@@ -68,7 +68,14 @@ def test_registry_keeps_unshipped_features_out_of_easy_install_default() -> None
         "whatsapp",
     )
     assert {"openclaw"} <= set(registry.UNAVAILABLE_KEYS)
-    assert registry.CORE_EXPRESS_KEYS == ("core_app", "glasshive")
+    assert registry.SOURCE_EXPRESS_CORE_KEYS == ("core_app", "glasshive")
+    assert registry.CORE_EXPRESS_KEYS == registry.SOURCE_EXPRESS_CORE_KEYS
+    assert registry.NATIVE_PAYLOAD_CORE_EXPRESS_KEYS == ("core_app",)
+    glasshive = registry.FEATURE_BY_KEY["glasshive"]
+    assert glasshive.native_payload_posture == "custom_only"
+    assert "Easy Install requires Codex CLI" in glasshive.required_user_action
+    assert "Custom Settings" in glasshive.required_user_action
+    assert "Codex or Claude" in glasshive.required_user_action
     assert {
         "scheduler",
         "prompt_workbench",

@@ -10,6 +10,15 @@ from typing import Any
 
 
 CODEX_APP_CLI = Path("/Applications/Codex.app/Contents/Resources/codex")
+GLASSHIVE_PROVIDER_MODEL_BY_WORKER_PROFILE = {
+    "codex-cli": "codex-cli:gpt-5.6-sol",
+    "claude-code": "claude-code:opus",
+}
+GLASSHIVE_WORKER_COMMAND_BY_PROFILE = {
+    "codex-cli": "codex",
+    "claude-code": "claude",
+}
+DEFAULT_GLASSHIVE_PROVIDER_MODEL = GLASSHIVE_PROVIDER_MODEL_BY_WORKER_PROFILE["codex-cli"]
 
 
 def resolve_bool(value: Any, default: bool = False) -> bool:
@@ -103,4 +112,16 @@ def detect_worker_profile() -> str:
         return "codex-cli"
     if host_cli_auth_ready("claude"):
         return "claude-code"
+    return ""
+
+
+def glasshive_provider_model_for_worker_profile(profile: str) -> str:
+    return GLASSHIVE_PROVIDER_MODEL_BY_WORKER_PROFILE.get(str(profile or "").strip(), "")
+
+
+def glasshive_worker_command_for_provider_model(model: str) -> str:
+    normalized_model = str(model or "").strip()
+    for profile, provider_model in GLASSHIVE_PROVIDER_MODEL_BY_WORKER_PROFILE.items():
+        if provider_model == normalized_model:
+            return GLASSHIVE_WORKER_COMMAND_BY_PROFILE[profile]
     return ""

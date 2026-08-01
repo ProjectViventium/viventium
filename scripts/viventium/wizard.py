@@ -20,6 +20,7 @@ if str(SCRIPT_DIR) not in sys.path:
 
 from installer_ui import CheckboxOption, InstallerUI, SelectOption
 from brain_readiness import feature_guidance, feature_label
+from host_cli_auth import DEFAULT_GLASSHIVE_PROVIDER_MODEL
 from retrieval_config import (
     DEFAULT_RETRIEVAL_EMBEDDINGS_MODEL,
     DEFAULT_RETRIEVAL_EMBEDDINGS_PROFILE,
@@ -40,9 +41,10 @@ DOCKER_FEATURES = {"ms365", "conversation_recall", "code_interpreter", "skyvern"
 EASY_INSTALL_LABEL = "Easy Install"
 CUSTOM_SETTINGS_INSTALL_LABEL = "Custom Settings Install"
 EASY_INSTALL_DESCRIPTION = (
-    "Guided first run with no terminal credentials. Start Viventium, add an OpenAI API key "
-    "in the browser, then send a first message to verify the optimized Viventium path. Use "
-    "Custom Settings Install when you want optional local services during setup."
+    "Guided source checkout first run with GlassHive as Viventium Main. Have a signed-in "
+    "Codex CLI, add an OpenAI API key in the browser for supporting AI tasks, then "
+    "send a first message. Use Custom Settings Install when you want other optional local "
+    "services during setup."
 )
 CUSTOM_SETTINGS_INSTALL_DESCRIPTION = (
     "Choose providers, features, and optional integrations now."
@@ -529,6 +531,11 @@ def build_base_config(
             "ms365": {"enabled": False},
             "glasshive": {
                 "enabled": False,
+                "provider": {
+                    "enabled": False,
+                    "default_access": "full",
+                    "allow_full_access": True,
+                },
                 "host_worker": {
                     "enabled": False,
                     "workspace_root": "~/viventium",
@@ -547,6 +554,7 @@ def build_base_config(
         config["runtime"]["prompt_workbench"]["seed_nightly"]["active"] = False
         config["runtime"]["nightly_routines"]["enabled"] = False
         config["integrations"]["glasshive"]["enabled"] = False
+        config["integrations"]["glasshive"]["provider"]["enabled"] = False
         config["integrations"]["glasshive"]["host_worker"]["enabled"] = False
 
     return config
@@ -1349,6 +1357,15 @@ def configure_easy_install(ui: InstallerUI) -> tuple[dict[str, Any], list[str]]:
         config["runtime"].setdefault("call_session_secret", {}),
         "viventium/call_session_secret",
     )
+    # This wizard is shipped by the source-checkout installer, which bootstraps the pinned
+    # GlassHive component before compilation. The separate immutable Native payload does not
+    # package or call this wizard and keeps its own GlassHive-off compiled defaults.
+    glasshive = config["integrations"]["glasshive"]
+    glasshive["enabled"] = True
+    glasshive["provider"]["enabled"] = True
+    glasshive["provider"]["default_model"] = DEFAULT_GLASSHIVE_PROVIDER_MODEL
+    glasshive["host_worker"]["enabled"] = True
+    glasshive["host_worker"]["default_worker_profile"] = "codex-cli"
     deferred = [
         "secondary_ai",
         "scheduler",
@@ -1356,7 +1373,6 @@ def configure_easy_install(ui: InstallerUI) -> tuple[dict[str, Any], list[str]]:
         "code_interpreter",
         "web_search",
         "conversation_recall",
-        "glasshive",
         "prompt_workbench",
         "nightly_reflection",
         "memory_hardening",
@@ -1524,6 +1540,9 @@ def configure_advanced_setup(ui: InstallerUI) -> tuple[dict[str, Any], list[str]
         mark_deferred(deferred, "nightly_reflection")
 
     config["integrations"]["glasshive"]["enabled"] = "glasshive" in selected
+    config["integrations"]["glasshive"]["provider"]["enabled"] = (
+        "glasshive" in selected
+    )
     config["integrations"]["glasshive"]["host_worker"]["enabled"] = (
         "glasshive" in selected
     )

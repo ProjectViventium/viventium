@@ -59,14 +59,44 @@ def test_auto_worker_profile_uses_logged_in_claude_when_codex_is_not_ready(monke
     config = {
         "version": 1,
         "runtime": {"nightly_routines": {"defaults_version": 1, "auto_worker_profile": True}},
-        "integrations": {"glasshive": {"enabled": True, "host_worker": {"enabled": True}}},
+        "integrations": {
+            "glasshive": {
+                "enabled": True,
+                "provider": {"enabled": True},
+                "host_worker": {"enabled": True},
+            }
+        },
     }
 
     updated, changed = module.ensure_default_nightly_routines(config)
 
     assert changed is True
     assert updated["integrations"]["glasshive"]["host_worker"]["default_worker_profile"] == "claude-code"
+    assert updated["integrations"]["glasshive"]["provider"]["default_model"] == "claude-code:opus"
     assert "provider" not in updated["runtime"].get("memory_hardening", {})
+
+
+def test_auto_worker_profile_uses_logged_in_codex_as_provider_default(monkeypatch) -> None:
+    module = load_module()
+    monkeypatch.setattr(module, "detect_worker_profile", lambda: "codex-cli")
+
+    config = {
+        "version": 1,
+        "runtime": {"nightly_routines": {"defaults_version": 1, "auto_worker_profile": True}},
+        "integrations": {
+            "glasshive": {
+                "enabled": True,
+                "provider": {"enabled": True},
+                "host_worker": {"enabled": True},
+            }
+        },
+    }
+
+    updated, changed = module.ensure_default_nightly_routines(config)
+
+    assert changed is True
+    assert updated["integrations"]["glasshive"]["host_worker"]["default_worker_profile"] == "codex-cli"
+    assert updated["integrations"]["glasshive"]["provider"]["default_model"] == "codex-cli:gpt-5.6-sol"
 
 
 def test_auto_worker_profile_preserves_explicit_user_worker_choice(monkeypatch) -> None:
@@ -82,6 +112,10 @@ def test_auto_worker_profile_preserves_explicit_user_worker_choice(monkeypatch) 
         "integrations": {
             "glasshive": {
                 "enabled": True,
+                "provider": {
+                    "enabled": True,
+                    "default_model": "codex-cli:gpt-5.6-sol",
+                },
                 "host_worker": {"enabled": True, "default_worker_profile": "claude-code"},
             }
         },
@@ -90,6 +124,7 @@ def test_auto_worker_profile_preserves_explicit_user_worker_choice(monkeypatch) 
     updated, changed = module.ensure_default_nightly_routines(config)
 
     assert changed is False
+    assert updated["integrations"]["glasshive"]["provider"]["default_model"] == "codex-cli:gpt-5.6-sol"
     assert updated["integrations"]["glasshive"]["host_worker"]["default_worker_profile"] == "claude-code"
     assert updated["runtime"]["memory_hardening"]["provider"] == "anthropic"
 

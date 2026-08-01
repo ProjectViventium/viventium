@@ -32,7 +32,9 @@ if str(SCRIPT_DIR) not in sys.path:
 
 from installer_ui import InstallerUI
 from host_cli_auth import (
+    DEFAULT_GLASSHIVE_PROVIDER_MODEL,
     codex_app_cli_candidates as shared_codex_app_cli_candidates,
+    glasshive_worker_command_for_provider_model,
     host_cli_auth_ready as shared_host_cli_auth_ready,
     host_cli_command as shared_host_cli_command,
     host_cli_exists as shared_host_cli_exists,
@@ -1065,6 +1067,7 @@ def compute_install_context(config: dict[str, Any]) -> dict[str, Any]:
     remote_call_mode = normalize_remote_call_mode(network)
     integrations = config.get("integrations", {}) or {}
     glasshive = integrations.get("glasshive") or {}
+    glasshive_provider = glasshive.get("provider") or {}
     glasshive_host_worker = glasshive.get("host_worker") or {}
     telegram = integrations.get("telegram") or {}
     telegram_local_bot_api = telegram.get("local_bot_api") or {}
@@ -1092,6 +1095,10 @@ def compute_install_context(config: dict[str, Any]) -> dict[str, Any]:
         ).strip(),
         "skyvern": resolve_bool((integrations.get("skyvern") or {}).get("enabled"), False),
         "glasshive": resolve_bool(glasshive.get("enabled"), False),
+        "glasshive_provider": resolve_bool(glasshive_provider.get("enabled"), False),
+        "glasshive_provider_default_model": str(
+            glasshive_provider.get("default_model") or DEFAULT_GLASSHIVE_PROVIDER_MODEL
+        ).strip(),
         "glasshive_host_worker": resolve_bool(glasshive_host_worker.get("enabled"), True),
         "glasshive_host_workspace_root": str(glasshive_host_worker.get("workspace_root") or "~/viventium").strip() or "~/viventium",
     }
@@ -1207,7 +1214,24 @@ def build_preflight_items(config: dict[str, Any]) -> list[PreflightItem]:
         codex_ready = host_cli_auth_ready("codex")
         claude_ready = host_cli_auth_ready("claude")
         openclaw_ready = host_cli_exists("openclaw")
-        worker_cli_ready = codex_ready or claude_ready
+        provider_worker_command = (
+            glasshive_worker_command_for_provider_model(ctx["glasshive_provider_default_model"])
+            if ctx["glasshive_provider"]
+            else ""
+        )
+        provider_worker_label = {
+            "codex": "Codex CLI",
+            "claude": "Claude Code",
+        }.get(provider_worker_command, "Supported harness")
+        provider_worker_ready = {
+            "codex": codex_ready,
+            "claude": claude_ready,
+        }.get(provider_worker_command, False)
+        worker_cli_ready = (
+            provider_worker_ready
+            if ctx["glasshive_provider"]
+            else codex_ready or claude_ready
+        )
         workspace_ready = host_workspace_root_ready(ctx["glasshive_host_workspace_root"])
         items.extend(
             [
@@ -1225,13 +1249,33 @@ def build_preflight_items(config: dict[str, Any]) -> list[PreflightItem]:
                 ),
                 PreflightItem(
                     key="glasshive_host_worker_cli_auth",
-                    label="Codex or Claude CLI login",
+                    label=(
+                        f"{provider_worker_label} login for GlassHive Main"
+                        if ctx["glasshive_provider"]
+                        else "Codex or Claude CLI login"
+                    ),
                     category="GlassHive host workers",
-                    reason="run required GlassHive host-native nightly workers on this computer",
+                    reason=(
+                        "run the configured GlassHive Main model"
+                        if ctx["glasshive_provider"]
+                        else "run required GlassHive host-native workers on this computer"
+                    ),
                     status="ok" if worker_cli_ready else "missing",
                     install_kind="manual" if not worker_cli_ready else "none",
                     manual_command=(
-                        "Install and sign in to either Codex (`codex login`) or Claude Code "
+                        (
+                            "Install and sign in to Codex (`codex login`), then rerun preflight; "
+                            "Claude authentication does not replace the configured Codex model"
+                            if provider_worker_command == "codex"
+                            else "Install and sign in to Claude Code (`claude auth login`), then "
+                            "rerun preflight; Codex authentication does not replace the configured "
+                            "Claude model"
+                        )
+                        if ctx["glasshive_provider"] and provider_worker_command
+                        else "Set integrations.glasshive.provider.default_model to a declared "
+                        "GlassHive model before rerunning preflight"
+                        if ctx["glasshive_provider"]
+                        else "Install and sign in to either Codex (`codex login`) or Claude Code "
                         "(`claude auth login`), then rerun preflight"
                     ),
                 ),

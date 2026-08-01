@@ -13,7 +13,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
-from host_cli_auth import detect_worker_profile
+from host_cli_auth import detect_worker_profile, glasshive_provider_model_for_worker_profile
 
 
 DEFAULTS_VERSION = 1
@@ -88,6 +88,21 @@ def ensure_default_nightly_routines(config: dict[str, Any]) -> tuple[dict[str, A
             if "default_worker_profile" not in host_worker:
                 host_worker["default_worker_profile"] = profile
                 changed = True
+
+    glasshive = integrations.get("glasshive") or {}
+    provider = glasshive.get("provider") or {}
+    host_worker = glasshive.get("host_worker") or {}
+    if (
+        resolve_bool(glasshive.get("enabled"), False)
+        and resolve_bool(provider.get("enabled"), False)
+        and "default_model" not in provider
+    ):
+        resolved_model = glasshive_provider_model_for_worker_profile(
+            str(host_worker.get("default_worker_profile") or "")
+        )
+        if resolved_model:
+            provider["default_model"] = resolved_model
+            changed = True
 
     return config, changed
 

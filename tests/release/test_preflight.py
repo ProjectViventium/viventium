@@ -15,6 +15,8 @@ import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PREFLIGHT_PATH = REPO_ROOT / "scripts/viventium/preflight.py"
+DEFAULT_NIGHTLY_ROUTINES_PATH = REPO_ROOT / "scripts/viventium/default_nightly_routines.py"
+CONFIG_COMPILER_PATH = REPO_ROOT / "scripts/viventium/config_compiler.py"
 COMMON_PATH = REPO_ROOT / "scripts/viventium/common.sh"
 DOCTOR_PATH = REPO_ROOT / "scripts/viventium/doctor.sh"
 LAUNCHER_PATH = REPO_ROOT / "viventium_v0_4/viventium-librechat-start.sh"
@@ -47,6 +49,28 @@ def load_preflight_module():
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def load_default_nightly_routines_module():
+    spec = importlib.util.spec_from_file_location(
+        "viventium_default_nightly_routines_for_preflight_test",
+        DEFAULT_NIGHTLY_ROUTINES_PATH,
+    )
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def load_config_compiler_module():
+    spec = importlib.util.spec_from_file_location(
+        "viventium_config_compiler_for_preflight_test",
+        CONFIG_COMPILER_PATH,
+    )
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
 
@@ -566,7 +590,7 @@ def test_preflight_defaults_glasshive_host_workers_on(monkeypatch) -> None:
     assert by_key["glasshive_host_workspace_root"].status == "ok"
 
 
-def test_preflight_accepts_claude_only_worker_login(monkeypatch, tmp_path: Path) -> None:
+def test_custom_preflight_accepts_claude_only_worker_login(monkeypatch, tmp_path: Path) -> None:
     module = load_preflight_module()
     for ready_helper in (
         "pnpm_runtime_ready",
@@ -588,7 +612,7 @@ def test_preflight_accepts_claude_only_worker_login(monkeypatch, tmp_path: Path)
 
     items = module.build_preflight_items(
         {
-            "install": {"mode": "native"},
+            "install": {"mode": "native", "experience": "custom"},
             "runtime": {"call_session_secret": {"secret_value": "local-dev-secret"}},
             "integrations": {
                 "glasshive": {
@@ -601,9 +625,193 @@ def test_preflight_accepts_claude_only_worker_login(monkeypatch, tmp_path: Path)
     by_key = {item.key: item for item in items}
 
     assert by_key["glasshive_host_worker_cli_auth"].status == "ok"
+    assert by_key["glasshive_host_worker_cli_auth"].label == "Codex or Claude CLI login"
     assert by_key["glasshive_host_codex_cli"].status == "optional"
     assert by_key["glasshive_host_claude_cli"].status == "ok"
     assert by_key["glasshive_host_worker_cli_auth"] not in module.missing_items(items)
+
+
+@pytest.mark.parametrize(
+    ("authenticated_cli", "expected_status"),
+    [("codex", "ok"), ("claude", "missing")],
+)
+def test_source_easy_preflight_requires_codex_login_for_codex_main(
+    monkeypatch,
+    tmp_path: Path,
+    authenticated_cli: str,
+    expected_status: str,
+) -> None:
+    module = load_preflight_module()
+    for ready_helper in (
+        "pnpm_runtime_ready",
+        "uv_runtime_ready",
+        "ollama_cli_runtime_ready",
+        "mongod_runtime_ready",
+        "meilisearch_runtime_ready",
+        "livekit_runtime_ready",
+        "cloudflared_runtime_ready",
+        "tailscale_cli_runtime_ready",
+        "caddy_runtime_ready",
+        "upnpc_runtime_ready",
+    ):
+        monkeypatch.setattr(module, ready_helper, lambda: True)
+    monkeypatch.setattr(module, "node_runtime_supported", lambda: True)
+    monkeypatch.setattr(module, "xcode_cli_tools_installed", lambda: True)
+    monkeypatch.setattr(
+        module,
+        "command_exists",
+        lambda command: command in {"git", "security", authenticated_cli},
+    )
+    monkeypatch.setattr(
+        module,
+        "host_cli_auth_ready",
+        lambda command: command == authenticated_cli,
+    )
+
+    items = module.build_preflight_items(
+        {
+            "install": {"mode": "native", "experience": "express"},
+            "runtime": {"call_session_secret": {"secret_value": "local-dev-secret"}},
+            "integrations": {
+                "glasshive": {
+                    "enabled": True,
+                    "provider": {
+                        "enabled": True,
+                        "default_model": "codex-cli:gpt-5.6-sol",
+                    },
+                    "host_worker": {
+                        "enabled": True,
+                        "default_worker_profile": "codex-cli",
+                        "workspace_root": str(tmp_path / "workers"),
+                    },
+                }
+            },
+        }
+    )
+    by_key = {item.key: item for item in items}
+    auth_item = by_key["glasshive_host_worker_cli_auth"]
+
+    assert auth_item.status == expected_status
+    assert auth_item.label == "Codex CLI login for GlassHive Main"
+    assert "codex login" in auth_item.manual_command
+    assert by_key["glasshive_host_codex_cli"].status == (
+        "ok" if authenticated_cli == "codex" else "optional"
+    )
+    assert by_key["glasshive_host_claude_cli"].status == (
+        "ok" if authenticated_cli == "claude" else "optional"
+    )
+    if authenticated_cli == "claude":
+        assert auth_item in module.manual_missing_items(items)
+    else:
+        assert auth_item not in module.missing_items(items)
+
+
+@pytest.mark.parametrize(
+    ("explicit_model", "expected_model", "expected_auth_status", "expected_label"),
+    [
+        (None, "claude-code:opus", "ok", "Claude Code login for GlassHive Main"),
+        (
+            "codex-cli:gpt-5.6-sol",
+            "codex-cli:gpt-5.6-sol",
+            "missing",
+            "Codex CLI login for GlassHive Main",
+        ),
+    ],
+)
+def test_custom_claude_only_defaults_preflight_and_assignment_follow_resolved_model(
+    monkeypatch,
+    tmp_path: Path,
+    explicit_model: str | None,
+    expected_model: str,
+    expected_auth_status: str,
+    expected_label: str,
+) -> None:
+    defaults = load_default_nightly_routines_module()
+    preflight = load_preflight_module()
+    compiler = load_config_compiler_module()
+    monkeypatch.setattr(defaults, "detect_worker_profile", lambda: "claude-code")
+    for ready_helper in (
+        "pnpm_runtime_ready",
+        "uv_runtime_ready",
+        "ollama_cli_runtime_ready",
+        "mongod_runtime_ready",
+        "meilisearch_runtime_ready",
+        "livekit_runtime_ready",
+        "cloudflared_runtime_ready",
+        "tailscale_cli_runtime_ready",
+        "caddy_runtime_ready",
+        "upnpc_runtime_ready",
+    ):
+        monkeypatch.setattr(preflight, ready_helper, lambda: True)
+    monkeypatch.setattr(preflight, "node_runtime_supported", lambda: True)
+    monkeypatch.setattr(preflight, "xcode_cli_tools_installed", lambda: True)
+    monkeypatch.setattr(
+        preflight,
+        "command_exists",
+        lambda command: command in {"git", "security", "claude"},
+    )
+    monkeypatch.setattr(
+        preflight,
+        "host_cli_auth_ready",
+        lambda command: command == "claude",
+    )
+
+    provider: dict[str, object] = {"enabled": True}
+    if explicit_model is not None:
+        provider["default_model"] = explicit_model
+    config = {
+        "version": 1,
+        "install": {"mode": "native", "experience": "custom"},
+        "runtime": {
+            "call_session_secret": {"secret_value": "local-dev-secret"},
+            "nightly_routines": {"defaults_version": 1, "auto_worker_profile": True},
+        },
+        "llm": {
+            "primary": {"provider": "openai", "auth_mode": "user_provided"},
+            "secondary": {"provider": "none", "auth_mode": "disabled"},
+        },
+        "integrations": {
+            "glasshive": {
+                "enabled": True,
+                "provider": provider,
+                "host_worker": {
+                    "enabled": True,
+                    "workspace_root": str(tmp_path / "workers"),
+                },
+            }
+        },
+    }
+
+    updated, changed = defaults.ensure_default_nightly_routines(config)
+    assert changed is True
+    glasshive = updated["integrations"]["glasshive"]
+    assert glasshive["host_worker"]["default_worker_profile"] == "claude-code"
+    assert glasshive["provider"]["default_model"] == expected_model
+
+    items = preflight.build_preflight_items(updated)
+    auth_item = {item.key: item for item in items}["glasshive_host_worker_cli_auth"]
+    assert auth_item.status == expected_auth_status
+    assert auth_item.label == expected_label
+
+    provider_entrypoint = (
+        tmp_path
+        / "GlassHive"
+        / "runtime_phase1"
+        / "src"
+        / "workers_projects_runtime"
+        / "conversation_provider.py"
+    )
+    provider_entrypoint.parent.mkdir(parents=True)
+    provider_entrypoint.write_text("# synthetic provider entrypoint\n", encoding="utf-8")
+    monkeypatch.setattr(compiler, "GLASSHIVE_RUNTIME_DIR", provider_entrypoint.parents[2])
+    assignments = compiler.build_agent_assignments(updated)
+    assert assignments["conscious"] == ("glasshive-harness", expected_model)
+
+    if explicit_model is not None:
+        assert auth_item in preflight.manual_missing_items(items)
+        assert "Claude authentication does not replace" in auth_item.manual_command
+    else:
+        assert auth_item not in preflight.missing_items(items)
 
 
 def test_preflight_blocks_glasshive_when_no_worker_cli_is_logged_in(monkeypatch, tmp_path: Path) -> None:

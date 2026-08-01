@@ -2068,6 +2068,7 @@ def test_render_runtime_env_emits_glasshive_launch_env_only_when_enabled(tmp_pat
     codex_bin.chmod(0o755)
     claude_bin.chmod(0o755)
     monkeypatch.setattr(config_compiler, "APP_SUPPORT_VIVENTIUM_DIR", app_support_root)
+    monkeypatch.setenv("VIVENTIUM_APP_SUPPORT_DIR", str(app_support_root))
     monkeypatch.setattr(
         config_compiler.shutil,
         "which",
@@ -2227,6 +2228,9 @@ def test_render_runtime_env_emits_glasshive_launch_env_only_when_enabled(tmp_pat
     assert enabled_env["WPR_CLAUDE_CODE_EFFORT"] == "max"
     assert enabled_env["WPR_DB_PATH"] == str(
         app_support_root / "state" / "runtime" / "isolated" / "glasshive" / "runtime_phase1.db"
+    )
+    assert not enabled_env["WPR_DB_PATH"].startswith(
+        str(Path.home() / "Library" / "Application Support" / "Viventium")
     )
     assert enabled_env["VIVENTIUM_LIBRECHAT_UPLOADS_ROOT"] == str(
         app_support_root / "data" / "uploads"

@@ -596,11 +596,21 @@ TELEGRAM_CODEX_ENV_FILE="${VIVENTIUM_TELEGRAM_CODEX_ENV_FILE:-$(resolve_path_or_
 TELEGRAM_CODEX_SETTINGS_FILE="${VIVENTIUM_TELEGRAM_CODEX_SETTINGS_FILE:-$(resolve_path_or_default "$TELEGRAM_CODEX_RUNTIME_SETTINGS_FILE" "$VIVENTIUM_APP_SUPPORT_ROOT/runtime/telegram-codex/settings.yaml" "$TELEGRAM_CODEX_DIR/config/settings.yaml")}"
 TELEGRAM_CODEX_PROJECTS_FILE="${VIVENTIUM_TELEGRAM_CODEX_PROJECTS_FILE:-$(resolve_path_or_default "$TELEGRAM_CODEX_RUNTIME_PROJECTS_FILE" "$VIVENTIUM_APP_SUPPORT_ROOT/runtime/telegram-codex/projects.yaml" "$TELEGRAM_CODEX_DIR/config/projects.yaml")}"
 # === VIVENTIUM END ===
+# === VIVENTIUM START ===
 # Canonical user preferences are always private App Support state. Install/upgrade migrates the
 # legacy repo-local directory without deleting it; only an explicit operator override may select
-# another location.
+# another location. Keep the root owner-private from its first launcher-created state so upgrade
+# recovery can safely bind the same authority before the Telegram worker has ever run.
+ensure_private_telegram_user_configs_dir() {
+  local target="$1"
+  local helper="$VIVENTIUM_CORE_DIR/scripts/viventium/telegram_user_config_migration.py"
+  local python_command="${PYTHON_BIN:-python3}"
+  "$python_command" "$helper" --ensure-private-root "$target" >/dev/null
+}
+
 TELEGRAM_USER_CONFIGS_DIR="${VIVENTIUM_TELEGRAM_USER_CONFIGS_DIR:-$VIVENTIUM_APP_SUPPORT_ROOT/state/telegram-user-configs}"
-mkdir -p "$TELEGRAM_USER_CONFIGS_DIR"
+ensure_private_telegram_user_configs_dir "$TELEGRAM_USER_CONFIGS_DIR"
+# === VIVENTIUM END ===
 SKYVERN_ENV_FILE="${VIVENTIUM_SKYVERN_ENV_FILE:-$(resolve_path_or_default \
   "$ROOT_DIR/docker/skyvern/.env" \
   "$ROOT_DIR/docker/skyvern/.env" \

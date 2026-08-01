@@ -24,6 +24,10 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 from telegram_tokens import telegram_bot_token_validation_error
+from host_cli_auth import (
+    DEFAULT_GLASSHIVE_PROVIDER_MODEL,
+    GLASSHIVE_PROVIDER_MODEL_BY_WORKER_PROFILE,
+)
 from retrieval_config import resolve_retrieval_embeddings_settings
 from prompt_registry import (
     PromptRegistryError,
@@ -739,7 +743,7 @@ def resolve_glasshive_provider_settings(config: dict[str, Any]) -> dict[str, Any
             for model in GLASSHIVE_PROVIDER_MODELS
             if model.get("harnessProfile") == "codex-cli"
         ),
-        available_models[0],
+        DEFAULT_GLASSHIVE_PROVIDER_MODEL,
     )
     if default_model not in available_models:
         raise SystemExit(
@@ -1076,7 +1080,7 @@ CURATED_CUSTOM_ENDPOINTS = [
 GLASSHIVE_PROVIDER_ID = "glasshive-harness"
 GLASSHIVE_PROVIDER_MODELS = [
     {
-        "id": "codex-cli:gpt-5.6-sol",
+        "id": GLASSHIVE_PROVIDER_MODEL_BY_WORKER_PROFILE["codex-cli"],
         "label": "Codex / GPT-5.6 Sol",
         "harnessProfile": "codex-cli",
         "effortChoices": [
@@ -1091,7 +1095,7 @@ GLASSHIVE_PROVIDER_MODELS = [
         "contextLimit": 272000,
     },
     {
-        "id": "claude-code:opus",
+        "id": GLASSHIVE_PROVIDER_MODEL_BY_WORKER_PROFILE["claude-code"],
         "label": "Claude / Opus",
         "harnessProfile": "claude-code",
         "effortChoices": ["low", "medium", "high", "xhigh", "max"],
@@ -3891,7 +3895,7 @@ def render_runtime_env(
             env["WPR_CLAUDE_CODE_EFFORT"] = str(glasshive_host_worker["claude_effort"])
         if not glasshive_enterprise["enabled"]:
             env["WPR_DB_PATH"] = str(
-                APP_SUPPORT_VIVENTIUM_DIR
+                runtime_app_support_dir
                 / "state"
                 / "runtime"
                 / runtime_profile

@@ -38,6 +38,125 @@ def _lexical(path: Path) -> Path:
     return Path(os.path.abspath(os.path.expanduser(str(path))))
 
 
+def ensure_private_preference_root(
+    path: Path,
+    *,
+    create: bool = True,
+    missing_ok: bool = False,
+) -> Path | None:
+    """Create or harden one owner-private directory without following links.
+
+    Every path component is opened relative to an already-open parent.  The
+    final permission change is descriptor-bound, and the complete chain is
+    revalidated before success so a concurrent rename cannot redirect chmod.
+    Existing ancestors are inspected but never modified.
+    """
+    target = _lexical(path)
+    directory_flags = (
+        os.O_RDONLY
+        | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_CLOEXEC", 0)
+    )
+    descriptors: list[int] = []
+    names: list[str] = []
+    try:
+        descriptor = os.open(target.anchor, directory_flags)
+        descriptors.append(descriptor)
+        for part in target.parts[1:]:
+            parent_descriptor = descriptors[-1]
+            try:
+                before = os.stat(
+                    part,
+                    dir_fd=parent_descriptor,
+                    follow_symlinks=False,
+                )
+            except FileNotFoundError:
+                if not create:
+                    if missing_ok:
+                        return None
+                    raise MigrationError(
+                        "Telegram preference root does not exist"
+                    )
+                os.mkdir(part, mode=0o700, dir_fd=parent_descriptor)
+                os.fsync(parent_descriptor)
+                before = os.stat(
+                    part,
+                    dir_fd=parent_descriptor,
+                    follow_symlinks=False,
+                )
+            if stat.S_ISLNK(before.st_mode):
+                raise MigrationError(
+                    "Telegram preference root contains a symlink"
+                )
+            if not stat.S_ISDIR(before.st_mode):
+                raise MigrationError(
+                    "Telegram preference root has a non-directory component"
+                )
+            child_descriptor = os.open(
+                part,
+                directory_flags,
+                dir_fd=parent_descriptor,
+            )
+            after = os.fstat(child_descriptor)
+            if (
+                not stat.S_ISDIR(after.st_mode)
+                or (before.st_dev, before.st_ino)
+                != (after.st_dev, after.st_ino)
+            ):
+                os.close(child_descriptor)
+                raise MigrationError(
+                    "Telegram preference root changed during validation"
+                )
+            descriptors.append(child_descriptor)
+            names.append(part)
+
+        final_metadata = os.fstat(descriptors[-1])
+        if (
+            len(descriptors) == 1
+            or not stat.S_ISDIR(final_metadata.st_mode)
+            or final_metadata.st_uid != os.getuid()
+        ):
+            raise MigrationError(
+                "Telegram preference root is not an owner-controlled directory"
+            )
+        if stat.S_IMODE(final_metadata.st_mode) != 0o700:
+            os.fchmod(descriptors[-1], 0o700)
+        os.fsync(descriptors[-1])
+
+        # A descriptor protects the chmod target. Rechecking each directory
+        # entry also prevents reporting success after an ancestor or the final
+        # name was concurrently exchanged.
+        for index, name in enumerate(names):
+            current = os.stat(
+                name,
+                dir_fd=descriptors[index],
+                follow_symlinks=False,
+            )
+            opened = os.fstat(descriptors[index + 1])
+            if (
+                not stat.S_ISDIR(current.st_mode)
+                or (current.st_dev, current.st_ino)
+                != (opened.st_dev, opened.st_ino)
+            ):
+                raise MigrationError(
+                    "Telegram preference root changed during validation"
+                )
+        return target
+    except MigrationError:
+        raise
+    except OSError as error:
+        raise MigrationError(
+            "Telegram preference root is unsafe or changed during validation"
+        ) from error
+    finally:
+        for descriptor in reversed(descriptors):
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+
+
 def _is_legacy_preference_root(path: Path) -> bool:
     """Recognize historical Viventium-owned roots without relying on checkout location."""
     parts = _lexical(path).parts
@@ -1164,12 +1283,33 @@ def migrate(
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--repo-root", required=True)
-    parser.add_argument("--app-support-dir", required=True)
+    parser.add_argument("--ensure-private-root")
+    parser.add_argument("--repo-root")
+    parser.add_argument("--app-support-dir")
     parser.add_argument("--active-config-root")
     parser.add_argument("--writer-stopped", action="store_true")
     args = parser.parse_args()
     try:
+        if args.ensure_private_root:
+            if args.repo_root or args.app_support_dir or args.active_config_root:
+                parser.error(
+                    "--ensure-private-root cannot be combined with migration arguments"
+                )
+            ensured = ensure_private_preference_root(
+                Path(args.ensure_private_root)
+            )
+            print(
+                json.dumps(
+                    {"status": "private-root-ready", "path": str(ensured)},
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+            )
+            return 0
+        if not args.repo_root or not args.app_support_dir:
+            parser.error(
+                "--repo-root and --app-support-dir are required for migration"
+            )
         result = migrate(
             Path(args.repo_root),
             Path(args.app_support_dir),

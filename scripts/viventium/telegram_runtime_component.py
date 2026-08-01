@@ -21,6 +21,21 @@ import tempfile
 from typing import Any, Iterable, Iterator
 
 
+SCRIPT_DIRECTORY = Path(__file__).resolve().parent
+if str(SCRIPT_DIRECTORY) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIRECTORY))
+
+_previous_dont_write_bytecode = sys.dont_write_bytecode
+sys.dont_write_bytecode = True
+try:
+    from telegram_user_config_migration import (  # noqa: E402
+        MigrationError as PreferenceRootError,
+        ensure_private_preference_root,
+    )
+finally:
+    sys.dont_write_bytecode = _previous_dont_write_bytecode
+
+
 SCHEMA_VERSION = 2
 COMPONENT_NAME = "telegram-viventium"
 MANIFEST_NAME = "component-manifest.json"
@@ -98,6 +113,7 @@ PREDECESSOR_REQUIRED_COMPONENT_FILES = (
     "bin/viventium",
     "scripts/viventium/telegram_poller_handoff.py",
     "scripts/viventium/telegram_runtime_component.py",
+    "scripts/viventium/telegram_user_config_migration.py",
     "viventium_v0_4/viventium-librechat-start.sh",
     "viventium_v0_4/telegram-viventium/TelegramVivBot/bot.py",
     "viventium_v0_4/telegram-viventium/TelegramVivBot/config.py",
@@ -152,12 +168,12 @@ def _validate_existing_real_chain(path: Path, label: str) -> None:
 def _ensure_private_directory(path: Path, *, root: Path | None = None) -> None:
     if root is not None:
         _contained(path, root, "Telegram runtime component directory")
-    path.mkdir(parents=True, exist_ok=True, mode=0o700)
-    _validate_existing_real_chain(path, "Telegram runtime component directory")
-    metadata = path.lstat()
-    if not stat.S_ISDIR(metadata.st_mode) or metadata.st_uid != os.getuid():
-        raise ComponentError("Telegram runtime component directory is not owner-controlled")
-    path.chmod(0o700)
+    try:
+        ensure_private_preference_root(path)
+    except PreferenceRootError as error:
+        raise ComponentError(
+            "Telegram runtime component directory is unsafe"
+        ) from error
 
 
 def _sha256(path: Path) -> str:
@@ -248,6 +264,7 @@ def _selected_sources(
         Path("bin") / "viventium",
         Path("scripts") / "viventium" / "telegram_poller_handoff.py",
         Path("scripts") / "viventium" / "telegram_runtime_component.py",
+        Path("scripts") / "viventium" / "telegram_user_config_migration.py",
         Path("viventium_v0_4") / "viventium-librechat-start.sh",
     ):
         candidate = controller_root / relative
@@ -1107,21 +1124,16 @@ def _telegram_authority(app_support: Path) -> tuple[Path, dict[str, Any]]:
         != canonical
     ):
         raise ComponentError("Telegram preference authority ledger is invalid")
-    _validate_existing_real_chain(
-        canonical,
-        "Canonical Telegram preference root",
-    )
-    if canonical.exists():
-        metadata = canonical.lstat()
-        if (
-            stat.S_ISLNK(metadata.st_mode)
-            or not stat.S_ISDIR(metadata.st_mode)
-            or metadata.st_uid != os.getuid()
-            or stat.S_IMODE(metadata.st_mode) & 0o077
-        ):
-            raise ComponentError(
-                "Canonical Telegram preference root is unsafe"
-            )
+    try:
+        ensure_private_preference_root(
+            canonical,
+            create=False,
+            missing_ok=True,
+        )
+    except PreferenceRootError as error:
+        raise ComponentError(
+            "Canonical Telegram preference root is unsafe"
+        ) from error
     return canonical, authority
 
 

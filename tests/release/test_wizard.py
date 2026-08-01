@@ -10,6 +10,7 @@ import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WIZARD_PATH = REPO_ROOT / "scripts" / "viventium" / "wizard.py"
+CONFIG_COMPILER_PATH = REPO_ROOT / "scripts" / "viventium" / "config_compiler.py"
 
 
 def load_wizard_module():
@@ -20,18 +21,30 @@ def load_wizard_module():
     return module
 
 
-def test_easy_install_copy_promises_browser_first_account_setup_without_terminal_credentials() -> None:
+def load_config_compiler_module():
+    spec = importlib.util.spec_from_file_location(
+        "viventium_config_compiler_for_wizard_test",
+        CONFIG_COMPILER_PATH,
+    )
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_easy_install_copy_explains_source_worker_readiness_and_browser_provider_setup() -> None:
     wizard = load_wizard_module()
 
     description = wizard.EASY_INSTALL_DESCRIPTION
-    assert "no terminal credentials" in description
+    assert "source checkout" in description
+    assert "signed-in Codex CLI" in description
+    assert "Claude" not in description
     assert "OpenAI API key" in description
     assert "OpenAI or Anthropic" not in description
     assert "browser" in description
     assert "Custom Settings Install" in description
     assert "after your first answer" not in description
     assert "Groq key" not in description
-    assert "Codex or Claude" not in description
     assert "Only asks" not in description
 
     options = wizard.install_profile_options()
@@ -291,14 +304,14 @@ def test_normalize_preset_keeps_recall_off_even_when_docker_desktop_present(
     assert normalized["runtime"]["personalization"]["default_conversation_recall"] is False
 
 
-def test_configure_easy_install_asks_no_terminal_questions_and_defers_optional_setup(
+def test_configure_source_easy_install_selects_glasshive_main_and_defers_optional_setup(
     monkeypatch,
 ) -> None:
     wizard = load_wizard_module()
 
     class FakeUI:
         def __getattr__(self, name: str):
-            raise AssertionError(f"Easy Install Native must not call InstallerUI.{name}")
+            raise AssertionError(f"Source Easy Install must not call InstallerUI.{name}")
 
     monkeypatch.setattr(
         wizard,
@@ -311,7 +324,12 @@ def test_configure_easy_install_asks_no_terminal_questions_and_defers_optional_s
     assert config["install"] == {"mode": "native", "experience": "express"}
     assert config["runtime"]["call_session_secret"]["secret_value"] == "generated-test-secret"
     assert config["runtime"]["personalization"]["default_conversation_recall"] is False
-    assert config["integrations"]["glasshive"]["enabled"] is False
+    glasshive = config["integrations"]["glasshive"]
+    assert glasshive["enabled"] is True
+    assert glasshive["provider"]["enabled"] is True
+    assert glasshive["provider"]["default_model"] == "codex-cli:gpt-5.6-sol"
+    assert glasshive["host_worker"]["enabled"] is True
+    assert glasshive["host_worker"]["default_worker_profile"] == "codex-cli"
     assert config["runtime"]["prompt_workbench"]["enabled"] is False
     assert config["runtime"]["memory_hardening"]["enabled"] is False
     assert config["llm"]["primary"] == {
@@ -327,7 +345,6 @@ def test_configure_easy_install_asks_no_terminal_questions_and_defers_optional_s
         "code_interpreter",
         "web_search",
         "conversation_recall",
-        "glasshive",
         "prompt_workbench",
         "nightly_reflection",
         "memory_hardening",
@@ -338,6 +355,74 @@ def test_configure_easy_install_asks_no_terminal_questions_and_defers_optional_s
         "ms365",
         "skyvern",
     }
+
+
+def test_base_express_config_keeps_immutable_native_payload_glasshive_off() -> None:
+    wizard = load_wizard_module()
+
+    config = wizard.build_base_config(
+        "native",
+        "openai",
+        "user_provided",
+        "none",
+        experience="express",
+    )
+
+    glasshive = config["integrations"]["glasshive"]
+    assert glasshive["enabled"] is False
+    assert glasshive["provider"]["enabled"] is False
+    assert glasshive["host_worker"]["enabled"] is False
+
+
+def test_source_easy_install_compiles_canonical_main_to_glasshive_codex(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    wizard = load_wizard_module()
+    compiler = load_config_compiler_module()
+
+    class FakeUI:
+        def __getattr__(self, name: str):
+            raise AssertionError(f"Source Easy Install must not call InstallerUI.{name}")
+
+    monkeypatch.setattr(
+        wizard,
+        "ensure_generated_secret",
+        lambda node, _service: node.update({"secret_value": "generated-test-secret"}),
+    )
+    provider_entrypoint = (
+        tmp_path
+        / "GlassHive"
+        / "runtime_phase1"
+        / "src"
+        / "workers_projects_runtime"
+        / "conversation_provider.py"
+    )
+    provider_entrypoint.parent.mkdir(parents=True)
+    provider_entrypoint.write_text("# synthetic provider entrypoint\n", encoding="utf-8")
+    monkeypatch.setattr(compiler, "GLASSHIVE_RUNTIME_DIR", provider_entrypoint.parents[2])
+
+    config, _deferred = wizard.configure_easy_install(FakeUI())
+    config = wizard.normalize_preset(config)
+    assignments = compiler.build_agent_assignments(config)
+    runtime_env = compiler.render_runtime_env(config, assignments)
+    compiled_agents = compiler.render_native_agents_bundle(config, assignments, set())
+
+    assert assignments["conscious"] == (
+        "glasshive-harness",
+        "codex-cli:gpt-5.6-sol",
+    )
+    assert compiled_agents["mainAgent"]["provider"] == "glasshive-harness"
+    assert compiled_agents["mainAgent"]["model"] == "codex-cli:gpt-5.6-sol"
+    assert compiled_agents["mainAgent"]["glasshive_options"] == {
+        "workspace": {"mode": "life"},
+        "access": "full",
+    }
+    assert runtime_env["START_GLASSHIVE"] == "true"
+    assert runtime_env["VIVENTIUM_FC_CONSCIOUS_LLM_PROVIDER"] == "glasshive-harness"
+    assert runtime_env["VIVENTIUM_FC_CONSCIOUS_LLM_MODEL"] == "codex-cli:gpt-5.6-sol"
+    assert runtime_env["GLASSHIVE_DEFAULT_WORKER_PROFILE"] == "codex-cli"
+    assert runtime_env["GLASSHIVE_PROVIDER_BASE_URL"] == "http://127.0.0.1:8766/v1"
 
 
 def test_normalize_preset_preserves_dormant_voice_provider_keys(monkeypatch) -> None:
@@ -711,7 +796,9 @@ def test_prompt_telegram_reprompts_until_botfather_token_looks_valid(monkeypatch
 
     telegram = config["integrations"]["telegram"]
     assert telegram["enabled"] is True
-    assert telegram["secret_value"] == "123456789:Valid_botfather_token_value_ABCDEFGH"
+    assert telegram["secret_value"] == (
+        "123456789:" + "Valid_botfather_token_value_ABCDEFGH"
+    )
     assert any("BotFather format" in error for error in ui.errors)
 
 

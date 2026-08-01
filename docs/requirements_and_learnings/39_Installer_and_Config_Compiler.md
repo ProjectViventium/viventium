@@ -862,6 +862,14 @@ delta on the disposable MacBook Air. Until those gates pass, release wording rem
   - the immutable Easy Install payload does not package Scheduler, GlassHive, Prompt Workbench,
     nightly reflection, or scheduled memory hardening today; it must describe them as Custom
     Settings Install features rather than installed or ready capabilities
+  - the source-checkout Easy Install is a different distribution capability: it bootstraps the
+    pinned GlassHive component before compilation, enables the GlassHive provider and host worker,
+    pins both its provider model and worker profile to Codex, and compiles the canonical Main to
+    `glasshive-harness` / `codex-cli:gpt-5.6-sol`
+  - `install.experience: express` alone must never imply that GlassHive exists. Source-wizard
+    defaults may enable it because that installer owns component bootstrap; the immutable Native
+    preset and compiled payload defaults remain GlassHive-off until that payload packages and
+    supervises the runtime
   - Custom Settings Install may activate the workflow during setup; upgrades of that runtime preserve an existing
     explicit active or disabled posture instead of forcing the new-user default over it
   - the canonical `install.experience` plus declared feature enablement owns this distinction;
@@ -879,15 +887,26 @@ delta on the disposable MacBook Air. Until those gates pass, release wording rem
     real additive migration
   - the reconciler must never write a real account email, local absolute user path, raw prompt,
     transcript, token, or owner-specific value into canonical config
-  - the default GlassHive worker profile is filled from the currently signed-in local worker CLI
-    only when the profile field is absent: Codex when `codex login status` succeeds, otherwise
-    Claude when `claude auth status` succeeds. A present empty value is still an explicit owner
-    choice and is not replaced
+  - outside source-checkout Easy Install, the default GlassHive worker profile may be filled from
+    the currently signed-in local worker CLI only when the profile field is absent: Codex when
+    `codex login status` succeeds, otherwise Claude when `claude auth status` succeeds. A present
+    empty value is still an explicit owner choice and is not replaced. Source Easy writes
+    `codex-cli` explicitly, so authentication discovery can never silently remap its Codex Main to
+    Claude
+  - when Custom Settings enables the GlassHive provider and its provider model is absent, the same
+    resolved worker profile fills the matching provider model (`codex-cli:gpt-5.6-sol` or
+    `claude-code:opus`) before compilation. Any explicit provider model is immutable owner intent:
+    defaults never rewrite it, and preflight requires authentication for that exact model's harness
   - the reconciler must not overwrite an explicit configured worker profile on later `start`,
     `compile-config`, `configure`, or `upgrade`; user choice beats auto-detection
-  - when GlassHive host-worker activation is explicitly enabled in Custom Settings Install, preflight requires at least one
-    signed-in Codex or Claude CLI and gives one clear sign-in action if neither is usable; a disabled
-    or setup-pending worker must not block Easy Install Native core readiness
+  - source-checkout Easy Install requires `codex login status` to succeed because its canonical Main
+    is the Codex GlassHive model. Claude-only authentication is reported as available but does not
+    satisfy this gate and must never trigger provider fallback or model remapping
+  - Custom Settings Install with only host-worker capability and no provider may accept either
+    signed-in Codex or Claude CLI. Once the provider is enabled, preflight requires the harness for
+    its resolved provider model. Another authenticated CLI must not satisfy that model-specific gate
+    or cause a silent model remap; a disabled or setup-pending worker must not block immutable Easy
+    Install Native core readiness
   - OpenClaw may be reported as optional, but missing OpenClaw must not block the default nightly
     workflow when Codex or Claude is ready
   - worker CLI auth is not the same as model-provider API or connected-account auth for memory
@@ -906,12 +925,17 @@ delta on the disposable MacBook Air. Until those gates pass, release wording rem
 - Easy Install Brain Readiness is a first-class installer contract, owned by the shared
   `scripts/viventium/brain_readiness.py` registry and reflected in wizard prompts, preflight,
   generated config, install/status output, doctor-style health, and QA rows:
-  - Easy Install Native installs the useful first-answer spine automatically: core app/helper, local
+  - immutable Easy Install Native installs the useful first-answer spine automatically: core app/helper, local
     account, OpenAI provider connection, text chat/persistence, built-in agents, Prompt
     Templates, Agent Builder, Feelings, and the setup/status shell
-  - Scheduler, GlassHive, Prompt Workbench, nightly reflection, scheduled memory hardening, local
-    voice, Telegram, transcript ingest, Recall/RAG, web search, and productivity MCP services remain
-    supported through Custom Settings Install, but are not packaged in immutable Easy Install today
+  - source-checkout Easy Install additionally bootstraps GlassHive and uses its Codex harness for the
+    canonical Main; missing Codex authentication—including a Claude-only host—is a visible
+    preflight/readiness failure and never a reason to substitute the direct OpenAI Main or remap the
+    configured GlassHive model
+  - Scheduler, Prompt Workbench, nightly reflection, scheduled memory hardening, local voice,
+    Telegram, transcript ingest, Recall/RAG, web search, and productivity MCP services remain
+    supported through Custom Settings Install; GlassHive also remains Custom-only in the immutable
+    Native distribution until that payload carries its runtime and supervisor
   - the built-in nightly flow is documented and tested as: scheduled prompt -> filled placeholders
     -> GlassHive run -> callback -> scheduler ledger -> Workbench shows completed
   - in Custom Settings installs that enable the nightly workflow, the built-in schedule must be
@@ -2646,6 +2670,9 @@ before updating it.
   supported existing-user input. The stopped-writer migration must preserve every byte while
   hardening to `0700` / `0600` through descriptor-bound no-follow traversal. Unsafe ownership,
   writable modes, links, hard links, or swap races fail before an outside target can change.
+  First-run launcher creation and recovery reuse that Python no-follow directory primitive: every
+  ancestor is held by descriptor, the final `0700` change uses `fchmod`, and a custom root with a
+  linked ancestor fails without creating or changing anything behind the link.
 - Pinned Meilisearch is attempted before any arbitrary host binary. An incompatible default derived
   index may be archived privately and rebuilt from Mongo only after the exact data/backup roots and
   every same-name container/PID receipt pass ownership checks. Ownership or shutdown uncertainty

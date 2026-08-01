@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -10,12 +11,39 @@ import stat
 import subprocess
 import sys
 
+import pytest
+
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = REPO_ROOT / "scripts" / "viventium" / "telegram_user_config_migration.py"
 LAUNCHER = REPO_ROOT / "viventium_v0_4" / "viventium-librechat-start.sh"
 CLI = REPO_ROOT / "bin" / "viventium"
 HELPER_INSTALLER = REPO_ROOT / "scripts" / "viventium" / "install_macos_helper.sh"
+
+
+def _load_migration_module():
+    spec = importlib.util.spec_from_file_location(
+        "telegram_user_config_migration_under_test",
+        SCRIPT,
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _ensure_private_root(path: Path) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT),
+            "--ensure-private-root",
+            str(path),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
 
 
 def _extract_shell_function(source: str, name: str) -> str:
@@ -912,3 +940,96 @@ def test_runtime_and_entrypoints_bind_migration_before_installed_launch() -> Non
     migration_position = cli.rindex('migrate_telegram_user_configs "$REPO_ROOT"')
     stop_position = cli.rfind("stop_stack_for_upgrade", 0, migration_position)
     assert 0 <= stop_position < migration_position
+
+
+def test_launcher_creates_and_hardens_private_telegram_preference_root(
+    tmp_path: Path,
+) -> None:
+    launcher = LAUNCHER.read_text(encoding="utf-8")
+    canonical = tmp_path / "app-support" / "state" / "telegram-user-configs"
+
+    created = _ensure_private_root(canonical)
+    assert created.returncode == 0, created.stderr
+    assert stat.S_IMODE(canonical.stat().st_mode) == 0o700
+
+    canonical.chmod(0o755)
+    hardened = _ensure_private_root(canonical)
+    assert hardened.returncode == 0, hardened.stderr
+    assert stat.S_IMODE(canonical.stat().st_mode) == 0o700
+    assert 'local helper="$VIVENTIUM_CORE_DIR/scripts/viventium/' in launcher
+    assert 'telegram_user_config_migration.py"' in launcher
+    assert '--ensure-private-root "$target"' in launcher
+    function = _extract_shell_function(
+        launcher,
+        "ensure_private_telegram_user_configs_dir",
+    )
+    assert "mkdir -p" not in function
+    assert "chmod " not in function
+
+
+def test_launcher_rejects_symlinked_telegram_preference_root(
+    tmp_path: Path,
+) -> None:
+    outside = tmp_path / "outside"
+    outside.mkdir(mode=0o755)
+    outside.chmod(0o755)
+    canonical = tmp_path / "telegram-user-configs"
+    canonical.symlink_to(outside, target_is_directory=True)
+
+    rejected = _ensure_private_root(canonical)
+
+    assert rejected.returncode != 0
+    assert "symlink" in rejected.stderr
+    assert stat.S_IMODE(outside.stat().st_mode) == 0o755
+
+
+def test_private_root_rejects_symlinked_ancestor_without_mutating_target(
+    tmp_path: Path,
+) -> None:
+    outside = tmp_path / "outside"
+    outside.mkdir(mode=0o755)
+    outside.chmod(0o755)
+    sentinel = outside / "sentinel.txt"
+    sentinel.write_text("unchanged\n", encoding="utf-8")
+    alias = tmp_path / "app-support-alias"
+    alias.symlink_to(outside, target_is_directory=True)
+
+    rejected = _ensure_private_root(alias / "state" / "telegram-user-configs")
+
+    assert rejected.returncode != 0
+    assert "symlink" in rejected.stderr or "unsafe" in rejected.stderr
+    assert sentinel.read_text(encoding="utf-8") == "unchanged\n"
+    assert stat.S_IMODE(outside.stat().st_mode) == 0o755
+    assert not (outside / "state").exists()
+
+
+def test_private_root_chmod_is_descriptor_bound_during_name_swap(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    module = _load_migration_module()
+    canonical = tmp_path / "app-support" / "state" / "telegram-user-configs"
+    canonical.mkdir(parents=True)
+    canonical.chmod(0o755)
+    detached = canonical.with_name("telegram-user-configs-detached")
+    outside = tmp_path / "outside"
+    outside.mkdir(mode=0o755)
+    outside.chmod(0o755)
+    real_fchmod = module.os.fchmod
+    swapped = False
+
+    def swap_name_then_fchmod(descriptor: int, mode: int) -> None:
+        nonlocal swapped
+        if not swapped:
+            swapped = True
+            canonical.rename(detached)
+            canonical.symlink_to(outside, target_is_directory=True)
+        real_fchmod(descriptor, mode)
+
+    monkeypatch.setattr(module.os, "fchmod", swap_name_then_fchmod)
+
+    with pytest.raises(module.MigrationError, match="changed"):
+        module.ensure_private_preference_root(canonical)
+
+    assert stat.S_IMODE(outside.stat().st_mode) == 0o755
+    assert stat.S_IMODE(detached.stat().st_mode) == 0o700

@@ -514,6 +514,41 @@ def _write_private_json(path: Path, payload: dict[str, object]) -> None:
     path.chmod(0o600)
 
 
+def test_telegram_authority_rejects_symlink_without_chmodding_target(
+    tmp_path: Path,
+) -> None:
+    module = _load_component_module()
+    app_support = tmp_path / "app-support"
+    canonical = app_support / "state" / "telegram-user-configs"
+    canonical.parent.mkdir(parents=True)
+    outside = tmp_path / "outside"
+    outside.mkdir(mode=0o755)
+    outside.chmod(0o755)
+    canonical.symlink_to(outside, target_is_directory=True)
+    _write_private_json(
+        app_support
+        / "state"
+        / "telegram-user-config-migration"
+        / "authority.json",
+        {
+            "schema_version": 2,
+            "kind": "viventium-telegram-preference-authority",
+            "status": "committed",
+            "authority": "canonical-app-support",
+            "generation": "c" * 64,
+            "canonical_root": str(canonical),
+            "retired_legacy_roots": [],
+            "source_tree_sha256": "d" * 64,
+            "operations": [],
+        },
+    )
+
+    with pytest.raises(module.ComponentError, match="unsafe"):
+        module._telegram_authority(app_support)
+
+    assert stat.S_IMODE(outside.stat().st_mode) == 0o755
+
+
 def test_recovery_receipt_is_transaction_bound_passive_then_rolled_back(
     tmp_path: Path,
 ) -> None:
@@ -544,7 +579,10 @@ def test_recovery_receipt_is_transaction_bound_passive_then_rolled_back(
     }
     _write_private_json(ledger_path, ledger)
     canonical = app_support / "state" / "telegram-user-configs"
-    canonical.mkdir(parents=True, mode=0o700)
+    # A pre-fix launcher could initialize this owner-controlled canonical root
+    # with the process umask (0755) before Telegram had ever written a file.
+    canonical.mkdir(parents=True, mode=0o755)
+    canonical.chmod(0o755)
     authority = {
         "schema_version": 2,
         "kind": "viventium-telegram-preference-authority",
@@ -584,6 +622,7 @@ def test_recovery_receipt_is_transaction_bound_passive_then_rolled_back(
         text=True,
     )
     assert published.returncode == 0, published.stderr
+    assert stat.S_IMODE(canonical.stat().st_mode) == 0o700
     receipt = (
         app_support / "state" / "continuity" / "telegram-recovery-active.json"
     )

@@ -1932,13 +1932,25 @@ persistent home and workspace mounts.
 
 ## Installer Integration
 
-- On supported source/Docker installs that select GlassHive, the compiler enables the provider and
-  host runtime together, bootstraps LIFE, and exposes the provider even when Codex or Claude
-  authentication still needs user action. The immutable Easy Install Native payload does not
-  package GlassHive today and must not advertise or emit this provider.
+- The source-checkout Easy Install selects GlassHive by default because that distribution
+  bootstraps the pinned component before compilation. It enables the provider and host runtime,
+  bootstraps LIFE, and compiles the canonical Main to `glasshive-harness` /
+  `codex-cli:gpt-5.6-sol`. It pins the provider model and worker profile to Codex and therefore
+  requires authenticated Codex specifically; Claude-only authentication remains a visible
+  readiness failure with no direct-provider substitution or model remapping.
+- Custom source/Docker installs that select GlassHive use the same provider-and-host contract. The
+  provider model follows the resolved Codex/Claude worker profile only when no model was explicitly
+  selected. Preflight then authenticates the harness required by that resolved model. An explicit
+  model is never overwritten or satisfied by authentication for the other harness. The immutable
+  Easy Install Native payload does not package or supervise GlassHive today and must not advertise
+  or emit this provider; it remains a separate capability boundary. An `express` label alone is
+  therefore not evidence that the runtime exists.
 - Provider selection is explicit and portable: both the GlassHive integration and its provider flag
   must be enabled. Provider-only mismatch fails compilation, while enabling only the broader
   GlassHive integration does not silently move any Agent to the harness endpoint.
+- Local GlassHive state is compiled under the selected Viventium App Support root and runtime
+  profile. Side-by-side install, upgrade, activation, and QA runtimes must never read or write the
+  canonical user's GlassHive SQLite database merely because the host username is the same.
 - Custom configurations may explicitly disable GlassHive through compiled configuration or the
   diagnostic `--skip-glasshive` launcher option.
 - If configuration enables GlassHive but a damaged or partial checkout is missing its runtime
