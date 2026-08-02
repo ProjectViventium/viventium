@@ -15,6 +15,7 @@ from librechat_llm import (
     LibreChatLLM,
     _extract_final_response_text,
     _extract_final_response_message_id,
+    _extract_resume_state_text,
     _extract_last_user_text,
     _extract_stream_error,
     _select_stream_error_message,
@@ -172,6 +173,18 @@ class _FakeStreamingSseSession:
         return _FakeStreamingSseResponse(self._events)
 
 
+class _FakeResumingSseSession(_FakeStreamingSseSession):
+    def __init__(self, event_batches: list[list[dict]], *args, **kwargs):
+        super().__init__([], *args, **kwargs)
+        self._event_batches = list(event_batches)
+
+    def get(self, url, *args, **kwargs):
+        self.get_calls.append((url, args, kwargs))
+        if not self._event_batches:
+            raise AssertionError("Unexpected extra voice SSE reconnect")
+        return _FakeStreamingSseResponse(self._event_batches.pop(0))
+
+
 class _FakeBlockingSseContent:
     def __init__(self, started: asyncio.Event):
         self.started = started
@@ -310,7 +323,7 @@ class TestListenOnlyStream(unittest.TestCase):
         self.assertTrue(post_json["streamId"].startswith("lc_"))
         self.assertEqual(post_json["viventiumTextDeltaMode"], "auto")
 
-    def test_aborts_librechat_stream_when_sse_closes_without_final_event(self) -> None:
+    def test_transport_close_does_not_cancel_durable_authoring(self) -> None:
         fake_session = _FakeClosedStreamSession()
         os.environ["VIVENTIUM_VOICE_SSE_MAX_RETRIES"] = "0"
         os.environ["VIVENTIUM_VOICE_SSE_RETRY_DELAY_S"] = "0.01"
@@ -333,7 +346,7 @@ class TestListenOnlyStream(unittest.TestCase):
         self.assertGreaterEqual(len(fake_session.get_calls), 1)
         post_urls = [call[0] for call in fake_session.post_calls]
         self.assertIn("http://librechat.test/api/viventium/voice/chat", post_urls)
-        self.assertIn(
+        self.assertNotIn(
             "http://librechat.test/api/viventium/voice/stream/stream_voice_1/abort",
             post_urls,
         )
@@ -345,6 +358,7 @@ class TestListenOnlyStream(unittest.TestCase):
             llm = LibreChatLLM(
                 origin="http://librechat.test",
                 auth=LibreChatAuth(call_session_id="call_1", call_secret="secret"),
+                is_participant_connected=lambda: True,
             )
             stream = llm.chat(chat_ctx=ctx)
             with patch("librechat_llm.aiohttp.ClientSession", return_value=fake_session):
@@ -363,9 +377,204 @@ class TestListenOnlyStream(unittest.TestCase):
             post_urls,
         )
         self.assertTrue(fake_session.abort_completed)
+        abort_calls = [call for call in fake_session.post_calls if str(call[0]).endswith("/abort")]
+        self.assertEqual(abort_calls[0][2]["json"]["reason"], "voice_user_interruption")
+
+    def test_detaches_without_cancelling_authoring_when_participant_refreshes(self) -> None:
+        async def run_stream() -> _FakeBlockingStreamSession:
+            fake_session = _FakeBlockingStreamSession()
+            ctx = ChatContext(items=[ChatMessage(role="user", content=["hello"])])
+            llm = LibreChatLLM(
+                origin="http://librechat.test",
+                auth=LibreChatAuth(call_session_id="call_1", call_secret="secret"),
+                is_participant_connected=lambda: False,
+            )
+            stream = llm.chat(chat_ctx=ctx)
+            with patch("librechat_llm.aiohttp.ClientSession", return_value=fake_session):
+                task = asyncio.create_task(stream._run())
+                await asyncio.wait_for(fake_session.sse_started.wait(), timeout=1.0)
+                task.cancel()
+                with self.assertRaises(asyncio.CancelledError):
+                    await task
+            return fake_session
+
+        fake_session = asyncio.run(run_stream())
+
+        abort_calls = [call for call in fake_session.post_calls if str(call[0]).endswith("/abort")]
+        self.assertEqual(abort_calls, [])
 
 
 class TestLibreChatStreamingRun(unittest.TestCase):
+    def test_resume_state_preserves_raw_text_for_chunk_boundary_deduplication(self) -> None:
+        raw = '<emotion value="happy"/>See [the file](https://example.com) or a@example.com.'
+        event = {
+            "sync": True,
+            "resumeState": {"aggregatedContent": [{"type": "text", "text": raw}]},
+        }
+
+        self.assertEqual(_extract_resume_state_text(event), raw)
+
+    def test_resume_sync_is_stable_across_non_associative_whitespace_chunks(self) -> None:
+        event_batches = [
+            [{"text": "Hello "}],
+            [
+                {
+                    "sync": True,
+                    "resumeState": {
+                        "aggregatedContent": [{"type": "text", "text": "Hello  world."}]
+                    },
+                },
+                {
+                    "final": True,
+                    "responseMessage": {
+                        "content": [{"type": "text", "text": "Hello  world."}]
+                    },
+                },
+            ],
+        ]
+
+        async def run_stream() -> list[str]:
+            fake_session = _FakeResumingSseSession(event_batches)
+            chunks: list[str] = []
+            ctx = ChatContext(items=[ChatMessage(role="user", content=["hello"])])
+            llm = LibreChatLLM(
+                origin="http://librechat.test",
+                auth=LibreChatAuth(call_session_id="call_1", call_secret="secret"),
+            )
+            with (
+                patch("librechat_llm.aiohttp.ClientSession", return_value=fake_session),
+                patch("librechat_llm._get_voice_sse_retry_config", return_value=(1, 0.0)),
+            ):
+                stream = llm.chat(chat_ctx=ctx)
+                async with stream:
+                    async for chunk in stream:
+                        if chunk.delta and chunk.delta.content:
+                            chunks.append(chunk.delta.content)
+            return chunks
+
+        self.assertEqual("".join(asyncio.run(run_stream())), "Hello world.")
+
+    def test_resume_sync_recovers_only_missing_text_without_duplicate_speech(self) -> None:
+        event_batches = [
+            [{"text": "Hello "}],
+            [
+                {
+                    "sync": True,
+                    "resumeState": {
+                        "aggregatedContent": [{"type": "text", "text": "Hello world."}]
+                    },
+                },
+                {
+                    "final": True,
+                    "responseMessage": {
+                        "content": [{"type": "text", "text": "Hello world."}]
+                    },
+                },
+            ],
+        ]
+
+        async def run_stream() -> list[str]:
+            fake_session = _FakeResumingSseSession(event_batches)
+            chunks: list[str] = []
+            ctx = ChatContext(items=[ChatMessage(role="user", content=["hello"])])
+            llm = LibreChatLLM(
+                origin="http://librechat.test",
+                auth=LibreChatAuth(call_session_id="call_1", call_secret="secret"),
+            )
+            with (
+                patch("librechat_llm.aiohttp.ClientSession", return_value=fake_session),
+                patch("librechat_llm._get_voice_sse_retry_config", return_value=(1, 0.0)),
+            ):
+                stream = llm.chat(chat_ctx=ctx)
+                async with stream:
+                    async for chunk in stream:
+                        if chunk.delta and chunk.delta.content:
+                            chunks.append(chunk.delta.content)
+            return chunks
+
+        self.assertEqual("".join(asyncio.run(run_stream())), "Hello world.")
+
+    def test_buffers_completed_speech_until_same_call_participant_reconnects(self) -> None:
+        events = [
+            {"text": "Answer completed while the browser was reloading."},
+            {
+                "final": True,
+                "responseMessage": {
+                    "content": [
+                        {"type": "text", "text": "Answer completed while the browser was reloading."}
+                    ]
+                },
+            },
+        ]
+
+        async def run_stream() -> tuple[list[str], list[str]]:
+            fake_session = _FakeStreamingSseSession(events)
+            connected = False
+            chunks: list[str] = []
+            ctx = ChatContext(items=[ChatMessage(role="user", content=["hello"])])
+            llm = LibreChatLLM(
+                origin="http://librechat.test",
+                auth=LibreChatAuth(call_session_id="call_1", call_secret="secret"),
+                is_participant_connected=lambda: connected,
+                participant_reconnect_grace_s=0.5,
+            )
+
+            async def consume() -> None:
+                with patch("librechat_llm.aiohttp.ClientSession", return_value=fake_session):
+                    stream = llm.chat(chat_ctx=ctx)
+                    async with stream:
+                        async for chunk in stream:
+                            if chunk.delta and chunk.delta.content:
+                                chunks.append(chunk.delta.content)
+
+            task = asyncio.create_task(consume())
+            await asyncio.sleep(0.05)
+            before_reconnect = list(chunks)
+            connected = True
+            await asyncio.wait_for(task, timeout=1.0)
+            return before_reconnect, chunks
+
+        before_reconnect, chunks = asyncio.run(run_stream())
+        self.assertEqual(before_reconnect, [])
+        self.assertEqual(
+            "".join(chunks),
+            "Answer completed while the browser was reloading.",
+        )
+
+    def test_drops_buffered_speech_after_reconnect_grace_without_aborting_authoring(self) -> None:
+        events = [
+            {"text": "Persisted answer with no listener."},
+            {
+                "final": True,
+                "responseMessage": {
+                    "content": [{"type": "text", "text": "Persisted answer with no listener."}]
+                },
+            },
+        ]
+
+        async def run_stream() -> tuple[list[str], _FakeStreamingSseSession]:
+            fake_session = _FakeStreamingSseSession(events)
+            chunks: list[str] = []
+            ctx = ChatContext(items=[ChatMessage(role="user", content=["hello"])])
+            llm = LibreChatLLM(
+                origin="http://librechat.test",
+                auth=LibreChatAuth(call_session_id="call_1", call_secret="secret"),
+                is_participant_connected=lambda: False,
+                participant_reconnect_grace_s=0.01,
+            )
+            with patch("librechat_llm.aiohttp.ClientSession", return_value=fake_session):
+                stream = llm.chat(chat_ctx=ctx)
+                async with stream:
+                    async for chunk in stream:
+                        if chunk.delta and chunk.delta.content:
+                            chunks.append(chunk.delta.content)
+            return chunks, fake_session
+
+        chunks, fake_session = asyncio.run(run_stream())
+        self.assertEqual(chunks, [])
+        abort_calls = [call for call in fake_session.post_calls if str(call[0]).endswith("/abort")]
+        self.assertEqual(abort_calls, [])
+
     def test_streamed_sse_deltas_preserve_reported_word_boundaries(self) -> None:
         expected = (
             "Nice, invoice cleared is a real milestone. "

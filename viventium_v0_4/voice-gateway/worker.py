@@ -2120,6 +2120,14 @@ def _parse_call_session_id(metadata: str) -> Optional[str]:
     return None
 
 
+def _parse_participant_identity(metadata: str) -> Optional[str]:
+    obj = _parse_metadata_json(metadata)
+    participant_identity = obj.get("participantIdentity") or obj.get("participant_identity")
+    if isinstance(participant_identity, str) and participant_identity.strip():
+        return participant_identity.strip()[:255]
+    return None
+
+
 def _parse_requested_voice_route(metadata: str) -> dict[str, dict[str, Optional[str]]]:
     obj = _parse_metadata_json(metadata)
     return _normalize_requested_voice_route(obj.get("requestedVoiceRoute"))
@@ -2219,6 +2227,25 @@ def _remote_participant_count(room: Any) -> int:
         return 0
 
 
+def _participant_identity_connected(room: Any, participant_identity: Optional[str]) -> bool:
+    participants = getattr(room, "remote_participants", None)
+    if participants is None:
+        return False
+    if not participant_identity:
+        return _remote_participant_count(room) > 0
+    try:
+        if participant_identity in participants:
+            return True
+        values = participants.values()
+    except (AttributeError, TypeError):
+        values = participants
+    try:
+        return any(
+            getattr(participant, "identity", None) == participant_identity
+            for participant in values
+        )
+    except TypeError:
+        return False
 def _attach_room_diagnostics(
     ctx: JobContext,
     *,
@@ -2245,15 +2272,8 @@ def _attach_room_diagnostics(
             call_session_id,
             getattr(participant, "identity", "<unknown>"),
         )
-        if active_job_marker is not None:
-            def _clear_marker_if_room_empty() -> None:
-                if _remote_participant_count(room) == 0:
-                    _clear_active_voice_job_marker(active_job_marker)
-
-            try:
-                asyncio.get_running_loop().call_later(0.25, _clear_marker_if_room_empty)
-            except RuntimeError:
-                _clear_marker_if_room_empty()
+        # The job shutdown callback owns marker cleanup. A transient empty room can be a browser
+        # refresh, and clearing here would start heavy model prewarm during an active response.
 
     @room.on("track_muted")
     def _on_track_muted(participant: Any, publication: Any) -> None:
@@ -2503,10 +2523,18 @@ def _voice_sync_transcription_enabled() -> bool:
     return _parse_bool_env("VIVENTIUM_VOICE_SYNC_TRANSCRIPTION", False)
 
 
-def _build_room_options(*, sync_transcription: bool) -> Any:
-    return room_io.RoomOptions(
-        text_output=room_io.TextOutputOptions(sync_transcription=sync_transcription)
-    )
+def _build_room_options(
+    *,
+    sync_transcription: bool,
+    participant_identity: Optional[str] = None,
+) -> Any:
+    options: dict[str, Any] = {
+        "text_output": room_io.TextOutputOptions(sync_transcription=sync_transcription),
+        "close_on_disconnect": False,
+    }
+    if participant_identity:
+        options["participant_identity"] = participant_identity
+    return room_io.RoomOptions(**options)
 
 
 def _metric_value(metrics: Any, key: str) -> Optional[float]:
@@ -3075,6 +3103,7 @@ async def entrypoint(ctx: JobContext) -> None:
     job_metadata = getattr(ctx.job, "metadata", "") or ""
     requested_voice_route = _parse_requested_voice_route(job_metadata)
     call_session_id = _parse_call_session_id(job_metadata)
+    participant_identity = _parse_participant_identity(job_metadata)
     connected = False
 
     if not call_session_id:
@@ -3168,6 +3197,10 @@ async def entrypoint(ctx: JobContext) -> None:
         voice_accepts_inline_controls=_tts_provider_accepts_inline_voice_controls(
             capabilities,
             env.tts_provider,
+        ),
+        is_participant_connected=lambda: _participant_identity_connected(
+            ctx.room,
+            participant_identity,
         ),
     )
     # === VIVENTIUM END ===
@@ -3797,7 +3830,10 @@ async def entrypoint(ctx: JobContext) -> None:
     await session.start(
         agent=agent,
         room=ctx.room,
-        room_options=_build_room_options(sync_transcription=sync_transcription),
+        room_options=_build_room_options(
+            sync_transcription=sync_transcription,
+            participant_identity=participant_identity,
+        ),
     )
     await _publish_voice_route_metadata(current_tts_provider, current_tts_impl)
     # === VIVENTIUM END ===

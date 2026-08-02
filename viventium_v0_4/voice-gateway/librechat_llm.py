@@ -621,6 +621,25 @@ def _extract_final_response_text(final_event: dict[str, Any]) -> str:
                 )
     return "".join(parts).strip()
 
+
+def _extract_resume_state_text(event: dict[str, Any]) -> str:
+    resume_state = event.get("resumeState")
+    if not isinstance(resume_state, dict):
+        return ""
+    content = resume_state.get("aggregatedContent")
+    if not isinstance(content, list):
+        return ""
+    parts: list[str] = []
+    for part in content:
+        if not isinstance(part, dict) or part.get("type") != "text":
+            continue
+        text = part.get("text")
+        if isinstance(text, str):
+            parts.append(text)
+        elif isinstance(text, dict) and isinstance(text.get("value"), str):
+            parts.append(text["value"])
+    return "".join(parts)
+
 def _extract_final_response_message_id(final_event: dict[str, Any]) -> str:
     """
     Extract the canonical assistant messageId from a LibreChat `final: true` SSE payload.
@@ -857,6 +876,8 @@ class LibreChatLLM(llm.LLM):
         voice_provider: str = "cartesia",
         voice_accepts_inline_controls: bool = False,
         followup_handler: Optional[Callable[..., None]] = None,
+        is_participant_connected: Optional[Callable[[], bool]] = None,
+        participant_reconnect_grace_s: float = 60.0,
     ) -> None:
         super().__init__()
         self._origin = origin.rstrip("/")
@@ -866,6 +887,27 @@ class LibreChatLLM(llm.LLM):
         self._voice_provider = voice_provider or "cartesia"
         self._voice_accepts_inline_controls = bool(voice_accepts_inline_controls)
         self._followup_handler = followup_handler
+        self._is_participant_connected = is_participant_connected
+        self._participant_reconnect_grace_s = max(0.0, float(participant_reconnect_grace_s))
+
+    def is_participant_connected(self) -> bool:
+        if self._is_participant_connected is None:
+            return True
+        try:
+            return bool(self._is_participant_connected())
+        except Exception:
+            logger.warning("[LibreChatLLM] Participant-state check failed; preserving interruption cancellation")
+            return True
+
+    async def wait_for_participant_reconnect(self) -> bool:
+        if self.is_participant_connected():
+            return True
+        deadline = time.monotonic() + self._participant_reconnect_grace_s
+        while time.monotonic() < deadline:
+            await asyncio.sleep(min(0.05, max(0.0, deadline - time.monotonic())))
+            if self.is_participant_connected():
+                return True
+        return self.is_participant_connected()
 
     @property
     def model(self) -> str:
@@ -966,6 +1008,7 @@ class _LibreChatLLMStream(llm.LLMStream):
         final_event: Optional[dict[str, Any]] = None
         stream_error: Optional[str] = None
         cancelled = False
+        participant_disconnected = False
 
         log_latency = _should_log_latency()
         started_at = time.time()
@@ -1037,6 +1080,7 @@ class _LibreChatLLMStream(llm.LLMStream):
                 saw_cortex_event = False
                 saw_glasshive_tool_call = False
                 collected_response: list[str] = []
+                collected_raw_response: list[str] = []
                 # === VIVENTIUM START ===
                 # Guard against `{NTA}` flashing during streaming.
                 no_response_guard = _NoResponseStreamGuard()
@@ -1055,7 +1099,9 @@ class _LibreChatLLMStream(llm.LLMStream):
                 cortex_message_id = ""
                 # === VIVENTIUM END ===
 
-                def send_chat_delta(content: str) -> None:
+                disconnected_speech: list[str] = []
+
+                def emit_chat_delta(content: str) -> None:
                     nonlocal first
                     if not content:
                         return
@@ -1070,6 +1116,63 @@ class _LibreChatLLMStream(llm.LLMStream):
                     )
                     first = False
                     self._event_ch.send_nowait(ChatChunk(id=self._request_id, delta=cd))
+
+                def send_chat_delta(content: str) -> None:
+                    if not content:
+                        return
+                    if not self._llm_impl.is_participant_connected():
+                        disconnected_speech.append(content)
+                        return
+                    if disconnected_speech:
+                        content = "".join(disconnected_speech) + content
+                        disconnected_speech.clear()
+                    emit_chat_delta(content)
+
+                async def flush_disconnected_speech() -> None:
+                    if not disconnected_speech:
+                        return
+                    if not self._llm_impl.is_participant_connected():
+                        reconnected = await self._llm_impl.wait_for_participant_reconnect()
+                        if not reconnected:
+                            logger.info(
+                                "[LibreChatLLM] Reconnect grace expired; persisted voice response was not replayed"
+                            )
+                            disconnected_speech.clear()
+                            return
+                    content = "".join(disconnected_speech)
+                    disconnected_speech.clear()
+                    emit_chat_delta(content)
+
+                def process_text_delta(raw_delta: str) -> None:
+                    nonlocal saw_any_tokens, first_token_at
+                    collected_raw_response.append(raw_delta)
+                    delta = sanitize_voice_delta_text(raw_delta)
+                    if not delta:
+                        return
+                    if _should_debug_voice_markup():
+                        display_delta = debug_display_filter.feed(delta)
+                        logger.info(
+                            "[VoiceMarkup] llm_delta stream_delta_json=%s tts_delta_json=%s display_delta_json=%s",
+                            _debug_text_json(raw_delta),
+                            _debug_text_json(delta),
+                            _debug_text_json(display_delta),
+                        )
+                    saw_any_tokens = True
+                    if first_token_at is None:
+                        first_token_at = time.time()
+                        if log_latency:
+                            logger.info(
+                                "[VoiceLatency] ttft_ms=%s request_id=%s stream_id=%s",
+                                int((first_token_at - started_at) * 1000),
+                                self._request_id,
+                                stream_id,
+                            )
+                    collected_response.append(delta)
+                    for emit_delta in no_response_guard.feed(delta):
+                        if not emit_delta:
+                            continue
+                        for buffered_delta in tts_delta_buffer.feed(emit_delta):
+                            send_chat_delta(buffered_delta)
 
                 # === VIVENTIUM START ===
                 attempts = 0
@@ -1106,6 +1209,16 @@ class _LibreChatLLMStream(llm.LLMStream):
                                     break
 
                                 if event.get("sync"):
+                                    resumed_text = _extract_resume_state_text(event)
+                                    collected_text = "".join(collected_raw_response)
+                                    if resumed_text.startswith(collected_text):
+                                        missing_text = resumed_text[len(collected_text) :]
+                                        if missing_text:
+                                            process_text_delta(missing_text)
+                                    elif resumed_text:
+                                        logger.warning(
+                                            "[LibreChatLLM] Resume state diverged from consumed voice text; refusing duplicate replay"
+                                        )
                                     continue
 
                                 if _payload_has_glasshive_tool_call(event):
@@ -1150,36 +1263,7 @@ class _LibreChatLLMStream(llm.LLMStream):
                                 # === VIVENTIUM END ===
 
                                 for raw_delta in extract_raw_text_deltas(event):
-                                    delta = sanitize_voice_delta_text(raw_delta)
-                                    if not delta:
-                                        continue
-                                    if _should_debug_voice_markup():
-                                        display_delta = debug_display_filter.feed(delta)
-                                        logger.info(
-                                            "[VoiceMarkup] llm_delta stream_delta_json=%s tts_delta_json=%s display_delta_json=%s",
-                                            _debug_text_json(raw_delta),
-                                            _debug_text_json(delta),
-                                            _debug_text_json(display_delta),
-                                        )
-                                    saw_any_tokens = True
-                                    if first_token_at is None:
-                                        first_token_at = time.time()
-                                        if log_latency:
-                                            logger.info(
-                                                "[VoiceLatency] ttft_ms=%s request_id=%s stream_id=%s",
-                                                int((first_token_at - started_at) * 1000),
-                                                self._request_id,
-                                                stream_id,
-                                            )
-                                    collected_response.append(delta)
-                                    # === VIVENTIUM START ===
-                                    # Suppress `{NTA}` from being spoken/rendered by buffering until decision.
-                                    for emit_delta in no_response_guard.feed(delta):
-                                        if not emit_delta:
-                                            continue
-                                        for buffered_delta in tts_delta_buffer.feed(emit_delta):
-                                            send_chat_delta(buffered_delta)
-                                    # === VIVENTIUM END ===
+                                    process_text_delta(raw_delta)
 
                             if stream_error or final_event:
                                 break
@@ -1261,6 +1345,7 @@ class _LibreChatLLMStream(llm.LLMStream):
                             send_chat_delta(buffered_delta)
                     for buffered_delta in tts_delta_buffer.finalize():
                         send_chat_delta(buffered_delta)
+                await flush_disconnected_speech()
                 # === VIVENTIUM END ===
 
                 # Fire-and-forget insight follow-up. Never block the main response.
@@ -1296,17 +1381,24 @@ class _LibreChatLLMStream(llm.LLMStream):
                 # === VIVENTIUM END ===
             except asyncio.CancelledError:
                 cancelled = True
+                participant_disconnected = not self._llm_impl.is_participant_connected()
                 raise
             finally:
                 if stream_id and final_event is None:
-                    reason = "voice_stream_cancelled" if cancelled else "voice_stream_closed_before_final"
-                    await _shielded_abort_librechat_voice_stream(
-                        session=session,
-                        origin=self._origin,
-                        stream_id=stream_id,
-                        headers=headers,
-                        request_id=self._request_id,
-                        started_at=started_at,
-                        reason=reason,
-                        log_latency=log_latency,
-                    )
+                    if participant_disconnected or not cancelled:
+                        logger.info(
+                            "[LibreChatLLM] Voice subscriber detached for reconnect request_id=%s stream_id=%s",
+                            self._request_id,
+                            stream_id,
+                        )
+                    else:
+                        await _shielded_abort_librechat_voice_stream(
+                            session=session,
+                            origin=self._origin,
+                            stream_id=stream_id,
+                            headers=headers,
+                            request_id=self._request_id,
+                            started_at=started_at,
+                            reason="voice_user_interruption",
+                            log_latency=log_latency,
+                        )
