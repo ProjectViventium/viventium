@@ -234,7 +234,12 @@ def ensure_private_directory(path: Path, *, boundary: Path) -> Path:
     return target
 
 
-def surface_logical_size(path: Path, *, allow_symlinks: bool = False) -> int:
+def surface_logical_size(
+    path: Path,
+    *,
+    allow_symlinks: bool = False,
+    omit_sockets: bool = False,
+) -> int:
     if not path.exists() and not path.is_symlink():
         return 0
     validate_chain(path)
@@ -274,6 +279,8 @@ def surface_logical_size(path: Path, *, allow_symlinks: bool = False) -> int:
                 continue
             if child_metadata.st_uid != os.getuid():
                 raise UpgradeTransactionError("Upgrade surface contains another user's entry")
+            if stat.S_ISSOCK(child_metadata.st_mode) and omit_sockets:
+                continue
             if not stat.S_ISREG(child_metadata.st_mode):
                 raise UpgradeTransactionError("Upgrade surface contains a special file")
             total += child_metadata.st_size
@@ -790,6 +797,7 @@ def verify_static_personalization_continuity(
         actual = surface_manifest(
             Path(str(surface.get("path") or "")),
             allow_symlinks=bool(surface.get("allow_symlinks", False)),
+            omit_sockets=bool(surface.get("omit_sockets", False)),
         )
         if actual != expected:
             if label == TELEGRAM_USER_CONFIG_SURFACE_LABEL:
@@ -1124,7 +1132,12 @@ def verify_telegram_preference_authority_handoff(
     }
 
 
-def surface_manifest(path: Path, *, allow_symlinks: bool = False) -> dict[str, Any]:
+def surface_manifest(
+    path: Path,
+    *,
+    allow_symlinks: bool = False,
+    omit_sockets: bool = False,
+) -> dict[str, Any]:
     if not path.exists() and not path.is_symlink():
         return {"kind": "absent", "files": []}
     validate_chain(path)
@@ -1182,6 +1195,8 @@ def surface_manifest(path: Path, *, allow_symlinks: bool = False) -> dict[str, A
                 continue
             if child_metadata.st_uid != os.getuid():
                 raise UpgradeTransactionError("Upgrade surface contains another user's entry")
+            if stat.S_ISSOCK(child_metadata.st_mode) and omit_sockets:
+                continue
             if not stat.S_ISREG(child_metadata.st_mode):
                 raise UpgradeTransactionError("Upgrade surface contains a special file")
             relative = child.relative_to(path).as_posix()
@@ -1205,8 +1220,33 @@ def surface_manifest(path: Path, *, allow_symlinks: bool = False) -> dict[str, A
     }
 
 
-def copy_surface(source: Path, destination: Path, *, allow_symlinks: bool = False) -> None:
-    manifest = surface_manifest(source, allow_symlinks=allow_symlinks)
+def copy_surface(
+    source: Path,
+    destination: Path,
+    *,
+    allow_symlinks: bool = False,
+    omit_sockets: bool = False,
+) -> None:
+    manifest = surface_manifest(
+        source,
+        allow_symlinks=allow_symlinks,
+        omit_sockets=omit_sockets,
+    )
+
+    def ignored_socket_entries(directory: str, names: list[str]) -> list[str]:
+        ignored: list[str] = []
+        for name in names:
+            child = Path(directory) / name
+            metadata = child.lstat()
+            if not stat.S_ISSOCK(metadata.st_mode):
+                continue
+            if metadata.st_uid != os.getuid():
+                raise UpgradeTransactionError(
+                    "Upgrade surface contains another user's entry"
+                )
+            ignored.append(name)
+        return ignored
+
     destination.parent.mkdir(parents=True, exist_ok=True)
     if manifest["kind"] == "file":
         shutil.copy2(source, destination, follow_symlinks=False)
@@ -1226,6 +1266,7 @@ def copy_surface(source: Path, destination: Path, *, allow_symlinks: bool = Fals
                     destination,
                     symlinks=allow_symlinks,
                     copy_function=shutil.copy2,
+                    ignore=ignored_socket_entries if omit_sockets else None,
                 )
         else:
             shutil.copytree(
@@ -1233,10 +1274,15 @@ def copy_surface(source: Path, destination: Path, *, allow_symlinks: bool = Fals
                 destination,
                 symlinks=allow_symlinks,
                 copy_function=shutil.copy2,
+                ignore=ignored_socket_entries if omit_sockets else None,
             )
     else:
         return
-    if surface_manifest(destination, allow_symlinks=allow_symlinks) != manifest:
+    if surface_manifest(
+        destination,
+        allow_symlinks=allow_symlinks,
+        omit_sockets=False,
+    ) != manifest:
         raise UpgradeTransactionError("Upgrade snapshot verification failed")
 
 
@@ -2778,32 +2824,35 @@ def checkpoint_surface_candidates(
     config_file: Path,
     runtime_dir: Path,
     extra_surfaces: list[tuple[str, Path]] | None = None,
-) -> list[tuple[str, Path, bool]]:
+) -> list[tuple[str, Path, bool, bool]]:
     candidates = [
-        ("config", contained(config_file, support, "canonical config"), False),
-        ("runtime", contained(runtime_dir, support, "generated runtime"), False),
+        ("config", contained(config_file, support, "canonical config"), False, False),
+        ("runtime", contained(runtime_dir, support, "generated runtime"), False, False),
         (
             MONGO_ENGINE_IDENTITY_SURFACE_LABEL,
             _mongo_receipt_path(support),
             False,
+            False,
         ),
-        ("runtime-state", support / "state" / "runtime", False),
-        ("bootstrap-python", support / "state" / "bootstrap-python", True),
-        ("legacy-mongo-state", support / "state" / "mongo-data", False),
-        ("native-data", support / "data", False),
-        (HELPER_CONFIG_SURFACE_LABEL, helper_config_path(support), False),
+        ("runtime-state", support / "state" / "runtime", True, True),
+        ("bootstrap-python", support / "state" / "bootstrap-python", True, False),
+        ("legacy-mongo-state", support / "state" / "mongo-data", False, False),
+        ("native-data", support / "data", False, False),
+        (HELPER_CONFIG_SURFACE_LABEL, helper_config_path(support), False, False),
         (
             "telegram-user-configs",
             support / "state" / "telegram-user-configs",
+            False,
             False,
         ),
         (
             "telegram-codex-pairings",
             support / "state" / "telegram-codex" / "paired-users",
             False,
+            False,
         ),
     ]
-    candidates.extend((label, path, False) for label, path in (extra_surfaces or []))
+    candidates.extend((label, path, False, False) for label, path in (extra_surfaces or []))
     return candidates
 
 
@@ -2979,10 +3028,19 @@ def snapshot_surfaces(
     manifests: list[dict[str, Any]] = []
     checkpoint = transaction / "checkpoint"
     checkpoint.mkdir(mode=0o700)
-    for label, path, allow_symlinks in candidates:
-        manifest = surface_manifest(path, allow_symlinks=allow_symlinks)
+    for label, path, allow_symlinks, omit_sockets in candidates:
+        manifest = surface_manifest(
+            path,
+            allow_symlinks=allow_symlinks,
+            omit_sockets=omit_sockets,
+        )
         backup = checkpoint / label
-        copy_surface(path, backup, allow_symlinks=allow_symlinks)
+        copy_surface(
+            path,
+            backup,
+            allow_symlinks=allow_symlinks,
+            omit_sockets=omit_sockets,
+        )
         if backup.exists():
             make_immutable(backup)
         record = {
@@ -2991,6 +3049,7 @@ def snapshot_surfaces(
             "backup": str(backup),
             "manifest": manifest,
             "allow_symlinks": allow_symlinks,
+            "omit_sockets": omit_sockets,
         }
         if label == LIBRECHAT_ENV_SURFACE_LABEL:
             record["semantic_manifest"] = librechat_env_semantic_manifest(backup)
@@ -3130,8 +3189,12 @@ def command_begin(args: argparse.Namespace) -> int:
     storage_inventory["checkpoint_status"] = "pending"
     storage_inventory["existed_before"] = None
     estimated_payload_bytes = sum(
-        surface_logical_size(path, allow_symlinks=allow_symlinks)
-        for _, path, allow_symlinks in checkpoint_surface_candidates(
+        surface_logical_size(
+            path,
+            allow_symlinks=allow_symlinks,
+            omit_sockets=omit_sockets,
+        )
+        for _, path, allow_symlinks, omit_sockets in checkpoint_surface_candidates(
             support,
             config_file,
             runtime_dir,
@@ -3251,8 +3314,12 @@ def command_snapshot_stopped_state(args: argparse.Namespace) -> int:
         extra_surfaces,
     )
     estimated_payload_bytes = sum(
-        surface_logical_size(path, allow_symlinks=allow_symlinks)
-        for _, path, allow_symlinks in candidates
+        surface_logical_size(
+            path,
+            allow_symlinks=allow_symlinks,
+            omit_sockets=omit_sockets,
+        )
+        for _, path, allow_symlinks, omit_sockets in candidates
     )
     docker: str | None = None
     if storage_inventory["backend"] == "docker_named_volume":
@@ -3362,6 +3429,7 @@ def replace_surface_from(
     label: str,
     *,
     allow_symlinks: bool = False,
+    omit_sockets: bool = False,
 ) -> None:
     failed_root = transaction / "replaced-state"
     failed_root.mkdir(mode=0o700, exist_ok=True)
@@ -3374,7 +3442,12 @@ def replace_surface_from(
         return
     staging = target.parent / f".{target.name}.upgrade-{uuid.uuid4().hex}"
     try:
-        copy_surface(source, staging, allow_symlinks=allow_symlinks)
+        copy_surface(
+            source,
+            staging,
+            allow_symlinks=allow_symlinks,
+            omit_sockets=omit_sockets,
+        )
         apply_manifest_modes(staging, manifest)
         os.replace(staging, target)
     finally:
@@ -3383,7 +3456,11 @@ def replace_surface_from(
                 shutil.rmtree(staging)
             else:
                 staging.unlink()
-    if surface_manifest(target, allow_symlinks=allow_symlinks) != manifest:
+    if surface_manifest(
+        target,
+        allow_symlinks=allow_symlinks,
+        omit_sockets=False,
+    ) != manifest:
         raise UpgradeTransactionError("Activated/restored surface did not match its verified manifest")
 
 
@@ -3657,6 +3734,7 @@ def command_rollback(args: argparse.Namespace) -> int:
             transaction,
             f"rollback-{surface['label']}",
             allow_symlinks=bool(surface.get("allow_symlinks", False)),
+            omit_sockets=bool(surface.get("omit_sockets", False)),
         )
     ledger["status"] = "rolled_back"
     ledger["stage"] = "rolled_back"

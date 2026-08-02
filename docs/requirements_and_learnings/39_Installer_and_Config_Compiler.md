@@ -1577,8 +1577,14 @@ delta on the disposable MacBook Air. Until those gates pass, release wording rem
     runtime, runtime state, bootstrap Python state, legacy Mongo state, native data, and any
     App-Support-contained explicit Mongo path. The checkpoint also owns the ignored
     `LibreChat/.env` with exact absent/file semantics, App Support Telegram user preferences, and
-    Telegram-Codex pairings, plus `helper-config.json`. Symlinked, special, malformed, or
-    non-current-user-owned entries fail before registration or snapshot
+    Telegram-Codex pairings, plus `helper-config.json`. A checkpoint root, ancestor, or ordinary
+    continuity surface that is symlinked still fails before registration or snapshot. Nested links
+    inside generated runtime state are the narrow exception because browser and AI harness runtimes
+    create them as normal process state: the transaction records and restores only the owned link
+    inode and target text without following or reading the target, verifies the no-follow manifest
+    after copy and restore, and omits current-user-owned Unix sockets because they are nondurable
+    process endpoints. It continues rejecting FIFOs, devices, malformed entries, and any
+    non-current-user-owned entry
   - quiesced candidate validation must not rewrite ignored `LibreChat/.env`. It resolves any missing
     validation-only auth/encryption values in process memory. Before commit, the private ledger
     compares path-free whole-file and field digests: existing `CREDS_KEY`, `CREDS_IV`, `JWT_SECRET`,

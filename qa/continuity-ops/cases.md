@@ -21,6 +21,7 @@ Use stable `CONT-NNN` IDs for continuity ops cases.
 | `CONT-011` | Strict upgrade continuity distinguishes schema-expired lifecycle records from active or durable state without exposing private values. | A legitimate TTL cleanup cannot force every upgrade to roll back, while active tokens/keys/content and durable connection, mapping, provider, prompt, schedule, memory, and agent personalization cannot disappear unnoticed. | private semantic manifest, Mongo TTL schemas, successor strict comparison | `tests/release/test_continuity_audit.py`, `test_continuity_bundle.py` | PARTIAL 2026-07-24; RED→GREEN synthetic coverage and the complete 102-case continuity audit/bundle suite pass for expired lifecycle cleanup, future token/delivery retention, all non-system/future Mongo collections, tool-call hashes, full scheduler tables/runs/outcomes, exact durable channel state, private-value exclusion, and atomic output. Installed legacy-index upgrade plus TTL-monitor/browser persistence remains pending. |
 | `CONT-012` | Source upgrade and cross-checkout promotion protect ignored LibreChat auth/runtime state, helper preferences, and locally owned Telegram preferences/pairings across candidate validation, commit, helper refresh, restart, and rollback. | Existing users keep encryption keys, login sessions, connected-account credentials, custom env fields, helper status/protected-folder choices, Telegram response preferences, and Telegram-Codex pairings while declared runtime-owned fields can advance. | ignored `LibreChat/.env`, revision-bound owner snapshot, exact candidate checkpoint, `helper-config.json`, private transaction checkpoint/digests, App Support Telegram roots, successor bridge, quiesced launcher | `tests/release/test_librechat_env_upgrade_continuity.py`, `test_librechat_owner_env.py`, `test_dev_runtime_activation.py`, `test_macos_helper_install.py`, `test_upgrade_transaction.py`, `test_first_upgrade_bridge.py` | PASS-ISOLATED/PARTIAL-INSTALLED 2026-07-25; the complete 2,063-passed/11-skipped release suite proves established-source priority, true-freshness gating, conflict/missing/concurrent-drift refusal, one-read revision binding through commit, exact candidate rollback quarantine/hard-linked commit acceptance, process-group SIGKILL recovery, schema-v1 recovery, missing-runtime-backup refusal, protected/owner-secret/empty/unknown gates, later-start persisted precedence, exact Telegram state, helper-config semantic gating, complete activation-root staged-secret rejection, and committed canonical-ledger cleanup containment. Installed browser/Telegram persistence remains required. |
 | `CONT-013` | Versioned nightly-default reconciliation is additive and cannot replace an existing canonical config choice on `start`, compile, configure, install, or upgrade. | Existing users keep explicit enabled/disabled, empty, worker-profile, schedule, extension, and unknown config values while missing fields receive current safe defaults exactly once. | canonical `config.yaml`, default-nightly reconciler, public CLI/start wrapper, generated runtime compile | `tests/release/test_default_nightly_routines.py`, `test_cli_upgrade.py` | PASS-AUTOMATED/PARTIAL-INSTALLED 2026-07-24 ([report](reports/2026-07-24-nightly-default-personalization-continuity.md)); RED reproduction showed three explicit-disable paths changing, then unit and real CLI-wrapper fixtures proved leaf-level preservation, additive missing defaults, unknown-field retention, mode retention, and byte-exact no-op. A disposable installed start/upgrade remains pending. |
+| `CONT-016` | Transactional upgrade checkpoints generated runtime-state links without following their targets and omits nondurable Unix sockets. | Browser and AI harness runtime entries cannot block an otherwise healthy upgrade, cause an external target to be touched, or weaken special-file rejection. | App Support runtime state, immutable upgrade checkpoint, rollback | `tests/release/test_upgrade_transaction.py` nested/root symlink, socket, and FIFO cases plus supported installed upgrade | PASS-AUTOMATED/PARTIAL-INSTALLED 2026-08-02; RED reproduced both live blockers, 145 transaction/CLI tests pass, and the installed retry advances to its independent capacity gate. Exact continuity needs 41 GiB free on this 30 GiB state; 14 GiB is available, so mutation remains safely blocked. |
 
 ## `CONT-003` - Immutable Metadata-Only Fallback
 
@@ -89,6 +90,32 @@ Use stable `CONT-NNN` IDs for continuity ops cases.
   inventory, named-volume content manifest, process exit status, and public-safe test output.
 - Last run: PARTIAL 2026-07-19. Synthetic stopped-file and named-volume rollback is PASS; physical
   power-loss and a real headed Docker/TCC restart run remain open and are not substituted by unit tests.
+
+## `CONT-016` - Generated Runtime Links Stay Opaque During Upgrade
+
+- Preconditions: an owner-controlled synthetic App Support root with generated runtime state, an
+  external file target, an external directory target, a Unix socket, and separate FIFO and
+  symlinked-root attack cases.
+- Steps:
+  1. Put file and directory links beneath generated runtime state, pointing outside App Support.
+  2. Begin the upgrade transaction and verify only link metadata enters the private checkpoint and
+     the nondurable socket does not.
+  3. Replace both live links with candidate files/directories, then roll back.
+  4. Compare the restored link text and both external target sentinels.
+  5. Add a FIFO, then replace the runtime-state root itself with a link; verify each registration
+     fails before a checkpoint is created.
+  6. Run the supported installed upgrade against stopped GlassHive browser/harness runtime state.
+- Expected result: nested generated-runtime links round-trip as opaque current-user-owned link
+  entries without target traversal, Unix sockets are omitted as nondurable endpoints, and FIFOs,
+  devices, roots, and ancestors remain fail-closed boundaries.
+- Forbidden result: upgrade blocked by normal nested runtime links or stale sockets, target content
+  copied into the checkpoint, external target mutation/deletion, socket restoration, or acceptance
+  of a FIFO/device/symlinked checkpoint root.
+- Evidence to capture: RED/GREEN focused results, exact link text, external sentinel hashes, absence
+  of a transaction for the root-link case, supported upgrade result, and post-restart health.
+- Last run: PASS-AUTOMATED/PARTIAL-INSTALLED 2026-08-02. The installed retry passed the link/socket
+  inspection and failed before mutation with its precise capacity requirement: 41 GiB required and
+  14 GiB available. The pre-existing running stack remained healthy.
 
 ## `CONT-002` - Public-Safe Evidence Record
 

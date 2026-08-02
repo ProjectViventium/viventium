@@ -25,7 +25,7 @@
 | `MPV-030` browser QA | `PASS` | Computer Use happy path plus independent Playwright CLI degraded path | Visible labels, defaults, readiness, call UX, and stable failure copy. |
 | `REL-003` nested/public identity | `PASS` | PRs 90/10/48 merged; merge trees equal reviewed heads | Parent and Native manifests pin exact public-main commits as `merged`. |
 | `REL-003` fresh bootstrap | `PASS` | New temporary root cloned and strict-validated all three affected components | Public origins, exact pins, clean worktrees. |
-| Parent hosted/install/upgrade closeout | `PARTIAL` | Nested hosted checks and local activation tree passed | Parent hosted and final supported upgrade identity remain. |
+| Parent hosted/install/upgrade closeout | `PARTIAL` | Clean supported activation passed; live upgrade now passes runtime-entry preflight and fails safely on capacity | Parent hosted checks remain; this Mac has 14 GiB free while exact continuity requires 41 GiB. |
 | Requested Claude Opus 5 review | `BLOCKED` | Service returned its explicit weekly-limit reset state | No older or weaker model substituted. |
 
 ## Natural User Use Case Checklist Run
@@ -40,7 +40,7 @@
 | `MPV-030-F` | Select or submit unsupported provider options | Live provider endpoint plus Agent Builder guardrails | `PASS` | Picker exposes exact declared choices only | Unknown model and effort returned precise HTTP 400 classifications | None |
 | `MPV-030-G` | Encounter a temporarily unavailable provider | Installed provider process and health probe | `PASS` | Request timed out within the bound; no false success | Same scoped process resumed to authenticated models HTTP 200 with both models | None |
 | `MPV-030-H` | Keep fluid default voice unless explicitly choosing GlassHive | Agent config and live call disclosures | `PASS` | Existing lighter Voice Call LLM remained unchanged | Capability split excludes GlassHive from native realtime while allowing cascaded voice | None |
-| `MPV-030-I` | Install the affected public components from empty state | Supported component bootstrap in a new root | `PASS` | CLI reported exact public component clones | Strict pin/clean-worktree validation passed for all three | Final parent upgrade closeout remains |
+| `MPV-030-I` | Install the affected public components from empty state | Supported component bootstrap in a new root | `PASS` | CLI reported exact public component clones | Strict pin/clean-worktree validation passed for all three | Live established-state upgrade is capacity-blocked on this Mac |
 
 ## Traceability
 
@@ -57,8 +57,9 @@
   public install identity.
 - Actual evidence: all real call, cancellation, reconnect, browser, provider, nested merge, and fresh
   component-bootstrap rows above pass.
-- Remaining gap or fix: parent hosted and supported upgrade identity closeout; requested Opus 5
-  second opinion remains externally quota-blocked until reset.
+- Remaining gap or fix: parent hosted closeout; this Mac needs 41 GiB free for the exact established
+  continuity checkpoint but has 14 GiB. Requested Opus 5 second opinion remains externally
+  quota-blocked until reset.
 
 ## Full-View Evidence Checklist
 
@@ -74,7 +75,7 @@
 | Generated/shipped artifact | Did built/generated identity match? | Local and hosted LibreChat builds, modern-playground production build, generated capabilities, merged pins, and fresh public clones agree; signed Native distribution is outside this feature claim. |
 | Real user path | Which real surfaces ran? | Agent Builder, live Modern Playground with delivered audio, browser refresh, End Call, separate Playwright Chromium, provider recovery, and supported component bootstrap. |
 | Visual/UX comparison | Did visible behavior match? | Friendly provider/model/default/readiness labels, audible result, Start Chat after End Call, and stable degraded-session copy matched supporting evidence. |
-| Not run / blocked | What remains? | Parent hosted/upgrade closeout remains `PARTIAL`; exact requested Claude Opus 5 review is `BLOCKED` by service quota. |
+| Not run / blocked | What remains? | Parent hosted closeout remains `PARTIAL`; live upgrade is `BLOCKED` by the documented capacity reserve after its runtime-entry fix; exact requested Claude Opus 5 review is `BLOCKED` by service quota. |
 
 Supporting evidence does not replace the real user paths above.
 
@@ -141,19 +142,25 @@ python3 scripts/viventium/bootstrap_components.py \
 
 Evidence totals include: Voice gateway 352 passed plus 48 subprocess subtests; parent dispatch 36
 passed; LibreChat Voice route 32 passed; LibreChat package 3,104 passed and 2 skipped; focused
-manifest/preflight/CI 131 passed. The dependency-complete full parent release suite passed 2,219
-tests with 12 intentional skips in 11 minutes 2 seconds.
+manifest/preflight/CI 131 passed. The dependency-complete full parent release suite passed 2,222
+tests with 12 intentional skips in 11 minutes 2 seconds. The post-RCA upgrade transaction and CLI
+suite passed 145 tests.
 
 ## Findings
 
 - Defects: the first live End Call exposed continued native work; scoped cancellation fixed it. A
   hosted provider-native test fixture omitted its required `main_chat` capability; the fixture now
-  exercises the fail-closed contract and the complete hosted matrix passes.
+  exercises the fail-closed contract and the complete hosted matrix passes. The supported installed
+  upgrade then exposed normal nested harness/browser symlinks and stale Unix sockets inside generated
+  runtime state; the transaction now preserves links without following targets, omits nondurable
+  sockets, and continues rejecting FIFOs, devices, and symlinked roots.
 - Regressions: no remaining functional regression found in the exercised Voice surfaces.
 - Flakes: none accepted. Hosted failure was reproduced and fixed; reconnect replacement dispatch is
   deterministically rejected by the active lease.
-- Environment issues: Claude Opus 5 weekly quota blocks the requested final second opinion until
-  the service reset. No weaker model was substituted.
+- Environment issues: the fixed live upgrade proceeds through runtime-state preflight and then fails
+  closed because its exact checkpoint plus reserve needs 41 GiB free while 14 GiB is available. The
+  running stack remains healthy. Claude Opus 5 weekly quota blocks the requested final second
+  opinion until the service reset. No weaker model was substituted.
 - Residual risks: GlassHive terminal authored text has higher TTFT than the lighter default; it is
   intentionally opt-in. Parent hosted and supported upgrade identity closeout remains.
 

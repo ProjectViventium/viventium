@@ -5,8 +5,10 @@ import hashlib
 import json
 import os
 import shutil
+import socket
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -23,6 +25,17 @@ def load_transaction_module():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def short_socket_test_root(request: pytest.FixtureRequest) -> Path:
+    temp_parent = (
+        Path("/private/tmp")
+        if sys.platform == "darwin"
+        else Path(tempfile.gettempdir()).resolve()
+    )
+    root = Path(tempfile.mkdtemp(prefix="viv-ut-", dir=temp_parent))
+    request.addfinalizer(lambda: shutil.rmtree(root, ignore_errors=True))
+    return root
 
 
 def run(
@@ -645,6 +658,120 @@ def test_bootstrap_python_symlinks_are_restored_without_touching_their_targets(t
     assert os.readlink(python_link) == str(external_interpreter)
     assert external_interpreter.read_text(encoding="utf-8") == "external interpreter sentinel\n"
     assert external_interpreter.stat().st_mode & 0o777 == 0o755
+
+
+def test_runtime_state_nested_symlinks_are_restored_without_touching_their_targets(
+    request: pytest.FixtureRequest,
+) -> None:
+    short_root = short_socket_test_root(request)
+    repo, _, support, _, _, _ = build_fixture(short_root)
+    external_tool = short_root / "external-tool"
+    external_tool.write_text("external tool sentinel\n", encoding="utf-8")
+    external_tool.chmod(0o755)
+    worker_tmp = support / "state" / "runtime" / "isolated" / "worker" / "tmp"
+    worker_tmp.mkdir(parents=True)
+    tool_link = worker_tmp / "tool"
+    tool_link.symlink_to(external_tool)
+    external_cache = short_root / "external-cache"
+    external_cache.mkdir()
+    cache_sentinel = external_cache / "sentinel"
+    cache_sentinel.write_text("external cache sentinel\n", encoding="utf-8")
+    cache_link = worker_tmp / "cache"
+    cache_link.symlink_to(external_cache, target_is_directory=True)
+    socket_path = worker_tmp / "browser.sock"
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as endpoint:
+        endpoint.bind(str(socket_path))
+
+    transaction = begin(repo, support)
+
+    assert external_tool.read_text(encoding="utf-8") == "external tool sentinel\n"
+    assert external_tool.stat().st_mode & 0o777 == 0o755
+    assert cache_sentinel.read_text(encoding="utf-8") == "external cache sentinel\n"
+    assert not (
+        transaction
+        / "checkpoint"
+        / "runtime-state"
+        / "isolated"
+        / "worker"
+        / "tmp"
+        / "browser.sock"
+    ).exists()
+    tool_link.unlink()
+    tool_link.write_text("candidate tool\n", encoding="utf-8")
+    cache_link.unlink()
+    cache_link.mkdir()
+    (cache_link / "candidate").write_text("candidate cache\n", encoding="utf-8")
+    result = run("rollback", "--transaction", str(transaction))
+
+    assert result.returncode == 0, result.stderr
+    assert tool_link.is_symlink()
+    assert os.readlink(tool_link) == str(external_tool)
+    assert cache_link.is_symlink()
+    assert os.readlink(cache_link) == str(external_cache)
+    assert not socket_path.exists()
+    assert external_tool.read_text(encoding="utf-8") == "external tool sentinel\n"
+    assert external_tool.stat().st_mode & 0o777 == 0o755
+    assert cache_sentinel.read_text(encoding="utf-8") == "external cache sentinel\n"
+
+
+def test_copy_surface_rejects_socket_left_in_checkpoint(
+    request: pytest.FixtureRequest,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = load_transaction_module()
+    short_root = short_socket_test_root(request)
+    source = short_root / "source"
+    destination = short_root / "checkpoint"
+    source.mkdir()
+    (source / "regular").write_text("checkpoint sentinel\n", encoding="utf-8")
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as endpoint:
+        endpoint.bind(str(source / "runtime.sock"))
+
+    def clone_that_retains_socket(command, **_kwargs):
+        copied_to = Path(command[-1])
+        copied_to.mkdir()
+        shutil.copy2(source / "regular", copied_to / "regular")
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as endpoint:
+            endpoint.bind(str(copied_to / "runtime.sock"))
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(module.sys, "platform", "darwin")
+    monkeypatch.setattr(module.subprocess, "run", clone_that_retains_socket)
+
+    with pytest.raises(module.UpgradeTransactionError, match="special file"):
+        module.copy_surface(
+            source,
+            destination,
+            allow_symlinks=True,
+            omit_sockets=True,
+        )
+
+
+def test_runtime_state_fifo_remains_fail_closed(tmp_path: Path) -> None:
+    repo, _, support, _, _, _ = build_fixture(tmp_path)
+    runtime_state = support / "state" / "runtime"
+    fifo_path = runtime_state / "unexpected.fifo"
+    os.mkfifo(fifo_path)
+
+    started = run(
+        "begin",
+        "--repo-root",
+        str(repo),
+        "--app-support-dir",
+        str(support),
+        "--config-file",
+        str(support / "config.yaml"),
+        "--runtime-dir",
+        str(support / "runtime"),
+        "--lock-file",
+        str(repo / "components.lock.json"),
+        "--was-running",
+        "true",
+    )
+
+    assert started.returncode != 0
+    assert "Upgrade surface contains a special file" in started.stderr
+    assert not (support / "state" / "upgrade-transaction-active.json").exists()
 
 
 def test_component_cloned_during_failed_upgrade_is_quarantined_not_left_as_drift(tmp_path: Path) -> None:
