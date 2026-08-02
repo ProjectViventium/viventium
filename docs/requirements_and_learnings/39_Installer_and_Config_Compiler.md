@@ -447,16 +447,14 @@ falling back to historical defaults:
   and Channels controls; and
 - lab-only OpenClaw is absent from public Easy Install setup and status output.
 
-The current GlassHive Voice Call LLM review candidate pins LibreChat review head
-`75c5ca87f53c4975a6e00e4b9e12fde45a9bc5c9` in both the parent component lock and Native payload
-component manifest, and modern-playground review head
-`65714e490a2b0976d115a539003f7da3d7510063` in the parent component lock. The source/Docker
-GlassHive runtime is pinned by the parent component lock to review head
-`a887434aed9a8b2c365efddc2ceea0eb751d46cc`; it is intentionally absent from the Native payload
-component manifest. Both manifests deliberately declare `review-head-pending-merge` until the
-nested pull requests merge. The final parent update must replace both refs with the public default-
-branch commits and restore `merged`; the public release policy verifies that identity. Source and
-local-runtime PASS still do not
+The GlassHive Voice Call LLM candidate pins merged public-main LibreChat commit
+`c7b7555b8d404a558481a82e5673e05d32cdecc2` in both the parent component lock and Native payload
+component manifest, and merged public-main modern-playground commit
+`98d1249db7a728e94656462d6bda979571be4dd7` in the parent component lock. The source/Docker
+GlassHive runtime is pinned by the parent component lock to merged public-main commit
+`b663070aecd05568249f5f323cc16b53ddb994a8`; it is intentionally absent from the Native payload
+component manifest. Both manifests declare `merged`, and each merge tree equals its reviewed PR
+head. Source and local-runtime PASS still do not
 substitute for a separately signed and notarized immutable Native artifact or vendor-side Telegram,
 Slack, or Meta account approval without credentials owned by the installing user.
 

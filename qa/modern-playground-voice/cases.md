@@ -1150,11 +1150,15 @@
   duplicate worker; late speech after cancel; or a native speech-to-speech claim.
 - Evidence: focused schema/API/client/voice tests, compiler diff, real browser save/reload,
   user-grade audible call, linked-chat refresh, Mongo/provider/session/log correlation, and restart.
-- Last Run: 2026-08-01 `PARTIAL`. Real Agent Builder save/reload, one audible GlassHive Codex call,
-  exact Mongo/provider/session correlation, and no duplicate answer passed. The first End Call run
-  correctly stopped media but exposed a native worker cancellation gap. Exact scoped cancellation,
-  privacy, duplicate-abort, and Redis reason propagation are fixed with 98 focused tests plus a
-  production playground build; post-fix End Call and refresh-in-flight user-path reruns remain.
+- Last Run: 2026-08-01 `PARTIAL`. Real Agent Builder save/reload and audible GlassHive Codex calls
+  passed with exact Mongo/provider/session correlation. Post-fix End Call cancelled the only native
+  request with zero authored output and no late speech. A browser reload during an in-flight turn
+  rejoined the same call identity; the original stream completed once and the call lease rejected a
+  replacement worker before generation. The full gateway, parent dispatch, LibreChat voice route,
+  and LibreChat package suites pass. A separate Playwright CLI pass proved the launch guard and
+  ended-session failure UX; live invalid model/effort and paused-provider recovery also passed.
+  Nested refs are merged and tree-equal. Parent hosted checks and supported install/upgrade identity
+  gates remain before release completion; the requested Opus 5 review is quota-blocked until reset.
 
 ## Release Test Traceability
 

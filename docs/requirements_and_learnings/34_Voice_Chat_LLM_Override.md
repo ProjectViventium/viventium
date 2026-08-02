@@ -100,6 +100,23 @@ Cancellation contract:
 - Refresh/reconnect continuity is a separate acceptance claim: absence of native cancellation is
   necessary but does not by itself prove successful stream reattachment and terminal delivery.
 
+Refresh/reconnect contract:
+
+- The playground derives one stable caller identity from the opaque call-session ID and uses it in
+  both the LiveKit token and dispatch metadata. A browser reload may reconnect only that identity
+  to the existing room and dispatch.
+- The LiveKit room retains the original worker during a bounded 60-second participant departure,
+  and the worker uses `close_on_disconnect=false`. A second dispatch attempt is rejected by the
+  existing per-call lease before a second model or TTS session can start.
+- The voice gateway keeps the LibreChat authoring stream alive across passive media detachment. It
+  resumes from raw canonical assistant text, computes the missing suffix before speech
+  normalization, and buffers terminal speech for the same caller during the reconnect window.
+- If the caller does not return during the bounded window, the authored text remains persisted but
+  is not played into an empty room. Passive timeout still does not become native harness
+  cancellation; only explicit End Call or a real user interruption owns that transition.
+- Presence is checked against the exact caller identity. Observer, worker, or unrelated participant
+  presence cannot satisfy reconnect delivery.
+
 ## Activation Conditions (all three required)
 | Condition | Source | Check |
 |-----------|--------|-------|
