@@ -207,13 +207,14 @@ Use `REL-NNN` for release-readiness and public-push packaging checks.
 - Forbidden result: stale ref or unreviewed local nested changes.
 - Evidence to capture: parent diff and nested SHA.
 - Automation: git inspection.
-- Last run: PASS 2026-08-01. `components.lock.json` declares `merged` and contains all 12 fetched
-  nested `origin/main` refs. It pins LibreChat to
-  `e40a1f3fe4a7c697cba52b7861c3d51f4fa8edc1` and GlassHive to
-  `5c2117ab7ebfa94a6556aba8822b34fcab44c54d`; unauthenticated remote-main lookup and local
-  nested-tree inspection matched both exact refs. The Native policy declares `merged`, pins the
-  same LibreChat ref, and intentionally contains no GlassHive component. Built, shipped, and
-  installed identities remain separately governed by `REL-008`.
+- Last run: PARTIAL 2026-08-03. The current candidate declares `merged`. It pins LibreChat PRs 91
+  and 92 at merge commit `d2c8a8c7f1886117e4bd0f9dff35a7fac0b5dd1f`, agent-starter-react
+  PR 10 merge commit `98d1249db7a728e94656462d6bda979571be4dd7`, and GlassHive PRs 48 and 49
+  at merge commit `449eb5d4e501df459d0e5a92cf2815a2105680da`; each merge tree equals its reviewed
+  head. Google Workspace MCP PR 9 is pinned at merge commit
+  `0824701abcf490de2a5091c68a7b0738f2294b3f`. The Native policy pins the same LibreChat commit
+  and intentionally contains no GlassHive, Google Workspace MCP, or playground component.
+  Remote-main/install identity gates remain before release acceptance.
 
 ## `REL-004` - Browser-Visible Background Cards
 

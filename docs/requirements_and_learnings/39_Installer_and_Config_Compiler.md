@@ -447,13 +447,15 @@ falling back to historical defaults:
   and Channels controls; and
 - lab-only OpenClaw is absent from public Easy Install setup and status output.
 
-The current reviewed LibreChat source is merged commit
-`e40a1f3fe4a7c697cba52b7861c3d51f4fa8edc1`, pinned by both the parent component lock and Native
-payload component manifest. The source/Docker GlassHive runtime is pinned by the parent component
-lock to merged commit `5c2117ab7ebfa94a6556aba8822b34fcab44c54d`; it is intentionally absent
-from the Native payload component manifest. Both manifests deliberately declare `merged`, and the
-public release policy independently verifies that every declared component ref equals its public
-default branch before accepting a parent change. Source and local-runtime PASS still do not
+The current candidate pins merged public-main LibreChat commit
+`d2c8a8c7f1886117e4bd0f9dff35a7fac0b5dd1f` in both the parent component lock and Native payload
+component manifest, and merged public-main modern-playground commit
+`98d1249db7a728e94656462d6bda979571be4dd7` in the parent component lock. The source/Docker
+GlassHive runtime is pinned by the parent component lock to merged public-main commit
+`449eb5d4e501df459d0e5a92cf2815a2105680da`; it is intentionally absent from the Native payload
+component manifest. The Google Workspace MCP source is pinned to merged public-main commit
+`0824701abcf490de2a5091c68a7b0738f2294b3f`. Both manifests declare `merged`, and each merge tree
+equals its reviewed PR head. Source and local-runtime PASS still do not
 substitute for a separately signed and notarized immutable Native artifact or vendor-side Telegram,
 Slack, or Meta account approval without credentials owned by the installing user.
 
@@ -1576,8 +1578,14 @@ delta on the disposable MacBook Air. Until those gates pass, release wording rem
     runtime, runtime state, bootstrap Python state, legacy Mongo state, native data, and any
     App-Support-contained explicit Mongo path. The checkpoint also owns the ignored
     `LibreChat/.env` with exact absent/file semantics, App Support Telegram user preferences, and
-    Telegram-Codex pairings, plus `helper-config.json`. Symlinked, special, malformed, or
-    non-current-user-owned entries fail before registration or snapshot
+    Telegram-Codex pairings, plus `helper-config.json`. A checkpoint root, ancestor, or ordinary
+    continuity surface that is symlinked still fails before registration or snapshot. Nested links
+    inside generated runtime state are the narrow exception because browser and AI harness runtimes
+    create them as normal process state: the transaction records and restores only the owned link
+    inode and target text without following or reading the target, verifies the no-follow manifest
+    after copy and restore, and omits current-user-owned Unix sockets because they are nondurable
+    process endpoints. It continues rejecting FIFOs, devices, malformed entries, and any
+    non-current-user-owned entry
   - quiesced candidate validation must not rewrite ignored `LibreChat/.env`. It resolves any missing
     validation-only auth/encryption values in process memory. Before commit, the private ledger
     compares path-free whole-file and field digests: existing `CREDS_KEY`, `CREDS_IV`, `JWT_SECRET`,

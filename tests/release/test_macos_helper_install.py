@@ -284,6 +284,12 @@ def test_install_and_uninstall_helper_bundle(tmp_path: Path) -> None:
     legacy_runner = app_support / "helper-scripts" / "helper-terminal-run.command"
     stale_detached_runner = app_support / "helper-scripts" / "helper-detached-start.pid.sh"
     legacy_launch_agent = fake_home / "Library" / "LaunchAgents" / "ai.viventium.helper.terminal.plist"
+    legacy_scheduler_launch_agent = (
+        fake_home / "Library" / "LaunchAgents" / "ai.viventium.scheduling-cortex.plist"
+    )
+    unrelated_scheduler_launch_agent = (
+        fake_home / "Library" / "LaunchAgents" / "ai.viventium.scheduling-cortex.custom.plist"
+    )
     zsh_history = fake_home / ".zsh_history"
     zsh_session_history = fake_home / ".zsh_sessions" / "legacy.history"
     terminal_saved_state = (
@@ -307,6 +313,27 @@ def test_install_and_uninstall_helper_bundle(tmp_path: Path) -> None:
 """,
         encoding="utf-8",
     )
+    legacy_scheduler_payload = {
+        "Label": "ai.viventium.scheduling-cortex",
+        "ProgramArguments": [
+            "/usr/bin/env",
+            "-i",
+            "/bin/bash",
+            str(app_support / "runtime" / "scheduling_cortex_launch.sh"),
+        ],
+        "RunAtLoad": True,
+        "KeepAlive": True,
+    }
+    with legacy_scheduler_launch_agent.open("wb") as handle:
+        plistlib.dump(legacy_scheduler_payload, handle)
+    with unrelated_scheduler_launch_agent.open("wb") as handle:
+        plistlib.dump(
+            {
+                "Label": "ai.viventium.scheduling-cortex.custom",
+                "ProgramArguments": ["/usr/bin/true"],
+            },
+            handle,
+        )
     zsh_history.write_text(
         "/usr/bin/true\n"
         f"{legacy_runner} ; exit;\n"
@@ -353,6 +380,8 @@ def test_install_and_uninstall_helper_bundle(tmp_path: Path) -> None:
     assert not legacy_runner.exists()
     assert not stale_detached_runner.exists()
     assert not legacy_launch_agent.exists()
+    assert not legacy_scheduler_launch_agent.exists()
+    assert unrelated_scheduler_launch_agent.exists()
     assert "helper-terminal-run.command" in zsh_history.read_text(encoding="utf-8")
     assert "helper-detached-start.pid.command" in zsh_history.read_text(encoding="utf-8")
     assert "helper-terminal-run.command" in zsh_session_history.read_text(encoding="utf-8")
@@ -389,6 +418,17 @@ def test_install_and_uninstall_helper_bundle(tmp_path: Path) -> None:
         / "scheduled_prompts.py"
     ).is_file()
 
+    # An exact-name LaunchAgent is not necessarily Viventium's legacy job.
+    # Preserve it unless its structured label and launcher arguments also match
+    # the retired contract, including during uninstall cleanup.
+    customized_scheduler_payload = {
+        "Label": "ai.viventium.scheduling-cortex",
+        "ProgramArguments": ["/usr/bin/true"],
+        "KeepAlive": True,
+    }
+    with legacy_scheduler_launch_agent.open("wb") as handle:
+        plistlib.dump(customized_scheduler_payload, handle)
+
     subprocess.run(
         [
             str(SCRIPT),
@@ -403,6 +443,8 @@ def test_install_and_uninstall_helper_bundle(tmp_path: Path) -> None:
     )
 
     assert not app_bundle.exists()
+    with legacy_scheduler_launch_agent.open("rb") as handle:
+        assert plistlib.load(handle) == customized_scheduler_payload
 
 
 def test_installed_scheduler_component_syncs_and_serves_matching_health(

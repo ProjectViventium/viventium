@@ -37,6 +37,15 @@ counts/timestamps and sanitized outcome summaries, no private message bodies, ID
 
 ## Latest status
 
+2026-08-02: GlassHive native capability bootstrap is **PASS** across fresh LibreChat and Telegram
+missing-auth turns and a real LiveKit scheduling read. The native harness now receives the signed
+broker operating contract without writing scaffolding into LIFE; disconnected Microsoft access
+returns the exact Agent Builder MCP Connect recovery and never substitutes Gmail or web. GlassHive
+is selectable and persistent for both main and Voice Chat Model, and a real GlassHive voice turn
+used the Agent-selected scheduling capability and delivered TTS. Authenticated Microsoft inbox
+content remains **BLOCKED** until the user explicitly confirms the OAuth grant. See
+`reports/2026-08-02-glasshive-native-bootstrap-and-voice-tools.md`.
+
 2026-06-10: current browser QA is **PASS** for the immediate quick-read path, calendar mutation
 boundary, and Anthropic-to-`gpt-5.4` fallback recovery. The quick-read prompt returned an inline
 provider-status answer through the Connected Accounts handoff, persisted after reload, used no

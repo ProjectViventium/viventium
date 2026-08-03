@@ -604,12 +604,12 @@ def test_live_fact_truthfulness_guard_stays_in_shipped_agent_prompts() -> None:
     bundle = _load_source_of_truth()
     main_instructions = (bundle.get("mainAgent", {}).get("instructions") or "").lower()
 
-    assert "never invent email, calendar, weather, news, markets" in main_instructions
-    assert "weather/news/markets/web facts" in main_instructions
-    assert "verified tool result" in main_instructions
-    assert "omit that section" in main_instructions
+    assert "memory, recall, conversation/file search, cached summaries" in main_instructions
+    assert "are not current evidence" in main_instructions
+    assert "verified current-run tool evidence" in main_instructions
+    assert "do not guess" in main_instructions
     assert "provider unavailable, timeout, rate limit, auth/config missing" in main_instructions
-    assert "browser/local-delegation fallback" in main_instructions
+    assert "browser or local-delegation fallback" in main_instructions
 
     for agent_name, owned_scope, excluded_scope in [
         ("MS365", "verified ms365 results only", "non-ms365 live facts"),

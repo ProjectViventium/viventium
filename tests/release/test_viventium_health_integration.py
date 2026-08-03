@@ -40,6 +40,17 @@ def expected_health_server() -> dict:
         "startup": False,
         "chatMenu": True,
         "timeout": 120000,
+        "viventiumGlassHive": {
+            "version": 1,
+            "permitsAutonomousWorker": True,
+            "hostAllowed": True,
+            "sandboxAllowed": False,
+            "defaultToolAccess": "content_read",
+            "contentReadPolicy": "require_broker_grant",
+            "writePolicy": "deny",
+            "riskClass": "health",
+            "reexportNativeTools": True,
+        },
         "serverInstructions": (
             "Viventium-Health provides read-only access to the owner's local raw health-source "
             "archive. List runs or records first, then read only the bounded record chunks needed "

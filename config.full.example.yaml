@@ -265,6 +265,11 @@ integrations:
       # Separate from the integrations.openclaw lab toggle below.
       default_worker_profile: codex-cli
       default_execution_mode: host
+      plugin_denylist: ["viventium-feelings@project-viventium"]
+      # Viventium Feelings owns emotional state; disable Codex's separate style layer by default.
+      codex_personality: none
+      # Run in the exact chosen folder and honor its canonical AGENTS.md by default.
+      codex_conversation_project_instructions: inherit
       # Optional native-capability controls. Leave unset for the default full-capability path.
       # runtime_requirements:
       #   json:
@@ -328,6 +333,7 @@ integrations:
     private_chat_only: true
   google_workspace:
     enabled: true
+    account_slots: 2
     client_id: your-google-client-id.apps.googleusercontent.com
     client_secret:
       secret_ref: keychain://viventium/google_client_secret

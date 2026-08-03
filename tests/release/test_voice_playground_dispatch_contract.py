@@ -147,6 +147,7 @@ def _run_connection_details_route_case(
 
         class FakeRoomConfiguration {{
           constructor(data = {{}}) {{
+            this.departureTimeout = Number(data.departureTimeout ?? data.departure_timeout ?? 0);
             this.agents = Array.isArray(data.agents)
               ? data.agents.map((agent) => new FakeRoomAgentDispatch(agent))
               : [];
@@ -158,6 +159,7 @@ def _run_connection_details_route_case(
 
           toJson() {{
             return {{
+              ...(this.departureTimeout > 0 ? {{ departureTimeout: this.departureTimeout }} : {{}}),
               agents: this.agents.map((agent) => ({{
                 agentName: agent.agentName,
                 ...(agent.metadata ? {{ metadata: agent.metadata }} : {{}}),
@@ -290,7 +292,8 @@ def _token_dispatch_agent(result: dict[str, object], agent_name: str = "librecha
 
 
 def _assert_no_token_dispatch(result: dict[str, object]) -> None:
-    assert result.get("tokenRoomConfigs") == []
+    for room_config in result.get("tokenRoomConfigs") or []:
+        assert room_config.get("agents") in (None, [])
 
 
 def _single_explicit_dispatch(
@@ -568,7 +571,7 @@ def test_connection_details_route_hydrates_requested_voice_route_from_call_sessi
     assert "voiceSettings?.requestedVoiceRoute ?? voiceSettings?.savedVoiceRoute" in content
     assert "Hydrated Viventium requestedVoiceRoute from authoritative call-session settings" in content
     assert "requestedVoiceRoute: authoritativeRequestedVoiceRoute" in content
-    assert "const hydratedAgentMetadata = await hydrateAgentMetadataWithVoiceSettings(" in content
+    assert "let hydratedAgentMetadata = await hydrateAgentMetadataWithVoiceSettings(" in content
 
 
 def test_modern_playground_launcher_isolates_next_dev_output_and_allows_public_dev_origins() -> None:
@@ -651,6 +654,90 @@ def test_connection_details_route_runtime_hydrates_dispatch_metadata_from_call_s
         "variant": "u3-rt-pro",
     }
     _assert_no_token_dispatch(result)
+
+
+def test_call_session_connection_uses_one_stable_participant_identity_for_refresh_resume() -> None:
+    result = _run_connection_details_route_case(
+        env={
+            "LIVEKIT_API_KEY": "lk-api-key",
+            "LIVEKIT_API_SECRET": "lk-api-secret",
+            "LIVEKIT_URL": "ws://localhost:7888",
+            "LIVEKIT_API_HOST": "http://localhost:7888",
+            "VIVENTIUM_LIBRECHAT_ORIGIN": "http://librechat.local",
+            "VIVENTIUM_CALL_SESSION_SECRET": "call-secret",
+            "VIVENTIUM_ALLOW_DIRECT_AGENT_DISPATCH": "true",
+        },
+        request_body={
+            "room_name": "room-refresh-resume",
+            "participantName": "Visible caller name",
+            "agentName": "librechat-voice-gateway",
+            "agentMetadata": json.dumps({"callSessionId": "call-refresh-resume"}),
+        },
+        fetch_responses=[
+            {
+                "match": "/api/viventium/calls/call-refresh-resume/voice-settings",
+                "status": 200,
+                "json": {},
+            },
+            {
+                "match": "/api/viventium/calls/call-refresh-resume/dispatch/claim",
+                "status": 200,
+                "json": {"status": "claimed", "claimId": "claim-refresh-resume"},
+            },
+            {
+                "match": "/api/viventium/calls/call-refresh-resume/dispatch/confirm",
+                "status": 200,
+                "json": {"status": "ok"},
+            },
+        ],
+    )
+
+    expected_identity = "viventium-user-call-refresh-resume"
+    assert result["response"]["body"]["participantIdentity"] == expected_identity
+    assert result["response"]["body"]["participantName"] == "Visible caller name"
+    assert result["tokenRoomConfigs"][-1]["departureTimeout"] == 60
+    dispatch_call = _single_explicit_dispatch(result, room_name="room-refresh-resume")
+    dispatch_metadata = json.loads(dispatch_call["options"]["metadata"])
+    assert dispatch_metadata["participantIdentity"] == expected_identity
+    assert "function buildCallSessionParticipantIdentity(" in ROUTE_FILE.read_text()
+
+    repeated = _run_connection_details_route_case(
+        env={
+            "LIVEKIT_API_KEY": "lk-api-key",
+            "LIVEKIT_API_SECRET": "lk-api-secret",
+            "LIVEKIT_URL": "ws://localhost:7888",
+            "LIVEKIT_API_HOST": "http://localhost:7888",
+            "VIVENTIUM_LIBRECHAT_ORIGIN": "http://librechat.local",
+            "VIVENTIUM_CALL_SESSION_SECRET": "call-secret",
+            "VIVENTIUM_ALLOW_DIRECT_AGENT_DISPATCH": "true",
+        },
+        request_body={
+            "room_name": "room-refresh-resume",
+            "participant_identity": "random-client-refresh-identity",
+            "agentName": "librechat-voice-gateway",
+            "agentMetadata": json.dumps({"callSessionId": "call-refresh-resume"}),
+        },
+        fetch_responses=[
+            {
+                "match": "/api/viventium/calls/call-refresh-resume/voice-settings",
+                "status": 200,
+                "json": {},
+            },
+            {
+                "match": "/api/viventium/calls/call-refresh-resume/dispatch/claim",
+                "status": 200,
+                "json": {"status": "already"},
+            },
+        ],
+        existing_dispatches=[
+            {
+                "id": "dispatch-refresh-resume",
+                "room": "room-refresh-resume",
+                "agentName": "librechat-voice-gateway",
+            }
+        ],
+    )
+    assert repeated["response"]["body"]["participantIdentity"] == expected_identity
 
 
 def test_connection_details_route_runtime_preserves_existing_requested_voice_route() -> None:
@@ -747,7 +834,10 @@ def test_connection_details_route_runtime_keeps_original_metadata_when_voice_set
     )
 
     dispatch_call = _single_explicit_dispatch(result, room_name="room-fail")
-    assert json.loads(dispatch_call["options"]["metadata"]) == original_metadata
+    assert json.loads(dispatch_call["options"]["metadata"]) == {
+        **original_metadata,
+        "participantIdentity": "viventium-user-call-fail",
+    }
     _assert_no_token_dispatch(result)
 
 
@@ -793,7 +883,10 @@ def test_connection_details_route_runtime_keeps_original_metadata_when_voice_set
     )
 
     dispatch_call = _single_explicit_dispatch(result, room_name="room-empty")
-    assert json.loads(dispatch_call["options"]["metadata"]) == original_metadata
+    assert json.loads(dispatch_call["options"]["metadata"]) == {
+        **original_metadata,
+        "participantIdentity": "viventium-user-call-empty",
+    }
     _assert_no_token_dispatch(result)
 
 

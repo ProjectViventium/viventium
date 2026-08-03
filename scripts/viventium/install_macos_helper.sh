@@ -836,6 +836,54 @@ cleanup_legacy_terminal_helper_launchers() {
   pkill -f "$APP_SUPPORT_DIR/helper-scripts/.*\\.command" >/dev/null 2>&1 || true
 }
 
+cleanup_legacy_scheduler_launch_agent() {
+  # Older local installs supervised Scheduling Cortex through a persistent
+  # LaunchAgent whose compatibility launcher lived directly under runtime/.
+  # The current stack owns Scheduler supervision itself. Remove only the exact
+  # legacy Viventium contract so a missing launcher cannot create an endless
+  # launchd retry loop; leave every unrelated or customized job untouched.
+  local legacy_launch_agent="$LAUNCH_AGENT_DIR/ai.viventium.scheduling-cortex.plist"
+  [[ -f "$legacy_launch_agent" && ! -L "$legacy_launch_agent" ]] || return 0
+
+  local python_bin
+  python_bin="$(resolve_repo_python)"
+  if ! "$python_bin" - "$legacy_launch_agent" "$APP_SUPPORT_DIR" <<'PY'
+import os
+import plistlib
+import stat
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+app_support = Path(os.path.abspath(os.path.expanduser(sys.argv[2])))
+metadata = os.lstat(path)
+if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.getuid():
+    raise SystemExit(1)
+
+with path.open("rb") as handle:
+    payload = plistlib.load(handle)
+arguments = payload.get("ProgramArguments")
+expected_launcher = str(app_support / "runtime" / "scheduling_cortex_launch.sh")
+if (
+    payload.get("Label") != "ai.viventium.scheduling-cortex"
+    or not isinstance(arguments, list)
+    or not arguments
+    or arguments[-1] != expected_launcher
+    or "/bin/bash" not in arguments
+):
+    raise SystemExit(1)
+PY
+  then
+    return 0
+  fi
+
+  if [[ "$SKIP_LAUNCHCTL" != "1" ]]; then
+    launchctl bootout "gui/$UID" "$legacy_launch_agent" >/dev/null 2>&1 || \
+      launchctl remove "ai.viventium.scheduling-cortex" >/dev/null 2>&1 || true
+  fi
+  rm -f "$legacy_launch_agent"
+}
+
 helper_source_hash() {
   local python_bin
   python_bin="$(resolve_repo_python)"
@@ -1171,6 +1219,7 @@ install)
     fi
     write_helper_install_receipt
     cleanup_legacy_terminal_helper_launchers
+    cleanup_legacy_scheduler_launch_agent
     build_helper
     install_bundle
     verify_installed_bundle "$STAGED_APP_BUNDLE"
@@ -1204,6 +1253,7 @@ install)
     ;;
   uninstall)
     cleanup_legacy_terminal_helper_launchers
+    cleanup_legacy_scheduler_launch_agent
     unregister_login_item || true
     remove_launch_agent
     stop_existing_helper

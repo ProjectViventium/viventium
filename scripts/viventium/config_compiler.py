@@ -87,6 +87,7 @@ DEFAULT_GLASSHIVE_MCP_TRANSPORT_TIMEOUT_MS = (
 DEFAULT_PUBLIC_GLASSHIVE_LINK_REF_TTL_SECONDS = 86400
 DEFAULT_PUBLIC_GLASSHIVE_WATCH_SESSION_SECONDS = 1800
 SUPPORTED_GLASSHIVE_WORKER_PROFILES = {"codex-cli", "claude-code", "openclaw-general"}
+DEFAULT_VIVENTIUM_GLASSHIVE_PLUGIN_DENYLIST = "viventium-feelings@project-viventium"
 DEFAULT_CORTEX_PHASE_A_NOTICE_MODE = "any_activated_on_voice"
 DEFAULT_CORTEX_LATE_DETECT_TIMEOUT_MS = "6000"
 DEFAULT_CORTEX_EXECUTION_TIMEOUT_MS = "3600000"
@@ -571,6 +572,28 @@ def resolve_glasshive_host_worker_settings(config: dict[str, Any]) -> dict[str, 
             return value.strip()
         raise SystemExit(f"{label} must be a string or list of strings")
 
+    def plugin_id_csv(value: Any, label: str) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, str):
+            items = [item.strip() for item in value.split(",") if item.strip()]
+        elif isinstance(value, list):
+            items = [str(item).strip() for item in value if str(item).strip()]
+        else:
+            raise SystemExit(f"{label} must be a string or list of strings")
+        unique: list[str] = []
+        for plugin_id in items:
+            if not re.fullmatch(
+                r"[A-Za-z0-9][A-Za-z0-9._-]*@[A-Za-z0-9][A-Za-z0-9._-]*",
+                plugin_id,
+            ):
+                raise SystemExit(
+                    f"{label} entries must use the canonical name@marketplace plugin ID"
+                )
+            if plugin_id not in unique:
+                unique.append(plugin_id)
+        return ",".join(unique)
+
     requirements_json = runtime_requirements.get("json")
     if requirements_json is None:
         requirements_json = host_worker.get("runtime_requirements_json")
@@ -590,6 +613,44 @@ def resolve_glasshive_host_worker_settings(config: dict[str, Any]) -> dict[str, 
         host_worker.get("codex_native_mcp_allowlist"),
         "integrations.glasshive.host_worker.codex_native_mcp_allowlist",
     )
+    plugin_denylist = plugin_id_csv(
+        host_worker.get(
+            "plugin_denylist",
+            DEFAULT_VIVENTIUM_GLASSHIVE_PLUGIN_DENYLIST,
+        ),
+        "integrations.glasshive.host_worker.plugin_denylist",
+    )
+    # Viventium owns the worker's emotional/personality layer. Standalone GlassHive still
+    # inherits native Codex personality when this compiled setting is absent.
+    raw_codex_personality = host_worker.get("codex_personality", "none")
+    if not isinstance(raw_codex_personality, str):
+        raise SystemExit(
+            "integrations.glasshive.host_worker.codex_personality "
+            "must be inherit, none, friendly, or pragmatic"
+        )
+    codex_personality = raw_codex_personality.strip().lower()
+    if codex_personality not in {"inherit", "none", "friendly", "pragmatic"}:
+        raise SystemExit(
+            "integrations.glasshive.host_worker.codex_personality "
+            "must be inherit, none, friendly, or pragmatic"
+        )
+    raw_project_instructions = host_worker.get(
+        "codex_conversation_project_instructions",
+        "inherit",
+    )
+    if not isinstance(raw_project_instructions, str):
+        raise SystemExit(
+            "integrations.glasshive.host_worker."
+            "codex_conversation_project_instructions must be inherit or exclude"
+        )
+    codex_conversation_project_instructions = (
+        raw_project_instructions.strip().lower()
+    )
+    if codex_conversation_project_instructions not in {"inherit", "exclude"}:
+        raise SystemExit(
+            "integrations.glasshive.host_worker."
+            "codex_conversation_project_instructions must be inherit or exclude"
+        )
     codex_disable_features = optional_csv(
         host_worker.get("codex_disable_features"),
         "integrations.glasshive.host_worker.codex_disable_features",
@@ -666,6 +727,11 @@ def resolve_glasshive_host_worker_settings(config: dict[str, Any]) -> dict[str, 
         "runtime_requirements_json": requirements_json_env,
         "runtime_requirements_file": runtime_requirements_file,
         "codex_native_mcp_allowlist": codex_native_mcp_allowlist,
+        "plugin_denylist": plugin_denylist,
+        "codex_personality": codex_personality,
+        "codex_conversation_project_instructions": (
+            codex_conversation_project_instructions
+        ),
         "codex_plugin_cache": str(host_worker.get("codex_plugin_cache") or "").strip(),
         "codex_ignore_user_config": codex_ignore_user_config,
         "codex_disable_features": codex_disable_features,
@@ -1223,6 +1289,7 @@ SOURCE_OF_TRUTH_AGENTS_BUNDLE = (
     / "viventium_v0_4/LibreChat/viventium/source_of_truth/local.viventium-agents.yaml"
 )
 DEFAULT_VIVENTIUM_AGENT_ICON_URL = "/assets/logo.svg"
+CONNECTED_ACCOUNTS_AGENT_ID = "agent_viventium_connected_accounts_95aeb3"
 APP_SUPPORT_VIVENTIUM_DIR = Path.home() / "Library" / "Application Support" / "Viventium"
 RESTORED_RUNTIME_SELECTION_RELATIVE_PATH = Path(
     "state/continuity/restored-runtime-selection.json"
@@ -2649,6 +2716,8 @@ def build_agent_provider_capabilities(config: dict[str, Any]) -> dict[str, Any]:
             "cortex_execution": True,
             "phase_b_followup": True,
             "activation_classifier": False,
+            "voice_pipeline_llm": True,
+            "native_realtime_voice": False,
             "realtime_voice": False,
             "automatic_fallback_target": False,
             "workspace_binding": True,
@@ -2659,6 +2728,9 @@ def build_agent_provider_capabilities(config: dict[str, Any]) -> dict[str, Any]:
             "default_access": provider["default_access"],
             "allow_full_access": provider["allow_full_access"],
             "excluded_mcp_servers": ["glasshive-workers-projects"],
+            # Agent-declared MCPs are eager; reviewed MCPs owned by explicit handoff edges are
+            # deferred. This stays provider-name agnostic without granting unrelated MCPs.
+            "reviewed_mcp_projection": "deferred",
             "models": copy.deepcopy(GLASSHIVE_PROVIDER_MODELS),
         }
     }
@@ -3902,6 +3974,12 @@ def render_runtime_env(
         env["WPR_CODEX_CLI_REASONING_EFFORT"] = str(
             glasshive_host_worker["codex_reasoning_effort"]
         )
+        env["WPR_CODEX_CLI_PERSONALITY"] = str(
+            glasshive_host_worker["codex_personality"]
+        )
+        env["WPR_CODEX_CLI_CONVERSATION_PROJECT_INSTRUCTIONS"] = str(
+            glasshive_host_worker["codex_conversation_project_instructions"]
+        )
         if glasshive_host_worker["codex_cli_path"]:
             env["WPR_CODEX_BIN"] = str(glasshive_host_worker["codex_cli_path"])
         if glasshive_host_worker["claude_cli_path"]:
@@ -3914,6 +3992,10 @@ def render_runtime_env(
             env["GLASSHIVE_HOST_RUNTIME_REQUIREMENTS_FILE"] = str(glasshive_host_worker["runtime_requirements_file"])
         if glasshive_host_worker["codex_native_mcp_allowlist"]:
             env["GLASSHIVE_HOST_CODEX_NATIVE_MCP_ALLOWLIST"] = str(glasshive_host_worker["codex_native_mcp_allowlist"])
+        if glasshive_host_worker["plugin_denylist"]:
+            env["GLASSHIVE_HOST_PLUGIN_DENYLIST"] = str(
+                glasshive_host_worker["plugin_denylist"]
+            )
         if glasshive_host_worker["codex_plugin_cache"]:
             env["GLASSHIVE_HOST_CODEX_PLUGIN_CACHE"] = str(glasshive_host_worker["codex_plugin_cache"])
         if glasshive_host_worker["codex_ignore_user_config"]:
@@ -4778,6 +4860,49 @@ def render_native_agents_bundle(
     bundle = copy.deepcopy(load_source_of_truth_agents_bundle())
     if not bundle:
         raise SystemExit("Native agent defaults require the source-of-truth agent bundle")
+
+    google_workspace = config.get("integrations", {}).get("google_workspace", {}) or {}
+    google_workspace_slots = (
+        bounded_int_or_default(
+            google_workspace.get("account_slots"),
+            2,
+            "integrations.google_workspace.account_slots",
+            minimum=1,
+            maximum=10,
+        )
+        if google_workspace.get("enabled")
+        else 0
+    )
+    if google_workspace_slots > 1:
+        handoff_agents = bundle.get("handoffAgents")
+        if isinstance(handoff_agents, list):
+            connected_accounts_agent = next(
+                (
+                    agent
+                    for agent in handoff_agents
+                    if isinstance(agent, dict)
+                    and str(agent.get("id") or "").strip() == CONNECTED_ACCOUNTS_AGENT_ID
+                ),
+                None,
+            )
+            if connected_accounts_agent is not None:
+                tools = (
+                    connected_accounts_agent.get("tools")
+                    if isinstance(connected_accounts_agent.get("tools"), list)
+                    else []
+                )
+                primary_slot_suffix = "_mcp_google_workspace"
+                primary_slot_tools = [
+                    str(tool)
+                    for tool in tools
+                    if str(tool).endswith(primary_slot_suffix)
+                ]
+                for slot in range(2, google_workspace_slots + 1):
+                    for primary_tool in primary_slot_tools:
+                        slot_tool = f"{primary_tool}_{slot}"
+                        if slot_tool not in tools:
+                            tools.append(slot_tool)
+                connected_accounts_agent["tools"] = tools
     web_search_is_enabled = resolve_web_search_settings(config)["enabled"] == "true"
     main_agent = bundle.get("mainAgent")
     if isinstance(main_agent, dict):
@@ -4998,6 +5123,21 @@ def build_interface_config(
     }
 
 
+def connected_account_glasshive_policy() -> dict[str, Any]:
+    """Return the reviewed broker policy shared by connected-account MCPs."""
+    return {
+        "version": 1,
+        "permitsAutonomousWorker": True,
+        "hostAllowed": True,
+        "sandboxAllowed": True,
+        "defaultToolAccess": "content_read",
+        "contentReadPolicy": "require_broker_grant",
+        "writePolicy": "confirm",
+        "riskClass": "productivity",
+        "reexportNativeTools": True,
+    }
+
+
 def build_mcp_servers(
     config: dict[str, Any],
     profile: dict[str, int],
@@ -5019,6 +5159,17 @@ def build_mcp_servers(
             "startup": False,
             "chatMenu": True,
             "timeout": 120000,
+            "viventiumGlassHive": {
+                "version": 1,
+                "permitsAutonomousWorker": True,
+                "hostAllowed": True,
+                "sandboxAllowed": False,
+                "defaultToolAccess": "content_read",
+                "contentReadPolicy": "require_broker_grant",
+                "writePolicy": "deny",
+                "riskClass": "health",
+                "reexportNativeTools": True,
+            },
             "serverInstructions": (
                 "Viventium-Health provides read-only access to the owner's local raw health-source "
                 "archive. List runs or records first, then read only the bounded record chunks "
@@ -5144,6 +5295,7 @@ def build_mcp_servers(
             "chatMenu": True,
             "timeout": 120000,
             "requiresOAuth": True,
+            "viventiumGlassHive": connected_account_glasshive_policy(),
             "oauth": {
                 "authorization_url": "${MS365_MCP_AUTH_URL}",
                 "token_url": "${MS365_MCP_TOKEN_URL}",
@@ -5179,48 +5331,72 @@ def build_mcp_servers(
             ),
         }
 
-    if integrations.get("google_workspace", {}).get("enabled"):
-        servers["google_workspace"] = {
-            "type": "streamable-http",
-            "url": "${GOOGLE_WORKSPACE_MCP_URL}",
-            "startup": False,
-            "chatMenu": True,
-            "timeout": 120000,
-            "requiresOAuth": True,
-            "oauth": {
-                "authorization_url": "${GOOGLE_WORKSPACE_MCP_AUTH_URL}",
-                "token_url": "${GOOGLE_WORKSPACE_MCP_TOKEN_URL}",
-                "redirect_uri": (
-                    f"http://localhost:{lc_api_port}/api/mcp/google_workspace/oauth/callback"
-                ),
-                "scope": "${GOOGLE_WORKSPACE_MCP_SCOPE}",
-            },
-            "serverInstructions": source_prompt_text(
-                "mcp.google_workspace.server",
-                (
-                    "Google Workspace owns authenticated Gmail, Google Calendar, Drive, Docs, Sheets, "
-                    "Slides, Tasks, Forms, Chat where exposed by tool schemas, and verified Google "
-                    "productivity facts. Use it when the user asks about Gmail, Google Calendar, "
-                    "Drive, Docs, Sheets, Slides, or a general productivity check where the available "
-                    "evidence may live in Google Workspace. Do not use it for Microsoft 365, "
-                    "web/news/weather facts, local files, or schedule/reminder management owned by "
-                    "another MCP. Inputs come from the user request, current conversation, current "
-                    "date/time/timezone, authenticated LibreChat user, and the tool schemas; do not "
-                    "assume another Google account or workspace. Default to read-only inspection for "
-                    "mail, calendar, files, docs, sheets, slides, and search. Send, delete, share, "
-                    "invite, edit, or otherwise mutate only when the user explicitly asks, the tool "
-                    "supports the mutation, and impact is clear; draft or summarize when confirmation "
-                    "is needed. Return concise user-facing verified results, not API fields, OAuth "
-                    "details, server names, or plumbing. If auth is missing/expired, scope is "
-                    "insufficient, rate limits hit, an item is not found, or a tool errors, report the "
-                    "specific limitation plainly and do not fabricate. Prevent duplicates by "
-                    "checking/listing/searching existing items and using structured IDs/metadata when "
-                    "available before creating or updating. Prefer exact tool outputs over memory. Do "
-                    "not branch on prompt text, display names, provider labels, or user identity; use "
-                    "declared capabilities, structured fields, IDs, timestamps, and tool evidence."
-                ),
+    google_workspace = integrations.get("google_workspace", {}) or {}
+    if google_workspace.get("enabled"):
+        account_slots = bounded_int_or_default(
+            google_workspace.get("account_slots"),
+            2,
+            "integrations.google_workspace.account_slots",
+            minimum=1,
+            maximum=10,
+        )
+        google_workspace_instructions = source_prompt_text(
+            "mcp.google_workspace.server",
+            (
+                "Google Workspace owns authenticated Gmail, Google Calendar, Drive, Docs, Sheets, "
+                "Slides, Tasks, Forms, Chat where exposed by tool schemas, and verified Google "
+                "productivity facts. Each configured connection is an independent account. When a "
+                "request covers all Google accounts, inspect every connected Google Workspace "
+                "account once and deduplicate repeated facts; otherwise use only the account(s) "
+                "needed. For relative Gmail date windows such as today or yesterday, calculate "
+                "the user's local start and end boundaries from the current timezone and pass "
+                "them to Gmail after: and before: as Unix epoch seconds; date-only Gmail query "
+                "values are Pacific-time boundaries and are not accurate for other timezones. "
+                "Use it when the user asks about Gmail, Google Calendar, Drive, Docs, Sheets, Slides, "
+                "or a general productivity check where the available evidence may live in Google "
+                "Workspace. Do not use it for Microsoft 365, web/news/weather facts, local files, or "
+                "schedule/reminder management owned by another MCP. Inputs come from the user "
+                "request, current conversation, current date/time/timezone, authenticated LibreChat "
+                "user, and the tool schemas; do not assume an unconnected Google account or "
+                "workspace. Default to read-only inspection for mail, calendar, files, docs, sheets, "
+                "slides, and search. Send, delete, share, invite, edit, or otherwise mutate only when "
+                "the user explicitly asks, the tool supports the mutation, and impact is clear; draft "
+                "or summarize when confirmation is needed. Return concise user-facing verified "
+                "results, not API fields, OAuth details, server names, or plumbing. If auth is "
+                "missing/expired, scope is insufficient, rate limits hit, an item is not found, or a "
+                "tool errors, report the specific limitation plainly and do not fabricate. Prevent "
+                "duplicates by checking/listing/searching existing items and using structured "
+                "IDs/metadata when available before creating or updating. Prefer exact tool outputs "
+                "over memory. Do not branch on prompt text, display names, provider labels, or user "
+                "identity; use declared capabilities, structured fields, IDs, timestamps, and tool "
+                "evidence."
             ),
-        }
+        )
+        for slot in range(1, account_slots + 1):
+            server_name = "google_workspace" if slot == 1 else f"google_workspace_{slot}"
+            servers[server_name] = {
+                "type": "streamable-http",
+                "title": f"Google Workspace Account {slot}",
+                "url": "${GOOGLE_WORKSPACE_MCP_URL}",
+                "startup": False,
+                "chatMenu": True,
+                "timeout": 120000,
+                "requiresOAuth": True,
+                "viventiumOAuthConnection": {
+                    "providerId": "google_workspace",
+                    "slot": slot,
+                },
+                "viventiumGlassHive": connected_account_glasshive_policy(),
+                "oauth": {
+                    "authorization_url": "${GOOGLE_WORKSPACE_MCP_AUTH_URL}",
+                    "token_url": "${GOOGLE_WORKSPACE_MCP_TOKEN_URL}",
+                    "redirect_uri": (
+                        f"http://localhost:{lc_api_port}/api/mcp/google_workspace/oauth/callback"
+                    ),
+                    "scope": "${GOOGLE_WORKSPACE_MCP_SCOPE}",
+                },
+                "serverInstructions": google_workspace_instructions,
+            }
 
     return servers
 

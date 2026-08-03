@@ -125,30 +125,17 @@ def test_source_yaml_prompt_refs_resolve_to_runtime_strings() -> None:
 
     assert isinstance(agents["mainAgent"]["instructions"], str)
     assert "# Identity" in agents["mainAgent"]["instructions"]
-    assert "{{current_user}}" in agents["mainAgent"]["instructions"]
-    assert "For important actions, If unsure which service the user means, ask." in agents["mainAgent"]["instructions"]
-    assert "configured/available connected email providers" in agents["mainAgent"]["instructions"]
-    assert "Connected Accounts handoff for immediate checks and quick updates" in agents["mainAgent"]["instructions"]
-    assert "immediate checks and quick updates" in agents["mainAgent"]["instructions"]
-    assert "Do not use GlassHive when a simple read-only Connected Accounts handoff is the direct, sufficient path" in (
-        agents["mainAgent"]["instructions"]
-    )
-    assert "For immediate connected-account checks or quick updates" in (
-        agents["mainAgent"]["instructions"]
-    )
-    assert "first get explicit user confirmation" in agents["mainAgent"]["instructions"]
-    assert "write-capable connected-account path" in agents["mainAgent"]["instructions"]
-    assert "GlassHive host-signed broker path" in agents["mainAgent"]["instructions"]
-    assert "If no write-capable path is available" in agents["mainAgent"]["instructions"]
-    assert "creating/updating calendar events" in agents["mainAgent"]["instructions"]
-    assert "deleting calendar events" in agents["mainAgent"]["instructions"]
-    assert "Use GlassHive for document generation, reports, deep research" in (
-        agents["mainAgent"]["instructions"]
-    )
-    assert "pass broker/MCP/tool availability as context" in agents["mainAgent"]["instructions"]
-    assert "Do not make tool choice, provider lists" in agents["mainAgent"]["instructions"]
-    assert "memory-derived priorities" in agents["mainAgent"]["instructions"]
-    assert "For vague user adjectives like urgent or important, pass the adjective through" in agents["mainAgent"]["instructions"]
+    assert "a cognitive system, second brain, and companion" in agents["mainAgent"]["instructions"]
+    assert "{{current_user}}" not in agents["mainAgent"]["instructions"]
+    assert "configured email accounts" in agents["mainAgent"]["instructions"]
+    assert "direct Connected Accounts handoff for immediate checks" in agents["mainAgent"]["instructions"]
+    assert "brokered worker only when the work is delegated" in agents["mainAgent"]["instructions"]
+    assert "pass the user's wording and available capabilities" in agents["mainAgent"]["instructions"]
+    assert "Do not invent provider lists, tool choices" in agents["mainAgent"]["instructions"]
+    assert 'Preserve vague terms such as "urgent"' in agents["mainAgent"]["instructions"]
+    assert "Before an external write" in agents["mainAgent"]["instructions"]
+    assert "Destructive or broad mutations require explicit confirmation" in agents["mainAgent"]["instructions"]
+    assert "Use local delegation for long-running" in agents["mainAgent"]["instructions"]
     assert isinstance(librechat["memory"]["agent"]["instructions"], str)
     assert isinstance(librechat["mcpServers"]["ms-365"]["serverInstructions"], str)
     assert "Microsoft 365 owns" in librechat["mcpServers"]["ms-365"]["serverInstructions"]
@@ -259,7 +246,8 @@ process.exit(0);
 
     assert_no_prompt_ref_keys(resolved)
     assert "# Identity" in resolved["mainAgent"]["instructions"]
-    assert "{{current_user}}" in resolved["mainAgent"]["instructions"]
+    assert "{{current_user}}" not in resolved["mainAgent"]["instructions"]
+    assert "a cognitive system, second brain, and companion" in resolved["mainAgent"]["instructions"]
     assert "Runtime-Owned Background Cards" in resolved["mainAgent"]["instructions"]
 
 
@@ -564,22 +552,30 @@ def test_glasshive_prompt_reflects_disabled_host_workers(monkeypatch: pytest.Mon
     assert "Default to host-native execution" not in rendered
 
 
-def test_live_data_prompt_uses_non_important_best_judgment_for_connected_inbox() -> None:
+def test_live_data_prompt_keeps_connected_inbox_routing_concise_and_faithful() -> None:
     registry = load_prompt_registry(PROMPT_ROOT)
     rendered = render_prompt("main.truth_live_data", registry)
 
-    assert (
-        "- For important actions, If unsure which service the user means, ask. "
-        "Otherwise, use your best judgement or get what you can."
-    ) in rendered
-    assert "configured/available connected email providers" in rendered
-    assert "do not defer the check to background cortices" in rendered
-    assert "read-only Connected Accounts handoff for immediate checks and quick updates" in rendered
-    assert "pass broker/MCP/tool availability as context" in rendered
-    assert "memory-derived priorities" in rendered
-    assert "For vague user adjectives like urgent or important, pass the adjective through" in rendered
-    assert "trust the GlassHive worker to choose the best path" in rendered
-    assert "Do not use GlassHive when a simple read-only Connected Accounts handoff" in rendered
+    assert "configured email accounts" in rendered
+    assert "direct Connected Accounts handoff for immediate checks" in rendered
+    assert "brokered worker only when the work is delegated" in rendered
+    assert "pass the user's wording and available capabilities" in rendered
+    assert "Do not invent provider lists, tool choices" in rendered
+    assert 'Preserve vague terms such as "urgent"' in rendered
+
+
+def test_main_boundaries_do_not_repeat_live_data_and_tool_policy() -> None:
+    registry = load_prompt_registry(PROMPT_ROOT)
+    boundaries = render_prompt("main.boundaries", registry)
+    live_data = render_prompt("main.truth_live_data", registry)
+    tools = render_prompt("main.tools", registry)
+
+    assert "Never explain internal mechanics" in boundaries
+    assert "Ask before external actions" in boundaries
+    assert "Private things stay private" in boundaries
+    assert "Never invent email" not in boundaries
+    assert "verified current-run tool evidence" in live_data
+    assert "Before an external write" in tools
 
 
 def test_glasshive_worker_prompt_prefers_broker_tools_over_browser_for_connected_accounts(
@@ -673,7 +669,8 @@ const chunks = [];
     js_resolved = json.loads(result.stdout.rsplit(marker, 1)[1])
 
     assert js_resolved == python_resolved
-    assert "{{current_user}}" in js_resolved["runtime"]
+    assert "{{current_user}}" not in js_resolved["runtime"]
+    assert "a cognitive system, second brain, and companion" in js_resolved["runtime"]
     assert "sonic-3" in js_resolved["voice"]
 
     runtime_script = """

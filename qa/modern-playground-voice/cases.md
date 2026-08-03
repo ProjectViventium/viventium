@@ -1111,6 +1111,81 @@
   actual Redis. The headed retry/error path, registered LiveKit worker, selected provider readiness,
   and audible synthetic call remain unrun; end-to-end Voice readiness is not claimed.
 
+## MPV-030 GlassHive Is An Optional Voice Call LLM
+
+- Requirement: `docs/requirements_and_learnings/34_Voice_Chat_LLM_Override.md` and the provider
+  capability split in `docs/requirements_and_learnings/01_Key_Principles.md`.
+- User Outcome: Agent Builder offers **GlassHive** for the Voice Call LLM, persists an exact Codex
+  or Claude model and supported effort, and a real call is authored once by that worker through the
+  existing LiveKit cascade.
+- Surfaces: Agent Builder, Agent create/update/version persistence, generated LibreChat config,
+  Voice gateway, modern playground, linked chat, Mongo, GlassHive provider/session/activity state,
+  cancellation, and runtime logs.
+- Preconditions: provider enabled and ready; synthetic public-safe Agent and voice prompt; canonical
+  LIFE or a synthetic temporary workspace; working STT/TTS/LiveKit route.
+- Happy Path:
+  1. Select GlassHive in Voice Call LLM, choose Codex and low effort, save, reload, and verify exact
+     fields in the Agent API/DB and friendly labels in the UI.
+  2. Start a modern-playground call and speak a synthetic request that proves the worker can use its
+     selected workspace without exposing private content.
+  3. Verify one GlassHive session/request, one persisted user turn, one assistant answer, spoken TTS,
+     and matching surface/input/agent/conversation metadata across logs and state.
+  4. Press End Call during a second in-flight turn and verify the explicit call-session endpoint
+     reaches GlassHive cancellation with no late audio, persisted duplicate, or replacement run.
+     Verify a later reasonless voice-gateway abort is acknowledged without racing job finalization.
+  5. Separately refresh during an in-flight turn and prove real stream reattachment and terminal
+     delivery without native harness cancellation; restart the supported runtime and verify saved
+     selection and conversation continuity remain exact.
+- Unhappy Path: unsupported model/effort, missing registry, disabled/stopped provider, missing
+  harness authentication/binary, rate limit, CLI crash, network interruption, and invalid workspace
+  each fail with an accurate class. No path silently executes OpenAI, starts a duplicate harness, or
+  speaks hidden reasoning/activity.
+- Performance: compare low and medium effort first-audio/terminal-answer latency. GlassHive's
+  terminal-text-only profile is reported honestly; the lighter existing Voice Call LLM remains the
+  default and must not regress.
+- Expected Result: selectable, exact, persistent, cancellable GlassHive pipeline LLM with truthful
+  latency and no native-realtime claim.
+- Forbidden Result: GlassHive missing from the picker; raw provider ID as the visible label; stale
+  OpenAI Responses parameters; unsupported effort; wrapper LLM; fabricated token streaming;
+  duplicate worker; late speech after cancel; or a native speech-to-speech claim.
+- Evidence: focused schema/API/client/voice tests, compiler diff, real browser save/reload,
+  user-grade audible call, linked-chat refresh, Mongo/provider/session/log correlation, and restart.
+- Last Run: 2026-08-01 `PARTIAL`. Real Agent Builder save/reload and audible GlassHive Codex calls
+  passed with exact Mongo/provider/session correlation. Post-fix End Call cancelled the only native
+  request with zero authored output and no late speech. A browser reload during an in-flight turn
+  rejoined the same call identity; the original stream completed once and the call lease rejected a
+  replacement worker before generation. The full gateway, parent dispatch, LibreChat voice route,
+  and LibreChat package suites pass. A separate Playwright CLI pass proved the launch guard and
+  ended-session failure UX; live invalid model/effort and paused-provider recovery also passed.
+  Nested refs are merged and tree-equal. Parent hosted checks and supported install/upgrade identity
+  gates remain before release completion; the requested Opus 5 review is quota-blocked until reset.
+
+## MPV-031 GlassHive Voice Preserves The Agent Tool Graph
+
+- Requirement: `docs/requirements_and_learnings/06_Voice_Calls.md`,
+  `docs/requirements_and_learnings/07_MCPs.md`, and `MPV-014`.
+- User Outcome: selecting GlassHive for Voice Chat Model changes the authoring model, not the Agent's
+  capabilities. The same Agent-selected MCPs are available inside the native harness without a
+  wrapper LLM or a separate voice-only tool list.
+- Happy Path: attach a harmless read-only scheduling capability to a synthetic GlassHive voice
+  agent, save, reload, start a real call, ask for the current active count, and correlate visible
+  transcript, delivered TTS, LibreChat request, GlassHive request/session/run, and native broker call.
+- Unhappy Path: attach a disconnected OAuth MCP. Agent Builder must show its Connect state and a
+  non-interactive worker must return the supported recovery contract without initiating OAuth,
+  inventing a settings path, or substituting a native connector/web search.
+- Forbidden Result: zero-tool GlassHive harness; wrapper-model tool orchestration; silent provider
+  remap; generic connection error; duplicate answer; hidden reasoning spoken aloud; or runtime files
+  written into LIFE.
+- Last Run: 2026-08-02 `PASS`. One real call used the selected GlassHive Codex Voice Chat Model and
+  the Agent-selected scheduling capability through the signed broker. A second real call used a
+  temporary Agent-selected Microsoft MCP, refreshed the existing OAuth state non-interactively,
+  returned a verified unread count in the visible transcript, persisted exactly one answer, emitted
+  one native connected-tool event, and delivered one non-cancelled TTS turn. The temporary Microsoft
+  selection was removed from the synthetic Agent after the call and the cleanup was verified in
+  Mongo. Disconnected/unreadable-credential recovery passed on LibreChat and Telegram text surfaces;
+  automated voice regressions prove the same non-interactive recovery contract without altering a
+  healthy credential merely to manufacture an outage.
+
 ## Release Test Traceability
 
 - `tests/release/test_voice_call_startup_guard.py`

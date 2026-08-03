@@ -2085,7 +2085,19 @@ def build_connected_accounts_notice(config: dict[str, Any], runtime_env: dict[st
 
     workspace_accounts: list[str] = []
     if google_workspace_enabled:
-        workspace_accounts.append("[bold]Google Workspace[/bold]")
+        try:
+            google_account_slots = int(
+                ((integrations.get("google_workspace") or {}).get("account_slots") or 2)
+            )
+        except (TypeError, ValueError):
+            google_account_slots = 2
+        google_account_slots = max(1, min(10, google_account_slots))
+        google_workspace_label = (
+            "[bold]Google Workspace[/bold]"
+            if google_account_slots == 1
+            else f"each of the {google_account_slots} [bold]Google Workspace[/bold] account slots"
+        )
+        workspace_accounts.append(google_workspace_label)
     if ms365_enabled:
         workspace_accounts.append("[bold]Microsoft 365[/bold]")
     if workspace_accounts:
@@ -2094,7 +2106,10 @@ def build_connected_accounts_notice(config: dict[str, Any], runtime_env: dict[st
         else:
             workspace_label = workspace_accounts[0]
         lines.append(
-            f"{next_step}. Connect {workspace_label} if you want Gmail/Drive or Outlook/MS365 tasks on this user account."
+            f"{next_step}. Open Agent Builder, select the agent that owns the connected account, "
+            "then in MCP Servers choose Connect beside the provider to connect "
+            f"{workspace_label}. Workspace MCP connections are not configured on the direct-model "
+            "Connected Accounts page."
         )
         lines.append(
             "Foundation-model auth and workspace OAuth are separate layers. Activation can succeed while tool execution still waits on a missing or expired service connection."
@@ -2161,7 +2176,7 @@ def main() -> None:
     if connected_accounts_notice:
         ui.print_blank()
         ui.print_section(
-            "Connect Direct AI Accounts",
+            "Connect AI and Workspace Accounts",
             connected_accounts_notice,
             style="yellow",
         )

@@ -899,8 +899,32 @@ def test_build_connected_accounts_notice_mentions_workspace_accounts_when_enable
     notice = install_summary.build_connected_accounts_notice(config)
 
     assert "Google Workspace" in notice
+    assert "each of the 2 [bold]Google Workspace[/bold] account slots" in notice
     assert "Microsoft 365" in notice
+    assert (
+        "Open Agent Builder, select the agent that owns the connected account, then in MCP "
+        "Servers choose Connect beside the provider"
+    ) in notice
+    assert "Connect [bold]Google Workspace[/bold] and [bold]Microsoft 365[/bold]" not in notice
     assert "Activation can succeed" in notice
+
+
+def test_build_connected_accounts_notice_handles_invalid_google_slot_value() -> None:
+    install_summary = load_install_summary_module()
+    config = {
+        "llm": {
+            "primary": {"provider": "openai", "auth_mode": "api_key", "secret_ref": "key"},
+            "secondary": {"provider": "none", "auth_mode": "disabled"},
+            "extra_provider_keys": {},
+        },
+        "integrations": {
+            "google_workspace": {"enabled": True, "account_slots": "invalid"},
+        },
+    }
+
+    notice = install_summary.build_connected_accounts_notice(config)
+
+    assert "each of the 2 [bold]Google Workspace[/bold] account slots" in notice
 
 
 def test_build_service_rows_uses_live_public_network_state_for_remote_access(monkeypatch, tmp_path: Path) -> None:

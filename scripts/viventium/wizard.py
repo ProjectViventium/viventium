@@ -540,6 +540,11 @@ def build_base_config(
                     "enabled": False,
                     "workspace_root": "~/viventium",
                     "default_execution_mode": "host",
+                    "plugin_denylist": [
+                        "viventium-feelings@project-viventium"
+                    ],
+                    "codex_personality": "none",
+                    "codex_conversation_project_instructions": "exclude",
                 },
             },
             "skyvern": {"enabled": False},

@@ -202,11 +202,10 @@ established machine cannot substitute for clean-pin acceptance.
 
 ### Current Isolated Candidate Reconciliation — 2026-07-24
 
-After the component pull requests merged, a reconciliation fetched each current `origin/main`, compared
-the hosted merge commit with the captured GitHub result, and compared the merged tree with the
-previously audited review tree. All 12 current component trees are pinned to reviewed public commits,
-the reviewed isolated worktrees remain clean, and the parent lock records the real merged `main`
-commits:
+The previously merged component inventory remains the base. The current candidate advances
+LibreChat and Google Workspace MCP while retaining the previously accepted voice component refs
+below. The
+parent and Native manifests declare `merged`, and each merge tree equals the reviewed PR head.
 
 The July 24 universal-upgrade preservation evidence remains valid as upgrade/runtime QA, but its
 temporary local-candidate component refs are historical and must not replace the newer public
@@ -214,22 +213,22 @@ component refs below.
 
 | Component | Current ref | Local source state | Delivery evidence |
 | --- | --- | --- | --- |
-| LibreChat | `e40a1f3fe4a7c697cba52b7861c3d51f4fa8edc1` | merged tree exact; review worktree clean | PRs 75–88 added GlassHive as a core Provider/Model choice plus exact capability/effort, Opus 5, migration, scheduler, post-upgrade finalization, clustered-startup, canonical managed-agent provisioning, capability-declared Chat Completions routing for main, cortex, handoff, and Phase B, compiler-owned per-runtime uploads isolation for shared checkouts, and explicit text-only/no-audio Telegram delivery. PR 79 preserves the exact GlassHive wire model and effort while preventing SDK model-name heuristics from switching LibreChat to Responses. PR 80 binds first-turn substantive and Emotional Reaction cortices to the canonical conversation while preserving agent-scoped native sessions. PR 81 preserves typed GlassHive workspace/access options across clean bootstrap seed and update paths. PR 82 keeps uploads out of the shared checkout and rejects ambiguous relative runtime paths. PR 83 keeps the optional-audio decision model-owned while making an explicit text-only request binding and enforcing canonical-source/fallback parity. PR 84 makes an explicit runtime env a complete boundary so QA/dev startup cannot supplement missing values from canonical production App Support. PR 85 preserves exact requested visible wording while keeping the model-owned text-only transport control on its required final line. PR 86 routes substantive cortices and Phase B through their selected GlassHive provider, gives direct conversations exact MCP scope, exposes Scheduling Cortex through the native capability broker, and prevents completed web/relay request signals from cancelling healthy MCP calls. Its optional full API job exposed managed-upgrade fingerprint and Node 24 test-transport gaps; PR 87 repaired both, and its complete hosted matrix passed before merge. PR 88 uses Rollup's supported one-shot forced-exit mode after successful API package output so hosted Intel clean-install validation cannot retain a completed build process. PR 84 had no configured required contexts and was independently reviewed and locally contract-tested before merge. Signed/notarized release and installed-runtime identity remain separate gates. |
+| LibreChat | `d2c8a8c7f1886117e4bd0f9dff35a7fac0b5dd1f` | merged public-main; PRs 91 and 92 | Adds server-owned multiple-account OAuth routing, independent per-slot credentials, provider-neutral GlassHive capability brokering and background follow-up reliability, universal scheduling exposure, and mandatory Feelings-cause integration while retaining the accepted GlassHive Voice Call LLM behavior. Hosted checks passed and both merge trees equal their reviewed heads. Signed-artifact identity remains separate. |
 | agents-playground | `f7ea19564bd062e82aed775b7c8932b70fb8984e` | merged tree exact; review worktree clean | PR 1 merged reviewed head `112f646c...`; classic fallback only. Artifact identity remains open. |
 | livekit | `c20e96166726565f026f894ccca6f1cff2480741` | merged tree exact; review worktree clean | PR 1 merged reviewed head `8839980c...`; the locked Docker runtime is a separate delivery artifact. |
 | cartesia-voice-agent | `a37250ac2c2de1827853cdc2b2eebee4164b6c69` | merged tree exact; review worktree clean | PR 1 merged reviewed head `df2f0248...`; artifact identity remains open. |
-| agent-starter-react | `f196cd5837fe6044543c50f5912f63e976d9d7b1` | merged tree exact; review worktree clean | PR 8 merged reviewed head `fd778562...`, the current modern-playground source. Its hosted test passes; final installed identity remains open. |
-| GlassHive | `5c2117ab7ebfa94a6556aba8822b34fcab44c54d` | merged tree exact; review worktree clean | PR 46 added the authenticated universal AI endpoint, conversation sessions, harness activity/cancellation, redaction, and canonical workspace controls required by the core provider. PR 47 preserves durable runs after transport detachment, serializes terminal session sync, bounds host-busy recovery independently, wakes only the oldest compatible host-lane waiter, and prevents concurrent callback-test dispatch. Built and installed artifact identity remain separate gates. |
+| agent-starter-react | `98d1249db7a728e94656462d6bda979571be4dd7` | merged public-main; PR 10 | Server-secret End Call proxy, stable call identity, bounded LiveKit departure retention, and single-flight explicit cancellation before room disconnect. Hosted tests passed and the merge tree equals the reviewed head. Installed-artifact identity remains separate. |
+| GlassHive | `449eb5d4e501df459d0e5a92cf2815a2105680da` | merged public-main; PRs 48 and 49 | Retains the accepted cascaded voice provider and adds durable host-conversation recovery, exact native developer authority, worker-local capability projection, precise cancellation/timeout recovery, and canonical workspace `AGENTS.md` inheritance. The 796-test runtime suite passed and both merge trees equal their reviewed heads. Built-artifact identity remains separate. |
 | Viventium-Health | `a8c14028069e91405c570545866ebfa206b4ee7d` | public component main; owner-safe acceptance committed | Raw append-only WHOOP connector, owner-level daily scheduler, and read-only MCP are isolated and tested. Real OAuth/pulls/refresh/scheduling/full MCP replay and the parent cognitive A/B passed without publishing health data; late correction and revocation remain open. Secret-bearing CLI input was removed and ordinary private chat retention is documented explicitly. |
 | ms-365-mcp-server | `c4c6f33b5e395a96780576cf0b55e5c420309e31` | merged tree exact; review worktree clean | PR 1 merged reviewed head `61f4b88e...`; runtime identity remains open. |
-| google_workspace_mcp | `070aee1fc34b2eb6e32237e81f3333a71a7e75bb` | merged tree exact; review worktree clean | PR 2 squash-merged reviewed head `c99e0e8d...`; shipped DXT/runtime identity remains open. |
+| google_workspace_mcp | `0824701abcf490de2a5091c68a7b0738f2294b3f` | merged public-main; PR 9 | Redacts sensitive dependency request logs in both supported entrypoints and ships the rebuilt DXT. The local connector suite and public-safety scans passed; shipped runtime identity is verified separately. |
 | mcp-youtube-transcript | `60d6bbb38e9c8e1db6dfa0bed03e6834e759f1cd` | merged tree exact; review worktree clean | PR 1 merged reviewed head `b12ec877...`; runtime identity remains open. |
 | openclaw | `841336aa05beae35df3c907e0a5b8d40d6350652` | merged tree exact; review worktree clean | PR 1 merged reviewed head `ea9923db...`; optional lab-only component, not supported Slack or WhatsApp onboarding. |
 | skyvern-source | `7c0a4ac1364ff30c880ba791be0ef3d487b70370` | merged tree exact; review worktree clean | PR 1 merged reviewed head `ea7c8106...`; runtime identity remains open. |
 
-This closes review-head-to-merge-pin drift. It does not claim that these sources have been built
-into the final immutable payload, signed, shipped, or proven as the installed runtime; those
-delivery gates remain separate.
+This inventory closes review-head-to-merge-pin drift for PRs 91, 92, 9, 10, 48, and 49. It does not claim that
+these sources have been built into the final immutable payload, signed, shipped, or
+proven as the installed runtime; those delivery gates remain separate.
 
 ## Nested Feature Evolution
 

@@ -1134,4 +1134,5 @@ def test_engine_receipt_is_a_dedicated_transaction_surface(
         module.MONGO_ENGINE_IDENTITY_SURFACE_LABEL,
         support / module.MONGO_ENGINE_IDENTITY_RECEIPT,
         False,
+        False,
     ) in candidates

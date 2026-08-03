@@ -82,6 +82,19 @@ background-cortex behavior.
 - A recoverable initialization failure in an optional handoff participant must remove that
   participant and its incident graph edges before compilation. The healthy main agent must not fail
   with an unknown-node graph error because an unrelated connected account needs reconnection.
+- Successful model initialization is not sufficient handoff readiness. When a handoff declares MCP
+  capability ownership and every declared server is conclusively missing auth, unreadable,
+  disabled, or unavailable for the current call, remove that handoff and its transfer edge. Give the
+  main call model compact structured readiness so it can use remaining tools or explain the exact
+  reconnect requirement. Keep a handoff when at least one declared provider is ready, and fail open
+  when readiness telemetry is unknown. Do not count generic `file_search` as connected-account
+  readiness, and do not block live audio waiting for interactive OAuth.
+- Choosing GlassHive as Voice Chat Model changes the text author, not the Agent's capability graph.
+  The voice gateway may correctly send zero wrapper tool definitions because the native harness
+  executes that Agent's signed eager/deferred MCP capabilities through the GlassHive broker. A real
+  tool call must be correlated at the native run/broker layer before claiming tool parity; a concise
+  answer alone is not proof. Missing OAuth returns the same supported Agent Builder recovery as web
+  and Telegram and must not trigger a second wrapper model.
 
 ## Public-Safe Specifications
 
@@ -89,6 +102,11 @@ background-cortex behavior.
 - The main agent provider/model is the default LLM for live voice calls.
 - The agent may optionally expose a dedicated Voice Call LLM via explicit `voice_llm_provider` and
   `voice_llm_model` fields.
+- Provider capability metadata distinguishes `voice_pipeline_llm` (can author text in the existing
+  LiveKit STT -> LLM -> TTS pipeline) from `native_realtime_voice` (owns a live audio session).
+  Legacy `realtime_voice: true` remains accepted as a compatibility alias for the cascaded picker.
+  GlassHive declares pipeline support and no native audio support, so it is an ordinary optional
+  Voice Call LLM without being mislabeled as speech-to-speech.
 - A dedicated Voice Call LLM must pass the same prompt-owned recall/tool-ownership acceptance case
   as the text route. Lower latency is not parity when explicit prior-conversation questions skip
   healthy retrieval and produce an unsupported no-memory answer.
@@ -110,6 +128,8 @@ background-cortex behavior.
   `VIVENTIUM_VOICE_FAST_LLM_PROVIDER` must not override the agent-visible Voice Call LLM contract.
 - If an explicit Voice Call LLM is invalid or lacks a required server credential, runtime should log
   the skip and fall back to the agent primary model/provider.
+- Capability-backed voice routes must validate their exact model and effort during Agent create,
+  update, and runtime initialization. Unsupported values fail visibly and never remap to OpenAI.
 
 ### Agent Fallback LLM Contract
 - Agent Builder must expose a user-visible `Fallback Model` route from the Model Parameters page.
@@ -299,6 +319,14 @@ background-cortex behavior.
 - Background/sleep recovery must not treat an intentional visible-page disconnect as a dropped
   connection. End Call should leave the page in the pre-connect state without silently starting a
   new LiveKit participant or duplicate worker job.
+- End Call must also cancel the exact active provider generation for that authenticated call
+  session. The browser never receives the shared call-session secret; the modern playground proxies
+  the intent server-side, LibreChat scopes it by user plus call-session metadata, and the structured
+  `user_cancelled` reason reaches the generating replica and harness. A later reasonless gateway
+  abort must not race a second finalization.
+- Reload, background suspension, and network loss do not call the explicit End Call endpoint. They
+  therefore do not request native harness cancellation, but full refresh/reconnect continuity must
+  still be proven on the real surface before it is reported as resumable.
 
 ### Live Response Streaming
 - Live voice calls should stream the response after the user finishes speaking.

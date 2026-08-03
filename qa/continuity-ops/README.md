@@ -229,6 +229,9 @@ Native transaction result: [`reports/2026-07-20-native-snapshot-restore-transact
 9. Transactional upgrade rollback
    - inject source/component, candidate compile, doctor, and restart failure boundaries
    - mutate synthetic config/runtime/bootstrap/legacy Mongo/runtime database bytes after checkpoint
+   - include generated runtime-state file and directory symlinks plus a Unix socket; preserve link
+     text without reading or changing external targets, omit the nondurable socket, and still reject
+     a symlinked runtime-state root and a FIFO
    - mutate a synthetic Docker named Mongo volume after checkpoint and verify its content manifest
      returns exactly to the stopped checkpoint
    - interrupt at a journaled stage and verify the next upgrade recovers before new mutation

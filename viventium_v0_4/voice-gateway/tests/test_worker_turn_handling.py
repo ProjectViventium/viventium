@@ -14,6 +14,7 @@ from worker import (
     _apply_requested_voice_route,
     _attach_room_diagnostics,
     _build_assemblyai_stt_kwargs,
+    _build_room_options,
     _build_voice_capability_catalog,
     _ensure_turn_detector_runner_registered,
     _semantic_turn_detector_status,
@@ -25,6 +26,8 @@ from worker import (
     _active_voice_job_markers,
     _clear_active_voice_job_marker,
     _mark_active_voice_job,
+    _parse_participant_identity,
+    _participant_identity_connected,
     _voice_sync_transcription_enabled,
     build_stt_selection,
     load_env,
@@ -34,6 +37,36 @@ from worker import (
 
 
 class TestWorkerTurnHandling(unittest.TestCase):
+    def test_call_session_room_options_keep_one_stable_participant_link_across_refresh(self) -> None:
+        metadata = '{"callSessionId":"call-1","participantIdentity":"viventium-user-call-1"}'
+        participant_identity = _parse_participant_identity(metadata)
+
+        options = _build_room_options(
+            sync_transcription=False,
+            participant_identity=participant_identity,
+        )
+
+        self.assertEqual(participant_identity, "viventium-user-call-1")
+        self.assertEqual(options.participant_identity, "viventium-user-call-1")
+        self.assertFalse(options.close_on_disconnect)
+
+    def test_participant_presence_is_scoped_to_the_expected_caller(self) -> None:
+        class Participant:
+            def __init__(self, identity: str):
+                self.identity = identity
+
+        class Room:
+            remote_participants = {
+                "observer": Participant("observer"),
+            }
+
+        room = Room()
+        self.assertFalse(_participant_identity_connected(room, "viventium-user-call-1"))
+        room.remote_participants["viventium-user-call-1"] = Participant(
+            "viventium-user-call-1"
+        )
+        self.assertTrue(_participant_identity_connected(room, "viventium-user-call-1"))
+
     def test_active_voice_job_markers_are_process_scoped(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             with patch.dict(
@@ -88,7 +121,7 @@ class TestWorkerTurnHandling(unittest.TestCase):
                 self.assertIn(marker, _active_voice_job_markers())
                 _clear_active_voice_job_marker(marker)
 
-    def test_room_empty_participant_disconnect_clears_active_marker(self) -> None:
+    def test_room_empty_participant_disconnect_keeps_marker_until_job_shutdown(self) -> None:
         class FakeRoom:
             name = "room"
 
@@ -124,7 +157,8 @@ class TestWorkerTurnHandling(unittest.TestCase):
                 )
                 room.handlers["participant_disconnected"](participant)
 
-                self.assertNotIn(marker, _active_voice_job_markers())
+                self.assertIn(marker, _active_voice_job_markers())
+                _clear_active_voice_job_marker(marker)
 
     def test_optional_module_available_handles_missing_parent_package(self) -> None:
         with patch(

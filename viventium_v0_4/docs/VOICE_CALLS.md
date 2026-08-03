@@ -85,6 +85,13 @@ stream, TTS, follow-up polling, tools, background cortices, title generation, or
   user-facing recovery text.
 - Visible-page End Call is intentional. Recovery logic should only restart after a background or
   sleep return, not after the user explicitly disconnects.
+- The End Call control first asks the modern playground's server proxy to cancel the exact active
+  call-session generation. LibreChat carries `user_cancelled` across its job transport (including
+  Redis replicas) so a harness provider receives native cancellation. A later reasonless voice
+  transport abort acknowledges the already-started cancellation instead of racing it.
+- Browser reload/network loss does not send explicit cancellation. This prevents an accidental
+  `user_cancelled` provider stop; successful refresh reattachment remains a distinct user-grade QA
+  requirement rather than an inference from that safeguard.
 
 ## Localhost vs Public Voice Origins
 - The modern LiveKit playground (`agent-starter-react`) is the default enabled playground for
@@ -171,6 +178,12 @@ stream, TTS, follow-up polling, tools, background cortices, title generation, or
 ## Agent LLM Routes and Fallback
 - The live call LLM defaults to the selected agent provider/model.
 - A dedicated Agent Builder `Voice Chat Model` may override the live-call LLM for voice only.
+- The picker uses `voice_pipeline_llm`, not native-audio capability. A provider such as GlassHive
+  can author text in the existing STT -> Agent Controller -> TTS route while correctly declaring
+  `native_realtime_voice: false`. Older `realtime_voice: true` configurations remain compatible.
+- GlassHive Codex/Claude routes expose their exact registry model labels and effort choices. Low
+  effort is available for a lighter call path; it remains an explicit user choice, not a rewrite of
+  the agent's text model or the default voice route.
 - A dedicated Agent Builder `Fallback Model` is the secondary provider/model route used when the
   primary agent route fails before producing assistant text.
 - The `Voice Chat Model` page has its own fallback model. Voice calls use that voice-specific
@@ -197,6 +210,11 @@ stream, TTS, follow-up polling, tools, background cortices, title generation, or
 - If a provider does not support native incremental input streaming, the gateway may adapt it to a
   streaming surface, but wrapper layers must not downgrade a native-streaming provider back to
   sentence-buffered fallback behavior.
+- A harness provider that truthfully exposes terminal authored text only must not fabricate answer
+  deltas from reasoning summaries, plans, or tool activity. On that explicit route, TTS begins when
+  the terminal authored answer is available; activity remains visual/observable and cancellation
+  remains native. Users who prioritize sub-second first audio should keep a streaming or native
+  realtime Voice Call LLM selected.
 - Incremental text chunks sent toward TTS must be speakable phrase fragments. After audio has
   started, a punctuation-only delta such as `.` must not be pushed as an isolated synthesis input,
   because some providers speak it as a literal word. The gateway buffers phrase boundaries and

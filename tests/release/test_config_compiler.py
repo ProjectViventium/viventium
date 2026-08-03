@@ -58,6 +58,17 @@ GLASSHIVE_CONVERSATION_PROVIDER = (
     / "workers_projects_runtime"
     / "conversation_provider.py"
 )
+CONNECTED_ACCOUNT_GLASSHIVE_POLICY = {
+    "version": 1,
+    "permitsAutonomousWorker": True,
+    "hostAllowed": True,
+    "sandboxAllowed": True,
+    "defaultToolAccess": "content_read",
+    "contentReadPolicy": "require_broker_grant",
+    "writePolicy": "confirm",
+    "riskClass": "productivity",
+    "reexportNativeTools": True,
+}
 
 
 def write_config(path: Path, payload: dict) -> None:
@@ -112,6 +123,54 @@ def minimal_compile_config() -> dict:
             "openclaw": {"enabled": False},
         },
     }
+
+
+def test_google_workspace_compiles_independent_multi_account_oauth_slots() -> None:
+    config = minimal_compile_config()
+    config["integrations"]["google_workspace"] = {
+        "enabled": True,
+        "account_slots": 3,
+    }
+
+    servers = config_compiler.build_mcp_servers(
+        config,
+        {"lc_api_port": 3180},
+        "agent-main",
+    )
+
+    assert [name for name in servers if name.startswith("google_workspace")] == [
+        "google_workspace",
+        "google_workspace_2",
+        "google_workspace_3",
+    ]
+    for slot, server_name in enumerate(
+        ("google_workspace", "google_workspace_2", "google_workspace_3"),
+        start=1,
+    ):
+        server = servers[server_name]
+        assert server["url"] == "${GOOGLE_WORKSPACE_MCP_URL}"
+        assert server["oauth"]["redirect_uri"] == (
+            "http://localhost:3180/api/mcp/google_workspace/oauth/callback"
+        )
+        assert server["viventiumOAuthConnection"] == {
+            "providerId": "google_workspace",
+            "slot": slot,
+        }
+        assert server["title"] == f"Google Workspace Account {slot}"
+        assert "independent authenticated account" in server["serverInstructions"]
+        assert "Unix epoch seconds" in server["serverInstructions"]
+        assert "Pacific-time boundaries" in server["serverInstructions"]
+
+
+def test_google_workspace_multi_account_slot_count_is_bounded() -> None:
+    config = minimal_compile_config()
+    config["integrations"]["google_workspace"] = {
+        "enabled": True,
+        "account_slots": 11,
+    }
+
+    with pytest.raises(SystemExit, match="account_slots"):
+        config_compiler.build_mcp_servers(config, {"lc_api_port": 3180}, "agent-main")
 
 
 def restored_runtime_fixture(tmp_path: Path) -> tuple[Path, Path, Path]:
@@ -848,6 +907,32 @@ def test_native_agent_bundle_omits_tools_and_handoffs_owned_by_unavailable_servi
     assert direct_servers == []
 
 
+def test_native_connected_accounts_agent_receives_every_compiled_google_slot() -> None:
+    config = minimal_compile_config()
+    config["integrations"]["google_workspace"] = {
+        "enabled": True,
+        "account_slots": 3,
+    }
+    assignments = config_compiler.build_agent_assignments(config)
+
+    compiled = config_compiler.render_native_agents_bundle(
+        config,
+        assignments,
+        {"google_workspace", "google_workspace_2", "google_workspace_3"},
+    )
+    connected_accounts = next(
+        agent
+        for agent in compiled["handoffAgents"]
+        if agent["id"] == config_compiler.CONNECTED_ACCOUNTS_AGENT_ID
+    )
+
+    assert "search_gmail_messages_mcp_google_workspace" in connected_accounts["tools"]
+    assert "search_gmail_messages_mcp_google_workspace_2" in connected_accounts["tools"]
+    assert "search_gmail_messages_mcp_google_workspace_3" in connected_accounts["tools"]
+    assert "send_gmail_message_mcp_google_workspace_3" in connected_accounts["tools"]
+    assert all(not tool.endswith("_mcp_google_workspace_4") for tool in connected_accounts["tools"])
+
+
 def test_native_agent_bundle_rewrites_main_parameters_for_direct_openai_profile() -> None:
     config = minimal_compile_config()
     assignments = config_compiler.build_agent_assignments(config)
@@ -1256,12 +1341,19 @@ def test_glasshive_compiles_as_exact_core_agent_provider(
     assert capability["cortex_execution"] is True
     assert capability["phase_b_followup"] is True
     assert capability["activation_classifier"] is False
+    assert capability["voice_pipeline_llm"] is True
+    assert capability["native_realtime_voice"] is False
     assert capability["realtime_voice"] is False
     assert capability["automatic_fallback_target"] is False
     assert capability["responses_api"] is False
     assert capability["default_access"] == "full"
     assert capability["allow_full_access"] is True
+    assert capability["reviewed_mcp_projection"] == "deferred"
     assert capability["excluded_mcp_servers"] == ["glasshive-workers-projects"]
+    health_policy = librechat["mcpServers"]["viventium-health"]["viventiumGlassHive"]
+    assert health_policy["permitsAutonomousWorker"] is True
+    assert health_policy["defaultToolAccess"] == "content_read"
+    assert health_policy["writePolicy"] == "deny"
     assert capability["models"][0]["recommendedEffort"] == "medium"
     assert capability["models"][0]["effortChoices"] == [
         "low",
@@ -1365,6 +1457,140 @@ def test_glasshive_rejects_an_unknown_configured_default_model() -> None:
 
     with pytest.raises(SystemExit, match="must match a declared GlassHive model"):
         config_compiler.build_agent_assignments(config)
+
+
+def test_viventium_glasshive_worker_policy_defaults_and_denylist_compile() -> None:
+    config = minimal_compile_config()
+    config["integrations"]["glasshive"] = {
+        "enabled": True,
+        "host_worker": {
+            "enabled": True,
+            "plugin_denylist": [
+                "viventium-feelings@project-viventium",
+                "viventium-feelings@project-viventium",
+            ],
+        },
+    }
+
+    settings = config_compiler.resolve_glasshive_host_worker_settings(config)
+    env = config_compiler.render_runtime_env(
+        config,
+        config_compiler.build_agent_assignments(config),
+    )
+
+    assert settings["plugin_denylist"] == "viventium-feelings@project-viventium"
+    assert settings["codex_personality"] == "none"
+    assert env["GLASSHIVE_HOST_PLUGIN_DENYLIST"] == (
+        "viventium-feelings@project-viventium"
+    )
+    assert env["WPR_CODEX_CLI_PERSONALITY"] == "none"
+
+
+def test_viventium_glasshive_worker_policy_defaults_for_preserved_config_without_rewrite(
+    tmp_path: Path,
+) -> None:
+    config = minimal_compile_config()
+    config["integrations"]["glasshive"] = {
+        "enabled": True,
+        "host_worker": {"enabled": True},
+    }
+    config_path = tmp_path / "config.yaml"
+    write_config(config_path, config)
+    original_config = config_path.read_bytes()
+
+    loaded = config_compiler.load_yaml(config_path)
+    settings = config_compiler.resolve_glasshive_host_worker_settings(loaded)
+    env = config_compiler.render_runtime_env(
+        loaded,
+        config_compiler.build_agent_assignments(loaded),
+    )
+    schema = yaml.safe_load(
+        (REPO_ROOT / "config.schema.yaml").read_text(encoding="utf-8")
+    )
+    denylist_schema = schema["properties"]["integrations"]["properties"][
+        "glasshive"
+    ]["properties"]["host_worker"]["properties"]["plugin_denylist"]
+
+    assert config_path.read_bytes() == original_config
+    assert settings["plugin_denylist"] == "viventium-feelings@project-viventium"
+    assert env["GLASSHIVE_HOST_PLUGIN_DENYLIST"] == (
+        "viventium-feelings@project-viventium"
+    )
+    assert denylist_schema["default"] == [
+        "viventium-feelings@project-viventium"
+    ]
+
+
+def test_viventium_glasshive_worker_policy_preserves_explicit_empty_plugin_denylist() -> None:
+    config = minimal_compile_config()
+    config["integrations"]["glasshive"] = {
+        "enabled": True,
+        "host_worker": {"enabled": True, "plugin_denylist": []},
+    }
+
+    settings = config_compiler.resolve_glasshive_host_worker_settings(config)
+    env = config_compiler.render_runtime_env(
+        config,
+        config_compiler.build_agent_assignments(config),
+    )
+
+    assert settings["plugin_denylist"] == ""
+    assert "GLASSHIVE_HOST_PLUGIN_DENYLIST" not in env
+
+
+@pytest.mark.parametrize("personality", ["inherit", "none", "friendly", "pragmatic"])
+def test_viventium_glasshive_codex_personality_is_native_config(
+    personality: str,
+) -> None:
+    config = minimal_compile_config()
+    config["integrations"]["glasshive"] = {
+        "enabled": True,
+        "host_worker": {"enabled": True, "codex_personality": personality},
+    }
+
+    settings = config_compiler.resolve_glasshive_host_worker_settings(config)
+
+    assert settings["codex_personality"] == personality
+
+
+def test_viventium_glasshive_inherits_canonical_workspace_instructions_by_default() -> None:
+    config = minimal_compile_config()
+    config["integrations"]["glasshive"] = {
+        "enabled": True,
+        "host_worker": {"enabled": True},
+    }
+
+    settings = config_compiler.resolve_glasshive_host_worker_settings(config)
+    env = config_compiler.render_runtime_env(
+        config,
+        config_compiler.build_agent_assignments(config),
+    )
+
+    assert settings["codex_conversation_project_instructions"] == "inherit"
+    assert env["WPR_CODEX_CLI_CONVERSATION_PROJECT_INSTRUCTIONS"] == "inherit"
+
+
+def test_public_schema_declares_codex_conversation_project_instruction_policy() -> None:
+    schema = yaml.safe_load((REPO_ROOT / "config.schema.yaml").read_text(encoding="utf-8"))
+    policy = (
+        schema["properties"]["integrations"]["properties"]["glasshive"]["properties"]
+        ["host_worker"]["properties"]["codex_conversation_project_instructions"]
+    )
+
+    assert policy["enum"] == ["inherit", "exclude"]
+    assert policy["default"] == "inherit"
+
+
+@pytest.mark.parametrize("invalid", ["", "warm", 123])
+def test_viventium_glasshive_rejects_invalid_codex_personality(invalid) -> None:
+    config = minimal_compile_config()
+    config["integrations"]["glasshive"] = {
+        "enabled": True,
+        "host_worker": {"enabled": True, "codex_personality": invalid},
+    }
+
+    with pytest.raises(SystemExit, match="codex_personality"):
+        config_compiler.resolve_glasshive_host_worker_settings(config)
 
 
 @pytest.mark.parametrize(
@@ -2770,6 +2996,12 @@ def test_mcp_server_instructions_own_scheduling_and_glasshive_cognition(tmp_path
     assert servers["glasshive-workers-projects"]["viventiumTrustedServerInstructions"] is True
     assert servers["glasshive-workers-projects"]["timeout"] == 1860000
 
+    assert servers["ms-365"]["viventiumGlassHive"] == CONNECTED_ACCOUNT_GLASSHIVE_POLICY
+    assert (
+        servers["google_workspace"]["viventiumGlassHive"]
+        == CONNECTED_ACCOUNT_GLASSHIVE_POLICY
+    )
+
     for instructions, product_phrase, other_provider in [
         (ms365, "microsoft 365 owns authenticated outlook mail", "google workspace"),
         (google_workspace, "google workspace owns authenticated gmail", "microsoft 365"),
@@ -2826,6 +3058,12 @@ def test_source_of_truth_mcp_instructions_match_prompt_architecture_contract() -
     }
     assert servers["glasshive-workers-projects"]["viventiumTrustedServerInstructions"] is True
 
+    assert servers["ms-365"]["viventiumGlassHive"] == CONNECTED_ACCOUNT_GLASSHIVE_POLICY
+    assert (
+        servers["google_workspace"]["viventiumGlassHive"]
+        == CONNECTED_ACCOUNT_GLASSHIVE_POLICY
+    )
+
     for instructions in [ms365, google_workspace]:
         assert "default to read-only inspection" in instructions
         assert "auth is missing/expired" in instructions
@@ -2852,8 +3090,8 @@ def test_source_of_truth_exposes_glasshive_native_scheduler_and_followup_tools()
     agents_bundle = load_source_of_truth_agents_bundle()
     main_agent = agents_bundle["mainAgent"]
     assert expected_tools.issubset(set(main_agent["tools"]))
-    assert "Use GlassHive MCP scheduling tools" in main_agent["instructions"]
-    assert "Never claim a GlassHive schedule exists unless" in main_agent["instructions"]
+    assert "The scheduling tool contract owns exact operations" in main_agent["instructions"]
+    assert "Verify current schedule state with the scheduling tool" in main_agent["instructions"]
 
     glasshive_policy = next(
         server
@@ -6841,6 +7079,14 @@ def test_config_compiler_runtime_port_overrides(tmp_path: Path) -> None:
     )
     assert librechat_yaml["mcpServers"]["ms-365"]["oauth"]["client_id"] == "${MS365_MCP_CLIENT_ID}"
     assert librechat_yaml["mcpServers"]["ms-365"]["oauth"]["client_secret"] == ""
+    assert (
+        librechat_yaml["mcpServers"]["ms-365"]["viventiumGlassHive"]
+        == CONNECTED_ACCOUNT_GLASSHIVE_POLICY
+    )
+    assert (
+        librechat_yaml["mcpServers"]["google_workspace"]["viventiumGlassHive"]
+        == CONNECTED_ACCOUNT_GLASSHIVE_POLICY
+    )
 
 
 def test_config_compiler_imports_legacy_private_env_passthrough(tmp_path: Path) -> None:
