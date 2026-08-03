@@ -79,7 +79,7 @@ npm run build
 uv run pytest -q
 ```
 
-- Config compiler: 187 passed, including a three-slot agent-tool projection regression.
+- Config compiler: 188 passed, including a three-slot agent-tool projection regression and the canonical LIFE-instruction default.
 - Install summary: 72 passed.
 - Complete parent release suite: 2,246 passed and 6 skipped.
 - LibreChat shared-callback route: 87 passed.
