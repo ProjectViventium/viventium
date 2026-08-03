@@ -574,7 +574,16 @@ acquire_bootstrap_python_lock() {
   }
 
   while ! mkdir -m 700 "$lock_dir" 2>/dev/null; do
+    # The previous owner may release the lock after mkdir reports EEXIST but
+    # before this process inspects the path. A vanished lock is a normal race:
+    # retry acquisition instead of misclassifying it as an unsafe path.
+    if [[ ! -e "$lock_dir" && ! -L "$lock_dir" ]]; then
+      continue
+    fi
     [[ -d "$lock_dir" && ! -L "$lock_dir" && -O "$lock_dir" ]] || {
+      if [[ ! -e "$lock_dir" && ! -L "$lock_dir" ]]; then
+        continue
+      fi
       echo "Viventium bootstrap Python lock path is unsafe." >&2
       return 1
     }
