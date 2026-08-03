@@ -243,6 +243,15 @@ def test_build_base_config_starts_custom_features_as_explicit_opt_ins() -> None:
     assert config["integrations"]["scheduling_cortex"]["enabled"] is False
     assert config["integrations"]["glasshive"]["enabled"] is False
     assert config["integrations"]["glasshive"]["host_worker"]["enabled"] is False
+    assert config["integrations"]["glasshive"]["host_worker"]["plugin_denylist"] == [
+        "viventium-feelings@project-viventium"
+    ]
+    assert config["integrations"]["glasshive"]["host_worker"]["codex_personality"] == "none"
+    assert (
+        config["integrations"]["glasshive"]["host_worker"]
+        ["codex_conversation_project_instructions"]
+        == "inherit"
+    )
     assert config["integrations"]["code_interpreter"]["enabled"] is False
     assert config["integrations"]["web_search"]["enabled"] is False
     assert config["integrations"]["web_search"]["search_provider"] == "searxng"
@@ -271,6 +280,15 @@ def test_build_base_config_express_defers_every_non_core_capability() -> None:
     assert config["runtime"]["memory_hardening"]["enabled"] is False
     assert config["integrations"]["glasshive"]["enabled"] is False
     assert config["integrations"]["glasshive"]["host_worker"]["enabled"] is False
+    assert config["integrations"]["glasshive"]["host_worker"]["plugin_denylist"] == [
+        "viventium-feelings@project-viventium"
+    ]
+    assert config["integrations"]["glasshive"]["host_worker"]["codex_personality"] == "none"
+    assert (
+        config["integrations"]["glasshive"]["host_worker"]
+        ["codex_conversation_project_instructions"]
+        == "inherit"
+    )
     assert config["integrations"]["scheduling_cortex"]["enabled"] is False
     assert config["integrations"]["web_search"]["enabled"] is False
     assert config["integrations"]["code_interpreter"]["enabled"] is False

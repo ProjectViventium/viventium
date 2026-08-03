@@ -544,7 +544,7 @@ def build_base_config(
                         "viventium-feelings@project-viventium"
                     ],
                     "codex_personality": "none",
-                    "codex_conversation_project_instructions": "exclude",
+                    "codex_conversation_project_instructions": "inherit",
                 },
             },
             "skyvern": {"enabled": False},
