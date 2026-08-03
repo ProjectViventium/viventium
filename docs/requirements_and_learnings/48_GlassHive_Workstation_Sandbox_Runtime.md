@@ -2135,6 +2135,12 @@ its installed plugin registry/cache/marketplace roots beside its isolated config
 worker-local catalog entries and selections win; upgrades add only missing host entries. These are
 read-mostly local projections, never copies into LIFE, and plugin data/state is not projected.
 
+Codex conversation workers run in the exact selected workspace and inherit its canonical
+`AGENTS.md` by default. A deployment may explicitly select `exclude` when workspace project
+instructions are prohibited; that opt-out runs Codex from private worker state with the selected
+workspace added only as an accessible directory. It is not the Viventium default because canonical
+LIFE context is part of the provider contract.
+
 Conversation-provider restart recovery is durable but never PID-only. Active-session metadata keeps
 only a SHA-256 fingerprint of the native process start identity and command, not the private command
 itself. Recovery requires the same PID, process-group leadership, and exact fingerprint before a

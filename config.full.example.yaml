@@ -268,8 +268,8 @@ integrations:
       plugin_denylist: ["viventium-feelings@project-viventium"]
       # Viventium Feelings owns emotional state; disable Codex's separate style layer by default.
       codex_personality: none
-      # Keep mission/project instructions out of ordinary Viv chat; workspace files remain available.
-      codex_conversation_project_instructions: exclude
+      # Run in the exact chosen folder and honor its canonical AGENTS.md by default.
+      codex_conversation_project_instructions: inherit
       # Optional native-capability controls. Leave unset for the default full-capability path.
       # runtime_requirements:
       #   json:

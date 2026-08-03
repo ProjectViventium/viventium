@@ -1553,7 +1553,7 @@ def test_viventium_glasshive_codex_personality_is_native_config(
     assert settings["codex_personality"] == personality
 
 
-def test_viventium_glasshive_excludes_codex_project_instructions_from_conversations() -> None:
+def test_viventium_glasshive_inherits_canonical_workspace_instructions_by_default() -> None:
     config = minimal_compile_config()
     config["integrations"]["glasshive"] = {
         "enabled": True,
@@ -1566,8 +1566,8 @@ def test_viventium_glasshive_excludes_codex_project_instructions_from_conversati
         config_compiler.build_agent_assignments(config),
     )
 
-    assert settings["codex_conversation_project_instructions"] == "exclude"
-    assert env["WPR_CODEX_CLI_CONVERSATION_PROJECT_INSTRUCTIONS"] == "exclude"
+    assert settings["codex_conversation_project_instructions"] == "inherit"
+    assert env["WPR_CODEX_CLI_CONVERSATION_PROJECT_INSTRUCTIONS"] == "inherit"
 
 
 def test_public_schema_declares_codex_conversation_project_instruction_policy() -> None:
@@ -1578,7 +1578,7 @@ def test_public_schema_declares_codex_conversation_project_instruction_policy() 
     )
 
     assert policy["enum"] == ["inherit", "exclude"]
-    assert policy["default"] == "exclude"
+    assert policy["default"] == "inherit"
 
 
 @pytest.mark.parametrize("invalid", ["", "warm", 123])

@@ -573,9 +573,9 @@ properties:
                 default: none
               codex_conversation_project_instructions:
                 type: string
-                description: Project-instruction policy for Codex conversation workers. Viventium defaults to exclude so workspace AGENTS.md files cannot compete with its current developer instructions; inherit preserves normal Codex discovery.
+                description: Project-instruction policy for Codex conversation workers. Viventium defaults to inherit so the harness runs in the exact chosen folder and honors its canonical AGENTS.md; exclude is an explicit opt-out for deployments that prohibit workspace instructions.
                 enum: [inherit, exclude]
-                default: exclude
+                default: inherit
               codex_plugin_cache:
                 type: string
               codex_ignore_user_config:

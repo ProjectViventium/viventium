@@ -636,7 +636,7 @@ def resolve_glasshive_host_worker_settings(config: dict[str, Any]) -> dict[str, 
         )
     raw_project_instructions = host_worker.get(
         "codex_conversation_project_instructions",
-        "exclude",
+        "inherit",
     )
     if not isinstance(raw_project_instructions, str):
         raise SystemExit(
