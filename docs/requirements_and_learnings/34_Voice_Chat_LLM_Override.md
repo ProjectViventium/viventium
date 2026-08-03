@@ -60,6 +60,11 @@ that route. It does not create a GlassHive-specific audio adapter.
   conversation. This validates a fast conversational lane plus a durable worker lane rather than
   forcing every spoken turn through a long harness run:
   https://learn.chatgpt.com/docs/features/voice
+- OpenAI's current Work/Codex voice guidance says Voice uses the tools and permissions of the
+  selected experience and can coordinate longer agentic tasks. That supports preserving the same
+  declared Viventium tool graph across text and LiveKit authoring instead of maintaining a separate,
+  capability-poor voice agent:
+  https://help.openai.com/en/articles/20001275-chatgpt-work-and-codex
 - LiveKit recommends STT-LLM-TTS for most production agents because it is modular, observable, and
   mature for tools; native realtime is fastest but less provider-portable:
   https://docs.livekit.io/agents/models/pipelines/

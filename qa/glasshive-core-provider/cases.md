@@ -14,7 +14,7 @@
 | GCP-008 | GlassHive cortex executes with its own provider while Phase A stays direct and Phase B follows the main route/session | Web chat, cortex cards | PASS (2026-07-30) |
 | GCP-009 | Feelings enters the main authored turn exactly once and never a specialist cortex/activity/LIFE file | Web, Telegram, logs/state | PASS (2026-07-30) |
 | GCP-010 | Telegram text, voice note, and video note each produce one harness-authored response | Telegram UI, relay, Mongo | PARTIAL (2026-07-31 delivery regression automated pass; post-fix Desktop run pending) |
-| GCP-011 | LiveKit calls continue to use Voice LLM and never offer/dispatch GlassHive | LiveKit UI/call, voice logs | PASS (2026-07-30) |
+| GCP-011 | LiveKit uses the configured cascaded Voice Call LLM; GlassHive may be selected as that text-in/text-out pipeline model but is never mislabeled as native realtime audio | LiveKit UI/call, voice logs | PASS (2026-08-01 real GlassHive Voice LLM call/reconnect acceptance) |
 | GCP-012 | Unknown provider/model/effort and stopped/missing/authless/busy/crashed harnesses fail visibly with no OpenAI substitution | Builder/chat, logs | PASS (2026-07-30) |
 | GCP-013 | Custom path validation, workspace-only/full access, file work, native tools, and missing tool auth behave honestly | Builder/chat, filesystem/tools | PASS (2026-07-30) |
 | GCP-014 | Ten-minute/concurrent mission load preserves the interactive lane and handles rate limit/interruption/restart | Web, GlassHive state | PASS (2026-07-30) |
@@ -32,6 +32,7 @@
 | GCP-026 | Source Easy pins the Codex model/profile and requires authenticated Codex; a Claude-only host fails readiness without provider fallback or silent model remapping, while Custom may accept Claude | Wizard/preflight/readiness/compiler | PASS (2026-08-01 Codex-only and Claude-only regression tests) |
 | GCP-027 | An alternate App Support runtime compiles and uses its own profiled GlassHive SQLite state without touching canonical user state | Compiler, clean install/upgrade, GlassHive API/state | PASS (2026-08-01 isolated clean install, direct API, web run, upgrade, and zero canonical-request evidence) |
 | GCP-028 | Custom aligns an absent provider model to the resolved worker profile; an explicit mismatched model remains unchanged and fails its exact harness-auth gate | Defaults/preflight/compiler | PASS (2026-08-01 Custom Claude-only and explicit-model mismatch regression tests) |
+| GCP-029 | An accepted host-native conversation survives API restart without truncating its instruction, double-launching the harness, or losing exact cancel/timeout/non-zero status | GlassHive API/supervisor/private state | PASS (2026-08-02 large-input Codex and Claude restart, active-child cancel, timeout, and non-zero-exit regressions) |
 
 ## Natural User Use Case Checklist
 
@@ -61,7 +62,7 @@
 - A required real user path cannot be replaced by a mock, source review, unit test, DB row, or another
   model's review.
 - Forbidden results: wrapper LLM authorship, silent OpenAI fallback, duplicate harness run/reply,
-  GlassHive as Phase A/Voice LLM/automatic fallback, specialist Feelings injection, runtime files in
+  GlassHive as Phase A/native realtime audio/automatic fallback, specialist Feelings injection, runtime files in
   LIFE, hidden chain-of-thought, shared provider/MCP/runtime credentials, caller-asserted owner or
   full-access escalation, or private data in committed evidence.
 

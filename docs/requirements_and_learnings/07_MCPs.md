@@ -55,6 +55,33 @@
   - `GOOGLE_OAUTH_CLIENT_ID` - Google Cloud Console OAuth 2.0 Client ID
   - `GOOGLE_OAUTH_CLIENT_SECRET` - Google Cloud Console OAuth 2.0 Client Secret
   - `MCP_ENABLE_OAUTH21` - Set to `true` for OAuth 2.1 mode (required for LibreChat integration)
+
+#### Multiple Google Workspace accounts per user
+
+- One logical Google Workspace provider may expose multiple independent OAuth connection slots.
+  The default local product surface exposes two; `integrations.google_workspace.account_slots`
+  may configure between one and ten.
+- Slots share the reviewed MCP endpoint and provider callback, but never share LibreChat OAuth
+  access/refresh/client records, flow IDs, or cached MCP connections. The server name remains the
+  stable storage and routing identity (`google_workspace`, `google_workspace_2`, and so on).
+- Trusted config carries `viventiumOAuthConnection.providerId` and `slot`. User-created MCP input
+  cannot set that metadata. The callback resolves the actual slot from server-owned OAuth flow
+  state and rejects a callback whose provider group does not match the route.
+- The Google MCP OAuth 2.1 bearer session remains bound to exactly one Google identity. Viventium
+  combines results above that boundary by invoking each relevant connected slot, not by copying
+  credentials, bypassing session binding, or letting one bearer token impersonate another account.
+- Gmail relative-day searches use Unix-second `after:` / `before:` boundaries calculated in the
+  user's current timezone. [Google's Gmail API guidance](https://developers.google.com/workspace/gmail/api/guides/filtering)
+  says date-only query boundaries are interpreted as Pacific time, which otherwise makes "today"
+  disagree across direct-agent and harness-worker paths.
+- Account labels and email addresses are private runtime data. Public config, logs, tests, and QA
+  use slot numbers and synthetic identities only.
+- Connector and HTTP dependency logs must never persist OAuth bearer values or credential-bearing
+  request URLs. Dependency request logging is warning-only at runtime, while account identifiers
+  and raw provider responses remain private runtime evidence rather than public QA material.
+- Upgrades and same-machine restarts preserve each slot's token records independently. Portable
+  continuity exports still exclude provider credentials by design, so a restored install asks the
+  user to reconnect each slot.
 - Optional env vars:
   - `GOOGLE_WORKSPACE_MCP_URL`
   - `GOOGLE_WORKSPACE_MCP_AUTH_URL`
@@ -101,8 +128,46 @@
   host-owned `glasshive-user-capabilities` broker MCP projected in `bootstrap_bundle_json`, not by
   copying provider OAuth/API tokens into the worker and not by having GlassHive read LibreChat
   storage directly.
+- A direct GlassHive conversation endpoint uses the same reviewed policy boundary. MCP servers
+  selected directly on the Agent are eager. Reviewed MCP servers selected on an explicit handoff
+  target are signed as deferred, because a native-tools provider replaces that extra model hop while
+  preserving the Agent Builder capability graph. Listing ordinary tools initializes only the eager
+  set; the harness must explicitly describe or invoke one signed deferred server before LibreChat
+  resolves that server's schemas or OAuth state. Unrelated reviewed MCPs are never granted merely
+  because the provider is GlassHive. This is the provider-name-independent extension point for
+  current and future MCPs.
+- A native conversation harness needs both the signed broker configuration and the signed broker
+  operating contract. GlassHive must merge the profile-specific bootstrap instructions into the
+  harness developer/system authority on every fresh or resumed provider turn while preserving the
+  application's own developer instructions. MCP configuration alone is not readiness: without the
+  contract, a harness can ignore the broker and guess a native connector or browser route. Do not
+  solve this by writing `AGENTS.md`, `CLAUDE.md`, `CODEX.md`, prompts, transcripts, or other runtime
+  scaffolding into the user's LIFE folder; conversation-mode bootstrap remains private runtime state.
+- Grants are short-lived and bound to the authenticated owner/conversation/run. Read and write
+  behavior remains controlled by each selected server's reviewed policy; writes retain their
+  separate confirmation/checkpoint policy. Agent Builder tool and handoff selection is the authority
+  boundary, not prompt wording or provider-wide defaults.
+- If registry or grant preparation is unavailable, the provider receives a typed degraded bootstrap
+  status. Unrelated conversation may continue, but a connected-account request must report that
+  exact blocker; it must not silently substitute memory, a different account, or a native connector.
 - The broker uses the same LibreChat MCP registry/auth/token-refresh path as normal MCP calls and
   re-checks user scope, current server policy, and current auth state on list/describe/invoke.
+- OAuth readiness distinguishes `missing_auth`, `unreadable_credential`, disabled/unavailable
+  service, and ready state. An optional handoff whose every declared MCP is conclusively unavailable
+  is removed from the current graph, and Main receives only the structured readiness facts so it can
+  choose among its remaining capabilities or give exact reconnect guidance. Voice remains
+  non-blocking; it must never transfer into a generic-model-only hollow specialist.
+- A GlassHive worker cannot complete an interactive browser OAuth redirect. Before deferred broker
+  discovery, inspect whether an OAuth server has an unexpired credential decryptable by this
+  runtime. Missing or unreadable credentials return a typed reconnect blocker immediately, without
+  initializing the MCP, starting OAuth polling, or retrying describe then invoke. A readable
+  credential continues through the ordinary connection/reuse/refresh path.
+- A non-interactive OAuth blocker must carry a provider-independent recovery contract as data, not
+  leave the harness to guess a settings path. It includes the exact credential status and the
+  `connect_mcp_account` action on the `agent_builder` surface: open Agent Builder, select the agent
+  that owns the connected account, then choose **Connect** beside the unavailable server under
+  **MCP Servers**. Describe and invoke must preserve that blocker; an auth-blocked invocation must
+  never collapse into `not_found` or model-invented guidance.
 - MCP servers opt in with a reviewed, server-managed `viventiumGlassHive` policy block. Like
   `viventiumRequestContext`, this block must be omitted from public MCP creation/update input.
 - The worker-facing broker should re-export native typed tools with namespaced names where possible.

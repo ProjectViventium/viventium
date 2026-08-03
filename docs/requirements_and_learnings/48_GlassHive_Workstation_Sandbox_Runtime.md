@@ -1336,6 +1336,13 @@ LibreChat internals.
   `/v1/models` declares `incremental_text: false` for both. GlassHive must never publish an
   intermediate working preamble as the answer or fabricate token deltas. A later native adapter may
   improve text latency if measured Quality + Performance warrants the extra lifecycle surface.
+- Host-native execution survives an API-process restart after request acceptance. A private
+  supervisor owns the complete `instruction.stdin`, launches the harness only after an atomic
+  start-permit/PID binding is durable, owns the child process group, timeout, and cancellation, and
+  writes the terminal marker atomically. The API process may observe or reattach to that state but
+  must not own or truncate the instruction stream. Cancellation terminates the exact active child
+  group, timeout and non-zero exits retain their exact terminal classifications, and recovery never
+  writes supervisor state or scaffolding into LIFE.
 
 ### Conversation versus mission mode
 
@@ -2096,6 +2103,44 @@ users are not told that a resumed workspace failed while Watch/Steer is visibly 
 ---
 
 ## Learnings
+
+### 2026-08-02: direct harness conversations defer connected-account discovery
+
+The direct GlassHive conversation provider may reuse LibreChat-owned authenticated connected-account
+MCP sessions without projecting provider credentials or eagerly initializing those providers.
+Provider capability metadata selects reviewed-policy deferred projection. The signed broker grant
+separates MCP servers declared directly on the Agent from reviewed MCP servers owned by that Agent's
+explicit handoff targets. It never grants unrelated reviewed servers merely because GlassHive was
+selected, and no provider name is hardcoded.
+
+Initial broker tool listing and ordinary native broker calls discover only the eager set. A harness
+must explicitly describe or invoke one signed deferred server before LibreChat resolves its schemas;
+the broker then reuses the existing user-scoped MCP connection. Current reviewed MCP policy is checked
+again at discovery time, and content-read/write rules remain unchanged. This makes current and future
+Agent-selected connections available to the harness without adding OAuth or schema-discovery latency
+to unrelated chat. Registry/grant preparation failures become a typed degraded bootstrap status
+instead of silently launching a capability-blind worker.
+
+For OAuth-backed deferred servers, discovery first verifies that an unexpired stored credential is
+decryptable by the current runtime. Missing or unreadable credentials produce an immediate typed
+reconnect blocker; a background worker never launches an interactive OAuth redirect or leaves flow
+polling behind. Readable credentials continue through the normal user-scoped MCP reuse/refresh path.
+
+Backwards-compatible grants without separate eager/deferred fields treat their complete allowlist as
+eager. Unknown or unsigned deferred server requests fail closed without provider discovery.
+
+Host conversation mode also preserves native harness inventory in the private worker home. Codex
+receives owner-local skill and plugin-cache roots beside its isolated auth/config; Claude receives
+its installed plugin registry/cache/marketplace roots beside its isolated config. Existing
+worker-local catalog entries and selections win; upgrades add only missing host entries. These are
+read-mostly local projections, never copies into LIFE, and plugin data/state is not projected.
+
+Conversation-provider restart recovery is durable but never PID-only. Active-session metadata keeps
+only a SHA-256 fingerprint of the native process start identity and command, not the private command
+itself. Recovery requires the same PID, process-group leadership, and exact fingerprint before a
+process may be monitored or cancelled. A single bounded reconciler resumes nonterminal provider
+records and finalizes surviving native transcripts exactly once. A record interrupted before a
+native run was attached fails with a typed pre-start interruption; it is never silently replayed.
 
 - The Selenium standalone-chromium image is infrastructure packaging, not a test framework
   dependency. Do not confuse it with Selenium Grid.

@@ -447,14 +447,15 @@ falling back to historical defaults:
   and Channels controls; and
 - lab-only OpenClaw is absent from public Easy Install setup and status output.
 
-The GlassHive Voice Call LLM candidate pins merged public-main LibreChat commit
-`c7b7555b8d404a558481a82e5673e05d32cdecc2` in both the parent component lock and Native payload
+The current candidate pins merged public-main LibreChat commit
+`d2c8a8c7f1886117e4bd0f9dff35a7fac0b5dd1f` in both the parent component lock and Native payload
 component manifest, and merged public-main modern-playground commit
 `98d1249db7a728e94656462d6bda979571be4dd7` in the parent component lock. The source/Docker
 GlassHive runtime is pinned by the parent component lock to merged public-main commit
 `b663070aecd05568249f5f323cc16b53ddb994a8`; it is intentionally absent from the Native payload
-component manifest. Both manifests declare `merged`, and each merge tree equals its reviewed PR
-head. Source and local-runtime PASS still do not
+component manifest. The Google Workspace MCP source is pinned to merged public-main commit
+`0824701abcf490de2a5091c68a7b0738f2294b3f`. Both manifests declare `merged`, and each merge tree
+equals its reviewed PR head. Source and local-runtime PASS still do not
 substitute for a separately signed and notarized immutable Native artifact or vendor-side Telegram,
 Slack, or Meta account approval without credentials owned by the installing user.
 

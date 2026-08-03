@@ -82,6 +82,19 @@ background-cortex behavior.
 - A recoverable initialization failure in an optional handoff participant must remove that
   participant and its incident graph edges before compilation. The healthy main agent must not fail
   with an unknown-node graph error because an unrelated connected account needs reconnection.
+- Successful model initialization is not sufficient handoff readiness. When a handoff declares MCP
+  capability ownership and every declared server is conclusively missing auth, unreadable,
+  disabled, or unavailable for the current call, remove that handoff and its transfer edge. Give the
+  main call model compact structured readiness so it can use remaining tools or explain the exact
+  reconnect requirement. Keep a handoff when at least one declared provider is ready, and fail open
+  when readiness telemetry is unknown. Do not count generic `file_search` as connected-account
+  readiness, and do not block live audio waiting for interactive OAuth.
+- Choosing GlassHive as Voice Chat Model changes the text author, not the Agent's capability graph.
+  The voice gateway may correctly send zero wrapper tool definitions because the native harness
+  executes that Agent's signed eager/deferred MCP capabilities through the GlassHive broker. A real
+  tool call must be correlated at the native run/broker layer before claiming tool parity; a concise
+  answer alone is not proof. Missing OAuth returns the same supported Agent Builder recovery as web
+  and Telegram and must not trigger a second wrapper model.
 
 ## Public-Safe Specifications
 

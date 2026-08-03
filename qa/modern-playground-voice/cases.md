@@ -1160,6 +1160,32 @@
   Nested refs are merged and tree-equal. Parent hosted checks and supported install/upgrade identity
   gates remain before release completion; the requested Opus 5 review is quota-blocked until reset.
 
+## MPV-031 GlassHive Voice Preserves The Agent Tool Graph
+
+- Requirement: `docs/requirements_and_learnings/06_Voice_Calls.md`,
+  `docs/requirements_and_learnings/07_MCPs.md`, and `MPV-014`.
+- User Outcome: selecting GlassHive for Voice Chat Model changes the authoring model, not the Agent's
+  capabilities. The same Agent-selected MCPs are available inside the native harness without a
+  wrapper LLM or a separate voice-only tool list.
+- Happy Path: attach a harmless read-only scheduling capability to a synthetic GlassHive voice
+  agent, save, reload, start a real call, ask for the current active count, and correlate visible
+  transcript, delivered TTS, LibreChat request, GlassHive request/session/run, and native broker call.
+- Unhappy Path: attach a disconnected OAuth MCP. Agent Builder must show its Connect state and a
+  non-interactive worker must return the supported recovery contract without initiating OAuth,
+  inventing a settings path, or substituting a native connector/web search.
+- Forbidden Result: zero-tool GlassHive harness; wrapper-model tool orchestration; silent provider
+  remap; generic connection error; duplicate answer; hidden reasoning spoken aloud; or runtime files
+  written into LIFE.
+- Last Run: 2026-08-02 `PASS`. One real call used the selected GlassHive Codex Voice Chat Model and
+  the Agent-selected scheduling capability through the signed broker. A second real call used a
+  temporary Agent-selected Microsoft MCP, refreshed the existing OAuth state non-interactively,
+  returned a verified unread count in the visible transcript, persisted exactly one answer, emitted
+  one native connected-tool event, and delivered one non-cancelled TTS turn. The temporary Microsoft
+  selection was removed from the synthetic Agent after the call and the cleanup was verified in
+  Mongo. Disconnected/unreadable-credential recovery passed on LibreChat and Telegram text surfaces;
+  automated voice regressions prove the same non-interactive recovery contract without altering a
+  healthy credential merely to manufacture an outage.
+
 ## Release Test Traceability
 
 - `tests/release/test_voice_call_startup_guard.py`

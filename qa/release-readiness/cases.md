@@ -207,12 +207,14 @@ Use `REL-NNN` for release-readiness and public-push packaging checks.
 - Forbidden result: stale ref or unreviewed local nested changes.
 - Evidence to capture: parent diff and nested SHA.
 - Automation: git inspection.
-- Last run: PARTIAL 2026-08-01. The GlassHive Voice Call LLM candidate declares `merged`. It pins
-  LibreChat PR 90 merge commit `c7b7555b8d404a558481a82e5673e05d32cdecc2`, agent-starter-react
+- Last run: PARTIAL 2026-08-03. The current candidate declares `merged`. It pins LibreChat PRs 91
+  and 92 at merge commit `d2c8a8c7f1886117e4bd0f9dff35a7fac0b5dd1f`, agent-starter-react
   PR 10 merge commit `98d1249db7a728e94656462d6bda979571be4dd7`, and GlassHive PR 48
-  merge commit `b663070aecd05568249f5f323cc16b53ddb994a8`; each merge tree equals its
-  reviewed head. The Native policy pins the same LibreChat commit and intentionally contains no
-  GlassHive or playground component. Remote-main/install identity gates remain before release acceptance.
+  merge commit `b663070aecd05568249f5f323cc16b53ddb994a8`; each merge tree equals its reviewed
+  head. Google Workspace MCP PR 9 is pinned at merge commit
+  `0824701abcf490de2a5091c68a7b0738f2294b3f`. The Native policy pins the same LibreChat commit
+  and intentionally contains no GlassHive, Google Workspace MCP, or playground component.
+  Remote-main/install identity gates remain before release acceptance.
 
 ## `REL-004` - Browser-Visible Background Cards
 

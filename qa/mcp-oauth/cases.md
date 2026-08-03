@@ -12,6 +12,8 @@ Use stable `MCPOAUTH-NNN` IDs for mcp oauth cases.
 | `MCPOAUTH-002` | Public QA evidence is sanitized and reproducible | A PR reviewer can verify the behavior without private/local data | QA report, git diff, logs summary, generated artifacts | Public-safety scan plus relevant release tests | NOT YET RUN (cataloged 2026-05-17; next feature run required) |
 | `MCPOAUTH-003` | A down local OAuth MCP endpoint does not break status polling, warmup, or chat response generation | User sees a clear unavailable state while other MCPs and chat keep working | MCP status endpoint, Agent Builder panel, backend warmup logs, web chat | `api/server/routes/__tests__/mcp.spec.js` plus live status/browser QA | 2026-05-17 live runtime sanity - passed with MS365 endpoint down |
 | `MCPOAUTH-004` | Connected status requires a decryptable credential and an early provider 401 gets one bounded refresh/replay. | Settings never claims a broken stored row is connected; valid reconnect restores real model use. | Connected Accounts settings, key store, OpenAI Codex route, scheduler generation | data-schema and API package tests plus sanitized browser/log/DB QA | PASS 2026-07-13; unreadable-row RCA reproduced safely, supported reconnect restored a decryptable record, and a real Sol/xHigh scheduled run completed without fallback |
+| `MCPOAUTH-005` | Request-time readiness classifies missing and undecryptable OAuth state and prevents capability-empty handoffs. | Web, Telegram, and voice either keep a partially ready specialist or stay with Main and show exact reconnect guidance. | Tool loader, optional graph, web/Telegram/LiveKit | MCP reinit + graph regressions, supported reconnect, real cross-surface QA | IN PROGRESS 2026-08-02: synthetic classification/graph coverage added; supported reconnect and real surfaces pending. |
+| `MCPOAUTH-006` | A non-interactive worker receives structured, UI-accurate recovery for every OAuth MCP without provider-name branching. | Missing, unreadable, and rejected credentials remain distinct; the user is directed to Agent Builder -> owning agent -> MCP Servers -> Connect, never an invented settings page. | GlassHive broker describe/invoke, MCP reinit | `Tools/mcp.spec.js` and `GlassHiveCapabilityBroker.spec.js` | PASS 2026-08-03: focused recovery tests, two supported Google OAuth grants, restart persistence, and authenticated GlassHive/web/Telegram reads passed. |
 
 ## `MCPOAUTH-001` - Core User Flow
 
@@ -76,6 +78,51 @@ Use stable `MCPOAUTH-NNN` IDs for mcp oauth cases.
 - Last run: PASS 2026-07-13; focused key tests passed, the full API package suite passed, supported
   reconnect restored the local record, and the real scheduled Sol/xHigh control completed with no fallback.
 
+## `MCPOAUTH-006` - Non-Interactive OAuth Recovery Contract
+
+- Unit-fixture missing, unreadable, and rejected-but-present OAuth credential states without
+  starting an interactive redirect from a worker request.
+- Verify describe and invoke return a typed blocker with `connect_mcp_account`, the
+  `agent_builder` surface, and the exact supported MCP Connect path.
+- Verify an auth-blocked invocation never becomes `not_found`, never initializes the provider, and
+  never contains provider-specific branching or a guessed Settings path.
+- On the real local surface, reconnect only through the Agent Builder MCP Connect action, then run
+  the same broker request after restart and confirm a real provider tool result.
+- Last run: PASS 2026-08-03; focused recovery tests and missing-auth turns pass, and the supported
+  Agent Builder OAuth flow was completed for two slots. Post-restart authenticated worker reads
+  succeeded without substituting web search or a direct wrapper model.
+
+## `MCPOAUTH-007` - Multiple Accounts On One OAuth MCP Provider
+
+- Configure three synthetic slots for one OAuth MCP provider and verify the compiler emits three
+  distinct server/storage identities with one shared reviewed endpoint and callback provider.
+- Verify the generated Connected Accounts agent receives every read and write tool for every
+  configured slot, rather than exposing extra cards that the default agent cannot call.
+- Verify full MCP config preserves trusted connection-group metadata while user-created MCP input
+  strips it.
+- Complete OAuth through the shared callback for the second slot and prove tokens, reconnection,
+  cached tools, success redirect, revoke, and refresh all use the second slot identity rather than
+  overwriting the first.
+- In the real Agent Builder, connect two different synthetic or owner-authorized Google accounts,
+  refresh the page, restart Viventium, and verify both cards stay independently connected.
+- Ask web Viventium, Telegram Viventium, and a GlassHive worker for a bounded read-only inbox check
+  across all connected Gmail accounts. Correlate one provider call per account with logs and
+  private DB token counts; the final response must combine and deduplicate evidence without
+  exposing account identifiers unless the user asks.
+- For a relative local-day request, verify direct and GlassHive paths use identical Unix-second
+  boundaries derived from the user's timezone. Date-only Gmail boundaries are forbidden because
+  the Gmail API interprets them as Pacific time and can return a different count.
+- Unhappy paths: one slot disconnected, one grant revoked, one provider request rate-limited, second
+  OAuth denied, duplicate callback, provider callback mismatch, and one account returning no rows.
+  A healthy slot must still return truthful partial results while the affected slot is named as
+  action-required; no silent single-account success is allowed for an all-accounts request.
+- Automation: compiler tests, data-provider MCP schema tests, API MCP route tests, and Google MCP
+  OAuth/session tests.
+- Last run: PARTIAL 2026-08-03; compiler/schema/callback and credential-log regressions pass. Real
+  two-account OAuth, restart persistence, direct web, GlassHive Main, and Telegram all-account reads
+  pass with timezone-correct Unix boundaries. Destructive live revoke and provider-rate-limit runs
+  remain represented by automated degraded-path coverage rather than owner-account mutation.
+
 ## Natural User Use Case Checklist
 
 These rows are the minimum natural-user checklist gate for Mcp Oauth. Add narrower feature-specific
@@ -87,3 +134,5 @@ rows before claiming a pass when the feature behavior changes.
 | `MCPOAUTH-UC-002` | On QA report, git diff, logs summary, generated artifacts, create or review the public QA evidence record with setup/auth/config, empty-state, degraded-dependency, and privacy checks. | owning requirement for `MCPOAUTH-002` / `MCPOAUTH-002` | QA report, git diff, logs summary, generated artifacts | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to MCPOAUTH-002. | The user sees an honest setup, retry, or degraded-state result for MCPOAUTH-002; no fake success is accepted. | NOT YET RUN (cataloged 2026-05-18; next feature run required) |
 | `MCPOAUTH-UC-003` | After a down local OAuth MCP endpoint does not break status polling, warmup, or chat response generation, refresh, restart, retry, or switch linked surfaces and verify persistence/parity. | owning requirement for `MCPOAUTH-003` / `MCPOAUTH-003` | MCP status endpoint, Agent Builder panel, backend warmup logs, web chat | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to MCPOAUTH-003. | MCPOAUTH-003 remains correct after the persistence or parity step and final wording matches evidence. | NOT YET RUN (cataloged 2026-05-18; next feature run required) |
 | `MCPOAUTH-UC-004` | Open Connected Accounts after restart, repair a disconnected provider through the supported reconnect, and run a synthetic model-backed automation. | `39_Installer_and_Config_Compiler.md` / `MCPOAUTH-004` | browser settings, provider callback, scheduler/model path, logs/DB | decryptability status only, sanitized callback/result, provider/model/effort trace, fallback state | Settings is truthful, reconnect persists, the requested provider actually answers, and no credential/account detail enters public evidence. | PASS 2026-07-13; browser reconnect and post-restart real scheduled control passed; private identifiers remained outside repo evidence |
+| `MCPOAUTH-UC-005` | Ask a GlassHive worker to use a disconnected agent-owned MCP, then repair it through the supported control. | `07_MCPs.md` / `MCPOAUTH-006` | GlassHive conversation, Agent Builder MCP panel, broker route | visible wording, structured broker response, OAuth status, provider call log | Before reconnect, the worker gives the exact Agent Builder MCP Connect path and does not claim a missing tool; after reconnect/restart, the live request succeeds through that MCP. | PASS 2026-08-03: supported OAuth and post-restart authenticated worker read completed. |
+| `MCPOAUTH-UC-006` | Connect two Google accounts, restart, and ask Viventium to check every Gmail inbox. | `07_MCPs.md` / `MCPOAUTH-007` | Agent Builder, web chat, Telegram, GlassHive broker | visible slot cards, sanitized OAuth status, distinct token/session counts, provider calls, final answer | Both accounts remain independent and usable; all-account requests cover both once, partial failures stay explicit, and one connection never overwrites another. | PASS 2026-08-03 for the natural user path: two grants persisted through two restarts and direct web, GlassHive Main, and Telegram each returned one bounded combined answer backed by both slots. |

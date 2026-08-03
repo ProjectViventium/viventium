@@ -478,6 +478,14 @@ properties:
             type: boolean
       google_workspace:
         type: object
+        properties:
+          enabled:
+            type: boolean
+          account_slots:
+            type: integer
+            minimum: 1
+            maximum: 10
+            description: Independent Google Workspace OAuth connections exposed to each Viventium user.
       ms365:
         type: object
       glasshive:
@@ -550,6 +558,24 @@ properties:
                   - type: array
                     items:
                       type: string
+              plugin_denylist:
+                description: Canonical name@marketplace plugin IDs disabled only in host Codex and Claude workers.
+                default: [viventium-feelings@project-viventium]
+                oneOf:
+                  - type: string
+                  - type: array
+                    items:
+                      type: string
+              codex_personality:
+                type: string
+                description: Worker-local Codex communication style. Viventium defaults to none so its final Feeling capsule remains the sole personality authority; inherit preserves the user's native Codex setting.
+                enum: [inherit, none, friendly, pragmatic]
+                default: none
+              codex_conversation_project_instructions:
+                type: string
+                description: Project-instruction policy for Codex conversation workers. Viventium defaults to exclude so workspace AGENTS.md files cannot compete with its current developer instructions; inherit preserves normal Codex discovery.
+                enum: [inherit, exclude]
+                default: exclude
               codex_plugin_cache:
                 type: string
               codex_ignore_user_config:

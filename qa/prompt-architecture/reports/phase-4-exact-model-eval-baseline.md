@@ -1,20 +1,20 @@
 # Prompt Registry Slice: Exact-Model Completion Baseline
 
-<!-- qa-evidence-exempt: Generated blocked-run baseline retained as a supplemental machine-evaluation artifact, not a dated user-path acceptance report. -->
+<!-- qa-evidence-exempt: Machine-generated blocked exact-model baseline; no real user-path QA execution occurred. -->
 
-Generated: 2026-07-11T19:51:31.339Z
+Generated: 2026-08-03T15:58:47.271Z
 
 ## Status
 
 - Status: blocked
 - Live run requested: no
-- Blocked reason: api_health_http_0
-- Prompt families: 16
-- Prompt cases: 113
+- Blocked reason: live_eval_disabled_set_VIVENTIUM_RUN_EXACT_MODEL_EVALS_or_pass_--run-live
+- Prompt families: 19
+- Prompt cases: 139
 - Agent hash: ed61775c0d925dba
-- Runner hash: ee810dcc7e8c3643
-- Runnable cases for this runner: 1
-- Selected case limit: all (1)
+- Runner hash: d171fa0f40eb67fa
+- Runnable cases for this runner: 139
+- Selected case limit: all (139)
 - Post-case observation window ms: 20000
 - Async follow-up grace after cortex completion ms: 30000
 - Result count: 0
@@ -26,6 +26,7 @@ Generated: 2026-07-11T19:51:31.339Z
 - Semantic judged: 0
 - Semantic passed: 0
 - Semantic failed: 0
+- Semantic judge unavailable: 0
 - Semantic judge blocked reason: none
 - Judge model hash: not used
 - Duplicate response hashes: 0
@@ -36,19 +37,19 @@ Generated: 2026-07-11T19:51:31.339Z
 
 ## Runtime Gate
 
-- API base hash: df04f69dd99af6b9
-- Runtime identity: fail
-- Runtime reasons: api_config_http_0, app_title_not_viventium, default_agent_not_main_viventium, connected_account_mode_not_enabled
-- App title: missing
-- Connected-account mode: not enabled
+- API base hash: 49e73564e9d328ef
+- Runtime identity: pass
+- Runtime reasons: none
+- App title: Viventium
+- Connected-account mode: enabled
 - Prompt debug-local gate: disabled
 - QA auth mode: not attempted
 
 ## Source Hashes
 
-- Agent source hash: 319f9ac1dd7d6fd5
-- LibreChat source hash: c5505f701c6002ed
-- Compiled LibreChat hash: e7b2fb5eaf3888c4
+- Agent source hash: b1bc9bc084ffbfb3
+- LibreChat source hash: 9a50a97ded91fb68
+- Compiled LibreChat hash: missing
 
 ## Results
 

@@ -368,22 +368,15 @@ def test_main_agent_does_not_defer_productivity_checks_to_background_cortices() 
     )
     instructions = bundle["mainAgent"]["instructions"].lower()
 
-    assert "do not promise that a background cortex will check gmail" in instructions
-    assert "do not promise that a background cortex will check outlook" in instructions
-    assert "do not defer the check to background cortices" in instructions
-    assert "use the connected accounts handoff for immediate checks" in instructions
-    assert "first get explicit user confirmation" in instructions
-    assert "including the connected accounts handoff when it has the required write tool" in instructions
-    assert "write-capable connected-account path" in instructions
-    assert "glasshive host-signed broker path" in instructions
-    assert "if no write-capable path is available" in instructions
-    assert "creating/updating calendar events" in instructions
-    assert "deleting/moving/archive/mark-read mail" in instructions
-    assert "sharing/permission changes" in instructions
-    assert "use a brokered worker when the request needs delegated/long-running glasshive work" in instructions
-    assert "memory is background" in instructions
-    assert "verified current-run google connector/tool evidence" in instructions
-    assert "verified current-run microsoft connector/tool evidence" in instructions
+    assert "verified current-run tool evidence" in instructions
+    assert "do not guess or promise that a background cortex will check later" in instructions
+    assert "a generic inbox/reply request means a current check across the configured email accounts" in instructions
+    assert "use the direct connected accounts handoff for immediate checks" in instructions
+    assert "use a brokered worker only when the work is delegated" in instructions
+    assert "before an external write, confirm the user requested it" in instructions
+    assert "destructive or broad mutations require explicit confirmation" in instructions
+    assert "otherwise say the path is unavailable" in instructions
+    assert "memory, recall, conversation/file search, cached summaries" in instructions
 
 
 def test_runtime_card_guard_fallback_matches_productivity_live_data_rule() -> None:

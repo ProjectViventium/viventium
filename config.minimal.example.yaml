@@ -170,6 +170,9 @@ integrations:
       # Separate from the integrations.openclaw lab toggle below.
       default_worker_profile: codex-cli
       default_execution_mode: host
+      plugin_denylist: ["viventium-feelings@project-viventium"]
+      codex_personality: none
+      codex_conversation_project_instructions: exclude
       codex_model: gpt-5.6-sol
       codex_reasoning_effort: xhigh
       codex_xhigh_route_proven: true

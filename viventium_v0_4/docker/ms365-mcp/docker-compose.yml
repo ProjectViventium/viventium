@@ -8,7 +8,7 @@ services:
       - "6274"
       - "--org-mode"
     ports:
-      - "${MS365_MCP_PORT:-6274}:6274"
+      - "${MS365_MCP_BIND_HOST:-127.0.0.1}:${MS365_MCP_PORT:-6274}:6274"
     environment:
       MS365_MCP_CLIENT_ID: ${MS365_MCP_CLIENT_ID}
       MS365_MCP_CLIENT_SECRET: ${MS365_MCP_CLIENT_SECRET}

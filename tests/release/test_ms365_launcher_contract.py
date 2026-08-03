@@ -5,6 +5,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 START_SCRIPT_PATH = REPO_ROOT / "viventium_v0_4" / "viventium-librechat-start.sh"
+COMPOSE_PATH = REPO_ROOT / "viventium_v0_4" / "docker" / "ms365-mcp" / "docker-compose.yml"
 
 
 def extract_shell_function(text: str, name: str) -> str:
@@ -41,3 +42,8 @@ def test_ms365_restart_reclaims_non_viventium_listener_before_reuse() -> None:
     assert 'if ! ms365_port_listener_is_viventium_owned "$base_port"; then' in start_ms365
     assert 'kill_port_listeners "$base_port"' in start_ms365
     assert "non-Viventium listener" in start_ms365
+
+
+def test_ms365_local_container_binds_loopback_by_default() -> None:
+    compose = COMPOSE_PATH.read_text(encoding="utf-8")
+    assert '${MS365_MCP_BIND_HOST:-127.0.0.1}:${MS365_MCP_PORT:-6274}:6274' in compose

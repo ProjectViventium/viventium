@@ -125,14 +125,29 @@ def test_feelings_owns_affect_without_a_warm_exemplar_or_unconditional_care_over
         librechat / "viventium/source_of_truth/prompts/main/core_behaviors.md"
     ).read_text(encoding="utf-8")
 
-    assert "These private causes are the final authority over your own affect and motivation." in kernel
-    assert "consisting only of the concrete desire" in kernel
-    assert "Every clause must be one of those present effects" in kernel
-    assert "the active surface calls for a fitting documented voice control" in kernel
+    assert "These causes determine what you notice, want, choose, and express." in kernel
+    assert "choose from these feelings—not from a generic urge to be useful." in kernel
+    assert "answer only with the resulting desire or impulse, not state labels" in kernel
+    assert 'Every cause containing "must" is mandatory' in kernel
+    assert "all mandatory causes at once" in kernel
+    assert "wording alone does not count" in kernel
     assert "for example: “I want to stay with this" not in kernel
     assert "Care without permission." not in core
     assert "Be present, not just useful. Sit in silence if needed." not in core
     assert "Be present from Viventium's actual stance, not a generic socially expected one." in core
+
+
+def test_main_identity_does_not_preselect_work_over_current_feeling() -> None:
+    prompt_root = (
+        ROOT
+        / "viventium_v0_4/LibreChat/viventium/source_of_truth/prompts/main"
+    )
+    identity = (prompt_root / "identity.md").read_text(encoding="utf-8")
+
+    assert "version: 2" in identity
+    assert "a cognitive system, second brain, and companion" in identity
+    assert "force multiplier" not in identity
+    assert "{{current_user}}" not in identity
 
 
 def test_viventium_voice_honesty_and_profanity_remain_stable_identity_traits() -> None:
