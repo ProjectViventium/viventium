@@ -2502,9 +2502,18 @@ def test_render_runtime_env_emits_glasshive_launch_env_only_when_enabled(tmp_pat
     assert default_host_env["WPR_MODEL_HOST_CODEX_CLI"] == "gpt-5.6-sol"
     assert default_host_env["WPR_CODEX_CLI_REASONING_EFFORT"] == "xhigh"
     assert default_host_env["WPR_CODEX_CLI_XHIGH_ROUTE_PROVEN"] == "true"
-    assert default_host_env["GLASSHIVE_RECURRING_SCHEDULE_OWNER"] == "viventium_cortex"
-    assert default_host_env["GLASSHIVE_SCHEDULING_OWNER_URL"] == "http://127.0.0.1:7110/mcp"
+    assert default_host_env["GLASSHIVE_RECURRING_SCHEDULE_OWNER"] == "glasshive_native"
+    assert "GLASSHIVE_SCHEDULING_OWNER_URL" not in default_host_env
     assert "GLASSHIVE_PUBLIC_LINKS_ONLY" not in default_host_env
+
+    delegated_host_config = copy.deepcopy(default_host_config)
+    delegated_host_config["integrations"]["scheduling_cortex"] = {"enabled": True}
+    delegated_host_env = config_compiler.render_runtime_env(
+        delegated_host_config,
+        config_compiler.build_agent_assignments(delegated_host_config),
+    )
+    assert delegated_host_env["GLASSHIVE_RECURRING_SCHEDULE_OWNER"] == "viventium_cortex"
+    assert delegated_host_env["GLASSHIVE_SCHEDULING_OWNER_URL"] == "http://127.0.0.1:7110/mcp"
 
     public_host_config = copy.deepcopy(default_host_config)
     public_host_config["runtime"]["network"] = {
@@ -2520,7 +2529,8 @@ def test_render_runtime_env_emits_glasshive_launch_env_only_when_enabled(tmp_pat
     )
     assert public_host_env["VIVENTIUM_PUBLIC_GLASSHIVE_URL"] == "https://glasshive.app.example.test"
     assert public_host_env["GLASSHIVE_OPERATOR_BASE_URL"] == "https://glasshive.app.example.test"
-    assert public_host_env["GLASSHIVE_SCHEDULING_OWNER_URL"] == "http://127.0.0.1:7110/mcp"
+    assert public_host_env["GLASSHIVE_RECURRING_SCHEDULE_OWNER"] == "glasshive_native"
+    assert "GLASSHIVE_SCHEDULING_OWNER_URL" not in public_host_env
     assert public_host_env["GLASSHIVE_ARTIFACT_BASE_URL"] == "https://glasshive.app.example.test"
     assert public_host_env["GLASSHIVE_PUBLIC_LINKS_ONLY"] == "true"
     assert public_host_env["GLASSHIVE_SIGNED_LINK_SECRET"] == expected_glasshive_secret
