@@ -466,10 +466,12 @@ most specific existing QA owner when a scenario already has a detailed provider 
   created against wrong workspace/user, or one-shot regression.
 - Evidence to capture: visible UI/MCP result, definition/occurrence rows, owner config, scheduler logs.
 - Full-view evidence minimum: real create + at least one fire + visible result + persisted ledger.
-- Automation: recurrence store/API/MCP/UI tests plus compiler assertions that select
-  `glasshive_native` unless the Scheduling Cortex integration is explicitly enabled.
-- Last run: PASS-AUTOMATED/PARTIAL 2026-08-08; recurrence/API/UI suites and the native/delegated
-  compiler owner regression pass, and disabling a
+- Automation: recurrence store/API/MCP/UI tests plus a compiler-to-pinned-runtime contract probe:
+  standalone enterprise deployments without a Viventium callback select `glasshive_native`, while
+  callback-bearing Viventium deployments and explicit Scheduling Cortex integrations select
+  `viventium_cortex`.
+- Last run: PASS-AUTOMATED/PARTIAL 2026-08-08; recurrence/API/UI suites and the cross-layer
+  native/delegated owner regression pass, and disabling a
   synthetic principal atomically deactivates its native definition and pre-fire work while
   transactional create/enable/manual-run/run-link guards close concurrent-disable races and leave
   other schedule classes untouched. Hosted admin-browser disable and a real clock fire are still
