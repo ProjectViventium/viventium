@@ -313,8 +313,8 @@ Selenium base:
 - **System**: bash, curl, file, git, jq, LibreOffice Writer/Impress/Calc, Pandoc, poppler-utils,
   ripgrep, screen, tmux, vim, wmctrl, xdotool, xterm, pcmanfm
 - **Node.js 22.x** via nodesource
-- **npm runtimes**: pinned Codex and Claude Code specs (`@openai/codex@0.142.0`,
-  `@anthropic-ai/claude-code@2.1.186`) plus an app-owned OpenClaw 2026.7.1-2 runtime installed
+- **npm runtimes**: pinned Codex and Claude Code specs (`@openai/codex@0.146.1`,
+  `@anthropic-ai/claude-code@2.1.223`) plus an app-owned OpenClaw 2026.7.1-2 runtime installed
   from the reviewed lock with `fast-uri` 3.1.3. Operators may override the Codex and Claude specs
   with `WPR_SANDBOX_CODEX_NPM_SPEC` and `WPR_SANDBOX_CLAUDE_CODE_NPM_SPEC` after updating QA
   evidence. OpenClaw is not overrideable by a mutable npm spec. The build must use a
@@ -1678,10 +1678,12 @@ runtime intent classifier.
   configured managed/profile/sandbox recovery options have been exhausted or would require an unsafe
   global host mutation.
 - Host-native worker substrates must have built-in version and capability preflight, even when the
-  operator did not supply a custom requirements JSON. Current floors are Codex CLI `>=0.142.0`,
-  Claude Code `>=2.1.186` with `--effort` support and `--chrome` support when Chrome integration is
-  enabled, and OpenClaw `>=2026.6.6`. These floors may be raised with a dated QA note after checking
-  current official docs/npm metadata and running the worker smoke suite.
+  operator did not supply a custom requirements JSON. Compatibility floors are Codex CLI
+  `>=0.144.1`, Claude Code `>=2.1.178` with `--effort` support, and the reviewed OpenClaw runtime.
+  These preserve existing host-native Viventium conversations. Fresh isolated workstation images
+  are separately pinned to Codex CLI `0.146.1` and Claude Code `2.1.223`; Chrome capability is also
+  checked when Chrome integration is enabled. Floors and image pins may be raised independently
+  with a dated QA note after checking current upstream metadata and running the worker smoke suite.
 - GlassHive MCP caller instructions must expose brokered MCP/tool capability as context, not as
   invented workspace goals. Unless the user explicitly specified them, callers must not manufacture
   success criteria, provider lists, output formats, artifacts, ranking rules, or workflow steps for
@@ -1830,21 +1832,32 @@ operator use. Ports on loopback.
 
 ### Azure Enterprise VM Mode
 
-`azure_enterprise_vm_docker` is the v1 enterprise deployment mode. It keeps the current Docker
-worker substrate and moves the control plane to an Azure VM inside one enterprise resource group.
-The security model is **one GlassHive deployment per enterprise tenant**. Multiple enterprise
-customers must use separate deployments or a later stronger isolation substrate such as ACI,
-per-user VMs, gVisor, or Kata.
+`azure_enterprise_vm_docker` keeps the Docker worker substrate and moves the control plane to an
+Azure VM inside one enterprise resource group. The security model is **one GlassHive deployment per
+enterprise tenant**. Multiple enterprise customers use separate deployments or a later stronger
+isolation substrate such as ACI, per-user VMs, gVisor, or Kata.
 
-Default enterprise auth is `first_party_assertion`:
+The deployment mode has two explicit security contracts:
+
+- `legacy_compatibility` preserves the existing static service-token and client-asserted-owner
+  integration while it is migrated. It is not a multi-user login boundary.
+- `multi_user` requires the Glass Drive BFF to own browser OIDC Authorization Code + PKCE and MCP to
+  own OAuth resource validation. Gateway/MCP signer processes and the private runtime run as
+  separate OS identities. Only the signer side receives the assertion private key; the runtime
+  receives verifier/JWKS configuration. The three services share durable runtime state through a
+  dedicated group using compiler-enforced `0770` directories and `0660` SQLite/WAL files, while the
+  gateway auth database remains in a gateway-only `0700` child directory.
+
+For both contracts:
 
 - LibreChat may connect to GlassHive in two independent supported roles: as the normal
   `glasshive-harness` AI Provider/Model for authored conversations, and through MCP configuration
   for explicit worker delegation/tool use. Enterprise identity and tenant assertions apply to both
   boundaries according to their separate credentials; neither role wraps the other.
-- The default LibreChat MCP config sends `X-Viventium-Tenant-Id`, `X-Viventium-User-Id`, and
-  request-context/upload headers; the service token is injected by the trusted reverse proxy unless
-  `service_token_delivery=client_header` is explicitly selected.
+- Legacy LibreChat MCP config may send `X-Viventium-Tenant-Id`, `X-Viventium-User-Id`, and
+  request-context/upload headers inside its explicitly trusted compatibility boundary. Multi-user
+  browser and direct MCP identity comes only from verified OIDC/OAuth state and short-lived signed
+  runtime assertions; caller identity headers are rejected.
 - GlassHive fails closed when `GLASSHIVE_ENTERPRISE_MODE=true` and `WPR_API_TOKEN` is missing.
 - GlassHive derives owner scope from the authenticated request context and ignores caller-supplied
   `owner_id` for project and worker creation in enterprise mode.
@@ -1884,15 +1897,16 @@ Default enterprise auth is `first_party_assertion`:
 - Signed-link QA must inspect visible chat, link `href`s, and hidden accessibility/copy text. A
   visually clean Markdown link can still leave raw signed URLs in offscreen serialized Markdown
   nodes; renderer and bridge fixes must treat that as a user-facing leakage surface.
-- `/health` is the only intentionally unauthenticated cloud route. UI, docs, OpenAPI, takeover,
-  artifacts, terminal websocket, metrics, admin, and MCP/control-plane routes require service auth
-  plus a user assertion.
+- `/health`, the public assertion JWKS, OAuth protected-resource metadata/challenge, and the minimal
+  OIDC login/callback endpoints are the only intentionally unauthenticated cloud routes. UI,
+  takeover, artifacts, terminal websocket, metrics, admin, and control-plane data require an
+  authenticated user/session or correctly scoped service assertion.
 
-Spec-compliant MCP OAuth/OIDC remains an optional mode for clients that accept a separate MCP
-consent flow. It must validate audience/resource correctly; do not pass LibreChat's own login token
-to GlassHive as if it were a GlassHive-audience token. Until an external token validator is wired,
-the GlassHive runtime accepts only `first_party_assertion` for request authorization by default;
-the optional MCP OAuth block is a client connection flow, not server-side token validation.
+Spec-compliant MCP OAuth is mandatory in `multi_user` mode and optional only in
+`legacy_compatibility`. It validates issuer, audience/resource, subject, authorized client, scopes,
+expiry, and JWKS rotation at the MCP edge. LibreChat's own login token is never passed through as a
+GlassHive token. MCP converts a verified principal into a new short-lived internal assertion; the
+private runtime does not accept the external token directly.
 
 The Azure setup guide, sample config, reverse-proxy expectations, provider env examples, scripts,
 and acceptance checklist live in the private enterprise deployment repo. Public product docs keep
@@ -1908,7 +1922,7 @@ approved key or virtual key in the enterprise deployment overlay.
 ### Prerequisites
 
 - Docker daemon running and accessible
-- Port availability: 7900, 4444, 18789 (per container); 8766, 8767 (service)
+- Port availability: 7900, 4444, 18789 (per container); 8766 runtime, 8767 MCP, 8780 Glass Drive BFF
 - Disk space for sandbox state directories
 - 2 GB shared memory per sandbox
 
@@ -1989,8 +2003,8 @@ persistent home and workspace mounts.
 | `GLASSHIVE_ENTERPRISE_TENANT_ID` | `local` | Single-tenant deployment identifier used when the request does not carry a tenant header |
 | `WPR_SANDBOX_IMAGE` | `workers-projects-runtime-workstation:phase1-node22-docs7` | Docker image with native CLI, browser/computer substrate, optional managed AI-worker browser extensions, worker-local native-host bootstrap, stale disabled-extension cleanup, and professional document toolchain |
 | `GLASSHIVE_AI_WORKER_BROWSER_EXTENSIONS` / `WPR_AI_WORKER_BROWSER_EXTENSIONS` | `none` | Comma-separated optional Docker browser extensions to force-install (`claude`, `codex`, or `all`). The default is `none` because extension policy/profile install is not proof of a connected bridge; opt in only when the selected worker image has a proven compatible browser, native host, auth/session, and user-grade QA evidence. |
-| `WPR_SANDBOX_CODEX_NPM_SPEC` | `@openai/codex@0.142.0` | Pinned Codex CLI package installed into rebuilt workstation images; update only with dated version/QA evidence |
-| `WPR_SANDBOX_CLAUDE_CODE_NPM_SPEC` | `@anthropic-ai/claude-code@2.1.186` | Pinned Claude Code package installed into rebuilt workstation images; update only with dated version/QA evidence |
+| `WPR_SANDBOX_CODEX_NPM_SPEC` | `@openai/codex@0.146.1` | Pinned Codex CLI package installed into rebuilt workstation images; update only with dated version/QA evidence |
+| `WPR_SANDBOX_CLAUDE_CODE_NPM_SPEC` | `@anthropic-ai/claude-code@2.1.223` | Pinned Claude Code package installed into rebuilt workstation images; update only with dated version/QA evidence |
 | `WPR_SANDBOX_OPENCLAW_LOCK_DIR` | bundled reviewed lock | App-owned OpenClaw 2026.7.1-2 lock used for rebuilt workstation images; mutable npm specs are rejected |
 | `WPR_CODEX_CHROME_PLUGIN_ROOT` / `CODEX_CHROME_PLUGIN_ROOT` | unset | Optional worker-local first-party Codex Chrome plugin root containing `extension-host/linux/<arch>/extension-host`; when present with a reachable node-repl executable, bootstrap writes the Codex native messaging manifest and config |
 | `WPR_CODEX_NODE_REPL_PATH` / `CODEX_NODE_REPL_PATH` | unset | Optional worker-local node-repl executable used by the Codex Chrome native host config. If unset, bootstrap tries `node_repl` on the container `PATH`; the base workstation image does not claim Codex Chrome readiness unless this path or a PATH-provided node-repl is actually present. |
@@ -2025,7 +2039,7 @@ persistent home and workspace mounts.
 | `WPR_CLAUDE_CODE_ENABLE_CHROME` | `true` | Claude Code workers launch with `--chrome` when available so Claude can use its native Chrome integration; set `0` only for an explicit locked-down mode |
 | `WPR_CLAUDE_CODE_EFFORT` | unset | Optional Claude Code effort. MCP/UI/direct API per-run effort must project `max` into the bootstrap bundle, and workspace plus host-native commands must translate it to `--effort max` |
 | `CLAUDE_CODE_OAUTH_TOKEN` | unset | Optional Claude Code headless OAuth token from `claude setup-token`; supported for Docker/workspace and host workers through the bootstrap/env allowlist. In enterprise/run-only mode it is written only to secret runtime env, not the interactive shell env. |
-| Built-in host CLI floors | Codex CLI `>=0.142.0`, Claude Code `>=2.1.186`, OpenClaw `>=2026.6.6` | Host-native workers fail closed before run creation when the configured CLI is too old or missing required capability flags |
+| Built-in host CLI floors | Codex CLI `>=0.144.1`, Claude Code `>=2.1.178`, reviewed OpenClaw runtime; fresh workstation image pins remain Codex `0.146.1` and Claude `2.1.223` | Host-native workers fail closed before run creation when the configured CLI is too old or missing required capability flags; fresh workspaces use the separately reviewed current pins |
 | `WPR_SANDBOX_VNC_PASSWORD` | `secret` | VNC access password |
 | `WPR_SANDBOX_VNC_NO_PASSWORD` | `1` | Disable VNC password |
 | `WPR_SANDBOX_SERVICE_TMPDIR` | `/tmp` | Temp path for container supervisor services such as noVNC/websockify; keep separate from mounted worker-home `TMPDIR` to avoid live desktop socket reset failures |

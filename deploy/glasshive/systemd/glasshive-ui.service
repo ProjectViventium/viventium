@@ -1,0 +1,28 @@
+[Unit]
+Description=GlassHive Glass Drive authentication and control plane
+After=network-online.target glasshive-runtime.service
+Wants=network-online.target glasshive-runtime.service
+PartOf=glasshive.target
+
+[Service]
+Type=simple
+User=glasshive-gateway
+Group=glasshive-state
+SupplementaryGroups=glasshive-state glasshive-gateway-secrets
+UMask=0007
+WorkingDirectory=/opt/viventium/current/viventium_v0_4/GlassHive/frontends/glass-drive-ui
+EnvironmentFile=/etc/viventium/glasshive/gateway.env
+EnvironmentFile=/etc/viventium/glasshive/gateway-active.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/opt/viventium/current/viventium_v0_4/GlassHive/frontends/glass-drive-ui/.venv/bin/uvicorn glass_drive_ui.server:app --host 127.0.0.1 --port ${GLASSHIVE_UI_PORT} --no-access-log
+ExecStartPost=/opt/viventium/current/viventium_v0_4/GlassHive/frontends/glass-drive-ui/.venv/bin/python /opt/viventium/current/deploy/glasshive/systemd/glasshive_ui_readiness_probe.py --url http://127.0.0.1:${GLASSHIVE_UI_PORT}/health --auth-state ${GLASSHIVE_AUTH_STATE_PATH} --timeout-sec 60
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/glasshive
+
+[Install]
+WantedBy=glasshive.target

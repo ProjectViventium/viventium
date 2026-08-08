@@ -101,6 +101,19 @@ This document defines what belongs in public, private personal, and private ente
 | Sparkle updater | Sparkle is MIT; archive/feed signing does not replace Apple code signing/notarization or Viventium's runtime/data health gate. | Candidate for the small macOS helper only after dependency/security review. Runtime payload activation remains Viventium-owned and health-gated. |
 | Viventium runtime/helper bundles | Viventium license plus all nested third-party notices. Apple distribution requirements are separate from copyright licenses. | Sign nested code first, then enclosing bundles; notarize every downloaded executable payload; publish SBOM, exact manifest, notices, and installed-artifact evidence before release. |
 
+### GlassHive User-Control-Plane Python Additions
+
+The GlassHive authentication and recurring-workspace additions introduce the following direct
+runtime dependencies. Exact versions and hashes remain lockfile/release-manifest facts rather than
+policy text. Their installed license files must be carried into generated notices and the release
+SBOM.
+
+| Dependency | Purpose | License boundary |
+| --- | --- | --- |
+| PyJWT with its cryptography extra | OIDC/JWKS validation and signed internal assertions | MIT; retain the installed PyJWT license plus the separately inventoried transitive cryptography notices. |
+| croniter | Validated recurring-schedule next-run calculation | MIT; retain the installed license. |
+| python-dateutil | Standards-based recurring date/time parsing | Dual Apache-2.0/BSD; retain the installed license and record the selected package metadata in the SBOM. |
+
 Version numbers and hashes belong in a signed release manifest, not this policy document. The
 release process must update notices/SBOM and rerun the license scan whenever any candidate changes.
 For npm workspaces, the release inventory is the physical `package-lock.json` package graph in the

@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import copy
 import hashlib
+import ipaddress
 import json
 import os
 import platform
@@ -14,7 +15,7 @@ import subprocess
 import sys
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import yaml
@@ -316,34 +317,297 @@ def _reject_localhost_cloud_url(label: str, value: str) -> None:
         raise SystemExit(f"{label} must be a non-localhost URL for azure_enterprise_vm_docker")
 
 
+def _require_https_public_url(label: str, value: str) -> None:
+    raw = str(value or "").strip()
+    try:
+        parsed = urlparse(raw)
+        _ = parsed.port
+    except ValueError as exc:
+        raise SystemExit(f"{label} must be a valid HTTPS URL") from exc
+    if (
+        parsed.scheme.lower() != "https"
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or any(character.isspace() for character in raw)
+    ):
+        raise SystemExit(f"{label} must be a valid HTTPS URL")
+    hostname = str(parsed.hostname or "").strip().lower().rstrip(".")
+    if hostname == "localhost" or hostname.endswith(".localhost"):
+        raise SystemExit(f"{label} must be a public HTTPS URL")
+    try:
+        address = ipaddress.ip_address(hostname)
+    except ValueError:
+        address = None
+    if address is not None and not address.is_global:
+        raise SystemExit(f"{label} must be a public HTTPS URL")
+
+
+def _canonical_mcp_public_url(label: str, value: str) -> str:
+    """Match `url::Url::parse(...).as_str()` for the bounded Codex MCP URL shape."""
+    raw = str(value or "").strip()
+    _require_https_public_url(label, raw)
+    parsed = urlparse(raw)
+    if parsed.query or parsed.fragment:
+        raise SystemExit(f"{label} must not contain a query string or fragment")
+    if any(ord(character) > 127 for character in raw) or re.search(r"%(?![0-9A-Fa-f]{2})", raw):
+        raise SystemExit(f"{label} must use an ASCII URL with valid percent escapes")
+    path = parsed.path or "/"
+    if any(unquote(segment) in {".", ".."} for segment in path.split("/")):
+        raise SystemExit(f"{label} must not contain dot path segments")
+    hostname = str(parsed.hostname or "").encode("idna").decode("ascii").lower()
+    host = f"[{hostname}]" if ":" in hostname else hostname
+    port = parsed.port
+    netloc = host if port in {None, 443} else f"{host}:{port}"
+    return f"https://{netloc}{path}"
+
+
 def resolve_glasshive_enterprise_settings(config: dict[str, Any]) -> dict[str, Any]:
+    def mapping(value: Any, label: str) -> dict[str, Any]:
+        if value in (None, ""):
+            return {}
+        if not isinstance(value, dict):
+            raise SystemExit(f"{label} must be a mapping")
+        return value
+
     integrations = config.get("integrations", {}) or {}
     glasshive = integrations.get("glasshive") or {}
-    enterprise = glasshive.get("enterprise") or {}
-    if not isinstance(enterprise, dict):
-        enterprise = {}
+    enterprise = mapping(glasshive.get("enterprise"), "integrations.glasshive.enterprise")
     enabled = glasshive_azure_enterprise_enabled(config)
-    auth = enterprise.get("auth") or {}
-    if not isinstance(auth, dict):
-        auth = {}
-    idle = enterprise.get("idle") or {}
-    if not isinstance(idle, dict):
-        idle = {}
-    quotas = enterprise.get("quotas") or {}
-    if not isinstance(quotas, dict):
-        quotas = {}
-    provider_env = enterprise.get("provider_env") or {}
-    if not isinstance(provider_env, dict):
-        provider_env = {}
-    oauth = enterprise.get("oauth") or {}
-    if not isinstance(oauth, dict):
-        oauth = {}
-    owner_identity = enterprise.get("owner_identity") or auth.get("owner_identity") or {}
-    if not isinstance(owner_identity, dict):
-        owner_identity = {}
-    workspace_links = enterprise.get("workspace_links") or {}
-    if not isinstance(workspace_links, dict):
-        workspace_links = {}
+    auth = mapping(enterprise.get("auth"), "integrations.glasshive.enterprise.auth")
+    idle = mapping(enterprise.get("idle"), "integrations.glasshive.enterprise.idle")
+    quotas = mapping(enterprise.get("quotas"), "integrations.glasshive.enterprise.quotas")
+    provider_env = mapping(
+        enterprise.get("provider_env"),
+        "integrations.glasshive.enterprise.provider_env",
+    )
+    oauth = mapping(enterprise.get("oauth"), "integrations.glasshive.enterprise.oauth")
+    owner_identity = mapping(
+        enterprise.get("owner_identity") or auth.get("owner_identity"),
+        "integrations.glasshive.enterprise.owner_identity",
+    )
+    workspace_links = mapping(
+        enterprise.get("workspace_links"),
+        "integrations.glasshive.enterprise.workspace_links",
+    )
+    human_auth = mapping(
+        enterprise.get("human_auth"),
+        "integrations.glasshive.enterprise.human_auth",
+    )
+    human_oidc = mapping(
+        human_auth.get("oidc"),
+        "integrations.glasshive.enterprise.human_auth.oidc",
+    )
+    oidc_role_map = mapping(
+        human_oidc.get("role_map"),
+        "integrations.glasshive.enterprise.human_auth.oidc.role_map",
+    )
+    allowed_oidc_roles = {"member", "viewer", "tenant_admin", "service"}
+    for raw_claim_value, raw_role in oidc_role_map.items():
+        claim_value = str(raw_claim_value or "").strip()
+        role = str(raw_role or "").strip()
+        if not claim_value or len(claim_value) > 200:
+            raise SystemExit(
+                "integrations.glasshive.enterprise.human_auth.oidc.role_map "
+                "contains an invalid claim value"
+            )
+        if role not in allowed_oidc_roles:
+            raise SystemExit(
+                "integrations.glasshive.enterprise.human_auth.oidc.role_map values "
+                "must be member, viewer, tenant_admin, or service"
+            )
+    internal_assertion = mapping(
+        enterprise.get("internal_assertion"),
+        "integrations.glasshive.enterprise.internal_assertion",
+    )
+    mcp_oauth = mapping(
+        enterprise.get("mcp_oauth"),
+        "integrations.glasshive.enterprise.mcp_oauth",
+    )
+    provider_accounts = mapping(
+        enterprise.get("provider_accounts"),
+        "integrations.glasshive.enterprise.provider_accounts",
+    )
+    inference_broker = mapping(
+        provider_accounts.get("inference_broker"),
+        "integrations.glasshive.enterprise.provider_accounts.inference_broker",
+    )
+    capability_broker = mapping(
+        provider_accounts.get("capability_broker"),
+        "integrations.glasshive.enterprise.provider_accounts.capability_broker",
+    )
+    inference_broker_enabled = resolve_bool(inference_broker.get("enabled"), False)
+    inference_broker_url = str(inference_broker.get("url") or "").strip().rstrip("/")
+    inference_broker_proxy_base_url = str(
+        inference_broker.get("proxy_base_url") or inference_broker_url
+    ).strip().rstrip("/")
+    try:
+        inference_broker_timeout_seconds = max(
+            1.0,
+            min(float(inference_broker.get("timeout_seconds") or 120), 600.0),
+        )
+    except (TypeError, ValueError) as exc:
+        raise SystemExit(
+            "integrations.glasshive.enterprise.provider_accounts.inference_broker.timeout_seconds must be numeric"
+        ) from exc
+    inference_owner_bindings = inference_broker.get("owner_bindings") or []
+    if not isinstance(inference_owner_bindings, list):
+        raise SystemExit(
+            "integrations.glasshive.enterprise.provider_accounts.inference_broker.owner_bindings must be a list"
+        )
+    cleaned_inference_bindings: list[dict[str, str]] = []
+    seen_inference_owners: set[tuple[str, str]] = set()
+    for index, raw_binding in enumerate(inference_owner_bindings):
+        if not isinstance(raw_binding, dict):
+            raise SystemExit(
+                "integrations.glasshive.enterprise.provider_accounts.inference_broker.owner_bindings entries must be mappings"
+            )
+        binding = {
+            key: str(raw_binding.get(key) or "").strip()
+            for key in (
+                "glasshive_tenant_id",
+                "glasshive_owner_id",
+                "librechat_user_id",
+                "proof",
+            )
+        }
+        if any(not value for value in binding.values()):
+            raise SystemExit(
+                "integrations.glasshive.enterprise.provider_accounts.inference_broker.owner_bindings "
+                f"entry {index + 1} is incomplete"
+            )
+        if binding["proof"] not in {"operator_verified", "shared_oidc_subject"}:
+            raise SystemExit(
+                "GlassHive inference owner binding proof must be operator_verified or shared_oidc_subject"
+            )
+        if (
+            binding["proof"] == "shared_oidc_subject"
+            and binding["glasshive_owner_id"] != binding["librechat_user_id"]
+        ):
+            raise SystemExit(
+                "GlassHive shared_oidc_subject inference binding requires the same canonical principal"
+            )
+        owner_key = (binding["glasshive_tenant_id"], binding["glasshive_owner_id"])
+        if owner_key in seen_inference_owners:
+            raise SystemExit("GlassHive inference owner bindings contain a duplicate canonical owner")
+        seen_inference_owners.add(owner_key)
+        cleaned_inference_bindings.append(binding)
+    inference_owner_bindings_json = json.dumps(
+        cleaned_inference_bindings,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    capability_owner_bindings = capability_broker.get("owner_bindings")
+    if capability_owner_bindings is None:
+        # Backward compatibility for deployments that predate the separate capability-broker
+        # binding field. New mixed shared-OIDC deployments should configure this field directly.
+        capability_owner_bindings = inference_owner_bindings
+    if not isinstance(capability_owner_bindings, list):
+        raise SystemExit(
+            "integrations.glasshive.enterprise.provider_accounts.capability_broker.owner_bindings must be a list"
+        )
+    cleaned_capability_bindings: list[dict[str, str]] = []
+    seen_capability_owners: set[tuple[str, str]] = set()
+    for index, raw_binding in enumerate(capability_owner_bindings):
+        if not isinstance(raw_binding, dict):
+            raise SystemExit(
+                "integrations.glasshive.enterprise.provider_accounts.capability_broker.owner_bindings entries must be mappings"
+            )
+        binding = {
+            key: str(raw_binding.get(key) or "").strip()
+            for key in (
+                "glasshive_tenant_id",
+                "glasshive_owner_id",
+                "librechat_user_id",
+                "proof",
+            )
+        }
+        if any(not value for value in binding.values()):
+            raise SystemExit(
+                "integrations.glasshive.enterprise.provider_accounts.capability_broker.owner_bindings "
+                f"entry {index + 1} is incomplete"
+            )
+        if binding["proof"] not in {"operator_verified", "shared_oidc_subject"}:
+            raise SystemExit(
+                "GlassHive capability owner binding proof must be operator_verified or shared_oidc_subject"
+            )
+        if (
+            binding["proof"] == "shared_oidc_subject"
+            and binding["glasshive_owner_id"] != binding["librechat_user_id"]
+        ):
+            raise SystemExit(
+                "GlassHive shared_oidc_subject capability binding requires the same canonical principal"
+            )
+        owner_key = (binding["glasshive_tenant_id"], binding["glasshive_owner_id"])
+        if owner_key in seen_capability_owners:
+            raise SystemExit(
+                "GlassHive capability owner bindings contain a duplicate canonical owner"
+            )
+        seen_capability_owners.add(owner_key)
+        cleaned_capability_bindings.append(binding)
+    capability_owner_bindings_json = json.dumps(
+        cleaned_capability_bindings,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    capability_broker_enabled = resolve_bool(capability_broker.get("enabled"), False)
+    capability_identity_binding = str(
+        capability_broker.get("identity_binding") or "operator_verified"
+    ).strip().lower()
+    if capability_identity_binding not in {"operator_verified", "shared_oidc_subject"}:
+        raise SystemExit(
+            "integrations.glasshive.enterprise.provider_accounts.capability_broker.identity_binding "
+            "must be operator_verified or shared_oidc_subject"
+        )
+    capability_broker_issuer_url = str(
+        capability_broker.get("issuer_url") or ""
+    ).strip().rstrip("/")
+    try:
+        capability_broker_timeout_seconds = max(
+            1.0,
+            min(float(capability_broker.get("timeout_seconds") or 10), 60.0),
+        )
+    except (TypeError, ValueError) as exc:
+        raise SystemExit(
+            "integrations.glasshive.enterprise.provider_accounts.capability_broker.timeout_seconds must be numeric"
+        ) from exc
+    if enabled and capability_broker_enabled:
+        if not capability_broker_issuer_url:
+            raise SystemExit(
+                "GlassHive connected capability broker requires an explicit issuer URL"
+            )
+        if capability_identity_binding == "operator_verified" and not cleaned_capability_bindings:
+            raise SystemExit(
+                "GlassHive connected capability broker requires at least one explicitly verified owner binding"
+            )
+        _require_https_public_url(
+            "integrations.glasshive.enterprise.provider_accounts.capability_broker.issuer_url",
+            capability_broker_issuer_url,
+        )
+    if enabled and inference_broker_enabled:
+        if not inference_broker_url or not inference_broker_proxy_base_url:
+            raise SystemExit(
+                "GlassHive inference broker requires a URL and proxy base URL"
+            )
+        if not cleaned_inference_bindings:
+            raise SystemExit(
+                "GlassHive inference broker requires at least one explicitly verified owner binding"
+            )
+        _require_https_public_url(
+            "integrations.glasshive.enterprise.provider_accounts.inference_broker.url",
+            inference_broker_url,
+        )
+        _require_https_public_url(
+            "integrations.glasshive.enterprise.provider_accounts.inference_broker.proxy_base_url",
+            inference_broker_proxy_base_url,
+        )
+    provider_account_isolation = str(
+        provider_accounts.get("isolation_mode") or "disabled"
+    ).strip().lower()
+    if provider_account_isolation not in {"disabled", "per_worker_container"}:
+        raise SystemExit(
+            "integrations.glasshive.enterprise.provider_accounts.isolation_mode must be disabled or per_worker_container"
+        )
     oauth_enabled = resolve_bool(oauth.get("enabled"), False)
     if enabled and oauth_enabled:
         for key in ("authorization_url", "token_url", "redirect_uri"):
@@ -366,7 +630,16 @@ def resolve_glasshive_enterprise_settings(config: dict[str, Any]) -> dict[str, A
         _reject_localhost_cloud_url("integrations.glasshive.operator_base_url", operator_base_url)
         _reject_localhost_cloud_url("integrations.glasshive.enterprise.artifact_base_url", artifact_base_url)
     tenant_id = str(enterprise.get("tenant_id") or auth.get("tenant_id") or "default").strip() or "default"
-    auth_mode = str(auth.get("mode") or enterprise.get("auth_mode") or "first_party_assertion").strip().lower()
+    security_mode = str(enterprise.get("security_mode") or "legacy_compatibility").strip().lower()
+    if security_mode not in {"legacy_compatibility", "multi_user"}:
+        raise SystemExit(
+            "integrations.glasshive.enterprise.security_mode must be legacy_compatibility or multi_user"
+        )
+    auth_mode = str(
+        auth.get("mode")
+        or enterprise.get("auth_mode")
+        or ("signed_internal_assertion" if security_mode == "multi_user" else "first_party_assertion")
+    ).strip().lower()
     service_token_env = str(auth.get("service_token_env") or "GLASSHIVE_MCP_SERVICE_TOKEN").strip() or "GLASSHIVE_MCP_SERVICE_TOKEN"
     service_token_delivery = str(
         auth.get("service_token_delivery")
@@ -380,6 +653,11 @@ def resolve_glasshive_enterprise_settings(config: dict[str, Any]) -> dict[str, A
     service_token = optional_nested_secret(auth, "service_token") or optional_nested_secret(enterprise, "service_token")
     signed_link_secret = optional_nested_secret(enterprise, "signed_link_secret")
     upload_root = str(enterprise.get("uploads_root") or glasshive.get("uploads_root") or LIBRECHAT_UPLOADS_DIR).strip()
+    state_dir = str(enterprise.get("state_dir") or "/var/lib/glasshive").strip()
+    if enabled and security_mode == "multi_user":
+        state_path = Path(state_dir)
+        if not state_path.is_absolute() or ".." in state_path.parts:
+            raise SystemExit("integrations.glasshive.enterprise.state_dir must be an absolute normalized path")
     source_roots = enterprise.get("bootstrap_source_roots")
     if isinstance(source_roots, list):
         source_root_value = os.pathsep.join(str(item).strip() for item in source_roots if str(item).strip())
@@ -423,6 +701,481 @@ def resolve_glasshive_enterprise_settings(config: dict[str, Any]) -> dict[str, A
         if cleaned_aliases:
             owner_identity_aliases_json = json.dumps(cleaned_aliases, sort_keys=True, separators=(",", ":"))
     owner_identity_aliases_file = str(owner_identity.get("aliases_file") or "").strip()
+    human_auth_mode = str(human_auth.get("mode") or "disabled").strip().lower()
+    trusted_proxy_boundary_proven = resolve_bool(
+        human_auth.get("trusted_proxy_boundary_proven"), False
+    )
+    if human_auth_mode not in {"disabled", "trusted_proxy", "oidc"}:
+        raise SystemExit(
+            "integrations.glasshive.enterprise.human_auth.mode must be disabled, trusted_proxy, or oidc"
+        )
+    runtime_auth = mapping(
+        (config.get("runtime") or {}).get("auth"),
+        "runtime.auth",
+    )
+
+    def normalized_allowed_domains(raw_value: Any, label: str) -> list[str]:
+        if isinstance(raw_value, str):
+            domains = [
+                item.strip().lower()
+                for item in raw_value.replace(",", " ").split()
+                if item.strip()
+            ]
+        elif isinstance(raw_value, list):
+            domains = [str(item).strip().lower() for item in raw_value if str(item).strip()]
+        elif raw_value in (None, ""):
+            domains = []
+        else:
+            raise SystemExit(f"{label} must be a string or list")
+        if any(not re.fullmatch(r"[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?", domain) for domain in domains):
+            raise SystemExit(f"{label} contains an invalid domain")
+        return list(dict.fromkeys(domains))
+
+    canonical_domains_configured = "allowed_domains" in runtime_auth
+    canonical_domains = normalized_allowed_domains(
+        runtime_auth.get("allowed_domains"),
+        "runtime.auth.allowed_domains",
+    )
+    legacy_domains_configured = "allowed_email_domains" in human_auth
+    legacy_domains = normalized_allowed_domains(
+        human_auth.get("allowed_email_domains"),
+        "integrations.glasshive.enterprise.human_auth.allowed_email_domains",
+    )
+    if (
+        canonical_domains_configured
+        and legacy_domains_configured
+        and legacy_domains != canonical_domains
+    ):
+        raise SystemExit(
+            "integrations.glasshive.enterprise.human_auth.allowed_email_domains must match "
+            "canonical runtime.auth.allowed_domains"
+        )
+    allowed_domains = canonical_domains if canonical_domains_configured else legacy_domains
+    principal_claim = str(enterprise.get("principal_claim") or "").strip()
+    legacy_oidc_principal_claim = str(human_oidc.get("principal_claim") or "").strip()
+    legacy_mcp_subject_claim = str(mcp_oauth.get("subject_claim") or "").strip()
+    configured_principal_claims = {
+        value for value in (principal_claim, legacy_oidc_principal_claim, legacy_mcp_subject_claim) if value
+    }
+    if len(configured_principal_claims) > 1:
+        raise SystemExit(
+            "GlassHive browser and MCP principal claims must match enterprise.principal_claim"
+        )
+    principal_claim = next(iter(configured_principal_claims), "")
+    oidc_email_claim = str(human_oidc.get("email_claim") or "email").strip()
+    oidc_email_claim_trusted = resolve_bool(human_oidc.get("email_claim_trusted"), False)
+    oidc_issuer = str(human_oidc.get("issuer") or "").strip().rstrip("/")
+    oidc_client_id = str(human_oidc.get("client_id") or "").strip()
+    oidc_redirect_uri = str(human_oidc.get("redirect_uri") or "").strip()
+    oidc_post_logout_redirect_uri = str(
+        human_oidc.get("post_logout_redirect_uri")
+        or (f"{operator_base_url.rstrip('/')}/login" if human_auth_mode == "oidc" else "")
+    ).strip()
+    oidc_client_secret = optional_nested_secret(human_oidc, "client_secret")
+    if enabled and human_auth_mode == "oidc":
+        for label, value in {
+            "issuer": oidc_issuer,
+            "client_id": oidc_client_id,
+            "redirect_uri": oidc_redirect_uri,
+        }.items():
+            if not value:
+                raise SystemExit(
+                    f"integrations.glasshive.enterprise.human_auth.oidc.{label} is required"
+                )
+        _reject_localhost_cloud_url(
+            "integrations.glasshive.enterprise.human_auth.oidc.issuer",
+            oidc_issuer,
+        )
+        _reject_localhost_cloud_url(
+            "integrations.glasshive.enterprise.human_auth.oidc.redirect_uri",
+            oidc_redirect_uri,
+        )
+        _reject_localhost_cloud_url(
+            "integrations.glasshive.enterprise.human_auth.oidc.post_logout_redirect_uri",
+            oidc_post_logout_redirect_uri,
+        )
+        _require_https_public_url(
+            "integrations.glasshive.enterprise.human_auth.oidc.post_logout_redirect_uri",
+            oidc_post_logout_redirect_uri,
+        )
+        post_logout = urlparse(oidc_post_logout_redirect_uri)
+        operator = urlparse(operator_base_url)
+        post_logout_origin = (
+            post_logout.scheme.lower(),
+            str(post_logout.hostname or "").lower(),
+            post_logout.port or (443 if post_logout.scheme.lower() == "https" else 80),
+        )
+        operator_origin = (
+            operator.scheme.lower(),
+            str(operator.hostname or "").lower(),
+            operator.port or (443 if operator.scheme.lower() == "https" else 80),
+        )
+        if post_logout_origin != operator_origin or post_logout.fragment:
+            raise SystemExit(
+                "integrations.glasshive.enterprise.human_auth.oidc.post_logout_redirect_uri "
+                "must use the exact GlassHive operator public origin and no fragment"
+            )
+    internal_assertion_issuer = str(
+        internal_assertion.get("issuer") or operator_base_url
+    ).strip().rstrip("/")
+    internal_assertion_audience = str(
+        internal_assertion.get("audience") or "glasshive-runtime"
+    ).strip()
+    internal_assertion_key_id = str(
+        internal_assertion.get("key_id") or "glasshive-gateway-1"
+    ).strip()
+    internal_assertion_private_key_file = str(
+        internal_assertion.get("private_key_file") or ""
+    ).strip()
+    internal_assertion_previous_jwks_file = str(
+        internal_assertion.get("previous_public_jwks_file") or ""
+    ).strip()
+    internal_assertion_previous_keys_expire_at = str(
+        internal_assertion.get("previous_keys_expire_at") or ""
+    ).strip()
+    if bool(internal_assertion_previous_jwks_file) != bool(
+        internal_assertion_previous_keys_expire_at
+    ):
+        raise SystemExit(
+            "GlassHive internal assertion rotation requires both previous_public_jwks_file "
+            "and previous_keys_expire_at"
+        )
+    if internal_assertion_previous_keys_expire_at and not re.fullmatch(
+        r"[1-9][0-9]{9}", internal_assertion_previous_keys_expire_at
+    ):
+        raise SystemExit(
+            "GlassHive internal assertion previous_keys_expire_at must be a Unix timestamp"
+        )
+    internal_assertion_jwks_url = str(
+        internal_assertion.get("jwks_url")
+        or f"{operator_base_url}/.well-known/jwks.json"
+    ).strip()
+    mcp_oauth_enabled = resolve_bool(mcp_oauth.get("enabled"), False)
+    mcp_oauth_issuer = str(
+        mcp_oauth.get("issuer") or (oidc_issuer if mcp_oauth_enabled else "")
+    ).strip().rstrip("/")
+    mcp_token_tenant_id = str(mcp_oauth.get("token_tenant_id") or "").strip()
+    if mcp_token_tenant_id and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,254}", mcp_token_tenant_id):
+        raise SystemExit(
+            "integrations.glasshive.enterprise.mcp_oauth.token_tenant_id contains an invalid tenant id"
+        )
+    mcp_issuer_host = str(urlparse(mcp_oauth_issuer).hostname or "").lower()
+    if mcp_token_tenant_id and mcp_issuer_host == "login.microsoftonline.com" and not re.fullmatch(
+        r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}",
+        mcp_token_tenant_id,
+    ):
+        raise SystemExit(
+            "integrations.glasshive.enterprise.mcp_oauth.token_tenant_id must be the Entra tenant GUID"
+        )
+    raw_mcp_public_url = str(mcp_oauth.get("public_url") or mcp_url).strip()
+    mcp_public_url = (
+        _canonical_mcp_public_url(
+            "integrations.glasshive.enterprise.mcp_oauth.public_url",
+            raw_mcp_public_url,
+        ).rstrip("/")
+        if enabled and mcp_oauth_enabled
+        else raw_mcp_public_url.rstrip("/")
+    )
+    raw_mcp_token_audiences = mcp_oauth.get("token_audiences") or []
+    if isinstance(raw_mcp_token_audiences, str):
+        mcp_token_audiences = [
+            item
+            for item in raw_mcp_token_audiences.replace(",", " ").split()
+            if item
+        ]
+    elif isinstance(raw_mcp_token_audiences, list):
+        mcp_token_audiences = [
+            str(item).strip()
+            for item in raw_mcp_token_audiences
+            if str(item).strip()
+        ]
+    else:
+        raise SystemExit(
+            "integrations.glasshive.enterprise.mcp_oauth.token_audiences must be a string or list"
+        )
+    mcp_token_audiences = list(dict.fromkeys(mcp_token_audiences))
+    if any(
+        not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._~:/+-]{0,511}", audience)
+        for audience in mcp_token_audiences
+    ):
+        raise SystemExit(
+            "integrations.glasshive.enterprise.mcp_oauth.token_audiences contains an invalid audience"
+        )
+    raw_mcp_scopes = mcp_oauth.get("required_scopes") or []
+    if isinstance(raw_mcp_scopes, str):
+        mcp_required_scope_values = [item for item in raw_mcp_scopes.split() if item]
+    elif isinstance(raw_mcp_scopes, list):
+        mcp_required_scope_values = [
+            str(item).strip() for item in raw_mcp_scopes if str(item).strip()
+        ]
+    else:
+        raise SystemExit(
+            "integrations.glasshive.enterprise.mcp_oauth.required_scopes must be a string or list"
+        )
+    mcp_required_scope_values = list(dict.fromkeys(mcp_required_scope_values))
+    if any(
+        not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._~:/+-]{0,511}", scope)
+        for scope in mcp_required_scope_values
+    ):
+        raise SystemExit(
+            "integrations.glasshive.enterprise.mcp_oauth.required_scopes contains an invalid scope"
+        )
+    mcp_required_scopes = " ".join(mcp_required_scope_values)
+    raw_mcp_token_scopes = mcp_oauth.get("token_scopes") or []
+    if isinstance(raw_mcp_token_scopes, str):
+        mcp_token_scope_values = [item for item in raw_mcp_token_scopes.split() if item]
+    elif isinstance(raw_mcp_token_scopes, list):
+        mcp_token_scope_values = [
+            str(item).strip() for item in raw_mcp_token_scopes if str(item).strip()
+        ]
+    else:
+        raise SystemExit(
+            "integrations.glasshive.enterprise.mcp_oauth.token_scopes must be a string or list"
+        )
+    mcp_token_scope_values = list(dict.fromkeys(mcp_token_scope_values))
+    if any(
+        not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._~:/+-]{0,511}", scope)
+        for scope in mcp_token_scope_values
+    ):
+        raise SystemExit(
+            "integrations.glasshive.enterprise.mcp_oauth.token_scopes contains an invalid scope"
+        )
+    mcp_token_scopes = " ".join(mcp_token_scope_values)
+    raw_mcp_client_ids = mcp_oauth.get("allowed_client_ids") or []
+    if isinstance(raw_mcp_client_ids, str):
+        mcp_allowed_client_ids = [
+            item for item in raw_mcp_client_ids.replace(",", " ").split() if item
+        ]
+    elif isinstance(raw_mcp_client_ids, list):
+        mcp_allowed_client_ids = [
+            str(item).strip() for item in raw_mcp_client_ids if str(item).strip()
+        ]
+    else:
+        raise SystemExit(
+            "integrations.glasshive.enterprise.mcp_oauth.allowed_client_ids must be a string or list"
+        )
+    mcp_allowed_client_ids = list(dict.fromkeys(mcp_allowed_client_ids))
+    if any(
+        not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,199}", client_id)
+        for client_id in mcp_allowed_client_ids
+    ):
+        raise SystemExit(
+            "integrations.glasshive.enterprise.mcp_oauth.allowed_client_ids contains an invalid client id"
+        )
+    mcp_clients = mapping(
+        mcp_oauth.get("clients"),
+        "integrations.glasshive.enterprise.mcp_oauth.clients",
+    )
+    mcp_claude_client = mapping(
+        mcp_clients.get("claude"),
+        "integrations.glasshive.enterprise.mcp_oauth.clients.claude",
+    )
+    mcp_codex_client = mapping(
+        mcp_clients.get("codex"),
+        "integrations.glasshive.enterprise.mcp_oauth.clients.codex",
+    )
+    mcp_claude_client_id = str(mcp_claude_client.get("client_id") or "").strip()
+    mcp_codex_client_id = str(mcp_codex_client.get("client_id") or "").strip()
+    for label, client_id in (
+        ("claude", mcp_claude_client_id),
+        ("codex", mcp_codex_client_id),
+    ):
+        if client_id and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,199}", client_id):
+            raise SystemExit(
+                f"integrations.glasshive.enterprise.mcp_oauth.clients.{label}.client_id is invalid"
+            )
+        if client_id and client_id not in mcp_allowed_client_ids:
+            raise SystemExit(
+                f"GlassHive MCP {label} client_id must also appear in mcp_oauth.allowed_client_ids"
+            )
+    raw_claude_callback_port = mcp_claude_client.get("callback_port")
+    try:
+        mcp_claude_callback_port = (
+            int(raw_claude_callback_port) if raw_claude_callback_port not in (None, "") else 0
+        )
+    except (TypeError, ValueError) as exc:
+        raise SystemExit(
+            "integrations.glasshive.enterprise.mcp_oauth.clients.claude.callback_port must be an integer"
+        ) from exc
+    if mcp_claude_callback_port and not 1024 <= mcp_claude_callback_port <= 65535:
+        raise SystemExit(
+            "integrations.glasshive.enterprise.mcp_oauth.clients.claude.callback_port must be between 1024 and 65535"
+        )
+    if bool(mcp_claude_client_id) != bool(mcp_claude_callback_port):
+        raise SystemExit(
+            "GlassHive MCP Claude client requires both client_id and callback_port"
+        )
+    configured_codex_resource = str(
+        mcp_codex_client.get("resource") or ""
+    ).strip().rstrip("/")
+    if configured_codex_resource and not mcp_codex_client_id:
+        raise SystemExit(
+            "GlassHive MCP Codex resource cannot be configured without client_id"
+        )
+    if configured_codex_resource and configured_codex_resource != mcp_public_url:
+        raise SystemExit(
+            "GlassHive MCP Codex resource must exactly match mcp_oauth.public_url; "
+            "access-token audiences belong in mcp_oauth.token_audiences"
+        )
+    raw_codex_callback_port = mcp_codex_client.get("callback_port")
+    try:
+        mcp_codex_callback_port = (
+            int(raw_codex_callback_port) if raw_codex_callback_port not in (None, "") else 0
+        )
+    except (TypeError, ValueError) as exc:
+        raise SystemExit(
+            "integrations.glasshive.enterprise.mcp_oauth.clients.codex.callback_port must be an integer"
+        ) from exc
+    if mcp_codex_callback_port and not 1024 <= mcp_codex_callback_port <= 65535:
+        raise SystemExit(
+            "integrations.glasshive.enterprise.mcp_oauth.clients.codex.callback_port must be between 1024 and 65535"
+        )
+    if bool(mcp_codex_client_id) != bool(mcp_codex_callback_port):
+        raise SystemExit(
+            "GlassHive MCP Codex client requires both client_id and callback_port"
+        )
+    mcp_codex_resource = mcp_public_url if mcp_codex_client_id else ""
+    if (mcp_claude_client_id or mcp_codex_client_id) and not mcp_oauth_enabled:
+        raise SystemExit("GlassHive MCP client registrations require mcp_oauth.enabled")
+    raw_mcp_client_claims = mcp_oauth.get("client_id_claims") or ["azp", "appid", "client_id"]
+    if isinstance(raw_mcp_client_claims, str):
+        mcp_client_id_claims = [
+            item for item in raw_mcp_client_claims.replace(",", " ").split() if item
+        ]
+    elif isinstance(raw_mcp_client_claims, list):
+        mcp_client_id_claims = [
+            str(item).strip() for item in raw_mcp_client_claims if str(item).strip()
+        ]
+    else:
+        raise SystemExit(
+            "integrations.glasshive.enterprise.mcp_oauth.client_id_claims must be a string or list"
+        )
+    mcp_client_id_claims = list(dict.fromkeys(mcp_client_id_claims))
+    if not mcp_client_id_claims or any(
+        not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,79}", claim)
+        for claim in mcp_client_id_claims
+    ):
+        raise SystemExit(
+            "integrations.glasshive.enterprise.mcp_oauth.client_id_claims is invalid"
+        )
+    if enabled and mcp_oauth_enabled:
+        if (
+            not mcp_oauth_issuer
+            or not mcp_required_scopes
+            or not mcp_token_scopes
+            or not mcp_token_audiences
+        ):
+            raise SystemExit(
+                "integrations.glasshive.enterprise.mcp_oauth requires issuer, at least one "
+                "authorization/request scope, accepted token_scopes, and explicit token_audiences"
+            )
+        _reject_localhost_cloud_url(
+            "integrations.glasshive.enterprise.mcp_oauth.issuer",
+            mcp_oauth_issuer,
+        )
+        if human_auth_mode == "oidc" and oidc_issuer and mcp_oauth_issuer != oidc_issuer:
+            raise SystemExit(
+                "GlassHive browser and MCP OAuth issuers must match when ownership is derived from issuer + subject"
+            )
+        _reject_localhost_cloud_url(
+            "integrations.glasshive.enterprise.mcp_oauth.public_url",
+            mcp_public_url,
+        )
+    multi_user_features_configured = bool(
+        human_auth_mode != "disabled"
+        or mcp_oauth_enabled
+        or inference_broker_enabled
+        or capability_broker_enabled
+        or internal_assertion
+        or principal_claim
+        or resolve_bool(provider_accounts.get("codex_subscriptions_enabled"), False)
+        or resolve_bool(provider_accounts.get("hosted_claude_consumer_auth_enabled"), False)
+        or resolve_bool(provider_accounts.get("api_key_secret_store_enabled"), False)
+    )
+    if enabled and security_mode != "multi_user" and multi_user_features_configured:
+        raise SystemExit(
+            "GlassHive user authentication, MCP OAuth, personal accounts, and inference broker "
+            "configuration requires integrations.glasshive.enterprise.security_mode=multi_user"
+        )
+    if enabled and security_mode == "multi_user":
+        if auth_mode != "signed_internal_assertion":
+            raise SystemExit(
+                "GlassHive multi_user security requires auth.mode=signed_internal_assertion"
+            )
+        if human_auth_mode != "oidc":
+            raise SystemExit(
+                "GlassHive multi_user security requires built-in oidc human auth; plaintext "
+                "trusted_proxy identity headers are not an authenticated multi-user boundary"
+            )
+        if not oidc_role_map:
+            raise SystemExit(
+                "GlassHive multi_user OIDC requires a non-empty human_auth.oidc.role_map; "
+                "the IdP must also require explicit user or group assignment"
+            )
+        if not internal_assertion_private_key_file:
+            raise SystemExit(
+                "GlassHive multi_user security requires an internal_assertion.private_key_file"
+            )
+        if not mcp_oauth_enabled:
+            raise SystemExit(
+                "GlassHive multi_user security requires enterprise.mcp_oauth.enabled"
+            )
+        if not mcp_allowed_client_ids:
+            raise SystemExit(
+                "GlassHive multi_user security requires enterprise.mcp_oauth.allowed_client_ids"
+            )
+        if not principal_claim:
+            raise SystemExit(
+                "GlassHive multi_user security requires enterprise.principal_claim so browser and MCP ownership stay identical"
+            )
+        if resolve_bool(provider_accounts.get("codex_subscriptions_enabled"), False) or resolve_bool(
+            provider_accounts.get("hosted_claude_consumer_auth_enabled"), False
+        ):
+            if provider_account_isolation != "per_worker_container":
+                raise SystemExit(
+                    "GlassHive multi_user personal subscriptions require a dedicated per-worker OS or container isolation substrate"
+                )
+        secure_urls = {
+            "integrations.glasshive.mcp_url": mcp_url,
+            "integrations.glasshive.operator_base_url": operator_base_url,
+            "integrations.glasshive.enterprise.artifact_base_url": artifact_base_url,
+            "integrations.glasshive.enterprise.internal_assertion.issuer": internal_assertion_issuer,
+            "integrations.glasshive.enterprise.internal_assertion.jwks_url": internal_assertion_jwks_url,
+            "integrations.glasshive.enterprise.mcp_oauth.issuer": mcp_oauth_issuer,
+            "integrations.glasshive.enterprise.mcp_oauth.public_url": mcp_public_url,
+        }
+        if oauth_enabled:
+            secure_urls.update(
+                {
+                    "integrations.glasshive.enterprise.oauth.authorization_url": str(
+                        oauth.get("authorization_url") or ""
+                    ),
+                    "integrations.glasshive.enterprise.oauth.token_url": str(
+                        oauth.get("token_url") or ""
+                    ),
+                    "integrations.glasshive.enterprise.oauth.redirect_uri": str(
+                        oauth.get("redirect_uri") or ""
+                    ),
+                }
+            )
+        if human_auth_mode == "oidc":
+            secure_urls.update(
+                {
+                    "integrations.glasshive.enterprise.human_auth.oidc.issuer": oidc_issuer,
+                    "integrations.glasshive.enterprise.human_auth.oidc.redirect_uri": oidc_redirect_uri,
+                    "integrations.glasshive.enterprise.human_auth.oidc.post_logout_redirect_uri": oidc_post_logout_redirect_uri,
+                }
+            )
+        if mcp_oauth.get("documentation_url"):
+            secure_urls["integrations.glasshive.enterprise.mcp_oauth.documentation_url"] = str(
+                mcp_oauth.get("documentation_url")
+            )
+        if provider_accounts.get("connected_accounts_url"):
+            secure_urls["integrations.glasshive.enterprise.provider_accounts.connected_accounts_url"] = str(
+                provider_accounts.get("connected_accounts_url")
+            )
+        for label, value in secure_urls.items():
+            _require_https_public_url(label, value)
     return {
         "enabled": enabled,
         "mcp_url": mcp_url,
@@ -430,11 +1183,13 @@ def resolve_glasshive_enterprise_settings(config: dict[str, Any]) -> dict[str, A
         "artifact_base_url": artifact_base_url,
         "tenant_id": tenant_id,
         "auth_mode": auth_mode,
+        "security_mode": security_mode,
         "service_token": service_token,
         "service_token_env": service_token_env,
         "service_token_delivery": service_token_delivery,
         "signed_link_secret": signed_link_secret,
         "upload_root": upload_root,
+        "state_dir": state_dir,
         "source_roots": source_root_value,
         "idle_terminate_after_s": positive_int_or_default(idle.get("terminate_after_seconds"), 1800, "integrations.glasshive.enterprise.idle.terminate_after_seconds"),
         "idle_reaper_interval_s": positive_int_or_default(idle.get("reaper_interval_seconds"), 60, "integrations.glasshive.enterprise.idle.reaper_interval_seconds"),
@@ -470,6 +1225,74 @@ def resolve_glasshive_enterprise_settings(config: dict[str, Any]) -> dict[str, A
         "owner_identity_aliases_file": owner_identity_aliases_file,
         "oauth_enabled": oauth_enabled,
         "oauth": oauth,
+        "human_auth_mode": human_auth_mode,
+        "trusted_proxy_boundary_proven": trusted_proxy_boundary_proven,
+        "allowed_email_domains": allowed_domains,
+        "allow_email_login": resolve_bool(runtime_auth.get("allow_email_login"), True),
+        "allow_email_registration": resolve_bool(runtime_auth.get("allow_registration"), True),
+        "oidc_issuer": oidc_issuer,
+        "oidc_client_id": oidc_client_id,
+        "oidc_client_secret": oidc_client_secret,
+        "oidc_redirect_uri": oidc_redirect_uri,
+        "oidc_post_logout_redirect_uri": oidc_post_logout_redirect_uri,
+        "oidc_scopes": str(human_oidc.get("scopes") or "openid profile email").strip(),
+        "oidc_role_claim": str(human_oidc.get("role_claim") or "roles").strip(),
+        "oidc_principal_claim": principal_claim,
+        "oidc_email_claim": oidc_email_claim,
+        "oidc_email_claim_trusted": oidc_email_claim_trusted,
+        "principal_id_format": "raw_claim" if human_auth_mode == "trusted_proxy" else "hashed_issuer_subject",
+        "oidc_role_map_json": json.dumps(
+            oidc_role_map,
+            sort_keys=True,
+            separators=(",", ":"),
+        ),
+        "internal_assertion_issuer": internal_assertion_issuer,
+        "internal_assertion_audience": internal_assertion_audience,
+        "internal_assertion_key_id": internal_assertion_key_id,
+        "internal_assertion_private_key_file": internal_assertion_private_key_file,
+        "internal_assertion_previous_jwks_file": internal_assertion_previous_jwks_file,
+        "internal_assertion_previous_keys_expire_at": internal_assertion_previous_keys_expire_at,
+        "internal_assertion_jwks_url": internal_assertion_jwks_url,
+        "mcp_oauth_enabled": mcp_oauth_enabled,
+        "mcp_oauth_issuer": mcp_oauth_issuer,
+        "mcp_public_url": mcp_public_url,
+        "mcp_token_audiences": " ".join(mcp_token_audiences),
+        "mcp_token_tenant_id": mcp_token_tenant_id,
+        "mcp_token_scopes": mcp_token_scopes,
+        "mcp_required_scopes": mcp_required_scopes,
+        "mcp_allowed_client_ids": " ".join(mcp_allowed_client_ids),
+        "mcp_client_id_claims": " ".join(mcp_client_id_claims),
+        "mcp_subject_claim": principal_claim,
+        "mcp_documentation_url": str(mcp_oauth.get("documentation_url") or "").strip(),
+        "mcp_claude_client_id": mcp_claude_client_id,
+        "mcp_claude_callback_port": mcp_claude_callback_port,
+        "mcp_codex_client_id": mcp_codex_client_id,
+        "mcp_codex_callback_port": mcp_codex_callback_port,
+        "mcp_codex_resource": mcp_codex_resource,
+        "provider_account_isolation": provider_account_isolation,
+        "codex_personal_accounts_enabled": resolve_bool(
+            provider_accounts.get("codex_subscriptions_enabled"),
+            False,
+        ),
+        "hosted_claude_consumer_auth_enabled": resolve_bool(
+            provider_accounts.get("hosted_claude_consumer_auth_enabled"),
+            False,
+        ),
+        "provider_secret_store_enabled": resolve_bool(
+            provider_accounts.get("api_key_secret_store_enabled"),
+            False,
+        ),
+        "connected_accounts_url": str(provider_accounts.get("connected_accounts_url") or "").strip(),
+        "inference_broker_enabled": inference_broker_enabled,
+        "inference_broker_url": inference_broker_url,
+        "inference_broker_proxy_base_url": inference_broker_proxy_base_url,
+        "inference_broker_timeout_seconds": inference_broker_timeout_seconds,
+        "inference_owner_bindings_json": inference_owner_bindings_json,
+        "capability_broker_enabled": capability_broker_enabled,
+        "capability_broker_issuer_url": capability_broker_issuer_url,
+        "capability_broker_timeout_seconds": capability_broker_timeout_seconds,
+        "capability_identity_binding": capability_identity_binding,
+        "capability_owner_bindings_json": capability_owner_bindings_json,
     }
 
 
@@ -603,6 +1426,22 @@ def resolve_glasshive_host_worker_settings(config: dict[str, Any]) -> dict[str, 
         requirements_json_env = ""
     elif isinstance(requirements_json, str):
         requirements_json_env = requirements_json.strip()
+        if requirements_json_env:
+            try:
+                parsed_requirements = json.loads(requirements_json_env)
+            except json.JSONDecodeError as exc:
+                raise SystemExit(
+                    "integrations.glasshive.host_worker.runtime_requirements.json must contain valid JSON"
+                ) from exc
+            if not isinstance(parsed_requirements, (dict, list)):
+                raise SystemExit(
+                    "integrations.glasshive.host_worker.runtime_requirements.json must contain a JSON object or array"
+                )
+            requirements_json_env = json.dumps(
+                parsed_requirements,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
     else:
         raise SystemExit("integrations.glasshive.host_worker.runtime_requirements.json must be an object, list, or JSON string")
 
@@ -3438,6 +4277,28 @@ def resolve_memory_hardening_model_tuple(
     return {"provider": "", "model": "", "effort": "", "effort_env": ""}
 
 
+def normalize_auth_allowed_domains(value: Any) -> list[str]:
+    if value in (None, ""):
+        return []
+    if not isinstance(value, list):
+        raise SystemExit("runtime.auth.allowed_domains must be a list of exact email domains")
+
+    domains: list[str] = []
+    for item in value:
+        if not isinstance(item, str):
+            raise SystemExit("runtime.auth.allowed_domains entries must be strings")
+        domain = item.strip().lower()
+        if not domain or any(token in domain for token in ("@", ":", "/")) or any(
+            character.isspace() for character in domain
+        ):
+            raise SystemExit(
+                "runtime.auth.allowed_domains entries must be exact domains such as example.com"
+            )
+        if domain not in domains:
+            domains.append(domain)
+    return domains
+
+
 def resolve_auth_settings(config: dict[str, Any]) -> dict[str, Any]:
     runtime = config.get("runtime", {}) or {}
     auth = runtime.get("auth", {}) or {}
@@ -3448,6 +4309,7 @@ def resolve_auth_settings(config: dict[str, Any]) -> dict[str, Any]:
     openid_client_secret = optional_nested_secret(openid, "client_secret") if openid_enabled else ""
     openid_session_secret = optional_nested_secret(openid, "session_secret") if openid_enabled else ""
     return {
+        "allowed_domains": normalize_auth_allowed_domains(auth.get("allowed_domains")),
         "allow_email_login": resolve_bool(auth.get("allow_email_login"), True),
         "allow_registration": resolve_bool(auth.get("allow_registration"), True),
         "bootstrap_registration_once": resolve_bool(
@@ -3464,6 +4326,7 @@ def resolve_auth_settings(config: dict[str, Any]) -> dict[str, Any]:
             "client_id": str(openid.get("client_id") or "").strip(),
             "client_secret": openid_client_secret,
             "issuer": str(openid.get("issuer") or "").strip().rstrip("/"),
+            "audience": str(openid.get("audience") or openid.get("client_id") or "").strip(),
             "session_secret": openid_session_secret,
             "scope": str(openid.get("scope") or "openid profile email").strip(),
             "callback_url": str(openid.get("callback_url") or "/oauth/openid/callback").strip(),
@@ -3591,6 +4454,25 @@ def render_runtime_env(
     glasshive_is_enabled = glasshive_enabled(config)
     glasshive_host_worker = resolve_glasshive_host_worker_settings(config)
     glasshive_enterprise = resolve_glasshive_enterprise_settings(config)
+    if (
+        glasshive_enterprise["capability_broker_enabled"]
+        and glasshive_enterprise["capability_identity_binding"] == "shared_oidc_subject"
+    ):
+        if not openid_settings["enabled"]:
+            raise SystemExit(
+                "GlassHive shared_oidc_subject capability binding requires runtime.auth.openid.enabled"
+            )
+        if (
+            str(openid_settings["issuer"]).strip().rstrip("/")
+            != str(glasshive_enterprise["oidc_issuer"]).strip().rstrip("/")
+        ):
+            raise SystemExit(
+                "GlassHive shared_oidc_subject capability binding requires GlassHive and LibreChat to use the same OIDC issuer"
+            )
+        if not glasshive_enterprise["oidc_principal_claim"]:
+            raise SystemExit(
+                "GlassHive shared_oidc_subject capability binding requires an explicit principal claim"
+            )
     glasshive_provider = resolve_glasshive_provider_settings(config)
     feature_request_pr = config.get("feature_requests", {}).get("pr", {}) or {}
     feature_request_pr_after_approval = resolve_bool(
@@ -3896,6 +4778,7 @@ def render_runtime_env(
                 "OPENID_CLIENT_ID": openid_settings["client_id"],
                 "OPENID_CLIENT_SECRET": openid_settings["client_secret"],
                 "OPENID_ISSUER": openid_settings["issuer"],
+                "OPENID_AUDIENCE": openid_settings["audience"],
                 "OPENID_SESSION_SECRET": openid_settings["session_secret"],
                 "OPENID_SCOPE": openid_settings["scope"],
                 "OPENID_CALLBACK_URL": openid_settings["callback_url"],
@@ -3950,6 +4833,10 @@ def render_runtime_env(
             if ui_port:
                 env["GLASSHIVE_UI_PORT"] = ui_port
         env["GLASSHIVE_OPERATOR_BASE_URL"] = glasshive_operator_base_url
+        env["GLASSHIVE_RECURRING_SCHEDULE_OWNER"] = "viventium_cortex"
+        env["GLASSHIVE_SCHEDULING_OWNER_URL"] = (
+            f"http://127.0.0.1:{profile['scheduling_mcp_port']}/mcp"
+        )
         env["GLASSHIVE_DEFAULT_LAUNCH_SURFACE"] = "desktop"
         env["GLASSHIVE_SHOW_LIVE_TERMINAL_IN_DESKTOP"] = "true"
         env["WPR_IDLE_DESKTOP_PRIME_BROWSER"] = "true"
@@ -4056,6 +4943,7 @@ def render_runtime_env(
             enterprise_public_api_origin = str(network.get("public_api_origin", "") or "").strip()
             env["GLASSHIVE_ENTERPRISE_MODE"] = "true"
             env["GLASSHIVE_AUTH_MODE"] = str(glasshive_enterprise["auth_mode"])
+            env["GLASSHIVE_SECURITY_MODE"] = str(glasshive_enterprise["security_mode"])
             env["GLASSHIVE_ENTERPRISE_TENANT_ID"] = str(glasshive_enterprise["tenant_id"])
             env["GLASSHIVE_ARTIFACT_BASE_URL"] = str(glasshive_enterprise["artifact_base_url"])
             signed_link_secret = str(glasshive_enterprise["signed_link_secret"] or "").strip() or scoped_secret(
@@ -4099,6 +4987,222 @@ def render_runtime_env(
             if glasshive_enterprise["service_token"]:
                 env[str(glasshive_enterprise["service_token_env"])] = str(glasshive_enterprise["service_token"])
                 env["WPR_API_TOKEN"] = str(glasshive_enterprise["service_token"])
+            if glasshive_enterprise["security_mode"] == "multi_user":
+                state_dir = Path(str(glasshive_enterprise["state_dir"]))
+                env["GLASSHIVE_SERVICE_TOPOLOGY"] = "external_split"
+                env["GLASSHIVE_STATE_DIR"] = str(state_dir)
+                env["GLASSHIVE_STATE_DIR_MODE"] = "0770"
+                env["GLASSHIVE_STATE_FILE_MODE"] = "0660"
+                env["WPR_DB_PATH"] = str(state_dir / "runtime_phase1.db")
+                env["GLASSHIVE_PROVIDER_ACCOUNT_HOME_ROOT"] = str(state_dir / "provider_accounts")
+                env["GLASSHIVE_AUTH_STATE_PATH"] = str(state_dir / "gateway" / "auth.sqlite3")
+                env["GLASSHIVE_HUMAN_AUTH_MODE"] = str(glasshive_enterprise["human_auth_mode"])
+                env["GLASSHIVE_ALLOW_EMAIL_LOGIN"] = (
+                    "true" if glasshive_enterprise["allow_email_login"] else "false"
+                )
+                env["GLASSHIVE_ALLOW_EMAIL_REGISTRATION"] = (
+                    "true" if glasshive_enterprise["allow_email_registration"] else "false"
+                )
+                if glasshive_enterprise["security_mode"] == "multi_user":
+                    env["GLASSHIVE_COOKIE_SECURE"] = "true"
+                env["GLASSHIVE_TRUST_INBOUND_IDENTITY"] = (
+                    "true" if glasshive_enterprise["human_auth_mode"] == "trusted_proxy" else "false"
+                )
+                env["GLASSHIVE_TRUSTED_PROXY_BOUNDARY_PROVEN"] = (
+                    "true" if glasshive_enterprise["trusted_proxy_boundary_proven"] else "false"
+                )
+                env["GLASSHIVE_ALLOWED_ORIGINS"] = str(glasshive_enterprise["operator_base_url"])
+                if (
+                    glasshive_enterprise["allowed_email_domains"]
+                    and glasshive_enterprise["human_auth_mode"] != "oidc"
+                ):
+                    env["GLASSHIVE_ALLOWED_EMAIL_DOMAINS"] = " ".join(
+                        glasshive_enterprise["allowed_email_domains"]
+                    )
+                if glasshive_enterprise["human_auth_mode"] == "oidc":
+                    env["GLASSHIVE_OIDC_ISSUER"] = str(glasshive_enterprise["oidc_issuer"])
+                    env["GLASSHIVE_OIDC_CLIENT_ID"] = str(glasshive_enterprise["oidc_client_id"])
+                    env["GLASSHIVE_OIDC_REDIRECT_URI"] = str(glasshive_enterprise["oidc_redirect_uri"])
+                    env["GLASSHIVE_OIDC_POST_LOGOUT_REDIRECT_URI"] = str(
+                        glasshive_enterprise["oidc_post_logout_redirect_uri"]
+                    )
+                    env["GLASSHIVE_OIDC_SCOPES"] = str(glasshive_enterprise["oidc_scopes"])
+                    env["GLASSHIVE_OIDC_ROLE_CLAIM"] = str(glasshive_enterprise["oidc_role_claim"])
+                    env["GLASSHIVE_OIDC_ROLE_MAP_JSON"] = str(glasshive_enterprise["oidc_role_map_json"])
+                    env["GLASSHIVE_OIDC_PRINCIPAL_CLAIM"] = str(
+                        glasshive_enterprise["oidc_principal_claim"]
+                    )
+                    env["GLASSHIVE_OIDC_EMAIL_CLAIM"] = str(
+                        glasshive_enterprise["oidc_email_claim"]
+                    )
+                    env["GLASSHIVE_OIDC_EMAIL_CLAIM_TRUSTED"] = (
+                        "true" if glasshive_enterprise["oidc_email_claim_trusted"] else "false"
+                    )
+                    if glasshive_enterprise["oidc_client_secret"]:
+                        env["GLASSHIVE_OIDC_CLIENT_SECRET"] = str(
+                            glasshive_enterprise["oidc_client_secret"]
+                        )
+                env["GLASSHIVE_INTERNAL_ASSERTION_ISSUER"] = str(
+                    glasshive_enterprise["internal_assertion_issuer"]
+                )
+                env["GLASSHIVE_INTERNAL_ASSERTION_AUDIENCE"] = str(
+                    glasshive_enterprise["internal_assertion_audience"]
+                )
+                env["GLASSHIVE_INTERNAL_ASSERTION_KEY_ID"] = str(
+                    glasshive_enterprise["internal_assertion_key_id"]
+                )
+                env["GLASSHIVE_INTERNAL_ASSERTION_PRIVATE_KEY_FILE"] = str(
+                    glasshive_enterprise["internal_assertion_private_key_file"]
+                )
+                if glasshive_enterprise["internal_assertion_previous_jwks_file"]:
+                    env["GLASSHIVE_INTERNAL_ASSERTION_PREVIOUS_JWKS_FILE"] = str(
+                        glasshive_enterprise["internal_assertion_previous_jwks_file"]
+                    )
+                    env["GLASSHIVE_INTERNAL_ASSERTION_PREVIOUS_KEYS_EXPIRE_AT"] = str(
+                        glasshive_enterprise[
+                            "internal_assertion_previous_keys_expire_at"
+                        ]
+                    )
+                env["GLASSHIVE_INTERNAL_ASSERTION_JWKS_URL"] = str(
+                    glasshive_enterprise["internal_assertion_jwks_url"]
+                )
+                env["GLASSHIVE_MCP_OAUTH_ISSUER"] = str(
+                    glasshive_enterprise["mcp_oauth_issuer"]
+                )
+                env["GLASSHIVE_MCP_PUBLIC_URL"] = str(glasshive_enterprise["mcp_public_url"])
+                env["GLASSHIVE_MCP_OAUTH_TOKEN_AUDIENCES"] = str(
+                    glasshive_enterprise["mcp_token_audiences"]
+                )
+                if glasshive_enterprise["mcp_token_tenant_id"]:
+                    env["GLASSHIVE_MCP_OAUTH_TOKEN_TENANT_ID"] = str(
+                        glasshive_enterprise["mcp_token_tenant_id"]
+                    )
+                env["GLASSHIVE_MCP_OAUTH_TOKEN_SCOPES"] = str(
+                    glasshive_enterprise["mcp_token_scopes"]
+                )
+                env["GLASSHIVE_MCP_OAUTH_REQUIRED_SCOPES"] = str(
+                    glasshive_enterprise["mcp_required_scopes"]
+                )
+                env["GLASSHIVE_MCP_OAUTH_ALLOWED_CLIENT_IDS"] = str(
+                    glasshive_enterprise["mcp_allowed_client_ids"]
+                )
+                env["GLASSHIVE_MCP_OAUTH_CLIENT_ID_CLAIMS"] = str(
+                    glasshive_enterprise["mcp_client_id_claims"]
+                )
+                env["GLASSHIVE_MCP_OAUTH_SUBJECT_CLAIM"] = str(
+                    glasshive_enterprise["mcp_subject_claim"]
+                )
+                env["GLASSHIVE_PRINCIPAL_ID_FORMAT"] = str(
+                    glasshive_enterprise["principal_id_format"]
+                )
+                if glasshive_enterprise["mcp_documentation_url"]:
+                    env["GLASSHIVE_MCP_DOCUMENTATION_URL"] = str(
+                        glasshive_enterprise["mcp_documentation_url"]
+                    )
+                if glasshive_enterprise["mcp_claude_client_id"]:
+                    env["GLASSHIVE_MCP_CLAUDE_CLIENT_ID"] = str(
+                        glasshive_enterprise["mcp_claude_client_id"]
+                    )
+                    env["GLASSHIVE_MCP_CLAUDE_CALLBACK_PORT"] = str(
+                        glasshive_enterprise["mcp_claude_callback_port"]
+                    )
+                if glasshive_enterprise["mcp_codex_client_id"]:
+                    env["GLASSHIVE_MCP_CODEX_CLIENT_ID"] = str(
+                        glasshive_enterprise["mcp_codex_client_id"]
+                    )
+                    env["GLASSHIVE_MCP_CODEX_CALLBACK_PORT"] = str(
+                        glasshive_enterprise["mcp_codex_callback_port"]
+                    )
+                    env["GLASSHIVE_MCP_CODEX_RESOURCE"] = str(
+                        glasshive_enterprise["mcp_codex_resource"]
+                    )
+                env["GLASSHIVE_ENABLE_CODEX_PERSONAL_ACCOUNTS"] = (
+                    "true" if glasshive_enterprise["codex_personal_accounts_enabled"] else "false"
+                )
+                env["GLASSHIVE_PROVIDER_ACCOUNT_ISOLATION"] = str(
+                    glasshive_enterprise["provider_account_isolation"]
+                )
+                env["GLASSHIVE_ENABLE_HOSTED_CLAUDE_CONSUMER_AUTH"] = (
+                    "true"
+                    if glasshive_enterprise["hosted_claude_consumer_auth_enabled"]
+                    else "false"
+                )
+                env["GLASSHIVE_PROVIDER_SECRET_STORE_ENABLED"] = (
+                    "true" if glasshive_enterprise["provider_secret_store_enabled"] else "false"
+                )
+                if glasshive_enterprise["connected_accounts_url"]:
+                    env["GLASSHIVE_CONNECTED_ACCOUNTS_URL"] = str(
+                        glasshive_enterprise["connected_accounts_url"]
+                    )
+                if glasshive_enterprise["inference_broker_enabled"]:
+                    inference_broker_secret = scoped_secret(
+                        call_session_secret,
+                        "glasshive-inference-broker",
+                    )
+                    env["GLASSHIVE_INFERENCE_BROKER_URL"] = str(
+                        glasshive_enterprise["inference_broker_url"]
+                    )
+                    env["GLASSHIVE_INFERENCE_BROKER_PROXY_BASE_URL"] = str(
+                        glasshive_enterprise["inference_broker_proxy_base_url"]
+                    )
+                    env["GLASSHIVE_INFERENCE_BROKER_SECRET"] = inference_broker_secret
+                    env["GLASSHIVE_INFERENCE_BROKER_TENANT_ID"] = str(
+                        glasshive_enterprise["tenant_id"]
+                    )
+                    env["GLASSHIVE_INFERENCE_BROKER_OWNER_BINDINGS_JSON"] = str(
+                        glasshive_enterprise["inference_owner_bindings_json"]
+                    )
+                    env["GLASSHIVE_INFERENCE_BROKER_TIMEOUT_SECONDS"] = str(
+                        glasshive_enterprise["inference_broker_timeout_seconds"]
+                    )
+                    env["VIVENTIUM_GLASSHIVE_INFERENCE_PROXY_URL"] = str(
+                        glasshive_enterprise["inference_broker_proxy_base_url"]
+                    )
+                    env["VIVENTIUM_GLASSHIVE_INFERENCE_BROKER_SECRET"] = (
+                        inference_broker_secret
+                    )
+                    env["VIVENTIUM_GLASSHIVE_INFERENCE_UPSTREAM_TIMEOUT_MS"] = str(
+                        int(glasshive_enterprise["inference_broker_timeout_seconds"] * 1000)
+                    )
+                if glasshive_enterprise["capability_broker_enabled"]:
+                    # Keep the direct capability issuer cryptographically separate from both
+                    # inference grants and the end-user capability-grant signer. Compromise of
+                    # one broker route must not mint assertions accepted by another protocol.
+                    capability_issuer_secret = scoped_secret(
+                        call_session_secret,
+                        "glasshive-capability-direct-issuer",
+                    )
+                    env["GLASSHIVE_CAPABILITY_BROKER_ISSUER_URL"] = str(
+                        glasshive_enterprise["capability_broker_issuer_url"]
+                    )
+                    env["GLASSHIVE_CAPABILITY_BROKER_ISSUER_SECRET"] = (
+                        capability_issuer_secret
+                    )
+                    env["GLASSHIVE_CAPABILITY_BROKER_TENANT_ID"] = str(
+                        glasshive_enterprise["tenant_id"]
+                    )
+                    env["GLASSHIVE_CAPABILITY_BROKER_IDENTITY_BINDING"] = str(
+                        glasshive_enterprise["capability_identity_binding"]
+                    )
+                    env["GLASSHIVE_CAPABILITY_BROKER_OWNER_BINDINGS_JSON"] = str(
+                        glasshive_enterprise["capability_owner_bindings_json"]
+                    )
+                    env["GLASSHIVE_CAPABILITY_BROKER_TIMEOUT_SECONDS"] = str(
+                        glasshive_enterprise["capability_broker_timeout_seconds"]
+                    )
+                    env["VIVENTIUM_GLASSHIVE_CAPABILITY_ISSUER_SECRET"] = (
+                        capability_issuer_secret
+                    )
+                    if (
+                        glasshive_enterprise["capability_identity_binding"]
+                        == "shared_oidc_subject"
+                    ):
+                        env["VIVENTIUM_GLASSHIVE_SHARED_OIDC_ISSUER"] = str(
+                            glasshive_enterprise["oidc_issuer"]
+                        )
+                        env["VIVENTIUM_GLASSHIVE_SHARED_OIDC_PRINCIPAL_CLAIM"] = str(
+                            glasshive_enterprise["oidc_principal_claim"]
+                        )
 
         if glasshive_provider["enabled"]:
             env.setdefault(
@@ -5437,10 +6541,13 @@ def render_librechat_yaml(
     web_search_is_enabled = web_search_settings["enabled"] == "true"
     auth_settings = resolve_auth_settings(config)
     social_logins = ["openid"] if auth_settings["openid"]["enabled"] else []
+    registration = {"socialLogins": social_logins}
+    if auth_settings["allowed_domains"]:
+        registration["allowedDomains"] = auth_settings["allowed_domains"]
     generated = {
         "version": LIBRECHAT_YAML_VERSION,
         "cache": True,
-        "registration": {"socialLogins": social_logins},
+        "registration": registration,
         "interface": build_interface_config(
             default_main_agent_id,
             code_interpreter_is_enabled,
@@ -5569,6 +6676,7 @@ def render_service_envs(output_dir: Path, env: dict[str, str]) -> None:
         "GLASSHIVE_MCP_API_KEY",
         "GLASSHIVE_PROVIDER_API_KEY",
         "GLASSHIVE_PROVIDER_BASE_URL",
+        "GLASSHIVE_ENTERPRISE_TENANT_ID",
         "MONGO_URI",
         "ALLOW_EMAIL_LOGIN",
         "ALLOW_REGISTRATION",
@@ -5600,9 +6708,13 @@ def render_service_envs(output_dir: Path, env: dict[str, str]) -> None:
         "VIVENTIUM_ACTIVATION_FALLBACK_ATTEMPT_TIMEOUT_MS",
         "VIVENTIUM_VOICE_PHASE_A_ASYNC_ALLOW_TOOL_HOLD",
         "VIVENTIUM_VOICE_LOG_LATENCY",
+        "VIVENTIUM_GLASSHIVE_CAPABILITY_ISSUER_SECRET",
+        "VIVENTIUM_GLASSHIVE_SHARED_OIDC_ISSUER",
+        "VIVENTIUM_GLASSHIVE_SHARED_OIDC_PRINCIPAL_CLAIM",
         "OPENID_CLIENT_ID",
         "OPENID_CLIENT_SECRET",
         "OPENID_ISSUER",
+        "OPENID_AUDIENCE",
         "OPENID_SESSION_SECRET",
         "OPENID_SCOPE",
         "OPENID_CALLBACK_URL",
@@ -5655,10 +6767,65 @@ def render_service_envs(output_dir: Path, env: dict[str, str]) -> None:
     telegram_codex_keys = ["TELEGRAM_CODEX_BOT_TOKEN", "TELEGRAM_CODEX_BOT_USERNAME"]
     skyvern_keys = ["START_SKYVERN"]
 
+    # Hosted multi-user GlassHive deliberately uses separate service identities. The gateway
+    # (Glass Drive + public MCP) may sign short-lived runtime assertions; the verifier-only
+    # runtime must never receive the private signing-key path or OIDC client secret.
+    glasshive_keys = sorted(
+        key
+        for key in env
+        if key.startswith("GLASSHIVE_")
+        or key.startswith("WPR_")
+        or key.startswith("VIVENTIUM_GLASSHIVE_")
+    )
+    glasshive_runtime_only = {
+        "GLASSHIVE_CAPABILITY_BROKER_ISSUER_URL",
+        "GLASSHIVE_CAPABILITY_BROKER_ISSUER_SECRET",
+        "GLASSHIVE_CAPABILITY_BROKER_TENANT_ID",
+        "GLASSHIVE_CAPABILITY_BROKER_IDENTITY_BINDING",
+        "GLASSHIVE_CAPABILITY_BROKER_OWNER_BINDINGS_JSON",
+        "GLASSHIVE_CAPABILITY_BROKER_TIMEOUT_SECONDS",
+    }
+    glasshive_gateway_only = {
+        "GLASSHIVE_MCP_CLAUDE_CLIENT_ID",
+        "GLASSHIVE_MCP_CLAUDE_CALLBACK_PORT",
+        "GLASSHIVE_MCP_CODEX_CLIENT_ID",
+        "GLASSHIVE_MCP_CODEX_CALLBACK_PORT",
+        "GLASSHIVE_MCP_CODEX_RESOURCE",
+    }
+    glasshive_librechat_only = {
+        "VIVENTIUM_GLASSHIVE_CAPABILITY_ISSUER_SECRET",
+        "VIVENTIUM_GLASSHIVE_SHARED_OIDC_ISSUER",
+        "VIVENTIUM_GLASSHIVE_SHARED_OIDC_PRINCIPAL_CLAIM",
+    }
+    glasshive_gateway_env = {
+        key: env.get(key, "")
+        for key in glasshive_keys
+        if key not in glasshive_runtime_only and key not in glasshive_librechat_only
+    }
+    runtime_denied = {
+        "GLASSHIVE_AUTH_STATE_PATH",
+        "GLASSHIVE_INTERNAL_ASSERTION_PRIVATE_KEY_FILE",
+        "GLASSHIVE_INTERNAL_ASSERTION_PREVIOUS_JWKS_FILE",
+        "GLASSHIVE_INTERNAL_ASSERTION_PREVIOUS_KEYS_EXPIRE_AT",
+        "GLASSHIVE_OIDC_CLIENT_SECRET",
+        "GLASSHIVE_TRUST_INBOUND_IDENTITY",
+        "GLASSHIVE_TRUSTED_PROXY_BOUNDARY_PROVEN",
+    }
+    glasshive_runtime_env = {
+        key: env.get(key, "")
+        for key in glasshive_keys
+        if key not in runtime_denied
+        and key not in glasshive_librechat_only
+        and key not in glasshive_gateway_only
+    }
+    glasshive_runtime_env["VIVENTIUM_DISABLE_DEFAULT_RUNTIME_ENV"] = "1"
+
     dump_env(service_dir / "librechat.env", {key: env.get(key, "") for key in librechat_keys})
     dump_env(service_dir / "telegram.config.env", {key: env.get(key, "") for key in telegram_keys})
     dump_env(service_dir / "telegram-codex.env", {key: env.get(key, "") for key in telegram_codex_keys})
     dump_env(service_dir / "skyvern.env", {key: env.get(key, "") for key in skyvern_keys})
+    dump_env(service_dir / "glasshive-gateway.env", glasshive_gateway_env)
+    dump_env(service_dir / "glasshive-runtime.env", glasshive_runtime_env)
 
 
 def _telegram_codex_default_model_name() -> str:

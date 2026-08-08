@@ -12,6 +12,11 @@ runtime:
     primary_attempt_timeout_ms: 1600
     fallback_attempt_timeout_ms: 2500
   auth:
+    # Optional exact email-domain allowlist for LibreChat/local email signup and login.
+    # GlassHive OIDC admission is enforced at the IdP from tenant/app-role policy, not email.
+    allowed_domains: []
+    # Show email-capable login only when the configured external provider supports it.
+    allow_email_login: true
     # Browser account creation is open by default for a brand-new local install.
     # Close it once your real accounts exist and the install is reachable from outside your network.
     allow_registration: true

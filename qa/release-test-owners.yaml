@@ -62,6 +62,8 @@ release_tests:
     qa_owner: qa/release-readiness/cases.md
   tests/release/test_glasshive_core_provider_qa.py:
     qa_owner: qa/glasshive-core-provider/cases.md
+  tests/release/test_glasshive_systemd_rollout.py:
+    qa_owner: qa/glasshive-user-control-plane/cases.md
   tests/release/test_install_summary.py:
     qa_owner: qa/installer-resilience/cases.md
   tests/release/test_helper_runtime_intent.py:

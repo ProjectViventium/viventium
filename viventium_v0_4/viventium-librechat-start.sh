@@ -9405,8 +9405,47 @@ PY
 }
 
 glasshive_stack_ready() {
-  curl -fsS "http://127.0.0.1:${GLASSHIVE_RUNTIME_PORT}/health" >/dev/null 2>&1 &&
-    curl -fsS "http://127.0.0.1:${GLASSHIVE_UI_PORT}/" >/dev/null 2>&1
+  local runtime_health=""
+  local ui_health=""
+  local mcp_status=""
+  local mcp_headers_file=""
+  mcp_headers_file="$(mktemp "${TMPDIR:-/tmp}/viventium-glasshive-mcp-headers.XXXXXX")" || return 1
+  runtime_health="$(curl -fsS --max-time 3 "http://127.0.0.1:${GLASSHIVE_RUNTIME_PORT}/health" 2>/dev/null || true)"
+  ui_health="$(curl -fsS --max-time 3 "http://127.0.0.1:${GLASSHIVE_UI_PORT}/health" 2>/dev/null || true)"
+  mcp_status="$(
+    curl -sS -D "$mcp_headers_file" \
+      -o /dev/null -w '%{http_code}' --max-time 3 \
+      -X POST "http://127.0.0.1:${GLASSHIVE_MCP_PORT}/mcp" 2>/dev/null || true
+  )"
+  if [[ "${GLASSHIVE_SECURITY_MODE:-}" == "multi_user" ]]; then
+    python3 -c 'import json,sys; p=json.load(sys.stdin); raise SystemExit(0 if p.get("status") == "ok" else 1)' \
+      <<<"$runtime_health" >/dev/null 2>&1 &&
+      python3 -c 'import json,sys; p=json.load(sys.stdin); r=p.get("runtime") or {}; raise SystemExit(0 if p.get("status") == "ok" and r.get("status") == "ok" else 1)' \
+        <<<"$ui_health" >/dev/null 2>&1 &&
+      [[ "$mcp_status" == "401" ]] &&
+      grep -qi '^www-authenticate:.*resource_metadata' "$mcp_headers_file"
+    local ready_status=$?
+    rm -f "$mcp_headers_file"
+    return "$ready_status"
+  fi
+  rm -f "$mcp_headers_file"
+  [[ -n "$runtime_health" ]] &&
+    [[ "$mcp_status" =~ ^[24][0-9][0-9]$ ]] &&
+    [[ -n "$ui_health" ]]
+}
+
+stop_candidate_glasshive_stack() {
+  stop_pid_file_scoped "$GLASSHIVE_UI_PID_FILE" "$GLASSHIVE_UI_DIR"
+  stop_pid_file_scoped "$GLASSHIVE_MCP_PID_FILE" "$GLASSHIVE_RUNTIME_DIR"
+  stop_pid_file_scoped "$GLASSHIVE_RUNTIME_PID_FILE" "$GLASSHIVE_RUNTIME_DIR"
+  kill_port_listeners "$GLASSHIVE_UI_PORT" "$GLASSHIVE_UI_DIR"
+  kill_port_listeners "$GLASSHIVE_MCP_PORT" "$GLASSHIVE_RUNTIME_DIR"
+  kill_port_listeners "$GLASSHIVE_RUNTIME_PORT" "$GLASSHIVE_RUNTIME_DIR"
+  if port_in_use "$GLASSHIVE_UI_PORT" || port_in_use "$GLASSHIVE_MCP_PORT" || port_in_use "$GLASSHIVE_RUNTIME_PORT"; then
+    log_error "GlassHive candidate teardown left an active listener; preserving PID evidence"
+    return 1
+  fi
+  rm -f "$GLASSHIVE_UI_PID_FILE" "$GLASSHIVE_MCP_PID_FILE" "$GLASSHIVE_RUNTIME_PID_FILE"
 }
 
 start_glasshive() {
@@ -9417,6 +9456,23 @@ start_glasshive() {
 
   if [[ ! -d "$GLASSHIVE_RUNTIME_DIR" ]]; then
     log_warn "GlassHive runtime directory not found: $GLASSHIVE_RUNTIME_DIR"
+    return 1
+  fi
+
+  if [[ "${GLASSHIVE_SECURITY_MODE:-}" == "multi_user" ]]; then
+    if [[ "${GLASSHIVE_SERVICE_TOPOLOGY:-}" != "external_split" ]]; then
+      log_error "Hosted multi-user GlassHive requires the shipped split gateway/runtime service topology"
+      log_error "GLASSHIVE_SERVICE_TOPOLOGY must be external_split in hosted multi-user mode"
+      log_error "GlassHive services must already be running under separate service identities"
+      log_error "Install deploy/glasshive/systemd, then set GLASSHIVE_SERVICE_TOPOLOGY=external_split"
+      return 1
+    fi
+    if glasshive_stack_ready; then
+      log_success "Externally managed split-identity GlassHive is ready"
+      return 0
+    fi
+    log_error "Split-identity GlassHive is not ready; refusing to hide the missing control plane"
+    log_error "Start glasshive-runtime, glasshive-mcp, and glasshive-ui using deploy/glasshive/systemd"
     return 1
   fi
 
@@ -9462,7 +9518,13 @@ start_glasshive() {
     return 1
   fi
 
-  uv run uvicorn workers_projects_runtime.api:app --host 127.0.0.1 --port "$GLASSHIVE_RUNTIME_PORT" >"$LOG_DIR/glasshive_runtime.log" 2>&1 &
+  # The runtime/worker process is a verifier-only context. Prevent its runtime-env loader from
+  # re-importing signer material after the explicit environment removal. Hosted multi-user
+  # deployments additionally require distinct OS users or containers for signer and runtime.
+  env -u GLASSHIVE_INTERNAL_ASSERTION_PRIVATE_KEY_FILE \
+    -u VIVENTIUM_ENV_FILE \
+    VIVENTIUM_DISABLE_DEFAULT_RUNTIME_ENV=1 \
+    uv run uvicorn workers_projects_runtime.api:app --host 127.0.0.1 --port "$GLASSHIVE_RUNTIME_PORT" >"$LOG_DIR/glasshive_runtime.log" 2>&1 &
   GLASSHIVE_RUNTIME_PID=$!
   GLASSHIVE_STARTED_BY_SCRIPT=true
   echo "$GLASSHIVE_RUNTIME_PID" >"$GLASSHIVE_RUNTIME_PID_FILE"
@@ -9507,10 +9569,14 @@ start_glasshive() {
   fi
 
   if ! glasshive_stack_ready; then
-    log_warn "GlassHive processes started but health checks are not fully ready yet"
-  else
-    log_success "GlassHive started on ports $GLASSHIVE_RUNTIME_PORT/$GLASSHIVE_MCP_PORT/$GLASSHIVE_UI_PORT"
+    log_error "GlassHive candidate failed runtime/MCP/UI readiness; stopping the complete candidate stack"
+    tail -20 "$LOG_DIR/glasshive_runtime.log" 2>/dev/null || true
+    tail -20 "$LOG_DIR/glasshive_mcp.log" 2>/dev/null || true
+    tail -20 "$LOG_DIR/glasshive_ui.log" 2>/dev/null || true
+    stop_candidate_glasshive_stack
+    return 1
   fi
+  log_success "GlassHive started on ports $GLASSHIVE_RUNTIME_PORT/$GLASSHIVE_MCP_PORT/$GLASSHIVE_UI_PORT"
   return 0
 }
 
@@ -11702,9 +11768,13 @@ queue_optional_services_parallel_with_librechat() {
   fi
 
   if [[ "$START_GLASSHIVE" == "true" ]]; then
-    queue_parallel_optional_start \
-      "GlassHive startup had issues - continuing anyway" \
-      start_glasshive
+    if [[ "${GLASSHIVE_SECURITY_MODE:-}" == "multi_user" ]]; then
+      start_glasshive || return 1
+    else
+      queue_parallel_optional_start \
+        "GlassHive startup had issues - continuing anyway" \
+        start_glasshive
+    fi
   fi
 }
 

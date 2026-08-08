@@ -27,6 +27,7 @@ Use stable `SCHED-NNN` IDs for scheduling cortex cases.
 | `SCHED-017` | Universal upgrade preserves the prior Scheduler choice and schedules DB while helper execution stays outside protected source checkouts. | Compiler, canonical config, helper installer/launcher, App Support component and DB | `test_config_compiler.py`, `test_macos_helper_install.py`, `test_scheduling_mcp_supervision.py` | PASS-AUTOMATED/PARTIAL 2026-07-24 ([report](reports/2026-07-24-universal-upgrade-scheduler-hardening.md)); migration, protected-folder artifact, installed-component sync/import, and matching `/health` tests pass; real user-helper restart/delivery NOT RUN |
 | `SCHED-018` | Upgrade readiness accepts Scheduling Cortex's documented `status: ok` only with exact service and configured-ledger identity. | CLI activation/restart health, Scheduling Cortex `/health`, generated runtime env | `test_cli_upgrade.py`; live activation and browser/status QA | PASS-AUTOMATED/PARTIAL 2026-07-25 ([report](../stable-dev-runtime/reports/2026-07-25-managed-sidecar-health-and-cancel-qa.md)); escaped literal-status mismatch reproduced and fixed; post-fix live activation/browser evidence pending |
 | `SCHED-019` | A GlassHive-backed Main Agent can use Scheduling Cortex through its exact brokered MCP scope on web and Telegram. | LibreChat, Telegram, GlassHive provider, capability broker, Scheduling Cortex MCP | broker route/service Jest, compiler tests, Scheduler tests, real user-surface QA | PASS 2026-08-01 ([report](reports/2026-08-01-glasshive-main-scheduler-capability-repair.md)); web/refresh and Telegram/no-late-duplicate passed with matching persisted/tool/run evidence; invalid grant failed closed |
+| `SCHED-020` | Disabled GlassHive principals cannot fire delegated work; structured failures terminate or retry within a bounded budget. | Tenant-admin BFF, GlassHive authority gate, Scheduling Cortex definition/run ledger | GlassHive recurring/BFF suites plus `test_glasshive_workspace_schedules.py` | PASS-AUTOMATED/PARTIAL 2026-08-06 ([report](reports/2026-08-06-glasshive-principal-authority-and-retry-budget.md)); hosted browser disable and installed clock fire remain |
 
 ## `SCHED-001` - Create/update existing schedule
 
@@ -537,6 +538,36 @@ Use stable `SCHED-NNN` IDs for scheduling cortex cases.
 - Evidence: [2026-08-01 report](reports/2026-08-01-glasshive-main-scheduler-capability-repair.md).
 - Last run: PASS 2026-08-01.
 
+## `SCHED-020` - GlassHive Principal Authority And Bounded Workspace Retry
+
+- Requirement: `55_GlassHive_User_Control_Plane_and_Persistent_Workspaces.md`
+  `GH-UCP-013` and `GH-UCP-014`.
+- Risk covered: disabling a user revokes only browser sessions while delegated/native schedules keep
+  firing, or an unrecoverable workspace prerequisite retries forever.
+- Steps:
+  1. Create native and delegated synthetic workspace definitions plus an unrelated Viventium task.
+  2. Disable the principal through the tenant-admin boundary and inspect authority, definitions,
+     pending native work, and the unrelated task.
+  3. Attempt a delegated fire after disable and confirm no GlassHive run or schedule is created.
+  4. Inject structured non-retryable action-required and retryable failures. Advance the retry clock
+     through the configured budget and inspect task plus deterministic occurrence ledgers.
+  5. Inject private-detail failure before network dispatch and verify it consumes the same bounded
+     deterministic occurrence budget.
+  6. Evaluate long-stale dense, sparse, and month-end RFC rules plus invalid subminute/complex rules.
+- Expected: authority changes precede browser-auth disable; only the target tenant/owner's GlassHive
+  definitions stop; transactional create/enable/manual-run/run-link guards fail closed under a
+  concurrent disable; action-required dispatches once; transient and pre-dispatch failures reuse one
+  occurrence and terminate at budget; stale recurrence calculation is bounded and preserves DTSTART.
+- Forbidden: credentials in schedule authority/state, browser-auth DB reads from Cortex, another
+  user's/task class deactivated, post-disable mutation, infinite retry, duplicate occurrence/run, or
+  linear stale-rule walking.
+- Automation: GlassHive `test_recurring_schedules.py`, `test_recurring_schedule_api.py`,
+  `test_schema_version.py`, BFF `test_server.py`, and Cortex
+  `test_glasshive_workspace_schedules.py`, `test_storage.py`, `test_dispatch.py`.
+- Last run: PASS-AUTOMATED/PARTIAL 2026-08-06
+  ([report](reports/2026-08-06-glasshive-principal-authority-and-retry-budget.md)); the real hosted
+  tenant-admin browser path, installed services, and a visible clock-triggered worker result remain.
+
 ## Natural User Use Case Checklist
 
 These rows are the minimum natural-user checklist gate for Scheduling Cortex. Add narrower feature-specific
@@ -562,3 +593,4 @@ rows before claiming a pass when the feature behavior changes.
 | `SCHED-UC-016` | Let a synthetic Viventium-agent automation run, then compare its model/effort with ordinary chat and clean the fixture run. | `11_Scheduling_Cortex.md` / `SCHED-016` | isolated Scheduler/LibreChat route, logs, fixture DB, browser when visible | compiled tuple, authenticated fixture metadata, initialization trace, exact response, fallback state, cleanup count | The scheduled turn uses Sol/xHigh, ordinary chat is not globally rewritten, no hidden fallback is claimed as success, and exact QA residue is zero. | PASS-AUTOMATED/PARTIAL 2026-07-13; tuple/fallback/ordinary-chat regressions pass, isolated visible model run NOT RUN |
 | `SCHED-UC-017` | Upgrade an existing Scheduler-enabled or explicitly disabled install, then launch through the helper from a protected developer checkout. | `11_Scheduling_Cortex.md` / `SCHED-017` | upgrade/compiler, helper installer/launcher, Scheduler MCP, schedules DB | canonical before/after semantic diff, generated env/MCP config, installed component inventory, DB hash/count, helper/MCP logs and health | The prior choice remains explicit, schedules survive, helper runs the App Support component, and a test schedule still works after restart. | PASS-AUTOMATED/PARTIAL 2026-07-24; migration/component/DB preservation and isolated installed MCP health pass, real user helper launch/restart/delivery NOT RUN |
 | `SCHED-UC-019` | Ask the GlassHive-backed Main Agent to inspect schedules from web and Telegram, then refresh/wait for duplicates. | `11_Scheduling_Cortex.md` / `SCHED-019` | LibreChat through Computer Use, Telegram Desktop, GlassHive, Scheduling Cortex MCP | visible count-only result, expanded harness activity, refreshed persistence, Mongo pair counts, GlassHive terminal aggregates, broker/Scheduler logs, invalid-grant response | Both surfaces return the same verified summary through Scheduling Cortex, persist correctly, expose no unrelated MCP server, and do not emit a late duplicate. | PASS 2026-08-01 ([report](reports/2026-08-01-glasshive-main-scheduler-capability-repair.md)) |
+| `SCHED-UC-020` | Have a tenant admin disable a user who owns recurring work, then observe a due occurrence and transient/account-repair failures. | `55_GlassHive_User_Control_Plane_and_Persistent_Workspaces.md` / `SCHED-020` | Tenant-admin browser, GlassHive runtime, Scheduling Cortex ledger | authority epoch/state, targeted definition counts, deterministic occurrence attempt count, visible schedule outcome | No disabled-user fire occurs; action-required is terminal and actionable; transient retry is bounded and never duplicates the run. | PASS-AUTOMATED/PARTIAL 2026-08-06; hosted browser and installed clock fire pending |
