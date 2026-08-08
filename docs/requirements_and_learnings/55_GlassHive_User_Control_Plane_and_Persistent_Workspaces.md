@@ -145,9 +145,12 @@ compliant hosted topology.
 - Operators can enable or disable GlassHive principal enrollment. `runtime.auth.allowed_domains`
   applies to LibreChat/local email signup and login; GlassHive OIDC admission is enforced by the
   IdP's tenant and app-role/group assignment policy, never by mutable `email` or
-  `preferred_username` claims. Multi-user compilation requires a non-empty role map. Entra web and
-  API enterprise applications require explicit assignment (or an equivalently reviewed and tested
-  deny-by-default gate); `allow_registration` never admits an otherwise unassigned tenant user.
+  `preferred_username` claims. Multi-user compilation requires a non-empty role map. Entra may use
+  one app registration for both confidential web sign-in and the exposed API resource, or separate
+  web and API registrations. Every enterprise application actually used must require assignment,
+  or an equivalently reviewed and tested deny-by-default gate. In combined mode roles and
+  assignments are defined once; in split mode the same role values and assignment policy apply to
+  both. `allow_registration` never admits an otherwise unassigned tenant user.
 - Cancelled, stale/replayed, invalid-token, provider-outage, and unapproved-account callbacks return
   to the designed login page with bounded non-sensitive error codes, retry guidance, and no echoed
   authorization code, state, claims, or provider description. Fresh and expired sessions preserve
@@ -307,14 +310,19 @@ compliant hosted topology.
 
 ### `GH-UCP-009` — Brokered user connections
 
-- Connections reuse the existing user-scoped capability broker and its provider OAuth lifecycle.
-  GlassHive stores metadata and broker references, not duplicate provider refresh tokens.
+- Brokered LibreChat/Viventium connections are optional. When the compatible capability-broker
+  adapter is enabled, GlassHive reuses its user-scoped OAuth lifecycle and stores metadata and broker
+  references, not duplicate provider refresh tokens. Without that adapter, GlassHive remains
+  standalone: persisted workers use their supported provider-native login, connectors, and skills
+  without a LibreChat account binding, replay cache, grant API, connected-accounts UI, or LibreChat
+  source change.
 - A worker receives compact factual capability context and a short-lived, narrow broker grant. It
   chooses the tool path itself; the host does not predict provider/account routing or manufacture a
   plan.
-- Direct Glass Drive launches, workspace continuations, scheduled missions, and authenticated MCP
-  assignments resolve the same verified GlassHive-owner to LibreChat-user binding immediately
-  before each run. The scalable default uses the exact shared OIDC issuer and principal claim:
+- When the optional broker adapter is enabled, direct Glass Drive launches, workspace continuations,
+  scheduled missions, and authenticated MCP assignments resolve the same verified GlassHive-owner
+  to LibreChat-user binding immediately before each run. The scalable default uses the exact shared
+  OIDC issuer and principal claim:
   LibreChat derives and uniquely indexes the same opaque issuer-plus-subject principal at
   authenticated sign-in, including existing-user re-login backfill. It never falls back to email.
   Deployments without a shared issuer may use an explicit operator-reviewed mapping. LibreChat
@@ -323,12 +331,14 @@ compliant hosted topology.
   environment-variable indirection, and revokes it on completion, interruption, pause, or
   termination. The grant is not persisted in GlassHive SQLite, reusable worker metadata, templates,
   public API responses, logs, or literal workspace MCP configuration.
-- Unmapped owners, broker outage, no reviewed connections, and connection action-required are
-  distinct states. The Connections surface reuses LibreChat's generic connected-accounts UI and
-  redacted readiness instead of adding provider-specific consent or token storage to GlassHive.
-- Every 60-second direct issuer assertion carries a signed random nonce that LibreChat consumes in
-  the existing shared replay cache before resolving a user or issuing/revoking a grant. Replay or
-  production replay-cache outage fails closed; a retry uses a freshly signed nonce.
+- When the optional broker adapter is enabled, unmapped owners, broker outage, no reviewed
+  connections, and connection action-required are distinct states. The Connections surface reuses
+  LibreChat's generic connected-accounts UI and redacted readiness instead of adding
+  provider-specific consent or token storage to GlassHive.
+- When the optional broker adapter is enabled, every 60-second direct issuer assertion carries a
+  signed random nonce that LibreChat consumes in the existing shared replay cache before resolving a
+  user or issuing/revoking a grant. Replay or production replay-cache outage fails closed; a retry
+  uses a freshly signed nonce.
 - Read-content and write scopes remain separate. Writes and destructive actions require the existing
   explicit confirmation policy. Revoke, expiry, provider outage, missing auth, unsupported
   configuration, rate limit, and successful-empty remain distinct states.
@@ -478,6 +488,9 @@ compliant hosted topology.
   release unit: ingress changes only after every readiness probe passes, and any start/readiness
   failure stops the complete candidate group and leaves or restores the preceding healthy group.
   PID existence and warning-only checks are not readiness.
+- Runtime, MCP, and BFF are the standalone GlassHive release unit. Optional LibreChat/Viventium
+  bridges are separately pinned, deployed, and validated only when enabled; they are not a
+  prerequisite or required source change for an existing standalone LibreChat deployment.
 - Minimum readiness is: internal runtime `/health` returns `200` JSON with `status=ok`; BFF `/health`
   returns `200` JSON with `status=ok` and nested `runtime.status=ok`; public MCP metadata returns the
   exact resource/issuer/scopes and unauthenticated initialize returns `401` with a

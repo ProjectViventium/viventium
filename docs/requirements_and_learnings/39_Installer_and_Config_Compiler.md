@@ -133,9 +133,10 @@ Provider credentials have two distinct owners and must not drift between them:
   unchanged. It is not projected into GlassHive hosted OIDC as mutable-email authorization;
   GlassHive tenant/domain admission must be an IdP tenant plus deny-by-default app-role/group
   assignment policy. Multi-user compilation requires a non-empty explicit OIDC role map; for Entra,
-  both web and API enterprise applications require assignment (or an equivalently reviewed and
-  tested Conditional Access/application-assignment gate). `allow_registration` only enrolls a
-  principal that already crossed that IdP boundary.
+  every enterprise application actually used requires assignment (or an equivalently reviewed and
+  tested Conditional Access/application-assignment gate). A single combined web-plus-API app
+  registration and split web/API registrations are both supported. `allow_registration` only
+  enrolls a principal that already crossed that IdP boundary.
 - Custom Settings Install may reference machine-level provider keys from canonical config through
   `keychain://` references. The compiler resolves OpenAI, Anthropic, Groq, and xAI through one
   provider-to-runtime mapping, writes resolved source-runtime and service env files mode `0600`,

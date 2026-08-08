@@ -316,8 +316,11 @@ integrations:
     #     # stores a second email/password credential database.
     #     mode: oidc
     #     # Enforce tenant/domain admission in the IdP with user/group assignment and app roles.
-    #     # For Entra, set "Assignment required?" to Yes on both the web and API enterprise apps;
-    #     # allow_registration only enrolls a principal after that IdP admission boundary.
+    #     # One Entra app registration may serve both the confidential web client and exposed API
+    #     # resource; separate registrations remain supported. Require assignment on every
+    #     # enterprise application used, or prove an equivalent deny-by-default role/admission gate.
+    #     # Never flip an existing shared application's assignment policy without auditing its current
+    #     # consumers. allow_registration only enrolls a principal after the IdP admission boundary.
     #     # runtime.auth.allowed_domains is only the LibreChat/local email-login policy.
     #     oidc:
     #       issuer: https://identity.example.com/tenant/v2.0
@@ -346,8 +349,9 @@ integrations:
     #     enabled: true
     #     issuer: https://identity.example.com/tenant/v2.0
     #     public_url: https://glasshive.example.com/mcp
-    #     # The Entra v2 access-token aud is normally the API app client-id GUID. It is not
-    #     # the public MCP URL used for RFC 8707 resource selection.
+    #     # The Entra v2 access-token aud is the combined web/API app client-id GUID in combined
+    #     # mode, or the dedicated API app client-id GUID in split mode. It is not the public MCP
+    #     # URL used for RFC 8707 resource selection.
     #     token_audiences: [<glasshive-api-app-client-id-guid>]
     #     # Optional upstream Entra tid validation. This is not the GlassHive tenant namespace.
     #     token_tenant_id: <entra-directory-tenant-guid>
