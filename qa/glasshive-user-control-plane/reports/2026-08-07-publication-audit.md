@@ -1,5 +1,7 @@
 # GlassHive user control plane publication audit — 2026-08-08
 
+<!-- qa-evidence-exempt: Publication diff and privacy ledger retained as audit evidence; user-path acceptance is recorded in the dedicated implementation and final-acceptance reports. -->
+
 ## Verdict
 
 GO for source publication after nested components merge first and the parent pins their exact merged commits. Read-only privacy, functionality, and release audits found no unresolved P0–P2 source-publication blocker. The hosted rollout remains a separate acceptance gate.
