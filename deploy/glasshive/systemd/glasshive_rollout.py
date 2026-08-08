@@ -816,7 +816,12 @@ def stage_release(
         )
         verify_release_manifest(staging, expected_release_id=release_id)
         _seal_release_tree(staging)
+        # Some filesystems require the renamed directory itself to remain owner-writable.
+        # Its children stay sealed, and the unpublished root remains owner-only until the
+        # atomic rename completes; seal the destination root immediately afterwards.
+        os.chmod(staging, 0o700)
         os.replace(staging, destination)
+        os.chmod(destination, 0o555)
         _fsync_directory(releases_root)
         verify_release_manifest(destination, expected_release_id=release_id)
         return manifest

@@ -205,7 +205,9 @@ def _git(repository: Path, *arguments: str) -> str:
     return result.stdout.strip()
 
 
-def test_stage_release_uses_clean_exact_pin_and_two_frozen_environments(tmp_path: Path) -> None:
+def test_stage_release_uses_clean_exact_pin_and_two_frozen_environments(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     source = tmp_path / "source"
     glasshive = source / "viventium_v0_4" / "GlassHive"
     runtime = glasshive / "runtime_phase1"
@@ -269,6 +271,20 @@ def test_stage_release_uses_clean_exact_pin_and_two_frozen_environments(tmp_path
     fake_python.write_text("#!/bin/sh\n", encoding="utf-8")
     fake_python.chmod(0o700)
     releases = tmp_path / "releases"
+
+    real_replace = rollout.os.replace
+
+    def replace_requiring_owner_writable_source(source: Path, destination: Path) -> None:
+        source_path = Path(source)
+        if (
+            source_path.is_dir()
+            and source_path.name.startswith(".staging-")
+            and not stat.S_IMODE(source_path.stat().st_mode) & stat.S_IWUSR
+        ):
+            raise PermissionError("source directory must remain owner-writable for atomic rename")
+        real_replace(source, destination)
+
+    monkeypatch.setattr(rollout.os, "replace", replace_requiring_owner_writable_source)
 
     manifest = rollout.stage_release(
         source=source,
