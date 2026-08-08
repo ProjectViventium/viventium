@@ -7,6 +7,7 @@ import json
 import sqlite3
 import stat
 import subprocess
+import sys
 import tarfile
 from pathlib import Path
 
@@ -212,10 +213,16 @@ def test_stage_release_uses_clean_exact_pin_and_two_frozen_environments(
     glasshive = source / "viventium_v0_4" / "GlassHive"
     runtime = glasshive / "runtime_phase1"
     ui = glasshive / "frontends" / "glass-drive-ui"
-    for project in (runtime, ui):
+    for project, package_name in (
+        (runtime, "workers_projects_runtime"),
+        (ui, "glass_drive_ui"),
+    ):
         project.mkdir(parents=True)
         (project / "pyproject.toml").write_text("[project]\nname='synthetic'\nversion='1.0.0'\n")
         (project / "uv.lock").write_text("version = 1\nrevision = 3\nrequires-python = '>=3.12'\n")
+        package = project / "src" / package_name
+        package.mkdir(parents=True)
+        (package / "__init__.py").write_text("RELOCATED = True\n", encoding="utf-8")
     _git(glasshive, "init")
     _git(glasshive, "config", "user.name", "Synthetic Release")
     _git(glasshive, "config", "user.email", "release@example.com")
@@ -256,21 +263,42 @@ def test_stage_release_uses_clean_exact_pin_and_two_frozen_environments(
     uv_log = tmp_path / "uv.log"
     fake_uv = tmp_path / "uv"
     fake_uv.write_text(
-        "#!/bin/sh\n"
-        f"printf '%s\\n' \"$*\" >> '{uv_log}'\n"
-        "mkdir -p .venv/bin\n"
-        "printf '#!/bin/sh\\n' > .venv/bin/python\n"
-        "printf '#!/bin/sh\\n' > .venv/bin/uvicorn\n"
-        "chmod 755 .venv/bin/python .venv/bin/uvicorn\n",
+        f"#!{sys.executable}\n"
+        "from pathlib import Path\n"
+        "import subprocess\n"
+        "import sys\n"
+        f"with Path({str(uv_log)!r}).open('a', encoding='utf-8') as handle:\n"
+        "    handle.write(' '.join(sys.argv[1:]) + '\\n')\n"
+        "if sys.argv[1] == 'venv':\n"
+        f"    subprocess.run([{sys.executable!r}, '-m', 'venv', '.venv'], check=True)\n"
+        "elif sys.argv[1] == 'sync':\n"
+        "    site_roots = list(Path('.venv/lib').glob('python*/site-packages'))\n"
+        "    if len(site_roots) != 1:\n"
+        "        raise SystemExit('synthetic venv has no unique site-packages')\n"
+        "    source = (Path.cwd() / 'src').resolve()\n"
+        "    (site_roots[0] / '__editable__.synthetic.pth').write_text(str(source) + '\\n')\n"
+        "    (site_roots[0] / '_virtualenv.pth').write_text('# synthetic bootstrap\\n')\n"
+        "    uvicorn = Path('.venv/bin/uvicorn')\n"
+        "    uvicorn.write_text('#!/bin/sh\\nexit 0\\n')\n"
+        "    uvicorn.chmod(0o755)\n"
+        "else:\n"
+        "    raise SystemExit('unexpected synthetic uv command')\n",
         encoding="utf-8",
     )
     fake_uv.chmod(0o700)
-    python_root = tmp_path / "python-runtime" / "bin"
-    python_root.mkdir(parents=True)
-    fake_python = python_root / "python3"
-    fake_python.write_text("#!/bin/sh\n", encoding="utf-8")
-    fake_python.chmod(0o700)
+    python = Path(sys.executable).resolve()
     releases = tmp_path / "releases"
+
+    staging_commands: list[tuple[tuple[str, ...], Path | None]] = []
+    real_run_checked = rollout._run_checked
+
+    def record_checked_command(
+        command: list[str] | tuple[str, ...], *, cwd: Path | None = None
+    ) -> subprocess.CompletedProcess[str]:
+        staging_commands.append((tuple(command), Path(cwd) if cwd is not None else None))
+        return real_run_checked(command, cwd=cwd)
+
+    monkeypatch.setattr(rollout, "_run_checked", record_checked_command)
 
     real_replace = rollout.os.replace
 
@@ -291,7 +319,7 @@ def test_stage_release_uses_clean_exact_pin_and_two_frozen_environments(
         releases_root=releases,
         release_id="release-20260806",
         uv=fake_uv,
-        python=fake_python,
+        python=python,
     )
 
     release = releases / "release-20260806"
@@ -305,11 +333,114 @@ def test_stage_release_uses_clean_exact_pin_and_two_frozen_environments(
     )
     assert all(
         "sync --frozen --no-dev --link-mode copy --python" in command
+        and "--no-editable" not in command
         and command.endswith("/.venv/bin/python")
         for command in commands[1::2]
     )
+    relocated_imports = [
+        (command, cwd)
+        for command, cwd in staging_commands
+        if len(command) == 4
+        and command[1:3] == ("-B", "-c")
+        and command[3] in {"import workers_projects_runtime", "import glass_drive_ui"}
+    ]
+    assert {command[3] for command, _cwd in relocated_imports} == {
+        "import workers_projects_runtime",
+        "import glass_drive_ui",
+    }
+    assert all(
+        cwd is not None and ".relocation-probe-" in str(cwd)
+        for _command, cwd in relocated_imports
+    )
+    for project in (
+        release / "viventium_v0_4" / "GlassHive" / "runtime_phase1",
+        release / "viventium_v0_4" / "GlassHive" / "frontends" / "glass-drive-ui",
+    ):
+        site_roots = list((project / ".venv" / "lib").glob("python*/site-packages"))
+        assert len(site_roots) == 1
+        editable_paths = list(site_roots[0].glob("__editable__*.pth"))
+        assert len(editable_paths) == 1
+        editable_value = editable_paths[0].read_text(encoding="utf-8").strip()
+        assert editable_value and not Path(editable_value).is_absolute()
+        assert (site_roots[0] / editable_value).resolve() == (project / "src").resolve()
+        assert (site_roots[0] / "_virtualenv.pth").read_text(encoding="utf-8") == (
+            "# synthetic bootstrap\n"
+        )
+        assert not list((project / "src").rglob("__pycache__"))
+        assert not list((project / "src").rglob("*.pyc"))
+    assert not list(releases.glob(".relocation-probe-*"))
     assert stat.S_IMODE(release.stat().st_mode) == 0o555
     assert not (release / ".git").exists()
+
+
+def test_editable_path_rewrite_fails_closed_when_layout_is_ambiguous(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    source = project / "src"
+    site_root = project / ".venv" / "lib" / "python3.12" / "site-packages"
+    source.mkdir(parents=True)
+    site_root.mkdir(parents=True)
+
+    with pytest.raises(rollout.RolloutError, match="exactly one editable source path"):
+        rollout._relativize_editable_project_path(project)
+
+    for name in ("first.pth", "second.pth"):
+        (site_root / name).write_text(str(source.resolve()) + "\n", encoding="utf-8")
+    with pytest.raises(rollout.RolloutError, match="exactly one editable source path"):
+        rollout._relativize_editable_project_path(project)
+
+
+def test_relocation_import_failure_restores_staging_without_probe_residue(tmp_path: Path) -> None:
+    releases = tmp_path / "releases"
+    staging = releases / ".staging-release-synthetic"
+    glasshive = staging / "viventium_v0_4" / "GlassHive"
+    for project, exit_code in (
+        (glasshive / "runtime_phase1", 0),
+        (glasshive / "frontends" / "glass-drive-ui", 1),
+    ):
+        executable = project / ".venv" / "bin" / "python"
+        executable.parent.mkdir(parents=True)
+        executable.write_text(f"#!/bin/sh\nexit {exit_code}\n", encoding="utf-8")
+        executable.chmod(0o700)
+
+    with pytest.raises(rollout.RolloutError, match="release staging command failed"):
+        rollout._probe_relocated_project_imports(
+            staging=staging,
+            releases_root=releases,
+            release_id="release-synthetic",
+        )
+
+    assert staging.is_dir()
+    assert not list(releases.glob(".relocation-probe-*"))
+
+
+def test_relocation_fsync_failure_restores_staging_without_probe_residue(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    releases = tmp_path / "releases"
+    staging = releases / ".staging-release-synthetic"
+    staging.mkdir(parents=True)
+    real_fsync_directory = rollout._fsync_directory
+    calls = 0
+
+    def fail_first_fsync(path: Path) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise OSError("synthetic fsync failure")
+        real_fsync_directory(path)
+
+    monkeypatch.setattr(rollout, "_fsync_directory", fail_first_fsync)
+
+    with pytest.raises(OSError, match="synthetic fsync failure"):
+        rollout._probe_relocated_project_imports(
+            staging=staging,
+            releases_root=releases,
+            release_id="release-synthetic",
+        )
+
+    assert calls == 2
+    assert staging.is_dir()
+    assert not list(releases.glob(".relocation-probe-*"))
 
 
 def test_adapter_contract_requires_all_named_acceptance_checks(tmp_path: Path) -> None:

@@ -699,6 +699,82 @@ def _validate_release_symlinks(release: Path, allowed_interpreter_root: Path) ->
         raise RolloutError(f"staged release symlink escapes approved roots: {path.relative_to(release)}")
 
 
+def _relativize_editable_project_path(project: Path) -> Path:
+    """Make one uv editable source path survive an atomic parent-directory rename."""
+
+    project = Path(project)
+    project_root = project.resolve()
+    source = (project / "src").resolve()
+    if not source.is_dir() or project_root not in source.parents:
+        raise RolloutError("staged project has no safe source directory")
+    site_roots = [
+        candidate
+        for candidate in (project / ".venv" / "lib").glob("python*/site-packages")
+        if candidate.is_dir() and not candidate.is_symlink()
+    ]
+    if len(site_roots) != 1:
+        raise RolloutError("staged project has no unique site-packages directory")
+    site_root = site_roots[0].resolve()
+    if project_root not in site_root.parents:
+        raise RolloutError("staged project site-packages escapes the project")
+    absolute_source = str(source)
+    matches: list[Path] = []
+    for path_file in sorted(site_root.glob("*.pth")):
+        if not path_file.is_file() or path_file.is_symlink():
+            continue
+        try:
+            content = path_file.read_text(encoding="utf-8")
+        except (OSError, UnicodeError) as exc:
+            raise RolloutError("staged project contains an unreadable path file") from exc
+        if content in {absolute_source, f"{absolute_source}\n"}:
+            matches.append(path_file)
+    if len(matches) != 1:
+        raise RolloutError("staged project must contain exactly one editable source path")
+    relative_source = os.path.relpath(source, start=site_root)
+    if Path(relative_source).is_absolute() or (site_root / relative_source).resolve() != source:
+        raise RolloutError("staged project editable source path is not safely relocatable")
+    _atomic_write(matches[0], f"{relative_source}\n".encode("utf-8"), mode=0o600)
+    return matches[0]
+
+
+def _probe_relocated_project_imports(
+    *, staging: Path, releases_root: Path, release_id: str
+) -> None:
+    """Physically relocate the candidate and import both owning packages."""
+
+    probe = releases_root / f".relocation-probe-{release_id}-{uuid.uuid4().hex[:12]}"
+    if probe.exists() or probe.is_symlink():
+        raise RolloutError("release relocation probe destination already exists")
+    os.replace(staging, probe)
+    try:
+        _fsync_directory(releases_root)
+        glasshive = probe / "viventium_v0_4" / "GlassHive"
+        for project, package_name in (
+            (glasshive / "runtime_phase1", "workers_projects_runtime"),
+            (glasshive / "frontends" / "glass-drive-ui", "glass_drive_ui"),
+        ):
+            _run_checked(
+                [
+                    str(project / ".venv" / "bin" / "python"),
+                    "-B",
+                    "-c",
+                    f"import {package_name}",
+                ],
+                cwd=project,
+            )
+    finally:
+        if probe.exists() or probe.is_symlink():
+            if staging.exists() or staging.is_symlink():
+                shutil.rmtree(probe, ignore_errors=True)
+                raise RolloutError("release relocation probe could not restore staging safely")
+            try:
+                os.replace(probe, staging)
+                _fsync_directory(releases_root)
+            except OSError as exc:
+                shutil.rmtree(probe, ignore_errors=True)
+                raise RolloutError("release relocation probe could not restore staging") from exc
+
+
 def _seal_release_tree(release: Path) -> None:
     for path in sorted(release.rglob("*"), key=lambda value: len(value.parts), reverse=True):
         if path.is_symlink():
@@ -799,6 +875,16 @@ def stage_release(
         if any(not path.exists() for path in required):
             raise RolloutError("frozen release staging did not produce every required executable")
         _validate_release_symlinks(staging, python.parent.parent)
+        for project in (
+            nested_destination / "runtime_phase1",
+            nested_destination / "frontends" / "glass-drive-ui",
+        ):
+            _relativize_editable_project_path(project)
+        _probe_relocated_project_imports(
+            staging=staging,
+            releases_root=releases_root,
+            release_id=release_id,
+        )
         # Normalize file modes before hashing. Directories are sealed after the manifest is written.
         for path in staging.rglob("*"):
             if path.is_symlink() or not path.is_file():

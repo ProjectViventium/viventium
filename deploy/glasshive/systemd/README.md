@@ -38,12 +38,17 @@ sudo python3 /path/to/viventium/deploy/glasshive/systemd/glasshive_rollout.py st
 
 Staging uses committed `git archive` input, never a working-tree copy. For the runtime and Glass
 Drive it first creates a supported `uv venv --relocatable`, then runs `uv sync --frozen --no-dev
---link-mode copy` against that environment. It verifies required executables and symlink
-containment, includes resolved external-interpreter content in the manifest hash, and removes write
-permission from the release. An unresolved, mutable, or changed interpreter target fails closed. A dirty
-checkout, stale component pin, unexpected symlink, missing lock, dependency failure, or existing
-destination is terminal. Services invoke the frozen `.venv` executables directly; no unit resolves
-dependencies at startup.
+--link-mode copy` against that environment. The helper keeps each project editable so source-layout
+assets remain available, but rewrites the generated absolute source `.pth` entry to a relative path.
+It then physically relocates the complete staging tree and imports both owning packages with
+bytecode writes disabled before the artifact can be sealed. This proves the source paths survive the
+atomic parent-directory rename without embedding the temporary probe path in generated files. It
+also verifies required executables and symlink containment, includes resolved external-interpreter
+content in the manifest hash, and removes write permission from the release. An unresolved, mutable,
+or changed interpreter target fails closed. A dirty checkout, stale component pin, unexpected
+symlink, missing lock, dependency failure, relocation/import failure, or existing destination is
+terminal. Services invoke the frozen `.venv` executables directly; no unit resolves dependencies at
+startup.
 
 ## Service identities and rootless Docker
 
