@@ -3135,6 +3135,21 @@ def test_glasshive_multi_user_control_plane_compiles_signed_identity_and_mcp_oau
     assert "GLASSHIVE_INTERNAL_ASSERTION_PREVIOUS_JWKS_FILE" not in glasshive_runtime_env
     assert "GLASSHIVE_INTERNAL_ASSERTION_PREVIOUS_KEYS_EXPIRE_AT" not in glasshive_runtime_env
 
+    combined_app_config = copy.deepcopy(config)
+    combined_client_id = combined_app_config["integrations"]["glasshive"]["enterprise"][
+        "mcp_oauth"
+    ]["token_audiences"][0]
+    combined_app_config["integrations"]["glasshive"]["enterprise"]["human_auth"][
+        "oidc"
+    ]["client_id"] = combined_client_id
+    combined_env = config_compiler.render_runtime_env(
+        combined_app_config,
+        config_compiler.build_agent_assignments(combined_app_config),
+    )
+    assert combined_env["GLASSHIVE_OIDC_CLIENT_ID"] == combined_client_id
+    assert combined_env["GLASSHIVE_MCP_OAUTH_TOKEN_AUDIENCES"] == combined_client_id
+    assert combined_env["GLASSHIVE_OIDC_ROLE_MAP_JSON"] == '{"Readers":"viewer"}'
+
     invalid_state_config = copy.deepcopy(config)
     invalid_state_config["integrations"]["glasshive"]["enterprise"]["state_dir"] = "../relative"
     with pytest.raises(SystemExit, match="state_dir must be an absolute normalized path"):

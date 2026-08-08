@@ -2,12 +2,12 @@
 
 ## Status
 
-The source candidate is **implemented and locally validated, but not release accepted**. The additive
+The source is **merged and locally validated, with hosted acceptance still pending**. The additive
 control plane, designed Glass Drive UX, local user journeys, and affected automated suites are present.
 Hosted identity, real external provider/connector consent, multi-user personal-subscription isolation,
 real external MCP clients, full standalone recurrence/template scope, installed-runtime provenance,
 clean install, and upgrade continuity remain explicit gates. This document is therefore the product
-truth and traceability source, not a claim that those external or release gates passed.
+truth and traceability source, not a claim that those hosted or external gates passed.
 
 ## Target Outcome
 
@@ -16,7 +16,8 @@ An authenticated enterprise user can use the designed GlassHive UI or a standard
 - create, find, rename, resume, duplicate, and schedule private persistent workspaces;
 - choose a personal Codex or Claude subscription for that user's missions without changing another
   user or the deployment-wide default;
-- connect user-owned data accounts through the existing capability broker;
+- connect user-owned data accounts through supported worker-native setup or, when configured, the
+  optional existing capability broker;
 - inspect and add reusable skills, plugins, and connectors through a curated Library with explicit
   human approval;
 - return to the same files, browser profile, worker context, account references, and approved
@@ -84,18 +85,19 @@ GlassHive runtime -- user-scoped workspaces, accounts, templates, Library, activ
         |                    |
         |                    +-- provider-home lease -> native Codex/Claude harness
         |
-        +-- narrow grant -> existing user-scoped capability broker -> connected service
+        +-- optional narrow grant -> user-scoped capability broker -> connected service
         |
-        +-- run-bound inference grant -> LibreChat credential owner -> fixed upstream adapter
+        +-- optional inference grant -> LibreChat credential owner -> fixed upstream adapter
 
-Scheduling Cortex -- authoritative recurrence + occurrence ledger
+recurrence owner -- glasshive_native, or optional Scheduling Cortex integration
         |
-        +-- owner-authenticated idempotent dispatch -> GlassHive workspace/run
+        +-- idempotent dispatch -> GlassHive workspace/run
 ```
 
-The browser gateway, runtime, provider homes, capability broker, and scheduler are distinct trust
-domains. Identity data and authorization assertions may cross these boundaries; raw provider tokens,
-browser cookies, and deployment credentials may not.
+The browser gateway, runtime, and provider homes are distinct trust domains. The capability,
+inference, and Scheduling Cortex bridges add separate trust domains only when configured. Identity
+data and authorization assertions may cross these boundaries; raw provider tokens, browser cookies,
+and deployment credentials may not.
 
 ### Hosted public edge and process topology
 
@@ -401,6 +403,8 @@ compliant hosted topology.
 
 - A deployment selects exactly one recurrence owner: `viventium_cortex` or `glasshive_native`.
   Conflicting ownership fails closed. Existing one-shot schedules remain compatible.
+- Standalone GlassHive selects `glasshive_native`; `viventium_cortex` is enabled only with the
+  separately pinned Scheduling Cortex bridge and is not a standalone deployment prerequisite.
 - The acceptance target supports one-shot, interval, cron, and RFC 5545-compatible definitions.
   Timezone, DST policy, start/end, enabled state, overlap, misfire, bounded catch-up, and jitter are
   explicit data, not prompt parsing. A narrower first increment must report unsupported forms
