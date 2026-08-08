@@ -4,6 +4,7 @@ import ast
 import importlib.util
 import io
 import json
+import shlex
 import sqlite3
 import stat
 import subprocess
@@ -260,17 +261,36 @@ def test_stage_release_uses_clean_exact_pin_and_two_frozen_environments(
     _git(source, "add", ".")
     _git(source, "commit", "-m", "synthetic parent")
 
+    python_root = tmp_path / "python-runtime" / "bin"
+    python_root.mkdir(parents=True)
+    python = python_root / "python3"
+    python.write_text(
+        "#!/bin/sh\n"
+        'venv_root="$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)"\n'
+        'site_root="$(find "${venv_root}/lib" -type d -name site-packages -print -quit)"\n'
+        'test -n "${site_root}"\n'
+        'test "$1" = "-B"\n'
+        'test "$2" = "-c"\n'
+        f"exec {shlex.quote(str(Path(sys.executable).resolve()))} -B -S -c "
+        "'import site,sys; site.addsitedir(sys.argv[1]); exec(sys.argv[2])' "
+        '"${site_root}" "$3"\n',
+        encoding="utf-8",
+    )
+    python.chmod(0o700)
+
     uv_log = tmp_path / "uv.log"
     fake_uv = tmp_path / "uv"
     fake_uv.write_text(
         f"#!{sys.executable}\n"
         "from pathlib import Path\n"
-        "import subprocess\n"
         "import sys\n"
         f"with Path({str(uv_log)!r}).open('a', encoding='utf-8') as handle:\n"
         "    handle.write(' '.join(sys.argv[1:]) + '\\n')\n"
         "if sys.argv[1] == 'venv':\n"
-        f"    subprocess.run([{sys.executable!r}, '-m', 'venv', '.venv'], check=True)\n"
+        "    Path('.venv/bin').mkdir(parents=True)\n"
+        "    Path('.venv/lib/python3.12/site-packages').mkdir(parents=True)\n"
+        "    allowed_python = Path(sys.argv[sys.argv.index('--python') + 1]).resolve()\n"
+        "    Path('.venv/bin/python').symlink_to(allowed_python)\n"
         "elif sys.argv[1] == 'sync':\n"
         "    site_roots = list(Path('.venv/lib').glob('python*/site-packages'))\n"
         "    if len(site_roots) != 1:\n"
@@ -286,7 +306,6 @@ def test_stage_release_uses_clean_exact_pin_and_two_frozen_environments(
         encoding="utf-8",
     )
     fake_uv.chmod(0o700)
-    python = Path(sys.executable).resolve()
     releases = tmp_path / "releases"
 
     staging_commands: list[tuple[tuple[str, ...], Path | None]] = []
@@ -358,6 +377,7 @@ def test_stage_release_uses_clean_exact_pin_and_two_frozen_environments(
     ):
         site_roots = list((project / ".venv" / "lib").glob("python*/site-packages"))
         assert len(site_roots) == 1
+        assert (project / ".venv" / "bin" / "python").resolve() == python.resolve()
         editable_paths = list(site_roots[0].glob("__editable__*.pth"))
         assert len(editable_paths) == 1
         editable_value = editable_paths[0].read_text(encoding="utf-8").strip()
