@@ -64,6 +64,24 @@ GlassHive core provider ownership:
 - Telegram long-turn transport: the compiler owns a 120-second `/chat` setup budget and a
   720-second SSE read budget; reconnect remains idempotent and never authorizes a second harness run
 
+GlassHive user control-plane ownership:
+
+- browser identity/session, OIDC Authorization Code + PKCE, CSRF, enrollment policy, signed runtime
+  assertions, and the designed control-plane UI: nested GlassHive `frontends/glass-drive-ui/`
+- owner-scoped workspace catalog, persistence, duplicate/template semantics, provider-account
+  references and leases, Library grants, audit, and worker execution: nested GlassHive
+  `runtime_phase1/src/workers_projects_runtime/`
+- user credential policy and encrypted OpenAI API-key ownership: nested LibreChat Connected Accounts;
+  the typed inference broker in `packages/api/src/endpoints/connectedAccounts/` mints and proxies
+  narrow run grants while raw credentials remain in LibreChat
+- recurring-definition CRUD and immutable occurrence ledger for Viventium: nested LibreChat
+  `viventium/MCPs/scheduling-cortex/`; GlassHive delegates schedule operations to that owner and the
+  internal `glasshive_workspace` executor dispatches an owner-scoped, idempotent occurrence
+- MCP is a parity surface over the same identities and owner-scoped operations. Hosted multi-user
+  mode requires OAuth resource validation; unverified identity headers never select an owner
+- templates and duplicate operations copy only bounded regular workspace content and non-secret
+  references. Provider homes, browser cookies, grants, schedules, and credentials are excluded
+
 Feelings ownership inside LibreChat:
 
 - compiler/env contract: root `config.schema.yaml`, examples, and `scripts/viventium/config_compiler.py`

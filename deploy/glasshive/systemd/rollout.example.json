@@ -1,0 +1,100 @@
+{
+  "schema_version": 1,
+  "release_id": "release-20260806-1",
+  "release_dir": "/opt/viventium/releases/release-20260806-1",
+  "releases_root": "/opt/viventium/releases",
+  "current_symlink": "/opt/viventium/current",
+  "runtime_active_env": "/etc/viventium/glasshive/runtime-active.env",
+  "gateway_active_env": "/etc/viventium/glasshive/gateway-active.env",
+  "runtime_env_file": "/etc/viventium/glasshive/runtime.env",
+  "gateway_env_file": "/etc/viventium/glasshive/gateway.env",
+  "state_dir": "/var/lib/glasshive",
+  "transactions_dir": "/var/lib/glasshive-rollouts",
+  "candidate_state_root": "/var/lib/glasshive/.rollout-candidates",
+  "lock_file": "/run/lock/glasshive-rollout.lock",
+  "runtime_user": "glasshive-runtime",
+  "probe_timeout_sec": 60,
+  "candidate_ports": {
+    "runtime": 18766,
+    "mcp": 18767,
+    "ui": 18780
+  },
+  "expected": {
+    "mcp_resource": "https://glasshive.example.com/mcp",
+    "mcp_resource_metadata_url": "https://glasshive.example.com/.well-known/oauth-protected-resource/mcp",
+    "mcp_issuer": "https://identity.example.com/tenant/v2.0",
+    "mcp_scopes": [
+      "api://<glasshive-api-app-client-id-guid>/user_impersonation"
+    ],
+    "mcp_token_audiences": ["<glasshive-api-app-client-id-guid>"],
+    "mcp_token_scopes": ["user_impersonation"],
+    "mcp_allowed_client_ids": [
+      "<registered-claude-public-client-id>",
+      "<registered-codex-public-client-id>"
+    ],
+    "mcp_tenant_id": "<tenant-id>",
+    "mcp_principal_claim": "oid"
+  },
+  "databases": [
+    {
+      "name": "runtime",
+      "path": "/var/lib/glasshive/runtime_phase1.db",
+      "env_name": "WPR_DB_PATH",
+      "restore_mode": "0660",
+      "candidate_relative": "runtime_phase1.db",
+      "invariants": [
+        {
+          "table": "projects",
+          "identity_columns": ["tenant_id", "owner_id"]
+        },
+        {
+          "table": "workers",
+          "identity_columns": ["tenant_id", "owner_id"]
+        }
+      ],
+      "post_migration_invariants": [
+        {
+          "table": "provider_accounts",
+          "identity_columns": ["tenant_id", "owner_id"]
+        },
+        {
+          "table": "control_plane_connections",
+          "identity_columns": ["tenant_id", "owner_id"]
+        },
+        {
+          "table": "workspace_capability_grants",
+          "identity_columns": ["tenant_id", "owner_id"]
+        },
+        {
+          "table": "workspace_templates",
+          "identity_columns": ["tenant_id", "owner_id"]
+        },
+        {
+          "table": "recurring_schedule_definitions",
+          "identity_columns": ["tenant_id", "owner_id"]
+        },
+        {
+          "table": "recurring_schedule_occurrences",
+          "identity_columns": ["tenant_id", "owner_id"]
+        }
+      ]
+    },
+    {
+      "name": "auth",
+      "path": "/var/lib/glasshive/gateway/auth.sqlite3",
+      "env_name": "GLASSHIVE_AUTH_STATE_PATH",
+      "restore_mode": "0600",
+      "allow_create_if_missing": true,
+      "candidate_relative": "gateway/auth.sqlite3",
+      "invariants": [
+        {
+          "table": "auth_principals",
+          "identity_columns": ["issuer", "subject"]
+        }
+      ]
+    }
+  ],
+  "state_adapter": "/usr/local/libexec/glasshive-state-adapter",
+  "ingress_adapter": "/usr/local/libexec/glasshive-ingress-adapter",
+  "acceptance_adapter": "/usr/local/libexec/glasshive-acceptance-adapter"
+}

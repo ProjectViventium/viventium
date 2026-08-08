@@ -1,0 +1,29 @@
+[Unit]
+Description=GlassHive verifier-only worker runtime
+After=network-online.target
+Wants=network-online.target
+PartOf=glasshive.target
+
+[Service]
+Type=simple
+User=glasshive-runtime
+Group=glasshive-state
+SupplementaryGroups=glasshive-state
+UMask=0007
+WorkingDirectory=/opt/viventium/current/viventium_v0_4/GlassHive/runtime_phase1
+EnvironmentFile=/etc/viventium/glasshive/runtime.env
+EnvironmentFile=/etc/viventium/glasshive/runtime-active.env
+Environment=VIVENTIUM_DISABLE_DEFAULT_RUNTIME_ENV=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStartPre=/opt/viventium/current/viventium_v0_4/GlassHive/runtime_phase1/.venv/bin/python /opt/viventium/current/deploy/glasshive/systemd/glasshive_rootless_docker_probe.py
+ExecStart=/opt/viventium/current/viventium_v0_4/GlassHive/runtime_phase1/.venv/bin/uvicorn workers_projects_runtime.api:app --host 127.0.0.1 --port ${GLASSHIVE_RUNTIME_PORT}
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=read-only
+ProtectSystem=strict
+ReadWritePaths=/var/lib/glasshive
+
+[Install]
+WantedBy=glasshive.target

@@ -17,6 +17,13 @@ runtime:
   call_session_secret:
     secret_ref: keychain://viventium/call_session_secret
   auth:
+    # Optional exact email-domain allowlist for LibreChat/local email signup and login.
+    # GlassHive OIDC authorization must instead be enforced by IdP tenant/app-role policy;
+    # mutable email claims never own a GlassHive workspace.
+    allowed_domains: []
+    # Show email-capable login when the external provider supports it. GlassHive itself does not
+    # store passwords or create a second credential stack.
+    allow_email_login: true
     # Browser sign-up is open by default so a new install can create its first account.
     # Once the install is reachable from outside your network, close this unless you intentionally
     # want public self-signup.
@@ -293,6 +300,102 @@ integrations:
     # Use explicit aliases only when browser auth identity and MCP/chat owner identity are known to
     # represent the same user in a non-SSO deployment.
     # enterprise:
+    #   # Persistent runtime/control-plane state. The gateway auth database is kept in a
+    #   # gateway-only child directory while runtime SQLite files use the shared state group.
+    #   state_dir: /var/lib/glasshive
+    #   # New multi-user deployments use signed internal assertions. Existing integrations can
+    #   # remain on legacy_compatibility until their gateway and key volume are ready.
+    #   security_mode: multi_user
+    #   tenant_id: example-tenant
+    #   # One stable claim must identify the same person in browser and MCP tokens.
+    #   # Microsoft Entra ID deployments normally use oid.
+    #   principal_claim: oid
+    #   human_auth:
+    #     # Multi-user mode requires Glass Drive Authorization Code + PKCE directly. Plain reverse-
+    #     # proxy identity headers are not accepted as an authentication boundary. GlassHive never
+    #     # stores a second email/password credential database.
+    #     mode: oidc
+    #     # Enforce tenant/domain admission in the IdP with user/group assignment and app roles.
+    #     # For Entra, set "Assignment required?" to Yes on both the web and API enterprise apps;
+    #     # allow_registration only enrolls a principal after that IdP admission boundary.
+    #     # runtime.auth.allowed_domains is only the LibreChat/local email-login policy.
+    #     oidc:
+    #       issuer: https://identity.example.com/tenant/v2.0
+    #       client_id: glasshive-ui
+    #       client_secret:
+    #         secret_ref: keychain://viventium/glasshive_oidc_client_secret
+    #       redirect_uri: https://glasshive.example.com/auth/oidc/callback
+    #       # Register this exact URI in the IdP's post-logout redirect allowlist. It defaults to
+    #       # the public operator origin plus /login when omitted.
+    #       post_logout_redirect_uri: https://glasshive.example.com/login
+    #       # Email is display metadata only; issuer + oid own the durable account.
+    #       email_claim: email
+    #       role_claim: roles
+    #       role_map:
+    #         GlassHive.Member: member
+    #         GlassHive.Viewer: viewer
+    #         GlassHive.TenantAdmin: tenant_admin
+    #   internal_assertion:
+    #     private_key_file: /run/secrets/glasshive-internal-assertion.pem
+    #     key_id: glasshive-gateway-1
+    #     # During rotation only: publish the previous PUBLIC key for an absolute 180-900 second
+    #     # overlap. Remove both fields after the expiry; never put an old private key here.
+    #     # previous_public_jwks_file: /run/secrets/glasshive-previous-public.jwks.json
+    #     # previous_keys_expire_at: <unix-epoch-seconds>
+    #   mcp_oauth:
+    #     enabled: true
+    #     issuer: https://identity.example.com/tenant/v2.0
+    #     public_url: https://glasshive.example.com/mcp
+    #     # The Entra v2 access-token aud is normally the API app client-id GUID. It is not
+    #     # the public MCP URL used for RFC 8707 resource selection.
+    #     token_audiences: [<glasshive-api-app-client-id-guid>]
+    #     # Optional upstream Entra tid validation. This is not the GlassHive tenant namespace.
+    #     token_tenant_id: <entra-directory-tenant-guid>
+    #     # Entra emits the short delegated permission name in the JWT scp claim.
+    #     token_scopes: [user_impersonation]
+    #     required_scopes: [api://<glasshive-api-app-client-id-guid>/user_impersonation]
+    #     # Register the approved Codex/Claude public clients in the configured IdP and list their
+    #     # exact access-token client ids here. Same-audience tokens from other clients are rejected.
+    #     allowed_client_ids: [glasshive-codex-client, glasshive-claude-client]
+    #     # Entra does not provide MCP dynamic client registration. Configure only real,
+    #     # pre-registered public clients and repeat their ids in allowed_client_ids.
+    #     clients:
+    #       claude:
+    #         client_id: <pre-registered-claude-public-client-id>
+    #         callback_port: <fixed-registered-claude-loopback-port>
+    #       codex:
+    #         client_id: <pre-registered-codex-public-client-id>
+    #         callback_port: <fixed-registered-codex-loopback-port>
+    #   provider_accounts:
+    #     # Personal accounts in multi-user deployments require this reviewed substrate.
+    #     isolation_mode: per_worker_container
+    #     codex_subscriptions_enabled: false
+    #     hosted_claude_consumer_auth_enabled: false
+    #     api_key_secret_store_enabled: false
+    #     connected_accounts_url: https://chat.example.com/settings/connections
+    #     # Optional direct user-scoped connected-service bridge. It never copies provider
+    #     # tokens into GlassHive. The URL is the explicit opt-in boundary and must be HTTPS.
+    #     capability_broker:
+    #       enabled: false
+    #       issuer_url: https://chat.example.com/api/viventium/glasshive/capabilities/direct
+    #       # shared_oidc_subject avoids per-user config when both apps use the exact same
+    #       # OIDC issuer and principal claim; users link by signing in once to each app.
+    #       identity_binding: shared_oidc_subject
+    #       # With operator_verified instead, configure the reviewed inference_broker
+    #       # owner_bindings below; inference execution itself may remain disabled.
+    #       timeout_seconds: 10
+    #     # Optional fixed Responses-API broker for user-scoped OpenAI API keys/routes already
+    #     # owned by the connected-accounts service. No provider secret is copied to GlassHive.
+    #     inference_broker:
+    #       enabled: false
+    #       url: https://chat.example.com/api/viventium/glasshive/inference
+    #       proxy_base_url: https://chat.example.com/api/viventium/glasshive/inference
+    #       timeout_seconds: 120
+    #       owner_bindings:
+    #         - glasshive_tenant_id: example-tenant
+    #           glasshive_owner_id: canonical-owner-id
+    #           librechat_user_id: connected-account-user-id
+    #           proof: operator_verified
     #   workspace_links:
     #     # Default false. When true, authenticated /r/{ref} workspace links request a lifecycle
     #     # resume before redirecting. Pair with idle/watch caps so forgotten tabs release compute.

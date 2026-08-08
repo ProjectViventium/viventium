@@ -357,6 +357,45 @@ def test_background_activation_attempt_budgets_are_reliable_and_configurable(
     assert "VIVENTIUM_ACTIVATION_FALLBACK_ATTEMPT_TIMEOUT_MS=2250" in librechat_env
 
 
+def test_glasshive_service_envs_keep_signer_material_out_of_runtime(tmp_path: Path) -> None:
+    env = {
+        "GLASSHIVE_SECURITY_MODE": "multi_user",
+        "GLASSHIVE_SERVICE_TOPOLOGY": "external_split",
+        "GLASSHIVE_STATE_DIR_MODE": "0770",
+        "GLASSHIVE_STATE_FILE_MODE": "0660",
+        "GLASSHIVE_AUTH_STATE_PATH": "/var/lib/glasshive/gateway/auth.sqlite3",
+        "GLASSHIVE_INTERNAL_ASSERTION_PRIVATE_KEY_FILE": "/run/secrets/assertion.pem",
+        "GLASSHIVE_INTERNAL_ASSERTION_PREVIOUS_JWKS_FILE": "/run/secrets/assertion-previous-public.jwks",
+        "GLASSHIVE_INTERNAL_ASSERTION_PREVIOUS_KEYS_EXPIRE_AT": "2000000600",
+        "GLASSHIVE_INTERNAL_ASSERTION_JWKS_URL": "https://glasshive.example.test/.well-known/jwks.json",
+        "GLASSHIVE_OIDC_CLIENT_SECRET": "synthetic-never-runtime",
+        "GLASSHIVE_RECURRING_SCHEDULE_OWNER": "viventium_cortex",
+        "WPR_DB_PATH": "/var/lib/glasshive/runtime_phase1.db",
+    }
+
+    config_compiler.render_service_envs(tmp_path, env)
+    gateway = (tmp_path / "service-env" / "glasshive-gateway.env").read_text(encoding="utf-8")
+    runtime = (tmp_path / "service-env" / "glasshive-runtime.env").read_text(encoding="utf-8")
+
+    assert "GLASSHIVE_INTERNAL_ASSERTION_PRIVATE_KEY_FILE=/run/secrets/assertion.pem" in gateway
+    assert "GLASSHIVE_OIDC_CLIENT_SECRET=synthetic-never-runtime" in gateway
+    assert "GLASSHIVE_INTERNAL_ASSERTION_PRIVATE_KEY_FILE" not in runtime
+    assert "GLASSHIVE_INTERNAL_ASSERTION_PREVIOUS_JWKS_FILE" not in runtime
+    assert "GLASSHIVE_INTERNAL_ASSERTION_PREVIOUS_KEYS_EXPIRE_AT" not in runtime
+    assert "GLASSHIVE_OIDC_CLIENT_SECRET" not in runtime
+    assert "GLASSHIVE_AUTH_STATE_PATH" in gateway
+    assert "GLASSHIVE_AUTH_STATE_PATH" not in runtime
+    assert "GLASSHIVE_INTERNAL_ASSERTION_JWKS_URL=" in runtime
+    assert "GLASSHIVE_RECURRING_SCHEDULE_OWNER=viventium_cortex" in runtime
+    assert "GLASSHIVE_STATE_DIR_MODE=0770" in gateway
+    assert "GLASSHIVE_STATE_DIR_MODE=0770" in runtime
+    assert "GLASSHIVE_STATE_FILE_MODE=0660" in gateway
+    assert "GLASSHIVE_STATE_FILE_MODE=0660" in runtime
+    assert "VIVENTIUM_DISABLE_DEFAULT_RUNTIME_ENV=1" in runtime
+    assert (tmp_path / "service-env" / "glasshive-gateway.env").stat().st_mode & 0o777 == 0o600
+    assert (tmp_path / "service-env" / "glasshive-runtime.env").stat().st_mode & 0o777 == 0o600
+
+
 def test_scheduled_agent_defaults_to_sol_xhigh_and_rejects_partial_policy() -> None:
     assert config_compiler.resolve_scheduled_agent_settings({}) == {
         "provider": "openai",
@@ -1065,11 +1104,13 @@ def test_livrechat_openid_auth_compiles_env_yaml_and_service_env(tmp_path: Path)
     config["runtime"]["auth"] = {
         "allow_email_login": False,
         "allow_registration": False,
+        "allowed_domains": [" Example.COM ", "staff.example.com", "example.com"],
         "openid": {
             "enabled": True,
             "client_id": "entra-client-id",
             "client_secret": {"secret_value": "entra-client-secret"},
             "issuer": "https://login.microsoftonline.com/tenant/v2.0/",
+            "audience": "api://glasshive-user-api",
             "session_secret": {"secret_value": "openid-session-secret"},
             "scope": "openid profile email",
             "callback_url": "/oauth/openid/callback",
@@ -1088,14 +1129,20 @@ def test_livrechat_openid_auth_compiles_env_yaml_and_service_env(tmp_path: Path)
     assert env["OPENID_CLIENT_ID"] == "entra-client-id"
     assert env["OPENID_CLIENT_SECRET"] == "entra-client-secret"
     assert env["OPENID_ISSUER"] == "https://login.microsoftonline.com/tenant/v2.0"
+    assert env["OPENID_AUDIENCE"] == "api://glasshive-user-api"
     assert env["OPENID_SESSION_SECRET"] == "openid-session-secret"
     assert env["OPENID_USE_PKCE"] == "true"
     assert env["OPENID_EMAIL_CLAIM"] == "preferred_username"
     assert librechat_yaml["registration"]["socialLogins"] == ["openid"]
+    assert librechat_yaml["registration"]["allowedDomains"] == [
+        "example.com",
+        "staff.example.com",
+    ]
 
     config_compiler.render_service_envs(tmp_path, env)
     service_env = (tmp_path / "service-env" / "librechat.env").read_text(encoding="utf-8")
     assert "OPENID_CLIENT_ID=entra-client-id" in service_env
+    assert "OPENID_AUDIENCE=api://glasshive-user-api" in service_env
     assert "OPENID_CLIENT_SECRET=entra-client-secret" in service_env
     assert "OPENID_SESSION_SECRET=openid-session-secret" in service_env
     assert "ALLOW_EMAIL_LOGIN=false" in service_env
@@ -1114,6 +1161,40 @@ def test_livrechat_openid_auth_fails_closed_when_enabled_without_secret() -> Non
 
     with pytest.raises(SystemExit, match="runtime.auth.openid.enabled requires"):
         config_compiler.render_runtime_env(config, config_compiler.build_agent_assignments(config))
+
+
+def test_livrechat_login_domain_allowlist_is_omitted_by_default() -> None:
+    config = minimal_compile_config()
+    assignments = config_compiler.build_agent_assignments(config)
+    env = config_compiler.render_runtime_env(config, assignments)
+
+    librechat_yaml = yaml.safe_load(config_compiler.render_librechat_yaml(config, assignments, env))
+
+    assert "allowedDomains" not in librechat_yaml["registration"]
+
+
+@pytest.mark.parametrize("allowed_domains", ["example.com", [""], ["https://example.com"], ["@example.com"]])
+def test_livrechat_login_domain_allowlist_rejects_invalid_values(allowed_domains: object) -> None:
+    config = minimal_compile_config()
+    config["runtime"]["auth"] = {"allowed_domains": allowed_domains}
+
+    with pytest.raises(SystemExit, match="runtime.auth.allowed_domains"):
+        assignments = config_compiler.build_agent_assignments(config)
+        config_compiler.render_runtime_env(config, assignments)
+
+
+def test_public_schema_declares_login_domain_allowlist() -> None:
+    schema = yaml.safe_load((REPO_ROOT / "config.schema.yaml").read_text(encoding="utf-8"))
+
+    allowed_domains = schema["properties"]["runtime"]["properties"]["auth"]["properties"][
+        "allowed_domains"
+    ]
+
+    assert allowed_domains["type"] == "array"
+    assert allowed_domains["items"] == {"type": "string"}
+    assert schema["properties"]["runtime"]["properties"]["auth"]["properties"][
+        "allow_email_login"
+    ]["type"] == "boolean"
 
 
 def test_launcher_treats_classic_playground_as_explicit_opt_in_only() -> None:
@@ -1165,6 +1246,25 @@ def test_launcher_keeps_glasshive_state_under_runtime_state_root() -> None:
     assert function_body.index('export WPR_DB_PATH="${WPR_DB_PATH:-$glasshive_state_dir/runtime_phase1.db}"') < function_body.index(
         "uv run uvicorn workers_projects_runtime.api:app"
     )
+
+
+def test_launcher_keeps_runtime_verifier_only_and_fails_closed_on_three_service_readiness() -> None:
+    script = START_SCRIPT.read_text(encoding="utf-8")
+    ready_index = script.index("glasshive_stack_ready() {")
+    function_body = script[ready_index : script.index("start_ms365_mcp() {", ready_index)]
+
+    assert "http://127.0.0.1:${GLASSHIVE_RUNTIME_PORT}/health" in function_body
+    assert "http://127.0.0.1:${GLASSHIVE_MCP_PORT}/mcp" in function_body
+    assert "http://127.0.0.1:${GLASSHIVE_UI_PORT}/health" in function_body
+    assert "env -u GLASSHIVE_INTERNAL_ASSERTION_PRIVATE_KEY_FILE" in function_body
+    assert "-u VIVENTIUM_ENV_FILE" in function_body
+    assert "VIVENTIUM_DISABLE_DEFAULT_RUNTIME_ENV=1" in function_body
+    assert "GLASSHIVE_SERVICE_TOPOLOGY must be external_split" in function_body
+    assert "must already be running under separate service identities" in function_body
+    assert "shared launcher user can read the assertion key" not in function_body
+    assert "stop_candidate_glasshive_stack" in function_body
+    assert "failed runtime/MCP/UI readiness" in function_body
+    assert "processes started but health checks are not fully ready yet" not in function_body
 
 
 def test_launcher_publishes_only_signed_glasshive_surfaces() -> None:
@@ -2402,6 +2502,8 @@ def test_render_runtime_env_emits_glasshive_launch_env_only_when_enabled(tmp_pat
     assert default_host_env["WPR_MODEL_HOST_CODEX_CLI"] == "gpt-5.6-sol"
     assert default_host_env["WPR_CODEX_CLI_REASONING_EFFORT"] == "xhigh"
     assert default_host_env["WPR_CODEX_CLI_XHIGH_ROUTE_PROVEN"] == "true"
+    assert default_host_env["GLASSHIVE_RECURRING_SCHEDULE_OWNER"] == "viventium_cortex"
+    assert default_host_env["GLASSHIVE_SCHEDULING_OWNER_URL"] == "http://127.0.0.1:7110/mcp"
     assert "GLASSHIVE_PUBLIC_LINKS_ONLY" not in default_host_env
 
     public_host_config = copy.deepcopy(default_host_config)
@@ -2418,6 +2520,7 @@ def test_render_runtime_env_emits_glasshive_launch_env_only_when_enabled(tmp_pat
     )
     assert public_host_env["VIVENTIUM_PUBLIC_GLASSHIVE_URL"] == "https://glasshive.app.example.test"
     assert public_host_env["GLASSHIVE_OPERATOR_BASE_URL"] == "https://glasshive.app.example.test"
+    assert public_host_env["GLASSHIVE_SCHEDULING_OWNER_URL"] == "http://127.0.0.1:7110/mcp"
     assert public_host_env["GLASSHIVE_ARTIFACT_BASE_URL"] == "https://glasshive.app.example.test"
     assert public_host_env["GLASSHIVE_PUBLIC_LINKS_ONLY"] == "true"
     assert public_host_env["GLASSHIVE_SIGNED_LINK_SECRET"] == expected_glasshive_secret
@@ -2552,6 +2655,18 @@ def test_config_compiler_rejects_invalid_glasshive_default_worker_profile() -> N
     }
 
     with pytest.raises(SystemExit, match="default_worker_profile must be one of"):
+        config_compiler.resolve_glasshive_host_worker_settings(config)
+
+
+@pytest.mark.parametrize("value", ["{not-json", '"disabled"'])
+def test_config_compiler_rejects_invalid_glasshive_runtime_requirements_json(value: str) -> None:
+    config = minimal_compile_config()
+    config["integrations"]["glasshive"] = {
+        "enabled": True,
+        "host_worker": {"runtime_requirements": {"json": value}},
+    }
+
+    with pytest.raises(SystemExit, match="runtime_requirements.json"):
         config_compiler.resolve_glasshive_host_worker_settings(config)
 
 
@@ -2754,6 +2869,953 @@ def test_glasshive_azure_enterprise_vm_docker_compiles_cloud_safe_config(tmp_pat
     assert "glasshive.enterprise.example.com" in librechat_yaml["mcpSettings"]["allowedDomains"]
     assert "glasshive-ui.enterprise.example.com" in librechat_yaml["mcpSettings"]["allowedDomains"]
     assert "glasshive-api.enterprise.example.com" in librechat_yaml["mcpSettings"]["allowedDomains"]
+
+
+def test_glasshive_multi_user_control_plane_compiles_signed_identity_and_mcp_oauth(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    configure_synthetic_glasshive_runtime(tmp_path, monkeypatch)
+    monkeypatch.setattr(config_compiler.shutil, "which", lambda _name: None)
+    config = minimal_compile_config()
+    config["runtime"]["network"] = {
+        "public_api_origin": "https://api.example.test",
+    }
+    config["runtime"]["auth"] = {
+        "allowed_domains": ["example.test"],
+        "allow_email_login": False,
+        "allow_registration": False,
+    }
+    config["integrations"]["glasshive"] = {
+        "enabled": True,
+        "deployment_mode": "azure_enterprise_vm_docker",
+        "mcp_url": "https://glasshive.example.test/mcp",
+        "operator_base_url": "https://glasshive.example.test",
+        "enterprise": {
+            "tenant_id": "tenant-public-safe",
+            "security_mode": "multi_user",
+            "principal_claim": "oid",
+            "auth": {"service_token": {"secret_value": "service-token-test"}},
+            "human_auth": {
+                "mode": "oidc",
+                "oidc": {
+                    "issuer": "https://identity.example.test/tenant/v2.0",
+                    "client_id": "glasshive-ui",
+                    "client_secret": {"secret_value": "oidc-secret-test"},
+                    "redirect_uri": "https://glasshive.example.test/auth/oidc/callback",
+                    "email_claim": "preferred_username",
+                    "email_claim_trusted": True,
+                    "role_claim": "roles",
+                    "role_map": {"Readers": "viewer"},
+                },
+            },
+            "internal_assertion": {
+                "private_key_file": "/run/secrets/glasshive-assertion.pem",
+                "key_id": "gateway-2026-08",
+                "previous_public_jwks_file": "/run/secrets/glasshive-assertion-previous-public.jwks",
+                "previous_keys_expire_at": 2000000600,
+            },
+            "mcp_oauth": {
+                "enabled": True,
+                "issuer": "https://identity.example.test/tenant/v2.0",
+                "public_url": "https://glasshive.example.test/mcp",
+                "token_audiences": ["00000000-0000-4000-8000-000000000123"],
+                "token_tenant_id": "00000000-0000-4000-8000-000000000456",
+                "token_scopes": ["user_impersonation"],
+                "required_scopes": [
+                    "api://00000000-0000-4000-8000-000000000123/user_impersonation"
+                ],
+                "allowed_client_ids": ["glasshive-codex-client", "glasshive-claude-client"],
+                "documentation_url": "https://docs.example.test/glasshive-clients",
+                "clients": {
+                    "claude": {
+                        "client_id": "glasshive-claude-client",
+                        "callback_port": 49152,
+                    },
+                    "codex": {
+                        "client_id": "glasshive-codex-client",
+                        "callback_port": 49153,
+                    },
+                },
+            },
+            "provider_accounts": {
+                "codex_subscriptions_enabled": False,
+                "hosted_claude_consumer_auth_enabled": False,
+                "api_key_secret_store_enabled": True,
+                "connected_accounts_url": "https://chat.example.test/settings/connections",
+                "capability_broker": {
+                    "enabled": True,
+                    "issuer_url": (
+                        "https://chat.example.test/api/viventium/glasshive/capabilities/direct"
+                    ),
+                    "timeout_seconds": 10,
+                },
+                "inference_broker": {
+                    "enabled": True,
+                    "url": "https://chat.example.test/api/viventium/glasshive/inference",
+                    "proxy_base_url": "https://chat.example.test/api/viventium/glasshive/inference",
+                    "owner_bindings": [
+                        {
+                            "glasshive_tenant_id": "tenant-public-safe",
+                            "glasshive_owner_id": "canonical-owner",
+                            "librechat_user_id": "connected-user",
+                            "proof": "operator_verified",
+                        }
+                    ],
+                },
+            },
+        },
+    }
+
+    env = config_compiler.render_runtime_env(
+        config,
+        config_compiler.build_agent_assignments(config),
+    )
+
+    assert env["GLASSHIVE_SECURITY_MODE"] == "multi_user"
+    assert env["GLASSHIVE_AUTH_MODE"] == "signed_internal_assertion"
+    assert env["GLASSHIVE_HUMAN_AUTH_MODE"] == "oidc"
+    assert env["GLASSHIVE_ALLOW_EMAIL_LOGIN"] == "false"
+    assert env["GLASSHIVE_ALLOW_EMAIL_REGISTRATION"] == "false"
+    assert env["GLASSHIVE_COOKIE_SECURE"] == "true"
+    assert "GLASSHIVE_ALLOWED_EMAIL_DOMAINS" not in env
+    assert env["GLASSHIVE_OIDC_ISSUER"] == "https://identity.example.test/tenant/v2.0"
+    assert env["GLASSHIVE_OIDC_POST_LOGOUT_REDIRECT_URI"] == (
+        "https://glasshive.example.test/login"
+    )
+    assert env["GLASSHIVE_OIDC_CLIENT_SECRET"] == "oidc-secret-test"
+    assert env["GLASSHIVE_OIDC_ROLE_MAP_JSON"] == '{"Readers":"viewer"}'
+    assert env["GLASSHIVE_OIDC_PRINCIPAL_CLAIM"] == "oid"
+    assert env["GLASSHIVE_OIDC_EMAIL_CLAIM"] == "preferred_username"
+    assert env["GLASSHIVE_OIDC_EMAIL_CLAIM_TRUSTED"] == "true"
+    assert env["GLASSHIVE_MCP_OAUTH_ALLOWED_CLIENT_IDS"] == (
+        "glasshive-codex-client glasshive-claude-client"
+    )
+    assert env["GLASSHIVE_MCP_OAUTH_TOKEN_AUDIENCES"] == (
+        "00000000-0000-4000-8000-000000000123"
+    )
+    assert env["GLASSHIVE_MCP_OAUTH_TOKEN_TENANT_ID"] == (
+        "00000000-0000-4000-8000-000000000456"
+    )
+    assert env["GLASSHIVE_MCP_OAUTH_TOKEN_SCOPES"] == "user_impersonation"
+    assert env["GLASSHIVE_MCP_OAUTH_CLIENT_ID_CLAIMS"] == "azp appid client_id"
+    assert env["GLASSHIVE_MCP_CLAUDE_CLIENT_ID"] == "glasshive-claude-client"
+    assert env["GLASSHIVE_MCP_CLAUDE_CALLBACK_PORT"] == "49152"
+    assert env["GLASSHIVE_MCP_CODEX_CLIENT_ID"] == "glasshive-codex-client"
+    assert env["GLASSHIVE_MCP_CODEX_CALLBACK_PORT"] == "49153"
+    assert env["GLASSHIVE_MCP_CODEX_RESOURCE"] == (
+        "https://glasshive.example.test/mcp"
+    )
+    assert env["GLASSHIVE_INFERENCE_BROKER_URL"] == (
+        "https://chat.example.test/api/viventium/glasshive/inference"
+    )
+    assert env["GLASSHIVE_INFERENCE_BROKER_PROXY_BASE_URL"].endswith(
+        "/api/viventium/glasshive/inference"
+    )
+    assert env["GLASSHIVE_INFERENCE_BROKER_TENANT_ID"] == "tenant-public-safe"
+    assert json.loads(env["GLASSHIVE_INFERENCE_BROKER_OWNER_BINDINGS_JSON"]) == [
+        {
+            "glasshive_owner_id": "canonical-owner",
+            "glasshive_tenant_id": "tenant-public-safe",
+            "librechat_user_id": "connected-user",
+            "proof": "operator_verified",
+        }
+    ]
+    assert env["GLASSHIVE_INFERENCE_BROKER_SECRET"] == env[
+        "VIVENTIUM_GLASSHIVE_INFERENCE_BROKER_SECRET"
+    ]
+    assert env["GLASSHIVE_INFERENCE_BROKER_SECRET"] != env[
+        "VIVENTIUM_GLASSHIVE_CAPABILITY_BROKER_SECRET"
+    ]
+    assert env["GLASSHIVE_CAPABILITY_BROKER_ISSUER_URL"].endswith(
+        "/api/viventium/glasshive/capabilities/direct"
+    )
+    assert env["GLASSHIVE_CAPABILITY_BROKER_TENANT_ID"] == "tenant-public-safe"
+    assert json.loads(env["GLASSHIVE_CAPABILITY_BROKER_OWNER_BINDINGS_JSON"]) == [
+        {
+            "glasshive_owner_id": "canonical-owner",
+            "glasshive_tenant_id": "tenant-public-safe",
+            "librechat_user_id": "connected-user",
+            "proof": "operator_verified",
+        }
+    ]
+    assert env["GLASSHIVE_CAPABILITY_BROKER_TIMEOUT_SECONDS"] == "10.0"
+    assert env["GLASSHIVE_CAPABILITY_BROKER_ISSUER_SECRET"] != env[
+        "GLASSHIVE_INFERENCE_BROKER_SECRET"
+    ]
+    assert env["GLASSHIVE_CAPABILITY_BROKER_ISSUER_SECRET"] == (
+        config_compiler.scoped_secret(
+            "call-session-test",
+            "glasshive-capability-direct-issuer",
+        )
+    )
+    assert env["VIVENTIUM_GLASSHIVE_CAPABILITY_ISSUER_SECRET"] == env[
+        "GLASSHIVE_CAPABILITY_BROKER_ISSUER_SECRET"
+    ]
+    assert env["GLASSHIVE_CAPABILITY_BROKER_ISSUER_SECRET"] != env[
+        "VIVENTIUM_GLASSHIVE_CAPABILITY_BROKER_SECRET"
+    ]
+    assert env["VIVENTIUM_GLASSHIVE_INFERENCE_UPSTREAM_TIMEOUT_MS"] == "120000"
+    assert env["VIVENTIUM_GLASSHIVE_INFERENCE_PROXY_URL"].endswith(
+        "/api/viventium/glasshive/inference"
+    )
+    assert env["GLASSHIVE_INTERNAL_ASSERTION_PRIVATE_KEY_FILE"] == (
+        "/run/secrets/glasshive-assertion.pem"
+    )
+    assert env["GLASSHIVE_INTERNAL_ASSERTION_PREVIOUS_JWKS_FILE"] == (
+        "/run/secrets/glasshive-assertion-previous-public.jwks"
+    )
+    assert env["GLASSHIVE_INTERNAL_ASSERTION_PREVIOUS_KEYS_EXPIRE_AT"] == "2000000600"
+    assert env["GLASSHIVE_INTERNAL_ASSERTION_JWKS_URL"] == (
+        "https://glasshive.example.test/.well-known/jwks.json"
+    )
+    assert env["GLASSHIVE_MCP_OAUTH_ISSUER"] == "https://identity.example.test/tenant/v2.0"
+    assert env["GLASSHIVE_MCP_PUBLIC_URL"] == "https://glasshive.example.test/mcp"
+    assert env["GLASSHIVE_MCP_OAUTH_REQUIRED_SCOPES"] == (
+        "api://00000000-0000-4000-8000-000000000123/user_impersonation"
+    )
+    assert env["GLASSHIVE_ENABLE_CODEX_PERSONAL_ACCOUNTS"] == "false"
+    assert env["GLASSHIVE_MCP_OAUTH_SUBJECT_CLAIM"] == "oid"
+    assert env["GLASSHIVE_PRINCIPAL_ID_FORMAT"] == "hashed_issuer_subject"
+    assert env["GLASSHIVE_ENABLE_HOSTED_CLAUDE_CONSUMER_AUTH"] == "false"
+    assert env["GLASSHIVE_PROVIDER_SECRET_STORE_ENABLED"] == "true"
+    assert env["GLASSHIVE_CONNECTED_ACCOUNTS_URL"] == (
+        "https://chat.example.test/settings/connections"
+    )
+    assert env["GLASSHIVE_STATE_DIR"] == "/var/lib/glasshive"
+    assert env["WPR_DB_PATH"] == "/var/lib/glasshive/runtime_phase1.db"
+    assert env["GLASSHIVE_PROVIDER_ACCOUNT_HOME_ROOT"] == "/var/lib/glasshive/provider_accounts"
+    assert env["GLASSHIVE_AUTH_STATE_PATH"] == "/var/lib/glasshive/gateway/auth.sqlite3"
+
+    config_compiler.render_service_envs(tmp_path, env)
+    librechat_env = (tmp_path / "service-env" / "librechat.env").read_text(
+        encoding="utf-8"
+    )
+    gateway_env = (tmp_path / "service-env" / "glasshive-gateway.env").read_text(
+        encoding="utf-8"
+    )
+    glasshive_runtime_env = (
+        tmp_path / "service-env" / "glasshive-runtime.env"
+    ).read_text(encoding="utf-8")
+    assert "VIVENTIUM_GLASSHIVE_CAPABILITY_ISSUER_SECRET=" in librechat_env
+    assert "GLASSHIVE_ENTERPRISE_TENANT_ID=tenant-public-safe" in librechat_env
+    assert "GLASSHIVE_CAPABILITY_BROKER_ISSUER_SECRET" not in librechat_env
+    assert "GLASSHIVE_CAPABILITY_BROKER_ISSUER_URL" not in gateway_env
+    assert "GLASSHIVE_CAPABILITY_BROKER_ISSUER_SECRET" not in gateway_env
+    assert "VIVENTIUM_GLASSHIVE_CAPABILITY_ISSUER_SECRET" not in gateway_env
+    assert "GLASSHIVE_MCP_CLAUDE_CLIENT_ID=glasshive-claude-client" in gateway_env
+    assert "GLASSHIVE_MCP_CLAUDE_CALLBACK_PORT=49152" in gateway_env
+    assert "GLASSHIVE_MCP_CODEX_CLIENT_ID=glasshive-codex-client" in gateway_env
+    assert "GLASSHIVE_MCP_CODEX_CALLBACK_PORT=49153" in gateway_env
+    assert (
+        "GLASSHIVE_MCP_CODEX_RESOURCE=https://glasshive.example.test/mcp"
+        in gateway_env
+    )
+    assert (
+        "GLASSHIVE_MCP_OAUTH_TOKEN_AUDIENCES="
+        "00000000-0000-4000-8000-000000000123"
+        in gateway_env
+    )
+    assert "GLASSHIVE_MCP_OAUTH_TOKEN_SCOPES=user_impersonation" in gateway_env
+    assert "GLASSHIVE_CAPABILITY_BROKER_ISSUER_URL=" in glasshive_runtime_env
+    assert "GLASSHIVE_CAPABILITY_BROKER_ISSUER_SECRET=" in glasshive_runtime_env
+    assert "GLASSHIVE_CAPABILITY_BROKER_TENANT_ID=" in glasshive_runtime_env
+    assert "GLASSHIVE_CAPABILITY_BROKER_OWNER_BINDINGS_JSON=" in glasshive_runtime_env
+    assert "VIVENTIUM_GLASSHIVE_CAPABILITY_ISSUER_SECRET" not in glasshive_runtime_env
+    assert "GLASSHIVE_MCP_CLAUDE_CLIENT_ID" not in glasshive_runtime_env
+    assert "GLASSHIVE_MCP_CODEX_CLIENT_ID" not in glasshive_runtime_env
+    assert "GLASSHIVE_MCP_CODEX_CALLBACK_PORT" not in glasshive_runtime_env
+    assert (
+        "GLASSHIVE_MCP_OAUTH_TOKEN_AUDIENCES="
+        "00000000-0000-4000-8000-000000000123"
+        in glasshive_runtime_env
+    )
+    assert "GLASSHIVE_MCP_OAUTH_TOKEN_SCOPES=user_impersonation" in glasshive_runtime_env
+    assert "GLASSHIVE_INTERNAL_ASSERTION_PRIVATE_KEY_FILE" not in glasshive_runtime_env
+    assert "GLASSHIVE_INTERNAL_ASSERTION_PREVIOUS_JWKS_FILE" not in glasshive_runtime_env
+    assert "GLASSHIVE_INTERNAL_ASSERTION_PREVIOUS_KEYS_EXPIRE_AT" not in glasshive_runtime_env
+
+    invalid_state_config = copy.deepcopy(config)
+    invalid_state_config["integrations"]["glasshive"]["enterprise"]["state_dir"] = "../relative"
+    with pytest.raises(SystemExit, match="state_dir must be an absolute normalized path"):
+        config_compiler.resolve_glasshive_enterprise_settings(invalid_state_config)
+
+    missing_mcp_client_allowlist = copy.deepcopy(config)
+    del missing_mcp_client_allowlist["integrations"]["glasshive"]["enterprise"][
+        "mcp_oauth"
+    ]["allowed_client_ids"]
+    with pytest.raises(SystemExit, match="allowed_client_ids"):
+        config_compiler.resolve_glasshive_enterprise_settings(missing_mcp_client_allowlist)
+
+    unallowlisted_codex_client = copy.deepcopy(config)
+    unallowlisted_codex_client["integrations"]["glasshive"]["enterprise"]["mcp_oauth"][
+        "clients"
+    ]["codex"]["client_id"] = "different-codex-client"
+    with pytest.raises(SystemExit, match="must also appear in mcp_oauth.allowed_client_ids"):
+        config_compiler.resolve_glasshive_enterprise_settings(unallowlisted_codex_client)
+
+    incomplete_claude_client = copy.deepcopy(config)
+    del incomplete_claude_client["integrations"]["glasshive"]["enterprise"]["mcp_oauth"][
+        "clients"
+    ]["claude"]["callback_port"]
+    with pytest.raises(SystemExit, match="requires both client_id and callback_port"):
+        config_compiler.resolve_glasshive_enterprise_settings(incomplete_claude_client)
+
+    incomplete_codex_client = copy.deepcopy(config)
+    del incomplete_codex_client["integrations"]["glasshive"]["enterprise"][
+        "mcp_oauth"
+    ]["clients"]["codex"]["callback_port"]
+    with pytest.raises(SystemExit, match="Codex client requires both client_id and callback_port"):
+        config_compiler.resolve_glasshive_enterprise_settings(incomplete_codex_client)
+
+    missing_token_audiences = copy.deepcopy(config)
+    del missing_token_audiences["integrations"]["glasshive"]["enterprise"][
+        "mcp_oauth"
+    ]["token_audiences"]
+    with pytest.raises(SystemExit, match="token_audiences"):
+        config_compiler.resolve_glasshive_enterprise_settings(missing_token_audiences)
+
+    missing_token_scopes = copy.deepcopy(config)
+    del missing_token_scopes["integrations"]["glasshive"]["enterprise"][
+        "mcp_oauth"
+    ]["token_scopes"]
+    with pytest.raises(SystemExit, match="token_scopes"):
+        config_compiler.resolve_glasshive_enterprise_settings(missing_token_scopes)
+
+    invalid_token_audiences = copy.deepcopy(config)
+    invalid_token_audiences["integrations"]["glasshive"]["enterprise"][
+        "mcp_oauth"
+    ]["token_audiences"] = ["audience with whitespace"]
+    with pytest.raises(SystemExit, match="token_audiences contains an invalid audience"):
+        config_compiler.resolve_glasshive_enterprise_settings(invalid_token_audiences)
+
+    mismatched_codex_resource = copy.deepcopy(config)
+    mismatched_codex_resource["integrations"]["glasshive"]["enterprise"][
+        "mcp_oauth"
+    ]["clients"]["codex"]["resource"] = "api://token-audience-is-not-the-resource"
+    with pytest.raises(SystemExit, match="must exactly match mcp_oauth.public_url"):
+        config_compiler.resolve_glasshive_enterprise_settings(mismatched_codex_resource)
+
+    config["integrations"]["glasshive"]["enterprise"]["mcp_oauth"]["issuer"] = (
+        "https://different-identity.example.test/tenant/v2.0"
+    )
+    with pytest.raises(SystemExit, match="browser and MCP OAuth issuers must match"):
+        config_compiler.resolve_glasshive_enterprise_settings(config)
+
+
+def test_glasshive_user_features_fail_closed_without_multi_user_security(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    configure_synthetic_glasshive_runtime(tmp_path, monkeypatch)
+    config = minimal_compile_config()
+    config["integrations"]["glasshive"] = {
+        "enabled": True,
+        "deployment_mode": "azure_enterprise_vm_docker",
+        "mcp_url": "https://glasshive.example.test/mcp",
+        "operator_base_url": "https://glasshive.example.test",
+        "enterprise": {
+            "tenant_id": "tenant-public-safe",
+            "provider_accounts": {
+                "inference_broker": {
+                    "enabled": True,
+                    "url": "https://chat.example.test/api/viventium/glasshive/inference",
+                    "owner_bindings": [
+                        {
+                            "glasshive_tenant_id": "tenant-public-safe",
+                            "glasshive_owner_id": "canonical-owner",
+                            "librechat_user_id": "connected-user",
+                            "proof": "operator_verified",
+                        }
+                    ],
+                }
+            },
+        },
+    }
+
+    with pytest.raises(SystemExit, match="security_mode=multi_user"):
+        config_compiler.resolve_glasshive_enterprise_settings(config)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "https://localhost/api",
+        "https://127.0.0.1/api",
+        "https://169.254.169.254/api",
+        "https://10.0.0.1/api",
+        "https://[::1]/api",
+    ],
+)
+def test_glasshive_public_urls_reject_local_and_private_literal_hosts(value: str) -> None:
+    with pytest.raises(SystemExit, match="public HTTPS URL"):
+        config_compiler._require_https_public_url("synthetic URL", value)
+
+
+def test_glasshive_multi_user_control_plane_fails_closed_without_assertion_key_or_mcp_oauth(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    configure_synthetic_glasshive_runtime(tmp_path, monkeypatch)
+    config = minimal_compile_config()
+    config["integrations"]["glasshive"] = {
+        "enabled": True,
+        "deployment_mode": "azure_enterprise_vm_docker",
+        "mcp_url": "https://glasshive.example.test/mcp",
+        "operator_base_url": "https://glasshive.example.test",
+        "enterprise": {
+            "security_mode": "multi_user",
+            "human_auth": {
+                "mode": "oidc",
+                "oidc": {
+                    "issuer": "https://identity.example.test/tenant/v2.0",
+                    "client_id": "glasshive-ui",
+                    "redirect_uri": "https://glasshive.example.test/auth/oidc/callback",
+                    "role_map": {"GlassHive.Member": "member"},
+                },
+            },
+        },
+    }
+
+    with pytest.raises(SystemExit, match="internal_assertion.private_key_file"):
+        config_compiler.resolve_glasshive_enterprise_settings(config)
+
+
+def test_glasshive_multi_user_rejects_plain_trusted_proxy_identity_headers() -> None:
+    config = minimal_compile_config()
+    config["integrations"]["glasshive"] = {
+        "enabled": True,
+        "deployment_mode": "azure_enterprise_vm_docker",
+        "mcp_url": "https://glasshive.example.test/mcp",
+        "operator_base_url": "https://glasshive.example.test",
+        "enterprise": {
+            "security_mode": "multi_user",
+            "human_auth": {
+                "mode": "trusted_proxy",
+                "trusted_proxy_boundary_proven": True,
+            },
+        },
+    }
+
+    with pytest.raises(SystemExit, match="requires built-in oidc human auth"):
+        config_compiler.resolve_glasshive_enterprise_settings(config)
+
+
+def test_glasshive_inference_broker_fails_closed_on_unverified_or_unsafe_bindings() -> None:
+    config = minimal_compile_config()
+    config["integrations"]["glasshive"] = {
+        "enabled": True,
+        "deployment_mode": "azure_enterprise_vm_docker",
+        "mcp_url": "https://glasshive.example.test/mcp",
+        "operator_base_url": "https://glasshive.example.test",
+        "enterprise": {
+            "provider_accounts": {
+                "inference_broker": {
+                    "enabled": True,
+                    "url": "https://chat.example.test/api/viventium/glasshive/inference",
+                    "proxy_base_url": "https://chat.example.test/api/viventium/glasshive/inference",
+                    "owner_bindings": [
+                        {
+                            "glasshive_tenant_id": "tenant-public-safe",
+                            "glasshive_owner_id": "canonical-owner",
+                            "librechat_user_id": "connected-user",
+                            "proof": "operator_verified",
+                        }
+                    ],
+                }
+            }
+        },
+    }
+
+    with pytest.raises(SystemExit, match="security_mode=multi_user"):
+        config_compiler.resolve_glasshive_enterprise_settings(config)
+
+    enterprise = config["integrations"]["glasshive"]["enterprise"]
+    enterprise.update(
+        {
+            "tenant_id": "tenant-public-safe",
+            "security_mode": "multi_user",
+            "principal_claim": "oid",
+            "human_auth": {
+                "mode": "oidc",
+                "oidc": {
+                    "issuer": "https://identity.example.test/tenant/v2.0",
+                    "client_id": "glasshive-ui",
+                    "redirect_uri": "https://glasshive.example.test/auth/oidc/callback",
+                    "role_map": {"GlassHive.Member": "member"},
+                },
+            },
+            "internal_assertion": {"private_key_file": "/run/secrets/assertion.pem"},
+            "mcp_oauth": {
+                "enabled": True,
+                "issuer": "https://identity.example.test/tenant/v2.0",
+                "public_url": "https://glasshive.example.test/mcp",
+                "token_audiences": ["00000000-0000-4000-8000-000000000123"],
+                "token_scopes": ["user_impersonation"],
+                "required_scopes": [
+                    "api://00000000-0000-4000-8000-000000000123/user_impersonation"
+                ],
+                "allowed_client_ids": ["glasshive-codex-client"],
+            },
+        }
+    )
+    settings = config_compiler.resolve_glasshive_enterprise_settings(config)
+    assert settings["inference_broker_enabled"] is True
+
+    no_bindings = copy.deepcopy(config)
+    no_bindings["integrations"]["glasshive"]["enterprise"]["provider_accounts"][
+        "inference_broker"
+    ]["owner_bindings"] = []
+    with pytest.raises(SystemExit, match="explicitly verified owner binding"):
+        config_compiler.resolve_glasshive_enterprise_settings(no_bindings)
+
+    unsafe_url = copy.deepcopy(config)
+    unsafe_url["integrations"]["glasshive"]["enterprise"]["provider_accounts"][
+        "inference_broker"
+    ]["proxy_base_url"] = "http://chat.example.test/api/viventium/glasshive/inference"
+    with pytest.raises(SystemExit, match="HTTPS"):
+        config_compiler.resolve_glasshive_enterprise_settings(unsafe_url)
+
+    duplicate_owner = copy.deepcopy(config)
+    binding = duplicate_owner["integrations"]["glasshive"]["enterprise"][
+        "provider_accounts"
+    ]["inference_broker"]["owner_bindings"][0]
+    duplicate_owner["integrations"]["glasshive"]["enterprise"]["provider_accounts"][
+        "inference_broker"
+    ]["owner_bindings"].append({**binding, "librechat_user_id": "different-user"})
+    with pytest.raises(SystemExit, match="duplicate canonical owner"):
+        config_compiler.resolve_glasshive_enterprise_settings(duplicate_owner)
+
+    mismatched_subject = copy.deepcopy(config)
+    mismatched_subject["integrations"]["glasshive"]["enterprise"]["provider_accounts"][
+        "inference_broker"
+    ]["owner_bindings"][0]["proof"] = "shared_oidc_subject"
+    with pytest.raises(SystemExit, match="same canonical principal"):
+        config_compiler.resolve_glasshive_enterprise_settings(mismatched_subject)
+
+
+def test_glasshive_direct_capability_broker_requires_explicit_safe_url_and_verified_binding(
+    tmp_path: Path,
+) -> None:
+    config = minimal_compile_config()
+    config["integrations"]["glasshive"] = {
+        "enabled": True,
+        "deployment_mode": "azure_enterprise_vm_docker",
+        "mcp_url": "https://glasshive.example.test/mcp",
+        "operator_base_url": "https://glasshive.example.test",
+        "enterprise": {
+            "tenant_id": "tenant-public-safe",
+            "security_mode": "multi_user",
+            "principal_claim": "oid",
+            "human_auth": {
+                "mode": "oidc",
+                "oidc": {
+                    "issuer": "https://identity.example.test/tenant/v2.0",
+                    "client_id": "glasshive-ui",
+                    "redirect_uri": "https://glasshive.example.test/auth/oidc/callback",
+                    "role_map": {"GlassHive.Member": "member"},
+                },
+            },
+            "internal_assertion": {"private_key_file": "/run/secrets/assertion.pem"},
+            "mcp_oauth": {
+                "enabled": True,
+                "issuer": "https://identity.example.test/tenant/v2.0",
+                "public_url": "https://glasshive.example.test/mcp",
+                "token_audiences": ["00000000-0000-4000-8000-000000000123"],
+                "token_scopes": ["user_impersonation"],
+                "required_scopes": [
+                    "api://00000000-0000-4000-8000-000000000123/user_impersonation"
+                ],
+                "allowed_client_ids": ["glasshive-codex-client"],
+            },
+            "provider_accounts": {
+                "capability_broker": {"enabled": True},
+                "inference_broker": {
+                    "enabled": False,
+                    "owner_bindings": [
+                        {
+                            "glasshive_tenant_id": "tenant-public-safe",
+                            "glasshive_owner_id": "canonical-owner",
+                            "librechat_user_id": "connected-user",
+                            "proof": "operator_verified",
+                        }
+                    ],
+                },
+            },
+        },
+    }
+
+    with pytest.raises(SystemExit, match="explicit issuer URL"):
+        config_compiler.resolve_glasshive_enterprise_settings(config)
+
+    unsafe_url = copy.deepcopy(config)
+    unsafe_url["integrations"]["glasshive"]["enterprise"]["provider_accounts"][
+        "capability_broker"
+    ]["issuer_url"] = "http://chat.example.test/api/viventium/glasshive/capabilities/direct"
+    with pytest.raises(SystemExit, match="HTTPS"):
+        config_compiler.resolve_glasshive_enterprise_settings(unsafe_url)
+
+    no_bindings = copy.deepcopy(config)
+    no_bindings["integrations"]["glasshive"]["enterprise"]["provider_accounts"][
+        "capability_broker"
+    ]["issuer_url"] = "https://chat.example.test/api/viventium/glasshive/capabilities/direct"
+    no_bindings["integrations"]["glasshive"]["enterprise"]["provider_accounts"][
+        "inference_broker"
+    ]["owner_bindings"] = []
+    with pytest.raises(SystemExit, match="explicitly verified owner binding"):
+        config_compiler.resolve_glasshive_enterprise_settings(no_bindings)
+
+    disabled = copy.deepcopy(config)
+    disabled["integrations"]["glasshive"]["enterprise"]["provider_accounts"][
+        "capability_broker"
+    ] = {
+        "enabled": False,
+        "issuer_url": "https://chat.example.test/api/viventium/glasshive/capabilities/direct",
+    }
+    env = config_compiler.render_runtime_env(
+        disabled,
+        config_compiler.build_agent_assignments(disabled),
+    )
+    assert "GLASSHIVE_CAPABILITY_BROKER_ISSUER_URL" not in env
+    assert "VIVENTIUM_GLASSHIVE_CAPABILITY_ISSUER_SECRET" not in env
+
+    shared_oidc = copy.deepcopy(no_bindings)
+    shared_oidc["integrations"]["glasshive"]["enterprise"]["provider_accounts"][
+        "capability_broker"
+    ]["identity_binding"] = "shared_oidc_subject"
+    shared_oidc["integrations"]["glasshive"]["enterprise"]["provider_accounts"][
+        "capability_broker"
+    ]["owner_bindings"] = [
+        {
+            "glasshive_tenant_id": "tenant-public-safe",
+            "glasshive_owner_id": "legacy-owner-id",
+            "librechat_user_id": "legacy-connected-user",
+            "proof": "operator_verified",
+        }
+    ]
+    shared_oidc["runtime"]["auth"] = {
+        "openid": {
+            "enabled": True,
+            "client_id": "librechat-client",
+            "client_secret": {"secret_value": "librechat-oidc-secret"},
+            "issuer": "https://identity.example.test/tenant/v2.0/",
+            "session_secret": {"secret_value": "librechat-session-secret"},
+        }
+    }
+    shared_env = config_compiler.render_runtime_env(
+        shared_oidc,
+        config_compiler.build_agent_assignments(shared_oidc),
+    )
+    assert shared_env["GLASSHIVE_CAPABILITY_BROKER_IDENTITY_BINDING"] == (
+        "shared_oidc_subject"
+    )
+    assert json.loads(shared_env["GLASSHIVE_CAPABILITY_BROKER_OWNER_BINDINGS_JSON"]) == [
+        {
+            "glasshive_tenant_id": "tenant-public-safe",
+            "glasshive_owner_id": "legacy-owner-id",
+            "librechat_user_id": "legacy-connected-user",
+            "proof": "operator_verified",
+        }
+    ]
+    assert shared_env["VIVENTIUM_GLASSHIVE_SHARED_OIDC_ISSUER"] == (
+        "https://identity.example.test/tenant/v2.0"
+    )
+    assert shared_env["VIVENTIUM_GLASSHIVE_SHARED_OIDC_PRINCIPAL_CLAIM"] == "oid"
+    config_compiler.render_service_envs(tmp_path, shared_env)
+    shared_lc_env = (tmp_path / "service-env" / "librechat.env").read_text(
+        encoding="utf-8"
+    )
+    shared_gateway_env = (
+        tmp_path / "service-env" / "glasshive-gateway.env"
+    ).read_text(encoding="utf-8")
+    shared_runtime_env = (
+        tmp_path / "service-env" / "glasshive-runtime.env"
+    ).read_text(encoding="utf-8")
+    assert "VIVENTIUM_GLASSHIVE_SHARED_OIDC_ISSUER=" in shared_lc_env
+    assert "VIVENTIUM_GLASSHIVE_SHARED_OIDC_PRINCIPAL_CLAIM=oid" in shared_lc_env
+    assert "VIVENTIUM_GLASSHIVE_SHARED_OIDC_ISSUER" not in shared_runtime_env
+    assert "VIVENTIUM_GLASSHIVE_SHARED_OIDC_ISSUER" not in shared_gateway_env
+    assert (
+        "GLASSHIVE_CAPABILITY_BROKER_IDENTITY_BINDING=shared_oidc_subject"
+        in shared_runtime_env
+    )
+    assert "GLASSHIVE_CAPABILITY_BROKER_IDENTITY_BINDING" not in shared_gateway_env
+
+    mismatched_issuer = copy.deepcopy(shared_oidc)
+    mismatched_issuer["runtime"]["auth"]["openid"]["issuer"] = (
+        "https://different-identity.example.test/tenant/v2.0"
+    )
+    with pytest.raises(SystemExit, match="same OIDC issuer"):
+        config_compiler.render_runtime_env(
+            mismatched_issuer,
+            config_compiler.build_agent_assignments(mismatched_issuer),
+        )
+
+
+def test_glasshive_multi_user_requires_canonical_principal_and_isolated_subscription_substrate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    configure_synthetic_glasshive_runtime(tmp_path, monkeypatch)
+    config = minimal_compile_config()
+    config["integrations"]["glasshive"] = {
+        "enabled": True,
+        "deployment_mode": "azure_enterprise_vm_docker",
+        "mcp_url": "https://glasshive.example.test/mcp",
+        "operator_base_url": "https://glasshive.example.test",
+        "enterprise": {
+            "tenant_id": "tenant-public-safe",
+            "security_mode": "multi_user",
+            "human_auth": {
+                "mode": "oidc",
+                "oidc": {
+                    "issuer": "https://identity.example.test/tenant/v2.0",
+                    "client_id": "glasshive-ui",
+                    "redirect_uri": "https://glasshive.example.test/auth/oidc/callback",
+                    "role_map": {"GlassHive.Member": "member"},
+                },
+            },
+            "internal_assertion": {"private_key_file": "/run/secrets/assertion.pem"},
+            "mcp_oauth": {
+                "enabled": True,
+                "issuer": "https://identity.example.test/tenant/v2.0",
+                "public_url": "https://glasshive.example.test/mcp",
+                "token_audiences": ["00000000-0000-4000-8000-000000000123"],
+                "token_scopes": ["user_impersonation"],
+                "required_scopes": [
+                    "api://00000000-0000-4000-8000-000000000123/user_impersonation"
+                ],
+                "allowed_client_ids": ["glasshive-codex-client"],
+            },
+        },
+    }
+
+    with pytest.raises(SystemExit, match="enterprise.principal_claim"):
+        config_compiler.resolve_glasshive_enterprise_settings(config)
+
+    enterprise = config["integrations"]["glasshive"]["enterprise"]
+    enterprise["principal_claim"] = "oid"
+    enterprise["provider_accounts"] = {"codex_subscriptions_enabled": True}
+    with pytest.raises(SystemExit, match="dedicated per-worker OS or container"):
+        config_compiler.resolve_glasshive_enterprise_settings(config)
+
+    enterprise["provider_accounts"]["isolation_mode"] = "per_worker_container"
+    settings = config_compiler.resolve_glasshive_enterprise_settings(config)
+    assert settings["provider_account_isolation"] == "per_worker_container"
+    env = config_compiler.render_runtime_env(
+        config,
+        config_compiler.build_agent_assignments(config),
+    )
+    assert env["GLASSHIVE_PROVIDER_ACCOUNT_ISOLATION"] == "per_worker_container"
+
+
+def test_glasshive_multi_user_rejects_cleartext_public_urls_and_domain_policy_drift(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    configure_synthetic_glasshive_runtime(tmp_path, monkeypatch)
+    config = minimal_compile_config()
+    config["runtime"]["auth"] = {"allowed_domains": ["example.test"]}
+    config["integrations"]["glasshive"] = {
+        "enabled": True,
+        "deployment_mode": "azure_enterprise_vm_docker",
+        "mcp_url": "http://glasshive.example.test/mcp",
+        "operator_base_url": "https://glasshive.example.test",
+        "enterprise": {
+            "tenant_id": "tenant-public-safe",
+            "security_mode": "multi_user",
+            "principal_claim": "oid",
+            "human_auth": {
+                "mode": "oidc",
+                "allowed_email_domains": ["outside.test"],
+                "oidc": {
+                    "issuer": "https://identity.example.test/tenant/v2.0",
+                    "client_id": "glasshive-ui",
+                    "redirect_uri": "https://glasshive.example.test/auth/oidc/callback",
+                    "role_map": {"GlassHive.Member": "member"},
+                },
+            },
+            "internal_assertion": {"private_key_file": "/run/secrets/assertion.pem"},
+            "mcp_oauth": {
+                "enabled": True,
+                "issuer": "https://identity.example.test/tenant/v2.0",
+                "public_url": "https://glasshive.example.test/mcp",
+                "token_audiences": ["00000000-0000-4000-8000-000000000123"],
+                "token_scopes": ["user_impersonation"],
+                "required_scopes": [
+                    "api://00000000-0000-4000-8000-000000000123/user_impersonation"
+                ],
+                "allowed_client_ids": ["glasshive-codex-client"],
+            },
+        },
+    }
+
+    with pytest.raises(SystemExit, match="must match canonical runtime.auth.allowed_domains"):
+        config_compiler.resolve_glasshive_enterprise_settings(config)
+
+    del config["integrations"]["glasshive"]["enterprise"]["human_auth"]["allowed_email_domains"]
+    with pytest.raises(SystemExit, match="integrations.glasshive.mcp_url must be a valid HTTPS URL"):
+        config_compiler.resolve_glasshive_enterprise_settings(config)
+
+
+def _minimal_glasshive_multi_user_identity_config() -> dict:
+    config = minimal_compile_config()
+    config["integrations"]["glasshive"] = {
+        "enabled": True,
+        "deployment_mode": "azure_enterprise_vm_docker",
+        "mcp_url": "https://glasshive.example.test/mcp",
+        "operator_base_url": "https://glasshive.example.test",
+        "enterprise": {
+            "tenant_id": "glasshive-ownership-namespace",
+            "security_mode": "multi_user",
+            "principal_claim": "oid",
+            "human_auth": {
+                "mode": "oidc",
+                "oidc": {
+                    "issuer": "https://login.microsoftonline.com/00000000-0000-4000-8000-000000000456/v2.0",
+                    "client_id": "glasshive-ui",
+                    "redirect_uri": "https://glasshive.example.test/auth/oidc/callback",
+                    "role_map": {"GlassHive.Member": "member"},
+                },
+            },
+            "internal_assertion": {"private_key_file": "/run/secrets/assertion.pem"},
+            "mcp_oauth": {
+                "enabled": True,
+                "issuer": "https://login.microsoftonline.com/00000000-0000-4000-8000-000000000456/v2.0",
+                "public_url": "https://glasshive.example.test/mcp",
+                "token_tenant_id": "00000000-0000-4000-8000-000000000456",
+                "token_audiences": ["00000000-0000-4000-8000-000000000123"],
+                "token_scopes": ["user_impersonation"],
+                "required_scopes": [
+                    "api://00000000-0000-4000-8000-000000000123/user_impersonation"
+                ],
+                "allowed_client_ids": ["glasshive-codex-client"],
+            },
+        },
+    }
+    return config
+
+
+def test_glasshive_multi_user_oidc_requires_explicit_valid_role_map() -> None:
+    config = _minimal_glasshive_multi_user_identity_config()
+    human_oidc = config["integrations"]["glasshive"]["enterprise"]["human_auth"]["oidc"]
+
+    human_oidc["role_map"] = {}
+    with pytest.raises(SystemExit, match="requires a non-empty human_auth.oidc.role_map"):
+        config_compiler.resolve_glasshive_enterprise_settings(config)
+
+    human_oidc["role_map"] = {"GlassHive.Member": "owner"}
+    with pytest.raises(SystemExit, match="must be member, viewer, tenant_admin, or service"):
+        config_compiler.resolve_glasshive_enterprise_settings(config)
+
+
+def test_glasshive_upstream_token_tenant_and_logout_redirect_are_distinct_safe_policies() -> None:
+    config = _minimal_glasshive_multi_user_identity_config()
+
+    settings = config_compiler.resolve_glasshive_enterprise_settings(config)
+
+    assert settings["tenant_id"] == "glasshive-ownership-namespace"
+    assert settings["mcp_token_tenant_id"] == "00000000-0000-4000-8000-000000000456"
+    assert settings["oidc_post_logout_redirect_uri"] == "https://glasshive.example.test/login"
+
+    mcp_oauth = config["integrations"]["glasshive"]["enterprise"]["mcp_oauth"]
+    mcp_oauth["token_tenant_id"] = "not-an-entra-guid"
+    with pytest.raises(SystemExit, match="must be the Entra tenant GUID"):
+        config_compiler.resolve_glasshive_enterprise_settings(config)
+
+    mcp_oauth["token_tenant_id"] = "00000000-0000-4000-8000-000000000456"
+    human_oidc = config["integrations"]["glasshive"]["enterprise"]["human_auth"]["oidc"]
+    human_oidc["post_logout_redirect_uri"] = "https://attacker.example.test/login"
+    with pytest.raises(SystemExit, match="exact GlassHive operator public origin"):
+        config_compiler.resolve_glasshive_enterprise_settings(config)
+
+
+def test_glasshive_mcp_public_url_is_canonical_and_rejects_query_or_fragment() -> None:
+    config = _minimal_glasshive_multi_user_identity_config()
+    glasshive = config["integrations"]["glasshive"]
+    mcp_oauth = glasshive["enterprise"]["mcp_oauth"]
+    glasshive["mcp_url"] = "https://GLASSHIVE.EXAMPLE.TEST:443/a%2fb/%7Euser"
+    mcp_oauth["public_url"] = "https://GLASSHIVE.EXAMPLE.TEST:443/a%2fb/%7Euser"
+
+    settings = config_compiler.resolve_glasshive_enterprise_settings(config)
+    assert settings["mcp_public_url"] == "https://glasshive.example.test/a%2fb/%7Euser"
+
+    for suffix in ("?tenant=private", "#private-fragment"):
+        mcp_oauth["public_url"] = f"https://glasshive.example.test/mcp{suffix}"
+        with pytest.raises(SystemExit, match="must not contain a query string or fragment"):
+            config_compiler.resolve_glasshive_enterprise_settings(config)
+
+def test_glasshive_multi_user_rejects_cleartext_legacy_oauth_endpoints(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    configure_synthetic_glasshive_runtime(tmp_path, monkeypatch)
+    config = minimal_compile_config()
+    config["integrations"]["glasshive"] = {
+        "enabled": True,
+        "deployment_mode": "azure_enterprise_vm_docker",
+        "mcp_url": "https://glasshive.example.test/mcp",
+        "operator_base_url": "https://glasshive.example.test",
+        "enterprise": {
+            "tenant_id": "tenant-public-safe",
+            "security_mode": "multi_user",
+            "principal_claim": "oid",
+            "oauth": {
+                "enabled": True,
+                "authorization_url": "https://identity.example.test/authorize",
+                "token_url": "http://identity.example.test/token",
+                "redirect_uri": "https://chat.example.test/oauth/callback",
+            },
+            "human_auth": {
+                "mode": "oidc",
+                "oidc": {
+                    "issuer": "https://identity.example.test/tenant/v2.0",
+                    "client_id": "glasshive-ui",
+                    "redirect_uri": "https://glasshive.example.test/auth/oidc/callback",
+                    "role_map": {"GlassHive.Member": "member"},
+                },
+            },
+            "internal_assertion": {"private_key_file": "/run/secrets/assertion.pem"},
+            "mcp_oauth": {
+                "enabled": True,
+                "issuer": "https://identity.example.test/tenant/v2.0",
+                "public_url": "https://glasshive.example.test/mcp",
+                "token_audiences": ["00000000-0000-4000-8000-000000000123"],
+                "token_scopes": ["user_impersonation"],
+                "required_scopes": [
+                    "api://00000000-0000-4000-8000-000000000123/user_impersonation"
+                ],
+                "allowed_client_ids": ["glasshive-codex-client"],
+            },
+        },
+    }
+
+    with pytest.raises(SystemExit, match="enterprise.oauth.token_url must be a valid HTTPS URL"):
+        config_compiler.resolve_glasshive_enterprise_settings(config)
+
+
+def test_glasshive_canonical_empty_domain_policy_cannot_be_overridden_by_legacy_field(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    configure_synthetic_glasshive_runtime(tmp_path, monkeypatch)
+    config = minimal_compile_config()
+    config["runtime"]["auth"] = {"allowed_domains": []}
+    config["integrations"]["glasshive"] = {
+        "enabled": True,
+        "deployment_mode": "azure_enterprise_vm_docker",
+        "mcp_url": "https://glasshive.example.test/mcp",
+        "operator_base_url": "https://glasshive.example.test",
+        "enterprise": {
+            "human_auth": {
+                "mode": "disabled",
+                "allowed_email_domains": ["legacy.example.test"],
+            },
+        },
+    }
+
+    with pytest.raises(SystemExit, match="must match canonical runtime.auth.allowed_domains"):
+        config_compiler.resolve_glasshive_enterprise_settings(config)
 
 
 def test_glasshive_azure_enterprise_local_simulation_compiles_matching_ports(

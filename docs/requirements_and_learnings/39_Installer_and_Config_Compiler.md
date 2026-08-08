@@ -122,6 +122,20 @@ Provider credentials have two distinct owners and must not drift between them:
   config, macOS Keychain entries, generated runtime values, or reusable machine credentials. The
   compiler exposes OpenAI, Anthropic, Groq, and Grok through the literal `user_provided` capability
   sentinel; it never replaces that sentinel with another provider's machine key.
+- OpenAI and Anthropic retain user-first/platform-second behavior by default. Each user can set a
+  per-provider `personal_required` policy in Connected Accounts; while selected, missing,
+  unreadable, expired, or disconnected personal credentials must surface setup/reconnect guidance
+  and must never fall back to a machine/platform key. Store this policy separately from credential
+  material so Disconnect cannot silently undo the opt-out.
+- `runtime.auth.allowed_domains` is the public exact-domain allowlist for browser password signup
+  and OpenID login. The compiler normalizes it case-insensitively into LibreChat
+  `registration.allowedDomains`; omission or an empty list leaves existing open-domain behavior
+  unchanged. It is not projected into GlassHive hosted OIDC as mutable-email authorization;
+  GlassHive tenant/domain admission must be an IdP tenant plus deny-by-default app-role/group
+  assignment policy. Multi-user compilation requires a non-empty explicit OIDC role map; for Entra,
+  both web and API enterprise applications require assignment (or an equivalently reviewed and
+  tested Conditional Access/application-assignment gate). `allow_registration` only enrolls a
+  principal that already crossed that IdP boundary.
 - Custom Settings Install may reference machine-level provider keys from canonical config through
   `keychain://` references. The compiler resolves OpenAI, Anthropic, Groq, and xAI through one
   provider-to-runtime mapping, writes resolved source-runtime and service env files mode `0600`,
@@ -448,11 +462,11 @@ falling back to historical defaults:
 - lab-only OpenClaw is absent from public Easy Install setup and status output.
 
 The current candidate pins merged public-main LibreChat commit
-`d2c8a8c7f1886117e4bd0f9dff35a7fac0b5dd1f` in both the parent component lock and Native payload
+`ccfd307c3b6bd5573c58dfc4f16b84fc691fef4f` in both the parent component lock and Native payload
 component manifest, and merged public-main modern-playground commit
 `98d1249db7a728e94656462d6bda979571be4dd7` in the parent component lock. The source/Docker
 GlassHive runtime is pinned by the parent component lock to merged public-main commit
-`449eb5d4e501df459d0e5a92cf2815a2105680da`; it is intentionally absent from the Native payload
+`f781050797c785c7e2ddbff19a5f5cdc089f293e`; it is intentionally absent from the Native payload
 component manifest. The Google Workspace MCP source is pinned to merged public-main commit
 `0824701abcf490de2a5091c68a7b0738f2294b3f`. Both manifests declare `merged`, and each merge tree
 equals its reviewed PR head. Source and local-runtime PASS still do not
@@ -1898,6 +1912,32 @@ delta on the disposable MacBook Air. Until those gates pass, release wording rem
   - `VIVENTIUM_LIFE_DIR` is the canonical LIFE location shared by bootstrap and provider defaults.
   These keys are generated outputs. Public examples document the canonical config fields instead
   of publishing generated credentials or owner-machine values.
+- Multi-user connected-account inference is a separate, opt-in compiler boundary under
+  `integrations.glasshive.enterprise.provider_accounts.inference_broker`:
+  - the broker and proxy origins must be fixed HTTPS URLs; worker requests cannot choose an origin,
+    path, adapter, or authorization header
+  - the configured enterprise OpenAI-compatible origin is operator-trusted infrastructure and may
+    be an approved private gateway. Compilation therefore enforces HTTPS and a fixed value rather
+    than public-IP-only reachability; deployment review owns DNS, TLS, network egress, and gateway
+    credentials. LibreChat disables redirect following and rejects every upstream `3xx`, and no
+    browser, MCP, worker, or grant request may add an origin or upstream header override
+  - every GlassHive tenant/owner maps to exactly one LibreChat user through an explicit reviewed
+    `owner_bindings` entry. `operator_verified` records an operator-reviewed mapping;
+    `shared_oidc_subject` is accepted only when both systems use the same canonical subject
+  - compilation fails closed when the broker is enabled without a verified mapping, with duplicate
+    owners, an unsupported proof, an insecure URL, or an incomplete configuration
+  - the generated runtime derives the broker signing secret from the existing scoped capability
+    secret. Operators do not provision a second shared secret and public config never contains it
+  - GlassHive receives only an owner-bound, run-bound, expiring grant and an allowlisted typed
+    adapter. The broker implements both Chat Completions and Responses for compatible consumers;
+    GlassHive's Codex issuer requests and enforces the Responses adapter. User API keys and
+    enterprise route credentials remain inside LibreChat; neither the bootstrap bundle nor a
+    persisted workspace, template, event, log, or run record may contain them
+  - the generated `VIVENTIUM_GLASSHIVE_INFERENCE_PROXY_URL` is consumed only by LibreChat's fixed
+    proxy route, while `GLASSHIVE_INFERENCE_BROKER_*` configures GlassHive's grant issuer client.
+    Disabled configuration emits none of these broker values
+  Subscription-based native Codex/Claude sign-in remains the isolated per-worker workstation path;
+  the inference broker does not translate consumer subscription sessions into an API protocol.
 - With the provider enabled, preflight requires at least one installed and authenticated
   Codex or Claude CLI before a supported install completes. A missing login is an actionable manual
   prerequisite (`codex login` or `claude auth login`), not a silent direct-model fallback. An

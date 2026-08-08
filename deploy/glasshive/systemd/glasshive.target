@@ -1,0 +1,7 @@
+[Unit]
+Description=GlassHive hosted split-identity control plane
+Requires=glasshive-runtime.service glasshive-mcp.service glasshive-ui.service
+After=glasshive-runtime.service glasshive-mcp.service glasshive-ui.service
+
+[Install]
+WantedBy=multi-user.target

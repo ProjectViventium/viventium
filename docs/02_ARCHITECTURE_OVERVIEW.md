@@ -21,6 +21,16 @@ Core components:
 - Orchestration: `viventium_v0_4/LibreChat/api/server/controllers/agents/client.js`
 - GlassHive provider API/session ownership:
   `viventium_v0_4/GlassHive/runtime_phase1/src/workers_projects_runtime/conversation_provider.py`
+- GlassHive user control plane: Glass Drive owns the browser session, OIDC/PKCE login, CSRF, and
+  human confirmation boundary; the GlassHive runtime owns owner-scoped workspaces, templates,
+  provider-account references, Library grants, activity, and worker execution. It receives only
+  short-lived signed identity assertions from the gateway.
+- Connected-account inference ownership: LibreChat keeps each user's encrypted API credential and
+  issues a short-lived grant bound to user, tenant, worker, run, model, route, and adapter. A worker
+  receives the grant and fixed adapter URL, never the upstream credential.
+- Recurring workspace ownership: Scheduling Cortex is the sole durable recurring-definition and
+  occurrence-ledger owner for Viventium. It dispatches owner-authenticated work to GlassHive; the
+  GlassHive schedule API is a delegated facade and does not persist a second shadow definition.
 - Agent provider capability/validation ownership:
   `viventium_v0_4/LibreChat/packages/api/src/agents/validation.ts` and
   `viventium_v0_4/LibreChat/packages/api/src/agents/initialize.ts`

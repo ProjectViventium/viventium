@@ -171,6 +171,14 @@ also shape delivery through controls the selected TTS provider really supports.
   - user connected account first when supported and available
   - explicit API key from canonical/generated runtime env next
   - otherwise show a clear action to connect the account or provide the key
+- A user's explicit per-provider `personal_required` policy is the one exception to platform
+  fallback: use that user's connected credential or fail with reconnect/setup guidance. The
+  backward-compatible default remains `personal_preferred`, which keeps the precedence above.
+- Login-domain restrictions have one canonical input, `runtime.auth.allowed_domains`, and compile
+  to LibreChat's existing `registration.allowedDomains` enforcement for both password registration
+  and its federated login. An omitted or empty list preserves the open-domain default. GlassHive's
+  separate hosted OIDC gateway does not authorize from mutable email claims; enforce its tenant and
+  app-role/group admission at the IdP.
 - Do not silently seed or expose models that the current configured auth mode cannot actually use
 - Local installer and runtime health checks must be honest about mixed-mode dependencies:
   - if a feature still needs Docker Desktop in a nominally native install, say so before startup

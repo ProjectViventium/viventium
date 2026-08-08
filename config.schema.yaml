@@ -43,8 +43,17 @@ properties:
       auth:
         type: object
         properties:
+          allowed_domains:
+            type: array
+            description: Exact email domains allowed by LibreChat/local email signup and login. GlassHive OIDC admission remains an IdP tenant/app-role policy and does not authorize from mutable email claims.
+            uniqueItems: true
+            items:
+              type: string
           allow_registration:
             type: boolean
+          allow_email_login:
+            type: boolean
+            description: Advertise email-capable login when the external identity provider supports it; GlassHive never stores a second password database.
           allow_password_reset:
             type: boolean
           connected_accounts_return_origin:
@@ -637,6 +646,217 @@ properties:
           enterprise:
             type: object
             properties:
+              state_dir:
+                type: string
+                description: Absolute persistent state root for split hosted GlassHive services; defaults to /var/lib/glasshive.
+              security_mode:
+                type: string
+                enum: [legacy_compatibility, multi_user]
+                description: Explicitly opts an enterprise deployment into signed, user-isolated control-plane security; legacy compatibility remains available for existing integrations.
+              principal_claim:
+                type: string
+                description: Stable identity-provider claim shared by browser login and direct MCP ownership (for Microsoft Entra ID, normally oid).
+              human_auth:
+                type: object
+                properties:
+                  mode:
+                    type: string
+                    enum: [disabled, trusted_proxy, oidc]
+                  trusted_proxy_boundary_proven:
+                    type: boolean
+                    description: Operator attestation that direct client access is blocked and trusted identity headers arrive only through private ingress or mTLS.
+                  allowed_email_domains:
+                    oneOf:
+                      - type: string
+                      - type: array
+                        items:
+                          type: string
+                  oidc:
+                    type: object
+                    properties:
+                      issuer:
+                        type: string
+                      client_id:
+                        type: string
+                      client_secret:
+                        oneOf:
+                          - type: string
+                          - type: object
+                      redirect_uri:
+                        type: string
+                      post_logout_redirect_uri:
+                        type: string
+                        description: Exact public GlassHive URI registered at the IdP for provider logout/account switching; defaults to the operator base URL plus /login.
+                      scopes:
+                        type: string
+                      role_claim:
+                        type: string
+                      email_claim:
+                        type: string
+                      email_claim_trusted:
+                        type: boolean
+                      role_map:
+                        type: object
+                        minProperties: 1
+                        propertyNames:
+                          type: string
+                          minLength: 1
+                          maxLength: 200
+                        additionalProperties:
+                          enum: [member, viewer, tenant_admin, service]
+              internal_assertion:
+                type: object
+                description: Dedicated asymmetric trust boundary from the Glass Drive gateway and MCP front door to the private runtime.
+                properties:
+                  issuer:
+                    type: string
+                  audience:
+                    type: string
+                  key_id:
+                    type: string
+                  private_key_file:
+                    type: string
+                  previous_public_jwks_file:
+                    type: string
+                    description: Optional public-only JWKS for the prior signer during a bounded key-rotation overlap.
+                  previous_keys_expire_at:
+                    oneOf:
+                      - type: integer
+                      - type: string
+                    description: Absolute Unix timestamp when the prior public keys stop being published; the gateway accepts only a 180-900 second overlap.
+                  jwks_url:
+                    type: string
+              mcp_oauth:
+                type: object
+                properties:
+                  enabled:
+                    type: boolean
+                  issuer:
+                    type: string
+                  public_url:
+                    type: string
+                  token_audiences:
+                    description: Exact access-token aud values accepted by the MCP verifier; separate from the public RFC 8707 resource URL.
+                    oneOf:
+                      - type: string
+                      - type: array
+                        items:
+                          type: string
+                  token_tenant_id:
+                    type: string
+                    description: Optional upstream access-token tid policy, independent from the GlassHive ownership namespace enterprise.tenant_id; use the Entra tenant GUID for Microsoft issuers.
+                  token_scopes:
+                    description: Exact access-token scp claim values accepted by the verifier, such as Entra's short user_impersonation value.
+                    oneOf:
+                      - type: string
+                      - type: array
+                        items:
+                          type: string
+                  required_scopes:
+                    description: Full authorization-server scope values advertised/requested by MCP clients.
+                    oneOf:
+                      - type: string
+                      - type: array
+                        items:
+                          type: string
+                  allowed_client_ids:
+                    description: Explicit OAuth public-client ids permitted to use the GlassHive MCP resource.
+                    oneOf:
+                      - type: string
+                      - type: array
+                        items:
+                          type: string
+                  client_id_claims:
+                    description: Ordered equivalent OAuth claims used to prove the authorized client; conflicting values fail closed.
+                    oneOf:
+                      - type: string
+                      - type: array
+                        items:
+                          type: string
+                  subject_claim:
+                    type: string
+                  documentation_url:
+                    type: string
+                  clients:
+                    type: object
+                    properties:
+                      claude:
+                        type: object
+                        properties:
+                          client_id:
+                            type: string
+                          callback_port:
+                            type: integer
+                            minimum: 1024
+                            maximum: 65535
+                      codex:
+                        type: object
+                        properties:
+                          client_id:
+                            type: string
+                          callback_port:
+                            type: integer
+                            minimum: 1024
+                            maximum: 65535
+                          resource:
+                            type: string
+                            description: Optional compatibility check; when present it must exactly equal mcp_oauth.public_url.
+              provider_accounts:
+                type: object
+                properties:
+                  isolation_mode:
+                    type: string
+                    enum: [disabled, per_worker_container]
+                  codex_subscriptions_enabled:
+                    type: boolean
+                  hosted_claude_consumer_auth_enabled:
+                    type: boolean
+                  api_key_secret_store_enabled:
+                    type: boolean
+                  connected_accounts_url:
+                    type: string
+                  capability_broker:
+                    type: object
+                    properties:
+                      enabled:
+                        type: boolean
+                      issuer_url:
+                        type: string
+                      identity_binding:
+                        type: string
+                        enum: [operator_verified, shared_oidc_subject]
+                      timeout_seconds:
+                        type: number
+                        minimum: 1
+                        maximum: 60
+                  inference_broker:
+                    type: object
+                    properties:
+                      enabled:
+                        type: boolean
+                      url:
+                        type: string
+                      proxy_base_url:
+                        type: string
+                      timeout_seconds:
+                        type: number
+                        minimum: 1
+                        maximum: 600
+                      owner_bindings:
+                        type: array
+                        items:
+                          type: object
+                          required: [glasshive_tenant_id, glasshive_owner_id, librechat_user_id, proof]
+                          properties:
+                            glasshive_tenant_id:
+                              type: string
+                            glasshive_owner_id:
+                              type: string
+                            librechat_user_id:
+                              type: string
+                            proof:
+                              type: string
+                              enum: [operator_verified, shared_oidc_subject]
               workspace_links:
                 type: object
                 properties:
