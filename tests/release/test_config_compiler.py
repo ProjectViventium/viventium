@@ -2506,6 +2506,15 @@ def test_render_runtime_env_emits_glasshive_launch_env_only_when_enabled(tmp_pat
     assert default_host_env["GLASSHIVE_SCHEDULING_OWNER_URL"] == "http://127.0.0.1:7110/mcp"
     assert "GLASSHIVE_PUBLIC_LINKS_ONLY" not in default_host_env
 
+    delegated_host_config = copy.deepcopy(default_host_config)
+    delegated_host_config["integrations"]["scheduling_cortex"] = {"enabled": True}
+    delegated_host_env = config_compiler.render_runtime_env(
+        delegated_host_config,
+        config_compiler.build_agent_assignments(delegated_host_config),
+    )
+    assert delegated_host_env["GLASSHIVE_RECURRING_SCHEDULE_OWNER"] == "viventium_cortex"
+    assert delegated_host_env["GLASSHIVE_SCHEDULING_OWNER_URL"] == "http://127.0.0.1:7110/mcp"
+
     public_host_config = copy.deepcopy(default_host_config)
     public_host_config["runtime"]["network"] = {
         "remote_call_mode": "public_https_edge",
@@ -2520,6 +2529,7 @@ def test_render_runtime_env_emits_glasshive_launch_env_only_when_enabled(tmp_pat
     )
     assert public_host_env["VIVENTIUM_PUBLIC_GLASSHIVE_URL"] == "https://glasshive.app.example.test"
     assert public_host_env["GLASSHIVE_OPERATOR_BASE_URL"] == "https://glasshive.app.example.test"
+    assert public_host_env["GLASSHIVE_RECURRING_SCHEDULE_OWNER"] == "viventium_cortex"
     assert public_host_env["GLASSHIVE_SCHEDULING_OWNER_URL"] == "http://127.0.0.1:7110/mcp"
     assert public_host_env["GLASSHIVE_ARTIFACT_BASE_URL"] == "https://glasshive.app.example.test"
     assert public_host_env["GLASSHIVE_PUBLIC_LINKS_ONLY"] == "true"
@@ -2846,6 +2856,68 @@ def test_glasshive_azure_enterprise_vm_docker_compiles_cloud_safe_config(tmp_pat
         '{"worker-owner@example.com":["browser-login-alias@example.com"]}'
     )
     assert env["VIVENTIUM_GLASSHIVE_CALLBACK_URL"] == "https://api.enterprise.example.com/api/viventium/glasshive/callback"
+    assert env["GLASSHIVE_RECURRING_SCHEDULE_OWNER"] == "viventium_cortex"
+    assert env["GLASSHIVE_SCHEDULING_OWNER_URL"] == "http://127.0.0.1:7110/mcp"
+
+    standalone_config = copy.deepcopy(config)
+    standalone_config["runtime"]["network"].pop("public_api_origin")
+    standalone_env = config_compiler.render_runtime_env(
+        standalone_config,
+        config_compiler.build_agent_assignments(standalone_config),
+    )
+    assert standalone_env["VIVENTIUM_GLASSHIVE_CALLBACK_URL"] == ""
+    assert standalone_env["GLASSHIVE_RECURRING_SCHEDULE_OWNER"] == "glasshive_native"
+    assert "GLASSHIVE_SCHEDULING_OWNER_URL" not in standalone_env
+
+    recurrence_cases = [
+        {
+            "owner": env["GLASSHIVE_RECURRING_SCHEDULE_OWNER"],
+            "callback": env["VIVENTIUM_GLASSHIVE_CALLBACK_URL"],
+        },
+        {
+            "owner": standalone_env["GLASSHIVE_RECURRING_SCHEDULE_OWNER"],
+            "callback": standalone_env["VIVENTIUM_GLASSHIVE_CALLBACK_URL"],
+        },
+    ]
+    recurrence_probe_env = os.environ.copy()
+    recurrence_probe_env["GLASSHIVE_RECURRENCE_CASES_JSON"] = json.dumps(recurrence_cases)
+    recurrence_probe_script = """
+import json
+import os
+
+from workers_projects_runtime import service
+
+service.load_viventium_runtime_env = lambda: None
+cases = json.loads(os.environ.pop("GLASSHIVE_RECURRENCE_CASES_JSON"))
+results = []
+for case in cases:
+    os.environ["GLASSHIVE_RECURRING_SCHEDULE_OWNER"] = case["owner"]
+    os.environ["VIVENTIUM_GLASSHIVE_CALLBACK_URL"] = case["callback"]
+    os.environ.pop("VIVENTIUM_ENV_FILE", None)
+    results.append(service._recurring_schedule_owner())
+print(json.dumps(results))
+""".strip()
+    recurrence_probe = subprocess.run(
+        [
+            "uv",
+            "run",
+            "--project",
+            str(REPO_ROOT / "viventium_v0_4" / "GlassHive" / "runtime_phase1"),
+            "--frozen",
+            "python",
+            "-c",
+            recurrence_probe_script,
+        ],
+        cwd=REPO_ROOT,
+        env=recurrence_probe_env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert json.loads(recurrence_probe.stdout) == [
+        "viventium_cortex",
+        "glasshive_native",
+    ]
 
     servers = config_compiler.build_mcp_servers(config, {"lc_api_port": 3080}, "agent-main")
     glasshive = servers["glasshive-workers-projects"]
@@ -3134,6 +3206,21 @@ def test_glasshive_multi_user_control_plane_compiles_signed_identity_and_mcp_oau
     assert "GLASSHIVE_INTERNAL_ASSERTION_PRIVATE_KEY_FILE" not in glasshive_runtime_env
     assert "GLASSHIVE_INTERNAL_ASSERTION_PREVIOUS_JWKS_FILE" not in glasshive_runtime_env
     assert "GLASSHIVE_INTERNAL_ASSERTION_PREVIOUS_KEYS_EXPIRE_AT" not in glasshive_runtime_env
+
+    combined_app_config = copy.deepcopy(config)
+    combined_client_id = combined_app_config["integrations"]["glasshive"]["enterprise"][
+        "mcp_oauth"
+    ]["token_audiences"][0]
+    combined_app_config["integrations"]["glasshive"]["enterprise"]["human_auth"][
+        "oidc"
+    ]["client_id"] = combined_client_id
+    combined_env = config_compiler.render_runtime_env(
+        combined_app_config,
+        config_compiler.build_agent_assignments(combined_app_config),
+    )
+    assert combined_env["GLASSHIVE_OIDC_CLIENT_ID"] == combined_client_id
+    assert combined_env["GLASSHIVE_MCP_OAUTH_TOKEN_AUDIENCES"] == combined_client_id
+    assert combined_env["GLASSHIVE_OIDC_ROLE_MAP_JSON"] == '{"Readers":"viewer"}'
 
     invalid_state_config = copy.deepcopy(config)
     invalid_state_config["integrations"]["glasshive"]["enterprise"]["state_dir"] = "../relative"

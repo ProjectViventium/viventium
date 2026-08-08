@@ -4833,9 +4833,10 @@ def render_runtime_env(
             if ui_port:
                 env["GLASSHIVE_UI_PORT"] = ui_port
         env["GLASSHIVE_OPERATOR_BASE_URL"] = glasshive_operator_base_url
-        env["GLASSHIVE_RECURRING_SCHEDULE_OWNER"] = "viventium_cortex"
-        env["GLASSHIVE_SCHEDULING_OWNER_URL"] = (
-            f"http://127.0.0.1:{profile['scheduling_mcp_port']}/mcp"
+        scheduling_cortex = integrations.get("scheduling_cortex", {})
+        scheduling_cortex_enabled = bool(
+            isinstance(scheduling_cortex, dict)
+            and resolve_bool(scheduling_cortex.get("enabled"), False)
         )
         env["GLASSHIVE_DEFAULT_LAUNCH_SURFACE"] = "desktop"
         env["GLASSHIVE_SHOW_LIVE_TERMINAL_IN_DESKTOP"] = "true"
@@ -5203,6 +5204,24 @@ def render_runtime_env(
                         env["VIVENTIUM_GLASSHIVE_SHARED_OIDC_PRINCIPAL_CLAIM"] = str(
                             glasshive_enterprise["oidc_principal_claim"]
                         )
+
+        # The pinned GlassHive runtime treats a non-empty Viventium callback as a
+        # delegated deployment marker and rejects native recurrence. Standalone
+        # enterprise deployments intentionally clear that callback and may own
+        # recurrence locally when Scheduling Cortex is not enabled.
+        recurrence_is_delegated = bool(
+            scheduling_cortex_enabled
+            or str(env.get("VIVENTIUM_GLASSHIVE_CALLBACK_URL") or "").strip()
+        )
+        env["GLASSHIVE_RECURRING_SCHEDULE_OWNER"] = (
+            "viventium_cortex" if recurrence_is_delegated else "glasshive_native"
+        )
+        if recurrence_is_delegated:
+            env["GLASSHIVE_SCHEDULING_OWNER_URL"] = (
+                f"http://127.0.0.1:{profile['scheduling_mcp_port']}/mcp"
+            )
+        else:
+            env.pop("GLASSHIVE_SCHEDULING_OWNER_URL", None)
 
         if glasshive_provider["enabled"]:
             env.setdefault(

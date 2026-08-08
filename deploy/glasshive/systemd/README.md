@@ -157,12 +157,17 @@ sudo systemctl enable glasshive.target
 
 ## Microsoft Entra registration contract
 
-Hosted Entra uses one tenant-specific confidential web registration, one API resource registration,
-and separate public-client registrations for Claude Code and Codex. Do not use `common`, email as the
-principal, dynamic client registration, a shared public-client secret, or a v1 access token.
+Hosted Entra supports either one existing tenant-specific confidential registration that serves both
+Glass Drive web sign-in and the exposed API resource, or separate confidential web and API resource
+registrations. Use separate public-client registrations for Claude Code and Codex. Do not use
+`common`, email as the principal, dynamic client registration, a shared public-client secret, or a v1
+access token. Reuse a suitable existing registration and preserve its callbacks, permissions, roles,
+and consumers instead of creating a duplicate application.
 
-The API application manifest must keep the exact API app client-id GUID as the access-token `aud`,
-issue v2 tokens, expose one delegated scope, and preauthorize only the reviewed public clients:
+The application exposing the API resource must keep its exact client-id GUID as the access-token
+`aud`, issue v2 tokens, expose one delegated scope, and preauthorize only the reviewed public clients.
+In combined mode this is the same registration used by Glass Drive web sign-in; in split mode it is
+the dedicated API registration:
 
 ```json
 {
@@ -229,23 +234,33 @@ Both public clients are single-tenant, have `isFallbackPublicClient: true`, no c
 - Codex: `http://127.0.0.1:<fixed-registered-codex-loopback-port>/callback/<server-hash>`.
 
 The Codex hash is derived by the supported client from the canonical MCP URL. Copy the complete URI
-shown by Glass Drive Connect AI; never calculate, wildcard, or shorten it. The confidential Glass
-Drive web registration stores its credential through the deployment secret reference and registers
-both exact public reply URIs:
+shown by Glass Drive Connect AI; never calculate, wildcard, or shorten it. The confidential
+registration used by Glass Drive stores its credential through the deployment secret reference and
+registers both exact public reply URIs:
 
 - login callback: `https://glasshive.example.com/auth/oidc/callback`; and
 - logout/account-switch return: `https://glasshive.example.com/login` (the exact configured
   `human_auth.oidc.post_logout_redirect_uri`).
 
-The web registration must define the same app-role **values** as the API registration—
-`GlassHive.Member`, `GlassHive.Viewer`, and `GlassHive.TenantAdmin`—with its own stable role UUIDs.
-In **Enterprise applications → Properties**, set **Assignment required? = Yes** on both the web and
-API enterprise applications, then assign each approved user/security group to a mapped app role on
-both. An organization that replaces this with a Conditional Access/application-assignment gate must
-document, review, and test that equivalent deny-by-default control before enabling GlassHive; an
-open tenant-wide application is not supported. Browser ID tokens carry roles from the web app; MCP
-access tokens carry roles from the API resource. Defining or assigning a role on only one app
-produces cross-surface authorization drift.
+In combined mode, web redirects, the exposed API scope, role values, and assignment policy live on
+one registration and service principal. In split mode, the web registration must define the same
+app-role **values** as the API registration—`GlassHive.Member`, `GlassHive.Viewer`, and
+`GlassHive.TenantAdmin`—with its own stable role UUIDs. In **Enterprise applications → Properties**,
+set **Assignment required? = Yes** on every enterprise application used: once in combined mode, or
+on both web and API applications in split mode. Assign each approved user/security group to a mapped
+app role on every application used. An organization that replaces this with a Conditional
+Access/application-assignment gate must document, review, and test that equivalent deny-by-default
+control before enabling GlassHive; an open tenant-wide application is not supported. Browser ID
+tokens carry roles from the web client; MCP access tokens carry roles from the exposed API resource.
+In split mode, defining or assigning a role on only one app produces cross-surface authorization
+drift.
+
+When reusing an existing registration that already serves another application, do not flip its
+service principal to assignment-required until every current consumer is inventoried and assigned;
+that change can cause an unrelated login outage. A required mapped-role check that rejects missing or
+unmapped roles may instead be the reviewed deny-by-default GlassHive admission gate. Preserve the
+shared app's existing callbacks, permissions, roles, secrets, and consumers, then add only the exact
+GlassHive callbacks and assignments needed by the deployment.
 
 Bind all registrations to one exact tenant id and issuer
 `https://login.microsoftonline.com/<tenant-id>/v2.0`. Configure GlassHive with:
@@ -253,19 +268,22 @@ Bind all registrations to one exact tenant id and issuer
 - principal claim `oid`; independent GlassHive ownership namespace `enterprise.tenant_id`; and
   optional upstream token tenant policy
   `GLASSHIVE_MCP_OAUTH_TOKEN_TENANT_ID=<entra-directory-tenant-guid>`;
-- token audience `<glasshive-api-app-client-id-guid>`;
+- token audience `<glasshive-api-app-client-id-guid>`, using the combined app client id in combined
+  mode or the API app client id in split mode;
 - authorization/request scope
-  `GLASSHIVE_MCP_OAUTH_REQUIRED_SCOPES=api://<glasshive-api-app-client-id-guid>/user_impersonation`;
+  `GLASSHIVE_MCP_OAUTH_REQUIRED_SCOPES=api://<glasshive-api-app-client-id-guid>/user_impersonation`,
+  with the same combined-or-split resource client id;
 - access-token claim scope `GLASSHIVE_MCP_OAUTH_TOKEN_SCOPES=user_impersonation`;
 - allowed client ids equal to the two preauthorized public-client app ids; and
 - role claim `roles` with the same explicit map for browser and MCP values, for example
   `{"GlassHive.Member":"member","GlassHive.Viewer":"viewer","GlassHive.TenantAdmin":"tenant_admin"}`.
 
 The compiler rejects multi-user OIDC configuration without a non-empty role map. The deployment
-still fails admission unless the enterprise-application assignment gate above is enabled: runtime
-`allow_registration` controls creation of an already admitted principal and is not an IdP access
-policy. Assign users or security groups to matching app roles on both the web and API apps so both
-token types carry bounded `roles`. Keep
+still fails admission unless every enterprise application uses assignment or the reviewed
+deny-by-default mapped-role gate above: runtime `allow_registration` controls creation of an already
+admitted principal and is not an IdP access policy. Assign users or security groups to matching app
+roles on the combined app, or on both web and API apps in split mode, so both token types carry
+bounded `roles`. Keep
 raw group claims disabled unless the deployment has separately implemented and tested group-overage
 resolution; truncation or a `_claim_names` overage response must never recover to a write-capable
 role. Before cutover, obtain a token through each real client and verify v2 issuer, API `aud`, `tid`,

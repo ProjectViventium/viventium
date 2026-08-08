@@ -89,21 +89,27 @@ most specific existing QA owner when a scenario already has a detailed provider 
 
 - Requirement: `GH-UCP-002`.
 - Risk covered: enrollment or login policy fails open or leaves a user stranded.
-- Preconditions: allowed and IdP-denied synthetic users; controllable expired/replayed callback fixtures.
-- Steps: try compile with an empty/invalid role map; verify the Entra web and API enterprise apps
-  require assignment; then try IdP tenant/app-role denial, disabled enrollment, missing config,
-  wrong issuer/audience, nonce/state mismatch, reused callback, expired session, safe deep-link
-  recovery, IdP outage, and rotated signing key.
+- Preconditions: allowed and IdP-denied synthetic users; combined and split Entra app fixtures;
+  controllable expired/replayed callback fixtures.
+- Steps: try compile with an empty/invalid role map; verify combined and split app configurations;
+  present missing, unmapped, and mapped roles through both browser OIDC and MCP OAuth; verify a
+  shared combined app with assignment disabled still denies an unassigned principal through the
+  mapped-role gate; then try IdP tenant/app-role denial, disabled enrollment, missing config, wrong
+  issuer/audience, nonce/state mismatch, reused callback, expired session, safe deep-link recovery,
+  IdP outage, and rotated signing key.
 - Expected result: each case fails safely with useful retry/operator guidance; no runtime resources are
-  created; the designed login page shows bounded retry/admin guidance without claims/codes/state;
-  a newly valid signing key works after bounded JWKS refresh.
+  created and no principal row is enrolled for a missing/unmapped role; a mapped role is accepted on
+  both surfaces; the designed login page shows bounded retry/admin guidance without
+  claims/codes/state; a newly valid signing key works after bounded JWKS refresh.
 - Forbidden result: generic success, an unassigned tenant user admitted because registration is open,
   leaked claims, redirect loop, raw exception, user creation before validation, or email/password
   storage inside GlassHive.
 - Evidence to capture: visible error/recovery copy, request status, gateway logs, absence of scoped rows.
 - Full-view evidence minimum: real browser failure state plus backend no-side-effect proof.
-- Automation: gateway negative tests plus Playwright failure injection.
-- Last run: PARTIAL 2026-08-06; compiler tests require a non-empty validated role map, and backend/DOM
+- Automation: compiler topology tests, gateway negative tests, MCP OAuth role-admission tests, plus
+  Playwright failure injection.
+- Last run: PARTIAL 2026-08-08; compiler tests support combined/split topology and require a non-empty
+  validated role map; browser and MCP tests reject missing/unmapped roles before enrollment; backend/DOM
   tests cover cancel, IdP denial, expired/replayed and invalid
   state, provider outage, wrong issuer/audience class, safe retry, disabled enrollment, deep-link
   recovery, signed-link exclusion, and callback URL/log redaction. Real hosted IdP failures pending.
@@ -460,8 +466,12 @@ most specific existing QA owner when a scenario already has a detailed provider 
   created against wrong workspace/user, or one-shot regression.
 - Evidence to capture: visible UI/MCP result, definition/occurrence rows, owner config, scheduler logs.
 - Full-view evidence minimum: real create + at least one fire + visible result + persisted ledger.
-- Automation: recurrence store/API/MCP/UI tests.
-- Last run: PASS-AUTOMATED/PARTIAL 2026-08-06; recurrence/API/UI suites pass, and disabling a
+- Automation: recurrence store/API/MCP/UI tests plus a compiler-to-pinned-runtime contract probe:
+  standalone enterprise deployments without a Viventium callback select `glasshive_native`, while
+  callback-bearing Viventium deployments and explicit Scheduling Cortex integrations select
+  `viventium_cortex`.
+- Last run: PASS-AUTOMATED/PARTIAL 2026-08-08; recurrence/API/UI suites and the cross-layer
+  native/delegated owner regression pass, and disabling a
   synthetic principal atomically deactivates its native definition and pre-fire work while
   transactional create/enable/manual-run/run-link guards close concurrent-disable races and leave
   other schedule classes untouched. Hosted admin-browser disable and a real clock fire are still
