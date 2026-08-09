@@ -55,7 +55,8 @@ most specific existing QA owner when a scenario already has a detailed provider 
   3. Run a direct Viventium GlassHive conversation and a delegated workspace turn.
 - Expected result: additive resources are available and every pre-existing contract still behaves as
   before. A valid worker-view signed link may still send only its narrow message/steer request when
-  OIDC session CSRF protection is enabled.
+  OIDC session CSRF protection is enabled. An authenticated watch session sends its current CSRF
+  cookie value in `X-GlassHive-CSRF` for message, steer, lifecycle, and desktop mutations.
 - Forbidden result: a renamed/removed field or tool, private fixture dependency, duplicate provider
   run, changed callback, direct conversation rerouted through MCP delegation, a valid signed link
   blocked by session CSRF, or a signed link bypassing CSRF for any other mutation.
@@ -63,8 +64,9 @@ most specific existing QA owner when a scenario already has a detailed provider 
   conversation, worker audit, component/build provenance.
 - Full-view evidence minimum: source + API + MCP + browser + direct conversation + installed artifact.
 - Automation: `runtime_phase1/tests/test_public_compatibility_contract.py` plus owning suites.
-- Last run: PARTIAL 2026-08-06; source compatibility and hosted-mode signed-link/CSRF regression
-  passed, while installed browser/channel regression remains open.
+- Last run: PARTIAL 2026-08-09; source compatibility, hosted-mode signed-link/CSRF regression, and
+  authenticated-watch CSRF forwarding tests passed, while installed browser/channel regression
+  remains open.
 
 ## `GHUCP-002` — OIDC Login Happy Path
 
@@ -664,11 +666,14 @@ most specific existing QA owner when a scenario already has a detailed provider 
   no session, an allowed session, an MCP token, and spoofed identity headers. Through the public
   browser edge, perform an authenticated state-preserving mutation with the real CSRF cookie/header
   pair and a spoofed identity header on the same request; inspect owning service logs and the
-  canonical subject that actually authorized the mutation.
+  canonical subject that actually authorized the mutation. From the authenticated watch surface,
+  submit a steer, a queued message, and one reversible lifecycle action; replay a mutation with the
+  header absent and with a mismatched value.
 - Expected result: browser routes reach BFF through login; MCP metadata/challenges reach MCP directly;
   JWKS is public; runtime has no public route; the edge removes client identity headers, preserves
   only the declared browser `X-GlassHive-CSRF` double-submit token across its prefix scrub, and injects
-  only verified stable-subject identity.
+  only verified stable-subject identity. The three authenticated watch actions each mutate once;
+  absent or mismatched CSRF pairs return `403` without runtime mutation.
 - Forbidden result: MCP/JWKS receives an HTML login redirect, one catch-all BFF upstream, raw client
   identity accepted, the CSRF header is scrubbed or bypassed, any other prefixed client header
   survives, email is used as durable owner id, or the runtime port/path is public.
