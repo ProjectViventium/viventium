@@ -548,6 +548,9 @@ compliant hosted topology.
   self-check/final-report contract.
 - Reviewed worker-image inputs are staged through same-directory atomic replacement so a sealed
   read-only prior copy remains retryable without partial build context or temporary residue.
+- The digest-pinned worker base image is paired with a reviewed immutable Ubuntu snapshot whose
+  package builds are compatible with that base. The managed image tag changes when this pairing
+  changes, and image provenance must attest the exact snapshot before an existing image is reused.
 - Performance measurement includes login, catalog load, create/resume/duplicate, setup, MCP
   connection, schedule fire, and result delivery, and is judged with the Core Outcome Metric rather
   than latency alone.

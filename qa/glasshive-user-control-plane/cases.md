@@ -274,7 +274,9 @@ most specific existing QA owner when a scenario already has a detailed provider 
 - Steps: create from the three-field launcher with a cold worker image; verify the request returns
   promptly to a starting watch surface and exactly one project/workspace/run exists; force
   a second cold-image preparation after the reviewed build input has become read-only and verify
-  atomic replacement succeeds without partial input or temporary residue; force
+  atomic replacement succeeds without partial input or temporary residue; build the digest-pinned
+  base against the reviewed immutable Ubuntu snapshot, verify the package set is compatible, and
+  require the exact snapshot provenance label before reuse; force
   auxiliary watch/link state unavailable, malformed, and writer-locked beyond the edge budget, then
   verify a bounded authenticated fallback without duplicate work; fail/cancel/interrupt the first
   run and verify the UI asks for a corrected follow-up without offering an ineffective Resume action;
@@ -292,7 +294,8 @@ most specific existing QA owner when a scenario already has a detailed provider 
   searchable, cursor stable, and shows readiness/next run; empty state is useful.
 - Forbidden result: raw internal ids as primary labels, cold image preparation blocking the browser
   request, a read-only staged build input making a safe retry fail, partial build input or staging
-  residue, watch/link storage corruption or contention consuming the edge deadline or returning a
+  residue, a mixed-snapshot package set or stale managed image satisfying provenance, watch/link
+  storage corruption or contention consuming the edge deadline or returning a
   retry-inducing 500 after commit, a terminal run presented as resumable compute, a terminated
   workspace accepting work its queue cannot run, teardown failure or a stale writer reopening a
   workspace, cached or already-open desktop/terminal access after close intent, unknown orphan
@@ -303,8 +306,11 @@ most specific existing QA owner when a scenario already has a detailed provider 
 - Evidence to capture: browser screenshots/DOM, API cursors, DB ownership, launch/run audit.
 - Full-view evidence minimum: real browser empty/create/search/rename plus scoped backend state.
 - Automation: `test_workspace_catalog.py`, UI server tests, Playwright.
-- Last run: PARTIAL 2026-08-05; local Playwright proved fresh ephemeral create, explicit Keep to named,
-  human rename, refresh, and scoped backend state. Hosted sign-in/two-user and scale paths remain open.
+- Last run: PARTIAL 2026-08-09; local Playwright proved fresh ephemeral create, explicit Keep to
+  named, human rename, refresh, and scoped backend state. A hosted authenticated watch action reached
+  exactly one durable run, and a real rootless cold build of the corrected digest/snapshot package
+  pairing completed with package, CLI, Python, Chromium, and driver checks. Post-restage worker
+  completion, hosted two-user, and scale paths remain open.
 
 ## `GHUCP-012` — Resume, Refresh, and Restart Continuity
 

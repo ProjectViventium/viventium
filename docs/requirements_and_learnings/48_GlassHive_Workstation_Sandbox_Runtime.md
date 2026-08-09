@@ -273,9 +273,10 @@ concrete blocker instead of spending indefinitely.
 
 ### Why Selenium's Docker Image (Not Selenium Grid)
 
-GlassHive uses **`selenium/standalone-chromium:latest`** as the **Docker base image** for worker
-containers. This is not Selenium Grid (the multi-node browser-test orchestrator). The image is used
-because it bundles:
+GlassHive uses the digest-pinned
+**`selenium/standalone-chromium:4.46.0-20260707@sha256:3400b92f1cddb2dfaaf358654e8f7d83d7be45192fb73c5f28c25faa28d36504`**
+as the **Docker base image** for worker containers. This is not Selenium Grid (the multi-node
+browser-test orchestrator). The image is used because it bundles:
 
 - Chromium browser
 - Xvfb virtual display server
@@ -335,7 +336,10 @@ Selenium base:
   manifest only when the matching Linux `extension-host` bundle is present in a worker-local or
   operator-provided Chrome plugin root; the runtime must not point Codex at a host macOS binary or a
   non-native-protocol proxy.
-- **Image tag**: `workers-projects-runtime-workstation:phase1-node22-docs7`
+- **Image tag**: `workers-projects-runtime-workstation:phase1-node22-docs8-openclaw2026.7.1-5`
+- **Ubuntu package snapshot**: `20260801T000000Z`. This reviewed immutable snapshot contains package
+  builds compatible with the digest-pinned base. The image label must attest that exact snapshot,
+  and provenance verification rejects stale or manually retagged images that do not match it.
 
 The workstation image must be capable of ordinary professional first-delivery work products. A
 worker should not need to hand-roll a minimal ZIP/DOCX or return Markdown/HTML only because the
@@ -2001,7 +2005,7 @@ persistent home and workspace mounts.
 | `GLASSHIVE_ENTERPRISE_MODE` | unset | Enables fail-closed enterprise request scoping |
 | `GLASSHIVE_AUTH_MODE` | `local` | `first_party_assertion` for v1 enterprise VM mode; OAuth modes are optional |
 | `GLASSHIVE_ENTERPRISE_TENANT_ID` | `local` | Single-tenant deployment identifier used when the request does not carry a tenant header |
-| `WPR_SANDBOX_IMAGE` | `workers-projects-runtime-workstation:phase1-node22-docs7` | Docker image with native CLI, browser/computer substrate, optional managed AI-worker browser extensions, worker-local native-host bootstrap, stale disabled-extension cleanup, and professional document toolchain |
+| `WPR_SANDBOX_IMAGE` | `workers-projects-runtime-workstation:phase1-node22-docs8-openclaw2026.7.1-5` | Docker image with native CLI, browser/computer substrate, optional managed AI-worker browser extensions, worker-local native-host bootstrap, stale disabled-extension cleanup, professional document toolchain, and exact reviewed base/snapshot provenance |
 | `GLASSHIVE_AI_WORKER_BROWSER_EXTENSIONS` / `WPR_AI_WORKER_BROWSER_EXTENSIONS` | `none` | Comma-separated optional Docker browser extensions to force-install (`claude`, `codex`, or `all`). The default is `none` because extension policy/profile install is not proof of a connected bridge; opt in only when the selected worker image has a proven compatible browser, native host, auth/session, and user-grade QA evidence. |
 | `WPR_SANDBOX_CODEX_NPM_SPEC` | `@openai/codex@0.146.1` | Pinned Codex CLI package installed into rebuilt workstation images; update only with dated version/QA evidence |
 | `WPR_SANDBOX_CLAUDE_CODE_NPM_SPEC` | `@anthropic-ai/claude-code@2.1.223` | Pinned Claude Code package installed into rebuilt workstation images; update only with dated version/QA evidence |
