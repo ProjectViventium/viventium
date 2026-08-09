@@ -273,6 +273,11 @@ compliant hosted topology.
 - Setup uses an isolated PTY/device/browser flow for native subscriptions or a no-echo secure secret
   input for API keys, shows pending/ready/action-required/unsupported status, and supports connect,
   test, reconnect, rotate, disconnect, usage/readiness inspection, and default selection.
+- Native setup output is translated at the runtime boundary into provider-specific, allowlisted
+  guidance: the reviewed sign-in destination, a bounded one-time code where supported, and an
+  optional reviewed recovery destination. The main Connections surface exposes those values as one
+  primary sign-in action and one copy action. Raw PTY output remains available only in collapsed
+  technical details and is never promoted into a clickable arbitrary URL.
 - The UI and MCP expose the same generic account lifecycle: connect metadata, start native setup,
   test current readiness, disconnect credentials, and forget already-disconnected metadata. A
   disconnected row does not consume the active-account quota, and forgetting it is rejected until
@@ -435,6 +440,11 @@ compliant hosted topology.
 - The control plane extends the designed Glass Drive UI. It does not expose the basic runtime API UI
   as the user product.
 - Primary navigation is clear and bounded: Workspaces, Connections, Library, Schedules, and Activity.
+- Connections defaults to the account name, status, and the single action needed now. Account
+  creation, destructive/diagnostic account actions, external MCP client commands and callbacks, raw
+  provider output, empty connected-tool state, and operational provenance use progressive disclosure
+  or remain hidden until they are relevant. The same essential-first hierarchy applies on narrow
+  screens.
 - The create-workspace entry preserves the approved three primary inputs: project description,
   success criteria, and optional context. Account/profile/type controls are secondary and
   use progressive disclosure.
