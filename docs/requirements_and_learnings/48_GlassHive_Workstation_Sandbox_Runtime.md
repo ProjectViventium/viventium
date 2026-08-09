@@ -422,6 +422,18 @@ reason, exit code, evidence path when finalized, and `last_heartbeat_at`. It mus
 quiet process with zero stdout/stderr is still `running` while the process or Docker screen session
 is alive, not a fabricated completion.
 
+For Docker/workstation runs, the runtime identity precreates the private per-run `stdout.log`,
+`stderr.log`, and `exit_code` files before the container starts. The existing worker-specific ACL
+lets the non-root container user write those files without transferring host ownership or granting
+the gateway group access to the workspace, home, browser profile, or provider state. An empty
+`exit_code` marker means the run is still unfinished; a populated integer records the actual terminal
+exit, while malformed nonempty content fails closed as a terminal runtime failure. The same contract
+applies after runtime restart and recovery.
+
+Enterprise/multi-user workers require both recursive and default POSIX ACL application to succeed;
+missing or failing ACL support aborts path preparation and worker start. The historical permissive
+bind-mount fallback is limited to an explicitly non-multi-user local security mode.
+
 The verifier is an evidence harness, not a new planner. It recursively inventories root,
 `output/`, `artifacts/`, and `reports/` deliverables while excluding scaffold, browser profile,
 upload, and harness evidence files. It validates professional artifacts structurally and records

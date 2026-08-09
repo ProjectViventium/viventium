@@ -276,7 +276,9 @@ most specific existing QA owner when a scenario already has a detailed provider 
   a second cold-image preparation after the reviewed build input has become read-only and verify
   atomic replacement succeeds without partial input or temporary residue; build the digest-pinned
   base against the reviewed immutable Ubuntu snapshot, verify the package set is compatible, and
-  require the exact snapshot provenance label before reuse; force
+  require the exact snapshot provenance label before reuse; have the rootless worker fill its
+  precreated private exit marker, verify the runtime identity can read it while the gateway identity
+  cannot, and verify an empty marker remains unfinished across recovery; force
   auxiliary watch/link state unavailable, malformed, and writer-locked beyond the edge budget, then
   verify a bounded authenticated fallback without duplicate work; fail/cancel/interrupt the first
   run and verify the UI asks for a corrected follow-up without offering an ineffective Resume action;
@@ -298,8 +300,9 @@ most specific existing QA owner when a scenario already has a detailed provider 
   storage corruption or contention consuming the edge deadline or returning a
   retry-inducing 500 after commit, a terminal run presented as resumable compute, a terminated
   workspace accepting work its queue cannot run, teardown failure or a stale writer reopening a
-  workspace, cached or already-open desktop/terminal access after close intent, unknown orphan
-  compute, a truncated provider stream reported complete, a closed recurring definition being
+  workspace, group/world permission widening on worker workspace, home, browser, or provider state,
+  an empty exit marker reported as success, cached or already-open desktop/terminal access after
+  close intent, unknown orphan compute, a truncated provider stream reported complete, a closed recurring definition being
   re-enabled or left active in the delegated owner, duplicate project/workspace/run, a queued first run
   stranded after restart, automatic stale reuse, duplicate pagination, cross-user tile, or basic
   runtime UI replacing Glass Drive.
@@ -310,7 +313,13 @@ most specific existing QA owner when a scenario already has a detailed provider 
   named, human rename, refresh, and scoped backend state. A hosted authenticated watch action reached
   exactly one durable run, and a real rootless cold build of the corrected digest/snapshot package
   pairing completed with package, CLI, Python, Chromium, and driver checks. Post-restage worker
-  completion, hosted two-user, and scale paths remain open.
+  execution reached the provider but exposed a rootless ownership mismatch on the worker-created
+  exit marker. The corrected source precreates a private runtime-owned marker and passed the full
+  runtime suite; a live rootless identity smoke proved worker write, runtime read, retained runtime
+  ownership, and gateway denial. The strict multi-user ACL path also applied private access and
+  default ACLs to a synthetic worker directory, let a newly created worker file remain readable by
+  the runtime identity, and denied the gateway identity; missing ACL support now fails closed.
+  Exact-commit post-restage worker completion, hosted two-user, and scale paths remain open.
 
 ## `GHUCP-012` — Resume, Refresh, and Restart Continuity
 

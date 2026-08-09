@@ -77,6 +77,28 @@ sudo machinectl shell glasshive-runtime@ /bin/bash -lc 'dockerd-rootless-setupto
 sudo loginctl enable-linger glasshive-runtime
 ```
 
+The host must load `br_netfilter` and enable bridge IPv4/IPv6 netfilter before the rootless daemon
+creates GlassHive's internal-only worker network. Its systemd user manager must also expose the
+`cpu`, `memory`, and `pids` controllers; worker limits fail closed if any requested controller is
+missing. Verify both prerequisites on the target host before staging:
+
+```bash
+sudo modprobe br_netfilter
+sudo sysctl -w net.bridge.bridge-nf-call-iptables=1
+sudo sysctl -w net.bridge.bridge-nf-call-ip6tables=1
+runtime_uid="$(id -u glasshive-runtime)"
+test -r "/sys/fs/cgroup/user.slice/user-${runtime_uid}.slice/user@${runtime_uid}.service/cgroup.controllers"
+grep -qw cpu "/sys/fs/cgroup/user.slice/user-${runtime_uid}.slice/user@${runtime_uid}.service/cgroup.controllers"
+grep -qw memory "/sys/fs/cgroup/user.slice/user-${runtime_uid}.slice/user@${runtime_uid}.service/cgroup.controllers"
+grep -qw pids "/sys/fs/cgroup/user.slice/user-${runtime_uid}.slice/user@${runtime_uid}.service/cgroup.controllers"
+sudo -u glasshive-runtime env XDG_RUNTIME_DIR="/run/user/${runtime_uid}" \
+  DOCKER_HOST="unix:///run/user/${runtime_uid}/docker.sock" \
+  docker info --format '{{.CgroupDriver}}' | grep -qx systemd
+```
+
+Persist the module, sysctls, and systemd controller delegation with the host distribution's normal
+configuration mechanism; an interactive one-time setting is not an accepted deployment state.
+
 `runtime-active.env` supplies `DOCKER_HOST=unix:///run/user/<uid>/docker.sock`. Before every runtime
 start, `glasshive_rootless_docker_probe.py` calls Docker through that socket and requires the daemon's
 JSON `SecurityOptions` to advertise `rootless`. Socket reachability alone is insufficient. Rootful,
