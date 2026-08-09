@@ -507,6 +507,7 @@ def test_live_edge_contract_names_every_public_route_and_header_family() -> None
         ],
         "service": "glasshive-ui",
         "upstream": "http://127.0.0.1:18780",
+        "preserve_client_headers": ["X-GlassHive-CSRF"],
         "websocket_path_prefixes": ["/novnc/"],
     }
     assert contract["mcp"]["exact_paths"] == [
@@ -544,6 +545,7 @@ def test_live_edge_contract_names_every_public_route_and_header_family() -> None
         "mcp_no_oauth2_proxy_html_redirect",
         "jwks_to_glass_drive_bff",
         "identity_header_families_scrubbed",
+        "browser_csrf_header_preserved",
         "runtime_not_public",
         "runtime_release_provenance",
         "ui_release_provenance",
@@ -944,6 +946,27 @@ def _deployment_fixture(tmp_path: Path) -> tuple[rollout.RolloutConfig, Path, Pa
     return config, runtime_db, previous
 
 
+def test_active_gateway_places_watch_state_beside_auth_database_in_writable_state(
+    tmp_path: Path,
+) -> None:
+    config, runtime_db, _ = _deployment_fixture(tmp_path)
+    auth_db = next(database.path for database in config.databases if database.name == "auth")
+
+    runtime, gateway = rollout._active_values(
+        config,
+        ports=config.candidate_ports,
+        state_dir=config.state_dir,
+        database_paths={"WPR_DB_PATH": runtime_db, "GLASSHIVE_AUTH_STATE_PATH": auth_db},
+        background_consumers_enabled=False,
+        reconcile_on_startup=False,
+    )
+
+    assert gateway["GLASSHIVE_WATCH_SESSION_STATE_PATH"] == str(
+        auth_db.parent / "watch_sessions.sqlite3"
+    )
+    assert runtime["GLASSHIVE_BACKGROUND_CONSUMERS_ENABLED"] == "false"
+
+
 def test_rollout_rejects_candidate_state_outside_systemd_writable_state_root(
     tmp_path: Path,
 ) -> None:
@@ -975,7 +998,23 @@ def test_shipped_candidate_state_is_beneath_every_service_writable_state_root() 
 
 def test_successful_rollout_rehearses_clone_then_switches_ingress(tmp_path: Path) -> None:
     config, _, _ = _deployment_fixture(tmp_path)
-    system = FakeSystem()
+    class ReconcilePolicySystem(FakeSystem):
+        def __init__(self) -> None:
+            super().__init__()
+            self.consumer_policy_by_phase: list[tuple[str, str, str]] = []
+
+        def start_group(self, *, phase: str) -> None:
+            values = rollout.read_active_environment(config.runtime_active_env)
+            self.consumer_policy_by_phase.append(
+                (
+                    phase,
+                    values["GLASSHIVE_RECONCILE_ON_STARTUP"],
+                    values["GLASSHIVE_BACKGROUND_CONSUMERS_ENABLED"],
+                )
+            )
+            super().start_group(phase=phase)
+
+    system = ReconcilePolicySystem()
     adapters = FakeAdapters()
 
     receipt = rollout.execute_rollout(config, system=system, adapters=adapters)
@@ -1001,6 +1040,10 @@ def test_successful_rollout_rehearses_clone_then_switches_ingress(tmp_path: Path
         "assert-stopped",
         "start-group:candidate-live",
         "probe-group:candidate-live",
+    ]
+    assert system.consumer_policy_by_phase == [
+        ("rehearsal", "false", "false"),
+        ("candidate-live", "true", "true"),
     ]
     assert adapters.events == [
         "ingress:inspect",

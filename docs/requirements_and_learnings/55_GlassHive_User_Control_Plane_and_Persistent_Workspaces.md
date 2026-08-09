@@ -113,8 +113,10 @@ Hosted multi-user GlassHive uses one HTTPS origin with explicit path ownership:
 - the runtime API (current loopback port `8766`) has no public ingress route and is reachable only
   over loopback, a private service network, or mutually authenticated transport.
 
-The edge removes every client-supplied `X-Viventium-*`, `X-GlassHive-*`, and `X-LibreChat-*`
-identity header before injecting identity derived from the verified proxy session. The stable IdP
+The edge removes every client-supplied privileged `X-Viventium-*`, `X-GlassHive-*`, and
+`X-LibreChat-*` header before injecting identity derived from the verified proxy session. The
+browser route captures and restores only the BFF's `X-GlassHive-CSRF` double-submit token across
+that scrub; it never restores an identity or service header. The stable IdP
 subject/`oid`, not email, is the canonical user id. A single catch-all upstream to the BFF is not a
 compliant hosted topology.
 
@@ -287,6 +289,30 @@ compliant hosted topology.
   without changing their behavior.
 - New work starts fresh by default. Reuse is an explicit `Open`/`Resume` action or a parent decision
   backed by a known stable alias.
+- Browser launch durably prepares the workspace and queues its first run before returning the watch
+  surface. Cold image/container preparation continues through the worker queue, so an edge request
+  deadline cannot invite a duplicate retry; the watch surface truthfully shows starting, running,
+  or failed. Busy, unavailable, or malformed auxiliary watch/link state falls back to the
+  authenticated owner-scoped watch URL after a bounded, sub-request-budget storage attempt and after
+  the one project, workspace, and run are durable. A failed/cancelled/interrupted run asks for a corrected
+  follow-up; it must not offer a Resume control that only restarts compute while leaving the same
+  terminal run as the visible result. An explicit close is permanent from `terminating` through
+  `terminated`; if compute teardown fails, `termination_failed` remains visibly closed and
+  retryable by Close/startup reconciliation without reopening the workspace. All three states
+  disable follow-up, pause/interrupt/resume, account switching, desktop/terminal attachment, and
+  schedule creation/re-enablement/run-now, and stale runtime writers cannot resurrect them. The
+  real external runtime start is serialized with Close; newly started runtime identity is durable
+  before request acceptance, while already-accepted long responses do not hold the Close lock.
+  Close revokes already-open terminal/desktop streams and deactivates both native and delegated
+  recurring definitions. A late delegated definition whose compensating deactivation fails makes
+  cleanup visibly `termination_failed` and retryable instead of claiming a clean close.
+- The supported single-runtime hosted service reconciles on startup. It recreates the process-local
+  queue processor for a durable queued run without creating a second run; an intentionally paused
+  workspace remains paused.
+- A migration rehearsal against cloned state is passive: startup reconciliation, immediate and
+  replay/retry callback delivery, lifecycle reapers, and schedule dispatch are all disabled. New
+  callback records remain pending for live. The live phase enables the consumers together so copied
+  work cannot produce rehearsal side effects and then run again after cutover.
 - The catalog is owner scoped, cursor paginated, searchable, and discoverable by human name, tags,
   favorite/recent state, provider readiness, current state, and next scheduled occurrence.
 - Opening a paused named workspace resumes it and restores its persisted filesystem, browser profile,
@@ -500,7 +526,9 @@ compliant hosted topology.
   exact resource/issuer/scopes and unauthenticated initialize returns `401` with a
   `WWW-Authenticate` resource-metadata challenge; authenticated initialize succeeds; unauthenticated
   browser access enters the identity flow and an allowed user lands in the designed Glass Drive;
-  spoofed identity headers are overwritten; public JWKS is reachable without a browser cookie; and
+  an authenticated state-preserving mutation proves the browser CSRF header survives the public
+  edge while spoofed identity headers are overwritten; public JWKS is reachable without a browser
+  cookie; and
   the runtime remains externally unreachable.
 - Source correctness, unit tests, mocks, or an already-running owner checkout cannot substitute for
   built and installed artifact evidence.

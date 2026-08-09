@@ -42,14 +42,17 @@ SAFE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$")
 ALLOWED_ACTIVE_ENV_KEYS = {
     "DOCKER_HOST",
     "GLASSHIVE_AUTH_STATE_PATH",
+    "GLASSHIVE_BACKGROUND_CONSUMERS_ENABLED",
     "GLASSHIVE_COMPONENT_REVISION",
     "GLASSHIVE_MCP_PORT",
     "GLASSHIVE_PARENT_REVISION",
+    "GLASSHIVE_RECONCILE_ON_STARTUP",
     "GLASSHIVE_RELEASE_ID",
     "GLASSHIVE_RUNTIME_BASE_URL",
     "GLASSHIVE_RUNTIME_PORT",
     "GLASSHIVE_STATE_DIR",
     "GLASSHIVE_UI_PORT",
+    "GLASSHIVE_WATCH_SESSION_STATE_PATH",
     "WPR_DB_PATH",
     "WPR_MCP_BASE_URL",
 }
@@ -107,6 +110,7 @@ ACCEPTANCE_CHECKS: dict[str, tuple[str, ...]] = {
         "mcp_no_oauth2_proxy_html_redirect",
         "jwks_to_glass_drive_bff",
         "identity_header_families_scrubbed",
+        "browser_csrf_header_preserved",
         "runtime_not_public",
         "runtime_release_provenance",
         "ui_release_provenance",
@@ -1522,6 +1526,10 @@ def ingress_route_contract(ports: Mapping[str, int]) -> dict[str, object]:
             ],
             "service": "glasshive-ui",
             "upstream": f"http://127.0.0.1:{normalized['ui']}",
+            # The BFF validates this double-submit token.  An ingress adapter must
+            # capture it before the deny-by-prefix scrub and restore only this
+            # named header when proxying browser traffic.
+            "preserve_client_headers": ["X-GlassHive-CSRF"],
             "websocket_path_prefixes": ["/novnc/"],
         },
         "mcp": {
@@ -1546,6 +1554,8 @@ def _active_values(
     ports: Mapping[str, int],
     state_dir: Path,
     database_paths: Mapping[str, Path],
+    background_consumers_enabled: bool,
+    reconcile_on_startup: bool,
 ) -> tuple[dict[str, str], dict[str, str]]:
     runtime_user = config.runtime_user
     try:
@@ -1562,6 +1572,8 @@ def _active_values(
     runtime = {
         **environment_provenance,
         "DOCKER_HOST": f"unix:///run/user/{runtime_uid}/docker.sock",
+        "GLASSHIVE_BACKGROUND_CONSUMERS_ENABLED": "true" if background_consumers_enabled else "false",
+        "GLASSHIVE_RECONCILE_ON_STARTUP": "true" if reconcile_on_startup else "false",
         "GLASSHIVE_RUNTIME_PORT": str(ports["runtime"]),
         "GLASSHIVE_STATE_DIR": str(state_dir),
         "WPR_DB_PATH": str(database_paths["WPR_DB_PATH"]),
@@ -1569,6 +1581,9 @@ def _active_values(
     gateway = {
         **environment_provenance,
         "GLASSHIVE_AUTH_STATE_PATH": str(database_paths["GLASSHIVE_AUTH_STATE_PATH"]),
+        "GLASSHIVE_WATCH_SESSION_STATE_PATH": str(
+            database_paths["GLASSHIVE_AUTH_STATE_PATH"].parent / "watch_sessions.sqlite3"
+        ),
         "GLASSHIVE_MCP_PORT": str(ports["mcp"]),
         "GLASSHIVE_RUNTIME_BASE_URL": f"http://127.0.0.1:{ports['runtime']}",
         "GLASSHIVE_UI_PORT": str(ports["ui"]),
@@ -1852,6 +1867,11 @@ def execute_rollout(
                 ports=config.candidate_ports,
                 state_dir=candidate_state,
                 database_paths=candidate_databases,
+                # A rehearsal clone validates migrations/readiness only. Executing a
+                # copied durable queue, schedule, callback, or reaper here would repeat
+                # side effects when live starts.
+                background_consumers_enabled=False,
+                reconcile_on_startup=False,
             )
             _atomic_symlink(config.release_dir, config.current_symlink)
             write_active_environment(config.runtime_active_env, rehearsal_runtime)
@@ -1880,6 +1900,8 @@ def execute_rollout(
                 ports=config.candidate_ports,
                 state_dir=config.state_dir,
                 database_paths=live_databases,
+                background_consumers_enabled=True,
+                reconcile_on_startup=True,
             )
             write_active_environment(config.runtime_active_env, live_runtime)
             write_active_environment(config.gateway_active_env, live_gateway)
