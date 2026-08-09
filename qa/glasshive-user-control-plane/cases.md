@@ -271,6 +271,8 @@ most specific existing QA owner when a scenario already has a detailed provider 
 - Preconditions: signed-in user with empty catalog, then enough synthetic workspaces for pagination.
 - Steps: create from the three-field launcher with a cold worker image; verify the request returns
   promptly to a starting watch surface and exactly one project/workspace/run exists; force
+  a second cold-image preparation after the reviewed build input has become read-only and verify
+  atomic replacement succeeds without partial input or temporary residue; force
   auxiliary watch/link state unavailable, malformed, and writer-locked beyond the edge budget, then
   verify a bounded authenticated fallback without duplicate work; fail/cancel/interrupt the first
   run and verify the UI asks for a corrected follow-up without offering an ineffective Resume action;
@@ -287,7 +289,8 @@ most specific existing QA owner when a scenario already has a detailed provider 
 - Expected result: human name is clear and editable; alias/id remain stable; catalog is scoped,
   searchable, cursor stable, and shows readiness/next run; empty state is useful.
 - Forbidden result: raw internal ids as primary labels, cold image preparation blocking the browser
-  request, watch/link storage corruption or contention consuming the edge deadline or returning a
+  request, a read-only staged build input making a safe retry fail, partial build input or staging
+  residue, watch/link storage corruption or contention consuming the edge deadline or returning a
   retry-inducing 500 after commit, a terminal run presented as resumable compute, a terminated
   workspace accepting work its queue cannot run, teardown failure or a stale writer reopening a
   workspace, cached or already-open desktop/terminal access after close intent, unknown orphan
