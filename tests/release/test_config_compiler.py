@@ -2974,6 +2974,8 @@ def test_glasshive_multi_user_control_plane_compiles_signed_identity_and_mcp_oau
                 "mode": "oidc",
                 "provider_email_login": True,
                 "allow_principal_enrollment": False,
+                "local_password_login": True,
+                "local_password_allowed_domains": ["example.test"],
                 "oidc": {
                     "issuer": "https://identity.example.test/tenant/v2.0",
                     "client_id": "glasshive-ui",
@@ -3054,6 +3056,12 @@ def test_glasshive_multi_user_control_plane_compiles_signed_identity_and_mcp_oau
     del default_closed_config["integrations"]["glasshive"]["enterprise"]["human_auth"][
         "allow_principal_enrollment"
     ]
+    del default_closed_config["integrations"]["glasshive"]["enterprise"]["human_auth"][
+        "local_password_login"
+    ]
+    del default_closed_config["integrations"]["glasshive"]["enterprise"]["human_auth"][
+        "local_password_allowed_domains"
+    ]
     del default_closed_config["runtime"]["auth"]["allow_email_login"]
     del default_closed_config["runtime"]["auth"]["allow_registration"]
     default_closed_env = config_compiler.render_runtime_env(
@@ -3068,10 +3076,15 @@ def test_glasshive_multi_user_control_plane_compiles_signed_identity_and_mcp_oau
     assert env["GLASSHIVE_ALLOW_PRINCIPAL_ENROLLMENT"] == "false"
     assert env["GLASSHIVE_ALLOW_EMAIL_LOGIN"] == "true"
     assert env["GLASSHIVE_ALLOW_EMAIL_REGISTRATION"] == "false"
+    assert env["GLASSHIVE_LOCAL_PASSWORD_LOGIN"] == "true"
+    assert env["GLASSHIVE_LOCAL_AUTH_ALLOWED_EMAIL_DOMAINS"] == "example.test"
+    assert len(env["GLASSHIVE_LOCAL_AUTH_THROTTLE_KEY"]) >= 32
     assert default_closed_env["GLASSHIVE_PROVIDER_EMAIL_LOGIN"] == "false"
     assert default_closed_env["GLASSHIVE_ALLOW_PRINCIPAL_ENROLLMENT"] == "false"
     assert default_closed_env["GLASSHIVE_ALLOW_EMAIL_LOGIN"] == "false"
     assert default_closed_env["GLASSHIVE_ALLOW_EMAIL_REGISTRATION"] == "false"
+    assert default_closed_env["GLASSHIVE_LOCAL_PASSWORD_LOGIN"] == "false"
+    assert "GLASSHIVE_LOCAL_AUTH_ALLOWED_EMAIL_DOMAINS" not in default_closed_env
     assert env["GLASSHIVE_COOKIE_SECURE"] == "true"
     assert "GLASSHIVE_ALLOWED_EMAIL_DOMAINS" not in env
     assert env["GLASSHIVE_OIDC_ISSUER"] == "https://identity.example.test/tenant/v2.0"
@@ -3202,6 +3215,9 @@ def test_glasshive_multi_user_control_plane_compiles_signed_identity_and_mcp_oau
     assert "GLASSHIVE_MCP_CLAUDE_CALLBACK_PORT=49152" in gateway_env
     assert "GLASSHIVE_MCP_CODEX_CLIENT_ID=glasshive-codex-client" in gateway_env
     assert "GLASSHIVE_MCP_CODEX_CALLBACK_PORT=49153" in gateway_env
+    assert "GLASSHIVE_LOCAL_PASSWORD_LOGIN=true" in gateway_env
+    assert "GLASSHIVE_LOCAL_AUTH_ALLOWED_EMAIL_DOMAINS=example.test" in gateway_env
+    assert "GLASSHIVE_LOCAL_AUTH_THROTTLE_KEY=" in gateway_env
     assert (
         "GLASSHIVE_MCP_CODEX_RESOURCE=https://glasshive.example.test/mcp"
         in gateway_env
@@ -3220,6 +3236,9 @@ def test_glasshive_multi_user_control_plane_compiles_signed_identity_and_mcp_oau
     assert "GLASSHIVE_MCP_CLAUDE_CLIENT_ID" not in glasshive_runtime_env
     assert "GLASSHIVE_MCP_CODEX_CLIENT_ID" not in glasshive_runtime_env
     assert "GLASSHIVE_MCP_CODEX_CALLBACK_PORT" not in glasshive_runtime_env
+    assert "GLASSHIVE_LOCAL_PASSWORD_LOGIN" not in glasshive_runtime_env
+    assert "GLASSHIVE_LOCAL_AUTH_ALLOWED_EMAIL_DOMAINS" not in glasshive_runtime_env
+    assert "GLASSHIVE_LOCAL_AUTH_THROTTLE_KEY" not in glasshive_runtime_env
     assert (
         "GLASSHIVE_MCP_OAUTH_TOKEN_AUDIENCES="
         "00000000-0000-4000-8000-000000000123"

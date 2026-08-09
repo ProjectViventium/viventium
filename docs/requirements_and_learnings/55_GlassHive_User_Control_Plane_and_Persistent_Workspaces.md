@@ -146,8 +146,21 @@ compliant hosted topology.
   insufficient when issuer, audience, algorithm, role, or domain policy differs.
 - The durable principal is derived from issuer + subject. Email and display name are mutable profile
   attributes, never authorization keys.
-- Email/password signup, reset, MFA, invitation, and account recovery are delegated to the configured
-  identity provider. GlassHive does not create a second password database.
+- Public email/password signup, reset, MFA, invitation, and account recovery are delegated to the
+  configured identity provider. GlassHive may additionally enable a default-off, gateway-owned local
+  password credential for an administrator-preapproved exact OIDC issuer + subject. Email is only a
+  normalized credential locator and never discovers, merges, or owns a principal. The verifier is a
+  versioned Argon2id PHC in the gateway-only auth database; raw passwords never enter config, argv,
+  logs, runtime state, worker homes, or MCP. Provisioning/rotation/unlock/disable use the locked
+  gateway one-shot over bounded stdin. The deployment secret manager generates the credential; the
+  gateway enforces at least 24 characters and 12 distinct characters without claiming a tiny literal
+  list is a comprehensive compromised-password corpus. Public signup and reset routes remain absent.
+- Local-password browser sessions use a separate session table understood only by releases that
+  support the feature. Disabling the feature rejects and revokes those sessions without affecting
+  OIDC sessions; rollback to an older OIDC-only release requires the supported revoke-local-sessions
+  one-shot before activation. The local factor bypasses IdP MFA/Conditional Access for this GlassHive
+  browser entry only, so it is an explicit deployment policy—not a claim of IdP-managed assurance.
+  MCP remains OIDC OAuth and resolves the same issuer + subject principal.
 - Provider-hosted organization SSO and provider-hosted email/password are two entry methods into the
   same OIDC issuer + subject identity. `provider_email_login` controls only truthful login-page
   capability copy; it never enables a GlassHive credential form or changes authorization.
@@ -165,6 +178,16 @@ compliant hosted topology.
   issuer; email is display metadata and is never used to find, merge, or authorize the principal.
   Both GlassHive-specific controls default false when neither their canonical key nor an explicitly
   configured one-release legacy fallback is present.
+- `local_password_login` is a separate GlassHive-specific, default-false capability and never falls
+  back from LibreChat auth settings. `local_password_allowed_domains` constrains credential locators
+  only. The compiler emits a stable gateway-only HMAC key for source throttling and never projects
+  the PHC or local session material outside the existing gateway tier. The UI and public MCP service
+  already share that gateway OS identity/environment boundary; the MCP protocol exposes no password
+  grant and MCP clients receive none of these values. LibreChat, runtime, and workers receive none of
+  the local-auth flag, locator allowlist, HMAC key, PHC, or session material. Unknown, wrong,
+  disabled, and locked credentials return the same public failure; durable
+  account/source throttles survive restart, bounded Argon2 capacity returns retry guidance without
+  charging a valid credential, and credential rotation cannot lock the replacement verifier.
 - Cancelled, stale/replayed, invalid-token, provider-outage, and unapproved-account callbacks return
   to the designed login page with bounded non-sensitive error codes, retry guidance, and no echoed
   authorization code, state, claims, or provider description. Fresh and expired sessions preserve

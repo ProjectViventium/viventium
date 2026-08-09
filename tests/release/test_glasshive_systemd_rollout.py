@@ -484,6 +484,17 @@ def test_adapter_contract_requires_all_named_acceptance_checks(tmp_path: Path) -
 
 def test_live_edge_contract_names_every_public_route_and_header_family() -> None:
     contract = rollout.ingress_route_contract({"runtime": 18766, "mcp": 18767, "ui": 18780})
+    auth_script = (
+        ROOT
+        / "viventium_v0_4"
+        / "GlassHive"
+        / "frontends"
+        / "glass-drive-ui"
+        / "src"
+        / "glass_drive_ui"
+        / "static"
+        / "auth.js"
+    ).read_text(encoding="utf-8")
 
     assert contract["browser"] == {
         "exact_paths": [
@@ -527,6 +538,8 @@ def test_live_edge_contract_names_every_public_route_and_header_family() -> None
         "X-GlassHive-",
         "X-LibreChat-",
     ]
+    assert "'X-GlassHive-CSRF': csrfToken" in auth_script
+    assert "X-GlassHive-Login-CSRF" not in auth_script
     assert {
         "root_to_glass_drive_bff",
         "auth_to_glass_drive_bff",
@@ -788,6 +801,9 @@ def test_ui_readiness_requires_initialized_auth_registry(tmp_path: Path) -> None
     with sqlite3.connect(database) as connection:
         connection.execute("CREATE TABLE auth_sessions (session_hash TEXT PRIMARY KEY)")
         connection.execute("CREATE TABLE auth_oidc_flows (state_hash TEXT PRIMARY KEY)")
+        connection.execute("CREATE TABLE auth_local_credentials (principal_id TEXT PRIMARY KEY)")
+        connection.execute("CREATE TABLE auth_local_source_attempts (source_hash TEXT PRIMARY KEY)")
+        connection.execute("CREATE TABLE auth_local_sessions (session_hash TEXT PRIMARY KEY)")
         connection.commit()
     ui_probe.verify_auth_registry(database)
 
@@ -1071,9 +1087,19 @@ def test_shipped_candidate_state_is_beneath_every_service_writable_state_root() 
     example = json.loads((systemd_dir / "rollout.example.json").read_text(encoding="utf-8"))
     state_dir = Path(example["state_dir"])
     candidate_state_root = Path(example["candidate_state_root"])
+    auth_database = next(
+        database for database in example["databases"] if database["name"] == "auth"
+    )
 
     assert candidate_state_root != state_dir
     assert candidate_state_root.is_relative_to(state_dir)
+    assert {
+        invariant["table"] for invariant in auth_database["post_migration_invariants"]
+    } == {
+        "auth_local_credentials",
+        "auth_local_source_attempts",
+        "auth_local_sessions",
+    }
     for unit_name in (
         "glasshive-runtime.service",
         "glasshive-ui.service",

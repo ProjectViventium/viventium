@@ -91,6 +91,20 @@
           "table": "auth_principals",
           "identity_columns": ["issuer", "subject"]
         }
+      ],
+      "post_migration_invariants": [
+        {
+          "table": "auth_local_credentials",
+          "identity_columns": ["principal_id", "login_email"]
+        },
+        {
+          "table": "auth_local_source_attempts",
+          "identity_columns": ["source_hash"]
+        },
+        {
+          "table": "auth_local_sessions",
+          "identity_columns": ["principal_id"]
+        }
       ]
     }
   ],

@@ -53,13 +53,17 @@ def test_hosted_admin_command_uses_exact_release_gateway_identity_and_environmen
     monkeypatch.setattr(admin, "GATEWAY_ENV", gateway_env)
     monkeypatch.setattr(admin, "GATEWAY_ACTIVE_ENV", active_env)
 
-    command = admin._systemd_command(script_path=script)
+    command = admin._systemd_command(
+        command="set-local-password",
+        stdin_json=True,
+        script_path=script,
+    )
 
     assert command[-5:] == [
         str(python_path),
         "-m",
         "glass_drive_ui.auth_admin",
-        "preapprove-oidc",
+        "set-local-password",
         "--stdin-json",
     ]
     assert "--uid=glasshive-gateway" in command
@@ -83,7 +87,11 @@ def test_hosted_admin_wrapper_returns_oneshot_result_without_reading_private_std
         "_mutation_lock",
         lambda: mutation_lock(tmp_path / "rollout.lock", expected_uid=os.getuid()),
     )
-    monkeypatch.setattr(admin, "_systemd_command", lambda: expected)
+    monkeypatch.setattr(
+        admin,
+        "_systemd_command",
+        lambda **kwargs: expected,
+    )
     monkeypatch.setattr(
         admin.subprocess,
         "run",
@@ -92,6 +100,36 @@ def test_hosted_admin_wrapper_returns_oneshot_result_without_reading_private_std
 
     assert admin.main(["preapprove-oidc", "--stdin-json"]) == 7
     assert observed == [expected]
+
+
+def test_hosted_admin_wrapper_supports_rollback_safe_local_session_revocation(
+    tmp_path,
+    monkeypatch,
+):
+    script, python_path = _synthetic_release(tmp_path)
+    systemd_run = tmp_path / "systemd-run"
+    systemd_run.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    systemd_run.chmod(0o755)
+    gateway_env = tmp_path / "gateway.env"
+    active_env = tmp_path / "gateway-active.env"
+    gateway_env.write_text("GLASSHIVE_HUMAN_AUTH_MODE=oidc\n", encoding="utf-8")
+    active_env.write_text("GLASSHIVE_RELEASE_ID=release-test\n", encoding="utf-8")
+    monkeypatch.setattr(admin, "SYSTEMD_RUN", systemd_run)
+    monkeypatch.setattr(admin, "GATEWAY_ENV", gateway_env)
+    monkeypatch.setattr(admin, "GATEWAY_ACTIVE_ENV", active_env)
+
+    command = admin._systemd_command(
+        command="revoke-local-sessions",
+        stdin_json=False,
+        script_path=script,
+    )
+
+    assert command[-4:] == [
+        str(python_path),
+        "-m",
+        "glass_drive_ui.auth_admin",
+        "revoke-local-sessions",
+    ]
 
 
 def test_hosted_admin_wrapper_requires_root(monkeypatch, capsys):

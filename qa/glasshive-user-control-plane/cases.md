@@ -88,7 +88,8 @@ most specific existing QA owner when a scenario already has a detailed provider 
 - Full-view evidence minimum: real IdP browser path, refresh, logout, and backend principal match.
 - Automation: `frontends/glass-drive-ui/tests/test_auth_gateway.py`, `test_auth_admin.py`, login UI
   tests, plus Playwright.
-- Last run: PARTIAL 2026-08-05; focused gateway tests only.
+- Last run: PARTIAL 2026-08-09; focused provider/local gateway, admin CLI, login UI, and no-signup
+  regressions pass. Real installed local and provider-hosted browser paths remain pending.
 
 ## `GHUCP-003` — Login Policy and Failure Paths
 
@@ -96,7 +97,8 @@ most specific existing QA owner when a scenario already has a detailed provider 
 - Risk covered: enrollment or login policy fails open or leaves a user stranded.
 - Preconditions: allowed and IdP-denied synthetic users; combined and split Entra app fixtures;
   closed principal enrollment; administrator-preapproved immutable subjects; controllable
-  expired/replayed callback fixtures.
+  expired/replayed callback fixtures; and an optional local-password candidate initially staged
+  disabled with a synthetic preapproved subject.
 - Steps: try compile with an empty/invalid role map; verify combined and split app configurations;
   present missing, unmapped, and mapped roles through both browser OIDC and MCP OAuth; verify a
   shared combined app with assignment disabled still denies an unassigned principal through the
@@ -105,6 +107,12 @@ most specific existing QA owner when a scenario already has a detailed provider 
   nonce/state mismatch, reused callback, expired session, safe deep-link recovery, IdP outage, and
   rotated signing key. Run the installed preapproval wrapper twice from the sealed active release
   using an operator-only input, switch releases, and repeat against the preserved gateway database.
+  With the optional local factor enabled only on the additive candidate, verify no signup/reset
+  route, exact-subject provisioning over stdin, right/wrong/unknown/disabled/locked login parity,
+  same-origin plus login-CSRF enforcement through the real edge, source/account throttling across
+  restart, concurrent rotation, session refresh/logout, OIDC-session independence, and identical
+  browser/MCP owner. Revoke local sessions, disable the flag, and prove old-binary rollback rejects
+  the local cookie while OIDC remains healthy.
 - Expected result: each case fails safely with useful retry/operator guidance; no runtime resources are
   created and no principal row is enrolled for a missing/unmapped role; a mapped role is accepted on
   both surfaces; the designed login page shows bounded retry/admin guidance without
@@ -113,10 +121,15 @@ most specific existing QA owner when a scenario already has a detailed provider 
   isolated; the installed wrapper runs under the gateway identity with both reviewed
   EnvironmentFiles and creates exactly one durable row; a disabled principal is reported as
   disabled rather than silently re-enabled; concurrent rollout/preapproval fails with retry guidance
-  in both directions; a newly valid signing key works after bounded JWKS refresh.
+  in both directions; a newly valid signing key works after bounded JWKS refresh. Local password
+  state is Argon2id-only and gateway-private; generic failures do not enumerate accounts; successful
+  login cannot reset a different account's source-throttle history; busy KDF capacity does not create
+  a false lockout; and flag-off/rollback revokes only local sessions.
 - Forbidden result: generic success, an unassigned tenant user admitted because registration is open,
-  leaked claims, redirect loop, raw exception, user creation before validation, or email/password
-  storage inside GlassHive; generic/source-checkout Python touching the hosted auth database; or a
+  leaked claims, redirect loop, raw exception, user creation before validation, public signup/reset,
+  plaintext/SHA password storage, email-based identity linking, password/session projection outside
+  the gateway tier, an MCP password grant, or local-auth projection to runtime, workers, or
+  LibreChat; generic/source-checkout Python touching the hosted auth database; or a
   successful preapproval message for a disabled account; or successful mutation of a rehearsal
   clone/state that rollback can overwrite.
 - Evidence to capture: visible error/recovery copy, request status, one-shot unit properties and exit,
@@ -125,12 +138,16 @@ most specific existing QA owner when a scenario already has a detailed provider 
 - Automation: compiler topology tests, gateway negative tests, MCP OAuth role-admission tests, plus
   Playwright failure injection plus `tests/release/test_glasshive_auth_admin.py`. Verify the
   compiler's canonical provider-email/enrollment settings override their legacy fallbacks, default
-  closed when both are absent, and never project a password or mutable-email admission rule.
-- Last run: PARTIAL 2026-08-08; compiler tests support combined/split topology and require a non-empty
+  closed when both are absent, and never project a password or mutable-email admission rule. Verify
+  local-password config defaults off, has no LibreChat fallback, emits only gateway values, and the
+  rollout preserves the three additive local-auth tables.
+- Last run: PARTIAL 2026-08-09; compiler tests support combined/split topology and require a non-empty
   validated role map; browser and MCP tests reject missing/unmapped roles before enrollment; backend/DOM
   tests cover cancel, IdP denial, expired/replayed and invalid
   state, provider outage, wrong issuer/audience class, safe retry, disabled enrollment, deep-link
-  recovery, signed-link exclusion, and callback URL/log redaction. Real hosted IdP failures pending.
+  recovery, signed-link exclusion, callback URL/log redaction, optional local Argon2id credentials,
+  durable throttling, issuer/rotation concurrency, separate rollback sessions, malformed input, and
+  absent signup/reset routes. Real hosted IdP and additive local-login browser acceptance pending.
 
 ## `GHUCP-004` — Signed Runtime Assertion, RBAC, and Delegation
 
@@ -791,7 +808,7 @@ most specific existing QA owner when a scenario already has a detailed provider 
 
 | Use Case ID | Natural user action | Requirement / case link | Real surface to use | Supporting evidence to compare | Expected visible result | Last run |
 | --- | --- | --- | --- | --- | --- | --- |
-| `GHUCP-UC-001` | Sign in with organization SSO or provider-hosted email/password, refresh, and log out; confirm public signup is absent | `GH-UCP-002` / `GHUCP-002`–`003` | Real browser + IdP | Gateway logs, principal/session state | Secure entry and clear closed-enrollment policy/recovery | PARTIAL: focused tests only |
+| `GHUCP-UC-001` | Sign in with organization SSO, provider-hosted email/password, or the optional admin-provisioned local factor; refresh and log out; confirm public signup/reset is absent | `GH-UCP-002` / `GHUCP-002`–`003` | Real browser + IdP/local candidate | Gateway logs, principal/session state | Secure entry, one immutable owner, and clear closed-enrollment policy/recovery | PARTIAL: focused tests only |
 | `GHUCP-UC-002` | Connect personal Codex/Claude and choose it for one mission | `GH-UCP-005`–`006` / `GHUCP-007`–`010` | Browser + native worker | Provider home, lease, worker audit, DB | Only that user's selected account is used | PARTIAL: local browser synthetic-native lifecycle passed; real worker mission pending |
 | `GHUCP-UC-003` | Create, find, rename, favorite, resume, and duplicate a workspace | `GH-UCP-007`–`008` / `GHUCP-011`–`014` | Glass Drive + desktop | API/DB/files/browser state | Human-named persistent workspace and safe copy | PARTIAL: local browser create/Keep/rename/duplicate passed; restart/favorite pending |
 | `GHUCP-UC-004` | Connect a service and let a worker use it | `GH-UCP-009` / `GHUCP-015`–`016` | Browser + broker + worker | Grant, tool calls, output, logs | Worker chooses a real scoped tool path | PENDING |

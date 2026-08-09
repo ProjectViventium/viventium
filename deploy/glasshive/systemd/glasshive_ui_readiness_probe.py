@@ -12,7 +12,16 @@ import urllib.request
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
-AUTH_TABLES = frozenset({"auth_principals", "auth_sessions", "auth_oidc_flows"})
+AUTH_TABLES = frozenset(
+    {
+        "auth_principals",
+        "auth_sessions",
+        "auth_oidc_flows",
+        "auth_local_credentials",
+        "auth_local_source_attempts",
+        "auth_local_sessions",
+    }
+)
 
 
 class UiReadinessError(RuntimeError):
