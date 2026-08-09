@@ -72,11 +72,13 @@ most specific existing QA owner when a scenario already has a detailed provider 
 
 - Requirement: `GH-UCP-002`.
 - Risk covered: a valid user cannot enter the product securely or loses session continuity.
-- Preconditions: hosted HTTPS deployment, configured OIDC client, IdP-assigned synthetic user, and
-  exact registered login/post-logout redirect URIs.
-- Steps: open login, start authorization, inspect PKCE/state/nonce, complete IdP login, land in Glass
-  Drive, verify the visible current-user control, refresh, open a workspace, exercise local logout
-  and provider account switching, and verify the session is revoked.
+- Preconditions: hosted HTTPS deployment, configured OIDC client, IdP-assigned synthetic SSO user,
+  provider-managed email/password user when that capability is advertised, and exact registered
+  login/post-logout redirect URIs.
+- Steps: open login, verify no public-signup action, start authorization, inspect PKCE/state/nonce,
+  complete both the applicable organization SSO and provider-hosted email/password paths, land in
+  Glass Drive, verify the visible current-user control, refresh, open a workspace, exercise local
+  logout and provider account switching, and verify the session is revoked.
 - Expected result: one stable principal is created from issuer+subject; secure session survives refresh;
   mutable profile values update without changing ownership; mapped browser roles synchronize both
   promotion and demotion; logout ends access and provider switching is truthful about IdP support.
@@ -84,7 +86,8 @@ most specific existing QA owner when a scenario already has a detailed provider 
   fixation, or silent fallback to a local owner.
 - Evidence to capture: browser network/DOM, sanitized cookie flags/claims, gateway logs, scoped DB rows.
 - Full-view evidence minimum: real IdP browser path, refresh, logout, and backend principal match.
-- Automation: `frontends/glass-drive-ui/tests/test_auth_gateway.py` plus Playwright.
+- Automation: `frontends/glass-drive-ui/tests/test_auth_gateway.py`, `test_auth_admin.py`, login UI
+  tests, plus Playwright.
 - Last run: PARTIAL 2026-08-05; focused gateway tests only.
 
 ## `GHUCP-003` — Login Policy and Failure Paths
@@ -92,24 +95,37 @@ most specific existing QA owner when a scenario already has a detailed provider 
 - Requirement: `GH-UCP-002`.
 - Risk covered: enrollment or login policy fails open or leaves a user stranded.
 - Preconditions: allowed and IdP-denied synthetic users; combined and split Entra app fixtures;
-  controllable expired/replayed callback fixtures.
+  closed principal enrollment; administrator-preapproved immutable subjects; controllable
+  expired/replayed callback fixtures.
 - Steps: try compile with an empty/invalid role map; verify combined and split app configurations;
   present missing, unmapped, and mapped roles through both browser OIDC and MCP OAuth; verify a
   shared combined app with assignment disabled still denies an unassigned principal through the
-  mapped-role gate; then try IdP tenant/app-role denial, disabled enrollment, missing config, wrong
-  issuer/audience, nonce/state mismatch, reused callback, expired session, safe deep-link recovery,
-  IdP outage, and rotated signing key.
+  mapped-role gate; then try IdP tenant/app-role denial, disabled enrollment, unknown subject,
+  same email with two different subjects, public signup, missing config, wrong issuer/audience,
+  nonce/state mismatch, reused callback, expired session, safe deep-link recovery, IdP outage, and
+  rotated signing key. Run the installed preapproval wrapper twice from the sealed active release
+  using an operator-only input, switch releases, and repeat against the preserved gateway database.
 - Expected result: each case fails safely with useful retry/operator guidance; no runtime resources are
   created and no principal row is enrolled for a missing/unmapped role; a mapped role is accepted on
   both surfaces; the designed login page shows bounded retry/admin guidance without
-  claims/codes/state; a newly valid signing key works after bounded JWKS refresh.
+  claims/codes/state; the administrator CLI is idempotent and returns only an opaque user ID; the
+  same subject retains ownership across mutable-email changes while different subjects remain
+  isolated; the installed wrapper runs under the gateway identity with both reviewed
+  EnvironmentFiles and creates exactly one durable row; a disabled principal is reported as
+  disabled rather than silently re-enabled; concurrent rollout/preapproval fails with retry guidance
+  in both directions; a newly valid signing key works after bounded JWKS refresh.
 - Forbidden result: generic success, an unassigned tenant user admitted because registration is open,
   leaked claims, redirect loop, raw exception, user creation before validation, or email/password
-  storage inside GlassHive.
-- Evidence to capture: visible error/recovery copy, request status, gateway logs, absence of scoped rows.
+  storage inside GlassHive; generic/source-checkout Python touching the hosted auth database; or a
+  successful preapproval message for a disabled account; or successful mutation of a rehearsal
+  clone/state that rollback can overwrite.
+- Evidence to capture: visible error/recovery copy, request status, one-shot unit properties and exit,
+  sealed release revision, gateway logs, and presence/absence/count of scoped rows.
 - Full-view evidence minimum: real browser failure state plus backend no-side-effect proof.
 - Automation: compiler topology tests, gateway negative tests, MCP OAuth role-admission tests, plus
-  Playwright failure injection.
+  Playwright failure injection plus `tests/release/test_glasshive_auth_admin.py`. Verify the
+  compiler's canonical provider-email/enrollment settings override their legacy fallbacks, default
+  closed when both are absent, and never project a password or mutable-email admission rule.
 - Last run: PARTIAL 2026-08-08; compiler tests support combined/split topology and require a non-empty
   validated role map; browser and MCP tests reject missing/unmapped roles before enrollment; backend/DOM
   tests cover cancel, IdP denial, expired/replayed and invalid
@@ -775,7 +791,7 @@ most specific existing QA owner when a scenario already has a detailed provider 
 
 | Use Case ID | Natural user action | Requirement / case link | Real surface to use | Supporting evidence to compare | Expected visible result | Last run |
 | --- | --- | --- | --- | --- | --- | --- |
-| `GHUCP-UC-001` | Sign up/sign in, refresh, and log out | `GH-UCP-002` / `GHUCP-002`–`003` | Real browser + IdP | Gateway logs, principal/session state | Secure entry and clear policy/recovery | PARTIAL: focused tests only |
+| `GHUCP-UC-001` | Sign in with organization SSO or provider-hosted email/password, refresh, and log out; confirm public signup is absent | `GH-UCP-002` / `GHUCP-002`–`003` | Real browser + IdP | Gateway logs, principal/session state | Secure entry and clear closed-enrollment policy/recovery | PARTIAL: focused tests only |
 | `GHUCP-UC-002` | Connect personal Codex/Claude and choose it for one mission | `GH-UCP-005`–`006` / `GHUCP-007`–`010` | Browser + native worker | Provider home, lease, worker audit, DB | Only that user's selected account is used | PARTIAL: local browser synthetic-native lifecycle passed; real worker mission pending |
 | `GHUCP-UC-003` | Create, find, rename, favorite, resume, and duplicate a workspace | `GH-UCP-007`–`008` / `GHUCP-011`–`014` | Glass Drive + desktop | API/DB/files/browser state | Human-named persistent workspace and safe copy | PARTIAL: local browser create/Keep/rename/duplicate passed; restart/favorite pending |
 | `GHUCP-UC-004` | Connect a service and let a worker use it | `GH-UCP-009` / `GHUCP-015`–`016` | Browser + broker + worker | Grant, tool calls, output, logs | Worker chooses a real scoped tool path | PENDING |

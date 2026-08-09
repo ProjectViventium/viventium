@@ -2958,7 +2958,7 @@ def test_glasshive_multi_user_control_plane_compiles_signed_identity_and_mcp_oau
     config["runtime"]["auth"] = {
         "allowed_domains": ["example.test"],
         "allow_email_login": False,
-        "allow_registration": False,
+        "allow_registration": True,
     }
     config["integrations"]["glasshive"] = {
         "enabled": True,
@@ -2972,6 +2972,8 @@ def test_glasshive_multi_user_control_plane_compiles_signed_identity_and_mcp_oau
             "auth": {"service_token": {"secret_value": "service-token-test"}},
             "human_auth": {
                 "mode": "oidc",
+                "provider_email_login": True,
+                "allow_principal_enrollment": False,
                 "oidc": {
                     "issuer": "https://identity.example.test/tenant/v2.0",
                     "client_id": "glasshive-ui",
@@ -3045,12 +3047,31 @@ def test_glasshive_multi_user_control_plane_compiles_signed_identity_and_mcp_oau
         config,
         config_compiler.build_agent_assignments(config),
     )
+    default_closed_config = copy.deepcopy(config)
+    del default_closed_config["integrations"]["glasshive"]["enterprise"]["human_auth"][
+        "provider_email_login"
+    ]
+    del default_closed_config["integrations"]["glasshive"]["enterprise"]["human_auth"][
+        "allow_principal_enrollment"
+    ]
+    del default_closed_config["runtime"]["auth"]["allow_email_login"]
+    del default_closed_config["runtime"]["auth"]["allow_registration"]
+    default_closed_env = config_compiler.render_runtime_env(
+        default_closed_config,
+        config_compiler.build_agent_assignments(default_closed_config),
+    )
 
     assert env["GLASSHIVE_SECURITY_MODE"] == "multi_user"
     assert env["GLASSHIVE_AUTH_MODE"] == "signed_internal_assertion"
     assert env["GLASSHIVE_HUMAN_AUTH_MODE"] == "oidc"
-    assert env["GLASSHIVE_ALLOW_EMAIL_LOGIN"] == "false"
+    assert env["GLASSHIVE_PROVIDER_EMAIL_LOGIN"] == "true"
+    assert env["GLASSHIVE_ALLOW_PRINCIPAL_ENROLLMENT"] == "false"
+    assert env["GLASSHIVE_ALLOW_EMAIL_LOGIN"] == "true"
     assert env["GLASSHIVE_ALLOW_EMAIL_REGISTRATION"] == "false"
+    assert default_closed_env["GLASSHIVE_PROVIDER_EMAIL_LOGIN"] == "false"
+    assert default_closed_env["GLASSHIVE_ALLOW_PRINCIPAL_ENROLLMENT"] == "false"
+    assert default_closed_env["GLASSHIVE_ALLOW_EMAIL_LOGIN"] == "false"
+    assert default_closed_env["GLASSHIVE_ALLOW_EMAIL_REGISTRATION"] == "false"
     assert env["GLASSHIVE_COOKIE_SECURE"] == "true"
     assert "GLASSHIVE_ALLOWED_EMAIL_DOMAINS" not in env
     assert env["GLASSHIVE_OIDC_ISSUER"] == "https://identity.example.test/tenant/v2.0"

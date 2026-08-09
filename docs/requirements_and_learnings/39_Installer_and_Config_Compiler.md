@@ -135,8 +135,15 @@ Provider credentials have two distinct owners and must not drift between them:
   assignment policy. Multi-user compilation requires a non-empty explicit OIDC role map; for Entra,
   every enterprise application actually used requires assignment (or an equivalently reviewed and
   tested Conditional Access/application-assignment gate). A single combined web-plus-API app
-  registration and split web/API registrations are both supported. `allow_registration` only
-  enrolls a principal that already crossed that IdP boundary.
+  registration and split web/API registrations are both supported. GlassHive-specific
+  `human_auth.provider_email_login` describes only the external provider's email/password
+  capability, while `human_auth.allow_principal_enrollment` controls first-login principal
+  creation after that IdP boundary. The latter never enables public signup; when false, the
+  gateway-only operator CLI preapproves an exact immutable provider subject. Legacy
+  `runtime.auth.allow_email_login` and `runtime.auth.allow_registration` remain compiler fallbacks
+  for one release when explicitly present, but continue to own LibreChat's local-password policy
+  independently. If neither canonical nor legacy key is present, both GlassHive controls default
+  false.
 - Custom Settings Install may reference machine-level provider keys from canonical config through
   `keychain://` references. The compiler resolves OpenAI, Anthropic, Groq, and xAI through one
   provider-to-runtime mapping, writes resolved source-runtime and service env files mode `0600`,
@@ -467,7 +474,7 @@ The current candidate pins merged public-main LibreChat commit
 component manifest, and merged public-main modern-playground commit
 `98d1249db7a728e94656462d6bda979571be4dd7` in the parent component lock. The source/Docker
 GlassHive runtime is pinned by the parent component lock to merged public-main commit
-`cbfa4f160bd4e0cbc00eca47657b3ac78ee8dce3`; it is intentionally absent from the Native payload
+`bda2b15988ee8b8893402efd3afd1810632e2fcd`; it is intentionally absent from the Native payload
 component manifest. The Google Workspace MCP source is pinned to merged public-main commit
 `0824701abcf490de2a5091c68a7b0738f2294b3f`. Both manifests declare `merged`, and each merge tree
 equals its reviewed PR head. Source and local-runtime PASS still do not

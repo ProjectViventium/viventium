@@ -662,6 +662,14 @@ properties:
                   mode:
                     type: string
                     enum: [disabled, trusted_proxy, oidc]
+                  provider_email_login:
+                    type: boolean
+                    default: false
+                    description: Advertises that the configured external OIDC provider accepts organization-managed email/password login; GlassHive never receives or stores the password. Defaults closed unless this key or its explicit one-release legacy fallback is configured.
+                  allow_principal_enrollment:
+                    type: boolean
+                    default: false
+                    description: Allows a successfully admitted OIDC subject to create its GlassHive principal on first login; defaults false for administrator-preapproved access unless this key or its explicit one-release legacy fallback is configured.
                   trusted_proxy_boundary_proven:
                     type: boolean
                     description: Operator attestation that direct client access is blocked and trusted identity headers arrive only through private ingress or mTLS.

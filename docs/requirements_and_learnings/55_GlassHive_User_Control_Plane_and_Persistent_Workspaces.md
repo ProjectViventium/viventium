@@ -148,6 +148,9 @@ compliant hosted topology.
   attributes, never authorization keys.
 - Email/password signup, reset, MFA, invitation, and account recovery are delegated to the configured
   identity provider. GlassHive does not create a second password database.
+- Provider-hosted organization SSO and provider-hosted email/password are two entry methods into the
+  same OIDC issuer + subject identity. `provider_email_login` controls only truthful login-page
+  capability copy; it never enables a GlassHive credential form or changes authorization.
 - Operators can enable or disable GlassHive principal enrollment. `runtime.auth.allowed_domains`
   applies to LibreChat/local email signup and login; GlassHive OIDC admission is enforced by the
   IdP's tenant and app-role/group assignment policy, never by mutable `email` or
@@ -156,7 +159,12 @@ compliant hosted topology.
   web and API registrations. Every enterprise application actually used must require assignment,
   or an equivalently reviewed and tested deny-by-default gate. In combined mode roles and
   assignments are defined once; in split mode the same role values and assignment policy apply to
-  both. `allow_registration` never admits an otherwise unassigned tenant user.
+  both. `allow_principal_enrollment` never admits an otherwise unassigned tenant user and never
+  enables public signup. With enrollment closed, an administrator may idempotently preapprove an
+  exact provider subject through the gateway-only CLI. The subject must come from the configured
+  issuer; email is display metadata and is never used to find, merge, or authorize the principal.
+  Both GlassHive-specific controls default false when neither their canonical key nor an explicitly
+  configured one-release legacy fallback is present.
 - Cancelled, stale/replayed, invalid-token, provider-outage, and unapproved-account callbacks return
   to the designed login page with bounded non-sensitive error codes, retry guidance, and no echoed
   authorization code, state, claims, or provider description. Fresh and expired sessions preserve

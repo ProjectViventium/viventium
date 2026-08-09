@@ -18,6 +18,24 @@ the initialized auth-registry schema through the gateway identity; MCP has `Requ
 so an MCP-first OAuth enrollment cannot race first-start auth schema creation. This dependency is
 one-way and introduces no UI-to-MCP cycle.
 
+Administrator-preapproved OIDC access uses the same sealed interpreter, gateway identity, groups,
+EnvironmentFiles, and writable state root as Glass Drive. Do not run a source-checkout or generic
+host Python against the gateway database. With a secret manager supplying a temporary `0600` JSON
+file or ephemeral descriptor, run:
+
+```bash
+sudo /opt/viventium/current/deploy/glasshive/systemd/glasshive_auth_admin.py \
+  preapprove-oidc --stdin-json < /run/private/glasshive-principal.json
+```
+
+The one-shot wrapper never accepts subject/email metadata on argv. It invokes the gateway module
+through `systemd-run --pipe`, and the module returns only an opaque user ID. Delete only that exact
+temporary input after the command returns. Repeating the same issuer + subject is idempotent;
+preapproval never silently re-enables a disabled principal. The wrapper holds the same root-owned
+`/run/lock/glasshive-rollout.lock` mutation lock as production deploy/recovery for the complete
+one-shot. If a rollout is active it exits with retry guidance rather than writing a rehearsal clone
+or state that rollback could overwrite. Production rollout configs must use that exact lock path.
+
 ## Immutable release layout
 
 The active pointer is `/opt/viventium/current`, but it may point only to a sealed release below
@@ -312,8 +330,10 @@ Bind all registrations to one exact tenant id and issuer
 
 The compiler rejects multi-user OIDC configuration without a non-empty role map. The deployment
 still fails admission unless every enterprise application uses assignment or the reviewed
-deny-by-default mapped-role gate above: runtime `allow_registration` controls creation of an already
-admitted principal and is not an IdP access policy. Assign users or security groups to matching app
+deny-by-default mapped-role gate above: canonical GlassHive
+`integrations.glasshive.enterprise.human_auth.allow_principal_enrollment` controls creation of an
+already admitted principal and is not an IdP access policy. The runtime `allow_registration` value
+is only a one-release upgrade fallback. Assign users or security groups to matching app
 roles on the combined app, or on both web and API apps in split mode, so both token types carry
 bounded `roles`. Keep
 raw group claims disabled unless the deployment has separately implemented and tested group-overage
