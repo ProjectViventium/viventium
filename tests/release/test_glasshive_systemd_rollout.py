@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import ast
+import fcntl
 import importlib.util
 import io
 import json
+import os
 import shlex
 import sqlite3
 import stat
@@ -11,6 +13,7 @@ import subprocess
 import sys
 import tarfile
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -965,6 +968,90 @@ def test_active_gateway_places_watch_state_beside_auth_database_in_writable_stat
         auth_db.parent / "watch_sessions.sqlite3"
     )
     assert runtime["GLASSHIVE_BACKGROUND_CONSUMERS_ENABLED"] == "false"
+
+
+def test_production_rollout_requires_the_shared_admin_mutation_lock(tmp_path: Path) -> None:
+    config, _runtime_db, _previous = _deployment_fixture(tmp_path)
+
+    with pytest.raises(
+        rollout.RolloutError,
+        match="hosted GlassHive rollout lock must be /run/lock/glasshive-rollout.lock",
+    ):
+        rollout.execute_rollout(config)
+
+    with pytest.raises(
+        rollout.RolloutError,
+        match="hosted GlassHive rollout lock must be /run/lock/glasshive-rollout.lock",
+    ):
+        rollout.recover_rollout(config, transaction_id="rollout-1-000000000000")
+
+
+def test_rollout_mutation_lock_rejects_symlinks_and_normalizes_mode(tmp_path: Path) -> None:
+    lock_path = tmp_path / "rollout.lock"
+    lock_path.write_text("", encoding="utf-8")
+    lock_path.chmod(0o644)
+
+    handle = rollout._open_mutation_lock(lock_path)
+    try:
+        assert stat.S_IMODE(os.fstat(handle.fileno()).st_mode) == 0o600
+    finally:
+        handle.close()
+
+    target = tmp_path / "target.lock"
+    target.write_text("", encoding="utf-8")
+    lock_path.unlink()
+    lock_path.symlink_to(target)
+    with pytest.raises(rollout.RolloutError, match="opened safely"):
+        rollout._open_mutation_lock(lock_path)
+
+
+@pytest.mark.parametrize("unsafe_type", [False, True])
+def test_rollout_mutation_lock_rejects_wrong_owner_or_type(
+    tmp_path: Path,
+    monkeypatch,
+    unsafe_type: bool,
+) -> None:
+    lock_path = tmp_path / "rollout.lock"
+    real_fstat = rollout.os.fstat
+
+    def unsafe_metadata(descriptor: int):
+        metadata = real_fstat(descriptor)
+        return SimpleNamespace(
+            st_mode=(stat.S_IFIFO | 0o600) if unsafe_type else metadata.st_mode,
+            st_uid=metadata.st_uid if unsafe_type else metadata.st_uid + 1,
+        )
+
+    monkeypatch.setattr(rollout.os, "fstat", unsafe_metadata)
+    with pytest.raises(rollout.RolloutError, match="unexpected owner or type"):
+        rollout._open_mutation_lock(lock_path)
+
+
+def test_rollout_and_recovery_report_shared_mutation_lock_contention(tmp_path: Path) -> None:
+    config, _runtime_db, _previous = _deployment_fixture(tmp_path)
+    holder = rollout._open_mutation_lock(config.lock_file)
+    try:
+        fcntl.flock(holder.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        for operation in (
+            lambda: rollout.execute_rollout(
+                config,
+                system=FakeSystem(),
+                adapters=FakeAdapters(),
+            ),
+            lambda: rollout.recover_rollout(
+                config,
+                transaction_id="rollout-1-000000000000",
+                system=FakeSystem(),
+                adapters=FakeAdapters(),
+            ),
+        ):
+            with pytest.raises(
+                rollout.RolloutError,
+                match="another GlassHive mutation.*retry after it completes",
+            ):
+                operation()
+    finally:
+        fcntl.flock(holder.fileno(), fcntl.LOCK_UN)
+        holder.close()
 
 
 def test_rollout_rejects_candidate_state_outside_systemd_writable_state_root(

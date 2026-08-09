@@ -713,6 +713,18 @@ def resolve_glasshive_enterprise_settings(config: dict[str, Any]) -> dict[str, A
         (config.get("runtime") or {}).get("auth"),
         "runtime.auth",
     )
+    provider_email_login = resolve_bool(
+        human_auth.get("provider_email_login")
+        if "provider_email_login" in human_auth
+        else runtime_auth.get("allow_email_login"),
+        False,
+    )
+    allow_principal_enrollment = resolve_bool(
+        human_auth.get("allow_principal_enrollment")
+        if "allow_principal_enrollment" in human_auth
+        else runtime_auth.get("allow_registration"),
+        False,
+    )
 
     def normalized_allowed_domains(raw_value: Any, label: str) -> list[str]:
         if isinstance(raw_value, str):
@@ -1228,8 +1240,8 @@ def resolve_glasshive_enterprise_settings(config: dict[str, Any]) -> dict[str, A
         "human_auth_mode": human_auth_mode,
         "trusted_proxy_boundary_proven": trusted_proxy_boundary_proven,
         "allowed_email_domains": allowed_domains,
-        "allow_email_login": resolve_bool(runtime_auth.get("allow_email_login"), True),
-        "allow_email_registration": resolve_bool(runtime_auth.get("allow_registration"), True),
+        "provider_email_login": provider_email_login,
+        "allow_principal_enrollment": allow_principal_enrollment,
         "oidc_issuer": oidc_issuer,
         "oidc_client_id": oidc_client_id,
         "oidc_client_secret": oidc_client_secret,
@@ -5001,12 +5013,18 @@ def render_runtime_env(
                 env["GLASSHIVE_PROVIDER_ACCOUNT_HOME_ROOT"] = str(state_dir / "provider_accounts")
                 env["GLASSHIVE_AUTH_STATE_PATH"] = str(state_dir / "gateway" / "auth.sqlite3")
                 env["GLASSHIVE_HUMAN_AUTH_MODE"] = str(glasshive_enterprise["human_auth_mode"])
-                env["GLASSHIVE_ALLOW_EMAIL_LOGIN"] = (
-                    "true" if glasshive_enterprise["allow_email_login"] else "false"
+                provider_email_login = (
+                    "true" if glasshive_enterprise["provider_email_login"] else "false"
                 )
-                env["GLASSHIVE_ALLOW_EMAIL_REGISTRATION"] = (
-                    "true" if glasshive_enterprise["allow_email_registration"] else "false"
+                allow_principal_enrollment = (
+                    "true" if glasshive_enterprise["allow_principal_enrollment"] else "false"
                 )
+                env["GLASSHIVE_PROVIDER_EMAIL_LOGIN"] = provider_email_login
+                env["GLASSHIVE_ALLOW_PRINCIPAL_ENROLLMENT"] = allow_principal_enrollment
+                # One-release aliases for older Glass Drive builds. Neither key enables
+                # identity-provider sign-up or creates a GlassHive password database.
+                env["GLASSHIVE_ALLOW_EMAIL_LOGIN"] = provider_email_login
+                env["GLASSHIVE_ALLOW_EMAIL_REGISTRATION"] = allow_principal_enrollment
                 if glasshive_enterprise["security_mode"] == "multi_user":
                     env["GLASSHIVE_COOKIE_SECURE"] = "true"
                 env["GLASSHIVE_TRUST_INBOUND_IDENTITY"] = (

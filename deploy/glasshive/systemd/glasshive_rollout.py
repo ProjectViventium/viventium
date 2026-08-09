@@ -35,6 +35,9 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+
+HOSTED_MUTATION_LOCK = Path("/run/lock/glasshive-rollout.lock")
+
 MANIFEST_NAME = "glasshive-release.json"
 RELEASE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$")
 IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
@@ -134,6 +137,31 @@ ACCEPTANCE_CHECKS: dict[str, tuple[str, ...]] = {
 
 class RolloutError(RuntimeError):
     """A release gate failed and the helper must not claim success."""
+
+
+def _open_mutation_lock(
+    lock_path: Path,
+    *,
+    expected_uid: int | None = None,
+):
+    """Open the shared deployment lock without trusting its directory entry."""
+
+    owner_uid = os.geteuid() if expected_uid is None else int(expected_uid)
+    lock_path.parent.mkdir(parents=True, exist_ok=True, mode=0o755)
+    flags = os.O_CREAT | os.O_RDWR | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(lock_path, flags, 0o600)
+    except OSError as exc:
+        raise RolloutError("GlassHive deployment lock could not be opened safely") from exc
+    try:
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != owner_uid:
+            raise RolloutError("GlassHive deployment lock has an unexpected owner or type")
+        os.fchmod(descriptor, 0o600)
+        return os.fdopen(descriptor, "r+", encoding="utf-8")
+    except BaseException:
+        os.close(descriptor)
+        raise
 
 
 class DatabaseConfig:
@@ -1698,6 +1726,10 @@ def execute_rollout(
     """Execute one complete rehearsal/cutover transaction or restore the predecessor."""
 
     production = system is None or adapters is None
+    if production and config.lock_file != HOSTED_MUTATION_LOCK:
+        raise RolloutError(
+            "hosted GlassHive rollout lock must be /run/lock/glasshive-rollout.lock"
+        )
     _validate_config(config, validate_adapters=production)
     system = system or ProductionSystem(config)
     adapters = adapters or ProductionAdapters(config)
@@ -1707,13 +1739,14 @@ def execute_rollout(
     if unfinished:
         raise RolloutError(f"unfinished rollout must be recovered first: {unfinished[0].name}")
 
-    config.lock_file.parent.mkdir(parents=True, exist_ok=True)
-    lock_handle = config.lock_file.open("a+", encoding="utf-8")
+    lock_handle = _open_mutation_lock(config.lock_file)
     try:
         fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError as exc:
         lock_handle.close()
-        raise RolloutError("another GlassHive rollout holds the deployment lock") from exc
+        raise RolloutError(
+            "another GlassHive mutation holds the deployment lock; retry after it completes"
+        ) from exc
 
     try:
         previous_release = config.current_symlink.resolve()
@@ -2097,13 +2130,19 @@ def recover_rollout(
     system: Any | None = None,
     adapters: Any | None = None,
 ) -> dict[str, object]:
-    config.lock_file.parent.mkdir(parents=True, exist_ok=True)
-    lock_handle = config.lock_file.open("a+", encoding="utf-8")
+    production = system is None or adapters is None
+    if production and config.lock_file != HOSTED_MUTATION_LOCK:
+        raise RolloutError(
+            "hosted GlassHive rollout lock must be /run/lock/glasshive-rollout.lock"
+        )
+    lock_handle = _open_mutation_lock(config.lock_file)
     try:
         fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError as exc:
         lock_handle.close()
-        raise RolloutError("another GlassHive rollout holds the deployment lock") from exc
+        raise RolloutError(
+            "another GlassHive mutation holds the deployment lock; retry after it completes"
+        ) from exc
     try:
         return _recover_rollout_locked(
             config,
