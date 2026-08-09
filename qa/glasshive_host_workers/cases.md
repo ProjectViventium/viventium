@@ -161,7 +161,8 @@ Use stable `GHHOST-NNN` IDs for glasshive host workers cases.
   image is present; use only synthetic public-safe browser/computer tasks.
 - Steps:
   1. Inspect/generated-build the workstation Dockerfile and verify the default image tag is
-     `workers-projects-runtime-workstation:phase1-node22-docs7`.
+     `workers-projects-runtime-workstation:phase1-node22-docs8-openclaw2026.7.1-5`, its base image
+     matches the reviewed digest, and its provenance attests Ubuntu snapshot `20260801T000000Z`.
   2. Verify Codex and Claude Code package specs are pinned to dated, QA-checked stable versions, or
      that any override has matching version and capability evidence.
   3. Verify managed policy exists for both Chromium and Google Chrome locations. By default it must
