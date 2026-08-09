@@ -116,7 +116,9 @@ Hosted multi-user GlassHive uses one HTTPS origin with explicit path ownership:
 The edge removes every client-supplied privileged `X-Viventium-*`, `X-GlassHive-*`, and
 `X-LibreChat-*` header before injecting identity derived from the verified proxy session. The
 browser route captures and restores only the BFF's `X-GlassHive-CSRF` double-submit token across
-that scrub; it never restores an identity or service header. The stable IdP
+that scrub; it never restores an identity or service header. The authenticated watch client reads
+the current session CSRF cookie for each state-changing request and sends the matching header for
+message, steer, lifecycle, and desktop actions; missing or stale pairs remain fail-closed. The stable IdP
 subject/`oid`, not email, is the canonical user id. A single catch-all upstream to the BFF is not a
 compliant hosted topology.
 
