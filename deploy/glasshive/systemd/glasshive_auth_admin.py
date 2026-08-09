@@ -18,6 +18,16 @@ SYSTEMD_RUN = Path("/usr/bin/systemd-run")
 GATEWAY_ENV = Path("/etc/viventium/glasshive/gateway.env")
 GATEWAY_ACTIVE_ENV = Path("/etc/viventium/glasshive/gateway-active.env")
 MUTATION_LOCK = Path("/run/lock/glasshive-rollout.lock")
+STDIN_COMMANDS = frozenset(
+    {
+        "preapprove-oidc",
+        "set-local-password",
+        "unlock-local-password",
+        "disable-local-password",
+        "enable-local-password",
+    }
+)
+ADMIN_COMMANDS = STDIN_COMMANDS | {"revoke-local-sessions"}
 
 
 class AdminBusyError(RuntimeError):
@@ -28,8 +38,11 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Run an admin-only GlassHive identity operation as the hosted gateway"
     )
-    parser.add_argument("command", choices=("preapprove-oidc",))
-    parser.add_argument("--stdin-json", action="store_true", required=True)
+    commands = parser.add_subparsers(dest="command", required=True)
+    for name in sorted(STDIN_COMMANDS):
+        command = commands.add_parser(name)
+        command.add_argument("--stdin-json", action="store_true", required=True)
+    commands.add_parser("revoke-local-sessions")
     return parser
 
 
@@ -48,14 +61,21 @@ def _release_paths(script_path: Path) -> tuple[Path, Path]:
     return working_directory, python_path
 
 
-def _systemd_command(*, script_path: Path = Path(__file__)) -> list[str]:
+def _systemd_command(
+    *,
+    command: str,
+    stdin_json: bool,
+    script_path: Path = Path(__file__),
+) -> list[str]:
+    if command not in ADMIN_COMMANDS or stdin_json != (command in STDIN_COMMANDS):
+        raise RuntimeError("Unsupported GlassHive identity administration command")
     if not SYSTEMD_RUN.is_file() or not os.access(SYSTEMD_RUN, os.X_OK):
         raise RuntimeError("systemd-run is unavailable")
     for environment_file in (GATEWAY_ENV, GATEWAY_ACTIVE_ENV):
         if not environment_file.is_file():
             raise RuntimeError("The reviewed GlassHive gateway environment is unavailable")
     working_directory, python_path = _release_paths(script_path)
-    return [
+    result = [
         str(SYSTEMD_RUN),
         "--quiet",
         "--wait",
@@ -79,9 +99,11 @@ def _systemd_command(*, script_path: Path = Path(__file__)) -> list[str]:
         str(python_path),
         "-m",
         "glass_drive_ui.auth_admin",
-        "preapprove-oidc",
-        "--stdin-json",
+        command,
     ]
+    if stdin_json:
+        result.append("--stdin-json")
+    return result
 
 
 @contextmanager
@@ -108,13 +130,16 @@ def _mutation_lock(lock_path: Path = MUTATION_LOCK, *, expected_uid: int | None 
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    _parser().parse_args(list(argv) if argv is not None else None)
+    arguments = _parser().parse_args(list(argv) if argv is not None else None)
     if os.geteuid() != 0:
         print("GlassHive identity administration requires root", file=sys.stderr)
         return 2
     try:
         with _mutation_lock():
-            command = _systemd_command()
+            command = _systemd_command(
+                command=str(arguments.command),
+                stdin_json=bool(getattr(arguments, "stdin_json", False)),
+            )
             completed = subprocess.run(command, check=False)
     except AdminBusyError as exc:
         print(str(exc), file=sys.stderr)

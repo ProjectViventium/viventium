@@ -763,6 +763,15 @@ def resolve_glasshive_enterprise_settings(config: dict[str, Any]) -> dict[str, A
             "canonical runtime.auth.allowed_domains"
         )
     allowed_domains = canonical_domains if canonical_domains_configured else legacy_domains
+    local_password_login = resolve_bool(human_auth.get("local_password_login"), False)
+    local_password_allowed_domains = normalized_allowed_domains(
+        human_auth.get("local_password_allowed_domains"),
+        "integrations.glasshive.enterprise.human_auth.local_password_allowed_domains",
+    )
+    if enabled and local_password_login and human_auth_mode != "oidc":
+        raise SystemExit(
+            "integrations.glasshive.enterprise.human_auth.local_password_login requires mode oidc"
+        )
     principal_claim = str(enterprise.get("principal_claim") or "").strip()
     legacy_oidc_principal_claim = str(human_oidc.get("principal_claim") or "").strip()
     legacy_mcp_subject_claim = str(mcp_oauth.get("subject_claim") or "").strip()
@@ -1242,6 +1251,8 @@ def resolve_glasshive_enterprise_settings(config: dict[str, Any]) -> dict[str, A
         "allowed_email_domains": allowed_domains,
         "provider_email_login": provider_email_login,
         "allow_principal_enrollment": allow_principal_enrollment,
+        "local_password_login": local_password_login,
+        "local_password_allowed_domains": local_password_allowed_domains,
         "oidc_issuer": oidc_issuer,
         "oidc_client_id": oidc_client_id,
         "oidc_client_secret": oidc_client_secret,
@@ -5025,6 +5036,17 @@ def render_runtime_env(
                 # identity-provider sign-up or creates a GlassHive password database.
                 env["GLASSHIVE_ALLOW_EMAIL_LOGIN"] = provider_email_login
                 env["GLASSHIVE_ALLOW_EMAIL_REGISTRATION"] = allow_principal_enrollment
+                env["GLASSHIVE_LOCAL_PASSWORD_LOGIN"] = (
+                    "true" if glasshive_enterprise["local_password_login"] else "false"
+                )
+                env["GLASSHIVE_LOCAL_AUTH_THROTTLE_KEY"] = scoped_secret(
+                    call_session_secret,
+                    f"glasshive-local-auth-throttle:{glasshive_enterprise['tenant_id']}",
+                )
+                if glasshive_enterprise["local_password_allowed_domains"]:
+                    env["GLASSHIVE_LOCAL_AUTH_ALLOWED_EMAIL_DOMAINS"] = " ".join(
+                        glasshive_enterprise["local_password_allowed_domains"]
+                    )
                 if glasshive_enterprise["security_mode"] == "multi_user":
                     env["GLASSHIVE_COOKIE_SECURE"] = "true"
                 env["GLASSHIVE_TRUST_INBOUND_IDENTITY"] = (
@@ -6848,6 +6870,9 @@ def render_service_envs(output_dir: Path, env: dict[str, str]) -> None:
         "GLASSHIVE_INTERNAL_ASSERTION_PREVIOUS_JWKS_FILE",
         "GLASSHIVE_INTERNAL_ASSERTION_PREVIOUS_KEYS_EXPIRE_AT",
         "GLASSHIVE_OIDC_CLIENT_SECRET",
+        "GLASSHIVE_LOCAL_PASSWORD_LOGIN",
+        "GLASSHIVE_LOCAL_AUTH_ALLOWED_EMAIL_DOMAINS",
+        "GLASSHIVE_LOCAL_AUTH_THROTTLE_KEY",
         "GLASSHIVE_TRUST_INBOUND_IDENTITY",
         "GLASSHIVE_TRUSTED_PROXY_BOUNDARY_PROVEN",
     }

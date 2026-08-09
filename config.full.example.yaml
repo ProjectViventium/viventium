@@ -312,14 +312,19 @@ integrations:
     #   principal_claim: oid
     #   human_auth:
     #     # Multi-user mode requires Glass Drive Authorization Code + PKCE directly. Plain reverse-
-    #     # proxy identity headers are not accepted as an authentication boundary. GlassHive never
-    #     # stores a second email/password credential database.
+    #     # proxy identity headers are not accepted as an authentication boundary.
     #     mode: oidc
     #     # These are separate controls. The first only describes a provider-hosted sign-in
     #     # capability; the second controls GlassHive principal creation after IdP admission.
     #     # Keep enrollment false for an administrator-preapproved enterprise deployment.
     #     provider_email_login: true
     #     allow_principal_enrollment: false
+    #     # Optional, default-off GlassHive-local browser credential for administrator-preapproved
+    #     # OIDC subjects. It never creates a public signup/reset path or an MCP password grant.
+    #     # Email is only the credential locator; issuer + subject remain the durable owner.
+    #     local_password_login: false
+    #     local_password_allowed_domains:
+    #       - example.com
     #     # Enforce tenant/domain admission in the IdP with user/group assignment and app roles.
     #     # One Entra app registration may serve both the confidential web client and exposed API
     #     # resource; separate registrations remain supported. Require assignment on every

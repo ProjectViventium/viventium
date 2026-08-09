@@ -53,7 +53,7 @@ properties:
             type: boolean
           allow_email_login:
             type: boolean
-            description: Advertise email-capable login when the external identity provider supports it; GlassHive never stores a second password database.
+            description: Advertise email-capable login when the external identity provider supports it; this LibreChat/provider setting does not enable GlassHive's separate default-off local factor.
           allow_password_reset:
             type: boolean
           connected_accounts_return_origin:
@@ -670,6 +670,17 @@ properties:
                     type: boolean
                     default: false
                     description: Allows a successfully admitted OIDC subject to create its GlassHive principal on first login; defaults false for administrator-preapproved access unless this key or its explicit one-release legacy fallback is configured.
+                  local_password_login:
+                    type: boolean
+                    default: false
+                    description: Enables the gateway-only local password form for explicitly preapproved OIDC subjects; public signup and MCP password grants remain unavailable.
+                  local_password_allowed_domains:
+                    oneOf:
+                      - type: string
+                      - type: array
+                        items:
+                          type: string
+                    description: Optional domain allowlist for local credential locators only; never controls OIDC or MCP ownership/admission.
                   trusted_proxy_boundary_proven:
                     type: boolean
                     description: Operator attestation that direct client access is blocked and trusted identity headers arrive only through private ingress or mTLS.

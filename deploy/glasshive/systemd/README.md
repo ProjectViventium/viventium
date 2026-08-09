@@ -36,6 +36,23 @@ preapproval never silently re-enables a disabled principal. The wrapper holds th
 one-shot. If a rollout is active it exits with retry guidance rather than writing a rehearsal clone
 or state that rollback could overwrite. Production rollout configs must use that exact lock path.
 
+The same wrapper owns optional local-password administration for that exact preapproved principal:
+
+```bash
+sudo /opt/viventium/current/deploy/glasshive/systemd/glasshive_auth_admin.py \
+  set-local-password --stdin-json < /run/private/glasshive-local-credential.json
+sudo /opt/viventium/current/deploy/glasshive/systemd/glasshive_auth_admin.py \
+  unlock-local-password --stdin-json < /run/private/glasshive-principal.json
+sudo /opt/viventium/current/deploy/glasshive/systemd/glasshive_auth_admin.py \
+  disable-local-password --stdin-json < /run/private/glasshive-principal.json
+```
+
+Passwords and identity metadata remain on stdin and must never appear in argv, environment values,
+shell history, or logs. `set-local-password` attaches only by exact configured OIDC subject; it never
+searches by email. Before disabling the feature or activating an older OIDC-only release, run
+`glasshive_auth_admin.py revoke-local-sessions`, prove local sessions are rejected, then activate the
+predecessor. OIDC sessions remain independent.
+
 ## Immutable release layout
 
 The active pointer is `/opt/viventium/current`, but it may point only to a sealed release below
