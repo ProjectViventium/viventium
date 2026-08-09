@@ -544,6 +544,8 @@ compliant hosted topology.
   mechanisms and official supported interfaces. Upgrades must preserve native skills/plugins,
   browser/computer integration, project instruction loading, effort controls, and the universal
   self-check/final-report contract.
+- Reviewed worker-image inputs are staged through same-directory atomic replacement so a sealed
+  read-only prior copy remains retryable without partial build context or temporary residue.
 - Performance measurement includes login, catalog load, create/resume/duplicate, setup, MCP
   connection, schedule fire, and result delivery, and is judged with the Core Outcome Metric rather
   than latency alone.
