@@ -6,6 +6,11 @@ Status note, 2026-06-22: this file is historical context. The current acceptance
 `cases.md`; legacy local media evidence is not public acceptance evidence and must remain outside
 the public repo.
 
+Status note, 2026-08-08: interactive launch now queues durable work and returns the watch surface
+without synchronously opening desktop applications. The former
+`GLASSHIVE_SHOW_LIVE_TERMINAL_IN_DESKTOP` compiler knob is retired; its observation below records
+only the historical run and is not current configuration guidance.
+
 ## Scope
 
 Validate the GlassHive launch/watch fixes for:

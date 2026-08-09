@@ -2591,7 +2591,7 @@ def test_render_runtime_env_emits_glasshive_launch_env_only_when_enabled(tmp_pat
     enabled_env = config_compiler.render_runtime_env(enabled_config, config_compiler.build_agent_assignments(enabled_config))
     assert enabled_env["GLASSHIVE_DEFAULT_LAUNCH_SURFACE"] == "desktop"
     assert enabled_env["GLASSHIVE_OPERATOR_BASE_URL"] == "http://127.0.0.1:8780"
-    assert enabled_env["GLASSHIVE_SHOW_LIVE_TERMINAL_IN_DESKTOP"] == "true"
+    assert "GLASSHIVE_SHOW_LIVE_TERMINAL_IN_DESKTOP" not in enabled_env
     assert enabled_env["WPR_IDLE_DESKTOP_PRIME_BROWSER"] == "true"
     assert enabled_env["GLASSHIVE_HOST_WORKERS_ENABLED"] == "true"
     assert enabled_env["WPR_HOST_WORKSPACE_ROOT"] == "~/viventium-workers"
@@ -2810,6 +2810,8 @@ def test_glasshive_azure_enterprise_vm_docker_compiles_cloud_safe_config(tmp_pat
     assert env["GLASSHIVE_OPERATOR_BASE_URL"] == "https://glasshive-ui.enterprise.example.com"
     assert env["GLASSHIVE_ARTIFACT_BASE_URL"] == "https://glasshive-api.enterprise.example.com"
     assert env["GLASSHIVE_ENTERPRISE_MODE"] == "true"
+    assert env["GLASSHIVE_BACKGROUND_CONSUMERS_ENABLED"] == "true"
+    assert env["GLASSHIVE_RECONCILE_ON_STARTUP"] == "true"
     assert env["GLASSHIVE_AUTH_MODE"] == "first_party_assertion"
     assert env["GLASSHIVE_ENTERPRISE_TENANT_ID"] == "tenant-alpha"
     assert env["GLASSHIVE_SIGNED_LINK_SECRET"] == config_compiler.scoped_secret(

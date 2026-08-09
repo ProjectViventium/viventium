@@ -269,12 +269,32 @@ most specific existing QA owner when a scenario already has a detailed provider 
 - Requirement: `GH-UCP-007`, `GH-UCP-011`.
 - Risk covered: user cannot tell where work lives or accidentally reuses another/private workspace.
 - Preconditions: signed-in user with empty catalog, then enough synthetic workspaces for pagination.
-- Steps: create from the three-field launcher; verify fresh-by-default; rename; tag/favorite; search by
-  human name; paginate; filter recent/readiness/state; try a second user.
+- Steps: create from the three-field launcher with a cold worker image; verify the request returns
+  promptly to a starting watch surface and exactly one project/workspace/run exists; force
+  auxiliary watch/link state unavailable, malformed, and writer-locked beyond the edge budget, then
+  verify a bounded authenticated fallback without duplicate work; fail/cancel/interrupt the first
+  run and verify the UI asks for a corrected follow-up without offering an ineffective Resume action;
+  explicitly close a workspace and verify `terminating`, teardown-failed, and `terminated` states
+  stay closed across stale runtime writers, pause/interrupt/resume, account switching, cached
+  desktop/terminal access, already-open terminal/noVNC streams, recurring re-enable/run-now, API,
+  browser, and MCP actions; race Close against the last external start boundary and prove no new
+  compute starts afterward, while an accepted long stream has already persisted its runtime PID and
+  Close remains prompt; race a delegated recurring create/enable against Close and prove either its
+  definition is deactivated or failed compensation remains visibly retryable;
+  restart the runtime while that first run is still queued and verify the same run is processed;
+  verify fresh-by-default; rename; tag/favorite; search by human name; paginate; filter
+  recent/readiness/state; try a second user.
 - Expected result: human name is clear and editable; alias/id remain stable; catalog is scoped,
   searchable, cursor stable, and shows readiness/next run; empty state is useful.
-- Forbidden result: raw internal ids as primary labels, automatic stale reuse, duplicate pagination,
-  cross-user tile, or basic runtime UI replacing Glass Drive.
+- Forbidden result: raw internal ids as primary labels, cold image preparation blocking the browser
+  request, watch/link storage corruption or contention consuming the edge deadline or returning a
+  retry-inducing 500 after commit, a terminal run presented as resumable compute, a terminated
+  workspace accepting work its queue cannot run, teardown failure or a stale writer reopening a
+  workspace, cached or already-open desktop/terminal access after close intent, unknown orphan
+  compute, a truncated provider stream reported complete, a closed recurring definition being
+  re-enabled or left active in the delegated owner, duplicate project/workspace/run, a queued first run
+  stranded after restart, automatic stale reuse, duplicate pagination, cross-user tile, or basic
+  runtime UI replacing Glass Drive.
 - Evidence to capture: browser screenshots/DOM, API cursors, DB ownership, launch/run audit.
 - Full-view evidence minimum: real browser empty/create/search/rename plus scoped backend state.
 - Automation: `test_workspace_catalog.py`, UI server tests, Playwright.
@@ -638,13 +658,17 @@ most specific existing QA owner when a scenario already has a detailed provider 
   or the runtime API is publicly exposed.
 - Preconditions: candidate hosted behind its intended HTTPS identity proxy and path-aware edge.
 - Steps: exercise `/`, `/mcp`, protected-resource metadata, public JWKS, and direct runtime paths with
-  no session, an allowed session, an MCP token, and spoofed identity headers; inspect owning service
-  logs and the injected canonical subject.
+  no session, an allowed session, an MCP token, and spoofed identity headers. Through the public
+  browser edge, perform an authenticated state-preserving mutation with the real CSRF cookie/header
+  pair and a spoofed identity header on the same request; inspect owning service logs and the
+  canonical subject that actually authorized the mutation.
 - Expected result: browser routes reach BFF through login; MCP metadata/challenges reach MCP directly;
-  JWKS is public; runtime has no public route; the edge removes client identity headers and injects
+  JWKS is public; runtime has no public route; the edge removes client identity headers, preserves
+  only the declared browser `X-GlassHive-CSRF` double-submit token across its prefix scrub, and injects
   only verified stable-subject identity.
 - Forbidden result: MCP/JWKS receives an HTML login redirect, one catch-all BFF upstream, raw client
-  identity accepted, email used as durable owner id, or public runtime port/path.
+  identity accepted, the CSRF header is scrubbed or bypassed, any other prefixed client header
+  survives, email is used as durable owner id, or the runtime port/path is public.
 - Evidence to capture: sanitized edge config, response/status/content types, challenge headers,
   upstream logs, spoof probes, and negative external reachability.
 - Full-view evidence minimum: real hosted browser plus real MCP client and edge/runtime correlation.
@@ -679,12 +703,15 @@ most specific existing QA owner when a scenario already has a detailed provider 
   schedules, occurrences, and WAL-backed state.
 - Steps: quiesce writers; create and restore-test a consistent backup; clone and rehearse migration;
   compare schema ledger/receipt, `quick_check`/`integrity_check`, `foreign_key_check`, invariant row
-  counts, and owner/tenant samples; cut over; verify browser/MCP persistence; inject failure and
-  restore both preceding artifact and pre-upgrade database/state.
+  counts, and owner/tenant samples; seed a pending callback, queued run, and due schedule, emit a new
+  callback during candidate acceptance, and prove the rehearsal clone keeps both callback records
+  pending and otherwise stays passive; cut over; verify browser/MCP persistence and that live resumes
+  each eligible item once; inject failure and restore both preceding artifact and pre-upgrade database/state.
 - Expected result: rehearsal passes before live open, exactly one version writes at a time, all checks
   and user-visible state survive, and failed upgrade recovery reopens the preceding healthy state.
 - Forbidden result: first rehearsal on live DB, file copy that omits committed WAL, concurrent old/new
-  writers, binary-only rollback with a mutated incompatible DB, or unexplained row/owner drift.
+  writers, callback/schedule/queue side effects from cloned rehearsal state, binary-only rollback
+  with a mutated incompatible DB, or unexplained row/owner drift.
 - Evidence to capture: quiesce proof, backup/restore ids, integrity/FK/schema/count summaries,
   sanitized before/after samples, process provenance, and reopened browser/MCP state.
 - Full-view evidence minimum: clone rehearsal plus installed cutover and injected restore path.

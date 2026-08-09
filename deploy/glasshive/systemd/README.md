@@ -123,10 +123,15 @@ sudo install -o root -g glasshive-gateway-secrets -m 0640 \
 
 The rollout helper owns two non-secret slot files, both `0640`:
 
-- `runtime-active.env`: runtime port, state/database paths, rootless socket, and immutable release
-  provenance;
-- `gateway-active.env`: MCP/UI ports, runtime loopback URLs, auth database path, and the same
-  immutable release provenance.
+- `runtime-active.env`: runtime port, state/database paths, rootless socket, phase-specific
+  background-consumer/reconciliation policy, and immutable release provenance;
+- `gateway-active.env`: MCP/UI ports, runtime loopback URLs, auth database path, watch-session
+  state beside that database under the writable state root, and the same immutable release
+  provenance.
+
+The explicit watch-session path prevents the hardened gateway unit from falling back to its
+read-only service home. Runtime worker-image staging is retry-safe even though sealed release lock
+inputs and prior staged copies are read-only.
 
 The public-safe provenance keys are `GLASSHIVE_RELEASE_ID`, `GLASSHIVE_PARENT_REVISION`, and
 `GLASSHIVE_COMPONENT_REVISION`. They come from the verified staged manifest; they are not a guessed
@@ -342,7 +347,10 @@ Actions are `inspect`, `switch`, `restore`, and `status`.
   upgrade. Exact `/mcp` and
   `/.well-known/oauth-protected-resource/mcp` routes directly to MCP without an `oauth2-proxy` HTML
   redirect; and exact `/.well-known/jwks.json` to the BFF. It strips every client-supplied identity
-  header whose name begins `X-Viventium-`, `X-GlassHive-`, or `X-LibreChat-`, and never exposes the
+  header whose name begins `X-Viventium-`, `X-GlassHive-`, or `X-LibreChat-`, except that the
+  browser route captures and restores the BFF's `X-GlassHive-CSRF` double-submit token exactly as
+  declared by `browser.preserve_client_headers`. The adapter must capture the token before the
+  prefix scrub and must not restore any other prefixed header. It never exposes the
   runtime upstream. It returns the exact `active_release_id` and SHA-256 of the canonical route
   contract only after the edge has converged. Canonical JSON is UTF-8 with recursively sorted object
   keys and compact `,`/`:` separators.
@@ -367,7 +375,12 @@ and the designed Glass Drive root on the alternate-port group. Candidate and liv
 prove that runtime, UI, and MCP report the exact staged manifest provenance. Live validation proves
 every named browser route family, including noVNC websocket upgrade, reaches the same Glass Drive
 release; both MCP routes reach MCP; MCP does not receive an `oauth2-proxy` HTML redirect; JWKS reaches
-the BFF; every named identity-header family is scrubbed; and the runtime is not public. Preflight and rollback validate the preceding release under its
+the BFF; every named identity-header family is scrubbed; and
+`browser_csrf_header_preserved` performs an authenticated, harmless state-changing request through
+the public edge with the real session cookie and double-submit header while a spoofed identity
+header is present. It passes only when the mutation succeeds for the authenticated subject, the
+spoof is absent upstream, and no other prefixed client header survives. The runtime is not public.
+Preflight and rollback validate the preceding release under its
 existing supported route contract, allowing a fail-closed migration away from a legacy catch-all
 without pretending that the predecessor already has the candidate routes. Missing checks, mocked
 success, or a generic HTTP 200 fail closed.
@@ -395,9 +408,11 @@ The transaction is:
    `quick_check`, `integrity_check`, `foreign_key_check`, table counts, and hashed owner/tenant
    invariants;
 4. clone the snapshot and databases; point the sealed candidate at alternate loopback ports and
-   clone-only paths; start all three services; run local runtime/BFF/MCP/JWKS readiness plus the
+   clone-only paths; disable all autonomous queue, schedule, callback, and lifecycle consumers;
+   start all three services; run local runtime/BFF/MCP/JWKS readiness plus the
    authenticated candidate adapter; stop the group and compare post-migration invariants;
-5. point the same candidate at the live databases while the predecessor remains stopped; rerun all
+5. point the same candidate at the live databases while the predecessor remains stopped; enable
+   the single-runtime autonomous consumers and startup reconciliation; rerun all
    local checks and invariants; atomically switch ingress only after success; run full hosted
    acceptance and independently inspect ingress;
 6. commit the journal and retain the verified pre-upgrade snapshot/backups under the deployment's

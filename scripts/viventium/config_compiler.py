@@ -4839,7 +4839,6 @@ def render_runtime_env(
             and resolve_bool(scheduling_cortex.get("enabled"), False)
         )
         env["GLASSHIVE_DEFAULT_LAUNCH_SURFACE"] = "desktop"
-        env["GLASSHIVE_SHOW_LIVE_TERMINAL_IN_DESKTOP"] = "true"
         env["WPR_IDLE_DESKTOP_PRIME_BROWSER"] = "true"
         env["GLASSHIVE_HOST_WORKERS_ENABLED"] = "true" if glasshive_host_worker["enabled"] else "false"
         env["GLASSHIVE_DEFAULT_WORKER_PROFILE"] = str(glasshive_host_worker["default_worker_profile"])
@@ -4943,6 +4942,10 @@ def render_runtime_env(
         if glasshive_enterprise["enabled"]:
             enterprise_public_api_origin = str(network.get("public_api_origin", "") or "").strip()
             env["GLASSHIVE_ENTERPRISE_MODE"] = "true"
+            # The shipped hosted runtime is a single systemd-owned queue consumer. Its
+            # process-local executor must be rebuilt from durable SQLite work after restart.
+            env["GLASSHIVE_BACKGROUND_CONSUMERS_ENABLED"] = "true"
+            env["GLASSHIVE_RECONCILE_ON_STARTUP"] = "true"
             env["GLASSHIVE_AUTH_MODE"] = str(glasshive_enterprise["auth_mode"])
             env["GLASSHIVE_SECURITY_MODE"] = str(glasshive_enterprise["security_mode"])
             env["GLASSHIVE_ENTERPRISE_TENANT_ID"] = str(glasshive_enterprise["tenant_id"])

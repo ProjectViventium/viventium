@@ -2058,7 +2058,6 @@ persistent home and workspace mounts.
 | `GLASSHIVE_OPERATOR_BASE_URL` | `http://127.0.0.1:8780` | User-facing GlassHive operator UI origin used for `/watch/{worker}` links |
 | `GLASSHIVE_ALLOWED_REDIRECT_HOSTS` / `WPR_ALLOWED_REDIRECT_HOSTS` | unset | Optional comma-separated host/origin allowlist for `/r/{ref}` redirects when the tokenless Watch/Steer target is not same-origin or one of the configured GlassHive operator/runtime/artifact origins |
 | `GLASSHIVE_DEFAULT_LAUNCH_SURFACE` | `desktop` | Project-first UI default initial watch surface (`desktop`, `terminal`, `auto`) |
-| `GLASSHIVE_SHOW_LIVE_TERMINAL_IN_DESKTOP` | `true` | When desktop-first watch is used, auto-open the active live run terminal inside the desktop |
 | `WPR_IDLE_DESKTOP_PRIME_BROWSER` | `true` | Prime fresh worker desktops with the GlassHive placeholder browser page instead of the inherited base-image splash |
 | `GLASSHIVE_CALLBACK_RETRY_ATTEMPTS` | `3` | Callback delivery attempts before GlassHive records `callback.failed` |
 | `GLASSHIVE_CALLBACK_RETRY_BASE_DELAY_S` | `0.5` | Linear callback retry base delay in seconds |
