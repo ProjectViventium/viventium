@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import fcntl
+import grp
 import importlib.util
 import io
 import json
@@ -581,12 +582,14 @@ def test_live_edge_contract_names_every_public_route_and_header_family() -> None
         "identity_header_families_scrubbed",
         "browser_csrf_header_preserved",
         "runtime_artifact_refs_writable",
+        "cross_service_link_refs_resolvable",
         "runtime_not_public",
         "runtime_release_provenance",
         "ui_release_provenance",
         "mcp_release_provenance",
     }.issubset(rollout.ACCEPTANCE_CHECKS["live"])
     assert "runtime_artifact_refs_writable" in rollout.ACCEPTANCE_CHECKS["candidate"]
+    assert "cross_service_link_refs_resolvable" in rollout.ACCEPTANCE_CHECKS["candidate"]
 
 
 def test_ingress_contract_covers_every_decorated_bff_route_family() -> None:
@@ -832,7 +835,7 @@ class FakeSystem:
     def __init__(self, *, fail_start: str = "") -> None:
         self.events: list[str] = []
         self.fail_start = fail_start
-        self.prepared_runtime_state_dirs: list[Path] = []
+        self.prepared_link_ref_state_dirs: list[Path] = []
         self.asserted_stopped_paths: list[list[Path]] = []
 
     def rootless_probe(self) -> None:
@@ -845,11 +848,13 @@ class FakeSystem:
         self.events.append("assert-stopped")
         self.asserted_stopped_paths.append(database_paths)
 
-    def prepare_runtime_auxiliary_state(self, state_dir: Path) -> Path:
-        private_dir = state_dir / rollout.RUNTIME_PRIVATE_STATE_DIR_NAME
-        private_dir.mkdir(mode=0o700)
-        self.prepared_runtime_state_dirs.append(private_dir)
-        return private_dir / rollout.RUNTIME_LINK_REF_DATABASE_NAME
+    def prepare_shared_link_ref_state(self, state_dir: Path) -> Path:
+        shared_dir = state_dir / rollout.LINK_REF_SHARED_STATE_DIR_NAME
+        shared_dir.mkdir(mode=0o770, exist_ok=True)
+        state_path = shared_dir / rollout.RUNTIME_LINK_REF_DATABASE_NAME
+        state_path.touch(mode=0o660, exist_ok=True)
+        self.prepared_link_ref_state_dirs.append(shared_dir)
+        return state_path
 
     def start_group(self, *, phase: str) -> None:
         self.events.append(f"start-group:{phase}")
@@ -996,7 +1001,7 @@ def _deployment_fixture(tmp_path: Path) -> tuple[rollout.RolloutConfig, Path, Pa
     return config, runtime_db, previous
 
 
-def test_active_services_place_auxiliary_state_in_their_writable_candidate_roots(
+def test_active_services_share_one_phase_local_link_ref_store(
     tmp_path: Path,
 ) -> None:
     config, runtime_db, _ = _deployment_fixture(tmp_path)
@@ -1014,42 +1019,44 @@ def test_active_services_place_auxiliary_state_in_their_writable_candidate_roots
     assert gateway["GLASSHIVE_WATCH_SESSION_STATE_PATH"] == str(
         auth_db.parent / "watch_sessions.sqlite3"
     )
-    assert runtime["GLASSHIVE_LINK_REF_STATE_PATH"] == str(
-        config.state_dir
-        / rollout.RUNTIME_PRIVATE_STATE_DIR_NAME
-        / rollout.RUNTIME_LINK_REF_DATABASE_NAME
-    )
+    expected_link_ref_path = str(rollout.shared_link_ref_state_path(config.state_dir))
+    assert runtime["GLASSHIVE_LINK_REF_STATE_PATH"] == expected_link_ref_path
+    assert gateway["GLASSHIVE_LINK_REF_STATE_PATH"] == expected_link_ref_path
+    assert runtime["GLASSHIVE_LINK_REF_SHARED_GROUP"] == rollout.LINK_REF_SHARED_GROUP
+    assert gateway["GLASSHIVE_LINK_REF_SHARED_GROUP"] == rollout.LINK_REF_SHARED_GROUP
     assert runtime["GLASSHIVE_BACKGROUND_CONSUMERS_ENABLED"] == "false"
 
 
-def test_runtime_artifact_refs_use_a_runtime_owned_private_directory(
+def test_link_refs_use_a_group_shared_nonpublic_directory(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
     config, _runtime_db, _previous = _deployment_fixture(tmp_path)
     config.runtime_user = pwd.getpwuid(os.geteuid()).pw_name
+    os.chown(config.state_dir, -1, os.getegid())
     config.state_dir.chmod(0o770)
     shared_mode = stat.S_IMODE(config.state_dir.stat().st_mode)
-    existing_private_dir = config.state_dir / rollout.RUNTIME_PRIVATE_STATE_DIR_NAME
-    existing_private_dir.mkdir(mode=0o755)
-    existing_state_path = existing_private_dir / rollout.RUNTIME_LINK_REF_DATABASE_NAME
+    existing_shared_dir = config.state_dir / rollout.LINK_REF_SHARED_STATE_DIR_NAME
+    existing_shared_dir.mkdir(mode=0o755)
+    existing_state_path = existing_shared_dir / rollout.RUNTIME_LINK_REF_DATABASE_NAME
     existing_state_path.touch(mode=0o644)
 
-    state_path = rollout.ProductionSystem(config).prepare_runtime_auxiliary_state(
+    state_path = rollout.ProductionSystem(config).prepare_shared_link_ref_state(
         config.state_dir
     )
 
-    assert state_path == (
-        config.state_dir
-        / rollout.RUNTIME_PRIVATE_STATE_DIR_NAME
-        / rollout.RUNTIME_LINK_REF_DATABASE_NAME
-    )
-    assert stat.S_IMODE(state_path.parent.stat().st_mode) == 0o700
+    assert state_path == rollout.shared_link_ref_state_path(config.state_dir)
+    expected_directory_mode = 0o2770 if sys.platform.startswith("linux") else 0o770
+    assert stat.S_IMODE(state_path.parent.stat().st_mode) == expected_directory_mode
     assert state_path.parent.stat().st_uid == os.geteuid()
-    assert stat.S_IMODE(state_path.stat().st_mode) == 0o600
+    assert stat.S_IMODE(state_path.stat().st_mode) == 0o660
     assert stat.S_IMODE(config.state_dir.stat().st_mode) == shared_mode == 0o770
 
     monkeypatch.setenv("GLASSHIVE_LINK_REF_STATE_PATH", str(state_path))
+    monkeypatch.setenv(
+        "GLASSHIVE_LINK_REF_SHARED_GROUP",
+        grp.getgrgid(os.getegid()).gr_name,
+    )
     monkeypatch.setenv("GLASSHIVE_SIGNED_LINK_SECRET", "synthetic-secret-for-tests")
     token = signed_links.sign_link_token(
         kind="artifact",
@@ -1064,25 +1071,197 @@ def test_runtime_artifact_refs_use_a_runtime_owned_private_directory(
     resolved = signed_links.resolve_signed_link_ref(ref_id)
     assert resolved is not None
     assert resolved["payload"]["path"] == "index.html"
-    assert stat.S_IMODE(state_path.stat().st_mode) == 0o600
-    assert stat.S_IMODE(state_path.parent.stat().st_mode) == 0o700
+    assert stat.S_IMODE(state_path.stat().st_mode) == 0o660
+    assert stat.S_IMODE(state_path.parent.stat().st_mode) == expected_directory_mode
     assert stat.S_IMODE(config.state_dir.stat().st_mode) == 0o770
 
 
-def test_runtime_private_state_rejects_a_symlinked_directory(tmp_path: Path) -> None:
+def test_shared_link_ref_state_preserves_predecessor_gateway_refs(tmp_path: Path) -> None:
     config, _runtime_db, _previous = _deployment_fixture(tmp_path)
     config.runtime_user = pwd.getpwuid(os.geteuid()).pw_name
+    os.chown(config.state_dir, -1, os.getegid())
+    config.state_dir.chmod(0o770)
+    legacy_path = rollout.legacy_link_ref_state_paths(config)[0]
+    with sqlite3.connect(legacy_path) as connection:
+        connection.execute(
+            """
+            CREATE TABLE signed_link_refs (
+                ref_id TEXT PRIMARY KEY,
+                kind TEXT NOT NULL,
+                token TEXT NOT NULL,
+                target_url TEXT NOT NULL DEFAULT '',
+                expires_at INTEGER NOT NULL,
+                created_at INTEGER NOT NULL,
+                payload_json TEXT NOT NULL DEFAULT '',
+                scope_key TEXT NOT NULL DEFAULT ''
+            )
+            """
+        )
+        connection.execute(
+            "INSERT INTO signed_link_refs VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                "ghr_predecessor_ref_1234",
+                "worker_view",
+                "synthetic-predecessor-token",
+                "/watch/wrk_predecessor",
+                0,
+                1,
+                "",
+                "",
+            ),
+        )
+    legacy_path.chmod(0o600)
+    system = rollout.ProductionSystem(config)
+    shared_path = system.prepare_shared_link_ref_state(config.state_dir)
+
+    copied = rollout.migrate_legacy_link_ref_state(
+        shared_path,
+        rollout.legacy_link_ref_state_paths(config),
+        state_dir=config.state_dir,
+    )
+
+    assert copied == 1
+    with sqlite3.connect(shared_path) as connection:
+        assert connection.execute(
+            "SELECT token, target_url FROM signed_link_refs WHERE ref_id = ?",
+            ("ghr_predecessor_ref_1234",),
+        ).fetchone() == ("synthetic-predecessor-token", "/watch/wrk_predecessor")
+    with sqlite3.connect(legacy_path) as connection:
+        assert connection.execute("SELECT count(*) FROM signed_link_refs").fetchone() == (1,)
+    with sqlite3.connect(shared_path) as connection:
+        connection.execute(
+            """
+            UPDATE signed_link_refs
+            SET expires_at = 0, payload_json = ?, scope_key = ?
+            WHERE ref_id = ?
+            """,
+            (
+                '{"kind":"worker_view","worker_id":"wrk_predecessor"}',
+                '{"kind":"worker_view","target_url":"/watch/wrk_predecessor"}',
+                "ghr_predecessor_ref_1234",
+            ),
+        )
+
+    assert rollout.migrate_legacy_link_ref_state(
+        shared_path,
+        rollout.legacy_link_ref_state_paths(config),
+        state_dir=config.state_dir,
+    ) == 0
+    with sqlite3.connect(shared_path) as connection:
+        assert connection.execute(
+            "SELECT expires_at, payload_json, scope_key FROM signed_link_refs WHERE ref_id = ?",
+            ("ghr_predecessor_ref_1234",),
+        ).fetchone() == (
+            0,
+            '{"kind":"worker_view","worker_id":"wrk_predecessor"}',
+            '{"kind":"worker_view","target_url":"/watch/wrk_predecessor"}',
+        )
+        connection.execute(
+            "DELETE FROM signed_link_refs WHERE ref_id = ?",
+            ("ghr_predecessor_ref_1234",),
+        )
+
+    assert rollout.migrate_legacy_link_ref_state(
+        shared_path,
+        rollout.legacy_link_ref_state_paths(config),
+        state_dir=config.state_dir,
+    ) == 0
+    with sqlite3.connect(shared_path) as connection:
+        assert connection.execute("SELECT count(*) FROM signed_link_refs").fetchone() == (0,)
+
+
+def test_candidate_legacy_link_ref_paths_stay_inside_the_candidate_root(
+    tmp_path: Path,
+) -> None:
+    config, _runtime_db, _previous = _deployment_fixture(tmp_path)
+    candidate_state = config.candidate_state_root / "candidate-synthetic"
+    candidate_auth = candidate_state / "gateway" / "auth.sqlite3"
+
+    paths = rollout.legacy_link_ref_state_paths(
+        config,
+        state_dir=candidate_state,
+        auth_database=candidate_auth,
+    )
+
+    assert paths == (
+        candidate_state / "gateway" / rollout.RUNTIME_LINK_REF_DATABASE_NAME,
+        candidate_state / ".local" / "state" / "glasshive" / rollout.RUNTIME_LINK_REF_DATABASE_NAME,
+        candidate_state / "runtime-private" / rollout.RUNTIME_LINK_REF_DATABASE_NAME,
+    )
+    assert all(path.is_relative_to(candidate_state) for path in paths)
+
+
+def test_shared_link_ref_state_rejects_conflicting_predecessor_refs_atomically(
+    tmp_path: Path,
+) -> None:
+    config, _runtime_db, _previous = _deployment_fixture(tmp_path)
+    config.runtime_user = pwd.getpwuid(os.geteuid()).pw_name
+    os.chown(config.state_dir, -1, os.getegid())
+    config.state_dir.chmod(0o770)
+    system = rollout.ProductionSystem(config)
+    shared_path = system.prepare_shared_link_ref_state(config.state_dir)
+    legacy_paths = rollout.legacy_link_ref_state_paths(config)[:2]
+    for index, legacy_path in enumerate(legacy_paths):
+        legacy_path.parent.mkdir(parents=True, exist_ok=True)
+        with sqlite3.connect(legacy_path) as connection:
+            connection.execute(
+                """
+                CREATE TABLE signed_link_refs (
+                    ref_id TEXT PRIMARY KEY,
+                    kind TEXT NOT NULL,
+                    token TEXT NOT NULL,
+                    target_url TEXT NOT NULL DEFAULT '',
+                    expires_at INTEGER NOT NULL,
+                    created_at INTEGER NOT NULL,
+                    payload_json TEXT NOT NULL DEFAULT '',
+                    scope_key TEXT NOT NULL DEFAULT ''
+                )
+                """
+            )
+            connection.execute(
+                "INSERT INTO signed_link_refs VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    "ghr_conflicting_predecessor_ref",
+                    "worker_view",
+                    "synthetic-token",
+                    "/watch/wrk_predecessor",
+                    0,
+                    1,
+                    f'{{"source":{index}}}',
+                    "",
+                ),
+            )
+        legacy_path.chmod(0o600)
+
+    with pytest.raises(rollout.RolloutError, match="ids conflict"):
+        rollout.migrate_legacy_link_ref_state(
+            shared_path,
+            legacy_paths,
+            state_dir=config.state_dir,
+        )
+
+    with sqlite3.connect(shared_path) as connection:
+        assert connection.execute("SELECT count(*) FROM signed_link_refs").fetchone() == (0,)
+        assert connection.execute(
+            "SELECT count(*) FROM link_ref_legacy_migrations"
+        ).fetchone() == (0,)
+
+
+def test_shared_link_ref_state_rejects_a_symlinked_directory(tmp_path: Path) -> None:
+    config, _runtime_db, _previous = _deployment_fixture(tmp_path)
+    config.runtime_user = pwd.getpwuid(os.geteuid()).pw_name
+    os.chown(config.state_dir, -1, os.getegid())
     config.state_dir.chmod(0o770)
     outside = tmp_path / "outside"
     outside.mkdir()
-    (config.state_dir / rollout.RUNTIME_PRIVATE_STATE_DIR_NAME).symlink_to(outside)
+    (config.state_dir / rollout.LINK_REF_SHARED_STATE_DIR_NAME).symlink_to(outside)
 
-    with pytest.raises(rollout.RolloutError, match="runtime private state directory"):
-        rollout.ProductionSystem(config).prepare_runtime_auxiliary_state(config.state_dir)
+    with pytest.raises(rollout.RolloutError, match="shared link-reference state could not be prepared"):
+        rollout.ProductionSystem(config).prepare_shared_link_ref_state(config.state_dir)
 
 
 @pytest.mark.parametrize("unsafe_boundary", ["mode", "group"])
-def test_runtime_private_state_rejects_an_unsafe_shared_root(
+def test_shared_link_ref_state_rejects_an_unsafe_shared_root(
     tmp_path: Path,
     monkeypatch,
     unsafe_boundary: str,
@@ -1098,10 +1277,10 @@ def test_runtime_private_state_rejects_an_unsafe_shared_root(
         )
 
     with pytest.raises(rollout.RolloutError, match="runtime state root has unexpected"):
-        rollout.ProductionSystem(config).prepare_runtime_auxiliary_state(config.state_dir)
+        rollout.ProductionSystem(config).prepare_shared_link_ref_state(config.state_dir)
 
 
-def test_runtime_private_state_requires_the_hosted_state_group(
+def test_shared_link_ref_state_requires_the_hosted_state_group(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -1119,7 +1298,7 @@ def test_runtime_private_state_requires_the_hosted_state_group(
     monkeypatch.setattr(rollout.grp, "getgrnam", missing_group)
 
     with pytest.raises(rollout.RolloutError, match="state group does not exist"):
-        rollout.ProductionSystem(config).prepare_runtime_auxiliary_state(config.state_dir)
+        rollout.ProductionSystem(config).prepare_shared_link_ref_state(config.state_dir)
 
 
 def test_production_rollout_requires_the_shared_admin_mutation_lock(tmp_path: Path) -> None:
@@ -1294,42 +1473,44 @@ def test_successful_rollout_rehearses_clone_then_switches_ingress(tmp_path: Path
         ("rehearsal", "false", "false"),
         ("candidate-live", "true", "true"),
     ]
-    assert system.prepared_runtime_state_dirs == [
-        config.state_dir / rollout.RUNTIME_PRIVATE_STATE_DIR_NAME,
+    assert system.prepared_link_ref_state_dirs == [
+        config.state_dir / rollout.LINK_REF_SHARED_STATE_DIR_NAME,
         config.candidate_state_root
         / receipt["transaction_id"]
-        / rollout.RUNTIME_PRIVATE_STATE_DIR_NAME,
+        / rollout.LINK_REF_SHARED_STATE_DIR_NAME,
     ]
     assert system.asserted_stopped_paths == [
         [
             *(database.path for database in config.databases),
-            rollout.runtime_link_ref_state_path(config.state_dir),
+            rollout.shared_link_ref_state_path(config.state_dir),
         ],
         [
             config.candidate_state_root / receipt["transaction_id"] / "runtime.sqlite3",
             config.candidate_state_root / receipt["transaction_id"] / "auth.sqlite3",
-            rollout.runtime_link_ref_state_path(
+            rollout.shared_link_ref_state_path(
                 config.candidate_state_root / receipt["transaction_id"]
             ),
         ],
     ]
-    live_auxiliary = adapters.state_payloads["snapshot"]["runtime_auxiliary_state"]
-    candidate_auxiliary = adapters.state_payloads["seal_clone"]["runtime_auxiliary_state"]
+    live_auxiliary = adapters.state_payloads["snapshot"]["shared_link_ref_state"]
+    candidate_auxiliary = adapters.state_payloads["seal_clone"]["shared_link_ref_state"]
     assert live_auxiliary == {
-        "path": str(rollout.runtime_link_ref_state_path(config.state_dir)),
-        "owner": config.runtime_user,
-        "directory_mode": "0700",
-        "file_mode": "0600",
+        "path": str(rollout.shared_link_ref_state_path(config.state_dir)),
+        "owner": "root",
+        "group": rollout.LINK_REF_SHARED_GROUP,
+        "directory_mode": "02770",
+        "file_mode": "0660",
     }
     assert candidate_auxiliary == {
         "path": str(
-            rollout.runtime_link_ref_state_path(
+            rollout.shared_link_ref_state_path(
                 config.candidate_state_root / receipt["transaction_id"]
             )
         ),
-        "owner": config.runtime_user,
-        "directory_mode": "0700",
-        "file_mode": "0600",
+        "owner": "root",
+        "group": rollout.LINK_REF_SHARED_GROUP,
+        "directory_mode": "02770",
+        "file_mode": "0660",
     }
     assert adapters.events == [
         "ingress:inspect",
@@ -1352,7 +1533,7 @@ def test_failed_live_runtime_state_preparation_restores_the_prechange_snapshot(
     preexisting: bool,
 ) -> None:
     config, _runtime_db, previous = _deployment_fixture(tmp_path)
-    private_dir = config.state_dir / rollout.RUNTIME_PRIVATE_STATE_DIR_NAME
+    private_dir = config.state_dir / rollout.LINK_REF_SHARED_STATE_DIR_NAME
     state_path = private_dir / rollout.RUNTIME_LINK_REF_DATABASE_NAME
     if preexisting:
         private_dir.mkdir(mode=0o750)
@@ -1389,7 +1570,7 @@ def test_failed_live_runtime_state_preparation_restores_the_prechange_snapshot(
     adapters = RestoringAdapters()
 
     class FailingPreparationSystem(FakeSystem):
-        def prepare_runtime_auxiliary_state(self, state_dir: Path) -> Path:
+        def prepare_shared_link_ref_state(self, state_dir: Path) -> Path:
             assert "state:snapshot" in adapters.events
             private_dir.mkdir(exist_ok=True)
             private_dir.chmod(0o700)
@@ -1421,7 +1602,7 @@ def test_recovery_uses_the_durable_snapshot_after_runtime_state_preparation_loss
     preexisting: bool,
 ) -> None:
     config, _runtime_db, previous = _deployment_fixture(tmp_path)
-    private_dir = config.state_dir / rollout.RUNTIME_PRIVATE_STATE_DIR_NAME
+    private_dir = config.state_dir / rollout.LINK_REF_SHARED_STATE_DIR_NAME
     state_path = private_dir / rollout.RUNTIME_LINK_REF_DATABASE_NAME
     if preexisting:
         private_dir.mkdir(mode=0o750)
@@ -1463,7 +1644,7 @@ def test_recovery_uses_the_durable_snapshot_after_runtime_state_preparation_loss
     adapters = RecoverableAdapters()
 
     class LostPreparationSystem(FakeSystem):
-        def prepare_runtime_auxiliary_state(self, state_dir: Path) -> Path:
+        def prepare_shared_link_ref_state(self, state_dir: Path) -> Path:
             private_dir.mkdir(exist_ok=True)
             private_dir.chmod(0o700)
             state_path.touch(exist_ok=True)
@@ -1549,15 +1730,16 @@ def test_any_candidate_or_cutover_failure_restores_database_release_and_ingress(
     with sqlite3.connect(runtime_db) as conn:
         assert conn.execute("SELECT count(*) FROM workspaces").fetchone()[0] == 1
     assert "state:restore" in adapters.events
-    assert adapters.state_payloads["restore"]["runtime_auxiliary_state"] == {
-        "path": str(rollout.runtime_link_ref_state_path(config.state_dir)),
-        "owner": config.runtime_user,
-        "directory_mode": "0700",
-        "file_mode": "0600",
+    assert adapters.state_payloads["restore"]["shared_link_ref_state"] == {
+        "path": str(rollout.shared_link_ref_state_path(config.state_dir)),
+        "owner": "root",
+        "group": rollout.LINK_REF_SHARED_GROUP,
+        "directory_mode": "02770",
+        "file_mode": "0660",
     }
     assert "state:cleanup_clone" in adapters.events
     assert "start-group:rollback" in system.events
-    assert rollout.runtime_link_ref_state_path(config.state_dir) in system.asserted_stopped_paths[-1]
+    assert rollout.shared_link_ref_state_path(config.state_dir) in system.asserted_stopped_paths[-1]
     assert "acceptance:rollback" in adapters.events
     assert "ingress:status" in adapters.events
 

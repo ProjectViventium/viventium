@@ -334,11 +334,16 @@ most specific existing QA owner when a scenario already has a detailed provider 
   cannot, and verify an empty marker remains unfinished across recovery; force
   auxiliary watch/link state unavailable, malformed, and writer-locked beyond the edge budget, then
   verify a bounded authenticated fallback without duplicate work; inspect a completed worker with
-  at least one artifact through the browser live/status route and prove runtime artifact short-ref
-  state is created inside the active candidate/live runtime-owned private directory rather than the
-  shared state root or service account home; verify the shared root stays `0770`, the private child is
-  runtime-owned `0700`, existing auxiliary SQLite files are `0600`, rehearsal/live paths differ, and
-  rollback restores the predecessor snapshot;
+  at least one artifact through the browser live/status route; create workspace and artifact refs in
+  runtime and prove the public UI resolves them, then create a UI/MCP ref and prove runtime resolves
+  it. Verify the same authenticated owner succeeds, a signed-out artifact request reaches login with
+  a safe return target, and another owner receives generic not-found with no bytes. Prove ref state
+  is created in the active phase-local shared-ref directory rather than the service-account home;
+  verify the state root stays `root:glasshive-state 0770`, the shared-ref child is
+  `root:glasshive-state 02770`, SQLite/WAL/SHM are `root:glasshive-state 0660`, candidate/live paths
+  differ, and rollback restores the predecessor snapshot. On upgrade, merge predecessor gateway and
+  runtime refs without changing their ids or deleting the predecessor stores; enrich an imported
+  row, revoke it, and run a second rollout to prove the stale predecessor row is not resurrected;
   fail/cancel/interrupt the first
   run and verify the UI asks for a corrected follow-up without offering an ineffective Resume action;
   explicitly close a workspace and verify `terminating`, teardown-failed, and `terminated` states
@@ -363,8 +368,9 @@ most specific existing QA owner when a scenario already has a detailed provider 
   workspace accepting work its queue cannot run, teardown failure or a stale writer reopening a
   workspace, group/world permission widening on worker workspace, home, browser, or provider state,
   an empty exit marker reported as success, a same-browser opaque handoff demanding an unrelated
-  trusted-proxy assertion or exposing raw JSON, a completed live/status read failing because runtime
-  short-ref state fell back to a read-only home/shared root or crossed rehearsal/live state, a
+  trusted-proxy assertion or exposing raw JSON, a completed live/status read failing because a
+  runtime-created ref is absent from the public UI, short-ref state fell back to a read-only home or
+  crossed rehearsal/live state, a
   completed workspace collapsing to generic `Desktop unavailable`, cached or already-open desktop/terminal access after
   close intent, unknown orphan compute, a truncated provider stream reported complete, a closed recurring definition being
   re-enabled or left active in the delegated owner, duplicate project/workspace/run, a queued first run
@@ -693,8 +699,8 @@ most specific existing QA owner when a scenario already has a detailed provider 
 - Full-view evidence minimum: clean bootstrap through supported entrypoint and installed user smoke.
 - Automation: release/bootstrap/compiler/installer suites plus provenance checks.
 - Last run: PARTIAL 2026-08-10; the parent candidate pins merged GlassHive
-  `69a8ddc94f208495c0aab9e3b19e1aa0e09dcd7c`, whose merge tree equals the reviewed authenticated-
-  handoff and account-UX head. Sealed canary provenance, installed post-fix real-browser UX,
+  `0c7c4471c99654c48e4b3651f9bd3bdba8224f2f`, whose merge tree equals the reviewed shared-ref,
+  authenticated-handoff, and account-UX head. Sealed canary provenance, installed post-fix real-browser UX,
   and a fresh public bootstrap/install in a new directory remain open for this exact pair.
 
 ## `GHUCP-027` — Clean Install, Upgrade, Continuity, and Rollback

@@ -37,8 +37,9 @@ from typing import Any
 
 
 HOSTED_MUTATION_LOCK = Path("/run/lock/glasshive-rollout.lock")
-RUNTIME_PRIVATE_STATE_DIR_NAME = "runtime-private"
+LINK_REF_SHARED_STATE_DIR_NAME = "link-refs-shared"
 RUNTIME_LINK_REF_DATABASE_NAME = "link_refs.sqlite3"
+LINK_REF_SHARED_GROUP = "glasshive-state"
 
 MANIFEST_NAME = "glasshive-release.json"
 RELEASE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$")
@@ -50,6 +51,7 @@ ALLOWED_ACTIVE_ENV_KEYS = {
     "GLASSHIVE_BACKGROUND_CONSUMERS_ENABLED",
     "GLASSHIVE_COMPONENT_REVISION",
     "GLASSHIVE_LINK_REF_STATE_PATH",
+    "GLASSHIVE_LINK_REF_SHARED_GROUP",
     "GLASSHIVE_MCP_PORT",
     "GLASSHIVE_PARENT_REVISION",
     "GLASSHIVE_RECONCILE_ON_STARTUP",
@@ -83,6 +85,7 @@ ACCEPTANCE_CHECKS: dict[str, tuple[str, ...]] = {
         "token_tenant_and_subject_exact",
         "auth_callback_query_not_logged",
         "runtime_artifact_refs_writable",
+        "cross_service_link_refs_resolvable",
     ),
     "preflight": (
         "authenticated_mcp_initialize",
@@ -119,6 +122,7 @@ ACCEPTANCE_CHECKS: dict[str, tuple[str, ...]] = {
         "identity_header_families_scrubbed",
         "browser_csrf_header_preserved",
         "runtime_artifact_refs_writable",
+        "cross_service_link_refs_resolvable",
         "runtime_not_public",
         "runtime_release_provenance",
         "ui_release_provenance",
@@ -1346,17 +1350,21 @@ class ProductionSystem:
         if open_pids:
             raise RolloutError("SQLite writer quiescence failed; database still has open process descriptors")
 
-    def prepare_runtime_auxiliary_state(self, state_dir: Path) -> Path:
-        """Prepare the private runtime-owned SQLite parent without widening shared state."""
+    def prepare_shared_link_ref_state(self, state_dir: Path) -> Path:
+        """Prepare the only SQLite state intentionally shared by runtime and gateway."""
 
+        shared_directory_mode = 0o2770 if sys.platform.startswith("linux") else 0o770
+        allowed_file_owners = {os.geteuid()}
+        for service_user in (self.config.runtime_user, "glasshive-gateway"):
+            try:
+                allowed_file_owners.add(pwd.getpwnam(service_user).pw_uid)
+            except KeyError:
+                if service_user == self.config.runtime_user and service_user != pwd.getpwuid(os.geteuid()).pw_name:
+                    raise RolloutError("runtime service user does not exist")
         try:
-            account = pwd.getpwnam(self.config.runtime_user)
+            state_gid = grp.getgrnam(LINK_REF_SHARED_GROUP).gr_gid
         except KeyError as exc:
-            raise RolloutError("runtime service user does not exist") from exc
-        try:
-            state_gid = grp.getgrnam("glasshive-state").gr_gid
-        except KeyError as exc:
-            if account.pw_uid != os.geteuid():
+            if self.config.runtime_user != pwd.getpwuid(os.geteuid()).pw_name:
                 raise RolloutError("GlassHive state group does not exist") from exc
             # Portable unit tests use the invoking account in place of the hosted service identity.
             state_gid = os.getegid()
@@ -1375,19 +1383,19 @@ class ProductionSystem:
             ):
                 raise RolloutError("runtime state root has unexpected owner, group, type, or mode")
             try:
-                os.mkdir(RUNTIME_PRIVATE_STATE_DIR_NAME, mode=0o700, dir_fd=parent_fd)
+                os.mkdir(LINK_REF_SHARED_STATE_DIR_NAME, mode=0o770, dir_fd=parent_fd)
             except FileExistsError:
                 pass
-            child_fd = os.open(RUNTIME_PRIVATE_STATE_DIR_NAME, child_flags, dir_fd=parent_fd)
+            child_fd = os.open(LINK_REF_SHARED_STATE_DIR_NAME, child_flags, dir_fd=parent_fd)
             child_metadata = os.fstat(child_fd)
             if (
                 not stat.S_ISDIR(child_metadata.st_mode)
-                or child_metadata.st_uid not in {os.geteuid(), account.pw_uid}
+                or child_metadata.st_uid != os.geteuid()
             ):
-                raise RolloutError("runtime private state directory has unexpected owner or type")
-            if child_metadata.st_uid != account.pw_uid or child_metadata.st_gid != account.pw_gid:
-                os.fchown(child_fd, account.pw_uid, account.pw_gid)
-            os.fchmod(child_fd, 0o700)
+                raise RolloutError("shared link-reference directory has unexpected owner or type")
+            if child_metadata.st_gid != state_gid:
+                os.fchown(child_fd, os.geteuid(), state_gid)
+            os.fchmod(child_fd, shared_directory_mode)
 
             for name in (
                 RUNTIME_LINK_REF_DATABASE_NAME,
@@ -1398,7 +1406,10 @@ class ProductionSystem:
                 try:
                     file_fd = os.open(
                         name,
-                        os.O_RDWR | getattr(os, "O_NOFOLLOW", 0),
+                        os.O_RDWR
+                        | (os.O_CREAT if name == RUNTIME_LINK_REF_DATABASE_NAME else 0)
+                        | getattr(os, "O_NOFOLLOW", 0),
+                        0o660,
                         dir_fd=child_fd,
                     )
                 except FileNotFoundError:
@@ -1407,12 +1418,12 @@ class ProductionSystem:
                     file_metadata = os.fstat(file_fd)
                     if (
                         not stat.S_ISREG(file_metadata.st_mode)
-                        or file_metadata.st_uid not in {os.geteuid(), account.pw_uid}
+                        or file_metadata.st_uid not in allowed_file_owners
                     ):
-                        raise RolloutError("runtime link-reference state has unexpected owner or type")
-                    if file_metadata.st_uid != account.pw_uid or file_metadata.st_gid != account.pw_gid:
-                        os.fchown(file_fd, account.pw_uid, account.pw_gid)
-                    os.fchmod(file_fd, 0o600)
+                        raise RolloutError("shared link-reference state has unexpected owner or type")
+                    if file_metadata.st_gid != state_gid:
+                        os.fchown(file_fd, os.geteuid(), state_gid)
+                    os.fchmod(file_fd, 0o660)
                     os.fsync(file_fd)
                 finally:
                     if file_fd >= 0:
@@ -1422,13 +1433,13 @@ class ProductionSystem:
         except RolloutError:
             raise
         except OSError as exc:
-            raise RolloutError("runtime private state directory could not be prepared safely") from exc
+            raise RolloutError("shared link-reference state could not be prepared safely") from exc
         finally:
             if child_fd >= 0:
                 os.close(child_fd)
             if parent_fd >= 0:
                 os.close(parent_fd)
-        return runtime_link_ref_state_path(state_dir)
+        return shared_link_ref_state_path(state_dir)
 
     def start_group(self, *, phase: str) -> None:
         del phase
@@ -1693,7 +1704,8 @@ def _active_values(
         "GLASSHIVE_RECONCILE_ON_STARTUP": "true" if reconcile_on_startup else "false",
         "GLASSHIVE_RUNTIME_PORT": str(ports["runtime"]),
         "GLASSHIVE_STATE_DIR": str(state_dir),
-        "GLASSHIVE_LINK_REF_STATE_PATH": str(runtime_link_ref_state_path(state_dir)),
+        "GLASSHIVE_LINK_REF_STATE_PATH": str(shared_link_ref_state_path(state_dir)),
+        "GLASSHIVE_LINK_REF_SHARED_GROUP": LINK_REF_SHARED_GROUP,
         "WPR_DB_PATH": str(database_paths["WPR_DB_PATH"]),
     }
     gateway = {
@@ -1703,6 +1715,8 @@ def _active_values(
             database_paths["GLASSHIVE_AUTH_STATE_PATH"].parent / "watch_sessions.sqlite3"
         ),
         "GLASSHIVE_MCP_PORT": str(ports["mcp"]),
+        "GLASSHIVE_LINK_REF_STATE_PATH": str(shared_link_ref_state_path(state_dir)),
+        "GLASSHIVE_LINK_REF_SHARED_GROUP": LINK_REF_SHARED_GROUP,
         "GLASSHIVE_RUNTIME_BASE_URL": f"http://127.0.0.1:{ports['runtime']}",
         "GLASSHIVE_UI_PORT": str(ports["ui"]),
         "WPR_MCP_BASE_URL": f"http://127.0.0.1:{ports['runtime']}",
@@ -1710,21 +1724,187 @@ def _active_values(
     return runtime, gateway
 
 
-def runtime_link_ref_state_path(state_dir: Path) -> Path:
+def shared_link_ref_state_path(state_dir: Path) -> Path:
     return (
         Path(state_dir)
-        / RUNTIME_PRIVATE_STATE_DIR_NAME
+        / LINK_REF_SHARED_STATE_DIR_NAME
         / RUNTIME_LINK_REF_DATABASE_NAME
     )
 
 
-def runtime_auxiliary_state_contract(config: RolloutConfig, state_dir: Path) -> dict[str, str]:
+def shared_link_ref_state_contract(config: RolloutConfig, state_dir: Path) -> dict[str, str]:
+    del config
     return {
-        "path": str(runtime_link_ref_state_path(state_dir)),
-        "owner": config.runtime_user,
-        "directory_mode": "0700",
-        "file_mode": "0600",
+        "path": str(shared_link_ref_state_path(state_dir)),
+        "owner": "root",
+        "group": LINK_REF_SHARED_GROUP,
+        "directory_mode": "02770",
+        "file_mode": "0660",
     }
+
+
+def legacy_link_ref_state_paths(
+    config: RolloutConfig,
+    *,
+    state_dir: Path | None = None,
+    auth_database: Path | None = None,
+) -> tuple[Path, ...]:
+    resolved_state_dir = Path(state_dir) if state_dir is not None else config.state_dir
+    resolved_auth_database = auth_database or next(
+        (database.path for database in config.databases if database.env_name == "GLASSHIVE_AUTH_STATE_PATH"),
+        config.state_dir / "gateway" / "auth.sqlite3",
+    )
+    return (
+        resolved_auth_database.parent / RUNTIME_LINK_REF_DATABASE_NAME,
+        resolved_state_dir / ".local" / "state" / "glasshive" / RUNTIME_LINK_REF_DATABASE_NAME,
+        resolved_state_dir / "runtime-private" / RUNTIME_LINK_REF_DATABASE_NAME,
+    )
+
+
+def migrate_legacy_link_ref_state(
+    destination: Path,
+    legacy_paths: Sequence[Path],
+    *,
+    state_dir: Path,
+) -> int:
+    """Merge predecessor ref stores without changing exposed opaque ids."""
+
+    required_columns = {"ref_id", "kind", "token", "target_url", "expires_at", "created_at"}
+    copied = 0
+    try:
+        resolved_root = state_dir.resolve(strict=True)
+        with sqlite3.connect(destination) as target:
+            target.row_factory = sqlite3.Row
+            target.execute(
+                """
+                CREATE TABLE IF NOT EXISTS signed_link_refs (
+                    ref_id TEXT PRIMARY KEY,
+                    kind TEXT NOT NULL,
+                    token TEXT NOT NULL,
+                    target_url TEXT NOT NULL DEFAULT '',
+                    expires_at INTEGER NOT NULL,
+                    created_at INTEGER NOT NULL,
+                    payload_json TEXT NOT NULL DEFAULT '',
+                    scope_key TEXT NOT NULL DEFAULT ''
+                )
+                """
+            )
+            target.execute(
+                """
+                CREATE TABLE IF NOT EXISTS link_ref_legacy_migrations (
+                    source_path TEXT PRIMARY KEY,
+                    migrated_at INTEGER NOT NULL
+                )
+                """
+            )
+            for legacy_path in legacy_paths:
+                source = Path(legacy_path)
+                if source == destination or not source.exists():
+                    continue
+                source_metadata = source.lstat()
+                resolved_source = source.resolve(strict=True)
+                if (
+                    source.is_symlink()
+                    or not stat.S_ISREG(source_metadata.st_mode)
+                    or not resolved_source.is_relative_to(resolved_root)
+                    or resolved_source != source.absolute()
+                    or stat.S_IMODE(source_metadata.st_mode) & 0o007
+                ):
+                    raise RolloutError("legacy link-reference state has unsafe ownership or permissions")
+                source_key = resolved_source.relative_to(resolved_root).as_posix()
+                migrated = target.execute(
+                    "SELECT 1 FROM link_ref_legacy_migrations WHERE source_path = ?",
+                    (source_key,),
+                ).fetchone()
+                if migrated is not None:
+                    continue
+                with sqlite3.connect(f"{resolved_source.as_uri()}?mode=ro", uri=True) as legacy:
+                    legacy.row_factory = sqlite3.Row
+                    table = legacy.execute(
+                        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'signed_link_refs'"
+                    ).fetchone()
+                    if table is None:
+                        raise RolloutError("legacy link-reference state has an unexpected schema")
+                    columns = {
+                        str(row[1])
+                        for row in legacy.execute("PRAGMA table_info(signed_link_refs)").fetchall()
+                    }
+                    if not required_columns.issubset(columns):
+                        raise RolloutError("legacy link-reference state has an unexpected schema")
+                    optional = [name for name in ("payload_json", "scope_key") if name in columns]
+                    selected = [*sorted(required_columns), *optional]
+                    rows = legacy.execute(
+                        f"SELECT {', '.join(selected)} FROM signed_link_refs"
+                    ).fetchall()
+                    for row in rows:
+                        ref_id = str(row["ref_id"] or "")
+                        existing = target.execute(
+                            """
+                            SELECT kind, token, target_url, created_at, expires_at,
+                                   payload_json, scope_key
+                            FROM signed_link_refs
+                            WHERE ref_id = ?
+                            """,
+                            (ref_id,),
+                        ).fetchone()
+                        core_identity = (
+                            str(row["kind"] or ""),
+                            str(row["token"] or ""),
+                            str(row["target_url"] or ""),
+                            int(row["created_at"]),
+                        )
+                        optional_identity = (
+                            str(row["payload_json"] or "") if "payload_json" in columns else "",
+                            str(row["scope_key"] or "") if "scope_key" in columns else "",
+                        )
+                        if existing is not None:
+                            if tuple(existing[:4]) != core_identity:
+                                raise RolloutError("legacy link-reference ids conflict across state stores")
+                            merged_optional = list(existing[5:])
+                            for index, incoming in enumerate(optional_identity):
+                                current = str(merged_optional[index] or "")
+                                if incoming and current and incoming != current:
+                                    raise RolloutError("legacy link-reference ids conflict across state stores")
+                                if incoming and not current:
+                                    merged_optional[index] = incoming
+                            if tuple(merged_optional) != tuple(existing[5:]):
+                                target.execute(
+                                    "UPDATE signed_link_refs SET payload_json = ?, scope_key = ? WHERE ref_id = ?",
+                                    (*merged_optional, ref_id),
+                                )
+                            continue
+                        target.execute(
+                            """
+                            INSERT INTO signed_link_refs
+                            (ref_id, kind, token, target_url, expires_at, created_at, payload_json, scope_key)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                ref_id,
+                                core_identity[0],
+                                core_identity[1],
+                                core_identity[2],
+                                int(row["expires_at"]),
+                                core_identity[3],
+                                *optional_identity,
+                            ),
+                        )
+                        copied += 1
+                target.execute(
+                    "INSERT INTO link_ref_legacy_migrations (source_path, migrated_at) VALUES (?, ?)",
+                    (source_key, int(time.time())),
+                )
+            target.execute(
+                "CREATE INDEX IF NOT EXISTS idx_signed_link_refs_expires_at ON signed_link_refs(expires_at)"
+            )
+            target.execute(
+                "CREATE INDEX IF NOT EXISTS idx_signed_link_refs_scope_key ON signed_link_refs(scope_key)"
+            )
+    except RolloutError:
+        raise
+    except (OSError, sqlite3.Error, ValueError) as exc:
+        raise RolloutError("legacy link-reference state could not be migrated safely") from exc
+    return copied
 
 
 def _restore_database(
@@ -1770,7 +1950,7 @@ def _rollback(
     system.assert_stopped(
         [
             *(database.path for database in config.databases),
-            runtime_link_ref_state_path(config.state_dir),
+            shared_link_ref_state_path(config.state_dir),
         ]
     )
     if ingress_switched:
@@ -1789,7 +1969,7 @@ def _rollback(
                 "snapshot_id": str(journal.get("state_snapshot_id") or ""),
                 "live_state_dir": str(config.state_dir),
                 "database_paths": [str(database.path) for database in config.databases],
-                "runtime_auxiliary_state": runtime_auxiliary_state_contract(
+                "shared_link_ref_state": shared_link_ref_state_contract(
                     config, config.state_dir
                 ),
             },
@@ -1918,7 +2098,7 @@ def execute_rollout(
             system.assert_stopped(
                 [
                     *(database.path for database in config.databases),
-                    runtime_link_ref_state_path(config.state_dir),
+                    shared_link_ref_state_path(config.state_dir),
                 ]
             )
             _journal_write(transaction, journal, "live_stopped")
@@ -1930,7 +2110,7 @@ def execute_rollout(
                     "live_state_dir": str(config.state_dir),
                     "transaction_dir": str(transaction),
                     "database_paths": [str(database.path) for database in config.databases],
-                    "runtime_auxiliary_state": runtime_auxiliary_state_contract(
+                    "shared_link_ref_state": shared_link_ref_state_contract(
                         config, config.state_dir
                     ),
                 },
@@ -1938,7 +2118,12 @@ def execute_rollout(
             state_snapshot_ready = True
             journal["state_snapshot_id"] = str(state_snapshot.get("snapshot_id") or "")
             _journal_write(transaction, journal, "state_snapshotted")
-            system.prepare_runtime_auxiliary_state(config.state_dir)
+            shared_ref_state = system.prepare_shared_link_ref_state(config.state_dir)
+            migrate_legacy_link_ref_state(
+                shared_ref_state,
+                legacy_link_ref_state_paths(config),
+                state_dir=config.state_dir,
+            )
 
             for database in config.databases:
                 if not database.path.exists() and database.allow_create_if_missing:
@@ -2002,7 +2187,16 @@ def execute_rollout(
                 if database.name not in absent_before:
                     _sqlite_backup(backups[database.name], candidate_path)
                 candidate_databases[database.env_name] = candidate_path
-            system.prepare_runtime_auxiliary_state(candidate_state)
+            candidate_shared_ref_state = system.prepare_shared_link_ref_state(candidate_state)
+            migrate_legacy_link_ref_state(
+                candidate_shared_ref_state,
+                legacy_link_ref_state_paths(
+                    config,
+                    state_dir=candidate_state,
+                    auth_database=candidate_databases["GLASSHIVE_AUTH_STATE_PATH"],
+                ),
+                state_dir=candidate_state,
+            )
             clone_seal = adapters.call_state(
                 "seal_clone",
                 {
@@ -2018,7 +2212,7 @@ def execute_rollout(
                         }
                         for database in config.databases
                     ],
-                    "runtime_auxiliary_state": runtime_auxiliary_state_contract(
+                    "shared_link_ref_state": shared_link_ref_state_contract(
                         config, candidate_state
                     ),
                 },
@@ -2047,7 +2241,7 @@ def execute_rollout(
             system.assert_stopped(
                 [
                     *candidate_databases.values(),
-                    runtime_link_ref_state_path(candidate_state),
+                    shared_link_ref_state_path(candidate_state),
                 ]
             )
 
@@ -2113,7 +2307,7 @@ def execute_rollout(
                     "snapshot_id": str(journal.get("state_snapshot_id") or ""),
                     "release_id": config.release_id,
                     "backup_dir": str(transaction / "backup"),
-                    "runtime_auxiliary_state": runtime_auxiliary_state_contract(
+                    "shared_link_ref_state": shared_link_ref_state_contract(
                         config, config.state_dir
                     ),
                 },
