@@ -340,7 +340,8 @@ most specific existing QA owner when a scenario already has a detailed provider 
   a safe return target, and another owner receives generic not-found with no bytes. Prove ref state
   is created in the active phase-local shared-ref directory rather than the service-account home;
   verify the state root stays `root:glasshive-state 0770`, the shared-ref child is
-  `root:glasshive-state 02770`, SQLite/WAL/SHM are `root:glasshive-state 0660`, candidate/live paths
+  `root:glasshive-state 02770`, and SQLite/WAL/SHM stay `glasshive-state 0660` with ownership limited
+  to root/runtime/gateway while running and normalized to root after quiescence. Candidate/live paths
   differ, and rollback restores the predecessor snapshot. On upgrade, merge predecessor gateway and
   runtime refs without changing their ids or deleting the predecessor stores; enrich an imported
   row, revoke it, and run a second rollout to prove the stale predecessor row is not resurrected;

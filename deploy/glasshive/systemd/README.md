@@ -109,7 +109,7 @@ phase-specific roots. Short references are the sole shared exception because run
 workspace links are resolved by UI/MCP and refs created by UI/MCP may be resolved by runtime. The
 rollout gives both tiers the same phase-local `GLASSHIVE_LINK_REF_STATE_PATH` and explicit
 `GLASSHIVE_LINK_REF_SHARED_GROUP=glasshive-state`. It creates the shared-ref child as
-`root:glasshive-state 02770` on Linux and its SQLite/WAL/SHM files as
+`root:glasshive-state 02770` on Linux and normalizes its stopped/prepared SQLite/WAL/SHM files to
 `root:glasshive-state 0660`, while the shared state root remains
 `root:glasshive-state 0770`. Auth, watch-session, provider, workspace, and worker databases remain
 private; do not point any service at its system account home or another service's private database
@@ -396,6 +396,9 @@ Actions are `snapshot`, `clone`, `seal_clone`, `restore`, `commit`, and `cleanup
   state without pretending not-yet-created database backups are missing. Initial snapshot,
   post-rehearsal clone inspection, and rollback restore each prove that no process still has the
   shared-ref DB or its WAL/SHM open, just as they do for the primary databases.
+  Before normalization, SQLite/WAL/SHM ownership may be `root`, `glasshive-runtime`, or
+  `glasshive-gateway`; no other owner is accepted, and group/mode must remain
+  `glasshive-state 0660`.
 - `clone` materializes the snapshot into the supplied empty candidate state directory without
   signing keys or secret gateway configuration, creates every declared candidate database parent
   with the requested runtime-shared or gateway-only access boundary, leaves the candidate root as

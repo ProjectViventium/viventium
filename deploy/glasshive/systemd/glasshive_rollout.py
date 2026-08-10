@@ -1421,7 +1421,7 @@ class ProductionSystem:
                         or file_metadata.st_uid not in allowed_file_owners
                     ):
                         raise RolloutError("shared link-reference state has unexpected owner or type")
-                    if file_metadata.st_gid != state_gid:
+                    if file_metadata.st_uid != os.geteuid() or file_metadata.st_gid != state_gid:
                         os.fchown(file_fd, os.geteuid(), state_gid)
                     os.fchmod(file_fd, 0o660)
                     os.fsync(file_fd)
@@ -1732,11 +1732,12 @@ def shared_link_ref_state_path(state_dir: Path) -> Path:
     )
 
 
-def shared_link_ref_state_contract(config: RolloutConfig, state_dir: Path) -> dict[str, str]:
-    del config
+def shared_link_ref_state_contract(config: RolloutConfig, state_dir: Path) -> dict[str, object]:
     return {
         "path": str(shared_link_ref_state_path(state_dir)),
-        "owner": "root",
+        "directory_owner": "root",
+        "allowed_file_owners": ["root", config.runtime_user, "glasshive-gateway"],
+        "prepared_file_owner": "root",
         "group": LINK_REF_SHARED_GROUP,
         "directory_mode": "02770",
         "file_mode": "0660",

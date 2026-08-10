@@ -1496,7 +1496,9 @@ def test_successful_rollout_rehearses_clone_then_switches_ingress(tmp_path: Path
     candidate_auxiliary = adapters.state_payloads["seal_clone"]["shared_link_ref_state"]
     assert live_auxiliary == {
         "path": str(rollout.shared_link_ref_state_path(config.state_dir)),
-        "owner": "root",
+        "directory_owner": "root",
+        "allowed_file_owners": ["root", config.runtime_user, "glasshive-gateway"],
+        "prepared_file_owner": "root",
         "group": rollout.LINK_REF_SHARED_GROUP,
         "directory_mode": "02770",
         "file_mode": "0660",
@@ -1507,7 +1509,9 @@ def test_successful_rollout_rehearses_clone_then_switches_ingress(tmp_path: Path
                 config.candidate_state_root / receipt["transaction_id"]
             )
         ),
-        "owner": "root",
+        "directory_owner": "root",
+        "allowed_file_owners": ["root", config.runtime_user, "glasshive-gateway"],
+        "prepared_file_owner": "root",
         "group": rollout.LINK_REF_SHARED_GROUP,
         "directory_mode": "02770",
         "file_mode": "0660",
@@ -1732,7 +1736,9 @@ def test_any_candidate_or_cutover_failure_restores_database_release_and_ingress(
     assert "state:restore" in adapters.events
     assert adapters.state_payloads["restore"]["shared_link_ref_state"] == {
         "path": str(rollout.shared_link_ref_state_path(config.state_dir)),
-        "owner": "root",
+        "directory_owner": "root",
+        "allowed_file_owners": ["root", config.runtime_user, "glasshive-gateway"],
+        "prepared_file_owner": "root",
         "group": rollout.LINK_REF_SHARED_GROUP,
         "directory_mode": "02770",
         "file_mode": "0660",

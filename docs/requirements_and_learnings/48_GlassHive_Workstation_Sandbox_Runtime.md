@@ -1790,8 +1790,10 @@ runtime intent classifier.
   `GLASSHIVE_LINK_REF_STATE_PATH` for runtime and gateway, enables explicit shared mode through
   `GLASSHIVE_LINK_REF_SHARED_GROUP=glasshive-state`, and keeps auth, watch, provider, workspace, and
   worker state private to their existing owners. On Linux the shared-ref child is
-  `root:glasshive-state 02770` and its SQLite/WAL/SHM files are
-  `root:glasshive-state 0660`; neither non-owner service is allowed to repair unsafe metadata.
+  `root:glasshive-state 02770`; SQLite/WAL/SHM remain `glasshive-state 0660` and may be owned only
+  by root, the runtime identity, or the gateway identity while services run. After all writers stop,
+  rollout preparation normalizes those files to root ownership. Neither non-owner service is
+  allowed to repair unsafe metadata.
   The rollout must create or validate that child without changing the state root's
   `root:glasshive-state 0770` boundary and must include it in snapshot/clone/restore. The live
   snapshot receipt must be durably journaled before any child creation or metadata normalization so
