@@ -1146,6 +1146,13 @@ without pretending the worker path is the only supported product route.
   scoped broker MCP block. Minimal Codex auth may be copied from the host Codex home into the
   worker-local Codex home with owner-only permissions. A broker-only Codex config is a capability
   regression unless an explicit lockdown config requested it and preflight/QA verify that intent.
+- Codex runtime metadata has a narrower lifecycle than credential files. While the exact selected
+  account lease and isolated container are active, `CODEX_HOME/installation_id` may be temporarily
+  worker-owned at Codex's required mode `0644`, and `CODEX_HOME/tmp/arg0` may be worker-owned at
+  `0700`. GlassHive must validate those exact paths without following symlinks, preserve existing
+  argument helpers across repeated readiness checks, and never apply this exception to Claude or a
+  noncanonical Codex home. Container cleanup then reseals the entire account tree to service
+  ownership and private `0700`/`0600` modes before releasing the lease.
 - Run-scoped env and MCP/client config must be refreshed before each worker run, including reused
   workers. Broker grants can rotate between runs; stale Claude `.mcp.json` headers, stale Codex MCP
   blocks, or duplicate MCP server sections are security and reliability bugs.
