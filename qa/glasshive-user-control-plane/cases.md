@@ -719,9 +719,10 @@ most specific existing QA owner when a scenario already has a detailed provider 
 - Full-view evidence minimum: clean bootstrap through supported entrypoint and installed user smoke.
 - Automation: release/bootstrap/compiler/installer suites plus provenance checks.
 - Last run: PARTIAL 2026-08-10; the parent candidate pins merged GlassHive
-  `e64c99e1d2d9d377976025671149abb033aad9e7`, whose merge tree equals the reviewed shared-ref,
+  `86edba04e11f423cc8e12550aa59e6690757632f`, whose merge tree equals the reviewed shared-ref,
   authenticated-handoff, account-UX, prepared-state compatibility, provider-account recovery,
-  provider-home continuity, and safe provider-cache symlink-cleanup heads. Sealed canary provenance,
+  provider-home continuity, safe provider-cache symlink cleanup, and valid repair-container mount
+  syntax heads. Sealed canary provenance,
   installed post-fix real-browser UX, and a fresh public bootstrap/install in a new directory remain open
   for this exact pair.
 
