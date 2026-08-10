@@ -300,8 +300,10 @@ compliant hosted topology.
   truthfully. These fields are local operational telemetry, never provider balance, billing, or quota.
 - Provider homes live outside workspace files on encrypted deployment storage with owner-only
   permissions. Duplicate/export/template operations never copy them. Hosted active environments
-  declare one canonical phase-local provider-home root. Upgrade derives the predecessor root from
-  that explicit value or the legacy runtime-database parent, snapshots both predecessor and
+  declare one canonical phase-local provider-home root. Upgrade resolves the predecessor from the
+  effective systemd EnvironmentFile order (base file, then active-slot overrides), using the
+  explicit provider-home value when present and the legacy runtime-database parent otherwise. It
+  reads only those non-secret path selectors from the base file, snapshots both predecessor and
   canonical paths before mutation, and then atomically materializes canonical live state before
   rehearsal. Clone, seal, restore, and recovery preserve exact content, numeric uid/gid, modes,
   extended attributes, POSIX ACLs, and prior absence; an account row without its matching home is a
@@ -327,7 +329,10 @@ compliant hosted topology.
 - In the reviewed Linux `per_worker_container` route, the exact account home is mounted only into the
   selected worker container. The rootless container grants and verifies access for its non-root worker
   user through POSIX ACLs, with no world-writable fallback; the container is removed, credential-tree
-  modes are tightened again, and only then is the exclusive lease released.
+  modes are tightened again, and only then is the exclusive lease released. Provider CLIs may leave
+  private executable-wrapper symlinks in their own caches. Sealing unlinks those directory entries
+  without following their targets before it changes ownership, modes, or ACLs on real directories and
+  files; hardlinks, special files, escaped paths, and any unlink failure remain fail-closed.
 - A hosted rollout does not infer provider-tree quiescence from currently open files alone. With the
   runtime, MCP, and UI stopped, it recursively checks descendant descriptors and separately inspects
   every recognized rootless `wpr-*` container. A running, paused, or restarting container whose bind

@@ -845,6 +845,74 @@ def test_predecessor_provider_home_prefers_explicit_path_then_legacy_database_pa
         )
 
 
+def test_predecessor_provider_home_uses_effective_base_env_with_active_precedence(
+    tmp_path: Path,
+) -> None:
+    config, runtime_db, _previous = _deployment_fixture(tmp_path)
+    base_home = config.candidate_state_root / "base-slot" / "provider_accounts"
+    active_home = config.candidate_state_root / "active-slot" / "provider_accounts"
+    config.runtime_env_file.write_text(
+        "# A secret-bearing base file may contain unrelated keys.\n"
+        "PRIVATE_SYNTHETIC_VALUE=not-inspected\n"
+        f"GLASSHIVE_PROVIDER_ACCOUNT_HOME_ROOT={base_home}\n",
+        encoding="utf-8",
+    )
+    active = rollout.read_active_environment(config.runtime_active_env)
+
+    effective = rollout.predecessor_runtime_environment(config, active)
+    assert effective["GLASSHIVE_PROVIDER_ACCOUNT_HOME_ROOT"] == str(base_home)
+    assert effective["WPR_DB_PATH"] == str(runtime_db)
+    assert "PRIVATE_SYNTHETIC_VALUE" not in effective
+    assert rollout.predecessor_provider_account_state_path(config, effective) == base_home
+
+    active["GLASSHIVE_PROVIDER_ACCOUNT_HOME_ROOT"] = str(active_home)
+    rollout.write_active_environment(config.runtime_active_env, active)
+    effective = rollout.predecessor_runtime_environment(
+        config,
+        rollout.read_active_environment(config.runtime_active_env),
+    )
+    assert effective["GLASSHIVE_PROVIDER_ACCOUNT_HOME_ROOT"] == str(active_home)
+
+
+def test_predecessor_runtime_environment_rejects_duplicate_or_symlinked_base_file(
+    tmp_path: Path,
+) -> None:
+    config, runtime_db, _previous = _deployment_fixture(tmp_path)
+    config.runtime_env_file.write_text(
+        f"WPR_DB_PATH={runtime_db}\nWPR_DB_PATH={runtime_db}\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(rollout.RolloutError, match="duplicate service environment key"):
+        rollout.predecessor_runtime_environment(config, {})
+
+    real_environment = tmp_path / "runtime-real.env"
+    real_environment.write_text(f"WPR_DB_PATH={runtime_db}\n", encoding="utf-8")
+    config.runtime_env_file.unlink()
+    config.runtime_env_file.symlink_to(real_environment)
+    with pytest.raises(rollout.RolloutError, match="missing or unsafe"):
+        rollout.predecessor_runtime_environment(config, {})
+
+
+def test_service_environment_descriptor_validation_rejects_writable_file(
+    tmp_path: Path,
+) -> None:
+    config, _runtime_db, _previous = _deployment_fixture(tmp_path)
+    config.runtime_env_file.chmod(0o600)
+    rollout._validate_service_environment_file(
+        config.runtime_env_file,
+        expected_uid=os.geteuid(),
+        expected_gid=os.getegid(),
+    )
+
+    config.runtime_env_file.chmod(0o620)
+    with pytest.raises(rollout.RolloutError, match="unsafe ownership or permissions"):
+        rollout._validate_service_environment_file(
+            config.runtime_env_file,
+            expected_uid=os.geteuid(),
+            expected_gid=os.getegid(),
+        )
+
+
 @pytest.mark.skipif(not Path("/proc").is_dir(), reason="Linux /proc descriptor proof")
 def test_state_quiescence_detects_open_provider_home_descendant(tmp_path: Path) -> None:
     provider_home = tmp_path / "provider_accounts" / "tenant" / "owner" / "account"
@@ -1126,6 +1194,10 @@ def _deployment_fixture(tmp_path: Path) -> tuple[rollout.RolloutConfig, Path, Pa
     _database(auth_db)
     runtime_env = tmp_path / "runtime-active.env"
     gateway_env = tmp_path / "gateway-active.env"
+    runtime_base_env = tmp_path / "runtime.env"
+    gateway_base_env = tmp_path / "gateway.env"
+    runtime_base_env.write_text("# synthetic runtime base environment\n", encoding="utf-8")
+    gateway_base_env.write_text("# synthetic gateway base environment\n", encoding="utf-8")
     rollout.write_active_environment(
         runtime_env,
         {
@@ -1189,6 +1261,8 @@ def _deployment_fixture(tmp_path: Path) -> tuple[rollout.RolloutConfig, Path, Pa
         acceptance_adapter=tmp_path / "acceptance-adapter",
         runtime_user="glasshive-runtime",
         candidate_state_root=candidate_state_root,
+        runtime_env_file=runtime_base_env,
+        gateway_env_file=gateway_base_env,
     )
     return config, runtime_db, previous
 
@@ -1853,9 +1927,10 @@ def test_legacy_provider_home_is_materialized_before_clone_and_rollback_restores
         xattr_supported = True
     except (AttributeError, OSError):
         pass
-    runtime_environment = rollout.read_active_environment(config.runtime_active_env)
-    runtime_environment["GLASSHIVE_PROVIDER_ACCOUNT_HOME_ROOT"] = str(predecessor_home)
-    rollout.write_active_environment(config.runtime_active_env, runtime_environment)
+    config.runtime_env_file.write_text(
+        f"GLASSHIVE_PROVIDER_ACCOUNT_HOME_ROOT={predecessor_home}\n",
+        encoding="utf-8",
+    )
     canonical_home = rollout.provider_account_state_path(config.state_dir)
     assert not canonical_home.exists()
 
@@ -1969,9 +2044,10 @@ def test_recovery_restores_absent_canonical_home_after_interrupted_materializati
         credential.stat().st_uid,
         credential.stat().st_gid,
     )
-    runtime_environment = rollout.read_active_environment(config.runtime_active_env)
-    runtime_environment["GLASSHIVE_PROVIDER_ACCOUNT_HOME_ROOT"] = str(predecessor_home)
-    rollout.write_active_environment(config.runtime_active_env, runtime_environment)
+    config.runtime_env_file.write_text(
+        f"GLASSHIVE_PROVIDER_ACCOUNT_HOME_ROOT={predecessor_home}\n",
+        encoding="utf-8",
+    )
     canonical_home = rollout.provider_account_state_path(config.state_dir)
 
     class InterruptedProviderAdapters(FakeAdapters):
@@ -2019,6 +2095,10 @@ def test_recovery_restores_absent_canonical_home_after_interrupted_materializati
     assert canonical_home.is_dir()
 
     transaction = next(config.transactions_dir.glob("rollout-*"))
+    journal_path = transaction / "journal.json"
+    legacy_journal = json.loads(journal_path.read_text(encoding="utf-8"))
+    legacy_journal.pop("predecessor_provider_account_home", None)
+    journal_path.write_text(json.dumps(legacy_journal), encoding="utf-8")
     receipt = rollout.recover_rollout(
         config,
         transaction_id=transaction.name,
