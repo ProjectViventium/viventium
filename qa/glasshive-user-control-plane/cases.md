@@ -15,9 +15,9 @@ most specific existing QA owner when a scenario already has a detailed provider 
 | `GHUCP-004` | `GH-UCP-003` | Runtime sees the correct user/tenant/role/scope and rejects cross-user or unsigned writes | Gateway, API | Assertion/API tests | 2026-08-05 PARTIAL: focused tests only |
 | `GHUCP-005` | `GH-UCP-004` | User copies an official command and connects Codex and Claude to the hosted MCP | Browser, Codex, Claude | MCP OAuth tests + real clients | 2026-08-05 PARTIAL: metadata/command tests only |
 | `GHUCP-006` | `GH-UCP-004` | Wrong audience, tenant, scope, expired token, or missing OAuth config fails loud | MCP clients, API | MCP OAuth tests | 2026-08-05 PARTIAL: focused tests only |
-| `GHUCP-007` | `GH-UCP-005` | User connects, tests, selects, reconnects, disconnects, and forgets a personal provider account | Browser, MCP, native harness | Control-plane tests + real provider | 2026-08-10 PARTIAL: capability-driven setup, automatic first-account default, sole-Ready selection, and policy-transition regressions pass; exact hosted build and real provider mission pending |
+| `GHUCP-007` | `GH-UCP-005` | User connects, tests, selects, reconnects, disconnects, and forgets a personal provider account | Browser, MCP, native harness | Control-plane tests + real provider | 2026-08-10 PARTIAL: capability-driven setup, automatic first-account default, sole-Ready selection, policy-transition, post-verification reseal, and verification-lease renewal regressions pass; exact hosted recovery and real provider mission pending |
 | `GHUCP-008` | `GH-UCP-005` | Provider metadata and homes remain owner scoped and secrets never enter the runtime database | API, filesystem, DB | Control-plane tests + secret scan | 2026-08-05 PARTIAL: owner-scope tests plus local private-mode and credential-removal checks passed |
-| `GHUCP-009` | `GH-UCP-006` | A mission uses only its selected compatible account and releases its lease | Worker, provider home | Mission tests + live worker | 2026-08-10 PARTIAL: a real Codex mission completed but exposed cleanup quarantine and rollout-home continuity failures; structural recovery and phase-local persistence regressions pass, exact hosted recovery plus a second mission remain pending |
+| `GHUCP-009` | `GH-UCP-006` | A mission uses only its selected compatible account and releases its lease | Worker, provider home | Mission tests + live worker | 2026-08-10 PARTIAL: a real Codex mission completed but exposed cleanup quarantine and rollout-home continuity failures; structural recovery, phase-local persistence, and renewable exclusive verification regressions pass, exact hosted recovery plus a second mission remain pending |
 | `GHUCP-010` | `GH-UCP-006` | Required/busy/unsupported account states fail closed; preferred policy preserves legacy compatibility | Browser, worker | Mission/policy tests | 2026-08-06 PARTIAL: focused source tests prove the multi-user per-worker-container gate and unchanged preferred/legacy fallbacks; installed supported/unsupported platform matrix pending |
 | `GHUCP-011` | `GH-UCP-007` | User creates and finds a private, human-named workspace | Browser, API, DB | Catalog tests + Playwright | 2026-08-10 PARTIAL: authenticated-session opaque launch handoff and owner-isolation regressions pass; exact installed browser mission, provider result, and two-user path remain open |
 | `GHUCP-012` | `GH-UCP-007` | Rename, favorite, resume, refresh, and restart preserve workspace identity and state | Browser, workspace desktop | Catalog/UI tests + restart QA | 2026-08-09 PARTIAL: hosted session/workspace catalog survived UI restart and local-auth rollback; compute/profile continuity remains open |
@@ -719,10 +719,10 @@ most specific existing QA owner when a scenario already has a detailed provider 
 - Full-view evidence minimum: clean bootstrap through supported entrypoint and installed user smoke.
 - Automation: release/bootstrap/compiler/installer suites plus provenance checks.
 - Last run: PARTIAL 2026-08-10; the parent candidate pins merged GlassHive
-  `86edba04e11f423cc8e12550aa59e6690757632f`, whose merge tree equals the reviewed shared-ref,
+  `ea6e864c61af4182c9fb278380c280b56bd0af3a`, whose merge tree equals the reviewed shared-ref,
   authenticated-handoff, account-UX, prepared-state compatibility, provider-account recovery,
-  provider-home continuity, safe provider-cache symlink cleanup, and valid repair-container mount
-  syntax heads. Sealed canary provenance,
+  provider-home continuity, safe provider-cache symlink cleanup, valid repair-container mount syntax,
+  and renewable post-verification reseal heads. Sealed canary provenance,
   installed post-fix real-browser UX, and a fresh public bootstrap/install in a new directory remain open
   for this exact pair.
 
