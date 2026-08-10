@@ -17,7 +17,7 @@ most specific existing QA owner when a scenario already has a detailed provider 
 | `GHUCP-006` | `GH-UCP-004` | Wrong audience, tenant, scope, expired token, or missing OAuth config fails loud | MCP clients, API | MCP OAuth tests | 2026-08-05 PARTIAL: focused tests only |
 | `GHUCP-007` | `GH-UCP-005` | User connects, tests, selects, reconnects, disconnects, and forgets a personal provider account | Browser, MCP, native harness | Control-plane tests + real provider | 2026-08-10 PARTIAL: capability-driven setup, automatic first-account default, sole-Ready selection, and policy-transition regressions pass; exact hosted build and real provider mission pending |
 | `GHUCP-008` | `GH-UCP-005` | Provider metadata and homes remain owner scoped and secrets never enter the runtime database | API, filesystem, DB | Control-plane tests + secret scan | 2026-08-05 PARTIAL: owner-scope tests plus local private-mode and credential-removal checks passed |
-| `GHUCP-009` | `GH-UCP-006` | A mission uses only its selected compatible account and releases its lease | Worker, provider home | Mission tests + live worker | 2026-08-10 PARTIAL: focused source tests prove exact Docker config-home projection, rootless-worker ACL/access verification, sole-Ready personal-only launch selection, stale-mount cleanup, short heartbeat recovery, and cleanup before lease release; real provider mission pending |
+| `GHUCP-009` | `GH-UCP-006` | A mission uses only its selected compatible account and releases its lease | Worker, provider home | Mission tests + live worker | 2026-08-10 PARTIAL: a real Codex mission completed but exposed cleanup quarantine and rollout-home continuity failures; structural recovery and phase-local persistence regressions pass, exact hosted recovery plus a second mission remain pending |
 | `GHUCP-010` | `GH-UCP-006` | Required/busy/unsupported account states fail closed; preferred policy preserves legacy compatibility | Browser, worker | Mission/policy tests | 2026-08-06 PARTIAL: focused source tests prove the multi-user per-worker-container gate and unchanged preferred/legacy fallbacks; installed supported/unsupported platform matrix pending |
 | `GHUCP-011` | `GH-UCP-007` | User creates and finds a private, human-named workspace | Browser, API, DB | Catalog tests + Playwright | 2026-08-10 PARTIAL: authenticated-session opaque launch handoff and owner-isolation regressions pass; exact installed browser mission, provider result, and two-user path remain open |
 | `GHUCP-012` | `GH-UCP-007` | Rename, favorite, resume, refresh, and restart preserve workspace identity and state | Browser, workspace desktop | Catalog/UI tests + restart QA | 2026-08-09 PARTIAL: hosted session/workspace catalog survived UI restart and local-auth rollback; compute/profile continuity remains open |
@@ -35,7 +35,7 @@ most specific existing QA owner when a scenario already has a detailed provider 
 | `GHUCP-024` | `GH-UCP-015` | Viventium direct GlassHive conversations keep session, tools, activity, cancellation, and channels | Web, channel, voice, scheduler | Core-provider QA | PENDING for this candidate |
 | `GHUCP-025` | `GH-UCP-016` | Cross-user access and public-data leakage fail closed across every surface | Browser, API, MCP, repo | Security tests + public scan | 2026-08-05 PARTIAL: synthetic scope tests only |
 | `GHUCP-026` | `GH-UCP-017` | Nested source, parent pin, bootstrap, compiler, launcher, and installed process all identify one build | Installer, helper, runtime | Release/installer cases | 2026-08-09 PARTIAL: exact merged parent/nested provenance reached the installed canary and browser; clean public bootstrap remains open |
-| `GHUCP-027` | `GH-UCP-017` | Fresh install, upgrade, restart, restore, and rollback preserve user state and compatibility | Installer, browser, runtime | Clean-room and continuity QA | 2026-08-09 PARTIAL: canary restart plus local-auth flag-off/session-revocation/re-enable passed; full clean install/upgrade/restore remains open |
+| `GHUCP-027` | `GH-UCP-017` | Fresh install, upgrade, restart, restore, and rollback preserve user state and compatibility | Installer, browser, runtime | Clean-room and continuity QA | 2026-08-10 PARTIAL: an escaped rollout retained account rows but stranded the provider home in the prior candidate; synthetic predecessor import, rollback/recovery, metadata, and stale-mount gates pass, exact hosted rerun remains open |
 | `GHUCP-028` | `GH-UCP-018` | Supported worker update preserves native skills/plugins/browser/project instructions and quality | Worker, browser, MCP | Preflight + wildcard QA | PENDING |
 | `GHUCP-029` | `GH-UCP-018` | Catalog, setup, resume, duplicate, schedule, and delivery remain useful and responsive at scale | Browser, API, worker | Timing/load + quality scoring | PENDING |
 | `GHUCP-030` | `GH-UCP-002`–`004`, `017` | Hosted browser, MCP, JWKS, and private runtime routes reach only their owning security contexts | Browser, edge, MCP, API | Route/header probes + real clients | 2026-08-09 PARTIAL: real hosted local login/CSRF-negative/stable-listener isolation passed; spoof and real MCP-client matrix remains open |
@@ -281,18 +281,24 @@ most specific existing QA owner when a scenario already has a detailed provider 
   lease renewal interval.
 - Steps: launch with selected account; inspect runtime environment/home; start a concurrent mission;
   allow token refresh; complete/fail/cancel the first run; start again; simulate stale lease.
+- Escape regression: finish a rootless run that writes mapped-UID descendants, leave a running,
+  paused, or restarting recognized worker container with the exact provider-home bind mount but no
+  open credential file, and begin rollout. State mutation must remain blocked until that process is
+  stopped; an already exited container's historical mount metadata must not permanently block the
+  rollout.
 - Expected result: only selected native home is projected; concurrent run gets actionable busy state;
   refresh writes back safely; lease releases on every terminal path; stale lease recovers.
 - Forbidden result: global auth copied, wrong provider accepted, lease ends before mission, stuck lease,
-  or second user obtains the account.
+  account row survives while its home disappears, an active bind mount escapes quiescence, an exited
+  container permanently blocks rollout, or a second user obtains the account.
 - Evidence to capture: worker command/env sans secrets, lease timeline, provider-home hash/metadata,
   run outcomes.
 - Full-view evidence minimum: real native worker mission and concurrency/recovery proof.
 - Automation: `test_mission_provider_accounts.py`.
-- Last run: PARTIAL 2026-08-10; the mission/account suite plus executable browser-policy regression
-  prove a pre-existing sole Ready compatible account is sent explicitly under `personal_required`
-  and temporary unsupported-profile selection cannot leave deployment fallback enabled. Real
-  provider execution, lease observation, and credential-home evidence remain open.
+- Last run: PARTIAL 2026-08-10; source regressions prove explicit phase-local provider roots,
+  recursive descriptor checks, and fail-closed rootless bind-mount inspection. A prior real Codex
+  mission completed but its cleanup and following rollout exposed the incident; installed recovery,
+  second mission, released lease, and persisted-home evidence remain open.
 
 ## `GHUCP-010` — Account Policy and Platform Gates
 
@@ -703,8 +709,9 @@ most specific existing QA owner when a scenario already has a detailed provider 
 - Full-view evidence minimum: clean bootstrap through supported entrypoint and installed user smoke.
 - Automation: release/bootstrap/compiler/installer suites plus provenance checks.
 - Last run: PARTIAL 2026-08-10; the parent candidate pins merged GlassHive
-  `e9429b1f3d42559ee71bea63a54eb02d01b8744b`, whose merge tree equals the reviewed shared-ref,
-  authenticated-handoff, account-UX, and prepared-state compatibility heads. Sealed canary provenance,
+  `7397d626daeff70b659f2d73def2045afd27de3f`, whose merge tree equals the reviewed shared-ref,
+  authenticated-handoff, account-UX, prepared-state compatibility, provider-account recovery, and
+  provider-home continuity heads. Sealed canary provenance,
   installed post-fix real-browser UX, and a fresh public bootstrap/install in a new directory remain open
   for this exact pair.
 
@@ -716,18 +723,26 @@ most specific existing QA owner when a scenario already has a detailed provider 
 - Steps: fresh install; create user/workspace/account metadata/connection/Library grant/schedule;
   upgrade; restart; resume; inspect all state; inject failed upgrade; roll back/recover; uninstall or
   cleanup via supported workflow.
+- Include a predecessor whose account database row is canonical but whose provider home remains in
+  the prior candidate. Keep the canonical provider root absent, then upgrade, inject failure after
+  materialization, and recover the exact journal.
 - Expected result: clean install works without private dependency; upgrade preserves supported state;
-  failure is transactional/recoverable; secrets remain outside git/install artifacts.
+  the predecessor home is atomically materialized before candidate clone; numeric uid/gid, content,
+  modes, xattrs, and ACLs survive; failure restores exact prior presence/absence; secrets remain
+  outside git/install artifacts.
 - Forbidden result: protected/private repo dependency, owner home credential required, state loss,
-  duplicate scheduler, stale artifact, or destructive rollback.
+  provider row without its home, ownership/ACL flattening, duplicate scheduler, stale artifact, or
+  destructive rollback.
 - Evidence to capture: installer/doctor/browser results, before/after state hashes/counts, process/build
   provenance, recovery report, public scan.
 - Full-view evidence minimum: fresh directory plus real installed browser and restart/upgrade path.
 - Automation: installer, continuity, stable-runtime, and release-readiness suites.
-- Last run: PARTIAL 2026-08-09; a real canary UI restart preserved the local session, and the reviewed
+- Last run: PARTIAL 2026-08-10; a real canary UI restart preserved the local session, and the reviewed
   flag-off rollback revoked that session and hid the form while keeping organization sign-in and
-  stable-listener behavior intact. Re-enabling restored login and the existing workspace record.
-  Fresh install, full upgrade, database restore, and preceding-binary rollback remain open.
+  stable-listener behavior intact. Re-enabling restored login and the existing workspace record. A
+  later rollout exposed provider-home discontinuity; source-level predecessor import and exact
+  recovery now pass, but the hosted rerun, fresh install, full restore, and preceding-binary rollback
+  remain open.
 
 ## `GHUCP-028` — Worker/Bootstrap Upgrade without Capability Loss
 

@@ -191,7 +191,8 @@ sudo install -o root -g glasshive-gateway-secrets -m 0640 \
 
 The rollout helper owns two non-secret slot files, both `0640`:
 
-- `runtime-active.env`: runtime port, state/database paths, rootless socket, phase-specific
+- `runtime-active.env`: runtime port, state/database paths, the explicit phase-local
+  `GLASSHIVE_PROVIDER_ACCOUNT_HOME_ROOT`, rootless socket, phase-specific
   background-consumer/reconciliation policy, and immutable release provenance;
 - `gateway-active.env`: MCP/UI ports, runtime loopback URLs, auth database path, watch-session
   state beside that database under the writable state root, and the same immutable release
@@ -383,10 +384,13 @@ and named check results only—never credentials, cookies, user data, database r
 
 ### State adapter
 
-Actions are `snapshot`, `clone`, `seal_clone`, `restore`, `commit`, and `cleanup_clone`.
+Actions are `snapshot`, `materialize_live`, `clone`, `seal_clone`, `restore`, `commit`, and
+`cleanup_clone`.
 
 - `snapshot` runs only after all writers are proven stopped. It snapshots associated non-database
-  state plus the declared phase-local shared short-reference directory and returns
+  state plus the declared phase-local shared short-reference directory, the canonical provider-home
+  tree, and a distinct predecessor provider-home tree when the previous slot points into an older
+  candidate. It returns
   `{"ok":true,"snapshot_id":"..."}`. The two primary declared SQLite paths are excluded because the
   rollout helper backs them up with SQLite's backup API; the shared short-reference SQLite state remains
   part of the adapter snapshot/restore contract. This snapshot must complete before the rollout
@@ -399,18 +403,35 @@ Actions are `snapshot`, `clone`, `seal_clone`, `restore`, `commit`, and `cleanup
   Before normalization, SQLite/WAL/SHM ownership may be `root`, `glasshive-runtime`, or
   `glasshive-gateway`; no other owner is accepted, and group/mode must remain
   `glasshive-state 0660`.
+- Provider-account state is a first-class phase-local tree. The contract preserves exact file
+  content, numeric uid/gid, modes, extended attributes, and POSIX access/default ACLs. Only
+  directories and single-linked regular files are accepted; symlinks, hard links, sockets, devices,
+  FIFOs, and other special entries fail the action atomically. Exact prior absence is state too.
+  Before each initial snapshot, post-rehearsal inspection, and rollback restore, the helper scans
+  every descendant inode for open descriptors and independently inspects all recognized rootless
+  `wpr-*` containers. Any running, paused, or restarting container with a bind mount at or below a
+  declared provider tree blocks mutation even when it currently holds no credential file
+  descriptor. Exited containers retain only historical mount metadata and do not block rollout.
+- `materialize_live` runs only after the snapshot receipt is durably journaled. It atomically copies
+  the predecessor tree into the canonical live path without changing the source, or materializes an
+  empty `glasshive-runtime:glasshive-state 0700` root when the predecessor was absent. If source and
+  destination are already the same path, it validates in place rather than copying a directory onto
+  itself. It returns `materialize_live_id`; process loss after this action is recovered from the
+  already-journaled snapshot.
 - `clone` materializes the snapshot into the supplied empty candidate state directory without
   signing keys or secret gateway configuration, creates every declared candidate database parent
   with the requested runtime-shared or gateway-only access boundary, leaves the candidate root as
-  `root:glasshive-state 0770`, and returns `clone_id`.
+  `root:glasshive-state 0770`, copies the now-canonical provider tree into its declared phase-local
+  path with the exact metadata contract above, and returns `clone_id`.
 - `seal_clone` runs after the helper has copied the SQLite backups. It applies and verifies the
   declared `0660` shared-ref and `0600` gateway-only ownership/modes, proves the runtime identity
   cannot traverse/read the auth database, verifies the short-reference child is
   `root:glasshive-state 02770` on Linux (`0770` on non-Linux local development) and its SQLite,
   WAL, and SHM files are `root:glasshive-state 0660`, and returns
-  `seal_clone_id`.
+  `seal_clone_id`. It also verifies the candidate provider tree against the declared contract.
 - `restore` transactionally restores associated state and returns `restore_id`. It must not open or
-  overwrite the declared SQLite paths.
+  overwrite the declared SQLite paths. It restores the canonical and predecessor provider paths to
+  their exact pre-rollout content/metadata or absence.
 - `commit` records retention of the pre-upgrade snapshot and returns `commit_id`; it must not destroy
   rollback evidence before the rollout journal is terminal.
 - `cleanup_clone` safely removes only the adapter-owned candidate clone and returns
@@ -418,6 +439,11 @@ Actions are `snapshot`, `clone`, `seal_clone`, `restore`, `commit`, and `cleanup
 
 An adapter action that exits nonzero must be atomic: it may not report failure after changing live
 state. All state receipts are local, owner-only deployment artifacts.
+
+The `provider_account_state_persisted` acceptance check is structural: it proves every copied
+account row still resolves to the same phase-local provider home and that the tree metadata contract
+holds. Candidate rehearsal must not invoke a provider login/refresh against copied credentials,
+because a rotating upstream refresh token could invalidate the untouched live predecessor.
 
 ### Ingress adapter
 
@@ -500,13 +526,17 @@ The transaction is:
 
 1. verify both immutable manifests, distinct port slots, rootless Docker, predecessor local
    readiness, ingress identity, and full hosted acceptance;
-2. explicitly stop UI, MCP, and runtime; prove all units inactive and scan `/proc/*/fd` for every
-   live database and committed WAL/SHM inode;
-3. snapshot associated state; use SQLite's backup API for each database; restore-test it; run
+2. explicitly stop UI, MCP, and runtime; prove all units inactive, prove no recognized rootless
+   worker retains a provider-home bind mount, and scan `/proc/*/fd` for every database, WAL/SHM, and
+   provider-tree descendant inode;
+3. snapshot associated state, including the canonical and any legacy candidate-scoped provider
+   home; durably journal the snapshot receipt; atomically materialize the canonical live provider
+   tree; use SQLite's backup API for each database; restore-test it; run
    `quick_check`, `integrity_check`, `foreign_key_check`, table counts, and hashed owner/tenant
    invariants;
-4. clone the snapshot and databases; point the sealed candidate at alternate loopback ports and
-   clone-only paths; disable all autonomous queue, schedule, callback, and lifecycle consumers;
+4. clone the snapshot and databases plus the canonical provider tree; point the sealed candidate at
+   alternate loopback ports and clone-only paths; disable all autonomous queue, schedule, callback,
+   and lifecycle consumers;
    start all three services; run local runtime/BFF/MCP/JWKS readiness plus the
    authenticated candidate adapter; stop the group and compare post-migration invariants;
 5. point the same candidate at the live databases while the predecessor remains stopped; enable

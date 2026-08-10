@@ -35,11 +35,11 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-
 HOSTED_MUTATION_LOCK = Path("/run/lock/glasshive-rollout.lock")
 LINK_REF_SHARED_STATE_DIR_NAME = "link-refs-shared"
 RUNTIME_LINK_REF_DATABASE_NAME = "link_refs.sqlite3"
 LINK_REF_SHARED_GROUP = "glasshive-state"
+PROVIDER_ACCOUNT_STATE_DIR_NAME = "provider_accounts"
 
 MANIFEST_NAME = "glasshive-release.json"
 RELEASE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$")
@@ -54,6 +54,7 @@ ALLOWED_ACTIVE_ENV_KEYS = {
     "GLASSHIVE_LINK_REF_SHARED_GROUP",
     "GLASSHIVE_MCP_PORT",
     "GLASSHIVE_PARENT_REVISION",
+    "GLASSHIVE_PROVIDER_ACCOUNT_HOME_ROOT",
     "GLASSHIVE_RECONCILE_ON_STARTUP",
     "GLASSHIVE_RELEASE_ID",
     "GLASSHIVE_RUNTIME_BASE_URL",
@@ -86,6 +87,7 @@ ACCEPTANCE_CHECKS: dict[str, tuple[str, ...]] = {
         "auth_callback_query_not_logged",
         "runtime_artifact_refs_writable",
         "cross_service_link_refs_resolvable",
+        "provider_account_state_persisted",
     ),
     "preflight": (
         "authenticated_mcp_initialize",
@@ -123,6 +125,7 @@ ACCEPTANCE_CHECKS: dict[str, tuple[str, ...]] = {
         "browser_csrf_header_preserved",
         "runtime_artifact_refs_writable",
         "cross_service_link_refs_resolvable",
+        "provider_account_state_persisted",
         "runtime_not_public",
         "runtime_release_provenance",
         "ui_release_provenance",
@@ -139,6 +142,7 @@ ACCEPTANCE_CHECKS: dict[str, tuple[str, ...]] = {
         "designed_root",
         "public_jwks",
         "spoof_headers_overwritten",
+        "provider_account_state_persisted",
         "runtime_not_public",
     ),
 }
@@ -774,7 +778,7 @@ def _relativize_editable_project_path(project: Path) -> Path:
     relative_source = os.path.relpath(source, start=site_root)
     if Path(relative_source).is_absolute() or (site_root / relative_source).resolve() != source:
         raise RolloutError("staged project editable source path is not safely relocatable")
-    _atomic_write(matches[0], f"{relative_source}\n".encode("utf-8"), mode=0o600)
+    _atomic_write(matches[0], f"{relative_source}\n".encode(), mode=0o600)
     return matches[0]
 
 
@@ -1152,16 +1156,41 @@ def _database_open_pids(paths: Sequence[Path]) -> dict[str, list[int]]:
     if not proc.is_dir():
         raise RolloutError("/proc is required to prove SQLite writer quiescence")
     targets: dict[tuple[int, int], str] = {}
+    entry_count = 0
+
+    def add_target(candidate: Path, *, label: str) -> None:
+        nonlocal entry_count
+        entry_count += 1
+        if entry_count > 100_000:
+            raise RolloutError("state quiescence scan exceeded its bounded entry limit")
+        try:
+            metadata = candidate.lstat()
+        except FileNotFoundError as exc:
+            raise RolloutError("state changed while proving writer quiescence") from exc
+        targets[(metadata.st_dev, metadata.st_ino)] = label
+
     for path in paths:
         if not path.exists():
             continue
-        metadata = path.stat()
-        targets[(metadata.st_dev, metadata.st_ino)] = str(path)
+        label = str(path)
+        add_target(path, label=label)
+        if path.is_dir() and not path.is_symlink():
+            for root, directories, files in os.walk(path, followlinks=False):
+                root_path = Path(root)
+                safe_directories: list[str] = []
+                for name in directories:
+                    child = root_path / name
+                    add_target(child, label=label)
+                    if not child.is_symlink():
+                        safe_directories.append(name)
+                directories[:] = safe_directories
+                for name in files:
+                    add_target(root_path / name, label=label)
+            continue
         for suffix in ("-wal", "-shm"):
             sidecar = Path(str(path) + suffix)
             if sidecar.exists():
-                sidecar_metadata = sidecar.stat()
-                targets[(sidecar_metadata.st_dev, sidecar_metadata.st_ino)] = str(path)
+                add_target(sidecar, label=label)
     matches: dict[str, list[int]] = {}
     for process in proc.iterdir():
         if not process.name.isdigit() or int(process.name) == os.getpid():
@@ -1341,14 +1370,123 @@ class ProductionSystem:
     def stop_group(self) -> None:
         self._run(["/usr/bin/systemctl", "stop", *GROUP_SERVICES])
 
-    def assert_stopped(self, database_paths: list[Path]) -> None:
+    def _run_rootless_docker(self, arguments: Sequence[str]) -> subprocess.CompletedProcess[str]:
+        try:
+            account = pwd.getpwnam(self.config.runtime_user)
+        except KeyError as exc:
+            raise RolloutError("runtime service user does not exist") from exc
+        runuser = next(
+            (path for path in ("/usr/sbin/runuser", "/sbin/runuser") if Path(path).is_file()),
+            None,
+        )
+        if not runuser or not Path("/usr/bin/docker").is_file():
+            raise RolloutError("rootless Docker inspection prerequisites are missing")
+        return self._run(
+            [
+                runuser,
+                "-u",
+                self.config.runtime_user,
+                "--",
+                "/usr/bin/env",
+                f"DOCKER_HOST=unix:///run/user/{account.pw_uid}/docker.sock",
+                "/usr/bin/docker",
+                *arguments,
+            ]
+        )
+
+    def _provider_account_bind_mounts(self, paths: Sequence[Path]) -> list[str]:
+        roots = tuple(Path(path).resolve(strict=False) for path in paths)
+        if not roots:
+            return []
+        listed = self._run_rootless_docker(
+            ["ps", "-aq", "--filter", "name=^/wpr-"]
+        )
+        container_ids = [
+            value.strip()
+            for value in str(listed.stdout or "").splitlines()
+            if value.strip()
+        ]
+        if any(
+            not re.fullmatch(r"[0-9a-f]{12,64}", container_id)
+            for container_id in container_ids
+        ):
+            raise RolloutError("rootless provider-container inspection returned an invalid id")
+        if len(container_ids) > 4096:
+            raise RolloutError("rootless provider-container inspection exceeded its bounded limit")
+        matches: set[str] = set()
+        for offset in range(0, len(container_ids), 128):
+            inspected = self._run_rootless_docker(
+                ["inspect", *container_ids[offset : offset + 128]]
+            )
+            try:
+                payload = json.loads(inspected.stdout or "[]")
+            except ValueError as exc:
+                raise RolloutError("rootless provider-container inspection returned invalid JSON") from exc
+            if not isinstance(payload, list):
+                raise RolloutError("rootless provider-container inspection returned invalid data")
+            if len(payload) != len(container_ids[offset : offset + 128]):
+                raise RolloutError("rootless provider-container inspection returned incomplete data")
+            requested_ids = container_ids[offset : offset + 128]
+            for entry in payload:
+                if not isinstance(entry, dict):
+                    raise RolloutError("rootless provider-container inspection returned invalid data")
+                inspected_id = str(entry.get("Id") or "")
+                if not inspected_id or not any(
+                    inspected_id.startswith(requested) or requested.startswith(inspected_id)
+                    for requested in requested_ids
+                ):
+                    raise RolloutError("rootless provider-container inspection returned mismatched data")
+                name = str(entry.get("Name") or "").lstrip("/")
+                if not name.startswith("wpr-"):
+                    continue
+                container_state = entry.get("State")
+                active_fields = ("Running", "Paused", "Restarting")
+                if not isinstance(container_state, dict) or any(
+                    not isinstance(container_state.get(field), bool)
+                    for field in active_fields
+                ):
+                    raise RolloutError(
+                        "rootless provider-container inspection returned invalid state data"
+                    )
+                if not any(container_state[field] for field in active_fields):
+                    # Exited containers retain historical bind metadata, but have no
+                    # process capable of mutating the provider tree.
+                    continue
+                mounts = entry.get("Mounts")
+                if not isinstance(mounts, list):
+                    raise RolloutError("rootless provider-container inspection omitted mount data")
+                for mount in mounts:
+                    if not isinstance(mount, dict) or str(mount.get("Type") or "") != "bind":
+                        continue
+                    source_value = str(mount.get("Source") or "")
+                    source = Path(source_value)
+                    if not source.is_absolute():
+                        raise RolloutError("rootless provider-container inspection returned an unsafe mount")
+                    resolved_source = source.resolve(strict=False)
+                    if any(
+                        resolved_source == root or resolved_source.is_relative_to(root)
+                        for root in roots
+                    ):
+                        matches.add(name)
+        return sorted(matches)
+
+    def assert_stopped(
+        self,
+        database_paths: list[Path],
+        *,
+        provider_account_paths: Sequence[Path] = (),
+    ) -> None:
         for service in GROUP_SERVICES:
             result = self._run(["/usr/bin/systemctl", "is-active", "--quiet", service], expected=(0, 3))
             if result.returncode == 0:
                 raise RolloutError(f"service did not stop: {service}")
-        open_pids = _database_open_pids(database_paths)
+        if self._provider_account_bind_mounts(provider_account_paths):
+            raise RolloutError(
+                "state writer quiescence failed; a rootless provider-account bind mount remains"
+            )
+        open_pids = _database_open_pids([*database_paths, *provider_account_paths])
         if open_pids:
-            raise RolloutError("SQLite writer quiescence failed; database still has open process descriptors")
+            raise RolloutError("state writer quiescence failed; a managed state path still has open descriptors")
 
     def prepare_shared_link_ref_state(self, state_dir: Path) -> Path:
         """Prepare the only SQLite state intentionally shared by runtime and gateway."""
@@ -1706,6 +1844,7 @@ def _active_values(
         "GLASSHIVE_STATE_DIR": str(state_dir),
         "GLASSHIVE_LINK_REF_STATE_PATH": str(shared_link_ref_state_path(state_dir)),
         "GLASSHIVE_LINK_REF_SHARED_GROUP": LINK_REF_SHARED_GROUP,
+        "GLASSHIVE_PROVIDER_ACCOUNT_HOME_ROOT": str(provider_account_state_path(state_dir)),
         "WPR_DB_PATH": str(database_paths["WPR_DB_PATH"]),
     }
     gateway = {
@@ -1729,6 +1868,78 @@ def shared_link_ref_state_path(state_dir: Path) -> Path:
         Path(state_dir)
         / LINK_REF_SHARED_STATE_DIR_NAME
         / RUNTIME_LINK_REF_DATABASE_NAME
+    )
+
+
+def provider_account_state_path(state_dir: Path) -> Path:
+    return Path(state_dir) / PROVIDER_ACCOUNT_STATE_DIR_NAME
+
+
+def _validated_provider_account_state_path(
+    config: RolloutConfig,
+    path: Path,
+    *,
+    field: str,
+) -> Path:
+    candidate = Path(path)
+    if not candidate.is_absolute() or candidate.name != PROVIDER_ACCOUNT_STATE_DIR_NAME:
+        raise RolloutError(f"{field} is not a managed provider-account directory")
+    resolved = _safe_child(config.state_dir, candidate, field=field)
+    if resolved != candidate or resolved.name != PROVIDER_ACCOUNT_STATE_DIR_NAME:
+        raise RolloutError(f"{field} contains an unsafe path indirection")
+    if candidate.is_symlink() or (candidate.exists() and not candidate.is_dir()):
+        raise RolloutError(f"{field} has an unsafe type")
+    return resolved
+
+
+def predecessor_provider_account_state_path(
+    config: RolloutConfig,
+    runtime_environment: Mapping[str, str],
+) -> Path:
+    explicit = str(
+        runtime_environment.get("GLASSHIVE_PROVIDER_ACCOUNT_HOME_ROOT") or ""
+    ).strip()
+    if explicit:
+        candidate = Path(explicit)
+    else:
+        database_value = str(runtime_environment.get("WPR_DB_PATH") or "").strip()
+        database = Path(database_value)
+        if not database.is_absolute():
+            raise RolloutError("predecessor runtime database path is missing or unsafe")
+        candidate = database.parent / PROVIDER_ACCOUNT_STATE_DIR_NAME
+    return _validated_provider_account_state_path(
+        config,
+        candidate,
+        field="predecessor provider-account home",
+    )
+
+
+def _provider_account_state_contract_for_path(
+    config: RolloutConfig,
+    path: Path,
+) -> dict[str, object]:
+    return {
+        "path": str(path),
+        "owner": config.runtime_user,
+        "group": LINK_REF_SHARED_GROUP,
+        "directory_mode": "0700",
+        "contents": "directories_regular_files_only",
+        "reject_hard_links": True,
+        "preserve_numeric_uid_gid": True,
+        "preserve_mode": True,
+        "preserve_xattrs": True,
+        "preserve_posix_acl": True,
+        "preserve_absence": True,
+    }
+
+
+def provider_account_state_contract(
+    config: RolloutConfig,
+    state_dir: Path,
+) -> dict[str, object]:
+    return _provider_account_state_contract_for_path(
+        config,
+        provider_account_state_path(state_dir),
     )
 
 
@@ -1945,14 +2156,33 @@ def _rollback(
     state_clone_ready: bool,
     ingress_switched: bool,
     absent_before: set[str],
+    predecessor_provider_account_home: Path,
 ) -> None:
     _journal_write(transaction, journal, "rolling_back")
     system.stop_group()
+    canonical_provider_account_home = _validated_provider_account_state_path(
+        config,
+        provider_account_state_path(config.state_dir),
+        field="canonical provider-account home",
+    )
+    provider_account_paths = {
+        canonical_provider_account_home,
+        predecessor_provider_account_home,
+    }
+    candidate_state_value = str(journal.get("candidate_state_dir") or "")
+    if candidate_state_value:
+        candidate_state = _safe_child(
+            config.candidate_state_root,
+            Path(candidate_state_value),
+            field="candidate state directory",
+        )
+        provider_account_paths.add(provider_account_state_path(candidate_state))
     system.assert_stopped(
         [
             *(database.path for database in config.databases),
             shared_link_ref_state_path(config.state_dir),
-        ]
+        ],
+        provider_account_paths=sorted(provider_account_paths),
     )
     if ingress_switched:
         adapters.call_ingress(
@@ -1972,6 +2202,18 @@ def _rollback(
                 "database_paths": [str(database.path) for database in config.databases],
                 "shared_link_ref_state": shared_link_ref_state_contract(
                     config, config.state_dir
+                ),
+                "provider_account_state": provider_account_state_contract(
+                    config, config.state_dir
+                ),
+                "predecessor_provider_account_state": (
+                    _provider_account_state_contract_for_path(
+                        config,
+                        predecessor_provider_account_home,
+                    )
+                ),
+                "provider_state_materialize_id": str(
+                    journal.get("provider_state_materialize_id") or ""
                 ),
             },
         )
@@ -2002,7 +2244,6 @@ def _rollback(
         {"previous_release_id": previous_release_id, "release_id": previous_release_id},
     )
     if state_clone_ready:
-        candidate_state_value = str(journal.get("candidate_state_dir") or "")
         adapters.call_state(
             "cleanup_clone",
             {
@@ -2058,6 +2299,15 @@ def execute_rollout(
         gateway_env_mode = stat.S_IMODE(config.gateway_active_env.stat().st_mode)
         runtime_env = read_active_environment(config.runtime_active_env)
         gateway_env = read_active_environment(config.gateway_active_env)
+        predecessor_provider_account_home = predecessor_provider_account_state_path(
+            config,
+            runtime_env,
+        )
+        canonical_provider_account_home = _validated_provider_account_state_path(
+            config,
+            provider_account_state_path(config.state_dir),
+            field="canonical provider-account home",
+        )
         previous_ports = _ports_from_environments(runtime_env, gateway_env)
         validate_candidate_ports(config.candidate_ports, previous_ports)
 
@@ -2082,6 +2332,9 @@ def execute_rollout(
             "ingress_snapshot_id": str(ingress.get("snapshot_id") or ""),
             "runtime_active_env_mode": runtime_env_mode,
             "gateway_active_env_mode": gateway_env_mode,
+            "predecessor_provider_account_home": str(
+                predecessor_provider_account_home
+            ),
             "created_at_unix": time.time(),
         }
         _journal_write(transaction, journal, "prepared")
@@ -2100,7 +2353,13 @@ def execute_rollout(
                 [
                     *(database.path for database in config.databases),
                     shared_link_ref_state_path(config.state_dir),
-                ]
+                ],
+                provider_account_paths=sorted(
+                    {
+                        canonical_provider_account_home,
+                        predecessor_provider_account_home,
+                    }
+                ),
             )
             _journal_write(transaction, journal, "live_stopped")
 
@@ -2114,11 +2373,62 @@ def execute_rollout(
                     "shared_link_ref_state": shared_link_ref_state_contract(
                         config, config.state_dir
                     ),
+                    "provider_account_state": provider_account_state_contract(
+                        config, config.state_dir
+                    ),
+                    "predecessor_provider_account_state": (
+                        _provider_account_state_contract_for_path(
+                            config,
+                            predecessor_provider_account_home,
+                        )
+                    ),
                 },
             )
+            state_snapshot_id = str(state_snapshot.get("snapshot_id") or "")
+            if not state_snapshot_id:
+                raise RolloutError("state adapter did not return a durable snapshot receipt")
             state_snapshot_ready = True
-            journal["state_snapshot_id"] = str(state_snapshot.get("snapshot_id") or "")
+            journal["state_snapshot_id"] = state_snapshot_id
             _journal_write(transaction, journal, "state_snapshotted")
+            provider_materialization = adapters.call_state(
+                "materialize_live",
+                {
+                    "snapshot_id": str(journal.get("state_snapshot_id") or ""),
+                    "source_provider_account_state": (
+                        _provider_account_state_contract_for_path(
+                            config,
+                            predecessor_provider_account_home,
+                        )
+                    ),
+                    "live_provider_account_state": provider_account_state_contract(
+                        config,
+                        config.state_dir,
+                    ),
+                    "source_present": predecessor_provider_account_home.is_dir(),
+                    "live_present_before": canonical_provider_account_home.is_dir(),
+                    "source_is_live": (
+                        predecessor_provider_account_home
+                        == canonical_provider_account_home
+                    ),
+                    "source_must_remain_unchanged": True,
+                },
+            )
+            provider_state_materialize_id = str(
+                provider_materialization.get("materialize_live_id") or ""
+            )
+            if not provider_state_materialize_id:
+                raise RolloutError(
+                    "state adapter did not return a provider-state materialization receipt"
+                )
+            journal["provider_state_materialize_id"] = provider_state_materialize_id
+            _journal_write(transaction, journal, "provider_state_materialized")
+            if (
+                not canonical_provider_account_home.is_dir()
+                or canonical_provider_account_home.is_symlink()
+            ):
+                raise RolloutError(
+                    "state adapter did not materialize safe live provider-account state"
+                )
             shared_ref_state = system.prepare_shared_link_ref_state(config.state_dir)
             migrate_legacy_link_ref_state(
                 shared_ref_state,
@@ -2171,11 +2481,27 @@ def execute_rollout(
                         }
                         for database in config.databases
                     ],
+                    "live_provider_account_state": provider_account_state_contract(
+                        config, config.state_dir
+                    ),
+                    "candidate_provider_account_state": provider_account_state_contract(
+                        config, candidate_state
+                    ),
                 },
             )
             journal["state_clone_id"] = str(state_clone.get("clone_id") or "")
             if not candidate_state.is_dir() or candidate_state.is_symlink():
                 raise RolloutError("state adapter did not materialize a safe candidate state directory")
+            candidate_provider_account_home = provider_account_state_path(
+                candidate_state
+            )
+            if (
+                not candidate_provider_account_home.is_dir()
+                or candidate_provider_account_home.is_symlink()
+            ):
+                raise RolloutError(
+                    "state adapter did not materialize candidate provider-account state"
+                )
             candidate_databases: dict[str, Path] = {}
             for database in config.databases:
                 candidate_path = _safe_child(
@@ -2216,6 +2542,9 @@ def execute_rollout(
                     "shared_link_ref_state": shared_link_ref_state_contract(
                         config, candidate_state
                     ),
+                    "provider_account_state": provider_account_state_contract(
+                        config, candidate_state
+                    ),
                 },
             )
             journal["state_seal_id"] = str(clone_seal.get("seal_clone_id") or "")
@@ -2243,7 +2572,10 @@ def execute_rollout(
                 [
                     *candidate_databases.values(),
                     shared_link_ref_state_path(candidate_state),
-                ]
+                ],
+                provider_account_paths=[
+                    provider_account_state_path(candidate_state)
+                ],
             )
 
             after_receipts: dict[str, dict[str, object]] = {}
@@ -2311,6 +2643,9 @@ def execute_rollout(
                     "shared_link_ref_state": shared_link_ref_state_contract(
                         config, config.state_dir
                     ),
+                    "provider_account_state": provider_account_state_contract(
+                        config, config.state_dir
+                    ),
                 },
             )
             journal["state_commit_id"] = str(state_commit.get("commit_id") or "")
@@ -2348,6 +2683,9 @@ def execute_rollout(
                     state_clone_ready=state_clone_ready,
                     ingress_switched=ingress_switched,
                     absent_before=absent_before,
+                    predecessor_provider_account_home=(
+                        predecessor_provider_account_home
+                    ),
                 )
             # Recovery must also journal failures raised while handling process-loss signals.
             except BaseException as rollback_error:  # noqa: BLE001
@@ -2409,6 +2747,20 @@ def _recover_rollout_locked(
         read_active_environment(runtime_before),
         read_active_environment(gateway_before),
     )
+    predecessor_provider_account_home_value = str(
+        journal.get("predecessor_provider_account_home") or ""
+    )
+    if predecessor_provider_account_home_value:
+        predecessor_provider_account_home = _validated_provider_account_state_path(
+            config,
+            Path(predecessor_provider_account_home_value),
+            field="predecessor provider-account home",
+        )
+    else:
+        predecessor_provider_account_home = predecessor_provider_account_state_path(
+            config,
+            read_active_environment(runtime_before),
+        )
     backups = {
         database.name: transaction / "backup" / f"{database.name}.sqlite3"
         for database in config.databases
@@ -2450,6 +2802,7 @@ def _recover_rollout_locked(
         state_clone_ready=bool(journal.get("candidate_state_dir")),
         ingress_switched=ingress_attempted,
         absent_before=absent_before,
+        predecessor_provider_account_home=predecessor_provider_account_home,
     )
     return {
         "status": "rolled_back",
