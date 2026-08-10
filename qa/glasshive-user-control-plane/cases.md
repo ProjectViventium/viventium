@@ -15,9 +15,9 @@ most specific existing QA owner when a scenario already has a detailed provider 
 | `GHUCP-004` | `GH-UCP-003` | Runtime sees the correct user/tenant/role/scope and rejects cross-user or unsigned writes | Gateway, API | Assertion/API tests | 2026-08-05 PARTIAL: focused tests only |
 | `GHUCP-005` | `GH-UCP-004` | User copies an official command and connects Codex and Claude to the hosted MCP | Browser, Codex, Claude | MCP OAuth tests + real clients | 2026-08-05 PARTIAL: metadata/command tests only |
 | `GHUCP-006` | `GH-UCP-004` | Wrong audience, tenant, scope, expired token, or missing OAuth config fails loud | MCP clients, API | MCP OAuth tests | 2026-08-05 PARTIAL: focused tests only |
-| `GHUCP-007` | `GH-UCP-005` | User connects, tests, selects, reconnects, disconnects, and forgets a personal provider account | Browser, MCP, native harness | Control-plane tests + real provider | 2026-08-10 PARTIAL: capability-driven setup, automatic first-account default, sole-Ready selection, policy-transition, post-verification reseal, and verification-lease renewal regressions pass; exact hosted recovery and real provider mission pending |
+| `GHUCP-007` | `GH-UCP-005` | User connects, tests, selects, reconnects, disconnects, and forgets a personal provider account | Browser, MCP, native harness | Control-plane tests + real provider | 2026-08-10 PARTIAL: capability-driven setup, automatic first-account default, sole-Ready selection, policy-transition, post-verification reseal, verification-lease renewal, and Codex runtime-metadata regressions pass; exact installed real-provider mission pending |
 | `GHUCP-008` | `GH-UCP-005` | Provider metadata and homes remain owner scoped and secrets never enter the runtime database | API, filesystem, DB | Control-plane tests + secret scan | 2026-08-05 PARTIAL: owner-scope tests plus local private-mode and credential-removal checks passed |
-| `GHUCP-009` | `GH-UCP-006` | A mission uses only its selected compatible account and releases its lease | Worker, provider home | Mission tests + live worker | 2026-08-10 PARTIAL: a real Codex mission completed but exposed cleanup quarantine and rollout-home continuity failures; structural recovery, phase-local persistence, and renewable exclusive verification regressions pass, exact hosted recovery plus a second mission remain pending |
+| `GHUCP-009` | `GH-UCP-006` | A mission uses only its selected compatible account and releases its lease | Worker, provider home | Mission tests + live worker | 2026-08-10 PARTIAL: real Codex runs exposed cleanup, continuity, and CLI runtime-metadata ownership failures; structural recovery, phase-local persistence, renewable verification, and rootless metadata smoke pass, but the exact installed second mission remains pending |
 | `GHUCP-010` | `GH-UCP-006` | Required/busy/unsupported account states fail closed; preferred policy preserves legacy compatibility | Browser, worker | Mission/policy tests | 2026-08-06 PARTIAL: focused source tests prove the multi-user per-worker-container gate and unchanged preferred/legacy fallbacks; installed supported/unsupported platform matrix pending |
 | `GHUCP-011` | `GH-UCP-007` | User creates and finds a private, human-named workspace | Browser, API, DB | Catalog tests + Playwright | 2026-08-10 PARTIAL: authenticated-session opaque launch handoff and owner-isolation regressions pass; exact installed browser mission, provider result, and two-user path remain open |
 | `GHUCP-012` | `GH-UCP-007` | Rename, favorite, resume, refresh, and restart preserve workspace identity and state | Browser, workspace desktop | Catalog/UI tests + restart QA | 2026-08-09 PARTIAL: hosted session/workspace catalog survived UI restart and local-auth rollback; compute/profile continuity remains open |
@@ -295,11 +295,19 @@ most specific existing QA owner when a scenario already has a detailed provider 
   rootless cleanup. Sealing must unlink the entry without following or changing its external target,
   then normalize the remaining real directories/files. Hardlinks, special files, traversal outside
   the mounted provider home, and any unlink failure must still fail closed.
+- Escape regression: start Codex 0.146.1 from a correctly resealed rootless account tree containing
+  `CODEX_HOME/installation_id` at `0600` and `CODEX_HOME/tmp/arg0` at `0700`. Before the CLI starts,
+  transfer ownership only for those exact non-secret runtime metadata paths and restore Codex's
+  required `0644`/`0700` modes without deleting an existing arg0 helper. Repeat the readiness grant,
+  complete the mission, then remove the container and reseal every directory/file to service-owned
+  `0700`/`0600` before lease release.
 - Expected result: only selected native home is projected; concurrent run gets actionable busy state;
   refresh writes back safely; lease releases on every terminal path; stale lease recovers.
 - Forbidden result: global auth copied, wrong provider accepted, lease ends before mission, stuck lease,
   account row survives while its home disappears, an active bind mount escapes quiescence, an exited
-  container permanently blocks rollout, or a second user obtains the account.
+  container permanently blocks rollout, Codex reports `Operation not permitted` while creating its
+  installation ID or argument aliases, readiness deletes a live arg0 helper, or a second user obtains
+  the account.
 - Evidence to capture: worker command/env sans secrets, lease timeline, provider-home hash/metadata,
   run outcomes.
 - Full-view evidence minimum: real native worker mission and concurrency/recovery proof.
@@ -307,8 +315,10 @@ most specific existing QA owner when a scenario already has a detailed provider 
 - Last run: PARTIAL 2026-08-10; source regressions prove effective base/active EnvironmentFile
   precedence, explicit phase-local provider roots, recursive descriptor checks, fail-closed rootless
   bind-mount inspection, and non-following cleanup of provider-created private symlink entries. A
-  prior real Codex mission completed but its cleanup and following rollout exposed the incident;
-  exact installed recovery, second mission, released lease, and persisted-home evidence remain open.
+  prior real Codex mission completed but its cleanup and following rollout exposed the incident. A
+  rootless smoke on the hosted worker image reproduced the old Codex permission failure, then reached
+  `thread.started` after the structured metadata handoff and proved private cleanup reseal. The exact
+  merged installed mission, released lease, artifact, and persisted-home evidence remain open.
 
 ## `GHUCP-010` — Account Policy and Platform Gates
 
@@ -719,10 +729,10 @@ most specific existing QA owner when a scenario already has a detailed provider 
 - Full-view evidence minimum: clean bootstrap through supported entrypoint and installed user smoke.
 - Automation: release/bootstrap/compiler/installer suites plus provenance checks.
 - Last run: PARTIAL 2026-08-10; the parent candidate pins merged GlassHive
-  `ea6e864c61af4182c9fb278380c280b56bd0af3a`, whose merge tree equals the reviewed shared-ref,
+  `7f4af03e4c97c5e14221e7169369bf39c880b409`, whose merge tree equals the reviewed shared-ref,
   authenticated-handoff, account-UX, prepared-state compatibility, provider-account recovery,
   provider-home continuity, safe provider-cache symlink cleanup, valid repair-container mount syntax,
-  and renewable post-verification reseal heads. Sealed canary provenance,
+  renewable post-verification reseal, and Codex runtime-metadata heads. Sealed canary provenance,
   installed post-fix real-browser UX, and a fresh public bootstrap/install in a new directory remain open
   for this exact pair.
 
