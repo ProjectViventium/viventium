@@ -1076,6 +1076,75 @@ def test_link_refs_use_a_group_shared_nonpublic_directory(
     assert stat.S_IMODE(config.state_dir.stat().st_mode) == 0o770
 
 
+def test_shared_link_ref_preparation_normalizes_trusted_service_owned_files(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    config, _runtime_db, _previous = _deployment_fixture(tmp_path)
+    current_user = pwd.getpwuid(os.geteuid()).pw_name
+    config.runtime_user = current_user
+    os.chown(config.state_dir, -1, os.getegid())
+    config.state_dir.chmod(0o770)
+    shared_dir = config.state_dir / rollout.LINK_REF_SHARED_STATE_DIR_NAME
+    shared_dir.mkdir(mode=0o770)
+    shared_dir.chmod(0o2770 if sys.platform.startswith("linux") else 0o770)
+    file_names = {
+        rollout.RUNTIME_LINK_REF_DATABASE_NAME,
+        f"{rollout.RUNTIME_LINK_REF_DATABASE_NAME}-wal",
+        f"{rollout.RUNTIME_LINK_REF_DATABASE_NAME}-shm",
+    }
+    for name in file_names:
+        path = shared_dir / name
+        path.touch(mode=0o660)
+        path.chmod(0o660)
+
+    service_uid = os.geteuid() + 1000
+    real_getpwnam = rollout.pwd.getpwnam
+
+    def fake_getpwnam(name: str):
+        if name in {current_user, "glasshive-gateway"}:
+            return SimpleNamespace(pw_uid=service_uid)
+        return real_getpwnam(name)
+
+    real_open = rollout.os.open
+    tracked_file_fds: set[int] = set()
+
+    def tracked_open(path, flags, mode=0o777, *, dir_fd=None):
+        descriptor = real_open(path, flags, mode, dir_fd=dir_fd)
+        if str(path) in file_names:
+            tracked_file_fds.add(descriptor)
+        return descriptor
+
+    real_fstat = rollout.os.fstat
+
+    def service_owned_fstat(descriptor: int):
+        metadata = real_fstat(descriptor)
+        if descriptor not in tracked_file_fds:
+            return metadata
+        return SimpleNamespace(
+            st_mode=metadata.st_mode,
+            st_uid=service_uid,
+            st_gid=os.getegid(),
+        )
+
+    normalized: list[tuple[int, int]] = []
+
+    def record_fchown(descriptor: int, owner: int, group: int) -> None:
+        if descriptor in tracked_file_fds:
+            normalized.append((owner, group))
+
+    monkeypatch.setattr(rollout.pwd, "getpwnam", fake_getpwnam)
+    monkeypatch.setattr(rollout.os, "open", tracked_open)
+    monkeypatch.setattr(rollout.os, "fstat", service_owned_fstat)
+    monkeypatch.setattr(rollout.os, "fchown", record_fchown)
+
+    rollout.ProductionSystem(config).prepare_shared_link_ref_state(config.state_dir)
+
+    assert normalized == [(os.geteuid(), os.getegid())] * 3
+    for name in file_names:
+        assert stat.S_IMODE((shared_dir / name).stat().st_mode) == 0o660
+
+
 def test_shared_link_ref_state_preserves_predecessor_gateway_refs(tmp_path: Path) -> None:
     config, _runtime_db, _previous = _deployment_fixture(tmp_path)
     config.runtime_user = pwd.getpwuid(os.geteuid()).pw_name
