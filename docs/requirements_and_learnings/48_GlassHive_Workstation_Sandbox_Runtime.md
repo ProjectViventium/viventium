@@ -1783,6 +1783,29 @@ runtime intent classifier.
   misconfigured.
   Raw `/v1/signed-links/{token}` compatibility URLs remain signed-token URLs and are not the
   durable user-facing contract.
+- In the hosted split-service topology, every process that creates a short reference must receive
+  the same phase-local shared-ref path. Runtime-created `/r/{ref}` workspace links are resolved by
+  the public UI, while UI/MCP-created refs may be resolved by runtime; separate local databases
+  therefore break the user-visible contract. The rollout places only this opaque ref store at
+  `GLASSHIVE_LINK_REF_STATE_PATH` for runtime and gateway, enables explicit shared mode through
+  `GLASSHIVE_LINK_REF_SHARED_GROUP=glasshive-state`, and keeps auth, watch, provider, workspace, and
+  worker state private to their existing owners. On Linux the shared-ref child is
+  `root:glasshive-state 02770`; SQLite/WAL/SHM remain `glasshive-state 0660` and may be owned only
+  by root, the runtime identity, or the gateway identity while services run. After all writers stop,
+  rollout preparation normalizes those files to root ownership. Neither non-owner service is
+  allowed to repair unsafe metadata.
+  The rollout must create or validate that child without changing the state root's
+  `root:glasshive-state 0770` boundary and must include it in snapshot/clone/restore. The live
+  snapshot receipt must be durably journaled before any child creation or metadata normalization so
+  preparation failure or process loss restores the exact predecessor state.
+  Upgrade migration merges predecessor gateway and runtime ref stores into the phase-local shared
+  store while preserving opaque ref ids. Identical duplicates are idempotent; conflicting ids fail
+  closed; predecessor files remain untouched for rollback. A transactional per-source migration
+  receipt prevents a later rollout from re-importing refs that the shared runtime has expired or
+  revoked. Rollback restores the predecessor snapshot without that receipt, so a later roll-forward
+  can import any refs legitimately created by the predecessor after rollback.
+  Runtime live/status reads must never fall back to the service account's home under the read-only
+  systemd filesystem, and rehearsal refs must never mutate live state.
 - Enterprise owner matching is configurable but strict by default. `GLASSHIVE_OWNER_IDENTITY_CLAIMS`
   defaults to `user_id`, so SSO deployments continue to compare the stored GlassHive owner against
   the trusted user assertion. Deployments whose browser auth and MCP/chat owner use different trusted
@@ -1826,10 +1849,9 @@ runtime intent classifier.
   workspace page if resume cannot be applied. Auto-resume must be paired with watch/session and
   idle-reaper caps so forgotten tabs do not run compute forever.
 - Runtime-created View / Steer refs that point at the separate GlassHive UI service require shared
-  link-ref state. Co-located runtime/UI processes should use the same
-  `GLASSHIVE_LINK_REF_STATE_PATH` SQLite file; split deployments must provide supported shared local
-  storage or route `/r/{ref}` to the process that created the ref. SQLite WAL must not be placed on
-  unsafe network filesystems.
+  link-ref state. Co-located and hosted split-service processes use the same phase-local
+  `GLASSHIVE_LINK_REF_STATE_PATH` SQLite file under the explicit shared-group contract above. SQLite
+  WAL must remain on the supported local filesystem; network SQLite is not supported.
 - `workspace_launch`, `workspace_wait`, and `workspace_status` default outputs are compact by
   design: they return user-actionable state, result tools, View / Steer/file short links, and
   output/error text, while raw project/worker/run ids and live diagnostic snapshots require an

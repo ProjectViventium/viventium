@@ -104,6 +104,17 @@ sudo install -d -o glasshive-gateway -g glasshive-gateway-secrets -m 0700 \
   /var/lib/glasshive/gateway
 ```
 
+The rollout-generated active environments keep private service databases inside their owning
+phase-specific roots. Short references are the sole shared exception because runtime-created
+workspace links are resolved by UI/MCP and refs created by UI/MCP may be resolved by runtime. The
+rollout gives both tiers the same phase-local `GLASSHIVE_LINK_REF_STATE_PATH` and explicit
+`GLASSHIVE_LINK_REF_SHARED_GROUP=glasshive-state`. It creates the shared-ref child as
+`root:glasshive-state 02770` on Linux and normalizes its stopped/prepared SQLite/WAL/SHM files to
+`root:glasshive-state 0660`, while the shared state root remains
+`root:glasshive-state 0770`. Auth, watch-session, provider, workspace, and worker databases remain
+private; do not point any service at its system account home or another service's private database
+directory.
+
 Install Docker's supported rootless prerequisites and assign the runtime user unique subordinate UID
 and GID ranges of at least 65,536 entries. Then install its user daemon and enable lingering:
 
@@ -375,14 +386,29 @@ and named check results only—never credentials, cookies, user data, database r
 Actions are `snapshot`, `clone`, `seal_clone`, `restore`, `commit`, and `cleanup_clone`.
 
 - `snapshot` runs only after all writers are proven stopped. It snapshots associated non-database
-  state and returns `{"ok":true,"snapshot_id":"..."}`. Declared SQLite paths are excluded because
-  the rollout helper backs them up with SQLite's backup API.
+  state plus the declared phase-local shared short-reference directory and returns
+  `{"ok":true,"snapshot_id":"..."}`. The two primary declared SQLite paths are excluded because the
+  rollout helper backs them up with SQLite's backup API; the shared short-reference SQLite state remains
+  part of the adapter snapshot/restore contract. This snapshot must complete before the rollout
+  durably journals its receipt and before the rollout creates or normalizes the live shared-ref
+  child, so an exception or process loss restores the exact predecessor absence, ownership, and
+  modes. Database-backup completion is journaled separately, so early recovery restores auxiliary
+  state without pretending not-yet-created database backups are missing. Initial snapshot,
+  post-rehearsal clone inspection, and rollback restore each prove that no process still has the
+  shared-ref DB or its WAL/SHM open, just as they do for the primary databases.
+  Before normalization, SQLite/WAL/SHM ownership may be `root`, `glasshive-runtime`, or
+  `glasshive-gateway`; no other owner is accepted, and group/mode must remain
+  `glasshive-state 0660`.
 - `clone` materializes the snapshot into the supplied empty candidate state directory without
   signing keys or secret gateway configuration, creates every declared candidate database parent
-  with the requested runtime-shared or gateway-only access boundary, and returns `clone_id`.
+  with the requested runtime-shared or gateway-only access boundary, leaves the candidate root as
+  `root:glasshive-state 0770`, and returns `clone_id`.
 - `seal_clone` runs after the helper has copied the SQLite backups. It applies and verifies the
-  declared `0660` runtime-shared and `0600` gateway-only ownership/modes, proves the runtime identity
-  cannot traverse/read the auth database, and returns `seal_clone_id`.
+  declared `0660` shared-ref and `0600` gateway-only ownership/modes, proves the runtime identity
+  cannot traverse/read the auth database, verifies the short-reference child is
+  `root:glasshive-state 02770` on Linux (`0770` on non-Linux local development) and its SQLite,
+  WAL, and SHM files are `root:glasshive-state 0660`, and returns
+  `seal_clone_id`.
 - `restore` transactionally restores associated state and returns `restore_id`. It must not open or
   overwrite the declared SQLite paths.
 - `commit` records retention of the pre-upgrade snapshot and returns `commit_id`; it must not destroy
@@ -431,7 +457,14 @@ the inspected ingress snapshot instead of assuming the switch did nothing.
 Actions `preflight`, `candidate`, `live`, and `rollback` return `checks` with boolean `true` for every
 required check. Candidate validation requires authenticated MCP initialize, browser identity flow,
 and the designed Glass Drive root on the alternate-port group. Candidate and live validation also
-prove that runtime, UI, and MCP report the exact staged manifest provenance. Live validation proves
+prove that runtime, UI, and MCP report the exact staged manifest provenance and that
+`runtime_artifact_refs_writable` creates and resolves a synthetic owner-scoped artifact ref through
+the runtime service identity at the declared shared-ref path without changing the state-root mode or
+using the service account home. `cross_service_link_refs_resolvable` then proves runtime-created
+workspace and artifact refs resolve through the public UI/MCP tier and that a UI/MCP-created ref
+resolves through runtime, using the same phase-local store while retaining tenant/owner checks.
+Signed-out browser artifact requests must recover through the login page with a safe return target;
+another owner receives a generic not-found result with no bytes. Live validation proves
 every named browser route family, including noVNC websocket upgrade, reaches the same Glass Drive
 release; both MCP routes reach MCP; MCP does not receive an `oauth2-proxy` HTML redirect; JWKS reaches
 the BFF; every named identity-header family is scrubbed; and
@@ -443,6 +476,12 @@ Preflight and rollback validate the preceding release under its
 existing supported route contract, allowing a fail-closed migration away from a legacy catch-all
 without pretending that the predecessor already has the candidate routes. Missing checks, mocked
 success, or a generic HTTP 200 fail closed.
+
+The first shared-ref rollout imports predecessor gateway/runtime ref stores transactionally and
+records a source-relative migration receipt inside the shared database. Later rollouts do not
+re-import a retired source, so normal expiry or worker revocation cannot resurrect a deleted ref.
+Rollback restores the predecessor snapshot, including the absence of that receipt, and leaves the
+legacy stores untouched for the predecessor release.
 
 ## Database rehearsal, cutover, and rollback
 
