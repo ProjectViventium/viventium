@@ -104,6 +104,14 @@ sudo install -d -o glasshive-gateway -g glasshive-gateway-secrets -m 0700 \
   /var/lib/glasshive/gateway
 ```
 
+The rollout-generated active environments keep each service's auxiliary SQLite state inside the
+same phase-specific writable root as its owning database. The rollout creates and validates a
+runtime-owned `0700` private child, and runtime artifact short references use
+`GLASSHIVE_LINK_REF_STATE_PATH` inside that child. The shared state root remains
+`root:glasshive-state 0770`; the runtime must never chmod that shared root. Gateway watch sessions
+and gateway short references remain beside `GLASSHIVE_AUTH_STATE_PATH`. Do not point either service
+at its system account home or at the other service's database directory.
+
 Install Docker's supported rootless prerequisites and assign the runtime user unique subordinate UID
 and GID ranges of at least 65,536 entries. Then install its user daemon and enable lingering:
 
@@ -375,14 +383,25 @@ and named check results only—never credentials, cookies, user data, database r
 Actions are `snapshot`, `clone`, `seal_clone`, `restore`, `commit`, and `cleanup_clone`.
 
 - `snapshot` runs only after all writers are proven stopped. It snapshots associated non-database
-  state and returns `{"ok":true,"snapshot_id":"..."}`. Declared SQLite paths are excluded because
-  the rollout helper backs them up with SQLite's backup API.
+  state plus the declared runtime auxiliary short-reference directory and returns
+  `{"ok":true,"snapshot_id":"..."}`. The two primary declared SQLite paths are excluded because the
+  rollout helper backs them up with SQLite's backup API; the runtime auxiliary SQLite state remains
+  part of the adapter snapshot/restore contract. This snapshot must complete before the rollout
+  durably journals its receipt and before the rollout creates or normalizes the live runtime-private
+  child, so an exception or process loss restores the exact predecessor absence, ownership, and
+  modes. Database-backup completion is journaled separately, so early recovery restores auxiliary
+  state without pretending not-yet-created database backups are missing. Initial snapshot,
+  post-rehearsal clone inspection, and rollback restore each prove that no process still has the
+  auxiliary DB or its WAL/SHM open, just as they do for the primary databases.
 - `clone` materializes the snapshot into the supplied empty candidate state directory without
   signing keys or secret gateway configuration, creates every declared candidate database parent
-  with the requested runtime-shared or gateway-only access boundary, and returns `clone_id`.
+  with the requested runtime-shared or gateway-only access boundary, leaves the candidate root as
+  `root:glasshive-state 0770`, and returns `clone_id`.
 - `seal_clone` runs after the helper has copied the SQLite backups. It applies and verifies the
   declared `0660` runtime-shared and `0600` gateway-only ownership/modes, proves the runtime identity
-  cannot traverse/read the auth database, and returns `seal_clone_id`.
+  cannot traverse/read the auth database, verifies the runtime auxiliary child is owned by the
+  runtime identity with mode `0700` and its existing SQLite files are `0600`, and returns
+  `seal_clone_id`.
 - `restore` transactionally restores associated state and returns `restore_id`. It must not open or
   overwrite the declared SQLite paths.
 - `commit` records retention of the pre-upgrade snapshot and returns `commit_id`; it must not destroy
@@ -431,7 +450,10 @@ the inspected ingress snapshot instead of assuming the switch did nothing.
 Actions `preflight`, `candidate`, `live`, and `rollback` return `checks` with boolean `true` for every
 required check. Candidate validation requires authenticated MCP initialize, browser identity flow,
 and the designed Glass Drive root on the alternate-port group. Candidate and live validation also
-prove that runtime, UI, and MCP report the exact staged manifest provenance. Live validation proves
+prove that runtime, UI, and MCP report the exact staged manifest provenance and that
+`runtime_artifact_refs_writable` creates and resolves a synthetic owner-scoped artifact ref through
+the runtime service identity at the declared private path without changing the shared-root mode or
+using the service account home. Live validation proves
 every named browser route family, including noVNC websocket upgrade, reaches the same Glass Drive
 release; both MCP routes reach MCP; MCP does not receive an `oauth2-proxy` HTML redirect; JWKS reaches
 the BFF; every named identity-header family is scrubbed; and

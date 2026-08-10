@@ -37,6 +37,8 @@ from typing import Any
 
 
 HOSTED_MUTATION_LOCK = Path("/run/lock/glasshive-rollout.lock")
+RUNTIME_PRIVATE_STATE_DIR_NAME = "runtime-private"
+RUNTIME_LINK_REF_DATABASE_NAME = "link_refs.sqlite3"
 
 MANIFEST_NAME = "glasshive-release.json"
 RELEASE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$")
@@ -47,6 +49,7 @@ ALLOWED_ACTIVE_ENV_KEYS = {
     "GLASSHIVE_AUTH_STATE_PATH",
     "GLASSHIVE_BACKGROUND_CONSUMERS_ENABLED",
     "GLASSHIVE_COMPONENT_REVISION",
+    "GLASSHIVE_LINK_REF_STATE_PATH",
     "GLASSHIVE_MCP_PORT",
     "GLASSHIVE_PARENT_REVISION",
     "GLASSHIVE_RECONCILE_ON_STARTUP",
@@ -79,6 +82,7 @@ ACCEPTANCE_CHECKS: dict[str, tuple[str, ...]] = {
         "token_client_id_allowed",
         "token_tenant_and_subject_exact",
         "auth_callback_query_not_logged",
+        "runtime_artifact_refs_writable",
     ),
     "preflight": (
         "authenticated_mcp_initialize",
@@ -114,6 +118,7 @@ ACCEPTANCE_CHECKS: dict[str, tuple[str, ...]] = {
         "jwks_to_glass_drive_bff",
         "identity_header_families_scrubbed",
         "browser_csrf_header_preserved",
+        "runtime_artifact_refs_writable",
         "runtime_not_public",
         "runtime_release_provenance",
         "ui_release_provenance",
@@ -1341,6 +1346,90 @@ class ProductionSystem:
         if open_pids:
             raise RolloutError("SQLite writer quiescence failed; database still has open process descriptors")
 
+    def prepare_runtime_auxiliary_state(self, state_dir: Path) -> Path:
+        """Prepare the private runtime-owned SQLite parent without widening shared state."""
+
+        try:
+            account = pwd.getpwnam(self.config.runtime_user)
+        except KeyError as exc:
+            raise RolloutError("runtime service user does not exist") from exc
+        try:
+            state_gid = grp.getgrnam("glasshive-state").gr_gid
+        except KeyError as exc:
+            if account.pw_uid != os.geteuid():
+                raise RolloutError("GlassHive state group does not exist") from exc
+            # Portable unit tests use the invoking account in place of the hosted service identity.
+            state_gid = os.getegid()
+        parent_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+        child_flags = parent_flags
+        parent_fd = -1
+        child_fd = -1
+        try:
+            parent_fd = os.open(state_dir, parent_flags)
+            parent_metadata = os.fstat(parent_fd)
+            if (
+                not stat.S_ISDIR(parent_metadata.st_mode)
+                or parent_metadata.st_uid != os.geteuid()
+                or parent_metadata.st_gid != state_gid
+                or stat.S_IMODE(parent_metadata.st_mode) != 0o770
+            ):
+                raise RolloutError("runtime state root has unexpected owner, group, type, or mode")
+            try:
+                os.mkdir(RUNTIME_PRIVATE_STATE_DIR_NAME, mode=0o700, dir_fd=parent_fd)
+            except FileExistsError:
+                pass
+            child_fd = os.open(RUNTIME_PRIVATE_STATE_DIR_NAME, child_flags, dir_fd=parent_fd)
+            child_metadata = os.fstat(child_fd)
+            if (
+                not stat.S_ISDIR(child_metadata.st_mode)
+                or child_metadata.st_uid not in {os.geteuid(), account.pw_uid}
+            ):
+                raise RolloutError("runtime private state directory has unexpected owner or type")
+            if child_metadata.st_uid != account.pw_uid or child_metadata.st_gid != account.pw_gid:
+                os.fchown(child_fd, account.pw_uid, account.pw_gid)
+            os.fchmod(child_fd, 0o700)
+
+            for name in (
+                RUNTIME_LINK_REF_DATABASE_NAME,
+                f"{RUNTIME_LINK_REF_DATABASE_NAME}-wal",
+                f"{RUNTIME_LINK_REF_DATABASE_NAME}-shm",
+            ):
+                file_fd = -1
+                try:
+                    file_fd = os.open(
+                        name,
+                        os.O_RDWR | getattr(os, "O_NOFOLLOW", 0),
+                        dir_fd=child_fd,
+                    )
+                except FileNotFoundError:
+                    continue
+                try:
+                    file_metadata = os.fstat(file_fd)
+                    if (
+                        not stat.S_ISREG(file_metadata.st_mode)
+                        or file_metadata.st_uid not in {os.geteuid(), account.pw_uid}
+                    ):
+                        raise RolloutError("runtime link-reference state has unexpected owner or type")
+                    if file_metadata.st_uid != account.pw_uid or file_metadata.st_gid != account.pw_gid:
+                        os.fchown(file_fd, account.pw_uid, account.pw_gid)
+                    os.fchmod(file_fd, 0o600)
+                    os.fsync(file_fd)
+                finally:
+                    if file_fd >= 0:
+                        os.close(file_fd)
+            os.fsync(child_fd)
+            os.fsync(parent_fd)
+        except RolloutError:
+            raise
+        except OSError as exc:
+            raise RolloutError("runtime private state directory could not be prepared safely") from exc
+        finally:
+            if child_fd >= 0:
+                os.close(child_fd)
+            if parent_fd >= 0:
+                os.close(parent_fd)
+        return runtime_link_ref_state_path(state_dir)
+
     def start_group(self, *, phase: str) -> None:
         del phase
         self._run(["/usr/bin/systemctl", "start", *START_SERVICES])
@@ -1604,6 +1693,7 @@ def _active_values(
         "GLASSHIVE_RECONCILE_ON_STARTUP": "true" if reconcile_on_startup else "false",
         "GLASSHIVE_RUNTIME_PORT": str(ports["runtime"]),
         "GLASSHIVE_STATE_DIR": str(state_dir),
+        "GLASSHIVE_LINK_REF_STATE_PATH": str(runtime_link_ref_state_path(state_dir)),
         "WPR_DB_PATH": str(database_paths["WPR_DB_PATH"]),
     }
     gateway = {
@@ -1618,6 +1708,23 @@ def _active_values(
         "WPR_MCP_BASE_URL": f"http://127.0.0.1:{ports['runtime']}",
     }
     return runtime, gateway
+
+
+def runtime_link_ref_state_path(state_dir: Path) -> Path:
+    return (
+        Path(state_dir)
+        / RUNTIME_PRIVATE_STATE_DIR_NAME
+        / RUNTIME_LINK_REF_DATABASE_NAME
+    )
+
+
+def runtime_auxiliary_state_contract(config: RolloutConfig, state_dir: Path) -> dict[str, str]:
+    return {
+        "path": str(runtime_link_ref_state_path(state_dir)),
+        "owner": config.runtime_user,
+        "directory_mode": "0700",
+        "file_mode": "0600",
+    }
 
 
 def _restore_database(
@@ -1660,7 +1767,12 @@ def _rollback(
 ) -> None:
     _journal_write(transaction, journal, "rolling_back")
     system.stop_group()
-    system.assert_stopped([database.path for database in config.databases])
+    system.assert_stopped(
+        [
+            *(database.path for database in config.databases),
+            runtime_link_ref_state_path(config.state_dir),
+        ]
+    )
     if ingress_switched:
         adapters.call_ingress(
             "restore",
@@ -1677,6 +1789,9 @@ def _rollback(
                 "snapshot_id": str(journal.get("state_snapshot_id") or ""),
                 "live_state_dir": str(config.state_dir),
                 "database_paths": [str(database.path) for database in config.databases],
+                "runtime_auxiliary_state": runtime_auxiliary_state_contract(
+                    config, config.state_dir
+                ),
             },
         )
     for database in config.databases:
@@ -1800,7 +1915,12 @@ def execute_rollout(
         ingress_switched = False
         try:
             system.stop_group()
-            system.assert_stopped([database.path for database in config.databases])
+            system.assert_stopped(
+                [
+                    *(database.path for database in config.databases),
+                    runtime_link_ref_state_path(config.state_dir),
+                ]
+            )
             _journal_write(transaction, journal, "live_stopped")
 
             state_snapshot = adapters.call_state(
@@ -1810,10 +1930,15 @@ def execute_rollout(
                     "live_state_dir": str(config.state_dir),
                     "transaction_dir": str(transaction),
                     "database_paths": [str(database.path) for database in config.databases],
+                    "runtime_auxiliary_state": runtime_auxiliary_state_contract(
+                        config, config.state_dir
+                    ),
                 },
             )
             state_snapshot_ready = True
             journal["state_snapshot_id"] = str(state_snapshot.get("snapshot_id") or "")
+            _journal_write(transaction, journal, "state_snapshotted")
+            system.prepare_runtime_auxiliary_state(config.state_dir)
 
             for database in config.databases:
                 if not database.path.exists() and database.allow_create_if_missing:
@@ -1835,6 +1960,7 @@ def execute_rollout(
                 backups[database.name] = backup
             journal["databases_absent_before"] = sorted(absent_before)
             _atomic_write(transaction / "database-before.json", _json_bytes(before_receipts), mode=0o600)
+            journal["database_backups_verified"] = True
             _journal_write(transaction, journal, "backup_verified")
 
             candidate_state = _safe_child(
@@ -1876,6 +2002,7 @@ def execute_rollout(
                 if database.name not in absent_before:
                     _sqlite_backup(backups[database.name], candidate_path)
                 candidate_databases[database.env_name] = candidate_path
+            system.prepare_runtime_auxiliary_state(candidate_state)
             clone_seal = adapters.call_state(
                 "seal_clone",
                 {
@@ -1891,6 +2018,9 @@ def execute_rollout(
                         }
                         for database in config.databases
                     ],
+                    "runtime_auxiliary_state": runtime_auxiliary_state_contract(
+                        config, candidate_state
+                    ),
                 },
             )
             journal["state_seal_id"] = str(clone_seal.get("seal_clone_id") or "")
@@ -1914,7 +2044,12 @@ def execute_rollout(
             system.probe_group(phase="rehearsal", ports=config.candidate_ports, expected=config.expected)
             adapters.call_acceptance("candidate", _candidate_payload(config, config.candidate_ports))
             system.stop_group()
-            system.assert_stopped(list(candidate_databases.values()))
+            system.assert_stopped(
+                [
+                    *candidate_databases.values(),
+                    runtime_link_ref_state_path(candidate_state),
+                ]
+            )
 
             after_receipts: dict[str, dict[str, object]] = {}
             for database in config.databases:
@@ -1978,6 +2113,9 @@ def execute_rollout(
                     "snapshot_id": str(journal.get("state_snapshot_id") or ""),
                     "release_id": config.release_id,
                     "backup_dir": str(transaction / "backup"),
+                    "runtime_auxiliary_state": runtime_auxiliary_state_contract(
+                        config, config.state_dir
+                    ),
                 },
             )
             journal["state_commit_id"] = str(state_commit.get("commit_id") or "")
@@ -2083,7 +2221,10 @@ def _recover_rollout_locked(
     absent_before = {
         str(item) for item in journal.get("databases_absent_before", []) if isinstance(item, str)
     }
-    if journal.get("state_snapshot_id"):
+    database_backups_verified = bool(journal.get("database_backups_verified")) or (
+        transaction / "database-before.json"
+    ).is_file()
+    if database_backups_verified:
         missing = [
             name for name, path in backups.items() if name not in absent_before and not path.is_file()
         ]

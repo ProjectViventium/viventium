@@ -333,7 +333,13 @@ most specific existing QA owner when a scenario already has a detailed provider 
   precreated private exit marker, verify the runtime identity can read it while the gateway identity
   cannot, and verify an empty marker remains unfinished across recovery; force
   auxiliary watch/link state unavailable, malformed, and writer-locked beyond the edge budget, then
-  verify a bounded authenticated fallback without duplicate work; fail/cancel/interrupt the first
+  verify a bounded authenticated fallback without duplicate work; inspect a completed worker with
+  at least one artifact through the browser live/status route and prove runtime artifact short-ref
+  state is created inside the active candidate/live runtime-owned private directory rather than the
+  shared state root or service account home; verify the shared root stays `0770`, the private child is
+  runtime-owned `0700`, existing auxiliary SQLite files are `0600`, rehearsal/live paths differ, and
+  rollback restores the predecessor snapshot;
+  fail/cancel/interrupt the first
   run and verify the UI asks for a corrected follow-up without offering an ineffective Resume action;
   explicitly close a workspace and verify `terminating`, teardown-failed, and `terminated` states
   stay closed across stale runtime writers, pause/interrupt/resume, account switching, cached
@@ -346,7 +352,9 @@ most specific existing QA owner when a scenario already has a detailed provider 
   verify fresh-by-default; rename; tag/favorite; search by human name; paginate; filter
   recent/readiness/state; try a second user.
 - Expected result: human name is clear and editable; alias/id remain stable; catalog is scoped,
-  searchable, cursor stable, and shows readiness/next run; empty state is useful.
+  searchable, cursor stable, and shows readiness/next run; empty state is useful. A completed run's
+  Watch/Steer surface shows `Worker completed` with its status/output, while Desktop shows
+  `Workspace complete` and retains artifact/status access when no live desktop remains.
 - Forbidden result: raw internal ids as primary labels, cold image preparation blocking the browser
   request, a read-only staged build input making a safe retry fail, partial build input or staging
   residue, a mixed-snapshot package set or stale managed image satisfying provenance, watch/link
@@ -355,7 +363,9 @@ most specific existing QA owner when a scenario already has a detailed provider 
   workspace accepting work its queue cannot run, teardown failure or a stale writer reopening a
   workspace, group/world permission widening on worker workspace, home, browser, or provider state,
   an empty exit marker reported as success, a same-browser opaque handoff demanding an unrelated
-  trusted-proxy assertion or exposing raw JSON, cached or already-open desktop/terminal access after
+  trusted-proxy assertion or exposing raw JSON, a completed live/status read failing because runtime
+  short-ref state fell back to a read-only home/shared root or crossed rehearsal/live state, a
+  completed workspace collapsing to generic `Desktop unavailable`, cached or already-open desktop/terminal access after
   close intent, unknown orphan compute, a truncated provider stream reported complete, a closed recurring definition being
   re-enabled or left active in the delegated owner, duplicate project/workspace/run, a queued first run
   stranded after restart, automatic stale reuse, duplicate pagination, cross-user tile, or basic

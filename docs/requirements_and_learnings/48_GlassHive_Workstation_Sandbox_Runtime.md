@@ -1783,6 +1783,17 @@ runtime intent classifier.
   misconfigured.
   Raw `/v1/signed-links/{token}` compatibility URLs remain signed-token URLs and are not the
   durable user-facing contract.
+- In the hosted split-service topology, every process that creates a short reference must receive a
+  writable state path owned by its service phase. The rollout active environment places runtime
+  artifact refs at `GLASSHIVE_LINK_REF_STATE_PATH` inside a runtime-owned `0700` private child of the
+  candidate/live state root and keeps gateway watch/ref state beside the gateway auth database. The
+  rollout must create or validate that child without changing the shared root's
+  `root:glasshive-state 0770` boundary, normalize existing auxiliary SQLite files to runtime-owned
+  `0600`, and include the child in snapshot/clone/restore. The live snapshot receipt must be durably
+  journaled before any child creation or metadata normalization so preparation failure or process
+  loss restores the exact predecessor state.
+  Runtime live/status reads must never fall back to the service account's home under the read-only
+  systemd filesystem, and rehearsal refs must never mutate live state.
 - Enterprise owner matching is configurable but strict by default. `GLASSHIVE_OWNER_IDENTITY_CLAIMS`
   defaults to `user_id`, so SSO deployments continue to compare the stored GlassHive owner against
   the trusted user assertion. Deployments whose browser auth and MCP/chat owner use different trusted
