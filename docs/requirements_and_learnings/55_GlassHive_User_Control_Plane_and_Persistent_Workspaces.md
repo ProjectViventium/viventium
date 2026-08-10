@@ -278,6 +278,9 @@ compliant hosted topology.
   optional reviewed recovery destination. The main Connections surface exposes those values as one
   primary sign-in action and one copy action. Raw PTY output remains available only in collapsed
   technical details and is never promoted into a clickable arbitrary URL.
+- While a provider sign-in attempt is active, Connections hides stale recovery text, account-creation
+  controls, and external-client setup so the current sign-in link, one-time code, copy action, and
+  cancel action remain the only primary task. Those controls return when the attempt ends.
 - The UI and MCP expose the same generic account lifecycle: connect metadata, start native setup,
   test current readiness, disconnect credentials, and forget already-disconnected metadata. A
   disconnected row does not consume the active-account quota, and forgetting it is rejected until
