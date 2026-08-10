@@ -281,6 +281,14 @@ compliant hosted topology.
 - While a provider sign-in attempt is active, Connections hides stale recovery text, account-creation
   controls, and external-client setup so the current sign-in link, one-time code, copy action, and
   cancel action remain the only primary task. Those controls return when the attempt ends.
+- Account creation controls are generated from the server's supported provider methods. An
+  unavailable worker-account route is omitted instead of rendered as a dead button or an internal
+  policy warning. External Codex/Claude MCP client setup remains a separate collapsed surface and is
+  never presented as a worker subscription.
+- The first account for an owner/provider becomes that provider's default. On launch, a sole Ready
+  compatible account is selected even when its row predates that defaulting rule, and new personal
+  work defaults to `personal_required`. Temporarily choosing a worker profile without personal
+  account support must not silently change that saved personal policy to deployment credentials.
 - The UI and MCP expose the same generic account lifecycle: connect metadata, start native setup,
   test current readiness, disconnect credentials, and forget already-disconnected metadata. A
   disconnected row does not consume the active-account quota, and forgetting it is rejected until
@@ -442,7 +450,8 @@ compliant hosted topology.
 
 - The control plane extends the designed Glass Drive UI. It does not expose the basic runtime API UI
   as the user product.
-- Primary navigation is clear and bounded: Workspaces, Connections, Library, Schedules, and Activity.
+- Primary navigation is clear and bounded: Run Project, Workspaces, Connections, Library, Schedules,
+  and Activity.
 - Connections defaults to the account name, status, and the single action needed now. Account
   creation, destructive/diagnostic account actions, external MCP client commands and callbacks, raw
   provider output, empty connected-tool state, and operational provenance use progressive disclosure
@@ -456,6 +465,12 @@ compliant hosted topology.
   screens, with reduced-motion support.
 - The current user, local sign-out, provider-level account switch, and actionable login recovery are
   visible product surfaces rather than hidden API-only operations.
+- An authenticated browser launch may return an opaque `/r/{ref}` handoff. That handoff reuses the
+  validated browser session, rechecks tenant and immutable owner before opening the watch surface,
+  returns an expired session through safe sign-in recovery, and retains not-found behavior for a
+  different owner. It never requires a second trusted-proxy assertion from the same browser.
+- Primary tabs and account controls wrap at narrow-desktop and mobile widths; no destination or
+  sign-out/account-switch action may be clipped behind a hidden horizontal scrollbar.
 - Account setup and connector authentication happen inside the selected private workspace only where
   the provider requires an interactive worker/browser session; deployment-wide credentials remain
   an operator concern.
