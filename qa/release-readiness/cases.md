@@ -209,8 +209,8 @@ Use `REL-NNN` for release-readiness and public-push packaging checks.
 - Automation: git inspection.
 - Last run: PASS 2026-08-10. The current candidate declares `merged`. It pins LibreChat PR 97
   at merge commit `ccfd307c3b6bd5573c58dfc4f16b84fc691fef4f`, agent-starter-react
-  PR 10 merge commit `98d1249db7a728e94656462d6bda979571be4dd7`, and GlassHive PRs 50–67
-  at merge commit `e9429b1f3d42559ee71bea63a54eb02d01b8744b`; each merge tree equals its reviewed
+  PR 10 merge commit `98d1249db7a728e94656462d6bda979571be4dd7`, and GlassHive PRs 50–68
+  at merge commit `7397d626daeff70b659f2d73def2045afd27de3f`; each merge tree equals its reviewed
   head. Google Workspace MCP PR 9 is pinned at merge commit
   `0824701abcf490de2a5091c68a7b0738f2294b3f`. The Native policy pins the same LibreChat commit
   and intentionally contains no GlassHive, Google Workspace MCP, or playground component.

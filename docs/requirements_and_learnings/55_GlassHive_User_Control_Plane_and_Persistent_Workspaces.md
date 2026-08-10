@@ -299,7 +299,13 @@ compliant hosted topology.
   dispatch duration. Input/output token totals remain absent unless the worker harness reports them
   truthfully. These fields are local operational telemetry, never provider balance, billing, or quota.
 - Provider homes live outside workspace files on encrypted deployment storage with owner-only
-  permissions. Duplicate/export/template operations never copy them.
+  permissions. Duplicate/export/template operations never copy them. Hosted active environments
+  declare one canonical phase-local provider-home root. Upgrade derives the predecessor root from
+  that explicit value or the legacy runtime-database parent, snapshots both predecessor and
+  canonical paths before mutation, and then atomically materializes canonical live state before
+  rehearsal. Clone, seal, restore, and recovery preserve exact content, numeric uid/gid, modes,
+  extended attributes, POSIX ACLs, and prior absence; an account row without its matching home is a
+  failed rollout.
 - Provider accounts and setup sessions are owner scoped. Cross-user access is indistinguishable from
   not found.
 - A user may enable personal-only credential policy only when a personal setup path is available or
@@ -322,6 +328,12 @@ compliant hosted topology.
   selected worker container. The rootless container grants and verifies access for its non-root worker
   user through POSIX ACLs, with no world-writable fallback; the container is removed, credential-tree
   modes are tightened again, and only then is the exclusive lease released.
+- A hosted rollout does not infer provider-tree quiescence from currently open files alone. With the
+  runtime, MCP, and UI stopped, it recursively checks descendant descriptors and separately inspects
+  every recognized rootless `wpr-*` container. A running, paused, or restarting container whose bind
+  mount is at or below the predecessor, canonical, rehearsal, or rollback provider tree blocks state
+  mutation even when it has no open credential descriptor. Exited containers' historical mount
+  metadata does not block rollout.
 - `personal_required` fails closed when no ready compatible account is selected. The default
   `personal_preferred` policy uses a ready personal account first and otherwise preserves the
   deployment-managed legacy path. A differently named optional policy must not silently replace this

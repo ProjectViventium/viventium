@@ -9,11 +9,13 @@ import json
 import os
 import pwd
 import shlex
+import shutil
 import sqlite3
 import stat
 import subprocess
 import sys
 import tarfile
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -813,6 +815,178 @@ def test_rootless_probe_rejects_rootful_or_ambiguous_socket_paths() -> None:
         rootless_probe.probe(docker_host="unix:///var/run/docker.sock")
 
 
+def test_predecessor_provider_home_prefers_explicit_path_then_legacy_database_parent(
+    tmp_path: Path,
+) -> None:
+    config, runtime_db, _previous = _deployment_fixture(tmp_path)
+    explicit = config.candidate_state_root / "prior-slot" / "provider_accounts"
+    legacy = runtime_db.parent / "provider_accounts"
+
+    assert rollout.predecessor_provider_account_state_path(
+        config,
+        {
+            "GLASSHIVE_PROVIDER_ACCOUNT_HOME_ROOT": str(explicit),
+            "WPR_DB_PATH": str(runtime_db),
+        },
+    ) == explicit
+    assert rollout.predecessor_provider_account_state_path(
+        config,
+        {"WPR_DB_PATH": str(runtime_db)},
+    ) == legacy
+
+    with pytest.raises(rollout.RolloutError, match="managed root"):
+        rollout.predecessor_provider_account_state_path(
+            config,
+            {
+                "GLASSHIVE_PROVIDER_ACCOUNT_HOME_ROOT": str(
+                    tmp_path / "outside" / "provider_accounts"
+                )
+            },
+        )
+
+
+@pytest.mark.skipif(not Path("/proc").is_dir(), reason="Linux /proc descriptor proof")
+def test_state_quiescence_detects_open_provider_home_descendant(tmp_path: Path) -> None:
+    provider_home = tmp_path / "provider_accounts" / "tenant" / "owner" / "account"
+    provider_home.mkdir(parents=True)
+    credential = provider_home / "auth.json"
+    credential.write_text("synthetic\n", encoding="utf-8")
+    process = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            "import pathlib,time,sys; h=pathlib.Path(sys.argv[1]).open('rb'); time.sleep(30)",
+            str(credential),
+        ]
+    )
+    try:
+        deadline = time.monotonic() + 5
+        matches: dict[str, list[int]] = {}
+        while time.monotonic() < deadline:
+            matches = rollout._database_open_pids([provider_home])
+            if process.pid in matches.get(str(provider_home), []):
+                break
+            time.sleep(0.05)
+        assert process.pid in matches[str(provider_home)]
+    finally:
+        process.terminate()
+        process.wait(timeout=5)
+
+
+@pytest.mark.parametrize(
+    ("container_state", "must_block"),
+    [
+        ({"Running": True, "Paused": False, "Restarting": False}, True),
+        ({"Running": True, "Paused": True, "Restarting": False}, True),
+        ({"Running": False, "Paused": False, "Restarting": True}, True),
+        ({"Running": False, "Paused": False, "Restarting": False}, False),
+    ],
+)
+def test_state_quiescence_rejects_only_active_rootless_provider_bind_mounts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    container_state: dict[str, bool],
+    must_block: bool,
+) -> None:
+    config, _runtime_db, _previous = _deployment_fixture(tmp_path)
+    config.runtime_user = pwd.getpwuid(os.geteuid()).pw_name
+    provider_root = config.state_dir / "provider_accounts"
+    account_home = provider_root / "tenant" / "owner" / "account"
+    account_home.mkdir(parents=True)
+    container_id = "a" * 64
+
+    class MountedProviderSystem(rollout.ProductionSystem):
+        @staticmethod
+        def _run(
+            command: list[str],
+            *,
+            expected: tuple[int, ...] = (0,),
+        ) -> subprocess.CompletedProcess[str]:
+            assert "is-active" in command
+            return subprocess.CompletedProcess(command, 3, "", "")
+
+        def _run_rootless_docker(
+            self,
+            arguments: list[str],
+        ) -> subprocess.CompletedProcess[str]:
+            if "ps" in arguments:
+                return subprocess.CompletedProcess(arguments, 0, f"{container_id}\n", "")
+            if "inspect" in arguments:
+                return subprocess.CompletedProcess(
+                    arguments,
+                    0,
+                    json.dumps(
+                        [
+                            {
+                                "Id": container_id,
+                                "Name": "/wpr-synthetic",
+                                "State": container_state,
+                                "Mounts": [
+                                    {
+                                        "Type": "bind",
+                                        "Source": str(account_home),
+                                        "Destination": "/home/codex/.codex",
+                                    }
+                                ],
+                            }
+                        ]
+                    ),
+                    "",
+                )
+            raise AssertionError(arguments)
+
+    monkeypatch.setattr(rollout, "_database_open_pids", lambda paths: {})
+
+    if must_block:
+        with pytest.raises(rollout.RolloutError, match="provider-account bind mount"):
+            MountedProviderSystem(config).assert_stopped(
+                [],
+                provider_account_paths=[provider_root],
+            )
+    else:
+        MountedProviderSystem(config).assert_stopped(
+            [],
+            provider_account_paths=[provider_root],
+        )
+
+
+def test_state_quiescence_rejects_malformed_rootless_provider_container_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config, _runtime_db, _previous = _deployment_fixture(tmp_path)
+    provider_root = config.state_dir / "provider_accounts"
+    provider_root.mkdir()
+    container_id = "b" * 64
+
+    class MalformedStateSystem(rollout.ProductionSystem):
+        def _run_rootless_docker(
+            self,
+            arguments: list[str],
+        ) -> subprocess.CompletedProcess[str]:
+            if "ps" in arguments:
+                return subprocess.CompletedProcess(arguments, 0, f"{container_id}\n", "")
+            return subprocess.CompletedProcess(
+                arguments,
+                0,
+                json.dumps(
+                    [
+                        {
+                            "Id": container_id,
+                            "Name": "/wpr-synthetic",
+                            "State": {"Running": "false"},
+                            "Mounts": [],
+                        }
+                    ]
+                ),
+                "",
+            )
+
+    monkeypatch.setattr(rollout, "_database_open_pids", lambda paths: {})
+    with pytest.raises(rollout.RolloutError, match="invalid state data"):
+        MalformedStateSystem(config)._provider_account_bind_mounts([provider_root])
+
+
 def test_ui_readiness_requires_initialized_auth_registry(tmp_path: Path) -> None:
     database = tmp_path / "auth.sqlite3"
     with sqlite3.connect(database) as connection:
@@ -837,6 +1011,7 @@ class FakeSystem:
         self.fail_start = fail_start
         self.prepared_link_ref_state_dirs: list[Path] = []
         self.asserted_stopped_paths: list[list[Path]] = []
+        self.asserted_stopped_provider_paths: list[list[Path]] = []
 
     def rootless_probe(self) -> None:
         self.events.append("rootless-probe")
@@ -844,9 +1019,15 @@ class FakeSystem:
     def stop_group(self) -> None:
         self.events.append("stop-group")
 
-    def assert_stopped(self, database_paths: list[Path]) -> None:
+    def assert_stopped(
+        self,
+        database_paths: list[Path],
+        *,
+        provider_account_paths: tuple[Path, ...] | list[Path] = (),
+    ) -> None:
         self.events.append("assert-stopped")
         self.asserted_stopped_paths.append(database_paths)
+        self.asserted_stopped_provider_paths.append(list(provider_account_paths))
 
     def prepare_shared_link_ref_state(self, state_dir: Path) -> Path:
         shared_dir = state_dir / rollout.LINK_REF_SHARED_STATE_DIR_NAME
@@ -876,12 +1057,23 @@ class FakeAdapters:
         self.state_payloads[action] = payload
         if action == self.fail_action:
             raise rollout.RolloutError(f"injected state {action} failure")
+        if action == "materialize_live":
+            provider_state = payload.get("live_provider_account_state")
+            if isinstance(provider_state, dict):
+                Path(str(provider_state["path"])).mkdir(
+                    parents=True,
+                    mode=0o700,
+                    exist_ok=True,
+                )
         if action == "clone":
             candidate = Path(str(payload["candidate_state_dir"]))
             candidate.mkdir(parents=True)
             for database in payload.get("candidate_databases", []):
                 if isinstance(database, dict):
                     (candidate / str(database["relative"])).parent.mkdir(parents=True, exist_ok=True)
+            provider_state = payload.get("candidate_provider_account_state")
+            if isinstance(provider_state, dict):
+                Path(str(provider_state["path"])).mkdir(mode=0o700)
         return {"ok": True, f"{action}_id": f"synthetic-{action}"}
 
     def call_ingress(self, action: str, payload: dict[str, object]) -> dict[str, object]:
@@ -1018,6 +1210,9 @@ def test_active_services_share_one_phase_local_link_ref_store(
 
     assert gateway["GLASSHIVE_WATCH_SESSION_STATE_PATH"] == str(
         auth_db.parent / "watch_sessions.sqlite3"
+    )
+    assert runtime["GLASSHIVE_PROVIDER_ACCOUNT_HOME_ROOT"] == str(
+        rollout.provider_account_state_path(config.state_dir)
     )
     expected_link_ref_path = str(rollout.shared_link_ref_state_path(config.state_dir))
     assert runtime["GLASSHIVE_LINK_REF_STATE_PATH"] == expected_link_ref_path
@@ -1561,6 +1756,14 @@ def test_successful_rollout_rehearses_clone_then_switches_ingress(tmp_path: Path
             ),
         ],
     ]
+    assert system.asserted_stopped_provider_paths == [
+        [rollout.provider_account_state_path(config.state_dir)],
+        [
+            rollout.provider_account_state_path(
+                config.candidate_state_root / receipt["transaction_id"]
+            )
+        ],
+    ]
     live_auxiliary = adapters.state_payloads["snapshot"]["shared_link_ref_state"]
     candidate_auxiliary = adapters.state_payloads["seal_clone"]["shared_link_ref_state"]
     assert live_auxiliary == {
@@ -1585,10 +1788,41 @@ def test_successful_rollout_rehearses_clone_then_switches_ingress(tmp_path: Path
         "directory_mode": "02770",
         "file_mode": "0660",
     }
+    expected_live_provider_state = rollout.provider_account_state_contract(
+        config,
+        config.state_dir,
+    )
+    expected_candidate_provider_state = rollout.provider_account_state_contract(
+        config,
+        config.candidate_state_root / receipt["transaction_id"],
+    )
+    assert adapters.state_payloads["snapshot"]["provider_account_state"] == (
+        expected_live_provider_state
+    )
+    assert adapters.state_payloads["materialize_live"]["source_provider_account_state"] == (
+        expected_live_provider_state
+    )
+    assert adapters.state_payloads["materialize_live"]["live_provider_account_state"] == (
+        expected_live_provider_state
+    )
+    assert adapters.state_payloads["materialize_live"]["source_present"] is False
+    assert adapters.state_payloads["materialize_live"]["live_present_before"] is False
+    assert adapters.state_payloads["materialize_live"]["source_is_live"] is True
+    assert rollout.provider_account_state_path(config.state_dir).is_dir()
+    assert adapters.state_payloads["clone"]["live_provider_account_state"] == (
+        expected_live_provider_state
+    )
+    assert adapters.state_payloads["clone"]["candidate_provider_account_state"] == (
+        expected_candidate_provider_state
+    )
+    assert adapters.state_payloads["seal_clone"]["provider_account_state"] == (
+        expected_candidate_provider_state
+    )
     assert adapters.events == [
         "ingress:inspect",
         "acceptance:preflight",
         "state:snapshot",
+        "state:materialize_live",
         "state:clone",
         "state:seal_clone",
         "acceptance:candidate",
@@ -1598,6 +1832,210 @@ def test_successful_rollout_rehearses_clone_then_switches_ingress(tmp_path: Path
         "state:commit",
         "state:cleanup_clone",
     ]
+
+
+def test_legacy_provider_home_is_materialized_before_clone_and_rollback_restores_absence(
+    tmp_path: Path,
+) -> None:
+    config, _runtime_db, _previous = _deployment_fixture(tmp_path)
+    predecessor_home = (
+        config.candidate_state_root / "prior-live" / rollout.PROVIDER_ACCOUNT_STATE_DIR_NAME
+    )
+    account_home = predecessor_home / "tenant" / "owner" / "account"
+    account_home.mkdir(parents=True, mode=0o710)
+    credential = account_home / "auth.json"
+    credential.write_text('{"synthetic":"credential"}\n', encoding="utf-8")
+    credential.chmod(0o640)
+    predecessor_home.chmod(0o700)
+    xattr_supported = False
+    try:
+        os.setxattr(credential, "user.glasshive.synthetic", b"preserved")
+        xattr_supported = True
+    except (AttributeError, OSError):
+        pass
+    runtime_environment = rollout.read_active_environment(config.runtime_active_env)
+    runtime_environment["GLASSHIVE_PROVIDER_ACCOUNT_HOME_ROOT"] = str(predecessor_home)
+    rollout.write_active_environment(config.runtime_active_env, runtime_environment)
+    canonical_home = rollout.provider_account_state_path(config.state_dir)
+    assert not canonical_home.exists()
+
+    def tree_receipt(root: Path) -> dict[str, dict[str, object]]:
+        receipt: dict[str, dict[str, object]] = {}
+        for entry in [root, *sorted(root.rglob("*"))]:
+            metadata = entry.lstat()
+            relative = "." if entry == root else entry.relative_to(root).as_posix()
+            xattrs: dict[str, bytes] = {}
+            try:
+                xattrs = {
+                    name: os.getxattr(entry, name)
+                    for name in sorted(os.listxattr(entry))
+                }
+            except (AttributeError, OSError):
+                pass
+            receipt[relative] = {
+                "mode": stat.S_IMODE(metadata.st_mode),
+                "uid": metadata.st_uid,
+                "gid": metadata.st_gid,
+                "content": entry.read_bytes() if entry.is_file() else None,
+                "xattrs": xattrs,
+            }
+        return receipt
+
+    predecessor_receipt = tree_receipt(predecessor_home)
+
+    class ExactProviderStateAdapters(FakeAdapters):
+        def __init__(self) -> None:
+            super().__init__(fail_action="live")
+            self.live_existed_before = False
+
+        @staticmethod
+        def copy_tree(source: Path, destination: Path) -> None:
+            if destination.exists():
+                shutil.rmtree(destination)
+            shutil.copytree(source, destination, copy_function=shutil.copy2)
+
+        def call_state(self, action: str, payload: dict[str, object]) -> dict[str, object]:
+            if action == "snapshot":
+                self.live_existed_before = canonical_home.exists()
+            if action == "materialize_live":
+                assert "state:snapshot" in self.events
+                source = Path(
+                    str(
+                        (payload["source_provider_account_state"])["path"]  # type: ignore[index]
+                    )
+                )
+                destination = Path(
+                    str(
+                        (payload["live_provider_account_state"])["path"]  # type: ignore[index]
+                    )
+                )
+                self.copy_tree(source, destination)
+            result = super().call_state(action, payload)
+            if action == "clone":
+                live = Path(
+                    str(
+                        (payload["live_provider_account_state"])["path"]  # type: ignore[index]
+                    )
+                )
+                candidate = Path(
+                    str(
+                        (payload["candidate_provider_account_state"])["path"]  # type: ignore[index]
+                    )
+                )
+                self.copy_tree(live, candidate)
+            if action == "restore" and not self.live_existed_before:
+                shutil.rmtree(canonical_home, ignore_errors=True)
+            return result
+
+        def call_acceptance(self, action: str, payload: dict[str, object]) -> dict[str, object]:
+            if action == "candidate":
+                active = rollout.read_active_environment(config.runtime_active_env)
+                candidate_home = Path(active["GLASSHIVE_PROVIDER_ACCOUNT_HOME_ROOT"])
+                assert tree_receipt(candidate_home) == predecessor_receipt
+            return super().call_acceptance(action, payload)
+
+    adapters = ExactProviderStateAdapters()
+
+    with pytest.raises(rollout.RolloutError, match="injected acceptance live failure"):
+        rollout.execute_rollout(config, system=FakeSystem(), adapters=adapters)
+
+    assert adapters.events.index("state:snapshot") < adapters.events.index("state:materialize_live")
+    assert adapters.events.index("state:materialize_live") < adapters.events.index("state:clone")
+    assert not canonical_home.exists()
+    assert tree_receipt(predecessor_home) == predecessor_receipt
+    assert xattr_supported is False or os.getxattr(
+        predecessor_home / "tenant" / "owner" / "account" / "auth.json",
+        "user.glasshive.synthetic",
+    ) == b"preserved"
+    transaction = next(config.transactions_dir.glob("rollout-*"))
+    journal = json.loads((transaction / "journal.json").read_text(encoding="utf-8"))
+    assert journal["provider_state_materialize_id"] == "synthetic-materialize_live"
+
+
+def test_recovery_restores_absent_canonical_home_after_interrupted_materialization(
+    tmp_path: Path,
+) -> None:
+    config, _runtime_db, previous = _deployment_fixture(tmp_path)
+    predecessor_home = (
+        config.candidate_state_root / "prior-live" / rollout.PROVIDER_ACCOUNT_STATE_DIR_NAME
+    )
+    predecessor_home.mkdir(parents=True, mode=0o700)
+    credential = predecessor_home / "auth.json"
+    credential.write_text("synthetic-provider-state\n", encoding="utf-8")
+    credential.chmod(0o640)
+    before = (
+        credential.read_bytes(),
+        stat.S_IMODE(credential.stat().st_mode),
+        credential.stat().st_uid,
+        credential.stat().st_gid,
+    )
+    runtime_environment = rollout.read_active_environment(config.runtime_active_env)
+    runtime_environment["GLASSHIVE_PROVIDER_ACCOUNT_HOME_ROOT"] = str(predecessor_home)
+    rollout.write_active_environment(config.runtime_active_env, runtime_environment)
+    canonical_home = rollout.provider_account_state_path(config.state_dir)
+
+    class InterruptedProviderAdapters(FakeAdapters):
+        def __init__(self) -> None:
+            super().__init__()
+            self.restore_attempts = 0
+
+        def call_state(self, action: str, payload: dict[str, object]) -> dict[str, object]:
+            if action == "materialize_live":
+                source = Path(
+                    str(
+                        (payload["source_provider_account_state"])["path"]  # type: ignore[index]
+                    )
+                )
+                destination = Path(
+                    str(
+                        (payload["live_provider_account_state"])["path"]  # type: ignore[index]
+                    )
+                )
+                shutil.copytree(source, destination, copy_function=shutil.copy2)
+            if action == "restore":
+                self.restore_attempts += 1
+                if self.restore_attempts == 1:
+                    self.events.append("state:restore")
+                    self.state_payloads[action] = payload
+                    raise rollout.RolloutError("injected interrupted provider restore")
+            result = super().call_state(action, payload)
+            if action == "restore":
+                shutil.rmtree(canonical_home, ignore_errors=True)
+            return result
+
+    adapters = InterruptedProviderAdapters()
+
+    class FailAfterProviderMaterialization(FakeSystem):
+        def prepare_shared_link_ref_state(self, state_dir: Path) -> Path:
+            assert canonical_home.is_dir()
+            raise rollout.RolloutError("injected interruption after provider materialization")
+
+    with pytest.raises(rollout.RolloutError, match="rollback is incomplete"):
+        rollout.execute_rollout(
+            config,
+            system=FailAfterProviderMaterialization(),
+            adapters=adapters,
+        )
+    assert canonical_home.is_dir()
+
+    transaction = next(config.transactions_dir.glob("rollout-*"))
+    receipt = rollout.recover_rollout(
+        config,
+        transaction_id=transaction.name,
+        system=FakeSystem(),
+        adapters=adapters,
+    )
+
+    assert receipt["status"] == "rolled_back"
+    assert config.current_symlink.resolve() == previous.resolve()
+    assert not canonical_home.exists()
+    assert (
+        credential.read_bytes(),
+        stat.S_IMODE(credential.stat().st_mode),
+        credential.stat().st_uid,
+        credential.stat().st_gid,
+    ) == before
+    assert adapters.restore_attempts == 2
 
 
 @pytest.mark.parametrize("preexisting", [False, True])
@@ -1812,9 +2250,15 @@ def test_any_candidate_or_cutover_failure_restores_database_release_and_ingress(
         "directory_mode": "02770",
         "file_mode": "0660",
     }
+    assert adapters.state_payloads["restore"]["provider_account_state"] == (
+        rollout.provider_account_state_contract(config, config.state_dir)
+    )
     assert "state:cleanup_clone" in adapters.events
     assert "start-group:rollback" in system.events
     assert rollout.shared_link_ref_state_path(config.state_dir) in system.asserted_stopped_paths[-1]
+    assert rollout.provider_account_state_path(config.state_dir) in (
+        system.asserted_stopped_provider_paths[-1]
+    )
     assert "acceptance:rollback" in adapters.events
     assert "ingress:status" in adapters.events
 
