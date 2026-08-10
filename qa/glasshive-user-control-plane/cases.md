@@ -342,7 +342,10 @@ most specific existing QA owner when a scenario already has a detailed provider 
   verify the state root stays `root:glasshive-state 0770`, the shared-ref child is
   `root:glasshive-state 02770`, and SQLite/WAL/SHM stay `glasshive-state 0660` with ownership limited
   to root/runtime/gateway while running and normalized to root after quiescence. Candidate/live paths
-  differ, and rollback restores the predecessor snapshot. On upgrade, merge predecessor gateway and
+  differ, and rollback restores the predecessor snapshot. Start the runtime against an already prepared
+  root-owned `0770` database parent and root-owned `0660` database, and prove it accepts the exact
+  process-group contract without chmod; wrong owner, group, mode, symlink, FIFO, or file type must fail
+  closed without hanging. On upgrade, merge predecessor gateway and
   runtime refs without changing their ids or deleting the predecessor stores; enrich an imported
   row, revoke it, and run a second rollout to prove the stale predecessor row is not resurrected;
   fail/cancel/interrupt the first
@@ -700,9 +703,10 @@ most specific existing QA owner when a scenario already has a detailed provider 
 - Full-view evidence minimum: clean bootstrap through supported entrypoint and installed user smoke.
 - Automation: release/bootstrap/compiler/installer suites plus provenance checks.
 - Last run: PARTIAL 2026-08-10; the parent candidate pins merged GlassHive
-  `0c7c4471c99654c48e4b3651f9bd3bdba8224f2f`, whose merge tree equals the reviewed shared-ref,
-  authenticated-handoff, and account-UX head. Sealed canary provenance, installed post-fix real-browser UX,
-  and a fresh public bootstrap/install in a new directory remain open for this exact pair.
+  `e9429b1f3d42559ee71bea63a54eb02d01b8744b`, whose merge tree equals the reviewed shared-ref,
+  authenticated-handoff, account-UX, and prepared-state compatibility heads. Sealed canary provenance,
+  installed post-fix real-browser UX, and a fresh public bootstrap/install in a new directory remain open
+  for this exact pair.
 
 ## `GHUCP-027` — Clean Install, Upgrade, Continuity, and Rollback
 
