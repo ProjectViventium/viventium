@@ -1088,6 +1088,87 @@ def read_active_environment(path: Path) -> dict[str, str]:
     return values
 
 
+PREDECESSOR_RUNTIME_ENV_KEYS = frozenset(
+    {
+        "GLASSHIVE_PROVIDER_ACCOUNT_HOME_ROOT",
+        "WPR_DB_PATH",
+    }
+)
+
+
+def _read_selected_environment(
+    path: Path,
+    *,
+    keys: frozenset[str],
+) -> dict[str, str]:
+    """Read only public path selectors from a potentially secret-bearing EnvironmentFile."""
+
+    path = Path(path)
+    if not path.is_file() or path.is_symlink():
+        raise RolloutError(f"service environment is missing or unsafe: {path}")
+    values: dict[str, str] = {}
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeError) as exc:
+        raise RolloutError("service environment is unreadable") from exc
+    for number, raw_line in enumerate(lines, start=1):
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "=" not in line:
+            raise RolloutError(f"invalid service environment line {number}")
+        key, value = line.split("=", 1)
+        if key not in keys:
+            continue
+        if key in values:
+            raise RolloutError(f"duplicate service environment key on line {number}")
+        _validate_active_environment_value(key, value)
+        values[key] = value
+    return values
+
+
+def _validate_service_environment_file(
+    path: Path,
+    *,
+    expected_gid: int,
+    expected_uid: int = 0,
+) -> None:
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as exc:
+        raise RolloutError("service environment is missing or unsafe") from exc
+    try:
+        metadata = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_uid != expected_uid
+            or metadata.st_gid != expected_gid
+            or stat.S_IMODE(metadata.st_mode) & 0o022
+        ):
+            raise RolloutError("service environment has unsafe ownership or permissions")
+    finally:
+        os.close(descriptor)
+
+
+def predecessor_runtime_environment(
+    config: RolloutConfig,
+    active_environment: Mapping[str, str],
+) -> dict[str, str]:
+    """Resolve the predecessor's systemd EnvironmentFile order without exposing secrets."""
+
+    effective = _read_selected_environment(
+        config.runtime_env_file,
+        keys=PREDECESSOR_RUNTIME_ENV_KEYS,
+    )
+    for key in PREDECESSOR_RUNTIME_ENV_KEYS:
+        value = str(active_environment.get(key) or "").strip()
+        if value:
+            _validate_active_environment_value(key, value)
+            effective[key] = value
+    return effective
+
+
 def _ports_from_environments(runtime: Mapping[str, str], gateway: Mapping[str, str]) -> dict[str, int]:
     try:
         ports = {
@@ -1723,15 +1804,10 @@ def _validate_config(config: RolloutConfig, *, validate_adapters: bool) -> None:
             config.gateway_active_env: gateway_gid,
         }
         for environment_file, expected_gid in environment_groups.items():
-            if not environment_file.is_file() or environment_file.is_symlink():
-                raise RolloutError("service environment is missing or unsafe")
-            metadata = environment_file.stat()
-            if (
-                metadata.st_uid != 0
-                or metadata.st_gid != expected_gid
-                or stat.S_IMODE(metadata.st_mode) & 0o022
-            ):
-                raise RolloutError("service environment has unsafe ownership or permissions")
+            _validate_service_environment_file(
+                environment_file,
+                expected_gid=expected_gid,
+            )
         validate_adapter_path(config.ingress_adapter)
         validate_adapter_path(config.state_adapter)
         validate_adapter_path(config.acceptance_adapter)
@@ -2301,7 +2377,7 @@ def execute_rollout(
         gateway_env = read_active_environment(config.gateway_active_env)
         predecessor_provider_account_home = predecessor_provider_account_state_path(
             config,
-            runtime_env,
+            predecessor_runtime_environment(config, runtime_env),
         )
         canonical_provider_account_home = _validated_provider_account_state_path(
             config,
@@ -2757,9 +2833,25 @@ def _recover_rollout_locked(
             field="predecessor provider-account home",
         )
     else:
+        if production:
+            if config.runtime_env_file != Path("/etc/viventium/glasshive/runtime.env"):
+                raise RolloutError(
+                    "runtime_env_file does not match the installed systemd unit contract"
+                )
+            try:
+                state_gid = grp.getgrnam("glasshive-state").gr_gid
+            except KeyError as exc:
+                raise RolloutError("GlassHive service groups are missing") from exc
+            _validate_service_environment_file(
+                config.runtime_env_file,
+                expected_gid=state_gid,
+            )
         predecessor_provider_account_home = predecessor_provider_account_state_path(
             config,
-            read_active_environment(runtime_before),
+            predecessor_runtime_environment(
+                config,
+                read_active_environment(runtime_before),
+            ),
         )
     backups = {
         database.name: transaction / "backup" / f"{database.name}.sqlite3"

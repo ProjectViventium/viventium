@@ -286,6 +286,11 @@ most specific existing QA owner when a scenario already has a detailed provider 
   open credential file, and begin rollout. State mutation must remain blocked until that process is
   stopped; an already exited container's historical mount metadata must not permanently block the
   rollout.
+- Escape regression: keep the predecessor provider-home path only in the base runtime
+  EnvironmentFile while the active-slot file overrides `WPR_DB_PATH`. Rollout must resolve the
+  effective base-then-active service environment, preserve the earlier provider home, and never
+  treat the active database parent as an empty replacement merely because the active file omits the
+  explicit provider-home key.
 - Expected result: only selected native home is projected; concurrent run gets actionable busy state;
   refresh writes back safely; lease releases on every terminal path; stale lease recovers.
 - Forbidden result: global auth copied, wrong provider accepted, lease ends before mission, stuck lease,
@@ -295,10 +300,11 @@ most specific existing QA owner when a scenario already has a detailed provider 
   run outcomes.
 - Full-view evidence minimum: real native worker mission and concurrency/recovery proof.
 - Automation: `test_mission_provider_accounts.py`.
-- Last run: PARTIAL 2026-08-10; source regressions prove explicit phase-local provider roots,
-  recursive descriptor checks, and fail-closed rootless bind-mount inspection. A prior real Codex
-  mission completed but its cleanup and following rollout exposed the incident; installed recovery,
-  second mission, released lease, and persisted-home evidence remain open.
+- Last run: PARTIAL 2026-08-10; source regressions prove effective base/active EnvironmentFile
+  precedence, explicit phase-local provider roots, recursive descriptor checks, and fail-closed
+  rootless bind-mount inspection. A prior real Codex mission completed but its cleanup and following
+  rollout exposed the incident; installed recovery, second mission, released lease, and
+  persisted-home evidence remain open.
 
 ## `GHUCP-010` — Account Policy and Platform Gates
 
