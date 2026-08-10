@@ -329,7 +329,10 @@ compliant hosted topology.
 - In the reviewed Linux `per_worker_container` route, the exact account home is mounted only into the
   selected worker container. The rootless container grants and verifies access for its non-root worker
   user through POSIX ACLs, with no world-writable fallback; the container is removed, credential-tree
-  modes are tightened again, and only then is the exclusive lease released.
+  modes are tightened again, and only then is the exclusive lease released. Provider CLIs may leave
+  private executable-wrapper symlinks in their own caches. Sealing unlinks those directory entries
+  without following their targets before it changes ownership, modes, or ACLs on real directories and
+  files; hardlinks, special files, escaped paths, and any unlink failure remain fail-closed.
 - A hosted rollout does not infer provider-tree quiescence from currently open files alone. With the
   runtime, MCP, and UI stopped, it recursively checks descendant descriptors and separately inspects
   every recognized rootless `wpr-*` container. A running, paused, or restarting container whose bind
