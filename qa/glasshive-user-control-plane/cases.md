@@ -519,9 +519,10 @@ most specific existing QA owner when a scenario already has a detailed provider 
 - Full-view evidence minimum: real browser visual/interaction QA plus API/log/DB confirmation.
 - Automation: UI static tests, accessibility checks, Playwright.
 - Last run: PARTIAL 2026-08-09; complete Glass Drive auth/UI tests plus synthetic desktop/mobile
-  Playwright navigation, progressive-disclosure, and code-copy interaction passed. The compact default
-  Connections view keeps only account/status/current action visible and the guided setup keeps raw
-  output collapsed. Exact hosted-build auth, keyboard, and screen-reader matrices remain open.
+  Playwright navigation, progressive-disclosure, and code-copy interaction passed. A real hosted
+  Chrome pass then caught stale recovery copy and unrelated disclosures during active sign-in; the
+  regression fix now hides both while preserving the single sign-in, copy, and cancel task. Exact
+  post-fix hosted Chrome/Computer, keyboard, and screen-reader matrices remain open.
 
 ## `GHUCP-020` — UI, API, and MCP Parity
 
@@ -662,9 +663,9 @@ most specific existing QA owner when a scenario already has a detailed provider 
 - Full-view evidence minimum: clean bootstrap through supported entrypoint and installed user smoke.
 - Automation: release/bootstrap/compiler/installer suites plus provenance checks.
 - Last run: PARTIAL 2026-08-09; the parent candidate pins merged GlassHive
-  `407810d73d6dea6e3e065645839e669a26cd8459`, whose merge tree equals the reviewed guided-
-  Connections head. Sealed canary provenance, installed real-browser UX, and a fresh public
-  bootstrap/install in a new directory remain open for this exact pair.
+  `cfc9828f11f3ed9c9a35877be7d871f06a238283`, whose merge tree equals the reviewed guided-
+  Connections live-QA follow-up head. Sealed canary provenance, installed post-fix real-browser UX,
+  and a fresh public bootstrap/install in a new directory remain open for this exact pair.
 
 ## `GHUCP-027` — Clean Install, Upgrade, Continuity, and Rollback
 
