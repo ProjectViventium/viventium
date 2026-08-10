@@ -334,7 +334,10 @@ compliant hosted topology.
   without following their targets before it changes ownership, modes, or ACLs on real directories and
   files; hardlinks, special files, escaped paths, and any unlink failure remain fail-closed. The repair
   one-shot uses Docker's writable-by-default bind-mount grammar; an unsupported bare `rw` mount field
-  must never prevent the sealed repair container from starting.
+  must never prevent the sealed repair container from starting. Because a provider status command may
+  recreate temporary wrappers, connection verification renews its exclusive account lease across the
+  pre-check seal, provider CLI, post-check seal, and final descriptor validation. Losing that lease
+  quarantines the account instead of publishing a stale Ready state.
 - A hosted rollout does not infer provider-tree quiescence from currently open files alone. With the
   runtime, MCP, and UI stopped, it recursively checks descendant descriptors and separately inspects
   every recognized rootless `wpr-*` container. A running, paused, or restarting container whose bind

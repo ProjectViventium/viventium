@@ -480,7 +480,7 @@ The current candidate pins merged public-main LibreChat commit
 component manifest, and merged public-main modern-playground commit
 `98d1249db7a728e94656462d6bda979571be4dd7` in the parent component lock. The source/Docker
 GlassHive runtime is pinned by the parent component lock to merged public-main commit
-`86edba04e11f423cc8e12550aa59e6690757632f`; it is intentionally absent from the Native payload
+`ea6e864c61af4182c9fb278380c280b56bd0af3a`; it is intentionally absent from the Native payload
 component manifest. The Google Workspace MCP source is pinned to merged public-main commit
 `0824701abcf490de2a5091c68a7b0738f2294b3f`. Both manifests declare `merged`, and each merge tree
 equals its reviewed PR head. Source and local-runtime PASS still do not
