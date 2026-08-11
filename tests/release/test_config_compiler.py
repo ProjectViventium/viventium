@@ -2975,6 +2975,7 @@ def test_glasshive_multi_user_control_plane_compiles_signed_identity_and_mcp_oau
                 "provider_email_login": True,
                 "allow_principal_enrollment": False,
                 "local_password_login": True,
+                "oidc_login_visible": False,
                 "local_password_allowed_domains": ["example.test"],
                 "oidc": {
                     "issuer": "https://identity.example.test/tenant/v2.0",
@@ -3060,6 +3061,9 @@ def test_glasshive_multi_user_control_plane_compiles_signed_identity_and_mcp_oau
         "local_password_login"
     ]
     del default_closed_config["integrations"]["glasshive"]["enterprise"]["human_auth"][
+        "oidc_login_visible"
+    ]
+    del default_closed_config["integrations"]["glasshive"]["enterprise"]["human_auth"][
         "local_password_allowed_domains"
     ]
     del default_closed_config["runtime"]["auth"]["allow_email_login"]
@@ -3077,6 +3081,7 @@ def test_glasshive_multi_user_control_plane_compiles_signed_identity_and_mcp_oau
     assert env["GLASSHIVE_ALLOW_EMAIL_LOGIN"] == "true"
     assert env["GLASSHIVE_ALLOW_EMAIL_REGISTRATION"] == "false"
     assert env["GLASSHIVE_LOCAL_PASSWORD_LOGIN"] == "true"
+    assert env["GLASSHIVE_OIDC_LOGIN_VISIBLE"] == "false"
     assert env["GLASSHIVE_LOCAL_AUTH_ALLOWED_EMAIL_DOMAINS"] == "example.test"
     assert len(env["GLASSHIVE_LOCAL_AUTH_THROTTLE_KEY"]) >= 32
     assert default_closed_env["GLASSHIVE_PROVIDER_EMAIL_LOGIN"] == "false"
@@ -3084,6 +3089,7 @@ def test_glasshive_multi_user_control_plane_compiles_signed_identity_and_mcp_oau
     assert default_closed_env["GLASSHIVE_ALLOW_EMAIL_LOGIN"] == "false"
     assert default_closed_env["GLASSHIVE_ALLOW_EMAIL_REGISTRATION"] == "false"
     assert default_closed_env["GLASSHIVE_LOCAL_PASSWORD_LOGIN"] == "false"
+    assert default_closed_env["GLASSHIVE_OIDC_LOGIN_VISIBLE"] == "true"
     assert "GLASSHIVE_LOCAL_AUTH_ALLOWED_EMAIL_DOMAINS" not in default_closed_env
     assert env["GLASSHIVE_COOKIE_SECURE"] == "true"
     assert "GLASSHIVE_ALLOWED_EMAIL_DOMAINS" not in env
@@ -3216,6 +3222,7 @@ def test_glasshive_multi_user_control_plane_compiles_signed_identity_and_mcp_oau
     assert "GLASSHIVE_MCP_CODEX_CLIENT_ID=glasshive-codex-client" in gateway_env
     assert "GLASSHIVE_MCP_CODEX_CALLBACK_PORT=49153" in gateway_env
     assert "GLASSHIVE_LOCAL_PASSWORD_LOGIN=true" in gateway_env
+    assert "GLASSHIVE_OIDC_LOGIN_VISIBLE=false" in gateway_env
     assert "GLASSHIVE_LOCAL_AUTH_ALLOWED_EMAIL_DOMAINS=example.test" in gateway_env
     assert "GLASSHIVE_LOCAL_AUTH_THROTTLE_KEY=" in gateway_env
     assert (
@@ -3237,6 +3244,7 @@ def test_glasshive_multi_user_control_plane_compiles_signed_identity_and_mcp_oau
     assert "GLASSHIVE_MCP_CODEX_CLIENT_ID" not in glasshive_runtime_env
     assert "GLASSHIVE_MCP_CODEX_CALLBACK_PORT" not in glasshive_runtime_env
     assert "GLASSHIVE_LOCAL_PASSWORD_LOGIN" not in glasshive_runtime_env
+    assert "GLASSHIVE_OIDC_LOGIN_VISIBLE" not in glasshive_runtime_env
     assert "GLASSHIVE_LOCAL_AUTH_ALLOWED_EMAIL_DOMAINS" not in glasshive_runtime_env
     assert "GLASSHIVE_LOCAL_AUTH_THROTTLE_KEY" not in glasshive_runtime_env
     assert (
@@ -3408,6 +3416,39 @@ def test_glasshive_multi_user_control_plane_fails_closed_without_assertion_key_o
 
     with pytest.raises(SystemExit, match="internal_assertion.private_key_file"):
         config_compiler.resolve_glasshive_enterprise_settings(config)
+
+
+def test_glasshive_rejects_hiding_oidc_without_local_password_login() -> None:
+    config = minimal_compile_config()
+    config["integrations"]["glasshive"] = {
+        "enabled": True,
+        "deployment_mode": "azure_enterprise_vm_docker",
+        "mcp_url": "https://glasshive.example.test/mcp",
+        "operator_base_url": "https://glasshive.example.test",
+        "enterprise": {
+            "human_auth": {
+                "mode": "oidc",
+                "local_password_login": False,
+                "oidc_login_visible": False,
+            },
+        },
+    }
+
+    with pytest.raises(SystemExit, match="at least one visible browser login method"):
+        config_compiler.resolve_glasshive_enterprise_settings(config)
+
+
+def test_public_schema_declares_glasshive_oidc_login_visibility_as_presentation_only() -> None:
+    schema = yaml.safe_load((REPO_ROOT / "config.schema.yaml").read_text(encoding="utf-8"))
+    visibility = (
+        schema["properties"]["integrations"]["properties"]["glasshive"]["properties"]
+        ["enterprise"]["properties"]["human_auth"]["properties"]["oidc_login_visible"]
+    )
+
+    assert visibility["type"] == "boolean"
+    assert visibility["default"] is True
+    assert "presentation" in visibility["description"].lower()
+    assert "issuer" in visibility["description"].lower()
 
 
 def test_glasshive_multi_user_rejects_plain_trusted_proxy_identity_headers() -> None:

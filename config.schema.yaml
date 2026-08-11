@@ -674,6 +674,10 @@ properties:
                     type: boolean
                     default: false
                     description: Enables the gateway-only local password form for explicitly preapproved OIDC subjects; public signup and MCP password grants remain unavailable.
+                  oidc_login_visible:
+                    type: boolean
+                    default: true
+                    description: Presentation-only control for the normal browser OIDC button; hiding it requires local password login and never changes the configured issuer plus subject ownership contract or disables direct OIDC recovery routes.
                   local_password_allowed_domains:
                     oneOf:
                       - type: string
