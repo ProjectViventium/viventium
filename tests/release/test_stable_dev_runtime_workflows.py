@@ -4,6 +4,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import signal
 import shlex
 import subprocess
 import sys
@@ -670,6 +671,11 @@ def test_dev_env_offsets_app_facing_and_runtime_sidecar_ports(tmp_path: Path) ->
     assert ports["sandpack_bundler_port"] == 4191
     assert ports["playground_port"] == 4300
     assert ports["voice_gateway_health_port"] == 9301
+    assert ports["mongo_port"] == 28117
+    assert ports["meili_port"] == 8700
+    assert ports["livekit_http_port"] == 8888
+    assert ports["livekit_tcp_port"] == 8889
+    assert ports["livekit_udp_port"] == 8890
     assert ports["scheduling_mcp_port"] == 8210
     assert ports["rag_api_port"] == 8110
     assert ports["google_mcp_port"] == 8111
@@ -685,7 +691,14 @@ def test_dev_env_offsets_app_facing_and_runtime_sidecar_ports(tmp_path: Path) ->
 def test_dev_env_offsets_default_sandpack_port_for_older_configs(tmp_path: Path) -> None:
     app_support = tmp_path / "App Support" / "Viventium"
     config = minimal_config()
-    config["runtime"]["ports"].pop("sandpack_bundler_port")
+    for key in (
+        "lc_api_port",
+        "lc_frontend_port",
+        "sandpack_bundler_port",
+        "playground_port",
+        "voice_gateway_health_port",
+    ):
+        config["runtime"]["ports"].pop(key, None)
     config_path = app_support / "config.yaml"
     config_path.parent.mkdir(parents=True)
     config_path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
@@ -709,7 +722,417 @@ def test_dev_env_offsets_default_sandpack_port_for_older_configs(tmp_path: Path)
     dev_config = yaml.safe_load(
         (app_support / "dev-envs" / "dev" / "config.yaml").read_text(encoding="utf-8")
     )
-    assert dev_config["runtime"]["ports"]["sandpack_bundler_port"] == 4191
+    ports = dev_config["runtime"]["ports"]
+    assert ports["lc_api_port"] == 4180
+    assert ports["lc_frontend_port"] == 4190
+    assert ports["sandpack_bundler_port"] == 4191
+    assert ports["playground_port"] == 4300
+    assert ports["voice_gateway_health_port"] == 9301
+    assert ports["mongo_port"] == 28117
+    assert ports["meili_port"] == 8700
+    assert ports["livekit_http_port"] == 8888
+    assert ports["livekit_tcp_port"] == 8889
+    assert ports["livekit_udp_port"] == 8890
+    assert ports["scheduling_mcp_port"] == 8210
+
+
+def test_dev_env_reuses_the_canonical_validated_runtime_tools() -> None:
+    dev_runtime_source = DEV_RUNTIME.read_text(encoding="utf-8")
+    launcher_source = FULL_STACK_LAUNCHER.read_text(encoding="utf-8")
+
+    assert 'env["VIVENTIUM_RUNTIME_TOOLS_DIR"] = str(' in dev_runtime_source
+    assert 'Path(args.app_support_dir).expanduser().resolve() / "runtime-tools"' in dev_runtime_source
+    assert 'VIVENTIUM_RUNTIME_TOOLS_DIR="${VIVENTIUM_RUNTIME_TOOLS_DIR:-' in launcher_source
+    assert "${VIVENTIUM_RUNTIME_TOOLS_DIR}/node/${VIVENTIUM_NODE_RUNTIME_VERSION}" in launcher_source
+
+
+def test_dev_env_run_enforces_bounded_native_thread_pools(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    cli = repo / "bin" / "viventium"
+    cli.parent.mkdir(parents=True)
+    capture = tmp_path / "resource-env.json"
+    cli.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json, os\n"
+        "from pathlib import Path\n"
+        "keys = [\n"
+        "    'OPENBLAS_NUM_THREADS', 'OMP_NUM_THREADS', 'MKL_NUM_THREADS',\n"
+        "    'VECLIB_MAXIMUM_THREADS', 'NUMEXPR_MAX_THREADS',\n"
+        "    'RAYON_NUM_THREADS', 'TOKENIZERS_PARALLELISM',\n"
+        "    'VIVENTIUM_DEV_RESOURCE_GUARD', 'VIVENTIUM_DETACHED_START',\n"
+        "]\n"
+        "Path(os.environ['VIVENTIUM_QA_CAPTURE']).write_text(\n"
+        "    json.dumps({key: os.environ.get(key) for key in keys})\n"
+        ")\n",
+        encoding="utf-8",
+    )
+    cli.chmod(0o755)
+
+    app_support = tmp_path / "App Support" / "Viventium"
+    config = app_support / "config.yaml"
+    config.parent.mkdir(parents=True)
+    config.write_text(yaml.safe_dump(minimal_config(), sort_keys=False), encoding="utf-8")
+    subprocess.run(
+        [
+            sys.executable,
+            str(DEV_RUNTIME),
+            "--repo-root",
+            str(repo),
+            "--app-support-dir",
+            str(app_support),
+            "--config-file",
+            str(config),
+            "create",
+            "dev",
+        ],
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+    environment = os.environ.copy()
+    environment["VIVENTIUM_QA_CAPTURE"] = str(capture)
+    for key in (
+        "OPENBLAS_NUM_THREADS",
+        "OMP_NUM_THREADS",
+        "MKL_NUM_THREADS",
+        "VECLIB_MAXIMUM_THREADS",
+        "NUMEXPR_MAX_THREADS",
+        "RAYON_NUM_THREADS",
+    ):
+        environment[key] = "128"
+    environment["TOKENIZERS_PARALLELISM"] = "true"
+    environment["VIVENTIUM_DETACHED_START"] = "1"
+    subprocess.run(
+        [
+            sys.executable,
+            str(DEV_RUNTIME),
+            "--repo-root",
+            str(repo),
+            "--app-support-dir",
+            str(app_support),
+            "--config-file",
+            str(config),
+            "run",
+            "dev",
+            "status",
+        ],
+        check=True,
+        env=environment,
+        text=True,
+        capture_output=True,
+    )
+
+    assert json.loads(capture.read_text(encoding="utf-8")) == {
+        "OPENBLAS_NUM_THREADS": "1",
+        "OMP_NUM_THREADS": "4",
+        "MKL_NUM_THREADS": "1",
+        "VECLIB_MAXIMUM_THREADS": "4",
+        "NUMEXPR_MAX_THREADS": "4",
+        "RAYON_NUM_THREADS": "4",
+        "TOKENIZERS_PARALLELISM": "false",
+        "VIVENTIUM_DEV_RESOURCE_GUARD": "v1",
+        "VIVENTIUM_DETACHED_START": "0",
+    }
+
+
+def test_macos_resource_guard_counts_reparented_candidate_python_with_spaced_paths(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spec = importlib.util.spec_from_file_location("viventium_dev_runtime_guard", DEV_RUNTIME)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    thread_inspections: list[int] = []
+
+    def fake_run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        if command == ["/bin/ps", "-axo", "pid=,ppid=,pgid=,comm="]:
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                stdout=(
+                    "4000 1 4000 bash\n"
+                    "4321 1 4000 /Applications/Synthetic Runtime/Python\n"
+                    "5000 4321 4000 child\n"
+                    "9000 1 9000 /opt/homebrew/bin/python3\n"
+                ),
+                stderr="",
+            )
+        assert command[:3] == ["/bin/ps", "-M", "-p"]
+        inspected_pid = int(command[3])
+        thread_inspections.append(inspected_pid)
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout="HEADER\nthread-one\nthread-two\nthread-three\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr(module.sys, "platform", "darwin")
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+
+    snapshot = module.process_thread_snapshot(4000)
+
+    assert snapshot[4321] == (1, 3)
+    assert thread_inspections == [4321]
+
+
+def test_macos_resource_guard_fails_closed_when_live_python_threads_cannot_be_inspected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spec = importlib.util.spec_from_file_location("viventium_dev_runtime_guard_failure", DEV_RUNTIME)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    def fake_run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        if command == ["/bin/ps", "-axo", "pid=,ppid=,pgid=,comm="]:
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                stdout="4321 1 4000 /Applications/Synthetic Runtime/Python\n",
+                stderr="",
+            )
+        raise subprocess.TimeoutExpired(command, timeout=2)
+
+    monkeypatch.setattr(module.sys, "platform", "darwin")
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+    monkeypatch.setattr(module.os, "kill", lambda _pid, _signal: None)
+
+    assert module.process_thread_snapshot(4000) is None
+
+
+def test_dev_env_run_stops_a_python_process_before_thread_budget_exhaustion(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    cli = repo / "bin" / "viventium"
+    cli.parent.mkdir(parents=True)
+    cli.write_text(
+        "#!/usr/bin/env python3\n"
+        "import threading, time\n"
+        "stop = threading.Event()\n"
+        "for _ in range(8):\n"
+        "    threading.Thread(target=stop.wait, daemon=True).start()\n"
+        "print('synthetic runaway ready', flush=True)\n"
+        "while True:\n"
+        "    time.sleep(1)\n",
+        encoding="utf-8",
+    )
+    cli.chmod(0o755)
+
+    app_support = tmp_path / "App Support" / "Viventium"
+    config = app_support / "config.yaml"
+    config.parent.mkdir(parents=True)
+    config.write_text(yaml.safe_dump(minimal_config(), sort_keys=False), encoding="utf-8")
+    subprocess.run(
+        [
+            sys.executable,
+            str(DEV_RUNTIME),
+            "--repo-root",
+            str(repo),
+            "--app-support-dir",
+            str(app_support),
+            "--config-file",
+            str(config),
+            "create",
+            "dev",
+        ],
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+    environment = os.environ.copy()
+    environment["VIVENTIUM_DEV_RESOURCE_GUARD_MAX_PROCESS_THREADS"] = "4"
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(DEV_RUNTIME),
+            "--repo-root",
+            str(repo),
+            "--app-support-dir",
+            str(app_support),
+            "--config-file",
+            str(config),
+            "run",
+            "dev",
+            "status",
+        ],
+        env=environment,
+        text=True,
+        capture_output=True,
+        timeout=8,
+        check=False,
+    )
+
+    assert completed.returncode == 86
+    assert "resource guard stopped the dev env" in completed.stderr.lower()
+    assert "thread budget" in completed.stderr.lower()
+
+
+def test_dev_env_run_enforces_the_candidate_python_tree_budget(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    cli = repo / "bin" / "viventium"
+    cli.parent.mkdir(parents=True)
+    cli.write_text(
+        "#!/usr/bin/env python3\n"
+        "import subprocess, sys, time\n"
+        "child = subprocess.Popen([\n"
+        "    sys.executable, '-c',\n"
+        "    \"import threading,time; "
+        "[threading.Thread(target=lambda: time.sleep(30), daemon=True).start() "
+        "for _ in range(3)]; print('child ready', flush=True); time.sleep(30)\",\n"
+        "])\n"
+        "print('tree ready', flush=True)\n"
+        "child.wait()\n",
+        encoding="utf-8",
+    )
+    cli.chmod(0o755)
+
+    app_support = tmp_path / "App Support" / "Viventium"
+    config = app_support / "config.yaml"
+    config.parent.mkdir(parents=True)
+    config.write_text(yaml.safe_dump(minimal_config(), sort_keys=False), encoding="utf-8")
+    subprocess.run(
+        [
+            sys.executable,
+            str(DEV_RUNTIME),
+            "--repo-root",
+            str(repo),
+            "--app-support-dir",
+            str(app_support),
+            "--config-file",
+            str(config),
+            "create",
+            "dev",
+        ],
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+    environment = os.environ.copy()
+    environment["VIVENTIUM_DEV_RESOURCE_GUARD_MAX_PROCESS_THREADS"] = "4"
+    environment["VIVENTIUM_DEV_RESOURCE_GUARD_MAX_TREE_THREADS"] = "4"
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(DEV_RUNTIME),
+            "--repo-root",
+            str(repo),
+            "--app-support-dir",
+            str(app_support),
+            "--config-file",
+            str(config),
+            "run",
+            "dev",
+            "status",
+        ],
+        env=environment,
+        text=True,
+        capture_output=True,
+        timeout=8,
+        check=False,
+    )
+
+    assert completed.returncode == 86
+    assert "process tree reached" in completed.stderr.lower()
+
+
+@pytest.mark.parametrize(
+    ("guard_signal", "expected_status"),
+    ((signal.SIGINT, 130), (signal.SIGTERM, 128 + signal.SIGTERM)),
+)
+def test_dev_env_run_forwards_operator_signals_and_waits_for_child_cleanup(
+    tmp_path: Path,
+    guard_signal: signal.Signals,
+    expected_status: int,
+) -> None:
+    repo = tmp_path / "repo"
+    cli = repo / "bin" / "viventium"
+    cli.parent.mkdir(parents=True)
+    cleanup_marker = tmp_path / "cleanup-complete"
+    child_pid_file = tmp_path / "child.pid"
+    cli.write_text(
+        "#!/usr/bin/env python3\n"
+        "import os, signal, time\n"
+        "from pathlib import Path\n"
+        "marker = Path(os.environ['VIVENTIUM_QA_CLEANUP_MARKER'])\n"
+        "Path(os.environ['VIVENTIUM_QA_CHILD_PID']).write_text(str(os.getpid()))\n"
+        "def cleanup(_signum, _frame):\n"
+        "    time.sleep(0.3)\n"
+        "    marker.write_text('drained')\n"
+        "    raise SystemExit(0)\n"
+        "signal.signal(signal.SIGINT, cleanup)\n"
+        "signal.signal(signal.SIGTERM, cleanup)\n"
+        "print('cleanup child ready', flush=True)\n"
+        "while True:\n"
+        "    time.sleep(1)\n",
+        encoding="utf-8",
+    )
+    cli.chmod(0o755)
+
+    app_support = tmp_path / "App Support" / "Viventium"
+    config = app_support / "config.yaml"
+    config.parent.mkdir(parents=True)
+    config.write_text(yaml.safe_dump(minimal_config(), sort_keys=False), encoding="utf-8")
+    subprocess.run(
+        [
+            sys.executable,
+            str(DEV_RUNTIME),
+            "--repo-root",
+            str(repo),
+            "--app-support-dir",
+            str(app_support),
+            "--config-file",
+            str(config),
+            "create",
+            "dev",
+        ],
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+    environment = os.environ.copy()
+    environment["VIVENTIUM_QA_CLEANUP_MARKER"] = str(cleanup_marker)
+    environment["VIVENTIUM_QA_CHILD_PID"] = str(child_pid_file)
+    guard = subprocess.Popen(
+        [
+            sys.executable,
+            str(DEV_RUNTIME),
+            "--repo-root",
+            str(repo),
+            "--app-support-dir",
+            str(app_support),
+            "--config-file",
+            str(config),
+            "run",
+            "dev",
+            "status",
+        ],
+        env=environment,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    try:
+        assert guard.stdout is not None
+        assert guard.stdout.readline().strip() == "cleanup child ready"
+        guard.send_signal(guard_signal)
+        assert guard.wait(timeout=5) == expected_status
+        assert cleanup_marker.read_text(encoding="utf-8") == "drained"
+    finally:
+        if guard.poll() is None:
+            guard.kill()
+            guard.wait(timeout=2)
+        if child_pid_file.exists():
+            child_pid = int(child_pid_file.read_text(encoding="utf-8"))
+            try:
+                os.killpg(child_pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
 
 
 def test_dev_env_shared_singletons_compile_without_duplicate_start_flags(tmp_path: Path) -> None:

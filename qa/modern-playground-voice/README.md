@@ -2,9 +2,9 @@
 
 ## Purpose
 
-Verify that an authenticated LibreChat agent conversation can launch the Viventium modern playground,
-connect a LiveKit call, open the transcript panel, and return a real AI response to a synthetic typed
-chat message.
+Verify the complete authenticated Call/Wing/Listen-Only experience: one-click connection, audible
+conversation, truthful task/tool/source activity, automatic speaker separation, interruption and
+cancellation, reconnect/persistence, post-call memory boundaries, and extended-call reliability.
 
 ## Acceptance Contract
 
@@ -12,7 +12,8 @@ chat message.
   entrypoint.
 - Clicking the phone button opens the modern playground on `http://localhost:3300` with a valid
   call-session deep link.
-- Clicking `Start chat` connects the browser to LiveKit and the voice agent.
+- With microphone permission already granted, the Call click auto-connects to LiveKit and reaches
+  an authoritative listening/speaking/working state without a second Start action.
 - Toggling the transcript opens the typed chat input.
 - Sending a synthetic typed prompt returns an actual assistant answer, not a generic runtime failure.
 - Assistant transcript rows preserve per-answer boundaries. A later assistant answer must not append
@@ -28,11 +29,23 @@ chat message.
   - LiveKit / dispatch failures
   - backend model-provider credential failures
 
-## Public-Safe Evidence
+The world-class Call/Wing/Listen-Only endurance gate is in
+`qa/modern-playground-voice/endurance-runbook.md`. It owns the 100-switch, 50-reconnect, 65-minute
+audible, 120-minute soak, exact replay, structured trace, and private-evidence workflow for
+MPV-032 through MPV-054. The machine-readable execution and coverage contract is
+`qa/modern-playground-voice/acceptance-manifest.template.v1.json`.
 
-- Local-only Playwright browser artifacts:
-  - `output/playwright/modern-playground-qa/.playwright-cli/`
-  - These artifacts are intentionally not committed because they can include private account UI state.
+## Private Raw Evidence
+
+- Put Playwright/browser artifacts, result JSON, screenshots, raw logs, call/session identifiers, and
+  transcript-bearing evidence in the designated private R&D/output tree outside this public repo.
+- Signed QA call URLs enter through `/call-bootstrap` with an ephemeral browser capability in the
+  fragment. The harness must prove that bootstrap stripped the fragment before it captures any
+  evidence, and no capability or fragment-bearing URL may appear in stdout/stderr, result JSON,
+  raw-event metadata, screenshot names, or public/private QA summaries.
+- `livekit_synthetic_audio_qa.js` requires `--output-root` (or
+  `VIVENTIUM_QA_OUTPUT_ROOT`), refuses a public-repo output, and emits a content-free console summary.
+- Commit only manually reviewed, sanitized counts/timings/conclusions under this QA folder.
 - Runtime logs:
   - `~/Library/Application Support/Viventium/state/runtime/isolated/logs/voice_gateway.log`
 - Stack launcher output from:
@@ -46,15 +59,17 @@ public Playground while keeping DB preflight local, and disable non-proxied UDP:
 
 ```bash
 MONGO_URI=mongodb://127.0.0.1:27117/LibreChatViventium \
+VIVENTIUM_QA_OUTPUT_ROOT=/path/to/private-viventium-qa \
 VIVENTIUM_QA_BROWSER_PLAYGROUND_URL=https://playground.app.example.com \
 VIVENTIUM_QA_BROWSER_PROXY=socks5://127.0.0.1:19050 \
 VIVENTIUM_QA_DISABLE_NON_PROXIED_UDP=1 \
 node qa/modern-playground-voice/scripts/livekit_synthetic_audio_qa.js \
+  --output-root /path/to/private-viventium-qa \
   --audio <synthetic-wav> \
   --expect "<synthetic transcript>" \
   --case-id public-browser-off-lan \
-  --result output/playwright/remote-access/public-browser-off-lan.json \
-  --screenshot output/playwright/remote-access/public-browser-off-lan.png
+  --result /path/to/private-viventium-qa/public-browser-off-lan.json \
+  --screenshot /path/to/private-viventium-qa/public-browser-off-lan.png
 ```
 
 Acceptance requires all of the following, not merely a loaded public page:
@@ -75,7 +90,8 @@ The same harness also supports two narrower diagnostics:
   named public TCP candidate to a controlled external ingress proxy.
 
 Keep proxy processes, JSON, screenshots, raw candidate addresses, session IDs, and transcripts
-local under `output/`; commit only sanitized status, candidate type/protocol, counts, and conclusions.
+under the configured private output root outside this repository; commit only sanitized status,
+candidate type/protocol, counts, and conclusions.
 
 ## Escaped Cross-Surface Case
 
@@ -91,16 +107,24 @@ cross-surface regression until a full user-path rerun passes.
 2. Open an authenticated LibreChat agent conversation on `http://localhost:3190`.
 3. Confirm the `Start voice call` phone button is visible.
 4. Click `Start voice call` and verify a new modern-playground tab opens on `http://localhost:3300`.
-5. In the modern playground, click `Start chat`.
-6. Confirm LiveKit connects and the bottom control bar shows the session as active.
-7. Toggle the transcript open.
-8. Send a synthetic typed prompt such as `Please reply with exactly: modern playground QA successful.`
-9. Record whether the assistant returns a real answer or a generic failure string.
-10. If background agents activate, compare the LibreChat assistant turn against the modern
+5. Before capturing evidence, confirm the call fragment is stripped and the page has left
+   `/call-bootstrap`; never print or capture the capability-bearing URL.
+6. Confirm LiveKit auto-connects and the compact status reaches `listening`, `speaking`, `working`,
+   or `needs input` without a second start action.
+7. Toggle the transcript open and verify speaker labels/uncertainty plus the task strip are
+   accessible when their authoritative events exist.
+8. Speak or send a synthetic prompt that performs a real lookup, returns sources, and completes in
+   the linked chat. Verify supported needs-input, unsupported-owner failure, retry, TTS interruption,
+   and explicit task cancellation as separate paths.
+9. Switch Call -> Wing -> Listen-Only -> Call and prove the same RTC connection remains active;
+   Listen-Only produces no TTS, tools, controller, cortex, live-memory, or ordinary-recall work.
+10. Hang up during active work. Audio must end immediately while the authoritative task continues
+    in linked chat without a prompt; refresh and compare task, source, speaker, and result state.
+11. If background agents activate, compare the LibreChat assistant turn against the modern
     playground transcript:
     - the playground must not show raw `cortex_insight` text as a separate spoken utterance
     - only a real persisted `cortex_followup` may appear as the second spoken assistant turn
-11. If the assistant fails, inspect browser network/console plus runtime logs to locate the failing
+12. If the assistant fails, inspect browser network/console plus runtime logs to locate the failing
     layer before changing code.
 
 ## Execution Evidence

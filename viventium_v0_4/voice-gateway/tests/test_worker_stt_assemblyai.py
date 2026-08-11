@@ -19,6 +19,7 @@ from worker import (  # noqa: E402
     ASSEMBLYAI_DEFAULT_STT_MODEL,
     ASSEMBLYAI_STT_MODELS,
     HAS_ASSEMBLYAI,
+    VoiceRouteError,
     _apply_requested_voice_route,
     _assemblyai_stt_model_variants,
     _build_assemblyai_stt_kwargs,
@@ -45,6 +46,7 @@ def _assemblyai_env(**overrides):
     base = {
         "VIVENTIUM_VOICE_STT_PROVIDER": "assemblyai",
         "ASSEMBLYAI_API_KEY": "test-assemblyai-key",
+        "OPENAI_API_KEY": "test-openai-key",
     }
     base.update(overrides)
     return base
@@ -125,7 +127,8 @@ class TestAssemblyAISttModelSelection(unittest.TestCase):
     @unittest.skipUnless(HAS_ASSEMBLYAI, "livekit-plugins-assemblyai not installed")
     def test_apply_requested_route_applies_selected_variant(self):
         requested = {
-            "stt": {"provider": "assemblyai", "variant": "universal-streaming-multilingual"}
+            "stt": {"provider": "assemblyai", "variant": "universal-streaming-multilingual"},
+            "tts": {"provider": "openai", "variant": "gpt-4o-mini-tts"},
         }
         with patch.dict(
             os.environ,
@@ -139,8 +142,11 @@ class TestAssemblyAISttModelSelection(unittest.TestCase):
         self.assertEqual(applied.assemblyai_stt_model, "universal-streaming-multilingual")
 
     @unittest.skipUnless(HAS_ASSEMBLYAI, "livekit-plugins-assemblyai not installed")
-    def test_apply_requested_route_normalizes_unknown_variant(self):
-        requested = {"stt": {"provider": "assemblyai", "variant": "nonexistent-engine"}}
+    def test_apply_requested_route_rejects_unknown_saved_variant(self):
+        requested = {
+            "stt": {"provider": "assemblyai", "variant": "nonexistent-engine"},
+            "tts": {"provider": "openai", "variant": "gpt-4o-mini-tts"},
+        }
         with patch.dict(
             os.environ,
             _assemblyai_env(VIVENTIUM_ASSEMBLYAI_STT_MODEL="u3-rt-pro"),
@@ -148,9 +154,9 @@ class TestAssemblyAISttModelSelection(unittest.TestCase):
         ):
             env = load_env()
             capabilities = _build_voice_capability_catalog(env)
-            applied = _apply_requested_voice_route(env, requested, capabilities)
-        # Never hand the provider an invalid model string; fall back to a valid catalog model.
-        self.assertIn(applied.assemblyai_stt_model, _VALID_MODEL_IDS)
+            with self.assertRaises(VoiceRouteError) as raised:
+                _apply_requested_voice_route(env, requested, capabilities)
+        self.assertEqual(raised.exception.code, "no_route")
 
     @unittest.skipUnless(HAS_ASSEMBLYAI, "livekit-plugins-assemblyai not installed")
     def test_build_stt_selection_passes_model_to_plugin(self):

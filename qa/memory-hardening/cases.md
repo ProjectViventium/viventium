@@ -21,6 +21,7 @@ Use stable `MEMHARD-NNN` IDs for memory hardening cases.
 | `MEMHARD-011` | Proposal apply, replay, and rollback are revision protected across delete/recreate generations. | Nightly maintenance cannot overwrite, erase, or resurrect over a newer channel/web/voice memory write. | proposal/apply/rollback, fixture tombstone revisions, isolated rollback snapshot, public-safe summary | hardener and fixture DB memory CAS regressions | PASS-AUTOMATED 2026-07-14; retained-tombstone ABA, exact rollback, duplicate fail-closed, and path-redaction regressions pass |
 | `MEMHARD-012` | The 03:00 LaunchAgent is single-trigger, idempotently reconciled, and lifecycle-receipted. | Repeated start/upgrade cannot unload a healthy agent, reset its evidence, or create a competing model cadence. | compiler, CLI sync, LaunchAgent fixture, trigger/lifecycle receipts | memory-hardening contract tests plus isolated plist/status | PASS-AUTOMATED/PARTIAL 2026-07-18; single-trigger/reconcile/receipt fixtures pass, isolated real-time scheduled fire NOT RUN |
 | `MEMHARD-013` | LaunchAgent reconciliation and upgrade ordering preserve exact prior user state on failure. | A failed schedule refresh cannot leave an existing job unloaded, replace its plist/marker, or mutate it before upgrade commit. | memory-harden loader, upgrade CLI ordering, synthetic plist/marker, fake launchctl | memory-hardening contract and upgrade-order regressions | PASS-AUTOMATED 2026-07-24 ([report](reports/2026-07-24-launchagent-transaction-rollback.md)); exact bytes/modes/load state, fresh-install cleanup, ownership fail-closed, and post-commit ordering pass |
+| `MEMHARD-016` | Voice-derived durable memory waits for terminal call, suppression, and speaker truth. | A conversation with guests or a cancelled task cannot silently become stable owner memory. | Call/Wing/Listen-Only messages, speaker segments/session state, suppression ledger, post-call hardener | voice persistence and memory-policy suites plus real post-call DB QA | `PARTIAL` 2026-08-09; focused policy automation exists, real post-call hardener journey pending |
 
 ## `MEMHARD-001` - Core User Flow
 
@@ -345,6 +346,25 @@ Use stable `MEMHARD-NNN` IDs for memory hardening cases.
   ([report](reports/2026-07-24-launchagent-transaction-rollback.md)); no live LaunchAgent or private
   App Support state was touched.
 
+## `MEMHARD-016` - Post-Call Voice Evidence Authority
+
+- During an active Call, Wing session, and Listen-Only session, create synthetic owner, guest,
+  shared-microphone, uncertain, and cancelled-task segments. Confirm no voice-derived durable write
+  occurs before hangup.
+- After hangup, run post-call processing with complete `speakerSegments`,
+  `SpeakerSessionStateV1`, call terminal state, and suppression state. Repeat with a late-discovered
+  second speaker and with each authoritative state unavailable.
+- Expected: only owner-trusted single-speaker Call content may reach the normal writer. Wing,
+  Listen-Only, mixed/shared-mic, guest, and unverified content remains soft; one call is one source;
+  speaker revisions apply before evaluation; cancelled/late output is absent; missing durable truth
+  fails closed.
+- Forbidden: active-call writes, multiple diarized speakers counted as corroboration, guest speech
+  promoted as owner fact, cancellation result entering memory, or unavailable state treated as safe.
+- Evidence: real call/hangup, sanitized message/segment/suppression counts, hardener proposal/result,
+  DB revisions, linked-chat refresh, and public-safe report.
+- Last run: `PARTIAL` — 2026-08-09 — focused policy/persistence automation only; real post-call
+  hardener and DB user path remains pending.
+
 ## Natural User Use Case Checklist
 
 These rows are the minimum natural-user checklist gate for Memory Hardening. Add narrower feature-specific
@@ -367,6 +387,7 @@ rows before claiming a pass when the feature behavior changes.
 | `MEMHARD-UC-012` | Apply, replay, and roll back a synthetic proposal while another surface advances the same key. | `20_Memory_System.md` / `MEMHARD-011` | hardener CLI, Mongo revisions, Telegram/web write | apply/rollback summaries, revision conflicts, preserved final value | Stale apply/rollback loses the race visibly and never erases the newer value. | PASS-AUTOMATED 2026-07-11; live smoke pending |
 | `MEMHARD-UC-013` | Re-run start/upgrade reconciliation, then inspect the overnight job after a synthetic timezone/sleep transition. | `20_Memory_System.md` / `MEMHARD-012` | LaunchAgent fixture, `memory-harden status`, trigger/lifecycle receipts | synthetic timezone, single calendar trigger, loaded state, generation hash, latest exit/run fixture | Reconciliation is a no-op when healthy; the calendar fire is judged from its receipt without a competing model cadence. | PASS-AUTOMATED/PARTIAL 2026-07-18; reconciliation/receipt fixtures pass, isolated real-time fire NOT RUN |
 | `MEMHARD-UC-014` | Upgrade or reconcile while launchctl/filesystem/receipt work fails. | `20_Memory_System.md`, `39_Installer_and_Config_Compiler.md` / `MEMHARD-013` | synthetic LaunchAgent/marker, fake launchctl, upgrade CLI source | exact before/after bytes and modes, loaded state, failed receipt rollback status, upgrade call order | The prior schedule remains exact and loaded as before; a committed upgrade gives a truthful retry command. | PASS-AUTOMATED 2026-07-24 ([report](reports/2026-07-24-launchagent-transaction-rollback.md)); live LaunchAgent mutation intentionally NOT RUN |
+| `MEMHARD-UC-015` | Finish a synthetic multi-speaker or cancelled voice call and run post-call hardening. | `20_Memory_System.md` / `MEMHARD-016`, `MPV-045` | real call, linked chat, speaker/task persistence, memory hardener | segment/session revisions, suppression state, proposal/write counts, DB revisions | Only verified single-speaker Call content is eligible; all other voice evidence remains soft and one call counts once. | `PARTIAL` 2026-08-09; real call/hardener path pending |
 
 ## Release Test Traceability
 

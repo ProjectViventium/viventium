@@ -207,14 +207,16 @@ Use `REL-NNN` for release-readiness and public-push packaging checks.
 - Forbidden result: stale ref or unreviewed local nested changes.
 - Evidence to capture: parent diff and nested SHA.
 - Automation: git inspection.
-- Last run: PASS 2026-08-10. The current candidate declares `merged`. It pins LibreChat PR 97
-  at merge commit `ccfd307c3b6bd5573c58dfc4f16b84fc691fef4f`, agent-starter-react
-  PR 10 merge commit `98d1249db7a728e94656462d6bda979571be4dd7`, and GlassHive PRs 50–74
-  at merge commit `94c99e3fdcf05d799b5d02e6a188071dc4fbc0eb`; each merge tree equals its reviewed
-  head. Google Workspace MCP PR 9 is pinned at merge commit
+- Last run: PARTIAL 2026-08-11. The isolated prerelease candidate declares
+  `review-head-pending-merge`. It pins sanitized LibreChat review commit
+  `1cd439d03cc165f5f7bc4631d28dd678deb63827`, agent-starter-react review commit
+  `56b728e358e8ff18cd5ac9c38655f26e492c277d`, GlassHive review commit
+  `ce65fdf4b6567f513c10474069bf40495b48d960`, and Viventium-Health review commit
+  `8b1f669d539a6a9e2e80e92c354130e4fac1a8af`. Google Workspace MCP PR 9 remains pinned at merge commit
   `0824701abcf490de2a5091c68a7b0738f2294b3f`. The Native policy pins the same LibreChat commit
   and intentionally contains no GlassHive, Google Workspace MCP, or playground component.
-  Remote-main/install identity gates remain before release acceptance.
+  Local clean-install identity can use exact local mirrors; public push/merge and remote-main
+  identity remain separate, unauthorized release gates.
 
 ## `REL-004` - Browser-Visible Background Cards
 

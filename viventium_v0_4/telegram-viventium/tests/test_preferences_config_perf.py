@@ -233,7 +233,7 @@ def test_update_first_buttons_message_uses_cached_call_url_without_fetch(monkeyp
     monkeypatch.setattr(telegram_config, "get_telegram_call_url", _fail_fetch)
     telegram_config._CALL_URL_CACHE.clear()
     telegram_config._CALL_URL_CACHE["user-1"] = {
-        "url": "http://198.51.100.25:3300/?cached=1",
+        "url": "https://voice.example.test/?cached=1",
         "expires_at": time.time() + 60,
     }
 
@@ -241,7 +241,7 @@ def test_update_first_buttons_message_uses_cached_call_url_without_fetch(monkeyp
     flattened = [btn for row in buttons for btn in row]
 
     assert flattened[0].text == "Call Viventium"
-    assert flattened[0].url == "http://198.51.100.25:3300/?cached=1"
+    assert flattened[0].url == "https://voice.example.test/?cached=1"
     assert flattened[1].text == "Preferences"
 
 
@@ -378,4 +378,44 @@ def test_get_telegram_call_url_does_not_cache_insecure_remote_urls(monkeypatch):
     result = telegram_config.get_telegram_call_url("123456789")
 
     assert result == "http://198.51.100.25:3300/?ok=1"
+    assert telegram_config._CALL_URL_CACHE == {}
+
+
+@pytest.mark.parametrize(
+    "fragment_key",
+    ["viventiumCallLaunch", "viventiumCallCapability"],
+)
+def test_get_telegram_call_url_never_caches_call_bearer_fragments(monkeypatch, fragment_key):
+    call_url = f"https://voice.example.test/call-bootstrap?callSessionId=call-1#{fragment_key}={'L' * 43}"
+
+    class _Resp:
+        status_code = 200
+        content = b"result"
+        text = "result"
+
+        @staticmethod
+        def json():
+            return {"callUrl": call_url}
+
+    monkeypatch.setenv("VIVENTIUM_LIBRECHAT_ORIGIN", "http://localhost:3180")
+    monkeypatch.setenv("VIVENTIUM_CALL_SESSION_SECRET", "secret")
+    monkeypatch.setattr(telegram_config.Users, "get_config", lambda *_args, **_kwargs: "")
+    monkeypatch.setattr(telegram_config.requests, "post", lambda *_args, **_kwargs: _Resp())
+    telegram_config._CALL_URL_CACHE.clear()
+
+    assert telegram_config.get_telegram_call_url("123456789") == call_url
+    assert telegram_config._CALL_URL_CACHE == {}
+
+
+def test_cached_legacy_call_bearer_is_removed_instead_of_reused():
+    telegram_config._CALL_URL_CACHE.clear()
+    telegram_config._CALL_URL_CACHE["123456789"] = {
+        "url": (
+            "https://voice.example.test/call-bootstrap?callSessionId=call-1"
+            f"#viventiumCallCapability={'C' * 43}"
+        ),
+        "expires_at": time.time() + 60,
+    }
+
+    assert telegram_config.get_cached_telegram_call_url("123456789") == ""
     assert telegram_config._CALL_URL_CACHE == {}

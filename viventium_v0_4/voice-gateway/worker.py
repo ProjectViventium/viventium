@@ -26,10 +26,11 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from dataclasses import dataclass, replace
 from importlib import metadata as importlib_metadata
 from pathlib import Path
-from typing import Any, Optional
-from urllib.parse import urlencode
+from typing import Any, NoReturn, Optional
+from urllib.parse import quote, urlencode
 
 import aiohttp
+from livekit import rtc
 
 from livekit.agents import (
     APIConnectionError,
@@ -40,10 +41,12 @@ from livekit.agents import (
     JobProcess,
     TurnHandlingOptions,
     WorkerOptions,
+    StopResponse,
     cli,
     tokenize,
 )
 from livekit.agents.worker import WorkerType
+from livekit.agents.stt import SpeechEventType
 from livekit.plugins import openai
 
 try:
@@ -146,6 +149,22 @@ from silero_vad_config import get_silero_vad_kwargs
 from mlx_chatterbox_tts import MlxChatterboxConfig, MlxChatterboxTTS
 # === VIVENTIUM END ===
 from fallback_tts import FallbackTTS, ProviderAttempt
+from speaker_segments import (
+    CallScopedSegmentSequencer,
+    SPEAKER_CONTEXT_EXTRA_KEY,
+    SpeakerSegmentTracker,
+    attach_speaker_context_to_message,
+    shared_microphone_state_applies_to_track,
+)
+from multi_track_ingress import MultiTrackIngressCoordinator
+from voice_progress import (
+    AsyncVoiceProgressController,
+    VoiceProgressStateMachine,
+    parse_authoritative_call_state_packet,
+    parse_voice_call_state_v1,
+    run_authoritative_mode_reconciliation,
+    sync_authoritative_call_mode_once,
+)
 
 logger = logging.getLogger("voice-gateway")
 
@@ -1093,6 +1112,34 @@ def _normalize_requested_voice_route(route: Any) -> dict[str, dict[str, Optional
     }
 
 
+class VoiceRouteError(RuntimeError):
+    """Classified failure for an authoritative saved voice route.
+
+    A selected route is a privacy and product-truth boundary.  Callers may surface the
+    classification, but must never recover by silently constructing a different provider.
+    """
+
+    def __init__(self, code: str, *, modality: str, provider: str, reason: str) -> None:
+        self.code = code
+        self.modality = modality
+        self.provider = (provider or "").strip().lower()
+        self.egress_class = "local" if _is_local_provider(self.provider) else "cloud"
+        super().__init__(
+            f"{code}: authoritative {modality} route {self.provider or '<missing>'} {reason}"
+        )
+
+
+def _raise_route_error(
+    code: str, *, modality: str, provider: str, reason: str
+) -> NoReturn:
+    raise VoiceRouteError(
+        code,
+        modality=modality,
+        provider=provider,
+        reason=reason,
+    )
+
+
 def _provider_display_label(provider: str, *, modality: str) -> str:
     provider_key = (provider or "").strip().lower()
     labels = {
@@ -1511,121 +1558,164 @@ def _apply_requested_voice_route(
     runtime_env = env
 
     stt_selection = normalized_route["stt"]
-    requested_stt_provider = (
-        _normalize_stt_provider(stt_selection["provider"]) if stt_selection["provider"] else None
+    if not stt_selection["provider"]:
+        _raise_route_error(
+            "no_route", modality="stt", provider="", reason="is missing"
+        )
+    requested_stt_provider = _normalize_stt_provider(stt_selection["provider"])
+    stt_capability = _find_voice_capability(
+        capabilities, modality="stt", provider=requested_stt_provider
     )
-    if requested_stt_provider:
-        capability = _find_voice_capability(capabilities, modality="stt", provider=requested_stt_provider)
-        if capability and capability.get("available"):
-            if requested_stt_provider == "openai":
-                runtime_env = replace(
-                    runtime_env,
-                    stt_provider="openai",
-                    openai_stt_model=_resolve_requested_variant(
-                        capability,
-                        stt_selection["variant"],
-                        runtime_env.openai_stt_model,
-                    )
-                    or runtime_env.openai_stt_model,
-                )
-            elif requested_stt_provider == "assemblyai":
-                runtime_env = replace(
-                    runtime_env,
-                    stt_provider="assemblyai",
-                    assemblyai_stt_model=_normalize_assemblyai_stt_model(
-                        _resolve_requested_variant(
-                            capability,
-                            stt_selection["variant"],
-                            runtime_env.assemblyai_stt_model,
-                        )
-                        or runtime_env.assemblyai_stt_model
-                    ),
-                )
-            elif requested_stt_provider == "pywhispercpp":
-                runtime_env = replace(
-                    runtime_env,
-                    stt_provider="pywhispercpp",
-                    stt_model=_resolve_requested_variant(
-                        capability,
-                        stt_selection["variant"],
-                        runtime_env.stt_model,
-                    )
-                    or runtime_env.stt_model,
-                )
-        else:
-            logger.warning(
-                "[voice-gateway] Ignoring unavailable requested listening provider: %s",
-                requested_stt_provider,
-            )
+    if stt_capability is None:
+        _raise_route_error(
+            "no_route",
+            modality="stt",
+            provider=requested_stt_provider,
+            reason="is not supported",
+        )
+    if not stt_capability.get("available"):
+        _raise_route_error(
+            "provider_failure",
+            modality="stt",
+            provider=requested_stt_provider,
+            reason="is unavailable",
+        )
+    requested_stt_variant = stt_selection["variant"]
+    stt_variant_ids = {
+        item.get("id")
+        for item in stt_capability.get("variants", [])
+        if isinstance(item, dict) and isinstance(item.get("id"), str)
+    }
+    if requested_stt_variant and stt_variant_ids and requested_stt_variant not in stt_variant_ids:
+        _raise_route_error(
+            "no_route",
+            modality="stt",
+            provider=requested_stt_provider,
+            reason="has an unsupported saved variant",
+        )
+    if requested_stt_provider == "openai":
+        runtime_env = replace(
+            runtime_env,
+            stt_provider="openai",
+            openai_stt_model=requested_stt_variant or runtime_env.openai_stt_model,
+        )
+    elif requested_stt_provider == "assemblyai":
+        runtime_env = replace(
+            runtime_env,
+            stt_provider="assemblyai",
+            assemblyai_stt_model=_normalize_assemblyai_stt_model(
+                requested_stt_variant or runtime_env.assemblyai_stt_model
+            ),
+        )
+    elif requested_stt_provider == "pywhispercpp":
+        runtime_env = replace(
+            runtime_env,
+            stt_provider="pywhispercpp",
+            stt_model=requested_stt_variant or runtime_env.stt_model,
+        )
+    else:
+        _raise_route_error(
+            "no_route",
+            modality="stt",
+            provider=requested_stt_provider,
+            reason="is not implemented",
+        )
 
     tts_selection = normalized_route["tts"]
-    requested_tts_provider = (
-        _normalize_voice_provider(tts_selection["provider"]) if tts_selection["provider"] else None
+    if not tts_selection["provider"]:
+        _raise_route_error(
+            "no_route", modality="tts", provider="", reason="is missing"
+        )
+    requested_tts_provider = _normalize_voice_provider(tts_selection["provider"])
+    tts_capability = _find_voice_capability(
+        capabilities, modality="tts", provider=requested_tts_provider
     )
-    if requested_tts_provider:
-        capability = _find_voice_capability(capabilities, modality="tts", provider=requested_tts_provider)
-        if capability and capability.get("available"):
-            if requested_tts_provider == "openai":
-                runtime_env = replace(
-                    runtime_env,
-                    tts_provider="openai",
-                    openai_tts_model=_resolve_requested_variant(
-                        capability,
-                        tts_selection["variant"],
-                        runtime_env.openai_tts_model,
-                    )
-                    or runtime_env.openai_tts_model,
-                )
-            elif requested_tts_provider == "elevenlabs":
-                runtime_env = replace(
-                    runtime_env,
-                    tts_provider="elevenlabs",
-                    elevenlabs_voice_id=_resolve_requested_variant(
-                        capability,
-                        tts_selection["variant"],
-                        runtime_env.elevenlabs_voice_id,
-                    )
-                    or runtime_env.elevenlabs_voice_id,
-                )
-            elif requested_tts_provider == "cartesia":
-                runtime_env = replace(
-                    runtime_env,
-                    tts_provider="cartesia",
-                    cartesia_voice_id=_resolve_requested_variant(
-                        capability,
-                        tts_selection["variant"],
-                        runtime_env.cartesia_voice_id,
-                    )
-                    or runtime_env.cartesia_voice_id,
-                    cartesia_model_id=DEFAULT_CARTESIA_MODEL_ID,
-                )
-            elif requested_tts_provider == "xai":
-                runtime_env = replace(
-                    runtime_env,
-                    tts_provider="xai",
-                    xai_voice=_resolve_requested_variant(
-                        capability,
-                        tts_selection["variant"],
-                        runtime_env.xai_voice,
-                    )
-                    or runtime_env.xai_voice,
-                )
-            elif requested_tts_provider == "local_chatterbox_turbo_mlx_8bit":
-                runtime_env = replace(
-                    runtime_env,
-                    tts_provider="local_chatterbox_turbo_mlx_8bit",
-                    mlx_audio_model_id=_resolve_requested_variant(
-                        capability,
-                        tts_selection["variant"],
-                        runtime_env.mlx_audio_model_id,
-                    )
-                    or runtime_env.mlx_audio_model_id,
-                )
-        else:
-            logger.warning(
-                "[voice-gateway] Ignoring unavailable requested speaking provider: %s",
-                requested_tts_provider,
-            )
+    if tts_capability is None:
+        _raise_route_error(
+            "no_route",
+            modality="tts",
+            provider=requested_tts_provider,
+            reason="is not supported",
+        )
+    if not tts_capability.get("available"):
+        _raise_route_error(
+            "provider_failure",
+            modality="tts",
+            provider=requested_tts_provider,
+            reason="is unavailable",
+        )
+    requested_tts_variant = tts_selection["variant"]
+    tts_variant_ids = {
+        item.get("id")
+        for item in tts_capability.get("variants", [])
+        if isinstance(item, dict) and isinstance(item.get("id"), str)
+    }
+    if requested_tts_variant and tts_variant_ids and requested_tts_variant not in tts_variant_ids:
+        _raise_route_error(
+            "no_route",
+            modality="tts",
+            provider=requested_tts_provider,
+            reason="has an unsupported saved variant",
+        )
+    if requested_tts_provider == "openai":
+        runtime_env = replace(
+            runtime_env,
+            tts_provider="openai",
+            openai_tts_model=requested_tts_variant or runtime_env.openai_tts_model,
+        )
+    elif requested_tts_provider == "elevenlabs":
+        runtime_env = replace(
+            runtime_env,
+            tts_provider="elevenlabs",
+            elevenlabs_voice_id=requested_tts_variant or runtime_env.elevenlabs_voice_id,
+        )
+    elif requested_tts_provider == "cartesia":
+        runtime_env = replace(
+            runtime_env,
+            tts_provider="cartesia",
+            cartesia_voice_id=requested_tts_variant or runtime_env.cartesia_voice_id,
+            cartesia_model_id=DEFAULT_CARTESIA_MODEL_ID,
+        )
+    elif requested_tts_provider == "xai":
+        runtime_env = replace(
+            runtime_env,
+            tts_provider="xai",
+            xai_voice=requested_tts_variant or runtime_env.xai_voice,
+        )
+    elif requested_tts_provider == "local_chatterbox_turbo_mlx_8bit":
+        runtime_env = replace(
+            runtime_env,
+            tts_provider="local_chatterbox_turbo_mlx_8bit",
+            mlx_audio_model_id=requested_tts_variant or runtime_env.mlx_audio_model_id,
+        )
+    else:
+        _raise_route_error(
+            "no_route",
+            modality="tts",
+            provider=requested_tts_provider,
+            reason="is not implemented",
+        )
+
+    # A fallback is opt-in configuration, never inferred from the primary.  Local-only remains
+    # absolute: crossing the local/cloud egress boundary is forbidden even when a key exists.
+    fallback_provider = _normalize_voice_provider(runtime_env.tts_provider_fallback)
+    fallback_capability = (
+        _find_voice_capability(capabilities, modality="tts", provider=fallback_provider)
+        if runtime_env.tts_provider_fallback
+        else None
+    )
+    fallback_allowed = bool(
+        runtime_env.tts_provider_fallback
+        and fallback_provider != requested_tts_provider
+        and fallback_capability
+        and fallback_capability.get("available")
+        and _is_local_provider(fallback_provider)
+        == _is_local_provider(requested_tts_provider)
+    )
+    runtime_env = replace(
+        runtime_env,
+        tts_provider_fallback=fallback_provider if fallback_allowed else "",
+    )
 
     return _apply_effective_turn_handling_profile(runtime_env)
 
@@ -1820,9 +1910,8 @@ def load_env() -> Env:
     if configured_xai_tts_api != "tts":
         if configured_xai_tts_api == "voice_agent":
             raise ValueError(
-                "The xAI Voice Agent API is a separate real-time conversational product and is "
-                "not supported as Viventium's TTS renderer. Set VIVENTIUM_XAI_TTS_API=tts to "
-                "use standalone xAI Text-to-Speech (/v1/tts)."
+                "The xAI Grok Voice Agent route is retired. "
+                "Set VIVENTIUM_XAI_TTS_API=tts to use standalone xAI Text-to-Speech (/v1/tts)."
             )
         raise ValueError(
             f"Unsupported VIVENTIUM_XAI_TTS_API={configured_xai_tts_api!r}. "
@@ -1840,10 +1929,8 @@ def load_env() -> Env:
     )
     if tts_provider_fallback in {"0", "false", "off", "none"}:
         tts_provider_fallback = ""
-    # If the primary provider can fail at runtime (Cartesia credit exhaustion, MLX model OOM, etc.),
-    # default fallback to ElevenLabs (or OpenAI) so voice calls remain functional.
-    if not tts_provider_fallback and (tts_provider == "cartesia" or "chatterbox" in tts_provider):
-        tts_provider_fallback = "elevenlabs" if HAS_ELEVENLABS else "openai"
+    # Fallback is explicit configuration only.  In particular, a local Chatterbox route must
+    # never acquire a cloud fallback merely because a cloud plugin/key happens to be installed.
     # === VIVENTIUM START ===
     # Feature: v1 STT env parity (voice override + legacy STT_PROVIDER)
     stt_provider = (
@@ -1869,13 +1956,12 @@ def load_env() -> Env:
         default_load_threshold = math.inf
     else:
         default_load_threshold = 0.7
-    # Local Whisper and local Chatterbox both use accelerator-heavy runtimes. Keeping a warm STT
-    # job process protects call startup, but prewarming Chatterbox in the replacement idle process
-    # can contend with the active Whisper turn and make final transcripts visibly late.
-    default_prewarm_local_tts = normalized_stt_provider not in {
-        "pywhispercpp",
-        "whisper_local",
-    }
+    # A local route cannot fall back to cloud TTS, so its registered worker must have both local
+    # models ready before accepting a call. Process prewarm waits for active jobs before loading;
+    # this preserves live-call latency while removing the first-call 5–15 second model load.
+    default_prewarm_local_tts = (
+        _normalize_voice_provider(tts_provider) == "local_chatterbox_turbo_mlx_8bit"
+    )
     configured_min_interruption_words = _parse_optional_int_env(
         "VIVENTIUM_VOICE_MIN_INTERRUPTION_WORDS",
     )
@@ -2120,12 +2206,24 @@ def _parse_call_session_id(metadata: str) -> Optional[str]:
     return None
 
 
-def _parse_participant_identity(metadata: str) -> Optional[str]:
+def _parse_dispatch_claim_id(metadata: str) -> Optional[str]:
     obj = _parse_metadata_json(metadata)
-    participant_identity = obj.get("participantIdentity") or obj.get("participant_identity")
-    if isinstance(participant_identity, str) and participant_identity.strip():
-        return participant_identity.strip()[:255]
+    claim_id = obj.get("dispatchClaimId") or obj.get("dispatch_claim_id")
+    if isinstance(claim_id, str) and claim_id.strip():
+        return claim_id.strip()[:160]
     return None
+
+
+def _parse_call_mode(metadata: str) -> str:
+    obj = _parse_metadata_json(metadata)
+    mode = str(obj.get("mode") or "").strip().lower()
+    if mode in {"call", "wing", "listen_only"}:
+        return mode
+    if bool(obj.get("listenOnly") or obj.get("listen_only")):
+        return "listen_only"
+    if bool(obj.get("wingMode") or obj.get("wing_mode")):
+        return "wing"
+    return "call"
 
 
 def _parse_requested_voice_route(metadata: str) -> dict[str, dict[str, Optional[str]]]:
@@ -2166,14 +2264,173 @@ def _build_local_chatterbox_config(model_id_override: Optional[str] = None) -> t
 
 # === VIVENTIUM START ===
 # Feature: Voice session lease claim
-async def _claim_voice_session(origin: str, auth: LibreChatAuth) -> bool:
+def _validate_dispatch_job_bindings(
+    job: Any,
+    *,
+    fallback_room_name: str,
+    call_session_id: str,
+    registered_agent_name: str,
+) -> tuple[str, Optional[str]]:
+    if not (call_session_id or "").strip():
+        raise RuntimeError("signed dispatch call session is missing")
+    room = getattr(job, "room", None)
+    room_name = str(
+        getattr(room, "name", "") or fallback_room_name or ""
+    ).strip()
+    registered_agent = (registered_agent_name or "").strip()
+    if not room_name or not registered_agent:
+        raise RuntimeError("signed voice dispatch binding is incomplete")
+    dispatched_agent = str(getattr(job, "agent_name", "") or "").strip()
+    if dispatched_agent and dispatched_agent != registered_agent:
+        raise RuntimeError("dispatch agent mismatch with registered voice gateway")
+    participant = getattr(job, "participant", None)
+    participant_identity = str(
+        getattr(participant, "identity", "") or ""
+    ).strip()
+    return room_name, participant_identity or None
+
+
+def _validate_voice_session_claim(
+    payload: Any,
+    *,
+    expected_call_session_id: str,
+    expected_room_name: str,
+    expected_gateway_agent_name: str,
+    expected_owner_participant_identity: Optional[str],
+) -> dict[str, Any]:
+    if not isinstance(payload, dict) or payload.get("status") != "claimed":
+        raise RuntimeError("invalid canonical voice claim")
+    expected_fields = {
+        "callSessionId": expected_call_session_id,
+        "roomName": expected_room_name,
+        "gatewayAgentName": expected_gateway_agent_name,
+    }
+    for field, expected in expected_fields.items():
+        actual = payload.get(field)
+        if not isinstance(actual, str) or not actual.strip() or len(actual) > 256:
+            raise RuntimeError("invalid canonical voice claim")
+        if not isinstance(expected, str) or not expected.strip():
+            raise RuntimeError("invalid canonical voice claim")
+        if actual.strip() != expected.strip():
+            raise RuntimeError(f"canonical voice claim mismatch: {field}")
+
+    claimed_owner = payload.get("ownerParticipantIdentity")
+    if (
+        not isinstance(claimed_owner, str)
+        or not claimed_owner.strip()
+        or len(claimed_owner) > 256
+    ):
+        raise RuntimeError("invalid canonical voice claim")
+    expected_owner = (expected_owner_participant_identity or "").strip()
+    if expected_owner and claimed_owner.strip() != expected_owner:
+        raise RuntimeError("canonical voice claim mismatch: ownerParticipantIdentity")
+
+    route = payload.get("requestedVoiceRoute")
+    if not isinstance(route, dict):
+        raise RuntimeError("invalid canonical voice claim")
+    normalized_route = _normalize_requested_voice_route(route)
+    for modality in ("stt", "tts"):
+        provider = normalized_route[modality].get("provider")
+        if not provider or len(provider) > 80:
+            raise RuntimeError("invalid canonical voice claim")
+        variant = normalized_route[modality].get("variant")
+        if variant is not None and len(variant) > 256:
+            raise RuntimeError("invalid canonical voice claim")
+
+    call_state = parse_voice_call_state_v1(
+        payload.get("callState"),
+        expected_call_session_id=expected_call_session_id,
+    )
+    if call_state is None:
+        raise RuntimeError("invalid canonical voice claim")
+
+    state = payload.get("speakerSessionState")
+    normalized_state = None
+    if state is not None:
+        shared_track_sids = state.get("sharedTrackSids") if isinstance(state, dict) else None
+        shared_participant_identities = (
+            state.get("sharedParticipantIdentities") if isinstance(state, dict) else None
+        )
+        if (
+            not isinstance(state, dict)
+            or state.get("version") != 1
+            or state.get("callSessionId") != expected_call_session_id
+            or state.get("attributionState")
+            not in {"single_speaker", "shared_mic_unverified"}
+            or not isinstance(state.get("revision"), int)
+            or isinstance(state.get("revision"), bool)
+            or state.get("revision") < 0
+            or not isinstance(state.get("detectedAt"), str)
+            or not state.get("detectedAt").strip()
+            or (
+                shared_track_sids is not None
+                and (
+                    not isinstance(shared_track_sids, list)
+                    or len(shared_track_sids) > 64
+                    or any(
+                        not isinstance(value, str)
+                        or not value.strip()
+                        or len(value.strip()) > 160
+                        for value in shared_track_sids
+                    )
+                )
+            )
+            or (
+                shared_participant_identities is not None
+                and (
+                    not isinstance(shared_participant_identities, list)
+                    or len(shared_participant_identities) > 64
+                    or any(
+                        not isinstance(value, str)
+                        or not value.strip()
+                        or len(value.strip()) > 160
+                        for value in shared_participant_identities
+                    )
+                )
+            )
+        ):
+            raise RuntimeError("invalid canonical voice claim")
+        normalized_state = dict(state)
+        if isinstance(shared_track_sids, list):
+            normalized_state["sharedTrackSids"] = sorted(
+                {value.strip() for value in shared_track_sids}
+            )
+        if isinstance(shared_participant_identities, list):
+            normalized_state["sharedParticipantIdentities"] = sorted(
+                {value.strip() for value in shared_participant_identities}
+            )
+
+    return {
+        **payload,
+        "callSessionId": expected_call_session_id.strip(),
+        "roomName": expected_room_name.strip(),
+        "gatewayAgentName": expected_gateway_agent_name.strip(),
+        "ownerParticipantIdentity": claimed_owner.strip(),
+        "requestedVoiceRoute": normalized_route,
+        "callState": call_state,
+        "speakerSessionState": normalized_state,
+    }
+
+
+async def _claim_voice_session(
+    origin: str,
+    auth: LibreChatAuth,
+    *,
+    expected_room_name: str,
+    expected_gateway_agent_name: str,
+    expected_owner_participant_identity: Optional[str],
+    dispatch_claim_id: Optional[str] = None,
+) -> Optional[dict[str, Any]]:
     if not auth.call_session_id:
-        return False
+        return None
     if not auth.call_secret:
-        return False
+        return None
     if not auth.job_id:
         logger.error("[voice-gateway] Missing job id for voice lease claim")
-        return False
+        return None
+    if not auth.worker_id:
+        logger.error("[voice-gateway] Missing worker id for voice lease claim")
+        return None
 
     url = f"{origin.rstrip('/')}/api/viventium/voice/claim"
     headers = {
@@ -2181,25 +2438,368 @@ async def _claim_voice_session(origin: str, auth: LibreChatAuth) -> bool:
         "X-VIVENTIUM-CALL-SECRET": auth.call_secret,
         "X-VIVENTIUM-JOB-ID": auth.job_id,
     }
-    if auth.worker_id:
-        headers["X-VIVENTIUM-WORKER-ID"] = auth.worker_id
+    headers["X-VIVENTIUM-WORKER-ID"] = auth.worker_id
+    if dispatch_claim_id:
+        headers["X-VIVENTIUM-DISPATCH-CLAIM"] = dispatch_claim_id
 
     timeout = aiohttp.ClientTimeout(total=5)
     try:
         async with aiohttp.ClientSession(timeout=timeout) as session:
             async with session.post(url, headers=headers) as resp:
                 if resp.status == 200:
-                    return True
-                body = await resp.text()
+                    payload = await resp.json()
+                    return _validate_voice_session_claim(
+                        payload,
+                        expected_call_session_id=auth.call_session_id,
+                        expected_room_name=expected_room_name,
+                        expected_gateway_agent_name=expected_gateway_agent_name,
+                        expected_owner_participant_identity=expected_owner_participant_identity,
+                    )
+                await resp.read()
                 logger.warning(
-                    "[voice-gateway] Voice lease claim rejected (status=%s, body=%s)",
+                    "[voice-gateway] Voice lease claim rejected (status=%s)",
                     resp.status,
-                    body,
                 )
+    except RuntimeError:
+        logger.error("[voice-gateway] Canonical voice lease claim rejected")
+        raise
     except Exception as exc:
         logger.warning("[voice-gateway] Voice lease claim failed: %s", exc)
-    return False
+    return None
 # === VIVENTIUM END ===
+
+
+async def _mark_voice_session_ready(
+    origin: str,
+    auth: LibreChatAuth,
+) -> Optional[dict[str, Any]]:
+    """Atomically clear a retryable failure only for the exact live worker."""
+    if (
+        not auth.call_session_id
+        or not auth.call_secret
+        or not auth.job_id
+        or not auth.worker_id
+    ):
+        return None
+    url = (
+        f"{origin.rstrip('/')}/api/viventium/voice/call-sessions/"
+        f"{quote(auth.call_session_id, safe='')}/ready"
+    )
+    headers = {
+        "X-VIVENTIUM-CALL-SESSION": auth.call_session_id,
+        "X-VIVENTIUM-CALL-SECRET": auth.call_secret,
+        "X-VIVENTIUM-JOB-ID": auth.job_id,
+        "X-VIVENTIUM-WORKER-ID": auth.worker_id,
+    }
+    try:
+        async with aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=2.0)
+        ) as session:
+            async with session.post(
+                url,
+                headers=headers,
+                json={"version": 1},
+            ) as resp:
+                if resp.status != 200:
+                    await resp.read()
+                    logger.warning(
+                        "[voice-gateway] Voice readiness rejected status=%s speechEnabled=false",
+                        resp.status,
+                    )
+                    return None
+                payload = await resp.json()
+    except Exception as exc:
+        logger.warning(
+            "[voice-gateway] Voice readiness failed error=%s speechEnabled=false",
+            type(exc).__name__,
+        )
+        return None
+    state = parse_voice_call_state_v1(
+        payload,
+        expected_call_session_id=auth.call_session_id,
+    )
+    if state is None or state["status"] != "listening":
+        logger.warning(
+            "[voice-gateway] Voice readiness response invalid speechEnabled=false"
+        )
+        return None
+    return state
+
+
+async def _establish_voice_response_plane(
+    *,
+    llm_impl: Any,
+    mark_ready: Any,
+    timeout_s: float,
+) -> tuple[Optional[Any], Optional[dict[str, Any]]]:
+    """Require task-SSE authentication before mutating backend call readiness."""
+    stream_task = llm_impl.start_call_task_event_stream()
+    stream_ready = bool(
+        stream_task is not None
+        and await llm_impl.wait_call_task_event_stream_ready(timeout_s=timeout_s)
+    )
+    if not stream_ready:
+        await llm_impl.stop_call_task_event_stream()
+        return None, None
+    ready_state = await mark_ready()
+    if ready_state is None:
+        await llm_impl.stop_call_task_event_stream()
+        return None, None
+    return stream_task, ready_state
+
+
+async def _abandon_voice_session_claim(
+    origin: str,
+    auth: LibreChatAuth,
+    *,
+    reason: str,
+) -> bool:
+    allowed_reasons = {
+        "owner_timeout",
+        "owner_mismatch",
+        "gateway_initialization_failed",
+    }
+    normalized_reason = (reason or "").strip()
+    if (
+        normalized_reason not in allowed_reasons
+        or not auth.call_session_id
+        or not auth.call_secret
+        or not auth.job_id
+        or not auth.worker_id
+    ):
+        return False
+    url = f"{origin.rstrip('/')}/api/viventium/voice/claim/abandon"
+    headers = {
+        "X-VIVENTIUM-CALL-SESSION": auth.call_session_id,
+        "X-VIVENTIUM-CALL-SECRET": auth.call_secret,
+        "X-VIVENTIUM-JOB-ID": auth.job_id,
+    }
+    headers["X-VIVENTIUM-WORKER-ID"] = auth.worker_id
+    try:
+        async with aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=1.0)
+        ) as session:
+            async with session.post(
+                url,
+                headers=headers,
+                json={"reason": normalized_reason},
+            ) as resp:
+                if resp.status != 200:
+                    await resp.read()
+                    logger.warning(
+                        "[voice-gateway] Voice lease abandon rejected status=%s reason=%s",
+                        resp.status,
+                        normalized_reason,
+                    )
+                    return False
+                payload = await resp.json()
+    except Exception as exc:
+        logger.warning(
+            "[voice-gateway] Voice lease abandon failed reason=%s error=%s",
+            normalized_reason,
+            type(exc).__name__,
+        )
+        return False
+    released = bool(
+        isinstance(payload, dict)
+        and payload.get("version") == 1
+        and payload.get("released") is True
+    )
+    logger.info(
+        "[voice-gateway] Voice lease abandon completed reason=%s released=%s",
+        normalized_reason,
+        released,
+    )
+    return released
+
+
+async def _report_voice_gateway_failure(
+    origin: str,
+    auth: LibreChatAuth,
+    *,
+    classification: str,
+    phase: str,
+    fatal: bool,
+    modality: Optional[str] = None,
+    provider: Optional[str] = None,
+) -> Optional[dict[str, Any]]:
+    if (
+        classification not in {"no_route", "provider_failure", "gateway_down"}
+        or phase not in {"initialization", "runtime"}
+        or modality not in {None, "stt", "tts"}
+        or not auth.call_session_id
+        or not auth.call_secret
+        or not auth.job_id
+        or not auth.worker_id
+    ):
+        return None
+    normalized_provider = (provider or "").strip().lower()
+    if len(normalized_provider) > 80:
+        return None
+    url = (
+        f"{origin.rstrip('/')}/api/viventium/voice/call-sessions/"
+        f"{quote(auth.call_session_id, safe='')}/failure"
+    )
+    headers = {
+        "X-VIVENTIUM-CALL-SESSION": auth.call_session_id,
+        "X-VIVENTIUM-CALL-SECRET": auth.call_secret,
+        "X-VIVENTIUM-JOB-ID": auth.job_id,
+        "X-VIVENTIUM-WORKER-ID": auth.worker_id,
+    }
+    body: dict[str, Any] = {
+        "version": 1,
+        "classification": classification,
+        "phase": phase,
+        "fatal": bool(fatal),
+    }
+    if modality is not None:
+        body["modality"] = modality
+    if normalized_provider:
+        body["provider"] = normalized_provider
+    try:
+        async with aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=1.0)
+        ) as session:
+            async with session.post(url, headers=headers, json=body) as resp:
+                if resp.status != 200:
+                    await resp.read()
+                    logger.warning(
+                        "[VoiceProvider] failure_report_rejected callSessionId=%s classification=%s phase=%s status=%s",
+                        auth.call_session_id,
+                        classification,
+                        phase,
+                        resp.status,
+                    )
+                    return None
+                payload = await resp.json()
+    except Exception as exc:
+        logger.warning(
+            "[VoiceProvider] failure_report_failed callSessionId=%s classification=%s phase=%s error=%s",
+            auth.call_session_id,
+            classification,
+            phase,
+            type(exc).__name__,
+        )
+        return None
+    if (
+        not isinstance(payload, dict)
+        or payload.get("version") != 1
+        or payload.get("callSessionId") != auth.call_session_id
+        or payload.get("status") not in {"failed", "degraded"}
+        or not isinstance(payload.get("error"), dict)
+    ):
+        return None
+    logger.info(
+        "[VoiceProvider] failure_reported callSessionId=%s classification=%s modality=%s phase=%s fatal=%s status=%s",
+        auth.call_session_id,
+        classification,
+        modality or "none",
+        phase,
+        bool(fatal),
+        payload["status"],
+    )
+    return payload
+
+
+async def _report_voice_initialization_failure_and_abandon(
+    origin: str,
+    auth: LibreChatAuth,
+    error: VoiceRouteError,
+) -> tuple[Optional[dict[str, Any]], bool]:
+    """Surface a safe fatal state before releasing the exact worker lease."""
+    reported = await _report_voice_gateway_failure(
+        origin,
+        auth,
+        classification=error.code,
+        modality=error.modality,
+        provider=error.provider,
+        phase="initialization",
+        fatal=True,
+    )
+    released = await _abandon_voice_session_claim(
+        origin,
+        auth,
+        reason="gateway_initialization_failed",
+    )
+    return reported, released
+
+
+async def _report_voice_gateway_initialization_failure_and_abandon(
+    origin: str,
+    auth: LibreChatAuth,
+) -> tuple[Optional[dict[str, Any]], bool]:
+    """Report a non-provider gateway startup failure before releasing ownership."""
+    reported = await _report_voice_gateway_failure(
+        origin,
+        auth,
+        classification="gateway_down",
+        phase="initialization",
+        fatal=True,
+    )
+    released = await _abandon_voice_session_claim(
+        origin,
+        auth,
+        reason="gateway_initialization_failed",
+    )
+    return reported, released
+
+
+def _classify_runtime_voice_provider_failure(
+    event: Any,
+    *,
+    stt_impl: Any,
+    tts_impl: Any,
+    stt_provider: str,
+    tts_provider: str,
+) -> Optional[tuple[str, str]]:
+    """Classify only SDK provider errors by their exact source object.
+
+    LiveKit's ``ErrorEvent`` preserves the STT/TTS instance that emitted the
+    failure.  Identity comparison avoids converting LLM, room, or microphone
+    failures into misleading provider UI states.
+    """
+    source = getattr(event, "source", None)
+    if source is stt_impl:
+        provider = (stt_provider or "").strip().lower()
+        return ("stt", provider) if provider else None
+    if source is tts_impl:
+        provider = (tts_provider or "").strip().lower()
+        return ("tts", provider) if provider else None
+    return None
+
+
+class CanonicalOwnerBindingError(RuntimeError):
+    def __init__(self, reason: str, message: str) -> None:
+        self.reason = reason
+        super().__init__(message)
+
+
+async def _resolve_canonical_owner_participant(
+    ctx: Any,
+    canonical_owner_identity: str,
+    *,
+    timeout_s: float,
+) -> Any:
+    """Connect audio and bind only the backend-owned participant identity."""
+    identity = (canonical_owner_identity or "").strip()
+    if not identity:
+        raise CanonicalOwnerBindingError("owner_timeout", "canonical owner unavailable")
+    await ctx.connect(auto_subscribe=AutoSubscribe.AUDIO_ONLY)
+    try:
+        participant = await asyncio.wait_for(
+            ctx.wait_for_participant(identity=identity),
+            timeout=max(float(timeout_s), 0.001),
+        )
+    except (asyncio.TimeoutError, TimeoutError) as exc:
+        raise CanonicalOwnerBindingError(
+            "owner_timeout", "canonical owner unavailable before timeout"
+        ) from exc
+    actual_identity = str(getattr(participant, "identity", "") or "").strip()
+    if actual_identity != identity:
+        raise CanonicalOwnerBindingError(
+            "owner_mismatch", "canonical owner mismatch after room connect"
+        )
+    return participant
 
 
 # === VIVENTIUM START ===
@@ -2227,25 +2827,29 @@ def _remote_participant_count(room: Any) -> int:
         return 0
 
 
-def _participant_identity_connected(room: Any, participant_identity: Optional[str]) -> bool:
+def _participant_identity_connected(room: Any, participant_identity: str) -> bool:
+    """Match only the canonical backend-claimed owner; observers never receive owner speech."""
+    identity = (participant_identity or "").strip()
+    if not identity:
+        return False
     participants = getattr(room, "remote_participants", None)
     if participants is None:
         return False
-    if not participant_identity:
-        return _remote_participant_count(room) > 0
     try:
-        if participant_identity in participants:
+        if identity in participants:
             return True
         values = participants.values()
     except (AttributeError, TypeError):
         values = participants
     try:
         return any(
-            getattr(participant, "identity", None) == participant_identity
+            str(getattr(participant, "identity", "") or "").strip() == identity
             for participant in values
         )
     except TypeError:
         return False
+
+
 def _attach_room_diagnostics(
     ctx: JobContext,
     *,
@@ -2272,8 +2876,8 @@ def _attach_room_diagnostics(
             call_session_id,
             getattr(participant, "identity", "<unknown>"),
         )
-        # The job shutdown callback owns marker cleanup. A transient empty room can be a browser
-        # refresh, and clearing here would start heavy model prewarm during an active response.
+        # The job shutdown callback owns marker cleanup. A transient empty room is the normal
+        # browser-refresh/reconnect path and must not trigger duplicate heavy model prewarm.
 
     @room.on("track_muted")
     def _on_track_muted(participant: Any, publication: Any) -> None:
@@ -2344,7 +2948,9 @@ def load_vad(env: Optional[Env] = None) -> Optional[Any]:
 # Added: 2026-01-11
 # === VIVENTIUM END ===
 def _build_assemblyai_stt_kwargs(env: Env) -> dict[str, Any]:
-    kwargs: dict[str, Any] = {}
+    # Speaker labels use the already-selected AssemblyAI stream. They do not select a provider or
+    # create a second/cloud route, so explicit local-only configurations remain local-only.
+    kwargs: dict[str, Any] = {"speaker_labels": True}
     # Pass the selected/configured engine through to the plugin. Without this the variant chosen in
     # the Listening picker (or VIVENTIUM_ASSEMBLYAI_STT_MODEL) is ignored and AssemblyAI falls back
     # to its own plugin default. Normalized so an unknown value can never reach the provider.
@@ -2367,12 +2973,19 @@ def build_stt_selection(env: Env, vad: Optional[Any]) -> tuple[Any, str]:
 
     if provider == "assemblyai":
         if not HAS_ASSEMBLYAI:
-            logger.warning(
-                "AssemblyAI STT requested but plugin not installed. "
-                "Install with: pip install livekit-plugins-assemblyai"
+            _raise_route_error(
+                "provider_failure",
+                modality="stt",
+                provider="assemblyai",
+                reason="plugin is unavailable",
             )
         elif not (os.getenv("ASSEMBLYAI_API_KEY") or "").strip():
-            logger.warning("ASSEMBLYAI_API_KEY not set; falling back to local/openai STT.")
+            _raise_route_error(
+                "provider_failure",
+                modality="stt",
+                provider="assemblyai",
+                reason="credentials are unavailable",
+            )
         else:
             assemblyai_kwargs = _build_assemblyai_stt_kwargs(env)
             logger.info(
@@ -2392,16 +3005,21 @@ def build_stt_selection(env: Env, vad: Optional[Any]) -> tuple[Any, str]:
                 "pywhispercpp",
             )
         except Exception as exc:
-            raise RuntimeError(
-                "Local Whisper.cpp STT was selected but could not be made ready. "
-                "The voice gateway will not silently switch to another STT provider."
-            ) from exc
+            error = VoiceRouteError(
+                "provider_failure",
+                modality="stt",
+                provider="pywhispercpp",
+                reason="could not be made ready; the gateway will not silently switch providers",
+            )
+            raise error from exc
 
-    if provider == "whisperlivekit":
-        logger.warning("whisperlivekit STT not bundled in voice-gateway; falling back.")
-
-    if provider not in {"openai", "assemblyai", "pywhispercpp", "whisper_local", "whisperlivekit"}:
-        logger.warning("Unknown STT provider '%s'; falling back to OpenAI STT.", provider)
+    if provider != "openai":
+        _raise_route_error(
+            "no_route",
+            modality="stt",
+            provider=provider,
+            reason="is not implemented",
+        )
 
     stt_impl = openai.STT(model=env.openai_stt_model)
     if vad is not None:
@@ -2471,11 +3089,14 @@ def prewarm_process(proc: JobProcess) -> None:
             )
             prewarmed_tts.prewarm()
             proc.userdata["prewarmed_local_chatterbox_tts"] = prewarmed_tts
-        except Exception:
-            logger.warning(
-                "[voice-gateway] Failed to prewarm local Chatterbox TTS at process startup; first call may be slow",
+        except Exception as exc:
+            logger.error(
+                "[voice-gateway] Local Chatterbox TTS prewarm failed; refusing to register an unhealthy local TTS worker",
                 exc_info=True,
             )
+            raise RuntimeError(
+                "Local Chatterbox TTS prewarm failed; worker will not register."
+            ) from exc
 
 
 def _merge_insights(
@@ -2524,12 +3145,12 @@ def _voice_sync_transcription_enabled() -> bool:
 
 
 def _build_room_options(
-    *,
-    sync_transcription: bool,
-    participant_identity: Optional[str] = None,
+    *, sync_transcription: bool, participant_identity: str = ""
 ) -> Any:
     options: dict[str, Any] = {
-        "text_output": room_io.TextOutputOptions(sync_transcription=sync_transcription),
+        "text_output": room_io.TextOutputOptions(
+            sync_transcription=sync_transcription
+        ),
         "close_on_disconnect": False,
     }
     if participant_identity:
@@ -2559,9 +3180,518 @@ def _metric_seconds(metrics: Any, key: str) -> float:
     return 0.0 if value is None else value
 
 
+def _interrupt_livekit_speech_handles(handles: set[Any]) -> None:
+    """Stop only still-active progress handles and forget the completed ones."""
+    pending = list(handles)
+    handles.clear()
+    for handle in pending:
+        try:
+            if not bool(handle.done()):
+                handle.interrupt(force=True)
+        except Exception as exc:
+            logger.warning(
+                "[VoiceTask] progress_interrupt_failed error=%s callContinues=true",
+                type(exc).__name__,
+            )
+
+
+def _interrupt_agent_session_speech(session: Any) -> None:
+    """Stop current AgentSession playout while preserving its backend task and room."""
+    try:
+        session.interrupt(force=True)
+    except Exception as exc:
+        logger.warning(
+            "[VoiceMode] main_speech_interrupt_failed error=%s callContinues=true",
+            type(exc).__name__,
+        )
+
+
+def _apply_authoritative_call_mode_to_speech_planes(
+    mode: str,
+    *,
+    progress_controller: Any,
+    ambient_ingress: Any,
+    followup_scheduler: Any,
+    session: Any,
+) -> None:
+    """Apply one validated mode atomically without reconnecting or cancelling backend work."""
+    if mode not in {"call", "wing", "listen_only"}:
+        return
+    progress_controller.set_mode(mode)
+    ambient_ingress.set_mode(mode)
+    followup_scheduler.set_mode(mode)
+    if mode == "listen_only":
+        _interrupt_agent_session_speech(session)
+
+
+def _suspend_all_call_speech_until_authoritative(
+    *,
+    progress_controller: Any,
+    followup_scheduler: Any,
+    session: Any,
+    authoritative_mode_state: Optional[Any] = None,
+) -> None:
+    if authoritative_mode_state is not None:
+        authoritative_mode_state.suspend()
+    progress_controller.suspend_until_authoritative()
+    followup_scheduler.suspend_until_authoritative()
+    _interrupt_agent_session_speech(session)
+
+
+def _apply_task_cancel_suppression(
+    task_id: str,
+    *,
+    progress_controller: Any,
+    followup_scheduler: Any,
+    session: Any,
+) -> None:
+    """Synchronously silence accepted cancellation while backend settlement continues."""
+    progress_controller.suppress_task(task_id)
+    followup_scheduler.cancel_pending()
+    _interrupt_agent_session_speech(session)
+
+
+async def _publish_livekit_speaker_segments(
+    local_participant: Any,
+    segments: list[dict[str, Any]],
+    *,
+    owner_participant_identity: str,
+) -> None:
+    """Publish validated gateway-owned segments without logging transcript content."""
+    for segment in segments:
+        if not isinstance(segment, dict) or segment.get("version") != 1:
+            continue
+        payload = json.dumps(segment, ensure_ascii=True, separators=(",", ":"))
+        if not await _publish_bounded_livekit_data(
+            local_participant,
+            payload,
+            topic="viventium.speaker.v1",
+            correlation_id=str(segment.get("segmentId") or ""),
+            destination_identity=owner_participant_identity,
+        ):
+            continue
+        speaker = segment.get("speaker") if isinstance(segment.get("speaker"), dict) else {}
+        logger.info(
+            "[VoiceSpeaker] segment_published callSessionId=%s turnId=%s segmentId=%s sequence=%s revision=%s final=%s attribution=%s source=%s chars=%s",
+            segment.get("callSessionId", ""),
+            segment.get("turnId", ""),
+            segment.get("segmentId", ""),
+            segment.get("sequence", ""),
+            segment.get("revision", ""),
+            bool(segment.get("isFinal")),
+            speaker.get("attribution", "unknown"),
+            speaker.get("source", "unknown"),
+            len(str(segment.get("text") or "")),
+        )
+
+
+async def _publish_livekit_task_event(
+    local_participant: Any,
+    task_event: dict[str, Any],
+    *,
+    owner_participant_identity: str,
+) -> None:
+    if (
+        not isinstance(task_event, dict)
+        or task_event.get("version") != 1
+        or not isinstance(task_event.get("taskId"), str)
+        or not isinstance(task_event.get("sequence"), int)
+    ):
+        return
+    payload = json.dumps(task_event, ensure_ascii=True, separators=(",", ":"))
+    if not await _publish_bounded_livekit_data(
+        local_participant,
+        payload,
+        topic="viventium.task.v1",
+        correlation_id=str(task_event.get("eventId") or task_event.get("taskId") or ""),
+        destination_identity=owner_participant_identity,
+    ):
+        return
+    logger.info(
+        "[VoiceTask] event_published callSessionId=%s taskId=%s eventId=%s sequence=%s state=%s phase=%s",
+        task_event.get("callSessionId", ""),
+        task_event.get("taskId", ""),
+        task_event.get("eventId", ""),
+        task_event.get("sequence", ""),
+        task_event.get("state", ""),
+        task_event.get("phase", ""),
+    )
+
+
+async def _publish_bounded_livekit_data(
+    local_participant: Any,
+    payload: str,
+    *,
+    topic: str,
+    correlation_id: str,
+    destination_identity: str,
+) -> bool:
+    destination = (destination_identity or "").strip()
+    if not destination:
+        logger.warning(
+            "[VoiceData] publish_skipped topic=%s correlationId=%s reason=missing_owner_destination",
+            topic,
+            correlation_id,
+        )
+        return False
+    payload_bytes = payload.encode("utf-8")
+    if len(payload_bytes) > 14_000:
+        logger.warning(
+            "[VoiceData] publish_skipped topic=%s correlationId=%s reason=payload_too_large bytes=%s",
+            topic,
+            correlation_id,
+            len(payload_bytes),
+        )
+        return False
+    try:
+        await local_participant.publish_data(
+            payload,
+            reliable=True,
+            topic=topic,
+            destination_identities=[destination],
+        )
+        return True
+    except Exception as exc:
+        logger.warning(
+            "[VoiceData] publish_failed topic=%s correlationId=%s error=%s callContinues=true",
+            topic,
+            correlation_id,
+            type(exc).__name__,
+        )
+        return False
+
+
+def _linked_participant_speaker_context(
+    room: Any, owner_participant_identity: str
+) -> dict[str, Any]:
+    owner_identity = (owner_participant_identity or "").strip()
+    if not owner_identity:
+        return {}
+    participant = next(
+        (
+            item
+            for item in getattr(room, "remote_participants", {}).values()
+            if str(getattr(item, "identity", "") or "").strip() == owner_identity
+        ),
+        None,
+    )
+    if participant is None:
+        return {}
+    track_sid = ""
+    publications = list(getattr(participant, "track_publications", {}).values())
+    microphone_publication = next(
+        (
+            item
+            for item in publications
+            if str(getattr(item, "source", "")).lower().endswith("microphone")
+        ),
+        publications[0] if publications else None,
+    )
+    if microphone_publication is not None:
+        track_sid = str(getattr(microphone_publication, "sid", "") or "")
+    identity = str(getattr(participant, "identity", "") or "").strip()
+    return {
+        "participant_identity": identity,
+        "participant_name": str(getattr(participant, "name", "") or "").strip(),
+        "track_sid": track_sid,
+        # LiveKit participant identity is signed by the token minted for the authenticated call
+        # session. Provider diarization never upgrades a different physical voice to this trust.
+        "owner_signed": identity == owner_identity,
+    }
+
+
 # === VIVENTIUM START ===
 # Feature: Cartesia voice-control tags are TTS-only, never user transcript text.
+class AuthoritativeCallModeState:
+    """Shared fail-closed mode gate for every response-producing call plane."""
+
+    def __init__(self) -> None:
+        self._mode: Optional[str] = None
+        self._authoritative = False
+
+    @property
+    def mode(self) -> Optional[str]:
+        return self._mode if self._authoritative else None
+
+    @property
+    def allows_agent_dispatch(self) -> bool:
+        return self._authoritative and self._mode in {"call", "wing"}
+
+    @property
+    def suppressed_mode(self) -> str:
+        return "listen_only" if self.mode == "listen_only" else "uncertain"
+
+    def apply(self, mode: str) -> None:
+        if mode not in {"call", "wing", "listen_only"}:
+            self.suspend()
+            return
+        self._mode = mode
+        self._authoritative = True
+
+    def suspend(self) -> None:
+        self._authoritative = False
+
+
+class CallTaskStreamSpeechAuthority:
+    """Fail-close every speech plane around the authoritative task SSE lifecycle."""
+
+    _STREAM_STATES = {
+        "connecting",
+        "syncing",
+        "connected",
+        "disconnected",
+        "terminal",
+        "stopped",
+    }
+    _CALL_STATUSES = {
+        "created",
+        "connecting",
+        "listening",
+        "speaking",
+        "working",
+        "needs_input",
+        "degraded",
+        "failed",
+        "ended",
+    }
+
+    def __init__(
+        self,
+        *,
+        call_session_id: str,
+        fetch_call_state: Any,
+        suspend: Any,
+        apply_state: Any,
+    ) -> None:
+        self._call_session_id = call_session_id
+        self._fetch_call_state = fetch_call_state
+        self._suspend = suspend
+        self._apply_state = apply_state
+        self._session_ready = False
+        self._stream_connected = False
+        self._authoritative = False
+
+    @property
+    def authoritative(self) -> bool:
+        return self._authoritative
+
+    @property
+    def stream_connected(self) -> bool:
+        return self._stream_connected
+
+    def _valid_call_state(
+        self,
+        state: Any,
+        *,
+        require_listening: bool = False,
+    ) -> bool:
+        if not isinstance(state, dict):
+            return False
+        revision = state.get("revision")
+        status = state.get("status")
+        return bool(
+            state.get("version") == 1
+            and state.get("callSessionId") == self._call_session_id
+            and state.get("mode") in {"call", "wing", "listen_only"}
+            and status in self._CALL_STATUSES
+            and status not in {"failed", "ended"}
+            and (not require_listening or status == "listening")
+            and isinstance(revision, int)
+            and not isinstance(revision, bool)
+            and revision >= 0
+            and isinstance(state.get("updatedAt"), str)
+            and bool(state.get("updatedAt"))
+        )
+
+    def mark_session_ready(self, state: Any) -> bool:
+        """Open speech only after both SSE 2xx and the exact ready transition."""
+        self._authoritative = False
+        if not self._stream_connected or not self._valid_call_state(
+            state,
+            require_listening=True,
+        ):
+            self._session_ready = False
+            self._suspend()
+            return False
+        self._apply_state(state)
+        self._session_ready = True
+        self._authoritative = True
+        return True
+
+    async def reconcile(self) -> bool:
+        """Restore only from a fresh call snapshot while the task stream is live."""
+        self._authoritative = False
+        self._suspend()
+        if not self._session_ready or not self._stream_connected:
+            return False
+        try:
+            snapshot = await self._fetch_call_state()
+        except Exception as exc:
+            logger.warning(
+                "[VoiceTask] call_stream_snapshot_failed callSessionId=%s error=%s speechSuspended=true",
+                self._call_session_id,
+                type(exc).__name__,
+            )
+            return False
+        if not self._valid_call_state(snapshot):
+            return False
+        self._apply_state(snapshot)
+        self._authoritative = True
+        return True
+
+    async def on_stream_health(self, health: Any) -> None:
+        valid = bool(
+            isinstance(health, dict)
+            and health.get("version") == 1
+            and health.get("callSessionId") == self._call_session_id
+            and health.get("state") in self._STREAM_STATES
+        )
+        state = health.get("state") if valid else "invalid"
+        if state != "connected":
+            self._stream_connected = False
+            self._authoritative = False
+            self._suspend()
+            return
+
+        status = health.get("status")
+        if (
+            not isinstance(status, int)
+            or isinstance(status, bool)
+            or status < 200
+            or status >= 300
+        ):
+            self._stream_connected = False
+            self._authoritative = False
+            self._suspend()
+            return
+
+        self._stream_connected = True
+        # A 2xx reconnect proves transport/auth, but not current call state. Keep
+        # all speech interrupted until a fresh authoritative state snapshot lands.
+        if not self._session_ready:
+            self._authoritative = False
+            self._suspend()
+            return
+        await self.reconcile()
+
+
+def _ingest_raw_stt_speaker_event(
+    tracker: SpeakerSegmentTracker,
+    event: Any,
+    *,
+    timeline_offset_s: float,
+) -> tuple[list[dict[str, Any]], bool]:
+    """Preserve provider timing/diarization before AgentSession strips SpeechData."""
+    event_type = getattr(event, "type", None)
+    is_interim = event_type == SpeechEventType.INTERIM_TRANSCRIPT
+    is_final = event_type == SpeechEventType.FINAL_TRANSCRIPT
+    if not (is_interim or is_final):
+        return [], False
+    alternatives = getattr(event, "alternatives", None)
+    if not isinstance(alternatives, list) or not alternatives:
+        return [], is_final
+    alternative = alternatives[0]
+    relative_start = getattr(alternative, "start_time", None)
+    relative_end = getattr(alternative, "end_time", None)
+    start_time: Optional[float] = None
+    end_time: Optional[float] = None
+    if (
+        isinstance(relative_start, (int, float))
+        and not isinstance(relative_start, bool)
+        and isinstance(relative_end, (int, float))
+        and not isinstance(relative_end, bool)
+        and float(relative_end) > float(relative_start)
+    ):
+        start_time = max(float(timeline_offset_s), 0.0) + float(relative_start)
+        end_time = max(float(timeline_offset_s), 0.0) + float(relative_end)
+    changes = tracker.ingest(
+        transcript=str(getattr(alternative, "text", "") or ""),
+        is_final=is_final,
+        provider_speaker_id=getattr(alternative, "speaker_id", None),
+        created_at=time.time(),
+        start_time=start_time,
+        end_time=end_time,
+    )
+    return changes, is_final
+
+
 class ViventiumVoiceAgent(Agent):
+    def __init__(
+        self,
+        *,
+        speaker_tracker: Optional[SpeakerSegmentTracker] = None,
+        authoritative_mode_state: Optional[AuthoritativeCallModeState] = None,
+        persist_suppressed_turn: Optional[Any] = None,
+        on_finalized_speaker_context: Optional[Any] = None,
+        on_interim_speaker_changes: Optional[Any] = None,
+        speaker_timeline_offset: Optional[Any] = None,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(**kwargs)
+        self._speaker_tracker = speaker_tracker
+        self._authoritative_mode_state = authoritative_mode_state
+        self._persist_suppressed_turn = persist_suppressed_turn
+        self._on_finalized_speaker_context = on_finalized_speaker_context
+        self._on_interim_speaker_changes = on_interim_speaker_changes
+        self._speaker_timeline_offset = speaker_timeline_offset
+
+    async def on_user_turn_completed(self, turn_ctx: Any, new_message: Any) -> None:
+        _ = turn_ctx
+        context: dict[str, Any] = {}
+        if self._speaker_tracker is not None:
+            extra = getattr(new_message, "extra", None)
+            existing = (
+                extra.get(SPEAKER_CONTEXT_EXTRA_KEY)
+                if isinstance(extra, dict)
+                else None
+            )
+            context = (
+                existing
+                if isinstance(existing, dict)
+                else attach_speaker_context_to_message(self._speaker_tracker, new_message)
+            )
+            if self._on_finalized_speaker_context is not None:
+                finalized = self._on_finalized_speaker_context(context)
+                if inspect.isawaitable(finalized):
+                    await finalized
+        mode_state = self._authoritative_mode_state
+        if mode_state is None or mode_state.allows_agent_dispatch:
+            return
+        try:
+            if self._persist_suppressed_turn is not None:
+                await self._persist_suppressed_turn(
+                    context,
+                    mode_state.suppressed_mode,
+                )
+        except Exception as exc:
+            logger.warning(
+                "[VoiceMode] suppressed_turn_persist_failed error=%s responseSuppressed=true",
+                type(exc).__name__,
+            )
+        raise StopResponse()
+
+    async def stt_node(self, audio: Any, model_settings: Any) -> Any:
+        raw_events = super().stt_node(audio, model_settings)
+        if inspect.isawaitable(raw_events):
+            raw_events = await raw_events
+        timeline_offset_s = (
+            float(self._speaker_timeline_offset())
+            if self._speaker_timeline_offset is not None
+            else 0.0
+        )
+        async for event in raw_events:
+            if self._speaker_tracker is not None:
+                changes, is_final = _ingest_raw_stt_speaker_event(
+                    self._speaker_tracker,
+                    event,
+                    timeline_offset_s=timeline_offset_s,
+                )
+                if changes and not is_final and self._on_interim_speaker_changes is not None:
+                    result = self._on_interim_speaker_changes(changes)
+                    if inspect.isawaitable(result):
+                        await result
+            yield event
+
     async def transcription_node(self, text: Any, model_settings: Any) -> Any:
         display_filter = VoiceControlDisplayFilter()
         async for delta in text:
@@ -2617,6 +3747,43 @@ class CortexFollowupScheduler:
         self._cortex_task: Optional[asyncio.Task[None]] = None
         self._glasshive_tasks: set[asyncio.Task[None]] = set()
         self._glasshive_task_warning_threshold = 4
+        self._mode = "call"
+        self._authoritative_mode_available = True
+        self._speech_handles: set[Any] = set()
+
+    def set_mode(self, mode: str) -> None:
+        if mode not in {"call", "wing", "listen_only"}:
+            return
+        self._mode = mode
+        self._authoritative_mode_available = True
+        if mode == "listen_only":
+            _interrupt_livekit_speech_handles(self._speech_handles)
+
+    def suspend_until_authoritative(self) -> None:
+        self._authoritative_mode_available = False
+        _interrupt_livekit_speech_handles(self._speech_handles)
+
+    def cancel_pending(self) -> None:
+        for task in (
+            self._task,
+            self._cortex_task,
+            *self._glasshive_tasks,
+        ):
+            if task is not None and not task.done():
+                task.cancel()
+        _interrupt_livekit_speech_handles(self._speech_handles)
+
+    async def close(self) -> None:
+        tasks = {
+            task
+            for task in (self._task, self._cortex_task, *self._glasshive_tasks)
+            if task is not None and not task.done()
+        }
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        _interrupt_livekit_speech_handles(self._speech_handles)
 
     def schedule(
         self,
@@ -2746,6 +3913,15 @@ class CortexFollowupScheduler:
                                     and text.strip()
                                     and _glasshive_callback_is_terminal(latest)
                                 ):
+                                    if (
+                                        self._mode == "listen_only"
+                                        or not self._authoritative_mode_available
+                                    ):
+                                        logger.info(
+                                            "[VoiceMode] glasshive_voice_suppressed message_id=%s linkedChatPreserved=true",
+                                            message_id,
+                                        )
+                                        return
                                     delivery = await self._claim_glasshive_delivery(session, latest)
                                     if delivery:
                                         text = str(
@@ -3070,6 +4246,8 @@ class CortexFollowupScheduler:
     def _speak(self, text: str, seq: int, *, allow_stale_delivery: bool = False) -> bool:
         if not allow_stale_delivery and seq != self._seq:
             return False
+        if self._mode == "listen_only" or not self._authoritative_mode_available:
+            return False
         try:
             # No-response is an intentional "say nothing" signal.
             if is_no_response_only(text):
@@ -3080,7 +4258,18 @@ class CortexFollowupScheduler:
             if not cleaned:
                 return False
             cleaned = cap_voice_followup_for_tts(cleaned)
-            self._session.say(cleaned, allow_interruptions=True, add_to_chat_ctx=False)
+            handle = self._session.say(
+                cleaned,
+                allow_interruptions=True,
+                add_to_chat_ctx=False,
+            )
+            if handle is not None:
+                self._speech_handles.add(handle)
+                add_done_callback = getattr(handle, "add_done_callback", None)
+                if callable(add_done_callback):
+                    add_done_callback(
+                        lambda completed: self._speech_handles.discard(completed)
+                    )
             return True
         except Exception as exc:
             logger.warning("[voice-gateway] Failed to speak follow-up: %s", exc)
@@ -3101,47 +4290,11 @@ async def entrypoint(ctx: JobContext) -> None:
         raise RuntimeError("VIVENTIUM_CALL_SESSION_SECRET is required for the voice gateway worker")
 
     job_metadata = getattr(ctx.job, "metadata", "") or ""
-    requested_voice_route = _parse_requested_voice_route(job_metadata)
     call_session_id = _parse_call_session_id(job_metadata)
-    participant_identity = _parse_participant_identity(job_metadata)
-    connected = False
+    dispatch_claim_id = _parse_dispatch_claim_id(job_metadata)
 
     if not call_session_id:
-        # === VIVENTIUM START ===
-        # Feature: Delay room connect until needed for metadata fallback.
-        # Purpose: Prevent duplicate-dispatch jobs from joining/publishing before lease claim.
-        await ctx.connect(auto_subscribe=AutoSubscribe.AUDIO_ONLY)
-        connected = True
-        # === VIVENTIUM END ===
-
-        # Fallback: read first remote participant metadata (Agents Playground sets participant_metadata too).
-        try:
-            for p in ctx.room.remote_participants.values():
-                meta = getattr(p, "metadata", "") or ""
-                if (
-                    not requested_voice_route["stt"]["provider"]
-                    and not requested_voice_route["tts"]["provider"]
-                ):
-                    requested_voice_route = _parse_requested_voice_route(meta)
-                call_session_id = _parse_call_session_id(meta)
-                if call_session_id:
-                    break
-        except Exception:
-            call_session_id = None
-
-    if not call_session_id:
-        wait_s = _parse_float_env("VIVENTIUM_CALL_SESSION_WAIT_S", 3.0)
-        if wait_s > 0:
-            logger.warning(
-                "callSessionId missing in job metadata; waiting up to %.1fs for participant metadata",
-                wait_s,
-            )
-            call_session_id = await _await_participant_call_session_id(ctx, timeout_s=wait_s)
-
-    if not call_session_id:
-        raw_meta = (getattr(ctx.job, "metadata", "") or "").strip()
-        snippet = raw_meta[:200] if raw_meta else "<empty>"
-        logger.error("Missing callSessionId after wait; job metadata=%s", snippet)
+        logger.error("Missing callSessionId in signed dispatch metadata")
         raise RuntimeError(
             "Missing callSessionId (expected dispatch job metadata JSON: {\"callSessionId\": \"...\"})"
         )
@@ -3159,7 +4312,23 @@ async def entrypoint(ctx: JobContext) -> None:
     if not job_id:
         logger.error("[voice-gateway] Missing LiveKit job id; refusing to start voice session")
         return
-    claimed = await _claim_voice_session(env.librechat_origin, auth)
+    expected_gateway_agent_name = (env.livekit_agent_name or "").strip()
+    expected_room_name, expected_owner_participant_identity = (
+        _validate_dispatch_job_bindings(
+            ctx.job,
+            fallback_room_name=str(getattr(ctx.room, "name", "") or ""),
+            call_session_id=call_session_id,
+            registered_agent_name=expected_gateway_agent_name,
+        )
+    )
+    claimed = await _claim_voice_session(
+        env.librechat_origin,
+        auth,
+        expected_room_name=expected_room_name,
+        expected_gateway_agent_name=expected_gateway_agent_name,
+        expected_owner_participant_identity=expected_owner_participant_identity,
+        dispatch_claim_id=dispatch_claim_id,
+    )
     if not claimed:
         logger.warning("[voice-gateway] Voice session already claimed; exiting worker")
         shutdown = getattr(ctx, "shutdown", None)
@@ -3169,10 +4338,74 @@ async def entrypoint(ctx: JobContext) -> None:
             except Exception:
                 logger.debug("[voice-gateway] Duplicate-session shutdown hook failed", exc_info=True)
         return
-    # Connect only after successful claim when metadata already came from dispatch job.
-    if not connected:
-        await ctx.connect(auto_subscribe=AutoSubscribe.AUDIO_ONLY)
-        connected = True
+    claimed_call_state = claimed["callState"]
+    call_mode = str(claimed_call_state["mode"])
+    authoritative_mode_state = AuthoritativeCallModeState()
+    # Claim state describes durable intent, but it is not a readiness grant. A
+    # reclaimed call may intentionally still carry a retryable failure tombstone.
+    # Keep every response plane closed until the exact job+worker marks ready.
+    voice_session_ready = [False]
+    unready_claim_active = [True]
+    abandon_attempted = [False]
+
+    async def _abandon_unready_claim(
+        reason: str = "gateway_initialization_failed",
+    ) -> bool:
+        if not unready_claim_active[0] or abandon_attempted[0]:
+            return False
+        abandon_attempted[0] = True
+        released = await _abandon_voice_session_claim(
+            env.librechat_origin,
+            auth,
+            reason=reason,
+        )
+        if released:
+            unready_claim_active[0] = False
+        else:
+            abandon_attempted[0] = False
+        return released
+
+    async def _release_unready_claim_on_shutdown(*_args: Any) -> None:
+        await _abandon_unready_claim("gateway_initialization_failed")
+
+    ctx.add_shutdown_callback(_release_unready_claim_on_shutdown)
+
+    async def _fail_voice_route_initialization(exc: VoiceRouteError) -> None:
+        _reported, released = await _report_voice_initialization_failure_and_abandon(
+            env.librechat_origin,
+            auth,
+            exc,
+        )
+        if released:
+            unready_claim_active[0] = False
+            abandon_attempted[0] = True
+        else:
+            # Keep the shutdown callback armed for a best-effort release retry.
+            abandon_attempted[0] = False
+        shutdown = getattr(ctx, "shutdown", None)
+        if callable(shutdown):
+            result = shutdown()
+            if inspect.isawaitable(result):
+                await result
+    owner_participant_identity = claimed["ownerParticipantIdentity"]
+    owner_wait_s = min(
+        max(_parse_float_env("VIVENTIUM_VOICE_OWNER_WAIT_S", 8.0), 0.25),
+        30.0,
+    )
+    try:
+        await _resolve_canonical_owner_participant(
+            ctx,
+            owner_participant_identity,
+            timeout_s=owner_wait_s,
+        )
+    except CanonicalOwnerBindingError as exc:
+        await _abandon_unready_claim(exc.reason)
+        shutdown = getattr(ctx, "shutdown", None)
+        if callable(shutdown):
+            result = shutdown()
+            if inspect.isawaitable(result):
+                await result
+        raise
     # === VIVENTIUM END ===
 
     # === VIVENTIUM START ===
@@ -3184,7 +4417,13 @@ async def entrypoint(ctx: JobContext) -> None:
     # === VIVENTIUM END ===
 
     capabilities = _build_voice_capability_catalog(env)
-    env = _apply_requested_voice_route(env, requested_voice_route, capabilities)
+    requested_voice_route = claimed["requestedVoiceRoute"]
+    speaker_session_state = claimed.get("speakerSessionState")
+    try:
+        env = _apply_requested_voice_route(env, requested_voice_route, capabilities)
+    except VoiceRouteError as exc:
+        await _fail_voice_route_initialization(exc)
+        raise
 
     # Build LibreChat-backed LLM
     # === VIVENTIUM START ===
@@ -3200,9 +4439,25 @@ async def entrypoint(ctx: JobContext) -> None:
         ),
         is_participant_connected=lambda: _participant_identity_connected(
             ctx.room,
-            participant_identity,
+            owner_participant_identity,
+        ),
+        participant_reconnect_grace_s=min(
+            max(
+                _parse_float_env(
+                    "VIVENTIUM_VOICE_PARTICIPANT_RECONNECT_GRACE_S",
+                    60.0,
+                ),
+                0.0,
+            ),
+            300.0,
         ),
     )
+
+    async def _close_llm_background_continuations(*_args: Any) -> None:
+        await llm_impl.close_background_continuations()
+
+    ctx.add_shutdown_callback(_close_llm_background_continuations)
+
     # === VIVENTIUM END ===
 
     # VAD (turn detection)
@@ -3221,7 +4476,20 @@ async def entrypoint(ctx: JobContext) -> None:
         vad = load_vad(env)
 
     # STT (provider selection)
-    stt_impl, stt_provider = build_stt_selection(env, vad)
+    try:
+        stt_impl, stt_provider = build_stt_selection(env, vad)
+    except VoiceRouteError as exc:
+        await _fail_voice_route_initialization(exc)
+        raise
+    except Exception as exc:
+        classified = VoiceRouteError(
+            "provider_failure",
+            modality="stt",
+            provider=_normalize_stt_provider(env.stt_provider),
+            reason="initialization failed",
+        )
+        await _fail_voice_route_initialization(classified)
+        raise classified from exc
 
     def _build_tts(
         provider: str,
@@ -3260,12 +4528,12 @@ async def entrypoint(ctx: JobContext) -> None:
         # - VIVENTIUM_MLX_AUDIO_PREBUFFER_MS (default: 500)
         if provider in {"local_chatterbox_turbo_mlx_8bit"} or "chatterbox" in provider:
             if sys.platform != "darwin":
-                logger.warning(
-                    "Local Chatterbox (MLX) requested on non-macOS platform (%s). Falling back to OpenAI TTS.",
-                    sys.platform,
+                _raise_route_error(
+                    "provider_failure",
+                    modality="tts",
+                    provider="local_chatterbox_turbo_mlx_8bit",
+                    reason=f"is unavailable on platform {sys.platform}",
                 )
-                actual_voice_provider = "openai"
-                return (_build_openai_tts(), actual_voice_provider)
 
             config, ref_audio_warning = _build_local_chatterbox_config(env.mlx_audio_model_id)
             if ref_audio_warning:
@@ -3294,38 +4562,44 @@ async def entrypoint(ctx: JobContext) -> None:
                     actual_voice_provider,
                 )
             except ImportError as exc:
-                logger.warning(
-                    "Local Chatterbox (MLX) requested but mlx-audio is not installed (%s). Falling back to OpenAI TTS.",
-                    exc,
+                _raise_route_error(
+                    "provider_failure",
+                    modality="tts",
+                    provider="local_chatterbox_turbo_mlx_8bit",
+                    reason=f"runtime is unavailable ({type(exc).__name__})",
                 )
-                actual_voice_provider = "openai"
-                return (_build_openai_tts(), actual_voice_provider)
             except Exception as exc:
                 logger.error(
-                    "Local Chatterbox (MLX) initialization failed (%s). Falling back to OpenAI TTS.",
-                    exc,
+                    "Local Chatterbox (MLX) initialization failed error=%s",
+                    type(exc).__name__,
                     exc_info=True,
                 )
-                actual_voice_provider = "openai"
-                return (_build_openai_tts(), actual_voice_provider)
+                _raise_route_error(
+                    "provider_failure",
+                    modality="tts",
+                    provider="local_chatterbox_turbo_mlx_8bit",
+                    reason="initialization failed",
+                )
         # === VIVENTIUM END ===
 
         # TTS (Cartesia, xAI standalone TTS, ElevenLabs, or OpenAI)
         if provider in {"xai", "x_ai", "grok", "xai_grok_voice"}:
             xai_api_key = (env.xai_tts_api_key or os.getenv("XAI_API_KEY", "") or "").strip()
             if not _is_real_api_key(xai_api_key):
-                logger.warning(
-                    "xAI TTS requested but a real VIVENTIUM_XAI_TTS_API_KEY or XAI_API_KEY is not set. Falling back to OpenAI TTS."
+                _raise_route_error(
+                    "provider_failure",
+                    modality="tts",
+                    provider="xai",
+                    reason="credentials are unavailable",
                 )
-                actual_voice_provider = "openai"
-                return (_build_openai_tts(), actual_voice_provider)
 
             if not HAS_XAI_TTS or xai_plugin is None:
-                logger.warning(
-                    "xAI TTS requested but livekit-plugins-xai is not installed. Falling back to OpenAI TTS."
+                _raise_route_error(
+                    "provider_failure",
+                    modality="tts",
+                    provider="xai",
+                    reason="plugin is unavailable",
                 )
-                actual_voice_provider = "openai"
-                return (_build_openai_tts(), actual_voice_provider)
 
             _log_selection(
                 "Using xAI standalone TTS (voice=%s, language=%s, sample_rate=%s, ws=%s, optimize_streaming_latency=%s)",
@@ -3366,11 +4640,12 @@ async def entrypoint(ctx: JobContext) -> None:
         if provider == "cartesia":
             cartesia_api_key = (os.getenv("CARTESIA_API_KEY", "") or "").strip()
             if not cartesia_api_key:
-                logger.warning(
-                    "Cartesia TTS requested but CARTESIA_API_KEY not set. Falling back to OpenAI TTS."
+                _raise_route_error(
+                    "provider_failure",
+                    modality="tts",
+                    provider="cartesia",
+                    reason="credentials are unavailable",
                 )
-                actual_voice_provider = "openai"
-                return (_build_openai_tts(), actual_voice_provider)
 
             _log_selection(
                 "Using Cartesia TTS (model=%s, voice=%s, sample_rate=%s, speed=%s, volume=%s, emotion=%s, language=%s, ws=%s, buffer_ms=%s)",
@@ -3411,12 +4686,12 @@ async def entrypoint(ctx: JobContext) -> None:
 
         if provider == "elevenlabs" and HAS_ELEVENLABS:
             if not eleven_api_key:
-                logger.warning(
-                    "ElevenLabs TTS requested but ELEVEN_API_KEY/ELEVENLABS_API_KEY not set. "
-                    "Falling back to OpenAI TTS."
+                _raise_route_error(
+                    "provider_failure",
+                    modality="tts",
+                    provider="elevenlabs",
+                    reason="credentials are unavailable",
                 )
-                actual_voice_provider = "openai"
-                return _build_openai_tts(), actual_voice_provider
 
             voice_id = (elevenlabs_voice_id_override or env.elevenlabs_voice_id).strip() or env.elevenlabs_voice_id
 
@@ -3458,28 +4733,48 @@ async def entrypoint(ctx: JobContext) -> None:
                 actual_voice_provider,
             )
 
-        # Fallback to OpenAI TTS
         if provider == "elevenlabs" and not HAS_ELEVENLABS:
-            logger.warning(
-                "ElevenLabs TTS requested but plugin not available. "
-                "Falling back to OpenAI TTS. Install with: pip install livekit-plugins-elevenlabs"
+            _raise_route_error(
+                "provider_failure",
+                modality="tts",
+                provider="elevenlabs",
+                reason="plugin is unavailable",
             )
-        elif provider and provider not in {"openai", "elevenlabs"}:
-            logger.warning("Unknown TTS provider '%s'; falling back to OpenAI TTS.", provider)
-        else:
-            _log_selection(
-                "Using OpenAI TTS with model=%s, voice=%s, speed=%.2f",
-                env.openai_tts_model,
-                env.openai_tts_voice,
-                env.openai_tts_speed,
+        if provider != "openai":
+            _raise_route_error(
+                "no_route",
+                modality="tts",
+                provider=provider,
+                reason="is not implemented",
             )
+        _log_selection(
+            "Using OpenAI TTS with model=%s, voice=%s, speed=%.2f",
+            env.openai_tts_model,
+            env.openai_tts_voice,
+            env.openai_tts_speed,
+        )
         actual_voice_provider = "openai"
         return (
             _build_openai_tts(),
             actual_voice_provider,
         )
 
-    primary_tts_impl, primary_voice_provider = _build_tts(env.tts_provider, selection_role="primary")
+    try:
+        primary_tts_impl, primary_voice_provider = _build_tts(
+            env.tts_provider, selection_role="primary"
+        )
+    except VoiceRouteError as exc:
+        await _fail_voice_route_initialization(exc)
+        raise
+    except Exception as exc:
+        classified = VoiceRouteError(
+            "provider_failure",
+            modality="tts",
+            provider=_normalize_voice_provider(env.tts_provider),
+            reason="initialization failed",
+        )
+        await _fail_voice_route_initialization(classified)
+        raise classified from exc
 
     # === VIVENTIUM START ===
     # Feature: Prewarm local TTS models to eliminate cold-start latency on first voice call.
@@ -3495,7 +4790,17 @@ async def entrypoint(ctx: JobContext) -> None:
         and hasattr(primary_tts_impl, "prewarm")
     ):
         logger.info("[voice-gateway] Prewarming TTS model (%s)...", primary_voice_provider)
-        primary_tts_impl.prewarm()
+        try:
+            primary_tts_impl.prewarm()
+        except Exception as exc:
+            classified = VoiceRouteError(
+                "provider_failure",
+                modality="tts",
+                provider=primary_voice_provider,
+                reason="prewarm failed",
+            )
+            await _fail_voice_route_initialization(classified)
+            raise classified from exc
     # === VIVENTIUM END ===
 
     attempts: list[ProviderAttempt] = [
@@ -3508,7 +4813,7 @@ async def entrypoint(ctx: JobContext) -> None:
     configured_fallback_tts_impl: Optional[Any] = None
     configured_fallback_voice_provider: Optional[str] = None
 
-    def _maybe_add_elevenlabs_voice_fallback(*, voice_provider: str) -> None:
+    async def _maybe_add_elevenlabs_voice_fallback(*, voice_provider: str) -> None:
         # If a chosen ElevenLabs voice id is blocked (IVC voice on lower tiers), fall back to a
         # premade voice id for reliability. We keep the provider label as "elevenlabs" so downstream
         # prompt injection stays stable; logs include the actual voice_id via `fallback_tts.py`.
@@ -3522,11 +4827,23 @@ async def entrypoint(ctx: JobContext) -> None:
         if fallback_voice_id == primary_voice_id:
             return
 
-        fallback_voice_tts, fallback_voice_provider = _build_tts(
-            "elevenlabs",
-            elevenlabs_voice_id_override=fallback_voice_id,
-            selection_role="fallback",
-        )
+        try:
+            fallback_voice_tts, fallback_voice_provider = _build_tts(
+                "elevenlabs",
+                elevenlabs_voice_id_override=fallback_voice_id,
+                selection_role="fallback",
+            )
+        except Exception:
+            await _report_voice_gateway_failure(
+                env.librechat_origin,
+                auth,
+                classification="provider_failure",
+                modality="tts",
+                provider="elevenlabs",
+                phase="initialization",
+                fatal=False,
+            )
+            return
         if fallback_voice_provider != "elevenlabs":
             return
         attempts.append(
@@ -3537,14 +4854,31 @@ async def entrypoint(ctx: JobContext) -> None:
             )
         )
 
-    _maybe_add_elevenlabs_voice_fallback(voice_provider=primary_voice_provider)
+    await _maybe_add_elevenlabs_voice_fallback(voice_provider=primary_voice_provider)
 
     if env.tts_provider_fallback and env.tts_provider_fallback != env.tts_provider:
-        fallback_tts_impl, fallback_voice_provider = _build_tts(
-            env.tts_provider_fallback,
-            selection_role="fallback",
-        )
-        if fallback_voice_provider != primary_voice_provider:
+        try:
+            fallback_tts_impl, fallback_voice_provider = _build_tts(
+                env.tts_provider_fallback,
+                selection_role="fallback",
+            )
+        except Exception:
+            await _report_voice_gateway_failure(
+                env.librechat_origin,
+                auth,
+                classification="provider_failure",
+                modality="tts",
+                provider=_normalize_voice_provider(env.tts_provider_fallback),
+                phase="initialization",
+                fatal=False,
+            )
+            fallback_tts_impl = None
+            fallback_voice_provider = None
+        if (
+            fallback_tts_impl is not None
+            and fallback_voice_provider
+            and fallback_voice_provider != primary_voice_provider
+        ):
             attempts.append(
                 _build_tts_provider_attempt(
                     capabilities=capabilities,
@@ -3552,7 +4886,7 @@ async def entrypoint(ctx: JobContext) -> None:
                     tts_impl=fallback_tts_impl,
                 )
             )
-            _maybe_add_elevenlabs_voice_fallback(voice_provider=fallback_voice_provider)
+            await _maybe_add_elevenlabs_voice_fallback(voice_provider=fallback_voice_provider)
             configured_fallback_tts_impl = fallback_tts_impl
             configured_fallback_voice_provider = fallback_voice_provider
 
@@ -3613,9 +4947,19 @@ async def entrypoint(ctx: JobContext) -> None:
         def _on_tts_metrics(metrics: Any) -> None:
             if getattr(metrics, "type", "") != "tts_metrics":
                 return
+            timestamp = _metric_value(metrics, "timestamp")
+            duration = _metric_value(metrics, "duration")
+            ttfb = _metric_value(metrics, "ttfb")
+            correlation_id = ""
+            if timestamp is not None and duration is not None and ttfb is not None:
+                correlation_id = llm_impl.record_next_trace_hop(
+                    "tts_first_byte",
+                    (timestamp - duration + max(ttfb, 0.0)) * 1000.0,
+                )
             logger.info(
-                "[VoiceLatency] tts_provider_metrics callSessionId=%s provider=%s label=%s request_id=%s ttfb_ms=%s duration_ms=%s audio_duration_ms=%s streamed=%s cancelled=%s characters=%s",
+                "[VoiceLatency] tts_provider_metrics callSessionId=%s correlationId=%s provider=%s label=%s request_id=%s ttfb_ms=%s duration_ms=%s audio_duration_ms=%s streamed=%s cancelled=%s characters=%s",
                 call_session_id,
+                correlation_id or "unmatched",
                 provider,
                 getattr(metrics, "label", ""),
                 getattr(metrics, "request_id", ""),
@@ -3689,6 +5033,572 @@ async def entrypoint(ctx: JobContext) -> None:
         min_consecutive_speech_delay=env.voice_min_consecutive_speech_delay_s,
         aec_warmup_duration=env.voice_aec_warmup_duration_s,
     )
+    runtime_failure_report_tasks: set[asyncio.Task[Any]] = set()
+    runtime_failure_reported_at: dict[tuple[str, str], float] = {}
+
+    def _schedule_runtime_provider_failure_report(event: Any) -> None:
+        classified = _classify_runtime_voice_provider_failure(
+            event,
+            stt_impl=stt_impl,
+            tts_impl=tts_impl,
+            stt_provider=stt_provider,
+            tts_provider=current_tts_provider,
+        )
+        if classified is None:
+            return
+        modality, provider = classified
+        now = time.monotonic()
+        report_key = (modality, provider)
+        if now - runtime_failure_reported_at.get(report_key, -math.inf) < 5.0:
+            return
+        runtime_failure_reported_at[report_key] = now
+        task = asyncio.create_task(
+            _report_voice_gateway_failure(
+                env.librechat_origin,
+                auth,
+                classification="provider_failure",
+                modality=modality,
+                provider=provider,
+                phase="runtime",
+                fatal=False,
+            )
+        )
+        runtime_failure_report_tasks.add(task)
+
+        def _consume_report_result(completed: asyncio.Task[Any]) -> None:
+            runtime_failure_report_tasks.discard(completed)
+            if completed.cancelled():
+                return
+            try:
+                completed.exception()
+            except Exception:
+                logger.debug(
+                    "[VoiceProvider] runtime failure report task cleanup failed",
+                    exc_info=True,
+                )
+
+        task.add_done_callback(_consume_report_result)
+        logger.warning(
+            "[VoiceProvider] runtime_failure callSessionId=%s modality=%s provider=%s callContinues=true",
+            call_session_id,
+            modality,
+            provider,
+        )
+
+    async def _drain_runtime_failure_reports(*_args: Any) -> None:
+        if runtime_failure_report_tasks:
+            await asyncio.gather(*tuple(runtime_failure_report_tasks), return_exceptions=True)
+
+    ctx.add_shutdown_callback(_drain_runtime_failure_reports)
+
+    followup_scheduler = CortexFollowupScheduler(
+        origin=env.librechat_origin,
+        auth=auth,
+        session=session,
+        timeout_s=env.voice_followup_timeout_s,
+        interval_s=env.voice_followup_interval_s,
+        grace_s=env.voice_followup_grace_s,
+        glasshive_timeout_s=env.voice_glasshive_timeout_s,
+    )
+    followup_scheduler.set_mode("listen_only")
+    llm_impl.set_followup_handler(followup_scheduler.schedule)
+
+    async def _close_followup_scheduler(*_args: Any) -> None:
+        await followup_scheduler.close()
+
+    ctx.add_shutdown_callback(_close_followup_scheduler)
+    progress_speech_handles: set[Any] = set()
+
+    def _stop_active_progress_speech() -> None:
+        _interrupt_livekit_speech_handles(progress_speech_handles)
+
+    def _speak_task_progress(task_id: str, text: str) -> None:
+        cleaned = sanitize_voice_followup_text(text)
+        if not cleaned:
+            return
+        try:
+            handle = session.say(
+                cleaned,
+                allow_interruptions=True,
+                add_to_chat_ctx=False,
+            )
+            if handle is not None:
+                progress_speech_handles.add(handle)
+                add_done_callback = getattr(handle, "add_done_callback", None)
+                if callable(add_done_callback):
+                    add_done_callback(
+                        lambda completed: progress_speech_handles.discard(completed)
+                    )
+            logger.info(
+                "[VoiceTask] progress_spoken callSessionId=%s taskId=%s chars=%s interruptible=true",
+                call_session_id,
+                task_id,
+                len(cleaned),
+            )
+        except Exception as exc:
+            logger.warning(
+                "[VoiceTask] progress_speak_failed callSessionId=%s taskId=%s error=%s callContinues=true",
+                call_session_id,
+                task_id,
+                type(exc).__name__,
+            )
+
+    progress_controller = AsyncVoiceProgressController(
+        machine=VoiceProgressStateMachine(enabled=False),
+        speak=_speak_task_progress,
+        clock=time.monotonic,
+        stop_active_speech=_stop_active_progress_speech,
+        initial_mode="listen_only",
+    )
+
+    async def _relay_and_track_task_event(task_event: dict[str, Any]) -> None:
+        progress_controller.on_task_event(task_event)
+        await _publish_livekit_task_event(
+            ctx.room.local_participant,
+            task_event,
+            owner_participant_identity=owner_participant_identity,
+        )
+
+    llm_impl.set_task_event_handler(_relay_and_track_task_event)
+    llm_impl.set_model_output_handler(progress_controller.on_model_output)
+
+    def _on_task_cancel_accepted(task_id: str, _result: dict[str, Any]) -> None:
+        # The backend task remains authoritative; this is the local suppression barrier.
+        _apply_task_cancel_suppression(
+            task_id,
+            progress_controller=progress_controller,
+            followup_scheduler=followup_scheduler,
+            session=session,
+        )
+
+    llm_impl.set_task_cancel_handler(_on_task_cancel_accepted)
+
+    segment_sequencer = CallScopedSegmentSequencer()
+    owner_speaker_context = _linked_participant_speaker_context(
+        ctx.room, owner_participant_identity
+    )
+    speaker_tracker = SpeakerSegmentTracker(
+        call_session_id=call_session_id,
+        segment_sequencer=segment_sequencer,
+        initial_shared_microphone=shared_microphone_state_applies_to_track(
+            speaker_session_state,
+            owner_speaker_context.get("track_sid", ""),
+            owner_speaker_context.get("participant_identity", ""),
+        ),
+        **owner_speaker_context,
+    )
+
+    async def _persist_ambient_speaker_session_state(
+        state: dict[str, Any]
+    ) -> None:
+        await llm_impl.post_speaker_segment_revisions([], session_state=state)
+
+    async def _persist_ambient_turn(payload: dict[str, Any]) -> None:
+        try:
+            await llm_impl.post_ambient_transcript(payload)
+        except Exception as exc:
+            logger.warning(
+                "[VoiceSpeaker] ambient_persist_failed callSessionId=%s segments=%s error=%s",
+                call_session_id,
+                len(payload.get("segments") or []),
+                type(exc).__name__,
+            )
+
+    async def _persist_suppressed_owner_turn(
+        context: dict[str, Any], mode: str
+    ) -> None:
+        segments = context.get("speakerSegments")
+        revisions = context.get("speakerSegmentRevisions")
+        bounded_segments = segments if isinstance(segments, list) else []
+        bounded_revisions = revisions if isinstance(revisions, list) else []
+        if bounded_revisions:
+            await llm_impl.post_speaker_segment_revisions(bounded_revisions)
+        if not bounded_segments:
+            return
+        first_turn_id = str(bounded_segments[0].get("turnId") or "")
+        await llm_impl.post_ambient_transcript(
+            {
+                "version": 1,
+                "callSessionId": call_session_id,
+                "mode": "listen_only" if mode == "listen_only" else call_mode,
+                "ingressKind": (
+                    "listen_only_owner"
+                    if mode == "listen_only"
+                    else "ambient_participant"
+                ),
+                **({"turnId": first_turn_id} if first_turn_id else {}),
+                "segments": bounded_segments,
+            }
+        )
+        logger.info(
+            "[VoiceMode] suppressed_owner_turn_persisted callSessionId=%s mode=%s segments=%s revisions=%s llmDispatched=false",
+            call_session_id,
+            mode,
+            len(bounded_segments),
+            len(bounded_revisions),
+        )
+
+    multi_track_ingress = MultiTrackIngressCoordinator(
+        call_session_id=call_session_id,
+        owner_participant_identity=owner_participant_identity,
+        mode=call_mode,
+        stt_impl=stt_impl,
+        audio_stream_factory=lambda track: rtc.AudioStream(track),
+        on_segment_changes=lambda changes: _publish_livekit_speaker_segments(
+            ctx.room.local_participant,
+            changes,
+            owner_participant_identity=owner_participant_identity,
+        ),
+        on_ambient_turn=_persist_ambient_turn,
+        on_session_state_change=_persist_ambient_speaker_session_state,
+        owner_present=lambda: _participant_identity_connected(
+            ctx.room, owner_participant_identity
+        ),
+        initial_speaker_session_state=speaker_session_state,
+        segment_sequencer=segment_sequencer,
+    )
+
+    async def _poll_spoken_progress() -> None:
+        while True:
+            await asyncio.sleep(0.1)
+            progress_controller.poll()
+
+    latest_pushed_mode_revision = [int(claimed_call_state["revision"])]
+
+    def _suspend_for_task_stream_uncertainty() -> None:
+        _suspend_all_call_speech_until_authoritative(
+            progress_controller=progress_controller,
+            followup_scheduler=followup_scheduler,
+            session=session,
+            authoritative_mode_state=authoritative_mode_state,
+        )
+
+    def _apply_task_stream_call_state(state: dict[str, Any]) -> None:
+        nonlocal call_mode
+        call_mode = str(state["mode"])
+        latest_pushed_mode_revision[0] = max(
+            latest_pushed_mode_revision[0],
+            int(state["revision"]),
+        )
+        authoritative_mode_state.apply(call_mode)
+        _apply_authoritative_call_mode_to_speech_planes(
+            call_mode,
+            progress_controller=progress_controller,
+            ambient_ingress=multi_track_ingress,
+            followup_scheduler=followup_scheduler,
+            session=session,
+        )
+
+    task_stream_authority = CallTaskStreamSpeechAuthority(
+        call_session_id=call_session_id,
+        fetch_call_state=llm_impl.get_call_state,
+        suspend=_suspend_for_task_stream_uncertainty,
+        apply_state=_apply_task_stream_call_state,
+    )
+    llm_impl.set_call_task_event_stream_health_handler(
+        task_stream_authority.on_stream_health
+    )
+
+    @ctx.room.on("data_received")
+    def _on_authoritative_call_state_packet(packet: Any) -> None:
+        if str(getattr(packet, "topic", "") or "") != "viventium.call.state.v1":
+            return
+        if not voice_session_ready[0] or not task_stream_authority.authoritative:
+            _suspend_all_call_speech_until_authoritative(
+                progress_controller=progress_controller,
+                followup_scheduler=followup_scheduler,
+                session=session,
+                authoritative_mode_state=authoritative_mode_state,
+            )
+            logger.warning(
+                "[VoiceMode] push_rejected callSessionId=%s reason=response_plane_not_authoritative speechSuspended=true",
+                call_session_id,
+            )
+            return
+        participant = getattr(packet, "participant", None)
+        source_identity = str(getattr(participant, "identity", "") or "").strip()
+        if source_identity != owner_participant_identity:
+            logger.warning(
+                "[VoiceMode] push_rejected callSessionId=%s reason=non_owner_source",
+                call_session_id,
+            )
+            return
+        raw_data = getattr(packet, "data", b"")
+        if not isinstance(raw_data, (bytes, bytearray)) or len(raw_data) > 16_000:
+            _suspend_all_call_speech_until_authoritative(
+                progress_controller=progress_controller,
+                followup_scheduler=followup_scheduler,
+                session=session,
+                authoritative_mode_state=authoritative_mode_state,
+            )
+            return
+        try:
+            payload = json.loads(bytes(raw_data).decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            payload = None
+        packet_revision = payload.get("revision") if isinstance(payload, dict) else None
+        if (
+            isinstance(packet_revision, int)
+            and not isinstance(packet_revision, bool)
+            and packet_revision <= latest_pushed_mode_revision[0]
+        ):
+            logger.info(
+                "[VoiceMode] push_ignored callSessionId=%s reason=stale_revision revision=%s latest=%s",
+                call_session_id,
+                packet_revision,
+                latest_pushed_mode_revision[0],
+            )
+            return
+        parsed = parse_authoritative_call_state_packet(
+            payload,
+            expected_call_session_id=call_session_id,
+            expected_owner_identity=owner_participant_identity,
+            source_identity=source_identity,
+            latest_revision=latest_pushed_mode_revision[0],
+        )
+        if parsed is None:
+            _suspend_all_call_speech_until_authoritative(
+                progress_controller=progress_controller,
+                followup_scheduler=followup_scheduler,
+                session=session,
+                authoritative_mode_state=authoritative_mode_state,
+            )
+            logger.warning(
+                "[VoiceMode] push_rejected callSessionId=%s reason=invalid_or_stale_contract speechSuspended=true",
+                call_session_id,
+            )
+            return
+        mode, status, revision = parsed
+        latest_pushed_mode_revision[0] = revision
+        if status in {"failed", "ended"}:
+            _suspend_all_call_speech_until_authoritative(
+                progress_controller=progress_controller,
+                followup_scheduler=followup_scheduler,
+                session=session,
+                authoritative_mode_state=authoritative_mode_state,
+            )
+            logger.info(
+                "[VoiceMode] push_terminal callSessionId=%s status=%s revision=%s",
+                call_session_id,
+                status,
+                revision,
+            )
+            return
+        authoritative_mode_state.apply(mode)
+        previous_mode = progress_controller.mode
+        _apply_authoritative_call_mode_to_speech_planes(
+            mode,
+            progress_controller=progress_controller,
+            ambient_ingress=multi_track_ingress,
+            followup_scheduler=followup_scheduler,
+            session=session,
+        )
+        logger.info(
+            "[VoiceMode] push_applied callSessionId=%s previous=%s current=%s revision=%s reconnect=false",
+            call_session_id,
+            previous_mode,
+            mode,
+            revision,
+        )
+
+    async def _sync_authoritative_mode() -> None:
+        def _on_mode_transition(previous_mode: str, current_mode: str) -> None:
+            followup_scheduler.set_mode(current_mode)
+            if previous_mode != "listen_only" and current_mode == "listen_only":
+                _interrupt_agent_session_speech(session)
+
+        def _on_state_uncertain() -> None:
+            _suspend_all_call_speech_until_authoritative(
+                progress_controller=progress_controller,
+                followup_scheduler=followup_scheduler,
+                session=session,
+                authoritative_mode_state=authoritative_mode_state,
+            )
+
+        def _on_terminal_state(status: str) -> None:
+            _suspend_all_call_speech_until_authoritative(
+                progress_controller=progress_controller,
+                followup_scheduler=followup_scheduler,
+                session=session,
+                authoritative_mode_state=authoritative_mode_state,
+            )
+            logger.info(
+                "[VoiceMode] terminal_state callSessionId=%s status=%s backendTaskPreserved=true",
+                call_session_id,
+                status,
+            )
+            shutdown = getattr(ctx, "shutdown", None)
+            if callable(shutdown):
+                result = shutdown()
+                if inspect.isawaitable(result):
+                    shutdown_task = asyncio.create_task(result)
+                    terminal_shutdown_tasks.add(shutdown_task)
+
+                    def _consume_terminal_shutdown(completed: asyncio.Task[Any]) -> None:
+                        terminal_shutdown_tasks.discard(completed)
+                        if completed.cancelled():
+                            return
+                        try:
+                            completed.exception()
+                        except Exception:
+                            logger.debug(
+                                "[VoiceMode] terminal shutdown cleanup failed",
+                                exc_info=True,
+                            )
+
+                    shutdown_task.add_done_callback(_consume_terminal_shutdown)
+
+        async def _reconcile_once() -> None:
+            if not task_stream_authority.authoritative:
+                restored = await task_stream_authority.reconcile()
+                if restored:
+                    logger.info(
+                        "[VoiceMode] task_stream_snapshot_restored callSessionId=%s speechAuthoritative=true",
+                        call_session_id,
+                    )
+                else:
+                    _on_state_uncertain()
+                    logger.warning(
+                        "[VoiceMode] progress_suspended callSessionId=%s reason=task_stream_unavailable audioConnected=true",
+                        call_session_id,
+                    )
+                return
+            previous_mode = progress_controller.mode
+            authoritative_mode = await sync_authoritative_call_mode_once(
+                fetch_mode=llm_impl.get_call_state,
+                progress_controller=progress_controller,
+                set_ambient_mode=multi_track_ingress.set_mode,
+                on_mode_transition=_on_mode_transition,
+                on_state_uncertain=_on_state_uncertain,
+                on_terminal_state=_on_terminal_state,
+            )
+            if authoritative_mode is None:
+                logger.warning(
+                    "[VoiceMode] progress_suspended callSessionId=%s reason=authoritative_state_unavailable audioConnected=true",
+                    call_session_id,
+                )
+            else:
+                authoritative_mode_state.apply(authoritative_mode)
+                # Also clears a prior fail-safe suspension when the mode value is unchanged.
+                followup_scheduler.set_mode(authoritative_mode)
+                if authoritative_mode != previous_mode:
+                    logger.info(
+                        "[VoiceMode] mode_changed callSessionId=%s previous=%s current=%s reconnect=false",
+                        call_session_id,
+                        previous_mode,
+                        authoritative_mode,
+                    )
+
+        await run_authoritative_mode_reconciliation(
+            reconcile_once=_reconcile_once,
+            interval_s=_parse_float_env(
+                "VIVENTIUM_VOICE_MODE_RECONCILIATION_S",
+                5.0,
+            ),
+            clock=asyncio.get_running_loop().time,
+            sleep=asyncio.sleep,
+        )
+
+    progress_poll_task: Optional[asyncio.Task[None]] = None
+    mode_sync_task: Optional[asyncio.Task[None]] = None
+    terminal_shutdown_tasks: set[asyncio.Task[Any]] = set()
+
+    async def _stop_progress_and_mode_sync(*_args: Any) -> None:
+        tasks = [
+            task
+            for task in (progress_poll_task, mode_sync_task)
+            if task is not None
+        ]
+        for task in tasks:
+            task.cancel()
+        for task in tasks:
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+        _stop_active_progress_speech()
+
+    ctx.add_shutdown_callback(_stop_progress_and_mode_sync)
+
+    def _register_ambient_track(track: Any, publication: Any, participant: Any) -> None:
+        if not voice_session_ready[0]:
+            return
+        if multi_track_ingress.track_joined(participant, track, publication):
+            logger.info(
+                "[VoiceSpeaker] ambient_track_started callSessionId=%s participantBound=true trackSid=%s authority=soft_evidence",
+                call_session_id,
+                getattr(publication, "sid", "") or getattr(track, "sid", ""),
+            )
+
+    @ctx.room.on("track_subscribed")
+    def _on_ambient_track_subscribed(track: Any, publication: Any, participant: Any) -> None:
+        _register_ambient_track(track, publication, participant)
+
+    @ctx.room.on("track_unsubscribed")
+    def _on_ambient_track_unsubscribed(track: Any, publication: Any, participant: Any) -> None:
+        _ = participant
+        track_sid = str(
+            getattr(publication, "sid", "") or getattr(track, "sid", "") or ""
+        )
+        if track_sid:
+            asyncio.get_running_loop().create_task(
+                multi_track_ingress.track_left(track_sid)
+            )
+
+    def _register_existing_ambient_tracks() -> None:
+        for participant in getattr(ctx.room, "remote_participants", {}).values():
+            for publication in getattr(participant, "track_publications", {}).values():
+                track = getattr(publication, "track", None)
+                if track is not None:
+                    _register_ambient_track(track, publication, participant)
+
+    async def _close_multi_track_ingress(*_args: Any) -> None:
+        await multi_track_ingress.close()
+
+    ctx.add_shutdown_callback(_close_multi_track_ingress)
+
+    async def _on_owner_interim_speaker_changes(
+        changes: list[dict[str, Any]],
+    ) -> None:
+        late_revisions = [
+            item for item in changes if item.get("turnId") != speaker_tracker.turn_id
+        ]
+        session_states = speaker_tracker.pop_session_state_changes()
+        await _publish_livekit_speaker_segments(
+            ctx.room.local_participant,
+            changes,
+            owner_participant_identity=owner_participant_identity,
+        )
+        if late_revisions or session_states:
+            llm_impl.queue_speaker_segment_revisions(
+                late_revisions,
+                session_state=session_states[-1] if session_states else None,
+            )
+
+    async def _on_finalized_owner_speaker_context(
+        context: dict[str, Any],
+    ) -> None:
+        segments = context.get("speakerSegments")
+        if not isinstance(segments, list):
+            segments = []
+        overlap_revisions = multi_track_ingress.apply_call_wide_overlap(segments)
+        revisions = context.get("speakerSegmentRevisions")
+        if not isinstance(revisions, list):
+            revisions = []
+        revisions.extend(overlap_revisions)
+        context["speakerSegmentRevisions"] = revisions
+        session_states = speaker_tracker.pop_session_state_changes()
+        if revisions or session_states:
+            await llm_impl.post_speaker_segment_revisions(
+                revisions,
+                session_state=session_states[-1] if session_states else None,
+            )
+        if segments or overlap_revisions:
+            await _publish_livekit_speaker_segments(
+                ctx.room.local_participant,
+                [*segments, *overlap_revisions],
+                owner_participant_identity=owner_participant_identity,
+            )
     logger.info(
         "[voice-gateway] AgentSession callSessionId=%s turn_detection=%s turn_end_reason=%s min_interrupt=%ss min_interrupt_words=%s min_endpoint=%ss max_endpoint=%ss false_interrupt_timeout=%s resume_false_interrupt=%s min_consecutive_speech_delay=%ss aec_warmup_duration=%s",
         call_session_id,
@@ -3706,12 +5616,25 @@ async def entrypoint(ctx: JobContext) -> None:
 
     @session.on("agent_state_changed")
     def _on_agent_state_changed(event: Any) -> None:
+        if str(getattr(event, "new_state", "") or "") == "speaking":
+            created_at = float(getattr(event, "created_at", 0.0) or 0.0)
+            correlation_id = llm_impl.record_next_trace_hop(
+                "audio_output",
+                (created_at if created_at > 0 else time.time()) * 1000.0,
+            )
+            task_id = llm_impl.task_id_for_trace(correlation_id)
+            if task_id:
+                progress_controller.on_audible_ack(task_id)
         logger.info(
             "[voice-gateway] agent_state_changed callSessionId=%s old=%s new=%s",
             call_session_id,
             getattr(event, "old_state", ""),
             getattr(event, "new_state", ""),
         )
+
+    @session.on("error")
+    def _on_voice_provider_error(event: Any) -> None:
+        _schedule_runtime_provider_failure_report(event)
 
     @session.on("user_state_changed")
     def _on_user_state_changed(event: Any) -> None:
@@ -3772,8 +5695,9 @@ async def entrypoint(ctx: JobContext) -> None:
             return
         if role == "assistant":
             logger.info(
-                "[VoiceLatency] assistant_turn_metrics callSessionId=%s provider=%s llm_node_ttft_ms=%s tts_node_ttfb_ms=%s e2e_latency_ms=%s event_lag_ms=%.3f",
+                "[VoiceLatency] assistant_turn_metrics callSessionId=%s correlationId=%s provider=%s llm_node_ttft_ms=%s tts_node_ttfb_ms=%s e2e_latency_ms=%s event_lag_ms=%.3f",
                 call_session_id,
+                llm_impl.current_trace_id,
                 current_tts_provider,
                 _metric_ms(metrics, "llm_node_ttft"),
                 _metric_ms(metrics, "tts_node_ttfb"),
@@ -3790,20 +5714,6 @@ async def entrypoint(ctx: JobContext) -> None:
             env.voice_false_interruption_timeout_s,
         )
 
-    # === VIVENTIUM START ===
-    # Feature: Async insight follow-up scheduling (non-blocking).
-    followup_scheduler = CortexFollowupScheduler(
-        origin=env.librechat_origin,
-        auth=auth,
-        session=session,
-        timeout_s=env.voice_followup_timeout_s,
-        interval_s=env.voice_followup_interval_s,
-        grace_s=env.voice_followup_grace_s,
-        glasshive_timeout_s=env.voice_glasshive_timeout_s,
-    )
-    llm_impl.set_followup_handler(followup_scheduler.schedule)
-    # === VIVENTIUM END ===
-
     agent = ViventiumVoiceAgent(
         instructions=(
             "You are the Viventium Voice Gateway. "
@@ -3812,6 +5722,12 @@ async def entrypoint(ctx: JobContext) -> None:
         llm=llm_impl,
         stt=stt_impl,
         tts=tts_impl,
+        speaker_tracker=speaker_tracker,
+        authoritative_mode_state=authoritative_mode_state,
+        persist_suppressed_turn=_persist_suppressed_owner_turn,
+        on_finalized_speaker_context=_on_finalized_owner_speaker_context,
+        on_interim_speaker_changes=_on_owner_interim_speaker_changes,
+        speaker_timeline_offset=multi_track_ingress.call_timeline_offset_s,
     )
 
     # === VIVENTIUM START ===
@@ -3827,13 +5743,97 @@ async def entrypoint(ctx: JobContext) -> None:
         call_session_id,
         sync_transcription,
     )
-    await session.start(
-        agent=agent,
-        room=ctx.room,
-        room_options=_build_room_options(
-            sync_transcription=sync_transcription,
-            participant_identity=participant_identity,
+    try:
+        await session.start(
+            agent=agent,
+            room=ctx.room,
+            room_options=_build_room_options(
+                sync_transcription=sync_transcription,
+                participant_identity=(
+                    owner_participant_identity or "__viventium_unbound_owner__"
+                ),
+            ),
+        )
+    except Exception:
+        _reported, released = (
+            await _report_voice_gateway_initialization_failure_and_abandon(
+                env.librechat_origin,
+                auth,
+            )
+        )
+        if released:
+            unready_claim_active[0] = False
+            abandon_attempted[0] = True
+        else:
+            abandon_attempted[0] = False
+        raise
+    call_task_event_stream, ready_state = await _establish_voice_response_plane(
+        llm_impl=llm_impl,
+        mark_ready=lambda: _mark_voice_session_ready(env.librechat_origin, auth),
+        timeout_s=min(
+            max(
+                _parse_float_env(
+                    "VIVENTIUM_VOICE_TASK_STREAM_READY_TIMEOUT_S",
+                    5.0,
+                ),
+                0.25,
+            ),
+            15.0,
         ),
+    )
+    if call_task_event_stream is None:
+        _suspend_for_task_stream_uncertainty()
+        _reported, released = (
+            await _report_voice_gateway_initialization_failure_and_abandon(
+                env.librechat_origin,
+                auth,
+            )
+        )
+        if released:
+            unready_claim_active[0] = False
+            abandon_attempted[0] = True
+        else:
+            abandon_attempted[0] = False
+        shutdown = getattr(ctx, "shutdown", None)
+        if callable(shutdown):
+            result = shutdown()
+            if inspect.isawaitable(result):
+                await result
+        raise RuntimeError("authoritative call task stream handshake failed")
+    if ready_state is None:
+        _suspend_all_call_speech_until_authoritative(
+            progress_controller=progress_controller,
+            followup_scheduler=followup_scheduler,
+            session=session,
+            authoritative_mode_state=authoritative_mode_state,
+        )
+        await _abandon_unready_claim("gateway_initialization_failed")
+        shutdown = getattr(ctx, "shutdown", None)
+        if callable(shutdown):
+            result = shutdown()
+            if inspect.isawaitable(result):
+                await result
+        raise RuntimeError("voice readiness handshake failed")
+    if not task_stream_authority.mark_session_ready(ready_state):
+        _suspend_for_task_stream_uncertainty()
+        await _abandon_unready_claim("gateway_initialization_failed")
+        shutdown = getattr(ctx, "shutdown", None)
+        if callable(shutdown):
+            result = shutdown()
+            if inspect.isawaitable(result):
+                await result
+        raise RuntimeError("authoritative task stream lost before voice readiness")
+    voice_session_ready[0] = True
+    progress_poll_task = asyncio.create_task(_poll_spoken_progress())
+    mode_sync_task = asyncio.create_task(_sync_authoritative_mode())
+    _register_existing_ambient_tracks()
+    unready_claim_active[0] = False
+    logger.info(
+        "[voice-gateway] Voice session ready callSessionId=%s mode=%s status=%s revision=%s",
+        call_session_id,
+        call_mode,
+        ready_state["status"],
+        ready_state["revision"],
     )
     await _publish_voice_route_metadata(current_tts_provider, current_tts_impl)
     # === VIVENTIUM END ===
@@ -3869,7 +5869,9 @@ def run() -> None:
         entrypoint_fnc=entrypoint,
         prewarm_fnc=prewarm_process,
         agent_name=env.livekit_agent_name,
-        worker_type=WorkerType.PUBLISHER,
+        # Explicit AgentDispatchClient dispatches are room jobs. Owner authority remains bound
+        # separately to the canonical participant identity returned by the signed backend claim.
+        worker_type=WorkerType.ROOM,
         initialize_process_timeout=initialize_process_timeout_s,
         num_idle_processes=idle_processes,
         load_threshold=load_threshold,

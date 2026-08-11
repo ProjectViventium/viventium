@@ -30,8 +30,9 @@ stream, TTS, follow-up polling, tools, background cortices, title generation, or
 - `roomName`: LiveKit room id
 - `callSessionId`: authentication context for the voice gateway
 - `agentName`: LiveKit dispatch agent name
-- `autoConnect=1`: auto-join on load for non-call-session sandbox links. Call-session links still
-  show the Start chat gate because browser microphone publication requires a user gesture.
+- `autoConnect=1`: validate and auto-join a signed call-session link. When microphone permission is
+  already granted, the originating **Call** click is the only product action. On first use, the
+  browser microphone permission prompt is the only unavoidable additional step.
 
 ### Explicit Dispatch Startup Contract
 - Call-session deep links use LiveKit publisher dispatch: the voice gateway joins only after the
@@ -42,8 +43,8 @@ stream, TTS, follow-up polling, tools, background cortices, title generation, or
   before the room is connected. For explicit-dispatch calls, audio spoken before the room connects
   is not buffered.
 - The browser's voice-settings display fetch is advisory. Slow or unavailable settings must not
-  disable the Start chat gate because `/api/connection-details` rehydrates authoritative
-  call-session voice settings server-side when the user starts the call.
+  add a pre-call gate because `/api/connection-details` rehydrates authoritative call-session voice
+  settings for the same Call-click auto-connect flow.
 - Voice-settings startup fetches in the browser, the playground proxy, and token hydration path are
   bounded by timeouts and must surface Viventium-specific recovery text rather than leaving the page
   in an indefinite loading state.
@@ -62,11 +63,11 @@ stream, TTS, follow-up polling, tools, background cortices, title generation, or
   2. enable the microphone after the room is connected
   3. let LiveKit assign the publisher job to `librechat-voice-gateway`
   4. persist the active job/worker ids on the call session
-- The Start chat gesture is single-flight. Once the user clicks it, the page should show connection
-  and microphone progress, disable duplicate starts, and automatically enable the microphone after
-  the room connects. The pre-connect muted state is an internal timeout-avoidance phase, not a user
-  default. Browser permission and missing-device failures should be shown as explicit microphone
-  errors, not as a connected muted call.
+- Call startup is single-flight. The LibreChat **Call** click should show connection and microphone
+  progress, prevent duplicate starts, and automatically enable the microphone after the room
+  connects. The pre-connect muted state is an internal timeout-avoidance phase, not a user default.
+  Browser permission and missing-device failures are explicit microphone errors; expired auth,
+  missing routes, gateway outages, and provider failures retain their own inline classifications.
 - `dispatchConfirmedAt` is durable call-session state that dispatch was prepared and the participant
   token was issued, not durable proof that LiveKit has already started a worker. The default path
   verifies or creates explicit LiveKit dispatch for call sessions; token-room-config dispatch is an
@@ -124,6 +125,17 @@ stream, TTS, follow-up polling, tools, background cortices, title generation, or
 - SSE parsing helpers: `voice-gateway/sse.py`
 - Playground deep-link handling: `agent-starter-react/components/app/app.tsx`
 - Playground sleep recovery: `agent-starter-react/hooks/useConnectionRecovery.ts`
+- Browser capability/bootstrap: `agent-starter-react/lib/call-capability-bootstrap.ts`,
+  `agent-starter-react/lib/call-browser-capability.ts`, and the `app/api/call-*` BFF routes
+- Task UI/events/actions: `agent-starter-react/components/app/call-activity.tsx` and
+  `agent-starter-react/hooks/useCallTaskEvents.ts`, `useCallTaskActions.ts`
+- Speaker UI/events: `agent-starter-react/components/app/call-speakers.tsx` and
+  `agent-starter-react/hooks/useCallSpeakerEvents.ts`
+- Authoritative task plane: `LibreChat/api/server/services/viventium/VoiceTaskService.js`,
+  `VoiceTaskManagementTool.js`, and the `viventiumVoiceTask` / suppression models
+- Speaker persistence: `LibreChat/api/server/services/viventium/SpeakerSegmentService.js` and
+  `viventiumVoiceSpeakerSegment`
+- Session-agent ACL: `LibreChat/api/server/services/viventium/VoiceAgentAuthorizationService.js`
 
 ## Voice Parity with Background Agents
 - Voice calls use the same backend orchestration as text (`AgentClient` + `BackgroundCortexService`).
@@ -144,17 +156,19 @@ stream, TTS, follow-up polling, tools, background cortices, title generation, or
   instruction. Final activation detection continues for Phase B, and text surfaces keep waiting for
   the full detection budget.
 - `VIVENTIUM_VOICE_BACKGROUND_AGENT_DETECTION_ASYNC=true` is the shipped default. The main voice LLM
-  and activation detection start together; if a cortex activates inside the 690 ms budget before
-  visible output, the speculative answer is aborted and Phase A is re-run with activation awareness.
-  Phase B still receives the complete activated set.
+  and activation detection start together. Main authors exactly once; activation not ready before
+  the invocation boundary surfaces through cards and Phase B. Phase B still receives the complete
+  activated set, including late recovery.
 - Text chat uses its own independent flag, `VIVENTIUM_TEXT_BACKGROUND_AGENT_DETECTION_ASYNC`, and
-  remains OFF by default with a 1300 ms budget.
+  is also ON by default with a 1300 ms background budget.
 - Internal `cortex_insight` content remains available in LibreChat's background-insight UI, but it
   must not be voiced directly into the modern playground transcript/TTS path.
 - Voice follow-up requests set `suppressBackgroundCortices=true` to prevent recursion.
 
 ## Listen-Only Mode
-- Listen-Only Mode is a persisted call-session state, mutually exclusive with Wing Mode.
+- Listen-Only is persisted as canonical `mode=listen_only`; Call and Wing are the other mutually
+  exclusive enum values. Mode switches do not reconnect the room. Legacy booleans remain migration
+  inputs/projections only.
 - It uses the current STT route. Local `pywhispercpp` / WhisperCPP is the intended low-cost route,
   but runtime must not silently remap the user's selected listening provider.
 - `/api/viventium/voice/chat` still authenticates the voice worker, resolves the conversation, and
@@ -172,8 +186,14 @@ stream, TTS, follow-up polling, tools, background cortices, title generation, or
 - Listen-Only entries are not user-authored chat turns and are excluded from normal conversation
   recall corpus construction and live agent prompt history. The daily memory hardener can read them
   as `ambient_transcript` soft evidence.
-- Same-microphone audio is not treated as diarized. Speaker labels come only from structured
-  LiveKit participant/track metadata when that metadata is present.
+- AssemblyAI routes enable speaker labels automatically. Same-microphone voices use call-scoped
+  generic labels, never identity; overlap, instability, unsupported local-only diarization, and
+  other uncertainty become `Unknown`. A second speaker on one track permanently downgrades every
+  speaker on that track to unverified for the session. Separate participant tracks remain distinct.
+- The additive `SpeakerSessionStateV1.sharedTrackSids` set persists that downgrade per LiveKit
+  track, unions newly ambiguous tracks monotonically, and is restored after reconnect before new
+  segments are accepted. Legacy state without a non-empty track set and segments missing `trackSid`
+  stay call-wide fail-closed; a guest-track tombstone cannot demote a distinct signed owner track.
 
 ## Agent LLM Routes and Fallback
 - The live call LLM defaults to the selected agent provider/model.
@@ -317,9 +337,9 @@ stream, TTS, follow-up polling, tools, background cortices, title generation, or
 - Durable per-call turn logs also come from the LibreChat voice route:
   - `[VIVENTIUM][voice/chat] user_turn_completed ...`
   - keyed by `callSessionId`, `conversationId`, `parentMessageId`, and `requestId`
-- When LiveKit closes or cancels a voice LLM stream before the LibreChat final event, the voice
-  gateway must post an authenticated abort for that specific `streamId` so barge-in stops backend
-  generation instead of only stopping local audio playback.
+- LiveKit speech interruption, stream disposal, browser disconnect, and hangup stop current TTS but
+  do not cancel authoritative work. Explicit cancellation is a separate task-id operation; an
+  accepted cancel installs the suppression barrier before the owner cancellation request.
 
 ## Voice-Mode Prompt Contract (Provider-Aware)
 Voice-mode instructions are injected by `buildVoiceModeInstructions(voiceProvider)` in
@@ -405,6 +425,30 @@ Voice-mode instructions are injected by `buildVoiceModeInstructions(voiceProvide
   - `X-VIVENTIUM-CALL-SECRET` (shared secret)
 - The secret is configured with `VIVENTIUM_CALL_SESSION_SECRET` and must match across LibreChat and the voice gateway.
 - Call sessions are stored in MongoDB with a TTL index (see `CallSessionService.js`).
+- Normal web launches deliver an exact-session browser capability in the `/call-bootstrap` fragment.
+  Bootstrap strips the fragment before navigation and stores only the browser capability under the
+  exact session; a raw call-session id cannot read or mutate browser call state.
+- Telegram `/call` uses a one-time fragment launch bearer exchanged same-origin for browser
+  authority. A browser-generated 32-byte idempotency value makes a lost-response retry safe; a
+  different replay is denied. Launch values are never query/body inputs, logs, or cacheable output.
+- The call session's canonical agent must pass global Agents `USE` and resource `VIEW` at web call
+  creation, Telegram link creation, and every Call/Wing turn. Revocation is immediate and body agent
+  metadata cannot substitute another agent. Listen-Only does not execute an agent.
+
+## Authoritative Work, Replay, And Memory
+
+- LibreChat is the authoritative tool/search/memory/work plane; LiveKit is the real-time
+  conversation plane. `VoiceTaskEventV1` is relayed on `viventium.task.v1`; task progress, sources,
+  cancellation, retry, and input capability are never inferred from transcript words.
+- Task snapshots and suppression tombstones are durable. Reconnect/event startup pages through the
+  complete durable task set, emits `synchronized` only after full replay, and tails durable writes
+  from another API process without a browser reconnect.
+- `needs_input` is valid only when the owner advertises a real input adapter. Unsupported input
+  requests fail visibly as `task_input_unsupported`; the UI does not expose a dead input control.
+- Speaker segments are persisted before transcript coalescing. Voice-derived durable memory writes
+  are deferred until post-call hardening; only owner-trusted, single-speaker Call content may enter
+  the normal writer. Wing, Listen-Only, mixed/shared-mic, guest, and unverified content remains soft
+  evidence, and one call is one evidence source.
 
 ## Required Environment Variables (Voice)
 - LiveKit:
@@ -617,6 +661,15 @@ Added: 2026-01-11
   the agent `Voice Chat Model` fields instead; the machine-level field is ignored for call LLM
   selection.
 - Background insights must still be generated in the main system (ensure background agent model/provider config is valid).
+
+## Dependency Baseline
+
+- The accepted gateway baseline pins `livekit-agents` and every LiveKit plugin to `1.5.10` in
+  `voice-gateway/requirements.txt`.
+- `1.6.9` was evaluated separately after the behavior work. It was not promoted because it improved
+  no accepted latency, diarization, reconnect, or packaging gate and introduced the turn-detector
+  deprecation warning. A future upgrade must rerun the same comparison and every user-grade voice
+  gate before changing the pin.
 
 ## Known Limitations
 - Voice insight polling is time-bounded; late insights may require longer timeouts if models are slow.

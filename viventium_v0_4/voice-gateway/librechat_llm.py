@@ -10,20 +10,32 @@
 from __future__ import annotations
 
 import asyncio
+import heapq
 import json
 import logging
+import math
 import os
 import re
 import sys
 import time
 import uuid
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Optional
+from urllib.parse import quote, urlparse
 
 import aiohttp
 
 logger = logging.getLogger("voice-gateway.librechat_llm")
+
+
+class _NonRetryableVoiceIngressError(RuntimeError):
+    pass
+
+
+class _RetryableVoiceIngressError(RuntimeError):
+    pass
 GLASSHIVE_MCP_SERVER = "glasshive-workers-projects"
 from livekit.agents import llm
 from livekit.agents.llm import ChatChunk, ChatContext, ChoiceDelta
@@ -43,6 +55,8 @@ from sse import (
     strip_voice_control_tags,
     VoiceControlDisplayFilter,
 )
+from speaker_segments import SPEAKER_CONTEXT_EXTRA_KEY
+from voice_hop_trace import VoiceHopTrace
 
 # === VIVENTIUM START ===
 # Feature: No-response tag ({NTA}) suppression for voice-call main responses.
@@ -577,6 +591,27 @@ def _extract_last_user_text(chat_ctx: ChatContext) -> str:
     return ""
 
 
+def _extract_last_user_speaker_context(chat_ctx: ChatContext) -> dict[str, Any]:
+    for item in reversed(chat_ctx.items):
+        if getattr(item, "type", None) != "message" or getattr(item, "role", None) != "user":
+            continue
+        extra = getattr(item, "extra", None)
+        context = extra.get(SPEAKER_CONTEXT_EXTRA_KEY) if isinstance(extra, dict) else None
+        if not isinstance(context, dict):
+            return {}
+        segments = context.get("speakerSegments")
+        revisions = context.get("speakerSegmentRevisions")
+        return {
+            "speakerSegments": segments if isinstance(segments, list) else [],
+            "speakerSegmentRevisions": revisions if isinstance(revisions, list) else [],
+            "speakerLabel": str(context.get("speakerLabel") or "room"),
+            "ownerParticipantIdentity": str(context.get("ownerParticipantIdentity") or ""),
+            "ownerTrackSid": str(context.get("ownerTrackSid") or ""),
+            "utteranceEndAtMs": context.get("utteranceEndAtMs"),
+        }
+    return {}
+
+
 def _extract_final_response_text(final_event: dict[str, Any]) -> str:
     """
     Extract assistant text from a LibreChat `final: true` SSE payload.
@@ -623,6 +658,7 @@ def _extract_final_response_text(final_event: dict[str, Any]) -> str:
 
 
 def _extract_resume_state_text(event: dict[str, Any]) -> str:
+    """Return the raw persisted assistant text used to dedupe a resumed SSE stream."""
     resume_state = event.get("resumeState")
     if not isinstance(resume_state, dict):
         return ""
@@ -639,6 +675,7 @@ def _extract_resume_state_text(event: dict[str, Any]) -> str:
         elif isinstance(text, dict) and isinstance(text.get("value"), str):
             parts.append(text["value"])
     return "".join(parts)
+
 
 def _extract_final_response_message_id(final_event: dict[str, Any]) -> str:
     """
@@ -741,6 +778,350 @@ def _extract_stream_error(payload: dict[str, Any]) -> Optional[str]:
         return err.strip()
     return "voice stream error"
 # === VIVENTIUM END ===
+
+
+_VOICE_TASK_STATES = {
+    "queued",
+    "running",
+    "needs_input",
+    "recovering",
+    "cancelling",
+    "completed",
+    "failed",
+    "cancelled_confirmed",
+    "cancelled_unenforceable",
+}
+_VOICE_TASK_SUPPRESSING_STATES = {
+    "cancelling",
+    "cancelled_confirmed",
+    "cancelled_unenforceable",
+}
+_VOICE_TASK_TERMINAL_STATES = {
+    "completed",
+    "failed",
+    "cancelled_confirmed",
+    "cancelled_unenforceable",
+}
+_VOICE_TASK_EVENT_TYPES = {
+    "state",
+    "snapshot",
+    "progress",
+    "source",
+    "needs_input",
+    "result",
+    "error",
+}
+
+
+def _extract_voice_task_sync(
+    payload: dict[str, Any],
+    *,
+    expected_call_session_id: str,
+) -> Optional[dict[str, Any]]:
+    event_type = payload.get("event") or payload.get("type") or payload.get("_sse_event")
+    if event_type != "voice_task_sync":
+        return None
+    if set(payload) != {
+        "version",
+        "callSessionId",
+        "state",
+        "emittedAt",
+        "_sse_event",
+    }:
+        return None
+    if payload.get("version") != 1 or isinstance(payload.get("version"), bool):
+        return None
+    if payload.get("callSessionId") != expected_call_session_id:
+        return None
+    if not _bounded_string(
+        payload.get("callSessionId"),
+        maximum=160,
+        required=True,
+    ):
+        return None
+    if payload.get("state") != "synchronized":
+        return None
+    emitted_at = payload.get("emittedAt")
+    if not _bounded_string(emitted_at, maximum=64, required=True):
+        return None
+    try:
+        parsed_emitted_at = datetime.fromisoformat(
+            str(emitted_at).replace("Z", "+00:00")
+        )
+    except ValueError:
+        return None
+    if parsed_emitted_at.tzinfo is None or parsed_emitted_at.utcoffset() != timezone.utc.utcoffset(
+        parsed_emitted_at
+    ):
+        return None
+    return {
+        "version": 1,
+        "callSessionId": expected_call_session_id,
+        "state": "synchronized",
+        "emittedAt": emitted_at,
+    }
+
+
+@dataclass
+class _TaskEventCursor:
+    latest_sequence: int
+    updated_at: float
+    terminal: bool = False
+
+
+class _VoiceTaskEventGate:
+    """Bounded per-task ordering and suppression barrier shared by every output path."""
+
+    def __init__(
+        self,
+        *,
+        max_tasks: int = 4_096,
+        ttl_s: float = 86_400.0,
+        suppression_ttl_s: float = 86_400.0,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self._max_tasks = max(int(max_tasks), 1)
+        self._ttl_s = max(float(ttl_s), 1.0)
+        self._suppression_ttl_s = max(float(suppression_ttl_s), 86_400.0)
+        self._clock = clock
+        self._by_task: dict[str, _TaskEventCursor] = {}
+        # Cancellation is a safety barrier, not an ordering cursor. Keep it in
+        # an independent 24-hour tombstone map so ordinary task churn cannot
+        # evict an accepted cancellation while the call/task may still replay.
+        self._suppression_tombstones: dict[str, float] = {}
+        self._suppression_expiry_heap: list[tuple[float, str]] = []
+
+    def _install_suppression(self, task_id: str, now: float) -> None:
+        if task_id in self._suppression_tombstones:
+            return
+        expires_at = now + self._suppression_ttl_s
+        self._suppression_tombstones[task_id] = expires_at
+        heapq.heappush(self._suppression_expiry_heap, (expires_at, task_id))
+
+    def accept(self, event: dict[str, Any]) -> bool:
+        task_id = str(event.get("taskId") or "").strip()
+        sequence = event.get("sequence")
+        state = str(event.get("state") or "")
+        if (
+            not task_id
+            or not isinstance(sequence, int)
+            or isinstance(sequence, bool)
+            or sequence < 0
+        ):
+            return False
+        now = self._clock()
+        self._prune(now)
+        if task_id in self._suppression_tombstones and state not in (
+            _VOICE_TASK_SUPPRESSING_STATES | _VOICE_TASK_TERMINAL_STATES
+        ):
+            return False
+        cursor = self._by_task.get(task_id)
+        if cursor is not None:
+            if sequence <= cursor.latest_sequence:
+                return False
+            if cursor.terminal and state not in _VOICE_TASK_TERMINAL_STATES:
+                return False
+        else:
+            cursor = _TaskEventCursor(latest_sequence=-1, updated_at=now)
+            self._by_task[task_id] = cursor
+
+        # Install the barrier before returning control to any publisher/speech handler.
+        cursor.latest_sequence = sequence
+        cursor.updated_at = now
+        if state in _VOICE_TASK_SUPPRESSING_STATES:
+            self._install_suppression(task_id, now)
+        if state in _VOICE_TASK_TERMINAL_STATES:
+            cursor.terminal = True
+        self._prune(now)
+        return True
+
+    def mark_cancel_accepted(self, task_id: str) -> None:
+        normalized = (task_id or "").strip()
+        if not normalized:
+            return
+        now = self._clock()
+        self._prune(now)
+        self._install_suppression(normalized, now)
+        self._prune(now)
+
+    def is_suppressed(self, task_id: str) -> bool:
+        normalized = (task_id or "").strip()
+        if not normalized:
+            return False
+        self._prune(self._clock())
+        return normalized in self._suppression_tombstones
+
+    def _prune(self, now: float) -> None:
+        expired = [
+            task_id
+            for task_id, cursor in self._by_task.items()
+            if now - cursor.updated_at > self._ttl_s
+        ]
+        for task_id in expired:
+            self._by_task.pop(task_id, None)
+        while (
+            self._suppression_expiry_heap
+            and self._suppression_expiry_heap[0][0] < now
+        ):
+            expires_at, task_id = heapq.heappop(self._suppression_expiry_heap)
+            if self._suppression_tombstones.get(task_id) == expires_at:
+                self._suppression_tombstones.pop(task_id, None)
+        while len(self._by_task) > self._max_tasks:
+            oldest_task_id = min(
+                self._by_task,
+                key=lambda task_id: self._by_task[task_id].updated_at,
+            )
+            self._by_task.pop(oldest_task_id, None)
+
+
+def _bounded_string(
+    value: Any,
+    *,
+    maximum: int,
+    required: bool = False,
+) -> bool:
+    return isinstance(value, str) and (bool(value.strip()) or not required) and len(value) <= maximum
+
+
+def _valid_voice_task_source(source: Any) -> bool:
+    if not isinstance(source, dict):
+        return False
+    allowed = {"id": 160, "title": 200, "provider": 80, "url": 1_000}
+    if not any(_bounded_string(source.get(key), maximum=limit, required=True) for key, limit in allowed.items()):
+        return False
+    structurally_valid = all(
+        key in allowed and _bounded_string(value, maximum=allowed[key])
+        for key, value in source.items()
+    )
+    if not structurally_valid:
+        return False
+    if "url" in source:
+        parsed = urlparse(source["url"])
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            return False
+    return True
+
+
+def _extract_voice_task_event(
+    payload: dict[str, Any],
+    *,
+    expected_call_session_id: str = "",
+) -> Optional[dict[str, Any]]:
+    event_type = payload.get("event") or payload.get("type") or payload.get("_sse_event")
+    if event_type != "voice_task_event":
+        return None
+    task_event = payload.get("voiceTaskEvent")
+    if not isinstance(task_event, dict):
+        return None
+    if task_event.get("version") != 1:
+        return None
+    if not _bounded_string(task_event.get("eventId"), maximum=160, required=True):
+        return None
+    if not _bounded_string(task_event.get("taskId"), maximum=160, required=True):
+        return None
+    if not _bounded_string(task_event.get("callSessionId"), maximum=160, required=True):
+        return None
+    if expected_call_session_id and task_event.get("callSessionId") != expected_call_session_id:
+        return None
+    if task_event.get("state") not in _VOICE_TASK_STATES:
+        return None
+    if task_event.get("type") not in _VOICE_TASK_EVENT_TYPES:
+        return None
+    if (
+        not isinstance(task_event.get("sequence"), int)
+        or isinstance(task_event.get("sequence"), bool)
+        or task_event["sequence"] < 0
+    ):
+        return None
+    emitted_at = task_event.get("emittedAt")
+    if not _bounded_string(emitted_at, maximum=64, required=True):
+        return None
+    try:
+        parsed_emitted_at = datetime.fromisoformat(str(emitted_at).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed_emitted_at.tzinfo is None:
+        return None
+    if not isinstance(task_event.get("cancellable"), bool):
+        return None
+    if not isinstance(task_event.get("retryable"), bool):
+        return None
+    owner = task_event.get("owner")
+    if (
+        not isinstance(owner, dict)
+        or not _bounded_string(owner.get("kind"), maximum=80, required=True)
+        or any(key not in {"kind", "id"} for key in owner)
+        or ("id" in owner and not _bounded_string(owner.get("id"), maximum=160))
+    ):
+        return None
+    for key, maximum in (
+        ("conversationId", 160),
+        ("turnId", 160),
+        ("streamId", 160),
+        ("parentTaskId", 160),
+        ("phase", 80),
+        ("label", 160),
+        ("detail", 500),
+        ("resultMessageId", 160),
+    ):
+        if key in task_event and not _bounded_string(task_event.get(key), maximum=maximum):
+            return None
+    source = task_event.get("source")
+    if source is not None and not _valid_voice_task_source(source):
+        return None
+    sources = task_event.get("sources")
+    if sources is not None and (
+        not isinstance(sources, list)
+        or len(sources) > 32
+        or any(not _valid_voice_task_source(item) for item in sources)
+    ):
+        return None
+    needs_input = task_event.get("needsInput")
+    if needs_input is not None and (
+        not isinstance(needs_input, dict)
+        or set(needs_input) - {"prompt", "inputType"}
+        or not _bounded_string(needs_input.get("prompt"), maximum=300, required=True)
+        or needs_input.get("inputType") not in {"text", "choice", "confirm"}
+    ):
+        return None
+    error = task_event.get("error")
+    if error is not None and (
+        not isinstance(error, dict)
+        or set(error) - {"code", "message", "retryable"}
+        or not _bounded_string(error.get("code"), maximum=80, required=True)
+        or not _bounded_string(error.get("message"), maximum=300, required=True)
+        or (
+            "retryable" in error
+            and not isinstance(error.get("retryable"), bool)
+        )
+    ):
+        return None
+    progress = task_event.get("progress")
+    if progress is not None:
+        valid_progress = isinstance(progress, dict)
+        current = progress.get("current") if isinstance(progress, dict) else None
+        total = progress.get("total") if isinstance(progress, dict) else None
+        valid_progress = bool(
+            valid_progress
+            and isinstance(current, (int, float))
+            and not isinstance(current, bool)
+            and isinstance(total, (int, float))
+            and not isinstance(total, bool)
+            and math.isfinite(float(current))
+            and math.isfinite(float(total))
+            and 0 <= float(current) <= float(total)
+            and float(total) > 0
+            and (
+                "unit" not in progress
+                or (
+                    isinstance(progress.get("unit"), str)
+                    and len(progress.get("unit")) <= 40
+                )
+            )
+        )
+        if not valid_progress:
+            return None
+    return task_event
 
 
 def format_insights_for_direct_speech(insights: list[dict[str, Any]]) -> str:
@@ -876,6 +1257,9 @@ class LibreChatLLM(llm.LLM):
         voice_provider: str = "cartesia",
         voice_accepts_inline_controls: bool = False,
         followup_handler: Optional[Callable[..., None]] = None,
+        task_event_handler: Optional[Callable[[dict[str, Any]], Any]] = None,
+        task_cancel_handler: Optional[Callable[[str, dict[str, Any]], Any]] = None,
+        model_output_handler: Optional[Callable[[str], Any]] = None,
         is_participant_connected: Optional[Callable[[], bool]] = None,
         participant_reconnect_grace_s: float = 60.0,
     ) -> None:
@@ -887,17 +1271,59 @@ class LibreChatLLM(llm.LLM):
         self._voice_provider = voice_provider or "cartesia"
         self._voice_accepts_inline_controls = bool(voice_accepts_inline_controls)
         self._followup_handler = followup_handler
+        self._task_event_handler = task_event_handler
+        self._task_cancel_handler = task_cancel_handler
+        self._model_output_handler = model_output_handler
         self._is_participant_connected = is_participant_connected
-        self._participant_reconnect_grace_s = max(0.0, float(participant_reconnect_grace_s))
+        self._participant_reconnect_grace_s = max(
+            0.0, float(participant_reconnect_grace_s)
+        )
+        self._task_cancel_results: dict[str, dict[str, Any]] = {}
+        self._task_cancel_lock = asyncio.Lock()
+        self._sent_speaker_revisions: dict[tuple[str, int], None] = {}
+        self._sent_speaker_session_states: dict[tuple[Any, ...], None] = {}
+        self._speaker_revision_lock = asyncio.Lock()
+        self._speaker_delivery_tasks: set[asyncio.Task[dict[str, Any]]] = set()
+        self._speaker_delivery_closing = False
+        self._sent_ambient_segments: dict[tuple[str, int], None] = {}
+        self._ambient_ingress_lock = asyncio.Lock()
+        self._current_trace_id = ""
+        self._current_trace: Optional[VoiceHopTrace] = None
+        self._traces_by_id: dict[str, VoiceHopTrace] = {}
+        self._task_id_by_trace_id: dict[str, str] = {}
+        self._summarized_trace_ids: dict[str, None] = {}
+        self._trace_finalizers: dict[str, asyncio.TimerHandle] = {}
+        self._background_continuations: set[asyncio.Task[None]] = set()
+        self._continuations_by_task: dict[str, set[asyncio.Task[None]]] = {}
+        self._seen_task_events: dict[tuple[Any, ...], None] = {}
+        self._task_event_gate = _VoiceTaskEventGate()
+        self._call_task_event_stream_task: Optional[asyncio.Task[None]] = None
+        self._call_task_event_stream_session: Optional[aiohttp.ClientSession] = None
+        self._call_task_event_stream_handshake: Optional[asyncio.Future[bool]] = None
+        self._call_task_event_stream_health_handler: Optional[
+            Callable[[dict[str, Any]], Any]
+        ] = None
+        self._call_task_event_stream_health: dict[str, Any] = {
+            "version": 1,
+            "callSessionId": self._auth.call_session_id,
+            "state": "idle",
+            "status": None,
+            "retryable": False,
+        }
+        self._call_state_session: Optional[aiohttp.ClientSession] = None
 
     def is_participant_connected(self) -> bool:
+        """Report whether the backend-claimed owner identity is currently in the room."""
         if self._is_participant_connected is None:
             return True
         try:
             return bool(self._is_participant_connected())
         except Exception:
-            logger.warning("[LibreChatLLM] Participant-state check failed; preserving interruption cancellation")
-            return True
+            logger.warning(
+                "[LibreChatLLM] Participant-state check failed; suppressing unaddressed speech",
+                exc_info=True,
+            )
+            return False
 
     async def wait_for_participant_reconnect(self) -> bool:
         if self.is_participant_connected():
@@ -908,6 +1334,168 @@ class LibreChatLLM(llm.LLM):
             if self.is_participant_connected():
                 return True
         return self.is_participant_connected()
+
+    @property
+    def current_trace_id(self) -> str:
+        return self._current_trace_id
+
+    @staticmethod
+    def _remember_bounded_keys(
+        target: dict[tuple[str, int], None],
+        keys: Any,
+        *,
+        max_entries: int = 8_192,
+    ) -> None:
+        for key in keys:
+            target[key] = None
+        while len(target) > max_entries:
+            target.pop(next(iter(target)))
+
+    def record_current_trace_hop(self, hop: str, timestamp_ms: float) -> None:
+        trace = self._current_trace
+        if trace is None:
+            return
+        if trace.record(hop, timestamp_ms):
+            logger.info("[VoiceHop] %s", trace.log_payload(hop))
+
+    def register_trace(self, trace: VoiceHopTrace) -> None:
+        self._current_trace_id = trace.correlation_id
+        self._current_trace = trace
+        self._traces_by_id[trace.correlation_id] = trace
+        while len(self._traces_by_id) > 128:
+            expired_id = next(iter(self._traces_by_id))
+            self._traces_by_id.pop(expired_id)
+            self._task_id_by_trace_id.pop(expired_id, None)
+
+    def bind_trace_task(self, correlation_id: str, task_id: str) -> None:
+        if correlation_id in self._traces_by_id and (task_id or "").strip():
+            self._task_id_by_trace_id[correlation_id] = task_id.strip()
+
+    def task_id_for_trace(self, correlation_id: str) -> str:
+        return self._task_id_by_trace_id.get((correlation_id or "").strip(), "")
+
+    def record_next_trace_hop(self, hop: str, timestamp_ms: float) -> str:
+        """Correlate ordered single-session TTS/playout metrics without using transcript text."""
+        if hop not in {"tts_first_byte", "audio_output"}:
+            return ""
+        for correlation_id, trace in self._traces_by_id.items():
+            if correlation_id in self._summarized_trace_ids or trace.has(hop):
+                continue
+            if hop == "tts_first_byte" and not trace.has("first_model_token"):
+                continue
+            if hop == "audio_output" and not trace.has("tts_first_byte"):
+                continue
+            if trace.record(hop, timestamp_ms):
+                logger.info("[VoiceHop] %s", trace.log_payload(hop))
+                if hop == "audio_output":
+                    self.finalize_trace_terminal(trace)
+                return correlation_id
+        return ""
+
+    def log_current_trace_terminal_if_ready(self) -> None:
+        trace = self._current_trace
+        if (
+            trace is None
+            or trace.correlation_id in self._summarized_trace_ids
+            or not trace.has("tts_first_byte")
+            or not trace.has("audio_output")
+        ):
+            return
+        self.finalize_trace_terminal(trace)
+
+    def finalize_trace_terminal(
+        self, trace: VoiceHopTrace
+    ) -> Optional[dict[str, Any]]:
+        finalizer = self._trace_finalizers.pop(trace.correlation_id, None)
+        if finalizer is not None:
+            finalizer.cancel()
+        if trace.correlation_id in self._summarized_trace_ids:
+            return None
+        self._summarized_trace_ids[trace.correlation_id] = None
+        while len(self._summarized_trace_ids) > 512:
+            self._summarized_trace_ids.pop(next(iter(self._summarized_trace_ids)))
+        summary = trace.terminal_summary(
+            {
+                "utterance_end->gateway_dispatch": 250.0,
+                "gateway_dispatch->agent_start": 250.0,
+                "tool_start->tool_end": 5_000.0,
+                "tool_end->first_model_token": 1_000.0,
+                "first_model_token->tts_first_byte": 1_500.0,
+                "tts_first_byte->audio_output": 300.0,
+            }
+        )
+        logger.info(
+            "[VoiceHop] %s",
+            json.dumps(summary, separators=(",", ":"), sort_keys=True),
+        )
+        return summary
+
+    def schedule_trace_terminal(
+        self, trace: VoiceHopTrace, *, grace_s: float = 5.0
+    ) -> None:
+        if trace.correlation_id in self._summarized_trace_ids:
+            return
+
+        if trace.correlation_id in self._trace_finalizers:
+            return
+
+        def _finalize_after_grace() -> None:
+            self._trace_finalizers.pop(trace.correlation_id, None)
+            self.finalize_trace_terminal(trace)
+
+        self._trace_finalizers[trace.correlation_id] = (
+            asyncio.get_running_loop().call_later(
+                max(float(grace_s), 0.0),
+                _finalize_after_grace,
+            )
+        )
+
+    @staticmethod
+    def _record_tool_hops_from_event(
+        trace: VoiceHopTrace, event: dict[str, Any], *, timestamp_ms: float
+    ) -> None:
+        task_event = _extract_voice_task_event(event)
+        if task_event is not None:
+            phase = str(task_event.get("phase") or "")
+            state = str(task_event.get("state") or "")
+            if phase == "tool" and state in {"queued", "running", "recovering"}:
+                if trace.record("tool_start", timestamp_ms):
+                    logger.info("[VoiceHop] %s", trace.log_payload("tool_start"))
+            elif trace.has("tool_start") and not trace.has("tool_end") and (
+                phase == "tool_completed"
+                or state
+                in {
+                    "completed",
+                    "failed",
+                    "cancelled_confirmed",
+                    "cancelled_unenforceable",
+                }
+            ):
+                if trace.record("tool_end", timestamp_ms):
+                    logger.info("[VoiceHop] %s", trace.log_payload("tool_end"))
+        event_type = event.get("event") or event.get("_sse_event")
+        data = event.get("data") if isinstance(event.get("data"), dict) else {}
+        step_details = (
+            data.get("stepDetails") if isinstance(data.get("stepDetails"), dict) else {}
+        )
+        if event_type == "on_run_step" and (
+            data.get("type") == "tool_calls"
+            or step_details.get("type") == "tool_calls"
+        ):
+            status = data.get("status")
+            if status in {None, "queued", "in_progress", "running"}:
+                if trace.record("tool_start", timestamp_ms):
+                    logger.info("[VoiceHop] %s", trace.log_payload("tool_start"))
+            elif status in {"completed", "failed", "cancelled"}:
+                if trace.record("tool_end", timestamp_ms):
+                    logger.info("[VoiceHop] %s", trace.log_payload("tool_end"))
+        elif (
+            event_type == "on_run_step_completed"
+            and trace.has("tool_start")
+            and not trace.has("tool_end")
+        ):
+            if trace.record("tool_end", timestamp_ms):
+                logger.info("[VoiceHop] %s", trace.log_payload("tool_end"))
 
     @property
     def model(self) -> str:
@@ -921,6 +1509,1092 @@ class LibreChatLLM(llm.LLM):
         self, handler: Optional[Callable[..., None]]
     ) -> None:
         self._followup_handler = handler
+
+    def set_task_event_handler(
+        self, handler: Optional[Callable[[dict[str, Any]], Any]]
+    ) -> None:
+        self._task_event_handler = handler
+
+    def set_task_cancel_handler(
+        self, handler: Optional[Callable[[str, dict[str, Any]], Any]]
+    ) -> None:
+        self._task_cancel_handler = handler
+
+    def set_call_task_event_stream_health_handler(
+        self,
+        handler: Optional[Callable[[dict[str, Any]], Any]],
+    ) -> None:
+        self._call_task_event_stream_health_handler = handler
+
+    @property
+    def call_task_event_stream_health(self) -> dict[str, Any]:
+        return dict(self._call_task_event_stream_health)
+
+    async def _report_call_task_event_stream_health(
+        self,
+        state: str,
+        *,
+        status: Optional[int] = None,
+        retryable: bool = False,
+    ) -> None:
+        health = {
+            "version": 1,
+            "callSessionId": self._auth.call_session_id,
+            "state": state,
+            "status": status,
+            "retryable": bool(retryable),
+        }
+        self._call_task_event_stream_health = health
+        logger.info(
+            "[VoiceTask] call_stream_health callSessionId=%s state=%s status=%s retryable=%s",
+            self._auth.call_session_id,
+            state,
+            status,
+            bool(retryable),
+        )
+        handler = self._call_task_event_stream_health_handler
+        if handler is None:
+            return
+        try:
+            result = handler(dict(health))
+            if asyncio.iscoroutine(result):
+                await result
+        except Exception:
+            # Health telemetry/control failures must fail the speech plane closed
+            # at the worker handler, but may not tear down the authoritative SSE.
+            logger.exception(
+                "[VoiceTask] call_stream_health_handler_failed callSessionId=%s state=%s",
+                self._auth.call_session_id,
+                state,
+            )
+
+    def is_task_output_suppressed(self, task_id: str) -> bool:
+        return self._task_event_gate.is_suppressed(task_id)
+
+    def set_model_output_handler(
+        self, handler: Optional[Callable[[str], Any]]
+    ) -> None:
+        self._model_output_handler = handler
+
+    async def _relay_task_event_once(self, task_event: dict[str, Any]) -> bool:
+        validated = _extract_voice_task_event(
+            {"event": "voice_task_event", "voiceTaskEvent": task_event},
+            expected_call_session_id=self._auth.call_session_id,
+        )
+        if validated is None:
+            return False
+        task_event = validated
+        if not self._task_event_gate.accept(task_event):
+            return False
+        event_id = str(task_event.get("eventId") or "").strip()
+        key: tuple[Any, ...] = (
+            ("event", event_id)
+            if event_id
+            else (
+                "sequence",
+                task_event.get("taskId"),
+                task_event.get("sequence"),
+                task_event.get("state"),
+            )
+        )
+        if key in self._seen_task_events:
+            return False
+        self._seen_task_events[key] = None
+        while len(self._seen_task_events) > 4096:
+            self._seen_task_events.pop(next(iter(self._seen_task_events)))
+        if self._task_event_handler is not None:
+            handler_result = self._task_event_handler(task_event)
+            if asyncio.iscoroutine(handler_result):
+                await handler_result
+        return True
+
+    def start_call_task_event_stream(
+        self,
+        *,
+        reconnect_min_s: float = 0.25,
+        reconnect_max_s: float = 5.0,
+    ) -> Optional[asyncio.Task[None]]:
+        """Start one call-lifetime authoritative task-event subscription.
+
+        The normal generation SSE ends with the parent turn. This separate stream
+        keeps child GlassHive tasks, retries, sources, and terminal snapshots live
+        for the full claimed call without polling or consuming model/TTS deltas.
+        """
+        current = self._call_task_event_stream_task
+        if current is not None and not current.done():
+            return current
+        if not all(
+            (
+                self._auth.call_session_id,
+                self._auth.call_secret,
+                self._auth.job_id,
+                self._auth.worker_id,
+            )
+        ):
+            logger.error(
+                "[VoiceTask] call_stream_not_started callSessionId=%s reason=missing_job_auth",
+                self._auth.call_session_id,
+            )
+            return None
+        lower = min(max(float(reconnect_min_s), 0.01), 30.0)
+        upper = min(max(float(reconnect_max_s), lower), 30.0)
+        self._call_task_event_stream_handshake = (
+            asyncio.get_running_loop().create_future()
+        )
+        task = asyncio.create_task(
+            self._run_call_task_event_stream(
+                reconnect_min_s=lower,
+                reconnect_max_s=upper,
+            ),
+            name=f"viventium-call-task-events:{self._auth.call_session_id}",
+        )
+        self._call_task_event_stream_task = task
+
+        def _consume(completed: asyncio.Task[None]) -> None:
+            if self._call_task_event_stream_task is completed:
+                self._call_task_event_stream_task = None
+            if completed.cancelled():
+                return
+            try:
+                completed.exception()
+            except Exception:
+                logger.warning(
+                    "[VoiceTask] call_stream_cleanup_failed callSessionId=%s",
+                    self._auth.call_session_id,
+                    exc_info=True,
+                )
+
+        task.add_done_callback(_consume)
+        return task
+
+    async def wait_call_task_event_stream_ready(self, *, timeout_s: float) -> bool:
+        handshake = self._call_task_event_stream_handshake
+        if handshake is None:
+            return False
+        try:
+            return bool(
+                await asyncio.wait_for(
+                    asyncio.shield(handshake),
+                    timeout=max(float(timeout_s), 0.01),
+                )
+            )
+        except asyncio.TimeoutError:
+            return False
+
+    async def _run_call_task_event_stream(
+        self,
+        *,
+        reconnect_min_s: float,
+        reconnect_max_s: float,
+    ) -> None:
+        url = f"{self._origin}/api/viventium/voice/tasks/events"
+        headers = {
+            "Accept": "text/event-stream",
+            "X-VIVENTIUM-CALL-SESSION": self._auth.call_session_id,
+            "X-VIVENTIUM-CALL-SECRET": self._auth.call_secret,
+            "X-VIVENTIUM-JOB-ID": str(self._auth.job_id),
+            "X-VIVENTIUM-WORKER-ID": str(self._auth.worker_id),
+        }
+        params = {"callSessionId": self._auth.call_session_id}
+        delay_s = reconnect_min_s
+        session = aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(
+                total=None,
+                connect=min(self._timeout_s, 10.0),
+                sock_read=45.0,
+            )
+        )
+        self._call_task_event_stream_session = session
+        try:
+            while True:
+                received_valid_event = False
+                try:
+                    await self._report_call_task_event_stream_health(
+                        "connecting",
+                        retryable=True,
+                    )
+                    async with session.get(
+                        url,
+                        headers=headers,
+                        params=params,
+                    ) as response:
+                        if response.status < 200 or response.status >= 300:
+                            # Exact job ownership/auth failures cannot recover on this
+                            # worker. Transient provider/load failures may reconnect.
+                            if response.status < 500 and response.status != 429:
+                                logger.warning(
+                                    "[VoiceTask] call_stream_rejected callSessionId=%s status=%s reconnect=false",
+                                    self._auth.call_session_id,
+                                    response.status,
+                                )
+                                await self._report_call_task_event_stream_health(
+                                    "terminal",
+                                    status=response.status,
+                                    retryable=False,
+                                )
+                                handshake = self._call_task_event_stream_handshake
+                                if handshake is not None and not handshake.done():
+                                    handshake.set_result(False)
+                                return
+                            logger.warning(
+                                "[VoiceTask] call_stream_unavailable callSessionId=%s status=%s reconnect=true",
+                                self._auth.call_session_id,
+                                response.status,
+                            )
+                            await self._report_call_task_event_stream_health(
+                                "disconnected",
+                                status=response.status,
+                                retryable=True,
+                            )
+                        else:
+                            # Headers authenticate the stream, but the backend may
+                            # still be replaying paginated durable snapshots.
+                            await self._report_call_task_event_stream_health(
+                                "syncing",
+                                status=response.status,
+                                retryable=False,
+                            )
+                            synchronized = False
+                            async for event in iter_sse_json_events(content=response.content):
+                                sync = _extract_voice_task_sync(
+                                    event,
+                                    expected_call_session_id=self._auth.call_session_id,
+                                )
+                                if sync is not None:
+                                    if synchronized:
+                                        continue
+                                    synchronized = True
+                                    received_valid_event = True
+                                    await self._report_call_task_event_stream_health(
+                                        "connected",
+                                        status=response.status,
+                                        retryable=False,
+                                    )
+                                    handshake = self._call_task_event_stream_handshake
+                                    if handshake is not None and not handshake.done():
+                                        handshake.set_result(True)
+                                    continue
+                                task_event = _extract_voice_task_event(
+                                    event,
+                                    expected_call_session_id=self._auth.call_session_id,
+                                )
+                                if task_event is None:
+                                    continue
+                                received_valid_event = True
+                                await self._relay_task_event_once(task_event)
+                            await self._report_call_task_event_stream_health(
+                                "disconnected",
+                                retryable=True,
+                            )
+                    if received_valid_event:
+                        delay_s = reconnect_min_s
+                except asyncio.CancelledError:
+                    raise
+                except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+                    logger.warning(
+                        "[VoiceTask] call_stream_disconnected callSessionId=%s error=%s reconnect=true",
+                        self._auth.call_session_id,
+                        type(exc).__name__,
+                    )
+                    await self._report_call_task_event_stream_health(
+                        "disconnected",
+                        retryable=True,
+                    )
+                except Exception as exc:
+                    logger.error(
+                        "[VoiceTask] call_stream_terminated callSessionId=%s error=%s reconnect=false",
+                        self._auth.call_session_id,
+                        type(exc).__name__,
+                    )
+                    await self._report_call_task_event_stream_health(
+                        "terminal",
+                        retryable=False,
+                    )
+                    return
+                await asyncio.sleep(delay_s)
+                delay_s = min(delay_s * 2.0, reconnect_max_s)
+        finally:
+            handshake = self._call_task_event_stream_handshake
+            if handshake is not None and not handshake.done():
+                handshake.set_result(False)
+            if self._call_task_event_stream_session is session:
+                self._call_task_event_stream_session = None
+            if not getattr(session, "closed", False):
+                await session.close()
+
+    async def stop_call_task_event_stream(self) -> None:
+        task = self._call_task_event_stream_task
+        self._call_task_event_stream_task = None
+        if task is not None and not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+        session = self._call_task_event_stream_session
+        self._call_task_event_stream_session = None
+        if session is not None and not getattr(session, "closed", False):
+            await session.close()
+        await self._report_call_task_event_stream_health(
+            "stopped",
+            retryable=False,
+        )
+
+    def _start_task_continuation(
+        self,
+        *,
+        stream_id: str,
+        task_id: str,
+        headers: dict[str, str],
+        request_id: str,
+        pending_insights: list[dict[str, Any]],
+        saw_cortex_event: bool,
+        saw_glasshive_tool_call: bool,
+        cortex_message_id: str,
+        hop_trace: VoiceHopTrace,
+    ) -> None:
+        task = asyncio.create_task(
+            self._continue_task_stream(
+                stream_id=stream_id,
+                task_id=task_id,
+                headers=headers,
+                request_id=request_id,
+                pending_insights=list(pending_insights),
+                saw_cortex_event=saw_cortex_event,
+                saw_glasshive_tool_call=saw_glasshive_tool_call,
+                cortex_message_id=cortex_message_id,
+                hop_trace=hop_trace,
+            )
+        )
+        self._background_continuations.add(task)
+        self._continuations_by_task.setdefault(task_id, set()).add(task)
+
+        def _discard(completed: asyncio.Task[None]) -> None:
+            self._background_continuations.discard(completed)
+            task_set = self._continuations_by_task.get(task_id)
+            if task_set is not None:
+                task_set.discard(completed)
+                if not task_set:
+                    self._continuations_by_task.pop(task_id, None)
+
+        task.add_done_callback(_discard)
+
+    async def _continue_task_stream(
+        self,
+        *,
+        stream_id: str,
+        task_id: str,
+        headers: dict[str, str],
+        request_id: str,
+        pending_insights: list[dict[str, Any]],
+        saw_cortex_event: bool,
+        saw_glasshive_tool_call: bool,
+        cortex_message_id: str,
+        hop_trace: VoiceHopTrace,
+    ) -> None:
+        final_event: Optional[dict[str, Any]] = None
+        suppress_task_output = False
+        sse_url = f"{self._origin}/api/viventium/voice/stream/{stream_id}"
+        max_retries, retry_delay_s = _get_voice_sse_retry_config()
+        attempts = 0
+        try:
+            async with aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=self._timeout_s)
+            ) as session:
+                while attempts <= max_retries and final_event is None:
+                    try:
+                        async with session.get(
+                            sse_url,
+                            headers=headers,
+                            params={"resume": "true"},
+                        ) as response:
+                            if response.status >= 400:
+                                break
+                            async for event in iter_sse_json_events(content=response.content):
+                                self._record_tool_hops_from_event(
+                                    hop_trace,
+                                    event,
+                                    timestamp_ms=time.time() * 1000.0,
+                                )
+                                if event.get("sync"):
+                                    continue
+                                task_event = _extract_voice_task_event(
+                                    event,
+                                    expected_call_session_id=self._auth.call_session_id,
+                                )
+                                if task_event is not None:
+                                    await self._relay_task_event_once(task_event)
+                                    if (
+                                        task_event.get("taskId") == task_id
+                                        and task_event.get("state")
+                                        in _VOICE_TASK_SUPPRESSING_STATES
+                                    ):
+                                        suppress_task_output = True
+                                    continue
+                                if _payload_has_glasshive_tool_call(event):
+                                    saw_glasshive_tool_call = True
+                                message_id_candidate = extract_cortex_message_id(event)
+                                if message_id_candidate:
+                                    cortex_message_id = message_id_candidate
+                                if event.get("event") in (
+                                    "on_cortex_update",
+                                    "on_cortex_followup",
+                                ):
+                                    saw_cortex_event = True
+                                    insight = extract_cortex_insight(event)
+                                    if insight:
+                                        pending_insights.append(insight)
+                                    continue
+                                if event.get("final"):
+                                    final_event = event
+                                    break
+                        if final_event is not None:
+                            break
+                    except (aiohttp.ClientError, asyncio.TimeoutError):
+                        pass
+                    attempts += 1
+                    if attempts <= max_retries:
+                        await asyncio.sleep(retry_delay_s)
+
+            message_id = (
+                _extract_final_response_message_id(final_event)
+                if final_event is not None
+                else ""
+            ) or cortex_message_id
+            if (
+                message_id
+                and self._followup_handler
+                and not suppress_task_output
+                and not self.is_task_output_suppressed(task_id)
+            ):
+                self._followup_handler(
+                    message_id,
+                    pending_insights,
+                    "",
+                    cortex_expected=saw_cortex_event,
+                    glasshive_expected=saw_glasshive_tool_call,
+                )
+            logger.info(
+                "[VoiceTask] detached_continuation_finished callSessionId=%s requestId=%s streamId=%s taskId=%s final=%s attempts=%s",
+                self._auth.call_session_id,
+                request_id,
+                stream_id,
+                task_id,
+                bool(final_event),
+                attempts + 1,
+            )
+        except asyncio.CancelledError:
+            logger.info(
+                "[VoiceTask] detached_continuation_cancelled callSessionId=%s requestId=%s streamId=%s taskId=%s",
+                self._auth.call_session_id,
+                request_id,
+                stream_id,
+                task_id,
+            )
+            raise
+
+    async def wait_for_background_continuations(self, *, timeout_s: float = 5.0) -> None:
+        tasks = list(self._background_continuations)
+        if not tasks:
+            return
+        await asyncio.wait_for(
+            asyncio.gather(*tasks, return_exceptions=True),
+            timeout=max(float(timeout_s), 0.01),
+        )
+
+    async def close_background_continuations(self) -> None:
+        await self.stop_call_task_event_stream()
+        self._speaker_delivery_closing = True
+        speaker_tasks = list(self._speaker_delivery_tasks)
+        if speaker_tasks:
+            _done, pending = await asyncio.wait(speaker_tasks, timeout=0.5)
+            for task in pending:
+                task.cancel()
+            if pending:
+                await asyncio.gather(*pending, return_exceptions=True)
+        for finalizer in self._trace_finalizers.values():
+            finalizer.cancel()
+        self._trace_finalizers.clear()
+        tasks = list(self._background_continuations)
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+        call_state_session = self._call_state_session
+        self._call_state_session = None
+        if call_state_session is not None and not getattr(call_state_session, "closed", False):
+            await call_state_session.close()
+
+    async def get_call_state(self) -> Optional[dict[str, Any]]:
+        """Read one strict authoritative state over a reused bounded HTTP connection."""
+        headers = {
+            "X-VIVENTIUM-CALL-SESSION": self._auth.call_session_id,
+            "X-VIVENTIUM-CALL-SECRET": self._auth.call_secret,
+        }
+        if self._auth.job_id:
+            headers["X-VIVENTIUM-JOB-ID"] = self._auth.job_id
+        if self._auth.worker_id:
+            headers["X-VIVENTIUM-WORKER-ID"] = self._auth.worker_id
+        url = (
+            f"{self._origin}/api/viventium/voice/call-sessions/"
+            f"{quote(self._auth.call_session_id, safe='')}/state"
+        )
+        started_at = time.monotonic()
+        try:
+            session = self._call_state_session
+            if session is None or getattr(session, "closed", False):
+                session = aiohttp.ClientSession(
+                    timeout=aiohttp.ClientTimeout(total=min(self._timeout_s, 0.2))
+                )
+                self._call_state_session = session
+            async with session.get(url, headers=headers) as resp:
+                if resp.status >= 400:
+                    logger.warning(
+                        "[VoiceMode] state_unavailable callSessionId=%s status=%s durationMs=%.3f",
+                        self._auth.call_session_id,
+                        resp.status,
+                        (time.monotonic() - started_at) * 1000.0,
+                    )
+                    return None
+                payload = await resp.json()
+        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError, TypeError) as exc:
+            logger.warning(
+                "[VoiceMode] state_lookup_failed callSessionId=%s error=%s durationMs=%.3f",
+                self._auth.call_session_id,
+                type(exc).__name__,
+                (time.monotonic() - started_at) * 1000.0,
+            )
+            return None
+        if not isinstance(payload, dict):
+            return None
+        response_call_session_id = payload.get("callSessionId")
+        revision = payload.get("revision")
+        updated_at = payload.get("updatedAt")
+        status = payload.get("status")
+        try:
+            parsed_updated_at = datetime.fromisoformat(
+                str(updated_at).replace("Z", "+00:00")
+            )
+        except (TypeError, ValueError):
+            parsed_updated_at = None
+        if (
+            payload.get("version") != 1
+            or response_call_session_id != self._auth.call_session_id
+            or not isinstance(revision, int)
+            or isinstance(revision, bool)
+            or revision < 0
+            or parsed_updated_at is None
+            or parsed_updated_at.tzinfo is None
+            or not isinstance(status, str)
+            or status not in {
+                "created",
+                "connecting",
+                "listening",
+                "speaking",
+                "working",
+                "needs_input",
+                "degraded",
+                "ended",
+                "failed",
+            }
+        ):
+            logger.warning(
+                "[VoiceMode] state_rejected callSessionId=%s reason=invalid_contract",
+                self._auth.call_session_id,
+            )
+            return None
+        mode = payload.get("mode")
+        if mode in {"call", "wing", "listen_only"}:
+            return {
+                "version": 1,
+                "callSessionId": self._auth.call_session_id,
+                "mode": str(mode),
+                "status": status,
+                "revision": revision,
+                "updatedAt": updated_at,
+            }
+        return None
+
+    async def get_call_mode(self) -> Optional[str]:
+        """Compatibility projection for callers that only need the active mode."""
+        state = await self.get_call_state()
+        if state is None or state.get("status") in {"ended", "failed"}:
+            return None
+        return str(state["mode"])
+
+    async def cancel_task(self, task_id: str, *, reason: str = "user_requested") -> dict[str, Any]:
+        """Explicitly cancel one authoritative backend task, idempotently.
+
+        LiveKit TTS interruption and stream disposal intentionally do not call this method.
+        """
+        normalized_task_id = (task_id or "").strip()
+        if not normalized_task_id:
+            raise ValueError("task_id is required")
+        async with self._task_cancel_lock:
+            cached = self._task_cancel_results.get(normalized_task_id)
+            if cached is not None:
+                return cached
+            headers = {
+                "Content-Type": "application/json",
+                "X-VIVENTIUM-CALL-SESSION": self._auth.call_session_id,
+                "X-VIVENTIUM-CALL-SECRET": self._auth.call_secret,
+            }
+            if self._auth.job_id:
+                headers["X-VIVENTIUM-JOB-ID"] = self._auth.job_id
+            if self._auth.worker_id:
+                headers["X-VIVENTIUM-WORKER-ID"] = self._auth.worker_id
+            url = (
+                f"{self._origin}/api/viventium/voice/tasks/"
+                f"{quote(normalized_task_id, safe='')}/cancel"
+            )
+            started_at = time.monotonic()
+            async with aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=min(self._timeout_s, 10.0))
+            ) as session:
+                async with session.post(
+                    url,
+                    headers=headers,
+                    json={"reason": reason or "user_requested"},
+                ) as resp:
+                    if resp.status >= 400:
+                        body = await resp.text()
+                        raise RuntimeError(
+                            f"LibreChat voice task cancel failed: {resp.status} "
+                            f"{_summarize_error_for_log(body)}"
+                        )
+                    result = await resp.json()
+                    if not isinstance(result, dict):
+                        result = {"version": 1, "taskId": normalized_task_id, "state": "cancelling"}
+            self._task_cancel_results[normalized_task_id] = result
+            while len(self._task_cancel_results) > 4_096:
+                self._task_cancel_results.pop(next(iter(self._task_cancel_results)))
+            self._task_event_gate.mark_cancel_accepted(normalized_task_id)
+            for continuation in list(
+                self._continuations_by_task.get(normalized_task_id, set())
+            ):
+                continuation.cancel()
+            if self._task_cancel_handler is not None:
+                handler_result = self._task_cancel_handler(normalized_task_id, result)
+                if asyncio.iscoroutine(handler_result):
+                    await handler_result
+            logger.info(
+                "[VoiceTask] explicit_cancel_requested callSessionId=%s taskId=%s durationMs=%.3f",
+                self._auth.call_session_id,
+                normalized_task_id,
+                (time.monotonic() - started_at) * 1000.0,
+            )
+            return result
+
+    async def post_speaker_segment_revisions(
+        self,
+        revisions: list[dict[str, Any]],
+        *,
+        session_state: Optional[dict[str, Any]] = None,
+    ) -> dict[str, Any]:
+        """Persist call-wide safety state first, then bounded idempotent revision pages."""
+        valid = [
+            item
+            for item in revisions
+            if isinstance(item, dict)
+            and item.get("version") == 1
+            and item.get("callSessionId") == self._auth.call_session_id
+            and isinstance(item.get("segmentId"), str)
+            and isinstance(item.get("revision"), int)
+            and not isinstance(item.get("revision"), bool)
+        ]
+        if not valid and session_state is None:
+            return {"version": 1, "accepted": [], "ignored": []}
+        async with self._speaker_revision_lock:
+            unsent = [
+                item
+                for item in valid
+                if (item["segmentId"], item["revision"])
+                not in self._sent_speaker_revisions
+            ]
+            if not unsent and session_state is None:
+                return {"version": 1, "accepted": [], "ignored": []}
+            headers = {
+                "Content-Type": "application/json",
+                "X-VIVENTIUM-CALL-SESSION": self._auth.call_session_id,
+                "X-VIVENTIUM-CALL-SECRET": self._auth.call_secret,
+            }
+            if self._auth.job_id:
+                headers["X-VIVENTIUM-JOB-ID"] = self._auth.job_id
+            if self._auth.worker_id:
+                headers["X-VIVENTIUM-WORKER-ID"] = self._auth.worker_id
+            started_at = time.monotonic()
+            shared_revisions = [
+                item
+                for item in unsent
+                if item.get("speaker", {}).get("actorTrust")
+                == "shared_mic_unverified"
+            ]
+            if shared_revisions and session_state is None:
+                first_speaker = shared_revisions[0].get("speaker", {})
+                session_state = {
+                    "version": 1,
+                    "callSessionId": self._auth.call_session_id,
+                    "revision": 1,
+                    "attributionState": "shared_mic_unverified",
+                    "detectedAt": datetime.now(timezone.utc).isoformat().replace(
+                        "+00:00", "Z"
+                    ),
+                    **(
+                        {
+                            "sourceTrackSid": str(first_speaker.get("trackSid")),
+                            "sharedTrackSids": [str(first_speaker.get("trackSid"))],
+                        }
+                        if first_speaker.get("trackSid")
+                        else {}
+                    ),
+                    **(
+                        {
+                            "sourceParticipantIdentity": str(
+                                first_speaker.get("participantIdentity")
+                            ),
+                            "sharedParticipantIdentities": [
+                                str(first_speaker.get("participantIdentity"))
+                            ],
+                        }
+                        if first_speaker.get("participantIdentity")
+                        else {}
+                    ),
+                }
+
+            accepted: list[str] = []
+            ignored: list[str] = []
+            async with aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=min(self._timeout_s, 10.0))
+            ) as session:
+                if session_state is not None:
+                    await self._persist_speaker_session_state(
+                        session=session,
+                        headers=headers,
+                        state=session_state,
+                    )
+                if not unsent:
+                    return {"version": 1, "accepted": [], "ignored": []}
+                for page in self._speaker_revision_pages(unsent):
+                    body = {
+                        "speakerSegmentRevisions": page,
+                        "ownerParticipantIdentity": str(
+                            page[0].get("speaker", {}).get("participantIdentity") or ""
+                        ),
+                        "ownerTrackSid": str(
+                            page[0].get("speaker", {}).get("trackSid") or ""
+                        ),
+                    }
+                    result = await self._post_voice_json_with_retry(
+                        session=session,
+                        url=(
+                            f"{self._origin}/api/viventium/voice/"
+                            "speaker-segments/revisions"
+                        ),
+                        headers=headers,
+                        body=body,
+                        operation="speaker revision",
+                    )
+                    accepted.extend(
+                        item for item in result.get("accepted", []) if isinstance(item, str)
+                    )
+                    ignored.extend(
+                        item for item in result.get("ignored", []) if isinstance(item, str)
+                    )
+                    self._remember_bounded_keys(
+                        self._sent_speaker_revisions,
+                        (
+                            (item["segmentId"], item["revision"])
+                            for item in page
+                        ),
+                    )
+            logger.info(
+                "[VoiceSpeaker] revisions_persisted callSessionId=%s count=%s pages=%s durationMs=%.3f",
+                self._auth.call_session_id,
+                len(unsent),
+                len(self._speaker_revision_pages(unsent)),
+                (time.monotonic() - started_at) * 1000.0,
+            )
+            return {"version": 1, "accepted": accepted, "ignored": ignored}
+
+    def queue_speaker_segment_revisions(
+        self,
+        revisions: list[dict[str, Any]],
+        *,
+        session_state: Optional[dict[str, Any]] = None,
+    ) -> asyncio.Task[dict[str, Any]]:
+        """Supervise retrying delivery so late safety revisions survive caller interruption."""
+        async def _deliver_for_call_lifetime() -> dict[str, Any]:
+            retry_round = 0
+            while True:
+                try:
+                    return await self.post_speaker_segment_revisions(
+                        revisions,
+                        session_state=session_state,
+                    )
+                except _NonRetryableVoiceIngressError:
+                    raise
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    if self._speaker_delivery_closing:
+                        raise
+                    retry_round += 1
+                    logger.warning(
+                        "[VoiceSpeaker] revision_delivery_retry callSessionId=%s round=%s error=%s memoryFailClosed=true",
+                        self._auth.call_session_id,
+                        retry_round,
+                        type(exc).__name__,
+                    )
+                    await asyncio.sleep(min(0.25 * (2 ** min(retry_round, 5)), 5.0))
+
+        task = asyncio.create_task(_deliver_for_call_lifetime())
+        self._speaker_delivery_tasks.add(task)
+
+        def _delivery_finished(completed: asyncio.Task[dict[str, Any]]) -> None:
+            self._speaker_delivery_tasks.discard(completed)
+            if completed.cancelled():
+                return
+            try:
+                completed.result()
+            except Exception as exc:
+                logger.warning(
+                    "[VoiceSpeaker] revision_delivery_failed callSessionId=%s error=%s memoryFailClosed=true",
+                    self._auth.call_session_id,
+                    type(exc).__name__,
+                )
+
+        task.add_done_callback(_delivery_finished)
+        return task
+
+    @staticmethod
+    def _speaker_revision_pages(
+        revisions: list[dict[str, Any]],
+        *,
+        max_items: int = 64,
+        max_bytes: int = 128_000,
+    ) -> list[list[dict[str, Any]]]:
+        pages: list[list[dict[str, Any]]] = []
+        current: list[dict[str, Any]] = []
+        for item in revisions:
+            candidate = [*current, item]
+            candidate_size = len(
+                json.dumps(
+                    {"speakerSegmentRevisions": candidate},
+                    ensure_ascii=True,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            )
+            if current and (len(candidate) > max_items or candidate_size >= max_bytes):
+                pages.append(current)
+                current = [item]
+            else:
+                current = candidate
+        if current:
+            pages.append(current)
+        return pages
+
+    async def _persist_speaker_session_state(
+        self,
+        *,
+        session: aiohttp.ClientSession,
+        headers: dict[str, str],
+        state: dict[str, Any],
+    ) -> None:
+        valid_state = (
+            isinstance(state, dict)
+            and state.get("version") == 1
+            and state.get("callSessionId") == self._auth.call_session_id
+            and isinstance(state.get("revision"), int)
+            and not isinstance(state.get("revision"), bool)
+            and state.get("revision") >= 1
+            and state.get("attributionState") == "shared_mic_unverified"
+            and isinstance(state.get("detectedAt"), str)
+            and bool(state.get("detectedAt").strip())
+        )
+        if not valid_state:
+            raise ValueError("invalid SpeakerSessionStateV1 shared-mic tombstone")
+        shared_track_sids = tuple(
+            sorted(
+                {
+                    value.strip()
+                    for value in state.get("sharedTrackSids", [])
+                    if isinstance(value, str) and value.strip()
+                }
+            )
+        )
+        source_track_sid = str(state.get("sourceTrackSid") or "").strip()
+        shared_participant_identities = tuple(
+            sorted(
+                {
+                    value.strip()
+                    for value in state.get("sharedParticipantIdentities", [])
+                    if isinstance(value, str) and value.strip()
+                }
+            )
+        )
+        source_participant_identity = str(
+            state.get("sourceParticipantIdentity") or ""
+        ).strip()
+        key = (
+            self._auth.call_session_id,
+            int(state["revision"]),
+            shared_track_sids,
+            source_track_sid,
+            shared_participant_identities,
+            source_participant_identity,
+        )
+        if key in self._sent_speaker_session_states:
+            return
+        await self._post_voice_json_with_retry(
+            session=session,
+            url=f"{self._origin}/api/viventium/voice/speaker-session-state",
+            headers=headers,
+            body=state,
+            operation="speaker session state",
+        )
+        self._remember_bounded_keys(self._sent_speaker_session_states, [key])
+
+    async def _post_voice_json_with_retry(
+        self,
+        *,
+        session: aiohttp.ClientSession,
+        url: str,
+        headers: dict[str, str],
+        body: dict[str, Any],
+        operation: str,
+    ) -> dict[str, Any]:
+        last_error: Optional[BaseException] = None
+        for attempt in range(3):
+            try:
+                async with session.post(url, headers=headers, json=body) as resp:
+                    if resp.status >= 500:
+                        if attempt < 2:
+                            await asyncio.sleep(0.1 * (2**attempt))
+                            continue
+                        error_body = await resp.text()
+                        raise _RetryableVoiceIngressError(
+                            f"LibreChat {operation} temporarily unavailable: {resp.status} "
+                            f"{_summarize_error_for_log(error_body)}"
+                        )
+                    if resp.status >= 400:
+                        error_body = await resp.text()
+                        raise _NonRetryableVoiceIngressError(
+                            f"LibreChat {operation} post failed: {resp.status} "
+                            f"{_summarize_error_for_log(error_body)}"
+                        )
+                    parsed = await resp.json()
+                    return parsed if isinstance(parsed, dict) else {}
+            except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+                last_error = exc
+                if attempt < 2:
+                    await asyncio.sleep(0.1 * (2**attempt))
+                    continue
+        if last_error is not None:
+            raise last_error
+        raise RuntimeError(f"LibreChat {operation} post failed")
+
+    async def post_ambient_transcript(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Persist guest-track speech as bounded, idempotent soft evidence only."""
+        raw_segments = payload.get("segments")
+        segments = [
+            item
+            for item in (raw_segments if isinstance(raw_segments, list) else [])[:32]
+            if isinstance(item, dict)
+            and item.get("version") == 1
+            and item.get("callSessionId") == self._auth.call_session_id
+            and isinstance(item.get("segmentId"), str)
+            and isinstance(item.get("revision"), int)
+        ]
+        if not segments:
+            return {"version": 1, "accepted": [], "ignored": []}
+        async with self._ambient_ingress_lock:
+            unsent = [
+                item
+                for item in segments
+                if (item["segmentId"], item["revision"]) not in self._sent_ambient_segments
+            ]
+            if not unsent:
+                return {"version": 1, "accepted": [], "ignored": []}
+            bounded_segments: list[dict[str, Any]] = []
+            total_chars = 0
+            for item in unsent:
+                item_chars = len(str(item.get("text") or ""))
+                if total_chars + item_chars > 64_000:
+                    break
+                bounded_segments.append(item)
+                total_chars += item_chars
+            if not bounded_segments:
+                raise ValueError("ambient transcript exceeds bounded request size")
+            ingress_kind = str(payload.get("ingressKind") or "ambient_participant")
+            if ingress_kind not in {"ambient_participant", "listen_only_owner"}:
+                raise ValueError("unsupported ambient ingress kind")
+            mode = str(payload.get("mode") or "call")
+            if mode not in {"call", "wing", "listen_only"}:
+                mode = "call"
+            body = {
+                "version": 1,
+                "callSessionId": self._auth.call_session_id,
+                "ingressKind": ingress_kind,
+                "segments": bounded_segments,
+            }
+            if ingress_kind == "ambient_participant":
+                body["mode"] = mode
+            for optional_key in ("conversationId", "turnId"):
+                value = payload.get(optional_key)
+                if isinstance(value, str) and value.strip():
+                    body[optional_key] = value.strip()
+            headers = {
+                "Content-Type": "application/json",
+                "X-VIVENTIUM-CALL-SESSION": self._auth.call_session_id,
+                "X-VIVENTIUM-CALL-SECRET": self._auth.call_secret,
+            }
+            if self._auth.job_id:
+                headers["X-VIVENTIUM-JOB-ID"] = self._auth.job_id
+            if self._auth.worker_id:
+                headers["X-VIVENTIUM-WORKER-ID"] = self._auth.worker_id
+            url = f"{self._origin}/api/viventium/voice/ambient-transcript"
+            started_at = time.monotonic()
+            result: dict[str, Any] = {}
+            for attempt in range(2):
+                try:
+                    async with aiohttp.ClientSession(
+                        timeout=aiohttp.ClientTimeout(total=min(self._timeout_s, 10.0))
+                    ) as session:
+                        async with session.post(url, headers=headers, json=body) as resp:
+                            if resp.status >= 500 and attempt == 0:
+                                await asyncio.sleep(0.1)
+                                continue
+                            if resp.status >= 400:
+                                error_body = await resp.text()
+                                raise RuntimeError(
+                                    f"LibreChat ambient ingress failed: {resp.status} "
+                                    f"{_summarize_error_for_log(error_body)}"
+                                )
+                            parsed = await resp.json()
+                            result = parsed if isinstance(parsed, dict) else {}
+                            break
+                except (aiohttp.ClientError, asyncio.TimeoutError):
+                    if attempt == 0:
+                        await asyncio.sleep(0.1)
+                        continue
+                    raise
+            self._remember_bounded_keys(
+                self._sent_ambient_segments,
+                (
+                    (item["segmentId"], item["revision"])
+                    for item in bounded_segments
+                ),
+            )
+            logger.info(
+                "[VoiceSpeaker] ambient_persisted callSessionId=%s segments=%s chars=%s durationMs=%.3f",
+                self._auth.call_session_id,
+                len(bounded_segments),
+                total_chars,
+                (time.monotonic() - started_at) * 1000.0,
+            )
+            return result or {
+                "version": 1,
+                "accepted": [item["segmentId"] for item in bounded_segments],
+                "ignored": [],
+            }
 
     # === VIVENTIUM START ===
     # Feature: allow worker to override voice provider after TTS fallbacks.
@@ -987,6 +2661,21 @@ class _LibreChatLLMStream(llm.LLMStream):
 
     async def _run(self) -> None:
         user_text = _extract_last_user_text(self._chat_ctx)
+        speaker_context = _extract_last_user_speaker_context(self._chat_ctx)
+        speaker_post_context = {
+            key: value
+            for key, value in speaker_context.items()
+            if key != "utteranceEndAtMs"
+        }
+        hop_trace = VoiceHopTrace(
+            correlation_id=self._request_id,
+            call_session_id=self._auth.call_session_id,
+        )
+        self._llm_impl.register_trace(hop_trace)
+        utterance_end_ms = speaker_context.get("utteranceEndAtMs")
+        if isinstance(utterance_end_ms, (int, float)):
+            hop_trace.record("utterance_end", float(utterance_end_ms))
+            logger.info("[VoiceHop] %s", hop_trace.log_payload("utterance_end"))
 
         if not user_text:
             # Nothing to do; emit no tokens.
@@ -1005,10 +2694,13 @@ class _LibreChatLLMStream(llm.LLMStream):
 
         chat_url = f"{self._origin}/api/viventium/voice/chat"
         stream_id: Optional[str] = None
+        task_id: Optional[str] = None
         final_event: Optional[dict[str, Any]] = None
         stream_error: Optional[str] = None
-        cancelled = False
-        participant_disconnected = False
+        pending_insights: list[dict[str, Any]] = []
+        saw_cortex_event = False
+        saw_glasshive_tool_call = False
+        cortex_message_id = ""
 
         log_latency = _should_log_latency()
         started_at = time.time()
@@ -1019,6 +2711,8 @@ class _LibreChatLLMStream(llm.LLMStream):
         async with aiohttp.ClientSession(timeout=timeout) as session:
             try:
                 # 1) Start resumable generation
+                hop_trace.record("gateway_dispatch", time.time() * 1000.0)
+                logger.info("[VoiceHop] %s", hop_trace.log_payload("gateway_dispatch"))
                 async with session.post(
                     chat_url,
                     headers=headers,
@@ -1033,6 +2727,7 @@ class _LibreChatLLMStream(llm.LLMStream):
                         # Ensure surface-aware prompt rules apply for voice calls.
                         "viventiumInputMode": "voice_call",
                         "viventiumSurface": "voice",
+                        **speaker_post_context,
                     },
                 ) as resp:
                     if resp.status >= 400:
@@ -1054,6 +2749,12 @@ class _LibreChatLLMStream(llm.LLMStream):
                         return
                     # === VIVENTIUM END ===
                     stream_id = payload.get("streamId")
+                    task_id_value = payload.get("taskId")
+                    if isinstance(task_id_value, str) and task_id_value.strip():
+                        task_id = task_id_value.strip()
+                        self._llm_impl.bind_trace_task(self._request_id, task_id)
+                    hop_trace.record("agent_start", time.time() * 1000.0)
+                    logger.info("[VoiceHop] %s", hop_trace.log_payload("agent_start"))
                     post_sent_at = time.time()
                     if log_latency:
                         logger.info(
@@ -1076,9 +2777,13 @@ class _LibreChatLLMStream(llm.LLMStream):
                 # === VIVENTIUM END ===
 
                 # Track cortex insights that arrive during streaming (background cortices)
-                pending_insights: list[dict[str, Any]] = []
-                saw_cortex_event = False
-                saw_glasshive_tool_call = False
+                suppress_task_output = False
+
+                def _output_is_suppressed() -> bool:
+                    return bool(
+                        suppress_task_output
+                        or (task_id and self._llm_impl.is_task_output_suppressed(task_id))
+                    )
                 collected_response: list[str] = []
                 collected_raw_response: list[str] = []
                 # === VIVENTIUM START ===
@@ -1096,14 +2801,13 @@ class _LibreChatLLMStream(llm.LLMStream):
                 # === VIVENTIUM END ===
                 # === VIVENTIUM START ===
                 # Keep the canonical assistant messageId from cortex updates as a follow-up fallback.
-                cortex_message_id = ""
                 # === VIVENTIUM END ===
 
                 disconnected_speech: list[str] = []
 
                 def emit_chat_delta(content: str) -> None:
                     nonlocal first
-                    if not content:
+                    if not content or _output_is_suppressed():
                         return
                     if _should_debug_voice_markup():
                         logger.info(
@@ -1120,6 +2824,9 @@ class _LibreChatLLMStream(llm.LLMStream):
                 def send_chat_delta(content: str) -> None:
                     if not content:
                         return
+                    if _output_is_suppressed():
+                        disconnected_speech.clear()
+                        return
                     if not self._llm_impl.is_participant_connected():
                         disconnected_speech.append(content)
                         return
@@ -1131,6 +2838,9 @@ class _LibreChatLLMStream(llm.LLMStream):
                 async def flush_disconnected_speech() -> None:
                     if not disconnected_speech:
                         return
+                    if _output_is_suppressed():
+                        disconnected_speech.clear()
+                        return
                     if not self._llm_impl.is_participant_connected():
                         reconnected = await self._llm_impl.wait_for_participant_reconnect()
                         if not reconnected:
@@ -1139,13 +2849,18 @@ class _LibreChatLLMStream(llm.LLMStream):
                             )
                             disconnected_speech.clear()
                             return
+                    if _output_is_suppressed():
+                        disconnected_speech.clear()
+                        return
                     content = "".join(disconnected_speech)
                     disconnected_speech.clear()
                     emit_chat_delta(content)
 
-                def process_text_delta(raw_delta: str) -> None:
+                async def process_text_delta(raw_delta: str) -> None:
                     nonlocal saw_any_tokens, first_token_at
                     collected_raw_response.append(raw_delta)
+                    if _output_is_suppressed():
+                        return
                     delta = sanitize_voice_delta_text(raw_delta)
                     if not delta:
                         return
@@ -1160,6 +2875,15 @@ class _LibreChatLLMStream(llm.LLMStream):
                     saw_any_tokens = True
                     if first_token_at is None:
                         first_token_at = time.time()
+                        hop_trace.record("first_model_token", first_token_at * 1000.0)
+                        logger.info(
+                            "[VoiceHop] %s",
+                            hop_trace.log_payload("first_model_token"),
+                        )
+                        if task_id and self._llm_impl._model_output_handler is not None:
+                            output_result = self._llm_impl._model_output_handler(task_id)
+                            if asyncio.iscoroutine(output_result):
+                                await output_result
                         if log_latency:
                             logger.info(
                                 "[VoiceLatency] ttft_ms=%s request_id=%s stream_id=%s",
@@ -1204,6 +2928,11 @@ class _LibreChatLLMStream(llm.LLMStream):
                                 break
 
                             async for event in iter_sse_json_events(content=sse_resp.content):
+                                self._llm_impl._record_tool_hops_from_event(
+                                    hop_trace,
+                                    event,
+                                    timestamp_ms=time.time() * 1000.0,
+                                )
                                 stream_error = _extract_stream_error(event)
                                 if stream_error:
                                     break
@@ -1214,10 +2943,34 @@ class _LibreChatLLMStream(llm.LLMStream):
                                     if resumed_text.startswith(collected_text):
                                         missing_text = resumed_text[len(collected_text) :]
                                         if missing_text:
-                                            process_text_delta(missing_text)
+                                            await process_text_delta(missing_text)
                                     elif resumed_text:
                                         logger.warning(
                                             "[LibreChatLLM] Resume state diverged from consumed voice text; refusing duplicate replay"
+                                        )
+                                    continue
+
+                                task_event = _extract_voice_task_event(
+                                    event,
+                                    expected_call_session_id=self._auth.call_session_id,
+                                )
+                                if task_event is not None:
+                                    event_task_id = task_event["taskId"].strip()
+                                    if task_id is None:
+                                        task_id = event_task_id
+                                    await self._llm_impl._relay_task_event_once(task_event)
+                                    if (
+                                        event_task_id == task_id
+                                        and task_event["state"] in _VOICE_TASK_SUPPRESSING_STATES
+                                    ):
+                                        suppress_task_output = True
+                                        logger.info(
+                                            "[VoiceTask] output_suppression_enabled callSessionId=%s requestId=%s streamId=%s taskId=%s state=%s",
+                                            self._auth.call_session_id,
+                                            self._request_id,
+                                            stream_id,
+                                            task_id,
+                                            task_event["state"],
                                         )
                                     continue
 
@@ -1263,7 +3016,7 @@ class _LibreChatLLMStream(llm.LLMStream):
                                 # === VIVENTIUM END ===
 
                                 for raw_delta in extract_raw_text_deltas(event):
-                                    process_text_delta(raw_delta)
+                                    await process_text_delta(raw_delta)
 
                             if stream_error or final_event:
                                 break
@@ -1285,13 +3038,13 @@ class _LibreChatLLMStream(llm.LLMStream):
                 # === VIVENTIUM END ===
 
                 # Fallback: if LibreChat didn't stream any deltas, emit the final response text (if any)
-                if not saw_any_tokens and final_event:
+                if not _output_is_suppressed() and not saw_any_tokens and final_event:
                     text = _extract_final_response_text(final_event)
                     if text and not is_no_response_only(text):
                         collected_response.append(text)
                         send_chat_delta(text)
                 # === VIVENTIUM START ===
-                if stream_error:
+                if stream_error and not _output_is_suppressed():
                     logger.warning(
                         "[LibreChatLLM] Voice stream error request_id=%s stream_id=%s error=%s",
                         self._request_id,
@@ -1337,7 +3090,7 @@ class _LibreChatLLMStream(llm.LLMStream):
                         _debug_text_json(strip_voice_control_tags(full_response_text)),
                     )
                 suppressed, pending_emit = no_response_guard.finalize(full_response_text)
-                if not suppressed:
+                if not suppressed and not _output_is_suppressed():
                     for emit_delta in pending_emit:
                         if not emit_delta:
                             continue
@@ -1356,7 +3109,11 @@ class _LibreChatLLMStream(llm.LLMStream):
                     message_id = _extract_final_response_message_id(final_event)
                 if not message_id:
                     message_id = cortex_message_id
-                if message_id and self._llm_impl._followup_handler:
+                if (
+                    message_id
+                    and self._llm_impl._followup_handler
+                    and not _output_is_suppressed()
+                ):
                     try:
                         if log_latency:
                             logger.info(
@@ -1380,25 +3137,31 @@ class _LibreChatLLMStream(llm.LLMStream):
                         logger.warning("[LibreChatLLM] follow-up handler failed: %s", e)
                 # === VIVENTIUM END ===
             except asyncio.CancelledError:
-                cancelled = True
-                participant_disconnected = not self._llm_impl.is_participant_connected()
+                if stream_id and task_id and final_event is None:
+                    self._llm_impl._start_task_continuation(
+                        stream_id=stream_id,
+                        task_id=task_id,
+                        headers=dict(headers),
+                        request_id=self._request_id,
+                        pending_insights=pending_insights,
+                        saw_cortex_event=saw_cortex_event,
+                        saw_glasshive_tool_call=saw_glasshive_tool_call,
+                        cortex_message_id=cortex_message_id,
+                        hop_trace=hop_trace,
+                    )
+                logger.info(
+                    "[VoiceTask] stream_consumer_interrupted callSessionId=%s requestId=%s streamId=%s backendTaskPreserved=true",
+                    self._auth.call_session_id,
+                    self._request_id,
+                    stream_id or "",
+                )
                 raise
             finally:
+                self._llm_impl.schedule_trace_terminal(hop_trace)
                 if stream_id and final_event is None:
-                    if participant_disconnected or not cancelled:
-                        logger.info(
-                            "[LibreChatLLM] Voice subscriber detached for reconnect request_id=%s stream_id=%s",
-                            self._request_id,
-                            stream_id,
-                        )
-                    else:
-                        await _shielded_abort_librechat_voice_stream(
-                            session=session,
-                            origin=self._origin,
-                            stream_id=stream_id,
-                            headers=headers,
-                            request_id=self._request_id,
-                            started_at=started_at,
-                            reason="voice_user_interruption",
-                            log_latency=log_latency,
-                        )
+                    logger.info(
+                        "[VoiceTask] stream_closed_without_final callSessionId=%s requestId=%s streamId=%s backendTaskPreserved=true",
+                        self._auth.call_session_id,
+                        self._request_id,
+                        stream_id,
+                    )

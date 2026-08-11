@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 
@@ -39,13 +40,32 @@ def test_agent_sync_docs_require_live_vs_source_review_before_push() -> None:
     assert "CRITICAL RULE: No Hardcoded NLU in Runtime Code" in principles_text
 
 
-def test_sync_script_help_exposes_compare_review_workflow() -> None:
+def test_sync_script_help_exposes_compare_review_workflow_without_built_api(
+    tmp_path: Path,
+) -> None:
+    require_blocker = tmp_path / "forbid-built-api.cjs"
+    require_blocker.write_text(
+        """const Module = require('module');
+const originalLoad = Module._load;
+Module._load = function (request, parent, isMain) {
+  if (request === '@librechat/api') {
+    throw new Error('QA forbids loading the built API for --help');
+  }
+  return originalLoad.call(this, request, parent, isMain);
+};
+""",
+        encoding="utf-8",
+    )
     result = subprocess.run(
         ["node", str(SYNC_SCRIPT), "--help"],
         check=True,
         capture_output=True,
         text=True,
         cwd=ROOT,
+        env={
+            **os.environ,
+            "NODE_OPTIONS": f"--require={require_blocker}",
+        },
     )
 
     help_text = result.stdout

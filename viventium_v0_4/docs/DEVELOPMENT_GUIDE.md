@@ -69,6 +69,12 @@ bin/viventium dev-env status dev
 bin/viventium dev-env run dev start
 ```
 
+`dev-env run` is also the required host-safety boundary for local candidate work. It replaces
+unbounded native Python worker-pool settings and supervises the candidate's Python thread budget.
+If the guard stops the candidate, investigate the workload; do not raise or bypass the limit.
+Broad Python, voice, audio, dependency-build, and soak workloads belong on disposable
+infrastructure after any host thread-exhaustion incident.
+
 When the current checkout should become the installed local prod runtime, promote it through the
 runtime-checkout path instead of copying source into install paths:
 

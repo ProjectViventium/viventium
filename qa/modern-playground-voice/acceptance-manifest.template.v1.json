@@ -1,0 +1,263 @@
+{
+  "schema": "viventium.voice.acceptance.manifest.v1",
+  "executionPolicy": {
+    "sourceFreezeRequired": true,
+    "startRuntime": false,
+    "rawOutput": "private_only",
+    "publicResult": "sanitized_content_free_only"
+  },
+  "conditionalGates": {
+    "behavior-needsInputRoundTrip": {
+      "capability": "voice_task_owner.provideInput",
+      "inventorySource": "runtime_voice_task_owner_registry",
+      "whenAdvertised": "PASS requires a successful owner input round trip",
+      "whenAbsent": "NOT_APPLICABLE",
+      "missingInventory": "FAIL"
+    }
+  },
+  "prerequisites": [
+    "integration_lead_source_freeze_signal",
+    "tracked_source_and_nested_component_heads_recorded",
+    "parent_pins_built_assets_and_active_artifacts_match",
+    "fresh_signed_session_per_profile",
+    "signed_call_bootstrap_url_with_ephemeral_exact_session_browser_capability",
+    "bootstrap_fragment_stripped_before_any_evidence_capture",
+    "synthetic_non_personal_audio_fixtures",
+    "private_output_root_outside_public_repository",
+    "private_external_evidence_completed_from_measured_browser_network_persistence_and_diarization_runs",
+    "named_process_ids_and_content_free_voice_hop_logs",
+    "local_fault_actions_are_reversible_and_target_only_the_synthetic_runtime"
+  ],
+  "environments": {
+    "dev": {
+      "apiPort": 4180,
+      "webPort": 4190,
+      "playgroundPort": 4300,
+      "prepareCommands": [
+        ["bin/viventium", "dev-env", "create", "dev", "--port-offset", "1000"],
+        ["bin/viventium", "dev-env", "run", "dev", "start"],
+        ["bin/viventium", "dev-env", "status", "dev", "--json"]
+      ]
+    },
+    "installed_prod": {
+      "apiPort": 3180,
+      "webPort": 3190,
+      "playgroundPort": 3300,
+      "prepareCommands": [
+        ["bin/viventium", "dev-runtime", "activate-current", "--validate", "--restart", "--allow-protected-folder"],
+        ["bin/viventium", "dev-runtime", "status"]
+      ]
+    },
+    "clean_install": {
+      "apiPort": 3180,
+      "webPort": 3190,
+      "playgroundPort": 3300,
+      "prepareCommands": [
+        ["git", "clone", "--depth", "1", "<approved-public-repository-url>", "<private>/clean-install-source"],
+        ["env", "VIVENTIUM_INSTALL_DIR=<private>/clean-install-runtime", "<private>/clean-install-source/install.sh", "--headless", "--config-input", "<private>/clean-install-config.yaml", "--no-start"],
+        ["<private>/clean-install-runtime/bin/viventium", "doctor"]
+      ]
+    }
+  },
+  "privateInputs": {
+    "runtimeConfigSlots": [
+      "<private>/manifests/dev-switches.json",
+      "<private>/manifests/dev-reconnects.json",
+      "<private>/manifests/dev-audible-65m.json",
+      "<private>/manifests/dev-soak-120m.json",
+      "<private>/manifests/livekit-1.5.10-audible.json",
+      "<private>/manifests/livekit-1.6.9-audible.json"
+    ],
+    "externalEvidenceTemplate": "qa/modern-playground-voice/external-evidence-template.v1.json",
+    "requiredIndependentEvidence": [
+      "browser_click_state_task_source_cancel_and_accessibility_timings",
+      "network_capture_cloud_audio_egress_bytes_under_local_only_policy",
+      "clean_sequential_shared_microphone_attributed_word_accuracy",
+      "noisy_multispeaker_bank_diarization_error_rate",
+      "separate_participant_track_attribution",
+      "post_cancel_persistence_memory_and_follow_up_suppression",
+      "conversation_delete_export_memory_and_speaker_map_expiry",
+      "authority_and_external_side_effect_audit",
+      "raw_session_identifier_without_browser_capability_negative_test",
+      "suppression_barrier_after_more_than_one_thousand_later_tasks",
+      "hung_owner_cancel_acknowledgement_timing_and_late_result_test",
+      "malformed_task_snapshot_visible_recovery_matrix",
+      "api_restart_durable_barrier_and_exact_replay_test",
+      "speaker_history_beyond_four_thousand_ninety_six_segments_traversal"
+    ]
+  },
+  "externalEvidenceAcquisition": {
+    "localOnlyEgress": {
+      "requiredInput": "private full-call network capture plus runtime route/config audit",
+      "measurement": "sum bytes of audio payload sent to cloud destinations while local-only policy is active",
+      "outputField": "quality.cloudAudioEgressBytes",
+      "missingResult": "FAIL",
+      "passValue": 0
+    },
+    "cleanSharedMicrophone": {
+      "requiredInput": "private aligned reference words/speakers and persisted SpeakerSegmentV1 hypothesis for clean sequential fixtures",
+      "measurement": "correctly attributed reference words divided by reference words times 100",
+      "outputField": "quality.cleanAttributedWordAccuracyPercent",
+      "missingResult": "FAIL",
+      "minimumPassValue": 95
+    },
+    "noisySpeakerBank": {
+      "requiredInput": "private time-aligned reference speaker activity and persisted SpeakerSegmentV1 hypothesis for the noisy bank",
+      "measurement": "standard diarization error rate: speaker confusion plus missed speech plus false alarm divided by reference speaker time times 100",
+      "outputField": "quality.noisySpeakerBankDerPercent",
+      "missingResult": "FAIL",
+      "maximumPassValue": 15
+    },
+    "rawSessionBrowserCapability": {
+      "requiredInput": "private negative request matrix for every task, speaker, and event operation using only a raw synthetic session identifier",
+      "measurement": "all capability-free reads and mutations are rejected before disclosure or state change; capable browser positive control still succeeds",
+      "outputField": "escapedRegressions.rawSessionIdWithoutBrowserCapabilityRejected",
+      "missingResult": "FAIL",
+      "passValue": true
+    },
+    "suppressionTaskPressure": {
+      "requiredInput": "private deterministic run with one cancelled target, at least 1,001 later task identifiers, then a late target result",
+      "measurement": "barrier remains present and late target output count across TTS, UI result, conversation, memory, source, and follow-up planes is zero",
+      "outputField": "escapedRegressions.suppressionBarrierPreservedAfter1001Tasks",
+      "missingResult": "FAIL",
+      "passValue": true
+    },
+    "hungOwnerCancellation": {
+      "requiredInput": "private browser and network timing trace with a cancellation owner adapter that never resolves plus a late result injection",
+      "measurement": "accepted or cancelling state appears within 250 ms, barrier is acknowledged within one second, terminal copy stays truthful, and late output is zero",
+      "outputField": "escapedRegressions.hungOwnerCancelAckWithin250Ms",
+      "missingResult": "FAIL",
+      "passValue": true
+    },
+    "malformedTaskSnapshot": {
+      "requiredInput": "private reconnect matrix covering unsupported version, missing field, invalid state, duplicate sequence, truncated JSON, and wrong content type",
+      "measurement": "each response is rejected atomically with visible degraded or failed recovery, known-good state is preserved, and valid retry applies once",
+      "outputField": "escapedRegressions.malformedTaskSnapshotFailsVisible",
+      "missingResult": "FAIL",
+      "passValue": true
+    },
+    "apiRestartDurability": {
+      "requiredInput": "private pre/post controlled API restart persistence and replay audit including a cancelled-task late result after restart",
+      "measurement": "task, result, speaker, and barrier replay is exact and late output across every suppression plane is zero",
+      "outputField": "escapedRegressions.apiRestartPreservesBarrierAndReplay",
+      "missingResult": "FAIL",
+      "passValue": true
+    },
+    "speakerHistoryBeyond4096": {
+      "requiredInput": "private generation and complete ordered traversal of at least 4,200 deterministic speaker segments after refresh and reconnect",
+      "measurement": "earliest, middle, and latest records are reachable and complete traversal has zero loss, duplicate, mutation, or revision regression",
+      "outputField": "escapedRegressions.speakerHistoryBeyond4096Accessible",
+      "missingResult": "FAIL",
+      "passValue": true
+    },
+    "verificationCommands": [
+      ["jq", "-e", ".schema == \"viventium.voice.external-evidence.v1\"", "<private>/evidence/external-evidence.v1.json"],
+      ["jq", "-e", ".quality.cloudAudioEgressBytes == 0", "<private>/evidence/external-evidence.v1.json"],
+      ["jq", "-e", ".quality.cleanAttributedWordAccuracyPercent >= 95", "<private>/evidence/external-evidence.v1.json"],
+      ["jq", "-e", ".quality.noisySpeakerBankDerPercent <= 15", "<private>/evidence/external-evidence.v1.json"],
+      ["jq", "-e", ".quality.falseVerifiedOwnerAssignments == 0 and .quality.separateTrackAttributionPercent == 100 and .quality.unknownAbstentionErrors == 0", "<private>/evidence/external-evidence.v1.json"],
+      ["jq", "-e", ".escapedRegressions | to_entries | length == 6 and all(.value == true)", "<private>/evidence/external-evidence.v1.json"]
+    ]
+  },
+  "runs": [
+    {
+      "id": "dev-switches",
+      "environment": "dev",
+      "profile": "switches",
+      "freshSessionSlot": "dev-switches-session",
+      "command": ["node", "qa/modern-playground-voice/scripts/world_class_call_acceptance.js", "--profile", "switches", "--config", "<private>/manifests/dev-switches.json", "--output-root", "<private>/results/dev-switches", "--result", "<private>/results/dev-switches/result.json"],
+      "expected": { "modeSwitches": 100, "sameRtcConnection": true, "lostOrDuplicateReplayItems": 0 }
+    },
+    {
+      "id": "dev-reconnects",
+      "environment": "dev",
+      "profile": "reconnects",
+      "freshSessionSlot": "dev-reconnects-session",
+      "command": ["node", "qa/modern-playground-voice/scripts/world_class_call_acceptance.js", "--profile", "reconnects", "--config", "<private>/manifests/dev-reconnects.json", "--output-root", "<private>/results/dev-reconnects", "--result", "<private>/results/dev-reconnects/result.json"],
+      "expected": { "reconnects": 50, "lostOrDuplicateReplayItems": 0, "sequenceOrRevisionRegressions": 0 }
+    },
+    {
+      "id": "dev-audible-65m",
+      "environment": "dev",
+      "profile": "audible",
+      "freshSessionSlot": "dev-audible-session-terminal-after-hangup",
+      "command": ["node", "qa/modern-playground-voice/scripts/world_class_call_acceptance.js", "--profile", "audible", "--config", "<private>/manifests/dev-audible-65m.json", "--output-root", "<private>/results/dev-audible-65m", "--result", "<private>/results/dev-audible-65m/result.json", "--allow-command-actions"],
+      "expected": { "minutes": 65, "cleanHangups": 1, "audibleEvidenceWindows": 3, "maxAudibleEvidenceGapSeconds": 1200, "allBehaviorAndQualityEvidencePresent": true }
+    },
+    {
+      "id": "dev-soak-120m",
+      "environment": "dev",
+      "profile": "soak",
+      "freshSessionSlot": "dev-soak-session-distinct-from-audible",
+      "command": ["node", "qa/modern-playground-voice/scripts/world_class_call_acceptance.js", "--profile", "soak", "--config", "<private>/manifests/dev-soak-120m.json", "--output-root", "<private>/results/dev-soak-120m", "--result", "<private>/results/dev-soak-120m/result.json"],
+      "expected": { "minutes": 120, "processCrashes": 0, "leakedTasks": 0, "duplicateOrLostTasksSegmentsResults": 0, "maxPostWarmGrowthPercent": 10 }
+    },
+    {
+      "id": "installed-prod-real-call",
+      "environment": "installed_prod",
+      "profile": "real_synthetic_audio_call",
+      "freshSessionSlot": "installed-prod-real-call-session",
+      "command": ["node", "qa/modern-playground-voice/scripts/livekit_synthetic_audio_qa.js", "--audio", "<private>/fixtures/installed-prod-turn.wav", "--expect", "<synthetic-expected-phrase>", "--case-id", "installed-prod-real-call", "--playground-url", "http://localhost:3300", "--mode", "call", "--interactive", "--output-root", "<private>/results/installed-prod-real-call", "--result", "<private>/results/installed-prod-real-call/result.json", "--screenshot", "<private>/results/installed-prod-real-call/playground.png"],
+      "expected": { "autoConnected": true, "rtcConnected": true, "interactiveTurnCompleted": true, "deliveredAudioPresent": true, "resultPrivateAndSanitized": true }
+    },
+    {
+      "id": "clean-install-parity",
+      "environment": "clean_install",
+      "profile": "install_artifact_parity",
+      "freshSessionSlot": "clean-install-real-call-session",
+      "command": ["<private>/clean-install-runtime/bin/viventium", "doctor"],
+      "followUpRun": "installed-prod-real-call with playground-url http://localhost:3300 and clean-install runtime variables",
+      "expected": { "freshDirectory": true, "componentPinsBuildInstallParity": true, "realCallRepeated": true }
+    },
+    {
+      "id": "livekit-accepted-dependency-set",
+      "environment": "dev",
+      "profile": "audible",
+      "dependencySet": "livekit-agents-and-plugins-1.5.10",
+      "freshSessionSlot": "livekit-accepted-audible-session",
+      "command": ["node", "qa/modern-playground-voice/scripts/world_class_call_acceptance.js", "--profile", "audible", "--config", "<private>/manifests/livekit-1.5.10-audible.json", "--output-root", "<private>/results/livekit-1.5.10-audible", "--result", "<private>/results/livekit-1.5.10-audible/result.json", "--allow-command-actions"],
+      "requiredCompanionProfiles": ["focused-and-full-tests", "reconnects", "soak", "production-build", "installed-real-call", "clean-install-real-call"],
+      "expected": { "allGatesPass": true, "newWarnings": 0, "artifactVersionsExact": true }
+    },
+    {
+      "id": "livekit-candidate-dependency-set",
+      "environment": "dev",
+      "profile": "audible",
+      "dependencySet": "livekit-agents-and-plugins-1.6.9",
+      "freshSessionSlot": "livekit-candidate-audible-session",
+      "command": ["node", "qa/modern-playground-voice/scripts/world_class_call_acceptance.js", "--profile", "audible", "--config", "<private>/manifests/livekit-1.6.9-audible.json", "--output-root", "<private>/results/livekit-1.6.9-audible", "--result", "<private>/results/livekit-1.6.9-audible/result.json", "--allow-command-actions"],
+      "requiredCompanionProfiles": ["focused-and-full-tests", "reconnects", "soak", "production-build", "installed-real-call", "clean-install-real-call"],
+      "expected": { "allGatesPass": true, "noQualityOrLatencyRegression": true, "warningsCompared": true, "artifactVersionsExact": true }
+    }
+  ],
+  "coverage": {
+    "MPV-032": { "runs": ["dev-audible-65m", "installed-prod-real-call"], "gates": ["click-to-listening-p95", "behavior-oneClickAlreadyGranted", "behavior-firstUseBrowserPermissionOnly", "behavior-microphoneDeniedInlineRecovery", "behavior-authExpiredInlineRecovery", "behavior-noRouteInlineRecovery", "behavior-gatewayUnavailableRecovery"] },
+    "MPV-033": { "runs": ["dev-audible-65m", "installed-prod-real-call"], "gates": ["acknowledgement-p95", "warm-substantive-audio-p95", "active-work-silence-max", "call-chat-result-source-parity"] },
+    "MPV-034": { "runs": ["dev-audible-65m"], "gates": ["clean-speaker-attributed-word-accuracy", "noisy-speaker-bank-der", "false-verified-owner-assignments", "unknown-attribution-abstention", "behavior-sharedMicOwnerAbstention"] },
+    "MPV-035": { "runs": ["dev-audible-65m", "dev-reconnects"], "gates": ["separate-track-attribution", "behavior-separateTrackJoinLeaveAttribution", "task-speaker-result-replay"] },
+    "MPV-036": { "runs": ["dev-audible-65m"], "gates": ["behavior-speakerRevisionAfterSecondSpeaker", "unknown-attribution-abstention", "no-biometric-identity-claims"] },
+    "MPV-037": { "runs": ["dev-switches", "dev-audible-65m"], "gates": ["mode-switches-atomic", "behavior-listenOnlyZeroAuthorityPlanes", "behavior-wingGuestZeroSideEffectAuthority", "action-authority-enforcement"] },
+    "MPV-038": { "runs": ["dev-audible-65m"], "gates": ["barge-in-stop-p95", "cancel-state-p95", "cancel-barrier-p95", "post-cancel-suppression-barrier", "behavior-interruptionStopsSpeechWorkContinues", "behavior-cooperativeCancellation", "behavior-unenforceableCancellation", "behavior-alreadyCompletedCancellationTruthful", "behavior-cancelRaceIdempotent"] },
+    "MPV-039": { "runs": ["dev-audible-65m"], "gates": ["structured-latency-traces", "voice-hop-ordering", "voice-hop-first-breach", "task-event-visible-p95", "source-visible-p95", "behavior-needsInputRoundTrip", "behavior-retryRoundTrip"] },
+    "MPV-040": { "runs": ["dev-audible-65m"], "gates": ["behavior-authExpiredInlineRecovery", "behavior-invalidSignatureRecovery", "behavior-noRouteInlineRecovery", "behavior-gatewayUnavailableRecovery"] },
+    "MPV-041": { "runs": ["dev-reconnects", "dev-audible-65m"], "gates": ["reconnects-exact-replay", "task-speaker-result-replay", "behavior-hangupContinuesLinkedChat"] },
+    "MPV-042": { "runs": ["dev-audible-65m"], "gates": ["local-only-cloud-audio-egress", "behavior-sttFailureClassified", "behavior-llmFailureClassified", "behavior-ttsFailureClassified", "behavior-toolFailureClassified", "behavior-livekitFailureClassified", "behavior-localOnlyUnknownDegradation"] },
+    "MPV-043": { "runs": ["dev-audible-65m"], "gates": ["structured-latency-traces", "voice-hop-ordering", "voice-hop-first-breach", "diarization-caption-added-p95", "acknowledgement-p50", "acknowledgement-p95", "warm-substantive-audio-p95", "task-event-visible-p95", "source-visible-p95", "barge-in-stop-p95"] },
+    "MPV-044": { "runs": ["dev-reconnects", "dev-soak-120m"], "gates": ["reconnects-exact-replay", "task-speaker-result-replay", "automated-120-minute-soak"] },
+    "MPV-045": { "runs": ["dev-audible-65m", "dev-soak-120m"], "gates": ["zero-raw-audio-retention", "speaker-map-session-expiry", "memory-boundary-enforcement", "action-authority-enforcement", "behavior-postCallMemoryHardening", "behavior-conversationDeleteExport"] },
+    "MPV-046": { "runs": ["dev-audible-65m", "installed-prod-real-call"], "gates": ["raw-session-id-browser-capability"] },
+    "MPV-047": { "runs": ["dev-audible-65m", "dev-soak-120m"], "gates": ["suppression-barrier-task-pressure", "post-cancel-suppression-barrier"] },
+    "MPV-048": { "runs": ["dev-audible-65m"], "gates": ["hung-owner-cancel-ack", "cancel-state-p95", "cancel-barrier-p95", "post-cancel-suppression-barrier"] },
+    "MPV-049": { "runs": ["dev-audible-65m", "dev-reconnects"], "gates": ["malformed-task-snapshot-fail-visible", "task-speaker-result-replay"] },
+    "MPV-050": { "runs": ["dev-audible-65m", "dev-reconnects"], "gates": ["api-restart-barrier-replay", "task-speaker-result-replay", "post-cancel-suppression-barrier"] },
+    "MPV-051": { "runs": ["dev-audible-65m", "dev-reconnects", "dev-soak-120m"], "gates": ["speaker-history-over-4096-access", "task-speaker-result-replay"] },
+    "MPV-052": { "runs": ["installed-prod-real-call", "clean-install-parity"], "gates": ["telegram-one-time-launch-exchange", "telegram-launch-replay-rejected", "telegram-capability-cache-empty"] },
+    "MPV-053": { "runs": ["dev-audible-65m", "installed-prod-real-call"], "gates": ["canonical-agent-authority", "agent-revocation-before-turn", "agent-decoy-rejected", "listen-only-zero-agent-execution"] },
+    "MPV-054": { "runs": ["livekit-accepted-dependency-set", "livekit-candidate-dependency-set"], "gates": ["livekit-dependency-suite-parity", "livekit-dependency-qoe-nonregression", "livekit-dependency-warning-diff", "livekit-dependency-build-install-clean-parity", "livekit-dependency-promotion-decision"] }
+  },
+  "publication": {
+    "allowedSchema": "viventium.voice.acceptance.result.v1",
+    "forbidden": ["raw_audio", "transcript_text", "call_or_task_ids", "urls", "filesystem_paths", "logs", "screenshots", "personal_or_customer_data"],
+    "reviewRequiredBeforeCopy": true
+  }
+}

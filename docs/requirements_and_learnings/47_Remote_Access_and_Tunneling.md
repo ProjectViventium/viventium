@@ -584,6 +584,9 @@ Current contract:
 - localhost callers still receive the localhost playground URL
 - the browser-facing public API origin must stay separate from the local frontend dev proxy target,
   so secure-origin launches do not proxy back into their own public HTTPS edge
+- Telegram `/call` public links are single-use launch links, not persistent directory links. Their
+  fragment bearer is stripped and exchanged same-origin for exact-session browser authority; raw
+  session ids and replayed launch links must not become remote control credentials
 - this avoids turning `Host` header spoofing into an open redirect or accidental public-link switch
 
 ## LiveKit Network Truth

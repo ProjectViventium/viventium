@@ -15,6 +15,9 @@ User → LibreChat UI → AgentClient (API) → BackgroundCortexService
                        ├→ pinned Feelings snapshot → dynamic instruction tail
                        ├→ spoken surface → shared feeling-expression + provider prompt
                        │                  └→ raw controls to TTS / sanitized visible text
+                       ├→ signed call session + exact browser capability + canonical Agent ACL
+                       │   ├→ LiveKit/voice gateway real-time media, TTS, interruption, speakers
+                       │   └→ LibreChat durable task/tool/search/memory work plane
                        │
                        ├→ SSE on_cortex_update → UI status cards
                        └→ BackgroundCortexFollowUpService → DB follow-up message
@@ -30,6 +33,15 @@ User → LibreChat UI → AgentClient (API) → BackgroundCortexService
 - Authenticated Feelings API: `LibreChat/api/server/routes/viventium/feelings.js`
 - Detached reaction: `LibreChat/api/server/services/viventium/EmotionalReactionService.js`
 - Spoken-surface prompt composition: `LibreChat/api/server/services/viventium/surfacePrompts.js`
+- Call session/auth: `LibreChat/api/server/routes/viventium/calls.js`,
+  `LibreChat/api/server/services/viventium/CallSessionService.js`, `callLaunch.js`, and
+  `VoiceAgentAuthorizationService.js`
+- Durable task/work plane: `LibreChat/api/server/services/viventium/VoiceTaskService.js`,
+  `VoiceTaskManagementTool.js`, task/suppression models, and owner adapters
+- Speaker persistence: `LibreChat/api/server/services/viventium/SpeakerSegmentService.js` and the
+  voice speaker-segment model
+- Real-time media/relay: `voice-gateway/worker.py`, `speaker_segments.py`, and
+  `multi_track_ingress.py`
 
 ### Key Frontend Components
 - SSE buffering + cortex events: `LibreChat/client/src/hooks/SSE/useSSE.ts`, `LibreChat/client/src/hooks/SSE/useResumableSSE.ts`
@@ -37,6 +49,10 @@ User → LibreChat UI → AgentClient (API) → BackgroundCortexService
 - Follow-up polling: `LibreChat/client/src/hooks/Viventium/useCortexFollowUpPoll.ts`
 - Export formatting: `LibreChat/client/src/hooks/Conversations/useExportConversation.ts`
 - Feelings instrument: `LibreChat/client/src/components/Feelings/` at `/feelings`
+- GlassHive Agent Builder fields: `LibreChat/client/src/components/SidePanel/Agents/ModelPanel.tsx`
+- Harness activity rendering: `LibreChat/client/src/components/Chat/Messages/Content/HarnessActivity.tsx`
+- Modern call surface: `agent-starter-react` bootstrap/BFF routes, call status/mode/activity and
+  speaker components, plus task/speaker event and action hooks
 
 ## Feelings runtime
 

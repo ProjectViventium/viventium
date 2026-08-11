@@ -543,7 +543,7 @@ import json
 import tomllib
 import requests
 from contextlib import contextmanager
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 CONFIG_DIR = os.environ.get('CONFIG_DIR', 'user_configs')
 
@@ -649,6 +649,12 @@ def _should_cache_call_url(call_url):
     if not parsed.scheme or not parsed.netloc:
         return False
 
+    # One-time launch and renewable browser capabilities are bearer authority. Telegram menus can
+    # be cached, forwarded, and revisited, so neither URL may enter the bot's in-memory URL cache.
+    fragment = parse_qs(parsed.fragment, keep_blank_values=True)
+    if "viventiumCallLaunch" in fragment or "viventiumCallCapability" in fragment:
+        return False
+
     if parsed.scheme == "https":
         return True
 
@@ -732,13 +738,16 @@ def get_telegram_call_link_result(conversation_key):
     now = time.time()
     cached = _CALL_URL_CACHE.get(normalized_user_id)
     if cached and cached.get("expires_at", 0) > now:
-        return {
-            "url": cached.get("url", ""),
-            "status_code": 200,
-            "link_required": False,
-            "public_url_required": False,
-            "error": "",
-        }
+        cached_url = cached.get("url", "")
+        if _should_cache_call_url(cached_url):
+            return {
+                "url": cached_url,
+                "status_code": 200,
+                "link_required": False,
+                "public_url_required": False,
+                "error": "",
+            }
+        _CALL_URL_CACHE.pop(normalized_user_id, None)
 
     base_url = (
         os.environ.get("VIVENTIUM_LIBRECHAT_ORIGIN")
@@ -838,7 +847,10 @@ def get_cached_telegram_call_url(conversation_key):
         return ""
     cached = _CALL_URL_CACHE.get(normalized_user_id)
     if cached and cached.get("expires_at", 0) > time.time():
-        return cached.get("url", "")
+        cached_url = cached.get("url", "")
+        if _should_cache_call_url(cached_url):
+            return cached_url
+        _CALL_URL_CACHE.pop(normalized_user_id, None)
     return ""
 
 class NestedDict:

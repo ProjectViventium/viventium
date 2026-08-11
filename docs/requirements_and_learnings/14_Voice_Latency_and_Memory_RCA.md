@@ -644,3 +644,22 @@ Review-only Claude pass on 2026-05-15 agreed with the broad RCA but corrected th
 3. Treat `Message.saveMessage` content-text mirroring as a parity-wide persistence repair, not a
    voice-only fix, and cover non-voice assistant content shapes in regression tests.
 4. Only after that consider the narrow Phase A fast no-activation bypass described above.
+
+## World-Class Call Measurement Contract (2026-08-09)
+
+The preceding measurements are historical RCA evidence, not current acceptance. In particular,
+the earlier `Remaining live validation` list is superseded by the living cases and endurance
+runbook under `qa/modern-playground-voice/`.
+
+Every measured lookup turn now emits one content-free correlated hop trace:
+
+`utterance end -> gateway dispatch -> agent start -> optional tool start/end -> first model token ->
+TTS first byte -> audio output`
+
+The first hop that breaches its budget owns the fix; downstream optimization must not hide an
+upstream violation. Current acceptance requires acknowledgement p50 at or below 1.0 seconds and p95
+at or below 1.5 seconds, warm substantive audio p95 at or below 2.5 seconds, task-event visibility
+p95 at or below 250 milliseconds, source visibility within 500 milliseconds of availability, no
+unexplained active-work silence beyond five seconds, and barge-in speech stop p95 at or below 1.4
+seconds. Measurements become accepted evidence only after the dated real browser/audio report is
+linked from the owning QA cases; source or instrumentation presence alone is `PARTIAL`.

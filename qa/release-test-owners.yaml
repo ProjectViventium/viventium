@@ -216,6 +216,8 @@ release_tests:
     qa_owner: qa/continuity-ops/cases.md
   tests/release/test_uploads_migration.py:
     qa_owner: qa/continuity-ops/cases.md
+  tests/release/test_voice_endurance_qa_contract.py:
+    qa_owner: qa/modern-playground-voice/cases.md
   tests/release/test_voice_call_startup_guard.py:
     qa_owner: qa/modern-playground-voice/cases.md
   tests/release/test_voice_playground_dispatch_contract.py:

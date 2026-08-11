@@ -51,6 +51,21 @@
 - **Last run:** 2026-06-28, automated regression and live-runtime QA rerun. See
   `reports/2026-06-28-telegram-fallback-audio-table-qa-rerun.md`.
 
+## Case TR-012: `/call` Uses One-Time Launch Authority
+
+- **Expected outcome:** the real bot returns the configured public HTTPS call URL only after the
+  canonical Agent passes global `USE` and resource `VIEW`. The browser strips its one-time fragment
+  bearer before same-origin exchange and auto-connects. A lost response retries only with the same
+  browser-generated idempotency value; a different value or second-browser replay is denied.
+- **Forbidden result:** localhost/raw LAN is presented as supported remote access; raw session id or
+  a consumed link authorizes call state; body agent metadata bypasses the canonical Agent ACL;
+  capability material enters query/body, logs, referrers, cache, screenshots, or reports.
+- **Evidence to capture:** real Telegram `/call` delivery, two-browser exchange/replay status matrix,
+  fragment-strip order, cache/referrer/privacy audit, permission/revocation matrix, visible/audible
+  call, linked-chat persistence, and active artifact identity.
+- **Last run:** `PARTIAL` — 2026-08-09 — focused launch/ACL automation is supporting evidence; the
+  real Telegram, second-browser, public-origin, audible, revocation, and persistence path is pending.
+
 ## Case TR-006: Telegram Markdown Tables Render Readably
 
 - **Expected outcome:** Markdown pipe tables from main answers or worker callbacks are converted to
@@ -236,10 +251,12 @@ rows before claiming a pass when the feature behavior changes.
 | `TELEGRAM-UC-011` | Hold the durable delivery API unavailable through repeated poll attempts, recover it, then enqueue a synthetic late callback. | `TR-012` | Telegram LibreChat bridge dispatcher | deterministic delays, warning/recovery logs, callback delivery timing and ledger status | Failure polling backs off to the cap without log spam; recovery immediately restores the normal poll interval and late delivery semantics. | PASS-AUTOMATED 2026-07-24; external callback delivery not run |
 | `TELEGRAM-UC-012` | Send a synthetic text turn while the empty GlassHive delivery poller is active, then repeat after a runtime restart. | `TR-013` | real Telegram bot chat and promoted local runtime | visible send/reply timestamps, pending-update count, process sample, bridge/API logs, active checkout identity | Both updates leave the Bot API queue promptly and receive a visible reply; local polling performs no unused CA-bundle work, and HTTPS verification remains unchanged. | PASS-AUTOMATED/PARTIAL-LIVE 2026-07-25; escaped stall reproduced, post-fix visible rerun pending |
 | `TELEGRAM-UC-013` | Upgrade or activate from a checkout with legacy repo-local Telegram preferences, then force a candidate failure and restart twice. | `TR-014`, `CONT-014` | supported CLI/helper, installed Telegram component, App Support preference state, real Telegram | component/selection/receipt identities, migration backup hashes, source-tree no-write proof, visible replies and latency | Preferences remain behaviorally intact, the source tree is untouched, rollback and success both execute from App Support, and the second start is byte-exact. | PASS-AUTOMATED/PARTIAL-INSTALLED 2026-07-25; complete 2,063-passed/11-skipped release and 347 Telegram cases pass, including real process-group SIGKILL recovery; installed restart/message lane pending |
+| `TELEGRAM-UC-014` | Send `/call`, open it in one browser, retry a lost exchange, then replay it from another browser and after Agent revocation. | `TR-012`, `MPV-052`, `MPV-053` | real Telegram bot, public HTTPS playground, two browser contexts, linked chat | delivered link class, fragment/exchange order, replay statuses, cache/referrer/log scan, ACL audit, audible call, persistence | The first browser enters one-click Call; same-idempotency retry is safe; replay and revoked Agent fail without disclosure or mutation. | `PARTIAL` 2026-08-09; real cross-surface journey pending |
 
 ## Release Test Traceability
 
 - `tests/release/test_telegram_codex_runtime_paths.py`
+- nested Telegram `/call` route, call-launch exchange, and Voice Agent authorization suites
 - `tests/release/test_telegram_lazy_startup_contract.py`
 - `tests/release/test_telegram_launchctl_ownership.py`
 - `tests/release/test_telegram_transcription_error_contract.py`

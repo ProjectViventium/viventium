@@ -215,10 +215,14 @@ llm:
   extra_provider_keys:
     openrouter: keychain://viventium/openrouter_api_key
 voice:
-  mode: local
+  # The public full example must compile on every supported host. Enable one complete route
+  # explicitly: `local` is Apple-Silicon-only and never falls back to cloud; `hosted` requires
+  # configured provider credentials.
+  mode: disabled
   stt_provider: whisper_local
-  # For Intel Macs or other machines where local STT is not desired, explicitly switch to a hosted
-  # provider instead of relying on silent installer rewrites:
+  # For Intel Macs or other machines where local audio is unavailable, explicitly switch the whole
+  # voice mode to hosted instead of relying on silent local-to-cloud rewrites:
+  # mode: hosted
   # stt_provider: assemblyai
   # stt:
   #   secret_ref: keychain://viventium/assemblyai_api_key
@@ -238,9 +242,10 @@ voice:
     min_endpointing_delay_s: 0.35   # floor before the turn can end (keep short for snappiness)
     max_endpointing_delay_s: 0.8    # ceiling the semantic detector may wait for more speech
                                     # (lower = faster end-of-turn; default 1.8 felt slow at ~1.4s p50)
+  # Local mode is an all-local egress boundary. Apple Silicon resolves this explicit automatic
+  # choice to the shipped local Chatterbox route; unsupported hosts fail closed during compile.
   tts_provider: browser
   wing_mode:
-    default_enabled: false
     prompt: |-
       WING MODE:
       - You are in Wing Mode during a live voice call: quietly aware, helpful, and unobtrusive.

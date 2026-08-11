@@ -196,6 +196,48 @@ the worker exits with an actionable startup error if it is missing or invalid.
     strip policy, and structural control result. It never includes prompt, user, or synthesized
     text; use the opt-in payload logger only when a transcript-level incident requires it.
 
+### Live call contracts
+
+- The configured STT route remains authoritative. AssemblyAI diarization is enabled with
+  `speaker_labels`; this does not select AssemblyAI or send local-only audio to a cloud route.
+- The signed job publisher is the owner input. Additional participant microphone tracks are
+  transcribed independently and sent to `/api/viventium/voice/ambient-transcript` as soft evidence;
+  they never create another speaking agent or authorize tools and side effects.
+- Provider speaker IDs are call-scoped. A second provider speaker on one track downgrades every
+  speaker on that track to unverified `Speaker N`; missing or ambiguous attribution is `Unknown`.
+- The gateway polls `/api/viventium/voice/call-sessions/:callSessionId/state` with the existing call
+  secret. Mode updates apply without reconnecting. `listen_only` clears pending progress speech and
+  interrupts active progress audio; an unavailable state endpoint fails closed for new progress TTS.
+- Authoritative `voice_task_event` SSE objects are validated and relayed unchanged over reliable
+  LiveKit data packets on `viventium.task.v1`. `SpeakerSegmentV1` uses
+  `viventium.speaker.v1`. Both topics use `publish_data` and are targeted only to the signed owner
+  identity; missing owner binding fails closed instead of broadcasting transcripts or task data.
+- Before the exact job is marked ready, one supervised call-lifetime subscription to
+  `/api/viventium/voice/tasks/events?callSessionId=<exact>` must complete an authenticated 2xx
+  handshake and receive the strict call-scoped `voice_task_sync` / `synchronized` marker emitted
+  after durable replay. It receives initial snapshots and later child-task events. A 2xx without
+  that marker or any startup rejection never enables the response plane. Disconnect, terminal auth,
+  or consumer death interrupts and suspends main, progress, and follow-up speech; a reconnect restores
+  speech only after a fresh authoritative call-state snapshot. The stream uses full call/job/worker
+  auth, reconnects with bounded backoff, and shares the same monotonic gate as the parent generation
+  stream, so retries and GlassHive completions stay live without polling or duplicate publication.
+- Barge-in or stream disposal stops speech only. Explicit task cancellation uses
+  `/api/viventium/voice/tasks/:taskId/cancel`; the gateway never infers cancellation from transcript
+  words and never cancels backend work merely because LiveKit stopped consuming it. Accepted
+  cancellations install a separate 24-hour suppression tombstone; ordinary task cursor pressure
+  cannot evict that zero-output barrier before its TTL.
+- Hop telemetry carries correlation IDs and timestamps, not transcript content. The shared sequence
+  is utterance end, gateway dispatch, agent/tool work, first model token, TTS first byte, and audio
+  output so the first breached latency hop can be identified deterministically.
+
+### Dependency baseline
+
+- `requirements.txt` pins `livekit-agents` and every LiveKit plugin to `1.5.10` as one tested set.
+- `1.6.9` was evaluated separately against the same behavior, latency, diarization, reconnect, and
+  packaging gates. It produced no accepted improvement and added the turn-detector deprecation
+  warning, so it was not promoted. Future dependency changes must rerun the same comparison and the
+  real audible/installed call gates before changing the pin.
+
 ### Run
 
 From repo root:

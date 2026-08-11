@@ -23,8 +23,9 @@ the main route.
 7. Hidden machine-level voice config must not override or replace the agent-visible Voice Call LLM.
 8. The voice parameter bag must not overwrite or persist back into the primary `model_parameters`
    bag. Voice settings are separate authoring state.
-9. Modern playground disclosures must resolve the effective assistant route from the actual call
-   agent and show the concrete provider/model that will answer the call.
+9. The effective assistant route must resolve from the actual call agent and remain observable in
+   Agent Builder, Advanced settings, and diagnostics. The primary Call/Wing surface has no pre-call
+   provider disclosure or first-use modal; route truth must not add friction to one-click calling.
 10. Shipped source-of-truth voice routes must seed provider-specific voice parameters explicitly so
     fresh installs and syncs preserve the intended behavior without relying on the primary model
     bag. Source-owned examples and fixtures may use provider-specific routes, but public docs must
@@ -165,9 +166,9 @@ does not select the Voice Call LLM, voice-call prompt, or voice-call Phase A pol
 - **AgentConfig.tsx**: "Voice Chat Model" button after "Model*" showing voice provider icon + model name, or "Using main model" when empty.
 - **AgentPanel.tsx**: Routes `Panel.voiceLlmModel` to VoiceLlmPanel. Includes voice fields and
   aligned voice-model parameters in `composeAgentUpdatePayload()`.
-- **Modern playground Wing Mode disclosure**: Resolves the effective assistant route from the
-  call-session agent and shows the concrete provider/model plus whether it came from the agent
-  Voice Call LLM or inherited the agent primary LLM.
+- **Modern playground call surface**: Resolves the effective route from the call-session agent but
+  does not render provider selection or a Wing disclosure in the primary path. Advanced settings
+  and diagnostics expose the concrete effective/fallback routes when needed.
 
 ### Runtime Layer
 - **voiceLlmOverride.js** (`api/server/services/viventium/`): Encapsulates activation check, validation, fallback, and model swap.

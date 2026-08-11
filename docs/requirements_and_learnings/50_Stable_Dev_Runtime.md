@@ -20,13 +20,17 @@ confusing upstream component boundaries.
 - The classic `agents-playground` UI is not part of local prod or dev-env defaults. It remains an
   explicit classic-playground opt-in only, so default starts do not spend resources on the old UI.
 - Heavy local services are shared singleton services by default:
-  - Meilisearch conversation search
   - recall/RAG
   - SearXNG
   - Firecrawl
   - Google Workspace MCP
   - Microsoft 365 MCP
 - Shared singleton services must not be duplicated merely because a developer starts a dev env.
+- Every `dev-env run` process tree inherits bounded native-library worker-pool settings and remains
+  under an active Python-thread guard. One Python process may use at most 512 threads and the
+  complete candidate Python tree may use at most 2,048 threads. An operator may lower those limits
+  for QA, but cannot raise them through inherited environment variables. A breach stops the isolated
+  dev process group and returns a distinct nonzero safety status instead of allowing host exhaustion.
 - Full isolation is an explicit advanced future mode, not the default.
 - A listener on the configured Mongo port is not sufficient persistence readiness. Before reusing an
   existing Mongo process, the native launcher must query the running server's parsed command-line
@@ -78,8 +82,10 @@ boundary:
 | LibreChat frontend | canonical installed port | offset port |
 | Modern LiveKit Playground | canonical installed port | offset port |
 | voice health port | canonical installed port | offset port when needed |
+| MongoDB | canonical runtime data directory and port | isolated dev-env data directory and offset port |
+| LiveKit | canonical runtime ports | offset HTTP, TCP, and UDP ports |
 | Scheduling Cortex MCP | canonical installed port and scheduler DB | offset port and dev-env scheduler DB |
-| Meilisearch conversation search | shared singleton | use local prod singleton |
+| Meilisearch conversation search | canonical runtime index | isolated dev-env index and offset port |
 | recall/RAG | shared singleton | use local prod singleton |
 | SearXNG | shared singleton | use local prod singleton |
 | Firecrawl | shared singleton | use local prod singleton |
@@ -560,6 +566,40 @@ is never a safety gate.
 - Do not silently update nested repos or `components.lock.json`.
 - Do not treat a dirty checkout as release-ready. Dirty local testing requires an explicit local-only
   acknowledgement.
+- Do not run broad Python, voice, audio, dependency-build, or soak workloads directly on a developer
+  workstation after a host-exhaustion signal. Use the guarded dev-env boundary for product startup;
+  use a disposable machine for unbounded stress. Focused checks outside a dev env must explicitly
+  bound native worker pools and process creation.
+- Do not disable, bypass, or raise the dev-env Python-thread guard to make a workload pass. If a
+  legitimate candidate reaches the default limit, treat that as a product defect and inspect the
+  process tree before changing any budget.
+
+### August 10, 2026 Python Thread-Exhaustion Incident
+
+Three same-day macOS kernel panic records reported the same spinlock-timeout signature and named a
+`python3.11` task with 9,474, 10,385, and 12,255 threads respectively. Memory/compressor state was
+reported healthy in the panic records. This proves a catastrophic Python-thread expansion coincided
+with each panic; the records do not identify the exact Python command or prove whether user-space
+code or the macOS kernel owns the underlying defect.
+
+The durable prevention boundary is `bin/viventium dev-env run`:
+
+- it replaces inherited OpenBLAS, OpenMP, MKL, vecLib, NumExpr, Rayon, and tokenizer parallelism
+  values with bounded development defaults;
+- it launches the candidate in its own process session and inspects only Python members of that
+  candidate process group every 250 ms, including services re-parented by their launcher;
+- it stops the complete isolated process group when one Python process exceeds 512 threads or the
+  candidate Python tree exceeds 2,048 threads;
+- it fails closed if the supported host cannot inspect the process tree; and
+- inherited detached-start flags are disabled so a guarded run cannot silently leave an
+  unsupervised runtime behind; and
+- Ctrl+C, SIGTERM, and SIGHUP are forwarded to the isolated process group and wait for its normal
+  cleanup to finish. Only a safety breach or inspection failure uses the bounded forced-stop path.
+
+This guard is deliberately scoped to dev envs. It does not mutate or restart installed local prod,
+and it is not evidence that large Python stress tests are safe on the same workstation. Any future
+change to Python runtime startup, voice dependencies, test parallelism, or dev-env process ownership
+must rerun `SDR-017` before user-level runtime QA.
 
 ## QA Requirements
 
@@ -570,3 +610,5 @@ Acceptance requires proving:
 - update check is side-effect-free
 - activate-current uses the existing runtime-checkout path
 - helper update UX can report up-to-date, blocked, and update-available states
+- inherited high parallelism is replaced by bounded dev defaults, a synthetic runaway is stopped
+  with the classified guard status, and the installed runtime stays untouched

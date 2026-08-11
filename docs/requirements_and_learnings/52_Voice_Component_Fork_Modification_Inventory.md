@@ -1,6 +1,6 @@
 # 52. Voice Component Fork Modification Inventory
 
-Generated: 2026-05-18
+Generated: 2026-08-10
 
 ## Purpose
 
@@ -48,6 +48,16 @@ Excluded from this fork-replay inventory:
   server artifact exists: Custom Settings startup must not discover or run `livekit` or
   `livekit-server` from `PATH`. It may use only the locked Docker runtime or a deliberately
   configured reachable external endpoint; otherwise it fails closed with a no-Voice path.
+- The `agent-starter-react` inventory was regenerated on 2026-08-10 from merge-base
+  `62c4654086d217bac46f2275c3574840646c6a89` through exact candidate
+  `79a8daea0966bdaaf2952c7c8b6fadddcc1809f8`. It includes call bootstrap/capability and launch
+  exchange, server-owned identity/route/dispatch readiness, call-mode/status/activity, task
+  list/events/actions, speaker paging/history, responsive/accessibility behavior, and focused
+  tests. The public-safe current file inventory appears in the 2026-08-10 addendum; the older hunk
+  anchors remain historical rebase context and are not release-identity evidence.
+- The Python LiveKit Agents/plugin decision is not a fork replay row. Its accepted `1.5.10` pin and
+  rejected `1.6.9` comparison belong in `voice-gateway/requirements.txt`, the gateway/runtime voice
+  docs, and MPV-054.
 
 
 ## Checklist Legend
@@ -60,7 +70,7 @@ Excluded from this fork-replay inventory:
 
 | Component | Role | Upstream repo | Base commit | Viventium HEAD | Upstream HEAD observed | Ahead / behind | Files | Added | Deleted |
 | --- | --- | --- | --- | --- | --- | ---: | ---: | ---: | ---: |
-| `agent-starter-react` | modern playground / active browser voice UI | `livekit-examples/agent-starter-react` | `62c4654086d2` | `c6aaa5abe202` | `cee4acfd969c` | `12 / 7` | 99 | 6745 | 9950 |
+| `agent-starter-react` | modern playground / active browser voice UI | `livekit-examples/agent-starter-react` | `62c4654086d2` | `79a8daea096` | `46f51a6a300c` | `37 / 10` | 151 | 17446 | 9922 |
 | `agents-playground` | legacy/classic playground retained as fallback/reference | `livekit/agents-playground` | `ee0b50c9f8c6` | `019b7abf4094` | `b6e09509fe36` | `1 / 2` | 38 | 12021 | 4875 |
 | `livekit` | LiveKit server source-audit placeholder; not an executable runtime | `livekit/livekit` | `9674ac48ab46` | `b1c51ce14454` | `37eb7a327647` | `1 / 72` | 384 | 14 | 135707 |
 | `cartesia-voice-agent` | Cartesia example component fork placeholder; active Cartesia route lives in Viventium voice gateway/shared config | `livekit-examples/cartesia-voice-agent` | `177fa9225ebf` | `23a86abe21c6` | `c6873f2f7efb` | `1 / 1` | 46 | 14 | 8673 |
@@ -80,10 +90,34 @@ Excluded from this fork-replay inventory:
 - Path: `viventium_v0_4/agent-starter-react`
 - Upstream branch observed: `upstream/main`
 - Base: `62c4654086d217bac46f2275c3574840646c6a89`
-- Viventium HEAD: `c6aaa5abe2027b52ff2e166ef8cf27c51fe545ae`
-- Upstream HEAD observed during inventory: `cee4acfd969c71b836d8421e22110d98b187b01c`
+- Viventium HEAD: `79a8daea0966bdaaf2952c7c8b6fadddcc1809f8`
+- Upstream HEAD observed during inventory: `46f51a6a300cceeb1c1460116a620c32cdef18fb`
 
 ```text
+79a8dae 2026-08-10 fix: preserve terminal call state truth
+161317e 2026-08-10 fix: reconcile authoritative call readiness in UI
+2c63581 2026-08-10 fix: await authoritative gateway readiness
+bc54cda 2026-08-10 fix: admit worker-bound voice assignments
+c05d83b 2026-08-10 fix: dispatch voice worker into canonical room
+2a7bda8 2026-08-10 fix: fence voice dispatch generations
+d09aa62 2026-08-10 Harden voice worker readiness preflight
+0609df6 2026-08-10 feat: deliver world-class voice call experience
+98d1249 2026-08-01 Merge pull request #10 from ProjectViventium/codex/glasshive-voice-cancel
+7b8dfe8 2026-08-01 fix(voice): retain call identity across refresh
+65714e4 2026-08-01 fix(voice): forward explicit end cancellation
+f196cd5 2026-07-22 Merge pull request #8 from ProjectViventium/codex/release-final-20260721-agent-starter-react
+fd77856 2026-07-21 fix: bind modern playground identity at build time
+d127229 2026-07-21 fix: keep voice setup accessible at narrow sizes
+949e22e 2026-07-21 fix: explain secure voice launch path
+4d4d78c 2026-07-21 fix: identify exact modern playground runtime
+b26aa3f 2026-07-20 chore: update patched frontend dependencies
+66c1d35 2026-07-20 chore: protect machine-local runtime state
+83044a5 2026-06-06 Merge pull request #6 from ProjectViventium/codex/playground-main-public-20260607
+2630457 2026-06-06 Ship Viventium voice playground updates
+e4d05d6 2026-05-24 Harden citation source sanitization (#5)
+a2dd546 2026-05-19 Merge pull request #4 from ProjectViventium/codex/publish-local-voice-rag-updates
+5d75895 2026-05-18 Format playground files for CI
+5836aa9 2026-05-18 Harden Viventium voice call startup
 c6aaa5a 2026-05-12 Merge codex/local-latest-public-sync
 5dca039 2026-05-12 Preserve configured local Whisper route labels
 e06db8f 2026-05-07 Polish voice route display and transcript dedupe
@@ -687,6 +721,96 @@ a791a46 2026-04-01 Apply Viventium public release state
 | [ ] | `agent-starter-react-H0270` | `styles/globals.css` | `@@ -122,3 +121,41 @@` | modern playground Viventium integration retained from the fork | Apply this hunk manually to the corresponding latest-upstream file, resolving context drift. Follow the comment audit: added Viventium text files need a top-of-file `VIVENTIUM START` / `VIVENTIUM END` block; modified or renamed upstream text files need inline wrappers around changed Viventium blocks; binary, generated, comment-limited, and deleted files use the inventory notes instead. |
 | [ ] | `agent-starter-react-H0271` | `tsconfig.json` | `@@ -1,7 +1,11 @@` | build/runtime configuration needed by the Viventium modern playground fork | Apply this hunk manually to the corresponding latest-upstream file, resolving context drift. Follow the comment audit: added Viventium text files need a top-of-file `VIVENTIUM START` / `VIVENTIUM END` block; modified or renamed upstream text files need inline wrappers around changed Viventium blocks; binary, generated, comment-limited, and deleted files use the inventory notes instead. |
 | [ ] | `agent-starter-react-H0272` | `tsconfig.json` | `@@ -19,9 +23,19 @@` | build/runtime configuration needed by the Viventium modern playground fork | Apply this hunk manually to the corresponding latest-upstream file, resolving context drift. Follow the comment audit: added Viventium text files need a top-of-file `VIVENTIUM START` / `VIVENTIUM END` block; modified or renamed upstream text files need inline wrappers around changed Viventium blocks; binary, generated, comment-limited, and deleted files use the inventory notes instead. |
+
+### 2026-08-10 Current Call Delta Addendum
+
+The historical hunk anchors above cover the original fork delta through `c6aaa5abe202`. The exact
+public-safe file inventory added or changed from that checkpoint through current candidate
+`79a8daea0966bdaaf2952c7c8b6fadddcc1809f8` is below. Generate a fresh raw diff from
+`62c4654086d217bac46f2275c3574840646c6a89..79a8daea0966bdaaf2952c7c8b6fadddcc1809f8`
+for line-level replay; never use the historical hunk numbers as current release identity.
+
+```text
+D .github/CODEOWNERS
+M .gitignore
+M README.md
+A app/api/call-launch-exchange/route.test.ts
+A app/api/call-launch-exchange/route.ts
+A app/api/call-session-end/route.ts
+A app/api/call-session-state/route.test.ts
+M app/api/call-session-state/route.ts
+M app/api/call-session-voice-settings/route.ts
+A app/api/call-speakers/route.test.ts
+A app/api/call-speakers/route.ts
+A app/api/call-tasks/[taskId]/[action]/route.ts
+A app/api/call-tasks/[taskId]/route.ts
+A app/api/call-tasks/proxy.test.ts
+A app/api/call-tasks/proxy.ts
+A app/api/call-tasks/route.ts
+A app/api/connection-details/authority.test.ts
+M app/api/connection-details/route.ts
+A app/api/health/route.ts
+A app/call-bootstrap/route.test.ts
+A app/call-bootstrap/route.ts
+M app/layout.tsx
+M components/app/app.tsx
+A components/app/call-activity.test.tsx
+A components/app/call-activity.tsx
+A components/app/call-issue-notice.test.tsx
+A components/app/call-issue-notice.tsx
+A components/app/call-mode-control.test.tsx
+A components/app/call-mode-control.tsx
+A components/app/session-view.test.tsx
+M components/app/session-view.tsx
+M components/app/view-controller.tsx
+M components/app/welcome-view.tsx
+M components/livekit/agent-control-bar/agent-control-bar.tsx
+M components/livekit/agent-control-bar/chat-input.tsx
+M components/livekit/agent-control-bar/track-toggle.tsx
+M eslint.config.mjs
+A hooks/useCallEndLifecycle.test.ts
+A hooks/useCallEndLifecycle.test.tsx
+A hooks/useCallEndLifecycle.ts
+A hooks/useCallResultBridge.test.tsx
+A hooks/useCallResultBridge.ts
+A hooks/useCallSessionState.test.tsx
+M hooks/useCallSessionState.ts
+A hooks/useCallSessionVoiceSettings.test.tsx
+M hooks/useCallSessionVoiceSettings.ts
+A hooks/useCallTaskActions.test.tsx
+A hooks/useCallTaskActions.ts
+A hooks/useViventiumVoiceEvents.test.tsx
+A hooks/useViventiumVoiceEvents.ts
+M hooks/useVoiceRoute.ts
+M hooks/useWakeLock.ts
+A lib/authoritative-call-session.ts
+A lib/call-browser-capability.ts
+A lib/call-capability-bootstrap.test.ts
+A lib/call-capability-bootstrap.ts
+A lib/call-handoff.test.ts
+A lib/call-handoff.ts
+A lib/call-proxy.test.ts
+A lib/call-proxy.ts
+A lib/call-start.test.ts
+A lib/call-start.ts
+A lib/call-state.test.ts
+A lib/call-state.ts
+M lib/citations.ts
+A lib/microphone-start.test.ts
+A lib/microphone-start.ts
+A lib/utils.test.ts
+M lib/utils.ts
+A lib/voice-events.test.ts
+A lib/voice-events.ts
+M next.config.ts
+M package.json
+M pnpm-lock.yaml
+M public/site.webmanifest
+M styles/globals.css
+M tsconfig.json
+A vitest.config.ts
+A vitest.setup.ts
+```
 
 ## agents-playground: Commit Inventory
 
@@ -2746,7 +2870,7 @@ Use this sequence for each future upstream refresh.
 
 ## Raw Line-By-Line Diff Handling
 
-The exact raw line-by-line diff for this inventory was generated locally at `tmp/voice-component-fork-inventory/2026-05-18-raw-line-by-line-diffs.md`. That path is intentionally under ignored `tmp/` and must stay out of tracked public docs. The raw appendix includes large deleted upstream source blocks from placeholder component forks, so public release review should rely on the public-safe hunk table above plus locally regenerated raw diffs when doing the actual rebase.
+The exact raw line-by-line diff for this inventory is regenerated locally at `tmp/voice-component-fork-inventory/2026-08-10-raw-line-by-line-diffs.md`. That path is intentionally under ignored `tmp/` and must stay out of tracked public docs. The raw appendix includes large deleted upstream source blocks from placeholder component forks, so public release review should rely on the public-safe inventory above plus locally regenerated raw diffs when doing the actual rebase.
 
 Regenerate the raw diff artifact from the current checked commits with:
 
@@ -2754,11 +2878,11 @@ Regenerate the raw diff artifact from the current checked commits with:
 mkdir -p tmp/voice-component-fork-inventory
 {
   printf '# Voice Component Fork Raw Line-By-Line Diffs\n\n'
-  git -C viventium_v0_4/agent-starter-react diff --binary --find-renames 62c4654086d217bac46f2275c3574840646c6a89..HEAD --src-prefix=upstream/agent-starter-react/ --dst-prefix=viventium/agent-starter-react/
+  git -C viventium_v0_4/agent-starter-react diff --binary --find-renames 62c4654086d217bac46f2275c3574840646c6a89..79a8daea0966bdaaf2952c7c8b6fadddcc1809f8 --src-prefix=upstream/agent-starter-react/ --dst-prefix=viventium/agent-starter-react/
   git -C viventium_v0_4/agents-playground diff --binary --find-renames ee0b50c9f8c6e62fc9710a4d8a8b436ea94c3572..HEAD --src-prefix=upstream/agents-playground/ --dst-prefix=viventium/agents-playground/
   git -C viventium_v0_4/livekit diff --binary --find-renames 9674ac48ab4657796bb5b9bb0e421d5b7723d30e..HEAD --src-prefix=upstream/livekit/ --dst-prefix=viventium/livekit/
   git -C viventium_v0_4/cartesia-voice-agent diff --binary --find-renames 177fa9225ebf8e08fdcd0ab1355a6af270ec359c..HEAD --src-prefix=upstream/cartesia-voice-agent/ --dst-prefix=viventium/cartesia-voice-agent/
-} > tmp/voice-component-fork-inventory/2026-05-18-raw-line-by-line-diffs.md
+} > tmp/voice-component-fork-inventory/2026-08-10-raw-line-by-line-diffs.md
 ```
 
 Use that local raw file during the future upstream pull/rebase to inspect exact old context and line-by-line additions/removals for each hunk ID. Before any public commit, keep only this tracked inventory unless the raw diff has been separately sanitized and reviewed.

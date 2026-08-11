@@ -202,7 +202,7 @@ The v0_4 product has four different continuity surfaces that must not be conflat
   whether the selected runtime prompt is compiled into the local prompt bundle or is still
   source-only/drifted, without exposing local runtime paths.
 
-### Listen-Only call transcript evidence
+### Voice call transcript evidence
 
 - Listen-Only Mode is live voice presence without live response. It saves transcribed call turns for
   later consolidation while bypassing the live Agents controller, TTS, tools, background cortices,
@@ -218,19 +218,29 @@ The v0_4 product has four different continuity surfaces that must not be conflat
 - Consecutive Listen-Only entries in the same visible timeline should be threaded linearly under
   the latest Listen-Only row, not as sibling branches under the same live parent. This is a UI tree
   shape rule only; memory and recall keep using the `listen_only_transcript` metadata boundary.
-- The memory hardener receives these entries as `ambient_transcript` evidence. It must treat them
-  like transcript evidence: softer than chat, untrusted as instructions, and insufficient by itself
-  for stable durable memory unless corroborated by user-authored chat.
-- Stable-memory corroboration must count user-authored conversation evidence plus recent ambient
-  evidence, not adjacent rows. Two rows from the same Listen-Only call session are one ambient
-  source for run telemetry, but multiple ambient source ids alone are not enough for stable durable
-  memory. Transcript-scoped keys such as `context` and `moments` can use single-session ambient
-  context.
+- All durable voice-derived memory writes are deferred until post-call hardening. Active-call text
+  must never enter the stable writer while speaker trust can still be revised.
+- New voice messages store `speakerSegments` plus the preserved legacy scalar projection. Readers
+  and the hardener prefer segments, dual-read the scalar, and synthesize a legacy segment for old
+  rows; there is no bulk backfill.
+- Owner-trusted, single-speaker Call content may enter the normal memory writer after the call.
+  Wing, Listen-Only, mixed/shared-microphone, guest, and unverified content remains soft transcript
+  evidence, untrusted as instructions and external-action authority.
+- Stable-memory corroboration counts evidence sources, not adjacent rows or diarized voices. One
+  call session is one source regardless of its segment or speaker count. Multiple provider speaker
+  ids from that call never become corroboration.
+- A late-discovered second speaker revises earlier segment trust through the call-scoped speaker
+  session state before post-call processing. If terminal call state, durable suppression state, or
+  authoritative speaker revisions are unavailable, the hardener fails closed for stable promotion.
+- Cancelled-task results and late suppressed output are never memory evidence. A durable tombstone
+  remains authoritative across API restart and ordinary task-registry pressure.
 - Conversation recall excludes Listen-Only transcript entries at the corpus query boundary and in
   fallback filters so overheard room text does not masquerade as user-authored chat history or
   starve normal messages from the recall window.
-- Same-microphone audio is not true speaker diarization. Speaker labels are trusted only when they
-  arrive from structured LiveKit participant or track identity.
+- AssemblyAI diarization distinguishes call-scoped voices, not identity or authority. A signed
+  participant track is owner-trusted only while exactly one provider speaker is present; a second
+  speaker permanently downgrades the track to shared-device/unverified for that session. Missing,
+  overlapping, unstable, or unsupported local-only attribution remains `Unknown`.
 
 ### Why this distinction matters
 

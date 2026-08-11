@@ -524,7 +524,7 @@ def test_validate_non_interactive_integrations_allows_explicit_dormant_telegram_
     wizard.validate_non_interactive_integrations(config)
 
 
-def test_normalize_preset_backfills_wing_mode_for_local_voice(monkeypatch) -> None:
+def test_normalize_preset_does_not_seed_a_hidden_wing_default(monkeypatch) -> None:
     wizard = load_wizard_module()
     monkeypatch.setattr(wizard, "store_keychain_secret", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(wizard.secrets, "token_hex", lambda _nbytes: "generated-call-secret")
@@ -555,7 +555,7 @@ def test_normalize_preset_backfills_wing_mode_for_local_voice(monkeypatch) -> No
 
     normalized = wizard.normalize_preset(config)
 
-    assert normalized["voice"]["wing_mode"]["default_enabled"] is False
+    assert "wing_mode" not in normalized["voice"]
 
 
 class _FakeWizardUI:
@@ -785,6 +785,24 @@ def test_easy_voice_uses_hosted_guidance_on_non_apple_silicon(monkeypatch) -> No
     assert config["voice"]["stt_provider"] == "openai"
     assert config["voice"]["tts_provider"] == "openai"
     assert any("Hosted voice" in note for note in ui.notes)
+
+
+def test_local_voice_defaults_never_add_a_hosted_fallback(monkeypatch) -> None:
+    wizard = load_wizard_module()
+    config = wizard.build_base_config(
+        install_mode="native",
+        primary_provider="openai",
+        auth_mode="connected_account",
+        secondary_provider="none",
+    )
+    monkeypatch.setattr(wizard, "default_local_tts_provider", lambda: wizard.LOCAL_TTS_PROVIDER)
+
+    wizard.set_local_voice_defaults(config)
+
+    assert config["voice"]["mode"] == "local"
+    assert config["voice"]["stt_provider"] == "whisper_local"
+    assert config["voice"]["tts_provider"] == wizard.LOCAL_TTS_PROVIDER
+    assert config["voice"]["tts_provider_fallback"] == ""
 
 
 def test_prompt_telegram_reprompts_until_botfather_token_looks_valid(monkeypatch) -> None:

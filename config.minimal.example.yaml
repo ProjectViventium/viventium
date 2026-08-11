@@ -151,8 +151,6 @@ voice:
   tts:
     voice: coral
     speed: 1.12
-  wing_mode:
-    default_enabled: false
 integrations:
   glasshive:
     # The immutable Native payload does not package GlassHive. Source/Docker users

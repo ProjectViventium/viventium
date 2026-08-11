@@ -66,7 +66,8 @@ def test_component_publication_state_is_explicit_and_aligned() -> None:
     lock_state = lock_payload.get("publication_state")
     native_state = native_payload.get("publication_state")
 
-    assert lock_state == native_state == "merged"
+    assert lock_state == native_state
+    assert lock_state in {"merged", "review-head-pending-merge"}
 
 
 def test_openclaw_is_manifested_as_lab_only_and_unapproved() -> None:

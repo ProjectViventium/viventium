@@ -45,7 +45,8 @@ from repo_path_safety import (
 CONFIG_VERSION = 1
 DEFAULT_MAIN_AGENT_ID = "agent_viventium_main_95aeb3"
 EXPERIMENTAL_LOCAL_TTS_PROVIDER = "local_chatterbox_turbo_mlx_8bit"
-DEFAULT_LOCAL_VOICE_GATEWAY_TTS_PROVIDER = "openai"
+LOCAL_VOICE_STT_PROVIDERS = {"whisper_local", "pywhispercpp"}
+LOCAL_VOICE_TTS_PROVIDERS = {EXPERIMENTAL_LOCAL_TTS_PROVIDER}
 DEFAULT_VOICE_FAST_LLM_PROVIDER = ""
 DEFAULT_WEB_SEARCH_PROVIDER = "searxng"
 DEFAULT_WEB_SCRAPER_PROVIDER = "firecrawl"
@@ -3861,30 +3862,38 @@ def resolve_voice_settings(config: dict[str, Any]) -> dict[str, str]:
     voice_mode = str(voice.get("mode", "disabled") or "disabled").strip().lower()
     raw_stt_provider = str(voice.get("stt_provider", "") or "").strip().lower()
     stt_provider = raw_stt_provider or "whisper_local"
+    if stt_provider == "local":
+        stt_provider = "whisper_local"
     stt_model = str(voice.get("stt_model", "") or "").strip()
     tts_provider = normalize_voice_tts_provider(voice.get("tts_provider", ""))
     tts_provider_fallback = normalize_voice_tts_provider(voice.get("tts_provider_fallback", ""))
 
     if voice_mode == "local":
-        # `browser` is a user-facing/client-side intent, not an instruction to silently route the
-        # server-side voice gateway through experimental local MLX TTS. Keep the default stable
-        # unless the user explicitly asks for local automatic or the direct local MLX provider.
-        if not tts_provider or tts_provider == "browser":
-            tts_provider = DEFAULT_LOCAL_VOICE_GATEWAY_TTS_PROVIDER
-        elif tts_provider in {"local_automatic", "automatic", "auto"}:
-            tts_provider = (
-                EXPERIMENTAL_LOCAL_TTS_PROVIDER
-                if host_supports_local_tts()
-                else DEFAULT_LOCAL_VOICE_GATEWAY_TTS_PROVIDER
+        if stt_provider not in LOCAL_VOICE_STT_PROVIDERS:
+            raise SystemExit(
+                "voice.mode=local requires a local STT provider (whisper_local or pywhispercpp); "
+                "hosted STT would violate the local-only egress boundary"
             )
-        elif tts_provider == EXPERIMENTAL_LOCAL_TTS_PROVIDER and not host_supports_local_tts():
-            # Intel Macs and non-macOS hosts cannot install MLX-Audio. Convert an explicit local
-            # Chatterbox request into the configured hosted fallback so clean installs still ship a
-            # working voice worker instead of dying during dependency bootstrap.
-            tts_provider = tts_provider_fallback or DEFAULT_LOCAL_VOICE_GATEWAY_TTS_PROVIDER
-            tts_provider_fallback = ""
-        if not tts_provider_fallback and tts_provider == EXPERIMENTAL_LOCAL_TTS_PROVIDER:
-            tts_provider_fallback = "openai"
+        if not tts_provider or tts_provider in {"browser", "local_automatic", "automatic", "auto"}:
+            tts_provider = EXPERIMENTAL_LOCAL_TTS_PROVIDER
+        if tts_provider not in LOCAL_VOICE_TTS_PROVIDERS:
+            raise SystemExit(
+                "voice.mode=local requires a local TTS provider; hosted TTS would violate the "
+                "local-only egress boundary"
+            )
+        if not host_supports_local_tts():
+            raise SystemExit(
+                "voice.mode=local has no supported local TTS route on this host; choose hosted "
+                "voice mode explicitly or install on supported Apple Silicon"
+            )
+        if tts_provider_fallback and tts_provider_fallback not in LOCAL_VOICE_TTS_PROVIDERS:
+            raise SystemExit(
+                "voice.mode=local cannot use a hosted TTS fallback; remove the fallback to keep "
+                "audio egress local-only"
+            )
+        # There is currently one supported local TTS implementation, so a same-provider fallback
+        # adds no resilience and is normalized away. The gateway also enforces the local/cloud class.
+        tts_provider_fallback = ""
     elif voice_mode == "hosted":
         if not tts_provider or tts_provider == "browser":
             tts_provider = "openai"
@@ -5500,7 +5509,7 @@ def render_runtime_env(
     env["VIVENTIUM_CORTEX_DETECT_TIMEOUT_MS"] = "2000"
     background_activation = runtime.get("background_activation") or {}
     if not isinstance(background_activation, dict):
-        fail("runtime.background_activation must be an object")
+        raise SystemExit("runtime.background_activation must be an object")
     env["VIVENTIUM_ACTIVATION_PRIMARY_ATTEMPT_TIMEOUT_MS"] = str(
         bounded_int_or_default(
             background_activation.get("primary_attempt_timeout_ms"),
@@ -5567,6 +5576,7 @@ def render_runtime_env(
 
     voice_mode = resolved_voice["mode"]
     env["VIVENTIUM_VOICE_ENABLED"] = "true" if voice_mode != "disabled" else "false"
+    env["VIVENTIUM_VOICE_MODE"] = voice_mode
     env["VIVENTIUM_STT_PROVIDER"] = resolved_voice["stt_provider"]
     if resolved_voice.get("stt_model"):
         env["VIVENTIUM_STT_MODEL"] = resolved_voice["stt_model"]
@@ -5638,9 +5648,10 @@ def render_runtime_env(
             "true" if resolve_bool(voice_worker.get("prewarm_local_tts"), True) else "false"
         )
     wing_mode = voice.get("wing_mode", voice.get("shadow_mode", {})) or {}
-    wing_mode_default_enabled = "true" if wing_mode.get("default_enabled") is True else "false"
-    env["VIVENTIUM_WING_MODE_DEFAULT_ENABLED"] = wing_mode_default_enabled
-    env["VIVENTIUM_SHADOW_MODE_DEFAULT_ENABLED"] = wing_mode_default_enabled
+    # Legacy readers still receive the compatibility variables, but a fresh Call always begins in
+    # Call mode. Historical default_enabled values are accepted for migration only and ignored.
+    env["VIVENTIUM_WING_MODE_DEFAULT_ENABLED"] = "false"
+    env["VIVENTIUM_SHADOW_MODE_DEFAULT_ENABLED"] = "false"
     wing_mode_prompt = str(wing_mode.get("prompt", "") or "").strip()
     if wing_mode_prompt:
         env["VIVENTIUM_WING_MODE_PROMPT"] = wing_mode_prompt

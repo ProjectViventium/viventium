@@ -4162,6 +4162,19 @@ seed.consumeManagedMigrationState(statePath, state.content_sha256);
 process.stdout.write(JSON.stringify({managedDefaultAdvanced:true,userEditPreserved:true,consumed:true}));
 process.exit(0);
 """
+    require_blocker = tmp_path / "forbid-built-api.cjs"
+    require_blocker.write_text(
+        """const Module = require('module');
+const originalLoad = Module._load;
+Module._load = function (request, parent, isMain) {
+  if (request === '@librechat/api') {
+    throw new Error('QA forbids loading the built API for migration-only reconciliation');
+  }
+  return originalLoad.call(this, request, parent, isMain);
+};
+""",
+        encoding="utf-8",
+    )
     reconciliation = subprocess.run(
         [
             "node",
@@ -4179,7 +4192,11 @@ process.exit(0);
         check=False,
         capture_output=True,
         text=True,
-        env={**os.environ, "MONGO_URI": "mongodb://127.0.0.1:1/synthetic"},
+        env={
+            **os.environ,
+            "MONGO_URI": "mongodb://127.0.0.1:1/synthetic",
+            "NODE_OPTIONS": f"--require={require_blocker}",
+        },
         timeout=120,
     )
     assert reconciliation.returncode == 0, reconciliation.stderr

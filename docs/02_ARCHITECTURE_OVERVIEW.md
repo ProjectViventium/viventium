@@ -14,7 +14,10 @@ User -> LibreChat UI -> AgentClient -> BackgroundCortexService
                      -> SSE updates -> UI cards
                      -> Follow-up service -> extra assistant message
                      -> detached Emotional Reaction Cortex -> versioned FeelingState
-                     -> Voice Gateway (LiveKit) for calls
+                     -> Call session + browser/Telegram capability + canonical Agent ACL
+                        -> Voice Gateway / LiveKit real-time conversation plane
+                        -> LibreChat durable task/tool/search/memory work plane
+                        -> task/source/speaker events -> modern call UI + linked chat
 ```
 
 Core components:
@@ -43,7 +46,15 @@ Core components:
 - Feelings control surface: `viventium_v0_4/LibreChat/client/src/components/Feelings/` (main live
   evidence plus selected-band range editor)
 - Spoken-surface prompt composition: `viventium_v0_4/LibreChat/api/server/services/viventium/surfacePrompts.js`
-- Voice worker: `viventium_v0_4/voice-gateway/`
+- Voice real-time plane: `viventium_v0_4/voice-gateway/` plus the pinned LiveKit server and modern
+  playground. It owns media, endpointing, TTS, interruption, speaker-segment production, and relay
+  of authoritative task events; it does not own tool/task truth.
+- Voice work plane: nested LibreChat `VoiceTaskService`, `VoiceTaskManagementTool`,
+  `SpeakerSegmentService`, durable task/suppression/speaker models, GenerationJobManager/GlassHive
+  owner adapters, and post-call memory hardening.
+- Voice authority plane: nested LibreChat call routes, `CallSessionService`, `callLaunch`, and
+  `VoiceAgentAuthorizationService`; browser BFF routes require exact-session capability and Telegram
+  launch links exchange a one-time fragment bearer.
 
 Reference: `viventium_v0_4/docs/ARCHITECTURE.md`
 
@@ -72,4 +83,5 @@ Reference: `viventium_v0_3_py/docs/02_ARCHITECTURE.md`
 | Background processing | Background agents inside LibreChat | Cortices in Python runtime |
 | Response serialization | LibreChat pipeline + follow-up messages | ResponseController single queue |
 | Memory | LibreChat DB + metadata | Markdown + vector store |
+| Wearable evidence | Private append-only provider archive + bounded Workbench correlation | None |
 | Voice | Voice Gateway worker | LiveKit agent directly |

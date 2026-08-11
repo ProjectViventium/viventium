@@ -4,6 +4,8 @@ import sys
 import tempfile
 import types
 import unittest
+import asyncio
+import json
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -14,7 +16,6 @@ from worker import (
     _apply_requested_voice_route,
     _attach_room_diagnostics,
     _build_assemblyai_stt_kwargs,
-    _build_room_options,
     _build_voice_capability_catalog,
     _ensure_turn_detector_runner_registered,
     _semantic_turn_detector_status,
@@ -26,47 +27,736 @@ from worker import (
     _active_voice_job_markers,
     _clear_active_voice_job_marker,
     _mark_active_voice_job,
-    _parse_participant_identity,
-    _participant_identity_connected,
     _voice_sync_transcription_enabled,
+    ViventiumVoiceAgent,
+    _publish_livekit_speaker_segments,
+    _publish_livekit_task_event,
+    _interrupt_livekit_speech_handles,
+    _interrupt_agent_session_speech,
+    _apply_authoritative_call_mode_to_speech_planes,
+    _suspend_all_call_speech_until_authoritative,
+    _apply_task_cancel_suppression,
+    AuthoritativeCallModeState,
+    CallTaskStreamSpeechAuthority,
+    _ingest_raw_stt_speaker_event,
+    _linked_participant_speaker_context,
+    _participant_identity_connected,
+    _build_room_options,
     build_stt_selection,
     load_env,
     load_turn_detection,
     optional_module_available,
 )
+from livekit.agents import StopResponse
+from livekit.agents.stt import SpeechData, SpeechEvent, SpeechEventType
+from livekit.agents.llm.chat_context import ChatContext, ChatMessage
+from speaker_segments import SpeakerSegmentTracker, SPEAKER_CONTEXT_EXTRA_KEY
+
+
+def _authoritative_state(*, mode="call", revision=7):
+    return {
+        "version": 1,
+        "callSessionId": "call_1",
+        "mode": mode,
+        "status": "listening",
+        "revision": revision,
+        "updatedAt": "2026-08-09T20:37:04.000Z",
+    }
+
+
+def _stream_health(state, *, status=200):
+    return {
+        "version": 1,
+        "callSessionId": "call_1",
+        "state": state,
+        "status": status,
+        "retryable": state in {"connecting", "disconnected"},
+    }
 
 
 class TestWorkerTurnHandling(unittest.TestCase):
-    def test_call_session_room_options_keep_one_stable_participant_link_across_refresh(self) -> None:
-        metadata = '{"callSessionId":"call-1","participantIdentity":"viventium-user-call-1"}'
-        participant_identity = _parse_participant_identity(metadata)
-
+    def test_room_options_bind_backend_claimed_owner_across_refresh(self) -> None:
         options = _build_room_options(
             sync_transcription=False,
-            participant_identity=participant_identity,
+            participant_identity="backend-claimed-owner",
         )
 
-        self.assertEqual(participant_identity, "viventium-user-call-1")
-        self.assertEqual(options.participant_identity, "viventium-user-call-1")
+        self.assertEqual(options.participant_identity, "backend-claimed-owner")
         self.assertFalse(options.close_on_disconnect)
 
-    def test_participant_presence_is_scoped_to_the_expected_caller(self) -> None:
+    def test_participant_presence_is_scoped_to_backend_claimed_owner(self) -> None:
         class Participant:
             def __init__(self, identity: str):
                 self.identity = identity
 
-        class Room:
-            remote_participants = {
-                "observer": Participant("observer"),
-            }
-
-        room = Room()
-        self.assertFalse(_participant_identity_connected(room, "viventium-user-call-1"))
-        room.remote_participants["viventium-user-call-1"] = Participant(
-            "viventium-user-call-1"
+        room = SimpleNamespace(
+            remote_participants={"observer": Participant("observer")}
         )
-        self.assertTrue(_participant_identity_connected(room, "viventium-user-call-1"))
+        self.assertFalse(
+            _participant_identity_connected(room, "backend-claimed-owner")
+        )
+        room.remote_participants["backend-claimed-owner"] = Participant(
+            "backend-claimed-owner"
+        )
+        self.assertTrue(
+            _participant_identity_connected(room, "backend-claimed-owner")
+        )
 
+    def test_task_stream_401_or_death_never_authorizes_session_readiness(self) -> None:
+        suspended = []
+        applied = []
+
+        async def fetch_state():
+            raise AssertionError("terminal stream must not fetch or restore call state")
+
+        authority = CallTaskStreamSpeechAuthority(
+            call_session_id="call_1",
+            fetch_call_state=fetch_state,
+            suspend=lambda: suspended.append("suspended"),
+            apply_state=applied.append,
+        )
+
+        asyncio.run(
+            authority.on_stream_health(
+                {
+                    "version": 1,
+                    "callSessionId": "call_1",
+                    "state": "terminal",
+                    "status": 401,
+                    "retryable": False,
+                }
+            )
+        )
+
+        self.assertFalse(authority.mark_session_ready(_authoritative_state()))
+        self.assertFalse(authority.authoritative)
+        self.assertEqual(applied, [])
+        self.assertGreaterEqual(len(suspended), 2)
+
+    def test_task_stream_reconnect_fetches_authoritative_snapshot_before_resuming(self) -> None:
+        operations = []
+        allow_snapshot = asyncio.Event()
+
+        async def fetch_state():
+            operations.append("fetch_started")
+            await allow_snapshot.wait()
+            operations.append("fetch_complete")
+            return _authoritative_state(mode="wing", revision=8)
+
+        authority = CallTaskStreamSpeechAuthority(
+            call_session_id="call_1",
+            fetch_call_state=fetch_state,
+            suspend=lambda: operations.append("suspend"),
+            apply_state=lambda state: operations.append(
+                ("apply", state["mode"], state["revision"])
+            ),
+        )
+
+        async def run():
+            await authority.on_stream_health(_stream_health("connected"))
+            self.assertTrue(authority.mark_session_ready(_authoritative_state()))
+            await authority.on_stream_health(_stream_health("disconnected"))
+            reconnect = asyncio.create_task(
+                authority.on_stream_health(_stream_health("connected"))
+            )
+            await asyncio.sleep(0)
+            self.assertFalse(authority.authoritative)
+            self.assertNotIn(("apply", "wing", 8), operations)
+            allow_snapshot.set()
+            await reconnect
+
+        asyncio.run(run())
+
+        self.assertTrue(authority.authoritative)
+        self.assertLess(
+            operations.index("fetch_complete"),
+            operations.index(("apply", "wing", 8)),
+        )
+        self.assertEqual(operations.count(("apply", "wing", 8)), 1)
+
+    def test_task_stream_reconnect_remains_silent_until_snapshot_retry_succeeds(self) -> None:
+        snapshots = [None, _authoritative_state(mode="call", revision=9)]
+        operations = []
+
+        async def fetch_state():
+            operations.append("fetch")
+            return snapshots.pop(0)
+
+        authority = CallTaskStreamSpeechAuthority(
+            call_session_id="call_1",
+            fetch_call_state=fetch_state,
+            suspend=lambda: operations.append("suspend"),
+            apply_state=lambda state: operations.append(("apply", state["revision"])),
+        )
+
+        async def run():
+            await authority.on_stream_health(_stream_health("connected"))
+            self.assertTrue(authority.mark_session_ready(_authoritative_state()))
+            await authority.on_stream_health(_stream_health("disconnected"))
+            await authority.on_stream_health(_stream_health("connected"))
+            self.assertFalse(authority.authoritative)
+            self.assertNotIn(("apply", 9), operations)
+            self.assertTrue(await authority.reconcile())
+
+        asyncio.run(run())
+
+        self.assertTrue(authority.authoritative)
+        self.assertEqual(operations.count(("apply", 9)), 1)
+
+    def test_raw_stt_event_preserves_timing_and_revises_same_mic_speakers(self) -> None:
+        tracker = SpeakerSegmentTracker(
+            call_session_id="call_1",
+            participant_identity="owner",
+            track_sid="TR_owner",
+            owner_signed=True,
+        )
+        first = SpeechEvent(
+            type=SpeechEventType.FINAL_TRANSCRIPT,
+            alternatives=[
+                SpeechData(
+                    language="en",
+                    text="First stable owner sentence",
+                    start_time=0.0,
+                    end_time=1.0,
+                    speaker_id="A",
+                )
+            ],
+        )
+        changes, is_final = _ingest_raw_stt_speaker_event(
+            tracker, first, timeline_offset_s=10.0
+        )
+        self.assertTrue(is_final)
+        self.assertEqual(changes[-1]["startTimeMs"], 10_000)
+        self.assertEqual(changes[-1]["endTimeMs"], 11_000)
+        self.assertEqual(changes[-1]["speaker"]["actorTrust"], "owner_participant")
+        tracker.finalize_turn("First stable owner sentence")
+
+        second = SpeechEvent(
+            type=SpeechEventType.FINAL_TRANSCRIPT,
+            alternatives=[
+                SpeechData(
+                    language="en",
+                    text="Second stable guest sentence",
+                    start_time=2.0,
+                    end_time=3.0,
+                    speaker_id="B",
+                )
+            ],
+        )
+        changes, _ = _ingest_raw_stt_speaker_event(
+            tracker, second, timeline_offset_s=10.0
+        )
+        self.assertTrue(tracker.shared_microphone_detected)
+        self.assertTrue(
+            any(
+                item["speaker"]["actorTrust"] == "shared_mic_unverified"
+                and item["revision"] > 1
+                for item in changes
+            )
+        )
+        self.assertEqual(changes[-1]["speaker"]["actorTrust"], "shared_mic_unverified")
+
+    def test_timingless_raw_or_user_input_event_cannot_verify_owner(self) -> None:
+        tracker = SpeakerSegmentTracker(
+            call_session_id="call_1",
+            participant_identity="owner",
+            owner_signed=True,
+        )
+        timingless = SpeechEvent(
+            type=SpeechEventType.FINAL_TRANSCRIPT,
+            alternatives=[
+                SpeechData(
+                    language="en",
+                    text="Timing is unavailable here",
+                    speaker_id="A",
+                )
+            ],
+        )
+        [segment], _ = _ingest_raw_stt_speaker_event(
+            tracker, timingless, timeline_offset_s=0.0
+        )
+        self.assertEqual(segment["speaker"]["attribution"], "unknown")
+
+        user_input_only = SimpleNamespace(
+            transcript="LiveKit stripped timing",
+            is_final=True,
+            speaker_id="A",
+        )
+        changes, is_final = _ingest_raw_stt_speaker_event(
+            tracker, user_input_only, timeline_offset_s=0.0
+        )
+        self.assertEqual(changes, [])
+        self.assertFalse(is_final)
+
+    def test_listen_only_owner_turn_persists_segments_once_then_stops_before_llm(self) -> None:
+        tracker = SpeakerSegmentTracker(
+            call_session_id="call_1",
+            participant_identity="owner",
+            owner_signed=True,
+        )
+        tracker.ingest(
+            transcript="Synthetic listen only statement",
+            is_final=True,
+            provider_speaker_id="A",
+            created_at=1.0,
+            start_time=0.0,
+            end_time=1.0,
+        )
+        mode_state = AuthoritativeCallModeState()
+        mode_state.apply("listen_only")
+        persisted = []
+
+        async def persist(context, mode):
+            persisted.append((context, mode))
+
+        agent = ViventiumVoiceAgent(
+            instructions="test",
+            speaker_tracker=tracker,
+            authoritative_mode_state=mode_state,
+            persist_suppressed_turn=persist,
+        )
+        message = ChatMessage(role="user", content=["Synthetic listen only statement"])
+
+        with self.assertRaises(StopResponse):
+            asyncio.run(agent.on_user_turn_completed(ChatContext.empty(), message))
+
+        self.assertEqual(len(persisted), 1)
+        context, mode = persisted[0]
+        self.assertEqual(mode, "listen_only")
+        self.assertEqual(len(context["speakerSegments"]), 1)
+        self.assertEqual(
+            context["speakerSegments"][0]["text"], "Synthetic listen only statement"
+        )
+
+    def test_uncertain_mode_and_transition_race_fail_closed_then_call_restores(self) -> None:
+        mode_state = AuthoritativeCallModeState()
+        persisted = []
+
+        async def persist(context, mode):
+            persisted.append((context, mode))
+
+        agent = ViventiumVoiceAgent(
+            instructions="test",
+            authoritative_mode_state=mode_state,
+            persist_suppressed_turn=persist,
+        )
+
+        with self.assertRaises(StopResponse):
+            asyncio.run(
+                agent.on_user_turn_completed(
+                    ChatContext.empty(), ChatMessage(role="user", content=["First"])
+                )
+            )
+        mode_state.apply("call")
+        asyncio.run(
+            agent.on_user_turn_completed(
+                ChatContext.empty(), ChatMessage(role="user", content=["Second"])
+            )
+        )
+        mode_state.apply("listen_only")
+        with self.assertRaises(StopResponse):
+            asyncio.run(
+                agent.on_user_turn_completed(
+                    ChatContext.empty(), ChatMessage(role="user", content=["Third"])
+                )
+            )
+        mode_state.apply("call")
+        asyncio.run(
+            agent.on_user_turn_completed(
+                ChatContext.empty(), ChatMessage(role="user", content=["Fourth"])
+            )
+        )
+
+        self.assertEqual([mode for _context, mode in persisted], ["uncertain", "listen_only"])
+
+    def test_cancel_acceptance_synchronously_stops_all_task_speech_but_not_backend(self) -> None:
+        calls = []
+        progress = SimpleNamespace(suppress_task=lambda task_id: calls.append(("progress", task_id)))
+        followup = SimpleNamespace(cancel_pending=lambda: calls.append(("followup", None)))
+        session = SimpleNamespace(interrupt=lambda *, force=False: calls.append(("main", force)))
+        backend_task_state = {"state": "cancelling"}
+
+        _apply_task_cancel_suppression(
+            "task_1",
+            progress_controller=progress,
+            followup_scheduler=followup,
+            session=session,
+        )
+
+        self.assertEqual(
+            calls,
+            [("progress", "task_1"), ("followup", None), ("main", True)],
+        )
+        self.assertEqual(backend_task_state, {"state": "cancelling"})
+
+    def test_mode_transition_halts_main_progress_and_followup_without_cancelling_task(self) -> None:
+        class Progress:
+            def __init__(self):
+                self.modes = []
+                self.suspensions = 0
+
+            def set_mode(self, mode):
+                self.modes.append(mode)
+
+            def suspend_until_authoritative(self):
+                self.suspensions += 1
+
+        class Plane:
+            def __init__(self):
+                self.modes = []
+                self.suspensions = 0
+
+            def set_mode(self, mode):
+                self.modes.append(mode)
+
+            def suspend_until_authoritative(self):
+                self.suspensions += 1
+
+        class Session:
+            def __init__(self):
+                self.interrupts = []
+
+            def interrupt(self, *, force=False):
+                self.interrupts.append(force)
+
+        progress = Progress()
+        ambient = Plane()
+        followup = Plane()
+        session = Session()
+        backend_task_state = {"state": "running"}
+
+        _apply_authoritative_call_mode_to_speech_planes(
+            "listen_only",
+            progress_controller=progress,
+            ambient_ingress=ambient,
+            followup_scheduler=followup,
+            session=session,
+        )
+        _suspend_all_call_speech_until_authoritative(
+            progress_controller=progress,
+            followup_scheduler=followup,
+            session=session,
+        )
+
+        self.assertEqual(progress.modes, ["listen_only"])
+        self.assertEqual(ambient.modes, ["listen_only"])
+        self.assertEqual(followup.modes, ["listen_only"])
+        self.assertEqual(progress.suspensions, 1)
+        self.assertEqual(followup.suspensions, 1)
+        self.assertEqual(session.interrupts, [True, True])
+        self.assertEqual(backend_task_state, {"state": "running"})
+
+    def test_listen_only_transition_interrupts_only_active_progress_handles(self) -> None:
+        class FakeHandle:
+            def __init__(self, done: bool) -> None:
+                self._done = done
+                self.forces = []
+
+            def done(self):
+                return self._done
+
+            def interrupt(self, *, force=False):
+                self.forces.append(force)
+
+        active = FakeHandle(False)
+        completed = FakeHandle(True)
+        handles = {active, completed}
+
+        _interrupt_livekit_speech_handles(handles)
+
+        self.assertEqual(active.forces, [True])
+        self.assertEqual(completed.forces, [])
+        self.assertEqual(handles, set())
+
+    def test_listen_only_transition_interrupts_main_speech_without_reconnect(self) -> None:
+        class FakeSession:
+            def __init__(self) -> None:
+                self.interrupt_forces = []
+                self.reconnects = 0
+
+            def interrupt(self, *, force=False):
+                self.interrupt_forces.append(force)
+
+        session = FakeSession()
+
+        _interrupt_agent_session_speech(session)
+
+        self.assertEqual(session.interrupt_forces, [True])
+        self.assertEqual(session.reconnects, 0)
+
+    def test_owner_binding_uses_job_publisher_not_first_remote_participant(self) -> None:
+        guest = SimpleNamespace(
+            identity="aaa-guest",
+            name="Guest",
+            track_publications={"guest": SimpleNamespace(sid="TR_guest", source="SOURCE_MICROPHONE")},
+        )
+        owner = SimpleNamespace(
+            identity="zzz-owner",
+            name="Owner",
+            track_publications={"owner": SimpleNamespace(sid="TR_owner", source="SOURCE_MICROPHONE")},
+        )
+        room = SimpleNamespace(remote_participants={"guest": guest, "owner": owner})
+
+        context = _linked_participant_speaker_context(room, "zzz-owner")
+
+        self.assertEqual(context["participant_identity"], "zzz-owner")
+        self.assertEqual(context["track_sid"], "TR_owner")
+        self.assertTrue(context["owner_signed"])
+
+    def test_missing_job_publisher_abstains_instead_of_trusting_remote(self) -> None:
+        room = SimpleNamespace(
+            remote_participants={
+                "guest": SimpleNamespace(
+                    identity="guest",
+                    name="Guest",
+                    track_publications={},
+                )
+            }
+        )
+
+        self.assertEqual(_linked_participant_speaker_context(room, ""), {})
+        self.assertEqual(_linked_participant_speaker_context(room, "owner-not-connected"), {})
+
+    def test_voice_agent_consumes_speaker_side_channel_once_before_llm(self) -> None:
+        tracker = SpeakerSegmentTracker(
+            call_session_id="call_1",
+            participant_identity="owner-participant",
+            participant_name="Owner",
+            track_sid="TR_owner",
+            owner_signed=True,
+        )
+        tracker.ingest(
+            transcript="Synthetic request",
+            is_final=True,
+            provider_speaker_id="A",
+            created_at=100.0,
+        )
+        agent = ViventiumVoiceAgent(instructions="test", speaker_tracker=tracker)
+        message = ChatMessage(role="user", content=["Synthetic request"])
+
+        asyncio.run(agent.on_user_turn_completed(ChatContext.empty(), message))
+
+        context = message.extra[SPEAKER_CONTEXT_EXTRA_KEY]
+        self.assertEqual(
+            context["speakerSegments"][0]["speaker"]["providerSpeakerId"],
+            "A",
+        )
+        second_message = ChatMessage(role="user", content=["Next request"])
+        asyncio.run(agent.on_user_turn_completed(ChatContext.empty(), second_message))
+        self.assertEqual(
+            second_message.extra[SPEAKER_CONTEXT_EXTRA_KEY]["speakerSegments"][0]["speaker"]["label"],
+            "Unknown",
+        )
+
+    def test_publishes_versioned_speaker_segment_to_livekit_topic(self) -> None:
+        class FakeParticipant:
+            def __init__(self) -> None:
+                self.calls = []
+
+            async def publish_data(
+                self, payload, *, reliable, topic, destination_identities
+            ):
+                self.calls.append((payload, reliable, topic, destination_identities))
+
+        participant = FakeParticipant()
+        segment = {
+            "version": 1,
+            "segmentId": "segment_000001",
+            "callSessionId": "call_1",
+            "turnId": "turn_000001",
+            "sequence": 1,
+            "revision": 1,
+            "text": "Synthetic request",
+            "isFinal": True,
+            "speaker": {
+                "key": "provider:A",
+                "label": "Speaker 1",
+                "source": "provider_diarization",
+                "attribution": "unverified",
+                "actorTrust": "shared_mic_unverified",
+                "providerSpeakerId": "A",
+            },
+        }
+
+        asyncio.run(
+            _publish_livekit_speaker_segments(
+                participant,
+                [segment],
+                owner_participant_identity="owner",
+            )
+        )
+
+        self.assertEqual(len(participant.calls), 1)
+        payload, reliable, topic, destinations = participant.calls[0]
+        self.assertTrue(reliable)
+        self.assertEqual(topic, "viventium.speaker.v1")
+        self.assertEqual(destinations, ["owner"])
+        self.assertEqual(json.loads(payload), segment)
+
+    def test_publishes_authoritative_task_event_to_livekit_topic(self) -> None:
+        class FakeParticipant:
+            def __init__(self) -> None:
+                self.calls = []
+
+            async def publish_data(
+                self, payload, *, reliable, topic, destination_identities
+            ):
+                self.calls.append((payload, reliable, topic, destination_identities))
+
+        participant = FakeParticipant()
+        task_event = {
+            "version": 1,
+            "eventId": "event_1",
+            "sequence": 1,
+            "taskId": "task_1",
+            "state": "running",
+            "phase": "searching",
+        }
+
+        asyncio.run(
+            _publish_livekit_task_event(
+                participant,
+                task_event,
+                owner_participant_identity="owner",
+            )
+        )
+
+        payload, reliable, topic, destinations = participant.calls[0]
+        self.assertTrue(reliable)
+        self.assertEqual(topic, "viventium.task.v1")
+        self.assertEqual(destinations, ["owner"])
+        self.assertEqual(json.loads(payload), task_event)
+
+    def test_publishes_recovering_retryable_error_to_owner_task_topic_unmodified(self) -> None:
+        class FakeParticipant:
+            def __init__(self) -> None:
+                self.calls = []
+
+            async def publish_data(
+                self, payload, *, reliable, topic, destination_identities
+            ):
+                self.calls.append((payload, reliable, topic, destination_identities))
+
+        participant = FakeParticipant()
+        task_event = {
+            "version": 1,
+            "eventId": "event_recovering",
+            "sequence": 7,
+            "emittedAt": "2026-08-09T20:37:07.000Z",
+            "callSessionId": "call_1",
+            "taskId": "task_1",
+            "type": "error",
+            "state": "recovering",
+            "phase": "cancel_barrier_recovering",
+            "cancellable": True,
+            "retryable": False,
+            "owner": {"kind": "generation_job", "id": "stream_1"},
+            "error": {
+                "code": "cancel_barrier_unavailable",
+                "message": "Cancellation could not be made durable. Output remains locally suppressed.",
+                "retryable": True,
+            },
+        }
+
+        asyncio.run(
+            _publish_livekit_task_event(
+                participant,
+                task_event,
+                owner_participant_identity="owner",
+            )
+        )
+
+        payload, reliable, topic, destinations = participant.calls[0]
+        self.assertTrue(reliable)
+        self.assertEqual(topic, "viventium.task.v1")
+        self.assertEqual(destinations, ["owner"])
+        self.assertEqual(json.loads(payload), task_event)
+
+    def test_livekit_data_publish_failure_never_breaks_call(self) -> None:
+        class FailingParticipant:
+            async def publish_data(self, *_args, **_kwargs):
+                raise RuntimeError("synthetic transport failure")
+
+        task_event = {
+            "version": 1,
+            "eventId": "event_1",
+            "sequence": 1,
+            "taskId": "task_1",
+            "state": "running",
+        }
+        segment = {
+            "version": 1,
+            "callSessionId": "call_1",
+            "turnId": "turn_1",
+            "segmentId": "segment_1",
+            "sequence": 1,
+            "revision": 1,
+            "text": "Synthetic",
+            "isFinal": True,
+            "speaker": {"label": "Unknown", "source": "unknown", "attribution": "unknown"},
+        }
+
+        asyncio.run(
+            _publish_livekit_task_event(
+                FailingParticipant(), task_event, owner_participant_identity="owner"
+            )
+        )
+        asyncio.run(
+            _publish_livekit_speaker_segments(
+                FailingParticipant(), [segment], owner_participant_identity="owner"
+            )
+        )
+
+    def test_oversize_livekit_data_packet_is_not_published(self) -> None:
+        class FakeParticipant:
+            def __init__(self) -> None:
+                self.calls = []
+
+            async def publish_data(self, *args, **kwargs):
+                self.calls.append((args, kwargs))
+
+        participant = FakeParticipant()
+        task_event = {
+            "version": 1,
+            "eventId": "event_1",
+            "sequence": 1,
+            "taskId": "task_1",
+            "state": "running",
+            "detail": "x" * 20_000,
+        }
+
+        asyncio.run(
+            _publish_livekit_task_event(
+                participant, task_event, owner_participant_identity="owner"
+            )
+        )
+
+        self.assertEqual(participant.calls, [])
+
+    def test_private_livekit_packets_fail_closed_without_owner_destination(self) -> None:
+        class FakeParticipant:
+            def __init__(self) -> None:
+                self.calls = []
+
+            async def publish_data(self, *args, **kwargs):
+                self.calls.append((args, kwargs))
+
+        participant = FakeParticipant()
+        task_event = {
+            "version": 1,
+            "eventId": "event_1",
+            "sequence": 1,
+            "taskId": "task_1",
+            "state": "running",
+        }
+
+        asyncio.run(
+            _publish_livekit_task_event(
+                participant, task_event, owner_participant_identity=""
+            )
+        )
+
+        self.assertEqual(participant.calls, [])
     def test_active_voice_job_markers_are_process_scoped(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             with patch.dict(
@@ -275,6 +965,7 @@ class TestWorkerTurnHandling(unittest.TestCase):
                 {
                     "VIVENTIUM_STT_PROVIDER": "whisper_local",
                     "ASSEMBLYAI_API_KEY": "assemblyai-test",
+                    "OPENAI_API_KEY": "openai-test",
                 },
                 clear=True,
             ),
@@ -284,7 +975,10 @@ class TestWorkerTurnHandling(unittest.TestCase):
             capabilities = _build_voice_capability_catalog(env)
             updated = _apply_requested_voice_route(
                 env,
-                {"stt": {"provider": "assemblyai", "variant": "u3-rt-pro"}},
+                {
+                    "stt": {"provider": "assemblyai", "variant": "u3-rt-pro"},
+                    "tts": {"provider": "openai", "variant": "gpt-4o-mini-tts"},
+                },
                 capabilities,
             )
 
@@ -303,6 +997,7 @@ class TestWorkerTurnHandling(unittest.TestCase):
                 {
                     "VIVENTIUM_STT_PROVIDER": "assemblyai",
                     "ASSEMBLYAI_API_KEY": "assemblyai-test",
+                    "OPENAI_API_KEY": "openai-test",
                 },
                 clear=True,
             ),
@@ -313,7 +1008,10 @@ class TestWorkerTurnHandling(unittest.TestCase):
             capabilities = _build_voice_capability_catalog(env)
             updated = _apply_requested_voice_route(
                 env,
-                {"stt": {"provider": "pywhispercpp", "variant": "tiny.en"}},
+                {
+                    "stt": {"provider": "pywhispercpp", "variant": "tiny.en"},
+                    "tts": {"provider": "openai", "variant": "gpt-4o-mini-tts"},
+                },
                 capabilities,
             )
 
@@ -433,6 +1131,7 @@ class TestWorkerTurnHandling(unittest.TestCase):
                 {
                     "VIVENTIUM_STT_PROVIDER": "whisper_local",
                     "ASSEMBLYAI_API_KEY": "assemblyai-test",
+                    "OPENAI_API_KEY": "openai-test",
                 },
                 clear=True,
             ),
@@ -444,7 +1143,10 @@ class TestWorkerTurnHandling(unittest.TestCase):
             capabilities = _build_voice_capability_catalog(env)
             updated = _apply_requested_voice_route(
                 env,
-                {"stt": {"provider": "assemblyai", "variant": "u3-rt-pro"}},
+                {
+                    "stt": {"provider": "assemblyai", "variant": "u3-rt-pro"},
+                    "tts": {"provider": "openai", "variant": "gpt-4o-mini-tts"},
+                },
                 capabilities,
             )
             assemblyai_key = _vad_kwargs_cache_key(_silero_vad_kwargs_for_env(updated))
@@ -497,7 +1199,7 @@ class TestWorkerTurnHandling(unittest.TestCase):
 
         self.assertEqual(env.voice_job_memory_warn_mb, 500.0)
 
-    def test_local_whisper_defaults_tts_prewarm_off_to_protect_stt_latency(self) -> None:
+    def test_all_local_route_prewarms_tts_before_worker_registration(self) -> None:
         with patch.dict(
             os.environ,
             {
@@ -508,7 +1210,7 @@ class TestWorkerTurnHandling(unittest.TestCase):
         ):
             env = load_env()
 
-        self.assertFalse(env.voice_prewarm_local_tts)
+        self.assertTrue(env.voice_prewarm_local_tts)
 
     def test_local_whisper_respects_explicit_tts_prewarm_override(self) -> None:
         with patch.dict(
@@ -555,6 +1257,7 @@ class TestWorkerTurnHandling(unittest.TestCase):
             _build_assemblyai_stt_kwargs(env),
             {
                 "model": "universal-streaming-multilingual",
+                "speaker_labels": True,
                 "end_of_turn_confidence_threshold": 0.27,
                 "min_turn_silence": 210,
                 "max_turn_silence": 1300,
@@ -583,6 +1286,7 @@ class TestWorkerTurnHandling(unittest.TestCase):
         self.assertEqual(provider, "assemblyai")
         stt_cls.assert_called_once_with(
             model="u3-rt-pro",
+            speaker_labels=True,
             end_of_turn_confidence_threshold=0.29,
             min_turn_silence=190,
             max_turn_silence=1250,

@@ -357,6 +357,17 @@ def test_background_activation_attempt_budgets_are_reliable_and_configurable(
     assert "VIVENTIUM_ACTIVATION_FALLBACK_ATTEMPT_TIMEOUT_MS=2250" in librechat_env
 
 
+def test_background_activation_configuration_must_be_an_object() -> None:
+    config = minimal_compile_config()
+    config["runtime"]["background_activation"] = "invalid"
+
+    with pytest.raises(SystemExit, match="runtime.background_activation must be an object"):
+        config_compiler.render_runtime_env(
+            config,
+            config_compiler.build_agent_assignments(config),
+        )
+
+
 def test_glasshive_service_envs_keep_signer_material_out_of_runtime(tmp_path: Path) -> None:
     env = {
         "GLASSHIVE_SECURITY_MODE": "multi_user",
@@ -2103,6 +2114,7 @@ def test_config_compiler_minimal(tmp_path: Path) -> None:
     assert "GROQ_API_KEY=groq-test" in runtime_env
     assert "OPENAI_API_KEY=openai-test" in runtime_env
     assert "VIVENTIUM_VOICE_ENABLED=false" in runtime_env
+    assert "VIVENTIUM_VOICE_MODE=disabled" in runtime_env
     assert "PLAYGROUND_VARIANT=modern" in runtime_env
     assert "VIVENTIUM_PLAYGROUND_VARIANT=modern" in runtime_env
     assert "VIVENTIUM_DEFAULT_TIMEZONE=Etc/UTC" in runtime_env
@@ -2186,8 +2198,8 @@ def test_config_compiler_minimal(tmp_path: Path) -> None:
     assert "SEARXNG_INSTANCE_URL=" not in runtime_env
     assert "FIRECRAWL_API_KEY=" not in runtime_env
     assert "FIRECRAWL_API_URL=" not in runtime_env
-    assert "VIVENTIUM_WING_MODE_DEFAULT_ENABLED=true" in runtime_env
-    assert "VIVENTIUM_SHADOW_MODE_DEFAULT_ENABLED=true" in runtime_env
+    assert "VIVENTIUM_WING_MODE_DEFAULT_ENABLED=false" in runtime_env
+    assert "VIVENTIUM_SHADOW_MODE_DEFAULT_ENABLED=false" in runtime_env
     assert "VIVENTIUM_WING_MODE_PROMPT='Custom wing prompt from config.'" in runtime_env
     assert "VIVENTIUM_SHADOW_MODE_PROMPT='Custom wing prompt from config.'" in runtime_env
     assert "ANTHROPIC_API_KEY=user_provided" in runtime_env
@@ -4436,9 +4448,9 @@ def test_config_compiler_ignores_legacy_fast_voice_llm_provider(tmp_path: Path) 
             },
         },
         "voice": {
-            "mode": "local",
+            "mode": "hosted",
             "stt_provider": "whisper_local",
-            "tts_provider": "browser",
+            "tts_provider": "openai",
             "fast_llm_provider": "x_ai",
         },
         "integrations": {
@@ -4470,6 +4482,7 @@ def test_config_compiler_ignores_legacy_fast_voice_llm_provider(tmp_path: Path) 
     librechat_env = (output_dir / "service-env" / "librechat.env").read_text(encoding="utf-8")
 
     assert "VIVENTIUM_TTS_PROVIDER=openai" in runtime_env
+    assert "VIVENTIUM_VOICE_MODE=hosted" in runtime_env
     assert "VIVENTIUM_VOICE_FAST_LLM_PROVIDER=" not in runtime_env
 
 
@@ -5641,7 +5654,7 @@ def test_config_compiler_preserves_explicit_cloudflare_quick_tunnel(tmp_path: Pa
             "secondary": {"provider": "none", "auth_mode": "disabled"},
             "extra_provider_keys": {},
         },
-        "voice": {"mode": "local"},
+        "voice": {"mode": "disabled"},
         "integrations": {
             "telegram": {"enabled": False},
             "google_workspace": {"enabled": False},
@@ -5712,7 +5725,7 @@ def test_config_compiler_preserves_supported_remote_mesh_modes(
             "secondary": {"provider": "none", "auth_mode": "disabled"},
             "extra_provider_keys": {},
         },
-        "voice": {"mode": "local"},
+        "voice": {"mode": "disabled"},
         "integrations": {
             "telegram": {"enabled": False},
             "google_workspace": {"enabled": False},
@@ -5775,7 +5788,7 @@ def test_config_compiler_renders_runtime_auth_controls(tmp_path: Path) -> None:
             "secondary": {"provider": "none", "auth_mode": "disabled"},
             "extra_provider_keys": {},
         },
-        "voice": {"mode": "local"},
+        "voice": {"mode": "disabled"},
         "integrations": {
             "telegram": {"enabled": False},
             "google_workspace": {"enabled": False},
@@ -5808,7 +5821,7 @@ def test_config_compiler_renders_runtime_auth_controls(tmp_path: Path) -> None:
     assert "VIVENTIUM_CONNECTED_ACCOUNTS_RETURN_ORIGIN=http://localhost:3190" in runtime_env
 
 
-def test_resolve_voice_settings_keeps_local_first_stt_on_intel_even_when_openai_key_exists(
+def test_resolve_voice_settings_fails_closed_when_local_tts_is_unsupported(
     monkeypatch,
 ) -> None:
     monkeypatch.setattr(config_compiler.platform, "system", lambda: "Darwin")
@@ -5829,8 +5842,8 @@ def test_resolve_voice_settings_keeps_local_first_stt_on_intel_even_when_openai_
         },
     }
 
-    result = config_compiler.resolve_voice_settings(config)
-    assert result["stt_provider"] == "whisper_local"
+    with pytest.raises(SystemExit, match="no supported local TTS route"):
+        config_compiler.resolve_voice_settings(config)
 
 
 def test_config_compiler_with_integrations_and_voice(tmp_path: Path) -> None:
@@ -5969,6 +5982,10 @@ def test_config_compiler_with_integrations_and_voice(tmp_path: Path) -> None:
     assert f"TELEGRAM_CODEX_BOT_TOKEN={VALID_TELEGRAM_CODEX_TOKEN}" in telegram_codex_env
 
 
+@pytest.mark.skipif(
+    not config_compiler.host_supports_local_tts(),
+    reason="requires a host with supported local TTS",
+)
 @pytest.mark.parametrize("stt_model", ["base.en", "large-v3-turbo"])
 def test_config_compiler_emits_local_voice_stt_model_override(tmp_path: Path, stt_model: str) -> None:
     config = {
@@ -6323,7 +6340,7 @@ def test_config_compiler_emits_background_followup_window_override(tmp_path: Pat
             "extra_provider_keys": {},
         },
         "voice": {
-            "mode": "local",
+            "mode": "disabled",
             "stt_provider": "whisper_local",
             "tts_provider": "browser",
         },
@@ -6405,7 +6422,7 @@ def test_config_compiler_rejects_invalid_glasshive_followup_timeout(tmp_path: Pa
             "extra_provider_keys": {},
         },
         "voice": {
-            "mode": "local",
+            "mode": "disabled",
             "stt_provider": "whisper_local",
             "tts_provider": "browser",
         },
@@ -6754,9 +6771,9 @@ def test_config_compiler_inherits_local_voice_stt_for_telegram_when_not_overridd
             "extra_provider_keys": {},
         },
         "voice": {
-            "mode": "local",
+            "mode": "hosted",
             "stt_provider": voice_stt_provider,
-            "tts_provider": "browser",
+            "tts_provider": "openai",
         },
         "integrations": {
             "telegram": {
@@ -6788,7 +6805,8 @@ def test_config_compiler_inherits_local_voice_stt_for_telegram_when_not_overridd
 
     telegram_env = (output_dir / "service-env" / "telegram.config.env").read_text(encoding="utf-8")
 
-    assert f"VIVENTIUM_TELEGRAM_STT_PROVIDER={voice_stt_provider}" in telegram_env
+    expected_provider = "whisper_local" if voice_stt_provider == "local" else voice_stt_provider
+    assert f"VIVENTIUM_TELEGRAM_STT_PROVIDER={expected_provider}" in telegram_env
     assert "VIVENTIUM_TELEGRAM_STT_PROVIDER=openai" not in telegram_env
     assert "VIVENTIUM_TELEGRAM_STT_PROVIDER=assemblyai" not in telegram_env
 
@@ -6817,9 +6835,9 @@ def test_config_compiler_allows_explicit_telegram_stt_provider_override(tmp_path
             "extra_provider_keys": {},
         },
         "voice": {
-            "mode": "local",
+            "mode": "hosted",
             "stt_provider": "whisper_local",
-            "tts_provider": "browser",
+            "tts_provider": "openai",
         },
         "integrations": {
             "telegram": {
@@ -6942,9 +6960,9 @@ def test_config_compiler_rejects_unknown_telegram_stt_provider(tmp_path: Path) -
             "extra_provider_keys": {},
         },
         "voice": {
-            "mode": "local",
+            "mode": "hosted",
             "stt_provider": "whisper_local",
-            "tts_provider": "browser",
+            "tts_provider": "openai",
         },
         "integrations": {
             "telegram": {
@@ -7106,6 +7124,10 @@ def test_config_compiler_rejects_invalid_enabled_telegram_token(tmp_path: Path) 
     assert "BotFather format" in combined_output
 
 
+@pytest.mark.skipif(
+    not config_compiler.host_supports_local_tts(),
+    reason="requires a host with supported local TTS",
+)
 def test_config_compiler_exports_dormant_voice_provider_keys_for_precall_selection(
     tmp_path: Path,
 ) -> None:
@@ -7139,7 +7161,6 @@ def test_config_compiler_exports_dormant_voice_provider_keys_for_precall_selecti
             "mode": "local",
             "stt_provider": "whisper_local",
             "tts_provider": "local_chatterbox_turbo_mlx_8bit",
-            "tts_provider_fallback": "openai",
             "provider_keys": {
                 "assemblyai": {"secret_value": "assemblyai-dormant"},
                 "cartesia": {"secret_value": "cartesia-dormant"},
@@ -7169,12 +7190,8 @@ def test_config_compiler_exports_dormant_voice_provider_keys_for_precall_selecti
     runtime_env = (output_dir / "runtime.env").read_text(encoding="utf-8")
 
     assert "VIVENTIUM_STT_PROVIDER=whisper_local" in runtime_env
-    if platform.system() == "Darwin" and platform.machine().lower() in {"arm64", "aarch64"}:
-        assert "VIVENTIUM_TTS_PROVIDER=local_chatterbox_turbo_mlx_8bit" in runtime_env
-        assert "VIVENTIUM_TTS_PROVIDER_FALLBACK=openai" in runtime_env
-    else:
-        assert "VIVENTIUM_TTS_PROVIDER=openai" in runtime_env
-        assert "VIVENTIUM_TTS_PROVIDER_FALLBACK=" not in runtime_env
+    assert "VIVENTIUM_TTS_PROVIDER=local_chatterbox_turbo_mlx_8bit" in runtime_env
+    assert "VIVENTIUM_TTS_PROVIDER_FALLBACK=" not in runtime_env
     assert "ASSEMBLYAI_API_KEY=assemblyai-dormant" in runtime_env
     assert "CARTESIA_API_KEY=cartesia-dormant" in runtime_env
     assert "ELEVENLABS_API_KEY=elevenlabs-dormant" in runtime_env
@@ -8356,7 +8373,11 @@ def test_config_compiler_imports_legacy_private_env_passthrough(tmp_path: Path) 
     assert "AZURE_OPENAI_API_INSTANCE_NAME=explicit-instance" in runtime_env
 
 
-def test_config_compiler_local_voice_browser_maps_to_stable_gateway_tts(tmp_path: Path) -> None:
+@pytest.mark.skipif(
+    not config_compiler.host_supports_local_tts(),
+    reason="requires a host with supported local TTS",
+)
+def test_config_compiler_local_voice_browser_resolves_to_local_only_tts(tmp_path: Path) -> None:
     config = {
         "version": 1,
         "install": {"mode": "native"},
@@ -8383,7 +8404,6 @@ def test_config_compiler_local_voice_browser_maps_to_stable_gateway_tts(tmp_path
             "mode": "local",
             "stt_provider": "whisper_local",
             "tts_provider": "browser",
-            "fast_llm_provider": "x_ai",
         },
         "integrations": {
             "telegram": {"enabled": False},
@@ -8412,24 +8432,21 @@ def test_config_compiler_local_voice_browser_maps_to_stable_gateway_tts(tmp_path
 
     runtime_env = (output_dir / "runtime.env").read_text(encoding="utf-8")
 
-    assert "VIVENTIUM_TTS_PROVIDER=openai" in runtime_env
-    assert "TTS_PROVIDER_PRIMARY=openai" in runtime_env
-    assert "VIVENTIUM_OPENAI_TTS_MODEL=gpt-4o-mini-tts" in runtime_env
-    assert "VIVENTIUM_OPENAI_TTS_VOICE=coral" in runtime_env
-    assert (
-        "VIVENTIUM_OPENAI_TTS_INSTRUCTIONS='Speak naturally with clear pacing. Keep the delivery "
-        "conversational, grounded, and human. Avoid robotic emphasis or exaggerated pauses.'"
-        in runtime_env
-    )
-    assert "warm" not in next(
-        line
-        for line in runtime_env.splitlines()
-        if line.startswith("VIVENTIUM_OPENAI_TTS_INSTRUCTIONS=")
-    ).lower()
-    assert "VIVENTIUM_OPENAI_TTS_SPEED=1.12" in runtime_env
-    assert "TTS_MODEL=gpt-4o-mini-tts" in runtime_env
+    assert "VIVENTIUM_VOICE_MODE=local" in runtime_env
+    assert "VIVENTIUM_TTS_PROVIDER=local_chatterbox_turbo_mlx_8bit" in runtime_env
+    assert "TTS_PROVIDER_PRIMARY=local_chatterbox_turbo_mlx_8bit" in runtime_env
+    assert "VIVENTIUM_TTS_PROVIDER_FALLBACK=" not in runtime_env
+    assert "TTS_PROVIDER_FALLBACK=" not in runtime_env
+    assert "VIVENTIUM_OPENAI_TTS_MODEL=" not in runtime_env
+    assert "VIVENTIUM_OPENAI_TTS_VOICE=" not in runtime_env
+    assert "VIVENTIUM_OPENAI_TTS_INSTRUCTIONS=" not in runtime_env
+    assert "VIVENTIUM_OPENAI_TTS_SPEED=" not in runtime_env
 
 
+@pytest.mark.skipif(
+    not config_compiler.host_supports_local_tts(),
+    reason="requires a host with supported local TTS",
+)
 def test_config_compiler_local_voice_local_automatic_uses_local_tts_when_supported(tmp_path: Path) -> None:
     config = {
         "version": 1,
@@ -8486,22 +8503,17 @@ def test_config_compiler_local_voice_local_automatic_uses_local_tts_when_support
 
     runtime_env = (output_dir / "runtime.env").read_text(encoding="utf-8")
 
-    if platform.system() == "Darwin" and platform.machine().lower() in {"arm64", "aarch64"}:
-        assert "VIVENTIUM_TTS_PROVIDER=local_chatterbox_turbo_mlx_8bit" in runtime_env
-        assert "VIVENTIUM_TTS_PROVIDER_FALLBACK=openai" in runtime_env
-        assert "TTS_PROVIDER_PRIMARY=local_chatterbox_turbo_mlx_8bit" in runtime_env
-        assert "TTS_PROVIDER_FALLBACK=openai" in runtime_env
-    else:
-        assert "VIVENTIUM_TTS_PROVIDER=openai" in runtime_env
-        assert "TTS_PROVIDER_PRIMARY=openai" in runtime_env
-    assert "VIVENTIUM_OPENAI_TTS_MODEL=gpt-4o-mini-tts" in runtime_env
-    assert "VIVENTIUM_OPENAI_TTS_VOICE=coral" in runtime_env
-    assert "VIVENTIUM_OPENAI_TTS_INSTRUCTIONS=" in runtime_env
-    assert "VIVENTIUM_OPENAI_TTS_SPEED=1.12" in runtime_env
-    assert "TTS_MODEL=gpt-4o-mini-tts" in runtime_env
+    assert "VIVENTIUM_TTS_PROVIDER=local_chatterbox_turbo_mlx_8bit" in runtime_env
+    assert "TTS_PROVIDER_PRIMARY=local_chatterbox_turbo_mlx_8bit" in runtime_env
+    assert "VIVENTIUM_TTS_PROVIDER_FALLBACK=" not in runtime_env
+    assert "TTS_PROVIDER_FALLBACK=" not in runtime_env
+    assert "VIVENTIUM_OPENAI_TTS_MODEL=" not in runtime_env
+    assert "VIVENTIUM_OPENAI_TTS_VOICE=" not in runtime_env
+    assert "VIVENTIUM_OPENAI_TTS_INSTRUCTIONS=" not in runtime_env
+    assert "VIVENTIUM_OPENAI_TTS_SPEED=" not in runtime_env
 
 
-def test_config_compiler_allows_custom_openai_tts_voice_and_speed(tmp_path: Path) -> None:
+def test_config_compiler_allows_custom_openai_tts_voice_and_speed_in_hosted_mode(tmp_path: Path) -> None:
     config = {
         "version": 1,
         "install": {"mode": "native"},
@@ -8525,7 +8537,7 @@ def test_config_compiler_allows_custom_openai_tts_voice_and_speed(tmp_path: Path
             "extra_provider_keys": {},
         },
         "voice": {
-            "mode": "local",
+            "mode": "hosted",
             "stt_provider": "whisper_local",
             "tts_provider": "browser",
             "fast_llm_provider": "x_ai",
@@ -8565,72 +8577,36 @@ def test_config_compiler_allows_custom_openai_tts_voice_and_speed(tmp_path: Path
     assert "VIVENTIUM_OPENAI_TTS_SPEED=1.22" in runtime_env
 
 
-def test_config_compiler_explicit_local_chatterbox_provider_falls_back_on_unsupported_hosts(
-    tmp_path: Path,
+def test_resolve_voice_settings_rejects_hosted_fallback_in_local_mode(
+    monkeypatch,
 ) -> None:
+    monkeypatch.setattr(config_compiler.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(config_compiler.platform, "machine", lambda: "arm64")
     config = {
-        "version": 1,
-        "install": {"mode": "native"},
-        "runtime": {
-            "log_level": "info",
-            "profile": "compat",
-            "call_session_secret": {"secret_value": "call-secret-explicit-local-chatterbox"},
-        },
-        "llm": {
-            "activation": {
-                "provider": "groq",
-                "auth_mode": "api_key",
-                "secret_value": "groq-test",
-            },
-            "primary": {
-                "provider": "openai",
-                "auth_mode": "api_key",
-                "secret_value": "openai-test",
-            },
-            "secondary": {"provider": "none", "auth_mode": "disabled"},
-            "extra_provider_keys": {},
-        },
         "voice": {
             "mode": "local",
             "stt_provider": "whisper_local",
             "tts_provider": "local_chatterbox_turbo_mlx_8bit",
             "tts_provider_fallback": "openai",
-            "fast_llm_provider": "x_ai",
-        },
-        "integrations": {
-            "telegram": {"enabled": False},
-            "google_workspace": {"enabled": False},
-            "ms365": {"enabled": False},
-            "skyvern": {"enabled": False},
-            "openclaw": {"enabled": False},
         },
     }
-    config_path = tmp_path / "config.yaml"
-    output_dir = tmp_path / "out"
-    write_config(config_path, config)
+    with pytest.raises(SystemExit, match="cannot use a hosted TTS fallback"):
+        config_compiler.resolve_voice_settings(config)
 
-    subprocess.run(
-        [
-            sys.executable,
-            str(REPO_ROOT / "scripts/viventium/config_compiler.py"),
-            "--config",
-            str(config_path),
-            "--output-dir",
-            str(output_dir),
-        ],
-        check=True,
-        cwd=REPO_ROOT,
-    )
 
-    runtime_env = (output_dir / "runtime.env").read_text(encoding="utf-8")
-
-    if platform.system() == "Darwin" and platform.machine().lower() in {"arm64", "aarch64"}:
-        assert "VIVENTIUM_TTS_PROVIDER=local_chatterbox_turbo_mlx_8bit" in runtime_env
-        assert "VIVENTIUM_TTS_PROVIDER_FALLBACK=openai" in runtime_env
-    else:
-        assert "VIVENTIUM_TTS_PROVIDER=openai" in runtime_env
-        assert "TTS_PROVIDER_PRIMARY=openai" in runtime_env
-        assert "VIVENTIUM_TTS_PROVIDER_FALLBACK=" not in runtime_env
+def test_resolve_voice_settings_rejects_hosted_stt_in_local_mode(monkeypatch) -> None:
+    monkeypatch.setattr(config_compiler.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(config_compiler.platform, "machine", lambda: "arm64")
+    with pytest.raises(SystemExit, match="hosted STT would violate"):
+        config_compiler.resolve_voice_settings(
+            {
+                "voice": {
+                    "mode": "local",
+                    "stt_provider": "assemblyai",
+                    "tts_provider": "local_chatterbox_turbo_mlx_8bit",
+                }
+            }
+        )
 
 
 def test_config_compiler_resolves_string_telegram_enablement_consistently(tmp_path: Path) -> None:

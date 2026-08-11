@@ -404,6 +404,7 @@ properties:
         properties:
           default_enabled:
             type: boolean
+            description: Deprecated migration-only field; new calls always start in Call mode.
           prompt:
             type: string
       shadow_mode:
@@ -411,6 +412,7 @@ properties:
         properties:
           default_enabled:
             type: boolean
+            description: Deprecated migration-only alias; new calls always start in Call mode.
           prompt:
             type: string
   integrations:

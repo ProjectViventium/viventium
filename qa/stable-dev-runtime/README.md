@@ -31,6 +31,9 @@ Minimum evidence for dev/prod coexistence:
 - generated dev config records `runtime.dev_env.enabled`
 - generated dev config records shared singleton services
 - shared singleton services are not started a second time by default
+- `dev-env run` exposes the `v1` resource-guard profile, replaces unsafe inherited native-thread
+  settings, and terminates a synthetic runaway with its classified safety exit
+- candidate and installed process/port snapshots prove the guard did not restart or stop local prod
 - `bin/viventium dev-runtime status` shows the installed runtime checkout separately from the dev env
 - `bin/viventium dev-runtime activate-current --validate --restart` uses runtime-checkout state and
   does not copy source into an install path; candidate outputs validate before live mutation, and

@@ -236,6 +236,15 @@ versioned `{MSG_BREAK}` control.
     stripped before xAI synthesis
   - OpenAI/ElevenLabs fallbacks still strip all provider markup before synthesis
 - `/call` should open the browser into the modern voice surface using a browser-facing URL.
+- `/call` requires the selected canonical agent to pass the same global Agents `USE` and resource
+  `VIEW` checks as normal Agents chat before a call link is issued.
+- The link carries a single-use `call_browser_launch_v1` bearer only in its fragment. The browser
+  strips the fragment before a same-origin exchange, generates a 32-byte idempotency capability,
+  and receives exact-session `call_browser_v1` authority. A lost response may retry with the same
+  idempotency value; a different value or another browser replay is denied.
+- Launch and browser capabilities are never accepted as query/body values, written to logs, placed
+  in referrers, cached, or copied into public evidence. A raw call-session id is not browser call
+  authority.
 - Raw LAN/IP browser-voice links should not be presented as a supported path unless they are
   explicitly known-good for the current deployment.
 

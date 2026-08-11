@@ -442,6 +442,11 @@ exact app-owned binary and its loopback listener/process arguments match; arbitr
 Homebrew Mongo remains a legacy/custom-path option only. API, web, status output, and the startup
 banner use loopback truth in local mode.
 
+For voice, local mode is a strict audio-egress boundary. Compilation must preserve local
+Whisper/Chatterbox routing or stop with a classified unsupported-route error; it must never rewrite
+an unavailable local provider or fallback to a hosted provider. Legacy Wing default fields are
+migration-only inputs, and every newly created call begins in Call mode.
+
 The browser handoff persists `setup=accounts` across registration/login, requires a configured
 trusted server origin for OAuth instead of trusting the request `Host`, and scopes popup/poll/manual
 completion work to one attempt identity so stale async results cannot corrupt a newer connection.
@@ -475,15 +480,16 @@ falling back to historical defaults:
   and Channels controls; and
 - lab-only OpenClaw is absent from public Easy Install setup and status output.
 
-The current candidate pins merged public-main LibreChat commit
-`ccfd307c3b6bd5573c58dfc4f16b84fc691fef4f` in both the parent component lock and Native payload
-component manifest, and merged public-main modern-playground commit
-`98d1249db7a728e94656462d6bda979571be4dd7` in the parent component lock. The source/Docker
-GlassHive runtime is pinned by the parent component lock to merged public-main commit
-`94c99e3fdcf05d799b5d02e6a188071dc4fbc0eb`; it is intentionally absent from the Native payload
+The current isolated prerelease candidate pins LibreChat commit
+`1cd439d03cc165f5f7bc4631d28dd678deb63827` in both the parent component lock and Native payload
+component manifest, modern-playground commit `56b728e358e8ff18cd5ac9c38655f26e492c277d`,
+GlassHive commit `ce65fdf4b6567f513c10474069bf40495b48d960`, and Viventium-Health commit
+`8b1f669d539a6a9e2e80e92c354130e4fac1a8af` in the parent component lock. GlassHive is
+intentionally absent from the Native payload
 component manifest. The Google Workspace MCP source is pinned to merged public-main commit
-`0824701abcf490de2a5091c68a7b0738f2294b3f`. Both manifests declare `merged`, and each merge tree
-equals its reviewed PR head. Source and local-runtime PASS still do not
+`0824701abcf490de2a5091c68a7b0738f2294b3f`. Both manifests declare
+`review-head-pending-merge`; local component mirrors are valid only for local QA until a separate
+public push/merge is authorized. Source and local-runtime PASS still do not
 substitute for a separately signed and notarized immutable Native artifact or vendor-side Telegram,
 Slack, or Meta account approval without credentials owned by the installing user.
 

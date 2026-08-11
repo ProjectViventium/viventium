@@ -32,6 +32,7 @@ from worker import (
     _configure_xai_standalone_tts_plugin,
     _normalize_voice_provider,
     _validate_ref_audio_path,
+    VoiceRouteError,
     load_env,
     prewarm_process,
     run,
@@ -110,12 +111,11 @@ class TestRefAudioValidation(unittest.TestCase):
         )
         self.assertNotIn("warm", env.openai_tts_instructions.lower())
 
-    def test_load_env_rejects_voice_agent_as_tts_route(self) -> None:
+    def test_load_env_rejects_retired_xai_voice_agent_route(self) -> None:
         with patch.dict(os.environ, {"VIVENTIUM_XAI_TTS_API": "voice_agent"}, clear=True):
             with self.assertRaisesRegex(
                 ValueError,
-                "Voice Agent API.*separate real-time conversational product.*"
-                "VIVENTIUM_XAI_TTS_API=tts",
+                "Grok Voice Agent.*retired.*VIVENTIUM_XAI_TTS_API=tts",
             ):
                 load_env()
 
@@ -145,6 +145,15 @@ class TestRefAudioValidation(unittest.TestCase):
         options = _build_room_options(sync_transcription=False)
 
         self.assertFalse(options.text_output.sync_transcription)
+
+    def test_build_room_options_binds_exact_job_publisher(self) -> None:
+        options = _build_room_options(
+            sync_transcription=False,
+            participant_identity="signed-owner",
+        )
+
+        self.assertEqual(options.participant_identity, "signed-owner")
+        self.assertFalse(options.close_on_disconnect)
 
     def test_build_room_options_can_still_opt_into_sync_transcription(self) -> None:
         options = _build_room_options(sync_transcription=True)
@@ -305,7 +314,7 @@ class TestRefAudioValidation(unittest.TestCase):
             self.assertEqual(valid, str(long_path.resolve()))
             self.assertIsNone(warning)
 
-    def test_run_registers_publisher_worker(self) -> None:
+    def test_run_registers_room_worker_for_explicit_dispatch(self) -> None:
         captured = {}
 
         def _fake_run_app(opts):
@@ -330,7 +339,7 @@ class TestRefAudioValidation(unittest.TestCase):
 
         self.assertIn("opts", captured)
         self.assertEqual(captured["opts"].agent_name, "librechat-voice-gateway")
-        self.assertEqual(captured["opts"].worker_type, WorkerType.PUBLISHER)
+        self.assertEqual(captured["opts"].worker_type, WorkerType.ROOM)
         self.assertEqual(captured["opts"].job_memory_warn_mb, 2200.0)
         self.assertEqual(captured["opts"].job_memory_limit_mb, 2200.0)
 
@@ -382,6 +391,34 @@ class TestRefAudioValidation(unittest.TestCase):
             prewarm_process(proc)
 
         tts_cls.assert_not_called()
+        self.assertNotIn("prewarmed_local_chatterbox_tts", proc.userdata)
+
+    def test_prewarm_process_fails_closed_on_local_chatterbox_failure(self) -> None:
+        proc = SimpleNamespace(userdata={})
+        fake_tts = Mock()
+        fake_tts.prewarm.side_effect = RuntimeError("bad local TTS model")
+
+        with (
+            patch(
+                "worker.load_env",
+                return_value=SimpleNamespace(
+                    stt_provider="openai",
+                    tts_provider="local_chatterbox_turbo_mlx_8bit",
+                    tts_provider_fallback="",
+                    mlx_audio_model_id="mlx-community/chatterbox-turbo-8bit",
+                    voice_prewarm_local_tts=True,
+                ),
+            ),
+            patch("worker.load_vad", return_value=None),
+            patch(
+                "worker._build_local_chatterbox_config",
+                return_value=(SimpleNamespace(model_id="mlx-community/chatterbox-turbo-8bit"), None),
+            ),
+            patch("worker.MlxChatterboxTTS", return_value=fake_tts),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "worker will not register"):
+                prewarm_process(proc)
+
         self.assertNotIn("prewarmed_local_chatterbox_tts", proc.userdata)
 
     def test_prewarm_process_fails_closed_on_local_whisper_prewarm_failure(self) -> None:
@@ -440,7 +477,7 @@ class TestRefAudioValidation(unittest.TestCase):
         self.assertEqual(_normalize_voice_provider("grok"), "xai")
         self.assertEqual(_normalize_voice_provider("xai_grok_voice"), "xai")
 
-    def test_apply_requested_voice_route_ignores_unavailable_providers(self) -> None:
+    def test_apply_requested_voice_route_fails_closed_for_unavailable_providers(self) -> None:
         with patch.dict(
             os.environ,
             {
@@ -457,13 +494,13 @@ class TestRefAudioValidation(unittest.TestCase):
                 "tts": {"provider": "xai", "variant": "Eve"},
             }
 
-            updated = _apply_requested_voice_route(env, requested, capabilities)
+            with self.assertRaises(VoiceRouteError) as raised:
+                _apply_requested_voice_route(env, requested, capabilities)
 
-        self.assertEqual(updated.stt_provider, env.stt_provider)
-        self.assertEqual(updated.tts_provider, "openai")
-        self.assertEqual(updated.xai_voice, "Sal")
+        self.assertEqual(raised.exception.code, "provider_failure")
+        self.assertEqual(raised.exception.provider, "assemblyai")
 
-    def test_apply_requested_voice_route_keeps_machine_default_when_requested_route_missing(self) -> None:
+    def test_apply_requested_voice_route_rejects_missing_saved_route(self) -> None:
         with patch.dict(
             os.environ,
             {
@@ -476,10 +513,10 @@ class TestRefAudioValidation(unittest.TestCase):
             env = load_env()
             capabilities = _build_voice_capability_catalog(env)
 
-            updated = _apply_requested_voice_route(env, {"stt": {}, "tts": {}}, capabilities)
+            with self.assertRaises(VoiceRouteError) as raised:
+                _apply_requested_voice_route(env, {"stt": {}, "tts": {}}, capabilities)
 
-        self.assertEqual(updated.tts_provider, "local_chatterbox_turbo_mlx_8bit")
-        self.assertEqual(updated.cartesia_model_id, "sonic-3")
+        self.assertEqual(raised.exception.code, "no_route")
 
     def test_apply_requested_voice_route_switches_from_local_default_to_cartesia_voice(self) -> None:
         lyra_voice_id = "6ccbfb76-1fc6-48f7-b71d-91ac6298247b"
@@ -487,6 +524,7 @@ class TestRefAudioValidation(unittest.TestCase):
             os.environ,
             {
                 "CARTESIA_API_KEY": "cartesia-key",
+                "OPENAI_API_KEY": "openai-key",
                 "VIVENTIUM_TTS_PROVIDER": "local_chatterbox_turbo_mlx_8bit",
                 "VIVENTIUM_CARTESIA_MODEL_ID": "sonic-2",
             },
@@ -495,7 +533,7 @@ class TestRefAudioValidation(unittest.TestCase):
             env = load_env()
             capabilities = _build_voice_capability_catalog(env)
             requested = {
-                "stt": {},
+                "stt": {"provider": "openai", "variant": "gpt-4o-mini-transcribe"},
                 "tts": {"provider": "cartesia", "variant": lyra_voice_id},
             }
 
