@@ -250,6 +250,9 @@ compliant hosted topology.
   fixed callback port plus the exact derived callback URI; Claude Code requires its fixed callback
   port and localhost callback URI. Missing token audiences/scopes, client allowlist drift, resource
   drift, or partial registration is an action-required deployment state, not a copyable false command.
+  Current Codex discovers the canonical resource from GlassHive protected-resource metadata. The
+  generated command validates that contract server-side but does not also pass `--oauth-resource`,
+  which would duplicate the RFC 8707 parameter and make the authorization request invalid.
 - “Use GlassHive from another AI app” keeps the ordinary path short. Automatic setup is one
   copyable, self-contained instruction containing each returned client's exact deployment-generated
   add/authenticate command, canonical URL, and collision-safe server name. The receiving AI never has
@@ -258,8 +261,8 @@ compliant hosted topology.
   client names from the endpoint's complete allowlisted contracts; a Codex-only deployment never
   advertises Claude or ChatGPT, and vice versa. Callback URIs, fixed ports, client
   registration explanations remain under administrator details, are labelled “do not open,” and
-  never masquerade as user actions or links. Public client/resource/callback flags may appear only as
-  opaque arguments inside the exact copyable command.
+  never masquerade as user actions or links. Public client/callback flags may appear only as opaque
+  arguments inside the exact copyable command.
 - Generated client configuration names are stable, shell-safe hashes of the canonical deployment
   URL, so separate self-hosted GlassHive origins do not collide in one local client. The browser does
   not execute local commands or claim it can silently edit another application's configuration.

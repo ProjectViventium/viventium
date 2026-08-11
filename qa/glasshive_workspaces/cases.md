@@ -49,8 +49,9 @@ Use stable `GHWS-NNN` IDs for glasshive workspaces cases.
 ## `GHWS-003` - Modern Navigation And Non-Mutating Output
 
 - Requirement: normal users remain in Glass Drive and can inspect output directly.
-- Risk covered: brand text is inert, a primary action exposes `/ui/projects/*`, two labels open the
-  same Watch page, or clicking a completed result unexpectedly resumes compute.
+- Risk covered: brand text is inert, a primary action exposes `/ui/projects/*`, a hosted delivery
+  exposes an unusable worker-local `file:///workspace/...` target, two labels open the same Watch
+  page, or clicking a completed result unexpectedly resumes compute.
 - Steps: open Home, Workspaces, Watch, and a completed artifact; use brand, Open workspace, Open
   output, and Download by pointer and keyboard; complete run A, observe run B start elsewhere, then
   complete B without rebuilding the grid; inspect lifecycle calls and refresh.
@@ -58,8 +59,8 @@ Use stable `GHWS-NNN` IDs for glasshive workspaces cases.
   uses the exact scoped artifact/result action; B replaces A's links after its completion; no
   inspection sends resume/start/message. Output disclosure exposes matching `aria-controls` and
   changes View/Hide copy truthfully.
-- Forbidden result: normal navigation reaches the legacy runtime UI, exposes raw ids/tokens/JSON, or
-  restarts work without an explicit Continue/Send action.
+- Forbidden result: normal navigation reaches the legacy runtime UI, exposes raw ids/tokens/JSON or
+  a worker-local file URL, or restarts work without an explicit Continue/Send action.
 - Evidence: browser URL/DOM, lifecycle network log, worker state before/after, artifact bytes/headers,
   console, narrow-layout screenshots.
 - Last run: PASS 2026-08-11 in a real local Chromium session with synthetic state. Brand and Watch

@@ -35,6 +35,20 @@
 - Escaped response-model regression: pending duplicate and template-origin reports reload through
   worker/live response models before execution.
 
+## Hosted Canary Attempt
+
+- The first sealed candidate was activated behind the isolated canary endpoint and tested through
+  the authenticated browser before acceptance.
+- Navigation, modern Workspaces, safe artifact Open/Download, completed Watch wording, concise
+  Connections, and Automatic/Manual external-AI presentation behaved as expected.
+- Acceptance was rejected because the prominent completed-output action still exposed a
+  worker-local `file:` target and the generated Codex command duplicated the OAuth resource that
+  the client already derives from protected-resource metadata.
+- Explicit rollback restored the verified predecessor; the stable endpoint and out-of-scope
+  services remained unchanged.
+- Both escaped failures now have synthetic regressions. Exact post-fix installed browser and client
+  reruns remain required before this report can mark the hosted release PASS.
+
 ## Expected And Forbidden Outcomes
 
 - Expected: one glossy control surface, one primary Open workspace action, direct safe output,

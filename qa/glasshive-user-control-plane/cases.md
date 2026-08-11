@@ -192,15 +192,16 @@ most specific existing QA owner when a scenario already has a detailed provider 
 - Expected result: the copied instruction embeds every returned client's exact generated add/sign-in
   commands, canonical HTTPS MCP URL, and collision-safe derived server name, so the receiving AI does
   not have to infer hidden configuration; only fully configured/allowlisted client
-  commands are shown; Codex includes its
-  OAuth client/public-resource flags, fixed callback login override, and exact derived redirect URI;
+  commands are shown; Codex includes its OAuth client and fixed callback login override, relies on
+  the exact protected-resource metadata instead of adding a second `resource` parameter, and uses
+  the exact derived redirect URI;
   Claude includes its client/fixed-callback flags and localhost redirect URI; OAuth completes; both
   clients see the same user-scoped capabilities and actionable reconnect flow. Callback/client/port
   details appear only under administrator registration details and say not to open the callback.
 - Forbidden result: callback reference presented as a link or user step, browser claim of silent local
   installation, a client named without a complete returned contract, bare colliding `glasshive`
   config name, wrong self-hosted origin, static bearer token, cross-user list, hidden manual config,
-  or false “connected” state.
+  duplicated OAuth `resource` parameter, or false “connected” state.
 - Evidence to capture: visible command UI, redacted client config, OAuth metadata/challenge, tool list,
   scoped runtime rows.
 - Full-view evidence minimum: browser command + two real clients + runtime authorization evidence.
