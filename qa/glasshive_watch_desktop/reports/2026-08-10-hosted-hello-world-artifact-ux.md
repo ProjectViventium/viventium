@@ -2,9 +2,10 @@
 
 ## Summary
 
-- Result: PARTIAL; the real pre-fix user path exposed two defects and the merged source correction
-  passed automated and local Chromium security gates. Exact post-fix hosted acceptance remains open.
-- Build/source under test: merged GlassHive PR 74 plus its parent pin candidate.
+- Result: PASS for the exact installed core user path; the pre-fix defects were reproduced, corrected,
+  and then rerun successfully through real Chrome. Hosted narrow-width repetition remains open.
+- Build/source under test: parent merge `889ae68c7d3bf26c459f0c96d473e46532f19568`
+  with GlassHive merge `94c99e3fdcf05d799b5d02e6a188071dc4fbc0eb`.
 - Runtime/artifact under test: additive hosted GlassHive canary; stable LibreChat was observed only for
   availability and was not modified.
 - Environment: hosted multi-user GlassHive through real Chrome, with sanitized synthetic task content.
@@ -15,15 +16,15 @@
 
 | Case ID | Result | Evidence | Notes |
 | --- | --- | --- | --- |
-| `GHWATCH-003` | PARTIAL | Real Chrome, durable completed run, and source suites | Open/Download failed before the correction; opaque workspace return passed. |
-| `GHWATCH-013` | PARTIAL | 436 affected tests and headed benign/adversarial Chromium probe | Exact pinned installed Open/Download rerun remains open. |
+| `GHWATCH-003` | PASS | Real Chrome, durable completed run, source suites, and exact installed rerun | Rendered Open, direct Download, opaque workspace return, and refresh passed after the correction. |
+| `GHWATCH-013` | PASS | 436 affected tests, headed benign/adversarial Chromium probe, and exact installed Chrome | The installed preview rendered `Hello world`; Download emitted the exact 423-byte file without navigation or an error tab. |
 
 ## Natural User Use Case Checklist Run
 
 | Use Case ID | Natural user action | Real surface used | Result | Visible evidence | Logs/DB/state/docs/artifact evidence | Remaining gap |
 | --- | --- | --- | --- | --- | --- | --- |
-| `GHWATCH-UC-004` | Complete one HTML task, open and download it, then return to the workspace. | Real hosted Chrome and GlassHive Watch | FAIL before fix / PARTIAL after source fix | Watch showed completion; View workspace and refresh worked; Open showed source and Download opened an error tab. | Completed/ready run and workspace, zero active provider leases, and `index.html` present. | Repeat on the exact post-fix installed canary. |
-| `GHWATCH-UC-013` | Open the HTML as a page, download exact bytes, return, refresh, and check supported widths. | Local headed Chromium plus pre-fix hosted Chrome | PARTIAL | Local rendered page and sandbox boundary passed; exact hosted post-fix UX not yet run. | Full affected suites and merged source/docs reviewed. | Exact installed Chrome Open/Download and width checks. |
+| `GHWATCH-UC-004` | Complete one HTML task, open and download it, then return to the workspace. | Real hosted Chrome and GlassHive Watch | PASS | Watch showed `Worker completed` / `Workspace complete`; Open visibly rendered `Hello world`; Download completed without leaving the preview; View workspace and refresh returned to the completed Watch. | Completed/ready run and workspace, zero active provider leases, exact 423-byte downloaded file, artifact present, and clean browser console. | None for the core use case. |
+| `GHWATCH-UC-013` | Open the HTML as a page, download exact bytes, return, refresh, and check supported widths. | Exact installed Chrome plus local headed Chromium | PARTIAL | Exact installed Open/Download/return/refresh passed; local 320/768/1024 layout and adversarial sandbox probes passed. | Full affected suites, exact release provenance, merged source/docs, and installed browser assets reviewed. | Repeat the exact hosted surface at narrow widths. |
 
 ## Traceability
 
@@ -34,10 +35,9 @@
 - Use case: complete a simple HTML page, open it as a page, download it, and return to its workspace.
 - QA case: `GHWATCH-003` and escaped regression `GHWATCH-013`.
 - Expected result: rendered page, exact attachment, opaque workspace return, safe refresh, no raw errors.
-- Actual evidence: recovery, personal-only launch, opaque handoff, completion, workspace return, and
-  persistence passed; pre-fix Open/Download failed; merged source plus adversarial Chromium passed.
-- Remaining gap or fix: seal and activate the exact parent/nested pair, then repeat the real hosted
-  Chrome loop and update this report.
+- Actual evidence: recovery, personal-only launch, opaque handoff, completion, rendered Open, direct
+  Download, workspace return, refresh persistence, merged source, and adversarial Chromium passed.
+- Remaining gap or fix: repeat the exact hosted surface at narrow widths; no core user-path defect remains.
 
 ## Full-View Evidence Checklist
 
@@ -50,10 +50,10 @@
 | Local/external prerequisite state | Which required dependency was proven? | Personal Codex account reached Ready and completed the hosted task; provider lease returned to zero. |
 | Logs | Which sanitized logs confirm or contradict the result? | Service health stayed active; no raw log or identifier is retained publicly. |
 | DB/state/persistence | Which sanitized state confirms it? | Latest workspace ready, run completed, account ready, zero active leases, artifact present. |
-| Generated/shipped artifact | Which installed artifact was inspected? | Pre-fix sealed additive canary was exercised; post-fix pin/build is pending activation. |
+| Generated/shipped artifact | Which installed artifact was inspected? | Exact sealed additive canary for parent `889ae68c...` and GlassHive `94c99e3...`; runtime, UI, MCP, and nested runtime health all reported the same provenance. |
 | Real user path | Which real surface was used like a user? | Real Chrome: Check connection -> Run Project -> Watch -> Open/Download -> View workspace -> refresh. |
-| Visual/UX comparison | Does visible behavior match? | Completion and return matched; pre-fix preview/download did not. |
-| Not run / blocked | Which required surface was not run? | Exact post-fix hosted Open/Download and fresh public bootstrap remain open. |
+| Visual/UX comparison | Does visible behavior match? | Yes for completion, rendered preview, download, workspace return, and refresh. |
+| Not run / blocked | Which required surface was not run? | Exact hosted narrow-width repetition and a fresh hosted public bootstrap remain open. |
 
 ## User-Grade Evidence
 
@@ -61,11 +61,12 @@
 - Real user path: recover the existing personal account, submit `Show a simple hello world html
   page`, follow the automatic opaque handoff, inspect completion, Open, Download, View workspace,
   and refresh.
-- Visible outcome: `Worker completed` and `Workspace complete` appeared. Before the fix, Open showed
-  escaped source and Download opened a browser error tab.
+- Visible outcome: `Worker completed` and `Workspace complete` appeared. After the fix, Open rendered
+  the `Hello world` heading inside the sandboxed page preview and Download completed without navigation
+  or an error tab.
 - Expanded/detail state: the Watch result identified the delivered `index.html` and its actions.
-- Persistence/reload result: View workspace returned to the completed Watch surface and refresh kept
-  the completed state.
+- Persistence/reload result: View workspace returned through the opaque route to the completed Watch
+  surface and refresh restored the completed state.
 - Local/external prerequisite state: the personal provider account was Ready before and after the
   mission; no active provider lease remained afterward.
 - Evidence retrieval classification, if applicable: provider and artifact evidence retrieved
@@ -73,8 +74,8 @@
 - Fallback path, if applicable: no fallback provider was allowed or used.
 - Backend/log/DB confirmation: sanitized state showed completed run, ready workspace/account, zero
   active leases, and the HTML artifact present.
-- Final model/runtime wording check: visible completion wording matched durable state; this report
-  does not call the post-fix hosted artifact UX passed before it is rerun.
+- Final model/runtime wording check: visible completion wording matched durable state and the exact
+  installed artifact UX passed its post-fix Chrome rerun.
 - Substitution check: logs, DB rows, API responses, source inspection, model completions, and unit
   tests are supporting evidence, not substitutes for the required post-fix visible Chrome path.
 
@@ -99,9 +100,8 @@ git diff --check
 - Defects: pre-fix Open displayed escaped HTML source; pre-fix Download opened a browser error tab.
 - Regressions: both escaped defects are now represented by `GHWATCH-013`.
 - Flakes: none observed in the affected source suites.
-- Environment issues: exact post-fix release was not yet installed at the time of this report revision.
-- Residual risks: exact installed Chrome Open/Download, width checks, and fresh public bootstrap remain
-  PARTIAL until executed.
+- Environment issues: none for the core exact installed rerun.
+- Residual risks: exact hosted narrow-width repetition and a fresh hosted public bootstrap remain open.
 
 ## Public-Safety Review
 
