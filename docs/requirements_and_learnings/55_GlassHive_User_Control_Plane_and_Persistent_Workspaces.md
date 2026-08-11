@@ -326,6 +326,14 @@ compliant hosted topology.
   of one account fails with an actionable busy state. Mission leases are heartbeated against a short
   crash-detection window rather than inheriting the worker's potentially day-long timeout, so an API
   crash cannot strand the account for 24 hours; loss quarantines the account with a reconnect action.
+- Live browser and desktop actions borrow the exact active worker route instead of reconstructing a
+  provider home or acquiring a second lease. A native subscription route is usable only after its
+  first container readiness succeeds and only while the exact stored lease id still matches; brokered
+  and approved fallback routes remain explicitly unbound. One worker slot stays reserved through
+  action readers, container removal, credential reseal, and lease release, so a second account or run
+  cannot race startup or terminate the first mission's container. A broker cleanup/revocation failure
+  after worker dispatch is surfaced and quarantined without dispatching the mission again through the
+  preferred fallback.
 - In the reviewed Linux `per_worker_container` route, the exact account home is mounted only into the
   selected worker container. The rootless container grants and verifies access for its non-root worker
   user through POSIX ACLs, with no world-writable fallback; the container is removed, credential-tree
