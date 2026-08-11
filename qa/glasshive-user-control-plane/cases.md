@@ -301,13 +301,24 @@ most specific existing QA owner when a scenario already has a detailed provider 
   required `0644`/`0700` modes without deleting an existing arg0 helper. Repeat the readiness grant,
   complete the mission, then remove the container and reseal every directory/file to service-owned
   `0700`/`0600` before lease release.
+- Escape regression: while a selected-account mission is running, request a browser/desktop action.
+  The action must borrow the exact run route and, for a native subscription, the exact lease id and
+  already-ready mounted worker. Block the first readiness call, replace the lease with identical
+  owner/worker/run metadata, race a second account on the same worker before startup and during
+  cleanup, and repeat with `personal_preferred` fallback plus API/enterprise broker routes. The first
+  mission must remain exclusive through container removal and reseal; fallback/broker actions must
+  remain usable without being misclassified as native mounts. Force broker revocation to fail after a
+  successful dispatch and prove the user's mission runs exactly once rather than again through the
+  preferred fallback.
 - Expected result: only selected native home is projected; concurrent run gets actionable busy state;
   refresh writes back safely; lease releases on every terminal path; stale lease recovers.
 - Forbidden result: global auth copied, wrong provider accepted, lease ends before mission, stuck lease,
   account row survives while its home disappears, an active bind mount escapes quiescence, an exited
   container permanently blocks rollout, Codex reports `Operation not permitted` while creating its
-  installation ID or argument aliases, readiness deletes a live arg0 helper, or a second user obtains
-  the account.
+  installation ID or argument aliases, readiness deletes a live arg0 helper, a desktop action starts a
+  competing container, an identical replacement lease authorizes a stale mount, cleanup releases the
+  worker slot early, a broker/fallback action is forced through native-home validation, or a second
+  user obtains the account, or post-dispatch broker cleanup executes the mission twice.
 - Evidence to capture: worker command/env sans secrets, lease timeline, provider-home hash/metadata,
   run outcomes.
 - Full-view evidence minimum: real native worker mission and concurrency/recovery proof.
@@ -729,10 +740,11 @@ most specific existing QA owner when a scenario already has a detailed provider 
 - Full-view evidence minimum: clean bootstrap through supported entrypoint and installed user smoke.
 - Automation: release/bootstrap/compiler/installer suites plus provenance checks.
 - Last run: PARTIAL 2026-08-10; the parent candidate pins merged GlassHive
-  `7f4af03e4c97c5e14221e7169369bf39c880b409`, whose merge tree equals the reviewed shared-ref,
+  `036c6b19b61d9496d498a266710180199a3bc72b`, whose merge tree equals the reviewed shared-ref,
   authenticated-handoff, account-UX, prepared-state compatibility, provider-account recovery,
   provider-home continuity, safe provider-cache symlink cleanup, valid repair-container mount syntax,
-  renewable post-verification reseal, and Codex runtime-metadata heads. Sealed canary provenance,
+  renewable post-verification reseal, Codex runtime metadata, and exact active provider-route
+  lifecycle heads. Sealed canary provenance,
   installed post-fix real-browser UX, and a fresh public bootstrap/install in a new directory remain open
   for this exact pair.
 
