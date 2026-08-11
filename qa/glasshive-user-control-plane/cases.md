@@ -740,13 +740,13 @@ most specific existing QA owner when a scenario already has a detailed provider 
 - Full-view evidence minimum: clean bootstrap through supported entrypoint and installed user smoke.
 - Automation: release/bootstrap/compiler/installer suites plus provenance checks.
 - Last run: PARTIAL 2026-08-10; the parent candidate pins merged GlassHive
-  `036c6b19b61d9496d498a266710180199a3bc72b`, whose merge tree equals the reviewed shared-ref,
+  `94c99e3fdcf05d799b5d02e6a188071dc4fbc0eb`, whose merge tree equals the reviewed shared-ref,
   authenticated-handoff, account-UX, prepared-state compatibility, provider-account recovery,
   provider-home continuity, safe provider-cache symlink cleanup, valid repair-container mount syntax,
   renewable post-verification reseal, Codex runtime metadata, and exact active provider-route
-  lifecycle heads. Sealed canary provenance,
-  installed post-fix real-browser UX, and a fresh public bootstrap/install in a new directory remain open
-  for this exact pair.
+  lifecycle and safe rendered-HTML artifact-preview heads. Sealed canary provenance, installed
+  post-fix real-browser Open/Download UX, and a fresh public bootstrap/install in a new directory
+  remain open for this exact pair.
 
 ## `GHUCP-027` — Clean Install, Upgrade, Continuity, and Rollback
 

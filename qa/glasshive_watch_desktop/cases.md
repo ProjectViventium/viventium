@@ -20,6 +20,7 @@ Use stable `GHWATCH-NNN` IDs for glasshive watch desktop cases.
 | `GHWATCH-010` | Worker desktop browser starts with clean browser chrome by default. | User sees the worker browser without a bookmark bar or unsupported `--no-sandbox` warning. | Docker workstation container, worker browser process, noVNC desktop view | `runtime_phase1/tests/test_docker_sandbox.py` plus disposable Docker worker and Playwright noVNC QA | PARTIAL 2026-06-22 docs audit: clean-browser RCA and tests are useful, but current acceptance needs a fresh text/DOM/process summary without public visual media. |
 | `GHWATCH-011` | Docker/workstation runs expose active-run heartbeat and desktop-prime evidence without noisy warning UX. | User/operator can tell whether a quiet worker is still running, finished, timed out, or missing visible desktop priming evidence. | Docker CLI runtime, Watch/Steer status, worker runtime description, run evidence | `runtime_phase1/tests/test_profile_runtime.py`, `test_docker_sandbox.py`, `test_run_evidence.py`, focused API tests, local Docker smoke, and Playwright Watch UI QA | PASS 2026-06-27 local: active-run heartbeat/final status, timeout status, desktop-prime marker, runtime description pass-through, evidence result, Watch UI running/completed states, artifact preview/download route evidence, and cleanup passed; see `reports/2026-06-27-docker-heartbeat-prime-local-qa.md`. |
 | `GHWATCH-012` | Signed public-ref links expose only opaque, expiring workspace/artifact refs. | User can open a generated link remotely without exposing the local operator/control plane. | Synthetic lab GlassHive origin, `/r/{ref}`, `/v1/link-refs/{ref}`, Watch / Steer, artifact preview/download | UI server tests plus Playwright and isolated external-fetch QA | PASS-AUTOMATED/PARTIAL 2026-07-15; signed-ref boundary regressions pass, isolated `example.test` lab browser proof is NOT RUN |
+| `GHWATCH-013` | A completed self-contained HTML deliverable opens as a safe rendered page and downloads without an error tab. | The user sees the page, downloads the exact file, and returns to the completed workspace without reading raw markup or encountering raw JSON/browser errors. | Watch / Steer artifact actions, sandboxed HTML landing page, attachment download, `View workspace` | Runtime API/UI suites, adversarial Chromium sandbox probe, and exact installed Chrome QA | PARTIAL 2026-08-10; source suites and local Chromium security probe pass, exact pinned canary Open/Download rerun remains open. |
 
 ## `GHWATCH-001` - Core User Flow
 
@@ -309,6 +310,42 @@ Use stable `GHWATCH-NNN` IDs for glasshive watch desktop cases.
 - Last run: PASS-AUTOMATED/PARTIAL 2026-07-15. Signed-ref generation/validation, TTL, artifact,
   and control-route denial regressions pass. Isolated lab external-browser/refresh proof is NOT RUN.
 
+## `GHWATCH-013` - Safe Rendered HTML Preview And Direct Download
+
+- Requirement: a completed bounded self-contained `.html` or `.htm` deliverable must open as a
+  visibly rendered page without executing untrusted artifact privileges on the GlassHive origin.
+- Risk covered: `Open` shows escaped source instead of the requested page, `Download` opens a browser
+  error tab, or artifact markup can access the parent page, authenticated APIs, cookies, referrers,
+  external resources, forms, popups, or top-level navigation.
+- Preconditions: a real completed personal-worker task has a small UTF-8 HTML deliverable and opaque
+  owner-scoped Open/Download references.
+- Steps:
+  1. In real Chrome, open the completed Watch surface and confirm `Worker completed`,
+     `Workspace complete`, and the HTML artifact actions are visible.
+  2. Choose `Open` and verify the landing page visibly renders the artifact in a dedicated iframe;
+     raw `<html>` source is not the primary user result.
+  3. Verify the iframe has an empty `sandbox`, `credentialless`, and `referrerpolicy="no-referrer"`.
+     Confirm scripts, forms, popups, top navigation, parent access, authenticated API use, and
+     external subresources cannot act. Ordinary link/frame navigation, if attempted, remains
+     confined to the sandbox with no credentials or referrer.
+  4. Choose `Download` and verify the browser saves the exact attachment bytes/name without opening
+     a raw JSON, 401, trusted-proxy, or browser error tab.
+  5. Choose `View workspace`; verify the opaque `/r` handoff returns to the completed Watch surface.
+     Refresh and repeat at 320, 768, and 1024 CSS-pixel widths.
+- Expected result: the user sees the rendered page, receives the exact file, can return to the
+  completed workspace, and the sandbox cannot affect authenticated GlassHive state.
+- Forbidden result: visible raw HTML source for eligible content, `ERR_BLOCKED_BY_CLIENT`, raw JSON,
+  trusted-proxy wording, script/API/parent mutation, credential/referrer-bearing subrequests, partial
+  rendering of a truncated file, recursive Watch embedding, or hidden actions at supported widths.
+- Evidence to capture: installed release provenance, browser DOM/text and screenshot summary,
+  downloaded byte count/content marker, response headers, console/network summary, refresh result,
+  backend run/artifact state, and sanitized test output.
+- Automation: `runtime_phase1/tests/test_api.py`, `frontends/glass-drive-ui/tests/test_server.py`,
+  JavaScript syntax checks, and real Chromium sandbox/hosted acceptance.
+- Last run: PARTIAL 2026-08-10. Full affected source suites passed and headed Chromium proved the
+  sandbox boundary with synthetic public-safe HTML. The exact pinned installed-canary Open/Download
+  loop is not yet run.
+
 ## Natural User Use Case Checklist
 
 These rows are the minimum natural-user checklist gate for Glasshive Watch Desktop. Add narrower feature-specific
@@ -328,3 +365,4 @@ rows before claiming a pass when the feature behavior changes.
 | `GHWATCH-UC-010` | Open the live worker desktop browser and inspect the browser chrome before doing work. | clean worker browser chrome / `GHWATCH-010` | Docker workstation browser through noVNC | Docker security option, Chromium process args, profile preferences, DOM/text summary, console/network state. | The browser has no bookmark bar and no unsupported `--no-sandbox` warning banner. | PARTIAL 2026-06-22 docs audit; legacy media-backed evidence is not current public acceptance evidence. |
 | `GHWATCH-UC-011` | Start a Docker/workstation worker run, then inspect status/evidence while it is quiet or complete. | active-run heartbeat and prime evidence / `GHWATCH-011` | Docker CLI runtime, Watch/Steer status, runtime description | `active-run.json`, transcript progress, evidence result, desktop-prime marker, artifact marker, Playwright Watch UI DOM text, artifact route headers/content, cleanup state. | The operator can tell whether the worker is running, completed, timed out, or lacking prime evidence without raw-token leaks or warning clutter. | PASS 2026-06-27 local; see `qa/glasshive_watch_desktop/reports/2026-06-27-docker-heartbeat-prime-local-qa.md`. |
 | `GHWATCH-UC-012` | Open a generated workspace ref and artifact ref from an isolated lab GlassHive hostname, then refresh the workspace. | signed public-ref boundary / `GHWATCH-012` | Isolated external browser, Watch / Steer, artifact preview/download | Synthetic status matrix, browser DOM/detail/refresh, fixture marker/hash, generated lab config | Opaque refs work while root/control/raw-token routes fail closed. | PASS-AUTOMATED/PARTIAL 2026-07-15; boundary regressions pass, isolated lab external-browser proof NOT RUN |
+| `GHWATCH-UC-013` | Complete a self-contained HTML task, then open, download, return to its workspace, refresh, and repeat at supported narrow widths. | safe HTML artifact UX / `GHWATCH-013` | Installed Chrome, Watch / Steer, artifact landing page and download | Exact provenance, DOM/screenshot, response headers, downloaded marker/size, console/network, backend run/artifact state | The page renders safely, the exact attachment downloads without an error tab, and the completed workspace remains usable. | PARTIAL 2026-08-10; source/Chromium sandbox gates pass, exact installed canary rerun pending. |
