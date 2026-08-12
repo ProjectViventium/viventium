@@ -4,8 +4,10 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import signal
 import subprocess
 import sys
+import time
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
@@ -22,8 +24,45 @@ APP_FACING_PORT_KEYS = (
     "lc_frontend_port",
     "sandpack_bundler_port",
     "playground_port",
+    "prompt_workbench_port",
     "voice_gateway_health_port",
 )
+
+APP_FACING_PORT_DEFAULTS = {
+    "isolated": {
+        "lc_api_port": 3180,
+        "lc_frontend_port": 3190,
+        "sandpack_bundler_port": 3191,
+        "playground_port": 3300,
+        "prompt_workbench_port": 8781,
+        "voice_gateway_health_port": 8301,
+    },
+    "compat": {
+        "lc_api_port": 3080,
+        "lc_frontend_port": 3090,
+        "sandpack_bundler_port": 3091,
+        "playground_port": 3000,
+        "prompt_workbench_port": 8781,
+        "voice_gateway_health_port": 8300,
+    },
+}
+
+RUNTIME_OWNED_PORT_DEFAULTS = {
+    "isolated": {
+        "mongo_port": 27117,
+        "meili_port": 7700,
+        "livekit_http_port": 7888,
+        "livekit_tcp_port": 7889,
+        "livekit_udp_port": 7890,
+    },
+    "compat": {
+        "mongo_port": 27017,
+        "meili_port": 7701,
+        "livekit_http_port": 7880,
+        "livekit_tcp_port": 7881,
+        "livekit_udp_port": 7882,
+    },
+}
 
 SCHEDULING_MCP_PORT_DEFAULTS = {
     "isolated": 7110,
@@ -38,6 +77,28 @@ SHARED_SINGLETON_SERVICES = (
     "google_workspace_mcp",
     "ms365_mcp",
 )
+
+DEV_RESOURCE_ENV = {
+    "OPENBLAS_NUM_THREADS": "1",
+    "OMP_NUM_THREADS": "4",
+    "MKL_NUM_THREADS": "1",
+    "VECLIB_MAXIMUM_THREADS": "4",
+    "NUMEXPR_MAX_THREADS": "4",
+    "RAYON_NUM_THREADS": "4",
+    "TOKENIZERS_PARALLELISM": "false",
+    "VIVENTIUM_DEV_RESOURCE_GUARD": "v1",
+    "VIVENTIUM_DETACHED_START": "0",
+}
+DEV_RESOURCE_GUARD_EXIT = 86
+DEV_RESOURCE_GUARD_FAILURE_EXIT = 87
+DEV_RESOURCE_GUARD_POLL_SECONDS = 0.25
+DEV_RESOURCE_GUARD_STOP_SECONDS = 5.0
+
+
+class GuardSignalInterrupt(Exception):
+    def __init__(self, signum: int) -> None:
+        super().__init__(signum)
+        self.signum = signum
 
 
 def utc_now() -> str:
@@ -99,11 +160,18 @@ def create_env(args: argparse.Namespace) -> int:
 
     offset = int(args.port_offset)
     runtime_profile = str(runtime.get("profile") or "isolated").strip().lower()
-    if "sandpack_bundler_port" not in ports:
-        ports["sandpack_bundler_port"] = 3191 if runtime_profile == "isolated" else 3091
+    app_facing_defaults = APP_FACING_PORT_DEFAULTS.get(
+        runtime_profile,
+        APP_FACING_PORT_DEFAULTS["isolated"],
+    )
     for key in APP_FACING_PORT_KEYS:
-        if key in ports:
-            ports[key] = int(ports[key]) + offset
+        ports[key] = int(ports.get(key, app_facing_defaults[key])) + offset
+    runtime_owned_defaults = RUNTIME_OWNED_PORT_DEFAULTS.get(
+        runtime_profile,
+        RUNTIME_OWNED_PORT_DEFAULTS["isolated"],
+    )
+    for key, default_port in runtime_owned_defaults.items():
+        ports[key] = int(ports.get(key, default_port)) + offset
     scheduling_base = ports.get("scheduling_mcp_port")
     if scheduling_base in (None, ""):
         scheduling_base = SCHEDULING_MCP_PORT_DEFAULTS.get(runtime_profile, 7110)
@@ -180,6 +248,198 @@ def status_env(args: argparse.Namespace) -> int:
     return 0
 
 
+def bounded_guard_limit(
+    env: dict[str, str], key: str, *, default: int, minimum: int, maximum: int
+) -> int:
+    try:
+        value = int(env.get(key, ""))
+    except (TypeError, ValueError):
+        value = default
+    return min(max(value, minimum), maximum)
+
+
+def process_thread_snapshot(root_pid: int) -> dict[int, tuple[int, int]] | None:
+    if sys.platform == "darwin":
+        command = ["/bin/ps", "-axo", "pid=,ppid=,pgid=,comm="]
+    elif sys.platform.startswith("linux"):
+        command = [
+            "/bin/ps",
+            "-e",
+            "-o",
+            "pid=",
+            "-o",
+            "ppid=",
+            "-o",
+            "pgid=",
+            "-o",
+            "nlwp=",
+            "-o",
+            "comm=",
+        ]
+    else:
+        return None
+    try:
+        completed = subprocess.run(
+            command,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    snapshot: dict[int, tuple[int, int]] = {}
+    commands: dict[int, str] = {}
+    reported_threads: dict[int, int] = {}
+    for line in completed.stdout.splitlines():
+        expected_fields = 4 if sys.platform == "darwin" else 5
+        fields = line.split(maxsplit=expected_fields - 1)
+        if len(fields) != expected_fields:
+            continue
+        try:
+            pid = int(fields[0])
+            parent_pid = int(fields[1])
+            process_group_id = int(fields[2])
+        except ValueError:
+            continue
+        if process_group_id != root_pid:
+            continue
+        snapshot[pid] = (parent_pid, 0)
+        commands[pid] = fields[-1].lower()
+        if sys.platform != "darwin":
+            try:
+                reported_threads[pid] = int(fields[3])
+            except ValueError:
+                reported_threads[pid] = 0
+
+    for pid in snapshot:
+        if "python" not in commands.get(pid, ""):
+            continue
+        parent_pid = snapshot[pid][0]
+        if sys.platform != "darwin":
+            snapshot[pid] = (parent_pid, max(reported_threads.get(pid, 0), 0))
+            continue
+        try:
+            thread_rows = subprocess.run(
+                ["/bin/ps", "-M", "-p", str(pid)],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=2,
+            ).stdout.splitlines()
+        except (OSError, subprocess.SubprocessError):
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                continue
+            except OSError:
+                return None
+            return None
+        threads = max(len([row for row in thread_rows[1:] if row.strip()]), 1)
+        snapshot[pid] = (parent_pid, threads)
+    return snapshot
+
+
+def stop_process_group(
+    process: subprocess.Popen[Any],
+    first_signal: int,
+    *,
+    drain_seconds: float | None = DEV_RESOURCE_GUARD_STOP_SECONDS,
+) -> None:
+    try:
+        os.killpg(process.pid, first_signal)
+    except ProcessLookupError:
+        return
+    if drain_seconds is None:
+        while process.poll() is None:
+            try:
+                process.wait(timeout=0.25)
+            except subprocess.TimeoutExpired:
+                continue
+        return
+    deadline = time.monotonic() + drain_seconds
+    while process.poll() is None and time.monotonic() < deadline:
+        time.sleep(0.05)
+    if process.poll() is not None:
+        return
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    try:
+        process.wait(timeout=DEV_RESOURCE_GUARD_STOP_SECONDS)
+    except subprocess.TimeoutExpired:
+        pass
+
+
+def run_resource_guarded(exec_args: list[str], env: dict[str, str]) -> int:
+    process_limit = bounded_guard_limit(
+        env,
+        "VIVENTIUM_DEV_RESOURCE_GUARD_MAX_PROCESS_THREADS",
+        default=512,
+        minimum=4,
+        maximum=512,
+    )
+    tree_limit = bounded_guard_limit(
+        env,
+        "VIVENTIUM_DEV_RESOURCE_GUARD_MAX_TREE_THREADS",
+        default=2048,
+        minimum=process_limit,
+        maximum=2048,
+    )
+    process: subprocess.Popen[Any] | None = None
+    managed_signals = [signal.SIGTERM]
+    if hasattr(signal, "SIGHUP"):
+        managed_signals.append(signal.SIGHUP)
+    previous_handlers = {signum: signal.getsignal(signum) for signum in managed_signals}
+
+    def interrupt_guard(signum: int, _frame: Any) -> None:
+        raise GuardSignalInterrupt(signum)
+
+    for signum in managed_signals:
+        signal.signal(signum, interrupt_guard)
+    try:
+        process = subprocess.Popen(exec_args, env=env, start_new_session=True)
+        while process.poll() is None:
+            snapshot = process_thread_snapshot(process.pid)
+            if snapshot is None:
+                print(
+                    "Viventium resource guard could not inspect the dev process tree; stopping it safely.",
+                    file=sys.stderr,
+                )
+                stop_process_group(process, signal.SIGTERM)
+                return DEV_RESOURCE_GUARD_FAILURE_EXIT
+            counts = {pid: threads for pid, (_parent_pid, threads) in snapshot.items()}
+            over_limit = [(pid, count) for pid, count in counts.items() if count > process_limit]
+            total_threads = sum(counts.values())
+            if over_limit or total_threads > tree_limit:
+                detail = (
+                    f"process {over_limit[0][0]} reached {over_limit[0][1]} threads"
+                    if over_limit
+                    else f"process tree reached {total_threads} threads"
+                )
+                print(
+                    "Viventium resource guard stopped the dev env before its thread budget "
+                    f"was exhausted ({detail}).",
+                    file=sys.stderr,
+                )
+                stop_process_group(process, signal.SIGTERM)
+                return DEV_RESOURCE_GUARD_EXIT
+            time.sleep(DEV_RESOURCE_GUARD_POLL_SECONDS)
+    except GuardSignalInterrupt as exc:
+        if process is not None:
+            stop_process_group(process, exc.signum, drain_seconds=None)
+        return 128 + exc.signum
+    except KeyboardInterrupt:
+        if process is not None:
+            stop_process_group(process, signal.SIGINT, drain_seconds=None)
+        return 130
+    finally:
+        for signum, previous_handler in previous_handlers.items():
+            signal.signal(signum, previous_handler)
+    return int(process.returncode or 0) if process is not None else 1
+
+
 def run_in_env(args: argparse.Namespace) -> int:
     repo_root = Path(args.repo_root).expanduser().resolve()
     target = env_dir(Path(args.app_support_dir).expanduser().resolve(), args.name)
@@ -190,7 +450,16 @@ def run_in_env(args: argparse.Namespace) -> int:
     command = args.command or ["status"]
     env = os.environ.copy()
     env["VIVENTIUM_DEV_ENV_NAME"] = payload["name"]
+    # This wrapper-owned identity is available even before the dev env has ever compiled.
+    # Stop logic must fail closed to runtime-scoped ownership instead of trusting a generated
+    # runtime.env that may be absent or stale.
+    env["VIVENTIUM_DEV_ENV_SCOPE_ACTIVE"] = "true"
+    env["VIVENTIUM_DEV_ENV_INSTANCE_ID"] = payload["name"]
     env["VIVENTIUM_SHARED_SINGLETON_SERVICES"] = ",".join(payload["shared_singleton_services"])
+    env["VIVENTIUM_RUNTIME_TOOLS_DIR"] = str(
+        Path(args.app_support_dir).expanduser().resolve() / "runtime-tools"
+    )
+    env.update(DEV_RESOURCE_ENV)
     exec_args = [
         str(repo_root / "bin" / "viventium"),
         "--app-support-dir",
@@ -201,7 +470,7 @@ def run_in_env(args: argparse.Namespace) -> int:
         payload["runtime_dir"],
         *command,
     ]
-    return subprocess.call(exec_args, env=env)
+    return run_resource_guarded(exec_args, env)
 
 
 def build_parser() -> argparse.ArgumentParser:

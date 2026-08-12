@@ -71,6 +71,7 @@ def default_voice_components() -> list[dict[str, str]]:
         make_component("viventium_v0_4/LibreChat", "LibreChat"),
         make_component("viventium_v0_4/agents-playground", "agents-playground"),
         make_component("viventium_v0_4/agent-starter-react", "agent-starter-react"),
+        make_component("viventium_v0_4/Viventium-Health", "Viventium-Health"),
         make_component("viventium_v0_4/GlassHive", "GlassHive"),
         make_component("viventium_v0_4/google_workspace_mcp", "google_workspace_mcp"),
     ]
@@ -86,13 +87,13 @@ def selected_component_names(config: dict) -> set[str]:
 def test_select_components_without_config_uses_public_modern_playground_default() -> None:
     names = selected_component_names({})
 
-    assert names == {"LibreChat", "agent-starter-react"}
+    assert names == {"LibreChat", "agent-starter-react", "Viventium-Health"}
 
 
 def test_select_components_defaults_to_modern_playground_for_voice_enabled_runtime() -> None:
     names = selected_component_names({"voice": {"mode": "local"}, "runtime": {}})
 
-    assert names == {"LibreChat", "agent-starter-react"}
+    assert names == {"LibreChat", "agent-starter-react", "Viventium-Health"}
 
 
 def test_select_components_keeps_classic_playground_opt_in_only() -> None:
@@ -100,7 +101,7 @@ def test_select_components_keeps_classic_playground_opt_in_only() -> None:
         {"voice": {"mode": "local"}, "runtime": {"playground_variant": "classic"}}
     )
 
-    assert names == {"LibreChat", "agents-playground"}
+    assert names == {"LibreChat", "agents-playground", "Viventium-Health"}
 
 
 def test_select_components_skips_playgrounds_when_voice_is_disabled() -> None:
@@ -108,7 +109,7 @@ def test_select_components_skips_playgrounds_when_voice_is_disabled() -> None:
         {"voice": {"mode": "disabled"}, "runtime": {"playground_variant": "classic"}}
     )
 
-    assert names == {"LibreChat"}
+    assert names == {"LibreChat", "Viventium-Health"}
 
 
 def test_select_components_fetches_glasshive_when_enabled() -> None:
@@ -120,7 +121,7 @@ def test_select_components_fetches_glasshive_when_enabled() -> None:
         }
     )
 
-    assert names == {"LibreChat", "agent-starter-react", "GlassHive"}
+    assert names == {"LibreChat", "agent-starter-react", "Viventium-Health", "GlassHive"}
 
 
 @pytest.mark.parametrize("validate_only", [False, True])
@@ -193,7 +194,7 @@ def test_select_components_skips_glasshive_when_disabled() -> None:
         }
     )
 
-    assert names == {"LibreChat", "agent-starter-react"}
+    assert names == {"LibreChat", "agent-starter-react", "Viventium-Health"}
 
 
 @pytest.mark.parametrize(
@@ -247,8 +248,8 @@ def test_config_without_selection_fields_preserves_mutating_yaml_defaults(tmp_pa
     bootstrapped = bootstrap_components.load_config(config)
 
     assert inspected == bootstrapped == {}
-    assert selected_component_names(inspected) == {"LibreChat"}
-    assert selected_component_names(bootstrapped) == {"LibreChat"}
+    assert selected_component_names(inspected) == {"LibreChat", "Viventium-Health"}
+    assert selected_component_names(bootstrapped) == {"LibreChat", "Viventium-Health"}
 
 
 def test_absent_config_selects_the_same_components_for_inspector_and_bootstrap(tmp_path: Path) -> None:

@@ -6,6 +6,7 @@ scalable scheduling with no UI changes, built as an MCP server with a persistent
 ## Executive Summary
 
 We will implement a dedicated Scheduling MCP server that:
+
 - stores per-user scheduled tasks in SQLite
 - exposes CRUD + search tools to the main agent only
 - runs a background scheduler loop that triggers prompts on time
@@ -14,7 +15,9 @@ We will implement a dedicated Scheduling MCP server that:
 ## Requirements
 
 ### Functional
-1. No UI changes.
+
+1. Reuse Prompt Workbench for schedule authoring, effective-prompt inspection, and run history; do
+   not add a continuity-specific page.
 2. Main agent only creates schedules.
 3. Per-user isolation.
 4. CRUD + search for scheduled tasks.
@@ -22,10 +25,12 @@ We will implement a dedicated Scheduling MCP server that:
 6. Task payload includes prompt, agent id, time, pattern, created source, and channels.
 7. Default to a new conversation per run unless explicitly configured otherwise.
 8. Non-blocking scheduler.
-9. No external API additions.
+9. Authenticated shared adapter contracts may be extended when the existing scheduler, delivery,
+   or acknowledgement path lacks a required typed field; do not add channel-specific endpoints.
 10. Auto-injected context should provide user identity and the main agent id.
 
 ### Non-Functional
+
 - Lightweight and scalable.
 - Reliable scheduling with explicit misfire handling.
 - Easy deployment.
@@ -133,7 +138,7 @@ ownership transfer.
   special schedule name.
 - A catch-up delivery must be visibly honest. The dispatch layer prepends a deterministic notice to
   delivered text, for example: `Late reminder: originally scheduled for 2026-02-13 19:00 UTC;
-  delivered 85 minutes late.`
+delivered 85 minutes late.`
 - If a task is missed instead of caught up, the delivery ledger must still be populated. Missed
   rows record `last_delivery_outcome=missed`, a structured reason such as
   `misfire_grace_exceeded` or `catch_up_window_exceeded`, `last_delivery_at`, and a
@@ -149,6 +154,7 @@ ownership transfer.
 ## Dispatch Behavior
 
 ### LibreChat Channel
+
 - Scheduler generation is canonical.
 - Runs should flow through the existing scheduler-authenticated internal routes.
 - Scheduled `viventium_agent` generation uses the compiler-owned
@@ -209,6 +215,7 @@ ownership transfer.
   protection, and Telegram/web delivery ledger evidence intact.
 
 ### Workbench / GlassHive Channel
+
 - Plain-English happy path: scheduled prompt -> filled placeholders -> GlassHive run -> callback ->
   scheduler ledger -> Workbench shows completed.
 - The built-in local nightly reflection follows this path by default on supported installs and
@@ -302,6 +309,7 @@ Rules:
   always compile the current policy.
 
 ### Telegram Channel
+
 - Scheduled Telegram delivery should reuse the canonical scheduler-generated final/follow-up text.
 - Do not start a second agent run through the Telegram chat route just for scheduled tasks.
 - Passive schedules must not emit scheduler-synthesized keepalive, status, "no change," or next-run

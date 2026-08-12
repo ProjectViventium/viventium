@@ -166,6 +166,26 @@ Use stable `RAG-NNN` IDs for conversation recall rag cases.
 - Last run: PASS-ISOLATED/PARTIAL-INSTALLED 2026-07-24
   ([report](reports/2026-07-24-pgdata-credential-migration.md)).
 
+## `RAG-007` - Cross-Provider Recall Capability And Provenance
+
+- Requirement: `docs/requirements_and_learnings/32_Conversation_Recall_RAG.md`.
+- Risk covered: a GlassHive-backed provider silently loses the host `file_search` tool, or an eval
+  appears to pass because the worker searched old fixtures or reports instead of the recall corpus.
+- Steps:
+  1. Seed a prior synthetic conversation with a per-run random nonce for the isolated QA account.
+  2. Ask for the fact from a fresh conversation through the configured provider route.
+  3. Join the response message to the exact GlassHive request, run, worker, and stdout ledger.
+  4. Require one completed brokered `file_search`, zero broker errors, zero native commands, the
+     nonce-bound response fragments, and guarded cleanup.
+- Expected result: every declared provider receives the same logical recall capability through its
+  supported transport and the answer is grounded in that run's corpus fixture.
+- Forbidden result: prompt-label leakage, broad filesystem search, a tool name without a completed
+  call, a successful-empty result reported as provider failure, or provider failure reported as
+  proof the fact is absent.
+- Last run: PASS-LIVE 2026-08-08. The latest provider-backed exact-model case completed in 16.8
+  seconds with guarded cleanup; brokered `file_search` started/completed once, with zero native
+  commands, broker errors, or stderr.
+
 ## Natural User Use Case Checklist
 
 These rows are the minimum natural-user checklist gate for Conversation Recall Rag. Add narrower feature-specific

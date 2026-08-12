@@ -65,7 +65,6 @@ to preserve local parity with older setups.
 - `runtime.auth.allow_registration`
 - `runtime.auth.allow_password_reset`
 - voice provider settings
-- `voice.wing_mode.default_enabled`
 - `voice.wing_mode.prompt`
 - Telegram bot token
 - optional Telegram local Bot API server origin/base URLs for large-media downloads
@@ -188,15 +187,15 @@ Why password reset stays off by default:
 
 ## Wing Mode
 
-The canonical config also supports a passive companion voice behavior:
+The canonical config supports an optional Wing prompt override:
 
-- `voice.wing_mode.default_enabled`
 - `voice.wing_mode.prompt`
 
-Legacy alias still accepted for compatibility:
+Legacy fields are accepted for migration-only parsing:
 
 - `voice.shadow_mode.default_enabled`
 - `voice.shadow_mode.prompt`
+- `voice.wing_mode.default_enabled`
 
 These generate:
 
@@ -207,7 +206,8 @@ These generate:
 
 Runtime behavior:
 
-- new live call sessions seed the persisted compatibility flag `shadowModeEnabled` from `voice.wing_mode.default_enabled`
+- every new live call starts in Call mode; legacy `default_enabled` values never silently start Wing
+- compatibility environment variables remain `false` for older readers
 - the modern playground exposes a single Wing Mode icon toggle to change it per call
 - the persisted call-session state is the runtime source of truth for whether Wing Mode is on; do not invent separate browser-only ownership of that flag
 - `voice.wing_mode.prompt` / `VIVENTIUM_WING_MODE_PROMPT` is an override, not a requirement; if omitted, runtime still injects the built-in default Wing Mode contract
@@ -218,9 +218,10 @@ Runtime behavior:
 
 For live voice calls, `voice.tts_provider` controls the server-side voice-gateway TTS selection.
 
-- `browser` now keeps the user-facing config simple and resolves to a stable hosted gateway TTS in local mode
-- `local_automatic` is the explicit opt-in for the local MLX Chatterbox path on supported Apple Silicon Macs
-- `local_chatterbox_turbo_mlx_8bit` remains an advanced direct override rather than a hidden default
+- `voice.mode: local` is an all-local audio-egress boundary: local Whisper STT plus local TTS only
+- `browser`, an empty provider, or `local_automatic` resolves to local MLX Chatterbox on supported Apple Silicon
+- unsupported local hosts, hosted STT/TTS providers, and hosted fallbacks fail compilation instead of silently switching to cloud audio
+- use `voice.mode: hosted` explicitly when a hosted STT or TTS provider is intended
 
 For Cartesia, `voice.tts` may declare the public Sonic-3 call options that compile into
 `runtime.env`:

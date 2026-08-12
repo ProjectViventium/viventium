@@ -4,6 +4,8 @@
 # feature QA case catalog that already exists; use release-readiness for broad
 # public packaging and boundary checks.
 release_tests:
+  tests/release/test_anti_sycophancy_architecture_contract.py:
+    qa_owner: qa/anti-sycophancy/cases.md
   tests/release/test_agent_migration_state.py:
     qa_owner: qa/agent-config-continuity/cases.md
   tests/release/test_agent_sync_review_contract.py:
@@ -62,6 +64,8 @@ release_tests:
     qa_owner: qa/release-readiness/cases.md
   tests/release/test_glasshive_core_provider_qa.py:
     qa_owner: qa/glasshive-core-provider/cases.md
+  tests/release/test_glasshive_codex_app_server_probe.py:
+    qa_owner: qa/glasshive_host_workers/cases.md
   tests/release/test_glasshive_auth_admin.py:
     qa_owner: qa/glasshive-user-control-plane/cases.md
   tests/release/test_glasshive_systemd_rollout.py:
@@ -70,6 +74,8 @@ release_tests:
     qa_owner: qa/installer-resilience/cases.md
   tests/release/test_helper_runtime_intent.py:
     qa_owner: qa/stable-dev-runtime/cases.md
+  tests/release/test_health_context_workbench.py:
+    qa_owner: qa/viventium-health/cases.md
   tests/release/test_install_experience_labels.py:
     qa_owner: qa/installer-resilience/cases.md
   tests/release/test_life_bootstrap.py:
@@ -86,6 +92,8 @@ release_tests:
     qa_owner: qa/stable-dev-runtime/cases.md
   tests/release/test_librechat_package_rebuild_contract.py:
     qa_owner: qa/release-readiness/cases.md
+  tests/release/test_life_bootstrap.py:
+    qa_owner: qa/glasshive-core-provider/cases.md
   tests/release/test_local_web_search_compose.py:
     qa_owner: qa/release-readiness/cases.md
   tests/release/test_macos_helper_install.py:
@@ -95,6 +103,8 @@ release_tests:
   tests/release/test_managed_agent_migration_history.py:
     qa_owner: qa/agent-config-continuity/cases.md
   tests/release/test_memory_hardening_contract.py:
+    qa_owner: qa/memory-hardening/cases.md
+  tests/release/test_memory_model_eval_harness.py:
     qa_owner: qa/memory-hardening/cases.md
   tests/release/test_meilisearch_resource_guardrails.py:
     qa_owner: qa/local-docker-services/cases.md
@@ -184,6 +194,8 @@ release_tests:
     qa_owner: qa/installer-resilience/cases.md
   tests/release/test_scheduled_glasshive_prompts.py:
     qa_owner: qa/prompt-workbench/cases.md
+  tests/release/test_scheduler_prompt_contract.py:
+    qa_owner: qa/scheduling-cortex/cases.md
   tests/release/test_scheduling_mcp_supervision.py:
     qa_owner: qa/background_agents/cases.md
   tests/release/test_shell_init.py:
@@ -212,14 +224,22 @@ release_tests:
     qa_owner: qa/continuity-ops/cases.md
   tests/release/test_viventium_health_integration.py:
     qa_owner: qa/viventium-health/cases.md
+  tests/release/test_viventium_health_runtime.py:
+    qa_owner: qa/viventium-health/cases.md
   tests/release/test_upgrade_support.py:
     qa_owner: qa/continuity-ops/cases.md
   tests/release/test_uploads_migration.py:
     qa_owner: qa/continuity-ops/cases.md
+  tests/release/test_voice_endurance_qa_contract.py:
+    qa_owner: qa/modern-playground-voice/cases.md
   tests/release/test_voice_call_startup_guard.py:
     qa_owner: qa/modern-playground-voice/cases.md
   tests/release/test_voice_playground_dispatch_contract.py:
     qa_owner: qa/modern-playground-voice/cases.md
+  tests/release/test_viventium_health_integration.py:
+    qa_owner: qa/installer-resilience/cases.md
+  tests/release/test_viventium_health_runtime.py:
+    qa_owner: qa/periphery-nightly-insights/cases.md
   tests/release/test_wizard.py:
     qa_owner: qa/installer-resilience/cases.md
   tests/release/test_express_launcher_summary.py:

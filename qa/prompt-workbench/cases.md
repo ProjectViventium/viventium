@@ -311,11 +311,13 @@ Mongo credentials, direct `memoryentries` writes or prompt text that instructs d
 unauthenticated private prompt access, hardcoded real user identity in public artifacts, or raw
 rendered prompt/result text in public QA reports.
 
-Last Run: PASS 2026-07-10
-([callback repair](../scheduling-cortex/reports/2026-07-10-workbench-callback-repair.md)).
-Fresh built-in manual proof completed through Workbench API -> Scheduling Cortex -> GlassHive ->
-signed callbacks -> scheduler ledger; queued, started, and completed callbacks all delivered on
-first attempt and no private prompt/result text was copied into public evidence.
+Last Run: PASS-LIVE-CADENCE 2026-08-09
+([continuity report](../memory-continuity/reports/2026-08-09-universal-cognitive-continuity-parity.md)).
+The natural 03:00 local occurrence completed through Scheduler, GlassHive, callbacks, parent/child
+ledgers, and artifact validation. After a browser-side refresh, Workbench showed the row as
+`completed` / `scheduled run`, preserved `xhigh -> xhigh`, exposed the complete evidence snapshot
+and a passed current artifact, and advanced the next due time by one day. Historical failures remain
+visible instead of being overwritten by the success.
 
 ## PW-010 Eval Designer And Results
 
@@ -1384,3 +1386,40 @@ rows before claiming a pass when the feature behavior changes.
 
 - `tests/release/test_prompt_workbench.py`
 - `tests/release/test_scheduled_glasshive_prompts.py`
+## PW-046 Generic Continuity Schedule Control Plane
+
+Requirement: `docs/requirements_and_learnings/11_Scheduling_Cortex.md` and
+`docs/requirements_and_learnings/49_Prompt_Architecture_and_Token_Efficiency.md`.
+
+User Outcome: The user can find, understand, edit, run, and audit Consciousness Continuity in the
+existing scheduled-prompt panel without learning scheduler internals or opening a new dashboard.
+
+Surfaces: Workbench browser UI and authenticated API.
+
+Steps:
+
+1. Open the scheduled object and inspect title/active state, next opportunity, timezone, cadence,
+   active window, projected daily runs, destinations, durable conversation, source prompt,
+   effective model, and last disposition.
+2. Edit a synthetic `restart_daily` active window, save, refresh, and verify persistence without
+   changing an unrelated legacy schedule.
+3. Follow links to `main.scheduling_self_continuity`, `scheduler.run_envelope`, and
+   `scheduler.consciousness_continuity_opportunity`; compare source/evaluated/runtime layers.
+4. Run Now and inspect silent/delivered/partial/superseded/failed states, latency, token/cost when
+   measured, effective model, channel outcomes, and degraded dependencies.
+5. Repeat keyboard-only, with screen-reader labels, light/dark themes, and a 320px viewport.
+
+Expected Result: The panel is generic to structured schedule metadata, shows honest unavailable
+values, preserves versioning/manual-run/cognitive-integrity behavior, and displays the exact
+registered prompt lineage without private memory expansion.
+
+Forbidden Result: A continuity-specific page/title branch, hidden hard-coded runtime prompt,
+fabricated cost, missing active-window semantics, inaccessible mobile controls, private prompt
+expansion, or history limited to GlassHive.
+
+Last Run: PASS-CORE / PARTIAL-RESPONSIVE 2026-08-11; a headed browser verified discovery, prompt
+lineage, active-window fields, history, refresh, accessible named controls, and repaired terminal
+failure disposition. Three real Main runs completed `silent`; the latest two persisted after
+refresh, reused the same archived durable conversation, and showed Sol/xHigh plus both channel
+outcomes. The explicit light/dark plus 320px sweep remains outstanding
+([report](../scheduling-cortex/reports/2026-08-11-consciousness-continuity-and-turn-coherence.md)).

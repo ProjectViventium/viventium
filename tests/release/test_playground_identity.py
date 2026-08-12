@@ -163,14 +163,21 @@ def test_launcher_exports_the_exact_playground_source_to_librechat() -> None:
     assert 'export VIVENTIUM_PLAYGROUND_SOURCE_REF="$PLAYGROUND_SOURCE_REF"' in launcher
 
 
-def test_direct_modern_playground_explains_why_voice_cannot_start() -> None:
+def test_direct_modern_playground_requires_an_authoritative_launch_without_setup_friction() -> None:
     content = MODERN_APP.read_text()
 
-    assert "else if (!canStartCall)" in content
-    assert (
-        "Open Voice from a Viventium conversation. This page joins that conversation securely."
-        in content
-    )
+    # A signed Viventium launch is immediately startable; an explicitly configured standalone
+    # development agent remains the only direct-playground exception.
+    assert "Boolean(expectedCallSessionId || appConfig.agentName)" in content
+    assert "setSessionRequested(true)" in content
+    assert "autoConnect={autoConnect || sessionRequested}" in content
+
+    # An unsigned/unconfigured direct visit fails closed without turning provider choice into a
+    # primary-path setup step.
+    assert "startDisabled={!canStartCall}" in content
+    assert "'Open from Viventium'" in content
+    assert "VoiceRouteControl" not in content
+    assert "voice-route-control" not in content
 
 
 def test_modern_playground_honors_the_reduced_motion_preference() -> None:

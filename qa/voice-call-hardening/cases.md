@@ -1,5 +1,10 @@
 # Voice Call Hardening QA Cases
 
+This folder retains provider/route hardening coverage. The complete current one-click lifecycle,
+browser/Telegram authority, task durability, automatic-speaker, memory, and endurance contract is
+owned by `qa/modern-playground-voice/cases.md` MPV-032 through MPV-054; do not use VCHARD-001 as a
+substitute for those user-grade gates.
+
 ## Case ID Convention
 
 Use stable `VCHARD-NNN` IDs for voice call hardening cases.

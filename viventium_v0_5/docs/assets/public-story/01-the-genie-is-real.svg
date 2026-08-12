@@ -1,0 +1,70 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" role="img" aria-labelledby="title desc">
+  <title id="title">The genie is real</title>
+  <desc id="desc">An introductory slide showing the extraordinary everyday power of an AI assistant as a glowing genie emerging from a bottle.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f9fbff"/>
+      <stop offset="1" stop-color="#eef2ff"/>
+    </linearGradient>
+    <linearGradient id="bottle" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#7d8cff"/>
+      <stop offset="1" stop-color="#3949bd"/>
+    </linearGradient>
+    <radialGradient id="glow">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.98"/>
+      <stop offset="0.35" stop-color="#a7b2ff" stop-opacity="0.75"/>
+      <stop offset="1" stop-color="#6d5ce7" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="soft" x="-80%" y="-80%" width="260%" height="260%">
+      <feGaussianBlur stdDeviation="22"/>
+    </filter>
+    <filter id="shadow" x="-40%" y="-40%" width="180%" height="180%">
+      <feDropShadow dx="0" dy="18" stdDeviation="22" flood-color="#283169" flood-opacity="0.18"/>
+    </filter>
+  </defs>
+
+  <rect width="1600" height="900" fill="url(#bg)"/>
+  <circle cx="1270" cy="180" r="260" fill="#dfe5ff" opacity="0.55"/>
+  <circle cx="1450" cy="730" r="180" fill="#e7e3ff" opacity="0.8"/>
+
+  <text x="96" y="76" fill="#44506a" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="18" font-weight="700" letter-spacing="5">VIVENTIUM</text>
+  <text x="1504" y="76" text-anchor="end" fill="#6b7488" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="18" font-weight="600">01 / 06</text>
+
+  <text x="96" y="214" fill="#171d2c" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="82" font-weight="760">The genie is real.</text>
+  <text x="96" y="276" fill="#48536a" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="30">Ask almost anything. Get useful work in seconds.</text>
+
+  <g transform="translate(96 388)">
+    <text x="0" y="0" fill="#25304a" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="25" font-weight="700">EXPLAIN</text>
+    <path d="M0 25 H190" stroke="#6b78e8" stroke-width="4" stroke-linecap="round"/>
+    <text x="0" y="70" fill="#59647a" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="22">Turn confusion into clarity.</text>
+
+    <text x="0" y="164" fill="#25304a" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="25" font-weight="700">CREATE</text>
+    <path d="M0 189 H190" stroke="#6b78e8" stroke-width="4" stroke-linecap="round"/>
+    <text x="0" y="234" fill="#59647a" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="22">Turn a thought into something real.</text>
+
+    <text x="0" y="328" fill="#25304a" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="25" font-weight="700">THINK</text>
+    <path d="M0 353 H190" stroke="#6b78e8" stroke-width="4" stroke-linecap="round"/>
+    <text x="0" y="398" fill="#59647a" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="22">See possibilities you could not see alone.</text>
+  </g>
+
+  <g transform="translate(1030 120)">
+    <ellipse cx="250" cy="670" rx="245" ry="52" fill="#26356f" opacity="0.12" filter="url(#soft)"/>
+    <circle cx="250" cy="250" r="285" fill="url(#glow)" filter="url(#soft)"/>
+    <path d="M226 520 C110 390 415 386 278 260 C184 174 352 126 272 42" fill="none" stroke="#7b83ef" stroke-width="34" stroke-linecap="round" opacity="0.38"/>
+    <path d="M250 518 C384 405 130 340 270 215 C350 144 188 98 258 28" fill="none" stroke="#ffffff" stroke-width="13" stroke-linecap="round" opacity="0.95"/>
+    <path d="M163 484 H337 L315 555 H185 Z" fill="#5260d2"/>
+    <rect x="181" y="536" width="138" height="58" rx="18" fill="#4351c4"/>
+    <path d="M135 585 C135 535 181 520 201 554 H299 C319 520 365 535 365 585 V653 C365 694 329 720 250 720 C171 720 135 694 135 653 Z" fill="url(#bottle)" filter="url(#shadow)"/>
+    <path d="M167 610 C214 590 286 590 333 610" fill="none" stroke="#aeb7ff" stroke-width="8" stroke-linecap="round" opacity="0.7"/>
+    <circle cx="250" cy="654" r="35" fill="#e1e5ff" opacity="0.9"/>
+    <path d="M234 654 L247 667 L271 638" fill="none" stroke="#4553c4" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="98" cy="212" r="9" fill="#8692ff"/>
+    <circle cx="426" cy="258" r="7" fill="#6759d6"/>
+    <circle cx="370" cy="78" r="12" fill="#a99cf2"/>
+    <path d="M75 330 l18 0 M84 321 l0 18" stroke="#7d88ee" stroke-width="5" stroke-linecap="round"/>
+    <path d="M430 390 l22 0 M441 379 l0 22" stroke="#8c77e1" stroke-width="5" stroke-linecap="round"/>
+  </g>
+
+  <path d="M96 824 H1504" stroke="#cbd2e2" stroke-width="1.5"/>
+  <text x="96" y="858" fill="#7b8498" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="17">THE VIVENTIUM WAY · AN ORIGINAL FRAMEWORK</text>
+</svg>

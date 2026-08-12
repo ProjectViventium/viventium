@@ -24,6 +24,19 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Fetch and validate the exact pinned contract components
+        run: |
+          printf '%s\n' 'voice:' '  mode: disabled' > "$RUNNER_TEMP/contract-selection.yaml"
+          python3 scripts/viventium/bootstrap_components.py \
+            --repo-root "$GITHUB_WORKSPACE" \
+            --config "$RUNNER_TEMP/contract-selection.yaml" \
+            --jobs 1
+          python3 scripts/viventium/bootstrap_components.py \
+            --repo-root "$GITHUB_WORKSPACE" \
+            --config "$RUNNER_TEMP/contract-selection.yaml" \
+            --validate-only \
+            --strict-pinned
+
       - name: Install test runner
         run: python3 -m pip install pytest pyyaml
 

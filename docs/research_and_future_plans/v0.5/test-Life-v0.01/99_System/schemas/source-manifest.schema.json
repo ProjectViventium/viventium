@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "life://99_System/schemas/source-manifest.schema.json",
+  "title": "Viventium Sources Manifest",
+  "type": "object",
+  "required": ["schemaVersion", "lifeId", "sources"],
+  "properties": {
+    "schemaVersion": { "const": "0.1" },
+    "lifeId": { "type": "string", "minLength": 1 },
+    "sources": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/source" }
+    }
+  },
+  "$defs": {
+    "source": {
+      "type": "object",
+      "required": ["id", "category", "title", "method", "authority", "permission", "sync", "health", "destination", "credentialRef", "retention"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "category": { "type": "string", "minLength": 1 },
+        "title": { "type": "string", "minLength": 1 },
+        "method": { "enum": ["native_connected_account", "signed_in_browser", "official_api", "folder_or_export"] },
+        "authority": { "enum": ["provider", "life_canonical", "derived_view"] },
+        "permission": {
+          "type": "object",
+          "required": ["mode", "scopes"],
+          "properties": {
+            "mode": { "enum": ["read_selected", "read_all_approved", "paused"] },
+            "scopes": { "type": "array", "items": { "type": "string" } }
+          },
+          "additionalProperties": false
+        },
+        "sync": {
+          "type": "object",
+          "required": ["cadence", "cursorRef", "lastAttemptAt", "lastSuccessAt"],
+          "properties": {
+            "cadence": { "type": "string", "minLength": 1 },
+            "cursorRef": { "type": ["string", "null"] },
+            "lastAttemptAt": { "type": ["string", "null"] },
+            "lastSuccessAt": { "type": ["string", "null"] }
+          },
+          "additionalProperties": false
+        },
+        "health": {
+          "type": "object",
+          "required": ["state", "detail"],
+          "properties": {
+            "state": { "enum": ["connected", "not_configured", "paused", "empty", "stale", "blocked", "unavailable", "auth_missing", "permission_denied", "timed_out", "rate_limited", "unsupported", "failed"] },
+            "detail": { "type": "string" }
+          },
+          "additionalProperties": false
+        },
+        "destination": {
+          "type": "object",
+          "required": ["lifeRefs"],
+          "properties": {
+            "lifeRefs": { "type": "array", "items": { "type": "string" }, "minItems": 1 }
+          },
+          "additionalProperties": false
+        },
+        "credentialRef": { "type": ["string", "null"] },
+        "retention": { "enum": ["user_controlled", "source_linked_summary", "provider_authoritative", "reference_only"] },
+        "lastReceiptRef": { "type": ["string", "null"] }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

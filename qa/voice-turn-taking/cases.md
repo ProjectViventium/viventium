@@ -10,7 +10,7 @@ Use stable `VCTURN-NNN` IDs for voice turn taking cases.
 | --- | --- | --- | --- | --- | --- |
 | `VCTURN-001` | Interruptions, silence, and end-of-turn detection produce natural call turns and no stale follow-up speech. | User-visible behavior matches source, docs, persisted state, and logs | LiveKit/playground call, VAD/EOT logs, transcript | `tests/release/test_voice_playground_dispatch_contract.py` plus user-grade QA when visible | NOT YET RUN (cataloged 2026-05-17; next feature run required) |
 | `VCTURN-002` | Public QA evidence is sanitized and reproducible | A PR reviewer can verify the behavior without private/local data | QA report, git diff, logs summary, generated artifacts | Public-safety scan plus relevant release tests | NOT YET RUN (cataloged 2026-05-17; next feature run required) |
-| `VCTURN-003` | Local Whisper turn ending uses a fast local endpointing profile and cancelled voice streams stop backend generation. | User pauses feel responsive, barge-in cancels the assistant stream, and partial assistant DB state is not left stale | Modern Playground, Voice Gateway, LibreChat voice stream route, Mongo messages, voice logs | Voice gateway unit tests, LibreChat route tests, real pywhispercpp benchmark, Playwright microphone run, runtime log/DB inspection | 2026-05-18 PASS for local Whisper endpointing, publisher dispatch, and Listen-Only pause continuation; live full-agent barge-in edit remains separate |
+| `VCTURN-003` | Local Whisper turn ending stays fast while barge-in interrupts TTS without implicitly cancelling authoritative work. | Pauses feel responsive; interruption is natural; explicit task cancellation remains separate and truthful | Modern Playground, Voice Gateway, LibreChat task/stream routes, Mongo messages, voice logs | Voice gateway/LibreChat focused tests plus real microphone/audio QA | Historical 2026-05-18 endpointing PASS; current interruption-versus-cancellation path is `PARTIAL` pending real audible rerun |
 | `VCTURN-004` | Synthetic speech with natural pauses is injected through the real LiveKit microphone path. | A fast endpointing profile does not split a resumed thought into multiple persisted turns | Modern Playground fake microphone, LiveKit, Whisper.cpp, LibreChat voice route, Mongo | Synthetic TTS fixture generator, fake-microphone QA harness, voice route tests, DB/log inspection | 2026-05-18 PASS |
 
 ## `VCTURN-001` - Core User Flow
@@ -43,12 +43,13 @@ Use stable `VCTURN-NNN` IDs for voice turn taking cases.
 - Automation: public-safety pattern scan plus relevant release tests.
 - Last run: NOT YET RUN (cataloged 2026-05-17; run on each new public report).
 
-## `VCTURN-003` - Fast Local Whisper Endpointing And Barge-In Cancel
+## `VCTURN-003` - Fast Local Whisper Endpointing And Barge-In Interruption
 
 - Requirement: local Whisper calls should not wait on a long fixed silence gate before submitting a
-  turn, and user barge-in should cancel the active assistant stream cleanly.
-- Risk covered: a `0.5s` endpointing profile could chop utterances, or cancellation could stop only
-  local playback while leaving LibreChat generation and persisted assistant state running.
+  turn, and user barge-in should stop active TTS while authoritative work continues unless the user
+  separately cancels the task by id.
+- Risk covered: a fast endpointing profile could chop utterances, or ordinary interruption could be
+  mislabeled as backend cancellation and silently discard useful work.
 - Preconditions: local Whisper route selected; canonical local stack or focused test harness
   available; synthetic public-safe audio/text only.
 - Steps:
@@ -56,27 +57,25 @@ Use stable `VCTURN-NNN` IDs for voice turn taking cases.
   2. Run a real local pywhispercpp benchmark with the selected model and record load/inference
      timings.
   3. Start the local playground in a real browser and confirm the selected listening route is visible.
-  4. Trigger or simulate LiveKit stream cancellation and verify LibreChat receives a voice-authenticated
-     abort request for the matching stream.
-  5. Inspect persisted message behavior so a cancelled assistant stream is saved as unfinished
-     instead of leaving a stale in-progress placeholder.
+  4. Barge in during audible assistant speech and verify TTS stops within the acceptance budget while
+     the authoritative task continues to one linked-chat result.
+  5. Separately cancel the task through its task-id control and verify the durable suppression
+     barrier, truthful terminal state, and zero late user/memory output.
   6. Inspect logs and DB/state with public-safe summaries only.
-- Expected result: local Whisper defaults to `0.5s` VAD silence and `0.5s` local endpointing unless
-  explicitly overridden; backend generation aborts on voice stream close/cancel before final event;
-  partial assistant state is saved as unfinished; the playground remains reachable with the local
-  route visible.
-- Forbidden result: a long hidden fixed silence gate remains in generated source defaults; barge-in
-  stops audio but leaves the backend job alive; a cancelled stream leaves a stale assistant
-  placeholder; raw private transcript text, call IDs, account IDs, or local paths are copied into
-  public QA.
+- Expected result: the configured local endpointing remains responsive; barge-in stops speech while
+  work continues; only explicit cancellation targets backend work and suppresses late output; the
+  playground remains reachable with the local route visible.
+- Forbidden result: a long hidden fixed silence gate remains; barge-in implicitly aborts useful
+  work; interrupt and cancel are shown as the same state; cancellation is claimed without a durable
+  barrier; private transcript or identifiers enter public QA.
 - Evidence to capture: sanitized timing breakdown in 250ms slices, focused test output, real local
   STT benchmark, browser snapshot summary, runtime config/log summary, DB shape summary, and
   residual gaps.
 - Automation: `voice-gateway/tests/test_*turn*`, `voice-gateway/tests/test_librechat_llm.py`,
   LibreChat `routes/viventium/__tests__/voice.spec.js`, and public-safe QA report.
-- Last run: 2026-05-18 PASS for local Whisper endpointing and Listen-Only pause continuation in
-  `qa/modern-playground-voice/reports/2026-05-18-synthetic-audio-livekit-continuation.md`. Live
-  full-agent barge-in/edit remains outside this Listen-Only acceptance case.
+- Last run: historical 2026-05-18 PASS for local Whisper endpointing and Listen-Only pause
+  continuation. Current interruption-versus-explicit-cancellation acceptance is `PARTIAL` until the
+  post-change audible/browser/persistence path passes under MPV-038.
 
 ## `VCTURN-004` - Synthetic Speech Pause Continuation
 

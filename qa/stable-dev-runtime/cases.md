@@ -31,7 +31,9 @@
 - Expected Result: existing runtime-checkout state is updated; no code is copied into an install path
 - Forbidden Result: parallel active checkout state, physical source copy, or unreviewed nested repo pin change
 - Evidence: dated report under `reports/`
-- Last Run: 2026-05-14 local implementation QA - passed by live activation, validation, and restart
+- Last Run: 2026-08-05 current-checkout activation QA - passed by validated live activation,
+  installed-helper rebinding, restart, browser refresh, and process/ownership checks
+  ([report](reports/2026-08-05-latest-checkout-activation-and-supervision.md))
 
 ## SDR-004: Upgrade Check Is Side-Effect-Free
 
@@ -83,7 +85,9 @@
 - Expected Result: status headline is "needs attention"; core surfaces are Running; each enabled but unreachable optional service is Action Required; helper status is shown separately and truthfully
 - Forbidden Result: status says "ready" while enabled recall/search/MCP/helper surfaces are broken, or shows "still starting" because of a stale start lock
 - Evidence: dated report under `reports/`
-- Last Run: 2026-05-17 live runtime sanity - passed
+- Last Run: 2026-08-05 current-checkout activation QA - passed; status kept optional-service
+  degradation visible while core surfaces remained running
+  ([report](reports/2026-08-05-latest-checkout-activation-and-supervision.md))
 
 ## SDR-008: Helper Steady-State Health Checks Stay Lightweight
 
@@ -459,6 +463,33 @@
   Scheduler suite passed all 17 cases with its declared runtime dependencies. Current-head hosted
   rerun remains pending.
 
+## SDR-017: Dev Env Stops Python Thread Exhaustion Before Host Failure
+
+- Requirement: `50_Stable_Dev_Runtime.md`
+- Surfaces: `bin/viventium dev-env run`, candidate process tree, installed-runtime process state
+- Preconditions: a dev env exists; the installed runtime may remain running; synthetic subprocesses
+  can inherit deliberately unsafe native thread settings
+- Steps: run a capture command with native thread settings set to 128 and detached start enabled;
+  run synthetic single-process and process-tree thread overruns; verify a re-parented Python member
+  with a spaced executable path is still counted; then interrupt a cleanup-aware child with SIGINT
+  and SIGTERM
+- Expected Result: bounded native worker-pool values replace the unsafe inherited settings; the
+  synthetic child and tree are stopped with safety exit 86 and a content-safe thread-budget
+  explanation; inherited detached start is disabled; ordinary operator signals complete child
+  cleanup without forced termination; no candidate child survives; installed local prod keeps its
+  original PIDs and health
+- Forbidden Result: thousands of Python threads, silent guard bypass, a generic success status,
+  killing or restarting installed local prod, or claiming that a guarded unit test proves unbounded
+  voice/audio stress is safe on the same workstation
+- Evidence: `tests/release/test_stable_dev_runtime_workflows.py`, process/port snapshot, browser
+  health check, and the public-safe dated report
+- Last Run: PASS 2026-08-10; RED reproduced both unsafe inherited values and a non-terminating
+  synthetic child, then GREEN proved bounded values and classified termination. A guarded
+  side-by-side candidate reached healthy API, web, playground, LiveKit, voice, Mongo, and search
+  surfaces. Its voice worker held 9 threads, the installed runtime stayed healthy on its existing
+  listeners, and headed Playwright reached the candidate registration form with zero console
+  errors. Audible voice and endurance remain separate acceptance gates.
+
 ## Natural User Use Case Checklist
 
 These rows are the minimum natural-user checklist gate for Stable Dev Runtime. Add narrower feature-specific
@@ -475,10 +506,12 @@ rows before claiming a pass when the feature behavior changes.
 | `STABLEDEV-UC-007` | Leave the helper open past its login window, simulate a late runtime death, then use Stop, relaunch the helper, and Start. | `50_Stable_Dev_Runtime.md` / `SDR-011` | Installed macOS helper, detached CLI runtime, helper config, ports/processes/logs | Persisted desired state, bounded attempt timestamps, helper/start logs, helper menu status, runtime health | Late death self-recovers without a restart storm; explicit Stop remains stopped across helper relaunch; Start resumes supervised recovery. | PARTIAL 2026-07-24; deterministic policy/source/build QA passed, installed headed lifecycle QA remains open. |
 | `STABLEDEV-UC-008` | Promote a clean local candidate branch that intentionally has no cloud upstream while preserving unrelated local work. | `50_Stable_Dev_Runtime.md` / `SDR-013` | `dev-runtime activate-current --validate --restart`, Git/component/helper inspection, active checkout | Pre-mutation structured report, active checkout, transaction state, runtime health | Clean no-upstream promotion is accepted; dirty parent/component state is refused before mutation unless the explicit parent-only local-testing flag applies. | PARTIAL 2026-07-24; executable isolated clean/dirty/bypass gates pass; installed live promotion pending. |
 | `STABLEDEV-UC-009` | Promote a clean checkout that has no ignored LibreChat environment, then refresh and restart as the existing user. | `39_Installer_and_Config_Compiler.md`, `50_Stable_Dev_Runtime.md` / `SDR-014` | `dev-runtime activate-current --validate --restart`, browser session/accounts, helper restart, generated runtime | Digest-only owner-env manifests, exact candidate checkpoint, transaction receipt, browser persistence, helper/start logs | Existing login/encryption keys, connected-account credentials, and unknown owner fields survive while declared runtime fields may advance; unsafe, conflicting, missing-established, missing-runtime-backup, revision, or concurrent drift fails closed without overwriting owner state. | PASS-ISOLATED/PARTIAL-INSTALLED 2026-07-24; 402 combined affected regressions and the 181-case final blocker gate pass; installed browser/helper evidence pending. |
+| `STABLEDEV-UC-010` | Start a guarded side-by-side candidate after a Python thread-exhaustion incident, open its real browser surfaces, and confirm installed local prod remains unchanged. | `50_Stable_Dev_Runtime.md` / `SDR-017` | `bin/viventium dev-env run`, candidate and installed health endpoints, process/thread snapshots, real browser | Guard profile and limits, candidate/installed PIDs and ports, logs, browser snapshot, focused regression | Candidate web/API/playground become usable under the guard; no Python process approaches the limit; installed local prod stays healthy and is not restarted. | PASS 2026-08-10; guarded candidate core surfaces and voice worker were healthy, voice stayed at 9 threads, installed local prod remained healthy, and headed Playwright reached login and registration with zero console errors. Audible voice and endurance were not run. |
 
 ## Release Test Traceability
 
 - `tests/release/test_cli_upgrade.py`
+- `tests/release/test_config_compiler.py`
 - `tests/release/test_detached_librechat_api_watchdog.py`
 - `tests/release/test_dev_runtime_activation.py`
 - `tests/release/test_detached_librechat_supervision.py`

@@ -1,5 +1,7 @@
 # GlassHive Host Workers QA Cases
 
+Automated Codex app-server probe owner: `tests/release/test_glasshive_codex_app_server_probe.py`.
+
 ## Case ID Convention
 
 Use stable `GHHOST-NNN` IDs for glasshive host workers cases.
@@ -17,6 +19,11 @@ Use stable `GHHOST-NNN` IDs for glasshive host workers cases.
 | `GHHOST-007` | Callback copy distinguishes a failed evidence gate with available artifacts from a total worker failure. | The user can tell whether a usable partial/delivered file exists and what still failed, without misleading success wording. | Telegram/web callbacks, callback outbox, artifact open/download links, run evidence | LibreChat `glasshive.spec.js`, GlassHive `test_api.py`, and real callback QA | PASS/PARTIAL 2026-06-25: automated coverage, live web callback/browser QA, and live Telegram/voice delivery-ledger claim/mark parity pass; real external Telegram send/audible voice delivery for this exact failed-evidence artifact case remains a side-effectful gate. |
 | `GHHOST-008` | Codex effort values are clamped before launch when a host model supplies an unsupported per-run effort. | A bad `effort=minimal` from voice/chat cannot make the worker fail before it starts acting. | Voice/chat MCP launch, host Codex command, config compiler, run evidence | `tests/test_profile_runtime.py::test_codex_cli_provider_config_clamps_minimal_without_route_allowlist`; `tests/test_mcp_server.py::test_worker_tool_schemas_advertise_host_native_execution`; `tests/release/test_config_compiler.py::test_render_runtime_env_emits_glasshive_launch_env_only_when_enabled`; real local GlassHive launch QA | PASS 2026-06-25: automated tests, live marker smoke, live Yahoo Finance browser smoke, DB/log/evidence checks, and Playwright UI checks passed; see `reports/2026-06-25-codex-minimal-effort-clamp-qa.md`. Full doctor validation remains blocked by local disk-space prerequisite. |
 | `GHHOST-009` | Browser/computer evidence, worker steering, and chat callbacks stay truthful after host-worker completion. | A successful browser task is not mislabeled as provider failure, blank steering fails before HTTP, own finished callbacks replace pending chat placeholders, and unrelated in-progress replies are not clobbered. | GlassHive run evidence, MCP `worker_message`, LibreChat callback receiver, real Chrome/LibreChat UI | `test_run_evidence.py`, `test_mcp_server.py`, LibreChat `glasshive.spec.js`, live MCP/callback/Chrome QA | PASS 2026-06-25: targeted and broader affected tests passed, live runtime rejected blank `worker_message`, synthetic signed callback updated its own unfinished placeholder, unrelated active placeholder returned retryable `425`, and real Chrome showed the completed callback without the placeholder. |
+| `GHHOST-010` | Host workers can suppress selected plugins by canonical plugin ID without stripping unrelated capabilities, retaining a contaminated native session, or adding prompt policy. | Viventium workers do not load the conflicting Feelings plugin, while other plugins and global user plugin settings remain available; a policy change replaces the old native session only after terminating it and carries visible history forward. | Config compiler, worker-local Codex config, Claude launch settings, provider session binding, worker instruction | Compiler/wizard tests; `test_profile_runtime.py` denylist/fail-closed cases; `test_conversation_provider.py::test_native_policy_change_supersedes_contaminated_session_and_seeds_visible_history`; installed config/DB/browser QA | PASS 2026-08-02: compiled and installed runtime denies only `viventium-feelings@project-viventium`; live worker config proved that plugin disabled and unrelated plugins retained; provider, DB, log, and browser QA passed. See `reports/2026-08-02-codex-worker-native-policy-qa.md`. |
+| `GHHOST-011` | Codex personality and mutable developer state preserve native roles without stale authority or needless native-session churn. | Viventium defaults to `none`; current authority is worker-local developer instruction; changed state serially replaces; unchanged or absent Phase-B state reuses; production stays on `codex exec`; App Server stays disabled because settings were stale and injection was append-only. | Config compiler, worker-local Codex config, provider session lifecycle, isolated App Server probe, installed UI/API/DB/log path | Compiler/runtime/provider tests, three-state App Server probe, four-turn installed API probe, real-browser Viventium prompt | PASS 2026-08-02: installed config/runtime, serial replacement, continuity, exact browser output, and latency evidence passed; App Server was explicitly rejected and remains off. |
+| `GHHOST-012` | Dynamic application authority is pinned at the actual provider/native boundary and separately graded for causal effect. | Structural broker text precedes one exact declared tail; off has none; changed authority replaces safely; behavior is not accepted from markers or config alone. | LibreChat provider headers, GlassHive request hydration/session bundle, worker-local Codex config, exact-model contrast | LibreChat/GlassHive provider tests, release contract, installed DB/config correlation, four-way semantic contrast | PARTIAL 2026-08-02: transport/order passed; behavioral potency failed `1/4` and remains open. See `../emotional-cortex/reports/2026-08-02-glasshive-feeling-authority-and-contrast.md`. |
+| `GHHOST-013` | Automatic conversation fallback preserves the logical agent's complete endpoint-owned capability bundle and safe diagnostics. | A real fallback keeps broker/tool capability, project instructions, visible history, and one current Feeling tail instead of becoming a stripped worker. | LibreChat primary/fallback materialization, signed capability headers, GlassHive request/run/worker state, safe logs | forced lazy and initialization fallback tests plus request/run/worker audit | PASS 2026-08-04: forced fallback tests passed in canonical and active components; request/run/worker evidence linked the historical failure to a missing fallback bundle, not provider misrouting or Feeling delivery. |
+| `GHHOST-015` | Future capacity retries use one persisted, due-aware scheduler path with bounded threads and exact recovery. | Temporary host contention waits safely and resumes once without destabilizing the computer, duplicating work, or starving eligible workers. | GlassHive service scheduler, SQLite run queue, bounded executor, process/thread lifecycle | 12 focused `test_api.py` capacity/scheduler cases plus isolated 200-retry thread-count stress and post-fix full runtime QA | PARTIAL 2026-08-10: 12 focused tests, the 175-case API file, a 200-retry constant-thread stress, and the 791-case full runtime suite passed; installed/running capacity recovery remains pending. See `reports/2026-08-10-capacity-retry-scheduler-thread-safety.md`. |
 
 ## `GHHOST-001` - Core User Flow
 
@@ -312,6 +319,174 @@ Use stable `GHHOST-NNN` IDs for glasshive host workers cases.
   `reports/2026-06-25-callback-placeholder-and-evidence-status-qa.md` and
   `reports/2026-06-25-first-principles-path-coverage-audit.md`.
 
+## `GHHOST-010` - Worker Plugin Denylist
+
+- Requirement: `docs/requirements_and_learnings/48_GlassHive_Workstation_Sandbox_Runtime.md`.
+- Risk covered: a Viventium worker loads a plugin that conflicts with Viventium-owned behavior, or
+  suppression accidentally disables every plugin, mutates global user config, or crowds the prompt.
+- Preconditions: a config containing canonical plugin IDs and synthetic source Codex config with one
+  denied and one allowed plugin.
+- Steps:
+  1. Compile the host-worker config and inspect the generated denylist environment value.
+  2. Materialize both Codex and Claude host workers.
+  3. Inspect worker-local Codex TOML and Claude `--settings` JSON.
+  4. Inspect the worker instruction and the original source plugin config.
+  5. Start a session with the plugin available, disable it in worker-local native config, and prove
+     that the contaminated session still retains stale capability context.
+  6. Change the generic native-policy fingerprint and verify the old worker terminates before one
+     replacement session starts with complete visible history.
+- Expected result: only configured exact IDs are disabled in the selected worker; unlisted plugins and
+  source/global config remain unchanged; no plugin-policy text appears in the instruction; and a
+  previously contaminated native session cannot survive the policy boundary.
+- Forbidden result: runtime branches on a specific plugin name, all plugins disabled, source/global
+  config edited, denylist text added to the model prompt, two concurrent authoring sessions, or a
+  resumed session that still exposes the denied plugin.
+- Evidence to capture: compiler output, worker-local native config, command settings, instruction text,
+  focused tests, and public-safety scan.
+- Automation: `tests/release/test_config_compiler.py`, `tests/release/test_wizard.py`, and
+  `viventium_v0_4/GlassHive/runtime_phase1/tests/test_profile_runtime.py`.
+- Last run: PASS 2026-08-02. The escaped contaminated-session case reproduced in an isolated native
+  thread; automated policy-fingerprint supersession and fail-closed worker config passed. The
+  surgical change was compiled into the active installed runtime, restarted, and verified through
+  generated config, worker-local config, DB/session lifecycle, runtime logs, API turns, and a real
+  Viventium browser turn. See
+  `reports/2026-08-02-codex-worker-native-policy-qa.md`.
+
+## `GHHOST-011` - Codex Personality And App Server QA Gate
+
+- Requirement: `docs/requirements_and_learnings/48_GlassHive_Workstation_Sandbox_Runtime.md`.
+- Risk covered: a worker-specific personality silently replaces Viventium Feelings, `none` is used
+  without support evidence, or App Server metadata changes while the model still receives stale
+  developer instructions.
+- Steps:
+  1. Compile `codex_personality` for every supported value and reject all others.
+  2. Prove Viventium defaults to worker-local `none`, while standalone GlassHive still inherits when
+     Viventium does not compile the setting.
+  3. Keep the App Server probe disabled by default.
+  4. Run changing synthetic developer settings on one App Server thread using the documented
+     per-turn collaboration-mode developer field; separately cover process restart/resume; reject
+     the transport if the first state remains model-visible or the second state is ignored.
+  5. Confirm developer-role `thread/inject_items` is append-only diagnostic evidence, not a
+     current-only replacement mechanism.
+  6. On production `codex exec`, prove present changed authority serially replaces the worker;
+     present unchanged and absent Phase-B authority reuse it; higher-authority content is absent from
+     the user instruction.
+  7. Verify the installed runtime through generated config, worker config, API/UI output, DB/log
+     lifecycle, and native/provider latency.
+- Expected result: Viventium removes Codex's competing personality instructions by default without
+  removing capabilities; current state uses native developer authority; changed state replaces one
+  session serially; unchanged and Phase-B state reuse it; production uses `codex exec`; App Server
+  remains off until a bounded replacement mechanism and full lifecycle both pass.
+- Forbidden result: forcing the Viventium default on standalone GlassHive, adding personality/Feeling
+  policy to user text, switching production transport, or accepting settings metadata without
+  model-visible proof, or treating a two-turn append-only injection probe as long-session approval.
+- Automation: `tests/release/test_config_compiler.py`,
+  `tests/release/test_glasshive_codex_app_server_probe.py`, and GlassHive
+  `runtime_phase1/tests/test_profile_runtime.py`.
+- Last run: PASS 2026-08-02. Canonical config compiled to `none`; standalone inheritance and explicit
+  alternatives passed. App Server settings failed a three-state same-thread/reconnect probe and
+  append-only injection was rejected. Installed production `codex exec` passed changed/unchanged/
+  Phase-B lifecycle checks plus the real browser path.
+
+## `GHHOST-013` - Complete Capability Bundle On Fallback
+
+- Requirement: `docs/requirements_and_learnings/51_GlassHive_Workflows_Self_Healing_and_Feature_Requests.md`.
+- Risk covered: the primary worker fails before visible text, the configured fallback really runs,
+  but its lazily materialized config omits the signed broker and project capability bundle.
+- Steps:
+  1. Force both initialization-time and lazy fallback from a declared primary to a declared fallback.
+  2. Resolve capability ownership from the fallback endpoint and use the shared signed attachment path.
+  3. Verify `agents_md`, `claude_md`, `codex_md`, broker capabilities, visible history, and one exact
+     current Feeling tail reach the fallback worker.
+  4. Join request to run to worker; do not infer historical routing from the mutable current-session row.
+  5. Verify the primary throw logs exactly one sanitized class/status/code/chain-depth/message-hash
+     record and never raw messages, stacks, tokens, or secrets.
+- Expected result: fallback is the same complete logical agent on its declared endpoint; the next
+  eligible turn can return to primary without duplicated authority or lost history.
+- Forbidden result: copying arbitrary primary headers, a stripped fallback bundle, duplicate Feeling,
+  provider-route claims based only on mutable session state, or secret-bearing error logs.
+- Last run: PASS 2026-08-04. Forced provider and fallback tests passed in both checkouts; historical
+  request/run/worker joins proved the fallback actually used its declared route; one Feeling tail was
+  already correct; the missing capability bundle and missing safe primary diagnostic were fixed.
+
+## `GHHOST-014` - Compact Signed Host-Tool Grant
+
+- Requirement: `docs/requirements_and_learnings/48_GlassHive_Workstation_Sandbox_Runtime.md`.
+- Risk covered: the broker serializes full conversation resources into an authorization header,
+  causing HTTP 431 before a worker can discover host tools; removing native worker tools to force an
+  eval pass would then regress legitimate workstation tasks.
+- Steps:
+  1. Initialize a provider request with a large synthetic resource bundle.
+  2. Sign only a bounded digest reference and retain the exact validated resource scope server-side.
+  3. Rehydrate and revalidate the scope at broker initialization, failing closed on mismatch or
+     expiry.
+  4. Run a real provider-backed recall turn and audit broker plus native-tool provenance.
+- Expected result: the signed grant remains below the conservative 4 KiB header budget, the worker
+  discovers `file_search`, and declared native capabilities remain available for tasks that need
+  them.
+- Forbidden result: transcript content in the bearer token, unbounded cache growth, unverified
+  rehydration, universal native-tool stripping, or a tool catalog without a completed call.
+- Last run: PASS-AUTOMATED/LIVE 2026-08-08. A representative grant fell from 20,411 to 942
+  characters; 46 broker/provider/route tests passed and a live worker completed brokered
+  `file_search` with zero native command executions.
+
+## `GHHOST-015` - Bounded Capacity-Retry Scheduler
+
+- Requirement: `docs/requirements_and_learnings/48_GlassHive_Workstation_Sandbox_Runtime.md`.
+- Risk covered: a future capacity retry is correctly left unclaimed, but a due-unaware processor
+  finalizer immediately resubmits it and allocates another process-local timer. A few queued runs can
+  then create thousands of threads and destabilize the host before their deadlines arrive.
+- Preconditions: use an isolated GlassHive service and synthetic workers/runs. Configure the runtime
+  to report retryable capacity contention, persist future `retry_after` values, record baseline and
+  peak service thread counts, and keep private machine diagnostics outside the public report.
+- Steps:
+  1. Queue future capacity retries and verify a worker processor returns without immediate
+     resubmission, native execution, or any per-run timer/thread creation.
+  2. Persist at least several hundred future retries across multiple workers, run repeated scheduler
+     cycles before their deadlines, and verify there is one scheduler thread and a bounded service
+     thread footprint independent of queued-run count.
+  3. Release capacity or advance the deadlines. Verify each eligible worker is submitted at most
+     once per scheduler cycle and each run is claimed/executed exactly once, with one terminal result
+     and no duplicate `run.started`/terminal event pair.
+  4. Persist a future retry, stop the service, reopen the same SQLite state, and verify it remains
+     dormant before its deadline and recovers exactly once afterward.
+  5. Put due runs on paused, terminated, and ready workers with a tight discovery limit. Verify the
+     ineligible rows are excluded before the limit and cannot starve ready work.
+  6. Begin shutdown during scheduler work and while it is waiting. Verify no new retry dispatch
+     begins, the wake exits promptly, and the scheduler thread terminates.
+  7. Independently inject a scheduled-run phase error, retry-discovery error, and next-deadline lookup
+     error. Verify sanitized errors are observable, unaffected phases still run, and the scheduler
+     falls back to its normal interval instead of dying or spinning.
+- Expected result: SQLite `retry_after` is the sole retry clock; one shared due-aware scheduler wakes
+  the bounded executor; immediate continuation occurs only for due work; every eligible run recovers
+  once across normal operation and restart; service thread count stays bounded under hundreds of
+  future retries.
+- Forbidden result: `threading.Timer` or any per-run retry thread; immediate self-resubmission for a
+  future row; thousands of threads from a small queue; duplicate native execution; paused/terminated
+  starvation; dispatch after shutdown; or one scheduler phase failure silently disabling another.
+- Evidence to capture: sanitized focused/full-suite results, source assertion that no per-retry timer
+  path exists, SQLite run/event counts before and after due time and restart, scheduler error logs,
+  baseline/peak thread counts, and confirmation that the tested runtime artifact contains the fix.
+- Automation: `runtime_phase1/tests/test_api.py` cases
+  `test_retryable_host_busy_waits_and_retries_without_terminal_failure`,
+  `test_future_capacity_retry_does_not_resubmit_processor_or_create_timer`,
+  `test_single_scheduler_wakes_each_due_retry_worker_once`,
+  `test_persisted_future_retry_wakes_after_service_restart`,
+  `test_hundreds_of_future_capacity_retries_do_not_create_retry_threads`,
+  `test_retry_scheduler_boundary_rechecks_immediately_when_deadline_just_crossed`,
+  `test_retry_scheduler_excludes_paused_and_terminated_workers_before_limit`,
+  `test_retry_scheduler_does_not_dispatch_after_shutdown_begins`,
+  `test_scheduler_cycle_contains_one_phase_failure_and_runs_the_other`,
+  `test_scheduler_wait_lookup_failure_uses_interval_and_stays_observable`,
+  `test_shutdown_during_scheduler_cycle_terminates_scheduler_thread`, and
+  `test_retryable_capacity_wait_has_max_attempts`.
+- Last run: PARTIAL 2026-08-10. All 12 focused automated cases passed. The complete 175-case
+  `test_api.py` file passed; a synthetic 200-retry backlog kept thread count constant; and the
+  post-fix 791-case runtime suite passed with five expected skips. Installed/running artifact
+  identity plus a controlled real capacity-wait/recovery remain pending; automated success is not
+  yet a runtime-completion claim. See
+  `reports/2026-08-10-capacity-retry-scheduler-thread-safety.md`.
+
 ## Natural User Use Case Checklist
 
 These rows are the minimum natural-user checklist gate for Glasshive Host Workers. Add narrower feature-specific
@@ -329,3 +504,8 @@ rows before claiming a pass when the feature behavior changes.
 | `GHHOST-UC-007B` | Receive a callback where the worker produced an artifact/report but final evidence verification failed. | `docs/requirements_and_learnings/48_GlassHive_Workstation_Sandbox_Runtime.md` / `GHHOST-007` | LibreChat web callback route, Telegram/voice callback parity path, GlassHive run evidence/outbox | Callback payload failure metadata, visible callback text, artifact refs, run status, targeted tests, public-safety scan | The user sees that output exists and final verification failed, while the run remains failed and total failures still use clear failure wording. | PASS/PARTIAL 2026-06-25: deterministic tests, live Chrome web callback, and Telegram/voice delivery-ledger parity passed; real external Telegram send/audible voice delivery for the exact case remains a side-effectful gate. |
 | `GHHOST-UC-008` | From chat or voice, ask GlassHive to open a public website through a host Codex worker after a host model supplies or could supply a low-effort override. | `docs/requirements_and_learnings/48_GlassHive_Workstation_Sandbox_Runtime.md` / `GHHOST-008` | LibreChat/voice MCP launch, host Codex command/evidence, GlassHive API, browser/computer surface | MCP schema, generated runtime env, command evidence, run DB/state, callback text, visible browser result or exact blocker | The worker starts with a supported effort value, uses the configured fallback when needed, and does not fail before action due to unsupported `reasoning.effort`. | PASS 2026-06-25: live host Codex worker opened Yahoo Finance in Chrome while requested `minimal` clamped to `medium`; Playwright UI and Chrome state verified completion. |
 | `GHHOST-UC-009` | Let a host-worker callback arrive after the chat has an unfinished assistant placeholder, and try steering without a known worker id. | `docs/requirements_and_learnings/48_GlassHive_Workstation_Sandbox_Runtime.md` / `GHHOST-009` | LibreChat web callback route, real Chrome conversation view, GlassHive MCP, run evidence | Targeted tests, live callback DB fields, live MCP validation result, visible browser state, cleanup result, sanitized logs | The final callback replaces its own pending placeholder with `unfinished=false`, unrelated active placeholders are retried instead of overwritten, blank steering is rejected before HTTP, and browser node ids do not become provider failures. | PASS 2026-06-25: synthetic live callback and real Chrome QA passed; blank worker id rejected by live MCP; unrelated active placeholder returned live `425`; affected automated suites passed. |
+| `GHHOST-UC-010` | Start or resume a Viventium host worker while one installed plugin is denied by exact ID. | `docs/requirements_and_learnings/48_GlassHive_Workstation_Sandbox_Runtime.md` / `GHHOST-010` | Generated runtime env, host Codex/Claude launch config, provider session binding, worker instruction | Compiler output, worker-local TOML, Claude settings JSON, session/worker state, source config, targeted tests, real browser path | The denied plugin is unavailable only inside that worker; contaminated sessions are superseded serially with visible history preserved; other plugins stay available and no suppression policy consumes prompt context. | PASS 2026-08-02: source, installed config/runtime, API, DB/log, and browser QA passed. |
+| `GHHOST-UC-011` | Use Viventium's Feeling-owned Codex default across changed, unchanged, and Phase-B state; compare App Server without switching production. | `docs/requirements_and_learnings/48_GlassHive_Workstation_Sandbox_Runtime.md` / `GHHOST-011` | Generated env, worker-local TOML, provider lifecycle, App Server QA, Viventium UI | Compiler/runtime/provider tests, state hashes, worker IDs, outputs, terminal events, latency | Viventium defaults to `none`; current state remains native developer authority; only changed authority pays serial replacement; App Server fails closed while stale/append-only. | PASS 2026-08-02: installed production path passed and App Server was rejected/off. |
+| `GHHOST-UC-012` | Send the same ordinary prompt with Feelings off and three contrasting enabled states through the real GlassHive-backed Main. | `docs/requirements_and_learnings/48_GlassHive_Workstation_Sandbox_Runtime.md` / `GHHOST-012` | Authenticated local chat API, GlassHive provider, Codex worker config, semantic judge | Exact restored fixtures, native suffix/count/order, outputs, semantic scores, request latency, cleanup | Correct native authority and materially different state-shaped choices both pass; no base replacement or prompt-specific branch | PARTIAL 2026-08-02: placement passed; semantic potency failed `1/4`. |
+| `GHHOST-UC-013` | Let a primary model fail before visible text and inspect the configured fallback result. | `docs/requirements_and_learnings/51_GlassHive_Workflows_Self_Healing_and_Feature_Requests.md` / `GHHOST-013` | authenticated chat, LibreChat fallback, GlassHive request/run/worker audit | forced tests, signed bundle keys, history, Feeling count, sanitized primary diagnostic | The fallback remains a complete Viventium agent and its real declared route is auditable without exposing the error. | PASS 2026-08-04: forced tests and request/run/worker forensic audit passed. |
+| `GHHOST-UC-015` | Let many host-capacity waits remain queued, restart the service, then release capacity. | `docs/requirements_and_learnings/48_GlassHive_Workstation_Sandbox_Runtime.md` / `GHHOST-015` | isolated GlassHive API/service, SQLite state, worker callbacks/status, OS thread monitor | due/future run counts, run/event uniqueness, scheduler logs, service thread baseline/peak, source and active artifact identity | The service stays responsive with one shared scheduler; future work sleeps, persists, and each eligible run resumes once when due. | PARTIAL 2026-08-10: 12 focused cases, 200-retry bounded-thread stress, the 175-case API file, and the 791-case runtime suite passed; installed real capacity recovery remains. |

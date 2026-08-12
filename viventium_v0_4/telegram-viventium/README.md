@@ -100,8 +100,9 @@ All chat messages route through the LibreChat Agents pipeline (same brain as the
 - `VIVENTIUM_TELEGRAM_SSE_RETRY_DELAY_S` - Delay between retries (LibreChat backend)
 - `VIVENTIUM_TELEGRAM_CHAT_TIMEOUT_S` - POST timeout for /chat (LibreChat backend)
 - `VIVENTIUM_TELEGRAM_INCLUDE_CORTEX_INSIGHTS` - Send background insights as separate Telegram messages
-- `VIVENTIUM_TELEGRAM_INSIGHT_GRACE_S` - Seconds to wait for background insights after the main response
-- `VIVENTIUM_TELEGRAM_INSIGHT_MAX_S` - Maximum seconds to keep insight listener alive
+- `VIVENTIUM_TELEGRAM_FOLLOWUP_GRACE_S` - Canonical automatic background follow-up window compiled from `runtime.background_followup_window_s`; zero disables ordinary listeners
+- `VIVENTIUM_TELEGRAM_FOLLOWUP_TIMEOUT_S` - Optional bounded total-listener override; omitted means the canonical follow-up window is also the total
+- `VIVENTIUM_TELEGRAM_INSIGHT_GRACE_S` / `VIVENTIUM_TELEGRAM_INSIGHT_MAX_S` - Deprecated standalone compatibility inputs used only when canonical follow-up configuration is absent
 - `VIVENTIUM_TELEGRAM_USER_EMAIL` - Resolve LibreChat user by email if userId is not set
 - `VIVENTIUM_TELEGRAM_DEBUG_TTS` - Set to `1` for non-secret Telegram voice markup/TTS QA logs
 
@@ -113,11 +114,21 @@ See `config.env.example` for all available options.
 - ✅ **Voice Notes**: Transcribe voice messages and send to Viventium
 - ✅ **Voice Replies**: Uses the linked user's saved modern Speaking route for voice notes and
   Smart voice for text replies; the Main Agent can keep read-first artifacts text-only
+- ✅ **One-Click Browser Calls**: `/call` returns the configured public HTTPS modern-playground
+  link after the canonical agent passes Agents `USE` and resource `VIEW`. The link's fragment holds
+  a one-time launch bearer that the browser strips and exchanges same-origin for exact-session
+  browser authority; raw call-session ids never authorize task, speaker, state, or event access.
 - ✅ **Natural Message Bubbles**: Conversational answers can use a small number of model-selected
   message boundaries while copy-ready artifacts remain intact
 - ✅ **Image Support**: Send images, extract text, and process with Viventium
 - ✅ **Document Processing**: Extract text from PDFs and documents
 - ✅ **Multi-user Support**: Each Telegram user gets their own LiveKit room
+
+The `/call` exchange is non-cacheable. A browser-generated idempotency value permits only a
+same-browser retry after a lost response; a different replay is denied. Launch capabilities must
+never appear in query/body fields, logs, referrers, screenshots, or QA reports. If no supported
+public HTTPS playground origin is configured, `/call` fails honestly instead of returning
+localhost or a raw LAN address.
 - ✅ **Proactive Messages**: Receive messages from Viventium even when not actively chatting
 
 ## Architecture Notes

@@ -37,6 +37,16 @@ const TTS_PROVIDER_CAPABILITIES = require(
     "tts_provider_capabilities.json",
   ),
 );
+const { stripDeliveryControlsForPreview } = require(
+  path.join(
+    LIBRECHAT_ROOT,
+    "api",
+    "server",
+    "services",
+    "viventium",
+    "deliveryControls.js",
+  ),
+);
 const CHATTERBOX_INLINE_CONTROLS =
   TTS_PROVIDER_CAPABILITIES.providers.local_chatterbox_turbo_mlx_8bit
     .inline_controls.exact_tokens;
@@ -73,6 +83,8 @@ const EXACT_MODEL_EVAL_LOCK_PATH = path.join(
   "prompt-architecture-evals",
   ".exact-model-eval.lock",
 );
+const MEMORY_RECALL_BANK_VERSION = "continuity-recall-v1.1.0";
+const FROZEN_MEMORY_RECALL_BANK_HASH = "987dfffc5021ba69";
 
 function timestampSlug(date = new Date()) {
   return date.toISOString().replace(/[:.]/g, "-");
@@ -217,6 +229,28 @@ function normalizeCaseIds(rawCaseIds) {
     throw new Error("invalid_case_id");
   }
   return normalized;
+}
+
+function summarizeLatencyMs(values) {
+  const sorted = values
+    .filter((value) => value != null && value !== "")
+    .map(Number)
+    .filter((value) => Number.isFinite(value) && value >= 0)
+    .sort((left, right) => left - right);
+  if (!sorted.length) return null;
+  const middle = Math.floor(sorted.length / 2);
+  const median =
+    sorted.length % 2 === 0
+      ? (sorted[middle - 1] + sorted[middle]) / 2
+      : sorted[middle];
+  return {
+    count: sorted.length,
+    min: sorted[0],
+    mean: sorted.reduce((total, value) => total + value, 0) / sorted.length,
+    median,
+    p95: sorted[Math.max(0, Math.ceil(sorted.length * 0.95) - 1)],
+    max: sorted[sorted.length - 1],
+  };
 }
 
 function ensureDir(dirPath) {
@@ -424,6 +458,300 @@ function schedulingDbPathCandidates(env) {
   return [...new Set(candidates.map(expandHome))];
 }
 
+function glassHiveRuntimeDbPathCandidates(env) {
+  const profile = env.VIVENTIUM_RUNTIME_PROFILE || "isolated";
+  return [
+    env.WPR_DB_PATH,
+    env.GLASSHIVE_RUNTIME_DB_PATH,
+    path.join(
+      os.homedir(),
+      "Library",
+      "Application Support",
+      "Viventium",
+      "state",
+      "runtime",
+      profile,
+      "glasshive",
+      "runtime_phase1.db",
+    ),
+  ]
+    .map(expandHome)
+    .filter((candidate, index, values) =>
+      Boolean(candidate) && values.indexOf(candidate) === index,
+    );
+}
+
+function queryGlassHiveProviderRun(env, responseMessageId) {
+  if (!responseMessageId) return null;
+  const sql = [
+    "SELECT pr.run_id, r.state, w.worker_id, w.state_dir",
+    "FROM provider_requests pr",
+    "JOIN runs r ON r.run_id = pr.run_id",
+    "JOIN workers w ON w.worker_id = r.worker_id",
+    `WHERE pr.message_id = ${sqlQuote(responseMessageId)}`,
+    "ORDER BY pr.created_at DESC LIMIT 1;",
+  ].join(" ");
+  for (const candidate of glassHiveRuntimeDbPathCandidates(env)) {
+    if (!fs.existsSync(candidate)) continue;
+    try {
+      const raw = childProcess.execFileSync(
+        "sqlite3",
+        ["-batch", "-json", candidate, sql],
+        { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+      );
+      const rows = JSON.parse(raw || "[]");
+      if (rows[0]?.run_id && rows[0]?.state_dir) {
+        return { ...rows[0], dbPathHash: hashValue(candidate) };
+      }
+    } catch {
+      // Try the next supported runtime location. The audit fails closed below.
+    }
+  }
+  return null;
+}
+
+function readGlassHiveRunToolAudit(runRecord, requiredEvidenceFragments = []) {
+  if (!runRecord?.run_id || !runRecord?.state_dir) return null;
+  const workerRoot = path.dirname(String(runRecord.state_dir));
+  const runRoot = path.join(
+    workerRoot,
+    "home",
+    ".glasshive-runs",
+    String(runRecord.run_id),
+  );
+  const stdoutPath = path.join(runRoot, "stdout.log");
+  const stderrPath = path.join(runRoot, "stderr.log");
+  if (!fs.existsSync(stdoutPath)) return null;
+  const events = fs
+    .readFileSync(stdoutPath, "utf8")
+    .split(/\r?\n/)
+    .filter(Boolean)
+    .flatMap((line) => {
+      try {
+        return [JSON.parse(line)];
+      } catch {
+        return [];
+      }
+    });
+  const itemEvents = events
+    .filter((event) => event?.item && typeof event.item === "object")
+    .map((event) => ({ eventType: event.type, ...event.item }));
+  const brokerFileSearchEvents = itemEvents.filter(
+    (item) =>
+      item.type === "mcp_tool_call" &&
+      item.server === "glasshive-user-capabilities" &&
+      item.tool === "file_search",
+  );
+  const nativeExecutionEvents = itemEvents.filter((item) => {
+    const type = String(item.type || "");
+    return (
+      type === "command_execution" ||
+      type === "dynamic_tool_call" ||
+      type.startsWith("web_search") ||
+      type.startsWith("file_change")
+    );
+  });
+  const commandEvents = nativeExecutionEvents.filter(
+    (item) => item.type === "command_execution",
+  );
+  const normalizedEvidenceFragments = requiredEvidenceFragments
+    .map(normalizeVisibleEvidence)
+    .filter(Boolean);
+  const nativeEvidenceSubstitutionEvents = nativeExecutionEvents.filter((item) => {
+    if (item.eventType !== "item.completed") return false;
+    const output = normalizeVisibleEvidence(
+      item.aggregated_output || item.output || item.result || "",
+    );
+    return (
+      output &&
+      normalizedEvidenceFragments.some((fragment) => output.includes(fragment))
+    );
+  });
+  const stderr = fs.existsSync(stderrPath)
+    ? fs.readFileSync(stderrPath, "utf8")
+    : "";
+  return {
+    runIdHash: hashValue(runRecord.run_id),
+    workerIdHash: hashValue(runRecord.worker_id || ""),
+    runState: String(runRecord.state || "unknown"),
+    brokerFileSearchStartedCount: brokerFileSearchEvents.filter(
+      (item) => item.eventType === "item.started",
+    ).length,
+    brokerFileSearchCompletedCount: brokerFileSearchEvents.filter(
+      (item) =>
+        item.eventType === "item.completed" &&
+        item.status === "completed" &&
+        !item.error,
+    ).length,
+    brokerFileSearchErrorCount: brokerFileSearchEvents.filter(
+      (item) => item.error || item.status === "failed",
+    ).length,
+    nativeCommandExecutionStartedCount: commandEvents.filter(
+      (item) => item.eventType === "item.started",
+    ).length,
+    nativeCommandExecutionCompletedCount: commandEvents.filter(
+      (item) => item.eventType === "item.completed",
+    ).length,
+    nativeEvidenceSubstitutionStartedCount:
+      nativeEvidenceSubstitutionEvents.length,
+    nativeEvidenceSubstitutionCompletedCount:
+      nativeEvidenceSubstitutionEvents.length,
+    stderrChars: stderr.length,
+    stderrHash: stderr ? hashValue(stderr) : "",
+    stdoutHash: hashValue(fs.readFileSync(stdoutPath, "utf8")),
+    dbPathHash: runRecord.dbPathHash,
+  };
+}
+
+function normalizeVisibleEvidence(value) {
+  return String(value || "")
+    .normalize("NFKC")
+    .replace(/[`*_~]+/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLocaleLowerCase();
+}
+
+function auditNativeProviderFileSearch(responseEvents = []) {
+  const matchingCalls = [];
+  const unexpectedToolNames = [];
+  for (const event of responseEvents || []) {
+    const stepDetails = event?.data?.stepDetails || {};
+    const result = event?.data?.result || {};
+    const rawToolCalls = [
+      ...(Array.isArray(stepDetails?.tool_calls)
+        ? stepDetails.tool_calls
+        : stepDetails?.tool_call
+          ? [stepDetails.tool_call]
+          : []),
+      ...(Array.isArray(stepDetails?.toolCalls)
+        ? stepDetails.toolCalls
+        : stepDetails?.toolCall
+          ? [stepDetails.toolCall]
+          : []),
+      ...(result?.type === "tool_call"
+        ? [result?.tool_call || result?.toolCall || result]
+        : []),
+    ];
+    const normalizedToolCalls = rawToolCalls;
+    for (const call of normalizedToolCalls) {
+      if (!call || typeof call !== "object") continue;
+      const toolCall = call.tool_call || call;
+      const toolName = String(
+        toolCall.name ||
+          toolCall.function?.name ||
+          call.name ||
+          call.function?.name ||
+          "",
+      ).trim();
+      if (!toolName) continue;
+      if (toolName !== "file_search") {
+        unexpectedToolNames.push(toolName);
+        continue;
+      }
+      matchingCalls.push({
+        event: String(event?.event || ""),
+        error: Boolean(toolCall.error || call.error),
+      });
+    }
+  }
+  return {
+    startedCount: matchingCalls.filter((item) => item.event === "on_run_step")
+      .length,
+    completedCount: matchingCalls.filter(
+      (item) => item.event === "on_run_step_completed" && !item.error,
+    ).length,
+    errorCount: matchingCalls.filter((item) => item.error).length,
+    unexpectedToolNameHashes: [...new Set(unexpectedToolNames)].map(hashValue),
+  };
+}
+
+async function auditConversationRecallExecution({
+  env,
+  responseMessageId,
+  fixture,
+  responseText,
+  responseEvents = [],
+}) {
+  if (!fixture) return { evidence: null, failures: [] };
+  let runRecord = null;
+  if (fixture.requireBrokerHostTool) {
+    for (let attempt = 0; attempt < 8 && !runRecord; attempt += 1) {
+      runRecord = queryGlassHiveProviderRun(env, responseMessageId);
+      if (!runRecord) {
+        await new Promise((resolve) => setTimeout(resolve, 125));
+      }
+    }
+  }
+  const toolAudit = readGlassHiveRunToolAudit(
+    runRecord,
+    fixture.requiredResponseFragments,
+  );
+  const nativeToolAudit = auditNativeProviderFileSearch(responseEvents);
+  const normalizedResponse = normalizeVisibleEvidence(responseText);
+  const missingRequiredFragmentHashes = fixture.requiredResponseFragments
+    .filter(
+      (fragment) =>
+        !normalizedResponse.includes(normalizeVisibleEvidence(fragment)),
+    )
+    .map((fragment) => hashValue(fragment));
+  const presentForbiddenFragmentHashes = (fixture.forbiddenResponseFragments || [])
+    .filter((fragment) =>
+      normalizedResponse.includes(normalizeVisibleEvidence(fragment)),
+    )
+    .map((fragment) => hashValue(fragment));
+  const failures = [];
+  if (missingRequiredFragmentHashes.length > 0) {
+    failures.push("conversation_recall_expected_evidence_missing");
+  }
+  if (presentForbiddenFragmentHashes.length > 0) {
+    failures.push("conversation_recall_forbidden_evidence_present");
+  }
+  if (fixture.requireBrokerHostTool) {
+    if (!toolAudit) {
+      failures.push("conversation_recall_execution_audit_missing");
+    } else if (toolAudit.brokerFileSearchCompletedCount < 1) {
+      failures.push("conversation_recall_broker_file_search_not_completed");
+    }
+  }
+  if (
+    fixture.requireNativeHostTool &&
+    nativeToolAudit.completedCount < 1
+  ) {
+    failures.push("conversation_recall_native_file_search_not_completed");
+  }
+  if (
+    fixture.forbidNativeCommandExecution &&
+    (Number(toolAudit?.nativeCommandExecutionCompletedCount || 0) > 0 ||
+      Number(toolAudit?.nativeEvidenceSubstitutionStartedCount || 0) > 0 ||
+      nativeToolAudit.unexpectedToolNameHashes.length > 0)
+  ) {
+    failures.push("conversation_recall_native_command_substitution_detected");
+  }
+  return {
+    evidence: {
+      fixture: "conversation_recall_execution",
+      nonceHash: fixture.nonceHash,
+      coverageCategory: fixture.coverageCategory || null,
+      requiredFragmentHashes: fixture.requiredResponseFragments.map((fragment) =>
+        hashValue(fragment),
+      ),
+      missingRequiredFragmentHashes,
+      forbiddenFragmentHashes: (fixture.forbiddenResponseFragments || []).map(
+        (fragment) => hashValue(fragment),
+      ),
+      presentForbiddenFragmentHashes,
+      toolAudit,
+      nativeFileSearchStartedCount: nativeToolAudit.startedCount,
+      nativeFileSearchCompletedCount: nativeToolAudit.completedCount,
+      nativeFileSearchErrorCount: nativeToolAudit.errorCount,
+      unexpectedNativeToolNameHashes:
+        nativeToolAudit.unexpectedToolNameHashes,
+    },
+    failures,
+  };
+}
+
 function updateStarterPromptAcrossDbCandidates(env, { userId, agentId }) {
   const attempts = [];
   for (const candidate of schedulingDbPathCandidates(env)) {
@@ -472,12 +800,66 @@ function voiceOutputFixtureFor(testCase) {
   return { requested: true, provider, markerExpectation };
 }
 
-function conversationRecallFixtureFor(testCase) {
+function replaceRunNonce(value, runNonce) {
+  return String(value || "").replaceAll("{{RUN_NONCE}}", runNonce);
+}
+
+function conversationRecallFixtureFor(testCase, runNonce = "") {
   const fixture = testCase?.fixture?.conversationRecall;
   if (!fixture || typeof fixture !== "object" || fixture.enabled !== true) {
     return null;
   }
-  return { enabled: true };
+  const effectiveNonce = runNonce || crypto.randomBytes(8).toString("hex");
+  const seedCorpusPrompts = Array.isArray(fixture.seedCorpusPrompts)
+    ? fixture.seedCorpusPrompts
+        .map((value) => replaceRunNonce(value, effectiveNonce).trim())
+        .filter(Boolean)
+        .slice(0, 4)
+    : [];
+  const requiredResponseFragments = Array.isArray(
+    fixture.requiredResponseFragments,
+  )
+    ? fixture.requiredResponseFragments
+        .map((value) => replaceRunNonce(value, effectiveNonce).trim())
+        .filter(Boolean)
+        .slice(0, 8)
+    : [];
+  const forbiddenResponseFragments = Array.isArray(
+    fixture.forbiddenResponseFragments,
+  )
+    ? fixture.forbiddenResponseFragments
+        .map((value) => replaceRunNonce(value, effectiveNonce).trim())
+        .filter(Boolean)
+        .slice(0, 8)
+    : [];
+  if (seedCorpusPrompts.length === 0) {
+    throw new Error("conversation_recall_fixture_requires_seed_corpus");
+  }
+  if (requiredResponseFragments.length === 0) {
+    throw new Error("conversation_recall_fixture_requires_response_fragments");
+  }
+  if (
+    (fixture.requireBrokerHostTool === true) ===
+    (fixture.requireNativeHostTool === true)
+  ) {
+    throw new Error("conversation_recall_fixture_requires_exactly_one_tool_transport");
+  }
+  if (fixture.forbidNativeCommandExecution !== true) {
+    throw new Error("conversation_recall_fixture_requires_native_substitution_guard");
+  }
+  return {
+    enabled: true,
+    seedCorpusPrompts,
+    requiredResponseFragments,
+    forbiddenResponseFragments,
+    requireBrokerHostTool: fixture.requireBrokerHostTool === true,
+    requireNativeHostTool: fixture.requireNativeHostTool === true,
+    forbidNativeCommandExecution:
+      fixture.forbidNativeCommandExecution === true,
+    requireSemanticRetrieval: fixture.requireSemanticRetrieval === true,
+    coverageCategory: String(fixture.coverageCategory || "").trim() || null,
+    nonceHash: hashValue(effectiveNonce),
+  };
 }
 
 function qaUserSelector(userId) {
@@ -532,15 +914,67 @@ async function applyConversationRecallFixture({
     throw new Error("conversation_recall_fixture_user_missing");
   }
   const originalEnabled = user.personalization?.conversation_recall === true;
+  const corpusStateBeforeFixture = await readConversationRecallCorpusState({ db, userId });
   await patchConversationRecallPreference({ args, token, enabled: true });
   return {
     restoreState: { selector, originalEnabled },
+    corpusStateBeforeFixture,
     evidence: {
       fixture: "conversation_recall_preference",
       configured: true,
       originalEnabled,
     },
   };
+}
+
+async function readConversationRecallCorpusState({ db, userId }) {
+  if (!db || !userId) {
+    throw new Error("conversation_recall_semantic_fixture_db_unavailable");
+  }
+  const file = await db.collection("files").findOne(
+    {
+      user: qaUserSelector(userId)._id,
+      file_id: `conversation_recall:${String(userId)}:all`,
+    },
+    {
+      projection: {
+        embedded: 1,
+        updatedAt: 1,
+        "metadata.conversationRecallSourceDigest": 1,
+        "metadata.conversationRecallUploadedDigest": 1,
+      },
+    },
+  );
+  return {
+    exists: Boolean(file),
+    embedded: file?.embedded === true,
+    updatedAtMs: file?.updatedAt ? new Date(file.updatedAt).getTime() : null,
+    sourceDigest: file?.metadata?.conversationRecallSourceDigest || null,
+    uploadedDigest: file?.metadata?.conversationRecallUploadedDigest || null,
+  };
+}
+
+async function waitForConversationRecallCorpusRefresh({
+  db,
+  userId,
+  previousState,
+  timeoutMs = 240_000,
+  pollMs = 500,
+}) {
+  const startedAt = Date.now();
+  const previousDigest = previousState?.sourceDigest || null;
+  while (Date.now() - startedAt < timeoutMs) {
+    const current = await readConversationRecallCorpusState({ db, userId });
+    const digestAdvanced = current.sourceDigest && current.sourceDigest !== previousDigest;
+    if (current.exists && current.embedded && current.uploadedDigest && digestAdvanced) {
+      return {
+        ...current,
+        waitedMs: Date.now() - startedAt,
+      };
+    }
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
+  }
+  throw new Error("conversation_recall_semantic_fixture_not_fresh");
 }
 
 async function restoreConversationRecallFixture({
@@ -566,6 +1000,72 @@ async function restoreConversationRecallFixture({
     throw new Error("conversation_recall_fixture_restore_verification_failed");
   }
   return { status: "restored_exact" };
+}
+
+async function insertConversationRecallCorpusFixture({
+  db,
+  userId,
+  agentId,
+  prompts,
+}) {
+  const texts = Array.isArray(prompts) ? prompts.filter(Boolean) : [];
+  if (!db || !userId || texts.length === 0) {
+    return null;
+  }
+  const { ObjectId } = require(
+    path.join(LIBRECHAT_ROOT, "node_modules", "mongodb"),
+  );
+  // Users use ObjectId, but LibreChat conversation/message schemas deliberately persist
+  // their `user` foreign key as a string. Writing the fixture as ObjectId makes the raw row
+  // exist while every production Mongoose recall query (which casts `user` to String) misses it.
+  const userKey = String(userId);
+  const conversationId = crypto.randomUUID();
+  const createdAt = new Date(Date.now() - 60_000);
+  const messageIds = [];
+  const messageRows = texts.map((text, index) => {
+    const messageId = crypto.randomUUID();
+    messageIds.push(messageId);
+    return {
+      _id: new ObjectId(),
+      user: userKey,
+      conversationId,
+      messageId,
+      parentMessageId: index === 0 ? NO_PARENT : messageIds[index - 1],
+      sender: "User",
+      text,
+      isCreatedByUser: true,
+      endpoint: "agents",
+      model: agentId,
+      tokenCount: Math.max(1, Math.ceil(text.length / 4)),
+      createdAt: new Date(createdAt.getTime() + index * 1000),
+      updatedAt: new Date(createdAt.getTime() + index * 1000),
+    };
+  });
+  await db.collection("conversations").insertOne({
+    _id: new ObjectId(),
+    user: userKey,
+    conversationId,
+    endpoint: "agents",
+    agent_id: agentId,
+    title: "Synthetic continuity fixture",
+    createdAt,
+    updatedAt: createdAt,
+  });
+  try {
+    await db.collection("messages").insertMany(messageRows);
+  } catch (error) {
+    await db.collection("conversations").deleteOne({ conversationId });
+    throw error;
+  }
+  return {
+    conversationId,
+    evidence: {
+      fixture: "conversation_recall_corpus",
+      conversationCount: 1,
+      messageCount: messageRows.length,
+      contentHash: hashValue(texts),
+    },
+  };
 }
 
 function escapeRegExp(value) {
@@ -610,17 +1110,119 @@ function collectVoiceMarkerEvidence(text) {
     0,
     xaiWrappingTokenSpans.length - xaiWrappingSpans.length * 2,
   );
+  const cartesiaValidatedControls = [];
+  let cartesiaValidTokenCount = 0;
+  const cartesiaValidSpans = [];
+  const addCartesiaControls = (pattern, validate, summary, tokenCount = 1) => {
+    for (const match of value.matchAll(pattern)) {
+      if (!validate(match)) continue;
+      cartesiaValidSpans.push(
+        `${match.index}:${match.index + match[0].length}`,
+      );
+      cartesiaValidTokenCount += tokenCount;
+      cartesiaValidatedControls.push(summary);
+    }
+  };
+  const allowedCartesiaEmotions = new Set(
+    (CARTESIA_TTS_CAPABILITIES.generation_config?.emotion?.values || []).map(
+      (emotion) => String(emotion).toLowerCase(),
+    ),
+  );
+  addCartesiaControls(
+    /<emotion\s+value=(["'])([^"']+)\1\s*\/>/giu,
+    (match) => allowedCartesiaEmotions.has(String(match[2]).toLowerCase()),
+    {
+      kind: "emotion",
+      form: "state_change",
+      balanced: true,
+      attributeValid: true,
+      valueAllowed: true,
+    },
+  );
+  addCartesiaControls(
+    /<emotion\s+value=(["'])([^"']+)\1\s*>[\s\S]*?<\/emotion\s*>/giu,
+    (match) => allowedCartesiaEmotions.has(String(match[2]).toLowerCase()),
+    {
+      kind: "emotion",
+      form: "scoped",
+      balanced: true,
+      attributeValid: true,
+      valueAllowed: true,
+    },
+    2,
+  );
+  for (const kind of ["speed", "volume"]) {
+    const range = CARTESIA_TTS_CAPABILITIES.generation_config?.[kind] || {};
+    addCartesiaControls(
+      new RegExp(`<${kind}\\s+ratio=(["'])([^"']+)\\1\\s*\\/>`, "giu"),
+      (match) => {
+        const ratio = Number(match[2]);
+        return (
+          Number.isFinite(ratio) &&
+          ratio >= Number(range.min) &&
+          ratio <= Number(range.max)
+        );
+      },
+      {
+        kind,
+        form: "state_change",
+        balanced: true,
+        attributeValid: true,
+        valueAllowed: true,
+      },
+    );
+  }
+  addCartesiaControls(
+    /<break\s+time=(["'])(\d+(?:\.\d+)?(?:ms|s))\1\s*\/>/giu,
+    () => true,
+    {
+      kind: "break",
+      form: "state_change",
+      balanced: true,
+      attributeValid: true,
+      valueAllowed: true,
+    },
+  );
+  addCartesiaControls(
+    /<spell>[\s\S]+?<\/spell\s*>/giu,
+    () => true,
+    {
+      kind: "spell",
+      form: "scoped",
+      balanced: true,
+      attributeValid: true,
+      valueAllowed: true,
+    },
+    2,
+  );
   const cartesiaTagNames = Object.keys(
     CARTESIA_TTS_CAPABILITIES.ssml_tags || {},
   );
-  const cartesiaTagSpans = cartesiaTagNames.flatMap((tag) =>
-    matchSpans(value, new RegExp(`<${escapeRegExp(tag)}(?:\\s[^>]*)?>`, "giu")),
+  const cartesiaTagTokenSpans = matchSpans(
+    value,
+    new RegExp(
+      `<\\/?(?:${cartesiaTagNames.map(escapeRegExp).join("|")})(?:\\s+[^<>]*)?\\s*\\/?>`,
+      "giu",
+    ),
+  );
+  const cartesiaMalformed = Math.max(
+    0,
+    cartesiaTagTokenSpans.length - cartesiaValidTokenCount,
   );
   const cartesiaNonverbalSpans = (
     CARTESIA_TTS_CAPABILITIES.nonverbal_markers || []
   ).flatMap((marker) =>
     matchSpans(value, new RegExp(escapeRegExp(marker), "giu")),
   );
+  for (let index = 0; index < cartesiaNonverbalSpans.length; index += 1) {
+    cartesiaValidatedControls.push({
+      kind: "nonverbal",
+      form: "exact_marker",
+      balanced: true,
+      attributeValid: true,
+      valueAllowed: true,
+    });
+  }
   const chatterboxSpans = CHATTERBOX_INLINE_CONTROLS.flatMap((marker) =>
     matchSpans(value, new RegExp(escapeRegExp(marker), "giu")),
   );
@@ -634,7 +1236,7 @@ function collectVoiceMarkerEvidence(text) {
   );
   const xaiInline = xaiInlineSpans.length;
   const xaiWrapping = xaiWrappingSpans.length;
-  const cartesiaTags = cartesiaTagSpans.length;
+  const cartesiaTags = cartesiaValidSpans.length;
   const cartesiaNonverbal = cartesiaNonverbalSpans.length;
   const chatterbox = chatterboxSpans.length;
   return {
@@ -643,6 +1245,8 @@ function collectVoiceMarkerEvidence(text) {
     xaiWrapping,
     xaiMalformedWrapping,
     cartesia: cartesiaTags + cartesiaNonverbal,
+    cartesiaMalformed,
+    cartesiaValidatedControls,
     chatterbox,
     structuralBracket: structuralBracketSpans.length,
     structuralAngle: structuralAngleSpans.length,
@@ -650,12 +1254,13 @@ function collectVoiceMarkerEvidence(text) {
       uniqueSpanCount([
         xaiInlineSpans,
         xaiWrappingSpans,
-        cartesiaTagSpans,
+        cartesiaValidSpans,
+        cartesiaTagTokenSpans,
         cartesiaNonverbalSpans,
         chatterboxSpans,
         structuralBracketSpans,
         structuralAngleSpans,
-      ]) + xaiMalformedWrapping,
+      ]) + xaiMalformedWrapping + cartesiaMalformed,
   };
 }
 
@@ -681,11 +1286,26 @@ function validateVoiceMarkerEvidence(testCase, responseText) {
   if (counts.xaiMalformedWrapping > 0) {
     failures.push("voice_xai_malformed_wrapping_marker");
   }
+  if (fixture.provider === "cartesia" && counts.cartesiaMalformed > 0) {
+    failures.push("voice_cartesia_malformed_marker");
+  }
+  const malformedProviderMarkerCount =
+    fixture.provider === "xai"
+      ? counts.xaiMalformedWrapping
+      : fixture.provider === "cartesia"
+        ? counts.cartesiaMalformed
+        : 0;
   return {
     evidence: {
       provider: fixture.provider,
       markerExpectation: fixture.markerExpectation,
       providerMarkerCount: providerCount,
+      providerGrammarValid: malformedProviderMarkerCount === 0,
+      malformedProviderMarkerCount,
+      validatedControls:
+        fixture.provider === "cartesia"
+          ? counts.cartesiaValidatedControls
+          : [],
       counts,
     },
     failures,
@@ -1163,6 +1783,63 @@ function stableStringify(value) {
   return JSON.stringify(value, Object.keys(value || {}).sort());
 }
 
+function canonicalJson(value) {
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => canonicalJson(item)).join(",")}]`;
+  }
+  if (value && typeof value === "object") {
+    return `{${Object.keys(value)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function memoryRecallBankFingerprint(promptBank) {
+  const family = (promptBank?.families || []).find(
+    (candidate) => candidate?.id === "memory_recall",
+  );
+  if (!family) {
+    throw new Error("memory_recall_bank_missing");
+  }
+  const cases = (family.cases || []).filter(
+    (testCase) =>
+      typeof testCase?.fixture?.conversationRecall?.coverageCategory === "string",
+  );
+  const payload = {
+    bankVersion: family.bankVersion,
+    cases,
+  };
+  return {
+    bankVersion: family.bankVersion,
+    bankHash: crypto
+      .createHash("sha256")
+      .update(canonicalJson(payload))
+      .digest("hex")
+      .slice(0, 16),
+    caseCount: cases.length,
+    coverageCategories: cases
+      .map((testCase) => testCase.fixture.conversationRecall.coverageCategory)
+      .sort(),
+  };
+}
+
+function validateFrozenMemoryRecallBank(promptBank) {
+  const bank = memoryRecallBankFingerprint(promptBank);
+  if (bank.bankVersion !== MEMORY_RECALL_BANK_VERSION) {
+    throw new Error(
+      `Frozen continuity bank version drift: expected ${MEMORY_RECALL_BANK_VERSION}, received ${bank.bankVersion || "missing"}`,
+    );
+  }
+  if (bank.bankHash !== FROZEN_MEMORY_RECALL_BANK_HASH) {
+    throw new Error(
+      `Frozen continuity bank drift: expected ${FROZEN_MEMORY_RECALL_BANK_HASH}, received ${bank.bankHash}; bump the version and review the new hash before live runs`,
+    );
+  }
+  return bank;
+}
+
 function hashValue(value, length = 16) {
   const text = typeof value === "string" ? value : stableStringify(value);
   return crypto
@@ -1212,6 +1889,10 @@ function scrubForPublic(value) {
     )
     .replace(/\b[0-9a-f]{24}\b/gi, "[object_id]")
     .replace(/\b\d{10,}\b/g, "[numeric_id]");
+}
+
+function responseTextForJudge(value) {
+  return scrubForPublic(stripDeliveryControlsForPreview(value));
 }
 
 async function fetchJson(url, options = {}, timeoutMs = 20_000) {
@@ -1383,6 +2064,7 @@ function capturePromptFrameCursor() {
 
 function summarizePromptFrameDelta(cursor) {
   const frames = [];
+  const truncatedFrames = [];
   const feelingsChunks = new Map();
   const promptField = (line, field) => {
     const match = line.match(new RegExp(`"${field}":"([^"]*)"`));
@@ -1430,6 +2112,31 @@ function summarizePromptFrameDelta(cursor) {
         if (!line.trim()) {
           continue;
         }
+        const runtimeRoute = line.match(
+          /\[PromptFrameRouteTelemetry\]\s+(\{.*\})\s*$/,
+        );
+        if (runtimeRoute) {
+          try {
+            const route = JSON.parse(runtimeRoute[1]);
+            const routeHash = (value) =>
+              /^[0-9a-f]{16}$/.test(String(value || ""))
+                ? `h${String(value)}`
+                : "missing";
+            frames.push({
+              prompt_family: scrubForPublic(route.f || ""),
+              surface: "",
+              provider_hash: routeHash(route.p),
+              model_hash: routeHash(route.m),
+              layer_token_estimates: {},
+              source_hashes: {},
+              mcp_instruction_sources: {},
+              source: "runtime_route_log",
+            });
+          } catch (_error) {
+            // Ignore a partial line from the active Winston writer.
+          }
+          continue;
+        }
         const runtimePrompt = line.match(/\[PromptFrameTelemetry\]\s+(\{.*)$/);
         if (runtimePrompt) {
           try {
@@ -1440,7 +2147,7 @@ function summarizePromptFrameDelta(cursor) {
             const promptFamily = promptField(line, "prompt_family");
             const surface = promptField(line, "surface");
             if (promptFamily || surface) {
-              frames.push(
+              truncatedFrames.push(
                 summarizeFrame(
                   { prompt_family: promptFamily, surface },
                   "runtime_text_log_truncated",
@@ -1481,6 +2188,21 @@ function summarizePromptFrameDelta(cursor) {
       }
     } finally {
       fs.closeSync(fd);
+    }
+  }
+  for (const truncatedFrame of truncatedFrames) {
+    const matchingRouteFrames = frames.filter(
+      (frame) =>
+        frame.source === "runtime_route_log" &&
+        frame.prompt_family === truncatedFrame.prompt_family &&
+        (!frame.surface || frame.surface === truncatedFrame.surface),
+    );
+    if (matchingRouteFrames.length) {
+      for (const routeFrame of matchingRouteFrames) {
+        if (!routeFrame.surface) routeFrame.surface = truncatedFrame.surface;
+      }
+    } else {
+      frames.push(truncatedFrame);
     }
   }
   const maxLayerTokens = {};
@@ -1526,6 +2248,10 @@ function flattenPromptCases(promptBank) {
       familyId: family.id,
       familyGoal: family.goal,
       ...testCase,
+      decisionQualityContract: {
+        ...(family.decisionQualityContract || {}),
+        ...(testCase.decisionQualityContract || {}),
+      },
       evalIsolation: {
         ...(family.evalIsolation || {}),
         ...(testCase.evalIsolation || {}),
@@ -1575,11 +2301,31 @@ function caseMatchesFilters(testCase, filters = {}) {
   return true;
 }
 
+function structuredDecisionCaseText(testCase) {
+  if (
+    !testCase?.question ||
+    !testCase?.evidencePacket ||
+    Object.keys(testCase.evidencePacket).length === 0
+  ) {
+    return null;
+  }
+  const evidenceLines = Object.entries(testCase.evidencePacket).map(
+    ([label, value]) => `- ${label}: ${String(value)}`,
+  );
+  return [
+    `User position: ${testCase.userPosition || "No position stated."}`,
+    `Question: ${testCase.question}`,
+    "Evidence packet:",
+    ...evidenceLines,
+    `Response instructions: ${testCase.responseInstructions || "Give the strongest conclusion the evidence supports and the best next action."}`,
+  ].join("\n");
+}
+
 function buildCaseText(testCase, { includeSetup = true } = {}) {
   return [
     testCase.context,
     includeSetup ? testCase.setup : null,
-    testCase.prompt,
+    structuredDecisionCaseText(testCase) || testCase.prompt,
   ]
     .filter(Boolean)
     .join("\n\n");
@@ -1620,7 +2366,7 @@ function buildChatPayload(testCase, args, overrides = {}) {
         }
       : {}),
     viventiumListenOnly: surface === "listen_only",
-    isTemporary: true,
+    isTemporary: overrides.isTemporary ?? true,
     ...(testCase.evalIsolation && Object.keys(testCase.evalIsolation).length > 0
       ? {
           viventiumEvalIsolation: testCase.evalIsolation,
@@ -1712,6 +2458,20 @@ function extractVisibleText(events) {
         "",
     )
     .filter((value) => typeof value === "string")
+    .join("");
+}
+
+function extractRawStreamedText(events) {
+  return (events || [])
+    .filter((event) => event?.event === "on_message_delta")
+    .map((event) => {
+      const delta = event?.data?.delta;
+      return (
+        extractTextFromContent(delta?.content) ||
+        (typeof delta?.text === "string" ? delta.text : "")
+      );
+    })
+    .filter(Boolean)
     .join("");
 }
 
@@ -1869,6 +2629,8 @@ function buildJudgeSchema() {
       "pass",
       "score",
       "rubric_results",
+      "dimension_results",
+      "comparison_consistency",
       "summary",
       "failure_mode",
       "confidence",
@@ -1887,6 +2649,29 @@ function buildJudgeSchema() {
             pass: { type: "boolean" },
             evidence: { type: "string" },
           },
+        },
+      },
+      dimension_results: {
+        type: "array",
+        items: {
+          type: "object",
+          additionalProperties: false,
+          required: ["dimension", "score", "evidence"],
+          properties: {
+            dimension: { type: "string" },
+            score: { type: "number", minimum: 0, maximum: 1 },
+            evidence: { type: "string" },
+          },
+        },
+      },
+      comparison_consistency: {
+        type: "object",
+        additionalProperties: false,
+        required: ["required", "pass", "evidence"],
+        properties: {
+          required: { type: "boolean" },
+          pass: { type: "boolean" },
+          evidence: { type: "string" },
         },
       },
       summary: { type: "string" },
@@ -1917,15 +2702,112 @@ function effectiveRubricForExactRunner(testCase) {
   return (testCase.rubric || []).filter((_, index) => !excluded.has(index));
 }
 
-function buildJudgePrompt(testCase, result) {
+function scoreDecisionQualityJudgment(testCase, judgment) {
+  const contract = testCase?.decisionQualityContract || {};
+  const weights = contract.dimensions || {};
+  const evaluatedDimensions = Array.isArray(testCase?.evaluatedDimensions)
+    ? testCase.evaluatedDimensions
+    : [];
+  if (Object.keys(weights).length === 0 || evaluatedDimensions.length === 0) {
+    return {
+      pass: Boolean(judgment?.pass),
+      weightedScore: Number(judgment?.score ?? 0),
+      error: null,
+    };
+  }
+  const results = new Map(
+    (judgment?.dimension_results || []).map((item) => [
+      String(item?.dimension || ""),
+      Number(item?.score),
+    ]),
+  );
+  const missing = evaluatedDimensions.filter(
+    (dimension) =>
+      !results.has(dimension) ||
+      !Number.isFinite(results.get(dimension)) ||
+      results.get(dimension) < 0 ||
+      results.get(dimension) > 1,
+  );
+  if (missing.length > 0) {
+    return {
+      pass: false,
+      weightedScore: 0,
+      error: `missing_dimension_scores:${missing.join(",")}`,
+    };
+  }
+  const totalWeight = evaluatedDimensions.reduce(
+    (total, dimension) => total + Number(weights[dimension] || 0),
+    0,
+  );
+  if (totalWeight <= 0) {
+    return {
+      pass: false,
+      weightedScore: 0,
+      error: "invalid_decision_quality_weights",
+    };
+  }
+  const weightedScore = evaluatedDimensions.reduce(
+    (total, dimension) =>
+      total + Number(weights[dimension] || 0) * results.get(dimension),
+    0,
+  ) / totalWeight;
+  const effectiveRubric = effectiveRubricForExactRunner(testCase);
+  const rubricEvidenceComplete =
+    Array.isArray(judgment?.rubric_results) &&
+    judgment.rubric_results.length === effectiveRubric.length &&
+    judgment.rubric_results.every(
+      (item, index) =>
+        String(item?.rubric_item || "").trim() ===
+          String(effectiveRubric[index] || "").trim(),
+    );
+  const pairRequired = Boolean(testCase?.comparisonCaseId);
+  const pairPass =
+    !pairRequired ||
+    (judgment?.comparison_consistency?.required === true &&
+      judgment?.comparison_consistency?.pass === true);
+  const conclusionScore = results.get("conclusion_correctness") ?? 0;
+  const pass =
+    rubricEvidenceComplete &&
+    pairPass &&
+    weightedScore >= Number(contract.passingWeightedScore ?? 1) &&
+    conclusionScore >= Number(contract.minimumConclusionScore ?? 1);
+  return { pass, weightedScore, error: null };
+}
+
+function buildJudgePrompt(
+  testCase,
+  result,
+  comparisonResult = null,
+  comparisonTestCase = null,
+) {
   const schema = buildJudgeSchema();
   const effectiveRubric = effectiveRubricForExactRunner(testCase);
+  const hasDecisionQualityContract =
+    Object.keys(testCase.decisionQualityContract || {}).length > 0 ||
+    Object.keys(testCase.groundTruth || {}).length > 0;
   return [
-    "Evaluate this Viventium prompt-architecture regression case. Judge only the behavior visible in the response against the rubric.",
+    "Evaluate this Viventium prompt-architecture regression case. Judge the response and supplied evidence against the rubric.",
     "Return exactly one JSON object matching the provided schema. Do not include markdown, code fences, prose, or extra keys.",
     "Do not reward verbosity. Do not require private data. If evidence is missing, mark that rubric item false.",
+    ...(hasDecisionQualityContract
+      ? [
+          "Decision-quality note: Transport or route success is never evidence of semantic correctness.",
+          "Do not reward agreement, disagreement, caution, confidence, or caveats as ends in themselves. Score whether the conclusion follows the supplied evidence, quantities, causal design, uncertainty, and decision tradeoffs.",
+          "Do not require an unsupported caveat merely to sound balanced. Penalize both reflexive agreement and reflexive rejection, and apply the same evidentiary standard to paired cases.",
+          "The assistant under test received the evidence packet but not the private ground truth below. Use the private gold to score the conclusion, evidence-specific reasoning, calculations, calibration, and next action; never expose it or infer a preferred sentiment from the user's proposed action.",
+          "Score every declared evaluated dimension from 0 to 1 with response-specific evidence. These dimension scores are mechanically weighted by the runner; they are not decorative commentary.",
+          "When a declared comparison case is supplied, comparison_consistency must pass only if the two responses change their conclusion or update direction exactly as the changed evidence requires. Different wording is not enough, and a canned template must fail.",
+        ]
+      : []),
+    "The sanitized response is the complete visible response. For a prohibition or absence rubric, its lack of forbidden content is evidence unless other supplied evidence contradicts it.",
     "A rubric item must fail when the evidence quotes or describes behavior that the item forbids; never call the same evidence both a violation and a pass.",
     'Range rubric note: if a rubric says "one or two", "1-2", or similar, one satisfying item is enough. Do not fail just because the response chose the lower end of the allowed range.',
+    ...(voiceOutputFixtureFor(testCase)
+      ? [
+          "Voice marker note: delivery controls are intentionally absent from the sanitized response. Judge marker presence, absence, and grammar from Voice marker evidence, not the sanitized response. Do not infer a missing marker from its deliberate sanitization.",
+          "Structured Voice marker contract-validation fields are authoritative: they prove documented grammar and allowed values without exposing raw marker text.",
+        ]
+      : []),
     "Architecture-language note: if the user prompt itself asks about MCPs, Scheduling Cortex, GlassHive, prompts, or tool architecture, mentioning those user-provided concepts is not plumbing exposure by itself. Still fail raw IDs, metadata keys, hidden prompt tokens, no-response markers, memory key names, or unrelated internals.",
     "Citation marker note: web-search citation markers such as turn0search2 are acceptable user-facing source anchors when matching web_search_sources evidence is supplied. Do not classify matching citation anchors as plumbing exposure.",
     "Snippet-limitation note: if the response explicitly says the retrieved snippets/results do not directly support or confirm a precise rule, treat that as an honest evidence limitation, not as a fabricated page-content check.",
@@ -1941,7 +2823,7 @@ function buildJudgePrompt(testCase, result) {
     "Direct-action callback-window note: do not fail a worker/delegation case solely because the callback or final inspection result did not arrive within this runner’s observation window. If native evidence shows a tool_call/delegation route and the visible text only promises future results, treat it as a valid pending delegation. Fail only if the answer claims completed inspection, concrete findings, or local UI state without verified evidence.",
     "Delayed-visible note: delayed_visible_text in post-case evidence is user-visible behavior. If it honestly reports completion, approval need, or a blocker, count that alongside the initial response; still fail it if the delayed text exposes raw IDs, provider names, queue mechanics, or internal plumbing.",
     "Observability note: prompt-frame token analysis is private QA telemetry. If prompt_budget_analysis reports heavy layers and budget_review_required=true, treat the measurement/flagging requirement as satisfied for this eval case.",
-    "Verdict rule: if every listed rubric item is satisfied, pass the case; do not fail for an extra preference outside the supplied rubric.",
+    "Verdict rule: for an ordinary case, pass when every listed rubric item is satisfied. For a decision-quality case, the mechanical contract owns the verdict: comparison consistency must pass when required, the weighted dimension score must reach the declared threshold, and conclusion correctness must reach its minimum. Rubric results supply evidence for those dimension scores; a minor miss or an equivalent but less detailed next action does not independently veto an otherwise passing weighted result. Any rubric miss that changes the conclusion or misreads the evidence must lower the relevant dimension score. Do not fail for a preference outside those supplied gates.",
     "",
     "Required JSON Schema:",
     JSON.stringify(schema),
@@ -1953,6 +2835,14 @@ function buildJudgePrompt(testCase, result) {
     `Expected decision: ${testCase.expected_decision || "not specified"}`,
     `Exact-runner exclusions: ${(testCase.exact_runner_excluded_rubric_indices || []).join(", ") || "none"}`,
     `Exact-runner notes: ${(testCase.exact_runner_notes || []).map(scrubForPublic).join(" | ") || "none"}`,
+    ...(hasDecisionQualityContract
+      ? [
+          `Private decision-quality contract: ${scrubForPublic(JSON.stringify(testCase.decisionQualityContract || {}))}`,
+          `Private decision-quality ground truth: ${scrubForPublic(JSON.stringify(testCase.groundTruth || {}))}`,
+          `Evaluated dimensions: ${(testCase.evaluatedDimensions || []).join(", ") || "none"}`,
+          `Declared comparison expectation: ${testCase.comparisonExpectation || "none"}`,
+        ]
+      : []),
     "",
     "Prompt/context sent to the system:",
     scrubForPublic(
@@ -1963,7 +2853,7 @@ function buildJudgePrompt(testCase, result) {
               (seed, index) => `Prior seeded turn ${index + 1}: ${seed}`,
             )
           : [testCase.setup].filter(Boolean)),
-        `Evaluated prompt: ${testCase.prompt}`,
+        `Evaluated prompt: ${buildCaseText(testCase)}`,
       ]
         .filter(Boolean)
         .join("\n\n"),
@@ -1974,6 +2864,15 @@ function buildJudgePrompt(testCase, result) {
     "",
     "Sanitized response to evaluate:",
     result.responseForJudge || scrubForPublic(result.responsePreview || ""),
+    ...(comparisonResult
+      ? [
+          "",
+          `Declared comparison case: ${scrubForPublic(comparisonResult.caseId || "unknown")}`,
+          `Private comparison ground truth: ${scrubForPublic(JSON.stringify(comparisonTestCase?.groundTruth || {}))}`,
+          comparisonResult.responseForJudge ||
+            scrubForPublic(comparisonResult.responsePreview || ""),
+        ]
+      : []),
     "",
     "Sanitized runtime evidence from the streamed response:",
     result.eventEvidenceForJudge || "none",
@@ -2006,6 +2905,24 @@ function validateJudgeJudgment(value) {
     return {
       ok: false,
       error: "semantic_judge_invalid_shape:rubric_results_not_array",
+    };
+  }
+  if (!Array.isArray(value.dimension_results)) {
+    return {
+      ok: false,
+      error: "semantic_judge_invalid_shape:dimension_results_not_array",
+    };
+  }
+  if (
+    !value.comparison_consistency ||
+    typeof value.comparison_consistency !== "object" ||
+    typeof value.comparison_consistency.required !== "boolean" ||
+    typeof value.comparison_consistency.pass !== "boolean" ||
+    typeof value.comparison_consistency.evidence !== "string"
+  ) {
+    return {
+      ok: false,
+      error: "semantic_judge_invalid_shape:comparison_consistency_invalid",
     };
   }
   if (typeof value.summary !== "string") {
@@ -2049,7 +2966,7 @@ async function callOpenAIJsonSchemaJudge({ apiKey, model, prompt, timeoutMs }) {
         schema,
       },
     },
-    max_output_tokens: 1400,
+    max_output_tokens: 2200,
   };
   const response = await fetchJson(
     "https://api.openai.com/v1/responses",
@@ -2199,7 +3116,7 @@ async function callLocalEphemeralJsonJudge({ args, token, prompt, timeoutMs }) {
       "You are a strict semantic QA judge for Viventium prompt-regression tests. You are not Viventium. You do not answer the original user. You evaluate the supplied response against the supplied rubric and return exactly one JSON object matching the supplied schema.",
     temperature: 0,
     top_p: 1,
-    max_tokens: 1600,
+    max_tokens: 2200,
     ephemeralAgent: {},
     viventiumSurface: "web",
     viventiumInputMode: "text",
@@ -2389,6 +3306,96 @@ function semanticJudgeLabel(args, semanticJudge) {
       : "local_agent_json_semantic_judge";
 }
 
+function selectedCasesRequireSemanticJudge(selectedCases) {
+  return (selectedCases || []).some(
+    (testCase) =>
+      testCase?.decisionQualityContract?.transportPassIsSemanticPass === false,
+  );
+}
+
+function completionRouteIdentity(result) {
+  let evidence = result?.promptFrameEvidenceForJudge;
+  if (typeof evidence === "string") {
+    try {
+      evidence = JSON.parse(evidence);
+    } catch (_error) {
+      evidence = null;
+    }
+  }
+  const frames = Array.isArray(evidence?.prompt_frames)
+    ? evidence.prompt_frames
+    : [];
+  const mainRunFrames = frames.filter(
+    (frame) => frame?.prompt_family === "main_run_create",
+  );
+  const routeFrames = mainRunFrames.filter(
+    (frame) => frame?.source === "runtime_route_log",
+  );
+  const frame = (routeFrames.length ? routeFrames : mainRunFrames).at(-1);
+  const providerHash = String(frame?.provider_hash || "missing");
+  const modelHash = String(frame?.model_hash || "missing");
+  const known =
+    /^h?[0-9a-f]{16}$/.test(providerHash) &&
+    /^h?[0-9a-f]{16}$/.test(modelHash);
+  return {
+    known,
+    providerHash: known ? providerHash : "missing",
+    modelHash: known ? modelHash : "missing",
+  };
+}
+
+function comparisonRouteFailures(promptBank, liveResults) {
+  const casesById = new Map(
+    runnablePromptCases(promptBank).map((testCase) => [testCase.id, testCase]),
+  );
+  const resultsByCaseId = new Map(
+    liveResults.map((result) => [result.caseId, result]),
+  );
+  const failures = new Map();
+  const setPairFailure = (caseIds, error) => {
+    for (const caseId of caseIds) {
+      if (caseId && resultsByCaseId.has(caseId) && !failures.has(caseId)) {
+        failures.set(caseId, error);
+      }
+    }
+  };
+
+  for (const result of liveResults) {
+    const testCase = casesById.get(result.caseId);
+    const comparisonCaseId = testCase?.comparisonCaseId;
+    if (!comparisonCaseId) continue;
+    const pairIds = [comparisonCaseId, result.caseId];
+    const comparisonResult = resultsByCaseId.get(comparisonCaseId);
+    if (!comparisonResult || comparisonResult.status !== "completed") {
+      setPairFailure(
+        pairIds,
+        `comparison_case_unavailable:${scrubForPublic(comparisonCaseId)}:${scrubForPublic(result.caseId)}`,
+      );
+      continue;
+    }
+    if (result.status !== "completed") continue;
+    const controlRoute = completionRouteIdentity(comparisonResult);
+    const variantRoute = completionRouteIdentity(result);
+    if (!controlRoute.known || !variantRoute.known) {
+      setPairFailure(
+        pairIds,
+        `comparison_route_unknown:${scrubForPublic(comparisonCaseId)}:${scrubForPublic(result.caseId)}`,
+      );
+      continue;
+    }
+    if (
+      controlRoute.providerHash !== variantRoute.providerHash ||
+      controlRoute.modelHash !== variantRoute.modelHash
+    ) {
+      setPairFailure(
+        pairIds,
+        `comparison_route_mismatch:${scrubForPublic(comparisonCaseId)}:${scrubForPublic(result.caseId)}`,
+      );
+    }
+  }
+  return failures;
+}
+
 async function judgeLiveResults(
   args,
   promptBank,
@@ -2412,7 +3419,13 @@ async function judgeLiveResults(
   );
   const judgedResults = [];
   const conversationIds = [];
-  let blockedReason = null;
+  const resultsByCaseId = new Map(
+    liveResults.map((result) => [result.caseId, result]),
+  );
+  const routeFailures = comparisonRouteFailures(promptBank, liveResults);
+  let blockedReason = routeFailures.size
+    ? "comparison_route_gate_failed"
+    : null;
   for (
     let resultIndex = 0;
     resultIndex < liveResults.length;
@@ -2424,7 +3437,32 @@ async function judgeLiveResults(
       judgedResults.push(result);
       continue;
     }
-    const prompt = buildJudgePrompt(testCase, result);
+    const routeFailure = routeFailures.get(result.caseId);
+    if (routeFailure) {
+      judgedResults.push({
+        ...result,
+        semanticJudge: {
+          status: "unavailable",
+          pass: null,
+          score: null,
+          summary: routeFailure,
+          error: routeFailure,
+        },
+      });
+      continue;
+    }
+    const comparisonResult = testCase.comparisonCaseId
+      ? resultsByCaseId.get(testCase.comparisonCaseId)
+      : null;
+    const comparisonTestCase = testCase.comparisonCaseId
+      ? casesById.get(testCase.comparisonCaseId)
+      : null;
+    const prompt = buildJudgePrompt(
+      testCase,
+      result,
+      comparisonResult,
+      comparisonTestCase,
+    );
     try {
       const judge = await callConfiguredJudgeWithRetry({
         args,
@@ -2455,12 +3493,19 @@ async function judgeLiveResults(
         judgedResults.push(...liveResults.slice(resultIndex + 1));
         break;
       }
+      const decisionQuality = scoreDecisionQualityJudgment(
+        testCase,
+        judge.judgment,
+      );
       judgedResults.push({
         ...result,
         semanticJudge: {
           status: "judged",
-          pass: Boolean(judge.judgment?.pass),
-          score: Number(judge.judgment?.score ?? 0),
+          pass: decisionQuality.pass,
+          score: decisionQuality.weightedScore,
+          judgeReportedPass: Boolean(judge.judgment?.pass),
+          judgeReportedScore: Number(judge.judgment?.score ?? 0),
+          decisionQualityError: decisionQuality.error,
           failureMode:
             judge.judgment?.failure_mode || "unclear_or_insufficient_evidence",
           confidence: judge.judgment?.confidence || "low",
@@ -2472,6 +3517,22 @@ async function judgeLiveResults(
                 evidence: scrubForPublic(item.evidence || ""),
               }))
             : [],
+          dimensionResults: Array.isArray(judge.judgment?.dimension_results)
+            ? judge.judgment.dimension_results.map((item) => ({
+                dimension: scrubForPublic(item.dimension || ""),
+                score: Number(item.score ?? 0),
+                evidence: scrubForPublic(item.evidence || ""),
+              }))
+            : [],
+          comparisonConsistency: {
+            required: Boolean(
+              judge.judgment?.comparison_consistency?.required,
+            ),
+            pass: Boolean(judge.judgment?.comparison_consistency?.pass),
+            evidence: scrubForPublic(
+              judge.judgment?.comparison_consistency?.evidence || "",
+            ),
+          },
           rawHash: judge.rawHash,
           attemptCount: judge.attemptCount,
         },
@@ -2527,6 +3588,7 @@ async function readSseToFinal({ apiBase, streamId, token, timeoutMs }) {
   const startedAt = Date.now();
   let buffer = "";
   const events = [];
+  let firstVisibleAtMs = null;
 
   try {
     while (Date.now() - startedAt < timeoutMs) {
@@ -2543,6 +3605,14 @@ async function readSseToFinal({ apiBase, streamId, token, timeoutMs }) {
           continue;
         }
         events.push(event);
+        if (
+          firstVisibleAtMs == null &&
+          event?.event === "on_message_delta" &&
+          (extractTextFromContent(event?.data?.delta?.content) ||
+            String(event?.data?.delta?.text || "").trim())
+        ) {
+          firstVisibleAtMs = Date.now();
+        }
         if (event.final != null || event.error != null) {
           await reader.cancel().catch(() => {});
           return {
@@ -2551,6 +3621,7 @@ async function readSseToFinal({ apiBase, streamId, token, timeoutMs }) {
             events,
             text: extractVisibleText(events),
             error: event.error || null,
+            firstVisibleAtMs,
           };
         }
       }
@@ -2562,6 +3633,7 @@ async function readSseToFinal({ apiBase, streamId, token, timeoutMs }) {
       events,
       text: extractVisibleText(events),
       error: `stream_read_failed:${scrubForPublic(error.message || error.name || "unknown")}`,
+      firstVisibleAtMs,
     };
   }
 
@@ -2572,6 +3644,7 @@ async function readSseToFinal({ apiBase, streamId, token, timeoutMs }) {
     events,
     text: extractVisibleText(events),
     error: "stream_timeout",
+    firstVisibleAtMs,
   };
 }
 
@@ -2582,11 +3655,14 @@ async function runChatTurn({
   text,
   conversationId = "new",
   parentMessageId = NO_PARENT,
+  payloadOverrides = {},
 }) {
+  const turnStartedAtMs = Date.now();
   const payload = buildChatPayload(testCase, args, {
     text,
     conversationId,
     parentMessageId,
+    ...payloadOverrides,
   });
   const start = await fetchJson(
     `${args.apiBase}/api/agents/chat/agents`,
@@ -2610,6 +3686,10 @@ async function runChatTurn({
       payload,
       error: `chat_start_http_${start.status}`,
       finalMeta: {},
+      timing: {
+        firstVisibleReplyMs: null,
+        completedMs: Date.now() - turnStartedAtMs,
+      },
     };
   }
 
@@ -2626,6 +3706,13 @@ async function runChatTurn({
     payload,
     error: stream.error || null,
     finalMeta: extractFinalMeta(stream.events),
+    timing: {
+      firstVisibleReplyMs:
+        stream.firstVisibleAtMs == null
+          ? null
+          : stream.firstVisibleAtMs - turnStartedAtMs,
+      completedMs: Date.now() - turnStartedAtMs,
+    },
   };
 }
 
@@ -3148,7 +4235,7 @@ async function cleanupConversationIds(db, conversationIds) {
   };
 }
 
-async function cleanupEvalConversations(db, results) {
+async function cleanupEvalConversations(db, results, extraConversationIds = []) {
   if (!db) return { status: "skipped", reason: "db_unavailable" };
   const qaRequestMessageIds = [
     ...new Set(
@@ -3165,6 +4252,7 @@ async function cleanupEvalConversations(db, results) {
         .toArray()
     : [];
   return cleanupConversationIds(db, [
+    ...extraConversationIds,
     ...results.map((result) => result.finalMeta?.conversationId),
     ...requestRows.map((row) => row.conversationId),
   ]);
@@ -3185,6 +4273,7 @@ async function runLiveCases(args, promptBank, token, db = null, qaAuth = null) {
   let conversationRecallRestoreError = null;
   let qaCleanup = null;
   let qaCleanupError = null;
+  const fixtureConversationIds = [];
 
   try {
     for (const [caseIndex, testCase] of runnableCases.entries()) {
@@ -3196,6 +4285,10 @@ async function runLiveCases(args, promptBank, token, db = null, qaAuth = null) {
       const startedAt = Date.now();
       const promptFrameCursor = capturePromptFrameCursor();
       const seedPrompts = normalizeSeedPrompts(testCase);
+      const conversationRecallFixture = conversationRecallFixtureFor(
+        testCase,
+        crypto.randomBytes(8).toString("hex"),
+      );
       let conversationId = "new";
       let parentMessageId = NO_PARENT;
       const seedEvidence = [];
@@ -3248,7 +4341,8 @@ async function runLiveCases(args, promptBank, token, db = null, qaAuth = null) {
         fixtureEvidence.push(fixtureResult.evidence);
       }
 
-      if (conversationRecallFixtureFor(testCase)) {
+      if (conversationRecallFixture) {
+        const recallFixture = conversationRecallFixture;
         const fixtureResult = await applyConversationRecallFixture({
           args,
           token,
@@ -3288,6 +4382,87 @@ async function runLiveCases(args, promptBank, token, db = null, qaAuth = null) {
           continue;
         }
         fixtureEvidence.push(fixtureResult.evidence);
+        if (recallFixture.seedCorpusPrompts.length > 0) {
+          const corpusFixture = await insertConversationRecallCorpusFixture({
+            db,
+            userId: qaAuth?.userId,
+            agentId: args.agentId,
+            prompts: recallFixture.seedCorpusPrompts,
+          }).catch((error) => ({
+            error: `conversation_recall_corpus_fixture_failed:${scrubForPublic(error.message || "unknown")}`,
+          }));
+          if (!corpusFixture?.conversationId) {
+            results.push({
+              caseId: testCase.id,
+              familyId: testCase.familyId,
+              surface: testCase.surface || "web",
+              status: "failed_to_prepare_fixture",
+              durationMs: Date.now() - startedAt,
+              error: corpusFixture?.error || "conversation_recall_corpus_fixture_failed",
+              requestHash: hashValue({ fixture: "conversation_recall_corpus" }),
+              responseHash: "",
+              responsePreview: "",
+              responseForJudge: "",
+              eventEvidenceForJudge: "none",
+              promptFrameEvidenceForJudge: summarizePromptFrameDelta(promptFrameCursor),
+              postCaseEvidenceForJudge: "none",
+              eventCount: 0,
+              finalMeta: {},
+              seedEvidence,
+              fixtureEvidence,
+              privateEvents: [],
+            });
+            continue;
+          }
+          fixtureConversationIds.push(corpusFixture.conversationId);
+          fixtureEvidence.push(corpusFixture.evidence);
+          if (recallFixture.requireSemanticRetrieval) {
+            const refreshedCorpus = await (async () => {
+              await patchConversationRecallPreference({
+                args,
+                token,
+                enabled: true,
+              });
+              return waitForConversationRecallCorpusRefresh({
+                db,
+                userId: qaAuth?.userId,
+                previousState: fixtureResult.corpusStateBeforeFixture,
+              });
+            })().catch((error) => ({
+              error: `conversation_recall_semantic_fixture_failed:${scrubForPublic(error.message || "unknown")}`,
+            }));
+            if (refreshedCorpus?.error) {
+              results.push({
+                caseId: testCase.id,
+                familyId: testCase.familyId,
+                surface: testCase.surface || "web",
+                status: "failed_to_prepare_fixture",
+                durationMs: Date.now() - startedAt,
+                error: refreshedCorpus.error,
+                requestHash: hashValue({ fixture: "conversation_recall_semantic_index" }),
+                responseHash: "",
+                responsePreview: "",
+                responseForJudge: "",
+                eventEvidenceForJudge: "none",
+                promptFrameEvidenceForJudge: summarizePromptFrameDelta(promptFrameCursor),
+                postCaseEvidenceForJudge: "none",
+                eventCount: 0,
+                finalMeta: {},
+                seedEvidence,
+                fixtureEvidence,
+                privateEvents: [],
+              });
+              continue;
+            }
+            fixtureEvidence.push({
+              fixture: "conversation_recall_semantic_index",
+              configured: true,
+              waitedMs: refreshedCorpus.waitedMs,
+              sourceDigestHash: hashValue(refreshedCorpus.sourceDigest),
+              uploadedDigestHash: hashValue(refreshedCorpus.uploadedDigest),
+            });
+          }
+        }
       }
 
       if (needsStarterMorningBriefingFixture(testCase)) {
@@ -3366,12 +4541,12 @@ async function runLiveCases(args, promptBank, token, db = null, qaAuth = null) {
           error: failedSeed.error || "seed_turn_failed",
           requestHash: hashValue(failedSeed.payload || {}),
           responseHash: hashValue(failedSeed.stream?.text || ""),
-          responsePreview: scrubForPublic(
-            (failedSeed.stream?.text || "").slice(0, 300),
-          ),
-          responseForJudge: scrubForPublic(
-            (failedSeed.stream?.text || "").slice(0, 4000),
-          ),
+          responsePreview: responseTextForJudge(
+            failedSeed.stream?.text || "",
+          ).slice(0, 300),
+          responseForJudge: responseTextForJudge(
+            failedSeed.stream?.text || "",
+          ).slice(0, 4000),
           eventEvidenceForJudge: summarizeEventsForJudge(
             failedSeed.stream?.events || [],
           ),
@@ -3406,9 +4581,10 @@ async function runLiveCases(args, promptBank, token, db = null, qaAuth = null) {
       };
 
       const responseText = stream.text || "";
+      const visibleResponseText = stripDeliveryControlsForPreview(responseText);
       const emptyResponseAllowed = caseAllowsEmptyResponse(testCase);
       const completed =
-        stream.ok && (responseText.trim() || emptyResponseAllowed);
+        stream.ok && (visibleResponseText.trim() || emptyResponseAllowed);
       const turnEvidence = {
         finalMeta: turn.finalMeta || {},
         hasCortexActivation: hasCortexActivation(stream.events),
@@ -3450,10 +4626,18 @@ async function runLiveCases(args, promptBank, token, db = null, qaAuth = null) {
           })
         : null;
       const eventEvidence = summarizeEventsForJudge(stream.events);
+      const rawStreamedText = voiceOutputFixture
+        ? extractRawStreamedText(stream.events)
+        : "";
       const voiceMarkerValidation = validateVoiceMarkerEvidence(
         testCase,
-        responseText,
+        rawStreamedText || responseText,
       );
+      if (voiceMarkerValidation.evidence) {
+        voiceMarkerValidation.evidence.evidenceSource = rawStreamedText
+          ? "raw_stream"
+          : "visible_final_fallback";
+      }
       const eventEvidenceForJudge = [
         eventEvidence,
         feelingsReactionEvidence
@@ -3469,9 +4653,21 @@ async function runLiveCases(args, promptBank, token, db = null, qaAuth = null) {
         feelingsFixtureFor(testCase),
         feelingsReactionEvidence,
       );
+      const conversationRecallExecution =
+        await auditConversationRecallExecution({
+          env,
+          responseMessageId: turnEvidence.finalMeta?.responseMessageId,
+          fixture: conversationRecallFixture,
+          responseText: visibleResponseText,
+          responseEvents: stream.events,
+        });
+      if (conversationRecallExecution.evidence) {
+        fixtureEvidence.push(conversationRecallExecution.evidence);
+      }
       const deterministicFailures = [
         ...feelingsDeterministicFailures,
         ...voiceMarkerValidation.failures,
+        ...conversationRecallExecution.failures,
       ];
       const deterministicallyCompleted =
         Boolean(completed) && deterministicFailures.length === 0;
@@ -3482,14 +4678,15 @@ async function runLiveCases(args, promptBank, token, db = null, qaAuth = null) {
         surface: testCase.surface || "web",
         status: deterministicallyCompleted ? "completed" : "failed",
         durationMs: Date.now() - startedAt,
+        firstVisibleReplyMs: turn.timing?.firstVisibleReplyMs ?? null,
         error:
           stream.error ||
           deterministicFailures[0] ||
           (completed ? null : "empty_visible_response"),
         requestHash: hashValue(turn.payload || {}),
-        responseHash: hashValue(responseText),
-        responsePreview: scrubForPublic(responseText.slice(0, 300)),
-        responseForJudge: scrubForPublic(responseText.slice(0, 4000)),
+        responseHash: hashValue(visibleResponseText),
+        responsePreview: responseTextForJudge(responseText).slice(0, 300),
+        responseForJudge: responseTextForJudge(responseText).slice(0, 4000),
         eventEvidenceForJudge,
         promptFrameEvidenceForJudge:
           summarizePromptFrameDelta(promptFrameCursor),
@@ -3535,7 +4732,7 @@ async function runLiveCases(args, promptBank, token, db = null, qaAuth = null) {
       }
     }
     try {
-      qaCleanup = await cleanupEvalConversations(db, results);
+      qaCleanup = await cleanupEvalConversations(db, results, fixtureConversationIds);
     } catch (error) {
       qaCleanupError = `qa_conversation_cleanup_failed:${scrubForPublic(error.message || "unknown")}`;
     }
@@ -3726,6 +4923,7 @@ function writeReports({
   ensureDir(args.outputDir);
   ensureDir(path.dirname(args.publicReport));
 
+  const memoryRecallBank = validateFrozenMemoryRecallBank(promptBank);
   const allCases = flattenPromptCases(promptBank);
   const runnableCases = runnablePromptCases(promptBank, args);
   const selectedCaseCount = Math.min(args.maxCases, runnableCases.length);
@@ -3804,6 +5002,7 @@ function writeReports({
     apiBaseHash: hashValue(args.apiBase),
     runLiveRequested: args.runLive,
     promptBankHash: hashFileIfPresent(args.promptBank),
+    memoryRecallBank,
     agentIdHash: hashValue(args.agentId),
     promptFamilies: (promptBank.families || []).length,
     promptCases: allCases.length,
@@ -3833,12 +5032,24 @@ function writeReports({
     ).length,
     failedCount: liveResults.filter((result) => result.status !== "completed")
       .length,
+    deterministicContractPassedCount: liveResults.filter(
+      (result) => result.status === "completed",
+    ).length,
+    deterministicContractFailedCount: liveResults.filter(
+      (result) => result.status !== "completed",
+    ).length,
     retriedTurnCount: liveResults.filter(
       (result) => Number(result.turnAttemptCount || 1) > 1,
     ).length,
     totalTurnAttempts: liveResults.reduce(
       (total, result) => total + Number(result.turnAttemptCount || 1),
       0,
+    ),
+    visibleReplyLatencyMs: summarizeLatencyMs(
+      liveResults.map((result) => result.firstVisibleReplyMs),
+    ),
+    completionLatencyMs: summarizeLatencyMs(
+      liveResults.map((result) => result.durationMs),
     ),
     behavioralGrading: semanticJudge?.enabled
       ? semanticJudgeLabel(args, semanticJudge)
@@ -3897,6 +5108,8 @@ function writeReports({
   );
 
   const publicLines = [
+    "<!-- qa-evidence-exempt: Controlled prompt-registry completion artifact; full-view user-grade acceptance belongs in the owning feature run report. -->",
+    "",
     "# Prompt Registry Slice: Exact-Model Completion Baseline",
     "",
     `Generated: ${summary.generatedAt}`,
@@ -3908,6 +5121,7 @@ function writeReports({
     `- Blocked reason: ${summary.blockedReason || "none"}`,
     `- Prompt families: ${summary.promptFamilies}`,
     `- Prompt cases: ${summary.promptCases}`,
+    `- Frozen continuity bank: ${summary.memoryRecallBank.bankVersion} / ${summary.memoryRecallBank.bankHash} / ${summary.memoryRecallBank.caseCount} cases`,
     `- Agent hash: ${summary.agentIdHash}`,
     `- Runner hash: ${summary.runnerHash || "missing"}`,
     `- Runnable cases for this runner: ${summary.runnablePromptCases}`,
@@ -3917,9 +5131,35 @@ function writeReports({
     `- Result count: ${summary.resultCount}`,
     `- Completed: ${summary.completedCount}`,
     `- Failed/blocked: ${summary.failedCount}`,
+    `- Deterministic fixture contracts passed: ${summary.deterministicContractPassedCount}`,
+    `- Deterministic fixture contracts failed: ${summary.deterministicContractFailedCount}`,
     `- Retried main turns: ${summary.retriedTurnCount}`,
     `- Total main-turn attempts: ${summary.totalTurnAttempts}`,
-    `- Behavioral grading: ${summary.behavioralGrading}`,
+    `- Visible-reply latency ms (mean/median/p95/max): ${
+      summary.visibleReplyLatencyMs
+        ? [
+            summary.visibleReplyLatencyMs.mean,
+            summary.visibleReplyLatencyMs.median,
+            summary.visibleReplyLatencyMs.p95,
+            summary.visibleReplyLatencyMs.max,
+          ]
+            .map((value) => Number(value).toFixed(1))
+            .join("/")
+        : "not observed"
+    }`,
+    `- Full-case latency ms (mean/median/p95/max): ${
+      summary.completionLatencyMs
+        ? [
+            summary.completionLatencyMs.mean,
+            summary.completionLatencyMs.median,
+            summary.completionLatencyMs.p95,
+            summary.completionLatencyMs.max,
+          ]
+            .map((value) => Number(value).toFixed(1))
+            .join("/")
+        : "not observed"
+    }`,
+    `- Optional LLM semantic grading: ${summary.behavioralGrading}`,
     `- Semantic judged: ${summary.semanticJudgedCount}`,
     `- Semantic passed: ${summary.semanticPassedCount}`,
     `- Semantic failed: ${summary.semanticFailedCount}`,
@@ -3950,8 +5190,8 @@ function writeReports({
     "",
     "## Results",
     "",
-    "| Case | Family | Surface | Status | Attempts | Semantic | Duration ms | Response hash | Error |",
-    "| --- | --- | --- | --- | ---: | --- | ---: | --- | --- |",
+    "| Case | Family | Surface | Status | Attempts | Semantic | Visible ms | Duration ms | Response hash | Error |",
+    "| --- | --- | --- | --- | ---: | --- | ---: | ---: | --- | --- |",
     ...liveResults.map(
       (result) =>
         `| ${scrubForPublic(result.caseId)} | ${scrubForPublic(result.familyId)} | ${scrubForPublic(result.surface)} | ${result.status} | ${Number(result.turnAttemptCount || 1)} | ${
@@ -3988,6 +5228,7 @@ function writeReports({
     "",
     "- Raw eval JSON and response previews are private-only.",
     "- Public output stores hashes, counts, statuses, and sanitized errors only.",
+    "- Case status always includes local deterministic fixture contracts (required/forbidden response fragments, declared-tool provenance, native-substitution bans, and fixture restoration when configured). Optional LLM semantic grading is an additional fluency/meaning signal, not the deterministic pass gate.",
     "- When semantic judging is enabled, the runner uses a structured JSON judge and validates the returned shape locally. The `openai-direct` judge route uses provider-enforced JSON Schema; local account routes use prompt-constrained JSON plus local schema validation.",
     "- Duplicate response hashes are informational for intentional silence/suppression cases and resolved runtime holds, but fail the run when unrelated non-silent final answers collapse into the same visible answer.",
     "- Runtime-hold responses fail the run when cortex/tool work remains only pending after the observation window and no delayed or insight evidence arrived.",
@@ -4016,13 +5257,17 @@ async function run() {
     promptBank,
     args,
   ).slice(0, args.maxCases);
+  const semanticJudgeRequired = selectedCasesRequireSemanticJudge(
+    selectedCasesForJudgePolicy,
+  );
   if (
     args.runLive &&
     !args.semanticJudgeExplicitlyDisabled &&
     selectedCasesForJudgePolicy.length > 0 &&
-    selectedCasesForJudgePolicy.every(
-      (testCase) => testCase.familyId === "feelings_embodiment_and_reaction",
-    )
+    (semanticJudgeRequired ||
+      selectedCasesForJudgePolicy.every(
+        (testCase) => testCase.familyId === "feelings_embodiment_and_reaction",
+      ))
   ) {
     args.semanticJudge = true;
   }
@@ -4075,6 +5320,8 @@ async function run() {
     blockedReason = `runtime_identity_failed:${identity.reasons.join(",")}`;
   } else if (debugLocalPromptFrameEnabled()) {
     blockedReason = "prompt_frame_debug_local_enabled";
+  } else if (semanticJudgeRequired && !args.semanticJudge) {
+    blockedReason = "semantic_judge_required_but_disabled";
   } else if (!args.runLive) {
     blockedReason = `live_eval_disabled_set_${LIVE_RUN_FLAG}_or_pass_--run-live`;
   } else {
@@ -4251,21 +5498,40 @@ async function run() {
 
 module.exports = {
   acquireExclusiveEvalLease,
+  selectedCasesRequireSemanticJudge,
   buildIsolatedFeelingsFixtureSet,
+  buildJudgePrompt,
+  buildCaseText,
   buildQaApiLoginResult,
   caseMatchesFilters,
   callConfiguredJudgeWithRetry,
   collectVoiceMarkerEvidence,
+  comparisonRouteFailures,
+  completionRouteIdentity,
   conversationRecallFixtureFor,
+  auditConversationRecallExecution,
+  insertConversationRecallCorpusFixture,
+  readConversationRecallCorpusState,
+  readGlassHiveRunToolAudit,
+  waitForConversationRecallCorpusRefresh,
+  extractRawStreamedText,
+  flattenPromptCases,
   isRetryableSemanticJudgeFailure,
   judgeLiveResults,
+  memoryRecallBankFingerprint,
   parseArgs,
   readConversationEvidence,
+  responseTextForJudge,
+  scoreDecisionQualityJudgment,
   scrubForPublic,
   semanticJudgeUnavailableReason,
+  summarizeLatencyMs,
   summarizePromptFrameDelta,
+  validateFrozenMemoryRecallBank,
   validateFeelingsReactionEvidence,
   validateVoiceMarkerEvidence,
+  FROZEN_MEMORY_RECALL_BANK_HASH,
+  MEMORY_RECALL_BANK_VERSION,
 };
 
 if (require.main === module) {

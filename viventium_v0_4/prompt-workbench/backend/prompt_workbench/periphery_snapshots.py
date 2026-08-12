@@ -4,6 +4,8 @@ import hashlib
 import json
 import os
 import re
+import subprocess
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -27,6 +29,11 @@ MAX_SCRATCHPADS = 80
 MAX_SCRATCHPAD_CHARS = 12_000
 MAX_TOTAL_SCRATCHPAD_CHARS = 160_000
 SNAPSHOT_RETENTION_COUNT = 14
+MAX_HEALTH_RECORD_SUMMARIES = 120
+MAX_HEALTH_RECORDS = 18
+MAX_HEALTH_RECORD_BYTES = 65_536
+MAX_TOTAL_HEALTH_CHARS = 384_000
+HEALTH_COMMAND_TIMEOUT_SECONDS = 12
 
 
 def _sha(value: str, *, length: int = 24) -> str:
@@ -38,6 +45,219 @@ def _utc_iso(value: datetime | None = None) -> str:
     if current.tzinfo is None:
         current = current.replace(tzinfo=timezone.utc)
     return current.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _empty_health_evidence(
+    status: str,
+    *,
+    missing: list[str] | None = None,
+) -> dict[str, Any]:
+    return {
+        "status": status,
+        "provider": "whoop",
+        "missingPrerequisites": list(missing or []),
+        "latestRun": None,
+        "records": [],
+        "counts": {
+            "runsInspected": 0,
+            "recordSummariesInspected": 0,
+            "recordsIncluded": 0,
+            "recordsTruncated": 0,
+            "recordReadFailures": 0,
+        },
+    }
+
+
+def _run_health_json(
+    command: str,
+    arguments: list[str],
+    *,
+    runner: Callable[..., Any],
+) -> dict[str, Any] | None:
+    try:
+        completed = runner(
+            [command, *arguments],
+            text=True,
+            capture_output=True,
+            timeout=HEALTH_COMMAND_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if int(getattr(completed, "returncode", 1)) != 0:
+        return None
+    try:
+        payload = json.loads(str(getattr(completed, "stdout", "") or ""))
+    except json.JSONDecodeError:
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _select_health_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for row in records:
+        record_id = str(row.get("record_id") or "")
+        resource = str(row.get("resource") or "unknown").strip().lower()
+        if not re.fullmatch(r"[0-9a-f]{32}", record_id):
+            continue
+        if row.get("status") != 200 or row.get("error"):
+            continue
+        grouped.setdefault(resource, []).append(row)
+
+    selected: list[dict[str, Any]] = []
+    depth = 0
+    resources = sorted(grouped)
+    while len(selected) < MAX_HEALTH_RECORDS:
+        added = False
+        for resource in resources:
+            rows = grouped[resource]
+            if depth >= len(rows):
+                continue
+            selected.append(rows[depth])
+            added = True
+            if len(selected) >= MAX_HEALTH_RECORDS:
+                break
+        if not added:
+            break
+        depth += 1
+    return selected
+
+
+def collect_health_evidence(
+    *,
+    command: str | None = None,
+    runner: Callable[..., Any] = subprocess.run,
+) -> dict[str, Any]:
+    """Read a bounded, exact-content projection from the read-only health CLI."""
+
+    resolved_command = str(
+        command
+        or os.getenv("VIVENTIUM_HEALTH_COMMAND")
+        or (
+            Path.home()
+            / "Library"
+            / "Application Support"
+            / "Viventium"
+            / "health"
+            / "runtime"
+            / "bin"
+            / "viventium-health"
+        )
+    )
+    if runner is subprocess.run and not Path(resolved_command).is_file():
+        return _empty_health_evidence(
+            "unavailable",
+            missing=["viventium_health_runtime"],
+        )
+
+    runs_payload = _run_health_json(
+        resolved_command,
+        ["runs", "--provider", "whoop", "--limit", "3"],
+        runner=runner,
+    )
+    records_payload = _run_health_json(
+        resolved_command,
+        [
+            "records",
+            "--provider",
+            "whoop",
+            "--limit",
+            str(MAX_HEALTH_RECORD_SUMMARIES),
+        ],
+        runner=runner,
+    )
+    if runs_payload is None or records_payload is None:
+        return _empty_health_evidence(
+            "unavailable",
+            missing=["viventium_health_archive_reader"],
+        )
+
+    runs = [row for row in runs_payload.get("runs") or [] if isinstance(row, dict)]
+    summaries = [row for row in records_payload.get("records") or [] if isinstance(row, dict)]
+    latest_run: dict[str, Any] | None = None
+    if runs:
+        raw = runs[0]
+        private_id = str(raw.get("run_id") or "")
+        latest_run = {
+            "sourceRef": _source_ref("health", f"run:{private_id}"),
+            "privateLocator": private_id,
+            "provider": "whoop",
+            "startedAt": raw.get("started_at"),
+            "finishedAt": raw.get("finished_at"),
+            "status": str(raw.get("status") or "incomplete"),
+            "requestedStart": raw.get("requested_start"),
+            "requestedEnd": raw.get("requested_end"),
+            "resources": [str(value) for value in raw.get("resources") or []],
+            "resourceResults": dict(raw.get("resource_results") or {}),
+        }
+
+    records: list[dict[str, Any]] = []
+    failures = 0
+    truncated = 0
+    total_chars = 0
+    for summary in _select_health_records(summaries):
+        remaining = MAX_TOTAL_HEALTH_CHARS - total_chars
+        if remaining <= 0:
+            break
+        record_id = str(summary["record_id"])
+        chunk = _run_health_json(
+            resolved_command,
+            ["read", record_id, "--offset", "0", "--max-bytes", str(MAX_HEALTH_RECORD_BYTES)],
+            runner=runner,
+        )
+        if (
+            chunk is None
+            or chunk.get("integrity_matches") is not True
+            or str(chunk.get("record_id") or "") != record_id
+        ):
+            failures += 1
+            continue
+        content = str(chunk.get("data") or "")[:remaining]
+        complete = bool(chunk.get("complete")) and len(content) == len(str(chunk.get("data") or ""))
+        if not complete:
+            truncated += 1
+        total_chars += len(content)
+        records.append(
+            {
+                "sourceRef": _source_ref("health", f"record:{record_id}"),
+                "privateLocator": record_id,
+                "provider": "whoop",
+                "resource": str(chunk.get("resource") or summary.get("resource") or "unknown"),
+                "fetchedAt": chunk.get("fetched_at") or summary.get("fetched_at"),
+                "responseStatus": chunk.get("status"),
+                "byteLength": int(chunk.get("total_bytes") or summary.get("byte_length") or 0),
+                "sha256": str(chunk.get("sha256") or summary.get("sha256") or ""),
+                "encoding": str(chunk.get("encoding") or "unknown"),
+                "contentComplete": complete,
+                "content": content,
+            }
+        )
+
+    latest_status = str((latest_run or {}).get("status") or "")
+    missing: list[str] = []
+    status = "complete" if records else "empty"
+    if latest_status in {"partial", "failed", "incomplete"}:
+        status = "degraded"
+        missing.append("whoop_pull_incomplete")
+    if failures:
+        status = "degraded"
+        missing.append("health_record_read_failure")
+    elif truncated and status == "complete":
+        status = "partial"
+    return {
+        "status": status,
+        "provider": "whoop",
+        "missingPrerequisites": sorted(set(missing)),
+        "latestRun": latest_run,
+        "records": records,
+        "counts": {
+            "runsInspected": len(runs),
+            "recordSummariesInspected": len(summaries),
+            "recordsIncluded": len(records),
+            "recordsTruncated": truncated,
+            "recordReadFailures": failures,
+        },
+    }
 
 
 def _user_snapshot_root(user_id: str) -> Path:
@@ -52,11 +272,20 @@ def _user_snapshot_root(user_id: str) -> Path:
 
 def _write_private_json(path: Path, payload: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(f".{path.name}.tmp")
-    temporary.write_text(json.dumps(payload, indent=2, sort_keys=True, default=str) + "\n", encoding="utf-8")
-    os.chmod(temporary, 0o600)
-    temporary.replace(path)
-    os.chmod(path, 0o600)
+    temporary = path.with_name(f".{path.name}.tmp-{uuid.uuid4().hex}")
+    try:
+        temporary.write_text(
+            json.dumps(payload, indent=2, sort_keys=True, default=str) + "\n",
+            encoding="utf-8",
+        )
+        os.chmod(temporary, 0o600)
+        temporary.replace(path)
+        os.chmod(path, 0o600)
+    finally:
+        try:
+            temporary.unlink()
+        except FileNotFoundError:
+            pass
 
 
 def _prune_snapshots(root: Path, *, keep: int = SNAPSHOT_RETENTION_COUNT) -> int:
@@ -409,6 +638,85 @@ def _model_scratchpad(record: dict[str, Any]) -> dict[str, Any] | None:
     return {key: value for key, value in record.items() if key != "label"}
 
 
+def _model_health_evidence(evidence: dict[str, Any]) -> dict[str, Any]:
+    latest_run = evidence.get("latestRun")
+    model_latest = (
+        {key: value for key, value in latest_run.items() if key != "privateLocator"}
+        if isinstance(latest_run, dict)
+        else None
+    )
+    model_records = [
+        {key: value for key, value in row.items() if key != "privateLocator"}
+        for row in evidence.get("records") or []
+        if isinstance(row, dict)
+    ]
+    return {
+        "status": str(evidence.get("status") or "unavailable"),
+        "provider": str(evidence.get("provider") or "whoop"),
+        "missingPrerequisites": list(evidence.get("missingPrerequisites") or []),
+        "latestRun": model_latest,
+        "records": model_records,
+        "counts": dict(evidence.get("counts") or {}),
+        "interpretationContract": {
+            "measurementTime": "Use measurement times inside provider content; fetchedAt is archive acquisition time.",
+            "vendorScores": "Treat proprietary scores as vendor observations, not clinical measurements.",
+            "causality": "Associations may be hypotheses only; do not claim diagnosis or causation.",
+        },
+    }
+
+
+def _write_life_health_projection(
+    evidence: dict[str, Any],
+    *,
+    generated_at: str,
+    snapshot_ref: str,
+) -> Path | None:
+    configured = str(os.getenv("VIVENTIUM_LIFE_HEALTH_DIR") or "").strip()
+    if not configured:
+        return None
+    root = Path(configured).expanduser()
+    if root.exists() and (not root.is_dir() or root.is_symlink()):
+        return None
+    root.mkdir(mode=0o700, parents=True, exist_ok=True)
+    root.chmod(0o700)
+    records = [row for row in evidence.get("records") or [] if isinstance(row, dict)]
+    latest_run = evidence.get("latestRun") if isinstance(evidence.get("latestRun"), dict) else {}
+    fetched_values = sorted(
+        str(row.get("fetchedAt")) for row in records if str(row.get("fetchedAt") or "").strip()
+    )
+    projection = {
+        "schemaVersion": 1,
+        "kind": "viventium-health-connector-status",
+        "provider": str(evidence.get("provider") or "whoop"),
+        "generatedAt": generated_at,
+        "status": str(evidence.get("status") or "unavailable"),
+        "missingPrerequisites": list(evidence.get("missingPrerequisites") or []),
+        "latestRun": {
+            "startedAt": latest_run.get("startedAt"),
+            "finishedAt": latest_run.get("finishedAt"),
+            "status": latest_run.get("status"),
+            "resources": list(latest_run.get("resources") or []),
+            "resourceResults": dict(latest_run.get("resourceResults") or {}),
+        }
+        if latest_run
+        else None,
+        "latestRecordFetchedAt": fetched_values[-1] if fetched_values else None,
+        "recordSummariesInspected": int(
+            (evidence.get("counts") or {}).get("recordSummariesInspected") or 0
+        ),
+        "recordsIncluded": int((evidence.get("counts") or {}).get("recordsIncluded") or 0),
+        "resourcesIncluded": sorted(
+            {str(row.get("resource") or "unknown") for row in records}
+        ),
+        "snapshotRefHash": _sha(snapshot_ref, length=24),
+        "rawEvidence": "private_viventium_health_archive",
+        "correlationSurface": "prompt_workbench_health_context",
+    }
+    path = root / "connector-status.json"
+    _write_private_json(path, projection)
+    return path
+
+
 def create_snapshot(
     *,
     user_id: str,
@@ -418,6 +726,8 @@ def create_snapshot(
     schedule_store: Any | None = None,
     lenses: list[dict[str, Any]] | None = None,
     now: datetime | None = None,
+    include_health: bool = False,
+    health_reader: Callable[[], dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     generated_at = _utc_iso(now)
     labels = _load_labels(user_id)
@@ -430,6 +740,11 @@ def create_snapshot(
     conversations = _conversation_records(mongo_payload, labels)
     scratchpads = _scratchpad_records(my_folder, labels)
     schedules, runs = _schedule_records(user_id, schedule_store)
+    health_evidence = (
+        (health_reader or collect_health_evidence)()
+        if include_health
+        else None
+    )
     model_conversations: list[dict[str, Any]] = []
     conversation_chars = 0
     for row in conversations:
@@ -459,6 +774,15 @@ def create_snapshot(
     model_scratchpads = [item for item in (_model_scratchpad(row) for row in scratchpads) if item]
     status = "complete" if mongo_available else "degraded"
     missing = [] if mongo_available else ["mongo"]
+    if health_evidence and str(health_evidence.get("status") or "") in {
+        "unavailable",
+        "degraded",
+        "partial",
+    }:
+        status = "degraded"
+        health_missing = list(health_evidence.get("missingPrerequisites") or [])
+        missing.extend(health_missing or ["health_evidence"])
+    missing = sorted(set(missing))
 
     model_payload: dict[str, Any] = {
         "schemaVersion": SNAPSHOT_SCHEMA_VERSION,
@@ -478,6 +802,8 @@ def create_snapshot(
         "scratchpads": model_scratchpads,
         "recentRuns": runs,
     }
+    if health_evidence is not None:
+        model_payload["healthEvidence"] = _model_health_evidence(health_evidence)
     model_hash = _sha(json.dumps(model_payload, sort_keys=True, default=str), length=12)
     stamp = re.sub(r"[^0-9TZ]", "", generated_at.split(".")[0])
     snapshot_id = f"{stamp}-{model_hash}"
@@ -492,6 +818,16 @@ def create_snapshot(
         source_refs.update(str(message["sourceRef"]) for message in conversation.get("messages") or [])
     for collection in (model_payload["schedules"], model_payload["scratchpads"], model_payload["recentRuns"]):
         source_refs.update(str(item["sourceRef"]) for item in collection)
+    model_health = model_payload.get("healthEvidence")
+    if isinstance(model_health, dict):
+        latest_health_run = model_health.get("latestRun")
+        if isinstance(latest_health_run, dict) and latest_health_run.get("sourceRef"):
+            source_refs.add(str(latest_health_run["sourceRef"]))
+        source_refs.update(
+            str(item["sourceRef"])
+            for item in model_health.get("records") or []
+            if isinstance(item, dict) and item.get("sourceRef")
+        )
 
     counts = {
         "conversationsAvailable": int((mongo_payload.get("counts") or {}).get("conversations") or len(conversations)),
@@ -506,6 +842,17 @@ def create_snapshot(
         "recentRunsIncluded": len(runs),
         "reasoningLensesIncluded": len(lenses or []),
     }
+    if health_evidence is not None:
+        counts.update(
+            {
+                "healthRecordSummariesInspected": int(
+                    (health_evidence.get("counts") or {}).get("recordSummariesInspected") or 0
+                ),
+                "healthRecordsIncluded": int(
+                    (health_evidence.get("counts") or {}).get("recordsIncluded") or 0
+                ),
+            }
+        )
     manifest = {
         "schemaVersion": SNAPSHOT_SCHEMA_VERSION,
         "snapshotRef": snapshot_ref,
@@ -519,6 +866,13 @@ def create_snapshot(
         "labelsHash": _sha(json.dumps(labels, sort_keys=True, default=str), length=16),
         "retention": {"maxSnapshots": SNAPSHOT_RETENTION_COUNT},
     }
+    if health_evidence is not None:
+        manifest["healthEvidence"] = {
+            "status": str(health_evidence.get("status") or "unavailable"),
+            "provider": str(health_evidence.get("provider") or "whoop"),
+            "missingPrerequisites": list(health_evidence.get("missingPrerequisites") or []),
+            "counts": dict(health_evidence.get("counts") or {}),
+        }
     full_payload = {
         "schemaVersion": SNAPSHOT_SCHEMA_VERSION,
         "snapshotRef": snapshot_ref,
@@ -532,6 +886,8 @@ def create_snapshot(
         "scratchpads": scratchpads,
         "recentRuns": runs,
     }
+    if health_evidence is not None:
+        full_payload["healthEvidence"] = health_evidence
 
     root = _user_snapshot_root(user_id)
     full_path = root / f"{snapshot_id}.{FULL_SNAPSHOT_FILE}.json"
@@ -541,6 +897,14 @@ def create_snapshot(
     _write_private_json(model_path, model_payload)
     _write_private_json(manifest_path, manifest)
     _write_private_json(root / "latest.json", manifest)
+    if health_evidence is not None:
+        _write_private_json(root / "latest.health-context.json", manifest)
+    if health_evidence is not None:
+        _write_life_health_projection(
+            health_evidence,
+            generated_at=generated_at,
+            snapshot_ref=snapshot_ref,
+        )
     _prune_snapshots(root)
     model_json = json.dumps(model_payload, indent=2, sort_keys=True, default=str)
     return {
@@ -552,8 +916,9 @@ def create_snapshot(
     }
 
 
-def preview_snapshot(user_id: str, **_: Any) -> dict[str, Any]:
-    path = _user_snapshot_root(user_id) / "latest.json"
+def preview_snapshot(user_id: str, *, include_health: bool = False, **_: Any) -> dict[str, Any]:
+    name = "latest.health-context.json" if include_health else "latest.json"
+    path = _user_snapshot_root(user_id) / name
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
@@ -592,4 +957,14 @@ def snapshot_source_refs(user_id: str, snapshot_ref: str) -> set[str]:
         if conversation.get("sourceRef"):
             refs.add(str(conversation["sourceRef"]))
         refs.update(str(item.get("sourceRef")) for item in conversation.get("messages") or [] if item.get("sourceRef"))
+    health = payload.get("healthEvidence")
+    if isinstance(health, dict):
+        latest_run = health.get("latestRun")
+        if isinstance(latest_run, dict) and latest_run.get("sourceRef"):
+            refs.add(str(latest_run["sourceRef"]))
+        refs.update(
+            str(item.get("sourceRef"))
+            for item in health.get("records") or []
+            if isinstance(item, dict) and item.get("sourceRef")
+        )
     return refs

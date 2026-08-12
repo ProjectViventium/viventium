@@ -74,6 +74,14 @@ For the manager-readable handbook, start with:
   mode, but raw insight text must remain background-only.
 - Follow-up realizations should still surface shortly after the original request within a
   configurable background follow-up window.
+- The Web client receives that same canonical window through startup config. Its automatic message
+  refresh window starts only after the Main stream has ended, stops early when a child follow-up,
+  an empty-parent promotion, or a durable `suppressed` / `empty` / `skipped` decision is visible,
+  and keeps polling through the short `persisted`-before-message-save race. If startup config is
+  unavailable, it performs one catch-up refresh instead of inventing a fallback business timeout.
+  An explicit canonical zero disables that catch-up and ends browser listening immediately.
+  Ending this browser-listening window never cancels or deadlines Main, cortex execution, or Phase B;
+  durable state remains visible on a later refresh.
 - Phase B follow-up generation must preserve the live main-agent provider/model route that produced
   the parent turn. Compiled/source runtime defaults may fill missing agent fields, but must not
   override an explicit user-managed live route and accidentally send follow-ups to a different
@@ -81,6 +89,35 @@ For the manager-readable handbook, start with:
 - If the user and assistant have already exchanged newer visible messages before Phase B completes,
   the follow-up adjudicator must see that newer exchange and decide whether the background result is
   still useful now or should resolve to `{NTA}`.
+
+### Approved anti-sycophancy integration contract — 2026-08-09
+
+The canonical A–F vision is
+[`viventium_v0_5/docs/07_Anti_Sycophancy.md`](../../viventium_v0_5/docs/07_Anti_Sycophancy.md).
+It adds one use of the existing cortex machinery without changing the two-phase contract:
+
+- Ordinary cortices still detect and execute as background work. Their execution never blocks the
+  first answer, and Phase B remains the only late-insight value gate.
+- Text and voice async are ON. Their `1300 ms` / `690 ms` values are background detection budgets,
+  not latency added to Main. Detection and Main start together; Main authors exactly once, and late
+  detection or recovery contributes through Phase B.
+- A dedicated **Deep Memory Search** cortex uses the existing scoped `file_search`/RAG surface and
+  runs on every eligible turn through generic `activation.mode: always`. This mode bypasses semantic
+  activation classification; it is not an “always activate” prompt and it does not inspect user
+  wording. The agent may finish with no useful evidence, in which case Phase B stays silent.
+- `activation.mode: always` is generic Agent Builder/runtime metadata. No cortex-name branch or
+  prompt-text heuristic may implement it.
+- The same Red Team agent may remain attached here as an automatic background cortex and also be
+  connected as an optional foreground handoff. The foreground handoff is owned by Agent Builder and
+  Main's prompt policy; it is not a second background phase and does not make Phase B blocking.
+- Reality Check is a new foreground GlassHive handoff, not a rename or repurposing of the existing
+  Deep Research cortex. Deep Research retains its own contract and required `web_search` tool.
+- Background and foreground specialists keep their own explicitly declared tool surfaces. There is
+  no parent-tool inheritance contract.
+
+Acceptance is owned by [`qa/anti-sycophancy/`](../../qa/anti-sycophancy/README.md) and the existing
+background-agent suites. A completed classifier call is supporting evidence, not proof that expected
+positive and negative user cases route correctly.
 
 ## Execution Matrix
 
@@ -193,7 +230,7 @@ Model inventory rule:
   `VIVENTIUM_CORTEX_EXECUTION_GUARD_GRACE_MS` may tune only that grace window, defaults to 15s,
   and is clamped between 0s and 60s.
 
-Anthropic Opus fallback rule:
+GlassHive Opus 5 fallback rule:
 
 - Opus 5 is the explicit fallback for every conscious/subconscious text route.
 - Fallback parameter bags remain provider-native: Red Team and Deep Research use
@@ -276,6 +313,10 @@ Requirements:
      the main-agent Phase A context with its name, reason, confidence, and scope.
   3. The main agent streams its Phase A answer immediately and that authored answer remains visible
      and durable.
+     Once that answer is final, the generation job becomes non-active immediately even if Phase B
+     is still running. Reload/resume must therefore show a normal send control, never a destructive
+     Stop action against a completed answer. Phase B continues through the durable status/follow-up
+     channel and the bounded, canonically configured background follow-up window.
   4. Cortex cards/rows are additive status surfaces. They appear as soon as activation is detected,
      update independently as each background agent runs, and never replace the main answer.
   5. Each activated background agent card must expose a user cancel affordance. Canceling one
@@ -299,6 +340,12 @@ Requirements:
 - Completion payloads must distinguish three terminal outcomes: visible insight, silent no-response
   success, and error. Logs should report visible insight counts, silent completion counts, and error
   counts separately so empty `{NTA}` output is not misclassified as an unexpected failure.
+- When a visible Phase B result used the background agent's configured model fallback, the terminal
+  cortex part must persist `fallback_used` plus a public-safe failure class. Browser SSE and resume
+  paths carry those fields, the completed row says “model fallback used,” and its expandable detail
+  explains that the configured primary route was unavailable without exposing provider secrets or
+  raw runtime errors. A silent no-response completion remains hidden because no fallback-produced
+  result affected the visible answer.
 - Activation awareness injected into the main-agent turn must tell the main agent which background
   agents activated, why they activated, what scope they own, and which activated scopes the main
   agent can cover through connected direct tools.
@@ -316,10 +363,10 @@ Requirements:
   - `VIVENTIUM_CORTEX_PHASE_A_NOTICE_MODE=any_activated_on_voice` is the default and applies that
     early-release behavior only to the voice-call surface; web, Telegram, scheduler, and other text
     surfaces keep `all_within_budget`.
-- The shipped voice default now keeps `VIVENTIUM_VOICE_BACKGROUND_AGENT_DETECTION_ASYNC=true` with a
-  690 ms Phase A budget. Voice may start the speculative main answer immediately, then abort and
-  re-run Phase A with activation awareness if a cortex activates inside that budget before TTFT.
-  Text mode remains non-speculative by default unless explicitly enabled.
+- The shipped defaults keep both `VIVENTIUM_VOICE_BACKGROUND_AGENT_DETECTION_ASYNC=true` and
+  `VIVENTIUM_TEXT_BACKGROUND_AGENT_DETECTION_ASYNC=true`, with 690 ms voice and 1300 ms text
+  background detection budgets. Main and detection start together; Main authors exactly once.
+  Anything not ready before Main's invocation boundary belongs to cards and Phase B.
 - Telegram voice-note and always-voice replies are text-mode turns with optional audio delivery.
   They do not use the LiveKit voice-call async policy, Voice Call LLM override, or voice-call
   prompt.
@@ -336,15 +383,16 @@ Requirements:
   resolves.
 - Early Phase A notice must fail closed to `all_within_budget` when any configured tool-hold cortex
   has an unowned direct-action scope on the current request. Fast notice is a latency optimization,
-  not proof that all direct-action context has resolved. This guard affects the notice timing only;
-  it does not disable the voice-mode speculative main run when
-  `VIVENTIUM_VOICE_PHASE_A_ASYNC_ALLOW_TOOL_HOLD=true`.
+  not proof that all direct-action context has resolved. Async Main still authors exactly once;
+  action-capable work remains owned by Main or an explicit foreground handoff.
 - If an activated background scope is also covered by a connected main-agent direct-action surface,
   Phase A must run the main agent first. The main agent should use its own verified tool results for
   the directly owned portion while Phase B continues as supplemental evidence.
 - Direct-action scope declarations may mark `same_scope_background_allowed=true` when the matching
-  background agent should still activate for supplemental Phase B evidence. This flag is generic; it
-  must not branch on agent names or prompt text.
+  background agent is structurally read-only and should still activate for supplemental Phase B
+  evidence. This flag is generic; it must not branch on agent names or prompt text. Shipped Google
+  Workspace and Microsoft 365 scopes set it to `false`, so a background specialist can never
+  duplicate Main's real-world action.
 - If a background agent's configured activation scope exactly matches a connected main-agent
   direct-action scope and `same_scope_background_allowed` is not true, runtime must structurally
   suppress that activation after classifier output. This is not user-text NLU; it is a guardrail
@@ -362,6 +410,10 @@ Requirements:
   authorized, the adjudicator must resolve silently to `{NTA}`.
 - Phase B follow-ups are nonblocking additions. Runtime must not replace, overwrite, or rewrite the
   original Phase A assistant message when Phase B completes.
+- A completed Main response is not abortable. Runtime may retain its internal stream briefly for
+  already-subscribed Phase B updates, but active-job discovery and the abort endpoint must both
+  treat Main as complete. This prevents an empty volatile stream buffer from overwriting a durable
+  final answer after refresh.
 - Phase B may still upsert structured cortex status/insight parts onto the Phase A message for
   durable progress/history. That parent content-part upsert is not a Phase A text replacement; the
   Phase A text and authored answer remain unchanged.
@@ -416,6 +468,9 @@ Requirements:
   carry safe lengths, hashes, surface, moved-on state, result, and suppression reason, not raw user
   text or raw background context. Surface pollers use this record to distinguish "nothing should be
   said" from "follow-up has not happened yet."
+- Web polling must treat `suppressed`, `empty`, and `skipped` as terminal-silent decisions, but not
+  `persisted`: the parent decision can be saved immediately before the new assistant follow-up, so
+  stopping on `persisted` alone can hide a valid late Phase B message.
 - Web rendering must hide runtime-generated hold text parts marked as no-response, such as a
   scheduler Phase A `{NTA}` marker, using the structured runtime-hold flag rather than broad
   keyword filtering. The stored parent message is not edited; only the internal hold token is not
@@ -586,12 +641,12 @@ Use this order so the fix stays surgical:
   fallback as ordinary `sent/delivered`. Scheduled cortex polling must thread `scheduleId` into
   cortex-state recovery and preserve structured fallback provenance so degraded fallback delivery is
   either suppressed or recorded as `fallback_delivered`, never hidden as a normal successful result.
-	  The owning boundaries are the deferred fallback helper
-	  (`api/server/services/viventium/cortexFallbackText.js`), cortex-state provenance
-	  (`api/server/services/viventium/cortexMessageState.js`), scheduler polling and fallback
-	  visibility classification (`viventium/MCPs/scheduling-cortex/scheduling_cortex/dispatch.py`),
-	  and persisted degradation metadata
-	  (`viventium/MCPs/scheduling-cortex/scheduling_cortex/scheduler.py`).
+  The owning boundaries are the deferred fallback helper
+  (`api/server/services/viventium/cortexFallbackText.js`), cortex-state provenance
+  (`api/server/services/viventium/cortexMessageState.js`), scheduler polling and fallback
+  visibility classification (`viventium/MCPs/scheduling-cortex/scheduling_cortex/dispatch.py`),
+  and persisted degradation metadata
+  (`viventium/MCPs/scheduling-cortex/scheduling_cortex/scheduler.py`).
 - On April 14, 2026, a shipped-source audit caught a Deep Research drift:
   - the built-in bundle still carried `web_search`, but its OpenAI execution bag was using
     `thinkingBudget` instead of the documented OpenAI `reasoning_effort`
@@ -695,19 +750,21 @@ This gate is the release/removal gate. The current local direct-execution baseli
 automatic main-agent activation for `Deep Research`, `MS365`, and `Google` while keeping those
 specialist agents defined, testable, and re-enableable. That local soft-retirement proves the main
 agent no longer routes live connected-account work through less capable automatic background
-specialists; it does not by itself prove full broker parity, scheduled-grant renewal, or permanent
-removal readiness.
+specialists; it does not by itself prove full broker parity, authenticated long-run grant re-mint,
+or permanent removal readiness. Expired bearer grants fail closed; scheduled work currently relies
+on a bounded delay-aware initial lifetime rather than pseudo-renewal.
 
 ## 2026-05-30 Background Activation Detection — Two Independent Modes (CANONICAL)
 
 This section is the **source of truth** for whether Activation Detection blocks the Main Agent's first
-answer, and how the speculative ("async") path behaves. Owner decisions, spelled out so there is no
+answer, and how the parallel async path behaves. Owner decisions, spelled out so there is no
 ambiguity for anyone — across LibreChat chat, voice, and Telegram.
 
 ### Vocabulary
+
 - **Activation Detection** — the Phase A classifier pass that decides which Background Cortices wake.
   It has a per-mode **time budget**.
-- **Phase A** — the Main Agent's primary answer, produced *with* knowledge of which Background
+- **Phase A** — the Main Agent's primary answer, produced _with_ knowledge of which Background
   Cortices activated (when detection finished in time to inject it).
 - **Phase B** — after the activated Background Cortices finish and surface insights, the Main Agent
   writes a **new, non-blocking follow-up turn**, aware of the Phase A answer so it does not repeat
@@ -715,16 +772,17 @@ ambiguity for anyone — across LibreChat chat, voice, and Telegram.
 - Activated Background Cortices are **always shown** to the user (activation cards), in every mode.
 
 ### Two modes, fully independent
+
 There are exactly two main-response orchestration modes — **voice-call mode** and **text mode**.
 Each owns its **own async flag** and its **own detection budget**. **Neither flag affects the other
 mode** (the voice-call flag never changes text behavior, and vice versa). Telegram always-voice is
 text mode with audio delivery after the text answer, not voice-call mode.
 
-| | Voice mode | Text mode |
-| --- | --- | --- |
-| async flag | `VIVENTIUM_VOICE_BACKGROUND_AGENT_DETECTION_ASYNC` | `VIVENTIUM_TEXT_BACKGROUND_AGENT_DETECTION_ASYNC` |
-| detection budget | `VIVENTIUM_VOICE_PHASE_A_AWAIT_MS` = **690 ms** | `VIVENTIUM_TEXT_PHASE_A_AWAIT_MS` = **1300 ms** |
-| async default | **ON** | **OFF** |
+|                  | Voice mode                                         | Text mode                                         |
+| ---------------- | -------------------------------------------------- | ------------------------------------------------- |
+| async flag       | `VIVENTIUM_VOICE_BACKGROUND_AGENT_DETECTION_ASYNC` | `VIVENTIUM_TEXT_BACKGROUND_AGENT_DETECTION_ASYNC` |
+| detection budget | `VIVENTIUM_VOICE_PHASE_A_AWAIT_MS` = **690 ms**    | `VIVENTIUM_TEXT_PHASE_A_AWAIT_MS` = **1300 ms**   |
+| async default    | **ON**                                             | **ON**                                            |
 
 `VIVENTIUM_CORTEX_DETECT_TIMEOUT_MS` (default 2000 ms) is the **shared fallback** budget; a mode uses
 it only when its own `*_PHASE_A_AWAIT_MS` is unset. `VIVENTIUM_CORTEX_SPECULATIVE_PARALLEL_DETECT` is
@@ -748,33 +806,30 @@ source configuration rather than runtime provider-name branching: it gives the f
 routes the first attempt while retaining a broad final fallback, and remains user-configurable.
 
 ### Async OFF — blocking detection with early-exit
+
 1. Activation Detection runs **first**, blocking the Main Agent answer, up to the mode budget.
-2. **Early-exit:** the moment *all* cortex detection results are in, detection returns immediately —
-   it never burns the remaining budget. (Voice additionally releases on the *first* true activation
+2. **Early-exit:** the moment _all_ cortex detection results are in, detection returns immediately —
+   it never burns the remaining budget. (Voice additionally releases on the _first_ true activation
    via the notice-mode knob.)
 3. The Main Agent produces **Phase A** with the activation result injected into its instructions.
 4. If the fast pass returns partial or zero activations after a detector timeout, the non-blocking
    6000 ms late pass retries the same classifier/fallback contract; any new valid activation surfaces through
    cards and **Phase B** without delaying the Main Agent answer.
 
-### Async ON — speculative parallel with "nevermind" cancel
+### Async ON — one-pass parallel Main + detection
+
 1. The Main Agent answer **and** Activation Detection start **simultaneously**.
-2. **Cortex activates within budget →** do the **"nevermind"** action on the speculative Main Agent
-   answer: cancel/terminate it as if it never happened, then run **Phase A** — the Main Agent answer
-   re-run *with* the Activation Detection result (which cortices activated) injected (the exact same
-   injection async-OFF uses). This is only allowed when the implementation's streamed-state guard
-   confirms no user-visible text or audio has been emitted yet. The 690 ms voice / 1300 ms text
-   budgets are latency targets, not the safety proof; faster models can beat those budgets.
-3. **No activation within budget** (zero activation, including the timeout case) **→** the speculative
-   answer **stands** as Phase A. The whole detection wait was overlapped — this is the win.
-4. **Budget expires before detection finishes →** the speculative answer **stands** as Phase A; any
-   cortex that activates *late* still surfaces via **Phase B**.
+2. Main is invoked **exactly once**. There is no cancel/replay around model output or tools.
+3. Activation awareness is injected only if it is already available before Main's irreversible
+   invocation boundary. Main never waits merely to decide whether the detector is "enough."
+4. Anything arriving later—including a timeout recovered by the 6000 ms retry—uses durable cards and
+   **Phase B**. Initial Phase B execution and late detection recovery run concurrently, deduplicate by
+   cortex ID, and produce one final value-gated follow-up decision.
 5. Phase B is unchanged in every case above.
 
-Why async ON is the smarter / default direction: on the common no-activation turn it removes the
-entire detection wait, while still giving an activation-aware answer (via the redo) when a cortex
-fires in time. The cost is a discarded speculative prefill on activation turns — a deliberate **speed
-vs. cost** trade-off, which is why async stays a per-mode flag (token-cautious operators keep it off).
+Why async ON is the default: it removes detector latency from the conscious answer without risking
+double authoring or duplicated tool side effects. The trade-off is explicit: a late activation cannot
+rewrite Phase A; it contributes through Phase B instead.
 
 ### QA isolation and contamination incident contract
 
@@ -800,50 +855,59 @@ runtime snapshot. Restoring it blindly can reintroduce contamination; a restore 
 known rows and rebuild conversation-recall vectors and search indexes before activation.
 
 ### Worked examples (text mode, budget 1300 ms)
-- *Async OFF — "hello", no cortex:* detection returns ~600 ms (all results in) → Phase A starts at
+
+- _Async OFF — "hello", no cortex:_ detection returns ~600 ms (all results in) → Phase A starts at
   ~600 ms (early-exit; not the full 1300 ms).
-- *Async ON — "hello", no cortex:* answer + detection start at 0 ms; detection returns ~600 ms with no
-  activation → the already-streaming answer stands (~600 ms of wait removed).
-- *Async ON — "summarize my last meeting", recall cortex activates at ~500 ms:* "nevermind" the
-  speculative answer; re-run Phase A aware the recall cortex is engaged; the recall insight lands later
-  via Phase B.
-- *Async ON — detection slow (>1300 ms):* the speculative answer stands as Phase A; if the cortex
-  activated late it surfaces via Phase B.
+- _Async ON — "hello", no classified cortex:_ answer + detection start at 0 ms; Main authors once.
+- _Async ON — "summarize my last meeting", recall cortex activates at ~500 ms:_ Main still authors
+  once; the recall result lands through cards and Phase B if it missed the invocation boundary.
+- _Async ON — detection slow (>1300 ms):_ Main is unaffected; a recovered activation surfaces via
+  Phase B.
 
 ### Safety: direct-action tool-hold
-Voice speculation stays enabled by default even when a configured/candidate Background Cortex
+
+Async orchestration stays enabled by default even when a configured/candidate Background Cortex
 declares a **direct-action surface/scope** (a side-effecting tool it owns). The first answer should
 not wait on tool-hold bookkeeping; side-effecting work and late evidence surface through Phase B or a
 follow-up turn. Operators can restore the older fail-closed blocking behavior by setting
 `VIVENTIUM_VOICE_PHASE_A_ASYNC_ALLOW_TOOL_HOLD=false`.
 
 ### Status (spec vs shipped — be honest)
+
 - Config, clean per-mode naming, budgets (text 1300 / voice 690), and async-OFF early-exit:
   **shipped** 2026-05-30 (`scripts/viventium/config_compiler.py`, `getCortexDetectTimeoutMs`,
   `voicePhaseAPolicy.js`, env passthrough allowlist).
-- Async-ON nevermind+redo: **shipped + live-verified 2026-05-30** via the streaming-preserving
+- Historical direct-provider async-ON nevermind+redo: **shipped + live-verified 2026-05-30** via the streaming-preserving
   live-reuse approach — the main answer streams live under a dedicated abort signal (a parameterized
   `runAgents(messages, signalOverride)`), and on in-budget activation the speculative run is aborted
   only if no visible answer text has streamed yet; otherwise the speculative answer is committed and
   the activated cortices surface via Phase B. Live
   evidence on the main agent (text chat, `VIVENTIUM_TEXT_BACKGROUND_AGENT_DETECTION_ASYNC=true`):
   commit path ("yo") → clean single streamed answer, detection ran in parallel (the sync `Phase A
-  complete` blocking log was absent); activation path ("priorities") → nevermind → 2 named activation
+complete` blocking log was absent); activation path ("priorities") → nevermind → 2 named activation
   cards + a cortex-aware Phase A answer, no error card.
-- Gate detail: live `speculativeMode` must use the policy-safe `voicePhaseAPolicy.enabled`, not the
+- Current canonical async orchestration supersedes that behavior: every provider route uses the
+  one-pass lane, Main authors once, and late activation/recovery uses Phase B. The old speculative
+  implementation remains dormant for compatibility archaeology; it is not selected by current policy.
+- Historical gate detail (dormant path): `speculativeMode` used the policy-safe
+  `voicePhaseAPolicy.enabled`, not the
   raw requested flag. The requested flag records the operator preference; the enabled flag is the
   resolved runtime decision after direct-action/tool-hold gates. Ordinary voice turns use async ON by
   default, including configured tool-hold scopes, because
   `VIVENTIUM_VOICE_PHASE_A_ASYNC_ALLOW_TOOL_HOLD=true` is now the shipped default.
-- **Voice async = ON** (owner target; the orchestration is shared agent-pipeline code, so voice uses
-  the identical path with the 690ms budget + the TTFT guard protecting against a mid-TTS cancel). Text
-  async default **OFF**.
-- Residual / remaining checks: (a) a nevermind aborts the speculative run's in-flight MCP connections,
-  producing benign "operation aborted" MCP log noise (same class as baseline; the redo re-establishes
-  them); (b) the voice playground (TTS + abort) was not separately exercised — shared code is proven
-  via text; (c) front-end "flow style" indicator and seam integration tests are follow-ups.
+- **Voice async = ON and text async = ON.** For the canonical workspace-bound GlassHive Main,
+  detection and Main start together, Main runs exactly once, and detections that arrive after the
+  invocation boundary surface through the existing Phase B lane. The 690ms/1300ms values bound the
+  background detector; they do not add that time to the conscious answer.
+- Headed Web acceptance now proves one real external Scheduling action under the one-pass lane: one
+  Agent POST, one causal successful execution receipt, one durable row, expanded activity after
+  refresh, one supported delete, and zero residue. A zero-POST reopen preserved the same answer and
+  details. Repeated real-browser timing cohorts, deterministic fast-before-boundary awareness,
+  current visible late recovery, and real voice evidence still remain; the broader orchestration is
+  therefore implemented but not yet release-accepted.
 
-### Implementation design + the streaming constraint (for the live wiring)
+### Historical implementation design + streaming constraint (dormant cancel/replay path)
+
 Seam map (verified 2026-05-30): the agents chat path is always resumable — `req._resumableStreamId`
 is set unconditionally and `res.json()` returns before generation, so the live per-token sink is
 `GenerationJobManager.emitChunk(streamId, …)` (not `res.write`). The answer is persisted by mutating
@@ -854,11 +918,12 @@ with a fresh `createContentAggregator()` + fresh `collectedUsage` + a fresh
 `getDefaultHandlers({ …, streamId: null })`.
 
 **Streaming constraint (critical — why a naive orchestrator wiring is wrong):**
-`runSpeculativeParallelMainRun` commits via `await specRunPromise; commit()` — it awaits the *full*
+`runSpeculativeParallelMainRun` commits via `await specRunPromise; commit()` — it awaits the _full_
 speculative answer, then delivers. Wired naively against an isolated buffer, that buffers the entire
 answer and replays it at once, which **defeats token-by-token streaming** (async-ON answers would
 appear all-at-once — a UX regression vs async-OFF, which streams live). The live wiring must therefore
 preserve streaming. Two viable shapes, with a real trade-off:
+
 1. **Live-reuse:** the speculative run streams to the real sink from the start (preserves streaming);
    on abort, the code must first verify the visible-stream state is still empty, then clear the empty
    `this.contentParts`/`this.collectedUsage` + inject + redo. Risk: run-lifecycle SSE events for the
@@ -866,16 +931,16 @@ preserve streaming. Two viable shapes, with a real trade-off:
 2. **Isolated + go-live-on-commit:** the speculative run buffers only until the decision; on commit,
    flip the sink to live and let it continue streaming (do NOT await full completion). Cleaner SSE, but
    commit no longer maps to the vanilla orchestrator's await-then-deliver ordering.
-A **streamed-state guard** is required: if a user-visible token/audio chunk already streamed when the
-decision lands, do not cancel mid-stream, regardless of TTFT or budget. Commit that Phase A answer and
-surface cortices via Phase B. This is especially important for voice TTS and for future fast voice
-LLM routes, where a mid-audio "nevermind" would feel broken.
+   A **streamed-state guard** is required: if a user-visible token/audio chunk already streamed when the
+   decision lands, do not cancel mid-stream, regardless of TTFT or budget. Commit that Phase A answer and
+   surface cortices via Phase B. This is especially important for voice TTS and for future fast voice
+   LLM routes, where a mid-audio "nevermind" would feel broken.
 
 ### Related model decisions (affect Main Agent / cortex latency)
 - Main Agent text: GlassHive Codex `gpt-5.6-sol` with `reasoning_effort: medium`. Background
   execution uses the same harness with the workload effort map above. Every text route falls back to
   `anthropic / claude-opus-5` when that auth path is available.
-- Voice LLM remains `xai / grok-4.3` with `reasoning_effort: none`. Its latency-preserving voice
+- Voice LLM remains `xai / grok-4.5` with `reasoning_effort: low`. Its latency-preserving voice
   fallback is `openAI / gpt-5.6-terra` with `reasoning_effort: none`; the text fallback policy does
   not replace the explicit voice route. The dedicated route must pass the same recall,
   tool-ownership, audible-delivery, and persistence gates as the main route. The TTS provider is

@@ -19,20 +19,38 @@ This document is the single source of truth for the Viventium Red Team cortex:
   premortem, steelman opposition, reference-class forecasting, Bayesian updating, kill criteria,
   stage-gates, stakeholder/incentive mapping, FMEA, decision journaling, and OODA.
 - Red Team should use the strongest configured reasoning substrate for the selected provider family:
-  OpenAI `gpt-5.4` with `reasoning_effort: xhigh`, or Anthropic Opus with the configured thinking
-  budget when the Anthropic execution family is selected.
+  OpenAI `gpt-5.6-sol` with `reasoning_effort: xhigh`, with the configured GlassHive Claude/Opus
+  fallback when the primary execution family is unavailable.
 - It should not activate for casual chat, pure emotional support, or routine questions.
 
 ## Locked Decisions
-- Red Team is a **background cortex** attached to the main Viventium agent.
+- Red Team remains a **background cortex** attached to the main Viventium agent.
+- **Superseded 2026-08-09:** “background-only” is no longer the complete product contract. The same
+  Red Team agent and execution instructions also serve as an optional foreground handoff in the
+  approved anti-sycophancy flow. Do not create a duplicate foreground Red Team.
+- Main may consult Red Team only after Reality Check has returned and Main decides an independent
+  challenge still adds value. Red Team returns its result to Main; Main owns the final answer.
+- The foreground path uses ordinary bidirectional Agent Builder handoffs
+  (`Main → Red Team → Main`) with concise return/anti-loop instructions. Do not add a new edge type,
+  direct-result fan-in, or Red-Team-specific runtime routing.
+- Existing handoff state supplies conversation, saved-memory/RAG context, and prior files. Red Team
+  keeps its own explicitly assigned authorized tools; it does not inherit the parent's tool set or
+  credentials.
 - Support/help remains a **separate selectable agent**; no support background cortex in this release.
 - Use currently configured/available model IDs in cloud (no new provider/model rollout required).
+
+The complete conscious/background relationship is owned by
+[`viventium_v0_5/docs/07_Anti_Sycophancy.md`](../../viventium_v0_5/docs/07_Anti_Sycophancy.md), with
+acceptance cases under [`qa/anti-sycophancy/`](../../qa/anti-sycophancy/README.md). The historical
+background-cortex cases under `qa/red-team-cortex/` remain required and must pass independently of
+the foreground handoff cases.
 
 ## Configuration
 
 ### Main Agent Activation Entry
 File:
-- `viventium_v0_4/LibreChat/viventium/source_of_truth/cloud.viventium-agents.yaml`
+- `viventium_v0_4/LibreChat/viventium/source_of_truth/local.viventium-agents.yaml`, with environment
+  variants owned by the config compiler rather than maintained as ad hoc live copies.
 
 Added under `main.background_cortices`:
 - `agent_id: agent_viventium_red_team_95aeb3`
@@ -49,24 +67,34 @@ Same file:
 - `id: agent_viventium_red_team_95aeb3`
 - Name: `Red Team`
 - Description: evidence-first mistake detection
-- Tools: web search + sequential-thinking
+- Tools: web search + file search + sequential-thinking
 - Instructions enforce:
-  - explicit claim/method/evidence/verdict/action output,
+  - explicit claim/method/evidence-for/evidence-against/analysis/verdict/next-move output,
+  - expected-value, benefit, opportunity-cost, downside, and causal/reference-class reasoning when
+    those dimensions are decision-relevant,
+  - plain support when the evidence supports proceeding; Red Team is not rewarded for opposition,
   - no fabricated sources,
-  - no fake capabilities (email/calendar/files access claims).
+  - capability-receipt honesty: claim only the exact assigned resource/tool evidence actually used.
 
 ## Output Contract
 When activated, the cortex response should be structured as:
 - Claim
 - Method Lens
-- Evidence
-- Verdict (`SUPPORTED` / `UNSUPPORTED` / `UNVERIFIABLE`)
-- Action Required
+- Evidence For
+- Evidence Against
+- Analysis
+- Verdict (`SUPPORTED` / `REFUTED` / `MIXED` / `UNRESOLVED`)
+- Best Next Move
 
 This format keeps it concise and decision-useful.
 
 ## Edge Cases
-- If evidence is incomplete or conflicting, verdict must be `UNVERIFIABLE` (not hallucinated certainty).
+- If evidence is incomplete or conflicting, verdict must be `MIXED` or `UNRESOLVED` rather than a
+  fabricated yes/no.
+- If evidence strongly supports the user's plan, verdict must be `SUPPORTED`; inventing a blocker,
+  generic caution, or a token counterargument is a failure.
+- Evaluate benefits, opportunity costs, and expected value alongside risk. Risk minimization is not
+  the product objective.
 - If user is in emotional support mode, do not activate Red Team even if claims are present.
 - If another cortex already covers a concern (e.g., broad confirmation bias), Red Team should stay focused on evidence and viability.
 
@@ -77,18 +105,23 @@ Also added in this release:
 - Escalation line to the private support channel managed outside this public repo.
 
 Files:
-- `viventium_v0_4/LibreChat/viventium/source_of_truth/cloud.viventium-agents.yaml`
-- `viventium_v0_4/LibreChat/viventium/source_of_truth/cloud.librechat.yaml`
+- `viventium_v0_4/LibreChat/viventium/source_of_truth/local.viventium-agents.yaml`
+- `viventium_v0_4/LibreChat/viventium/source_of_truth/local.librechat.yaml`
+- `scripts/viventium/config_compiler.py`
 
 ## Deployment Procedure (Safe)
-From `viventium_v0_4/LibreChat`:
-```bash
-node scripts/viventium-sync-agents.js pull --env=cloud
-node scripts/viventium-sync-agents.js push --prompts-only --dry-run --env=cloud
-node scripts/viventium-sync-agents.js push --prompts-only --env=cloud
-```
+
+Follow the repository Agent Sync Safety contract: compare live versus source, present protected
+drift, dry-run only the selected prompt/graph/activation fields, and apply only after review with
+the explicit compare acknowledgement. Never use the default broad push for this feature.
 
 ## Validation Checklist
+- The same configured Red Team agent completes both its automatic background role and optional
+  foreground handoff role without duplicate agent definitions.
+- In the foreground path, Red Team receives the shared conversation/memory/file state plus its own
+  declared tools, returns to Main, and never becomes the final speaker or loops back repeatedly.
+  The structural per-agent/user-turn completed-target receipt must prevent the same foreground
+  Red Team transfer from being offered twice while leaving its background role independent.
 - Red Team activates on important plan/timeline/claim-heavy prompts when they include an unsupported
   benchmark, quantified projection, asserted inevitability, or dismissed material risk; a plain
   roadmap or scheduling request is not enough by itself.

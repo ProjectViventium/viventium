@@ -30,7 +30,7 @@ When adding a new production-miss regression, add the case to `03_eval_prompt_ba
 | `ACT-29` | Async-ON no-activation: speculative answer stands as Phase A; detection wait overlapped; single delivery, no double-bill, no redo | Timing trace (main started before detection done), exactly-once delivery/billing |
 | `ACT-30` | Async-ON activation within budget: "nevermind" cancel + Phase A re-run with awareness; cards shown; Phase B follow-up; discarded speculative never delivered/billed | Trace showing abort+redo, named cards, follow-up persistence, exactly-once delivery |
 | `ACT-31` | Mode independence + direct-action fail-closed: voice flag never changes text (and vice versa); a direct-action cortex forces the blocking path even with async ON | Per-mode config evidence, blocking-path taken for direct-action cortex, no cross-mode bleed |
-| `ACT-32` | Phase B terminal decisions are durable and surface-visible even when no follow-up text should be sent | Browser/log/DB proof of `generated`, `suppressed`, `empty`, or `skipped` decision metadata; voice and Telegram pollers stop waiting on terminal silent decisions |
+| `ACT-32` | Phase B terminal decisions are durable and surface-visible even when no follow-up text should be sent | Browser/log/DB proof of `generated`, `suppressed`, `empty`, or `skipped` decision metadata; Web, voice, and Telegram pollers stop waiting on terminal silent decisions; Web keeps the `persisted`-before-message-save race visible and has no client-only execution timeout |
 | `ACT-33` | Main-agent provider rate limits before visible text use a configured fallback or a classified blocker, not raw provider plumbing | Browser-visible answer/blocker, live agent fallback config, backend log class, persisted message content, and no raw `MODEL_RATE_LIMIT`/LangChain troubleshooting bubble |
 | `ACT-34` | Visible Phase A text emitted to a user surface but missed by canonical aggregation is repaired before Phase B; Phase B must not fallback over it | Stream/canonical mismatch fixture or live logs, persisted parent text, terminal `suppressed` decision metadata, and no second contradictory deterministic follow-up |
 | `ACT-35` | Conscious/subconscious execution uses the documented GPT-5.6 Sol/Terra workload map, Opus 5 managed text fallback for fresh installs, protected explicit existing-user fallbacks on upgrade, and unchanged Grok 4.3 voice primary | Source/compiler/runtime contract tests, reviewed live A/B/C model-only sync, Agent Builder persisted model bags, real browser main/cortex turns, refresh, logs/DB model evidence, and fallback-auth classification |
@@ -68,6 +68,10 @@ For any background-agent Web UI change, QA must prove:
 - `{NTA}`, empty, skipped, and generated Phase B follow-up outcomes persist a structured terminal
   decision so web, voice, Telegram, and QA can distinguish "nothing useful to add" from "Phase B
   never finished"
+- Web automatic refresh starts after the Main stream, uses the startup-projected canonical
+  background follow-up window, stops on visible child/promoted/silent-terminal state, and does not
+  call abort/cancel when that listening window ends; a missing startup field produces one catch-up
+  refresh only, while an explicit canonical zero produces none
 - if a visible assistant delta reached the user surface but upstream aggregation initially missed it,
   the canonical parent must be repaired with that text before Phase B adjudication, and Phase B must
   persist a silent suppressed decision instead of sending a deterministic fallback over the visible

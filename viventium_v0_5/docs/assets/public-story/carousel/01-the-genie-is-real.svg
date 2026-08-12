@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1350" viewBox="0 0 1080 1350" role="img" aria-labelledby="title desc">
+  <title id="title">The genie is real</title>
+  <desc id="desc">Carousel cover introducing the extraordinary usefulness of everyday AI and the difference between power and truth.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f9fbff"/><stop offset="1" stop-color="#edf1ff"/></linearGradient>
+    <linearGradient id="bottle" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#7d8cff"/><stop offset="1" stop-color="#3949bd"/></linearGradient>
+    <radialGradient id="glow"><stop offset="0" stop-color="#ffffff" stop-opacity="1"/><stop offset="0.4" stop-color="#a7b2ff" stop-opacity="0.72"/><stop offset="1" stop-color="#6d5ce7" stop-opacity="0"/></radialGradient>
+    <filter id="soft" x="-80%" y="-80%" width="260%" height="260%"><feGaussianBlur stdDeviation="24"/></filter>
+    <filter id="shadow" x="-50%" y="-50%" width="200%" height="200%"><feDropShadow dx="0" dy="18" stdDeviation="20" flood-color="#283169" flood-opacity="0.18"/></filter>
+  </defs>
+  <rect width="1080" height="1350" fill="url(#bg)"/>
+  <circle cx="940" cy="160" r="260" fill="#dfe5ff" opacity="0.65"/>
+  <circle cx="100" cy="1230" r="210" fill="#e5e1ff" opacity="0.55"/>
+  <text x="70" y="74" fill="#44506a" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="18" font-weight="700" letter-spacing="5">VIVENTIUM</text>
+  <text x="1010" y="74" text-anchor="end" fill="#6b7488" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="18" font-weight="650">01 / 06</text>
+  <text x="70" y="205" fill="#171d2c" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="84" font-weight="780">The genie</text>
+  <text x="70" y="292" fill="#171d2c" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="84" font-weight="780">is real.</text>
+  <text x="70" y="356" fill="#48536a" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="29">Ask almost anything.</text>
+  <text x="70" y="398" fill="#48536a" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="29">Get useful work in seconds.</text>
+  <g transform="translate(290 330)">
+    <circle cx="250" cy="275" r="300" fill="url(#glow)" filter="url(#soft)"/>
+    <path d="M224 575 C100 425 426 420 280 270 C188 176 360 120 272 28" fill="none" stroke="#7b83ef" stroke-width="38" stroke-linecap="round" opacity="0.38"/>
+    <path d="M250 574 C394 446 124 366 270 220 C356 136 188 88 258 18" fill="none" stroke="#ffffff" stroke-width="14" stroke-linecap="round" opacity="0.95"/>
+    <path d="M160 535 H340 L318 610 H182 Z" fill="#5260d2"/>
+    <rect x="180" y="590" width="140" height="58" rx="18" fill="#4351c4"/>
+    <path d="M126 640 C126 584 176 570 198 604 H302 C324 570 374 584 374 640 V730 C374 778 334 808 250 808 C166 808 126 778 126 730 Z" fill="url(#bottle)" filter="url(#shadow)"/>
+    <path d="M160 676 C214 654 286 654 340 676" fill="none" stroke="#aeb7ff" stroke-width="8" stroke-linecap="round" opacity="0.7"/>
+    <circle cx="250" cy="730" r="38" fill="#e1e5ff"/>
+    <path d="M233 730 L247 744 L273 712" fill="none" stroke="#4553c4" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+  <text x="540" y="1198" text-anchor="middle" fill="#39465e" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="27" font-weight="700">But power is not the same as truth.</text>
+  <path d="M70 1260 H1010" stroke="#cbd2e2" stroke-width="1.5"/>
+  <text x="70" y="1306" fill="#7b8498" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="17">THE VIVENTIUM WAY</text>
+  <text x="1010" y="1306" text-anchor="end" fill="#7b8498" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="17">SWIPE →</text>
+</svg>

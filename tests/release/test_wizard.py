@@ -524,7 +524,7 @@ def test_validate_non_interactive_integrations_allows_explicit_dormant_telegram_
     wizard.validate_non_interactive_integrations(config)
 
 
-def test_normalize_preset_backfills_wing_mode_for_local_voice(monkeypatch) -> None:
+def test_normalize_preset_does_not_seed_a_hidden_wing_default(monkeypatch) -> None:
     wizard = load_wizard_module()
     monkeypatch.setattr(wizard, "store_keychain_secret", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(wizard.secrets, "token_hex", lambda _nbytes: "generated-call-secret")
@@ -555,7 +555,7 @@ def test_normalize_preset_backfills_wing_mode_for_local_voice(monkeypatch) -> No
 
     normalized = wizard.normalize_preset(config)
 
-    assert normalized["voice"]["wing_mode"]["default_enabled"] is False
+    assert "wing_mode" not in normalized["voice"]
 
 
 class _FakeWizardUI:
@@ -787,6 +787,24 @@ def test_easy_voice_uses_hosted_guidance_on_non_apple_silicon(monkeypatch) -> No
     assert any("Hosted voice" in note for note in ui.notes)
 
 
+def test_local_voice_defaults_never_add_a_hosted_fallback(monkeypatch) -> None:
+    wizard = load_wizard_module()
+    config = wizard.build_base_config(
+        install_mode="native",
+        primary_provider="openai",
+        auth_mode="connected_account",
+        secondary_provider="none",
+    )
+    monkeypatch.setattr(wizard, "default_local_tts_provider", lambda: wizard.LOCAL_TTS_PROVIDER)
+
+    wizard.set_local_voice_defaults(config)
+
+    assert config["voice"]["mode"] == "local"
+    assert config["voice"]["stt_provider"] == "whisper_local"
+    assert config["voice"]["tts_provider"] == wizard.LOCAL_TTS_PROVIDER
+    assert config["voice"]["tts_provider_fallback"] == ""
+
+
 def test_prompt_telegram_reprompts_until_botfather_token_looks_valid(monkeypatch) -> None:
     wizard = load_wizard_module()
     config = wizard.build_base_config(
@@ -950,3 +968,162 @@ def test_prompt_browser_auth_controls_sets_remote_browser_auth_flags() -> None:
     assert any("leave browser sign-up on until you create it" in note for note in ui.notes)
     assert any("automatically close sign-up after the first real account" in note for note in ui.notes)
     assert any("one-time reset link locally" in note for note in ui.notes)
+
+
+def test_easy_install_copy_explains_source_checkout_glasshive_prerequisites() -> None:
+    wizard = load_wizard_module()
+
+    description = wizard.EASY_INSTALL_DESCRIPTION
+    assert "Guided source checkout first run" in description
+    assert "GlassHive as Viventium Main" in description
+    assert "signed-in Codex CLI" in description
+    assert "OpenAI API key" in description
+    assert "browser" in description
+    assert "send a first message" in description
+    assert "Groq key" not in description
+    assert "Codex or Claude" not in description
+    assert "Only asks" not in description
+
+    options = wizard.install_profile_options()
+    assert [(option.value, option.label) for option in options] == [
+        ("recommended", "Easy Install"),
+        ("advanced", "Custom Settings Install"),
+    ]
+
+    source = WIZARD_PATH.read_text(encoding="utf-8")
+    assert '"Express Install"' not in source
+    assert '"Advanced Setup"' not in source
+    assert '"Fastest path. Only asks for Groq and optional Telegram."' not in source
+
+
+def test_build_base_config_preserves_custom_install_defaults() -> None:
+    wizard = load_wizard_module()
+    wizard.docker_desktop_installed = lambda: False
+
+    config = wizard.build_base_config(
+        install_mode="native",
+        primary_provider="openai",
+        auth_mode="connected_account",
+        secondary_provider="none",
+    )
+
+    assert config["install"] == {"mode": "native", "experience": "custom"}
+    assert config["runtime"]["personalization"]["default_conversation_recall"] is False
+    assert config["runtime"]["nightly_routines"]["enabled"] is False
+    assert config["runtime"]["prompt_workbench"]["enabled"] is False
+    assert config["runtime"]["prompt_workbench"]["seed_nightly"]["active"] is False
+    assert config["runtime"]["prompt_workbench"]["seed_nightly"]["executor"] == "glasshive_host"
+    assert config["runtime"]["memory_hardening"]["enabled"] is False
+    assert config["runtime"]["memory_hardening"]["operator_user_email"] == ""
+    assert config["runtime"]["memory_hardening"]["transcripts"]["source_dir"] == ""
+    assert (
+        config["runtime"]["memory_hardening"]["transcripts"]["rag_mode"]
+        == "detailed_summary_only"
+    )
+    assert config["runtime"]["retrieval"]["embeddings"]["provider"] == "ollama"
+    assert config["runtime"]["retrieval"]["embeddings"]["model"] == "qwen3-embedding:0.6b"
+    assert config["runtime"]["retrieval"]["embeddings"]["profile"] == "medium"
+    assert (
+        config["runtime"]["retrieval"]["embeddings"]["ollama_base_url"]
+        == "http://host.docker.internal:11434"
+    )
+    assert config["runtime"]["network"]["remote_call_mode"] == "disabled"
+    assert config["runtime"]["auth"]["allow_registration"] is True
+    assert config["runtime"]["auth"]["bootstrap_registration_once"] is False
+    assert config["runtime"]["auth"]["allow_password_reset"] is False
+    assert config["integrations"]["glasshive"]["enabled"] is False
+    assert config["integrations"]["glasshive"]["host_worker"]["enabled"] is False
+    assert config["integrations"]["glasshive"]["host_worker"]["plugin_denylist"] == [
+        "viventium-feelings@project-viventium"
+    ]
+    assert config["integrations"]["glasshive"]["host_worker"]["codex_personality"] == "none"
+    assert (
+        config["integrations"]["glasshive"]["host_worker"]
+        ["codex_conversation_project_instructions"]
+        == "inherit"
+    )
+    assert config["integrations"]["code_interpreter"]["enabled"] is False
+    assert config["integrations"]["web_search"]["enabled"] is False
+    assert config["integrations"]["web_search"]["search_provider"] == "searxng"
+    assert config["integrations"]["web_search"]["scraper_provider"] == "firecrawl"
+    assert config["llm"]["primary"]["auth_mode"] == "connected_account"
+    assert "fast_llm_provider" not in config["voice"]
+
+
+def test_configure_easy_install_asks_no_terminal_questions_and_defers_optional_setup(
+    monkeypatch,
+) -> None:
+    wizard = load_wizard_module()
+
+    class FakeUI:
+        def __getattr__(self, name: str):
+            raise AssertionError(f"Express Native must not call InstallerUI.{name}")
+
+    monkeypatch.setattr(
+        wizard,
+        "ensure_generated_secret",
+        lambda node, _service: node.update({"secret_value": "generated-test-secret"}),
+    )
+
+    config, deferred = wizard.configure_easy_install(FakeUI())
+
+    assert config["install"] == {"mode": "native", "experience": "express"}
+    assert config["runtime"]["call_session_secret"]["secret_value"] == "generated-test-secret"
+    assert config["runtime"]["personalization"]["default_conversation_recall"] is False
+    assert config["integrations"]["glasshive"]["enabled"] is True
+    assert config["runtime"]["prompt_workbench"]["enabled"] is False
+    assert config["runtime"]["memory_hardening"]["enabled"] is False
+    assert "secret_ref" not in config["llm"]["activation"]
+    assert "secret_value" not in config["llm"]["activation"]
+    assert set(deferred) == {
+        "secondary_ai",
+        "scheduler",
+        "voice",
+        "code_interpreter",
+        "web_search",
+        "conversation_recall",
+        "prompt_workbench",
+        "nightly_reflection",
+        "memory_hardening",
+        "transcript_ingest",
+        "telegram",
+        "telegram_codex",
+        "google_workspace",
+        "ms365",
+        "skyvern",
+    }
+
+
+def test_normalize_preset_backfills_wing_mode_for_local_voice(monkeypatch) -> None:
+    wizard = load_wizard_module()
+    monkeypatch.setattr(wizard, "store_keychain_secret", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(wizard.secrets, "token_hex", lambda _nbytes: "generated-call-secret")
+
+    config = {
+        "version": 1,
+        "runtime": {},
+        "llm": {
+            "activation": {
+                "provider": "groq",
+                "secret_value": "groq-secret",
+            },
+            "primary": {
+                "provider": "openai",
+                "secret_value": "openai-secret",
+            },
+            "secondary": {
+                "provider": "none",
+                "auth_mode": "disabled",
+            },
+        },
+        "voice": {
+            "mode": "local",
+            "stt_provider": "whisper_local",
+            "tts_provider": "local_chatterbox_turbo_mlx_8bit",
+        },
+    }
+
+    normalized = wizard.normalize_preset(config)
+
+    assert "wing_mode" not in normalized["voice"]
+    assert normalized["voice"]["tts_provider"] == "local_chatterbox_turbo_mlx_8bit"

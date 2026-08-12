@@ -583,21 +583,32 @@ def test_process_arguments_preserve_spaced_app_support_path(tmp_path: Path) -> N
     spaced_data_path = tmp_path / "Application Support" / "Viventium" / "mongo-data"
     process = subprocess.Popen(
         [
-            sys.executable,
+            "/bin/sh",
             "-c",
-            "import time; time.sleep(30)",
+            "trap 'exit 0' TERM; read -r _; exit 0",
+            "synthetic-mongod",
             "--dbpath",
             str(spaced_data_path),
         ],
+        stdin=subprocess.PIPE,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
+    stdin_pipe = process.stdin
     try:
         arguments = module._process_arguments(process.pid)
     finally:
-        process.terminate()
-        process.wait(timeout=10)
+        if process.poll() is None:
+            process.terminate()
+        if stdin_pipe is not None:
+            stdin_pipe.close()
+        try:
+            process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=10)
 
+    assert process.poll() is not None
     assert arguments[-2:] == ["--dbpath", str(spaced_data_path)]
 
 

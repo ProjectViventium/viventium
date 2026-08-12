@@ -109,7 +109,8 @@ if [[ -d "/usr/local/opt/node@24/bin" ]]; then
 fi
 VIVENTIUM_NODE_RUNTIME_VERSION="24.16.0"
 VIVENTIUM_NODE_RUNTIME_ARCH="$(uname -m 2>/dev/null || true)"
-VIVENTIUM_NODE_RUNTIME_BIN="${VIVENTIUM_APP_SUPPORT_DIR:-$HOME/Library/Application Support/Viventium}/runtime-tools/node/${VIVENTIUM_NODE_RUNTIME_VERSION}/${VIVENTIUM_NODE_RUNTIME_ARCH}/bin"
+VIVENTIUM_RUNTIME_TOOLS_DIR="${VIVENTIUM_RUNTIME_TOOLS_DIR:-${VIVENTIUM_APP_SUPPORT_DIR:-$HOME/Library/Application Support/Viventium}/runtime-tools}"
+VIVENTIUM_NODE_RUNTIME_BIN="${VIVENTIUM_RUNTIME_TOOLS_DIR}/node/${VIVENTIUM_NODE_RUNTIME_VERSION}/${VIVENTIUM_NODE_RUNTIME_ARCH}/bin"
 if [[ -d "$VIVENTIUM_NODE_RUNTIME_BIN" ]]; then
   export PATH="$VIVENTIUM_NODE_RUNTIME_BIN:${PATH}"
 fi
@@ -661,6 +662,7 @@ SCHEDULING_MCP_PID_FILE="$LOG_ROOT/scheduling_cortex_mcp.pid"
 GLASSHIVE_RUNTIME_PID_FILE="$LOG_ROOT/glasshive_runtime.pid"
 GLASSHIVE_MCP_PID_FILE="$LOG_ROOT/glasshive_mcp.pid"
 GLASSHIVE_UI_PID_FILE="$LOG_ROOT/glasshive_ui.pid"
+VOICE_GATEWAY_PID_FILE="$LOG_ROOT/voice_gateway.pid"
 TELEGRAM_BOT_PID_FILE="$LOG_ROOT/telegram_bot.pid"
 TELEGRAM_LOCAL_BOT_API_PID_FILE="$LOG_ROOT/telegram-local-bot-api.pid"
 TELEGRAM_LOCAL_BOT_API_LOG_FILE="$LOG_DIR/telegram-local-bot-api.log"
@@ -686,7 +688,12 @@ MEILI_DOCKER_LOG_MAX_FILE="${VIVENTIUM_LOCAL_MEILI_DOCKER_LOG_MAX_FILE:-3}"
 MEILI_ENV="${VIVENTIUM_LOCAL_MEILI_ENV:-production}"
 MEILI_MAX_INDEXING_MEMORY="${MEILI_MAX_INDEXING_MEMORY:-512MiB}"
 MEILI_MAX_INDEXING_THREADS="${MEILI_MAX_INDEXING_THREADS:-1}"
-PYTHON_BIN="${PYTHON_BIN:-python3}"
+PYTHON_BIN="${VIVENTIUM_PYTHON_BIN:-${PYTHON_BIN:-python3}}"
+if declare -F ensure_python_requirements_file >/dev/null 2>&1; then
+  PYTHON_BIN="$(ensure_python_requirements_file \
+    "$PYTHON_BIN" \
+    "$VIVENTIUM_CORE_DIR/scripts/viventium/requirements-installer.txt")"
+fi
 DOCKER_BIN="$(command -v docker || true)"
 
 docker() {
@@ -934,6 +941,28 @@ truthy_env_value() {
   value="$(printf '%s' "$value" | tr '[:upper:]' '[:lower:]')"
   [[ "$value" == "1" || "$value" == "true" || "$value" == "yes" || "$value" == "on" ]]
 }
+
+# === VIVENTIUM START ===
+# Feature: Side-by-side dev-runtime process isolation.
+# Purpose: dev environments can share this checkout with local prod, so workspace-wide process
+# sweeps are not a safe ownership signal. Dev stops must use runtime-owned PID files, unique ports,
+# and compose project names while leaving shared singleton services untouched.
+runtime_allows_workspace_wide_process_sweep() {
+  ! truthy_env_value "${VIVENTIUM_DEV_ENV_SCOPE_ACTIVE:-false}" &&
+    ! truthy_env_value "${VIVENTIUM_DEV_ENV_ENABLED:-false}"
+}
+
+require_compiled_dev_env_stop_identity() {
+  if ! truthy_env_value "${VIVENTIUM_DEV_ENV_SCOPE_ACTIVE:-false}"; then
+    return 0
+  fi
+  if truthy_env_value "${VIVENTIUM_DEV_ENV_ENABLED:-false}"; then
+    return 0
+  fi
+  log_error "Refusing dev-environment stop because its compiled runtime identity is unavailable"
+  return 1
+}
+# === VIVENTIUM END ===
 
 regenerate_canonical_runtime_env_if_needed() {
   local canonical_config_file="${VIVENTIUM_CONFIG_FILE:-$VIVENTIUM_APP_SUPPORT_ROOT/config.yaml}"
@@ -1300,6 +1329,7 @@ SCHEDULING_MCP_PID_FILE="$LOG_ROOT/scheduling_cortex_mcp.pid"
 GLASSHIVE_RUNTIME_PID_FILE="$LOG_ROOT/glasshive_runtime.pid"
 GLASSHIVE_MCP_PID_FILE="$LOG_ROOT/glasshive_mcp.pid"
 GLASSHIVE_UI_PID_FILE="$LOG_ROOT/glasshive_ui.pid"
+VOICE_GATEWAY_PID_FILE="$LOG_ROOT/voice_gateway.pid"
 TELEGRAM_BOT_PID_FILE="$LOG_ROOT/telegram_bot.pid"
 TELEGRAM_BOT_DEFERRED_PID_FILE="$LOG_ROOT/telegram_bot_deferred.pid"
 TELEGRAM_BOT_DEFERRED_MARKER_FILE="$LOG_ROOT/telegram_bot_deferred.pending"
@@ -2751,6 +2781,17 @@ record_detached_launch_process_group() {
   fi
 }
 
+clear_runtime_start_claim_after_handoff() {
+  local claim_file="${VIVENTIUM_RUNTIME_START_CLAIM_FILE:-}"
+  local owner_pid="${VIVENTIUM_RUNTIME_START_CLAIM_OWNER_PID:-}"
+  local owner_repo="${VIVENTIUM_RUNTIME_START_CLAIM_REPO_ROOT:-}"
+  [[ -n "$claim_file" && -n "$owner_pid" && -n "$owner_repo" ]] || return 0
+  [[ -f "$claim_file" && ! -L "$claim_file" ]] || return 0
+  [[ "$(sed -n '1p' "$claim_file")" == "$owner_pid" ]] || return 0
+  [[ "$(sed -n '2p' "$claim_file")" == "$owner_repo" ]] || return 0
+  rm -f "$claim_file"
+}
+
 clear_detached_launch_process_group() {
   rm -f "$DETACHED_LAUNCH_PGID_FILE" "$DETACHED_LAUNCH_MEMBERS_FILE"
 }
@@ -3483,6 +3524,32 @@ find_voice_gateway_runtime_pids() {
         ;;
     esac
   done < <(find_scope_runtime_pids "$scope")
+
+  if [[ "${#collected[@]}" -gt 0 ]]; then
+    printf '%s\n' "${collected[@]}" | sort -u | xargs 2>/dev/null || true
+  fi
+}
+
+find_current_runtime_voice_gateway_pids() {
+  if runtime_allows_workspace_wide_process_sweep; then
+    find_voice_gateway_runtime_pids "$VOICE_GATEWAY_DIR"
+    return 0
+  fi
+
+  local collected=()
+  local pid=""
+  pid="$(read_pid_file "$VOICE_GATEWAY_PID_FILE")"
+  if [[ "$pid" =~ ^[0-9]+$ ]] && ps -p "$pid" >/dev/null 2>&1 && pid_matches_scope "$pid" "$VOICE_GATEWAY_DIR"; then
+    collected+=("$pid")
+  fi
+
+  local health_port="${VIVENTIUM_VOICE_GATEWAY_HEALTH_PORT:-${VOICE_GATEWAY_PORT:-8000}}"
+  while read -r pid; do
+    [[ "$pid" =~ ^[0-9]+$ ]] || continue
+    if pid_matches_scope "$pid" "$VOICE_GATEWAY_DIR"; then
+      collected+=("$pid")
+    fi
+  done < <(find_port_listener_pids "$health_port")
 
   if [[ "${#collected[@]}" -gt 0 ]]; then
     printf '%s\n' "${collected[@]}" | sort -u | xargs 2>/dev/null || true
@@ -6947,6 +7014,7 @@ stop_running_services() {
   local done_msg="${2:-Restart cleanup complete}"
   local scheduling_stop_failed=false
   local stop_excluded_pids=("$$" "${BASHPID:-}" "$PPID")
+  require_compiled_dev_env_stop_identity || return 1
   log_warn "$reason"
   protect_noncanonical_runtime_from_global_docker_mutation
   if ! authorize_runtime_process_group_stop; then
@@ -6957,6 +7025,8 @@ stop_running_services() {
   fi
   stop_detached_librechat_api_watchdog
   stop_prompt_workbench_watchdog
+  # Prompt Workbench ownership is App-Support-state + exact PID/port scoped. A dev runtime may
+  # therefore stop its own sidecar without enabling same-checkout/global process sweeps.
   stop_prompt_workbench_if_managed
 
   # LibreChat backend/frontend
@@ -6993,30 +7063,37 @@ stop_running_services() {
     for playground_dir in "${playground_dirs[@]}"; do
       if [[ -n "$playground_dir" && -d "$playground_dir" ]]; then
         kill_port_listeners "$playground_port" "$playground_dir"
-        kill_by_pattern_scoped "next dev" "$playground_dir"
-        # Drain any remaining Next.js or helper children rooted in the playground cwd.
-        kill_scope_runtime_processes "$playground_dir" "$playground_dir"
-        kill_orphaned_scope_runtime_processes "$playground_dir" "$playground_dir"
+        if runtime_allows_workspace_wide_process_sweep; then
+          kill_by_pattern_scoped "next dev" "$playground_dir"
+          # Drain any remaining Next.js or helper children rooted in the playground cwd.
+          kill_scope_runtime_processes "$playground_dir" "$playground_dir"
+          kill_orphaned_scope_runtime_processes "$playground_dir" "$playground_dir"
+        fi
       fi
     done
   fi
 
   # Voice Gateway worker
   if [[ "$SKIP_VOICE_GATEWAY" != "true" ]]; then
-    kill_by_pattern_scoped "voice-gateway/worker.py" "$VOICE_GATEWAY_DIR"
-    kill_by_pattern_scoped "worker.py dev" "$VOICE_GATEWAY_DIR"
-    kill_by_pattern_scoped "worker.py start" "$VOICE_GATEWAY_DIR"
-    kill_by_pattern_scoped "job_proc_lazy_main" "$VOICE_GATEWAY_DIR"
-    local voice_gateway_runtime_pids
-    voice_gateway_runtime_pids=$(find_voice_gateway_runtime_pids "$VOICE_GATEWAY_DIR")
-    if [[ -n "$voice_gateway_runtime_pids" ]]; then
-      log_warn "Stopping voice gateway runtime processes in $VOICE_GATEWAY_DIR"
-      kill_pids "$voice_gateway_runtime_pids"
+    local voice_gateway_health_port="${VIVENTIUM_VOICE_GATEWAY_HEALTH_PORT:-${VOICE_GATEWAY_PORT:-8000}}"
+    stop_pid_file_scoped "$VOICE_GATEWAY_PID_FILE" "$VOICE_GATEWAY_DIR"
+    kill_port_listeners "$voice_gateway_health_port" "$VOICE_GATEWAY_DIR"
+    if runtime_allows_workspace_wide_process_sweep; then
+      kill_by_pattern_scoped "voice-gateway/worker.py" "$VOICE_GATEWAY_DIR"
+      kill_by_pattern_scoped "worker.py dev" "$VOICE_GATEWAY_DIR"
+      kill_by_pattern_scoped "worker.py start" "$VOICE_GATEWAY_DIR"
+      kill_by_pattern_scoped "job_proc_lazy_main" "$VOICE_GATEWAY_DIR"
+      local voice_gateway_runtime_pids
+      voice_gateway_runtime_pids=$(find_voice_gateway_runtime_pids "$VOICE_GATEWAY_DIR")
+      if [[ -n "$voice_gateway_runtime_pids" ]]; then
+        log_warn "Stopping voice gateway runtime processes in $VOICE_GATEWAY_DIR"
+        kill_pids "$voice_gateway_runtime_pids"
+      fi
     fi
   fi
 
   # V1 agent
-  if [[ -d "$V1_AGENT_DIR" ]]; then
+  if [[ -d "$V1_AGENT_DIR" ]] && runtime_allows_workspace_wide_process_sweep; then
     kill_by_pattern_scoped "frontal_cortex.agent start" "$V1_AGENT_DIR"
   fi
 
@@ -7050,12 +7127,14 @@ stop_running_services() {
     kill_pids "$telegram_codex_pid"
     rm -f "$TELEGRAM_CODEX_PID_FILE"
   fi
-  if [[ -d "$TELEGRAM_CODEX_DIR" ]]; then
+  if [[ -d "$TELEGRAM_CODEX_DIR" ]] && runtime_allows_workspace_wide_process_sweep; then
     kill_by_pattern_scoped "telegram-codex" "$TELEGRAM_CODEX_DIR"
     kill_by_pattern_scoped "uv run telegram-codex" "$TELEGRAM_CODEX_DIR"
   fi
 
-  kill_by_pattern_scoped_excluding "viventium-librechat-start.sh" "$ROOT_DIR" "${stop_excluded_pids[@]}"
+  if runtime_allows_workspace_wide_process_sweep; then
+    kill_by_pattern_scoped_excluding "viventium-librechat-start.sh" "$ROOT_DIR" "${stop_excluded_pids[@]}"
+  fi
   local helper_script_scope="${VIVENTIUM_APP_SUPPORT_DIR:-$HOME/Library/Application Support/Viventium}/helper-scripts"
   if [[ -d "$helper_script_scope" ]]; then
     kill_by_pattern_scoped_excluding "viventium-librechat-start.sh" "$helper_script_scope" "${stop_excluded_pids[@]}"
@@ -7075,18 +7154,20 @@ stop_running_services() {
     stop_pid_file_scoped "$GLASSHIVE_RUNTIME_PID_FILE" "$GLASSHIVE_RUNTIME_DIR"
     stop_pid_file_scoped "$GLASSHIVE_MCP_PID_FILE" "$GLASSHIVE_RUNTIME_DIR"
     stop_pid_file_scoped "$GLASSHIVE_UI_PID_FILE" "$GLASSHIVE_UI_DIR"
-    kill_port_listeners "$GLASSHIVE_RUNTIME_PORT" "$GLASSHIVE_RUNTIME_DIR"
-    kill_port_listeners "$GLASSHIVE_MCP_PORT" "$GLASSHIVE_RUNTIME_DIR"
-    kill_port_listeners "$GLASSHIVE_UI_PORT" "$GLASSHIVE_UI_DIR"
-    kill_by_pattern_scoped "uv run uvicorn workers_projects_runtime.api:app" "$GLASSHIVE_RUNTIME_DIR"
-    kill_by_pattern_scoped "uv run python -m workers_projects_runtime.mcp_server" "$GLASSHIVE_RUNTIME_DIR"
-    kill_by_pattern_scoped "uv run uvicorn glass_drive_ui.server:app" "$GLASSHIVE_UI_DIR"
+    if runtime_allows_workspace_wide_process_sweep; then
+      kill_port_listeners "$GLASSHIVE_RUNTIME_PORT" "$GLASSHIVE_RUNTIME_DIR"
+      kill_port_listeners "$GLASSHIVE_MCP_PORT" "$GLASSHIVE_RUNTIME_DIR"
+      kill_port_listeners "$GLASSHIVE_UI_PORT" "$GLASSHIVE_UI_DIR"
+      kill_by_pattern_scoped "uv run uvicorn workers_projects_runtime.api:app" "$GLASSHIVE_RUNTIME_DIR"
+      kill_by_pattern_scoped "uv run python -m workers_projects_runtime.mcp_server" "$GLASSHIVE_RUNTIME_DIR"
+      kill_by_pattern_scoped "uv run uvicorn glass_drive_ui.server:app" "$GLASSHIVE_UI_DIR"
+    fi
   fi
 
   # === VIVENTIUM START ===
   # Feature: Stop Skyvern stack on restart/stop when enabled.
   # === VIVENTIUM END ===
-  if [[ "$START_SKYVERN" == "true" && "$SKIP_DOCKER" != "true" ]]; then
+  if [[ "$START_SKYVERN" == "true" && "$SKIP_DOCKER" != "true" ]] && runtime_allows_workspace_wide_process_sweep; then
     local skyvern_script="$ROOT_DIR/viventium-skyvern-start.sh"
     if [[ -x "$skyvern_script" ]]; then
       "$skyvern_script" stop >/dev/null 2>&1 || true
@@ -7101,7 +7182,7 @@ stop_running_services() {
   fi
 
   # Google Workspace MCP
-  if [[ -d "$GOOGLE_MCP_DIR" || -f "$GOOGLE_MCP_PID_FILE" ]]; then
+  if [[ "$START_GOOGLE_MCP" == "true" ]] && runtime_allows_workspace_wide_process_sweep; then
     stop_pid_file_scoped "$GOOGLE_MCP_PID_FILE" "$GOOGLE_MCP_DIR"
     kill_port_listeners "$GOOGLE_MCP_PORT" "$GOOGLE_MCP_DIR"
     kill_by_pattern_scoped "uv run python -u main.py --transport streamable-http" "$GOOGLE_MCP_DIR"
@@ -7109,14 +7190,14 @@ stop_running_services() {
   fi
 
   # MS365 OAuth callback + MCP container
-  if [[ -d "$V1_AGENT_DIR" || -n "${MS365_MCP_CALLBACK_PORT:-}" ]]; then
+  if [[ "$START_MS365_MCP" == "true" ]] && runtime_allows_workspace_wide_process_sweep; then
     kill_port_listeners "$MS365_MCP_CALLBACK_PORT" "$VIVENTIUM_CORE_DIR"
   fi
   if [[ "$GLOBAL_DOCKER_CLEANUP_ALLOWED" == "true" && "$SKIP_DOCKER" != "true" ]] &&
     command -v docker >/dev/null 2>&1
   then
     if docker_daemon_ready; then
-      if [[ -d "$CODE_INTERPRETER_DIR" ]]; then
+      if [[ "$START_CODE_INTERPRETER" == "true" ]] && runtime_allows_workspace_wide_process_sweep; then
           local ci_compose_file="$CODE_INTERPRETER_DIR/docker-compose.ghcr.yml"
           if [[ ! -f "$ci_compose_file" ]]; then
             ci_compose_file="$CODE_INTERPRETER_DIR/docker-compose.yml"
@@ -7147,56 +7228,68 @@ stop_running_services() {
           cleanup_code_interpreter_exec_containers "restart"
       fi
 
-      local ms365_compose="$ROOT_DIR/docker/ms365-mcp/docker-compose.yml"
-      if [[ -f "$ms365_compose" ]]; then
-        docker compose -f "$ms365_compose" down >/dev/null 2>&1 || true
+      if [[ "$START_MS365_MCP" == "true" ]] && runtime_allows_workspace_wide_process_sweep; then
+        local ms365_compose="$ROOT_DIR/docker/ms365-mcp/docker-compose.yml"
+        if [[ -f "$ms365_compose" ]]; then
+          docker compose -f "$ms365_compose" down >/dev/null 2>&1 || true
+        fi
+        remove_named_container_if_present "viventium_ms365_mcp"
+        remove_compose_project_containers "ms365-mcp"
       fi
-      remove_named_container_if_present "viventium_ms365_mcp"
-      remove_compose_project_containers "ms365-mcp"
 
-      local rag_compose="$LIBRECHAT_DIR/rag.yml"
-      if [[ -f "$rag_compose" ]]; then
-        (
-          cd "$LIBRECHAT_DIR"
-          RAG_PORT="$VIVENTIUM_RAG_API_PORT" docker compose --project-name "$VIVENTIUM_RAG_COMPOSE_PROJECT_NAME" -f "$rag_compose" down >/dev/null 2>&1 || true
-        )
+      if [[ "$START_RAG_API" == "true" ]]; then
+        local rag_compose="$LIBRECHAT_DIR/rag.yml"
+        if [[ -f "$rag_compose" ]]; then
+          (
+            cd "$LIBRECHAT_DIR"
+            RAG_PORT="$VIVENTIUM_RAG_API_PORT" docker compose --project-name "$VIVENTIUM_RAG_COMPOSE_PROJECT_NAME" -f "$rag_compose" down >/dev/null 2>&1 || true
+          )
+        fi
+        remove_compose_service_containers "$VIVENTIUM_RAG_COMPOSE_PROJECT_NAME" "rag_api" "vectordb"
+        if runtime_allows_workspace_wide_process_sweep; then
+          remove_compose_service_containers "librechat" "rag_api" "vectordb"
+        fi
       fi
-      remove_compose_service_containers "$VIVENTIUM_RAG_COMPOSE_PROJECT_NAME" "rag_api" "vectordb"
-      remove_compose_service_containers "librechat" "rag_api" "vectordb"
 
       # VIVENTIUM START: Use v0.4 SearxNG compose.
       local searxng_compose="$VIVENTIUM_CORE_DIR/viventium_v0_4/docker/searxng/docker-compose.yml"
       # VIVENTIUM END
-      if [[ -f "$searxng_compose" ]]; then
-        docker compose -f "$searxng_compose" down >/dev/null 2>&1 || true
+      if [[ "$START_SEARXNG" == "true" ]] && runtime_allows_workspace_wide_process_sweep; then
+        if [[ -f "$searxng_compose" ]]; then
+          docker compose -f "$searxng_compose" down >/dev/null 2>&1 || true
+        fi
+        remove_compose_project_containers "searxng"
       fi
-      remove_compose_project_containers "searxng"
 
       # VIVENTIUM START: Use v0.4 Firecrawl compose.
       local firecrawl_compose="$VIVENTIUM_CORE_DIR/viventium_v0_4/docker/firecrawl/docker-compose.yml"
       # VIVENTIUM END
-      if [[ -f "$firecrawl_compose" ]]; then
-        docker compose -f "$firecrawl_compose" down >/dev/null 2>&1 || true
-      fi
-      remove_compose_project_containers "firecrawl"
-
-      local mongo_container
-      mongo_container=$(docker ps -aq --filter "name=^/${MONGO_CONTAINER_NAME}$" 2>/dev/null | head -1 || true)
-      if [[ -n "$mongo_container" ]]; then
-        local mongo_service_label
-        mongo_service_label=$(docker inspect -f '{{ index .Config.Labels "viventium.service" }}' "$mongo_container" 2>/dev/null || true)
-        if [[ "$mongo_service_label" == "mongodb" ]]; then
-          docker rm -f "$mongo_container" >/dev/null 2>&1 || true
+      if [[ "$START_FIRECRAWL" == "true" ]] && runtime_allows_workspace_wide_process_sweep; then
+        if [[ -f "$firecrawl_compose" ]]; then
+          docker compose -f "$firecrawl_compose" down >/dev/null 2>&1 || true
         fi
+        remove_compose_project_containers "firecrawl"
       fi
 
-      local meili_container
-      meili_container=$(docker ps -aq --filter "name=^/${MEILI_CONTAINER_NAME}$" 2>/dev/null | head -1 || true)
-      if [[ -n "$meili_container" ]]; then
-        local meili_service_label
-        meili_service_label=$(docker inspect -f '{{ index .Config.Labels "viventium.service" }}' "$meili_container" 2>/dev/null || true)
-        if [[ "$meili_service_label" == "meilisearch" ]]; then
-          docker rm -f "$meili_container" >/dev/null 2>&1 || true
+      if runtime_allows_workspace_wide_process_sweep; then
+        local mongo_container
+        mongo_container=$(docker ps -aq --filter "name=^/${MONGO_CONTAINER_NAME}$" 2>/dev/null | head -1 || true)
+        if [[ -n "$mongo_container" ]]; then
+          local mongo_service_label
+          mongo_service_label=$(docker inspect -f '{{ index .Config.Labels "viventium.service" }}' "$mongo_container" 2>/dev/null || true)
+          if [[ "$mongo_service_label" == "mongodb" ]]; then
+            docker rm -f "$mongo_container" >/dev/null 2>&1 || true
+          fi
+        fi
+
+        local meili_container
+        meili_container=$(docker ps -aq --filter "name=^/${MEILI_CONTAINER_NAME}$" 2>/dev/null | head -1 || true)
+        if [[ -n "$meili_container" ]]; then
+          local meili_service_label
+          meili_service_label=$(docker inspect -f '{{ index .Config.Labels "viventium.service" }}' "$meili_container" 2>/dev/null || true)
+          if [[ "$meili_service_label" == "meilisearch" ]]; then
+            docker rm -f "$meili_container" >/dev/null 2>&1 || true
+          fi
         fi
       fi
 
@@ -7227,6 +7320,9 @@ stop_running_services() {
 }
 
 cleanup_stale_containers() {
+  if ! runtime_allows_workspace_wide_process_sweep; then
+    return 0
+  fi
   if [[ "$SKIP_DOCKER" == "true" ]]; then
     return 0
   fi
@@ -12662,14 +12758,7 @@ if [[ "$SKIP_VOICE_GATEWAY" != "true" ]]; then
     # Feature: Robust voice worker detection across invocation styles.
     # Purpose: catch parent launchers plus spawned runtime children scoped to the voice-gateway dir.
     EXISTING_VOICE_GATEWAY_PIDS=""
-    VOICE_GATEWAY_PID_CANDIDATES="$(
-      {
-        pgrep -f "voice-gateway/worker.py" 2>/dev/null || true
-        pgrep -f "worker.py dev" 2>/dev/null || true
-        pgrep -f "worker.py start" 2>/dev/null || true
-        find_voice_gateway_runtime_pids "$VOICE_GATEWAY_DIR"
-      } | awk 'NF' | sort -u
-    )"
+    VOICE_GATEWAY_PID_CANDIDATES="$(find_current_runtime_voice_gateway_pids)"
     if [[ -n "$VOICE_GATEWAY_PID_CANDIDATES" ]]; then
       for pid in $VOICE_GATEWAY_PID_CANDIDATES; do
         if pid_matches_scope "$pid" "$VOICE_GATEWAY_DIR"; then
@@ -12987,6 +13076,7 @@ PY
       ) >"$LOG_DIR/voice_gateway.log" 2>&1 &
       VOICE_GATEWAY_PID=$!
       VOICE_GATEWAY_STARTED_BY_SCRIPT=true
+      printf '%s\n' "$VOICE_GATEWAY_PID" >"$VOICE_GATEWAY_PID_FILE"
       echo -e "${GREEN}[viventium]${NC} Voice Gateway pid: $VOICE_GATEWAY_PID (log: $LOG_DIR/voice_gateway.log)"
     fi
   fi
@@ -13024,6 +13114,7 @@ else
   start_deferred_postcommit_finalizer
 fi
 
+clear_runtime_start_claim_after_handoff
 prewarm_remote_call_access
 
 echo ""

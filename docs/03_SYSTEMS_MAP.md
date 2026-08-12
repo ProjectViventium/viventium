@@ -110,8 +110,28 @@ Smart messaging delivery ownership:
 - Telegram audio delivery/telemetry: `viventium_v0_4/telegram-viventium/TelegramVivBot/`, consuming
   the same shared voice capability JSON as LibreChat prompt composition
 
+World-class call ownership:
+
+- launch/session/auth: nested LibreChat `routes/viventium/calls.js`, `CallSessionService.js`,
+  `callLaunch.js`, and `VoiceAgentAuthorizationService.js`; web browser authority is exact-session,
+  Telegram launch authority is single-use, and canonical Agent `USE`/`VIEW` is rechecked on every
+  Call/Wing turn
+- task/work plane: nested LibreChat `VoiceTaskService.js`, `VoiceTaskManagementTool.js`, durable
+  task/suppression models, GenerationJobManager and GlassHive owner adapters; paged durable replay
+  and cross-process tail feed `viventium.task.v1`
+- speaker plane: `voice-gateway/speaker_segments.py` and `multi_track_ingress.py` produce
+  call-scoped segments/session-trust changes; nested LibreChat `SpeakerSegmentService.js` and the
+  speaker model own persistence/revisions; `viventium.speaker.v1` feeds the browser
+- browser surface: `agent-starter-react` call bootstrap/BFF routes, call mode/status/activity,
+  task-event/action hooks, and speaker captions; Call/Wing/Listen-Only switch within one RTC room
+- memory boundary: nested LibreChat message metadata and memory hardener defer durable voice writes
+  until terminal post-call speaker/suppression truth is available
+- raw audio retention remains zero; derived transcripts follow conversation retention, deletion,
+  and export controls
+
 Nested git repos inside v0.4:
 - `viventium_v0_4/GlassHive/`
+- `viventium_v0_4/Viventium-Health/`
 - `viventium_v0_4/LibreChat/`
 - `viventium_v0_4/agents-playground/`
 - `viventium_v0_4/agent-starter-react/`

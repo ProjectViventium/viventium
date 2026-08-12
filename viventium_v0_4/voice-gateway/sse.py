@@ -673,7 +673,12 @@ async def iter_sse_json_events(
                 continue
             # === VIVENTIUM START ===
             # Handle LibreChat SSE error events so callers can surface failures.
-            if ev.event not in ("message", "error"):
+            if ev.event not in (
+                "message",
+                "error",
+                "voice_task_event",
+                "voice_task_sync",
+            ):
                 continue
             try:
                 payload = json.loads(ev.data)

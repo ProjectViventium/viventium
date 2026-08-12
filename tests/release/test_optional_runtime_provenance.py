@@ -4,6 +4,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import re
 import subprocess
 import time
 from pathlib import Path
@@ -30,6 +31,39 @@ LIVEKIT_SOURCE_COMMIT = "0b3fd288e3ef3263ec475ba0d78cf3ad77459981"
 
 def _read(relative: str) -> str:
     return (ROOT / relative).read_text(encoding="utf-8")
+
+
+def _extract_javascript_logging_calls(source: str) -> list[str]:
+    """Return complete console/logger calls without treating ordinary service arguments as logs."""
+    call_start = re.compile(
+        r"\b(?:console|logger)\.(?:trace|debug|info|warn|error|log)(?:\?\.)?\s*\("
+    )
+    calls: list[str] = []
+    for match in call_start.finditer(source):
+        depth = 1
+        quote: str | None = None
+        escaped = False
+        cursor = match.end()
+        while cursor < len(source) and depth:
+            character = source[cursor]
+            if quote is not None:
+                if escaped:
+                    escaped = False
+                elif character == "\\":
+                    escaped = True
+                elif character == quote:
+                    quote = None
+            elif character in ("'", '"', "`"):
+                quote = character
+            elif character == "(":
+                depth += 1
+            elif character == ")":
+                depth -= 1
+            cursor += 1
+        if depth:
+            raise AssertionError(f"Unterminated JavaScript logging call at offset {match.start()}")
+        calls.append(source[match.start() : cursor])
+    return calls
 
 
 def _extract_shell_function(text: str, name: str) -> str:
@@ -747,17 +781,31 @@ def test_voice_call_diagnostics_never_emit_user_or_session_payloads() -> None:
 
     assert "console." not in route
     assert "console." not in button
+    diagnostic_calls = "\n".join(
+        call
+        for source in (route, service, button)
+        for call in _extract_javascript_logging_calls(source)
+    )
+    assert "logger." in diagnostic_calls
+    diagnostic_calls = diagnostic_calls.replace(
+        "hasConversationId: typeof conversationId === 'string' && conversationId !== 'new'",
+        "hasConversationId: [presence-only]",
+    ).replace(
+        "hasAgentId: typeof agentId === 'string' && agentId.length > 0",
+        "hasAgentId: [presence-only]",
+    )
     for forbidden in (
-        "body: req.body",
-        "userId: req.user",
+        "req.",
+        "session.",
+        "userId",
+        "agentId",
+        "callSessionId",
+        "conversationId",
+        "roomName",
         "Session created:",
         "Response:",
-        "callSessionId=${callSessionId}",
-        "newConversationId=${conversationId}",
-        "conversationId to ${conversationId}",
     ):
-        assert forbidden not in route
-        assert forbidden not in service
+        assert forbidden not in diagnostic_calls
 
 
 def test_skyvern_runtime_images_are_immutable() -> None:

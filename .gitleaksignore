@@ -2,3 +2,9 @@
 # `hasFinalResult=true`; it is not a credential. Keep the exact fingerprint so
 # every other finding, including other lines in the same file, remains fatal.
 fc5fc9abf48fcf05871a2e7d17c57fe08e2fc97e:qa/glasshive_watch_desktop/reports/2026-06-16-worker-capability-and-delivery-story.md:generic-api-key:87
+
+# Public V0.5 browser prototype local-storage slot. The former variable name
+# `STORE_KEY` triggers the generic-key rule in two independently preserved
+# snapshot commits, but this literal is not a credential.
+1e45f3b1f2a1637450b0deeefab374f7d850ac60:docs/research_and_future_plans/v0.5/artifacts/viventium-v0.5-product-prototype.js:generic-api-key:4
+111607bc70564b618765f57d51810673cfe1dbe4:docs/research_and_future_plans/v0.5/artifacts/viventium-v0.5-product-prototype.js:generic-api-key:4

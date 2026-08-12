@@ -45,6 +45,7 @@ class _FakeTelegramBot:
         self.messages = []
         self.edits = []
         self.audios = []
+        self.deletes = []
         self.next_id = 1000
         self.edit_error = None
         self.edit_errors = []
@@ -79,6 +80,8 @@ class _FakeTelegramBot:
         return None
 
     async def delete_message(self, **_kwargs):
+        self.deletes.append(_kwargs)
+        self.current_messages.pop(_kwargs.get("message_id"), None)
         return None
 
     async def send_media_group(self, **_kwargs):
@@ -1807,3 +1810,359 @@ def test_error_handler_does_not_log_raw_update_text(caplog):
     assert "PRIVATE MESSAGE TEXT" not in log_text
     assert "update_id=123" in log_text
     assert "message_id=456" in log_text
+
+
+def test_get_viventium_response_resolves_nested_blockquote_formatting(monkeypatch):
+    class _NestedBlockquoteRobot:
+        async def ask_stream_async(self, *args, **kwargs):
+            _ = args, kwargs
+            yield (
+                "**Not the primary wedge.** **Build durable agency.**\n\n"
+                "> **Agency compounds.**"
+            )
+
+        def get_cached_voice_route(self, _key):
+            return None
+
+        def reset(self, *args, **kwargs):
+            _ = args, kwargs
+
+    async def _noop_send_librechat_attachments(**_kwargs):
+        return None
+
+    monkeypatch.setattr(
+        tg_bot,
+        "Users",
+        types.SimpleNamespace(get_config=lambda *_args, **_kwargs: False),
+    )
+    monkeypatch.setattr(tg_bot, "send_librechat_attachments", _noop_send_librechat_attachments)
+
+    context = _FakeContext()
+    asyncio.run(
+        tg_bot.getViventiumResponse(
+            update_message=_FakeUpdateMessage(),
+            context=context,
+            title="",
+            robot=_NestedBlockquoteRobot(),
+            message="give me the core recommendation",
+            chatid=111,
+            messageid=222,
+            convo_id="chat-1",
+            message_thread_id=None,
+            voice_note_detected=False,
+            files=None,
+            trace_id="test-nested-blockquote-formatting",
+            telegram_message_id=222,
+            telegram_update_id=333,
+        )
+    )
+
+    rendered = " ".join(
+        str(item.get("text", ""))
+        for item in context.bot.messages + context.bot.edits
+    )
+    assert "<blockquote><b>Agency compounds.</b></blockquote>" in rendered
+    assert "\x00PH" not in rendered
+
+
+def test_get_viventium_response_reconciles_preview_then_sends_ordered_final_segments(monkeypatch):
+    class _SegmentRobot:
+        def __init__(self):
+            self.acks = []
+
+        async def ask_stream_async(self, *args, **kwargs):
+            _ = args, kwargs
+            yield {"type": "logical_turn", "logical_turn_id": "turn-1", "revision": 3}
+            yield "Draft preview.\n{MSG_BREAK}\nFinal continuation."
+
+        async def ack_delivery(self, *args):
+            self.acks.append(args)
+            return True
+
+        def reset(self, *args, **kwargs):
+            _ = args, kwargs
+
+    async def _noop_send_librechat_attachments(**_kwargs):
+        return None
+
+    monkeypatch.setattr(tg_bot, "Users", types.SimpleNamespace(get_config=lambda *_a, **_k: False))
+    monkeypatch.setattr(tg_bot, "should_send_voice_reply", lambda **_k: False)
+    monkeypatch.setattr(tg_bot, "send_librechat_attachments", _noop_send_librechat_attachments)
+    context = _FakeContext()
+    robot = _SegmentRobot()
+
+    asyncio.run(
+        tg_bot.getViventiumResponse(
+            update_message=_FakeUpdateMessage(),
+            context=context,
+            title="",
+            robot=robot,
+            message="synthetic request",
+            chatid=111,
+            messageid=222,
+            convo_id="chat-1",
+            message_thread_id=None,
+            trace_id="test-preview-supersession",
+            telegram_message_id=222,
+            telegram_update_id=333,
+        )
+    )
+
+    assert context.bot.deletes == []
+    assert _final_delivered_texts(context) == [
+        "Draft preview.",
+        "Final continuation.",
+    ]
+    assert context.bot.edits[-1]["text"] == "Draft preview."
+    assert context.bot.messages[-2]["reply_to_message_id"] == 222
+    assert "reply_to_message_id" not in context.bot.messages[-1]
+    assert robot.acks == [
+        ("turn-1", 3, "committed", f"telegram:111:{context.bot.next_id}"),
+    ]
+
+
+def test_get_viventium_response_final_reconciliation_does_not_depend_on_preview_delete(monkeypatch):
+    class _DeleteFailBot(_FakeTelegramBot):
+        async def delete_message(self, **kwargs):
+            self.deletes.append(kwargs)
+            raise ConnectionError("synthetic stale preview delete failure")
+
+    class _SegmentRobot:
+        async def ask_stream_async(self, *args, **kwargs):
+            _ = args, kwargs
+            yield "First final.\n{MSG_BREAK}\nSecond final."
+
+        def reset(self, *args, **kwargs):
+            _ = args, kwargs
+
+    async def _noop_send_librechat_attachments(**_kwargs):
+        return None
+
+    monkeypatch.setattr(tg_bot, "Users", types.SimpleNamespace(get_config=lambda *_a, **_k: False))
+    monkeypatch.setattr(tg_bot, "should_send_voice_reply", lambda **_k: False)
+    monkeypatch.setattr(tg_bot, "send_librechat_attachments", _noop_send_librechat_attachments)
+    context = _FakeContext()
+    context.bot = _DeleteFailBot()
+
+    asyncio.run(
+        tg_bot.getViventiumResponse(
+            update_message=_FakeUpdateMessage(),
+            context=context,
+            title="",
+            robot=_SegmentRobot(),
+            message="synthetic request",
+            chatid=111,
+            messageid=222,
+            convo_id="chat-1",
+            message_thread_id=None,
+            trace_id="test-preview-delete-failure",
+            telegram_message_id=222,
+            telegram_update_id=333,
+        )
+    )
+
+    delivered = _final_delivered_texts(context)
+    assert delivered[-2:] == ["First final.", "Second final."]
+    assert context.bot.deletes == []
+    assert not any("Connection error" in text for text in delivered)
+    assert not any("stale preview delete failure" in text for text in delivered)
+
+
+def test_get_viventium_response_superseded_terminal_retracts_preview_without_error(monkeypatch):
+    class _SupersededRobot:
+        def __init__(self):
+            self.acks = []
+
+        async def ask_stream_async(self, *args, **kwargs):
+            _ = args, kwargs
+            yield {"type": "logical_turn", "logical_turn_id": "turn-1", "revision": 1}
+            yield "Unfinished preview."
+            await asyncio.sleep(0.02)
+            yield {"type": "superseded", "logical_turn_id": "turn-1", "revision": 1}
+
+        async def ack_delivery(self, *args):
+            self.acks.append(args)
+            return True
+
+        def reset(self, *args, **kwargs):
+            _ = args, kwargs
+
+    async def _noop_send_librechat_attachments(**_kwargs):
+        return None
+
+    monkeypatch.setattr(tg_bot, "Users", types.SimpleNamespace(get_config=lambda *_a, **_k: False))
+    monkeypatch.setattr(tg_bot, "should_send_voice_reply", lambda **_k: False)
+    monkeypatch.setattr(tg_bot, "send_librechat_attachments", _noop_send_librechat_attachments)
+    context = _FakeContext()
+    robot = _SupersededRobot()
+
+    asyncio.run(
+        tg_bot.getViventiumResponse(
+            update_message=_FakeUpdateMessage(),
+            context=context,
+            title="",
+            robot=robot,
+            message="synthetic first segment",
+            chatid=111,
+            messageid=222,
+            convo_id="chat-1",
+            message_thread_id=None,
+            trace_id="test-core-superseded",
+            telegram_message_id=222,
+            telegram_update_id=333,
+        )
+    )
+
+    assert context.bot.deletes
+    assert not any("Connection error" in str(item.get("text") or "") for item in context.bot.messages)
+    assert not any("No response received" in str(item.get("text") or "") for item in context.bot.messages)
+    assert robot.acks == [("turn-1", 1, "partial_removed", "telegram:111")]
+
+
+def test_get_viventium_response_superseded_delete_failure_reports_failed_not_removed(monkeypatch):
+    class _DeleteFailBot(_FakeTelegramBot):
+        async def delete_message(self, **kwargs):
+            self.deletes.append(kwargs)
+            raise ConnectionError("synthetic stale preview delete failure")
+
+    class _SupersededRobot:
+        def __init__(self):
+            self.acks = []
+
+        async def ask_stream_async(self, *args, **kwargs):
+            _ = args, kwargs
+            yield {"type": "logical_turn", "logical_turn_id": "turn-1", "revision": 1}
+            yield "Unfinished preview."
+            await asyncio.sleep(0.02)
+            yield {"type": "superseded", "logical_turn_id": "turn-1", "revision": 1}
+
+        async def ack_delivery(self, *args):
+            self.acks.append(args)
+            return True
+
+        def reset(self, *args, **kwargs):
+            _ = args, kwargs
+
+    async def _noop_send_librechat_attachments(**_kwargs):
+        return None
+
+    monkeypatch.setattr(tg_bot, "Users", types.SimpleNamespace(get_config=lambda *_a, **_k: False))
+    monkeypatch.setattr(tg_bot, "should_send_voice_reply", lambda **_k: False)
+    monkeypatch.setattr(tg_bot, "send_librechat_attachments", _noop_send_librechat_attachments)
+    context = _FakeContext()
+    context.bot = _DeleteFailBot()
+    robot = _SupersededRobot()
+
+    asyncio.run(
+        tg_bot.getViventiumResponse(
+            update_message=_FakeUpdateMessage(),
+            context=context,
+            title="",
+            robot=robot,
+            message="synthetic first segment",
+            chatid=111,
+            messageid=222,
+            convo_id="chat-1",
+            message_thread_id=None,
+            trace_id="test-core-superseded-delete-failure",
+            telegram_message_id=222,
+            telegram_update_id=333,
+        )
+    )
+
+    assert robot.acks == [("turn-1", 1, "failed", "telegram:111")]
+    assert not any("Connection error" in str(item.get("text") or "") for item in context.bot.messages)
+
+
+def test_get_viventium_response_retracts_just_sent_final_when_commit_ack_is_stale(monkeypatch):
+    class _StaleAtCommitRobot:
+        def __init__(self):
+            self.acks = []
+
+        async def ask_stream_async(self, *args, **kwargs):
+            _ = args, kwargs
+            yield {"type": "logical_turn", "logical_turn_id": "turn-1", "revision": 1}
+            yield "Finished locally but obsolete before Telegram commit."
+
+        async def ack_delivery_status(self, *args):
+            self.acks.append(args)
+            return "stale_revision"
+
+        def reset(self, *args, **kwargs):
+            _ = args, kwargs
+
+    async def _noop_send_librechat_attachments(**_kwargs):
+        return None
+
+    monkeypatch.setattr(tg_bot, "Users", types.SimpleNamespace(get_config=lambda *_a, **_k: False))
+    monkeypatch.setattr(tg_bot, "should_send_voice_reply", lambda **_k: False)
+    monkeypatch.setattr(tg_bot, "send_librechat_attachments", _noop_send_librechat_attachments)
+    context = _FakeContext()
+    robot = _StaleAtCommitRobot()
+
+    asyncio.run(
+        tg_bot.getViventiumResponse(
+            update_message=_FakeUpdateMessage(),
+            context=context,
+            title="",
+            robot=robot,
+            message="synthetic first segment",
+            chatid=111,
+            messageid=222,
+            convo_id="chat-1",
+            message_thread_id=None,
+            trace_id="test-stale-at-commit",
+            telegram_message_id=222,
+            telegram_update_id=333,
+        )
+    )
+
+    assert robot.acks == [
+        ("turn-1", 1, "committed", "telegram:111:1001"),
+    ]
+    assert context.bot.deletes[-1] == {"chat_id": 111, "message_id": 1001}
+    assert context.bot.current_messages == {}
+
+
+def test_get_viventium_response_passes_stable_opaque_source_event_id(monkeypatch):
+    class _CaptureRobot:
+        def __init__(self):
+            self.kwargs = None
+
+        async def ask_stream_async(self, *args, **kwargs):
+            _ = args
+            self.kwargs = kwargs
+            yield "Done."
+
+        def reset(self, *args, **kwargs):
+            _ = args, kwargs
+
+    async def _noop_send_librechat_attachments(**_kwargs):
+        return None
+
+    monkeypatch.setattr(tg_bot, "Users", types.SimpleNamespace(get_config=lambda *_a, **_k: False))
+    monkeypatch.setattr(tg_bot, "should_send_voice_reply", lambda **_k: False)
+    monkeypatch.setattr(tg_bot, "send_librechat_attachments", _noop_send_librechat_attachments)
+    robot = _CaptureRobot()
+
+    asyncio.run(
+        tg_bot.getViventiumResponse(
+            update_message=_FakeUpdateMessage(),
+            context=_FakeContext(),
+            title="",
+            robot=robot,
+            message="synthetic request",
+            chatid=111,
+            messageid=222,
+            convo_id="chat-1",
+            message_thread_id=None,
+            trace_id="test-source-event",
+            telegram_message_id=222,
+            telegram_update_id=333,
+        )
+    )
+
+    assert robot.kwargs["source_event_id"] == "telegram:chat:111:message:222"
+    assert "actor_kind" not in robot.kwargs
+    assert "origin" not in robot.kwargs
+    assert "supersede_scope" not in robot.kwargs

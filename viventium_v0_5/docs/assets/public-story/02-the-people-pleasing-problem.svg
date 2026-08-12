@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" role="img" aria-labelledby="title desc">
+  <title id="title">The people-pleasing problem</title>
+  <desc id="desc">A dark slide explaining that an AI assistant can sound supportive and certain while merely mirroring the user instead of telling the truth.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#101625"/>
+      <stop offset="1" stop-color="#1d1830"/>
+    </linearGradient>
+    <radialGradient id="mirrorGlow">
+      <stop offset="0" stop-color="#9e92ff" stop-opacity="0.45"/>
+      <stop offset="1" stop-color="#9e92ff" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="mirror" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#bbc3ff" stop-opacity="0.82"/>
+      <stop offset="0.55" stop-color="#6d72c8" stop-opacity="0.32"/>
+      <stop offset="1" stop-color="#f3e9ff" stop-opacity="0.65"/>
+    </linearGradient>
+    <filter id="shadow" x="-40%" y="-40%" width="180%" height="180%">
+      <feDropShadow dx="0" dy="24" stdDeviation="25" flood-color="#000000" flood-opacity="0.38"/>
+    </filter>
+  </defs>
+
+  <rect width="1600" height="900" fill="url(#bg)"/>
+  <circle cx="1225" cy="420" r="360" fill="url(#mirrorGlow)"/>
+
+  <text x="96" y="76" fill="#b8c0d6" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="18" font-weight="700" letter-spacing="5">VIVENTIUM</text>
+  <text x="1504" y="76" text-anchor="end" fill="#949db4" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="18" font-weight="600">02 / 06</text>
+
+  <text x="96" y="190" fill="#ffffff" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="72" font-weight="760">But the genie wants you happy.</text>
+  <text x="96" y="248" fill="#b8c0d6" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="29">Sometimes it mistakes being helpful for being agreeable.</text>
+
+  <g transform="translate(96 352)">
+    <circle cx="12" cy="2" r="7" fill="#9c8cff"/>
+    <text x="42" y="11" fill="#f3f5ff" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="27" font-weight="620">It mirrors your assumptions.</text>
+    <text x="42" y="51" fill="#9fa8bd" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="21">The starting idea quietly becomes “the truth.”</text>
+
+    <circle cx="12" cy="142" r="7" fill="#9c8cff"/>
+    <text x="42" y="151" fill="#f3f5ff" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="27" font-weight="620">It rewards your confidence.</text>
+    <text x="42" y="191" fill="#9fa8bd" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="21">The stronger you sound, the more certain it may sound.</text>
+
+    <circle cx="12" cy="282" r="7" fill="#9c8cff"/>
+    <text x="42" y="291" fill="#f3f5ff" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="27" font-weight="620">It fills gaps with plausible words.</text>
+    <text x="42" y="331" fill="#9fa8bd" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="21">Missing facts can disappear beneath a smooth answer.</text>
+  </g>
+
+  <g transform="translate(1015 220)">
+    <rect x="55" y="0" width="360" height="500" rx="180" fill="url(#mirror)" stroke="#c8c8ff" stroke-width="3" opacity="0.95" filter="url(#shadow)"/>
+    <path d="M235 80 C162 80 121 141 121 228 C121 335 178 406 235 406 C292 406 349 335 349 228 C349 141 308 80 235 80 Z" fill="#17172b" opacity="0.78"/>
+    <circle cx="194" cy="220" r="10" fill="#d7d9ff"/>
+    <circle cx="276" cy="220" r="10" fill="#d7d9ff"/>
+    <path d="M188 294 C217 324 253 324 282 294" fill="none" stroke="#d7d9ff" stroke-width="8" stroke-linecap="round"/>
+    <path d="M146 470 L324 470" stroke="#e2e4ff" stroke-width="5" stroke-linecap="round" opacity="0.7"/>
+
+    <path d="M-35 98 H138 Q166 98 166 126 V198 Q166 226 138 226 H47 L3 270 L12 226 H-35 Q-63 226 -63 198 V126 Q-63 98 -35 98 Z" fill="#ffffff" filter="url(#shadow)"/>
+    <text x="51" y="151" text-anchor="middle" fill="#1c2132" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="27" font-weight="720">“You’re right.”</text>
+    <text x="51" y="187" text-anchor="middle" fill="#737c92" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="18">Even when you may not be.</text>
+  </g>
+
+  <rect x="944" y="754" width="560" height="62" rx="31" fill="#2a2442" stroke="#6d619c" stroke-width="1.5"/>
+  <text x="1224" y="794" text-anchor="middle" fill="#d9d6ed" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="21">This people-pleasing failure is called sycophancy.</text>
+
+  <text x="96" y="858" fill="#828ba2" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="17">THE VIVENTIUM WAY · AN ORIGINAL FRAMEWORK</text>
+</svg>

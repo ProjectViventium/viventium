@@ -10,11 +10,17 @@ This document maps the live system to code and data structures.
 ## Component Overview
 ```
 User → LibreChat UI → AgentClient (API) → BackgroundCortexService
+                       ├→ selected Provider/Model
+                       │   ├→ direct provider
+                       │   └→ GlassHive authenticated harness conversation session
                        │                └─ Phase A detect (≤2s)
                        │                └─ Phase B execute (async)
                        ├→ pinned Feelings snapshot → dynamic instruction tail
                        ├→ spoken surface → shared feeling-expression + provider prompt
                        │                  └→ raw controls to TTS / sanitized visible text
+                       ├→ signed call session + exact browser capability + canonical Agent ACL
+                       │   ├→ LiveKit/voice gateway real-time media, TTS, interruption, speakers
+                       │   └→ LibreChat durable task/tool/search/memory work plane
                        │
                        ├→ SSE on_cortex_update → UI status cards
                        └→ BackgroundCortexFollowUpService → DB follow-up message
@@ -30,6 +36,15 @@ User → LibreChat UI → AgentClient (API) → BackgroundCortexService
 - Authenticated Feelings API: `LibreChat/api/server/routes/viventium/feelings.js`
 - Detached reaction: `LibreChat/api/server/services/viventium/EmotionalReactionService.js`
 - Spoken-surface prompt composition: `LibreChat/api/server/services/viventium/surfacePrompts.js`
+- Call session/auth: `LibreChat/api/server/routes/viventium/calls.js`,
+  `LibreChat/api/server/services/viventium/CallSessionService.js`, `callLaunch.js`, and
+  `VoiceAgentAuthorizationService.js`
+- Durable task/work plane: `LibreChat/api/server/services/viventium/VoiceTaskService.js`,
+  `VoiceTaskManagementTool.js`, task/suppression models, and owner adapters
+- Speaker persistence: `LibreChat/api/server/services/viventium/SpeakerSegmentService.js` and the
+  voice speaker-segment model
+- Real-time media/relay: `voice-gateway/worker.py`, `speaker_segments.py`, and
+  `multi_track_ingress.py`
 
 ### Key Frontend Components
 - SSE buffering + cortex events: `LibreChat/client/src/hooks/SSE/useSSE.ts`, `LibreChat/client/src/hooks/SSE/useResumableSSE.ts`
@@ -37,6 +52,10 @@ User → LibreChat UI → AgentClient (API) → BackgroundCortexService
 - Follow-up polling: `LibreChat/client/src/hooks/Viventium/useCortexFollowUpPoll.ts`
 - Export formatting: `LibreChat/client/src/hooks/Conversations/useExportConversation.ts`
 - Feelings instrument: `LibreChat/client/src/components/Feelings/` at `/feelings`
+- GlassHive Agent Builder fields: `LibreChat/client/src/components/SidePanel/Agents/ModelPanel.tsx`
+- Harness activity rendering: `LibreChat/client/src/components/Chat/Messages/Content/HarnessActivity.tsx`
+- Modern call surface: `agent-starter-react` bootstrap/BFF routes, call status/mode/activity and
+  speaker components, plus task/speaker event and action hooks
 
 ## Feelings runtime
 
@@ -82,6 +101,39 @@ Agent.background_cortices: Array<{
   }
 }>
 ```
+
+Every main or cortex Agent also uses the normal `provider` and `model` fields. A GlassHive selection
+uses `provider: glasshive-harness`, an exact harness model ID, normal
+`model_parameters.reasoning_effort`, and this small provider-owned bag:
+
+```
+Agent.glasshive_options: {
+  workspace: { mode: "life" | "custom", path?: string },
+  access: "full" | "workspace",
+  fallback_model?: "claude-code:opus" | "codex-cli:gpt-5.6-sol",
+  fallback_reasoning_effort?: "low" | "medium" | "high" | "xhigh" | "max"
+}
+```
+
+The compiler-owned capability registry decides which pickers/runtimes may offer a provider. Unknown
+providers or models fail visibly; they are never rewritten to OpenAI.
+
+The ordinary Agent Builder fallback uses `fallback_llm_provider`, `fallback_llm_model`, and
+`fallback_llm_model_parameters`. GlassHive is an eligible text fallback target, so the built-in Main
+Agent can route GlassHive/Codex to GlassHive/Claude Opus 5. The retry remains one outer chat/Telegram
+turn but receives a distinct provider-attempt idempotency key; otherwise GlassHive would replay the
+failed Codex request. Lifecycle queue/start/provider-switch status stays out of reasoning and does
+not lock pre-authoring recovery. Once visible text or genuine reasoning/plan/tool/file activity
+exists, no second authoring attempt is allowed.
+
+The fallback panel consumes the same compiled capability registry as the primary model panel. That
+is what makes GlassHive readiness, friendly model labels, and the route-scoped High effort control
+visible and persistable instead of leaving a backend-only fallback tuple that the user cannot audit.
+
+`glasshive_options.fallback_*` is a separate advanced provider-internal option. It is configurable,
+disabled by default on the built-in Agent, and must never be silently treated as the Agent Builder
+fallback.
+
 Sources:
 - `LibreChat/packages/data-schemas/src/schema/agent.ts`
 - `LibreChat/packages/data-provider/src/types/assistants.ts`

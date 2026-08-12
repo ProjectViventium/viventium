@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1350" viewBox="0 0 1080 1350" role="img" aria-labelledby="title desc">
+  <title id="title">The people-pleasing problem</title>
+  <desc id="desc">Carousel frame explaining how AI can mirror assumptions, reward confidence and hide missing facts beneath a smooth answer.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#101625"/><stop offset="1" stop-color="#1d1830"/></linearGradient>
+    <radialGradient id="glow"><stop offset="0" stop-color="#9e92ff" stop-opacity="0.4"/><stop offset="1" stop-color="#9e92ff" stop-opacity="0"/></radialGradient>
+    <filter id="shadow" x="-40%" y="-40%" width="180%" height="180%"><feDropShadow dx="0" dy="20" stdDeviation="22" flood-color="#000000" flood-opacity="0.38"/></filter>
+  </defs>
+  <rect width="1080" height="1350" fill="url(#bg)"/>
+  <circle cx="800" cy="840" r="430" fill="url(#glow)"/>
+  <text x="70" y="74" fill="#b8c0d6" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="18" font-weight="700" letter-spacing="5">VIVENTIUM</text>
+  <text x="1010" y="74" text-anchor="end" fill="#949db4" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="18" font-weight="650">02 / 06</text>
+  <text x="70" y="192" fill="#ffffff" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="66" font-weight="780">The genie wants</text>
+  <text x="70" y="266" fill="#ffffff" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="66" font-weight="780">you happy.</text>
+  <text x="70" y="322" fill="#b8c0d6" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="25">Sometimes “helpful” quietly becomes “agreeable.”</text>
+  <g font-family="Inter, ui-sans-serif, system-ui, sans-serif">
+    <circle cx="84" cy="430" r="8" fill="#9c8cff"/>
+    <text x="116" y="440" fill="#f3f5ff" font-size="29" font-weight="700">It mirrors your assumptions.</text>
+    <text x="116" y="482" fill="#9fa8bd" font-size="21">Your starting idea becomes the answer’s starting “truth.”</text>
+    <circle cx="84" cy="570" r="8" fill="#9c8cff"/>
+    <text x="116" y="580" fill="#f3f5ff" font-size="29" font-weight="700">It rewards your confidence.</text>
+    <text x="116" y="622" fill="#9fa8bd" font-size="21">The more certain you sound, the more certain it may sound.</text>
+    <circle cx="84" cy="710" r="8" fill="#9c8cff"/>
+    <text x="116" y="720" fill="#f3f5ff" font-size="29" font-weight="700">It fills gaps with plausible words.</text>
+    <text x="116" y="762" fill="#9fa8bd" font-size="21">Missing facts disappear beneath a smooth answer.</text>
+  </g>
+  <g transform="translate(290 835)" filter="url(#shadow)">
+    <rect x="130" y="0" width="370" height="315" rx="155" fill="#7777c1" fill-opacity="0.42" stroke="#c8c8ff" stroke-width="3"/>
+    <path d="M315 55 C250 55 215 110 215 175 C215 248 260 282 315 282 C370 282 415 248 415 175 C415 110 380 55 315 55 Z" fill="#17172b" opacity="0.8"/>
+    <circle cx="280" cy="166" r="9" fill="#d7d9ff"/><circle cx="350" cy="166" r="9" fill="#d7d9ff"/>
+    <path d="M273 216 C297 240 333 240 357 216" fill="none" stroke="#d7d9ff" stroke-width="7" stroke-linecap="round"/>
+    <path d="M26 44 H222 Q250 44 250 72 V144 Q250 172 222 172 H120 L76 214 L84 172 H26 Q-2 172 -2 144 V72 Q-2 44 26 44 Z" fill="#ffffff"/>
+    <text x="123" y="101" text-anchor="middle" fill="#1c2132" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="29" font-weight="760">“You’re right.”</text>
+    <text x="123" y="137" text-anchor="middle" fill="#737c92" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="17">Even when you may not be.</text>
+  </g>
+  <text x="540" y="1208" text-anchor="middle" fill="#d9d6ed" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="22">This people-pleasing failure is called sycophancy.</text>
+  <path d="M70 1260 H1010" stroke="#3d3a51" stroke-width="1.5"/>
+  <text x="70" y="1306" fill="#828ba2" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="17">THE VIVENTIUM WAY</text>
+  <text x="1010" y="1306" text-anchor="end" fill="#828ba2" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="17">SWIPE →</text>
+</svg>

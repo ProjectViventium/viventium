@@ -107,8 +107,8 @@ runtime:
     provider_profile: launch_ready_only
     anthropic_model: claude-opus-5
     anthropic_effort: xhigh
-    openai_model: gpt-5.6-sol
-    openai_reasoning_effort: xhigh
+    openai_model: gpt-5.6-luna
+    openai_reasoning_effort: medium
     transcripts:
       source_dir: ""
       max_files_per_run: 20
@@ -117,11 +117,13 @@ runtime:
       stable_evidence_max_age_days: 90
       rag_mode: detailed_summary_only
   background_followup_window_s: 30
+  # Optional foreground Agent Provider deadline. Omit by default; operators may set 30-1800.
   ports:
     lc_api_port: 3180
     lc_frontend_port: 3190
     sandpack_bundler_port: 3191
     playground_port: 3300
+    prompt_workbench_port: 8781
     mongo_port: 27117
     meili_port: 7700
     livekit_http_port: 7888
@@ -151,9 +153,10 @@ voice:
   tts:
     voice: coral
     speed: 1.12
-  wing_mode:
-    default_enabled: false
 integrations:
+  health:
+    enabled: false
+    life_projection_dir: ""
   glasshive:
     # The immutable Native payload does not package GlassHive. Source/Docker users
     # can enable the provider from Custom Settings after the component is present.

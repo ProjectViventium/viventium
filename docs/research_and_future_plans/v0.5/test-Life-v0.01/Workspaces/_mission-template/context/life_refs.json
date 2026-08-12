@@ -1,0 +1,11 @@
+{
+  "schemaVersion": "0.1",
+  "references": [
+    {
+      "uri": "life://CURRENT.md",
+      "purpose": "current orientation",
+      "authority": "current_view",
+      "permission": "read"
+    }
+  ]
+}

@@ -189,6 +189,24 @@ also shape delivery through controls the selected TTS provider really supports.
   - recompile generated runtime files
   - rerun doctor before restart
 
+### Cognitive Continuity Is Evidence, Not Hardcoding
+
+- Never turn one missed name, relationship, phrase, or user complaint into a runtime entity rule.
+- The main agent cannot know evidence that was never stored, belongs to another identity, is outside
+  its authorization, or is unavailable from every declared tool. The cognitive system must maximize
+  useful context before the turn and make the remaining limit explicit.
+- Validate continuity with a versioned, frozen, multi-domain bank: relationships, preferences,
+  projects, updates/corrections, exact numbers and dates, absent evidence, distractors,
+  multilingual paraphrases, ordinary language, injection resistance, and selective forgetting.
+- Keep saved memory, conversation recall, current conversation context, tool capability, provider
+  authentication, host-worker authentication, and scheduled maintenance as separate observable
+  planes. Health in one plane never certifies another.
+- A GlassHive `/host` login authenticates the local worker process. It is not the signed-in
+  LibreChat user's OpenAI/Anthropic account, memory identity, recall ACL, or Google/Microsoft OAuth.
+- Connected means the active runtime can use the credential, not merely decrypt a database row.
+  Terminal provider rejection must persist an actionable disconnected state; transient provider
+  outages remain retryable and must not be mislabeled as reconnect.
+
 ### 2.3.1 Shipped Artifact and Pin Discipline
 - A source fix is not shipped just because the tracked file changed.
 - When a feature is delivered through a nested component, compiled `dist/` output, prebuilt helper, shipped binary, or pinned component ref, release readiness requires all relevant surfaces to match:
@@ -355,6 +373,17 @@ also shape delivery through controls the selected TTS provider really supports.
   with preflight/QA coverage, not the default path. Because the host AI and user can ask for unknown
   future work, the runtime gives the worker its full truthful capability surface and lets the worker
   decide how to use it.
+- Controlled QA and enterprise evidence-isolation runs may explicitly set the host-worker native web
+  policy to `disabled`. That policy disables the selected CLI's provider-native web search/fetch
+  tools while leaving the declared signed broker MCP available, and it must participate in native
+  session policy fingerprinting so an older session cannot retain the prior capability. The default
+  remains `inherit`. Never infer this lockdown from prompt text, an Agent/provider name, or the mere
+  presence of a `web_search` tool; it is an operator-owned capability boundary.
+- Viventium-compiled Codex workers default native `personality` to `none`, which disables Codex's
+  separate personality instructions without disabling tools or capabilities. Viventium's final
+  request-scoped Feeling capsule owns emotional/personality behavior. Standalone GlassHive remains
+  neutral to the embedding product and defaults to inheriting the user's native Codex personality;
+  Viventium operators may also explicitly choose `inherit`, `friendly`, or `pragmatic`.
 - Browser/computer capability must be understood as the selected worker's native product surface, not
   as only an MCP inventory item. Claude Code may expose Chrome and computer use through its own
   interactive CLI surfaces; Codex may expose Browser, Chrome, and Computer Use through app/plugin
@@ -720,12 +749,13 @@ A developer referring to a single document about a respective feature **must per
 - **`--prompts-only` safe fields**: `id`, `name`, `description`, `instructions`, `conversation_starters`, `background_cortices` (with safe merge that only touches `activation.enabled`, `activation.prompt`, `activation.confidence_threshold`, and the explicitly reviewed reliability field `activation.fallbacks`). Treat fallback changes as live runtime-behavior changes, not as copy-only prompt edits.
 - **`--activation-config-only` safe fields**: only `background_cortices`, with an allowlist merge over `activation.enabled`, `activation.prompt`, `activation.confidence_threshold`, `activation.fallbacks`, `activation.model`, `activation.provider`, `activation.cooldown_ms`, `activation.max_history`, and `activation.intent_scope`. Use `--activation-fields=...` to narrow further.
 - **`--model-config-only` safe fields**: only agent model/provider fields and their parameter bags
-  (`provider`, `model`, `model_parameters`, `voice_llm_model`, `voice_llm_provider`,
+  (`provider`, `model`, `model_parameters`, `glasshive_options`, `voice_llm_model`, `voice_llm_provider`,
   `voice_llm_model_parameters`, `voice_fallback_llm_model`, `voice_fallback_llm_provider`,
   `voice_fallback_llm_model_parameters`, `fallback_llm_model`, `fallback_llm_provider`,
   `fallback_llm_model_parameters`). Use this when correcting stale model drift without touching
-  tools or prompts. Voice model changes that depend on provider-specific knobs, such as xAI
-  `reasoning_effort: none`, must prove the parameter bag survived the sync.
+  tools or prompts. Use `--model-config-fields=glasshive_options` (or another reviewed field list)
+  when unrelated live model bags must remain untouched. Voice model changes that depend on provider-specific knobs, such as Grok 4.5
+  `reasoning_effort: low`, must prove the parameter bag survived the sync.
 - **Use `--agent-ids=...` for surgical pushes** when only a subset of background agents changed. This keeps model/prompt fixes narrowly scoped instead of rewriting the whole roster.
 - A background-only `--agent-ids` prompt push may merge the selected activation subrecord stored on
   the main-agent document, but it must not update the main agent's top-level instructions, name,
@@ -759,14 +789,16 @@ A developer referring to a single document about a respective feature **must per
   - direct `openAI / gpt-5.6-sol|terra` or `anthropic / claude-opus-5` execution is the explicit
     GlassHive-disabled install profile, not the default for a GlassHive-enabled install
   - `anthropic / claude-opus-5` as the text-execution fallback
-  - voice remains the explicit `xai / grok-4.3` route with `reasoning_effort: none`
+  - voice remains the explicit `xai / grok-4.5` route with `reasoning_effort: low`
 - Memory writers, activation classifiers, helper/title models, and autonomous GlassHive mission
   workers are separate workloads with their own documented model contracts; do not infer their
   model from the GlassHive conversation-provider matrix.
 - Unattended analytical automations default to OpenAI `gpt-5.6-sol` with `xhigh` reasoning. This
-  includes Prompt Workbench/GlassHive scheduled analysis and OpenAI memory hardening. A different
-  route must be an explicit, documented operator fallback with visible requested/effective model
-  evidence; never silently lower the model or effort.
+  includes Prompt Workbench/GlassHive scheduled analysis and the optional independent memory
+  observer. Immediate saved-memory writing and nightly hardening are separate exact-mutation
+  workloads: their evaluated default is OpenAI `gpt-5.6-luna` at `medium`, while deep reflection
+  remains Sol/xHigh. A different route must be an explicit, documented operator fallback with
+  visible requested/effective model evidence; never silently change the governed model or effort.
 - "Automation" in that rule does not mean ordinary conscious chat, user reminder delivery,
   activation classification, voice reactions, or other latency-sensitive in-turn work. Those keep
   their own evaluated contracts. The GlassHive host Codex substrate is shared with direct host
@@ -1097,3 +1129,59 @@ Before making any change, ensure:
 ---
 
 **Remember**: These principles exist to maintain code quality, prevent technical debt, and ensure the project remains maintainable. Follow them consistently in every interaction.
+
+## Cognitive Availability Before Behavioral Prompting
+
+An agent cannot reliably reason from context it was never given and cannot use a capability the
+active provider transport did not expose. Continuity failures must therefore be debugged in this
+order:
+
+1. Did the governed saved-memory snapshot contain the fact within its visible budget?
+2. Was the scoped recall resource attached, healthy, fresh, and queryable?
+3. Did the selected provider receive the same host tools and resources as an in-process agent?
+4. Did the model use the supplied evidence appropriately?
+
+Do not turn a missing-context defect into a prompt-specific instruction to ask about one entity,
+relationship, or phrasing. Natural curiosity is useful only after the cognitive system has supplied
+what it knows and has made unknown/unavailable evidence explicit. Product behavior must distinguish
+`not found in a healthy search` from `search unavailable, stale, timed out, or not delivered`.
+
+The parity requirement applies to Viventium, LibreChat-native providers, GlassHive conversation
+providers, Telegram, browser, voice, and background/callback paths. The same authorized host
+capability must be available through a structured transport; provider labels, agent names, prompt
+text, and user identity are not legal routing predicates.
+
+## Same-Main Continuity And Logical-Turn Integrity
+
+Consciousness Continuity is a recurring opportunity for the existing Main agent to orient to its
+authorized context, appraise the complete nine-band Feeling state alongside goals, plans,
+commitments, evidence, capabilities, and prior outcomes, and intelligently choose whether to act,
+plan, ask, communicate, or remain silent. It is a functional continuity architecture, not a claim
+of phenomenal consciousness and not a second agent, goal engine, reward scalar, emotional-driver
+store, or private inner-monologue database.
+
+The same Main identity, instructions, configured tools, memory, recall, cortices, schedules,
+permissions, conversation history, and `{NTA}` silence contract remain authoritative. Feelings
+shape attention, appraisal, motivation, action selection, language, and learning; they never add
+authority or mechanically select an action. Scheduled origin must not reduce Main's configured
+capability inventory, open unattended OAuth, bypass approval, create a special tool allowlist, or
+turn one Feeling into the master objective.
+
+Logical turns are also a shared product invariant. When a stable external-user segment arrives
+before an assistant presentation commits, the unfinished presentation may be superseded and
+retracted, the ordered user segments remain durable, and one current revision answers the combined
+context. Supersession is not a connection failure. It must be implemented through trusted typed
+context, atomic revision state, and thin adapter capabilities—not prompt-text, surface-name,
+provider-name, or user-identity branches.
+
+Presentation interruption and work cancellation are different operations:
+
+- supersession may retract unfinished assistant text, previews, speech, stale follow-ups, and stale
+  natural-language callbacks;
+- it must not implicitly repeat or cancel committed external effects, durable GlassHive work, or
+  background tasks;
+- only explicit cancellation may stop durable work;
+- completed receipts remain attributable to the surviving logical turn or arrive as a truthful
+  completion follow-up;
+- web, Telegram, voice, scheduler, Workbench/manual runs, callbacks, and future adapters each meet
+  the Quality + Performance outcome metric without inventing channel-specific coordinators.

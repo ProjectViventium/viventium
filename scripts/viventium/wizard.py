@@ -325,9 +325,6 @@ def normalize_preset(config: dict[str, Any]) -> dict[str, Any]:
     primary = llm.setdefault("primary", {})
     secondary = llm.setdefault("secondary", {})
     voice = config.setdefault("voice", {})
-    voice_mode = str(voice.get("mode") or "").strip().lower()
-    if voice_mode == "local" and "wing_mode" not in voice and "shadow_mode" not in voice:
-        voice["wing_mode"] = {"default_enabled": False}
     integrations = config.setdefault("integrations", {})
     integrations.setdefault("code_interpreter", {}).setdefault("enabled", False)
     web_search = integrations.setdefault("web_search", {})
@@ -514,7 +511,6 @@ def build_base_config(
             "stt_provider": "whisper_local",
             "tts_provider": "browser",
             "tts_provider_fallback": "",
-            "wing_mode": {"default_enabled": False},
         },
         "integrations": {
             "scheduling_cortex": {"enabled": False},
@@ -850,9 +846,10 @@ def set_local_voice_defaults(config: dict[str, Any]) -> None:
     voice["mode"] = "local"
     voice["stt_provider"] = "whisper_local"
     voice["tts_provider"] = default_local_tts_provider()
-    voice["tts_provider_fallback"] = (
-        "openai" if voice["tts_provider"] == LOCAL_TTS_PROVIDER else ""
-    )
+    # Local voice is a strict zero-cloud-egress route. Provider fallback is selected only by an
+    # explicit hosted configuration; the compiler and gateway both fail closed on a cross-class
+    # fallback.
+    voice["tts_provider_fallback"] = ""
 
 
 def set_hosted_voice_defaults(config: dict[str, Any]) -> None:

@@ -23,7 +23,7 @@ Additional current QA artifacts:
 - `qa/background_agents/phase_b_main_fallback_persistence_2026-05-09.md` — main-model fallback regression proving in-flight Phase B work is preserved and persisted against the final fallback/primary answer
 - `qa/background_agents/late_stream_termination_rendering_2026-05-09.md` — web rendering/backend persistence regression for assistant messages that have visible text plus a late stream-termination error part
 - `qa/background_agents/visible_cards_browser_qa_2026-05-10.md` — real browser regression proving named background-agent cards are visible, persisted after reload, and stored as successful terminal cortex insights
-- `qa/background_agents/reports/2026-07-09-gpt-5-6-conscious-subconscious-routing.md` — GPT-5.6 Sol/Terra workload routing, Opus 4.8 fallback, live sync, and QA-account browser acceptance
+- `qa/background_agents/reports/2026-07-09-gpt-5-6-conscious-subconscious-routing.md` — historical GPT-5.6 Sol/Terra routing and former direct-fallback browser acceptance
 - `qa/background_agents/reports/2026-07-09-activation-routing-model-eval.md` — full 11-cortex Prompt Workbench classifier corpus, Scout/Qwen/GPT-OSS comparison, prompt repair, runtime model controls, and QA-account acceptance
 - `qa/background_agents/reports/2026-07-09-interruption-restart-browser-qa.md` — ACT-37 real browser/Mongo supported-stop-start acceptance proving active-state durability, stale startup recovery, expanded terminal reload detail, and no generation placeholder
 

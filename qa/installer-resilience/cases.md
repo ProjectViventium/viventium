@@ -1172,6 +1172,7 @@ rows before claiming a pass when the feature behavior changes.
 - `tests/release/test_doctor_sh.py`
 - `tests/release/test_express_launcher_summary.py`
 - `tests/release/test_install_summary.py`
+- `tests/release/test_viventium_health_integration.py`
 - `tests/release/test_install_experience_labels.py`
 - `tests/release/test_installer_ui.py`
 - `tests/release/test_preflight.py`

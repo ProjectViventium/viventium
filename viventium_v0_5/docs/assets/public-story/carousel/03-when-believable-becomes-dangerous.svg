@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1350" viewBox="0 0 1080 1350" role="img" aria-labelledby="title desc">
+  <title id="title">When believable becomes dangerous</title>
+  <desc id="desc">Carousel frame showing a polished wrong answer influencing a choice, an action and a real outcome.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#fffaf0"/><stop offset="1" stop-color="#f7ede8"/></linearGradient>
+    <linearGradient id="danger" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#e66b56"/><stop offset="1" stop-color="#b83943"/></linearGradient>
+    <filter id="shadow" x="-50%" y="-50%" width="200%" height="200%"><feDropShadow dx="0" dy="18" stdDeviation="18" flood-color="#743c35" flood-opacity="0.18"/></filter>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 Z" fill="#a14f43"/></marker>
+  </defs>
+  <rect width="1080" height="1350" fill="url(#bg)"/>
+  <circle cx="980" cy="120" r="230" fill="#f5dcd0" opacity="0.65"/>
+  <circle cx="85" cy="1240" r="180" fill="#fae6cf" opacity="0.65"/>
+  <text x="70" y="74" fill="#615b58" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="18" font-weight="700" letter-spacing="5">VIVENTIUM</text>
+  <text x="1010" y="74" text-anchor="end" fill="#7e7470" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="18" font-weight="650">03 / 06</text>
+  <text x="70" y="186" fill="#2c2524" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="62" font-weight="780">A wrong answer</text>
+  <text x="70" y="256" fill="#2c2524" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="62" font-weight="780">can still feel right.</text>
+  <text x="70" y="314" fill="#6a5f5b" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="25">Believable words can quietly steer a real decision.</text>
+  <g transform="translate(135 360)" font-family="Inter, ui-sans-serif, system-ui, sans-serif" text-anchor="middle">
+    <path d="M30 0 H410 Q440 0 440 30 V154 Q440 184 410 184 H155 L92 240 L104 184 H30 Q0 184 0 154 V30 Q0 0 30 0 Z" fill="#ffffff" stroke="#ddc9c1" stroke-width="2" filter="url(#shadow)"/>
+    <text x="220" y="78" fill="#403535" font-size="34" font-weight="760">“This sounds right.”</text>
+    <text x="220" y="126" fill="#8a7670" font-size="21">polished · confident · personal</text>
+    <path d="M220 246 V328" stroke="#a14f43" stroke-width="4" marker-end="url(#arrow)"/>
+    <rect x="90" y="355" width="260" height="96" rx="48" fill="#f0ba76" filter="url(#shadow)"/>
+    <text x="220" y="414" fill="#513b2b" font-size="27" font-weight="780">CHOICE</text>
+    <path d="M220 462 V540" stroke="#a14f43" stroke-width="4" marker-end="url(#arrow)"/>
+    <rect x="90" y="567" width="260" height="96" rx="48" fill="#dc8d60" filter="url(#shadow)"/>
+    <text x="220" y="626" fill="#ffffff" font-size="27" font-weight="780">ACTION</text>
+    <path d="M220 674 V752" stroke="#a14f43" stroke-width="4" marker-end="url(#arrow)"/>
+    <rect x="55" y="779" width="330" height="104" rx="52" fill="url(#danger)" filter="url(#shadow)"/>
+    <text x="220" y="843" fill="#ffffff" font-size="29" font-weight="780">REAL OUTCOME</text>
+  </g>
+  <text x="780" y="600" text-anchor="middle" fill="#b83943" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="47" font-weight="800">CONFIDENT</text>
+  <text x="780" y="660" text-anchor="middle" fill="#b83943" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="47" font-weight="800">≠</text>
+  <text x="780" y="720" text-anchor="middle" fill="#b83943" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="47" font-weight="800">CORRECT</text>
+  <text x="780" y="790" text-anchor="middle" fill="#695c58" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="22">The more the answer matters,</text>
+  <text x="780" y="824" text-anchor="middle" fill="#695c58" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="22">the more dangerous pleasing</text>
+  <text x="780" y="858" text-anchor="middle" fill="#695c58" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="22">certainty becomes.</text>
+  <path d="M70 1260 H1010" stroke="#ddcec8" stroke-width="1.5"/>
+  <text x="70" y="1306" fill="#8b7f7a" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="17">THE VIVENTIUM WAY</text>
+  <text x="1010" y="1306" text-anchor="end" fill="#8b7f7a" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="17">SWIPE →</text>
+</svg>

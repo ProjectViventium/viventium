@@ -1,0 +1,3 @@
+{"schemaVersion":"0.1","sequence":1,"timestamp":"YYYY-MM-DDTHH:MM:SSZ","kind":"message","role":"user","sourceRef":"source://task/example/message/1","content":"Synthetic example request."}
+{"schemaVersion":"0.1","sequence":2,"timestamp":"YYYY-MM-DDTHH:MM:SSZ","kind":"message","role":"assistant","sourceRef":"source://task/example/message/2","content":"Synthetic visible response."}
+{"schemaVersion":"0.1","sequence":3,"timestamp":"YYYY-MM-DDTHH:MM:SSZ","kind":"tool_result","tool":"example_read_only_tool","status":"successful_empty","sourceRef":"source://task/example/tool/1","content":"No relevant evidence found."}

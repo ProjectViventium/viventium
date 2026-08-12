@@ -223,11 +223,17 @@ def test_config_compile_runs_native_continuity_and_release_boundary_suites() -> 
     assert "python scripts/viventium/bootstrap_components.py" in source
     assert '--config config.full.example.yaml' in source
     assert '--jobs 1' in source
+    assert "modern-playground-selection.yaml" in source
+    assert "'  mode: local'" in source
+    assert "'  playground_variant: modern'" in source
     assert "Install LibreChat workspace dependencies" in source
     assert "npm ci --ignore-scripts" in source
     assert "npm run build:packages" in source
     assert "Install modern playground dependencies" in source
     assert "corepack pnpm install --frozen-lockfile --ignore-scripts" in source
+    assert source.index("modern-playground-selection.yaml") < source.index(
+        "Install modern playground dependencies"
+    )
     assert source.index("bootstrap_components.py") < source.index("python -m pytest")
     assert source.index("npm run build:packages") < source.index("python -m pytest")
     assert source.index("pnpm install") < source.index("python -m pytest")
@@ -295,6 +301,16 @@ def test_pr_gate_push_triggers_only_default_branch() -> None:
         assert re.search(r"\n  push:\n    branches:\n      - main\n", trigger_source), (
             f"{workflow_name}: feature-branch pushes must not duplicate pull-request checks"
         )
+
+
+def test_productivity_contract_fetches_pinned_component_before_source_checks() -> None:
+    source = _workflow_sources()["productivity-activation-contract.yml"]
+
+    assert "Fetch and validate the exact pinned contract components" in source
+    assert "scripts/viventium/bootstrap_components.py" in source
+    assert "--validate-only" in source
+    assert "--strict-pinned" in source
+    assert source.index("bootstrap_components.py") < source.index("python3 -m pytest")
 
 
 def test_changed_release_workflows_do_not_persist_checkout_credentials() -> None:

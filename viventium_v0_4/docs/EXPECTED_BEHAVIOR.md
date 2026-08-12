@@ -126,7 +126,22 @@ Conversation exports must render background events as readable text (not raw JSO
   intensity rules or post-hoc amplification.
 
 ## Voice Parity Rules
+- Clicking **Call** is the complete product start action. A valid signed session auto-connects when
+  microphone permission is already granted; first-use browser permission is the only unavoidable
+  prompt. Call, Wing, and Listen-Only switch atomically inside the same RTC room.
 - Voice calls must follow the same non-blocking contract as text chat.
+- Tool/search/work status and sources come only from authoritative `VoiceTaskEventV1` state. The UI
+  shows input/retry/cancel controls only when the owning runtime advertises that real capability;
+  unsupported input requests fail visibly instead of presenting a dead textbox.
+- Barge-in interrupts speech while authoritative work continues. Only explicit task-id cancellation
+  requests owner cancellation and installs a durable zero-output suppression barrier. Hangup ends
+  audio immediately while already-started work continues in linked chat.
+- AssemblyAI speaker labels and separate participant tracks are applied automatically. Provider
+  labels are call-scoped, never identity; a second speaker on one track downgrades all speakers on
+  that track to unverified, and ambiguity abstains to `Unknown`.
+- Durable voice-derived memory is deferred until post-call processing. Only owner-trusted,
+  single-speaker Call content may enter the normal memory writer; Wing, Listen-Only, mixed/shared-
+  mic, guest, and unverified content remains soft evidence, with one call counted as one source.
 - After the main response, voice should speak only a persisted main-agent follow-up message.
 - Raw background insights must never be spoken directly as a fallback in modern-playground voice.
 - Empty voice follow-up generation for a normal follow-up stays silent; fallback insight text is

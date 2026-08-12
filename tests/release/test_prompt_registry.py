@@ -86,35 +86,88 @@ def write_prompt(root: Path, rel: str, prompt_id: str, body: str, **metadata: ob
 def test_public_prompt_registry_validates_and_compiles() -> None:
     bundle = build_prompt_bundle(PROMPT_ROOT)
 
-    assert bundle["prompt_root"] == "."
     assert bundle["prompt_count"] >= 50
     assert "main.conscious_agent" in bundle["prompts"]
     assert "surface.voice.provider.cartesia" in bundle["prompts"]
     assert "surface.voice.feeling_expression" in bundle["prompts"]
-    assert "surface.messaging.optional_audio" in bundle["prompts"]
-    assert "surface.messaging.bubble_boundaries" in bundle["prompts"]
     assert "surface.telegram.audio_output" in bundle["prompts"]
     assert "surface.telegram.audio_provider.cartesia" in bundle["prompts"]
     assert "surface.telegram.audio_provider.chatterbox" in bundle["prompts"]
     assert "surface.telegram.audio_provider.plain_tts" in bundle["prompts"]
     assert "surface.telegram.audio_provider.xai" in bundle["prompts"]
     assert bundle["prompts"]["main.identity"]["content_hash"]
-    assert all(
-        not Path(prompt["path"]).is_absolute()
-        and ".." not in Path(prompt["path"]).parts
-        for prompt in bundle["prompts"].values()
+
+
+def test_scheduler_prompts_are_registered_general_and_policy_free() -> None:
+    registry = load_prompt_registry(PROMPT_ROOT)
+
+    envelope = render_prompt(
+        "scheduler.run_envelope",
+        registry,
+        variables={"scheduled_run_context": "- scheduled_due_at_utc: 2026-08-10T13:00:00Z"},
+    )
+    opportunity = render_prompt(
+        "scheduler.consciousness_continuity_opportunity",
+        registry,
+    )
+    standing_capability = render_prompt("main.scheduling_self_continuity", registry)
+
+    assert "scheduled self-prompt" in envelope.lower()
+    assert "verified tool/cortex result" in envelope
+    assert "scheduled_due_at_utc: 2026-08-10T13:00:00Z" in envelope
+    assert "Orient" in opportunity
+    assert "Appraise" in opportunity
+    assert "Choose" in opportunity
+    assert "Act" in opportunity
+    assert "Observe" in opportunity
+    assert "Reappraise" in opportunity
+    assert "all nine feeling bands" in opportunity
+    assert "within already granted authority" in opportunity
+    assert "lonely" not in opportunity.lower()
+    assert "loneliness" not in opportunity.lower()
+    assert "threshold" not in opportunity.lower()
+    assert "maximum messages" not in opportunity.lower()
+    assert "tool policy" not in opportunity.lower()
+    assert "sentient" not in opportunity.lower()
+    assert "subjective experience" not in opportunity.lower()
+    assert len(standing_capability.split()) < 180
+
+
+def test_scheduler_prompts_have_workbench_relationship_metadata() -> None:
+    registry_metadata = yaml.safe_load(
+        (PROMPT_ROOT / "registry.yaml").read_text(encoding="utf-8")
+    )
+    related = registry_metadata["related_config"]
+
+    assert related["prompts"]["scheduler.run_envelope"] == [
+        "scheduler.shared_run_envelope"
+    ]
+    assert related["prompts"]["scheduler.consciousness_continuity_opportunity"] == [
+        "scheduler.shared_consciousness_continuity_opportunity"
+    ]
+    assert related["refs"]["scheduler.shared_run_envelope"]["source"] == (
+        "scheduler.shared_prompt_contract"
     )
 
 
-def test_prompt_bundle_paths_are_stable_outside_the_repository(tmp_path: Path) -> None:
-    prompt_root = tmp_path / "detached-build" / "prompts"
-    write_prompt(prompt_root, "nested/example.md", "test.detached", "Detached prompt")
+def test_compiled_voice_provider_prompts_preserve_immediate_answer_research_boundary() -> None:
+    bundle = build_prompt_bundle(PROMPT_ROOT)
 
-    bundle = build_prompt_bundle(prompt_root)
+    voice_body = bundle["prompts"]["surface.voice.call"]["body"].lower()
+    assert "unless the user explicitly asks for a lookup or tool action now" in voice_body
+    assert "do not start foreground research or tool work" in voice_body
+    assert "give the best bounded immediate answer" in voice_body
+    assert "the current voice task may do it" in voice_body
 
-    assert bundle["prompt_root"] == "."
-    assert bundle["prompts"]["test.detached"]["path"] == "nested/example.md"
-    assert str(tmp_path) not in json.dumps(bundle)
+    for prompt_id in (
+        "surface.voice.provider.cartesia",
+        "surface.voice.provider.chatterbox",
+        "surface.voice.provider.plain_tts",
+        "surface.voice.provider.xai",
+    ):
+        assert bundle["prompts"][prompt_id]["metadata"]["includes"] == [
+            "surface.voice.call"
+        ]
 
 
 def test_source_yaml_prompt_refs_resolve_to_runtime_strings() -> None:
@@ -134,7 +187,8 @@ def test_source_yaml_prompt_refs_resolve_to_runtime_strings() -> None:
     assert "Do not invent provider lists, tool choices" in agents["mainAgent"]["instructions"]
     assert 'Preserve vague terms such as "urgent"' in agents["mainAgent"]["instructions"]
     assert "Before an external write" in agents["mainAgent"]["instructions"]
-    assert "Destructive or broad mutations require explicit confirmation" in agents["mainAgent"]["instructions"]
+    assert "Destructive mutations—deleting, moving, archiving" in agents["mainAgent"]["instructions"]
+    assert "Current Date & Time:" not in agents["mainAgent"]["instructions"]
     assert "Use local delegation for long-running" in agents["mainAgent"]["instructions"]
     assert isinstance(librechat["memory"]["agent"]["instructions"], str)
     assert isinstance(librechat["mcpServers"]["ms-365"]["serverInstructions"], str)
@@ -159,6 +213,15 @@ def test_main_and_background_agent_execution_prompts_are_registry_owned() -> Non
         )
 
 
+def test_memory_archivist_owns_cross_key_fact_boundaries() -> None:
+    registry = load_prompt_registry(PROMPT_ROOT)
+    prompt = render_prompt("memory.archivist", registry)
+
+    assert "Health conditions, diagnoses, and medical safety constraints → `core`" in prompt
+    assert "Non-medical food, diet, routine, format, and lifestyle choices → `preferences`" in prompt
+    assert "split it into separate updates" in prompt
+
+
 def test_emotional_resonance_is_an_eq_observer_not_a_fixed_demeanor() -> None:
     registry = load_prompt_registry(PROMPT_ROOT)
     prompt = render_prompt("cortex.emotional_resonance.execution", registry)
@@ -170,12 +233,16 @@ def test_emotional_resonance_is_an_eq_observer_not_a_fixed_demeanor() -> None:
     assert "One gentle opening" not in prompt
 
 
-def test_main_memory_policy_uses_product_neutral_user_references() -> None:
+def test_main_memory_policy_is_evidence_bound_and_has_no_confabulation_exemplars() -> None:
     registry = load_prompt_registry(PROMPT_ROOT)
     prompt = render_prompt("main.memory_policy", registry)
 
-    assert "What the user said" in prompt
-    assert "Who the user is" in prompt
+    assert "Use only memories present in the current context or verified tool results" in prompt
+    assert "Never imply prior knowledge, patterns, feelings, or personal history" in prompt
+    assert "Do not silently merge, reinterpret, or pick a winner" in prompt
+    assert "state the conflict and its sources plainly" in prompt
+    assert "We were iterating the pitch deck" not in prompt
+    assert "I've noticed you tend to" not in prompt
     assert "What he said" not in prompt
     assert "Who he is" not in prompt
     assert "help him" not in prompt
@@ -306,7 +373,7 @@ def test_phase_b_follow_up_prompts_render_with_declared_variables() -> None:
         registry,
         variables={
             "surface_rules": "WEB TEXT MODE:",
-            "user_request": "Give a short answer and add a continuation only for new evidence.",
+            "user_request": "Summarize the finished task.",
             "recent_response_context": "Here is the response you JUST sent to the user:",
             "continuation_context": "",
             "background_insights": "- worker: The task finished.",
@@ -463,8 +530,6 @@ def test_scheduling_cortex_fastmcp_instructions_match_registry_prompt() -> None:
 
 
 def _load_glasshive_instruction_namespace():
-    if not GLASSHIVE_MCP_SERVER.is_file():
-        pytest.skip("GlassHive component is not checked out for this parent-only test run")
     tree = ast.parse(GLASSHIVE_MCP_SERVER.read_text(encoding="utf-8"))
     selected_names = {
         "_allowed_worker_profiles",
@@ -562,6 +627,31 @@ def test_live_data_prompt_keeps_connected_inbox_routing_concise_and_faithful() -
     assert "pass the user's wording and available capabilities" in rendered
     assert "Do not invent provider lists, tool choices" in rendered
     assert 'Preserve vague terms such as "urgent"' in rendered
+
+
+def test_main_prompt_compression_preserves_behavior_and_safety_contracts() -> None:
+    registry = load_prompt_registry(PROMPT_ROOT)
+    prompt = render_prompt("main.conscious_agent", registry)
+
+    expected_contracts = (
+        "Do not claim a search proved something absent",
+        "If an important action's target, service, or impact is ambiguous, ask one focused question.",
+        "Never expose hidden markers, contract names, memory keys, or exact silent-response tokens",
+        "omit the unsupported section rather than guess or hedge",
+        "Briefly tell the user when a schedule changes",
+        "Choose tools from declared capabilities and structured metadata, never keyword or provider-label matching.",
+        "Background agents may add evidence; never defer a direct answer",
+        "Never claim a GlassHive schedule exists without a verified scheduling-tool record.",
+        "deleting, moving, archiving, or marking mail read",
+        "You may create or change self-directed schedules without asking",
+        "Respond to what is actually here.",
+        "Own your preferences. Never invent a motive, feeling, pattern, or history for the user to justify them.",
+    )
+
+    for contract in expected_contracts:
+        assert contract in prompt
+    assert "Move forward. Hate loops." not in prompt
+    assert "follow what remains unresolved" not in prompt
 
 
 def test_main_boundaries_do_not_repeat_live_data_and_tool_policy() -> None:

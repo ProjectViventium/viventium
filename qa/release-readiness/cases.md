@@ -207,14 +207,14 @@ Use `REL-NNN` for release-readiness and public-push packaging checks.
 - Forbidden result: stale ref or unreviewed local nested changes.
 - Evidence to capture: parent diff and nested SHA.
 - Automation: git inspection.
-- Last run: PASS 2026-08-10. The current candidate declares `merged`. It pins LibreChat PR 97
-  at merge commit `ccfd307c3b6bd5573c58dfc4f16b84fc691fef4f`, agent-starter-react
-  PR 10 merge commit `98d1249db7a728e94656462d6bda979571be4dd7`, and GlassHive PRs 50–74
-  at merge commit `94c99e3fdcf05d799b5d02e6a188071dc4fbc0eb`; each merge tree equals its reviewed
-  head. Google Workspace MCP PR 9 is pinned at merge commit
-  `0824701abcf490de2a5091c68a7b0738f2294b3f`. The Native policy pins the same LibreChat commit
-  and intentionally contains no GlassHive, Google Workspace MCP, or playground component.
-  Remote-main/install identity gates remain before release acceptance.
+- Last run: PASS 2026-08-12. The isolated prerelease candidate declares `merged`. It pins
+  LibreChat merge commit `b8501b3c3c752b86663aa846019f59f7855d8634`, agent-starter-react merge commit
+  `95b324c7498c50a7421751e5dd71971e268a3a84`, GlassHive merge commit
+  `3f4f74c90e6de15444bbd71fa12406d0c5d47337`, and Viventium-Health merge commit
+  `91a9bbf5ff8bd0963dd3dc33bfd388c66fa7ed69`. Each merge tree equals its audited review head.
+  Google Workspace MCP PR 9 remains pinned at merge commit
+  `0824701abcf490de2a5091c68a7b0738f2294b3f`. The Native policy pins the same merged LibreChat
+  commit and intentionally contains no GlassHive, Google Workspace MCP, or playground component.
 
 ## `REL-004` - Browser-Visible Background Cards
 

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
+import shlex
+import pytest
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -78,7 +80,10 @@ def test_express_native_can_skip_meilisearch_without_changing_stop_cleanup() -> 
     assert 'NATIVE_STACK_SKIP_MEILI="${VIVENTIUM_NATIVE_STACK_SKIP_MEILI:-0}"' in script_text
     assert 'if [[ "$NATIVE_STACK_SKIP_MEILI" != "1" ]]; then' in start_case
     assert "start_meili" in start_case
-    assert 'stop_pid_file "$MEILI_PID_FILE" "Meilisearch"' in stop_case
+    assert (
+        'stop_pid_file_if_matches "$MEILI_PID_FILE" "Meilisearch" '
+        "meili_process_matches_expected"
+    ) in stop_case
 
 
 def test_native_mongo_stop_requires_a_fresh_running_engine_receipt() -> None:
@@ -167,9 +172,10 @@ def test_detect_livekit_node_ip_prefers_lan_interface_address() -> None:
         [
             "bash",
             "-lc",
-            (
-                "set -euo pipefail\n"
-                "route() { printf '   interface: en7\\n'; }\n"
+                (
+                    "set -euo pipefail\n"
+                    "unset LIVEKIT_NODE_IP\n"
+                    "route() { printf '   interface: en7\\n'; }\n"
                 "ipconfig() {\n"
                 "  if [[ \"$1\" == \"getifaddr\" && \"$2\" == \"en7\" ]]; then\n"
                 "    printf '192.0.2.10\\n'\n"
@@ -198,9 +204,10 @@ def test_detect_livekit_node_ip_falls_back_to_loopback() -> None:
         [
             "bash",
             "-lc",
-            (
-                "set -euo pipefail\n"
-                "route() { return 1; }\n"
+                (
+                    "set -euo pipefail\n"
+                    "unset LIVEKIT_NODE_IP\n"
+                    "route() { return 1; }\n"
                 "ipconfig() { return 1; }\n"
                 "hostname() { return 1; }\n"
                 f"{function_def}"
@@ -353,7 +360,10 @@ def test_start_mongo_refuses_a_listener_with_unexpected_persistence_identity() -
             (
                 "set -euo pipefail\n"
                 "MONGO_PORT='27117'\n"
+                "MONGO_PID_FILE='/tmp/viventium-synthetic-mongod.pid'\n"
                 "port_listening() { return 0; }\n"
+                "resolve_unique_listener_pid() { printf '222\\n'; }\n"
+                "mongo_process_matches_expected() { return 0; }\n"
                 "mongo_listener_matches_expected() { return 1; }\n"
                 f"{function_def}"
                 "start_mongo\n"
@@ -380,8 +390,12 @@ def test_start_mongo_reuses_a_listener_with_matching_persistence_identity() -> N
             (
                 "set -euo pipefail\n"
                 "MONGO_PORT='27117'\n"
+                "MONGO_PID_FILE='/tmp/viventium-synthetic-mongod.pid'\n"
                 "port_listening() { return 0; }\n"
+                "resolve_unique_listener_pid() { printf '222\\n'; }\n"
+                "mongo_process_matches_expected() { return 0; }\n"
                 "mongo_listener_matches_expected() { return 0; }\n"
+                "write_pid() { :; }\n"
                 f"{function_def}"
                 "start_mongo\n"
             ),
@@ -576,3 +590,425 @@ def test_start_livekit_skip_cleanly_delegates_to_the_release_launcher() -> None:
     assert completed.returncode == 0
     assert "launcher will own LiveKit startup" in completed.stdout
     assert completed.stderr == ""
+
+
+def test_native_stop_refuses_a_stale_pid_that_fails_runtime_identity(tmp_path: Path) -> None:
+    script_text = NATIVE_STACK_PATH.read_text(encoding="utf-8")
+    function_def = extract_shell_function(script_text, "stop_pid_file_if_matches")
+    pid_file = tmp_path / "native.pid"
+    pid_file.write_text("4242\n", encoding="utf-8")
+
+    completed = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                "set -euo pipefail\n"
+                f"PID_FILE='{pid_file}'\n"
+                "kill() { return 0; }\n"
+                "process_matches() { return 1; }\n"
+                "stop_pid() { printf 'killed:%s\\n' \"$1\"; }\n"
+                f"{function_def}"
+                "stop_pid_file_if_matches \"$PID_FILE\" 'Synthetic service' process_matches\n"
+                "if [[ -f \"$PID_FILE\" ]]; then printf 'pid-file=present\\n'; else printf 'pid-file=removed\\n'; fi\n"
+            ),
+        ],
+        cwd=REPO_ROOT,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+    assert "killed:" not in completed.stdout
+    assert "Skipping stale Synthetic service PID 4242" in completed.stderr
+    assert "pid-file=removed" in completed.stdout
+
+
+def test_native_identity_reads_full_argv_and_rejects_a_foreign_runtime(tmp_path: Path) -> None:
+    script_text = NATIVE_STACK_PATH.read_text(encoding="utf-8")
+    function_names = [
+        "process_command_line",
+        "process_executable_identity",
+        "process_executable_basename_matches",
+        "mongo_executable_matches_expected",
+        "command_line_has_option_value",
+        "canonical_existing_dir",
+        "mongo_process_matches_expected",
+        "meili_process_matches_expected",
+    ]
+    defs = "".join(extract_shell_function(script_text, name) for name in function_names)
+    selected_root = tmp_path / "selected runtime"
+    # Keep the foreign data dirs prefixed by the selected dirs to prove
+    # ownership checks compare complete argument values, not path substrings.
+    selected_mongo = selected_root / "mongo-data"
+    selected_meili = selected_root / "meili-data"
+    foreign_mongo = Path(f"{selected_mongo}-foreign")
+    foreign_meili = Path(f"{selected_meili}-foreign")
+    for path in (selected_mongo, selected_meili, foreign_mongo, foreign_meili):
+        path.mkdir(parents=True)
+
+    completed = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                "set -euo pipefail\n"
+                f"MONGO_DATA_DIR={shlex.quote(str(selected_mongo))}\n"
+                "MONGO_PORT='32117'\n"
+                f"MEILI_DATA_DIR={shlex.quote(str(selected_meili))}\n"
+                "MEILI_HOST='127.0.0.1'\n"
+                "MEILI_PORT='12700'\n"
+                f"SELECTED_MONGO={shlex.quote(str(selected_mongo))}\n"
+                f"SELECTED_MEILI={shlex.quote(str(selected_meili))}\n"
+                f"FOREIGN_MONGO={shlex.quote(str(foreign_mongo))}\n"
+                f"FOREIGN_MEILI={shlex.quote(str(foreign_meili))}\n"
+                "ps() {\n"
+                "  if [[ \" $* \" != *' -ww '* ]]; then\n"
+                "    printf '/opt/viventium/bin/native-service --identity-output-truncated\\n'\n"
+                "    return 0\n"
+                "  fi\n"
+                "  case \" $* \" in\n"
+                "    *' -o comm= '*) printf '/opt/homebrew/bi\\n' ;;\n"
+                "    *' -o ucomm= '*)\n"
+                "      case \" $* \" in\n"
+                "        *' -p 10'* ) printf 'mongod\\n' ;;\n"
+                "        *' -p 20'* ) printf 'meilisearch\\n' ;;\n"
+                "      esac\n"
+                "      ;;\n"
+                "    *' -p 101 '*) printf '/opt/viventium/bin/mongod --bind_ip 127.0.0.1 --port 32117 --dbpath %s --logpath /tmp/mongod.log\\n' \"$SELECTED_MONGO\" ;;\n"
+                "    *' -p 102 '*) printf '/opt/viventium/bin/mongod --bind_ip 127.0.0.1 --port 32117 --dbpath %s --logpath /tmp/mongod.log\\n' \"$FOREIGN_MONGO\" ;;\n"
+                "    *' -p 201 '*) printf '/opt/viventium/bin/meilisearch --http-addr 127.0.0.1:12700 --master-key synthetic --db-path %s --no-analytics\\n' \"$SELECTED_MEILI\" ;;\n"
+                "    *' -p 202 '*) printf '/opt/viventium/bin/meilisearch --http-addr 127.0.0.1:12700 --master-key synthetic --db-path %s --no-analytics\\n' \"$FOREIGN_MEILI\" ;;\n"
+                "  esac\n"
+                "}\n"
+                f"{defs}"
+                "for pair in 'mongo_process_matches_expected 101 selected-mongo' 'mongo_process_matches_expected 102 foreign-mongo' 'meili_process_matches_expected 201 selected-meili' 'meili_process_matches_expected 202 foreign-meili'; do\n"
+                "  set -- $pair\n"
+                "  if \"$1\" \"$2\"; then printf '%s=match\\n' \"$3\"; else printf '%s=mismatch\\n' \"$3\"; fi\n"
+                "done\n"
+            ),
+        ],
+        cwd=REPO_ROOT,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+    assert completed.stdout.strip().splitlines() == [
+        "selected-mongo=match",
+        "foreign-mongo=mismatch",
+        "selected-meili=match",
+        "foreign-meili=mismatch",
+    ]
+
+
+def test_native_matchers_reject_reused_pid_lookalikes_and_livekit_prefixes(
+    tmp_path: Path,
+) -> None:
+    script_text = NATIVE_STACK_PATH.read_text(encoding="utf-8")
+    function_names = [
+        "process_command_line",
+        "process_executable_identity",
+        "process_executable_basename_matches",
+        "mongo_executable_matches_expected",
+        "command_line_has_option_value",
+        "canonical_existing_dir",
+        "mongo_process_matches_expected",
+        "meili_process_matches_expected",
+        "livekit_command_matches_expected",
+    ]
+    defs = "".join(extract_shell_function(script_text, name) for name in function_names)
+    mongo_data = tmp_path / "selected runtime" / "mongo-data"
+    meili_data = tmp_path / "selected runtime" / "meili-data"
+    livekit_config = tmp_path / "selected runtime" / "livekit" / "livekit.yaml"
+    mongo_data.mkdir(parents=True)
+    meili_data.mkdir(parents=True)
+    livekit_config.parent.mkdir(parents=True)
+
+    completed = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                "set -euo pipefail\n"
+                f"MONGO_DATA_DIR={shlex.quote(str(mongo_data))}\n"
+                "MONGO_PORT='32117'\n"
+                f"MEILI_DATA_DIR={shlex.quote(str(meili_data))}\n"
+                "MEILI_HOST='127.0.0.1'\n"
+                "MEILI_PORT='12700'\n"
+                f"LIVEKIT_CFG_FILE={shlex.quote(str(livekit_config))}\n"
+                "LIVEKIT_NODE_IP='192.0.2.10'\n"
+                "VIVENTIUM_INSTALL_EXPERIENCE='legacy'\n"
+                "MONGODB_NATIVE_BINARY='/opt/viventium/pinned/mongod'\n"
+                "ps() {\n"
+                "  case \" $* \" in\n"
+                "    *' -o comm= '*) printf '/opt/homebrew/bi\\n' ;;\n"
+                "    *' -o ucomm= '*)\n"
+                "      case \" $* \" in\n"
+                "        *' -p 301 '*) printf 'mongod-wrapper\\n' ;;\n"
+                "        *' -p 302 '*) printf 'meilisearch-helper\\n' ;;\n"
+                "        *' -p 303 '*) printf 'mongod\\n' ;;\n"
+                "        *' -p 400 '*) printf 'livekit-server\\n' ;;\n"
+                "        *' -p 401 '*) printf 'livekit-server-helper\\n' ;;\n"
+                "        *' -p 402 '*) printf 'livekit-server\\n' ;;\n"
+                "        *' -p 403 '*) printf 'livekit-server\\n' ;;\n"
+                "      esac\n"
+                "      ;;\n"
+                "    *' -o command= '*)\n"
+                "      case \" $* \" in\n"
+                "        *' -p 301 '*) printf '/opt/synthetic/mongod-wrapper --port 32117 --dbpath %s\\n' \"$MONGO_DATA_DIR\" ;;\n"
+                "        *' -p 302 '*) printf '/opt/synthetic/meilisearch-helper --http-addr 127.0.0.1:12700 --db-path %s\\n' \"$MEILI_DATA_DIR\" ;;\n"
+                "        *' -p 303 '*) printf '/opt/homebrew/bin/mongod --port 32117 --dbpath %s\\n' \"$MONGO_DATA_DIR\" ;;\n"
+                "        *' -p 400 '*) printf '/opt/synthetic/livekit-server --config %s --node-ip 192.0.2.10\\n' \"$LIVEKIT_CFG_FILE\" ;;\n"
+                "        *' -p 401 '*) printf '/opt/synthetic/livekit-server-helper --config %s --node-ip 192.0.2.10\\n' \"$LIVEKIT_CFG_FILE\" ;;\n"
+                "        *' -p 402 '*) printf '/opt/synthetic/livekit-server --config %s-foreign --node-ip 192.0.2.10\\n' \"$LIVEKIT_CFG_FILE\" ;;\n"
+                "        *' -p 403 '*) printf '/opt/synthetic/livekit-server --config %s --node-ipv6 192.0.2.10\\n' \"$LIVEKIT_CFG_FILE\" ;;\n"
+                "      esac\n"
+                "      ;;\n"
+                "  esac\n"
+                "}\n"
+                f"{defs}"
+                "if VIVENTIUM_INSTALL_EXPERIENCE=express mongo_process_matches_expected 303; then printf 'mongo-wrong-pinned-binary=match\\n'; else printf 'mongo-wrong-pinned-binary=mismatch\\n'; fi\n"
+                "for pair in 'mongo_process_matches_expected 301 mongo-lookalike' 'meili_process_matches_expected 302 meili-lookalike' 'livekit_command_matches_expected 400 livekit-selected' 'livekit_command_matches_expected 401 livekit-lookalike' 'livekit_command_matches_expected 402 livekit-config-prefix' 'livekit_command_matches_expected 403 livekit-option-lookalike'; do\n"
+                "  set -- $pair\n"
+                "  if \"$1\" \"$2\"; then printf '%s=match\\n' \"$3\"; else printf '%s=mismatch\\n' \"$3\"; fi\n"
+                "done\n"
+            ),
+        ],
+        cwd=REPO_ROOT,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+    assert completed.stdout.strip().splitlines() == [
+        "mongo-wrong-pinned-binary=mismatch",
+        "mongo-lookalike=mismatch",
+        "meili-lookalike=mismatch",
+        "livekit-selected=match",
+        "livekit-lookalike=mismatch",
+        "livekit-config-prefix=mismatch",
+        "livekit-option-lookalike=mismatch",
+    ]
+
+
+def test_unique_listener_pid_requires_exactly_one_process() -> None:
+    script_text = NATIVE_STACK_PATH.read_text(encoding="utf-8")
+    function_def = extract_shell_function(script_text, "resolve_unique_listener_pid")
+
+    completed = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                "set -euo pipefail\n"
+                "lsof() {\n"
+                "  case \" $* \" in\n"
+                "    *' -iTCP:1001 '*) printf '41\\n' ;;\n"
+                "    *' -iTCP:1002 '*) printf '41\\n42\\n' ;;\n"
+                "    *' -iTCP:1003 '*) printf '41\\n41\\n' ;;\n"
+                "  esac\n"
+                "}\n"
+                f"{function_def}"
+                "for port in 1000 1001 1002 1003; do\n"
+                "  if pid=\"$(resolve_unique_listener_pid \"$port\" 2>/dev/null)\"; then printf '%s=%s\\n' \"$port\" \"$pid\"; else printf '%s=refused\\n' \"$port\"; fi\n"
+                "done\n"
+            ),
+        ],
+        cwd=REPO_ROOT,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+    assert completed.stdout.strip().splitlines() == [
+        "1000=refused",
+        "1001=41",
+        "1002=refused",
+        "1003=41",
+    ]
+
+
+def test_express_executable_path_uses_one_primary_lsof_text_image(tmp_path: Path) -> None:
+    script_text = NATIVE_STACK_PATH.read_text(encoding="utf-8")
+    function_names = [
+        "canonical_existing_path",
+        "process_executable_path",
+        "mongo_executable_matches_expected",
+    ]
+    defs = "".join(extract_shell_function(script_text, name) for name in function_names)
+    pinned_binary = tmp_path / "runtime tools" / "mongodb" / "bin" / "mongod"
+    foreign_binary = tmp_path / "foreign runtime" / "bin" / "mongod"
+    pinned_binary.parent.mkdir(parents=True)
+    foreign_binary.parent.mkdir(parents=True)
+    pinned_binary.write_text("synthetic\n", encoding="utf-8")
+    foreign_binary.write_text("synthetic\n", encoding="utf-8")
+
+    completed = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                "set -euo pipefail\n"
+                "VIVENTIUM_INSTALL_EXPERIENCE='express'\n"
+                f"MONGODB_NATIVE_BINARY={shlex.quote(str(pinned_binary))}\n"
+                f"PINNED_BINARY={shlex.quote(str(pinned_binary))}\n"
+                f"FOREIGN_BINARY={shlex.quote(str(foreign_binary))}\n"
+                "lsof() {\n"
+                "  case \" $* \" in\n"
+                "    *' -p 501 '*) printf 'p501\\nftxt\\nn%s\\nftxt\\nn/usr/lib/dyld\\n' \"$PINNED_BINARY\" ;;\n"
+                "    *' -p 502 '*) printf 'p502\\nftxt\\nn%s\\nftxt\\nn/usr/lib/dyld\\n' \"$FOREIGN_BINARY\" ;;\n"
+                "    *' -p 503 '*) printf 'p503\\n' ;;\n"
+                "    *' -p 504 '*) printf 'p504\\nftxt\\nn%s\\np999\\nftxt\\nn%s\\n' \"$PINNED_BINARY\" \"$FOREIGN_BINARY\" ;;\n"
+                "  esac\n"
+                "}\n"
+                f"{defs}"
+                "for pid in 501 502 503 504; do\n"
+                "  if mongo_executable_matches_expected \"$pid\"; then printf '%s=match\\n' \"$pid\"; else printf '%s=mismatch\\n' \"$pid\"; fi\n"
+                "done\n"
+            ),
+        ],
+        cwd=REPO_ROOT,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+    assert completed.stdout.strip().splitlines() == [
+        "501=match",
+        "502=mismatch",
+        "503=mismatch",
+        "504=mismatch",
+    ]
+
+
+def test_express_executable_path_fails_closed_without_lsof(tmp_path: Path) -> None:
+    script_text = NATIVE_STACK_PATH.read_text(encoding="utf-8")
+    function_names = [
+        "canonical_existing_path",
+        "process_executable_path",
+        "mongo_executable_matches_expected",
+    ]
+    defs = "".join(extract_shell_function(script_text, name) for name in function_names)
+    pinned_binary = tmp_path / "mongodb" / "mongod"
+    pinned_binary.parent.mkdir()
+    pinned_binary.write_text("synthetic\n", encoding="utf-8")
+
+    completed = subprocess.run(
+        [
+            "/bin/bash",
+            "-lc",
+            (
+                "set -euo pipefail\n"
+                "VIVENTIUM_INSTALL_EXPERIENCE='express'\n"
+                f"MONGODB_NATIVE_BINARY={shlex.quote(str(pinned_binary))}\n"
+                f"{defs}"
+                "PATH='/nonexistent'\n"
+                "if mongo_executable_matches_expected 501; then printf 'match\\n'; else printf 'mismatch\\n'; fi\n"
+            ),
+        ],
+        cwd=REPO_ROOT,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+    assert completed.stdout.strip() == "mismatch"
+
+
+def test_start_mongo_adopts_unique_exact_listener_over_stale_pid(tmp_path: Path) -> None:
+    script_text = NATIVE_STACK_PATH.read_text(encoding="utf-8")
+    defs = "".join(
+        extract_shell_function(script_text, name) for name in ("write_pid", "start_mongo")
+    )
+    pid_file = tmp_path / "mongod.pid"
+    pid_file.write_text("111\n", encoding="utf-8")
+
+    completed = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                "set -euo pipefail\n"
+                "MONGO_PORT='32117'\n"
+                f"MONGO_PID_FILE={shlex.quote(str(pid_file))}\n"
+                "VIVENTIUM_INSTALL_EXPERIENCE='legacy'\n"
+                "port_listening() { return 0; }\n"
+                "resolve_unique_listener_pid() { printf '222\\n'; }\n"
+                "mongo_process_matches_expected() { [[ \"$1\" == '222' ]]; }\n"
+                "mongo_listener_matches_expected() { [[ \"$1\" == '222' ]]; }\n"
+                f"{defs}"
+                "start_mongo\n"
+                "printf 'pid=%s\\n' \"$(tr -d '[:space:]' <\"$MONGO_PID_FILE\")\"\n"
+            ),
+        ],
+        cwd=REPO_ROOT,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+    assert "pid=222" in completed.stdout
+    assert "adopted listener PID 222" in completed.stdout
+
+
+@pytest.mark.parametrize(
+    ("listener_status", "identity_status", "expected_status", "expected_pid"),
+    [
+        (0, 0, 0, "222"),
+        (0, 1, 1, "111"),
+        (1, 0, 1, "111"),
+    ],
+)
+def test_start_meili_adopts_only_one_exact_listener(
+    tmp_path: Path,
+    listener_status: int,
+    identity_status: int,
+    expected_status: int,
+    expected_pid: str,
+) -> None:
+    script_text = NATIVE_STACK_PATH.read_text(encoding="utf-8")
+    defs = "".join(
+        extract_shell_function(script_text, name) for name in ("write_pid", "start_meili")
+    )
+    pid_file = tmp_path / f"meilisearch-{listener_status}-{identity_status}.pid"
+    pid_file.write_text("111\n", encoding="utf-8")
+
+    completed = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                "set -euo pipefail\n"
+                "MEILI_PORT='12700'\n"
+                f"MEILI_PID_FILE={shlex.quote(str(pid_file))}\n"
+                "port_listening() { return 0; }\n"
+                f"resolve_unique_listener_pid() {{ if [[ '{listener_status}' == '0' ]]; then printf '222\\n'; else return 1; fi; }}\n"
+                f"meili_process_matches_expected() {{ return {identity_status}; }}\n"
+                f"{defs}"
+                "start_meili\n"
+            ),
+        ],
+        cwd=REPO_ROOT,
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+
+    assert (completed.returncode == 0) is (expected_status == 0)
+    assert pid_file.read_text(encoding="utf-8").strip() == expected_pid
+    if expected_status == 0:
+        assert "adopted listener PID 222" in completed.stdout
+    else:
+        assert "refusing" in completed.stderr
+
+
+def test_native_stop_validates_each_runtime_process_before_killing() -> None:
+    script_text = NATIVE_STACK_PATH.read_text(encoding="utf-8")
+    stop_case = script_text.split("case \"${1:-}\" in", 1)[1].split("  stop)", 1)[1].split("    ;;", 1)[0]
+
+    assert 'stop_pid_file_if_matches "$LIVEKIT_PID_FILE" "LiveKit" livekit_command_matches_expected' in script_text
+    assert 'stop_pid_file_if_matches "$MEILI_PID_FILE" "Meilisearch" meili_process_matches_expected' in stop_case
+    assert "prepare_native_mongo_engine_identity_for_stop" in stop_case
+    assert "stop_recorded_native_mongo_engine" in stop_case
+    assert "seal_native_mongo_engine_identity_after_stop" in stop_case

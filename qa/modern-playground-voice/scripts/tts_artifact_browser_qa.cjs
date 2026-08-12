@@ -402,6 +402,7 @@ async function main() {
     result.conversationHash = shortHash(call.conversationId);
 
     browser = await chromium.launch({
+      channel: 'chrome',
       headless: process.env.VIVENTIUM_QA_HEADLESS !== '0',
       args: [
         '--autoplay-policy=no-user-gesture-required',

@@ -6,6 +6,7 @@
 | --- | --- | --- | --- |
 | Background Analysis | `ACT-01`, `ACT-07`, `ACT-15`, `ACT-17`, `ACT-18`, `ACT-19`, `ACT-20`, `ACT-36` | `ACT-12`, `ACT-21`, `ACT-36` | Known to over-activate on some broad analysis prompts; benchmark tracks spillover explicitly. |
 | Confirmation Bias | `ACT-02`, `ACT-13`, `ACT-15`, `ACT-18`, `ACT-19`, `ACT-20`, `ACT-36`, `ACT-46`, `ACT-48` | `ACT-12`, `ACT-14`, `ACT-21`, `ACT-36`, `ACT-48` negative control | Must stay distinct from generic analysis and emotional prompts; latest-user-message control prevents stale repeated activation from history. |
+| Deep Memory Search | `ANTI-010` | `ANTI-002`, `ANTI-005` | Structured `activation.mode: always`; authorized retrieval, Phase B value-gating, and silent empty/unavailable results replace classifier coverage. |
 | Red Team | `ACT-01`, `ACT-02`, `ACT-13`, `ACT-15`, `ACT-17`, `ACT-18`, `ACT-19`, `ACT-20`, `ACT-35`, `ACT-36`, `ACT-46`, `ACT-47`, `ACT-48` | `ACT-12`, `ACT-21`, `ACT-35` negative control, `ACT-36`, `ACT-48` negative control | Challenge pressure should not fire on pure tool/capability requests, pure decision-method education, or stale older requests. |
 | Deep Research | `ACT-03`, `ACT-36` | `ACT-12`, `ACT-27`, `ACT-36` | Shipped specialist remains capable, but main-agent auto-activation is disabled in the GlassHive broker-first local baseline. |
 | MS365 | `ACT-09`, `ACT-11`, `ACT-23`, `ACT-24`, `ACT-25`, `ACT-26`, `ACT-36` | `ACT-12`, `ACT-25` negative controls, `ACT-27`, `ACT-36` | Provider-only clarification is a required regression case; source/live tool arrays must include MS365 MCP tools; in the broker-first local baseline the main agent no longer auto-activates MS365 as a background cortex. |
@@ -32,9 +33,10 @@
 - `ACT-35` protects Red Team's decision-method stack: explicit Socratic/no-bullshit/premortem asks
   on a concrete plan activate the Red Team with method-lens output, while pure method education stays
   quiet.
-- `ACT-36` protects the whole classifier topology: exact-runtime evaluation covers every cortex,
+- `ACT-36` protects the classifier topology: exact-runtime evaluation covers every classifier-owned cortex,
   separates semantic accuracy from provider availability/latency, and rejects sibling leakage,
-  stale-turn activation, and retired activation-model defaults.
+  stale-turn activation, and retired activation-model defaults. It does not cover a cortex whose
+  structured mode is `always`.
 - `ACT-37` protects every cortex card against mid-turn interruption and write reordering: status
   snapshots persist incrementally, queued writes coalesce, and the final snapshot is authoritative.
 - `ACT-38` protects fallback availability when a provider client ignores cancellation: the local

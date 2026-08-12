@@ -1,0 +1,48 @@
+schemaVersion: "0.1"
+lifeId: "example-life"
+sources:
+  - id: "ai-openai-example"
+    category: "ai_account"
+    title: "OpenAI"
+    method: "native_connected_account"
+    authority: "provider"
+    permission:
+      mode: "read_selected"
+      scopes: []
+    sync:
+      cadence: "manual"
+      cursorRef: null
+      lastAttemptAt: null
+      lastSuccessAt: null
+    health:
+      state: "not_configured"
+      detail: "Public-safe template only."
+    destination:
+      lifeRefs:
+        - "life://Memory/Conversations/"
+    credentialRef: null
+    retention: "user_controlled"
+
+  - id: "email-browser-example"
+    category: "email"
+    title: "Example email account"
+    method: "signed_in_browser"
+    authority: "provider"
+    permission:
+      mode: "read_selected"
+      scopes:
+        - "message metadata"
+        - "user-selected content"
+    sync:
+      cadence: "manual"
+      cursorRef: null
+      lastAttemptAt: null
+      lastSuccessAt: null
+    health:
+      state: "not_configured"
+      detail: "Choose a browser in the Sources app; never store browser cookies here."
+    destination:
+      lifeRefs:
+        - "life://Communications/Email/"
+    credentialRef: null
+    retention: "source_linked_summary"

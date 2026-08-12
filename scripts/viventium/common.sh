@@ -457,6 +457,29 @@ resolve_existing_product_python() {
   return 1
 }
 
+resolve_executable_source() {
+  local source_path="$1"
+  local source_dir=""
+  local link_target=""
+
+  if [[ "$source_path" != */* ]]; then
+    source_path="$(command -v "$source_path" 2>/dev/null || true)"
+  fi
+  [[ -n "$source_path" ]] || return 1
+
+  while [[ -L "$source_path" ]]; do
+    source_dir="$(cd -P "$(dirname "$source_path")" && pwd)"
+    link_target="$(readlink "$source_path")"
+    if [[ "$link_target" == /* ]]; then
+      source_path="$link_target"
+    else
+      source_path="$source_dir/$link_target"
+    fi
+  done
+
+  printf '%s\n' "$source_path"
+}
+
 bootstrap_python_root() {
   local app_support_dir="${VIVENTIUM_APP_SUPPORT_DIR:-$HOME/Library/Application Support/Viventium}"
   printf '%s\n' "${VIVENTIUM_BOOTSTRAP_PYTHON_ROOT:-$app_support_dir/state/bootstrap-python}"
@@ -694,18 +717,18 @@ create_bootstrap_python_unlocked() {
 
   for candidate in "${candidates[@]}"; do
     [[ -n "$candidate" ]] || continue
-    resolved_candidate="$(command -v "$candidate" 2>/dev/null || true)"
+    resolved_candidate="$(resolve_executable_source "$candidate" 2>/dev/null || true)"
     [[ -n "$resolved_candidate" ]] || continue
     case "$seen_candidates" in
       *"|$resolved_candidate|"*) continue ;;
     esac
     seen_candidates="${seen_candidates}${resolved_candidate}|"
-    python_runs_inline_script "$candidate" || continue
+    python_runs_inline_script "$resolved_candidate" || continue
 
     staging_root="$(mktemp -d "$root.build.XXXXXX")" || return 1
     chmod 700 "$staging_root"
     staging_python="$staging_root/bin/python3"
-    if "$candidate" -m venv "$staging_root" >/dev/null 2>&1 &&
+    if "$resolved_candidate" -m venv "$staging_root" >/dev/null 2>&1 &&
       [[ -x "$staging_python" ]] &&
       python_runs_inline_script "$staging_python" &&
       "$staging_python" -m pip --version >/dev/null 2>&1

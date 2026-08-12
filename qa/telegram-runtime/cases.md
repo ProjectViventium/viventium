@@ -51,6 +51,21 @@
 - **Last run:** 2026-06-28, automated regression and live-runtime QA rerun. See
   `reports/2026-06-28-telegram-fallback-audio-table-qa-rerun.md`.
 
+## Case TR-012: `/call` Uses One-Time Launch Authority
+
+- **Expected outcome:** the real bot returns the configured public HTTPS call URL only after the
+  canonical Agent passes global `USE` and resource `VIEW`. The browser strips its one-time fragment
+  bearer before same-origin exchange and auto-connects. A lost response retries only with the same
+  browser-generated idempotency value; a different value or second-browser replay is denied.
+- **Forbidden result:** localhost/raw LAN is presented as supported remote access; raw session id or
+  a consumed link authorizes call state; body agent metadata bypasses the canonical Agent ACL;
+  capability material enters query/body, logs, referrers, cache, screenshots, or reports.
+- **Evidence to capture:** real Telegram `/call` delivery, two-browser exchange/replay status matrix,
+  fragment-strip order, cache/referrer/privacy audit, permission/revocation matrix, visible/audible
+  call, linked-chat persistence, and active artifact identity.
+- **Last run:** `PARTIAL` — 2026-08-09 — focused launch/ACL automation is supporting evidence; the
+  real Telegram, second-browser, public-origin, audible, revocation, and persistence path is pending.
+
 ## Case TR-006: Telegram Markdown Tables Render Readably
 
 - **Expected outcome:** Markdown pipe tables from main answers or worker callbacks are converted to
@@ -216,6 +231,149 @@
 - **Last run:** PASS-AUTOMATED/PARTIAL-INSTALLED 2026-07-25. All 22 migration cases and the
   descriptor-bound adversarial swap probe pass; installed candidate restart/reply remains required.
 
+## Case TR-022: First-Turn Connected Tools Use Finalized Gateway Scope
+
+- **Requirement:** A new Telegram conversation must refresh conversation-provider capabilities from
+  the finalized run body after durable conversation and assistant message ids exist.
+- **User outcome:** The first Telegram request can use every structurally declared, authorized MCP
+  without a retry, screenshot request, or browser substitution.
+- **Surfaces:** Telegram bridge, Agent run creation, provider capability projection, signed broker,
+  MCP transport, Mongo persistence, text and audio delivery.
+- **Steps:** Start a new marked Telegram conversation, ask for a short summary from an owner-only
+  connected evidence source, inspect the visible reply, broker/MCP logs, and persisted final message;
+  separately run missing-scope and non-owner regressions.
+- **Expected result:** The broker accepts the exact finalized turn, invokes the declared MCP, and the
+  response cites available dated evidence or the source's exact current blocker. Missing scope and
+  non-owner access still fail closed.
+- **Forbidden result:** `conversationId: new` is signed as real scope; the host claims provider auth
+  failure without calling the provider; it browses or requests screenshots because the broker grant
+  was malformed; a non-owner receives the host-wide health capability.
+- **Evidence to capture:** focused broker/provider/gateway tests, real Telegram bubbles, Mongo final
+  state, broker/MCP invocation logs, zero missing-scope warnings, and a dated public-safe report.
+- **Last run:** PASS 2026-08-11; real marked Telegram request returned a persisted dated health
+  summary, accurately named the separately degraded source sync, and delivered text plus audio after
+  four successful health MCP calls.
+
+## Case TR-023: GlassHive Lifecycle Start Does Not Suppress Quota Fallback
+
+- **Requirement:** A GlassHive main Agent configured with Codex primary and Claude fallback must
+  recover from an exact structured retryable pre-authoring quota/rate rejection.
+- **User outcome:** The same Telegram turn stays open and receives one Claude-authored answer without
+  exposing the primary quota error.
+- **Surfaces:** Telegram bot, LibreChat SSE, GlassHive conversation provider/state.
+- **Preconditions:** Both harnesses are authenticated; main Agent carries GlassHive/Claude in its
+  Agent Builder `fallback_llm_*` fields and has no provider-internal fallback enabled;
+  a controlled fault produces an exact quota/rate admission failure before authored activity.
+- **Steps:** Send synthetic public-safe text through the real bot, inspect the bubble, then correlate
+  the same request/session/idempotency identity, primary termination, single replacement run,
+  activity stream, and stored message. Repeat with cancellation and with authored-activity fixtures.
+- **Expected result:** `queued`/`started`/`fallback` status alone does not lock recovery; Claude answers once on
+  the same turn; cancellation wins before the switch; authored text/reasoning/plan/tool/file activity
+  forbids the switch; an abandoned switch claim fails visibly instead of hanging the turn.
+- **Forbidden result:** The rate-limit blocker reaches Telegram while the configured fallback is
+  healthy, a second/overlapping author is launched, a new Telegram turn is invented, or fallback
+  occurs after authoring evidence.
+- **Evidence to capture:** real delivered Telegram bubble, sanitized SSE/activity classes, request/run
+  counts and identity continuity, active config/artifact hashes, automated regressions, and dated report.
+- **Last run:** PASS 2026-08-04. Real Telegram quota and provider-unavailable faults each switched
+  once to GlassHive/Claude Opus 5 high effort, persisted a clean assistant message, and exposed no
+  primary error bubble. A subsequent cold helper recovery used one launch, and the final clean
+  Telegram/Codex turn passed. See
+  `../glasshive-core-provider/reports/2026-08-04-installed-agent-builder-glasshive-fallback.md`.
+
+## Case TR-024: Nested Telegram Formatting Never Leaks Internal Placeholders
+
+- **Requirement:** Nested supported Markdown in main answers and proactive/follow-up deliveries
+  renders through the shared Telegram HTML path without exposing formatter internals.
+- **User outcome:** A block quote containing bold or italic text shows the original emphasized words.
+- **Surfaces:** Telegram main streamed reply, scheduled/proactive callback, and background follow-up.
+- **Preconditions:** Telegram text delivery enabled; synthetic response contains formatted text
+  before and inside a Markdown block quote.
+- **Steps:** Render the synthetic fixture through the pure renderer, the main streamed bot path, and
+  the follow-up bridge path; visually inspect the generated HTML; send the same shape through the
+  real bot and inspect the delivered Telegram bubble.
+- **Expected result:** Telegram receives valid HTML containing the original words and supported
+  emphasis. No NUL-delimited placeholder or visible `PH<number>` token remains.
+- **Forbidden result:** The quote contains `PH0`, `PH2`, another internal placeholder, missing source
+  words, raw HTML, or a parse-mode fallback caused by the formatter.
+- **Evidence to capture:** Focused Python regressions, affected Telegram suite, Playwright visual
+  fixture, active runtime source/hash, real Telegram send/receive, sanitized runtime log class, and
+  a dated public-safe report.
+- **Last run:** 2026-07-27 PASS for the fixed source, shared main/follow-up paths, real Bot API
+  acceptance, headed browser visual QA, and native Telegram rendering. PARTIAL for the installed
+  bridge: the active checkout has the same verified fix, but transactional activation stopped
+  before restart because the target volume was below the required free-space threshold. See
+  `reports/2026-07-27-nested-markdown-placeholder-rendering.md`.
+
+## Case TR-025: Follow-Up Listening Uses Canonical Runtime Configuration
+
+- **Requirement:** Telegram's raw SSE listener and DB-backed follow-up poller must share the
+  compiler-owned background follow-up window and must not carry an independent implicit timeout.
+- **User outcome:** Ordinary Telegram turns stop automatic follow-up listening at the configured
+  boundary, while persisted Main/cortex work is not canceled and the separate GlassHive callback
+  window remains available when a worker was actually launched.
+- **Surfaces:** canonical config/compiler output and Telegram LibreChat bridge lifecycle.
+- **Preconditions:** compile synthetic configs with default, explicit, zero, and invalid follow-up
+  values; instantiate the bridge with canonical and deprecated compatibility env combinations.
+- **Steps:** inspect generated env, initialize the bridge, exercise listener scheduling/cancellation,
+  and run the affected Telegram bridge suite without a bot token or external account.
+- **Expected result:** supported installs use `VIVENTIUM_TELEGRAM_FOLLOWUP_GRACE_S`; unset standalone
+  bridges do not invent a wait; canonical zero disables ordinary listeners; invalid/out-of-range
+  canonical config fails closed; legacy insight values cannot override canonical config; stopping
+  the raw listener does not stop the persisted poll; GlassHive keeps its separate configured wait.
+- **Forbidden result:** an implicit 180/210-second listener, prompt/agent/provider branching, Main or
+  cortex cancellation, or collapse of the GlassHive callback window into the background window.
+- **Evidence to capture:** compiler regressions, bridge unit/lifecycle regressions, source/example
+  scan, generated env assertions, and a dated public-safe report.
+- **Last run:** 2026-08-10 source and automated tests PASS; live Telegram delivery was intentionally
+  not run in this change and remains a separate user-surface acceptance step.
+
+## Case TR-026: Rapid Segments Supersede One Unfinished Reply
+
+- **Requirement:** A → unfinished B → stable C produces one current D from ordered A+C in the same
+  canonical conversation.
+- **Surfaces:** Telegram text bridge, LibreChat logical-turn store, stream preview, Mongo history.
+- **Steps:** Send two and then three uniquely marked rapid text segments after the first preview
+  appears; repeat when C arrives after final commit.
+- **Expected outcome:** Before commit, B is removed and never returns, A/C remain separate source
+  messages, D is the only current answer, and the lifecycle is `superseded`; after commit, C is a
+  normal follow-up.
+- **Forbidden result:** `Connection error. Please retry.`, stitched stale text, duplicate model
+  answer, deleted user input, global cross-chat abort, or B restored after reopen.
+- **Evidence to capture:** Telegram Desktop bubbles/screenshots, bridge/core revision logs, Mongo
+  user/assistant ordering and tombstone metadata, refresh/reopen, and focused race tests.
+- **Last run:** PASS-LIVE 2026-08-11; real rapid A/B/C produced one current D, no stale
+  connection error, and matching canonical revision/Mongo evidence
+  ([report](../scheduling-cortex/reports/2026-08-11-consciousness-continuity-and-turn-coherence.md)).
+
+## Case TR-027: Preview Deletion Failure Is Truthfully Degraded
+
+- **Requirement:** Failed Telegram deletion cannot let a stale preview continue mutating or become a
+  transport error for a successful current revision.
+- **Expected outcome:** Later edits to the stale presentation are suppressed, delivery records
+  `partial_removed`/degraded outcome, and D still arrives once.
+- **Forbidden result:** stale preview edits continue, successful supersession emits connection
+  error, or deletion retry duplicates the final response.
+- **Evidence to capture:** synthetic Bot API deletion fault, bridge regression, channel outcome
+  ledger, visible final state, and sanitized warning class.
+- **Last run:** PASS-AUTOMATED / PARTIAL-LIVE 2026-08-11; deletion-failure and failed-ack behavior
+  passed fault regressions, while the real Telegram run covered successful preview retraction rather
+  than an induced Bot API deletion fault
+  ([report](../scheduling-cortex/reports/2026-08-11-consciousness-continuity-and-turn-coherence.md)).
+
+## Case TR-028: Voice-Note And File Source Segments Survive Supersession
+
+- **Requirement:** Final transcript/file receipt followed by clarification remains ordered user
+  context; only assistant previews are retractable.
+- **Expected outcome:** finalized transcript or file segment remains in history; pending
+  transcription uses the bounded existing wait; failure lets later text proceed with a truthful
+  unavailable-transcription state.
+- **Forbidden result:** transcript/file source deleted as B, C answered before an earlier receipt
+  resolves without truthful state, attachment semantics changed, or stale speech/preview delivered.
+- **Evidence to capture:** real voice note and synthetic file+clarification in Telegram Desktop,
+  transcription/file logs, Mongo message/attachment order, final bubble, and failure regression.
+- **Last run:** ADDED 2026-08-11; real native surface required after integration.
+
 ## Natural User Use Case Checklist
 
 These rows are the minimum natural-user checklist gate for Telegram Runtime. Add narrower feature-specific
@@ -236,10 +394,18 @@ rows before claiming a pass when the feature behavior changes.
 | `TELEGRAM-UC-011` | Hold the durable delivery API unavailable through repeated poll attempts, recover it, then enqueue a synthetic late callback. | `TR-012` | Telegram LibreChat bridge dispatcher | deterministic delays, warning/recovery logs, callback delivery timing and ledger status | Failure polling backs off to the cap without log spam; recovery immediately restores the normal poll interval and late delivery semantics. | PASS-AUTOMATED 2026-07-24; external callback delivery not run |
 | `TELEGRAM-UC-012` | Send a synthetic text turn while the empty GlassHive delivery poller is active, then repeat after a runtime restart. | `TR-013` | real Telegram bot chat and promoted local runtime | visible send/reply timestamps, pending-update count, process sample, bridge/API logs, active checkout identity | Both updates leave the Bot API queue promptly and receive a visible reply; local polling performs no unused CA-bundle work, and HTTPS verification remains unchanged. | PASS-AUTOMATED/PARTIAL-LIVE 2026-07-25; escaped stall reproduced, post-fix visible rerun pending |
 | `TELEGRAM-UC-013` | Upgrade or activate from a checkout with legacy repo-local Telegram preferences, then force a candidate failure and restart twice. | `TR-014`, `CONT-014` | supported CLI/helper, installed Telegram component, App Support preference state, real Telegram | component/selection/receipt identities, migration backup hashes, source-tree no-write proof, visible replies and latency | Preferences remain behaviorally intact, the source tree is untouched, rollback and success both execute from App Support, and the second start is byte-exact. | PASS-AUTOMATED/PARTIAL-INSTALLED 2026-07-25; complete 2,063-passed/11-skipped release and 347 Telegram cases pass, including real process-group SIGKILL recovery; installed restart/message lane pending |
+| `TELEGRAM-UC-014` | Send `/call`, open it in one browser, retry a lost exchange, then replay it from another browser and after Agent revocation. | `TR-012`, `MPV-052`, `MPV-053` | real Telegram bot, public HTTPS playground, two browser contexts, linked chat | delivered link class, fragment/exchange order, replay statuses, cache/referrer/log scan, ACL audit, audible call, persistence | The first browser enters one-click Call; same-idempotency retry is safe; replay and revoked Agent fail without disclosure or mutation. | `PARTIAL` 2026-08-09; real cross-surface journey pending |
+| `TELEGRAM-UC-015` | Start a new Telegram conversation and ask for a short result from an authorized connected MCP. | `TR-022`, `GH-MCP-BROKER-023`, `VH-022` | real Telegram Desktop and active LibreChat/provider runtime | visible text/audio, finalized Mongo turn, broker/MCP logs, source status | The first turn uses the connected tool, reports dated evidence or the exact source blocker, and never substitutes browsing because provisional gateway scope leaked into the signed grant. | PASS 2026-08-11; real owner health request, four MCP calls, persisted final response, text/audio delivery, zero missing-scope warnings |
+| `TELEGRAM-UC-016` | Send a turn whose GlassHive/Codex primary returns an exact pre-authoring quota rejection while the configured Claude fallback is healthy. | `TR-005`, `TR-023`, `GCP-031` | real Telegram bot, LibreChat SSE, GlassHive state | delivered bubble, saved fallback settings, primary/fallback attempt identity, one replacement run, activity/error classes | The original turn stays open and receives one fallback-authored answer; lifecycle start does not expose the primary error or lock fallback. | PASS 2026-08-04; real quota/provider-unavailable recovery, with no duplicate authoring |
+| `TELEGRAM-UC-017` | Receive a main answer and follow-up containing emphasis inside a Markdown block quote. | `TR-024` | real Telegram bot plus shared renderer visual fixture | delivered bubbles, renderer output, regressions, active source/hash, sanitized logs | Original words remain visible; no internal placeholder, NUL, raw tag, or parse fallback appears. | PASS source/real rendering 2026-07-27; installed bridge restart remained blocked by disk threshold |
+| `TELEGRAM-UC-018` | Configure, disable, or omit the background follow-up window and run a synthetic Telegram turn. | `TR-025` | generated service env and bridge lifecycle harness | compiler output, listener/task state, focused regressions | Canonical config owns ordinary listening, zero disables it, no implicit timeout remains, and GlassHive retains its separate callback window. | PASS automated/PARTIAL live 2026-08-10 |
+| `TELEGRAM-UC-019` | Send rapid A/B/C text while B is unfinished, then repeat with a preview-deletion fault. | `TR-026`, `TR-027` | Telegram Desktop, bridge/core lifecycle, persisted history | bubbles, revision logs, user/assistant ordering, delivery outcome, reopen | One current D survives, stale preview mutation stops, successful supersession is not misreported as a connection error, and source messages remain. | PASS rapid live/PARTIAL deletion-fault live 2026-08-11 |
+| `TELEGRAM-UC-020` | Send a voice note or file and then a clarification while an unfinished reply exists. | `TR-028` | Telegram Desktop, transcription/file path, persisted history | transcript/file receipt order, attachment state, final bubble, failure regression | Finalized source segments survive supersession; pending failure is truthful and only assistant presentation is retractable. | ADDED 2026-08-11; real integrated surface required |
 
 ## Release Test Traceability
 
 - `tests/release/test_telegram_codex_runtime_paths.py`
+- nested Telegram `/call` route, call-launch exchange, and Voice Agent authorization suites
 - `tests/release/test_telegram_lazy_startup_contract.py`
 - `tests/release/test_telegram_launchctl_ownership.py`
 - `tests/release/test_telegram_transcription_error_contract.py`

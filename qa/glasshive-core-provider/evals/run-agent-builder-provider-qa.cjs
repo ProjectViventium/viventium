@@ -379,6 +379,19 @@ async function pickCombobox(page, ariaName, optionText) {
   await namedOption.click();
 }
 
+function capabilityControls(page, parameterField = "model_parameters") {
+  const legacyPrefix = parameterField === "model_parameters" ? "#glasshive" : "#unused-legacy";
+  return {
+    workspace: page
+      .locator(`#${parameterField}-glasshive-workspace-mode, ${legacyPrefix}-workspace-mode`)
+      .first(),
+    access: page
+      .locator(`#${parameterField}-glasshive-access, ${legacyPrefix}-access`)
+      .first(),
+    effort: page.locator(`#${parameterField}-effort, ${legacyPrefix}-effort`).first(),
+  };
+}
+
 async function configureGlassHiveAgent(page, name, modelLabel, modelId, effort) {
   await selectAgent(page, name);
   const modelButton = page.locator('label[for="provider"]').locator("..").getByRole("button");
@@ -392,13 +405,14 @@ async function configureGlassHiveAgent(page, name, modelLabel, modelId, effort) 
   if (readinessText !== "Authenticated and ready") {
     throw new Error(`GlassHive readiness was ${readinessText}`);
   }
+  const controls = capabilityControls(page);
   const initial = {
-    workspace: await page.locator("#glasshive-workspace-mode").inputValue(),
-    access: await page.locator("#glasshive-access").inputValue(),
-    effort: await page.locator("#glasshive-effort").inputValue(),
+    workspace: await controls.workspace.inputValue(),
+    access: await controls.access.inputValue(),
+    effort: await controls.effort.inputValue(),
   };
-  await page.locator("#glasshive-access").selectOption("workspace");
-  await page.locator("#glasshive-effort").selectOption(effort);
+  await controls.access.selectOption("workspace");
+  await controls.effort.selectOption(effort);
   await page.getByRole("button", { name: /Back to builder/i }).click();
   const saveResponse = page.waitForResponse((response) => response.request().method() === "PATCH" && /\/api\/agents\//.test(response.url()), { timeout: 30000 });
   await page.getByRole("button", { name: "Save", exact: true }).click();
@@ -413,12 +427,13 @@ async function configureGlassHiveAgent(page, name, modelLabel, modelId, effort) 
     exact: true,
   });
   await persistedReadiness.waitFor({ state: "visible", timeout: 30000 });
+  const persistedControls = capabilityControls(page);
   const persisted = {
     provider: await page.getByRole("combobox", { name: "Provider", exact: true }).innerText(),
     model: await page.getByRole("combobox", { name: "Model", exact: true }).innerText(),
-    workspace: await page.locator("#glasshive-workspace-mode").inputValue(),
-    access: await page.locator("#glasshive-access").inputValue(),
-    effort: await page.locator("#glasshive-effort").inputValue(),
+    workspace: await persistedControls.workspace.inputValue(),
+    access: await persistedControls.access.inputValue(),
+    effort: await persistedControls.effort.inputValue(),
     ready: await persistedReadiness.isVisible(),
   };
   await page.getByRole("button", { name: /Back to builder/i }).click();
@@ -427,6 +442,64 @@ async function configureGlassHiveAgent(page, name, modelLabel, modelId, effort) 
     persisted: persisted.provider.includes("GlassHive") && persisted.model.includes(modelLabel) && persisted.workspace === "life" && persisted.access === "workspace" && persisted.effort === effort && persisted.ready,
     persistenceEvidence: persisted,
     modelId,
+  };
+}
+
+async function configureGlassHiveFallback(page, name) {
+  await selectAgent(page, name);
+  await page.locator('label[for="provider"]').locator("..").getByRole("button").click();
+  await page.locator('button[aria-labelledby="fallback-llm-label"]').click();
+  await pickCombobox(page, "Provider", "GlassHive");
+  await pickCombobox(page, "Model", "Claude / Opus 5");
+  const readiness = page.getByText("Authenticated and ready", { exact: true });
+  await readiness.waitFor({ state: "visible", timeout: 30000 });
+  const controls = capabilityControls(page, "fallback_llm_model_parameters");
+  await controls.effort.selectOption("high");
+  const configured = {
+    provider: await page.getByRole("combobox", { name: "Provider", exact: true }).innerText(),
+    model: await page.getByRole("combobox", { name: "Model", exact: true }).innerText(),
+    effort: await controls.effort.inputValue(),
+    ready: await readiness.isVisible(),
+  };
+  await page.getByRole("button", { name: /Back to builder/i }).click();
+  await page.getByRole("button", { name: /Back to builder/i }).click();
+  const saveResponse = page.waitForResponse(
+    (response) => response.request().method() === "PATCH" && /\/api\/agents\//.test(response.url()),
+    { timeout: 30000 },
+  );
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  const saved = await saveResponse;
+  if (!saved.ok()) throw new Error(`Agent Builder fallback save returned HTTP ${saved.status()}`);
+
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await installAccessToken(page, "");
+  await openAgentBuilder(page);
+  await selectAgent(page, name);
+  await page.locator('label[for="provider"]').locator("..").getByRole("button").click();
+  await page.locator('button[aria-labelledby="fallback-llm-label"]').click();
+  const persistedReadiness = page.getByText("Authenticated and ready", { exact: true });
+  await persistedReadiness.waitFor({ state: "visible", timeout: 30000 });
+  const persistedControls = capabilityControls(page, "fallback_llm_model_parameters");
+  const persisted = {
+    provider: await page.getByRole("combobox", { name: "Provider", exact: true }).innerText(),
+    model: await page.getByRole("combobox", { name: "Model", exact: true }).innerText(),
+    effort: await persistedControls.effort.inputValue(),
+    ready: await persistedReadiness.isVisible(),
+  };
+  await page.getByRole("button", { name: /Back to builder/i }).click();
+  await page.getByRole("button", { name: /Back to builder/i }).click();
+  return {
+    visible:
+      configured.provider.includes("GlassHive") &&
+      configured.model.includes("Claude / Opus 5") &&
+      configured.effort === "high" &&
+      configured.ready,
+    persisted:
+      persisted.provider.includes("GlassHive") &&
+      persisted.model.includes("Claude / Opus 5") &&
+      persisted.effort === "high" &&
+      persisted.ready,
+    persistenceEvidence: persisted,
   };
 }
 
@@ -561,7 +634,8 @@ async function main() {
     await installAccessToken(page, auth.accessToken);
     await openAgentBuilder(page);
     const ordinary = await configureGlassHiveAgent(page, ordinaryName, "Codex / GPT-5.6 Sol", "codex-cli:gpt-5.6-sol", "medium");
-    const cortex = await configureGlassHiveAgent(page, cortexName, "Claude / Opus", "claude-code:opus", "max");
+    const cortex = await configureGlassHiveAgent(page, cortexName, "Claude / Opus 5", "claude-code:opus", "max");
+    const fallback = await configureGlassHiveFallback(page, ordinaryName);
 
     await selectAgent(page, ordinaryName);
     await page.getByRole("button", { name: /^Select (an )?agent$/i }).click();
@@ -949,7 +1023,9 @@ async function main() {
       ordinaryDefaultsVisible: ordinary.defaultsCorrect,
       ordinarySaveReloadPersistence: ordinary.persisted,
       cortexSaveReloadPersistence: cortex.persisted,
-      ordinaryMongoRoundTrip: savedById.get(createdAgentIds[0])?.provider === "glasshive-harness" && savedById.get(createdAgentIds[0])?.model === ordinary.modelId && savedById.get(createdAgentIds[0])?.glasshive_options?.workspace?.mode === "life" && savedById.get(createdAgentIds[0])?.glasshive_options?.access === "workspace" && savedById.get(createdAgentIds[0])?.model_parameters?.reasoning_effort === "medium",
+      fallbackOpusHighVisible: fallback.visible,
+      fallbackOpusHighSaveReloadPersistence: fallback.persisted,
+      ordinaryMongoRoundTrip: savedById.get(createdAgentIds[0])?.provider === "glasshive-harness" && savedById.get(createdAgentIds[0])?.model === ordinary.modelId && savedById.get(createdAgentIds[0])?.glasshive_options?.workspace?.mode === "life" && savedById.get(createdAgentIds[0])?.glasshive_options?.access === "workspace" && savedById.get(createdAgentIds[0])?.model_parameters?.reasoning_effort === "medium" && savedById.get(createdAgentIds[0])?.fallback_llm_provider === "glasshive-harness" && savedById.get(createdAgentIds[0])?.fallback_llm_model === "claude-code:opus" && savedById.get(createdAgentIds[0])?.fallback_llm_model_parameters?.reasoning_effort === "high",
       cortexMongoRoundTrip: savedById.get(createdAgentIds[1])?.provider === "glasshive-harness" && savedById.get(createdAgentIds[1])?.model === cortex.modelId && savedById.get(createdAgentIds[1])?.glasshive_options?.access === "workspace" && savedById.get(createdAgentIds[1])?.model_parameters?.reasoning_effort === "max",
       versionCreated: savedAgents.every((agent) => Array.isArray(agent.versions) && agent.versions.length > 0),
       browserHarnessAnswerVisible: await page.locator(".agent-turn").filter({ hasText: "WEB_AGENT_OK" }).last().isVisible(),
@@ -1011,6 +1087,7 @@ async function main() {
       conversationTitleGenerated: result.checks.conversationTitleGenerated,
       ordinaryPersistenceEvidence: ordinary.persistenceEvidence,
       cortexPersistenceEvidence: cortex.persistenceEvidence,
+      fallbackPersistenceEvidence: fallback.persistenceEvidence,
       providerState: providerState
         ? {
             sessionCount: providerState.session_count,

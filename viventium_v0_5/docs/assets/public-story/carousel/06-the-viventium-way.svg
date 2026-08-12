@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1350" viewBox="0 0 1080 1350" role="img" aria-labelledby="title desc">
+  <title id="title">The Viventium Way</title>
+  <desc id="desc">Closing carousel frame presenting the original Viventium anti-sycophancy framework.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#162b5f"/><stop offset="0.58" stop-color="#21376c"/><stop offset="1" stop-color="#173f4c"/></linearGradient>
+    <linearGradient id="line" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#9cb4ff"/><stop offset="0.5" stop-color="#bba6ff"/><stop offset="1" stop-color="#85ddba"/></linearGradient>
+    <radialGradient id="halo"><stop offset="0" stop-color="#ffffff" stop-opacity="0.2"/><stop offset="1" stop-color="#ffffff" stop-opacity="0"/></radialGradient>
+  </defs>
+  <rect width="1080" height="1350" fill="url(#bg)"/>
+  <circle cx="930" cy="150" r="300" fill="url(#halo)"/><circle cx="100" cy="1240" r="260" fill="url(#halo)" opacity="0.55"/>
+  <text x="70" y="74" fill="#dce4ff" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="18" font-weight="700" letter-spacing="5">VIVENTIUM</text>
+  <text x="1010" y="74" text-anchor="end" fill="#b7c2df" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="18" font-weight="650">06 / 06</text>
+  <text x="70" y="190" fill="#ffffff" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="70" font-weight="800">The Viventium Way</text>
+  <text x="70" y="254" fill="#d8e1f9" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="27">My solution was not to make AI argue.</text>
+  <text x="70" y="300" fill="#9fe0c2" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="27" font-weight="700">It was to change what it knows before it answers.</text>
+  <g transform="translate(180 405)" font-family="Inter, ui-sans-serif, system-ui, sans-serif">
+    <path d="M62 42 V610" stroke="#8fa6dc" stroke-width="8" stroke-linecap="round"/><path d="M62 42 V610" stroke="url(#line)" stroke-width="5" stroke-linecap="round"/>
+    <circle cx="62" cy="42" r="42" fill="#dfe7ff" stroke="#ffffff" stroke-width="5"/>
+    <text x="135" y="34" fill="#ffffff" font-size="26" font-weight="780">UNDERSTAND YOU</text><text x="135" y="68" fill="#bdc9e6" font-size="20">your actual world</text>
+    <circle cx="62" cy="232" r="42" fill="#e4ddff" stroke="#ffffff" stroke-width="5"/>
+    <text x="135" y="224" fill="#ffffff" font-size="26" font-weight="780">KEEP THINKING</text><text x="135" y="258" fill="#bdc9e6" font-size="20">quiet specialists in the background</text>
+    <circle cx="62" cy="422" r="42" fill="#d9f6e9" stroke="#ffffff" stroke-width="5"/>
+    <text x="135" y="414" fill="#ffffff" font-size="26" font-weight="780">CHECK REALITY</text><text x="135" y="448" fill="#bdc9e6" font-size="20">beyond the conversation</text>
+    <circle cx="62" cy="612" r="42" fill="#bcf0d4" stroke="#ffffff" stroke-width="5"/>
+    <text x="135" y="604" fill="#ffffff" font-size="26" font-weight="780">CHALLENGE ITSELF</text><text x="135" y="638" fill="#bdc9e6" font-size="20">before answering</text>
+  </g>
+  <rect x="100" y="1120" width="880" height="112" rx="56" fill="#ffffff" fill-opacity="0.1" stroke="#ffffff" stroke-opacity="0.22" stroke-width="2"/>
+  <text x="540" y="1165" text-anchor="middle" fill="#ffffff" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="26" font-weight="700">Not a yes-machine.</text>
+  <text x="540" y="1202" text-anchor="middle" fill="#ffffff" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="23">A thinking partner grounded in your life and the world.</text>
+  <text x="70" y="1306" fill="#b8c5e3" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="17">AN ORIGINAL ANTI-SYCOPHANCY FRAMEWORK</text>
+</svg>

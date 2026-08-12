@@ -1180,7 +1180,10 @@ def select_components(components: list[dict[str, Any]], config: dict[str, Any]) 
     if not config and not getattr(config, "source_has_mapping", False):
         config = {"voice": {"mode": "local"}, "runtime": {"playground_variant": "modern"}}
 
-    selected_names = {"LibreChat"}
+    # Viventium-Health is a small, dependency-free core evidence boundary. It is always
+    # bootstrapped so the compiled read-only MCP never depends on owner-machine leftovers;
+    # provider authorization and scheduled acquisition remain explicit opt-ins.
+    selected_names = {"LibreChat", "Viventium-Health"}
     voice_mode = str(config.get("voice", {}).get("mode", "disabled")).strip().lower()
     playground_variant = str(
         config.get("runtime", {}).get("playground_variant", "modern")

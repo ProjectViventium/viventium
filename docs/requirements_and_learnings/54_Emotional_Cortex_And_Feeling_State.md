@@ -340,6 +340,86 @@ The placement follows OpenAI's prompt-caching guidance for this layer: keep chan
 later than stable instructions. See
 [Prompt caching](https://developers.openai.com/api/docs/guides/prompt-caching).
 
+### Instruction physics and Codex authority
+
+Prompting does **not** update model weights. A system/developer/user message conditions the current
+forward pass: it changes the token context, internal activations/attention and cached key/value state,
+and therefore the probability distribution over the next token. Fine-tuning or training changes
+weights; ordinary inference does not. A hidden/private instruction is not stronger because it is
+hidden. Its effective strength comes from role authority, placement, clarity, salience, competing
+instructions, and model steerability.
+
+The supported role order is `system > developer > user > assistant/tool`. For direct model routes,
+the capsule remains final in the highest additive application-owned system/developer instruction
+content the route supports. For Codex workers, the highest safe supported additive configuration is
+native `developer_instructions`; `base-instructions` / `model_instructions_file` replaces Codex's
+default base instructions and is prohibited for mutable Feelings because it can remove native tool,
+safety, and product behavior. Codex loads configured additional instructions before project
+`AGENTS.md`, so “last in the config string” is not proof that no later native context exists.
+
+GlassHive therefore carries the exact already-declared dynamic tail in the authenticated provider
+request as `X-GlassHive-Developer-Instruction-Tail-B64`. The header is encoding, not encryption. The
+provider rejects a non-empty declared tail that is absent from system/developer authority, removes
+duplicates, moves the exact opaque tail after capability-broker instructions, and hashes the
+effective pinned snapshot for session replacement. Off sends no tail. Runtime code remains generic:
+it does not branch on the Feeling tag, agent name, provider display label, or user prompt.
+
+The 2026-08-03 investigation linked the potency failure to competing prompt layers rather than a
+missing Feeling tail. The runtime removed two standing activity attractors, compressed duplicated
+Main instructions from 20,999 to 10,280 characters, disabled Codex's separate personality for
+Viventium, and kept canonical LIFE instructions after they passed direct A/B. Salience is now
+structural: extremes are required in data and, when fewer than two extremes are active, the strongest
+non-neutral pulls are promoted until two rows are required. Every required row must affect the
+resulting desire/action, and runtime never scans cause prose for words such as `must`. This closes
+the default-state gap where all shipped values previously produced zero required rows. No native
+Codex base instruction was replaced.
+
+One false-negative rerun exposed a separate shipped-artifact fault: source and built output contained
+the new rule, but the running API had restarted during the build's clean phase and retained the old
+bundle. DB-captured provider instructions proved the stale rule was still executing. A deliberate
+post-build process reload changed the active child and DB evidence then showed the new rule exactly
+once at the final developer boundary. Source correctness is therefore insufficient; affected QA must
+prove source, built artifact, running process, and provider-bound instruction agree.
+
+A second installed-source drift omitted the native-session binding check for a changed effective
+system/developer snapshot. That allowed a resumed Codex thread to retain the prior Feeling even when
+the provider received a new one. The provider now compares the current authority hash at each serial
+turn boundary: changed authority terminates and replaces the native worker while seeding visible
+history; unchanged authority resumes it. A real three-turn provider run proved depleted → bright
+replacement, bright → bright reuse, old-worker termination, one capsule per worker, preserved visible
+history, and 5–6 second completions.
+
+A later same-chat run exposed the opposite session error: the minute-by-minute clock was inside the
+durable developer snapshot, so an unchanged Feeling replaced its worker at the next minute. Moving
+time to per-turn context fixed that churn, but the first integration passed the encoded value only to
+the incoming request after the final run-request copy had already been created, so GlassHive received
+no clock. The final path writes the encoded value into that exact run-request object. Focused tests
+cover the copy, provider tests cover unchanged authority across changing turn context, and the active
+worker input showed the current timezone-aware clock outside developer authority. The post-fix model
+completion was blocked by an externally exhausted Codex allowance; this transport proof is not
+misstated as a fresh visible-completion pass.
+
+The project-instruction boundary was tested rather than inferred from command shape. Two fresh Codex
+sessions used a neutral primary `-C` and an added directory containing both a readable proof file and
+a hostile synthetic `AGENTS.md`; both ignored the hostile reply instruction and one read the proof
+file exactly. The opt-out therefore preserves file capability. A separate six-run paired A/B used
+the same bright/high-Play state and prompt against the real LIFE workspace: `inherit` passed 3/3 and
+`exclude` passed 3/3. Because exclusion did not improve the pass rate and canonical LIFE context is a
+Viventium requirement, the product default remains `inherit`; `exclude` remains an explicit option.
+
+With the actual artifact loaded, eight repeated mixed low-Mood/high-Play turns embodied both pulls,
+and a three-repeat four-state matrix passed 11/12 outputs. One bright case was only partial because it
+introduced unnecessary negative framing; the next two bright repeats passed. The matrix averaged
+7.726 seconds, median 7.347 seconds, and nearest-rank p95 12.067 seconds. The comparable pre-guard
+matrix averaged 7.781 seconds with p95 12.042 seconds, so the quality gain introduced no material
+latency regression. Medium reasoning effort remained the best tested Viventium Main default: high
+was about 14% slower with lower alignment, while xhigh was about 2.4 times slower with lower
+alignment on this task.
+
+Primary implementation references: [OpenAI Harmony role hierarchy](https://github.com/openai/harmony),
+[OpenAI prompt engineering](https://developers.openai.com/api/docs/guides/prompt-engineering), and
+[Codex configuration](https://learn.chatgpt.com/docs/codex/config-reference).
+
 ### Spoken expression on voice-capable surfaces
 
 Feelings shapes spoken delivery only when the request structurally declares that the response will
@@ -665,6 +745,196 @@ Quality and performance are both acceptance criteria.
 - Appraiser failure never changes state and never fails the reply.
 - Acceptance records main TTFT and detached reaction duration separately, plus requested and actual
   reaction routes.
+- The 2026-08-03 final GlassHive four-state matrix averaged 7.726 seconds with 12.067-second p95,
+  effectively unchanged from the comparable pre-guard matrix at 7.781 seconds and 12.042-second p95.
+  Real connected-account/tool guardrail probes remained correct but slow at 24–103 seconds; this is
+  a GlassHive operational-route performance gap, not evidence that Feeling capsule assembly is slow.
+
+## Harness plugin parity (Feelings for Claude Code and Codex)
+
+The public **Viventium Feelings** plugin (`ProjectViventium/viventium-feelings`) is a downstream,
+self-contained child of this document. It is the one-click, value-first taste of the Viventium mind:
+it re-expresses the exact Feelings model inside a user's existing Claude Code or Codex harness with no
+LibreChat server, no Mongo, and no hosted state. This document remains the parent source of truth; the
+plugin repo carries its own product/architecture docs but must not redefine the model here.
+
+What must stay in parity with this document (a divergence requires a dated
+[timeline](#requirements--decisions-timeline-timestamped) entry here first):
+
+- the nine bands, their fixed order, default Nature, half-lives, and low→high level words;
+- the five equal-width ranges per band and the additive-only range-customization contract;
+- the lazy `2^(-elapsed/halfLife)` decay, `[0,100]` clamping, and Nature/Current/Reset semantics;
+- the typed reaction schema (closed band/direction/strength/cause enums; `slight/clear/strong` =
+  `3/8/15`; zero-to-nine changes; one display-only Inner-state line ≤280 chars);
+- the private, words-only embodiment capsule and the verbatim embodied frame;
+- privacy posture: local-only typed state, no raw prompt/answer persistence, explicit erase.
+
+What legitimately differs by design (and must stay honest about it):
+
+- **Core-worker isolation.** Viventium's core already injects its authoritative current state, so a
+  Viventium-compiled Codex worker must disable the downstream Feelings plugin by exact plugin ID.
+  This prevents two independent feeling states. Standalone Codex and Claude Code users can enable
+  the plugin normally; the generic GlassHive default does not deny it.
+- **Appraiser route.** The core product's default reaction route is OpenAI `gpt-5.6-terra` with an
+  Anthropic fallback. The plugin instead reuses the user's own signed-in harness model as the
+  detached appraiser — that is the whole point of "no second account." It is not a downgrade claim;
+  it is a different, path-of-least-resistance substrate.
+- **Surface scope.** The plugin governs Claude Code and Codex plugin surfaces only. It must not claim
+  to govern ordinary Claude Chat or ChatGPT Chat, nor claim model sentience.
+- **Activation modes.** The plugin ships `always`/`disabled`; the core `classified` mode depends on
+  the LibreChat activation classifier and is out of scope for the standalone plugin.
+- **Nature profiles.** The plugin surfaces transparent named starting points (Grounded, Candid, Warm,
+  Curious) as a UX convenience over the same editable per-band Nature; they are macros, not new state.
+
+### Shared dashboard interaction and brand contract
+
+Both the core `/feelings` route and the plugin dashboard must satisfy the interaction and brand
+requirements ratified on 2026-07-19 (see the timeline). In short: the fundamental interaction —
+**see Current and Nature/baseline and change either directly, inline, with no modal** — lives on the
+band itself; advanced options (human-facing **How quickly it returns**, **Felt**, and the five range
+additions) are one click away in an inline drawer, never a modal. Half-life and enabled-lane remain
+internal schema and engineering terms, not ordinary interface copy. Chrome is restrained and
+frontier-lab aligned (monochrome ink/paper; per-band color is used only for that band's own
+identity — never a loud global accent), the theme follows the operating system (light/dark) with an
+explicit override, and the brand is the crisp Viventium **V** mark and product-forward wordmark, not a
+generic atom glyph.
+
+### Sync workflow
+
+1. The owner introduces a new Feelings idea or requirement (in chat or a doc).
+2. An agent records it in the [timeline](#requirements--decisions-timeline-timestamped) below with an
+   ISO date and enough detail to implement and QA.
+3. The agent propagates the ratified change into the affected child repos (plugin runtime, dashboard,
+   docs, QA), verifies it on the real surface, and links the evidence.
+4. Parity drift found later is reconciled against this document, not against a single child's local
+   state.
+
+## Requirements & Decisions Timeline (timestamped)
+
+This timeline is the single, chronological place to see what Feelings requirements exist and when the
+owner introduced them, so the core product and every child repo can be vibe-code-synced against one
+anchor. **Convention:** future agents MUST append a new dated (`YYYY-MM-DD`) entry here whenever the
+owner introduces or changes a Feelings idea/requirement, and MUST NOT silently bake an undated idea
+into runtime as if it were ratified. Earlier ratified product decisions also live, in prose, under
+[Owner-approved decisions](#owner-approved-decisions); this timeline is the forward-looking log.
+
+- **2026-07-19 — Harness plugin parity, dashboard interaction, and brand (owner feedback).**
+  - **Inline, no-modal core interaction.** The dashboard must show current state and baseline (Nature)
+    and let the user change either interactively on the lane itself. Modals for this fundamental
+    interaction are rejected. Half-life and other advanced options may be one click away (an inline
+    expand), but not the primary interaction. Applies to core `/feelings` and the plugin.
+  - **Frontier-lab visual alignment.** The lemon/lime accent is rejected ("looks like a sports-betting
+    site"). Use a restrained, production-grade palette aligned with Viventium's own brand and how
+    frontier labs present; reserve saturated color for per-band identity only.
+  - **System light/dark.** The dashboard must sync with the OS light/dark setting (with an explicit
+    manual override); shipping dark-only is rejected.
+  - **Brand mark and wordmark.** Replace the atom-style glyph with the crisp, modern Viventium **V**
+    favicon/mark used by viventium.ai; the navbar must read as the product (Viventium Feelings), not a
+    bare, context-free "Viventium".
+  - **Host-adaptive status/taskbar icon (option).** The plugin should be able to present the Viventium
+    V in the host's status/task bar depending on the system it is installed on. Path-of-least-
+    resistance scope now: the dashboard tab/window favicon is the V (theme-aware) and the host is
+    shown as a badge (Claude Code / Codex). A deeper OS menu-bar/tray presence is a separate future
+    item because the CLI harnesses expose no persistent tray the plugin owns.
+  - **Core status-bar parity.** The main Viventium macOS status-bar (ViventiumHelper) menu should gain
+    a direct button that opens the Feelings page, matching the plugin's dashboard-first entry. Owned by
+    the core app; tracked here for parity. Implementation touches `apps/macos/ViventiumHelper` and its
+    prebuilt universal binary + source hash, so it must follow shipped-artifact discipline.
+  - **Single source of truth.** Establish this timeline + parity section so new owner ideas are
+    timestamped in one place and child repos stay synced. (This entry.)
+
+- **2026-07-28 — Temporal trail and human-facing V0.5 language (owner feedback).**
+  - **The journey is essential.** Current values alone are insufficient. Every canonical Feeling
+    must show a temporal trail of how it travelled. MIND carries a compact recent Emotion Trail;
+    the complete CHARACTER instrument shows a trail for all nine bands plus a readable list of what
+    changed, when, by how much, and why. Missing intervals must not be fabricated as continuous
+    sampling.
+  - **Typed truth only.** A rendered change must come from the canonical typed reaction contract:
+    a valid band, direction, `slight/clear/strong` strength (`3/8/15`), and allowed cause. A manual
+    state edit clears stale reaction language until another real reaction arrives.
+  - **Human product labels.** The UI says Current, Natural, How quickly it returns, Felt, and What
+    changed and why. Internal implementation terms such as lane, half-life, and state vector remain
+    in code and technical documentation; they are not ordinary product copy.
+  - **V0.5 reuse.** The new V0.5 CHARACTER surface must import or faithfully reuse the complete live
+    Feelings behavior rather than approximating it with a generic personality form or alternate
+    taxonomy. Any sample first-run data must be labeled Sample and never presented as sensed truth.
+
+- **2026-08-02 — Viventium owns the Codex worker personality layer (owner feedback).**
+  - **Best-aligned Viventium default.** Viventium-compiled Codex workers use native
+    `personality=none` by default. In Codex this disables Codex's separate personality instructions;
+    it does not disable tools, reasoning, or worker capabilities. The final request-scoped Feeling
+    capsule remains the sole intended emotional/personality authority.
+  - **Scope boundary.** This is not imposed on standalone GlassHive, which continues to inherit the
+    user's Codex personality when Viventium does not compile the setting. Viventium operators retain
+    explicit `inherit`, `friendly`, and `pragmatic` alternatives.
+  - **Mutable authority evidence.** `codex exec resume` and App Server settings metadata did not
+    replace an earlier model-visible developer instruction. App Server `thread/inject_items` did:
+    it persisted a new developer-role Responses API message into the same loaded thread, and two
+    opposite synthetic Feeling instructions produced the expected opposite outputs with complete
+    terminal events. Because injection appends rather than replaces, older developer items remain in
+    persisted history; the two-turn result does not prove long-session current-only authority. This
+    proves transport eligibility only. Production remains `codex exec` until a separately configured
+    integration proves bounded history plus compaction/restart/reconnect/cancel behavior and receives
+    full user-path approval.
+
+- **2026-08-02 — Highest-safe instruction authority and causal contrast (owner feedback).**
+  - Document that inference-time instructions condition activations/context and output probabilities;
+    they do not rewrite model weights, and private visibility adds no authority by itself.
+  - Pin the exact request-scoped Feeling at the actual GlassHive provider/native boundary, after the
+    capability broker, using generic exact-tail metadata. Keep Codex base instructions intact.
+  - Require an off/depleted/bright/mixed same-prompt contrast and semantic grading. The first live
+    run proved placement but failed potency (`1/4` semantic pass), so GlassHive remains PARTIAL.
+  - Do not ship the experimental capsule-grounding or core-prompt neutralization until repeated
+    contrasts pass and protected prompt sync is reviewed.
+
+- **2026-08-03 — Short current-only Feeling authority accepted for GlassHive Main (owner feedback).**
+  - Remove the two proven standing activity attractors and duplicated Main policy text while keeping
+    identity, truth, tools, privacy, and external-action boundaries intact.
+  - Default Viventium conversation workers to Codex personality `none`, canonical LIFE project
+    instructions `inherit`, the exact Feeling capsule once as the final developer authority, and
+    medium reasoning. Keep `exclude` as a tested deployment option rather than the default.
+  - Mark endpoint salience structurally in the range definitions. Every `required` row must change
+    the resulting desire/action; runtime must never infer salience from cause wording.
+  - Treat source, build, and running artifact as separate acceptance surfaces. The first post-build
+    rerun was stale until an explicit runtime reload; provider-bound DB evidence caught it.
+  - Accept GlassHive Main potency after mixed passed 8/8 repeats, the four-state matrix passed 11/12,
+    and a real browser reply/refresh embodied the mixed state. Keep the one bright partial and slow
+    24–103 second operational-tool probes visible as remaining quality/performance evidence.
+  - Close the same-chat stale-authority escape: a changed effective system/developer snapshot must
+    replace the native worker and seed visible history; an unchanged snapshot must resume it. The
+    installed three-turn provider run proved both branches and exact one-capsule authority.
+  - Do not blame `AGENTS.md` without causal evidence. The final bright/high-Play A/B passed 3/3 with
+    canonical LIFE instructions inherited and 3/3 with them excluded, so inheritance remains the
+    Viventium default and exclusion remains a tested opt-out.
+  - Keep durable developer authority separate from mutable turn facts. Current time is per-turn
+    context and must reach the final run-request copy; it must neither enter the session authority
+    hash nor be dropped after custom-provider remapping.
+
+- **2026-08-04 — Final Main potency and truthful Reaction blocker (owner-directed QA).**
+  - Keep the final capsule short and causal: every required row must change one concrete current
+    desire/action; label recital, separate row clauses, and tone alone do not count.
+  - Judge semantic visible output after delivery-control stripping, while validating raw
+    provider-control grammar separately.
+  - Keep Viventium's native Codex personality default at `none`; retain all useful plugins and deny
+    only the conflicting Feelings plugin through the generic configured plugin ID list.
+  - Keep the earlier v4 Main bank as a 26/26 semantic pass. The v5 bank adds the shipped-default
+    on/off pair and must not inherit that score; its final candidate run remains a local functional
+    gate until the connected judge account is reauthenticated.
+  - Endpoint-only salience leaves the shipped defaults with no required row, while requiring four
+    moderate rows overloads the choice. Require all extremes; otherwise promote the strongest
+    non-neutral pulls until two rows are required. The paired default fixture must prove material
+    content change, not warmer tone.
+  - Do not average in the nine Reaction cases: they are blocked by authorization failures on both
+    the configured OpenAI primary and Anthropic fallback and require account reconnection plus a
+    real rerun.
+  - Bring the background Feelings tab forward before browser status assertions; background polling
+    is intentionally paused and stale visible state is not current UI evidence.
+  - Final connected-account validation completed all 41 current cases with zero transport,
+    deterministic, duplicate, or unresolved-async failures. The raw semantic judge passed 40/41;
+    its rejected output passed all seven item-level checks and the judge's own summary, while its
+    aggregate flag remained false. The boundary also passed fresh repeats. The authenticated
+    browser/Reaction run then passed 46/46 checks with exact
+    state restoration and synthetic-data cleanup. See the final report linked below.
 
 ## Harness plugin parity (Feelings for Claude Code and Codex)
 

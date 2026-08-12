@@ -147,6 +147,23 @@
   behavior remains controlled by each selected server's reviewed policy; writes retain their
   separate confirmation/checkpoint policy. Agent Builder tool and handoff selection is the authority
   boundary, not prompt wording or provider-wide defaults.
+- Conversation-provider grants must be refreshed from the finalized per-run request identity, not
+  only the gateway request captured before persistence. Telegram, voice, scheduler, and other trusted
+  gateways may begin with `conversationId: new` and no durable assistant message id; after run
+  creation assigns the real conversation/message ids, those exact ids must replace the provisional
+  values before signing. The broker continues to reject `new`, zero-parent sentinels, and truly
+  unscoped grants.
+- Mint-time and verify-time scope policy must be identical. Runtime conversation-grant creation
+  requires an exact message plus conversation or pre-persistence turn id and fails before
+  persistence/header attachment when either boundary is absent; direct and scheduled runs instead
+  use their explicit signed worker/run or schedule/run identity.
+- Provider failover changes model transport, not participant authority. A tool-less fallback route
+  inherits MCP and host-tool projection from the owning participant's structured capability source;
+  it must not silently receive an empty broker merely because the fallback Agent document omits the
+  participant's tools.
+- Background cortex execution installs the same invocation-fresh provider-capability refresher as
+  foreground Agent runs. The exact cortex request body is attached at setup and re-signed at the
+  pre-model-attempt boundary so a delayed Phase B run cannot outlive the bootstrap replay window.
 - If registry or grant preparation is unavailable, the provider receives a typed degraded bootstrap
   status. Unrelated conversation may continue, but a connected-account request must report that
   exact blocker; it must not silently substitute memory, a different account, or a native connector.
@@ -198,12 +215,45 @@
 - Content-read intent must be host-bound, not worker-authored. The host may mint a signed broker grant
   with a content-read scope when the user explicitly asks to inspect connected-account content; a
   worker-supplied boolean alone must not satisfy the content-read gate.
-- Write confirmation must not be a worker-authored boolean. Mutating broker calls require a
-  host-signed confirmation token bound to the broker grant, server, tool, invocation id, and
-  argument hash; until a user-facing approval flow mints that token, writes fail closed.
+- Write authorization is reviewed server policy, not prompt wording or a worker-authored boolean.
+  `writePolicy: deny` blocks mutations; `writePolicy: confirm` requires a host-signed confirmation
+  token bound to the broker grant, server, tool, invocation id, and argument hash; and
+  `writePolicy: allow` is reserved for explicitly reviewed low-impact product capabilities such as
+  user-owned schedule CRUD. Every brokered mutation still requires an invocation id and shared
+  replay protection. Connected-account writes remain confirmation-gated unless their own reviewed
+  source-of-truth policy explicitly proves a narrower safe exception.
 - Broker invocation replay checks must use the shared LibreChat flow/cache backing store. If that
   shared store is unavailable, invocation-id-bearing broker calls fail closed by default; an
   in-memory replay fallback is permitted only for explicit local single-process testing.
+- Conversation-provider projection must compare every structurally declared Agent MCP server with
+  the current trusted policy registry and record `complete`, `partial`, or `empty` plus structured
+  omissions. A partial/empty projection is carried into worker context so native host tools cannot
+  make an omitted server appear available. This is capability truth, not intent classification:
+  runtime code must not branch on the user's words, an agent name, a provider label, or a tool-name
+  substring to decide whether a server is needed.
+- Conversation-provider grants must be refreshed from the finalized per-run request identity, not
+  only the gateway request captured before persistence. Telegram, voice, scheduler, and other trusted
+  gateways may begin with `conversationId: new` and no durable assistant message id; after run
+  creation assigns the real conversation/message ids, those exact ids must replace the provisional
+  values before signing. The broker continues to reject `new`, zero-parent sentinels, and truly
+  unscoped grants.
+- Mint-time and verify-time scope policy must be identical. Runtime grant creation requires an
+  exact message plus conversation or pre-persistence turn id and fails before persistence/header
+  attachment when either boundary is absent; producing a bearer token that the broker is guaranteed
+  to reject is itself a defect.
+- Provider failover changes model transport, not participant authority. A tool-less fallback route
+  inherits MCP and host-tool projection from the owning participant's structured capability source;
+  it must not silently receive an empty broker merely because the fallback Agent document omits the
+  participant's tools.
+- Background cortex execution installs the same invocation-fresh provider-capability refresher as
+  foreground Agent runs. The exact cortex request body is attached at setup and re-signed at the
+  pre-model-attempt boundary so a delayed Phase B run cannot outlive the bootstrap replay window.
+- A broker `tools/call` must receive a fresh cancellation signal bound to that broker HTTP request
+  and response. Never reuse a completed outer chat/provider signal: an already-aborted inherited
+  signal can make a healthy provider look unavailable before the call starts. Successful non-empty
+  `tools/list` discovery may be reused briefly within the same signed grant, but every request still
+  revalidates the user and current server policy and never caches failures, empty discovery, provider
+  tokens, or tool results.
 - Scheduled GlassHive work must not rely on a grant that expires before the run starts. The broker
   may extend run-scoped grants for scheduled work within a conservative cap, but far-future or
   recurring connected-account work needs a renewal design before it can replace productivity

@@ -80,3 +80,14 @@ def test_strip_delivery_controls_for_preview_hides_incomplete_reserved_suffix():
     assert strip_delivery_controls_for_preview("~~~text\n{MSG_\n~~~") == "~~~text\n{MSG_\n~~~"
     assert strip_delivery_controls_for_preview("> {SKIP_") == "> {SKIP_"
     assert strip_delivery_controls_for_preview("Literal {MSG_ in prose") == "Literal {MSG_ in prose"
+
+
+def test_parse_delivery_controls_anchors_case_crlf_and_tilde_fence_behavior():
+    source = "Before.\r\n  { skip_voice }  \r\n~~~text\r\n{MSG_BREAK}\r\n~~~\r\nAfter."
+
+    parsed = parse_delivery_controls(source)
+
+    assert parsed.skip_voice is True
+    assert parsed.skip_voice_count == 1
+    assert parsed.message_break_count == 0
+    assert parsed.clean_text == "Before.\n~~~text\n{MSG_BREAK}\n~~~\nAfter."

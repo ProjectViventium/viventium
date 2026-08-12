@@ -16,7 +16,7 @@ class _DummySession:
     def __init__(self) -> None:
         self.say_calls: list[dict[str, object]] = []
 
-    def say(self, text: str, *, allow_interruptions: bool, add_to_chat_ctx: bool) -> None:
+    def say(self, text: str, *, allow_interruptions: bool, add_to_chat_ctx: bool):
         self.say_calls.append(
             {
                 "text": text,
@@ -24,6 +24,26 @@ class _DummySession:
                 "add_to_chat_ctx": add_to_chat_ctx,
             }
         )
+        return _DummySpeechHandle()
+
+
+class _DummySpeechHandle:
+    def __init__(self) -> None:
+        self._done = False
+        self.interrupt_forces = []
+        self._callbacks = []
+
+    def done(self) -> bool:
+        return self._done
+
+    def interrupt(self, *, force=False):
+        self.interrupt_forces.append(force)
+        self._done = True
+        for callback in self._callbacks:
+            callback(self)
+
+    def add_done_callback(self, callback):
+        self._callbacks.append(callback)
 
 
 class _FakeClientSession:
@@ -75,6 +95,56 @@ class TestCortexFollowupScheduler(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(session.say_calls[0]["text"], "Here is the real follow-up.")
         self.assertEqual(session.say_calls[0]["allow_interruptions"], True)
         self.assertEqual(session.say_calls[0]["add_to_chat_ctx"], False)
+
+    async def test_listen_only_suppresses_callback_and_call_mode_resumes(self) -> None:
+        session = _DummySession()
+        scheduler = self._build_scheduler(session=session)
+
+        async def _fake_fetch(self, _http_session, message_id):
+            return {
+                "insights": [{"cortex_id": "pattern", "insight": "Background thought."}],
+                "followUp": {"messageId": message_id, "text": f"Follow-up {message_id}"},
+            }
+
+        scheduler._fetch_cortex = MethodType(_fake_fetch, scheduler)
+
+        with mock.patch.object(worker.aiohttp, "ClientSession", _FakeClientSession):
+            scheduler.set_mode("listen_only")
+            scheduler.schedule("silent", [], "", cortex_expected=True)
+            await scheduler._task
+            scheduler.set_mode("call")
+            scheduler.schedule("audible", [], "", cortex_expected=True)
+            await scheduler._task
+
+        self.assertEqual(
+            [call["text"] for call in session.say_calls],
+            ["Follow-up audible"],
+        )
+
+    async def test_switch_to_listen_only_interrupts_active_followup_handle(self) -> None:
+        session = _DummySession()
+        scheduler = self._build_scheduler(session=session)
+        self.assertTrue(scheduler._speak("Current follow-up", 0))
+        handle = next(iter(scheduler._speech_handles))
+
+        scheduler.set_mode("listen_only")
+
+        self.assertEqual(handle.interrupt_forces, [True])
+        self.assertEqual(scheduler._speech_handles, set())
+
+    async def test_close_cancels_pollers_and_active_followup_audio(self) -> None:
+        session = _DummySession()
+        scheduler = self._build_scheduler(session=session)
+        self.assertTrue(scheduler._speak("Current follow-up", 0))
+        handle = next(iter(scheduler._speech_handles))
+        poller = asyncio.create_task(asyncio.sleep(60))
+        scheduler._task = poller
+        scheduler._cortex_task = poller
+
+        await scheduler.close()
+
+        self.assertTrue(poller.cancelled())
+        self.assertEqual(handle.interrupt_forces, [True])
 
     async def test_keeps_background_insights_silent_without_followup(self) -> None:
         session = _DummySession()
@@ -344,6 +414,37 @@ class TestCortexFollowupScheduler(unittest.IsolatedAsyncioTestCase):
         scheduler.schedule("msg_123", [], "")
 
         self.assertIsNone(scheduler._task)
+        self.assertEqual(session.say_calls, [])
+
+    async def test_stable_supersession_stops_stale_followup_without_claiming_durable_result(self) -> None:
+        session = _DummySession()
+        scheduler = self._build_scheduler(session=session)
+        fetch_calls = []
+
+        async def _fake_fetch(self, _http_session, message_id):
+            fetch_calls.append(message_id)
+            return {
+                "latest": {
+                    "callbackId": "callback-1",
+                    "text": "Late durable result must not speak as the stale response.",
+                    "status": "completed",
+                }
+            }
+
+        scheduler._fetch_glasshive = MethodType(_fake_fetch, scheduler)
+
+        with mock.patch.object(worker.aiohttp, "ClientSession", _FakeClientSession):
+            scheduler.schedule(
+                "msg_123",
+                [],
+                "",
+                cortex_expected=False,
+                glasshive_expected=True,
+                presentation_is_current=lambda: False,
+            )
+            await scheduler._task
+
+        self.assertEqual(fetch_calls, [])
         self.assertEqual(session.say_calls, [])
 
 

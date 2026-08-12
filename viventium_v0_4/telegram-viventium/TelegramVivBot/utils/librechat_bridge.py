@@ -15,6 +15,7 @@ import asyncio
 from contextlib import asynccontextmanager
 import json
 import logging
+import math
 import os
 import re
 import time
@@ -64,6 +65,8 @@ class LibreChatSession:
     stream_id: str
     conversation_id: str
     voice_route: Optional[dict[str, Any]] = None
+    logical_turn_id: str = ""
+    revision: Optional[int] = None
 
 
 # === VIVENTIUM START ===
@@ -898,6 +901,22 @@ def _parse_positive_float(value: str, fallback: float) -> float:
     return fallback
 
 
+_MAX_AUTOMATIC_FOLLOWUP_WINDOW_S = 86_400.0
+
+
+def _parse_optional_followup_window(value: str) -> Optional[float]:
+    """Parse an explicit automatic-listener window without inventing a fallback."""
+    if not value:
+        return None
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(parsed) or parsed < 0 or parsed > _MAX_AUTOMATIC_FOLLOWUP_WINDOW_S:
+        return None
+    return parsed
+
+
 def _parse_non_negative_int(value: str, fallback: int) -> int:
     try:
         num = int(value)
@@ -1264,29 +1283,80 @@ class LibreChatBridge:
             (os.getenv("VIVENTIUM_TELEGRAM_CHAT_START_CONNECT_RETRY_DELAY_S") or "").strip(),
             0.75,
         )
-        self.insight_grace_s = _parse_positive_float(
-            (os.getenv("VIVENTIUM_TELEGRAM_INSIGHT_GRACE_S") or "").strip(),
-            180.0,
-        )
-        self.insight_max_s = _parse_positive_float(
-            (os.getenv("VIVENTIUM_TELEGRAM_INSIGHT_MAX_S") or "").strip(),
-            self.insight_grace_s + 30.0,
-        )
-        if self.insight_max_s < self.insight_grace_s:
-            self.insight_max_s = self.insight_grace_s
         # === VIVENTIUM START ===
+        # Feature: One config-owned automatic follow-up window across Telegram listeners.
+        # Reason: The raw SSE listener and DB-backed poller previously invented separate implicit
+        # 180s/210s lifetimes. Supported installs now use the compiler-owned background follow-up
+        # window. Legacy insight env is accepted only when the canonical value is absent.
+        canonical_followup_raw = (
+            os.getenv("VIVENTIUM_TELEGRAM_FOLLOWUP_GRACE_S") or ""
+        ).strip()
+        legacy_insight_grace_raw = (
+            os.getenv("VIVENTIUM_TELEGRAM_INSIGHT_GRACE_S") or ""
+        ).strip()
+        using_legacy_insight_window = False
+        if canonical_followup_raw:
+            configured_followup_window_s = _parse_optional_followup_window(
+                canonical_followup_raw
+            )
+            if configured_followup_window_s is None:
+                logger.warning(
+                    "Invalid VIVENTIUM_TELEGRAM_FOLLOWUP_GRACE_S; automatic Telegram follow-up listeners are disabled"
+                )
+                configured_followup_window_s = 0.0
+        elif legacy_insight_grace_raw:
+            configured_followup_window_s = _parse_optional_followup_window(
+                legacy_insight_grace_raw
+            )
+            if configured_followup_window_s is None:
+                logger.warning(
+                    "Invalid deprecated VIVENTIUM_TELEGRAM_INSIGHT_GRACE_S; automatic Telegram follow-up listeners are disabled"
+                )
+                configured_followup_window_s = 0.0
+            else:
+                using_legacy_insight_window = True
+                logger.warning(
+                    "VIVENTIUM_TELEGRAM_INSIGHT_GRACE_S is deprecated; configure runtime.background_followup_window_s instead"
+                )
+        else:
+            configured_followup_window_s = 0.0
+
+        configured_total_raw = (
+            os.getenv("VIVENTIUM_TELEGRAM_FOLLOWUP_TIMEOUT_S") or ""
+        ).strip()
+        if configured_followup_window_s <= 0:
+            configured_total_s = 0.0
+        elif configured_total_raw:
+            configured_total_s = _parse_optional_followup_window(configured_total_raw)
+            if configured_total_s is None:
+                logger.warning(
+                    "Invalid VIVENTIUM_TELEGRAM_FOLLOWUP_TIMEOUT_S; using the canonical follow-up window"
+                )
+                configured_total_s = configured_followup_window_s
+        elif using_legacy_insight_window:
+            legacy_total_raw = (
+                os.getenv("VIVENTIUM_TELEGRAM_INSIGHT_MAX_S") or ""
+            ).strip()
+            configured_total_s = _parse_optional_followup_window(legacy_total_raw)
+            if configured_total_s is None:
+                configured_total_s = configured_followup_window_s
+        else:
+            configured_total_s = configured_followup_window_s
+
+        if configured_followup_window_s > 0:
+            configured_total_s = max(configured_total_s, configured_followup_window_s)
+
+        # Keep the historical attribute names as internal compatibility aliases. They no longer
+        # own defaults or extend a compiler-configured follow-up window.
+        self.insight_grace_s = configured_followup_window_s
+        self.insight_max_s = configured_total_s
+        self.followup_grace_s = configured_followup_window_s
+        self.followup_timeout_s = configured_total_s
+
         # Feature: DB-backed follow-up polling (LibreChat parity).
         self.followup_interval_s = _parse_positive_float(
             (os.getenv("VIVENTIUM_TELEGRAM_FOLLOWUP_INTERVAL_S") or "").strip(),
             1.5,
-        )
-        self.followup_grace_s = _parse_positive_float(
-            (os.getenv("VIVENTIUM_TELEGRAM_FOLLOWUP_GRACE_S") or "").strip(),
-            30.0,
-        )
-        self.followup_timeout_s = _parse_positive_float(
-            (os.getenv("VIVENTIUM_TELEGRAM_FOLLOWUP_TIMEOUT_S") or "").strip(),
-            self.insight_max_s,
         )
         self.glasshive_timeout_s = _parse_positive_float(
             (os.getenv("VIVENTIUM_TELEGRAM_GLASSHIVE_TIMEOUT_S") or "").strip(),
@@ -1323,8 +1393,6 @@ class LibreChatBridge:
                 600_000,
             ),
         )
-        if self.followup_timeout_s < self.followup_grace_s:
-            self.followup_timeout_s = self.followup_grace_s
         if self.glasshive_timeout_s < 1.0:
             self.glasshive_timeout_s = 1.0
         # === VIVENTIUM END ===
@@ -1843,7 +1911,11 @@ class LibreChatBridge:
                 if delivery_plan.skip_voice:
                     should_send_voice = False
                 if should_send_voice:
-                    voice_audio = await synthesize_speech(voice_text, convo_id, voice_route=voice_route)
+                    voice_audio = await synthesize_speech(
+                        voice_text,
+                        convo_id,
+                        voice_route=voice_route,
+                    )
             except Exception as exc:
                 logger.warning("Failed proactive voice synthesis, falling back to text: %s", exc)
         logger.info(
@@ -2080,6 +2152,7 @@ class LibreChatBridge:
         telegram_username = kwargs.get("telegram_username") or kwargs.get("telegramUsername") or ""
         telegram_message_id = kwargs.get("telegram_message_id") or kwargs.get("telegramMessageId") or ""
         telegram_update_id = kwargs.get("telegram_update_id") or kwargs.get("telegramUpdateId") or ""
+        source_event_id = kwargs.get("source_event_id") or kwargs.get("sourceEventId") or ""
         # === VIVENTIUM START ===
         # Feature: Voice mode metadata for surface-specific formatting.
         voice_mode = kwargs.get("voice_mode")
@@ -2143,6 +2216,8 @@ class LibreChatBridge:
                 }
                 if audio_requested is not None:
                     start_kwargs["audio_requested"] = audio_requested
+                if source_event_id:
+                    start_kwargs["source_event_id"] = str(source_event_id)
                 session = await self._start_chat_with_connect_retry(**start_kwargs)
                 if trace_id:
                     self._timing_log(trace_id, "lc_chat_http", chat_start_ts)
@@ -2159,6 +2234,13 @@ class LibreChatBridge:
                 return
             if not session:
                 return
+
+            if session.logical_turn_id:
+                yield {
+                    "type": "logical_turn",
+                    "logical_turn_id": session.logical_turn_id,
+                    "revision": session.revision,
+                }
 
             self._trace(
                 "LibreChatBridge session start: chat_id=%s stream_id=%s conversation_id=%s agent_id=%s include_insights=%s",
@@ -2192,7 +2274,11 @@ class LibreChatBridge:
                     session.conversation_id,
                 )
             insight_task: Optional[asyncio.Task] = None
-            if self.on_message_callback:
+            if (
+                self.on_message_callback
+                and self.insight_grace_s > 0
+                and self.insight_max_s > 0
+            ):
                 insight_task = asyncio.create_task(
                     self._listen_for_insights(stream_id=session.stream_id, chat_id=chat_id),
                 )
@@ -2259,6 +2345,7 @@ class LibreChatBridge:
         preference_convo_id: Optional[str],
         voice_mode: Optional[bool],
         input_mode: str,
+        source_event_id: str = "",
         audio_requested: Optional[bool] = None,
         files: Optional[list] = None,  # === VIVENTIUM: File upload support ===
         message_timestamp: Optional[str] = None,  # === VIVENTIUM: Time context support ===
@@ -2283,6 +2370,8 @@ class LibreChatBridge:
             payload["telegramMessageId"] = telegram_message_id
         if telegram_update_id:
             payload["telegramUpdateId"] = telegram_update_id
+        if source_event_id:
+            payload["sourceEventId"] = source_event_id
         # === VIVENTIUM START ===
         # Feature: Opportunistic voice preference sync for scheduler parity.
         pref_convo_id = preference_convo_id or telegram_chat_id
@@ -2363,6 +2452,14 @@ class LibreChatBridge:
         stream_id = data.get("streamId")
         conversation_id = data.get("conversationId")
         voice_route = _normalize_voice_route(data.get("voiceRoute"))
+        logical_turn_id = str(
+            data.get("logical_turn_id") or data.get("logicalTurnId") or ""
+        ).strip()
+        raw_revision = data.get("revision")
+        try:
+            revision = int(raw_revision) if raw_revision is not None else None
+        except (TypeError, ValueError):
+            revision = None
         if not isinstance(stream_id, str) or not stream_id:
             raise RuntimeError("LibreChat response missing streamId")
         if not isinstance(conversation_id, str) or not conversation_id:
@@ -2372,7 +2469,91 @@ class LibreChatBridge:
             stream_id=stream_id,
             conversation_id=conversation_id,
             voice_route=voice_route,
+            logical_turn_id=logical_turn_id,
+            revision=revision,
         )
+
+    async def ack_delivery(
+        self,
+        logical_turn_id: str,
+        revision: int,
+        state: str,
+        presentation_ref: str = "",
+    ) -> bool:
+        """Best-effort acknowledgement to an optional generic core lifecycle endpoint."""
+
+        return (
+            await self.ack_delivery_status(
+                logical_turn_id,
+                revision,
+                state,
+                presentation_ref,
+            )
+            == "recorded"
+        )
+
+    async def ack_delivery_status(
+        self,
+        logical_turn_id: str,
+        revision: int,
+        state: str,
+        presentation_ref: str = "",
+    ) -> str:
+        """Return enough lifecycle truth to retract a final that became stale in transit."""
+
+        endpoint = (os.getenv("VIVENTIUM_DELIVERY_ACK_ENDPOINT") or "").strip()
+        adapter_secret = (
+            os.getenv("VIVENTIUM_TELEGRAM_INTERACTION_ADAPTER_SECRET") or ""
+        ).strip()
+        if not endpoint or not adapter_secret or not logical_turn_id:
+            return "unavailable"
+        try:
+            normalized_revision = int(revision)
+        except (TypeError, ValueError):
+            return "unavailable"
+        url = (
+            endpoint
+            if endpoint.startswith(("http://", "https://"))
+            else f"{self.base_url.rstrip('/')}/{endpoint.lstrip('/')}"
+        )
+        payload = {
+            "logical_turn_id": str(logical_turn_id),
+            "revision": normalized_revision,
+            "state": str(state),
+        }
+        if presentation_ref:
+            payload["presentation_ref"] = str(presentation_ref)
+        headers = {"x-viventium-adapter-secret": adapter_secret}
+        timeout = httpx.Timeout(10.0, connect=5.0, read=10.0, write=10.0, pool=5.0)
+        max_attempts = 3
+        for attempt in range(max_attempts):
+            try:
+                async with httpx.AsyncClient(timeout=timeout) as client:
+                    response = await client.post(url, json=payload, headers=headers)
+            except Exception as exc:
+                if attempt + 1 >= max_attempts:
+                    logger.debug(
+                        "Delivery acknowledgement unavailable after retries: %s",
+                        type(exc).__name__,
+                    )
+                    return "unavailable"
+                await asyncio.sleep(0.2 * (attempt + 1))
+                continue
+            status_code = int(response.status_code)
+            if 200 <= status_code < 300:
+                return "recorded"
+            try:
+                body = response.json()
+            except Exception:
+                body = {}
+            error = body.get("error") if isinstance(body, dict) else None
+            if error in {"stale_revision", "conflict", "not_found"}:
+                return str(error)
+            retryable = status_code in {408, 425, 429} or status_code >= 500
+            if not retryable or attempt + 1 >= max_attempts:
+                return "unavailable"
+            await asyncio.sleep(0.2 * (attempt + 1))
+        return "unavailable"
 
     async def _stream_response(
         self,
@@ -2398,6 +2579,7 @@ class LibreChatBridge:
         self._get_stream_final_event(stream_id)
         emitted_text = False
         emitted_attachments = False
+        emitted_logical_turn = False
         stream_text_parts: list[str] = []
         for attempt in range(self.max_retries + 1):
             # === VIVENTIUM START ===
@@ -2413,7 +2595,7 @@ class LibreChatBridge:
             try:
                 read_timeout_s = _parse_positive_float(
                     (os.getenv("VIVENTIUM_TELEGRAM_SSE_READ_TIMEOUT_S") or "").strip(),
-                    120.0,
+                    720.0,
                 )
                 timeout = _build_stream_timeout(read_timeout_s)
                 async with httpx.AsyncClient(
@@ -2424,6 +2606,24 @@ class LibreChatBridge:
                         resp.raise_for_status()
 
                         async for payload in iter_sse_json_events(chunk_iter=resp.aiter_bytes()):
+                            if not emitted_logical_turn:
+                                logical_turn_id = str(
+                                    payload.get("logical_turn_id")
+                                    or payload.get("logicalTurnId")
+                                    or ""
+                                ).strip()
+                                if logical_turn_id:
+                                    raw_revision = payload.get("revision")
+                                    try:
+                                        revision = int(raw_revision) if raw_revision is not None else None
+                                    except (TypeError, ValueError):
+                                        revision = None
+                                    emitted_logical_turn = True
+                                    yield {
+                                        "type": "logical_turn",
+                                        "logical_turn_id": logical_turn_id,
+                                        "revision": revision,
+                                    }
                             if payload.get("sync"):
                                 continue
 
@@ -2450,6 +2650,19 @@ class LibreChatBridge:
 
                             if payload_has_glasshive_tool_call(payload):
                                 self._mark_glasshive_seen(stream_id)
+
+                            if payload.get("final") and payload.get("superseded") is True:
+                                self._mark_stream_final(stream_id)
+                                yield {
+                                    "type": "superseded",
+                                    "logical_turn_id": str(
+                                        payload.get("logical_turn_id")
+                                        or payload.get("logicalTurnId")
+                                        or ""
+                                    ).strip(),
+                                    "revision": payload.get("revision"),
+                                }
+                                return
 
                             # === VIVENTIUM START ===
                             # Feature: Surface streamed attachments to Telegram (images/files).
@@ -2602,6 +2815,8 @@ class LibreChatBridge:
     # Feature: DB-backed follow-up polling to mirror LibreChat UI.
     def _schedule_followup_poll(self, stream_id: str, chat_id: str) -> None:
         if not self.on_message_callback:
+            return
+        if self.followup_timeout_s <= 0 and not self._has_glasshive_seen(stream_id):
             return
         if self._has_followup_sent(stream_id):
             return
@@ -2951,6 +3166,8 @@ class LibreChatBridge:
 
     async def _listen_for_insights(self, *, stream_id: str, chat_id: str) -> None:
         if not self.on_message_callback:
+            return
+        if self.insight_grace_s <= 0 or self.insight_max_s <= 0:
             return
         if not self._is_stream_active(chat_id, stream_id):
             return

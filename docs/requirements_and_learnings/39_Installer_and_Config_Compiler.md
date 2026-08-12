@@ -12,6 +12,7 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
    - wizard/config selection
    - preflight prerequisite detection and install
    - component bootstrap
+   - pinned Viventium-Health runtime materialization under owner-only App Support state
    - config compilation
    - doctor validation
    - helper install
@@ -23,6 +24,11 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
    - `viventium_v0_4/viventium-librechat-start.sh`
    - `viventium_v0_4/LibreChat/scripts/viventium-seed-agents.js`
    - `viventium_v0_4/LibreChat/viventium/source_of_truth/local.viventium-agents.yaml`
+
+The health runtime is a generated installed artifact, not an authoring surface. Install, upgrade,
+component bootstrap, and start rebuild it atomically from the exact `components.lock.json` ref,
+reject a mismatched or dirty component package, and preserve OAuth/archive state outside the runtime
+directory. The public `bin/viventium health ...` command uses the same materialized executable.
 
 ## Installer UX Requirements
 
@@ -150,6 +156,12 @@ Provider credentials have two distinct owners and must not drift between them:
   only credential locators, never OIDC/MCP admission. Compilation derives a stable gateway-only
   throttle HMAC key, excludes all three values from runtime/worker env, and leaves public signup,
   reset, and MCP password grants structurally unavailable.
+- `integrations.glasshive.enterprise.human_auth.oidc_login_visible` is a presentation-only boolean
+  that defaults true. Setting it false hides the normal organization-login button but retains the
+  configured OIDC issuer+subject identity namespace and direct recovery endpoint. Compilation must
+  reject `false` unless local password login is enabled, so an operator cannot ship a browser with no
+  visible login method. This value is gateway-only and does not change MCP, runtime, worker, or
+  LibreChat identity/admission policy.
 - Custom Settings Install may reference machine-level provider keys from canonical config through
   `keychain://` references. The compiler resolves OpenAI, Anthropic, Groq, and xAI through one
   provider-to-runtime mapping, writes resolved source-runtime and service env files mode `0600`,
@@ -442,6 +454,11 @@ exact app-owned binary and its loopback listener/process arguments match; arbitr
 Homebrew Mongo remains a legacy/custom-path option only. API, web, status output, and the startup
 banner use loopback truth in local mode.
 
+For voice, local mode is a strict audio-egress boundary. Compilation must preserve local
+Whisper/Chatterbox routing or stop with a classified unsupported-route error; it must never rewrite
+an unavailable local provider or fallback to a hosted provider. Legacy Wing default fields are
+migration-only inputs, and every newly created call begins in Call mode.
+
 The browser handoff persists `setup=accounts` across registration/login, requires a configured
 trusted server origin for OAuth instead of trusting the request `Host`, and scopes popup/poll/manual
 completion work to one attempt identity so stale async results cannot corrupt a newer connection.
@@ -475,15 +492,16 @@ falling back to historical defaults:
   and Channels controls; and
 - lab-only OpenClaw is absent from public Easy Install setup and status output.
 
-The current candidate pins merged public-main LibreChat commit
-`ccfd307c3b6bd5573c58dfc4f16b84fc691fef4f` in both the parent component lock and Native payload
-component manifest, and merged public-main modern-playground commit
-`98d1249db7a728e94656462d6bda979571be4dd7` in the parent component lock. The source/Docker
-GlassHive runtime is pinned by the parent component lock to merged public-main commit
-`94c99e3fdcf05d799b5d02e6a188071dc4fbc0eb`; it is intentionally absent from the Native payload
+The current isolated prerelease candidate pins merged LibreChat commit
+`b8501b3c3c752b86663aa846019f59f7855d8634` in both the parent component lock and Native payload
+component manifest, merged modern-playground commit `95b324c7498c50a7421751e5dd71971e268a3a84`,
+merged GlassHive commit `3f4f74c90e6de15444bbd71fa12406d0c5d47337`, and merged Viventium-Health commit
+`91a9bbf5ff8bd0963dd3dc33bfd388c66fa7ed69` in the parent component lock. GlassHive is
+intentionally absent from the Native payload
 component manifest. The Google Workspace MCP source is pinned to merged public-main commit
-`0824701abcf490de2a5091c68a7b0738f2294b3f`. Both manifests declare `merged`, and each merge tree
-equals its reviewed PR head. Source and local-runtime PASS still do not
+`0824701abcf490de2a5091c68a7b0738f2294b3f`. Both manifests declare `merged`; each updated
+component merge tree equals its audited review head, and the local component mirrors match those
+reviewed trees. Source and local-runtime PASS still do not
 substitute for a separately signed and notarized immutable Native artifact or vendor-side Telegram,
 Slack, or Meta account approval without credentials owned by the installing user.
 
@@ -880,8 +898,10 @@ delta on the disposable MacBook Air. Until those gates pass, release wording rem
 - `librechat.yaml` memory-writer provider/model must be compiled from the actually available
   foundation providers (`openai` / `anthropic`), including connected-account auth:
   - do not leave memory on a hardcoded xAI default when xAI was never configured
-  - current product policy prefers Anthropic for memory when Anthropic is available and otherwise
-    falls back to OpenAI
+  - omission of `llm.memory` follows the configured foundation priority
+  - optional `llm.memory.provider` / `llm.memory.model` may select another already-authenticated
+    OpenAI or Anthropic route, must fail closed when that provider is unavailable, and compiles only
+    `memory.agent`; it does not create automatic runtime fallback
   - docs, tests, and generated runtime outputs must all reflect that exact compiler rule
   - the generated provider token is part of the public product contract; downstream runtime
     initialization must accept the compiler-emitted canonical value instead of requiring a
@@ -1140,7 +1160,7 @@ delta on the disposable MacBook Air. Until those gates pass, release wording rem
 - Endpoint helper config must not hide unavailable provider dependencies:
   - Anthropic conversation-title generation must stay on Anthropic instead of routing through xAI
   - xAI custom endpoint inventory is an explicit compiler/source-template contract:
-    `grok-4.3` is the default and title/summary model, current 4.20 stable IDs use the dated
+    `grok-4.5` is the default and title/summary model, current 4.20 stable IDs use the dated
     `0309` forms documented by xAI, and model IDs scheduled for xAI's May 15, 2026 retirement must
     not be used as generated defaults
   - Keep the compiler fallback and `local.librechat.yaml` source-template xAI endpoint aligned;
@@ -1225,6 +1245,37 @@ delta on the disposable MacBook Air. Until those gates pass, release wording rem
     flags, and Claude Chrome/effort launch flags. These compile into canonical runtime env so
     operators do not need undocumented `runtime.extra_env` escape hatches for the capability
     contract.
+  - `integrations.glasshive.host_worker.plugin_denylist` accepts canonical `name@marketplace`
+    plugin IDs and compiles them into `GLASSHIVE_HOST_PLUGIN_DENYLIST`. The runtime applies the
+    denylist only to worker-local Codex config and Claude launch settings; it must not encode plugin
+    policy in worker prompts or disable plugins outside the selected worker. The generic compiler
+    and schema do not invent a denied plugin ID; Viventium's canonical config and examples explicitly
+    select `viventium-feelings@project-viventium`.
+  - `integrations.glasshive.host_worker.codex_personality` is optional and accepts `inherit`,
+    `none`, `friendly`, or `pragmatic`. Viventium defaults to `none`: Codex documents this as
+    disabling its own personality instructions, which leaves Viventium's final Feeling capsule as
+    the sole intended personality/emotional authority. `inherit` remains an explicit operator option
+    and standalone GlassHive still inherits when Viventium does not compile this setting. The value
+    is written only to worker-local Codex config and never becomes Viventium prompt text.
+  - `integrations.glasshive.host_worker.codex_conversation_project_instructions` accepts `inherit`
+    or `exclude`. Viventium defaults to `inherit` so conversation workers keep canonical LIFE context.
+    `exclude` is a tested deployment opt-out: it uses a neutral non-project working directory while
+    retaining real LIFE file access through an additional directory grant. Mission-worker project
+    behavior is unchanged.
+  - `integrations.glasshive.host_worker.codex_app_server_qa_enabled` defaults false and compiles to
+    `WPR_CODEX_APP_SERVER_QA_ENABLED`. It enables only the isolated App Server compatibility probe;
+    production conversation workers remain on `codex exec`. The 2026-08-02 installed-build probe
+    rejected App Server for production: both `thread/settings/update` and the documented per-turn
+    `turn/start.collaborationMode.settings.developer_instructions` failed to make a changed state
+    current, while developer-role `thread/inject_items` was model-visible but append-only. A later
+    transport change requires a separately reviewed current-only authority mechanism and full
+    lifecycle QA.
+  - The compiled Viventium default therefore uses native-session lifecycle as the state boundary:
+    current `system`/`developer` content is worker-local Codex `developer_instructions`; present and
+    changed authority serially replaces the old worker and seeds visible history; present and
+    unchanged authority resumes; and an absent Phase-B snapshot carries the pinned state forward.
+    User text never carries developer authority, and no provider/plugin name is hardcoded into the
+    lifecycle decision.
   - when `integrations.glasshive.host_worker.enabled=false`, the compiler must emit
     `GLASSHIVE_HOST_WORKERS_ENABLED=false`, force the generated default execution mode to `docker`,
     and generate MCP instructions that do not tell agents to create host-native workers
@@ -1244,6 +1295,9 @@ delta on the disposable MacBook Air. Until those gates pass, release wording rem
     - when local enterprise simulation URLs include explicit ports, emit matching
       `GLASSHIVE_MCP_PORT` and `GLASSHIVE_UI_PORT` so the launcher binds the same ports that
       LibreChat is configured to call
+    - in local non-enterprise mode, when no explicit `integrations.glasshive.mcp_url` is set,
+      derive `GLASSHIVE_MCP_URL` from the compiled `GLASSHIVE_MCP_PORT`; dev-env port offsets must
+      change the listener and LibreChat caller together
     - default service-token delivery to a trusted reverse proxy and therefore omit `X-WPR-Token`
       from LibreChat YAML unless `service_token_delivery=client_header` is explicitly configured
     - add `X-Viventium-Tenant-Id` and LibreChat user/request/upload headers to the generated
@@ -1268,6 +1322,10 @@ delta on the disposable MacBook Air. Until those gates pass, release wording rem
     interactive shell. On macOS, a valid app-bundled Codex CLI path is a supported Codex host-worker
     runtime and the compiler must emit it as `WPR_CODEX_BIN` when `codex` is not on the service
     `PATH`; discovery checks `/Applications`, `~/Applications`, and `VIVENTIUM_CODEX_APP_DIRS`.
+    The same service-visible rule applies to Claude: a current-user executable under
+    `~/.local/bin` is a supported discovery result and must compile to `WPR_CLAUDE_CODE_BIN` rather
+    than being reported unavailable only because the helper's launch `PATH` is narrower than the
+    interactive shell.
   - generated GlassHive MCP headers must include user, agent, conversation, parent message, and
     current message context so `worker_find_or_resume` can seed same-chat callback metadata without
     a controller-level mention parser
@@ -1330,10 +1388,24 @@ delta on the disposable MacBook Air. Until those gates pass, release wording rem
 - Voice turn-taking follows the same compiler/runtime ownership rule:
   - canonical runtime config owns the shared background follow-up window:
     - `runtime.background_followup_window_s`
+    - valid range: 0-86400 seconds; zero explicitly disables ordinary automatic surface listening
     - compiles to:
       - `VIVENTIUM_CORTEX_FOLLOWUP_GRACE_S`
       - `VIVENTIUM_VOICE_FOLLOWUP_GRACE_S`
       - `VIVENTIUM_TELEGRAM_FOLLOWUP_GRACE_S`
+    - the LibreChat server projects the canonical cortex value into authenticated startup config as
+      `viventiumBackgroundFollowupWindowS`; Web uses it as a post-stream query-refresh window, not
+      as a Main/cortex/Phase-B execution deadline
+    - an older or mismatched Web bundle without that startup field receives one catch-up refresh;
+      the client must not substitute another hardcoded duration; an explicit canonical zero remains
+      zero and disables automatic Web refreshes
+    - Telegram uses the same value for both its raw SSE listener and DB-backed follow-up poll by
+      default. It has no implicit 180-second listener. A bounded explicit
+      `VIVENTIUM_TELEGRAM_FOLLOWUP_TIMEOUT_S` may extend the total listener window; deprecated
+      `VIVENTIUM_TELEGRAM_INSIGHT_*` values are standalone compatibility inputs only when the
+      canonical value is absent
+    - ending a surface listener never cancels Main, cortex execution, Phase B, or the separately
+      configured GlassHive callback wait
     - note:
       - the umbrella product phrase is now `background follow-up window`
       - the env var names intentionally keep the older `FOLLOWUP_GRACE` suffix for backward compatibility
@@ -1345,13 +1417,22 @@ delta on the disposable MacBook Air. Until those gates pass, release wording rem
       - `VIVENTIUM_TELEGRAM_GLASSHIVE_TIMEOUT_S`
     - default:
       - 600 seconds, because host-native browser/desktop work can legitimately take several minutes
+    - this timeout must not inherit the shorter background follow-up grace window
+    - valid range:
+      - 30-86400 seconds; compiler and preflight should reject values outside that range
   - GlassHive callback delivery health is runtime state, not generated config. Generated config owns
     callback URL/secret/wait-window inputs, but runtime health and nightly QA must prove callback
     outbox delivery, active backlog, active retry attempts, stale delivering reclaim, and dead-letter
     delta from the live store.
-      - this timeout must not inherit the shorter background follow-up grace window
-    - valid range:
-      - 30-86400 seconds; compiler and preflight should reject values outside that range
+  - canonical runtime config also owns the separate synchronous GlassHive Agent Provider deadline:
+    - `runtime.glasshive_foreground_response_timeout_s`
+    - compiles into the generated `runtime.env` as `GLASSHIVE_PROVIDER_RESPONSE_TIMEOUT_S`
+    - default: unset; no automatic foreground deadline
+    - valid range: 30-1800 whole seconds; compiler rejects invalid or out-of-range values
+    - this bounds only a user-blocking `/v1/chat/completions` response; it does not cap GlassHive
+      missions, MCP jobs, background work, or the longer callback-listening window above
+    - the launcher loads generated `runtime.env` before starting GlassHive, so the runtime process
+      inherits this value without a second service-specific config surface
   - canonical voice config owns `VIVENTIUM_TURN_DETECTION`
   - canonical voice turn-handling config owns:
     - `VIVENTIUM_VOICE_MIN_INTERRUPTION_DURATION_S`
@@ -1391,9 +1472,8 @@ delta on the disposable MacBook Air. Until those gates pass, release wording rem
     - background detection budgets/flags are owner-canonical in
       `docs/requirements_and_learnings/02_Background_Agents.md` ("2026-05-30 … Two Independent Modes").
       The compiler emits, for the two independent modes (neither flag affects the other mode):
-    - `VIVENTIUM_VOICE_BACKGROUND_AGENT_DETECTION_ASYNC=true` (voice async "nevermind+redo" default
-      ON)
-    - `VIVENTIUM_TEXT_BACKGROUND_AGENT_DETECTION_ASYNC=false` (text async opt-in; default OFF)
+    - `VIVENTIUM_VOICE_BACKGROUND_AGENT_DETECTION_ASYNC=true` (voice one-pass parallel default ON)
+    - `VIVENTIUM_TEXT_BACKGROUND_AGENT_DETECTION_ASYNC=true` (text detection runs in parallel by default)
     - `VIVENTIUM_VOICE_PHASE_A_AWAIT_MS=690` (voice detection budget)
     - `VIVENTIUM_TEXT_PHASE_A_AWAIT_MS=1300` (text detection budget)
     - `VIVENTIUM_CORTEX_DETECT_TIMEOUT_MS=2000` (shared fallback budget)

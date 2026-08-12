@@ -1,0 +1,158 @@
+{
+  "schema": "viventium.voice.acceptance.result.v1",
+  "generatedAt": "1970-01-01T00:00:00.000Z",
+  "profile": "switches",
+  "environment": "dev",
+  "status": "BLOCKED",
+  "plan": {
+    "modeSwitches": 100,
+    "reconnects": 50,
+    "audibleMinutes": 65,
+    "soakMinutes": 120
+  },
+  "execution": {
+    "modeSwitchesCompleted": 0,
+    "reconnectsCompleted": 0,
+    "audibleMinutesObserved": 0,
+    "soakMinutesObserved": 0,
+    "browserConnected": false,
+    "audioPlaybackEvents": 0,
+    "audibleEvidenceWindows": 0,
+    "maxAudibleEvidenceGapSeconds": null,
+    "snapshots": 0,
+    "runtimeGatesExecuted": false,
+    "scenario": {
+      "authoritativeSources": 0,
+      "distinctSpeakerKeys": 0,
+      "bargeIns": 0,
+      "cancellations": 0,
+      "networkLosses": 0,
+      "providerDegradations": 0,
+      "observedDegradedStates": 0,
+      "participantJoins": 0,
+      "participantLeaves": 0,
+      "refreshes": 0,
+      "modeChanges": 0,
+      "cleanHangups": 0
+    }
+  },
+  "replay": {
+    "lostTasks": 0,
+    "duplicateTasks": 0,
+    "regressedTasks": 0,
+    "changedStableTasks": 0,
+    "lostSegments": 0,
+    "duplicateSegments": 0,
+    "regressedSegments": 0,
+    "changedStableSegments": 0,
+    "duplicateResults": 0
+  },
+  "latency": {
+    "traceCount": 0,
+    "completeTraceCount": 0,
+    "incompleteTraceCount": 0,
+    "firstBreachCount": 0,
+    "firstBreachByHop": {},
+    "outOfOrderTraceCount": 0,
+    "utteranceToAudioMs": {
+      "count": 0,
+      "p50": null,
+      "p95": null,
+      "max": null
+    },
+    "hopDurationsMs": {},
+    "callStartToListeningMs": { "count": 0, "p50": null, "p95": null, "max": null },
+    "clickToListeningMs": { "count": 0, "p50": null, "p95": null, "max": null },
+    "taskEventVisibleMs": { "count": 0, "p50": null, "p95": null, "max": null },
+    "sourceVisibleMs": { "count": 0, "p50": null, "p95": null, "max": null },
+    "cancelStateMs": { "count": 0, "p50": null, "p95": null, "max": null },
+    "cancelBarrierMs": { "count": 0, "p50": null, "p95": null, "max": null },
+    "utteranceToAcknowledgementMs": { "count": 0, "p50": null, "p95": null, "max": null },
+    "warmSubstantiveAudioMs": { "count": 0, "p50": null, "p95": null, "max": null },
+    "bargeInStopMs": { "count": 0, "p50": null, "p95": null, "max": null },
+    "maxActiveWorkSilenceMs": null
+  },
+  "quality": {
+    "cloudAudioEgressBytes": null,
+    "cleanAttributedWordAccuracyPercent": null,
+    "noisySpeakerBankDerPercent": null,
+    "falseVerifiedOwnerAssignments": null,
+    "diarizationAddedCaptionP95Ms": null,
+    "separateTrackAttributionPercent": null,
+    "unknownAbstentionErrors": null,
+    "biometricIdentityClaims": null,
+    "postCancelBarrierOutputCount": null,
+    "callChatParityPercent": null,
+    "rawAudioRetainedBytes": null,
+    "speakerMapRowsAfterExpiry": null,
+    "memoryBoundaryViolationCount": null,
+    "unauthorizedSideEffectCount": null
+  },
+  "behaviorPaths": {
+    "oneClickAlreadyGranted": null,
+    "firstUseBrowserPermissionOnly": null,
+    "microphoneDeniedInlineRecovery": null,
+    "authExpiredInlineRecovery": null,
+    "invalidSignatureRecovery": null,
+    "noRouteInlineRecovery": null,
+    "gatewayUnavailableRecovery": null,
+    "sttFailureClassified": null,
+    "llmFailureClassified": null,
+    "ttsFailureClassified": null,
+    "toolFailureClassified": null,
+    "livekitFailureClassified": null,
+    "sharedMicOwnerAbstention": null,
+    "speakerRevisionAfterSecondSpeaker": null,
+    "separateTrackJoinLeaveAttribution": null,
+    "interruptionStopsSpeechWorkContinues": null,
+    "cooperativeCancellation": null,
+    "unenforceableCancellation": null,
+    "alreadyCompletedCancellationTruthful": null,
+    "cancelRaceIdempotent": null,
+    "hangupContinuesLinkedChat": null,
+    "listenOnlyZeroAuthorityPlanes": null,
+    "wingGuestZeroSideEffectAuthority": null,
+    "needsInputRoundTrip": null,
+    "retryRoundTrip": null,
+    "postCallMemoryHardening": null,
+    "conversationDeleteExport": null,
+    "localOnlyUnknownDegradation": null
+  },
+  "behaviorApplicability": {
+    "needsInputRoundTrip": {
+      "status": null,
+      "reason": null,
+      "advertisedInputOwnerCount": null
+    }
+  },
+  "escapedRegressions": {
+    "rawSessionIdWithoutBrowserCapabilityRejected": null,
+    "suppressionBarrierPreservedAfter1001Tasks": null,
+    "hungOwnerCancelAckWithin250Ms": null,
+    "malformedTaskSnapshotFailsVisible": null,
+    "apiRestartPreservesBarrierAndReplay": null,
+    "speakerHistoryBeyond4096Accessible": null
+  },
+  "resources": {
+    "processesObserved": 0,
+    "processCrashes": 0,
+    "maxPostWarmGrowthPercent": null,
+    "overTenPercentGrowth": 0,
+    "missingPostWarmSamples": 0,
+    "leakedTasks": 0
+  },
+  "gates": [],
+  "evidence": {
+    "screenshots": 0,
+    "structuredSnapshots": 0,
+    "latencyLogs": 0,
+    "rawArtifactsPrivate": true
+  },
+  "privacy": {
+    "publicSafe": true,
+    "rawIdentifiersIncluded": false,
+    "rawTranscriptIncluded": false,
+    "localPathsIncluded": false
+  },
+  "failures": []
+}
