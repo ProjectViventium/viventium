@@ -1,14 +1,14 @@
 {
   "version": 1,
   "generated_from": "devops/git/repos.json",
-  "publication_state": "review-head-pending-merge",
+  "publication_state": "merged",
   "components": [
     {
       "name": "LibreChat",
       "path": "viventium_v0_4/LibreChat",
       "origin": "https://github.com/ProjectViventium/viventium-librechat.git",
       "upstream": "https://github.com/danny-avila/LibreChat.git",
-      "ref": "6af5197425db09a6f1ed5ae2941d886b69725e58"
+      "ref": "b8501b3c3c752b86663aa846019f59f7855d8634"
     },
     {
       "name": "agents-playground",
@@ -36,21 +36,21 @@
       "path": "viventium_v0_4/agent-starter-react",
       "origin": "https://github.com/ProjectViventium/agent-starter-react.git",
       "upstream": "https://github.com/livekit-examples/agent-starter-react.git",
-      "ref": "0b70e8b7984b9f3e3bdb503b355e5a71a67dea48"
+      "ref": "95b324c7498c50a7421751e5dd71971e268a3a84"
     },
     {
       "name": "GlassHive",
       "path": "viventium_v0_4/GlassHive",
       "origin": "https://github.com/ProjectViventium/GlassHive.git",
       "upstream": "",
-      "ref": "4cba3c9c2c1bb81ae8f89c37bee1fcba3af7d565"
+      "ref": "3f4f74c90e6de15444bbd71fa12406d0c5d47337"
     },
     {
       "name": "Viventium-Health",
       "path": "viventium_v0_4/Viventium-Health",
       "origin": "https://github.com/ProjectViventium/Viventium-Health.git",
       "upstream": "",
-      "ref": "c4204b86dda78581482951659a1f16f0a73370ef"
+      "ref": "91a9bbf5ff8bd0963dd3dc33bfd388c66fa7ed69"
     },
     {
       "name": "ms-365-mcp-server",

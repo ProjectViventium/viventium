@@ -486,16 +486,16 @@ falling back to historical defaults:
   and Channels controls; and
 - lab-only OpenClaw is absent from public Easy Install setup and status output.
 
-The current isolated prerelease candidate pins LibreChat commit
-`6af5197425db09a6f1ed5ae2941d886b69725e58` in both the parent component lock and Native payload
-component manifest, modern-playground commit `0b70e8b7984b9f3e3bdb503b355e5a71a67dea48`,
-GlassHive commit `4cba3c9c2c1bb81ae8f89c37bee1fcba3af7d565`, and Viventium-Health commit
-`c4204b86dda78581482951659a1f16f0a73370ef` in the parent component lock. GlassHive is
+The current isolated prerelease candidate pins merged LibreChat commit
+`b8501b3c3c752b86663aa846019f59f7855d8634` in both the parent component lock and Native payload
+component manifest, merged modern-playground commit `95b324c7498c50a7421751e5dd71971e268a3a84`,
+merged GlassHive commit `3f4f74c90e6de15444bbd71fa12406d0c5d47337`, and merged Viventium-Health commit
+`91a9bbf5ff8bd0963dd3dc33bfd388c66fa7ed69` in the parent component lock. GlassHive is
 intentionally absent from the Native payload
 component manifest. The Google Workspace MCP source is pinned to merged public-main commit
-`0824701abcf490de2a5091c68a7b0738f2294b3f`. Both manifests declare
-`review-head-pending-merge`; local component mirrors are valid only for local QA until a separate
-public push/merge is completed and verified. Source and local-runtime PASS still do not
+`0824701abcf490de2a5091c68a7b0738f2294b3f`. Both manifests declare `merged`; each updated
+component merge tree equals its audited review head, and the local component mirrors match those
+reviewed trees. Source and local-runtime PASS still do not
 substitute for a separately signed and notarized immutable Native artifact or vendor-side Telegram,
 Slack, or Meta account approval without credentials owned by the installing user.
 
