@@ -1,0 +1,29 @@
+schemaVersion: "0.1"
+workerId: nightly-example
+title: Example Night Worker
+status: disabled_template
+purpose: Demonstrate the manifest shape without running work.
+nonGoals:
+  - Do not write saved memory.
+  - Do not mutate high-stakes canon.
+schedule:
+  owner: existing_scheduler
+  scheduleRef: existing_daily_memory_hardening
+  cadence: inherited
+executor:
+  kind: glasshive
+  profile: configured_runtime_default
+inputs:
+  lifeRefs:
+    - "life://CURRENT.md"
+  sourceCategories: []
+permissions:
+  read: []
+  write:
+    - "life://99_System/night-runs/"
+outputs:
+  kind: run_receipt
+  destination: "life://99_System/night-runs/"
+memoryWriteMode: "off"
+surfacing: "on_demand"
+qaOwner: "unassigned"

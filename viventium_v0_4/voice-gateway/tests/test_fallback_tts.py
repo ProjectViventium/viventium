@@ -273,6 +273,51 @@ class TestFallbackTTS(unittest.IsolatedAsyncioTestCase):
         # Cartesia should receive the original text with tags intact.
         self.assertEqual(primary.last_synth_text, tagged_text)
 
+    async def test_chunked_rendering_observation_reports_preserved_controls_without_payload(self) -> None:
+        primary = FakeTTS(sample_rate=44100, should_fail=False)
+        wrapper = FallbackTTS(
+            attempts=[ProviderAttempt(label="cartesia", tts=primary)],
+        )
+        private_text = '<emotion value="curiosity"/>Synthetic private sentence.'
+
+        with self.assertLogs("voice-gateway.fallback_tts", level="INFO") as captured:
+            frame = await wrapper.synthesize(private_text).collect()
+
+        self.assertGreater(len(frame.data), 0)
+        joined = "\n".join(captured.output)
+        self.assertIn("[VoiceRendering][voice_gateway]", joined)
+        self.assertIn("event=attempt", joined)
+        self.assertIn("event=selected", joined)
+        self.assertIn("provider=cartesia", joined)
+        self.assertIn("model=fake", joined)
+        self.assertIn("role=primary", joined)
+        self.assertIn("markup_policy=preserve", joined)
+        self.assertIn("controls_present=true", joined)
+        self.assertNotIn(private_text, joined)
+        self.assertNotIn("Synthetic private sentence", joined)
+
+    async def test_chunked_rendering_observation_reports_fallback_sanitization(self) -> None:
+        primary = FakeTTS(sample_rate=44100, should_fail=True)
+        fallback = FakeTTS(sample_rate=44100, should_fail=False)
+        wrapper = FallbackTTS(
+            attempts=[
+                ProviderAttempt(label="cartesia", tts=primary),
+                ProviderAttempt(label="openai", tts=fallback, sanitize_voice_markup=True),
+            ],
+        )
+
+        with self.assertLogs("voice-gateway.fallback_tts", level="INFO") as captured:
+            frame = await wrapper.synthesize("[sigh] Synthetic fallback sentence.").collect()
+
+        self.assertGreater(len(frame.data), 0)
+        joined = "\n".join(captured.output)
+        self.assertIn("provider=openai", joined)
+        self.assertIn("role=fallback", joined)
+        self.assertIn("markup_policy=strip", joined)
+        self.assertIn("controls_present=true", joined)
+        self.assertIn("controls_action=stripped", joined)
+        self.assertNotIn("Synthetic fallback sentence", joined)
+
     async def test_streaming_primary_failure_uses_fallback(self) -> None:
         selected: list[str] = []
         primary = FakeStreamingTTS(sample_rate=44100, should_fail=True)
@@ -340,6 +385,31 @@ class TestFallbackTTS(unittest.IsolatedAsyncioTestCase):
         self.assertIn("action=forwarded", joined)
         self.assertIn('text_json=" Next thought."', joined)
         self.assertEqual(tts.last_stream_chunks, ["Good to hear you", " Next thought."])
+
+    async def test_streaming_rendering_observation_is_structural_and_payload_free(self) -> None:
+        tts = FakeStreamingTTS(sample_rate=44100, should_fail=False)
+        wrapper = FallbackTTS(attempts=[ProviderAttempt(label="xai", tts=tts)])
+        private_text = "<soft>Synthetic private sentence.</soft>"
+
+        stream = wrapper.stream()
+        stream.push_text(private_text)
+        stream.end_input()
+
+        with self.assertLogs("voice-gateway.fallback_tts", level="INFO") as captured:
+            async with stream:
+                async for _ in stream:
+                    pass
+
+        joined = "\n".join(captured.output)
+        self.assertIn("[VoiceRendering][voice_gateway]", joined)
+        self.assertIn("event=attempt", joined)
+        self.assertIn("event=input_complete", joined)
+        self.assertIn("event=selected", joined)
+        self.assertIn("provider=xai", joined)
+        self.assertIn("markup_policy=preserve", joined)
+        self.assertIn("controls_present=true", joined)
+        self.assertNotIn(private_text, joined)
+        self.assertNotIn("Synthetic private sentence", joined)
 
     async def test_chunked_provider_input_logs_full_synthesize_text(self) -> None:
         tts = FakeTTS(sample_rate=44100, should_fail=False)

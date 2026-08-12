@@ -31,6 +31,17 @@ Excluded from this fork-replay inventory:
 - Default release policy: `agent-starter-react` is the default enabled LiveKit playground for
   voice-capable installs. `agents-playground` is default-off and may be replayed, pinned, or started
   only for an explicit classic-playground opt-in path.
+- This generated 2026-05-18 inventory predates the current one-click Call, browser/Telegram
+  capability exchange, mode/status/task/source/speaker UI, and related proxy/hook/test delta. Do not
+  treat its `agent-starter-react` HEAD, file list, or hunk list as current release evidence.
+- After the nested playground work is committed, regenerate this document from the new merge-base
+  through that exact HEAD. The regenerated inventory must include call bootstrap/capability,
+  launch exchange, call-mode/status/activity, task list/events/actions, speaker snapshot/history,
+  responsive/accessibility, and focused tests. Then verify that nested commit,
+  `components.lock.json`, built asset, and installed artifact all identify the same implementation.
+- The Python LiveKit Agents/plugin decision is not a fork replay row. Its accepted `1.5.10` pin and
+  rejected `1.6.9` comparison belong in `voice-gateway/requirements.txt`, the gateway/runtime voice
+  docs, and MPV-047.
 
 
 ## Checklist Legend

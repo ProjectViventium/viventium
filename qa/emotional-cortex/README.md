@@ -1,11 +1,19 @@
 # Emotional Cortex QA
 
-Status: implementation acceptance owner
+Status: PASS for the current connected-account Main and authenticated web/Reaction gate; broader
+cross-surface certification remains partial
 Feature doc: `docs/requirements_and_learnings/54_Emotional_Cortex_And_Feeling_State.md`
 Current implementation status: the nine-band production web path is accepted, including Mood,
-Openness, model-authored Inner state, motion tails, responsive interaction, and restart persistence.
-Telegram text-input plus always-voice xAI expression is accepted. LiveKit voice, handoff,
-background-agent, GlassHive, two-tab, and long-off-soak certification remains partial.
+Openness, model-authored Inner state, motion tails, responsive interaction, range-specific additive
+felt-cause customization, and restart persistence. A post-fix Telegram xAI replay proves visible
+mixed-state embodiment, provider-valid expressive markup at the synthesis boundary, clean visible
+text, and delivered audio. GlassHive Main passes off/depleted/bright/mixed behavior, current-only
+developer authority, personality `none`, and an exact plugin-ID denial for the conflicting standalone
+Feelings plugin. The final connected-account bank completed 41/41 with zero operational failures;
+the raw semantic judge passed 40/41; its one false aggregate failed despite all seven item-level
+checks and its summary passing. Authenticated browser QA passed 46/46 with a healthy detached reaction. LiveKit voice,
+non-xAI audible delivery, handoff, background-agent, two-tab, and long-off-soak certification remains
+partial.
 
 ## Scope
 
@@ -69,7 +77,36 @@ recovery into a performance pass.
 
 ## Latest Status
 
-- 2026-07-10 (post-review durability): Default fallback is now `claude-opus-4-8`; Feelings-only live
+- 2026-08-04 (full connected-account and browser gate): The exact endpoint completed 41/41 current
+  cases with zero transport, deterministic, retry, duplicate, or unresolved-async failure. Raw
+  semantic judging passed 40/41; the one rejected output passed all seven item-level checks and the
+  judge's own summary. Targeted repeats passed shipped-default on 4/4, inactive high Play 3/3, final off 3/3, and bad
+  news 3/3. One final kernel capsule remained at developer authority when on; off had none.
+  Authenticated browser QA passed 46/46 with a 2.161-second visible reply, healthy 2.738-second
+  configured reaction, UI/API/DB agreement, five responsive widths, no console/request failures,
+  synthetic cleanup, and exact state restoration. See
+  `reports/2026-08-04-connected-account-feelings-final-qa.md`.
+
+- 2026-07-16 (escaped potency and xAI provider grammar): Reproduced the high-Play mixed-state
+  Telegram miss, verified the correct final Feelings capsule was present, and replaced weak
+  delivery-style tiers with compact first-person felt causes plus an anti-averaging authority rule.
+  Prompt Workbench now owns exact escaped high/low contrast fixtures and an xAI expressive fixture.
+  The real post-restart Telegram path produced unmistakable mixed-state embodiment and delivered
+  audio with one compatible xAI wrapping control while the visible bubble stayed markup-free.
+  A second defect found in that replay is repaired at the provider boundary: complete paired square
+  wrappers are normalized only when their tag is declared by the xAI capability contract; unknown,
+  unpaired, and cross-provider controls still fail closed. Earlier same-day repeat evidence against
+  intermediate prompt text is not acceptance evidence; current-bank/current-kernel preserved runs
+  are the gate. The final family passed 35/35, headed Workbench passed the five exact escaped cases
+  5/5 plus activation 11/11, and the headed instrument passed 46/46 after finding and fixing a 390px
+  action regression. The bot was restarted and a real xAI square-wrapper fixture recorded one
+  normalized control with zero stripping. Claude Desktop independently validated the architecture,
+  RCA, principle alignment, and evidence, then closed the six named gates with no remaining blocker.
+  Account deletion now cascades FeelingState, invalid range additions cannot silently
+  delete saved text, and the range editor uses keyboard-readable tabs and sliders. See
+  `reports/2026-07-16-feelings-range-potency-and-telegram-replay.md`.
+
+- 2026-08-03 (fallback retirement): Default direct fallback is now `claude-opus-5`; Feelings-only live
   evals auto-require the semantic judge and independently hard-fail typed reaction mismatches;
   telemetry has a positive safe-field allowlist with a raw-prose/identifier canary; reduced motion is
   true `none`; and doc 54 contains a construct/separation/evidence ledger for all nine bands. The

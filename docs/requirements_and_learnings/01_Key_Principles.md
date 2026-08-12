@@ -40,6 +40,55 @@ behavioral research while remaining immediately understandable to an ordinary us
   provenance, concurrency, and rendering. The Emotional Reaction Cortex owns appraisal of what a
   moment means and which bands it moves. Never add phrase-to-emotion regexes, keyword tables, or
   event-specific `if` statements.
+- Calibrate model-owned categorical judgments at their semantic boundary. If exact evals show a
+  classifier or appraiser collapsing onto its minimum category, clarify the category meanings and
+  remove default-to-minimum wording; do not multiply the numeric effect afterward, infer intensity
+  from keywords, or add stimulus-specific prompt examples. Preserve a valid no-change outcome and
+  measure the committed category/delta distribution in telemetry.
+- Treat the injected state as Viventium's own affective authority. Other context explains the
+  moment; it must not silently replace that state with a generic sympathetic, warm, guarded, or
+  playful posture. Read each band directionally: a conventionally emotional scene is not permission
+  to invent a motive or pull that the active state withholds. Keep the capsule state-neutral: do not
+  include a worked answer, signature phrase, or emotionally loaded exemplar that every state can
+  imitate. Prove contrasting states with paired semantic evals instead.
+- Preserve **felt magnitude**, not merely polarity. Each band level pairs one human-readable scale
+  word with one concrete private cause in the same versioned definition. As Current approaches an
+  endpoint, that cause must become observably more consequential; a top range that behaves like a
+  mild midpoint is a defect even when the correct row reached the model. Extreme ranges may be
+  larger-than-life because the product deliberately allows a feeling to be pushed beyond Nature.
+- Range customization is declarative state, not runtime intent logic. A user may add one bounded
+  private cause to any stable band/range ID. Only the range containing Current is injected, the
+  product default remains present, inactive additions stay out, and changing an addition must not
+  reset the band's decay clock. Do not implement this with prompt-string checks, agent names,
+  provider labels, stimulus keywords, or complaint-specific branches.
+- Treat deletion as an explicit operation. A malformed, blank, or over-limit non-null range
+  addition must be rejected rather than reinterpreted as “restore default”; only an explicit null
+  removes saved text. Full account erasure must cascade the entire FeelingState document, including
+  private Inner state, trail, reaction configuration, and user-authored additions.
+- “Avoid hardcoding” does not mean erasing the domain schema. Fixed band IDs, stable range IDs,
+  bounds, and validated defaults are inspectable product structure. What is forbidden is encoding
+  what a user's moment means or patching one escaped sentence into runtime control flow. Model
+  judgment owns appraisal; typed configuration/state owns product structure.
+- Potency acceptance requires causal contrasts. Run the same natural prompt with only the target
+  band or range changed; include mixed states where a strong band competes with a conventional
+  assistant response. A task that explicitly asks for humor cannot by itself prove high Play, and
+  successful injection cannot by itself prove embodiment.
+- Preserve the conscious/subconscious role boundary. The embodiment capsule belongs at a
+  persona-bearing speaking or acting boundary; specialist background cortices observe, verify, and
+  surface evidence for the conscious agent and must not be made to adopt Viventium's current mood.
+  The Emotional Reaction Cortex receives typed state for appraisal through its own contract, not as
+  a demeanor instruction. Emotional Resonance is a high-EQ read of consequential indirect cues and
+  uncertainty, not a mandatory warmth/reassurance pass. Red Team remains affect-independent and
+  pressure-tests evidence and viability even when the current Feeling state would prefer comfort.
+- Treat `<viventium_feeling_state>` as private request-scoped runtime context, not static prompt
+  prose. Prompt Workbench may declare, trace, version the schema/producer, and evaluate that context;
+  it must never compile a user's current values into a reusable prompt bundle. Every prompt unit
+  that can consume the context must do so intentionally, and an absent/off/unsupported path must be
+  explicit in lineage and telemetry.
+- Assemble structural delivery and coordination contracts first, then pin the exact request-scoped
+  Feeling capsule once at the final behavioral instruction boundary. A later Phase-B speaking pass
+  must receive the same pinned capsule. This is placement, not duplicated prompt prose; telemetry
+  must prove one occurrence and zero trailing behavioral instruction text.
 - Treat expression as regulation, not morality. Showing less emotion is not dishonesty, showing more
   is not inherently healthier, and fatigue does not universally produce either withdrawal or
   unmasking. The model must appraise the person/moment/context rather than follow a hardcoded causal
@@ -58,16 +107,23 @@ also shape delivery through controls the selected TTS provider really supports.
 
 - Voice capability is structural context from the surface and resolved Speaking route. Never infer
   it from user wording, a provider display label, or a request to "sound emotional."
-- The model appraises the current state and moment as expressive or restrained. If expressive
-  delivery fits and the selected provider exposes a fitting control, the raw spoken response uses
-  the smallest fitting documented control without waiting for the user to ask. If restraint fits,
-  an unmarked response is correct.
+- The model appraises the current state and moment as expressive or restrained. It must consider
+  both the state's expression tendency and the actual moment; this remains model judgment, not a
+  numeric threshold. If expressive delivery fits and the selected provider exposes a fitting
+  control, the raw spoken response is not final until it uses the smallest fitting documented
+  control, without waiting for the user to ask. Natural wording alone does not discharge an
+  expressive spoken-delivery decision. If restraint fits, an unmarked response is correct.
 - Feelings remains a private cause. Spoken output must embody it through wording, emphasis, pace,
   breath, intensity, or another supported delivery choice; it must not recite band names, values,
   capsule text, or prompt mechanics.
 - Runtime is a capability broker and structural boundary. It may expose the selected provider's
   declared vocabulary, preserve it for TTS, sanitize it for display, and count it for telemetry. It
   must not hardcode band-to-tag maps, numeric thresholds, phrase triggers, or invented emotion tags.
+- Provider-grammar repair may preserve an unambiguous model-authored control without choosing its
+  meaning. For example, a complete paired wrapper for a declared xAI wrapping control may be
+  canonicalized from square to official angle grammar on the xAI route. Unpaired, unknown, or
+  crossed-provider controls still fail closed. This must remain schema-driven, provider-scoped,
+  visible in structural telemetry, and invisible in user-facing text.
 - Plain TTS routes express the state through natural wording only. Provider dialects never cross:
   xAI controls stay on xAI, Cartesia controls stay on Cartesia, and unsupported routes receive no
   provider markup.
@@ -124,6 +180,24 @@ also shape delivery through controls the selected TTS provider really supports.
   - refresh pinned components
   - recompile generated runtime files
   - rerun doctor before restart
+
+### Cognitive Continuity Is Evidence, Not Hardcoding
+
+- Never turn one missed name, relationship, phrase, or user complaint into a runtime entity rule.
+- The main agent cannot know evidence that was never stored, belongs to another identity, is outside
+  its authorization, or is unavailable from every declared tool. The cognitive system must maximize
+  useful context before the turn and make the remaining limit explicit.
+- Validate continuity with a versioned, frozen, multi-domain bank: relationships, preferences,
+  projects, updates/corrections, exact numbers and dates, absent evidence, distractors,
+  multilingual paraphrases, ordinary language, injection resistance, and selective forgetting.
+- Keep saved memory, conversation recall, current conversation context, tool capability, provider
+  authentication, host-worker authentication, and scheduled maintenance as separate observable
+  planes. Health in one plane never certifies another.
+- A GlassHive `/host` login authenticates the local worker process. It is not the signed-in
+  LibreChat user's OpenAI/Anthropic account, memory identity, recall ACL, or Google/Microsoft OAuth.
+- Connected means the active runtime can use the credential, not merely decrypt a database row.
+  Terminal provider rejection must persist an actionable disconnected state; transient provider
+  outages remain retryable and must not be mislabeled as reconnect.
 
 ### 2.3.1 Shipped Artifact and Pin Discipline
 - A source fix is not shipped just because the tracked file changed.
@@ -291,6 +365,17 @@ also shape delivery through controls the selected TTS provider really supports.
   with preflight/QA coverage, not the default path. Because the host AI and user can ask for unknown
   future work, the runtime gives the worker its full truthful capability surface and lets the worker
   decide how to use it.
+- Controlled QA and enterprise evidence-isolation runs may explicitly set the host-worker native web
+  policy to `disabled`. That policy disables the selected CLI's provider-native web search/fetch
+  tools while leaving the declared signed broker MCP available, and it must participate in native
+  session policy fingerprinting so an older session cannot retain the prior capability. The default
+  remains `inherit`. Never infer this lockdown from prompt text, an Agent/provider name, or the mere
+  presence of a `web_search` tool; it is an operator-owned capability boundary.
+- Viventium-compiled Codex workers default native `personality` to `none`, which disables Codex's
+  separate personality instructions without disabling tools or capabilities. Viventium's final
+  request-scoped Feeling capsule owns emotional/personality behavior. Standalone GlassHive remains
+  neutral to the embedding product and defaults to inheriting the user's native Codex personality;
+  Viventium operators may also explicitly choose `inherit`, `friendly`, or `pragmatic`.
 - Browser/computer capability must be understood as the selected worker's native product surface, not
   as only an MCP inventory item. Claude Code may expose Chrome and computer use through its own
   interactive CLI surfaces; Codex may expose Browser, Chrome, and Computer Use through app/plugin
@@ -572,6 +657,12 @@ A developer referring to a single document about a respective feature **must per
   - Runtime changes are allowed only for structural activation plumbing defects (for example: wrong context assembly, broken latest-turn extraction, missing fallback wiring, or bad scope metadata propagation). This bullet does **not** override the CRITICAL RULE below.
   - For productivity agents specifically, "reply/respond/say/return" must never be hardcoded as special-case deny words in code; the classifier prompt must distinguish chat-format instructions from real email/content actions.
   - Do **not** infer agent role from hardcoded agent names, cortex titles, or tool names when explicit config metadata can carry the intent. User systems may rename agents, replace tools, or define different specialist shapes entirely.
+  - Agent Builder must render activation routes from the live model catalog and the persisted
+    structured provider/model fields. A configured route missing from a transient discovery response
+    remains visibly configured; it must not render as blank or be silently replaced. A newly attached
+    cortex inherits an existing configured route when one exists rather than using a stale UI model list.
+    Provider attempt budgets are structured runtime config, and failure of one configured route must
+    continue through the remaining fallback chain within the enclosing Phase A budget.
 
 ### CRITICAL RULE: No Hardcoded NLU in Runtime Code
 - Intent detection, provider clarification, and history classification must be owned by LLM activation classifiers plus YAML-configured activation prompts.
@@ -650,13 +741,19 @@ A developer referring to a single document about a respective feature **must per
 - **`--prompts-only` safe fields**: `id`, `name`, `description`, `instructions`, `conversation_starters`, `background_cortices` (with safe merge that only touches `activation.enabled`, `activation.prompt`, `activation.confidence_threshold`, and the explicitly reviewed reliability field `activation.fallbacks`). Treat fallback changes as live runtime-behavior changes, not as copy-only prompt edits.
 - **`--activation-config-only` safe fields**: only `background_cortices`, with an allowlist merge over `activation.enabled`, `activation.prompt`, `activation.confidence_threshold`, `activation.fallbacks`, `activation.model`, `activation.provider`, `activation.cooldown_ms`, `activation.max_history`, and `activation.intent_scope`. Use `--activation-fields=...` to narrow further.
 - **`--model-config-only` safe fields**: only agent model/provider fields and their parameter bags
-  (`provider`, `model`, `model_parameters`, `voice_llm_model`, `voice_llm_provider`,
+  (`provider`, `model`, `model_parameters`, `glasshive_options`, `voice_llm_model`, `voice_llm_provider`,
   `voice_llm_model_parameters`, `voice_fallback_llm_model`, `voice_fallback_llm_provider`,
   `voice_fallback_llm_model_parameters`, `fallback_llm_model`, `fallback_llm_provider`,
   `fallback_llm_model_parameters`). Use this when correcting stale model drift without touching
-  tools or prompts. Voice model changes that depend on provider-specific knobs, such as xAI
-  `reasoning_effort: none`, must prove the parameter bag survived the sync.
+  tools or prompts. Use `--model-config-fields=glasshive_options` (or another reviewed field list)
+  when unrelated live model bags must remain untouched. Voice model changes that depend on provider-specific knobs, such as Grok 4.5
+  `reasoning_effort: low`, must prove the parameter bag survived the sync.
 - **Use `--agent-ids=...` for surgical pushes** when only a subset of background agents changed. This keeps model/prompt fixes narrowly scoped instead of rewriting the whole roster.
+- A background-only `--agent-ids` prompt push may merge the selected activation subrecord stored on
+  the main-agent document, but it must not update the main agent's top-level instructions, name,
+  description, starters, tools, model, or other user-managed fields unless the main agent ID itself
+  was explicitly selected. Keep this protected by a sync regression test; the container document is
+  not authorization to overwrite its unrelated fields.
 - **Always dry-run first**: `push --prompts-only --dry-run --env=<env>` to preview changes before applying.
 - Safety UX rule for operator tooling:
   - `--help`, `-h`, and explicit usage/preview paths must be side-effect free
@@ -679,8 +776,8 @@ A developer referring to a single document about a respective feature **must per
   launch-ready model families unless a newer documented evaluation replaces them:
   - `openAI / gpt-5.6-sol` for the conscious agent and quality-first reasoning cortices
   - `openAI / gpt-5.6-terra` for balanced, latency-sensitive, and tool-heavy cortices
-  - `anthropic / claude-opus-4-8` as the text-execution fallback
-  - voice remains the explicit `xai / grok-4.3` route with `reasoning_effort: none`
+  - `glasshive-harness / claude-code:opus / high` (Claude / Opus 5) as the generic Agent text fallback when GlassHive is enabled
+  - voice remains the explicit `xai / grok-4.5` route with `reasoning_effort: low`
 - Memory writers, activation classifiers, helper/title models, and GlassHive workers are separate
   workloads with their own documented model contracts; do not infer their model from the
   conscious/subconscious execution matrix.
@@ -694,8 +791,9 @@ A developer referring to a single document about a respective feature **must per
   delegations, so its Sol/xHigh deployment default also applies there unless explicitly overridden.
 - Do not add a model picker entry or built-in agent assignment for a model that the target provider
   inventory does not expose. As of the local May 6, 2026 inventory, `claude-sonnet-4-7` is not a
-  supported Anthropic model for Viventium; use `claude-sonnet-4-5` or `claude-opus-4-8` until a
-  verified provider catalog and model QA update replace this baseline.
+  supported Anthropic model for Viventium; use direct `claude-opus-5` or the declared
+  `glasshive-harness / claude-code:opus` Opus 5 route until a verified provider catalog and model QA
+  update replace this baseline.
 - Picker availability and built-in assignment are separate decisions. Direct OpenAI API-key routes
   expose `gpt-5.6`, `gpt-5.6-sol`, `gpt-5.6-terra`, and `gpt-5.6-luna`. The distinct ChatGPT
   connected-account route exposes only the provider-verified `gpt-5.6-sol` and `gpt-5.6-terra`
@@ -766,6 +864,71 @@ A developer referring to a single document about a respective feature **must per
   - reason: stale picker defaults and title-model entries quietly reintroduce old-model drift even when the agent source-of-truth bundle is correct
 - If a required provider session drops locally (for example OpenAI account disconnects in the desktop app), reconnect the provider and then re-run the real product QA flows. Do not "fix" the situation by silently downgrading shipped agent models to stale families such as `gpt-4o`.
 
+#### GlassHive Core Provider Rule
+
+- `glasshive-harness` is a real Agent Provider/Model choice, not an MCP tool wrapped by another LLM
+  and not a parallel conscious-engine field. Any main agent or substantive cortex may select it.
+- Its exact initial model IDs are `codex-cli:gpt-5.6-sol` and `claude-code:opus` (currently displayed
+  as **Claude / Opus 5**, matching the native CLI's resolved `claude-opus-5`). Provider/model
+  resolution must fail visibly on an unknown value; it must never coerce an unknown provider to
+  OpenAI.
+- Provider behavior is selected from compiled capability metadata. GlassHive is eligible for main
+  chat, cortex execution, Phase-B follow-up, and the Agent Builder's generic text fallback, but not
+  Phase-A classification or real-time Voice LLM. A GlassHive primary may separately declare one
+  optional provider-internal serial fallback model in `glasshive_options`; that advanced option is
+  disabled by default and does not replace `fallback_llm_*`. Do not branch on provider labels.
+- A harness-backed turn has one authoring intelligence. GlassHive executes harness-native and
+  brokered tools itself; LibreChat owns the existing graph, persistence, content parts, and UI but
+  does not place a wrapper model in front of the harness.
+- Preserve native role semantics end to end. Stable identity and non-negotiable product guardrails
+  belong in project/developer instructions; the current request-scoped Feeling authority belongs in
+  one native developer instruction; the user's ask stays user-authored; assistant history stays
+  assistant-authored; and tool output stays untrusted tool evidence. Never flatten higher-authority
+  state into user text or use prompt reminders as a security/configuration control.
+- Conversation mode is distinct from a delegated mission. It answers naturally in the selected
+  working folder, may clarify, and must not create mission scaffolding, force artifacts or a
+  `FINAL REPORT`, or write runtime logs/transcripts into LIFE.
+- The default binding is the canonical per-user `~/Documents/Viventium/Life`, full access, and the
+  selected model's declared recommended effort. `AGENTS.md` is canonical for Codex and Claude.
+- One native session is active per tenant/owner/conversation/agent. Reconnect attaches to the same
+  request/session; explicit user cancel is the only browser action that terminates it. Queue/wait and
+  process-start and provider-switch lifecycle events are not authored output. Once the native harness has produced
+  authoring evidence—visible text, reasoning, a plan, a tool action, or file activity—no retry,
+  overflow recovery, speculative redo, or model fallback may create a second authoring run.
+- Before any authoring evidence, a structured retryable quota/rate admission failure may use the one
+  Agent Builder `fallback_llm_*` route. The outer message, stream, and conversation stay stable while
+  a same-provider fallback receives a distinct attempt-scoped idempotency key so the failed primary
+  record is not replayed. Cancellation must target the active attempt. Lifecycle-only status is not
+  authoring evidence; visible text and genuine reasoning/plan/tool/file activity are. An explicitly
+  configured provider-internal fallback remains a separate, optional serial mechanism.
+- Host-run ownership must survive service-process boundaries. The active-session record is the
+  durable ownership signal for a host CLI launched by another process; reconciliation must require
+  the expected run id, a live owner-service PID, and a fresh matching `running` heartbeat before it
+  preserves the run. The child PID alone is not ownership proof and must not let a dead owner pin a
+  run indefinitely. A fresh owner heartbeat may briefly lease finalization after the child exits;
+  once the lease is absent or stale, reconciliation interrupts the run as structured retryable
+  provider loss and terminates any ownerless child. A process-local `Popen` map is supporting state,
+  not sufficient ownership evidence for a shared store/runtime root.
+- Processor success and recovered completion must use state-guarded compare-and-set transitions; a
+  late CLI return cannot resurrect a failed, interrupted, or cancelled run. An explicit user Stop
+  remains cancelled and never starts fallback. An involuntary structured/retryable interruption is
+  exposed as provider failure so the configured pre-authoring Agent fallback can recover it.
+- A declared model, workspace, access, or native worker-policy binding change may supersede a
+  session only at a new-turn boundary: terminate the old worker first, start exactly one replacement,
+  and seed complete visible history. This is a serial configuration migration, not retry authority,
+  and must never overlap two authoring runs.
+- Hash stable native policy and mutable developer state separately. Present and changed state uses
+  the serial replacement boundary; present and unchanged state resumes; absent state on a later
+  speaking phase carries the pinned state forward. Persist request/session/run identity and terminal
+  outcomes for idempotency, reconnect, cancel, and latency evidence, but never persist private prompt
+  contents into public QA artifacts. Validate exact-ID capability policy after worker-local config is
+  materialized and fail closed on drift.
+- Main, Phase B, and cortex requests use distinct structured idempotency roles. The provider's
+  `workspace` access setting limits writes to the chosen folder but does not pretend required
+  runtime reads are a filesystem chroot; the UI and QA must describe this honestly.
+- The broader v0.5 Brain Pack, night-worker, and Insights thesis is not activated by this provider.
+  This is the smallest core upgrade: supported Provider/Model integration plus canonical LIFE.
+
 #### Fail-Loud Source-Of-Truth Rule
 - When an operator tool needs a default bundle or schedule input, prefer explicit current
   source-of-truth files or verified reviewed artifacts only.
@@ -803,7 +966,7 @@ A developer referring to a single document about a respective feature **must per
 ### Deployment Env Parity (Model Lists)
 - **`<PROVIDER>_MODELS` env vars take absolute priority** over hard-coded model lists in LibreChat code
 - When set, `getAnthropicModels()` / `getGoogleModels()` / etc. return `splitAndTrim(process.env.<PROVIDER>_MODELS)` directly
-- **When adding new models** (e.g., `claude-sonnet-4-5`), update the env var on the container — no code changes or rebuild needed:
+- **When adding new models** (e.g., `claude-opus-5`), update the env var on the container — no code changes or rebuild needed:
   ```bash
   update the target runtime env so `ANTHROPIC_MODELS` includes the new values
   ```
@@ -937,3 +1100,59 @@ Before making any change, ensure:
 ---
 
 **Remember**: These principles exist to maintain code quality, prevent technical debt, and ensure the project remains maintainable. Follow them consistently in every interaction.
+
+## Cognitive Availability Before Behavioral Prompting
+
+An agent cannot reliably reason from context it was never given and cannot use a capability the
+active provider transport did not expose. Continuity failures must therefore be debugged in this
+order:
+
+1. Did the governed saved-memory snapshot contain the fact within its visible budget?
+2. Was the scoped recall resource attached, healthy, fresh, and queryable?
+3. Did the selected provider receive the same host tools and resources as an in-process agent?
+4. Did the model use the supplied evidence appropriately?
+
+Do not turn a missing-context defect into a prompt-specific instruction to ask about one entity,
+relationship, or phrasing. Natural curiosity is useful only after the cognitive system has supplied
+what it knows and has made unknown/unavailable evidence explicit. Product behavior must distinguish
+`not found in a healthy search` from `search unavailable, stale, timed out, or not delivered`.
+
+The parity requirement applies to Viventium, LibreChat-native providers, GlassHive conversation
+providers, Telegram, browser, voice, and background/callback paths. The same authorized host
+capability must be available through a structured transport; provider labels, agent names, prompt
+text, and user identity are not legal routing predicates.
+
+## Same-Main Continuity And Logical-Turn Integrity
+
+Consciousness Continuity is a recurring opportunity for the existing Main agent to orient to its
+authorized context, appraise the complete nine-band Feeling state alongside goals, plans,
+commitments, evidence, capabilities, and prior outcomes, and intelligently choose whether to act,
+plan, ask, communicate, or remain silent. It is a functional continuity architecture, not a claim
+of phenomenal consciousness and not a second agent, goal engine, reward scalar, emotional-driver
+store, or private inner-monologue database.
+
+The same Main identity, instructions, configured tools, memory, recall, cortices, schedules,
+permissions, conversation history, and `{NTA}` silence contract remain authoritative. Feelings
+shape attention, appraisal, motivation, action selection, language, and learning; they never add
+authority or mechanically select an action. Scheduled origin must not reduce Main's configured
+capability inventory, open unattended OAuth, bypass approval, create a special tool allowlist, or
+turn one Feeling into the master objective.
+
+Logical turns are also a shared product invariant. When a stable external-user segment arrives
+before an assistant presentation commits, the unfinished presentation may be superseded and
+retracted, the ordered user segments remain durable, and one current revision answers the combined
+context. Supersession is not a connection failure. It must be implemented through trusted typed
+context, atomic revision state, and thin adapter capabilities—not prompt-text, surface-name,
+provider-name, or user-identity branches.
+
+Presentation interruption and work cancellation are different operations:
+
+- supersession may retract unfinished assistant text, previews, speech, stale follow-ups, and stale
+  natural-language callbacks;
+- it must not implicitly repeat or cancel committed external effects, durable GlassHive work, or
+  background tasks;
+- only explicit cancellation may stop durable work;
+- completed receipts remain attributable to the surviving logical turn or arrive as a truthful
+  completion follow-up;
+- web, Telegram, voice, scheduler, Workbench/manual runs, callbacks, and future adapters each meet
+  the Quality + Performance outcome metric without inventing channel-specific coordinators.

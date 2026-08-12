@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" role="img" aria-labelledby="title desc">
+  <title id="title">When believable becomes dangerous</title>
+  <desc id="desc">A slide showing how a polished but wrong answer can influence a choice, then an action, and finally a real outcome.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#fffaf0"/>
+      <stop offset="1" stop-color="#f7ede8"/>
+    </linearGradient>
+    <linearGradient id="danger" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#e66b56"/>
+      <stop offset="1" stop-color="#b83943"/>
+    </linearGradient>
+    <filter id="shadow" x="-50%" y="-50%" width="200%" height="200%">
+      <feDropShadow dx="0" dy="18" stdDeviation="18" flood-color="#743c35" flood-opacity="0.18"/>
+    </filter>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 0 L10 5 L0 10 Z" fill="#a14f43"/>
+    </marker>
+  </defs>
+
+  <rect width="1600" height="900" fill="url(#bg)"/>
+  <circle cx="1450" cy="140" r="240" fill="#f5dcd0" opacity="0.58"/>
+  <circle cx="120" cy="790" r="180" fill="#fae6cf" opacity="0.6"/>
+
+  <text x="96" y="76" fill="#615b58" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="18" font-weight="700" letter-spacing="5">VIVENTIUM</text>
+  <text x="1504" y="76" text-anchor="end" fill="#7e7470" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="18" font-weight="600">03 / 06</text>
+
+  <text x="96" y="185" fill="#2c2524" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="68" font-weight="760">The danger is a wrong answer that feels right.</text>
+  <text x="96" y="245" fill="#6a5f5b" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="29">Believable words can quietly steer a real decision.</text>
+
+  <g transform="translate(112 360)">
+    <path d="M28 0 H300 Q328 0 328 28 V128 Q328 156 300 156 H110 L58 205 L68 156 H28 Q0 156 0 128 V28 Q0 0 28 0 Z" fill="#ffffff" stroke="#ddc9c1" stroke-width="2" filter="url(#shadow)"/>
+    <text x="164" y="67" text-anchor="middle" fill="#403535" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="28" font-weight="720">“This sounds right.”</text>
+    <text x="164" y="111" text-anchor="middle" fill="#8a7670" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="20">polished · confident · personal</text>
+
+    <path d="M372 94 H495" fill="none" stroke="#a14f43" stroke-width="4" marker-end="url(#arrow)"/>
+
+    <g transform="translate(525 25) rotate(-7 55 135)">
+      <rect width="110" height="270" rx="18" fill="#f0ba76" filter="url(#shadow)"/>
+      <text x="55" y="145" text-anchor="middle" fill="#513b2b" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="23" font-weight="760" transform="rotate(90 55 145)">CHOICE</text>
+    </g>
+
+    <g transform="translate(735 68) rotate(-18 60 150)">
+      <rect width="120" height="300" rx="19" fill="#dc8d60" filter="url(#shadow)"/>
+      <text x="60" y="158" text-anchor="middle" fill="#ffffff" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="23" font-weight="760" transform="rotate(90 60 158)">ACTION</text>
+    </g>
+
+    <g transform="translate(970 135) rotate(-34 72 170)">
+      <rect width="144" height="340" rx="22" fill="url(#danger)" filter="url(#shadow)"/>
+      <text x="72" y="178" text-anchor="middle" fill="#ffffff" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="24" font-weight="760" transform="rotate(90 72 178)">OUTCOME</text>
+    </g>
+
+    <path d="M1170 422 C1245 450 1302 452 1372 420" fill="none" stroke="#b83943" stroke-width="5" stroke-linecap="round" marker-end="url(#arrow)"/>
+  </g>
+
+  <text x="96" y="725" fill="#b83943" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="55" font-weight="780">CONFIDENT ≠ CORRECT</text>
+  <text x="96" y="775" fill="#695c58" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="23">The more the answer matters, the more dangerous pleasing certainty becomes.</text>
+
+  <path d="M96 824 H1504" stroke="#ddcec8" stroke-width="1.5"/>
+  <text x="96" y="858" fill="#8b7f7a" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="17">THE VIVENTIUM WAY · AN ORIGINAL FRAMEWORK</text>
+</svg>

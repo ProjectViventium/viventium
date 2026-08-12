@@ -19,6 +19,7 @@ BUILT_EXECUTABLE="${VIVENTIUM_HELPER_BUILT_EXECUTABLE:-$HELPER_BUILD_DIR/$HELPER
 HELPER_PREBUILT_DIR="${VIVENTIUM_HELPER_PREBUILT_DIR:-$HELPER_PACKAGE_DIR/prebuilt}"
 HELPER_PREBUILT_EXECUTABLE="${VIVENTIUM_HELPER_PREBUILT_EXECUTABLE:-$HELPER_PREBUILT_DIR/${HELPER_EXECUTABLE_NAME}-universal}"
 HELPER_PREBUILT_SOURCE_HASH_FILE="${VIVENTIUM_HELPER_PREBUILT_SOURCE_HASH_FILE:-$HELPER_PREBUILT_DIR/source.sha256}"
+HELPER_PREBUILT_BINARY_HASH_FILE="${VIVENTIUM_HELPER_PREBUILT_BINARY_HASH_FILE:-$HELPER_PREBUILT_DIR/binary.sha256}"
 HELPER_APP_DIR="${VIVENTIUM_HELPER_APP_DIR:-$HOME/Applications}"
 HELPER_APP_BUNDLE="${VIVENTIUM_HELPER_APP_BUNDLE:-$HELPER_APP_DIR/Viventium.app}"
 LEGACY_HELPER_APP_BUNDLE="${VIVENTIUM_HELPER_LEGACY_APP_BUNDLE:-$HELPER_APP_DIR/Viventium Helper.app}"
@@ -270,143 +271,16 @@ APPLESCRIPT
 }
 
 cleanup_legacy_terminal_helper_launchers() {
-  local python_bin
-  python_bin="$(resolve_repo_python)"
-  "$python_bin" - "$APP_SUPPORT_DIR" "$HELPER_SCRIPT_DIR" "$LAUNCH_AGENT_DIR" "$OSASCRIPT_TIMEOUT_SECONDS" <<'PY'
-import os
-import shutil
-import subprocess
-import sys
-from pathlib import Path
-
-app_support_dir = Path(sys.argv[1]).resolve()
-helper_script_dir = Path(sys.argv[2]).resolve()
-launch_agent_dir = Path(sys.argv[3]).resolve()
-timeout = float(sys.argv[4])
-
-legacy_command_markers = (
-    "helper-terminal-run.command",
-    "helper-detached-start.pid.command",
-    "helper-detached-stop.pid.command",
-)
-legacy_history_markers = tuple(
-    str(helper_script_dir / marker)
-    for marker in legacy_command_markers
-)
-legacy_history_markers += tuple(
-    marker.replace(" ", "\\ ")
-    for marker in legacy_history_markers
-)
-
-for stale_script in helper_script_dir.glob("*.command"):
-    try:
-        stale_script.unlink()
-    except FileNotFoundError:
-        pass
-
-
-def scrub_legacy_helper_history(path: Path) -> None:
-    try:
-        text = path.read_text(encoding="utf-8", errors="ignore")
-    except OSError:
-        return
-    lines = text.splitlines(keepends=True)
-    filtered = [line for line in lines if not any(marker in line for marker in legacy_history_markers)]
-    if filtered == lines:
-        return
-    try:
-        path.write_text("".join(filtered), encoding="utf-8")
-    except OSError:
-        return
-
-
-for history_path in (Path.home() / ".zsh_history",):
-    scrub_legacy_helper_history(history_path)
-
-zsh_sessions_dir = Path.home() / ".zsh_sessions"
-if zsh_sessions_dir.exists():
-    for history_path in zsh_sessions_dir.glob("*"):
-        if history_path.suffix not in {".history", ".historynew", ".session"}:
-            continue
-        scrub_legacy_helper_history(history_path)
-
-
-def terminal_saved_state_contains_legacy_marker(saved_state_dir: Path) -> bool:
-    if not saved_state_dir.exists():
-        return False
-    marker_bytes = [
-        marker.encode("utf-8")
-        for marker in (*legacy_command_markers, *legacy_history_markers)
-    ]
-    for candidate in saved_state_dir.rglob("*"):
-        if not candidate.is_file():
-            continue
-        try:
-            payload = candidate.read_bytes()
-        except OSError:
-            continue
-        if any(marker in payload for marker in marker_bytes):
-            return True
-    return False
-
-
-terminal_saved_state_dir = (
-    Path.home() / "Library" / "Saved Application State" / "com.apple.Terminal.savedState"
-)
-if terminal_saved_state_contains_legacy_marker(terminal_saved_state_dir):
-    shutil.rmtree(terminal_saved_state_dir, ignore_errors=True)
-
-for plist_path in launch_agent_dir.glob("*.plist"):
-    try:
-        text = plist_path.read_text(encoding="utf-8", errors="ignore")
-    except OSError:
-        continue
-    if str(helper_script_dir) not in text and not any(marker in text for marker in legacy_command_markers):
-        continue
-    subprocess.run(
-        ["launchctl", "bootout", f"gui/{os.getuid()}", str(plist_path)],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        check=False,
-    )
-    try:
-        plist_path.unlink()
-    except FileNotFoundError:
-        pass
-
-escaped_helper_dir = (
-    str(helper_script_dir)
-    .replace("\\", "\\\\")
-    .replace('"', '\\"')
-)
-script = f'''tell application "System Events"
-  repeat with li in every login item
-    set shouldDelete to false
-    try
-      set liPath to POSIX path of (path of li as alias)
-      if liPath contains "{escaped_helper_dir}" then
-        set shouldDelete to true
-      end if
-    end try
-    if shouldDelete then
-      delete li
-    end if
-  end repeat
-end tell
-'''
-try:
-    subprocess.run(
-        ["/usr/bin/osascript"],
-        input=script,
-        text=True,
-        timeout=timeout,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        check=False,
-    )
-except subprocess.TimeoutExpired:
-    pass
-PY
+  # Cleanup is intentionally limited to paths owned by Viventium. Never read or
+  # rewrite shell history, terminal session state, or unrelated LaunchAgents.
+  find "$HELPER_SCRIPT_DIR" -maxdepth 1 -type f \
+    \( -name '*.command' -o -name 'helper-detached-*.sh' \) -delete 2>/dev/null || true
+  local legacy_launch_agent="$LAUNCH_AGENT_DIR/ai.viventium.helper.terminal.plist"
+  if [[ -f "$legacy_launch_agent" ]]; then
+    [[ "$SKIP_LAUNCHCTL" == "1" ]] || \
+      launchctl bootout "gui/$UID" "$legacy_launch_agent" >/dev/null 2>&1 || true
+    rm -f "$legacy_launch_agent"
+  fi
   pkill -f "$APP_SUPPORT_DIR/helper-scripts/.*\\.command" >/dev/null 2>&1 || true
 }
 
@@ -439,12 +313,24 @@ PY
 prebuilt_helper_matches_sources() {
   [[ -x "$HELPER_PREBUILT_EXECUTABLE" ]] || return 1
   [[ -f "$HELPER_PREBUILT_SOURCE_HASH_FILE" ]] || return 1
+  prebuilt_helper_binary_matches_digest || return 1
 
   local expected_hash
   local actual_hash
   expected_hash="$(tr -d '[:space:]' < "$HELPER_PREBUILT_SOURCE_HASH_FILE")"
   actual_hash="$(helper_source_hash)"
   [[ -n "$expected_hash" && "$expected_hash" == "$actual_hash" ]]
+}
+
+prebuilt_helper_binary_matches_digest() {
+  [[ -x "$HELPER_PREBUILT_EXECUTABLE" ]] || return 1
+  [[ -f "$HELPER_PREBUILT_BINARY_HASH_FILE" ]] || return 1
+  local expected_hash
+  local actual_hash
+  expected_hash="$(tr -d '[:space:]' < "$HELPER_PREBUILT_BINARY_HASH_FILE" | tr '[:upper:]' '[:lower:]')"
+  [[ "$expected_hash" =~ ^[0-9a-fA-F]{64}$ ]] || return 1
+  actual_hash="$(shasum -a 256 "$HELPER_PREBUILT_EXECUTABLE" | awk '{print $1}')"
+  [[ "$expected_hash" == "$actual_hash" ]]
 }
 
 use_prebuilt_helper() {

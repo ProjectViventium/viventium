@@ -4,6 +4,7 @@ import copy
 import json
 import os
 import platform
+import re
 import subprocess
 import sys
 import importlib.util
@@ -87,6 +88,179 @@ def minimal_compile_config() -> dict:
     }
 
 
+def test_background_activation_attempt_budgets_are_reliable_and_configurable(
+    tmp_path: Path,
+) -> None:
+    config = minimal_compile_config()
+    env = config_compiler.render_runtime_env(
+        config, config_compiler.build_agent_assignments(config)
+    )
+    assert env["VIVENTIUM_ACTIVATION_PRIMARY_ATTEMPT_TIMEOUT_MS"] == "1600"
+    assert env["VIVENTIUM_ACTIVATION_FALLBACK_ATTEMPT_TIMEOUT_MS"] == "2500"
+    assert "VIVENTIUM_CORTEX_EXECUTION_TIMEOUT_MS" not in env
+
+    config["runtime"]["background_activation"] = {
+        "primary_attempt_timeout_ms": 1450,
+        "fallback_attempt_timeout_ms": 2250,
+        "execution_timeout_s": 420,
+    }
+    configured = config_compiler.render_runtime_env(
+        config, config_compiler.build_agent_assignments(config)
+    )
+    assert configured["VIVENTIUM_ACTIVATION_PRIMARY_ATTEMPT_TIMEOUT_MS"] == "1450"
+    assert configured["VIVENTIUM_ACTIVATION_FALLBACK_ATTEMPT_TIMEOUT_MS"] == "2250"
+    assert configured["VIVENTIUM_CORTEX_EXECUTION_TIMEOUT_MS"] == "420000"
+    config_compiler.render_service_envs(tmp_path, configured)
+    librechat_env = (tmp_path / "service-env" / "librechat.env").read_text(encoding="utf-8")
+    assert "VIVENTIUM_ACTIVATION_PRIMARY_ATTEMPT_TIMEOUT_MS=1450" in librechat_env
+    assert "VIVENTIUM_ACTIVATION_FALLBACK_ATTEMPT_TIMEOUT_MS=2250" in librechat_env
+    assert "VIVENTIUM_CORTEX_EXECUTION_TIMEOUT_MS=420000" in librechat_env
+
+
+def test_cross_surface_delivery_ack_contract_is_compiled_for_core_and_adapters(
+    tmp_path: Path,
+) -> None:
+    config = minimal_compile_config()
+    env = config_compiler.render_runtime_env(
+        config, config_compiler.build_agent_assignments(config)
+    )
+
+    assert env["VIVENTIUM_DELIVERY_ACK_ENDPOINT"] == (
+        "/api/viventium/interactions/delivery-ack"
+    )
+    assert env["VIVENTIUM_TELEGRAM_INTERACTION_ADAPTER_SECRET"] == config_compiler.scoped_secret(
+        env["VIVENTIUM_CALL_SESSION_SECRET"], "interaction-adapter:telegram"
+    )
+    assert env["VIVENTIUM_VOICE_INTERACTION_ADAPTER_SECRET"] == config_compiler.scoped_secret(
+        env["VIVENTIUM_CALL_SESSION_SECRET"], "interaction-adapter:voice"
+    )
+    assert (
+        env["VIVENTIUM_TELEGRAM_INTERACTION_ADAPTER_SECRET"]
+        != env["VIVENTIUM_VOICE_INTERACTION_ADAPTER_SECRET"]
+    )
+    assert "VIVENTIUM_INTERACTION_ADAPTER_SECRET" not in env
+
+    config_compiler.render_service_envs(tmp_path, env)
+    librechat_env = (tmp_path / "service-env" / "librechat.env").read_text(
+        encoding="utf-8"
+    )
+    telegram_env = (tmp_path / "service-env" / "telegram.config.env").read_text(
+        encoding="utf-8"
+    )
+    assert "VIVENTIUM_DELIVERY_ACK_ENDPOINT=/api/viventium/interactions/delivery-ack" in librechat_env
+    assert "VIVENTIUM_TELEGRAM_INTERACTION_ADAPTER_SECRET=" in librechat_env
+    assert "VIVENTIUM_VOICE_INTERACTION_ADAPTER_SECRET=" in librechat_env
+    assert "VIVENTIUM_DELIVERY_ACK_ENDPOINT=/api/viventium/interactions/delivery-ack" in telegram_env
+    assert "VIVENTIUM_TELEGRAM_INTERACTION_ADAPTER_SECRET=" in telegram_env
+    assert "VIVENTIUM_VOICE_INTERACTION_ADAPTER_SECRET" not in telegram_env
+
+
+@pytest.mark.parametrize("invalid_window", [-1, 86401, "invalid", float("inf")])
+def test_background_followup_window_rejects_invalid_or_unbounded_values(invalid_window) -> None:
+    config = minimal_compile_config()
+    config["runtime"]["background_followup_window_s"] = invalid_window
+
+    with pytest.raises(SystemExit, match="runtime.background_followup_window_s"):
+        config_compiler.render_runtime_env(
+            config,
+            config_compiler.build_agent_assignments(config),
+        )
+
+
+def test_background_followup_window_accepts_explicit_zero() -> None:
+    config = minimal_compile_config()
+    config["runtime"]["background_followup_window_s"] = 0
+
+    env = config_compiler.render_runtime_env(
+        config,
+        config_compiler.build_agent_assignments(config),
+    )
+
+    assert env["VIVENTIUM_CORTEX_FOLLOWUP_GRACE_S"] == "0"
+    assert env["VIVENTIUM_VOICE_FOLLOWUP_GRACE_S"] == "0"
+    assert env["VIVENTIUM_TELEGRAM_FOLLOWUP_GRACE_S"] == "0"
+
+
+def test_glasshive_foreground_response_timeout_is_opt_in_and_bounded_when_configured(
+    tmp_path: Path,
+) -> None:
+    config = minimal_compile_config()
+    default_env = config_compiler.render_runtime_env(
+        config, config_compiler.build_agent_assignments(config)
+    )
+    assert "GLASSHIVE_PROVIDER_RESPONSE_TIMEOUT_S" not in default_env
+
+    config["runtime"]["glasshive_foreground_response_timeout_s"] = 420
+    configured_env = config_compiler.render_runtime_env(
+        config, config_compiler.build_agent_assignments(config)
+    )
+    assert configured_env["GLASSHIVE_PROVIDER_RESPONSE_TIMEOUT_S"] == "420"
+
+    config_compiler.dump_env(tmp_path / "runtime.env", configured_env)
+    runtime_env = (tmp_path / "runtime.env").read_text(encoding="utf-8")
+    assert "GLASSHIVE_PROVIDER_RESPONSE_TIMEOUT_S=420" in runtime_env
+
+    schema = yaml.safe_load((REPO_ROOT / "config.schema.yaml").read_text(encoding="utf-8"))
+    timeout_schema = schema["properties"]["runtime"]["properties"][
+        "glasshive_foreground_response_timeout_s"
+    ]
+    assert timeout_schema == {
+        "description": (
+            "Optional ingress-anchored response budget, in seconds, for a synchronous GlassHive "
+            "Agent Provider turn. Omit or set null for no automatic foreground deadline. Cold "
+            "synchronous session startup has the documented non-preemption caveat. This does not "
+            "cap autonomous, MCP, or background worker runs."
+        ),
+        "default": None,
+        "oneOf": [
+            {"type": "integer", "minimum": 30, "maximum": 1800},
+            {"type": "null"},
+        ],
+    }
+    for preset_name in ("config.minimal.example.yaml", "config.full.example.yaml"):
+        preset = yaml.safe_load((REPO_ROOT / preset_name).read_text(encoding="utf-8"))
+        assert "glasshive_foreground_response_timeout_s" not in preset["runtime"]
+
+
+@pytest.mark.parametrize("timeout_s", [29, 1801, "not-a-number"])
+def test_glasshive_foreground_response_timeout_rejects_unsafe_values(
+    timeout_s: object,
+) -> None:
+    config = minimal_compile_config()
+    config["runtime"]["glasshive_foreground_response_timeout_s"] = timeout_s
+
+    with pytest.raises(
+        SystemExit,
+        match=(
+            "runtime.glasshive_foreground_response_timeout_s must be "
+            "(?:an integer|between 30 and 1800)"
+        ),
+    ):
+        config_compiler.render_runtime_env(
+            config, config_compiler.build_agent_assignments(config)
+        )
+
+
+def test_scheduled_agent_defaults_to_sol_xhigh_and_rejects_partial_policy() -> None:
+    assert config_compiler.resolve_scheduled_agent_settings({}) == {
+        "provider": "openai",
+        "model": "gpt-5.6-sol",
+        "reasoning_effort": "xhigh",
+    }
+
+    with pytest.raises(SystemExit, match="must stay xhigh"):
+        config_compiler.resolve_scheduled_agent_settings(
+            {
+                "runtime": {
+                    "scheduled_agent": {
+                        "model": "gpt-5.6-sol",
+                        "reasoning_effort": "medium",
+                    }
+                }
+            }
+        )
+
+
 def load_source_of_truth_agents_bundle() -> dict:
     return config_compiler.resolve_source_prompt_refs(
         yaml.safe_load(SOURCE_OF_TRUTH_AGENTS_BUNDLE.read_text(encoding="utf-8"))
@@ -97,6 +271,117 @@ def load_source_of_truth_librechat_yaml() -> dict:
     return config_compiler.resolve_source_prompt_refs(
         yaml.safe_load(SOURCE_OF_TRUTH_LIBRECHAT_YAML.read_text(encoding="utf-8"))
     )
+
+
+def test_background_cortex_activation_modes_are_closed_and_source_validated(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    valid_source = tmp_path / "valid-agents.yaml"
+    write_config(
+        valid_source,
+        {
+            "mainAgent": {
+                "background_cortices": [
+                    {
+                        "agent_id": "always-cortex",
+                        "activation": {"enabled": True, "mode": "always"},
+                    },
+                    {
+                        "agent_id": "legacy-classified-cortex",
+                        "activation": {
+                            "enabled": True,
+                            "provider": "groq",
+                            "model": "qwen/qwen3.6-27b",
+                            "prompt": "Classify this turn.",
+                            "confidence_threshold": 0.7,
+                            "cooldown_ms": 0,
+                            "max_history": 5,
+                        },
+                    },
+                ]
+            }
+        },
+    )
+    monkeypatch.setattr(config_compiler, "SOURCE_OF_TRUTH_AGENTS_BUNDLE", valid_source)
+    assert config_compiler.load_source_of_truth_agents_bundle()["mainAgent"]
+
+    invalid_source = tmp_path / "invalid-agents.yaml"
+    write_config(
+        invalid_source,
+        {
+            "mainAgent": {
+                "background_cortices": [
+                    {
+                        "agent_id": "invalid-cortex",
+                        "activation": {"enabled": True, "mode": "sometimes"},
+                    }
+                ]
+            }
+        },
+    )
+    monkeypatch.setattr(config_compiler, "SOURCE_OF_TRUTH_AGENTS_BUNDLE", invalid_source)
+    with pytest.raises(
+        SystemExit,
+        match=r"background_cortices\[0\]\.activation\.mode must be classified, always, or disabled",
+    ):
+        config_compiler.load_source_of_truth_agents_bundle()
+
+    incomplete_source = tmp_path / "incomplete-classified-agents.yaml"
+    write_config(
+        incomplete_source,
+        {
+            "mainAgent": {
+                "background_cortices": [
+                    {
+                        "agent_id": "incomplete-cortex",
+                        "activation": {"enabled": True, "mode": "classified"},
+                    }
+                ]
+            }
+        },
+    )
+    monkeypatch.setattr(config_compiler, "SOURCE_OF_TRUTH_AGENTS_BUNDLE", incomplete_source)
+    with pytest.raises(
+        SystemExit,
+        match=r"background_cortices\[0\]\.activation\.provider is required for classified mode",
+    ):
+        config_compiler.load_source_of_truth_agents_bundle()
+
+
+def test_main_agent_mcp_servers_have_reviewed_glasshive_projection_policy() -> None:
+    agents = load_source_of_truth_agents_bundle()
+    librechat = load_source_of_truth_librechat_yaml()
+    compiled_servers = config_compiler.build_mcp_servers(
+        {"integrations": {"health": {"enabled": True}}},
+        {"lc_api_port": 3180},
+        "agent_viventium_main_95aeb3",
+    )
+    excluded = set(
+        librechat["endpoints"]["agents"]["providerCapabilities"]["glasshive-harness"].get(
+            "excluded_mcp_servers", []
+        )
+    )
+    declared_servers = {
+        tool_id.rsplit("_mcp_", 1)[1]
+        for tool_id in agents["mainAgent"]["tools"]
+        if isinstance(tool_id, str) and "_mcp_" in tool_id
+    } - excluded
+
+    assert declared_servers
+    for server_name in declared_servers:
+        policy = librechat["mcpServers"][server_name].get("viventiumGlassHive")
+        assert policy, f"{server_name} is declared by the main Agent but has no GlassHive policy"
+        assert policy["version"] == 1
+        assert policy["permitsAutonomousWorker"] is True
+        assert policy["defaultToolAccess"] == "none"
+        assert policy["toolPolicies"]
+        declared_tool_names = {
+            tool_id.rsplit("_mcp_", 1)[0]
+            for tool_id in agents["mainAgent"]["tools"]
+            if isinstance(tool_id, str) and tool_id.endswith(f"_mcp_{server_name}")
+        }
+        assert declared_tool_names <= set(policy["toolPolicies"])
+        assert compiled_servers[server_name]["viventiumGlassHive"] == policy
 
 
 def test_source_prompt_refs_fail_closed_when_registry_is_missing() -> None:
@@ -139,6 +424,18 @@ def test_runtime_env_defaults_to_modern_playground_and_keeps_classic_opt_in() ->
     assert invalid_env["VIVENTIUM_PLAYGROUND_VARIANT"] == "modern"
 
 
+def test_health_runtime_command_is_compiled_as_a_direct_app_support_executable(monkeypatch) -> None:
+    config = minimal_compile_config()
+    config["integrations"]["health"] = {"enabled": True}
+    monkeypatch.setenv("VIVENTIUM_APP_SUPPORT_DIR", "/tmp/viventium-app-support")
+
+    env = config_compiler.render_runtime_env(config, config_compiler.build_agent_assignments(config))
+
+    assert env["VIVENTIUM_HEALTH_COMMAND"] == (
+        "/tmp/viventium-app-support/health/runtime/bin/viventium-health"
+    )
+
+
 def test_runtime_env_disables_automatic_mongoose_index_creation() -> None:
     config = minimal_compile_config()
     env = config_compiler.render_runtime_env(
@@ -167,6 +464,23 @@ def test_prompt_workbench_sidecar_compiles_as_explicit_runtime_opt_in() -> None:
     assert enabled_env["VIVENTIUM_PROMPT_WORKBENCH_SEED_NIGHTLY_ENABLED"] == "true"
     assert enabled_env["VIVENTIUM_PROMPT_WORKBENCH_SEED_NIGHTLY_ACTIVE"] == "true"
     assert enabled_env["VIVENTIUM_PROMPT_WORKBENCH_SEED_NIGHTLY_EXECUTOR"] == "glasshive_host"
+
+
+def test_dev_env_prompt_workbench_uses_an_isolated_port() -> None:
+    config = minimal_compile_config()
+    config["runtime"]["prompt_workbench"] = {"enabled": True}
+    config["runtime"]["dev_env"] = {
+        "enabled": True,
+        "name": "qa",
+        "port_offset": 2000,
+    }
+
+    env = config_compiler.render_runtime_env(
+        config,
+        config_compiler.build_agent_assignments(config),
+    )
+
+    assert env["VIVENTIUM_PROMPT_WORKBENCH_PORT"] == "10781"
 
 
 def test_config_compiler_exports_default_timezone_from_global_settings() -> None:
@@ -320,6 +634,16 @@ def test_launcher_keeps_glasshive_state_under_runtime_state_root() -> None:
     )
 
 
+def test_launcher_publishes_only_signed_glasshive_surfaces() -> None:
+    script = START_SCRIPT.read_text(encoding="utf-8")
+    prepare_index = script.index("prepare_remote_call_access() {")
+    prepare_body = script[prepare_index : script.index("prewarm_remote_call_access() {", prepare_index)]
+
+    assert '"${GLASSHIVE_PUBLIC_LINKS_ONLY:-false}" == "true"' in prepare_body
+    assert 'helper_args+=(--glasshive-port "$glasshive_port")' in prepare_body
+    assert 'helper_args+=(--public-glasshive-origin "$VIVENTIUM_PUBLIC_GLASSHIVE_URL")' in prepare_body
+
+
 def source_of_truth_built_in_agent_map() -> dict[str, str]:
     bundle = load_source_of_truth_agents_bundle()
     agents = [bundle.get("mainAgent", {})] + list(bundle.get("backgroundAgents", []))
@@ -333,8 +657,135 @@ def source_of_truth_built_in_agent_map() -> dict[str, str]:
     }
 
 
+def test_main_agent_voice_profile_preserves_recall_capable_primary_and_independent_fallback() -> None:
+    main_agent = load_source_of_truth_agents_bundle()["mainAgent"]
+
+    assert main_agent["voice_llm_provider"] == "xai"
+    assert main_agent["voice_llm_model"] == "grok-4.5"
+    assert main_agent["voice_llm_model_parameters"] == {
+        "model": "grok-4.5",
+        "reasoning_effort": "low",
+    }
+    assert main_agent["voice_fallback_llm_provider"] == "openAI"
+    assert main_agent["voice_fallback_llm_model"] == "gpt-5.6-terra"
+    assert main_agent["voice_fallback_llm_model_parameters"] == {
+        "model": "gpt-5.6-terra",
+        "reasoning_effort": "none",
+        "useResponsesApi": True,
+    }
+    assert main_agent["fallback_llm_provider"] == "glasshive-harness"
+    assert main_agent["fallback_llm_model"] == "claude-code:opus"
+    assert main_agent["fallback_llm_model_parameters"] == {
+        "model": "claude-code:opus",
+        "reasoning_effort": "high",
+    }
+
+
+def test_public_agent_bootstrap_template_uses_glasshive_opus5_high_fallbacks() -> None:
+    bundle = load_source_of_truth_agents_bundle()
+    agents = [
+        bundle["mainAgent"],
+        *bundle.get("backgroundAgents", []),
+        *bundle.get("handoffAgents", []),
+    ]
+
+    for agent in agents:
+        if agent.get("id") == "agent_viventium_deep_memory_95aeb3":
+            assert agent.get("fallback_llm_provider") == "glasshive-harness"
+            assert agent.get("fallback_llm_model") == "codex-cli:gpt-5.6-sol"
+            assert agent.get("fallback_llm_model_parameters") == {
+                "model": "codex-cli:gpt-5.6-sol",
+                "reasoning_effort": "medium",
+            }
+            continue
+        if agent.get("id") == "agent_viventium_reality_check_95aeb3":
+            # Foreground GlassHive handoffs use the provider-native fallback because generic
+            # fallback materialization currently belongs to the primary Agent initialization path.
+            assert agent.get("fallback_llm_provider") in (None, "")
+            assert agent.get("fallback_llm_model") in (None, "")
+            assert agent["glasshive_options"]["fallback_model"] == "claude-code:opus"
+            assert agent["glasshive_options"]["fallback_reasoning_effort"] == "high"
+            continue
+        assert agent["fallback_llm_provider"] == "glasshive-harness"
+        assert agent["fallback_llm_model"] == "claude-code:opus"
+        assert agent["fallback_llm_model_parameters"] == {
+            "model": "claude-code:opus",
+            "reasoning_effort": "high",
+        }
+
+
+def test_active_product_surfaces_do_not_reference_retired_claude_models() -> None:
+    retired_markers = {
+        "claude-opus-" + "4-8",
+        "Opus " + "4.8",
+        "claude-sonnet-" + "4-5",
+        "Claude Sonnet " + "4.5",
+    }
+    roots = [
+        REPO_ROOT / "scripts",
+        REPO_ROOT / "tests",
+        REPO_ROOT / "docs",
+        REPO_ROOT / "qa",
+        REPO_ROOT / "viventium_v0_4" / "LibreChat" / "viventium",
+        REPO_ROOT / "viventium_v0_4" / "LibreChat" / "scripts",
+        REPO_ROOT / "viventium_v0_4" / "LibreChat" / "api" / "server" / "services" / "viventium",
+        REPO_ROOT / "viventium_v0_4" / "LibreChat" / "api" / "test" / "scripts",
+        REPO_ROOT / "viventium_v0_4" / "LibreChat" / "api" / "test" / "services" / "viventium",
+        REPO_ROOT / "viventium_v0_4" / "LibreChat" / "packages" / "api" / "src" / "feelings",
+        REPO_ROOT / "viventium_v0_4" / "LibreChat" / "client" / "src" / "components" / "Feelings",
+        REPO_ROOT / "viventium_v0_4" / "GlassHive",
+        REPO_ROOT / "viventium_v0_4" / "telegram-viventium",
+    ]
+    explicit_files = [
+        REPO_ROOT / "config.minimal.example.yaml",
+        REPO_ROOT / "config.full.example.yaml",
+    ]
+    generated_runtime_files = {
+        REPO_ROOT / "viventium_v0_4" / "LibreChat" / "librechat.yaml",
+    }
+    suffixes = {".cjs", ".html", ".js", ".json", ".md", ".py", ".ts", ".tsx", ".yaml", ".yml"}
+    excluded_parts = {
+        ".git",
+        ".venv",
+        ".viventium",
+        "artifacts",
+        "coverage",
+        "data",
+        "dist",
+        "node_modules",
+        "output",
+        "reports",
+        "site-packages",
+        "state",
+        "tmp",
+    }
+    candidates = [*explicit_files]
+    for root in roots:
+        for current_dir, directory_names, file_names in os.walk(root):
+            directory_names[:] = [
+                name for name in directory_names if name not in excluded_parts
+            ]
+            current_path = Path(current_dir)
+            candidates.extend(
+                current_path / name
+                for name in file_names
+                if (current_path / name).suffix in suffixes
+                and current_path / name not in generated_runtime_files
+                and (current_path / name).name != "report.md"
+                and re.search(r"20\d{2}-\d{2}-\d{2}", (current_path / name).name) is None
+            )
+
+    stale = []
+    for path in candidates:
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        if any(marker in text for marker in retired_markers):
+            stale.append(str(path.relative_to(REPO_ROOT)))
+
+    assert stale == []
+
+
 XAI_CURRENT_DEFAULT_MODELS = [
-    "grok-4.3",
+    "grok-4.5",
     "grok-4.20-non-reasoning",
     "grok-4.20-multi-agent-0309",
     "grok-4.20-0309-reasoning",
@@ -378,6 +829,7 @@ def test_memory_hardening_accepts_gpt56_sol_for_overnight_automation() -> None:
             "runtime": {
                 "memory_hardening": {
                     "openai_model": "gpt-5.6-sol",
+                    "openai_reasoning_effort": "xhigh",
                 }
             }
         }
@@ -386,12 +838,29 @@ def test_memory_hardening_accepts_gpt56_sol_for_overnight_automation() -> None:
     assert settings["openai_model"] == "gpt-5.6-sol"
 
 
+def test_memory_hardening_accepts_gpt56_terra_at_evaluated_effort() -> None:
+    settings = config_compiler.resolve_memory_hardening_settings(
+        {
+            "runtime": {
+                "memory_hardening": {
+                    "openai_model": "gpt-5.6-terra",
+                    "openai_reasoning_effort": "high",
+                }
+            }
+        }
+    )
+
+    assert settings["openai_model"] == "gpt-5.6-terra"
+    assert settings["openai_reasoning_effort"] == "high"
+
+
 def test_memory_hardening_accepts_installed_gpt55_during_model_rollout() -> None:
     settings = config_compiler.resolve_memory_hardening_settings(
         {
             "runtime": {
                 "memory_hardening": {
                     "openai_model": "gpt-5.5",
+                    "openai_reasoning_effort": "xhigh",
                 }
             }
         }
@@ -401,27 +870,171 @@ def test_memory_hardening_accepts_installed_gpt55_during_model_rollout() -> None
 
 
 @pytest.mark.parametrize("filename", ["config.full.example.yaml", "config.minimal.example.yaml"])
-def test_shipped_config_examples_default_automation_to_sol_xhigh(filename: str) -> None:
+def test_shipped_config_examples_default_memory_hardening_to_luna_medium(filename: str) -> None:
     config = yaml.safe_load((REPO_ROOT / filename).read_text(encoding="utf-8"))
     memory_hardening = config["runtime"]["memory_hardening"]
     host_worker = config["integrations"]["glasshive"]["host_worker"]
 
-    assert memory_hardening["openai_model"] == "gpt-5.6-sol"
-    assert memory_hardening["openai_reasoning_effort"] == "xhigh"
+    assert memory_hardening["openai_model"] == "gpt-5.6-luna"
+    assert memory_hardening["openai_reasoning_effort"] == "medium"
     assert host_worker["codex_model"] == "gpt-5.6-sol"
     assert host_worker["codex_reasoning_effort"] == "xhigh"
+    assert host_worker["plugin_denylist"] == [
+        "viventium-feelings@project-viventium"
+    ]
 
 
-def test_build_custom_endpoints_xai_defaults_to_grok_43() -> None:
+def test_build_custom_endpoints_xai_defaults_to_grok_45() -> None:
     xai = custom_endpoint(config_compiler.build_custom_endpoints(), "xai")
     models = xai["models"]["default"]
 
     assert models[:4] == XAI_CURRENT_DEFAULT_MODELS
     assert not any("experimental-beta-0304" in model for model in models)
-    assert xai["titleModel"] == "grok-4.3"
-    assert xai["summaryModel"] == "grok-4.3"
+    assert xai["titleModel"] == "grok-4.5"
+    assert xai["summaryModel"] == "grok-4.5"
     assert xai["titleModel"] not in XAI_RETIRED_MODEL_IDS
     assert xai["summaryModel"] not in XAI_RETIRED_MODEL_IDS
+
+
+def test_glasshive_compiles_as_exact_core_agent_provider(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_dir = tmp_path / "runtime_phase1"
+    runtime_dir.mkdir()
+    monkeypatch.setattr(config_compiler, "GLASSHIVE_RUNTIME_DIR", runtime_dir)
+    monkeypatch.setattr(config_compiler.shutil, "which", lambda _name: None)
+    config = minimal_compile_config()
+    config["integrations"]["glasshive"] = {
+        "enabled": True,
+        "provider": {
+            "enabled": True,
+            "life_dir": str(tmp_path / "Life"),
+        },
+    }
+    assignments = config_compiler.build_agent_assignments(config)
+    env = config_compiler.render_runtime_env(config, assignments)
+    librechat = yaml.safe_load(config_compiler.render_librechat_yaml(config, assignments, env))
+    endpoint = custom_endpoint(librechat["endpoints"]["custom"], "glasshive-harness")
+    capability = librechat["endpoints"]["agents"]["providerCapabilities"][
+        "glasshive-harness"
+    ]
+
+    assert endpoint["modelDisplayLabel"] == "GlassHive"
+    assert assignments["conscious"] == (
+        "glasshive-harness",
+        "codex-cli:gpt-5.6-sol",
+    )
+    assert env["VIVENTIUM_FC_CONSCIOUS_LLM_PROVIDER"] == "glasshive-harness"
+    assert env["VIVENTIUM_FC_CONSCIOUS_LLM_MODEL"] == "codex-cli:gpt-5.6-sol"
+    assert env["VIVENTIUM_CORTEX_BACKGROUND_ANALYSIS_LLM_PROVIDER"] == "openai"
+    assert env["VIVENTIUM_CORTEX_BACKGROUND_ANALYSIS_LLM_MODEL"] == "gpt-5.6-terra"
+    assert librechat["viventium"]["primaryProvider"] == "openai"
+    assert librechat["viventium"]["consciousAgent"] == {
+        "provider": "glasshive-harness",
+        "model": "codex-cli:gpt-5.6-sol",
+    }
+    assert endpoint["models"] == {
+        "default": ["codex-cli:gpt-5.6-sol", "claude-code:opus"],
+        "fetch": False,
+    }
+    assert endpoint["titleEndpoint"] == "openAI"
+    assert endpoint["titleModel"] == "gpt-5.6-terra"
+    assert set(config_compiler.GLASSHIVE_PROVIDER_DROP_PARAMS) <= set(endpoint["dropParams"])
+    assert capability["main_chat"] is True
+    assert capability["cortex_execution"] is True
+    assert capability["phase_b_followup"] is True
+    assert capability["activation_classifier"] is False
+    assert capability["realtime_voice"] is False
+    assert capability["automatic_fallback_target"] is True
+    assert capability["serial_model_fallback"] is True
+    assert capability["worker_native_tools"] is True
+    assert capability["host_tools_transport"] == "broker_mcp"
+    assert capability["host_tools"] == ["file_search", "web_search"]
+    assert "native_tools" not in capability
+    assert capability["responses_api"] is False
+    assert capability["excluded_mcp_servers"] == ["glasshive-workers-projects"]
+    assert capability["models"][0]["recommendedEffort"] == "medium"
+    assert capability["models"][1]["effortChoices"] == [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+    ]
+    assert capability["models"][1]["recommendedEffort"] == "high"
+    assert endpoint["addParams"]["maxRetries"] == 0
+    assert "glasshive-harness" not in librechat["modelSpecs"]["addedEndpoints"]
+    assert "glasshive-harness" in librechat["endpoints"]["agents"][
+        "capabilityRequiredProviders"
+    ]
+    assert env["GLASSHIVE_PROVIDER_BASE_URL"] == "http://127.0.0.1:8766/v1"
+    assert env["GLASSHIVE_PROVIDER_API_KEY"] == env["WPR_API_TOKEN"]
+    assert env["VIVENTIUM_LIFE_DIR"] == str(tmp_path / "Life")
+
+    config_compiler.render_service_envs(tmp_path / "compiled", env)
+    librechat_env = (
+        tmp_path / "compiled" / "service-env" / "librechat.env"
+    ).read_text(encoding="utf-8")
+    telegram_env = (
+        tmp_path / "compiled" / "service-env" / "telegram.config.env"
+    ).read_text(encoding="utf-8")
+    assert "GLASSHIVE_PROVIDER_BASE_URL=http://127.0.0.1:8766/v1" in librechat_env
+    assert "GLASSHIVE_PROVIDER_API_KEY=" in librechat_env
+    assert "VIVENTIUM_TELEGRAM_SSE_READ_TIMEOUT_S=720" in telegram_env
+
+
+def test_glasshive_compiler_capability_matches_tracked_source_of_truth(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_dir = tmp_path / "runtime_phase1"
+    runtime_dir.mkdir()
+    monkeypatch.setattr(config_compiler, "GLASSHIVE_RUNTIME_DIR", runtime_dir)
+    monkeypatch.setattr(config_compiler.shutil, "which", lambda _name: None)
+    config = minimal_compile_config()
+    config["integrations"]["glasshive"] = {
+        "enabled": True,
+        "provider": {"enabled": True, "life_dir": str(tmp_path / "Life")},
+    }
+    assignments = config_compiler.build_agent_assignments(config)
+    env = config_compiler.render_runtime_env(config, assignments)
+    compiled = yaml.safe_load(config_compiler.render_librechat_yaml(config, assignments, env))
+    source = yaml.safe_load(
+        (
+            REPO_ROOT
+            / "viventium_v0_4"
+            / "LibreChat"
+            / "viventium"
+            / "source_of_truth"
+            / "local.librechat.yaml"
+        ).read_text(encoding="utf-8")
+    )
+
+    assert compiled["endpoints"]["agents"]["providerCapabilities"][
+        "glasshive-harness"
+    ] == source["endpoints"]["agents"]["providerCapabilities"]["glasshive-harness"]
+    assert compiled["endpoints"]["agents"]["capabilityRequiredProviders"] == source[
+        "endpoints"
+    ]["agents"]["capabilityRequiredProviders"]
+    assert env["VIVENTIUM_TELEGRAM_SSE_READ_TIMEOUT_S"] == "720"
+
+
+def test_glasshive_provider_is_absent_when_integration_is_disabled() -> None:
+    config = minimal_compile_config()
+    assignments = config_compiler.build_agent_assignments(config)
+    env = config_compiler.render_runtime_env(config, assignments)
+    librechat = yaml.safe_load(config_compiler.render_librechat_yaml(config, assignments, env))
+
+    assert all(
+        endpoint.get("name") != "glasshive-harness"
+        for endpoint in librechat["endpoints"]["custom"]
+    )
+    assert "glasshive-harness" not in librechat["endpoints"]["agents"].get(
+        "providerCapabilities", {}
+    )
+    assert "glasshive-harness" not in librechat["modelSpecs"]["addedEndpoints"]
+    assert "GLASSHIVE_PROVIDER_API_KEY" not in env
 
 
 def test_source_of_truth_candidates_reject_generated_app_support_input(
@@ -462,6 +1075,29 @@ def test_prompt_bundle_candidates_include_local_state_root(
     candidates = config_compiler.default_live_prompt_bundle_candidates()
 
     assert (state_root / "prompt-bundle.json").resolve() in candidates
+
+
+def test_prompt_bundle_candidates_prefer_canonical_runtime_over_legacy_state_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app_support_root = tmp_path / "Library" / "Application Support" / "Viventium"
+    state_root = app_support_root / "state" / "runtime" / "isolated"
+    canonical_bundle = app_support_root / "runtime" / "prompt-bundle.json"
+    legacy_state_bundle = state_root / "prompt-bundle.json"
+    canonical_bundle.parent.mkdir(parents=True)
+    state_root.mkdir(parents=True)
+    canonical_bundle.write_text("{}", encoding="utf-8")
+    legacy_state_bundle.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(config_compiler, "APP_SUPPORT_VIVENTIUM_DIR", app_support_root)
+    monkeypatch.setenv("VIVENTIUM_STATE_ROOT", str(state_root))
+    monkeypatch.delenv("VIVENTIUM_PROMPT_BUNDLE_PATH", raising=False)
+
+    candidates = config_compiler.default_live_prompt_bundle_candidates()
+
+    assert candidates.index(canonical_bundle.resolve()) < candidates.index(
+        legacy_state_bundle.resolve()
+    )
 
 
 def test_prompt_bundle_candidates_include_runtime_profile_state_root(
@@ -626,11 +1262,11 @@ def test_source_template_xai_endpoint_uses_current_stable_models() -> None:
     assert models[:4] == XAI_CURRENT_DEFAULT_MODELS
     assert not any("experimental-beta-0304" in model for model in models)
     assert XAI_RETIRED_MODEL_IDS.isdisjoint(models)
-    assert xai["titleModel"] == "grok-4.3"
-    assert xai["summaryModel"] == "grok-4.3"
+    assert xai["titleModel"] == "grok-4.5"
+    assert xai["summaryModel"] == "grok-4.5"
 
 
-def test_rendered_librechat_yaml_xai_endpoint_uses_grok_43_after_source_template_merge() -> None:
+def test_rendered_librechat_yaml_xai_endpoint_uses_grok_45_after_source_template_merge() -> None:
     config = {
         "version": 1,
         "install": {"mode": "native"},
@@ -670,11 +1306,11 @@ def test_rendered_librechat_yaml_xai_endpoint_uses_grok_43_after_source_template
 
     assert models[:4] == XAI_CURRENT_DEFAULT_MODELS
     assert XAI_RETIRED_MODEL_IDS.isdisjoint({xai["titleModel"], xai["summaryModel"]})
-    assert xai["titleModel"] == "grok-4.3"
-    assert xai["summaryModel"] == "grok-4.3"
+    assert xai["titleModel"] == "grok-4.5"
+    assert xai["summaryModel"] == "grok-4.5"
 
 
-def test_rendered_librechat_yaml_exposes_grok_43_in_model_specs() -> None:
+def test_rendered_librechat_yaml_exposes_grok_45_in_model_specs() -> None:
     config = {
         "version": 1,
         "install": {"mode": "native"},
@@ -710,13 +1346,13 @@ def test_rendered_librechat_yaml_exposes_grok_43_in_model_specs() -> None:
     env = config_compiler.render_runtime_env(config, assignments)
     librechat_yaml = yaml.safe_load(config_compiler.render_librechat_yaml(config, assignments, env))
     grok_spec = next(
-        item for item in librechat_yaml["modelSpecs"]["list"] if item.get("name") == "grok-4.3"
+        item for item in librechat_yaml["modelSpecs"]["list"] if item.get("name") == "grok-4.5"
     )
 
-    assert grok_spec["label"] == "Grok 4.3"
+    assert grok_spec["label"] == "Grok 4.5"
     assert grok_spec["group"] == "xai"
     assert grok_spec["preset"]["endpoint"] == "xai"
-    assert grok_spec["preset"]["model"] == "grok-4.3"
+    assert grok_spec["preset"]["model"] == "grok-4.5"
 
 
 def test_config_compiler_minimal(tmp_path: Path) -> None:
@@ -778,6 +1414,9 @@ def test_config_compiler_minimal(tmp_path: Path) -> None:
     )
 
     runtime_env = (output_dir / "runtime.env").read_text(encoding="utf-8")
+    telegram_env = (output_dir / "service-env" / "telegram.config.env").read_text(
+        encoding="utf-8"
+    )
     librechat_env = (output_dir / "service-env" / "librechat.env").read_text(encoding="utf-8")
     librechat_yaml = yaml.safe_load((output_dir / "librechat.yaml").read_text(encoding="utf-8"))
     prompt_bundle = json.loads((output_dir / "prompt-bundle.json").read_text(encoding="utf-8"))
@@ -798,20 +1437,26 @@ def test_config_compiler_minimal(tmp_path: Path) -> None:
     assert "VIVENTIUM_WEB_GLASSHIVE_TIMEOUT_S=600" in runtime_env
     assert "VIVENTIUM_VOICE_GLASSHIVE_TIMEOUT_S=600" in runtime_env
     assert "VIVENTIUM_TELEGRAM_GLASSHIVE_TIMEOUT_S=600" in runtime_env
+    assert "VIVENTIUM_TELEGRAM_FOLLOWUP_GRACE_S=30" in telegram_env
+    assert "VIVENTIUM_TELEGRAM_GLASSHIVE_TIMEOUT_S=600" in telegram_env
+    assert "GLASSHIVE_PROVIDER_RESPONSE_TIMEOUT_S=" not in runtime_env
     assert "VIVENTIUM_CORTEX_PHASE_A_NOTICE_MODE=any_activated_on_voice" in runtime_env
     assert "VIVENTIUM_CORTEX_PHASE_A_NOTICE_MODE=any_activated_on_voice" in librechat_env
     assert "VIVENTIUM_VOICE_BACKGROUND_AGENT_DETECTION_ASYNC=true" in librechat_env
-    assert "VIVENTIUM_TEXT_BACKGROUND_AGENT_DETECTION_ASYNC=false" in librechat_env
+    assert "VIVENTIUM_TEXT_BACKGROUND_AGENT_DETECTION_ASYNC=true" in librechat_env
     assert "VIVENTIUM_VOICE_PHASE_A_AWAIT_MS=690" in librechat_env
     assert "VIVENTIUM_TEXT_PHASE_A_AWAIT_MS=1300" in librechat_env
-    assert "VIVENTIUM_CORTEX_LATE_DETECT_TIMEOUT_MS=4000" in runtime_env
-    assert "VIVENTIUM_CORTEX_LATE_DETECT_TIMEOUT_MS=4000" in librechat_env
+    assert "VIVENTIUM_CORTEX_LATE_DETECT_TIMEOUT_MS=6000" in runtime_env
+    assert "VIVENTIUM_CORTEX_LATE_DETECT_TIMEOUT_MS=6000" in librechat_env
     assert "VIVENTIUM_VOICE_PHASE_A_ASYNC_ALLOW_TOOL_HOLD=true" in librechat_env
     assert "VIVENTIUM_VOICE_LOG_LATENCY=1" in librechat_env
     assert "VIVENTIUM_LIBRECHAT_ORIGIN=http://127.0.0.1:3180" in runtime_env
     assert "VIVENTIUM_TELEGRAM_AGENT_ID=agent_viventium_main_95aeb3" in runtime_env
     assert "VIVENTIUM_REMOTE_CALL_MODE=disabled" in runtime_env
     assert "VIVENTIUM_MAIN_AGENT_ID=agent_viventium_main_95aeb3" in runtime_env
+    assert "VIVENTIUM_SCHEDULED_AGENT_PROVIDER=openai" in runtime_env
+    assert "VIVENTIUM_SCHEDULED_AGENT_MODEL=gpt-5.6-sol" in runtime_env
+    assert "VIVENTIUM_SCHEDULED_AGENT_REASONING_EFFORT=xhigh" in runtime_env
     assert "VIVENTIUM_LOCAL_SUBSCRIPTION_AUTH=true" in runtime_env
     assert "VIVENTIUM_DEFAULT_CONVERSATION_RECALL=false" in runtime_env
     assert "VIVENTIUM_MEMORY_HARDENING_ENABLED=false" in runtime_env
@@ -825,12 +1470,12 @@ def test_config_compiler_minimal(tmp_path: Path) -> None:
     assert "VIVENTIUM_MEMORY_HARDENING_MIN_APPLY_INTERVAL_SECONDS=300" in runtime_env
     assert "VIVENTIUM_MEMORY_HARDENING_PROVIDER_PROFILE=launch_ready_only" in runtime_env
     assert "VIVENTIUM_MEMORY_HARDENING_PROVIDER=openai" in runtime_env
-    assert "VIVENTIUM_MEMORY_HARDENING_MODEL=gpt-5.6-sol" in runtime_env
-    assert "VIVENTIUM_MEMORY_HARDENING_EFFORT=xhigh" in runtime_env
-    assert "VIVENTIUM_MEMORY_HARDENING_ANTHROPIC_MODEL=claude-opus-4-8" in runtime_env
+    assert "VIVENTIUM_MEMORY_HARDENING_MODEL=gpt-5.6-luna" in runtime_env
+    assert "VIVENTIUM_MEMORY_HARDENING_EFFORT=medium" in runtime_env
+    assert "VIVENTIUM_MEMORY_HARDENING_ANTHROPIC_MODEL=claude-opus-5" in runtime_env
     assert "VIVENTIUM_MEMORY_HARDENING_ANTHROPIC_EFFORT=xhigh" in runtime_env
-    assert "VIVENTIUM_MEMORY_HARDENING_OPENAI_MODEL=gpt-5.6-sol" in runtime_env
-    assert "VIVENTIUM_MEMORY_HARDENING_OPENAI_REASONING_EFFORT=xhigh" in runtime_env
+    assert "VIVENTIUM_MEMORY_HARDENING_OPENAI_MODEL=gpt-5.6-luna" in runtime_env
+    assert "VIVENTIUM_MEMORY_HARDENING_OPENAI_REASONING_EFFORT=medium" in runtime_env
     assert "VIVENTIUM_MEMORY_TRANSCRIPTS_DIR=" in runtime_env
     assert "VIVENTIUM_MEMORY_TRANSCRIPTS_IGNORE_GLOBS=" in runtime_env
     assert "VIVENTIUM_MEMORY_TRANSCRIPTS_MAX_FILES_PER_RUN=20" in runtime_env
@@ -884,7 +1529,11 @@ def test_config_compiler_minimal(tmp_path: Path) -> None:
     assert librechat_yaml["memory"]["disabled"] is False
     assert librechat_yaml["memory"]["personalize"] is True
     assert librechat_yaml["memory"]["agent"]["provider"] == "openai"
-    assert librechat_yaml["memory"]["agent"]["model"] == "gpt-5.4"
+    assert librechat_yaml["memory"]["agent"]["model"] == "gpt-5.6-luna"
+    assert librechat_yaml["memory"]["agent"]["model_parameters"]["reasoning_effort"] == "medium"
+    assert librechat_yaml["memory"]["readProfile"]["tokenLimit"] == 8000
+    assert librechat_yaml["memory"]["readProfile"]["keyLimits"]["preferences"] == 600
+    assert librechat_yaml["memory"]["readProfile"]["keyLimits"]["world"] == 1200
     assert prompt_bundle["prompt_count"] >= 50
     assert "main.conscious_agent" in prompt_bundle["prompts"]
     assert prompt_bundle["prompts"]["main.identity"]["content_hash"]
@@ -908,7 +1557,7 @@ def test_config_compiler_minimal(tmp_path: Path) -> None:
     assert built_in_agents == source_of_truth_built_in_agent_map()
     assert "azureOpenAI" not in librechat_yaml["endpoints"]
     assert librechat_yaml["endpoints"]["anthropic"]["titleEndpoint"] == "anthropic"
-    assert librechat_yaml["endpoints"]["anthropic"]["titleModel"] == "claude-sonnet-4-5"
+    assert librechat_yaml["endpoints"]["anthropic"]["titleModel"] == "claude-opus-5"
     assert all(
         item.get("preset", {}).get("endpoint") != "azureOpenAI"
         for item in librechat_yaml["modelSpecs"]["list"]
@@ -1015,6 +1664,30 @@ def test_render_runtime_env_emits_glasshive_launch_env_only_when_enabled(tmp_pat
     assert default_host_env["WPR_MODEL_HOST_CODEX_CLI"] == "gpt-5.6-sol"
     assert default_host_env["WPR_CODEX_CLI_REASONING_EFFORT"] == "xhigh"
     assert default_host_env["WPR_CODEX_CLI_XHIGH_ROUTE_PROVEN"] == "true"
+    assert "GLASSHIVE_PUBLIC_LINKS_ONLY" not in default_host_env
+
+    public_host_config = copy.deepcopy(default_host_config)
+    public_host_config["runtime"]["network"] = {
+        "remote_call_mode": "public_https_edge",
+        "public_glasshive_origin": "https://glasshive.app.example.test",
+    }
+    public_host_env = config_compiler.render_runtime_env(
+        public_host_config,
+        config_compiler.build_agent_assignments(public_host_config),
+    )
+    expected_glasshive_secret = config_compiler.scoped_secret(
+        "call-session-test", "glasshive-public-links"
+    )
+    assert public_host_env["VIVENTIUM_PUBLIC_GLASSHIVE_URL"] == "https://glasshive.app.example.test"
+    assert public_host_env["GLASSHIVE_OPERATOR_BASE_URL"] == "https://glasshive.app.example.test"
+    assert public_host_env["GLASSHIVE_ARTIFACT_BASE_URL"] == "https://glasshive.app.example.test"
+    assert public_host_env["GLASSHIVE_PUBLIC_LINKS_ONLY"] == "true"
+    assert public_host_env["GLASSHIVE_SIGNED_LINK_SECRET"] == expected_glasshive_secret
+    assert public_host_env["GLASSHIVE_SIGNED_LINK_TTL_S"] == "86400"
+    assert "GLASSHIVE_SIGNED_LINK_TTL_SECONDS" not in public_host_env
+    assert public_host_env["GLASSHIVE_LINK_REF_TTL_SECONDS"] == "86400"
+    assert public_host_env["GLASSHIVE_MAX_WATCH_SESSION_DURATION_S"] == "1800"
+    assert public_host_env["GLASSHIVE_UI_PORT"] == "8780"
 
     disabled_host_config = copy.deepcopy(base_config)
     disabled_host_config["integrations"]["glasshive"] = {
@@ -1052,6 +1725,7 @@ def test_render_runtime_env_emits_glasshive_launch_env_only_when_enabled(tmp_pat
             "codex_plugin_cache": "codex-plugin-cache",
             "codex_ignore_user_config": False,
             "codex_disable_features": ["image_generation"],
+            "native_web_access": "disabled",
             "codex_allowed_reasoning_efforts": ["none", "low", "medium", "high", "xhigh"],
             "codex_reasoning_effort": "xhigh",
             "codex_reasoning_effort_fallback": "medium",
@@ -1090,6 +1764,7 @@ def test_render_runtime_env_emits_glasshive_launch_env_only_when_enabled(tmp_pat
     assert enabled_env["GLASSHIVE_HOST_CODEX_PLUGIN_CACHE"] == "codex-plugin-cache"
     assert enabled_env["WPR_CODEX_CLI_IGNORE_USER_CONFIG"] == "false"
     assert enabled_env["WPR_CODEX_CLI_DISABLE_FEATURES"] == "image_generation"
+    assert enabled_env["WPR_HOST_NATIVE_WEB_ACCESS"] == "disabled"
     assert enabled_env["WPR_CODEX_CLI_ALLOWED_REASONING_EFFORTS"] == "none,low,medium,high,xhigh"
     assert enabled_env["WPR_CODEX_CLI_REASONING_EFFORT"] == "xhigh"
     assert enabled_env["WPR_CODEX_CLI_REASONING_EFFORT_FALLBACK"] == "medium"
@@ -1098,6 +1773,15 @@ def test_render_runtime_env_emits_glasshive_launch_env_only_when_enabled(tmp_pat
     assert enabled_env["WPR_CLAUDE_CODE_EFFORT"] == "max"
     assert enabled_env["WPR_DB_PATH"] == str(
         app_support_root / "state" / "runtime" / "isolated" / "glasshive" / "runtime_phase1.db"
+    )
+    dev_state_root = tmp_path / "dev-envs" / "qa" / "state" / "runtime" / "isolated"
+    monkeypatch.setenv("VIVENTIUM_STATE_ROOT", str(dev_state_root))
+    dev_scoped_env = config_compiler.render_runtime_env(
+        enabled_config,
+        config_compiler.build_agent_assignments(enabled_config),
+    )
+    assert dev_scoped_env["WPR_DB_PATH"] == str(
+        dev_state_root / "glasshive" / "runtime_phase1.db"
     )
     assert enabled_env["WPR_LIBRECHAT_UPLOADS_ROOT"].endswith("viventium_v0_4/LibreChat/uploads")
     assert enabled_env["WPR_BOOTSTRAP_SOURCE_ROOTS"] == enabled_env["WPR_LIBRECHAT_UPLOADS_ROOT"]
@@ -1136,6 +1820,253 @@ def test_config_compiler_rejects_invalid_glasshive_default_worker_profile() -> N
         config_compiler.resolve_glasshive_host_worker_settings(config)
 
 
+def test_config_compiler_emits_validated_glasshive_worker_plugin_denylist() -> None:
+    config = minimal_compile_config()
+    config["integrations"]["glasshive"] = {
+        "enabled": True,
+        "host_worker": {
+            "enabled": True,
+            "plugin_denylist": [
+                "viventium-feelings@project-viventium",
+                "viventium-feelings@project-viventium",
+            ],
+        },
+    }
+
+    settings = config_compiler.resolve_glasshive_host_worker_settings(config)
+    env = config_compiler.render_runtime_env(
+        config,
+        config_compiler.build_agent_assignments(config),
+    )
+
+    assert settings["plugin_denylist"] == "viventium-feelings@project-viventium"
+    assert (
+        env["GLASSHIVE_HOST_PLUGIN_DENYLIST"]
+        == "viventium-feelings@project-viventium"
+    )
+
+
+def test_config_compiler_uses_declarative_viventium_plugin_denylist_default() -> None:
+    config = minimal_compile_config()
+    config["integrations"]["glasshive"] = {
+        "enabled": True,
+        "host_worker": {"enabled": True},
+    }
+
+    settings = config_compiler.resolve_glasshive_host_worker_settings(config)
+    env = config_compiler.render_runtime_env(
+        config,
+        config_compiler.build_agent_assignments(config),
+    )
+
+    assert settings["plugin_denylist"] == "viventium-feelings@project-viventium"
+    assert env["GLASSHIVE_HOST_PLUGIN_DENYLIST"] == (
+        "viventium-feelings@project-viventium"
+    )
+    schema = yaml.safe_load((REPO_ROOT / "config.schema.yaml").read_text(encoding="utf-8"))
+    assert schema["properties"]["integrations"]["properties"]["glasshive"]["properties"][
+        "host_worker"
+    ]["properties"]["plugin_denylist"]["default"] == [
+        "viventium-feelings@project-viventium"
+    ]
+
+
+@pytest.mark.parametrize("personality", ["inherit", "none", "friendly", "pragmatic"])
+def test_config_compiler_emits_validated_glasshive_codex_personality(
+    personality: str,
+) -> None:
+    config = minimal_compile_config()
+    config["integrations"]["glasshive"] = {
+        "enabled": True,
+        "host_worker": {
+            "enabled": True,
+            "codex_personality": personality,
+        },
+    }
+
+    settings = config_compiler.resolve_glasshive_host_worker_settings(config)
+    env = config_compiler.render_runtime_env(
+        config,
+        config_compiler.build_agent_assignments(config),
+    )
+
+    assert settings["codex_personality"] == personality
+    assert env["WPR_CODEX_CLI_PERSONALITY"] == personality
+
+
+def test_viventium_config_compiler_defaults_codex_personality_to_none_and_app_server_qa_off() -> None:
+    config = minimal_compile_config()
+    config["integrations"]["glasshive"] = {
+        "enabled": True,
+        "host_worker": {"enabled": True},
+    }
+
+    settings = config_compiler.resolve_glasshive_host_worker_settings(config)
+    env = config_compiler.render_runtime_env(
+        config,
+        config_compiler.build_agent_assignments(config),
+    )
+
+    assert settings["codex_personality"] == "none"
+    assert settings["codex_app_server_qa_enabled"] is False
+    assert env["WPR_CODEX_CLI_PERSONALITY"] == "none"
+    assert env["WPR_CODEX_APP_SERVER_QA_ENABLED"] == "false"
+
+
+def test_viventium_config_compiler_inherits_canonical_workspace_instructions_by_default() -> None:
+    config = minimal_compile_config()
+    config["integrations"]["glasshive"] = {
+        "enabled": True,
+        "host_worker": {"enabled": True},
+    }
+
+    settings = config_compiler.resolve_glasshive_host_worker_settings(config)
+    env = config_compiler.render_runtime_env(
+        config,
+        config_compiler.build_agent_assignments(config),
+    )
+
+    assert settings["codex_conversation_project_instructions"] == "inherit"
+    assert (
+        env["WPR_CODEX_CLI_CONVERSATION_PROJECT_INSTRUCTIONS"]
+        == "inherit"
+    )
+
+
+@pytest.mark.parametrize("mode", ["inherit", "exclude"])
+def test_viventium_config_compiler_validates_codex_conversation_project_instructions(
+    mode: str,
+) -> None:
+    config = minimal_compile_config()
+    config["integrations"]["glasshive"] = {
+        "enabled": True,
+        "host_worker": {
+            "enabled": True,
+            "codex_conversation_project_instructions": mode,
+        },
+    }
+
+    settings = config_compiler.resolve_glasshive_host_worker_settings(config)
+
+    assert settings["codex_conversation_project_instructions"] == mode
+
+
+def test_viventium_config_compiler_rejects_invalid_codex_conversation_project_instructions() -> None:
+    config = minimal_compile_config()
+    config["integrations"]["glasshive"] = {
+        "enabled": True,
+        "host_worker": {
+            "enabled": True,
+            "codex_conversation_project_instructions": "truncate",
+        },
+    }
+
+    with pytest.raises(
+        SystemExit,
+        match="codex_conversation_project_instructions",
+    ):
+        config_compiler.resolve_glasshive_host_worker_settings(config)
+
+
+def test_public_schema_declares_codex_conversation_project_instruction_policy() -> None:
+    schema = yaml.safe_load((REPO_ROOT / "config.schema.yaml").read_text(encoding="utf-8"))
+    policy = (
+        schema["properties"]["integrations"]["properties"]["glasshive"]["properties"]
+        ["host_worker"]["properties"]["codex_conversation_project_instructions"]
+    )
+
+    assert policy["enum"] == ["inherit", "exclude"]
+    assert policy["default"] == "inherit"
+
+
+@pytest.mark.parametrize("mode", ["inherit", "disabled"])
+def test_viventium_config_compiler_supports_explicit_native_web_access_policy(
+    mode: str,
+) -> None:
+    config = minimal_compile_config()
+    config["integrations"]["glasshive"] = {
+        "enabled": True,
+        "host_worker": {
+            "enabled": True,
+            "native_web_access": mode,
+        },
+    }
+
+    settings = config_compiler.resolve_glasshive_host_worker_settings(config)
+    env = config_compiler.render_runtime_env(
+        config,
+        config_compiler.build_agent_assignments(config),
+    )
+
+    assert settings["native_web_access"] == mode
+    assert env["WPR_HOST_NATIVE_WEB_ACCESS"] == mode
+
+
+@pytest.mark.parametrize("mode", ["", "deny", "broker-only", 123])
+def test_viventium_config_compiler_rejects_invalid_native_web_access_policy(
+    mode: object,
+) -> None:
+    config = minimal_compile_config()
+    config["integrations"]["glasshive"] = {
+        "enabled": True,
+        "host_worker": {
+            "enabled": True,
+            "native_web_access": mode,
+        },
+    }
+
+    with pytest.raises(SystemExit, match="native_web_access"):
+        config_compiler.resolve_glasshive_host_worker_settings(config)
+
+
+def test_public_schema_declares_native_web_access_lockdown_policy() -> None:
+    schema = yaml.safe_load((REPO_ROOT / "config.schema.yaml").read_text(encoding="utf-8"))
+    policy = (
+        schema["properties"]["integrations"]["properties"]["glasshive"]["properties"]
+        ["host_worker"]["properties"]["native_web_access"]
+    )
+
+    assert policy["enum"] == ["inherit", "disabled"]
+    assert policy["default"] == "inherit"
+
+
+@pytest.mark.parametrize("personality", ["", "warm", 123])
+def test_config_compiler_rejects_invalid_glasshive_codex_personality(
+    personality: object,
+) -> None:
+    config = minimal_compile_config()
+    config["integrations"]["glasshive"] = {
+        "enabled": True,
+        "host_worker": {
+            "enabled": True,
+            "codex_personality": personality,
+        },
+    }
+
+    with pytest.raises(SystemExit, match="codex_personality"):
+        config_compiler.resolve_glasshive_host_worker_settings(config)
+
+
+@pytest.mark.parametrize(
+    "invalid_value",
+    [123, ["missing-marketplace"], ["bad id@project-viventium"]],
+)
+def test_config_compiler_rejects_invalid_glasshive_worker_plugin_denylist(
+    invalid_value: object,
+) -> None:
+    config = minimal_compile_config()
+    config["integrations"]["glasshive"] = {
+        "enabled": True,
+        "host_worker": {
+            "enabled": True,
+            "plugin_denylist": invalid_value,
+        },
+    }
+
+    with pytest.raises(SystemExit, match="plugin_denylist"):
+        config_compiler.resolve_glasshive_host_worker_settings(config)
+
+
 def test_render_runtime_env_uses_codex_app_bundle_when_shell_path_is_missing(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1158,6 +2089,40 @@ def test_render_runtime_env_uses_codex_app_bundle_when_shell_path_is_missing(
     assert env["GLASSHIVE_HOST_WORKERS_ENABLED"] == "true"
     assert env["WPR_HOST_CODEX_CLI_AVAILABLE"] == "true"
     assert env["WPR_CODEX_BIN"] == str(app_cli)
+
+
+def test_resolve_host_cli_path_uses_user_local_bin_when_gui_path_is_missing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home_dir = tmp_path / "home"
+    claude_cli = home_dir / ".local" / "bin" / "claude"
+    claude_cli.parent.mkdir(parents=True)
+    claude_cli.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    claude_cli.chmod(0o755)
+    monkeypatch.setattr(config_compiler.Path, "home", lambda: home_dir)
+    monkeypatch.setattr(config_compiler.shutil, "which", lambda _name: None)
+
+    assert config_compiler.resolve_host_cli_path("claude") == str(claude_cli)
+
+
+def test_resolve_host_cli_path_canonicalizes_codex_symlink_when_bundle_companion_exists(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bundle_cli = tmp_path / "Codex.app" / "Contents" / "Resources" / "codex"
+    bundle_cli.parent.mkdir(parents=True)
+    bundle_cli.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    bundle_cli.chmod(0o755)
+    companion = bundle_cli.parent / "codex-code-mode-host"
+    companion.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    companion.chmod(0o755)
+    path_link = tmp_path / "bin" / "codex"
+    path_link.parent.mkdir()
+    path_link.symlink_to(bundle_cli)
+    monkeypatch.setattr(config_compiler.shutil, "which", lambda _name: str(path_link))
+
+    assert config_compiler.resolve_host_cli_path("codex") == str(bundle_cli)
 
 
 def test_render_runtime_env_discovers_codex_app_bundle_from_user_app_search_path(
@@ -1183,6 +2148,28 @@ def test_render_runtime_env_discovers_codex_app_bundle_from_user_app_search_path
     assert env["GLASSHIVE_HOST_WORKERS_ENABLED"] == "true"
     assert env["WPR_HOST_CODEX_CLI_AVAILABLE"] == "true"
     assert env["WPR_CODEX_BIN"] == str(app_cli)
+
+
+def test_render_runtime_env_keeps_local_glasshive_mcp_url_on_configured_port(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_dir = tmp_path / "runtime_phase1"
+    runtime_dir.mkdir(parents=True)
+    monkeypatch.setattr(config_compiler, "GLASSHIVE_RUNTIME_DIR", runtime_dir)
+    monkeypatch.setattr(config_compiler.shutil, "which", lambda _name: None)
+
+    config = minimal_compile_config()
+    config["integrations"]["glasshive"] = {"enabled": True}
+    config["runtime"]["extra_env"] = {"GLASSHIVE_MCP_PORT": "10767"}
+
+    env = config_compiler.render_runtime_env(
+        config,
+        config_compiler.build_agent_assignments(config),
+    )
+
+    assert env["GLASSHIVE_MCP_PORT"] == "10767"
+    assert env["GLASSHIVE_MCP_URL"] == "http://127.0.0.1:10767/mcp"
 
 
 def test_glasshive_azure_enterprise_vm_docker_compiles_cloud_safe_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1630,8 +2617,8 @@ def test_source_of_truth_exposes_glasshive_native_scheduler_and_followup_tools()
     agents_bundle = load_source_of_truth_agents_bundle()
     main_agent = agents_bundle["mainAgent"]
     assert expected_tools.issubset(set(main_agent["tools"]))
-    assert "Use GlassHive MCP scheduling tools" in main_agent["instructions"]
-    assert "Never claim a GlassHive schedule exists unless" in main_agent["instructions"]
+    assert "The scheduling tool contract owns exact operations" in main_agent["instructions"]
+    assert "Verify current schedule state with the scheduling tool" in main_agent["instructions"]
 
     glasshive_policy = next(
         server
@@ -1816,6 +2803,9 @@ def test_config_compiler_ignores_legacy_fast_voice_llm_provider(tmp_path: Path) 
     )
 
     runtime_env = (output_dir / "runtime.env").read_text(encoding="utf-8")
+    telegram_env = (output_dir / "service-env" / "telegram.config.env").read_text(
+        encoding="utf-8"
+    )
     librechat_env = (output_dir / "service-env" / "librechat.env").read_text(encoding="utf-8")
 
     assert "VIVENTIUM_TTS_PROVIDER=openai" in runtime_env
@@ -1860,10 +2850,16 @@ def test_render_librechat_yaml_preserves_defaults_and_overlays_compiled_memory_a
 
     assert librechat_yaml["memory"]["disabled"] is False
     assert librechat_yaml["memory"]["agent"]["provider"] == "openai"
-    assert librechat_yaml["memory"]["agent"]["model"] == "gpt-5.4"
+    assert librechat_yaml["memory"]["agent"]["model"] == "gpt-5.6-luna"
+    assert librechat_yaml["memory"]["agent"]["model_parameters"]["reasoning_effort"] == "medium"
     assert librechat_yaml["endpoints"]["anthropic"]["titleEndpoint"] == "anthropic"
-    assert librechat_yaml["endpoints"]["anthropic"]["titleModel"] == "claude-sonnet-4-5"
+    assert librechat_yaml["endpoints"]["anthropic"]["titleModel"] == "claude-opus-5"
     assert librechat_yaml["viventium"]["background_cortices"]["activation_format"]["brew_begin_tag"]
+    expected_recall_prompt = config_compiler.render_prompt(
+        "main.conversation_recall",
+        config_compiler.load_prompt_registry(),
+    ).rstrip()
+    assert librechat_yaml["viventium"]["conversation_recall"]["prompt"] == expected_recall_prompt
     assert librechat_yaml["balance"]["enabled"] is False
     assert librechat_yaml["balance"]["startBalance"] == 200000
     assert "webSearch" not in librechat_yaml
@@ -1886,6 +2882,7 @@ def test_build_agent_assignments_openai_only_uses_gpt56_workload_profile() -> No
 
     assert assignments["conscious"] == ("openai", "gpt-5.6-sol")
     assert assignments["background_analysis"] == ("openai", "gpt-5.6-terra")
+    assert assignments["deep_memory"] == ("openai", "gpt-5.6-terra")
     assert assignments["confirmation_bias"] == ("openai", "gpt-5.6-terra")
     assert assignments["red_team"] == ("openai", "gpt-5.6-sol")
     assert assignments["deep_research"] == ("openai", "gpt-5.6-sol")
@@ -1895,10 +2892,10 @@ def test_build_agent_assignments_openai_only_uses_gpt56_workload_profile() -> No
     assert assignments["emotional_resonance"] == ("openai", "gpt-5.6-terra")
     assert assignments["strategic_planning"] == ("openai", "gpt-5.6-sol")
     assert assignments["support"] == ("openai", "gpt-5.6-terra")
-    assert assignments["memory"] == ("openai", "gpt-5.4")
+    assert assignments["memory"] == ("openai", "gpt-5.6-luna")
 
 
-def test_build_agent_assignments_anthropic_only_uses_opus48_agent_fallback_profile() -> None:
+def test_build_agent_assignments_anthropic_only_uses_current_sonnet_profile() -> None:
     config = {
         "llm": {
             "primary": {
@@ -1913,18 +2910,19 @@ def test_build_agent_assignments_anthropic_only_uses_opus48_agent_fallback_profi
 
     assignments = config_compiler.build_agent_assignments(config)
 
-    assert assignments["conscious"] == ("anthropic", "claude-opus-4-8")
-    assert assignments["background_analysis"] == ("anthropic", "claude-opus-4-8")
-    assert assignments["confirmation_bias"] == ("anthropic", "claude-opus-4-8")
-    assert assignments["red_team"] == ("anthropic", "claude-opus-4-8")
-    assert assignments["deep_research"] == ("anthropic", "claude-opus-4-8")
-    assert assignments["productivity"] == ("anthropic", "claude-opus-4-8")
-    assert assignments["parietal"] == ("anthropic", "claude-opus-4-8")
-    assert assignments["pattern_recognition"] == ("anthropic", "claude-opus-4-8")
-    assert assignments["emotional_resonance"] == ("anthropic", "claude-opus-4-8")
-    assert assignments["strategic_planning"] == ("anthropic", "claude-opus-4-8")
-    assert assignments["support"] == ("anthropic", "claude-opus-4-8")
-    assert assignments["memory"] == ("anthropic", "claude-sonnet-4-5")
+    assert assignments["conscious"] == ("anthropic", "claude-opus-5")
+    assert assignments["background_analysis"] == ("anthropic", "claude-opus-5")
+    assert assignments["deep_memory"] == ("anthropic", "claude-opus-5")
+    assert assignments["confirmation_bias"] == ("anthropic", "claude-opus-5")
+    assert assignments["red_team"] == ("anthropic", "claude-opus-5")
+    assert assignments["deep_research"] == ("anthropic", "claude-opus-5")
+    assert assignments["productivity"] == ("anthropic", "claude-opus-5")
+    assert assignments["parietal"] == ("anthropic", "claude-opus-5")
+    assert assignments["pattern_recognition"] == ("anthropic", "claude-opus-5")
+    assert assignments["emotional_resonance"] == ("anthropic", "claude-opus-5")
+    assert assignments["strategic_planning"] == ("anthropic", "claude-opus-5")
+    assert assignments["support"] == ("anthropic", "claude-opus-5")
+    assert assignments["memory"] == ("anthropic", "claude-opus-5")
 
 
 def test_build_agent_assignments_requires_openai_or_anthropic_foundation() -> None:
@@ -2054,6 +3052,143 @@ def test_config_compiler_full_run_requires_groq_activation_credential(tmp_path: 
     assert "Missing required Groq activation credential." in completed.stderr
 
 
+def test_config_compiler_accepts_express_connected_account_without_terminal_provider_secret(
+    tmp_path: Path,
+) -> None:
+    config = minimal_compile_config()
+    config["install"]["experience"] = "express"
+    config["llm"]["activation"].pop("secret_value")
+    config["llm"]["activation"]["secret_ref"] = "keychain://viventium/groq_api_key"
+    config["llm"]["primary"] = {
+        "provider": "openai",
+        "auth_mode": "connected_account",
+    }
+    config["runtime"].update(
+        {
+            "memory_hardening": {"enabled": False},
+            "prompt_workbench": {
+                "enabled": False,
+                "seed_nightly": {"enabled": False, "active": False},
+            },
+            "nightly_routines": {"enabled": False, "defaults_version": 1},
+            "personalization": {"default_conversation_recall": False},
+        }
+    )
+    config["integrations"].update(
+        {
+            "glasshive": {"enabled": False, "host_worker": {"enabled": False}},
+            "web_search": {"enabled": False},
+            "code_interpreter": {"enabled": False},
+        }
+    )
+    config_path = tmp_path / "config.yaml"
+    output_dir = tmp_path / "out"
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    security = fake_bin / "security"
+    security.write_text("#!/bin/sh\nexit 44\n", encoding="utf-8")
+    security.chmod(0o755)
+    write_config(config_path, config)
+
+    subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "scripts/viventium/config_compiler.py"),
+            "--config",
+            str(config_path),
+            "--output-dir",
+            str(output_dir),
+        ],
+        env={**os.environ, "PATH": f"{fake_bin}{os.pathsep}/usr/bin:/bin"},
+        check=True,
+        cwd=REPO_ROOT,
+    )
+
+    runtime_env = (output_dir / "runtime.env").read_text(encoding="utf-8")
+    librechat_yaml_text = (output_dir / "librechat.yaml").read_text(encoding="utf-8")
+    librechat_yaml = yaml.safe_load(librechat_yaml_text)
+    assert "VIVENTIUM_INSTALL_MODE=native" in runtime_env
+    assert "VIVENTIUM_INSTALL_EXPERIENCE=express" in runtime_env
+    assert "VIVENTIUM_OPENAI_AUTH_MODE=connected_account" in runtime_env
+    assert "GROQ_API_KEY=" not in runtime_env
+    assert "OPENAI_API_KEY=user_provided" in runtime_env
+    assert "VIVENTIUM_VOICE_ENABLED=false" in runtime_env
+    assert "START_GLASSHIVE=false" in runtime_env
+    assert "START_PROMPT_WORKBENCH=false" in runtime_env
+    assert "VIVENTIUM_MEMORY_HARDENING_ENABLED=false" in runtime_env
+    assert "START_RAG_API=false" in runtime_env
+    assert "SEARCH=false" in runtime_env
+    assert "${GROQ_API_KEY}" not in librechat_yaml_text
+    assert "groq" not in {
+        endpoint["name"] for endpoint in librechat_yaml["endpoints"]["custom"]
+    }
+    assert "groq" not in librechat_yaml["modelSpecs"]["addedEndpoints"]
+
+
+def test_public_minimal_example_compiles_without_preexisting_keychain_state(
+    tmp_path: Path,
+) -> None:
+    candidate = tmp_path / "config.yaml"
+    output_dir = tmp_path / "runtime"
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    security = fake_bin / "security"
+    security.write_text("#!/bin/sh\nexit 44\n", encoding="utf-8")
+    security.chmod(0o755)
+    env = {**os.environ, "PATH": f"{fake_bin}{os.pathsep}/usr/bin:/bin"}
+
+    subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "scripts/viventium/wizard.py"),
+            "--output",
+            str(candidate),
+            "--preset",
+            str(REPO_ROOT / "config.minimal.example.yaml"),
+            "--non-interactive",
+        ],
+        env=env,
+        check=True,
+        cwd=REPO_ROOT,
+    )
+    subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "scripts/viventium/config_compiler.py"),
+            "--config",
+            str(candidate),
+            "--output-dir",
+            str(output_dir),
+        ],
+        env=env,
+        check=True,
+        cwd=REPO_ROOT,
+    )
+
+    normalized = yaml.safe_load(candidate.read_text(encoding="utf-8"))
+    runtime_env = (output_dir / "runtime.env").read_text(encoding="utf-8")
+    librechat = yaml.safe_load((output_dir / "librechat.yaml").read_text(encoding="utf-8"))
+    assert normalized["install"]["experience"] == "express"
+    assert normalized["runtime"]["memory_hardening"]["enabled"] is False
+    assert normalized["runtime"]["prompt_workbench"]["enabled"] is False
+    assert normalized["runtime"]["nightly_routines"]["enabled"] is False
+    assert normalized["voice"]["mode"] == "disabled"
+    assert normalized["integrations"]["glasshive"]["enabled"] is True
+    assert custom_endpoint(librechat["endpoints"]["custom"], "glasshive-harness")
+    assert "glasshive-harness" in librechat["endpoints"]["agents"]["providerCapabilities"]
+    assert "GROQ_API_KEY=" not in runtime_env
+    assert "SEARCH=false" in runtime_env
+
+
+def test_public_config_schema_models_express_as_optional_install_experience() -> None:
+    schema = yaml.safe_load((REPO_ROOT / "config.schema.yaml").read_text(encoding="utf-8"))
+
+    install_schema = schema["properties"]["install"]
+    assert install_schema["properties"]["experience"]["enum"] == ["express", "custom"]
+    assert "experience" not in install_schema["required"]
+    assert "secret_ref" not in schema["properties"]["llm"]["properties"]["activation"]["required"]
+
+
 def test_config_compiler_full_run_accepts_default_groq_activation_without_xai(tmp_path: Path) -> None:
     config = minimal_compile_config()
     config_path = tmp_path / "config.yaml"
@@ -2146,6 +3281,8 @@ def test_render_runtime_env_exports_explicit_background_role_assignments() -> No
 
     assert env["VIVENTIUM_CORTEX_BACKGROUND_ANALYSIS_LLM_PROVIDER"] == "openai"
     assert env["VIVENTIUM_CORTEX_BACKGROUND_ANALYSIS_LLM_MODEL"] == "gpt-5.6-terra"
+    assert env["VIVENTIUM_CORTEX_DEEP_MEMORY_LLM_PROVIDER"] == "openai"
+    assert env["VIVENTIUM_CORTEX_DEEP_MEMORY_LLM_MODEL"] == "gpt-5.6-terra"
     assert env["VIVENTIUM_CORTEX_RED_TEAM_LLM_PROVIDER"] == "openai"
     assert env["VIVENTIUM_CORTEX_RED_TEAM_LLM_MODEL"] == "gpt-5.6-sol"
     assert env["VIVENTIUM_CORTEX_PRODUCTIVITY_LLM_PROVIDER"] == "openai"
@@ -2156,7 +3293,7 @@ def test_render_runtime_env_exports_explicit_background_role_assignments() -> No
     assert env["VIVENTIUM_BACKGROUND_ACTIVATION_MODEL"] == "qwen/qwen3.6-27b"
 
 
-def test_build_agent_assignments_prefer_gpt56_agents_with_opus48_available_as_fallback() -> None:
+def test_build_agent_assignments_prefer_gpt56_agents_with_glasshive_opus5_fallback() -> None:
     config = {
         "version": 1,
         "install": {"mode": "native"},
@@ -2196,6 +3333,7 @@ def test_build_agent_assignments_prefer_gpt56_agents_with_opus48_available_as_fa
 
     assert assignments["conscious"] == ("openai", "gpt-5.6-sol")
     assert assignments["background_analysis"] == ("openai", "gpt-5.6-terra")
+    assert assignments["deep_memory"] == ("openai", "gpt-5.6-terra")
     assert assignments["confirmation_bias"] == ("openai", "gpt-5.6-terra")
     assert assignments["red_team"] == ("openai", "gpt-5.6-sol")
     assert assignments["deep_research"] == ("openai", "gpt-5.6-sol")
@@ -2205,10 +3343,10 @@ def test_build_agent_assignments_prefer_gpt56_agents_with_opus48_available_as_fa
     assert assignments["emotional_resonance"] == ("openai", "gpt-5.6-terra")
     assert assignments["strategic_planning"] == ("openai", "gpt-5.6-sol")
     assert assignments["support"] == ("openai", "gpt-5.6-terra")
-    assert assignments["memory"] == ("anthropic", "claude-sonnet-4-5")
+    assert assignments["memory"] == ("openai", "gpt-5.6-luna")
 
 
-def test_build_agent_assignments_memory_prefers_anthropic_when_available() -> None:
+def test_build_agent_assignments_memory_follows_anthropic_primary() -> None:
     config = {
         "version": 1,
         "install": {"mode": "native"},
@@ -2246,10 +3384,86 @@ def test_build_agent_assignments_memory_prefers_anthropic_when_available() -> No
 
     assignments = config_compiler.build_agent_assignments(config)
 
-    assert assignments["memory"] == ("anthropic", "claude-sonnet-4-5")
+    assert assignments["memory"] == ("anthropic", "claude-opus-5")
 
 
-def test_build_agent_assignments_uses_opus48_for_every_anthropic_agent_fallback_role() -> None:
+def test_llm_memory_override_changes_only_the_compiled_memory_agent() -> None:
+    baseline_config = minimal_compile_config()
+    baseline_config["llm"]["secondary"] = {
+        "provider": "anthropic",
+        "auth_mode": "connected_account",
+    }
+    override_config = copy.deepcopy(baseline_config)
+    override_config["llm"]["memory"] = {
+        "provider": "anthropic",
+        "model": "claude-opus-5",
+    }
+
+    baseline_assignments = config_compiler.build_agent_assignments(baseline_config)
+    override_assignments = config_compiler.build_agent_assignments(override_config)
+    assert override_assignments["memory"] == ("anthropic", "claude-opus-5")
+    assert {
+        role: assignment
+        for role, assignment in override_assignments.items()
+        if role != "memory"
+    } == {
+        role: assignment
+        for role, assignment in baseline_assignments.items()
+        if role != "memory"
+    }
+
+    baseline_env = config_compiler.render_runtime_env(baseline_config, baseline_assignments)
+    override_env = config_compiler.render_runtime_env(override_config, override_assignments)
+    baseline_yaml = yaml.safe_load(
+        config_compiler.render_librechat_yaml(baseline_config, baseline_assignments, baseline_env)
+    )
+    override_yaml = yaml.safe_load(
+        config_compiler.render_librechat_yaml(override_config, override_assignments, override_env)
+    )
+    assert override_yaml["memory"]["agent"]["provider"] == "anthropic"
+    assert override_yaml["memory"]["agent"]["model"] == "claude-opus-5"
+    override_yaml["memory"]["agent"] = baseline_yaml["memory"]["agent"]
+    assert override_yaml == baseline_yaml
+
+
+@pytest.mark.parametrize(
+    ("memory_config", "expected_message"),
+    [
+        (
+            {"provider": "xai", "model": "grok-4.5"},
+            "llm.memory.provider must be openai or anthropic",
+        ),
+        (
+            {"provider": "anthropic", "model": "claude-opus-5"},
+            "llm.memory.provider must have configured foundation authentication",
+        ),
+        (
+            {"provider": "openai", "model": ""},
+            "llm.memory.model must be a non-empty string",
+        ),
+    ],
+)
+def test_llm_memory_override_fails_closed_without_valid_foundation_auth(
+    memory_config: dict,
+    expected_message: str,
+) -> None:
+    config = minimal_compile_config()
+    config["llm"]["memory"] = memory_config
+
+    with pytest.raises(SystemExit, match=expected_message):
+        config_compiler.build_agent_assignments(config)
+
+
+def test_public_schema_declares_optional_memory_model_assignment() -> None:
+    schema = yaml.safe_load((REPO_ROOT / "config.schema.yaml").read_text(encoding="utf-8"))
+    memory_schema = schema["properties"]["llm"]["properties"]["memory"]
+
+    assert memory_schema["required"] == ["provider", "model"]
+    assert memory_schema["properties"]["provider"]["enum"] == ["openai", "anthropic"]
+    assert memory_schema["properties"]["model"]["minLength"] == 1
+
+
+def test_build_agent_assignments_uses_sonnet_for_every_direct_anthropic_role() -> None:
     config = {
         "version": 1,
         "install": {"mode": "native"},
@@ -2282,14 +3496,15 @@ def test_build_agent_assignments_uses_opus48_for_every_anthropic_agent_fallback_
 
     assignments = config_compiler.build_agent_assignments(config)
 
-    opus_roles = {
+    anthropic_roles = {
         role
         for role, assignment in assignments.items()
-        if assignment == ("anthropic", "claude-opus-4-8") and role != "conscious"
+        if assignment == ("anthropic", "claude-opus-5") and role != "conscious"
     }
 
-    assert opus_roles == {
+    assert anthropic_roles == {
         "background_analysis",
+        "deep_memory",
         "confirmation_bias",
         "red_team",
         "deep_research",
@@ -2299,6 +3514,7 @@ def test_build_agent_assignments_uses_opus48_for_every_anthropic_agent_fallback_
         "emotional_resonance",
         "strategic_planning",
         "support",
+        "memory",
     }
 
 
@@ -2341,7 +3557,7 @@ def test_build_agent_assignments_do_not_promote_xai_into_main_agent_when_foundat
     assignments = config_compiler.build_agent_assignments(config)
 
     assert assignments["conscious"] == ("openai", "gpt-5.6-sol")
-    assert assignments["memory"] == ("openai", "gpt-5.4")
+    assert assignments["memory"] == ("openai", "gpt-5.6-luna")
 
 
 def test_render_runtime_env_uses_qwen_36_for_background_activation_defaults() -> None:
@@ -2494,9 +3710,9 @@ def test_prune_unavailable_source_defaults_preserves_anthropic_for_connected_acc
         "modelSpecs": {
             "list": [
                 {
-                    "name": "claude-sonnet-4-5",
-                    "label": "Claude Sonnet 4.5",
-                    "preset": {"endpoint": "anthropic", "model": "claude-sonnet-4-5"},
+                    "name": "claude-opus-5",
+                    "label": "Claude Opus 5",
+                    "preset": {"endpoint": "anthropic", "model": "claude-opus-5"},
                 },
                 {
                     "name": "viventium",
@@ -2505,7 +3721,7 @@ def test_prune_unavailable_source_defaults_preserves_anthropic_for_connected_acc
             ],
             "addedEndpoints": ["agents", "anthropic", "openAI"],
         },
-        "endpoints": {"anthropic": {"summaryModel": "claude-sonnet-4-5"}},
+        "endpoints": {"anthropic": {"summaryModel": "claude-opus-5"}},
     }
     preserved = config_compiler.prune_unavailable_source_defaults(
         payload,
@@ -2527,9 +3743,9 @@ def test_prune_unavailable_source_defaults_prunes_unusable_anthropic_direct_entr
         "modelSpecs": {
             "list": [
                 {
-                    "name": "claude-sonnet-4-5",
-                    "label": "Claude Sonnet 4.5",
-                    "preset": {"endpoint": "anthropic", "model": "claude-sonnet-4-5"},
+                    "name": "claude-opus-5",
+                    "label": "Claude Opus 5",
+                    "preset": {"endpoint": "anthropic", "model": "claude-opus-5"},
                 },
                 {
                     "name": "viventium",
@@ -2538,7 +3754,7 @@ def test_prune_unavailable_source_defaults_prunes_unusable_anthropic_direct_entr
             ],
             "addedEndpoints": ["agents", "anthropic", "openAI"],
         },
-        "endpoints": {"anthropic": {"summaryModel": "claude-sonnet-4-5"}},
+        "endpoints": {"anthropic": {"summaryModel": "claude-opus-5"}},
     }
     pruned = config_compiler.prune_unavailable_source_defaults(
         payload,
@@ -2552,35 +3768,28 @@ def test_prune_unavailable_source_defaults_prunes_unusable_anthropic_direct_entr
     assert "anthropic" not in pruned["endpoints"]
 
 
-def test_prune_unavailable_source_defaults_preserves_current_explicit_anthropic_models() -> None:
+def test_prune_unavailable_source_defaults_preserves_current_explicit_anthropic_model() -> None:
     payload = {
         "modelSpecs": {
             "list": [
                 {
-                    "name": "claude-sonnet-4-5",
-                    "label": "Claude Sonnet 4.5",
-                    "preset": {"endpoint": "anthropic", "model": "claude-sonnet-4-5"},
-                },
-                {
-                    "name": "claude-opus-4-8",
-                    "label": "Claude Opus 4 7",
-                    "preset": {"endpoint": "anthropic", "model": "claude-opus-4-8"},
+                    "name": "claude-opus-5",
+                    "label": "Claude Opus 5",
+                    "preset": {"endpoint": "anthropic", "model": "claude-opus-5"},
                 },
             ]
         },
-        "endpoints": {"anthropic": {"summaryModel": "claude-sonnet-4-5"}},
+        "endpoints": {"anthropic": {"summaryModel": "claude-opus-5"}},
     }
     normalized = config_compiler.prune_unavailable_source_defaults(
         payload,
         {"ANTHROPIC_API_KEY": "anthropic-test"},
     )
     assert [entry["name"] for entry in normalized["modelSpecs"]["list"]] == [
-        "claude-sonnet-4-5",
-        "claude-opus-4-8",
+        "claude-opus-5",
     ]
-    assert normalized["modelSpecs"]["list"][0]["label"] == "Claude Sonnet 4.5"
-    assert normalized["modelSpecs"]["list"][1]["label"] == "Claude Opus 4 7"
-    assert normalized["endpoints"]["anthropic"]["summaryModel"] == "claude-sonnet-4-5"
+    assert normalized["modelSpecs"]["list"][0]["label"] == "Claude Opus 5"
+    assert normalized["endpoints"]["anthropic"]["summaryModel"] == "claude-opus-5"
 
 
 def test_source_of_truth_built_in_agent_avatars_use_portable_asset_paths() -> None:
@@ -3289,6 +4498,7 @@ def test_config_compiler_emits_background_followup_window_override(tmp_path: Pat
             "profile": "isolated",
             "background_followup_window_s": 45,
             "glasshive_followup_timeout_s": 900,
+            "glasshive_foreground_response_timeout_s": 420,
             "call_session_secret": {"secret_value": "call-session-test"},
             "network": {"remote_call_mode": "auto"},
         },
@@ -3337,6 +4547,9 @@ def test_config_compiler_emits_background_followup_window_override(tmp_path: Pat
     )
 
     runtime_env = (output_dir / "runtime.env").read_text(encoding="utf-8")
+    telegram_env = (output_dir / "service-env" / "telegram.config.env").read_text(
+        encoding="utf-8"
+    )
     librechat_env = (output_dir / "service-env" / "librechat.env").read_text(encoding="utf-8")
 
     assert "VIVENTIUM_CORTEX_FOLLOWUP_GRACE_S=45" in runtime_env
@@ -3345,20 +4558,23 @@ def test_config_compiler_emits_background_followup_window_override(tmp_path: Pat
     assert "VIVENTIUM_WEB_GLASSHIVE_TIMEOUT_S=900" in runtime_env
     assert "VIVENTIUM_VOICE_GLASSHIVE_TIMEOUT_S=900" in runtime_env
     assert "VIVENTIUM_TELEGRAM_GLASSHIVE_TIMEOUT_S=900" in runtime_env
+    assert "VIVENTIUM_TELEGRAM_FOLLOWUP_GRACE_S=45" in telegram_env
+    assert "VIVENTIUM_TELEGRAM_GLASSHIVE_TIMEOUT_S=900" in telegram_env
+    assert "GLASSHIVE_PROVIDER_RESPONSE_TIMEOUT_S=420" in runtime_env
     assert "VIVENTIUM_CORTEX_PHASE_A_NOTICE_MODE=any_activated_on_voice" in runtime_env
     assert "VIVENTIUM_VOICE_BACKGROUND_AGENT_DETECTION_ASYNC=true" in runtime_env
-    assert "VIVENTIUM_TEXT_BACKGROUND_AGENT_DETECTION_ASYNC=false" in runtime_env
+    assert "VIVENTIUM_TEXT_BACKGROUND_AGENT_DETECTION_ASYNC=true" in runtime_env
     assert "VIVENTIUM_VOICE_PHASE_A_AWAIT_MS=690" in runtime_env
     assert "VIVENTIUM_TEXT_PHASE_A_AWAIT_MS=1300" in runtime_env
-    assert "VIVENTIUM_CORTEX_LATE_DETECT_TIMEOUT_MS=4000" in runtime_env
+    assert "VIVENTIUM_CORTEX_LATE_DETECT_TIMEOUT_MS=6000" in runtime_env
     assert "VIVENTIUM_VOICE_PHASE_A_ASYNC_ALLOW_TOOL_HOLD=true" in runtime_env
     assert "VIVENTIUM_VOICE_LOG_LATENCY=1" in runtime_env
     assert "VIVENTIUM_CORTEX_PHASE_A_NOTICE_MODE=any_activated_on_voice" in librechat_env
     assert "VIVENTIUM_VOICE_BACKGROUND_AGENT_DETECTION_ASYNC=true" in librechat_env
-    assert "VIVENTIUM_TEXT_BACKGROUND_AGENT_DETECTION_ASYNC=false" in librechat_env
+    assert "VIVENTIUM_TEXT_BACKGROUND_AGENT_DETECTION_ASYNC=true" in librechat_env
     assert "VIVENTIUM_VOICE_PHASE_A_AWAIT_MS=690" in librechat_env
     assert "VIVENTIUM_TEXT_PHASE_A_AWAIT_MS=1300" in librechat_env
-    assert "VIVENTIUM_CORTEX_LATE_DETECT_TIMEOUT_MS=4000" in librechat_env
+    assert "VIVENTIUM_CORTEX_LATE_DETECT_TIMEOUT_MS=6000" in librechat_env
     assert "VIVENTIUM_VOICE_PHASE_A_ASYNC_ALLOW_TOOL_HOLD=true" in librechat_env
     assert "VIVENTIUM_VOICE_LOG_LATENCY=1" in librechat_env
 
@@ -4250,6 +5466,65 @@ def test_config_compiler_normalizes_xai_tts_alias_and_prefers_tts_secret(tmp_pat
     assert "VIVENTIUM_XAI_TTS_BIT_RATE=128000" in telegram_env
 
 
+def test_config_compiler_rejects_retired_xai_grok_voice_agent_route(tmp_path: Path) -> None:
+    config = {
+        "version": 1,
+        "install": {"mode": "native"},
+        "runtime": {
+            "log_level": "info",
+            "profile": "isolated",
+            "call_session_secret": {"secret_value": "synthetic-call-secret"},
+        },
+        "llm": {
+            "activation": {
+                "provider": "groq",
+                "auth_mode": "api_key",
+                "secret_value": "synthetic-groq-key",
+            },
+            "primary": {
+                "provider": "openai",
+                "auth_mode": "api_key",
+                "secret_value": "synthetic-openai-key",
+            },
+            "secondary": {"provider": "none", "auth_mode": "disabled"},
+            "extra_provider_keys": {},
+        },
+        "voice": {
+            "mode": "hosted",
+            "stt_provider": "openai",
+            "tts_provider": "xai",
+            "tts": {
+                "secret_value": "synthetic-xai-key",
+                "xai": {"tts_api": "voice_agent"},
+            },
+        },
+        "integrations": {},
+    }
+    config_path = tmp_path / "config.yaml"
+    output_dir = tmp_path / "out"
+    write_config(config_path, config)
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "scripts/viventium/config_compiler.py"),
+            "--config",
+            str(config_path),
+            "--output-dir",
+            str(output_dir),
+        ],
+        check=False,
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert "Grok Voice Agent route is retired" in (result.stdout + result.stderr)
+    assert "tts_api: tts" in (result.stdout + result.stderr)
+    assert not (output_dir / "runtime.env").exists()
+
+
 def test_config_compiler_disables_rag_bootstrap_when_conversation_recall_default_is_off(tmp_path: Path) -> None:
     config = {
         "version": 1,
@@ -4534,12 +5809,13 @@ def test_config_compiler_enables_connected_accounts_gate_for_openai_and_anthropi
     assert "OPENAI_MODELS=" not in runtime_env
     assert "ANTHROPIC_API_KEY=anthropic-test" in runtime_env
     assert "VIVENTIUM_MEMORY_HARDENING_PROVIDER=openai" in runtime_env
-    assert "VIVENTIUM_MEMORY_HARDENING_MODEL=gpt-5.6-sol" in runtime_env
-    assert "VIVENTIUM_MEMORY_HARDENING_EFFORT=xhigh" in runtime_env
-    assert librechat_yaml["memory"]["agent"]["provider"] == "anthropic"
-    assert librechat_yaml["memory"]["agent"]["model"] == "claude-sonnet-4-5"
+    assert "VIVENTIUM_MEMORY_HARDENING_MODEL=gpt-5.6-luna" in runtime_env
+    assert "VIVENTIUM_MEMORY_HARDENING_EFFORT=medium" in runtime_env
+    assert librechat_yaml["memory"]["agent"]["provider"] == "openai"
+    assert librechat_yaml["memory"]["agent"]["model"] == "gpt-5.6-luna"
+    assert librechat_yaml["memory"]["agent"]["model_parameters"]["reasoning_effort"] == "medium"
     assert librechat_yaml["endpoints"]["anthropic"]["titleEndpoint"] == "anthropic"
-    assert librechat_yaml["endpoints"]["anthropic"]["titleModel"] == "claude-sonnet-4-5"
+    assert librechat_yaml["endpoints"]["anthropic"]["titleModel"] == "claude-opus-5"
 
 
 def test_render_librechat_yaml_uses_connected_anthropic_for_memory_when_no_other_foundation_exists() -> None:
@@ -4578,9 +5854,9 @@ def test_render_librechat_yaml_uses_connected_anthropic_for_memory_when_no_other
     librechat_yaml = yaml.safe_load(config_compiler.render_librechat_yaml(config, assignments, env))
 
     assert librechat_yaml["memory"]["agent"]["provider"] == "anthropic"
-    assert librechat_yaml["memory"]["agent"]["model"] == "claude-sonnet-4-5"
+    assert librechat_yaml["memory"]["agent"]["model"] == "claude-opus-5"
     assert librechat_yaml["endpoints"]["anthropic"]["titleEndpoint"] == "anthropic"
-    assert librechat_yaml["endpoints"]["anthropic"]["titleModel"] == "claude-sonnet-4-5"
+    assert librechat_yaml["endpoints"]["anthropic"]["titleModel"] == "claude-opus-5"
 
 
 def test_render_librechat_yaml_uses_connected_openai_for_memory_when_no_other_foundation_exists() -> None:
@@ -4620,10 +5896,11 @@ def test_render_librechat_yaml_uses_connected_openai_for_memory_when_no_other_fo
 
     assert env["VIVENTIUM_OPENAI_AUTH_MODE"] == "connected_account"
     assert env["VIVENTIUM_MEMORY_HARDENING_PROVIDER"] == "openai"
-    assert env["VIVENTIUM_MEMORY_HARDENING_MODEL"] == "gpt-5.6-sol"
-    assert env["VIVENTIUM_MEMORY_HARDENING_EFFORT"] == "xhigh"
+    assert env["VIVENTIUM_MEMORY_HARDENING_MODEL"] == "gpt-5.6-luna"
+    assert env["VIVENTIUM_MEMORY_HARDENING_EFFORT"] == "medium"
     assert librechat_yaml["memory"]["agent"]["provider"] == "openai"
-    assert librechat_yaml["memory"]["agent"]["model"] == "gpt-5.4"
+    assert librechat_yaml["memory"]["agent"]["model"] == "gpt-5.6-luna"
+    assert librechat_yaml["memory"]["agent"]["model_parameters"]["reasoning_effort"] == "medium"
 
 
 def test_config_compiler_falls_back_to_existing_runtime_env_when_keychain_secret_is_missing(
@@ -5190,7 +6467,16 @@ def test_config_compiler_local_voice_browser_maps_to_stable_gateway_tts(tmp_path
     assert "TTS_PROVIDER_PRIMARY=openai" in runtime_env
     assert "VIVENTIUM_OPENAI_TTS_MODEL=gpt-4o-mini-tts" in runtime_env
     assert "VIVENTIUM_OPENAI_TTS_VOICE=coral" in runtime_env
-    assert "VIVENTIUM_OPENAI_TTS_INSTRUCTIONS=" in runtime_env
+    assert (
+        "VIVENTIUM_OPENAI_TTS_INSTRUCTIONS='Speak naturally with clear pacing. Keep the delivery "
+        "conversational, grounded, and human. Avoid robotic emphasis or exaggerated pauses.'"
+        in runtime_env
+    )
+    assert "warm" not in next(
+        line
+        for line in runtime_env.splitlines()
+        if line.startswith("VIVENTIUM_OPENAI_TTS_INSTRUCTIONS=")
+    ).lower()
     assert "VIVENTIUM_OPENAI_TTS_SPEED=1.12" in runtime_env
     assert "TTS_MODEL=gpt-4o-mini-tts" in runtime_env
 

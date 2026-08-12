@@ -11,6 +11,9 @@ background-cortex runtime remain truthful for fresh installs and local restarts.
 
 Additional current QA artifacts:
 
+- `qa/background_agents/reports/2026-08-09-background-cortex-fallback-disclosure.md` — real
+  non-admin browser acceptance for visible, persisted background-cortex provider fallback,
+  expanded public failure class, reload, and exact disposable-fixture cleanup
 - `qa/background_agents/report.md` — historical April 5, 2026 Anthropic execution compatibility report
 - `qa/background_agents/activation_reliability_2026-04-12.md` — corrected live activation-provider benchmark using the Anthropic connected-account path, Mongo-backed runtime bootstrapping, and per-scenario cooldown reset
 - `qa/background_agents/telegram_scheduler_fallback_2026-04-24.md` — scheduled Telegram degraded-delivery regression for deferred fallback provenance
@@ -20,7 +23,7 @@ Additional current QA artifacts:
 - `qa/background_agents/phase_b_main_fallback_persistence_2026-05-09.md` — main-model fallback regression proving in-flight Phase B work is preserved and persisted against the final fallback/primary answer
 - `qa/background_agents/late_stream_termination_rendering_2026-05-09.md` — web rendering/backend persistence regression for assistant messages that have visible text plus a late stream-termination error part
 - `qa/background_agents/visible_cards_browser_qa_2026-05-10.md` — real browser regression proving named background-agent cards are visible, persisted after reload, and stored as successful terminal cortex insights
-- `qa/background_agents/reports/2026-07-09-gpt-5-6-conscious-subconscious-routing.md` — GPT-5.6 Sol/Terra workload routing, Opus 4.8 fallback, live sync, and QA-account browser acceptance
+- `qa/background_agents/reports/2026-07-09-gpt-5-6-conscious-subconscious-routing.md` — historical GPT-5.6 Sol/Terra routing and former direct-fallback browser acceptance
 - `qa/background_agents/reports/2026-07-09-activation-routing-model-eval.md` — full 11-cortex Prompt Workbench classifier corpus, Scout/Qwen/GPT-OSS comparison, prompt repair, runtime model controls, and QA-account acceptance
 - `qa/background_agents/reports/2026-07-09-interruption-restart-browser-qa.md` — ACT-37 real browser/Mongo supported-stop-start acceptance proving active-state durability, stale startup recovery, expanded terminal reload detail, and no generation placeholder
 
@@ -59,8 +62,10 @@ sarcasm, denial, and recent-context carryover.
 - The conscious agent uses Sol/medium; Strategic Planning uses Sol/high; Background Analysis,
   Confirmation Bias, Parietal Cortex, and Pattern Recognition use Terra/medium; MS365, Google,
   Emotional Resonance, and Viventium User Help use Terra/low.
-- Every conscious/subconscious text route uses `anthropic / claude-opus-4-8` as fallback. Voice
-  remains `xai / grok-4.3 / none` with a latency-preserving Terra/none voice fallback.
+- Every conscious/subconscious text route uses
+  `glasshive-harness / claude-code:opus / high` as its generic Agent fallback when GlassHive is
+  enabled. Voice
+  remains `xai / grok-4.5 / low` with a latency-preserving Terra/none voice fallback.
 - High-effort Opus fallbacks preserve the source-owned Anthropic thinking budgets, and cross-provider
   fallback initialization strips OpenAI-only `reasoning_effort` and `useResponsesApi` fields.
 - Built-in background-agent provider rewrites must replace provider-specific `model_parameters`
@@ -98,7 +103,8 @@ sarcasm, denial, and recent-context carryover.
    - the documented OpenAI-only, Anthropic-only, and mixed execution matrix matches compiler
      assignments
    - GPT-5.6 Sol/Terra and effort assignments match the documented workload map
-   - Anthropic Opus 4.8 is the explicit fallback for every conscious/subconscious text route
+   - GlassHive Claude / Opus 5 at high effort is the explicit generic Agent fallback for every
+     conscious/subconscious text route
    - runtime normalization and seed/upsert repair stale cross-provider model-parameter drift
 7. Start-script inspection verifies local startup still re-seeds built-ins from the source-of-truth
    agents bundle through `viventium-seed-agents.js`.
@@ -112,7 +118,8 @@ sarcasm, denial, and recent-context carryover.
   - `web_search` when runtime web search is enabled
   - `reasoning_effort: xhigh` on the shipped OpenAI execution bag
 - The provider-matrix audit proves OpenAI-capable installs use the GPT-5.6 workload map and
-  Anthropic-only installs use the explicit Opus 4.8 fallback profile for built-in agents.
+  Anthropic-only installs use the direct `claude-opus-5` profile for built-in execution; a
+  GlassHive-disabled install rewrites the unavailable harness fallback to a distinct direct route.
 - Start-path inspection confirms fresh installs and restarts consume the corrected bundle instead of
   relying on live Mongo edits.
 - Live QA separates activation success from downstream user-scoped auth:

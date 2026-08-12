@@ -215,7 +215,7 @@ The 5s delay is **most consistent** with:
 Historical note: the values in this addendum were superseded by the May 30 two-mode contract in
 `02_Background_Agents.md`. Current generated runtime defaults are voice async ON with
 `VIVENTIUM_VOICE_PHASE_A_AWAIT_MS=690`,
-`VIVENTIUM_VOICE_PHASE_A_ASYNC_ALLOW_TOOL_HOLD=true`, and text async OFF with
+`VIVENTIUM_VOICE_PHASE_A_ASYNC_ALLOW_TOOL_HOLD=true`, and text async ON with
 `VIVENTIUM_TEXT_PHASE_A_AWAIT_MS=1300`.
 
 Older local env was updated to align with the Phase A/background values that reduce voice-call startup
@@ -229,11 +229,19 @@ VIVENTIUM_VOICE_PHASE_A_AWAIT_MS=500
 VIVENTIUM_VOICE_PHASE_A_ASYNC_ALLOW_TOOL_HOLD=false
 ```
 
-Related Phase B controls currently used in code:
-- `VIVENTIUM_PHASE_B_STREAM_WAIT_MS` (default `180000` ms in `api/server/controllers/agents/request.js`)
-- `VIVENTIUM_DEBUG_PHASE_B` (debug logging flag in agent runtime/background services)
+Current Phase B control:
+- `VIVENTIUM_CORTEX_FOLLOWUP_GRACE_S` owns the shared background follow-up window across chat,
+  voice, and Telegram.
+- The Web startup payload exposes that canonical value as
+  `viventiumBackgroundFollowupWindowS`; the client uses it only to bound post-stream message
+  refreshes. It has no client-authored `180000` fallback and does not cancel background execution
+  when browser listening ends.
+- `VIVENTIUM_DEBUG_PHASE_B` remains the diagnostic logging flag.
 
-These Phase B vars are not currently exported in the cloud snapshot as explicit env values, so local tuning should be applied intentionally (only if follow-up delivery timing or debug visibility requires it).
+The former request-local `VIVENTIUM_PHASE_B_STREAM_WAIT_MS` / hardcoded `180000` fallback was
+removed on 2026-08-10. It incorrectly kept a completed Main generation active while Phase B ran,
+which could show Stop after refresh and allow an empty abort checkpoint to overwrite the final
+answer. Main is now marked complete immediately; durable polling/adjudication owns late Phase B.
 
 Disabling “Use memory” bypasses the entire memory pipeline and is expected to reduce the delay, which matches your observation.
 
@@ -364,7 +372,8 @@ Chat Completions live search is deprecated:
 - https://docs.x.ai/developers/model-capabilities/text/reasoning
 - https://docs.x.ai/developers/tools/web-search
 
-Because Viventium's current xAI voice route is Chat Completions, the least-risk immediate fix is to
+Because Viventium's voice route at the time of this May 2026 investigation used xAI Chat
+Completions, the least-risk immediate fix was to
 wire `reasoning_effort: "none"` correctly for the existing route. Replacing the voice route with
 xAI Responses + built-in web search is a larger design change because it changes endpoint semantics,
 tool event handling, citations, retry behavior, and fallback behavior. It is promising for weather
@@ -402,9 +411,14 @@ into the low-risk latency fix.
   count. It intentionally does not log prompt text, message text, auth headers, or provider keys.
 - The voice gateway now supplies a per-turn stream id to LibreChat, so sequential voice turns can be
   correlated and do not depend on conversation id as an implicit stream identifier.
-- The current local source-of-truth main-agent voice route is `xai / grok-4.3` with
-  `voice_llm_model_parameters.reasoning_effort: "none"`; live DB must be synced and verified through
-  the agent sync path rather than by relying on hand-edited runtime state.
+- The current local source-of-truth main-agent voice route remains the dedicated
+  `xai / grok-4.5` profile with `voice_llm_model_parameters.reasoning_effort: "low"`, no Responses
+  flag, and an explicit `openAI / gpt-5.6-terra / none` Responses fallback. July 2026 incident QA
+  found that switching the optional voice provider in Agent Builder could retain the prior
+  provider's parameter bag, allowing OpenAI's Responses flag to contaminate xAI. The shared
+  optional-model panel now clears only that route's parameters after a real provider change while
+  preserving persisted parameters during initial hydration. Live DB must still be synced and
+  verified through the agent sync path rather than by relying on hand-edited runtime state.
 
 ### Microtiming addendum (2026-05-19)
 
@@ -638,3 +652,22 @@ Review-only Claude pass on 2026-05-15 agreed with the broad RCA but corrected th
 3. Treat `Message.saveMessage` content-text mirroring as a parity-wide persistence repair, not a
    voice-only fix, and cover non-voice assistant content shapes in regression tests.
 4. Only after that consider the narrow Phase A fast no-activation bypass described above.
+
+## World-Class Call Measurement Contract (2026-08-09)
+
+The preceding measurements are historical RCA evidence, not current acceptance. In particular,
+the earlier `Remaining live validation` list is superseded by the living cases and endurance
+runbook under `qa/modern-playground-voice/`.
+
+Every measured lookup turn now emits one content-free correlated hop trace:
+
+`utterance end -> gateway dispatch -> agent start -> optional tool start/end -> first model token ->
+TTS first byte -> audio output`
+
+The first hop that breaches its budget owns the fix; downstream optimization must not hide an
+upstream violation. Current acceptance requires acknowledgement p50 at or below 1.0 seconds and p95
+at or below 1.5 seconds, warm substantive audio p95 at or below 2.5 seconds, task-event visibility
+p95 at or below 250 milliseconds, source visibility within 500 milliseconds of availability, no
+unexplained active-work silence beyond five seconds, and barge-in speech stop p95 at or below 1.4
+seconds. Measurements become accepted evidence only after the dated real browser/audio report is
+linked from the owning QA cases; source or instrumentation presence alone is `PARTIAL`.

@@ -1,5 +1,55 @@
 # Installer Resilience QA
 
+## Current Easy Install Audit Package
+
+The current installer/new-user acceptance baseline is the 2026-07-19 audit package:
+
+- [latest Easy Install lifecycle and safety QA](reports/2026-07-19-easy-install-lifecycle-and-safety-qa.md);
+- [evidence report](reports/2026-07-18-express-installer-and-onboarding-audit.md);
+- [locally available installer/delivery lifecycle inventory](installer-lifecycle-inventory-2026-07-18.md);
+- [open-source installer and onboarding research](open-source-installer-research-2026-07-18.md);
+- [phased remediation plan](express-installer-remediation-plan.md);
+- [initial Fable 5 Extra review](fable-review-2026-07-18.md) and
+  [final remediation reconciliation](fable-final-remediation-review-2026-07-18.md);
+- [Claude Fable 5 Extra final Easy Install review reconciliation](claude-final-express-review-2026-07-18.md);
+- [corrected visible Fable 5 Extra review and remediation reconciliation](claude-fable5-extra-review-2026-07-19.md);
+- [physical MacBook Air Easy Install + Docker handoff](macbook-air-docker-qa-handoff.md);
+- [umbrella reusable case catalog](cases.md), including discrete release gates through `INST-024` and links to
+  narrower feature owners.
+
+Current decision: **PARTIAL for the local Easy Install Native source candidate; not ready for a
+public-release claim**. The disposable macOS VM passes install/rerun/restart/reinstall, real browser
+registration and account handoff, provider authorization start/cancel/retry, disconnected-provider
+guidance, Feelings discovery and persistence, core loopback listeners, failed-upgrade recovery,
+Custom Settings Install rollback, preserve-data uninstall, and manual recovery of the tested synthetic state. The full
+parent release suite passes with 1,032 passed and 7 skipped. The exact signed payload, truly vanilla
+no-developer-tools machine, completed provider answer, public full-payload restore,
+Developer ID/Keychain/Gatekeeper, wider fault/accessibility/network matrices, physical Docker
+comparison, and delivery-pin/shipped-artifact alignment remain open.
+The corrected visible second opinion accepted the audit closeout after its findings were reconciled
+and retained the product's PARTIAL/not-ready verdict.
+Historical scenarios below are supporting lineage, not substitutes for the current owning cases and
+report.
+
+Files dated before 2026-07-19 can retain “Express” in their filename or quoted historical result.
+Current public product copy and all new evidence use **Easy Install** and **Custom Settings Install**;
+the internal `express` / `custom` values remain compatibility identifiers.
+
+## Disposable Easy Install Native browser QA
+
+After creating a synthetic account in a disposable runtime, run the repeatable user-path harness:
+
+```bash
+VIVENTIUM_QA_CLIENT_BASE=http://127.0.0.1:13190 \
+VIVENTIUM_QA_EMAIL='<synthetic-email>' \
+VIVENTIUM_QA_PASSWORD='<synthetic-password>' \
+node qa/installer-resilience/scripts/express-native-browser-qa.cjs
+```
+
+Add `--register` only on an empty disposable runtime. The harness refuses non-loopback targets and
+production/CI use, never prints credentials or OAuth state, and intentionally stops before provider
+authorization completes. Screenshots stay in its temporary private evidence directory.
+
 This QA record captures the April 7, 2026 installer hardening work for two clean-machine failure
 classes:
 

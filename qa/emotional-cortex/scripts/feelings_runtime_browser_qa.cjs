@@ -5,6 +5,10 @@ const crypto = require("crypto");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
+const {
+  assertNonOwnerQaSelection,
+  cleanupQaRunArtifacts,
+} = require("../../background_agents/evals/browser-qa-safety.cjs");
 
 const REPO_ROOT = path.resolve(__dirname, "..", "..", "..");
 const LIBRECHAT_ROOT = path.join(REPO_ROOT, "viventium_v0_4", "LibreChat");
@@ -60,6 +64,7 @@ function parseEnvFile(filePath) {
 
 function loadLocalEnv() {
   const candidates = [
+    path.join(LIBRECHAT_ROOT, ".env"),
     path.join(
       os.homedir(),
       "Library",
@@ -85,14 +90,23 @@ function loadLocalEnv() {
       "service-env",
       "librechat.env",
     ),
-    path.join(LIBRECHAT_ROOT, ".env"),
+    path.join(
+      os.homedir(),
+      "Library",
+      "Application Support",
+      "Viventium",
+      "runtime",
+      "service-env",
+      "librechat.owner.env",
+    ),
   ];
-  return candidates.reduce(
-    (all, filePath) => Object.assign(all, parseEnvFile(filePath)),
-    {
-      ...process.env,
-    },
-  );
+  return {
+    ...candidates.reduce(
+      (all, filePath) => Object.assign(all, parseEnvFile(filePath)),
+      {},
+    ),
+    ...process.env,
+  };
 }
 
 function shortHash(value) {
@@ -167,6 +181,22 @@ async function createQaAuth(env) {
     await client.close();
     throw new Error("Configured QA user not found");
   }
+  const owner = await db
+    .collection("users")
+    .findOne({ role: "ADMIN" }, { projection: { email: 1 } });
+  if (
+    String(user.role || "")
+      .trim()
+      .toUpperCase() === "ADMIN"
+  ) {
+    await client.close();
+    throw new Error("Admin/owner account refused for Feelings browser QA");
+  }
+  assertNonOwnerQaSelection({
+    ownerEmail: owner?.email,
+    requestedEmail: process.env.VIVENTIUM_QA_EMAIL || "",
+    selectedUser: user,
+  });
   const accessToken = jwt.sign(
     {
       id: user._id.toString(),
@@ -202,6 +232,43 @@ async function createQaAuth(env) {
     user,
     userHash: shortHash(user._id),
   };
+}
+
+async function captureFeelingState(auth) {
+  const collectionNames = (await auth.db.listCollections().toArray()).map(
+    (entry) => entry.name,
+  );
+  const collectionName =
+    collectionNames.find((name) => name.toLowerCase() === "feelingstates") ||
+    "feelingstates";
+  return {
+    collectionName,
+    document: await auth.db
+      .collection(collectionName)
+      .findOne({ userId: auth.user._id }),
+  };
+}
+
+async function restoreFeelingState(auth, captured) {
+  const collection = auth.db.collection(captured.collectionName);
+  await collection.deleteMany({ userId: auth.user._id });
+  if (!captured.document) {
+    return (await collection.countDocuments({ userId: auth.user._id })) === 0;
+  }
+  await collection.insertOne(captured.document);
+  const restored = await collection.findOne({ _id: captured.document._id });
+  return JSON.stringify(restored) === JSON.stringify(captured.document);
+}
+
+function createMeiliClient(env) {
+  if (!env.MEILI_HOST || !env.MEILI_MASTER_KEY) return null;
+  const { MeiliSearch } = require(
+    path.join(LIBRECHAT_ROOT, "node_modules", "meilisearch"),
+  );
+  return new MeiliSearch({
+    host: env.MEILI_HOST,
+    apiKey: env.MEILI_MASTER_KEY,
+  });
 }
 
 function authHeaders(auth, body = false) {
@@ -243,6 +310,13 @@ async function readFeelings(auth) {
 
 async function deleteFeelings(auth) {
   const current = await readFeelings(auth);
+  if (
+    current.state.version === 0 &&
+    current.state.enabled === false &&
+    !current.state.capsule
+  ) {
+    return;
+  }
   const response = await fetchJson(`${API_BASE}/api/viventium/feelings`, {
     method: "DELETE",
     headers: authHeaders(auth, true),
@@ -252,13 +326,23 @@ async function deleteFeelings(auth) {
     throw new Error(`Feelings reset failed with HTTP ${response.status}`);
 }
 
-async function waitForReaction(auth, version, timeoutMs = 45_000) {
+async function waitForReaction(
+  auth,
+  version,
+  earliestReactionStartMs,
+  timeoutMs = 45_000,
+) {
   const startedAt = Date.now();
   let latest = null;
   while (Date.now() - startedAt < timeoutMs) {
     latest = await readFeelings(auth);
     const health = latest.state.reactionHealth;
+    const healthStartedAtMs = Date.parse(health.lastStartedAt || "");
+    const healthIsFresh =
+      Number.isFinite(healthStartedAtMs) &&
+      healthStartedAtMs >= earliestReactionStartMs;
     if (
+      healthIsFresh &&
       health.status !== "running" &&
       health.status !== "never" &&
       (latest.state.version > version ||
@@ -344,8 +428,11 @@ async function waitForVisibleAssistantReply(
 
 async function main() {
   requireLocalQaOptIn();
+  const qaStartedAt = new Date();
   const env = loadLocalEnv();
   const auth = await createQaAuth(env);
+  const feelingStateBeforeQa = await captureFeelingState(auth);
+  const meiliClient = createMeiliClient(env);
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
   const outputDir = path.join(PRIVATE_ROOT, "emotional-cortex", stamp);
   fs.mkdirSync(outputDir, { recursive: true });
@@ -385,8 +472,12 @@ async function main() {
         (await persistencePage
           .getByRole("switch", { name: "Feelings on" })
           .isVisible()) &&
-        (await persistencePage.getByText("Last felt sense", { exact: false }).isVisible()) &&
-        (await persistencePage.getByText(existing.state.innerState.text, { exact: true }).isVisible());
+        (await persistencePage
+          .getByText("Last felt sense", { exact: false })
+          .isVisible()) &&
+        (await persistencePage
+          .getByText(existing.state.innerState.text, { exact: true })
+          .isVisible());
       const restartPath = path.join(outputDir, "feelings-post-restart.png");
       await persistencePage.screenshot({ path: restartPath, fullPage: true });
       result.artifacts.push(path.basename(restartPath));
@@ -459,9 +550,12 @@ async function main() {
     result.checks.enableHttp = (await enableResponse).status() === 200;
     await page.getByText("Feelings are awake.", { exact: true }).waitFor();
     result.checks.innerStateWaitingTruthful = await page
-      .getByText("The next reaction will put this state into Viv’s own words.", {
-        exact: true,
-      })
+      .getByText(
+        "The next reaction will put this state into Viv’s own words.",
+        {
+          exact: true,
+        },
+      )
       .isVisible();
     progress("feelings_enabled");
 
@@ -517,8 +611,123 @@ async function main() {
     result.checks.laneKeyboardControl =
       Math.round(afterLaneKeyboard.state.bands.energy.current) ===
       laneValueBefore + 1;
-    result.snapshotHashBeforeChat = afterLaneKeyboard.state.snapshotHash;
     progress("manual_controls_verified");
+
+    result.checks.liveEvidenceUsesPrimaryWorkspace =
+      (await page.locator(".feelings-primary .feelings-capsule").count()) === 1 &&
+      (await page.locator(".feelings-primary .feelings-trail").count()) === 1 &&
+      (await page.locator(".feelings-inspector .feelings-range-editor").count()) === 1;
+    await page.getByRole("button", { name: /^Select Play:/ }).click();
+    const playCurrent = page.getByRole("slider", {
+      name: "Current feeling",
+      exact: true,
+    });
+    const highPlayWrite = page.waitForResponse(
+      (response) =>
+        response.url().includes("/api/viventium/feelings/bands/play") &&
+        response.request().method() === "PATCH",
+    );
+    await playCurrent.fill("87");
+    await playCurrent.dispatchEvent("pointerup");
+    result.checks.highPlayWriteHttp = (await highPlayWrite).status() === 200;
+    await page.getByText("Play moved.", { exact: true }).waitFor();
+    const highPlayBeforeOverride = await readFeelings(auth);
+    const storedHighPlayBeforeOverride = await captureFeelingState(auth);
+    const playUpdatedAtBeforeOverride =
+      storedHighPlayBeforeOverride.document?.bands?.play?.updatedAt;
+    const highRangeTab = page.getByRole("tab", {
+      name: /80.*100: exuberant, current range/,
+    });
+    await highRangeTab.click();
+    result.checks.highRangeDefaultIsCausal = await page
+      .getByText(
+        "A ridiculous impulse keeps bursting out; I want to surprise us into real laughter.",
+        { exact: true },
+      )
+      .isVisible();
+    const rangeAddition =
+      "Every ordinary detail feels one step away from becoming a delighted absurd little game.";
+    const rangeInput = page.getByRole("textbox", {
+      name: "Your added feeling for exuberant",
+    });
+    await rangeInput.fill(rangeAddition);
+    const saveRangeResponse = page.waitForResponse(
+      (response) =>
+        response.url().includes("/api/viventium/feelings/bands/play") &&
+        response.request().method() === "PATCH",
+    );
+    await page.getByRole("button", { name: "Save range feeling" }).click();
+    result.checks.rangeSaveHttp = (await saveRangeResponse).status() === 200;
+    await page.getByText("Play exuberant customized.", { exact: true }).waitFor();
+    const activeRangeState = await readFeelings(auth);
+    const storedActiveRangeState = await captureFeelingState(auth);
+    result.checks.activeRangeAdditionPersisted =
+      activeRangeState.state.rangePromptOverrides?.play?.level_4 ===
+        rangeAddition &&
+      activeRangeState.state.rangePromptOverrideCount === 1 &&
+      activeRangeState.state.activeRangePromptOverrideCount === 1 &&
+      activeRangeState.state.capsule.includes(rangeAddition) &&
+      playUpdatedAtBeforeOverride instanceof Date &&
+      storedActiveRangeState.document?.bands?.play?.updatedAt instanceof Date &&
+      storedActiveRangeState.document.bands.play.updatedAt.getTime() ===
+        playUpdatedAtBeforeOverride.getTime();
+    const rangeEditorPath = path.join(
+      outputDir,
+      "feelings-high-play-range-customized.png",
+    );
+    await page.screenshot({ path: rangeEditorPath, fullPage: true });
+    result.artifacts.push(path.basename(rangeEditorPath));
+
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await page.getByRole("heading", { name: "Feeling spectrum" }).waitFor();
+    await page.getByRole("button", { name: /^Select Play:/ }).click();
+    await page.getByRole("tab", {
+      name: /80.*100: exuberant, current range, customized/,
+    }).click();
+    result.checks.rangeAdditionRefreshPersistence =
+      (await page
+        .getByRole("textbox", { name: "Your added feeling for exuberant" })
+        .inputValue()) === rangeAddition;
+    const inactiveRangeWrite = page.waitForResponse(
+      (response) =>
+        response.url().includes("/api/viventium/feelings/bands/play") &&
+        response.request().method() === "PATCH",
+    );
+    await page
+      .getByRole("slider", { name: "Current feeling", exact: true })
+      .fill("61");
+    await page
+      .getByRole("slider", { name: "Current feeling", exact: true })
+      .dispatchEvent("pointerup");
+    result.checks.inactiveRangeWriteHttp =
+      (await inactiveRangeWrite).status() === 200;
+    const inactiveRangeState = await readFeelings(auth);
+    result.checks.inactiveRangeAdditionStaysOut =
+      inactiveRangeState.state.rangePromptOverrideCount === 1 &&
+      inactiveRangeState.state.activeRangePromptOverrideCount === 0 &&
+      !inactiveRangeState.state.capsule.includes(rangeAddition);
+    await page.getByRole("tab", {
+      name: /80.*100: exuberant, customized/,
+    }).click();
+    const restoreRangeResponse = page.waitForResponse(
+      (response) =>
+        response.url().includes("/api/viventium/feelings/bands/play") &&
+        response.request().method() === "PATCH",
+    );
+    await page
+      .getByRole("button", { name: "Restore default range feeling" })
+      .click();
+    result.checks.rangeRestoreHttp =
+      (await restoreRangeResponse).status() === 200;
+    const restoredRangeState = await readFeelings(auth);
+    result.checks.rangeRestoreRemovesOverride =
+      restoredRangeState.state.rangePromptOverrideCount === 0 &&
+      !restoredRangeState.state.rangePromptOverrides?.play?.level_4 &&
+      !restoredRangeState.state.capsule.includes(rangeAddition);
+    await page.getByRole("button", { name: /^Select Energy:/ }).click();
+    const stateBeforeChat = await readFeelings(auth);
+    result.snapshotHashBeforeChat = stateBeforeChat.state.snapshotHash;
+    progress("range_customization_verified");
 
     const reactionButton = page.getByRole("button", {
       name: "Reaction Cortex",
@@ -531,7 +740,7 @@ async function main() {
       .innerText();
     result.checks.reactionDrawer =
       reactionRouteText.includes("Primary: gpt-5.6-terra · Fast") &&
-      reactionRouteText.includes("Fallback: claude-opus-4-8") &&
+      reactionRouteText.includes("Fallback: claude-opus-5") &&
       (await dialog
         .getByRole("combobox", { name: "When should it activate?" })
         .inputValue()) === "always";
@@ -575,6 +784,7 @@ async function main() {
       );
       const actionBoxes = await Promise.all([
         page.getByRole("button", { name: "Reaction Cortex" }).boundingBox(),
+        page.getByRole("button", { name: "Reset state" }).boundingBox(),
         page.getByRole("switch", { name: "Feelings on" }).boundingBox(),
       ]);
       const primaryActionsVisible = actionBoxes.every(
@@ -586,7 +796,10 @@ async function main() {
           box.y + box.height <= height,
       );
       responsiveResults.push({ width, overflow, primaryActionsVisible });
-      const responsivePath = path.join(outputDir, `feelings-responsive-${width}.png`);
+      const responsivePath = path.join(
+        outputDir,
+        `feelings-responsive-${width}.png`,
+      );
       await page.screenshot({ path: responsivePath, fullPage: true });
       result.artifacts.push(path.basename(responsivePath));
     }
@@ -678,13 +891,14 @@ async function main() {
 
     const reaction = await waitForReaction(
       auth,
-      afterLaneKeyboard.state.version,
+      stateBeforeChat.state.version,
+      sentAt,
     );
     result.metrics.reactionObservedMs = reaction.elapsedMs;
     result.checks.reactionCompleted =
       reaction.payload?.state?.reactionHealth?.status === "healthy";
     result.checks.reactionChangedState =
-      reaction.payload?.state?.version > afterLaneKeyboard.state.version;
+      reaction.payload?.state?.version > stateBeforeChat.state.version;
     const innerState = reaction.payload?.state?.innerState;
     result.checks.innerStateGenerated =
       typeof innerState?.text === "string" &&
@@ -706,9 +920,37 @@ async function main() {
     await titleResponse;
     progress("detached_reaction_observed");
 
-    const reactionEntry = [...(reaction.payload?.state?.trail || [])]
-      .reverse()
-      .find((entry) => entry.sourceType === "user_turn");
+    // React Query intentionally pauses interval refreshes for a background tab. Bring the
+    // Feelings surface forward after the detached reaction so the visible status and route are
+    // refreshed before user-facing assertions and screenshots.
+    await page.bringToFront();
+    const expectedHealthText =
+      reaction.payload?.state?.reactionHealth?.status === "degraded"
+        ? /Needs attention/i
+        : reaction.payload?.state?.reactionHealth?.status === "skipped"
+          ? /Ready · last skipped/i
+          : /Ready · .*last reaction/i;
+    await page
+      .locator(".feelings-live-readout")
+      .getByText(expectedHealthText)
+      .waitFor({ timeout: 10_000 })
+      .catch(() => {});
+
+    const reactionEntries = (reaction.payload?.state?.trail || [])
+      .slice(stateBeforeChat.state.trail?.length || 0)
+      .filter((entry) => entry.sourceType === "user_turn");
+    result.reactionMovements = reactionEntries.map((entry) => ({
+      band: entry.band,
+      delta: Number((Number(entry.after) - Number(entry.before)).toFixed(2)),
+      strength: entry.strength,
+      cause: entry.cause,
+    }));
+    result.checks.reactionHasClearMovement = reactionEntries.some(
+      (entry) =>
+        ["clear", "strong"].includes(entry.strength) &&
+        Math.abs(Number(entry.after) - Number(entry.before)) >= 7,
+    );
+    const reactionEntry = [...reactionEntries].reverse()[0];
     if (reactionEntry) {
       const bandDefinition = reaction.payload.definitions.find(
         (entry) => entry.id === reactionEntry.band,
@@ -728,7 +970,8 @@ async function main() {
           offsetFromTrackBottom: trackBox.bottom - markerBox.bottom,
         };
       };
-      const natureBeforePosition = await natureMarker.evaluate(readNaturePosition);
+      const natureBeforePosition =
+        await natureMarker.evaluate(readNaturePosition);
       await page.waitForFunction(
         ({ label, value }) =>
           document
@@ -742,9 +985,11 @@ async function main() {
       );
       await page.waitForTimeout(1200);
       const transitionCapture = await page.evaluate((label) => {
-        return [...(window.__feelingsTransitionCaptures || [])]
-          .reverse()
-          .find((entry) => entry.label === label) || null;
+        return (
+          [...(window.__feelingsTransitionCaptures || [])]
+            .reverse()
+            .find((entry) => entry.label === label) || null
+        );
       }, markerName);
       const transitionPositions = transitionCapture?.positions || [];
       const distinctPositions = new Set(
@@ -752,7 +997,8 @@ async function main() {
           .filter((value) => value != null)
           .map((value) => Number(value).toFixed(1)),
       );
-      const natureAfterPosition = await natureMarker.evaluate(readNaturePosition);
+      const natureAfterPosition =
+        await natureMarker.evaluate(readNaturePosition);
       result.transitionPositions = transitionPositions;
       result.transitionDurationMs = transitionCapture?.endedAt
         ? transitionCapture.endedAt - transitionCapture.startedAt
@@ -775,7 +1021,9 @@ async function main() {
         .first()
         .isVisible();
       result.checks.motionTailVisible =
-        (await page.getByTestId(`feelings-motion-tail-${reactionEntry.band}`).count()) === 1;
+        (await page
+          .getByTestId(`feelings-motion-tail-${reactionEntry.band}`)
+          .count()) === 1;
       await page.emulateMedia({ reducedMotion: "reduce" });
       const reducedStyles = await page.evaluate((label) => {
         const marker = document.querySelector(`[aria-label="${label}"]`);
@@ -812,7 +1060,10 @@ async function main() {
         reducedStyles.markerTransitionSeconds <= 0.01 &&
         reducedStyles.tailAnimationSeconds <= 0.01 &&
         reducedStyles.heartbeatAnimationSeconds <= 0.01;
-      const reducedMotionPath = path.join(outputDir, "feelings-reduced-motion.png");
+      const reducedMotionPath = path.join(
+        outputDir,
+        "feelings-reduced-motion.png",
+      );
       await page.screenshot({ path: reducedMotionPath, fullPage: true });
       result.artifacts.push(path.basename(reducedMotionPath));
       await page.emulateMedia({ reducedMotion: "no-preference" });
@@ -856,7 +1107,9 @@ async function main() {
     const actualHealth = reaction.payload?.state?.reactionHealth;
     result.checks.actualRouteVisible =
       Boolean(actualHealth?.lastUsedModel) &&
-      postReactionRouteText.includes(`Last route: ${actualHealth.lastUsedModel}`) &&
+      postReactionRouteText.includes(
+        `Last route: ${actualHealth.lastUsedModel}`,
+      ) &&
       (!actualHealth.lastUsedServiceTier ||
         postReactionRouteText.includes(actualHealth.lastUsedServiceTier));
     await page.keyboard.press("Escape");
@@ -877,7 +1130,9 @@ async function main() {
       dbState.version === reaction.payload?.state?.version &&
       dbState.trail.length <= 90 &&
       dbState.processedStimulusKeys?.length >= 1 &&
-      dbState.processedStimulusKeys.every((key) => /^[a-f0-9]{24}$/.test(key)) &&
+      dbState.processedStimulusKeys.every((key) =>
+        /^[a-f0-9]{24}$/.test(key),
+      ) &&
       dbState.innerState?.text === innerState?.text &&
       !dbState.innerState.text.includes(syntheticStimulus);
     result.db = dbState
@@ -897,7 +1152,8 @@ async function main() {
       exact: true,
     });
     const reducedBefore = Number(await reducedSlider.inputValue());
-    const reducedAfter = reducedBefore >= 100 ? reducedBefore - 1 : reducedBefore + 1;
+    const reducedAfter =
+      reducedBefore >= 100 ? reducedBefore - 1 : reducedBefore + 1;
     const reducedWrite = page.waitForResponse(
       (response) =>
         response.url().includes("/api/viventium/feelings/bands/") &&
@@ -905,17 +1161,24 @@ async function main() {
     );
     await reducedSlider.fill(String(reducedAfter));
     await reducedSlider.dispatchEvent("pointerup");
-    result.checks.reducedMotionWriteHttp = (await reducedWrite).status() === 200;
+    result.checks.reducedMotionWriteHttp =
+      (await reducedWrite).status() === 200;
     const afterManualClear = await readFeelings(auth);
     result.postManualVersion = afterManualClear.state.version;
     result.checks.manualEditClearsInnerState =
       afterManualClear.state.innerState == null &&
       (await page
-        .getByText("The next reaction will put this state into Viv’s own words.", {
-          exact: true,
-        })
+        .getByText(
+          "The next reaction will put this state into Viv’s own words.",
+          {
+            exact: true,
+          },
+        )
         .isVisible());
-    const manualClearPath = path.join(outputDir, "feelings-after-manual-clear.png");
+    const manualClearPath = path.join(
+      outputDir,
+      "feelings-after-manual-clear.png",
+    );
     await page.screenshot({ path: manualClearPath, fullPage: true });
     result.artifacts.push(path.basename(manualClearPath));
 
@@ -949,10 +1212,12 @@ async function main() {
       const preparedReaction = await waitForReaction(
         auth,
         afterManualClear.state.version,
+        prepareSentAt,
       );
       result.checks.restartStatePrepared =
         preparedReaction.payload?.state?.reactionHealth?.status === "healthy" &&
-        preparedReaction.payload?.state?.version > afterManualClear.state.version &&
+        preparedReaction.payload?.state?.version >
+          afterManualClear.state.version &&
         typeof preparedReaction.payload?.state?.innerState?.text === "string" &&
         preparedReaction.payload.state.innerState.text.length > 0;
       result.restartPreparedVersion =
@@ -966,40 +1231,63 @@ async function main() {
     result.checks.noFeatureRequestFailures = !failedRequests.some((request) =>
       request.urlClass.includes("/api/viventium/feelings"),
     );
-    const conversationIds = [conversationId, preparedConversationId].filter(Boolean);
+    const conversationIds = [conversationId, preparedConversationId].filter(
+      Boolean,
+    );
     if (conversationIds.length > 0) {
-      const messageCleanup = await auth.db
-        .collection("messages")
-        .deleteMany({ conversationId: { $in: conversationIds } });
-      const conversationCleanup = await auth.db
-        .collection("conversations")
-        .deleteMany({ conversationId: { $in: conversationIds } });
+      const cleanup = await cleanupQaRunArtifacts({
+        db: auth.db,
+        userId: String(auth.user._id),
+        startedAt: qaStartedAt,
+        trackedConversationIds: conversationIds,
+        meiliClient,
+      });
       result.checks.syntheticConversationCleaned =
-        messageCleanup.deletedCount >= conversationIds.length * 2 &&
-        conversationCleanup.deletedCount === conversationIds.length;
+        cleanup.messagesDeleted >= conversationIds.length * 2 &&
+        cleanup.conversationsDeleted === conversationIds.length &&
+        (!meiliClient ||
+          (cleanup.meiliMessagesDeleted >= conversationIds.length * 2 &&
+            cleanup.meiliConversationsDeleted === conversationIds.length));
+      result.qaCleanup = {
+        conversationCount: cleanup.conversationsDeleted,
+        messageCount: cleanup.messagesDeleted,
+        meiliConversationCount: cleanup.meiliConversationsDeleted,
+        meiliMessageCount: cleanup.meiliMessagesDeleted,
+      };
       conversationIds.forEach((id) => pendingConversationCleanup.delete(id));
     } else {
       result.checks.syntheticConversationCleaned = false;
     }
   } finally {
     if (browser) await bounded(browser.close());
-    if (pendingConversationCleanup.size > 0) {
-      const conversationIds = [...pendingConversationCleanup];
-      await bounded(
-        auth.db
-          .collection("messages")
-          .deleteMany({ conversationId: { $in: conversationIds } }),
-      );
-      await bounded(
-        auth.db
-          .collection("conversations")
-          .deleteMany({ conversationId: { $in: conversationIds } }),
-      );
+    let cleanupFailure = null;
+    try {
+      if (pendingConversationCleanup.size > 0) {
+        await cleanupQaRunArtifacts({
+          db: auth.db,
+          userId: String(auth.user._id),
+          startedAt: qaStartedAt,
+          trackedConversationIds: [...pendingConversationCleanup],
+          meiliClient,
+        });
+      }
+    } catch (error) {
+      cleanupFailure = error;
     }
-    await bounded(
-      auth.db.collection("sessions").deleteOne({ _id: auth.sessionId }),
-    );
-    await bounded(auth.client.close(true));
+    try {
+      if (!PREPARE_RESTART_STATE) {
+        result.checks.qaStateRestored = await restoreFeelingState(
+          auth,
+          feelingStateBeforeQa,
+        );
+      }
+    } finally {
+      await bounded(
+        auth.db.collection("sessions").deleteOne({ _id: auth.sessionId }),
+      );
+      await bounded(auth.client.close(true));
+    }
+    if (cleanupFailure) throw cleanupFailure;
   }
   const resultPath = path.join(outputDir, "result.json");
   fs.writeFileSync(resultPath, `${JSON.stringify(result, null, 2)}\n`, {

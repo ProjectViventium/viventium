@@ -7,9 +7,17 @@ import sys
 from pathlib import Path
 
 import yaml
+import pytest
 
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+@pytest.fixture(autouse=True)
+def isolate_user_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    monkeypatch.setenv("HOME", str(fake_home))
 
 
 def minimal_config() -> dict:
@@ -96,6 +104,43 @@ def test_transcripts_source_cli_sets_config_backs_up_and_compiles(tmp_path: Path
     )
     runtime_env = (runtime_dir / "runtime.env").read_text(encoding="utf-8")
     assert f"VIVENTIUM_MEMORY_TRANSCRIPTS_DIR={transcript_dir.resolve()}" in runtime_env
+
+
+def test_noncanonical_config_update_preserves_canonical_launch_agent(tmp_path: Path) -> None:
+    launch_agents = Path(os.environ["HOME"]) / "Library" / "LaunchAgents"
+    launch_agents.mkdir(parents=True)
+    canonical_plist = launch_agents / "ai.viventium.memory-harden.plist"
+    canonical_plist.write_text("canonical-sentinel\n", encoding="utf-8")
+    app_support = tmp_path / "side-by-side-app-support"
+    runtime_dir = app_support / "runtime"
+    config_path = app_support / "config.yaml"
+    transcript_dir = tmp_path / "transcripts"
+    transcript_dir.mkdir()
+    write_config(config_path, minimal_config())
+
+    result = subprocess.run(
+        [
+            str(ROOT / "bin/viventium"),
+            "--app-support-dir",
+            str(app_support),
+            "--config-file",
+            str(config_path),
+            "--runtime-dir",
+            str(runtime_dir),
+            "transcripts",
+            "source",
+            "set",
+            str(transcript_dir),
+            "--json",
+        ],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert canonical_plist.read_text(encoding="utf-8") == "canonical-sentinel\n"
 
 
 def test_transcripts_source_cli_clear_and_status(tmp_path: Path) -> None:
@@ -298,3 +343,94 @@ def test_config_settings_rejects_non_directory_without_backup(tmp_path: Path) ->
     assert result.returncode != 0
     assert "must be a folder" in result.stderr
     assert not backup_dir.exists()
+
+
+def test_qa_test_account_cli_sets_redacted_config_and_compiles(tmp_path: Path) -> None:
+    app_support = tmp_path / "app-support"
+    runtime_dir = app_support / "runtime"
+    config_path = app_support / "config.yaml"
+    write_config(config_path, minimal_config())
+
+    result = subprocess.run(
+        [
+            str(ROOT / "bin/viventium"),
+            "--app-support-dir",
+            str(app_support),
+            "--config-file",
+            str(config_path),
+            "--runtime-dir",
+            str(runtime_dir),
+            "qa-test-account",
+            "set",
+            "--email-stdin",
+            "--json",
+        ],
+        cwd=ROOT,
+        input="qa-person@example.com\n",
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["changed"] is True
+    assert "email" not in payload
+    assert "qa-person@example.com" not in result.stdout
+    config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    assert config["runtime"]["extra_env"]["VIVENTIUM_QA_EMAIL"] == "qa-person@example.com"
+    runtime_env = (runtime_dir / "runtime.env").read_text(encoding="utf-8")
+    assert "VIVENTIUM_QA_EMAIL=qa-person@example.com" in runtime_env
+
+
+def test_qa_test_account_cli_status_and_clear_are_redacted(tmp_path: Path) -> None:
+    app_support = tmp_path / "app-support"
+    runtime_dir = app_support / "runtime"
+    config_path = app_support / "config.yaml"
+    config = minimal_config()
+    config["runtime"]["extra_env"] = {"VIVENTIUM_QA_EMAIL": "qa-person@example.com"}
+    write_config(config_path, config)
+
+    status = subprocess.run(
+        [
+            str(ROOT / "bin/viventium"),
+            "--app-support-dir",
+            str(app_support),
+            "--config-file",
+            str(config_path),
+            "qa-test-account",
+            "status",
+            "--json",
+        ],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert status.returncode == 0, status.stderr
+    assert json.loads(status.stdout)["status"] == "configured"
+    assert "qa-person@example.com" not in status.stdout
+
+    clear = subprocess.run(
+        [
+            str(ROOT / "bin/viventium"),
+            "--app-support-dir",
+            str(app_support),
+            "--config-file",
+            str(config_path),
+            "--runtime-dir",
+            str(runtime_dir),
+            "qa-test-account",
+            "clear",
+            "--json",
+        ],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert clear.returncode == 0, clear.stderr
+    assert json.loads(clear.stdout)["changed"] is True
+    assert "qa-person@example.com" not in clear.stdout
+    updated = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    assert "VIVENTIUM_QA_EMAIL" not in updated["runtime"]["extra_env"]

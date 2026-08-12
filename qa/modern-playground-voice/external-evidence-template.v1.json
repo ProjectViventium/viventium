@@ -1,0 +1,73 @@
+{
+  "schema": "viventium.voice.external-evidence.v1",
+  "taskOwnerCapabilityInventory": {
+    "authoritative": null,
+    "source": null,
+    "owners": []
+  },
+  "latency": {
+    "clickToListeningMs": [],
+    "taskEventVisibleMs": [],
+    "sourceVisibleMs": [],
+    "cancelStateMs": [],
+    "cancelBarrierMs": [],
+    "utteranceToAcknowledgementMs": [],
+    "warmSubstantiveAudioMs": [],
+    "bargeInStopMs": [],
+    "maxActiveWorkSilenceMs": null
+  },
+  "quality": {
+    "cloudAudioEgressBytes": null,
+    "cleanAttributedWordAccuracyPercent": null,
+    "noisySpeakerBankDerPercent": null,
+    "falseVerifiedOwnerAssignments": null,
+    "diarizationAddedCaptionP95Ms": null,
+    "separateTrackAttributionPercent": null,
+    "unknownAbstentionErrors": null,
+    "biometricIdentityClaims": null,
+    "postCancelBarrierOutputCount": null,
+    "callChatParityPercent": null,
+    "rawAudioRetainedBytes": null,
+    "speakerMapRowsAfterExpiry": null,
+    "memoryBoundaryViolationCount": null,
+    "unauthorizedSideEffectCount": null
+  },
+  "behaviorPaths": {
+    "oneClickAlreadyGranted": null,
+    "firstUseBrowserPermissionOnly": null,
+    "microphoneDeniedInlineRecovery": null,
+    "authExpiredInlineRecovery": null,
+    "invalidSignatureRecovery": null,
+    "noRouteInlineRecovery": null,
+    "gatewayUnavailableRecovery": null,
+    "sttFailureClassified": null,
+    "llmFailureClassified": null,
+    "ttsFailureClassified": null,
+    "toolFailureClassified": null,
+    "livekitFailureClassified": null,
+    "sharedMicOwnerAbstention": null,
+    "speakerRevisionAfterSecondSpeaker": null,
+    "separateTrackJoinLeaveAttribution": null,
+    "interruptionStopsSpeechWorkContinues": null,
+    "cooperativeCancellation": null,
+    "unenforceableCancellation": null,
+    "alreadyCompletedCancellationTruthful": null,
+    "cancelRaceIdempotent": null,
+    "hangupContinuesLinkedChat": null,
+    "listenOnlyZeroAuthorityPlanes": null,
+    "wingGuestZeroSideEffectAuthority": null,
+    "needsInputRoundTrip": null,
+    "retryRoundTrip": null,
+    "postCallMemoryHardening": null,
+    "conversationDeleteExport": null,
+    "localOnlyUnknownDegradation": null
+  },
+  "escapedRegressions": {
+    "rawSessionIdWithoutBrowserCapabilityRejected": null,
+    "suppressionBarrierPreservedAfter1001Tasks": null,
+    "hungOwnerCancelAckWithin250Ms": null,
+    "malformedTaskSnapshotFailsVisible": null,
+    "apiRestartPreservesBarrierAndReplay": null,
+    "speakerHistoryBeyond4096Accessible": null
+  }
+}

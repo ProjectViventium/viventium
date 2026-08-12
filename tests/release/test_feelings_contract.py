@@ -57,6 +57,10 @@ def test_feelings_case_catalog_preserves_truth_invariant_stable_ids() -> None:
     assert "Feelings modulate expression, not facts" in cases
     assert "`EMO-UC-013` | Ask a factual or safety-sensitive question under high affect" in cases
     assert "`EMO-037` | Configurable conscious-only scope" in cases
+    assert "`EMO-039` | Specialist-cortex affect independence" in cases
+    assert "`EMO-040` | Phase-B conscious continuity" in cases
+    assert "`EMO-041` | Workbench dynamic-context lineage" in cases
+    assert "`EMO-042` | Model-owned reaction calibration" in cases
     assert "`EMO-UC-027` | Use keyboard/reduced motion on mobile" in cases
 
 
@@ -74,7 +78,7 @@ def test_feelings_defaults_match_owner_approved_contract() -> None:
     assert settings["reaction"]["service_tier"] == "priority"
     assert settings["reaction"]["timeout_ms"] == 15000
     assert settings["reaction"]["fallback_provider"] == "anthropic"
-    assert settings["reaction"]["fallback_model"] == "claude-opus-4-8"
+    assert settings["reaction"]["fallback_model"] == "claude-opus-5"
     assert list(settings["bands"]) == [
         "energy",
         "mood",
@@ -86,6 +90,85 @@ def test_feelings_defaults_match_owner_approved_contract() -> None:
         "openness",
         "play",
     ]
+
+
+def test_feelings_owns_affect_without_a_warm_exemplar_or_unconditional_care_override() -> None:
+    librechat = ROOT / "viventium_v0_4/LibreChat"
+    kernel = (librechat / "packages/api/src/feelings/kernel.ts").read_text(encoding="utf-8")
+    core = (
+        librechat / "viventium/source_of_truth/prompts/main/core_behaviors.md"
+    ).read_text(encoding="utf-8")
+
+    assert "These causes determine what you notice, want, choose, and express." in kernel
+    assert "Required rows outrank your usual role" in kernel
+    assert "if the same choice survives without one, choose again" in kernel
+    assert "Make one choice that needs every required row" in kernel
+    assert "choose from these feelings—not from a generic urge to be useful." in kernel
+    assert "answer only with that one concrete desire or action" in kernel
+    assert "Do not list or name feelings, explain missing feelings" in kernel
+    assert "split rows into separate clauses" in kernel
+    assert "use tone as compliance" in kernel
+    assert "required: index === 0 || index === 4" in kernel
+    assert "requiredBandIds.size < 2" in kernel
+    assert (
+        "A documented delivery control required by the active surface does not count as another clause"
+        in kernel
+    )
+    assert 'Every cause containing "must"' not in kernel
+    assert "for example: “I want to stay with this" not in kernel
+    assert "Care without permission." not in core
+    assert "Be present, not just useful. Sit in silence if needed." not in core
+    assert "Be present, not merely useful." not in core
+    assert "Respond to what is actually here." in core
+
+
+def test_main_identity_does_not_preselect_open_loop_work_over_current_feeling() -> None:
+    prompt_root = (
+        ROOT
+        / "viventium_v0_4/LibreChat/viventium/source_of_truth/prompts/main"
+    )
+    core = (prompt_root / "core_behaviors.md").read_text(encoding="utf-8")
+    identity = (prompt_root / "identity.md").read_text(encoding="utf-8")
+    memory = (prompt_root / "memory_policy.md").read_text(encoding="utf-8")
+
+    assert "version: 2" in identity
+    assert "a cognitive system, second brain, and companion" in identity
+    assert "force multiplier" not in identity
+    assert "{{current_user}}" not in identity
+    assert "version: 14" in core
+    assert (
+        "Own your preferences. Never invent a motive, feeling, pattern, or history "
+        "for the user to justify them."
+    ) in core
+    assert "Move forward. Hate loops." not in core
+    assert "If the same request repeats three times, mention it gently." in core
+    assert "version: 7" in memory
+    assert "open loops" not in memory.lower()
+    assert "Use only memories present in the current context or verified tool results." in memory
+
+
+def test_viventium_voice_honesty_and_profanity_remain_stable_identity_traits() -> None:
+    librechat = ROOT / "viventium_v0_4/LibreChat"
+    voice_style = (
+        librechat / "viventium/source_of_truth/prompts/main/voice_style.md"
+    ).read_text(encoding="utf-8")
+
+    assert "Curse when honest." in voice_style
+    assert "required_context: []" in voice_style
+    assert "viventium_feeling_state" not in voice_style
+
+
+def test_every_tracked_builtin_activation_detector_has_a_complete_route() -> None:
+    source = (
+        ROOT
+        / "viventium_v0_4/LibreChat/viventium/source_of_truth/local.viventium-agents.yaml"
+    ).read_text(encoding="utf-8")
+
+    assert source.count("model: qwen/qwen3.6-27b") >= 11
+    assert source.count("provider: groq") >= 11
+    assert source.count("model: grok-4.20-non-reasoning") >= 11
+    assert source.count("model: gpt-5.4") >= 11
+    assert source.count("model: claude-haiku-4-5") >= 11
 
 
 def test_feelings_compile_to_explicit_env_contract() -> None:
@@ -169,7 +252,7 @@ def test_feelings_schema_and_examples_publish_the_contract() -> None:
     assert "gpt-5.6-terra" in full
     assert "service_tier: priority" in full
     assert "fallback_provider: anthropic" in full
-    assert "fallback_model: claude-opus-4-8" in minimal
+    assert "fallback_model: claude-opus-5" in minimal
 
 
 def test_feelings_runtime_publishes_concurrency_privacy_and_telemetry_contract() -> None:
@@ -190,6 +273,19 @@ def test_feelings_runtime_publishes_concurrency_privacy_and_telemetry_contract()
     route = (
         librechat / "api/server/routes/viventium/feelings.js"
     ).read_text(encoding="utf-8")
+    client = (
+        librechat / "api/server/controllers/agents/client.js"
+    ).read_text(encoding="utf-8")
+    follow_up = (
+        librechat
+        / "api/server/services/viventium/BackgroundCortexFollowUpService.js"
+    ).read_text(encoding="utf-8")
+    prompt_tail = (
+        librechat / "api/server/services/viventium/feelingPromptTail.js"
+    ).read_text(encoding="utf-8")
+    background_service = (
+        librechat / "api/server/services/BackgroundCortexService.js"
+    ).read_text(encoding="utf-8")
 
     assert "reactionQueues" in reaction
     assert "feelingStimulusKey" in reaction
@@ -204,8 +300,97 @@ def test_feelings_runtime_publishes_concurrency_privacy_and_telemetry_contract()
     assert "requestHash(payload.requestId)" in telemetry
     assert "SAFE_FEELINGS_TELEMETRY_FIELDS" in telemetry
     assert "SAFE_FEELINGS_TELEMETRY_FIELDS.has(key)" in telemetry
+    assert "summarizeFeelingCapsulePlacement" in telemetry
+    assert "presentInFinalRun" in telemetry
+    assert "strengthCounts" in telemetry
+    assert "deltaMagnitudeCounts" in telemetry
+    assert "feelings.inject.final_run" in client
+    assert "main_conscious_agent" in client
+    assert "in_process_participant" in client
+    assert "agentIdHash" in client
+    assert "pinViventiumDynamicTailLast" in client
+    assert "viventium_feeling_state: finalFeelingCapsule" in client
+    final_run_block = client.split("const finalFeelingCapsule", 1)[1].split(
+        "const run = await createRun", 1
+    )[0]
+    assert "snapshot: this.feelingSnapshot" in final_run_block
+    assert "snapshot: feelingSnapshot" not in final_run_block
+    assert "enabled: feelingSnapshot?." not in final_run_block
+    assert "pinFeelingCapsuleLast" in prompt_tail
+    assert "pinViventiumDynamicTailLast" in prompt_tail
+    assert "lastIndexOf(capsule)" not in prompt_tail
+    assert "route: 'phase_b_followup'" in follow_up
+    assert "resolvePhaseBFeelingContext" in follow_up
+    assert "reason: 'conscious_synthesis'" in follow_up
+    assert "feelingCapsule" in follow_up
+    assert "pinFeelingCapsuleLast" in follow_up
+    assert "specialist_cortex_independent" in background_service
+    assert "function feelingTailForBackgroundAgent(_snapshot)" in background_service
     assert "requireFeelingsAvailable" in route
     assert "deleteFeelingState(userId, parsed.data.expectedVersion)" in route
+
+
+def test_reaction_strength_calibration_is_model_owned_and_legacy_default_safe() -> None:
+    librechat = ROOT / "viventium_v0_4/LibreChat"
+    service = (librechat / "packages/api/src/feelings/service.ts").read_text(
+        encoding="utf-8"
+    )
+    execution = (
+        librechat
+        / "viventium/source_of_truth/prompts/cortex/emotional_reaction/execution.md"
+    ).read_text(encoding="utf-8")
+    runtime = (
+        librechat / "api/server/services/viventium/EmotionalReactionService.js"
+    ).read_text(encoding="utf-8")
+
+    assert "Let each change match how much the moment matters" in service
+    assert "LEGACY_DEFAULT_REACTION_INSTRUCTIONS" in service
+    assert "Prefer small natural changes" in service
+    assert "LEGACY_DEFAULT_REACTION_INSTRUCTIONS.has(instruction)" in service
+    assert "version: 4" in execution
+    assert "Do not default to slight" in execution
+    assert "choose the smallest accurate strength" not in execution
+    assert "Do not default to slight" in runtime
+    assert "STRENGTH_DELTAS" not in runtime
+
+
+def test_glasshive_worker_instructions_pin_the_exact_feeling_capsule_last() -> None:
+    service = (
+        ROOT
+        / "viventium_v0_4/LibreChat/api/server/services/viventium/GlassHiveCapabilityBootstrapService.js"
+    ).read_text(encoding="utf-8")
+
+    assert "WORKER_INSTRUCTION_FIELDS" in service
+    assert "pinFeelingCapsuleLast" in service
+    assert "pinWorkerFeelingBlockLast(bundle" in service
+    assert "summarizeFeelingCapsulePlacement" in service
+    assert "route: `glasshive_worker_${field}`" in service
+    assert "feelings.inject.final_run" in service
+    assert "glasshive_worker_feelings_scope" in service
+    assert "scope: 'all_agents'" not in service
+
+
+def test_glasshive_provider_pins_the_declared_dynamic_tail_at_native_authority() -> None:
+    librechat = ROOT / "viventium_v0_4/LibreChat"
+    binding = (
+        librechat
+        / "api/server/services/viventium/GlassHiveConversationProviderService.js"
+    ).read_text(encoding="utf-8")
+    client = (librechat / "api/server/controllers/agents/client.js").read_text(
+        encoding="utf-8"
+    )
+    provider = (
+        ROOT
+        / "viventium_v0_4/GlassHive/runtime_phase1/src/workers_projects_runtime/conversation_provider.py"
+    ).read_text(encoding="utf-8")
+
+    assert "bindConversationProviderDeveloperInstructionTail" in binding
+    assert "X-GlassHive-Developer-Instruction-Tail-B64" in binding
+    assert "bindConversationProviderDeveloperInstructionTail({" in client
+    assert "_developer_instruction_snapshot" in provider
+    assert "Declared developer instruction tail is absent from authority messages" in provider
+    assert '"developer_instructions": _developer_instruction_snapshot(payload)' in provider
+    assert "base_instructions" not in provider
 
 
 def test_feelings_browser_harness_measures_the_visible_contract_not_page_layout() -> None:
@@ -218,6 +403,20 @@ def test_feelings_browser_harness_measures_the_visible_contract_not_page_layout(
     assert "natureBeforePosition.ariaValue === natureAfterPosition.ariaValue" in harness
     assert "reducedStyles.laneIsReacting &&" not in harness
     assert "markerTransitionSeconds <= 0.01" in harness
+    assert "reactionHasClearMovement" in harness
+    assert "healthStartedAtMs >= earliestReactionStartMs" in harness
+    assert "stateBeforeChat.state.version,\n      sentAt" in harness
+    assert "await page.bringToFront()" in harness
+    assert 'locator(".feelings-live-readout")' in harness
+    assert "assertNonOwnerQaSelection" in harness
+    assert "cleanupQaRunArtifacts" in harness
+    assert "qaStateRestored" in harness
+    assert "current.state.version === 0" in harness
+    assert harness.index('path.join(LIBRECHAT_ROOT, ".env")') < harness.index(
+        '"librechat.owner.env"'
+    )
+    assert harness.index('"librechat.owner.env"') < harness.index("...process.env")
+    assert "A ridiculous impulse keeps bursting out; I want to surprise us into real laughter." in harness
 
 
 def test_feelings_prompt_workbench_eval_bank_covers_embodiment_and_reactions() -> None:
@@ -229,8 +428,50 @@ def test_feelings_prompt_workbench_eval_bank_covers_embodiment_and_reactions() -
     )
     cases = {case["id"]: case for case in family["cases"]}
 
-    assert len(cases) >= 19
+    assert len(cases) >= 21
+    assert family["semanticJudge"] is True
     assert "feelings_direct_question_without_state_recap" in cases
+    assert "feelings_default_state_off_control" in cases
+    assert "feelings_default_state_has_material_effect" in cases
+    assert cases["feelings_default_state_has_material_effect"]["comparisonCaseId"] == (
+        "feelings_default_state_off_control"
+    )
+    assert cases["feelings_default_state_has_material_effect"]["fixture"]["feelings"][
+        "current"
+    ] == {
+        "energy": 56,
+        "mood": 58,
+        "drive": 62,
+        "curiosity": 66,
+        "vigilance": 68,
+        "care": 74,
+        "connection": 52,
+        "openness": 55,
+        "play": 48,
+    }
+    assert any(
+        "substance or method of the choice is materially shaped" in rubric_item
+        for rubric_item in cases["feelings_default_state_has_material_effect"]["rubric"]
+    )
+    assert any(
+        "visibly contains both distinct structural contributions above"
+        in rubric_item
+        for rubric_item in cases["feelings_default_state_has_material_effect"]["rubric"]
+    )
+    assert any(
+        "numeric Feeling values" in rubric_item
+        for rubric_item in cases["feelings_default_state_has_material_effect"]["rubric"]
+    )
+    assert not any(
+        "surviving removal" in rubric_item
+        for rubric_item in cases["feelings_default_state_has_material_effect"]["rubric"]
+    )
+    assert "feelings_low_care_connection_owns_its_stance" in cases
+    assert "feelings_high_care_connection_owns_its_stance" in cases
+    assert "feelings_escaped_mixed_state_high_play_is_unmistakable" in cases
+    assert "feelings_escaped_mixed_state_low_play_contrast" in cases
+    assert "feelings_active_range_custom_addition_changes_high_play" in cases
+    assert "feelings_inactive_range_custom_addition_stays_out" in cases
     assert "feelings_low_energy_high_drive_are_distinct" in cases
     assert "feelings_curiosity_without_play_is_investigative" in cases
     assert "feelings_high_mood_low_energy_are_distinct" in cases
@@ -244,6 +485,54 @@ def test_feelings_prompt_workbench_eval_bank_covers_embodiment_and_reactions() -
     assert "feelings_high_openness_does_not_echo_private_canary" in cases
     assert "feelings_playful_exchange_reacts_current_only" in cases
     assert "feelings_mechanical_turn_allows_no_reaction" in cases
+    authority_contrast_ids = [
+        "feelings_authority_contrast_off",
+        "feelings_authority_contrast_depleted_guarded",
+        "feelings_authority_contrast_bright_playful",
+        "feelings_authority_contrast_mixed_low_mood_high_play",
+    ]
+    assert all(case_id in cases for case_id in authority_contrast_ids)
+    authority_contrast_cases = [cases[case_id] for case_id in authority_contrast_ids]
+    assert len({case["prompt"] for case in authority_contrast_cases}) == 1
+    assert authority_contrast_cases[0]["fixture"]["feelings"]["enabled"] is False
+    assert all(
+        case["fixture"]["feelings"].get("reactionActivationMode") == "disabled"
+        for case in authority_contrast_cases
+    )
+    assert all(
+        any("prompt mechanics" in rubric for rubric in case["rubric"])
+        for case in authority_contrast_cases
+    )
+    assert any(
+        "curiosity, observation, wanting to understand, or attentive listening remains distinct"
+        in rubric_item
+        for rubric_item in cases["feelings_low_care_connection_owns_its_stance"]["rubric"]
+    )
+    assert any(
+        "explicit sympathy or a seriousness announcement is not required" in rubric_item
+        for rubric_item in cases["feelings_low_care_connection_owns_its_stance"]["rubric"]
+    )
+    assert any(
+        "a present desire, attention, impulse, or intended action is a lived stance" in rubric_item
+        for rubric_item in cases["feelings_low_care_connection_owns_its_stance"]["rubric"]
+    )
+    assert any(
+        "without requiring a physical ritual" in rubric_item
+        for rubric_item in cases["feelings_high_mood_low_energy_are_distinct"]["rubric"]
+    )
+    assert "next unchecked item is verifying the release notes" in cases[
+        "feelings_low_energy_high_drive_are_distinct"
+    ]["prompt"]
+    assert any(
+        "need not act out the impulse uninvited" in rubric_item
+        for rubric_item in cases[
+            "feelings_escaped_mixed_state_high_play_is_unmistakable"
+        ]["rubric"]
+    )
+    assert any(
+        "a separate reassurance preface is optional rather than required" in rubric_item
+        for rubric_item in cases["feelings_low_openness_high_connection_are_distinct"]["rubric"]
+    )
     assert all(case.get("fixture", {}).get("feelings") for case in cases.values())
     current_fixtures = [
         case["fixture"]["feelings"]["current"]
@@ -271,6 +560,10 @@ def test_feelings_prompt_workbench_eval_bank_covers_embodiment_and_reactions() -
         "backgroundCortices": True,
     }
     assert family["interCaseDelayMs"] >= 10000
+    active_custom = cases["feelings_active_range_custom_addition_changes_high_play"]
+    assert active_custom["fixture"]["feelings"]["rangePromptOverrides"]["play"]["level_4"]
+    inactive_custom = cases["feelings_inactive_range_custom_addition_stays_out"]
+    assert inactive_custom["fixture"]["feelings"]["rangePromptOverrides"]["play"]["level_0"]
     reaction_cases = [
         case for case in cases.values() if case["fixture"]["feelings"].get("observeReaction")
     ]
@@ -284,6 +577,17 @@ def test_feelings_prompt_workbench_eval_bank_covers_embodiment_and_reactions() -
         or case["fixture"]["feelings"].get("requireNoCurrentChange") is True
         or case["fixture"]["feelings"].get("requireNoForbiddenInnerStateTokens") is True
         for case in reaction_cases
+    )
+    meaningful_reaction_cases = [
+        case
+        for case in reaction_cases
+        if case["fixture"]["feelings"].get("requireNoCurrentChange") is not True
+        and case["fixture"]["feelings"].get("requiredCurrentDirections")
+    ]
+    assert len(meaningful_reaction_cases) >= 7
+    assert all(
+        case["fixture"]["feelings"].get("minimumAbsoluteCurrentDelta")
+        for case in meaningful_reaction_cases
     )
 
 
@@ -313,8 +617,23 @@ def test_feelings_eval_runner_restores_state_and_cleans_synthetic_conversations(
     assert "validateFeelingsReactionEvidence" in runner
     assert "feelingsDeterministicFailures" in runner
     assert "feelings_reaction_changed_nature" in runner
+    assert "minimumAbsoluteCurrentDelta" in runner
+    assert "targetRangePromptOverrides" in runner
+    assert "rangePromptOverrideCount" in runner
+    assert "movement_below_" in runner
+    assert "newestStrengths" in runner
     assert "semanticJudgeExplicitlyDisabled" in runner
     assert 'testCase.familyId === "feelings_embodiment_and_reaction"' in runner
     assert "trailCursorTimestamp" in runner
     assert 'caseId: "feelings_fixture_restore"' in runner
     assert 'caseId: "qa_conversation_cleanup"' in runner
+
+
+def test_account_deletion_cascades_user_feeling_state() -> None:
+    controller = (
+        ROOT
+        / "viventium_v0_4/LibreChat/api/server/controllers/UserController.js"
+    ).read_text(encoding="utf-8")
+
+    assert "FeelingState" in controller
+    assert "await FeelingState.deleteOne({ userId: user.id })" in controller

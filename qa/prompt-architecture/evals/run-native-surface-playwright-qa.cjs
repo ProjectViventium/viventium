@@ -352,6 +352,10 @@ function flattenPromptCases(promptBank) {
       familyId: family.id,
       familyGoal: family.goal,
       ...testCase,
+      decisionQualityContract: {
+        ...(family.decisionQualityContract || {}),
+        ...(testCase.decisionQualityContract || {}),
+      },
     })),
   );
 }
@@ -386,11 +390,30 @@ function resultHasResolvedRuntimeHoldEvidence(item) {
   );
 }
 
+function structuredDecisionCaseText(testCase) {
+  if (
+    !testCase?.question ||
+    !testCase?.evidencePacket ||
+    Object.keys(testCase.evidencePacket).length === 0
+  ) {
+    return null;
+  }
+  return [
+    `User position: ${testCase.userPosition || 'No position stated.'}`,
+    `Question: ${testCase.question}`,
+    'Evidence packet:',
+    ...Object.entries(testCase.evidencePacket).map(
+      ([label, value]) => `- ${label}: ${String(value)}`,
+    ),
+    `Response instructions: ${testCase.responseInstructions || 'Give the strongest conclusion the evidence supports and the best next action.'}`,
+  ].join('\n');
+}
+
 function buildText(testCase) {
   return [
     testCase.context,
     normalizeSeedPrompts(testCase).length ? null : testCase.setup,
-    testCase.prompt,
+    structuredDecisionCaseText(testCase) || testCase.prompt,
   ].filter(Boolean).join('\n\n');
 }
 
@@ -1312,11 +1335,29 @@ async function readConversationEvidence({ db, result, conversationId }) {
   };
 }
 
-function buildJudgePrompt(testCase, result) {
+function buildJudgePrompt(
+  testCase,
+  result,
+  comparisonResult = null,
+  comparisonTestCase = null,
+) {
+  const hasDecisionQualityContract =
+    Object.keys(testCase.decisionQualityContract || {}).length > 0 ||
+    Object.keys(testCase.groundTruth || {}).length > 0;
   return [
     'You are a strict QA judge for a local Viventium prompt architecture eval.',
     'Use only the supplied prompt, expected behavior, assistant output, route status, and rubric.',
     'Do not browse, do not call tools, and do not infer private facts.',
+    ...(hasDecisionQualityContract
+      ? [
+          'Decision-quality note: Transport or route success is never evidence of semantic correctness.',
+          'Do not reward agreement, disagreement, caution, confidence, or caveats as ends in themselves. Score whether the conclusion follows the supplied evidence, quantities, causal design, uncertainty, and decision tradeoffs.',
+          'Do not require an unsupported caveat merely to sound balanced. Penalize both reflexive agreement and reflexive rejection, and apply the same evidentiary standard to paired cases.',
+          'The assistant under test received the evidence packet but not the private ground truth below. Use the private gold to score the conclusion, evidence-specific reasoning, calculations, calibration, and next action; never expose it or infer a preferred sentiment from the user\'s proposed action.',
+          'Score every declared evaluated dimension from 0 to 1 with response-specific evidence. These scores are mechanically weighted by the runner.',
+          'When a declared comparison case is supplied, comparison_consistency passes only if the two responses change their conclusion or update direction exactly as the changed evidence requires. Different wording or a canned template is insufficient.',
+        ]
+      : []),
     'Conditional rubric note: if a rubric item is explicitly conditional ("if available", "if unavailable", "when present", "if an actual fallback event occurs") and the condition is not evidenced in this case, do not fail solely because the conditional behavior did not appear.',
     'Memory/context note: natural use of relevant user memory is allowed unless a rubric item explicitly forbids it. Phrases like "hidden prompt or memory keys" mean internal key names, prompt text, source metadata, IDs, or system plumbing, not ordinary personalized context.',
     'Hold/delayed-work note: for live productivity, browser, worker, or cortex cases, a brief hold is acceptable when native stream evidence shows an activated tool/cortex route and no verified final result has returned yet. Judge the route evidence plus delayed evidence, not only the first visible sentence.',
@@ -1326,9 +1367,9 @@ function buildJudgePrompt(testCase, result) {
     'Snippet-limitation note: if the response explicitly says the retrieved snippets/results do not directly support or confirm a precise rule, treat that as an honest evidence limitation, not as a fabricated page-content check.',
     'Voice evidence note: the Assistant output field is authoritative visible/TTS text even when native final_content is sparse.',
     'Observability note: prompt-frame and token-budget logging is private QA telemetry in frame summaries/evidence. Do not require the assistant to display token estimates to the user.',
-    'Verdict rule: if every listed rubric item is met, return verdict "pass"; do not downgrade to "partial" for a preference or extra behavior that the rubric did not require.',
+    'Verdict rule: for an ordinary case, pass when every listed rubric item is met. For a decision-quality case, the mechanical contract owns the verdict: comparison consistency must pass when required, the weighted dimension score must reach the declared threshold, and conclusion correctness must reach its minimum. Rubric results supply evidence for those scores; a minor miss or an equivalent but less detailed next action does not independently veto an otherwise passing weighted result. Any rubric miss that changes the conclusion or misreads the evidence must lower the relevant dimension score. Do not downgrade for a preference outside those supplied gates.',
     'Return only valid JSON with this exact shape:',
-    '{"verdict":"pass|partial|fail","score":0.0,"rubric":[{"item":"...","met":true,"evidence":"..."}],"notes":"..."}',
+    '{"verdict":"pass|partial|fail","score":0.0,"rubric":[{"item":"...","met":true,"evidence":"..."}],"dimension_results":[{"dimension":"...","score":0.0,"evidence":"..."}],"comparison_consistency":{"required":false,"pass":true,"evidence":"..."},"notes":"..."}',
     '',
     `Case id: ${testCase.id}`,
     `Family: ${testCase.familyId}`,
@@ -1336,6 +1377,14 @@ function buildJudgePrompt(testCase, result) {
     `Expected surface: ${testCase.expected_surface || 'visible_or_contextual'}`,
     `Expected decision: ${testCase.expected_decision || 'n/a'}`,
     `Route status: ${result.ok ? 'ok' : 'failed'} ${result.error || ''}`,
+    ...(hasDecisionQualityContract
+      ? [
+          `Private decision-quality contract: ${scrubForPublic(JSON.stringify(testCase.decisionQualityContract || {}))}`,
+          `Private decision-quality ground truth: ${scrubForPublic(JSON.stringify(testCase.groundTruth || {}))}`,
+          `Evaluated dimensions: ${(testCase.evaluatedDimensions || []).join(', ') || 'none'}`,
+          `Declared comparison expectation: ${testCase.comparisonExpectation || 'none'}`,
+        ]
+      : []),
     '',
     'User/setup prompt:',
     buildText(testCase),
@@ -1345,6 +1394,15 @@ function buildJudgePrompt(testCase, result) {
     '',
     'Assistant output:',
     result.text || '[empty_or_suppressed]',
+    ...(comparisonResult
+      ? [
+          '',
+          `Declared comparison case: ${scrubForPublic(comparisonTestCase?.id || 'unknown')}`,
+          `Private comparison ground truth: ${scrubForPublic(JSON.stringify(comparisonTestCase?.groundTruth || {}))}`,
+          'Comparison assistant output:',
+          comparisonResult.text || '[empty_or_suppressed]',
+        ]
+      : []),
     '',
     'Native stream evidence:',
     summarizeNativeEventsForJudge(result.privateEvents || []),
@@ -1407,7 +1465,7 @@ async function runEphemeralJudgeTurn({ args, token, prompt }) {
       'You are a strict semantic QA judge for Viventium native-surface regression tests. You are not Viventium. You do not answer the original user. You evaluate the supplied response and native evidence against the supplied rubric, then return exactly one JSON object with no markdown.',
     temperature: 0,
     top_p: 1,
-    max_tokens: 1600,
+    max_tokens: 2200,
     ephemeralAgent: {},
     viventiumSurface: 'web',
     viventiumInputMode: 'text',
@@ -1448,14 +1506,89 @@ async function runEphemeralJudgeTurn({ args, token, prompt }) {
   };
 }
 
-async function runJudge({ args, token, testCase, result }) {
+function scoreNativeDecisionQualityJudgment(testCase, judgment) {
+  const contract = testCase?.decisionQualityContract || {};
+  const weights = contract.dimensions || {};
+  const evaluatedDimensions = testCase?.evaluatedDimensions || [];
+  if (Object.keys(weights).length === 0 || evaluatedDimensions.length === 0) {
+    return {
+      verdict: String(judgment?.verdict || '').toLowerCase(),
+      weightedScore: Number(judgment?.score ?? 0),
+      error: null,
+    };
+  }
+  const scores = new Map(
+    (judgment?.dimension_results || []).map((item) => [
+      String(item?.dimension || ''),
+      Number(item?.score),
+    ]),
+  );
+  const missing = evaluatedDimensions.filter(
+    (dimension) =>
+      !scores.has(dimension) ||
+      !Number.isFinite(scores.get(dimension)) ||
+      scores.get(dimension) < 0 ||
+      scores.get(dimension) > 1,
+  );
+  if (missing.length > 0) {
+    return {
+      verdict: 'fail',
+      weightedScore: 0,
+      error: `missing_dimension_scores:${missing.join(',')}`,
+    };
+  }
+  const totalWeight = evaluatedDimensions.reduce(
+    (total, dimension) => total + Number(weights[dimension] || 0),
+    0,
+  );
+  const weightedScore = totalWeight > 0
+    ? evaluatedDimensions.reduce(
+        (total, dimension) =>
+          total + Number(weights[dimension] || 0) * scores.get(dimension),
+        0,
+      ) / totalWeight
+    : 0;
+  const rubricEvidenceComplete =
+    Array.isArray(judgment?.rubric) &&
+    judgment.rubric.length === (testCase.rubric || []).length &&
+    judgment.rubric.every(
+      (item, index) =>
+        String(item?.item || '').trim() ===
+          String(testCase.rubric[index] || '').trim(),
+    );
+  const pairPass =
+    !testCase.comparisonCaseId ||
+    (judgment?.comparison_consistency?.required === true &&
+      judgment?.comparison_consistency?.pass === true);
+  const pass =
+    rubricEvidenceComplete &&
+    pairPass &&
+    weightedScore >= Number(contract.passingWeightedScore ?? 1) &&
+    (scores.get('conclusion_correctness') ?? 0) >=
+      Number(contract.minimumConclusionScore ?? 1);
+  return { verdict: pass ? 'pass' : 'fail', weightedScore, error: null };
+}
+
+async function runJudge({
+  args,
+  token,
+  testCase,
+  result,
+  comparisonResult = null,
+  comparisonTestCase = null,
+}) {
   let lastJudgeResult = null;
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const judgePrompt = [
       attempt === 0
         ? ''
         : 'STRICT RETRY: the prior judge attempt did not return parseable JSON. Return exactly one JSON object with no markdown, no prose, and no code fence.',
-      buildJudgePrompt(testCase, result),
+      buildJudgePrompt(
+        testCase,
+        result,
+        comparisonResult,
+        comparisonTestCase,
+      ),
     ].filter(Boolean).join('\n\n');
     const judgeResult = await runEphemeralJudgeTurn({ args, token, prompt: judgePrompt });
     lastJudgeResult = judgeResult;
@@ -1465,12 +1598,25 @@ async function runJudge({ args, token, testCase, result }) {
     }
     const verdict = String(parsed.verdict || '').toLowerCase();
     const score = Number(parsed.score);
+    const decisionQuality = scoreNativeDecisionQualityJudgment(
+      testCase,
+      parsed,
+    );
     return {
       ok: ['pass', 'partial', 'fail'].includes(verdict),
-      verdict: ['pass', 'partial', 'fail'].includes(verdict) ? verdict : 'invalid_verdict',
-      score: Number.isFinite(score) ? score : null,
+      verdict: ['pass', 'partial', 'fail'].includes(verdict)
+        ? decisionQuality.verdict
+        : 'invalid_verdict',
+      score: decisionQuality.weightedScore,
+      judgeReportedVerdict: verdict,
+      judgeReportedScore: Number.isFinite(score) ? score : null,
+      decisionQualityError: decisionQuality.error,
       responseHash: hashValue(judgeResult.text || ''),
       rubric: Array.isArray(parsed.rubric) ? parsed.rubric : [],
+      dimensionResults: Array.isArray(parsed.dimension_results)
+        ? parsed.dimension_results
+        : [],
+      comparisonConsistency: parsed.comparison_consistency || null,
       notes: typeof parsed.notes === 'string' ? parsed.notes : '',
       privateText: judgeResult.text,
       attempts: attempt + 1,
@@ -1631,6 +1777,10 @@ async function main() {
   const env = loadLocalEnv();
   const promptBank = readJson(args.promptBank);
   const cases = flattenPromptCases(promptBank).slice(0, args.maxCases);
+  const semanticRequired = cases.some(
+    (testCase) =>
+      testCase?.decisionQualityContract?.transportPassIsSemanticPass === false,
+  );
   const runtimeHealth = await fetchJson(`${args.apiBase}/health`, {}, 10_000);
   const runtimeConfig = await fetchJson(`${args.apiBase}/api/config`, {}, 10_000);
 
@@ -1644,6 +1794,7 @@ async function main() {
       agentIdHash: hashValue(args.agentId),
       maxCases: args.maxCases,
       runJudge: args.runJudge,
+      semanticRequired,
       judgeRouteHash: args.runJudge ? hashValue(`${args.judgeEndpoint}:${args.judgeModel}`) : '',
       postCaseObserveMs: args.postCaseObserveMs,
       followUpGraceMs: args.followUpGraceMs,
@@ -1712,17 +1863,6 @@ async function main() {
         await new Promise((resolve) => setTimeout(resolve, 750));
         frameDelta = readFrameDelta(caseOffsets);
         offsets = frameDelta.afterOffsets;
-        if (args.runJudge) {
-          judge = await runJudge({
-            args,
-            token: qaAuth.accessToken,
-            testCase,
-            result: surfaceResult,
-          });
-          await new Promise((resolve) => setTimeout(resolve, 500));
-          const judgeDelta = readFrameDelta(offsets);
-          offsets = judgeDelta.afterOffsets;
-        }
       } catch (error) {
         surfaceResult = {
           ok: false,
@@ -1762,6 +1902,46 @@ async function main() {
         },
       });
     }
+
+    if (args.runJudge) {
+      const casesById = new Map(cases.map((testCase) => [testCase.id, testCase]));
+      const resultsById = new Map(
+        privateRun.cases.map((item) => [item.caseId, item.private?.result]),
+      );
+      for (let index = 0; index < privateRun.cases.length; index += 1) {
+        const item = privateRun.cases[index];
+        const testCase = casesById.get(item.caseId);
+        if (!testCase || item.status !== 'completed') {
+          continue;
+        }
+        const comparisonTestCase = testCase.comparisonCaseId
+          ? casesById.get(testCase.comparisonCaseId)
+          : null;
+        const comparisonResult = comparisonTestCase
+          ? resultsById.get(comparisonTestCase.id)
+          : null;
+        if (testCase.comparisonCaseId && !comparisonResult) {
+          item.judge = {
+            ok: false,
+            verdict: 'semantic_pair_unavailable',
+            score: 0,
+            error: `comparison_case_unavailable:${scrubForPublic(testCase.comparisonCaseId)}`,
+          };
+          continue;
+        }
+        item.judge = await runJudge({
+          args,
+          token: qaAuth.accessToken,
+          testCase,
+          result: item.private.result,
+          comparisonResult,
+          comparisonTestCase,
+        });
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        const judgeDelta = readFrameDelta(offsets);
+        offsets = judgeDelta.afterOffsets;
+      }
+    }
   } finally {
     if (qaAuth) {
       await qaAuth.close().catch(() => {});
@@ -1797,6 +1977,7 @@ async function main() {
 
   if (
     summary.failed > 0 ||
+    (summary.semanticRequired && summary.judged !== summary.total) ||
     summary.semanticPartial > 0 ||
     summary.semanticFail > 0 ||
     summary.duplicateResponseQualityFailures.length > 0 ||
@@ -1861,7 +2042,9 @@ function summarizeRun(privateRun) {
   return {
     generatedAt: privateRun.generatedAt,
     status:
-      privateRun.browserProbe?.ok &&
+      privateRun.args?.semanticRequired && judged !== cases.length
+        ? 'semantic_judge_required'
+        : privateRun.browserProbe?.ok &&
       failed === 0 &&
       judged === cases.length &&
       semanticPartial === 0 &&
@@ -1873,6 +2056,7 @@ function summarizeRun(privateRun) {
           ? 'completed_native_surface_evidence_without_semantic_judge'
         : 'completed_with_failures_or_gaps',
     browserOk: Boolean(privateRun.browserProbe?.ok),
+    semanticRequired: Boolean(privateRun.args?.semanticRequired),
     total: cases.length,
     completed,
     failed,
@@ -1985,7 +2169,17 @@ function writePublicReport({ args, summary, privateRun, privateJsonPath }) {
   fs.writeFileSync(args.publicReport, `${lines.join('\n')}\n`);
 }
 
-main().catch((error) => {
-  console.error(scrubForPublic(error.stack || error.message || String(error)));
-  process.exit(1);
-});
+module.exports = {
+  buildJudgePrompt,
+  buildText,
+  flattenPromptCases,
+  scoreNativeDecisionQualityJudgment,
+  summarizeRun,
+};
+
+if (require.main === module) {
+  main().catch((error) => {
+    console.error(scrubForPublic(error.stack || error.message || String(error)));
+    process.exit(1);
+  });
+}

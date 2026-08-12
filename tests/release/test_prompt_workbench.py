@@ -21,7 +21,7 @@ WORKBENCH_BACKEND = REPO_ROOT / "viventium_v0_4" / "prompt-workbench" / "backend
 if str(WORKBENCH_BACKEND) not in sys.path:
     sys.path.insert(0, str(WORKBENCH_BACKEND))
 
-from prompt_workbench import drafts, import_mapper, periphery_snapshots, prompt_service, promptfoo_adapter, scheduled_prompts, sync_engine  # noqa: E402
+from prompt_workbench import cognitive_integrity, drafts, import_mapper, periphery_snapshots, prompt_service, promptfoo_adapter, scheduled_prompts, sync_engine  # noqa: E402
 from prompt_workbench import evals  # noqa: E402
 from prompt_workbench.paths import resolve_repo_path  # noqa: E402
 from prompt_workbench.runtime_env import load_viventium_runtime_env  # noqa: E402
@@ -87,6 +87,638 @@ def test_workbench_render_matches_existing_prompt_registry() -> None:
 
     assert actual == expected
     assert "# Identity" in actual
+
+
+def test_cognitive_integrity_contract_distinguishes_worker_and_host_tools() -> None:
+    payload = {
+        "endpoints": {
+            "agents": {
+                "providerCapabilities": {
+                    "glasshive-harness": {
+                        "worker_native_tools": True,
+                        "host_tools_transport": "broker_mcp",
+                        "host_tools": ["file_search"],
+                    }
+                }
+            }
+        },
+        "memory": {
+            "tokenLimit": 8000,
+            "keyLimits": {"world": 1200, "preferences": 600},
+            "readProfile": {
+                "tokenLimit": 8000,
+                "keyLimits": {"world": 1200, "preferences": 600},
+            },
+        },
+    }
+
+    contract = cognitive_integrity._provider_and_memory_contract(payload)
+
+    assert contract["providerCapabilityTransport"]["status"] == "ok"
+    assert contract["memoryExposure"]["status"] == "ok"
+
+
+def test_cognitive_integrity_imports_from_workbench_launch_path(tmp_path: Path) -> None:
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(WORKBENCH_BACKEND)
+
+    completed = subprocess.run(
+        [sys.executable, "-c", "import prompt_workbench.cognitive_integrity"],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+
+
+def test_cognitive_integrity_contract_blocks_ambiguous_tools_and_hidden_memory() -> None:
+    payload = {
+        "endpoints": {
+            "agents": {
+                "providerCapabilities": {
+                    "glasshive-harness": {"native_tools": True}
+                }
+            }
+        },
+        "memory": {
+            "tokenLimit": 8000,
+            "keyLimits": {"world": 1200},
+            "readProfile": {"tokenLimit": 2200, "keyLimits": {"world": 320}},
+        },
+    }
+
+    contract = cognitive_integrity._provider_and_memory_contract(payload)
+
+    assert contract["providerCapabilityTransport"]["status"] == "blocked"
+    assert "ambiguous_native_tools_field_present" in contract["providerCapabilityTransport"]["reasons"]
+    assert contract["memoryExposure"]["status"] == "blocked"
+    assert "read_total_below_storage_total" in contract["memoryExposure"]["reasons"]
+
+
+def test_cognitive_integrity_contract_blocks_absent_memory_configuration() -> None:
+    contract = cognitive_integrity._provider_and_memory_contract(
+        {
+            "endpoints": {
+                "agents": {
+                    "providerCapabilities": {
+                        "glasshive-harness": {
+                            "worker_native_tools": True,
+                            "host_tools_transport": "broker_mcp",
+                            "host_tools": ["file_search"],
+                        }
+                    }
+                }
+            }
+        }
+    )
+
+    assert contract["memoryExposure"]["status"] == "blocked"
+    assert "memory_config_missing" in contract["memoryExposure"]["reasons"]
+
+
+def test_cognitive_integrity_blocks_failed_nightly_even_when_definition_is_active(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def list_scheduled_prompts(**kwargs: object) -> dict[str, object]:
+        captured.update(kwargs)
+        return {
+            "scheduledPrompts": [
+                {
+                    "templateId": scheduled_prompts.NIGHTLY_TEMPLATE_ID,
+                    "active": True,
+                    "lastStatus": "error",
+                    "executor": "glasshive_host",
+                    "executionProfile": "codex-cli",
+                    "latestScheduledRun": {
+                        "status": "failed",
+                        "triggerKind": "scheduled",
+                        "triggerSource": "scheduler_loop",
+                        "startedAt": "2026-08-08T07:00:17Z",
+                        "errorClass": "glasshive_evidence_check_failed",
+                    },
+                    "recentRuns": [
+                        {"status": "failed", "errorClass": "glasshive_evidence_check_failed"}
+                    ],
+                }
+            ]
+        }
+
+    monkeypatch.setattr(
+        cognitive_integrity.scheduled_prompts,
+        "list_scheduled_prompts",
+        list_scheduled_prompts,
+    )
+
+    result = cognitive_integrity._nightly_status("synthetic-user")
+
+    assert result["status"] == "blocked"
+    assert result["latestRunFailure"] is True
+    assert result["lastErrorClass"] == "glasshive_evidence_check_failed"
+    assert captured["read_only"] is True
+
+
+def test_cognitive_integrity_does_not_let_manual_recovery_mask_failed_scheduled_nightly(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def list_scheduled_prompts(**_: object) -> dict[str, object]:
+        return {
+            "scheduledPrompts": [
+                {
+                    "templateId": scheduled_prompts.NIGHTLY_TEMPLATE_ID,
+                    "active": True,
+                    "lastStatus": "completed",
+                    "executor": "glasshive_host",
+                    "executionProfile": "codex-cli",
+                    "latestScheduledRun": {
+                        "status": "failed",
+                        "triggerKind": "scheduled",
+                        "triggerSource": "scheduler_loop",
+                        "startedAt": "2026-08-08T07:00:17Z",
+                        "errorClass": "glasshive_evidence_check_failed",
+                    },
+                    "latestManualRun": {
+                        "status": "completed",
+                        "triggerKind": "manual",
+                        "triggerSource": "workbench_manual",
+                        "startedAt": "2026-08-08T15:46:44Z",
+                    },
+                    "recentRuns": [
+                        {
+                            "status": "completed",
+                            "triggerKind": "manual",
+                            "startedAt": "2026-08-08T15:46:44Z",
+                        },
+                        {
+                            "status": "failed",
+                            "triggerKind": "scheduled",
+                            "startedAt": "2026-08-08T07:00:17Z",
+                            "errorClass": "glasshive_evidence_check_failed",
+                        },
+                    ],
+                }
+            ]
+        }
+
+    monkeypatch.setattr(
+        cognitive_integrity.scheduled_prompts,
+        "list_scheduled_prompts",
+        list_scheduled_prompts,
+    )
+
+    result = cognitive_integrity._nightly_status("synthetic-user")
+
+    assert result["status"] == "blocked"
+    assert result["latestScheduledStatus"] == "failed"
+    assert result["latestManualStatus"] == "completed"
+    assert result["manualRecoveryAfterScheduledFailure"] is True
+    assert result["lastErrorClass"] == "glasshive_evidence_check_failed"
+
+
+def test_cognitive_integrity_blocks_when_manual_runs_evict_scheduled_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def list_scheduled_prompts(**_: object) -> dict[str, object]:
+        return {
+            "scheduledPrompts": [
+                {
+                    "templateId": scheduled_prompts.NIGHTLY_TEMPLATE_ID,
+                    "active": True,
+                    "lastStatus": "completed",
+                    "recentRuns": [
+                        {
+                            "status": "completed",
+                            "triggerKind": "manual",
+                            "startedAt": f"2026-08-08T1{minute}:00:00Z",
+                        }
+                        for minute in range(5)
+                    ],
+                }
+            ]
+        }
+
+    monkeypatch.setattr(
+        cognitive_integrity.scheduled_prompts,
+        "list_scheduled_prompts",
+        list_scheduled_prompts,
+    )
+
+    result = cognitive_integrity._nightly_status(
+        "synthetic-user",
+        now=datetime(2026, 8, 8, 16, 0, tzinfo=timezone.utc),
+    )
+
+    assert result["status"] == "blocked"
+    assert result["latestScheduledStatus"] is None
+    assert "scheduled_run_not_observed" in result["reasons"]
+
+
+def test_cognitive_integrity_blocks_stale_scheduled_nightly(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def list_scheduled_prompts(**_: object) -> dict[str, object]:
+        return {
+            "scheduledPrompts": [
+                {
+                    "templateId": scheduled_prompts.NIGHTLY_TEMPLATE_ID,
+                    "active": True,
+                    "lastStatus": "completed",
+                    "latestScheduledRun": {
+                        "status": "completed",
+                        "triggerKind": "scheduled",
+                        "startedAt": "2026-08-05T07:00:00Z",
+                    },
+                    "recentRuns": [],
+                }
+            ]
+        }
+
+    monkeypatch.setattr(
+        cognitive_integrity.scheduled_prompts,
+        "list_scheduled_prompts",
+        list_scheduled_prompts,
+    )
+
+    result = cognitive_integrity._nightly_status(
+        "synthetic-user",
+        now=datetime(2026, 8, 8, 16, 0, tzinfo=timezone.utc),
+    )
+
+    assert result["status"] == "blocked"
+    assert "scheduled_run_stale" in result["reasons"]
+    assert result["latestScheduledAt"] == "2026-08-05T07:00:00Z"
+
+
+def test_cognitive_integrity_rejects_a_projected_nightly_without_scheduler_provenance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        cognitive_integrity.scheduled_prompts,
+        "list_scheduled_prompts",
+        lambda **_: {
+            "scheduledPrompts": [
+                {
+                    "templateId": scheduled_prompts.NIGHTLY_TEMPLATE_ID,
+                    "active": True,
+                    "latestScheduledRun": {
+                        "status": "completed",
+                        "triggerKind": "unknown",
+                        "triggerSource": "scheduler_loop",
+                        "startedAt": "2026-08-08T07:00:00Z",
+                    },
+                    "recentRuns": [],
+                }
+            ]
+        },
+    )
+
+    result = cognitive_integrity._nightly_status(
+        "synthetic-user",
+        now=datetime(2026, 8, 8, 8, 0, tzinfo=timezone.utc),
+    )
+
+    assert result["status"] == "blocked"
+    assert "scheduled_run_provenance_invalid" in result["reasons"]
+
+
+def test_scheduling_db_path_honors_selected_app_support_root(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.delenv("SCHEDULING_DB_PATH", raising=False)
+    monkeypatch.setenv("VIVENTIUM_APP_SUPPORT_DIR", str(tmp_path))
+
+    assert scheduled_prompts._scheduling_db_path() == str(
+        tmp_path / "state" / "runtime" / "isolated" / "scheduling" / "schedules.db"
+    )
+
+
+def test_cognitive_integrity_blocks_codex_symlink_that_hides_enabled_companion(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app_support = tmp_path / "app-support"
+    runtime_dir = app_support / "runtime"
+    runtime_dir.mkdir(parents=True)
+    bundle_cli = tmp_path / "bundle" / "codex"
+    bundle_cli.parent.mkdir()
+    bundle_cli.write_text("#!/bin/sh\necho 'code_mode_host stable true'\n", encoding="utf-8")
+    bundle_cli.chmod(0o755)
+    companion = bundle_cli.parent / "codex-code-mode-host"
+    companion.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    companion.chmod(0o755)
+    invocation = tmp_path / "bin" / "codex"
+    invocation.parent.mkdir()
+    invocation.symlink_to(bundle_cli)
+    (runtime_dir / "runtime.env").write_text(f"WPR_CODEX_BIN={invocation}\n", encoding="utf-8")
+    monkeypatch.setattr(cognitive_integrity, "APP_SUPPORT_VIVENTIUM_DIR", app_support)
+
+    result = cognitive_integrity._runtime_codex_worker_status()
+
+    assert result["status"] == "blocked"
+    assert result["binaryInvocation"] == "symlink"
+    assert result["companionReady"] is False
+    assert result["reasons"] == ["enabled_code_mode_host_companion_missing_at_invocation_path"]
+
+    (runtime_dir / "runtime.env").write_text(f"WPR_CODEX_BIN={bundle_cli}\n", encoding="utf-8")
+    assert cognitive_integrity._runtime_codex_worker_status()["status"] == "ok"
+
+
+def test_cognitive_integrity_rejects_successful_but_unparseable_codex_feature_probe(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app_support = tmp_path / "app-support"
+    runtime_dir = app_support / "runtime"
+    runtime_dir.mkdir(parents=True)
+    binary = tmp_path / "codex"
+    binary.write_text("#!/bin/sh\necho 'not structured feature output'\n", encoding="utf-8")
+    binary.chmod(0o755)
+    (runtime_dir / "runtime.env").write_text(f"WPR_CODEX_BIN={binary}\n", encoding="utf-8")
+    monkeypatch.setattr(cognitive_integrity, "APP_SUPPORT_VIVENTIUM_DIR", app_support)
+
+    result = cognitive_integrity._runtime_codex_worker_status()
+
+    assert result == {"status": "blocked", "reasons": ["codex_feature_probe_unparseable"]}
+
+
+def test_cognitive_integrity_requires_configured_non_admin_qa_account(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app_support = tmp_path / "app-support"
+    runtime_dir = app_support / "runtime"
+    runtime_dir.mkdir(parents=True)
+    monkeypatch.setattr(cognitive_integrity, "APP_SUPPORT_VIVENTIUM_DIR", app_support)
+
+    assert cognitive_integrity._qa_test_account_status()["reasons"] == [
+        "qa_test_account_not_configured"
+    ]
+
+    (runtime_dir / "runtime.env").write_text(
+        "VIVENTIUM_QA_EMAIL=qa-person@example.com\n"
+        "VIVENTIUM_LOCAL_MONGO_PORT=27117\n"
+        "VIVENTIUM_LOCAL_MONGO_DB=LibreChatViventium\n",
+        encoding="utf-8",
+    )
+    captured: dict[str, object] = {}
+
+    def fake_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        captured["command"] = command
+        captured["input"] = kwargs.get("input")
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout='{"count":1,"role":"USER","userId":"synthetic-user-id"}\n',
+            stderr="",
+        )
+
+    monkeypatch.setattr(cognitive_integrity.subprocess, "run", fake_run)
+
+    result = cognitive_integrity._qa_test_account_status()
+
+    assert result["status"] == "ok"
+    assert result["accountCount"] == 1
+    assert "qa-person@example.com" not in " ".join(captured["command"])
+    assert "qa-person@example.com" in str(captured["input"])
+
+
+def test_cognitive_integrity_blocks_a_degraded_per_turn_memory_writer(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import hashlib
+    import json
+
+    app_support = tmp_path / "app-support"
+    health_dir = app_support / "state" / "memory-continuity-health"
+    health_dir.mkdir(parents=True)
+    user_hash = hashlib.sha256(b"synthetic-user-id").hexdigest()[:24]
+    (health_dir / f"{user_hash}.read.json").write_text(
+        json.dumps({"status": "ok", "path": "read", "updatedAt": "2026-08-08T10:00:00Z"}),
+        encoding="utf-8",
+    )
+    (health_dir / f"{user_hash}.writer.json").write_text(
+        json.dumps(
+            {
+                "status": "degraded",
+                "path": "writer",
+                "reason": "provider_auth",
+                "updatedAt": "2026-08-08T10:01:00Z",
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(cognitive_integrity, "APP_SUPPORT_VIVENTIUM_DIR", app_support)
+
+    result = cognitive_integrity._memory_continuity_runtime_status(
+        user_hash,
+        now=datetime.fromisoformat("2026-08-08T10:02:00+00:00"),
+    )
+
+    assert result["savedMemoryRead"]["status"] == "ok"
+    assert result["savedMemoryRead"]["scope"] == "configured_qa_test_account"
+    assert result["immediateMemoryWriter"]["status"] == "blocked"
+    assert result["immediateMemoryWriter"]["reason"] == "provider_auth"
+    assert result["immediateMemoryWriter"]["scope"] == "configured_qa_test_account"
+
+
+def test_cognitive_integrity_blocks_missing_and_stale_memory_receipts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app_support = tmp_path / "app-support"
+    health_dir = app_support / "state" / "memory-continuity-health"
+    health_dir.mkdir(parents=True)
+    user_hash = "synthetic-user-hash"
+    monkeypatch.setattr(cognitive_integrity, "APP_SUPPORT_VIVENTIUM_DIR", app_support)
+
+    missing = cognitive_integrity._memory_continuity_runtime_status(
+        user_hash,
+        now=datetime(2026, 8, 8, 16, 0, tzinfo=timezone.utc),
+    )
+    assert missing["savedMemoryRead"]["status"] == "blocked"
+    assert missing["savedMemoryRead"]["reason"] == "no_runtime_receipt"
+    assert missing["immediateMemoryWriter"]["status"] == "blocked"
+
+    stale_payload = {
+        "status": "ok",
+        "updatedAt": "2026-08-06T10:00:00Z",
+        "provider": "openai",
+        "model": "synthetic-model",
+        "effort": "medium",
+    }
+    for path_key in ("read", "writer"):
+        (health_dir / f"{user_hash}.{path_key}.json").write_text(
+            json.dumps({**stale_payload, "path": path_key}),
+            encoding="utf-8",
+        )
+
+    stale = cognitive_integrity._memory_continuity_runtime_status(
+        user_hash,
+        now=datetime(2026, 8, 8, 16, 0, tzinfo=timezone.utc),
+    )
+    assert stale["savedMemoryRead"]["status"] == "blocked"
+    assert stale["savedMemoryRead"]["reason"] == "runtime_receipt_stale"
+    assert stale["immediateMemoryWriter"]["status"] == "blocked"
+    assert stale["immediateMemoryWriter"]["effort"] == "medium"
+
+
+def test_cognitive_integrity_blocks_unobserved_memory_paths_in_joined_report(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(cognitive_integrity, "_safe_runtime_drift", lambda _path: {"status": "ok"})
+    monkeypatch.setattr(cognitive_integrity, "_safe_prompt_drift", lambda: {"status": "ok"})
+    monkeypatch.setattr(
+        cognitive_integrity,
+        "load_source_of_truth_librechat_yaml",
+        lambda: {
+            "endpoints": {
+                "agents": {
+                    "providerCapabilities": {
+                        "glasshive-harness": {
+                            "worker_native_tools": True,
+                            "host_tools_transport": "broker_mcp",
+                            "host_tools": ["file_search"],
+                        }
+                    }
+                }
+            },
+            "memory": {
+                "tokenLimit": 1,
+                "keyLimits": {"core": 1},
+                "readProfile": {"tokenLimit": 1, "keyLimits": {"core": 1}},
+            },
+        },
+    )
+    monkeypatch.setattr(cognitive_integrity, "_live_contract", cognitive_integrity.load_source_of_truth_librechat_yaml)
+    monkeypatch.setattr(cognitive_integrity, "_runtime_codex_worker_status", lambda: {"status": "ok"})
+    monkeypatch.setattr(cognitive_integrity, "_nightly_status", lambda _user: {"status": "ok"})
+    monkeypatch.setattr(
+        cognitive_integrity,
+        "_qa_test_account_status",
+        lambda: {"status": "ok", "accountHash": "synthetic-hash"},
+    )
+    monkeypatch.setattr(
+        cognitive_integrity,
+        "_memory_continuity_runtime_status",
+        lambda _hash: {
+            "savedMemoryRead": {"status": "not_observed"},
+            "immediateMemoryWriter": {"status": "not_observed"},
+        },
+    )
+    monkeypatch.setattr(cognitive_integrity, "_memory_hardening_status", lambda: {"status": "ok"})
+    monkeypatch.setattr(cognitive_integrity, "_conversation_recall_runtime_status", lambda: {"status": "ok"})
+
+    result = cognitive_integrity.cognitive_integrity_report(user_id="synthetic-user")
+
+    assert result["status"] == "blocked"
+    assert "qaAccountSavedMemoryReadRuntime" in result["blockingChecks"]
+    assert "qaAccountImmediateMemoryWriterRuntime" in result["blockingChecks"]
+
+
+def test_cognitive_integrity_recall_health_requires_a_structured_up_response(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app_support = tmp_path / "app-support"
+    runtime_dir = app_support / "runtime"
+    runtime_dir.mkdir(parents=True)
+    (runtime_dir / "runtime.env").write_text(
+        "RAG_API_URL=http://127.0.0.1:9999\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(cognitive_integrity, "APP_SUPPORT_VIVENTIUM_DIR", app_support)
+
+    class FakeResponse:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return b"[]"
+
+    monkeypatch.setattr(cognitive_integrity.urllib.request, "urlopen", lambda *_args, **_kwargs: FakeResponse())
+
+    result = cognitive_integrity._conversation_recall_runtime_status()
+
+    assert result == {
+        "status": "blocked",
+        "reason": "recall_health_invalid_payload",
+        "httpStatus": 200,
+    }
+
+
+def test_cognitive_integrity_recall_health_accepts_only_explicit_up(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app_support = tmp_path / "app-support"
+    runtime_dir = app_support / "runtime"
+    runtime_dir.mkdir(parents=True)
+    (runtime_dir / "runtime.env").write_text(
+        "RAG_API_URL=http://127.0.0.1:9999\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(cognitive_integrity, "APP_SUPPORT_VIVENTIUM_DIR", app_support)
+
+    class FakeResponse:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return b'{"status":"UP"}'
+
+    monkeypatch.setattr(cognitive_integrity.urllib.request, "urlopen", lambda *_args, **_kwargs: FakeResponse())
+
+    result = cognitive_integrity._conversation_recall_runtime_status()
+
+    assert result["status"] == "ok"
+    assert result["declaredStatus"] == "UP"
+
+
+def test_sync_status_lists_each_canonical_background_agent_prompt_unit() -> None:
+    source = prompt_service.source_agents_bundle()
+
+    rows = sync_engine._agent_rows(source=source, live=source, ledger={"records": {}})
+
+    background_rows = [row for row in rows if row["sourcePromptId"] != "main.conscious_agent"]
+    assert len(background_rows) == len(source["backgroundAgents"]) == 12
+    assert {row["sourcePromptId"] for row in background_rows} == {
+        "cortex.background_analysis.execution",
+        "cortex.confirmation_bias.execution",
+        "cortex.deep_memory.execution",
+        "cortex.red_team.execution",
+        "cortex.deep_research.execution",
+        "cortex.online_tool_use.execution",
+        "cortex.parietal_cortex.execution",
+        "cortex.pattern_recognition.execution",
+        "cortex.emotional_resonance.execution",
+        "cortex.strategic_planning.execution",
+        "cortex.support.execution",
+        "cortex.google.execution",
+    }
+    assert all(row["state"] == "synced" for row in rows)
+
+
+def test_drift_board_never_substitutes_an_unrelated_agent_row() -> None:
+    source = (WORKBENCH_SRC / "components" / "DriftBoard.tsx").read_text(encoding="utf-8")
+
+    assert "?? rows[0]" not in source
+    assert "No managed live row for this prompt" in source
 
 
 def test_workbench_loads_canonical_runtime_env_without_overwriting_existing_values(
@@ -730,7 +1362,7 @@ def test_scheduled_prompt_object_has_drafts_preview_and_execution_config_ui() ->
     assert "sourceKind !== 'user_schedule'" in draft_source
     assert "Workbench variable rendering is not applied" in draft_source
     assert "selectedScheduledPrompt={selectedScheduledPrompt}" in dock_source
-    assert "includeSchedule: !isUserLevelSchedule || scheduleTouched" in schedule_source
+    assert "includeSchedule: !draft.id || scheduleTouched" in schedule_source
     assert "includeMemoryWriteMode: !isUserLevelSchedule" in schedule_source
     assert "setScheduleTouched(true)" in schedule_source
     assert "schedule-execution-card" in schedule_source
@@ -814,27 +1446,32 @@ def test_scheduled_prompt_template_endpoint_and_user_scoping(tmp_path: Path, mon
     assert client.patch(f"/api/scheduled-prompts/{other['id']}", json={"active": True}).status_code == 403
 
 
-def test_nightly_prompt_template_prefers_configured_default_timezone(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("TZ", raising=False)
+def test_nightly_prompt_template_uses_current_system_timezone_over_compiled_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setenv("VIVENTIUM_DEFAULT_TIMEZONE", "America/Toronto")
+    monkeypatch.setattr(scheduled_prompts, "_system_timezone_name", lambda: "Europe/Paris")
 
     template = scheduled_prompts.nightly_prompt_template()
 
     assert template["schedule"] == {
         "type": "daily",
         "time": "03:00",
-        "timezone": "America/Toronto",
+        "timezone": "Europe/Paris",
     }
     assert template["memoryWriteMode"] == "off"
 
 
-def test_nightly_prompt_template_uses_public_safe_utc_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_nightly_prompt_template_uses_current_system_timezone_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.delenv("TZ", raising=False)
     monkeypatch.delenv("VIVENTIUM_DEFAULT_TIMEZONE", raising=False)
+    monkeypatch.setattr(scheduled_prompts, "_system_timezone_name", lambda: "Europe/Paris")
 
     template = scheduled_prompts.nightly_prompt_template()
 
-    assert template["schedule"]["timezone"] == "UTC"
+    assert template["schedule"]["timezone"] == "Europe/Paris"
 
 
 def test_nightly_prompt_template_requests_private_risk_radar_sidecar() -> None:
@@ -891,13 +1528,18 @@ def test_nightly_dispatch_render_keeps_private_evidence_out_of_the_instruction(
     assert len(rendered["rendered"]) < 8_000
 
 
-def test_nightly_seed_reconciles_existing_builtin_schedule_timezone(
+def test_nightly_seed_preserves_existing_builtin_schedule_timezone_and_disabled_state(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("SCHEDULING_DB_PATH", str(tmp_path / "schedules.db"))
     monkeypatch.setenv("VIVENTIUM_PRIVATE_USER_DATA_DIR", str(tmp_path / "private"))
     monkeypatch.setenv("VIVENTIUM_LOCAL_MACHINE_GLASSHIVE_ROOT", str(tmp_path / "glasshive"))
     monkeypatch.setenv("VIVENTIUM_DEFAULT_TIMEZONE", "America/Toronto")
+    monkeypatch.setattr(
+        scheduled_prompts, "_system_timezone_name", lambda: "America/Toronto"
+    )
+    monkeypatch.setenv("WPR_MODEL_HOST_CODEX_CLI", "gpt-test-scheduled")
+    monkeypatch.setenv("WPR_CODEX_CLI_REASONING_EFFORT", "xhigh")
     monkeypatch.setattr(scheduled_prompts, "_query_mongo_json", lambda script: None)
 
     template = scheduled_prompts.nightly_prompt_template()
@@ -915,23 +1557,78 @@ def test_nightly_seed_reconciles_existing_builtin_schedule_timezone(
     reseeded = scheduled_prompts.seed_nightly_prompt(
         user_id="startup-admin",
         email="startup-admin@example.test",
+        active=True,
     )
 
-    expected_schedule = {"type": "daily", "time": "03:00", "timezone": "America/Toronto"}
+    expected_schedule = {"type": "daily", "time": "03:00", "timezone": "America/Los_Angeles"}
     assert reseeded["id"] == existing["id"]
     assert reseeded["schedule"] == expected_schedule
+    assert reseeded["active"] is False
     stored = scheduled_prompts.storage().get_scheduled_prompt_definition(existing["id"])
     task = scheduled_prompts.storage().get_task("startup-admin", stored["task_id"])
     assert stored["schedule"] == expected_schedule
     assert task["schedule"] == expected_schedule
+    assert stored["timezone"] == "America/Los_Angeles"
+    assert stored["metadata"]["schedule_timezone_mode"] == "fixed"
+    assert stored["active"] == 0
+    assert task["active"] == 0
 
 
-def test_nightly_seed_reconciles_existing_builtin_prompt_into_scheduler_task(
+def test_nightly_seed_migrates_legacy_untagged_default_after_travel(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("SCHEDULING_DB_PATH", str(tmp_path / "schedules.db"))
     monkeypatch.setenv("VIVENTIUM_PRIVATE_USER_DATA_DIR", str(tmp_path / "private"))
     monkeypatch.setenv("VIVENTIUM_LOCAL_MACHINE_GLASSHIVE_ROOT", str(tmp_path / "glasshive"))
+    monkeypatch.setenv("WPR_MODEL_HOST_CODEX_CLI", "gpt-test-scheduled")
+    monkeypatch.setenv("WPR_CODEX_CLI_REASONING_EFFORT", "xhigh")
+    monkeypatch.setattr(scheduled_prompts, "_query_mongo_json", lambda script: None)
+    current_timezone = ["America/Toronto"]
+    monkeypatch.setattr(
+        scheduled_prompts, "_system_timezone_name", lambda: current_timezone[0]
+    )
+
+    existing = scheduled_prompts.create_scheduled_prompt(
+        {
+            **scheduled_prompts.nightly_prompt_template(),
+            "templateId": scheduled_prompts.NIGHTLY_TEMPLATE_ID,
+        },
+        user_id="startup-admin",
+        email="startup-admin@example.test",
+    )
+    store = scheduled_prompts.storage()
+    stored = store.get_scheduled_prompt_definition(existing["id"])
+    legacy_metadata = dict(stored.get("metadata") or {})
+    legacy_metadata.pop("schedule_timezone_mode", None)
+    store.update_scheduled_prompt_definition(existing["id"], {"metadata": legacy_metadata})
+
+    current_timezone[0] = "Europe/Amsterdam"
+    reseeded = scheduled_prompts.seed_nightly_prompt(
+        user_id="startup-admin",
+        email="startup-admin@example.test",
+    )
+
+    expected = {"type": "daily", "time": "03:00", "timezone": "Europe/Amsterdam"}
+    stored = store.get_scheduled_prompt_definition(existing["id"])
+    task = store.get_task("startup-admin", stored["task_id"])
+    assert reseeded["schedule"] == expected
+    assert stored["schedule"] == expected
+    assert task["schedule"] == expected
+    assert stored["metadata"]["schedule_timezone_mode"] == "local"
+
+
+def test_nightly_seed_refreshes_managed_local_timezone_without_resetting_user_fields(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("SCHEDULING_DB_PATH", str(tmp_path / "schedules.db"))
+    monkeypatch.setenv("VIVENTIUM_PRIVATE_USER_DATA_DIR", str(tmp_path / "private"))
+    monkeypatch.setenv("VIVENTIUM_LOCAL_MACHINE_GLASSHIVE_ROOT", str(tmp_path / "glasshive"))
+    current_timezone = ["America/Toronto"]
+    monkeypatch.setattr(
+        scheduled_prompts, "_system_timezone_name", lambda: current_timezone[0]
+    )
+    monkeypatch.setenv("WPR_MODEL_HOST_CODEX_CLI", "gpt-test-scheduled")
+    monkeypatch.setenv("WPR_CODEX_CLI_REASONING_EFFORT", "xhigh")
     monkeypatch.setattr(scheduled_prompts, "_query_mongo_json", lambda script: None)
 
     template = scheduled_prompts.nightly_prompt_template()
@@ -939,23 +1636,193 @@ def test_nightly_seed_reconciles_existing_builtin_prompt_into_scheduler_task(
         {
             **template,
             "templateId": scheduled_prompts.NIGHTLY_TEMPLATE_ID,
-            "promptText": "legacy scratchpad-only nightly prompt\n",
+            "title": "My nightly review",
+            "promptText": "Keep this user-authored nightly prompt",
             "active": False,
         },
         user_id="startup-admin",
         email="startup-admin@example.test",
     )
+    current_timezone[0] = "Europe/Amsterdam"
 
     reseeded = scheduled_prompts.seed_nightly_prompt(
         user_id="startup-admin",
         email="startup-admin@example.test",
+        active=True,
     )
 
     stored = scheduled_prompts.storage().get_scheduled_prompt_definition(existing["id"])
     task = scheduled_prompts.storage().get_task("startup-admin", stored["task_id"])
+    expected = {"type": "daily", "time": "03:00", "timezone": "Europe/Amsterdam"}
+    assert reseeded["schedule"] == expected
+    assert stored["schedule"] == expected
+    assert task["schedule"] == expected
+    assert stored["metadata"]["schedule_timezone_mode"] == "local"
+    assert stored["title"] == "My nightly review"
+    assert stored["prompt_text"] == "Keep this user-authored nightly prompt\n"
+    assert stored["active"] == 0
+    assert task["active"] == 0
+
+
+def test_nightly_prompt_update_preserves_local_mode_until_schedule_is_explicit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("SCHEDULING_DB_PATH", str(tmp_path / "schedules.db"))
+    monkeypatch.setenv("VIVENTIUM_PRIVATE_USER_DATA_DIR", str(tmp_path / "private"))
+    monkeypatch.setenv("VIVENTIUM_LOCAL_MACHINE_GLASSHIVE_ROOT", str(tmp_path / "glasshive"))
+    monkeypatch.setenv("VIVENTIUM_DEFAULT_TIMEZONE", "America/Toronto")
+    monkeypatch.setattr(
+        scheduled_prompts, "_system_timezone_name", lambda: "America/Toronto"
+    )
+    monkeypatch.setattr(scheduled_prompts, "_query_mongo_json", lambda script: None)
+
+    created = scheduled_prompts.create_scheduled_prompt(
+        {
+            **scheduled_prompts.nightly_prompt_template(),
+            "templateId": scheduled_prompts.NIGHTLY_TEMPLATE_ID,
+        },
+        user_id="startup-admin",
+        email="startup-admin@example.test",
+    )
+    updated = scheduled_prompts.update_scheduled_prompt(
+        created["id"],
+        {"title": "Updated without touching schedule"},
+        user_id="startup-admin",
+        email="startup-admin@example.test",
+    )
+    store = scheduled_prompts.storage()
+    stored = store.get_scheduled_prompt_definition(created["id"])
+    assert updated["schedule"] == {
+        "type": "daily",
+        "time": "03:00",
+        "timezone": "America/Toronto",
+    }
+    assert stored["metadata"]["schedule_timezone_mode"] == "local"
+
+    scheduled_prompts.update_scheduled_prompt(
+        created["id"],
+        {"schedule": dict(updated["schedule"])},
+        user_id="startup-admin",
+        email="startup-admin@example.test",
+    )
+    stored = store.get_scheduled_prompt_definition(created["id"])
+    assert stored["metadata"]["schedule_timezone_mode"] == "fixed"
+
+
+def test_scheduled_prompt_update_persists_registered_source_prompt_link(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from prompt_workbench.app import ScheduledPromptPatchRequest
+
+    assert ScheduledPromptPatchRequest(
+        sourcePromptId="scheduler.consciousness_continuity_opportunity"
+    ).model_dump()["sourcePromptId"] == "scheduler.consciousness_continuity_opportunity"
+
+    monkeypatch.setenv("SCHEDULING_DB_PATH", str(tmp_path / "schedules.db"))
+    monkeypatch.setenv("VIVENTIUM_PRIVATE_USER_DATA_DIR", str(tmp_path / "private"))
+    monkeypatch.setenv(
+        "VIVENTIUM_LOCAL_MACHINE_GLASSHIVE_ROOT", str(tmp_path / "glasshive")
+    )
+    monkeypatch.setattr(scheduled_prompts, "_query_mongo_json", lambda script: None)
+
+    created = scheduled_prompts.create_scheduled_prompt(
+        {
+            "title": "Continuity",
+            "promptText": "Orient, appraise, choose, act, observe, and reappraise.",
+            "executor": "viventium_agent",
+        },
+        user_id="startup-admin",
+        email="startup-admin@example.test",
+    )
+
+    updated = scheduled_prompts.update_scheduled_prompt(
+        created["id"],
+        {"sourcePromptId": "scheduler.consciousness_continuity_opportunity"},
+        user_id="startup-admin",
+        email="startup-admin@example.test",
+    )
+
+    stored = scheduled_prompts.storage().get_scheduled_prompt_definition(created["id"])
+    task = scheduled_prompts.storage().get_task("startup-admin", stored["task_id"])
+    assert updated["sourcePromptId"] == "scheduler.consciousness_continuity_opportunity"
+    assert stored["source_prompt_id"] == "scheduler.consciousness_continuity_opportunity"
+    assert (
+        task["metadata"]["workbench_scheduled_prompt"]["source_prompt_id"]
+        == "scheduler.consciousness_continuity_opportunity"
+    )
+    assert (
+        task["metadata"]["prompt_context"]["effective_prompt_id"]
+        == "scheduler.consciousness_continuity_opportunity"
+    )
+
+
+def test_nightly_seed_preserves_user_prompt_and_repairs_only_scheduler_task_plumbing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("SCHEDULING_DB_PATH", str(tmp_path / "schedules.db"))
+    monkeypatch.setenv("VIVENTIUM_PRIVATE_USER_DATA_DIR", str(tmp_path / "private"))
+    monkeypatch.setenv("VIVENTIUM_LOCAL_MACHINE_GLASSHIVE_ROOT", str(tmp_path / "glasshive"))
+    monkeypatch.setenv("WPR_MODEL_HOST_CODEX_CLI", "gpt-test-scheduled")
+    monkeypatch.setenv("WPR_CODEX_CLI_REASONING_EFFORT", "xhigh")
+    monkeypatch.setattr(scheduled_prompts, "_query_mongo_json", lambda script: None)
+
+    template = scheduled_prompts.nightly_prompt_template()
+    custom_prompt = "Keep this user-authored nightly prompt\n"
+    custom_schedule = {"type": "daily", "time": "04:30", "timezone": "Europe/Paris"}
+    existing = scheduled_prompts.create_scheduled_prompt(
+        {
+            **template,
+            "templateId": scheduled_prompts.NIGHTLY_TEMPLATE_ID,
+            "title": "My nightly review",
+            "promptText": custom_prompt,
+            "schedule": custom_schedule,
+            "active": False,
+            "memoryWriteMode": "propose",
+        },
+        user_id="startup-admin",
+        email="startup-admin@example.test",
+    )
+    store = scheduled_prompts.storage()
+    stored_before = store.get_scheduled_prompt_definition(existing["id"])
+    version_before = store.latest_scheduled_prompt_version(existing["id"])
+    store.update_task(
+        "startup-admin",
+        stored_before["task_id"],
+        {
+            "executor": "viventium_agent",
+            "prompt": "stale task mirror",
+            "schedule": {"type": "daily", "time": "01:00", "timezone": "UTC"},
+            "active": 1,
+            "last_run_at": "2026-07-10T08:00:00Z",
+            "last_status": "completed",
+            "last_generated_text": "preserved run summary",
+        },
+    )
+
+    reseeded = scheduled_prompts.seed_nightly_prompt(
+        user_id="startup-admin",
+        email="startup-admin@example.test",
+        active=True,
+    )
+
+    stored = store.get_scheduled_prompt_definition(existing["id"])
+    task = store.get_task("startup-admin", stored["task_id"])
+    version_after = store.latest_scheduled_prompt_version(existing["id"])
     assert reseeded["id"] == existing["id"]
-    assert "periphery/risk_radar/YYYY/MM" in stored["prompt_text"]
-    assert "periphery/risk_radar/YYYY/MM" in task["prompt"]
+    assert stored["title"] == "My nightly review"
+    assert stored["prompt_text"] == custom_prompt
+    assert stored["schedule"] == custom_schedule
+    assert stored["timezone"] == "Europe/Paris"
+    assert stored["active"] == 0
+    assert stored["memory_write_mode"] == "propose"
+    assert task["executor"] == "glasshive_host"
+    assert task["prompt"] == custom_prompt
+    assert task["schedule"] == custom_schedule
+    assert task["active"] == 0
+    assert task["last_run_at"] == "2026-07-10T08:00:00Z"
+    assert task["last_status"] == "completed"
+    assert task["last_generated_text"] == "preserved run summary"
+    assert version_after["id"] == version_before["id"]
 
 
 def test_nightly_seed_backfills_legacy_execution_metadata_without_resetting_profile(
@@ -1017,9 +1884,73 @@ def test_nightly_seed_backfills_legacy_execution_metadata_without_resetting_prof
     assert task["metadata"]["workbench_scheduled_prompt"]["execution_profile"] == "codex-cli"
     assert task["metadata"]["workbench_scheduled_prompt"]["execution_model"] == "gpt-test-scheduled"
     assert task["metadata"]["workbench_scheduled_prompt"]["reasoning_effort"] == "xhigh"
-    assert stored["memory_write_mode"] == "off"
-    assert task["metadata"]["workbench_scheduled_prompt"]["memory_write_mode"] == "off"
+    assert stored["metadata"]["execution"]["ignore_user_config"] is True
+    assert task["metadata"]["workbench_scheduled_prompt"]["ignore_user_config"] is True
+    assert stored["memory_write_mode"] == "propose"
+    assert task["metadata"]["workbench_scheduled_prompt"]["memory_write_mode"] == "propose"
     assert task["metadata"]["misfire_policy"] == scheduled_prompts.NIGHTLY_MISFIRE_POLICY
+
+
+@pytest.mark.parametrize(
+    ("missing_field", "env_name", "error_fragment"),
+    [
+        ("execution_model", "WPR_MODEL_HOST_CODEX_CLI", "WPR_MODEL_HOST_CODEX_CLI or execution_model"),
+        (
+            "reasoning_effort",
+            "WPR_CODEX_CLI_REASONING_EFFORT",
+            "WPR_CODEX_CLI_REASONING_EFFORT or reasoning_effort",
+        ),
+    ],
+)
+def test_nightly_seed_fails_cleanly_when_legacy_execution_tuple_and_env_are_missing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    missing_field: str,
+    env_name: str,
+    error_fragment: str,
+) -> None:
+    monkeypatch.setenv("SCHEDULING_DB_PATH", str(tmp_path / "schedules.db"))
+    monkeypatch.setenv("VIVENTIUM_PRIVATE_USER_DATA_DIR", str(tmp_path / "private"))
+    monkeypatch.setenv("VIVENTIUM_LOCAL_MACHINE_GLASSHIVE_ROOT", str(tmp_path / "glasshive"))
+    monkeypatch.setenv("WPR_MODEL_HOST_CODEX_CLI", "gpt-test-scheduled")
+    monkeypatch.setenv("WPR_CODEX_CLI_REASONING_EFFORT", "xhigh")
+    monkeypatch.setattr(scheduled_prompts, "_query_mongo_json", lambda script: None)
+
+    existing = scheduled_prompts.create_scheduled_prompt(
+        {
+            **scheduled_prompts.nightly_prompt_template(),
+            "templateId": scheduled_prompts.NIGHTLY_TEMPLATE_ID,
+            "active": False,
+        },
+        user_id="startup-admin",
+        email="startup-admin@example.test",
+    )
+    store = scheduled_prompts.storage()
+    definition = store.get_scheduled_prompt_definition(existing["id"])
+    definition_metadata = dict(definition["metadata"])
+    definition_execution = dict(definition_metadata["execution"])
+    definition_execution.pop(missing_field)
+    definition_metadata["execution"] = definition_execution
+    store.update_scheduled_prompt_definition(existing["id"], {"metadata": definition_metadata})
+
+    task = store.get_task("startup-admin", definition["task_id"])
+    task_metadata = dict(task["metadata"])
+    task_execution = dict(task_metadata["execution"])
+    task_execution.pop(missing_field)
+    task_metadata["execution"] = task_execution
+    task_workbench = dict(task_metadata["workbench_scheduled_prompt"])
+    task_workbench.pop(missing_field)
+    task_metadata["workbench_scheduled_prompt"] = task_workbench
+    store.update_task("startup-admin", definition["task_id"], {"metadata": task_metadata})
+    monkeypatch.delenv(env_name, raising=False)
+    if env_name == "WPR_MODEL_HOST_CODEX_CLI":
+        monkeypatch.delenv("WPR_MODEL_CODEX_CLI", raising=False)
+
+    with pytest.raises(RuntimeError, match=error_fragment):
+        scheduled_prompts.seed_nightly_prompt(
+            user_id="startup-admin",
+            email="startup-admin@example.test",
+        )
 
 
 def test_scheduled_automation_tuple_is_config_driven_and_profile_aware(
@@ -1088,6 +2019,8 @@ def test_scheduled_prompt_crud_manual_run_and_private_tables(tmp_path: Path, mon
     manual = client.post(f"/api/scheduled-prompts/{prompt_id}/manual-runs")
     assert manual.status_code == 200
     assert manual.json()["run"]["status"] == "queued"
+    assert manual.json()["run"]["triggerKind"] == "manual"
+    assert manual.json()["run"]["triggerSource"] == "workbench_manual"
     assert manual.json()["run"]["privateDetailPointer"].startswith("private://scheduled-prompt-run/")
     assert str(tmp_path) not in json.dumps(manual.json())
     duplicate = client.post(f"/api/scheduled-prompts/{prompt_id}/manual-runs")
@@ -1106,6 +2039,8 @@ def test_scheduled_prompt_crud_manual_run_and_private_tables(tmp_path: Path, mon
     assert task["metadata"]["workbench_scheduled_prompt"]["execution_model"] == "gpt-5.6-sol"
     assert task["metadata"]["workbench_scheduled_prompt"]["reasoning_effort"] == "xhigh"
     assert runs and Path(runs[0]["private_detail_path"]).exists()
+    assert runs[0]["trigger_kind"] == "manual"
+    assert runs[0]["trigger_source"] == "workbench_manual"
     assert "mongodb://" not in Path(runs[0]["private_detail_path"]).read_text(encoding="utf-8")
 
 
@@ -1134,6 +2069,272 @@ def test_public_scheduled_run_exposes_requested_and_effective_effort_only() -> N
     assert "private" not in public
 
 
+def test_public_scheduled_run_exposes_backward_compatible_audit_outcomes() -> None:
+    public = scheduled_prompts._public_run(
+        {
+            "run_id": "run-audit-1",
+            "status": "completed",
+            "executor": "viventium_agent",
+            "disposition": "silent",
+            "started_at": "2026-08-10T13:00:00Z",
+            "completed_at": "2026-08-10T13:00:01.250Z",
+            "execution_snapshot_json": json.dumps(
+                {
+                    "model": "gpt-5.6-sol",
+                    "reasoning_effort": "xhigh",
+                    "usage": {"input_tokens": 120, "output_tokens": 30, "cost_usd": 0.012},
+                    "degraded_dependencies": ["calendar unavailable"],
+                    "private_prompt": "must not surface",
+                }
+            ),
+            "channel_outcomes_json": json.dumps(
+                {
+                    "workbench": {"outcome": "audit_only", "reason": "audit_sink"},
+                    "telegram": {
+                        "outcome": "suppressed",
+                        "reason": "no_useful_output",
+                        "generated_text": "must not surface",
+                    },
+                }
+            ),
+        }
+    )
+
+    assert public["disposition"] == "silent"
+    assert public["effectiveModel"] == "gpt-5.6-sol"
+    assert public["effectiveReasoningEffort"] == "xhigh"
+    assert public["latencyMs"] == 1250
+    assert public["usage"] == {"inputTokens": 120, "outputTokens": 30, "costUsd": 0.012}
+    assert public["degradedDependencies"] == ["calendar unavailable"]
+    assert public["channelOutcomes"] == {
+        "workbench": {"outcome": "audit_only", "reason": "audit_sink"},
+        "telegram": {"outcome": "suppressed", "reason": "no_useful_output"},
+    }
+    assert "private_prompt" not in json.dumps(public)
+    assert "generated_text" not in json.dumps(public)
+
+
+def test_schedules_panel_supports_windowed_intervals_and_audit_context() -> None:
+    source = (
+        REPO_ROOT
+        / "viventium_v0_4"
+        / "prompt-workbench"
+        / "src"
+        / "components"
+        / "ScheduledPromptsPanel.tsx"
+    ).read_text(encoding="utf-8")
+
+    assert '<option value="interval">Interval</option>' in source
+    assert 'active_window' in source
+    assert 'start_local' in source
+    assert 'end_local' in source
+    assert 'cadence: "restart_daily"' in source
+    assert 'Projected runs/day' in source
+    assert 'Dedicated conversation per run' in source
+    assert 'Dedicated durable conversation' in source
+    assert 'Destination channels' in source
+    assert 'deliveryLibreChat' in source
+    assert 'deliveryTelegram' in source
+    assert 'LibreChat chat' in source
+    assert 'Telegram' in source
+    assert 'Source prompt' in source
+    assert 'Standing Main capability' in source
+    assert 'Run envelope' in source
+    assert 'Canonical output' in source
+    assert 'Effective prompt' in source
+    assert 'Effective scheduled model' in source
+    assert 'Effective scheduled effort' in source
+    assert 'run.disposition' in source
+    assert 'run.effectiveModel' in source
+    assert 'run.channelOutcomes' in source
+    assert 'Latency:' in source
+    assert 'Tokens / cost: not recorded' in source
+    assert 'Degraded dependencies:' in source
+    assert 'silent, delivered, partial, superseded, or failed' in source
+    assert 'Workbench is an audit sink, not user delivery' in source
+    assert 'aria-describedby' in source
+    assert 'role="switch"' in source
+    assert 'aria-checked={item.active}' in source
+    assert 'aria-label={`${item.active ? "Disable" : "Enable"} ${item.title}`}' in source
+    assert 'className="schedule-row-select"' in source
+
+
+def test_schedules_panel_opens_related_prompts_in_the_normal_editor() -> None:
+    schedule_source = (
+        REPO_ROOT
+        / "viventium_v0_4"
+        / "prompt-workbench"
+        / "src"
+        / "components"
+        / "ScheduledPromptsPanel.tsx"
+    ).read_text(encoding="utf-8")
+    dock_source = (
+        REPO_ROOT
+        / "viventium_v0_4"
+        / "prompt-workbench"
+        / "src"
+        / "components"
+        / "WorkbenchDock.tsx"
+    ).read_text(encoding="utf-8")
+
+    assert "onOpenPrompt?: (id: string) => void" in schedule_source
+    assert "onOpenPrompt?.(selected.sourcePromptId!)" in schedule_source
+    assert "onOpenPrompt?.(selected.effectivePromptId!)" in schedule_source
+    assert "onOpenPrompt?.(selected.runEnvelopePromptId!)" in schedule_source
+    assert "onOpenPrompt?.(selected.canonicalOutputPromptId!)" in schedule_source
+    assert "onOpenPrompt?.(selected.standingCapabilityPromptId!)" in schedule_source
+    assert 'href={`/api/prompts/' not in schedule_source
+    assert "onOpenPrompt={onOpenPrompt}" in dock_source
+
+
+def test_scheduler_prompt_contracts_are_visible_as_workbench_related_sources() -> None:
+    envelope = prompt_service.related_config_for_prompt("scheduler.run_envelope")
+    opportunity = prompt_service.related_config_for_prompt(
+        "scheduler.consciousness_continuity_opportunity"
+    )
+    canonical_output = prompt_service.related_config_for_prompt("scheduler.canonical_output")
+
+    assert envelope[0]["selector"] == "SCHEDULER_RUN_ENVELOPE_TEMPLATE"
+    assert opportunity[0]["selector"] == (
+        "CONSCIOUSNESS_CONTINUITY_OPPORTUNITY_PROMPT_ID"
+    )
+    assert canonical_output[0]["selector"] == "buildScheduledCanonicalOutputInstructions"
+    assert all(
+        row["status"] == "source"
+        for row in [*envelope, *opportunity, *canonical_output]
+    )
+
+
+def test_legacy_nightly_runs_without_trigger_provenance_remain_unknown() -> None:
+    schedule = {"type": "daily", "time": "03:00", "timezone": "America/Toronto"}
+
+    scheduled = scheduled_prompts._public_run(
+        {"run_id": "run-scheduled", "due_at": "2026-08-08T07:00:00Z"},
+        schedule=schedule,
+        timezone_name="America/Toronto",
+    )
+    manual = scheduled_prompts._public_run(
+        {"run_id": "run-manual", "due_at": "2026-08-08T15:46:42Z"},
+        schedule=schedule,
+        timezone_name="America/Toronto",
+    )
+
+    assert scheduled["triggerKind"] == "unknown"
+    assert manual["triggerKind"] == "unknown"
+
+
+def test_caller_label_cannot_impersonate_scheduler_or_manual_provenance() -> None:
+    assert scheduled_prompts._public_run(
+        {
+            "run_id": "caller-labelled",
+            "trigger_kind": "scheduled",
+            "trigger_source": "unverified_caller",
+        }
+    )["triggerKind"] == "unknown"
+    assert scheduled_prompts._public_run(
+        {
+            "run_id": "scheduler-loop",
+            "trigger_kind": "scheduled",
+            "trigger_source": "scheduler_loop",
+        }
+    )["triggerKind"] == "scheduled"
+
+
+def test_scheduler_provenance_requires_due_time_to_match_declared_schedule() -> None:
+    schedule = {"type": "daily", "time": "03:00", "timezone": "America/Toronto"}
+    matching = scheduled_prompts._public_run(
+        {
+            "run_id": "scheduler-on-cadence",
+            "due_at": "2026-08-08T07:00:00Z",
+            "trigger_kind": "scheduled",
+            "trigger_source": "scheduler_loop",
+        },
+        schedule=schedule,
+        timezone_name="America/Toronto",
+    )
+    forged = scheduled_prompts._public_run(
+        {
+            "run_id": "scheduler-off-cadence",
+            "due_at": "2026-08-08T15:46:42Z",
+            "trigger_kind": "scheduled",
+            "trigger_source": "scheduler_loop",
+        },
+        schedule=schedule,
+        timezone_name="America/Toronto",
+    )
+
+    assert matching["triggerKind"] == "scheduled"
+    assert forged["triggerKind"] == "unknown"
+
+
+def test_public_definition_projects_latest_scheduled_outside_recent_manual_window() -> None:
+    class FakeStore:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, object]] = []
+
+        def get_task(self, *_args):
+            return None
+
+        def latest_scheduled_prompt_version(self, *_args):
+            return None
+
+        def list_scheduled_prompt_runs(self, **kwargs):
+            self.calls.append(kwargs)
+            if kwargs.get("trigger_kind") == "scheduled":
+                return [
+                    {
+                        "run_id": "scheduled-run",
+                        "status": "completed",
+                        "trigger_kind": "scheduled",
+                        "trigger_source": "scheduler_loop",
+                        "due_at": "2026-08-08T03:00:00Z",
+                        "started_at": "2026-08-08T07:00:00Z",
+                    }
+                ]
+            if kwargs.get("trigger_kind") == "manual":
+                return [
+                    {
+                        "run_id": "manual-run",
+                        "status": "completed",
+                        "trigger_kind": "manual",
+                        "trigger_source": "workbench_manual",
+                        "started_at": "2026-08-08T12:00:00Z",
+                    }
+                ]
+            return [
+                {
+                    "run_id": f"manual-{index}",
+                    "status": "completed",
+                    "trigger_kind": "manual",
+                    "trigger_source": "workbench_manual",
+                    "started_at": f"2026-08-08T1{index}:00:00Z",
+                }
+                for index in range(5)
+            ]
+
+    store = FakeStore()
+    public = scheduled_prompts._public_definition(
+        {
+            "id": "definition-1",
+            "task_id": None,
+            "schedule": {"type": "daily", "time": "03:00", "timezone": "UTC"},
+            "timezone": "UTC",
+            "active": True,
+        },
+        store=store,
+    )
+
+    assert len(public["recentRuns"]) == 5
+    assert public["latestScheduledRun"]["runId"] == "scheduled-run"
+    assert public["latestScheduledRun"]["triggerKind"] == "scheduled"
+    assert public["latestManualRun"]["runId"] == "manual-run"
+    assert any(
+        call.get("trigger_kind") == "scheduled"
+        and call.get("trigger_source") == "scheduler_loop"
+        for call in store.calls
+    )
+
+
 def test_workbench_scheduled_prompt_can_use_viventium_executor(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1158,37 +2359,120 @@ def test_workbench_scheduled_prompt_can_use_viventium_executor(
             "active": False,
             "memoryWriteMode": "off",
             "executor": "viventium_agent",
-            "channel": "librechat",
+            "channel": ["librechat", "telegram"],
             "conversationPolicy": "same",
         },
     )
     assert created.status_code == 200
     body = created.json()
     assert body["executor"] == "viventium_agent"
-    assert body["channel"] == "librechat"
+    assert body["channel"] == ["librechat", "telegram"]
     assert body["conversationPolicy"] == "same"
     task = scheduled_prompts.storage().get_task(body["userId"], body["taskId"])
     assert task["executor"] == "viventium_agent"
-    assert task["channel"] == "librechat"
+    assert task["channel"] == ["librechat", "telegram"]
     assert task["conversation_policy"] == "same"
 
     calls = []
 
     def fake_dispatch(task_for_dispatch):
         calls.append(task_for_dispatch["id"])
-        return {"delivery": {"outcome": "sent", "reason": "manual_run", "generated_text": "private"}}
+        return {
+            "conversation_id": "conversation-1",
+            "delivery": {
+                "outcome": "sent",
+                "reason": "manual_run",
+                "generated_text": "private",
+                "channels": {
+                    "librechat": {"outcome": "sent", "reason": "canonical"},
+                    "telegram": {"outcome": "failed", "reason": "channel_dispatch_failed"},
+                },
+            },
+            "channel_errors": {
+                "telegram": {
+                    "outcome": "failed",
+                    "reason": "channel_dispatch_failed",
+                    "error_class": "TimeoutError",
+                }
+            },
+            "execution": {
+                "provider": "openai",
+                "model": "gpt-test-scheduled",
+                "reasoning_effort": "xhigh",
+            },
+        }
 
     monkeypatch.setattr(scheduled_prompts, "dispatch_task", fake_dispatch)
     manual = client.post(f"/api/scheduled-prompts/{body['id']}/manual-runs")
     assert manual.status_code == 200
     assert manual.json()["run"]["executor"] == "viventium_agent"
     assert manual.json()["run"]["status"] == "completed"
+    assert manual.json()["run"]["triggerKind"] == "manual"
     assert manual.json()["run"]["resultSummary"] == "sent: manual_run"
+    assert manual.json()["run"]["disposition"] == "partial"
+    assert manual.json()["run"]["effectiveModel"] == "gpt-test-scheduled"
+    assert manual.json()["run"]["effectiveReasoningEffort"] == "xhigh"
+    assert manual.json()["run"]["interactionRef"] == "conversation:conversation-1"
+    assert manual.json()["run"]["channelOutcomes"] == {
+        "librechat": {"outcome": "sent", "reason": "canonical"},
+        "telegram": {"outcome": "failed", "reason": "channel_dispatch_failed"},
+    }
+    persisted_task = scheduled_prompts.storage().get_task(body["userId"], body["taskId"])
+    assert persisted_task["last_conversation_id"] == "conversation-1"
+    assert persisted_task["conversation_id"] == "conversation-1"
     duplicate = client.post(f"/api/scheduled-prompts/{body['id']}/manual-runs")
     assert duplicate.status_code == 200
     assert duplicate.json()["coalesced"] is True
     assert duplicate.json()["run"]["executor"] == "viventium_agent"
     assert calls == [body["taskId"]]
+
+
+def test_workbench_viventium_manual_run_failure_records_failed_disposition(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pytest.importorskip("httpx")
+    pytest.importorskip("fastapi.testclient")
+    monkeypatch.setenv("SCHEDULING_DB_PATH", str(tmp_path / "schedules.db"))
+    monkeypatch.setenv("VIVENTIUM_PRIVATE_USER_DATA_DIR", str(tmp_path / "private"))
+    monkeypatch.setenv("VIVENTIUM_LOCAL_MACHINE_GLASSHIVE_ROOT", str(tmp_path / "glasshive"))
+    monkeypatch.setenv("VIVENTIUM_PROMPT_WORKBENCH_AUTH_DISABLED", "1")
+    monkeypatch.setattr(scheduled_prompts, "_query_mongo_json", lambda script: None)
+    from fastapi.testclient import TestClient
+    from prompt_workbench.app import app
+
+    client = TestClient(app)
+    created = client.post(
+        "/api/scheduled-prompts",
+        json={
+            "title": "Failing Viventium route prompt",
+            "promptText": "Exercise the terminal audit path",
+            "schedule": {"type": "daily", "time": "03:00", "timezone": "UTC"},
+            "active": False,
+            "memoryWriteMode": "off",
+            "executor": "viventium_agent",
+            "channel": ["librechat", "telegram"],
+            "conversationPolicy": "same",
+        },
+    )
+    assert created.status_code == 200
+    definition = scheduled_prompts.storage().get_scheduled_prompt_definition(created.json()["id"])
+    task = scheduled_prompts.storage().get_task(definition["user_id"], definition["task_id"])
+
+    def failing_dispatch(_task):
+        raise TimeoutError("synthetic timeout")
+
+    monkeypatch.setattr(scheduled_prompts, "dispatch_task", failing_dispatch)
+    with pytest.raises(TimeoutError, match="synthetic timeout"):
+        scheduled_prompts._manual_run_workbench_viventium_agent(
+            scheduled_prompts.storage(), definition, task
+        )
+
+    [run] = scheduled_prompts.storage().list_scheduled_prompt_runs(
+        definition_id=created.json()["id"], limit=1
+    )
+    assert run["status"] == "failed"
+    assert run["disposition"] == "failed"
 
 
 def test_scheduled_prompt_memory_proposal_review_and_governed_apply(
@@ -1692,6 +2976,319 @@ def test_periphery_list_uses_generated_time_not_file_mtime(
     ]
 
 
+def test_periphery_collection_hardens_worker_created_artifact_permissions(tmp_path: Path) -> None:
+    my_folder = tmp_path / "my-folder"
+    root = my_folder / "periphery"
+    artifact_dir = root / "health_context" / "2026" / "08"
+    artifact_dir.mkdir(parents=True)
+    sidecar = artifact_dir / "20260810T160238Z.health_context.json"
+    markdown = sidecar.with_suffix(".md")
+    markdown.write_text("Synthetic private health context", encoding="utf-8")
+    sidecar.write_text(
+        json.dumps(
+            {
+                "schemaVersion": 1,
+                "moduleId": "health_context",
+                "generatedAt": "2026-08-10T16:02:38Z",
+                "scheduledRunRef": {"runId": "synthetic"},
+                "sourceRefs": [],
+                "confidence": "medium",
+                "severity": "low",
+                "timeSensitivity": "same_day",
+                "ttl": "P1D",
+                "staleAfter": "2099-08-11T16:02:38Z",
+                "observations": [],
+                "risks": [],
+                "blindSpots": [],
+                "opportunityCosts": [],
+                "opportunities": [],
+                "whatWouldMakeThisWrong": [],
+                "whenToSurface": [],
+                "proposedActions": [],
+                "memoryProposalRefs": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    for directory in (root, root / "health_context", root / "health_context" / "2026", artifact_dir):
+        directory.chmod(0o755)
+    sidecar.chmod(0o644)
+    markdown.chmod(0o644)
+
+    _, artifacts, invalid, _ = scheduled_prompts._collect_periphery(
+        str(my_folder),
+        user_id="user-a",
+    )
+
+    assert len(artifacts) == 1
+    assert invalid == []
+    assert sidecar.stat().st_mode & 0o777 == 0o600
+    assert markdown.stat().st_mode & 0o777 == 0o600
+    assert all(
+        directory.stat().st_mode & 0o777 == 0o700
+        for directory in (root, root / "health_context", root / "health_context" / "2026", artifact_dir)
+    )
+
+
+def test_periphery_collection_rejects_symlinked_worker_artifacts(tmp_path: Path) -> None:
+    my_folder = tmp_path / "my-folder"
+    root = my_folder / "periphery"
+    artifact_dir = root / "health_context" / "2026" / "08"
+    artifact_dir.mkdir(parents=True)
+    external_sidecar = tmp_path / "external-health-context.json"
+    external_sidecar.write_text("{}", encoding="utf-8")
+    external_sidecar.chmod(0o644)
+    sidecar = artifact_dir / "20260810T160238Z.health_context.json"
+    sidecar.symlink_to(external_sidecar)
+
+    _, artifacts, invalid, _ = scheduled_prompts._collect_periphery(
+        str(my_folder),
+        user_id="user-a",
+    )
+
+    assert artifacts == []
+    assert len(invalid) == 1
+    assert invalid[0]["reason"] == "unsafe_symlink"
+    assert external_sidecar.stat().st_mode & 0o777 == 0o644
+
+
+def test_periphery_read_reuses_ingestion_guard_for_symlinked_markdown(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("VIVENTIUM_LOCAL_MACHINE_GLASSHIVE_ROOT", str(tmp_path / "glasshive"))
+    my_folder = Path(scheduled_prompts._glasshive_my_folder("user-a"))
+    root = my_folder / "periphery"
+    artifact_dir = root / "health_context" / "2026" / "08"
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    sidecar = artifact_dir / "20260810T160238Z.health_context.json"
+    sidecar.write_text(
+        json.dumps(
+            {
+                "schemaVersion": 1,
+                "moduleId": "health_context",
+                "generatedAt": "2026-08-10T16:02:38Z",
+                "scheduledRunRef": {"runId": "synthetic"},
+                "sourceRefs": [],
+                "confidence": "medium",
+                "severity": "low",
+                "timeSensitivity": "same_day",
+                "ttl": "P1D",
+                "staleAfter": "2099-08-11T16:02:38Z",
+                "observations": [],
+                "risks": [],
+                "blindSpots": [],
+                "opportunityCosts": [],
+                "opportunities": [],
+                "whatWouldMakeThisWrong": [],
+                "whenToSurface": [],
+                "proposedActions": [],
+                "memoryProposalRefs": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    external_markdown = tmp_path / "outside-private-content.md"
+    external_markdown.write_text("must stay outside Periphery", encoding="utf-8")
+    sidecar.with_suffix(".md").symlink_to(external_markdown)
+    artifact_id = scheduled_prompts._periphery_artifact_id(sidecar, root)
+
+    with pytest.raises(ValueError, match="unsafe_symlink"):
+        scheduled_prompts.read_user_periphery_artifact(
+            user_id="user-a",
+            artifact_id=artifact_id,
+        )
+
+
+def test_periphery_collection_rejects_hard_linked_artifacts(tmp_path: Path) -> None:
+    my_folder = tmp_path / "my-folder"
+    root = my_folder / "periphery"
+    artifact_dir = root / "health_context" / "2026" / "08"
+    artifact_dir.mkdir(parents=True)
+    external_sidecar = tmp_path / "external-health-context.json"
+    external_sidecar.write_text("{}", encoding="utf-8")
+    external_sidecar.chmod(0o644)
+    sidecar = artifact_dir / "20260810T160238Z.health_context.json"
+    os.link(external_sidecar, sidecar)
+
+    _, artifacts, invalid, _ = scheduled_prompts._collect_periphery(
+        str(my_folder),
+        user_id="user-a",
+    )
+
+    assert artifacts == []
+    assert len(invalid) == 1
+    assert invalid[0]["reason"] == "unsafe_hard_link"
+    assert external_sidecar.stat().st_mode & 0o777 == 0o644
+
+
+def test_periphery_index_write_does_not_follow_preplanted_temp_symlink(tmp_path: Path) -> None:
+    my_folder = tmp_path / "my-folder"
+    root = my_folder / "periphery"
+    root.mkdir(parents=True)
+    external_file = tmp_path / "outside-index-target.json"
+    external_file.write_text("outside stays unchanged", encoding="utf-8")
+    external_mode = external_file.stat().st_mode & 0o777
+    (root / "._index.json.tmp").symlink_to(external_file)
+
+    scheduled_prompts._collect_periphery(str(my_folder), user_id="user-a")
+
+    assert external_file.read_text(encoding="utf-8") == "outside stays unchanged"
+    assert external_file.stat().st_mode & 0o777 == external_mode
+    assert not (root / "_index.json").is_symlink()
+    assert (root / "_index.json").stat().st_mode & 0o777 == 0o600
+    assert root.stat().st_mode & 0o777 == 0o700
+
+
+def test_periphery_collection_rejects_a_symlinked_root_without_writing_through_it(
+    tmp_path: Path,
+) -> None:
+    my_folder = tmp_path / "my-folder"
+    my_folder.mkdir()
+    external_root = tmp_path / "outside-periphery"
+    external_root.mkdir()
+    root = my_folder / "periphery"
+    root.symlink_to(external_root, target_is_directory=True)
+
+    _, artifacts, invalid, index = scheduled_prompts._collect_periphery(
+        str(my_folder),
+        user_id="user-a",
+    )
+
+    assert artifacts == []
+    assert invalid[0]["reason"] == "unsafe_symlink"
+    assert index["status"] == "blocked"
+    assert index["blockedReasons"] == ["unsafe_symlink"]
+    assert not (external_root / "_index.json").exists()
+
+
+def test_periphery_discovery_does_not_enumerate_a_symlinked_module_directory(
+    tmp_path: Path,
+) -> None:
+    my_folder = tmp_path / "my-folder"
+    root = my_folder / "periphery"
+    root.mkdir(parents=True)
+    external_module = tmp_path / "outside-module"
+    external_artifact_dir = external_module / "2026" / "08"
+    external_artifact_dir.mkdir(parents=True)
+    external_sidecar = external_artifact_dir / "private-name.health_context.json"
+    external_sidecar.write_text("{}", encoding="utf-8")
+    external_mode = external_sidecar.stat().st_mode & 0o777
+    (root / "health_context").symlink_to(external_module, target_is_directory=True)
+
+    _, artifacts, invalid, index = scheduled_prompts._collect_periphery(
+        str(my_folder),
+        user_id="user-a",
+    )
+
+    assert artifacts == []
+    assert len(invalid) == 1
+    assert invalid[0]["reason"] == "unsafe_symlink"
+    assert "private-name" not in json.dumps(invalid)
+    assert index["status"] == "blocked"
+    assert external_sidecar.stat().st_mode & 0o777 == external_mode
+
+
+def test_glasshive_folder_precreates_owner_only_periphery_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("VIVENTIUM_LOCAL_MACHINE_GLASSHIVE_ROOT", str(tmp_path / "glasshive"))
+
+    my_folder = Path(scheduled_prompts._glasshive_my_folder("user-a"))
+
+    assert (my_folder / "periphery").is_dir()
+    assert all(
+        directory.stat().st_mode & 0o777 == 0o700
+        for directory in (my_folder.parent, my_folder, my_folder / "periphery")
+    )
+
+
+def test_glasshive_folder_enforces_permissions_only_at_the_private_boundary(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("VIVENTIUM_LOCAL_MACHINE_GLASSHIVE_ROOT", str(tmp_path / "glasshive"))
+    my_folder = Path(scheduled_prompts._glasshive_my_folder("user-a"))
+
+    def deny_private_permission_change(descriptor: int, mode: int) -> None:
+        raise PermissionError("synthetic unsupported private permissions")
+
+    monkeypatch.setattr(scheduled_prompts.os, "fchmod", deny_private_permission_change)
+
+    assert Path(scheduled_prompts._glasshive_my_folder("user-a")) == my_folder
+    with pytest.raises(RuntimeError, match="private_continuity_permissions_unavailable"):
+        scheduled_prompts._glasshive_my_folder("user-a", require_private=True)
+
+
+def test_periphery_index_reports_partial_privacy_rejection_as_degraded() -> None:
+    index = scheduled_prompts._periphery_index_payload(
+        [{"moduleId": "health_context", "qualityStatus": "passed"}],
+        [
+            {"reason": "unsafe_hard_link"},
+            {"reason": "invalid_json"},
+        ],
+    )
+
+    assert index["status"] == "degraded"
+    assert index["blockedArtifactCount"] == 1
+    assert index["blockedReasons"] == ["unsafe_hard_link"]
+
+
+def test_periphery_collection_hardens_artifacts_beyond_index_limit(tmp_path: Path) -> None:
+    my_folder = tmp_path / "my-folder"
+    root = my_folder / "periphery"
+    artifact_dir = root / "health_context" / "2026" / "08"
+    artifact_dir.mkdir(parents=True)
+    sidecars: list[Path] = []
+    for index in range(scheduled_prompts.PERIPHERY_ARTIFACT_LIMIT + 3):
+        sidecar = artifact_dir / f"20260810T16{index:04d}Z.health_context.json"
+        sidecar.write_text("{}", encoding="utf-8")
+        sidecar.chmod(0o644)
+        sidecars.append(sidecar)
+
+    scheduled_prompts._collect_periphery(str(my_folder), user_id="user-a")
+
+    assert all(sidecar.stat().st_mode & 0o777 == 0o600 for sidecar in sidecars)
+
+
+def test_periphery_collection_fails_closed_when_private_permissions_cannot_be_applied(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    my_folder = tmp_path / "my-folder"
+    root = my_folder / "periphery"
+    artifact_dir = root / "health_context" / "2026" / "08"
+    artifact_dir.mkdir(parents=True)
+    sidecar = artifact_dir / "20260810T160238Z.health_context.json"
+    sidecar.write_text("{}", encoding="utf-8")
+    sidecar.chmod(0o644)
+    original_fchmod = os.fchmod
+    failed_once = False
+
+    def fail_for_first_private_file(descriptor: int, mode: int) -> None:
+        nonlocal failed_once
+        if mode == 0o600 and not failed_once:
+            failed_once = True
+            raise PermissionError("synthetic private-permission failure")
+        original_fchmod(descriptor, mode)
+
+    monkeypatch.setattr(scheduled_prompts.os, "fchmod", fail_for_first_private_file)
+
+    _, artifacts, invalid, index = scheduled_prompts._collect_periphery(
+        str(my_folder),
+        user_id="user-a",
+    )
+
+    assert artifacts == []
+    assert len(invalid) == 1
+    assert invalid[0]["reason"] == "private_permissions_unavailable"
+    assert index["status"] == "blocked"
+    assert index["blockedReasons"] == ["private_permissions_unavailable"]
+    assert sidecar.stat().st_mode & 0o777 == 0o644
+    assert root.stat().st_mode & 0o777 == 0o700
+
+
 def test_scheduled_prompt_periphery_artifacts_reject_invalid_and_foreign_files(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1978,6 +3575,8 @@ def test_user_level_scheduled_tasks_show_in_workbench_and_can_be_managed(
             "title": "Renamed user schedule",
             "active": True,
             "schedule": {"type": "daily", "time": "06:15", "timezone": "UTC"},
+            "channel": ["librechat", "telegram"],
+            "conversationPolicy": "same",
         },
     )
     assert patched.status_code == 200
@@ -1986,6 +3585,8 @@ def test_user_level_scheduled_tasks_show_in_workbench_and_can_be_managed(
     task = scheduled_prompts.storage().get_task("user-a", "task-user-level")
     assert task["active"] == 1
     assert task["schedule"]["time"] == "06:15"
+    assert task["channel"] == ["librechat", "telegram"]
+    assert task["conversation_policy"] == "same"
     assert task["metadata"]["workbench_title"] == "Renamed user schedule"
 
     monkeypatch.setattr(
@@ -2160,6 +3761,30 @@ def test_prompt_flow_map_uses_source_graph_eval_refs_and_double_click_navigation
     assert "promptRefsForFamily" in flow_source
     assert "evalBank={tabState.evalBank}" in dock_source
     assert "onOpenPrompt={openPromptFromMap}" in app_source
+
+
+def test_eval_panel_uses_declared_lineage_for_links_and_exposes_dependency_details() -> None:
+    source = (WORKBENCH_SRC / "components" / "EvalPanel.tsx").read_text(encoding="utf-8")
+
+    assert "selectedPromptId === 'main.conscious_agent'" not in source
+    assert "['main.conscious_agent']" not in source
+    assert "runHasPromptDependency" in source
+    assert "Prompt and runtime context dependencies" in source
+    assert "lineageManifest" in source
+    assert "runnerSummary?.status" in source
+    assert "semanticPassedCount" in source
+    assert "semanticJudgeUnavailableCount" in source
+    assert "judge unavailable" in source
+    assert "semanticJudgeRequired" in source
+    assert "Independent semantic rubric judging is required" in source
+    assert "max={Math.max(1, visibleRows.length)}" in source
+    assert "max={25}" not in source
+
+    browser_harness = (
+        REPO_ROOT / "qa/prompt-workbench/scripts/live-evals-browser-qa.cjs"
+    ).read_text(encoding="utf-8")
+    assert "FEELINGS_RUN_TIMEOUT_MS" in browser_harness
+    assert "FEELINGS_MAX_CASES * 420_000" in browser_harness
 
 
 def test_prompt_diff_wraps_both_panes_and_uses_working_tree_baseline() -> None:
@@ -2590,7 +4215,23 @@ def test_live_eval_runner_uses_prompt_bank_equals_flag(tmp_path: Path, monkeypat
     eval_root = tmp_path / "evals"
     eval_root.mkdir(parents=True)
     prompt_bank = eval_root / "prompt-bank.json"
-    prompt_bank.write_text(json.dumps({"families": []}), encoding="utf-8")
+    prompt_bank.write_text(
+        json.dumps(
+            {
+                "families": [
+                    {
+                        "id": "voice_style",
+                        "promptRefs": ["main.voice_style"],
+                        "cases": [
+                            {"id": "case_one", "surface": "voice"},
+                            {"id": "case_two", "surface": "voice"},
+                        ],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
     runner = eval_root / "run-exact-model-evals.cjs"
     runner.write_text("// synthetic runner\n", encoding="utf-8")
     private_root = tmp_path / "private"
@@ -2601,6 +4242,11 @@ def test_live_eval_runner_uses_prompt_bank_equals_flag(tmp_path: Path, monkeypat
     monkeypatch.setattr(evals, "PROMPT_BANK_PATH", prompt_bank)
     monkeypatch.setattr(evals, "EXACT_MODEL_EVAL_SCRIPT", runner)
     monkeypatch.setattr(evals, "workbench_private_root", lambda: private_root)
+    monkeypatch.setattr(
+        evals,
+        "load_eval_bank",
+        lambda: json.loads(prompt_bank.read_text(encoding="utf-8")),
+    )
 
     def fake_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
         captured.append((cmd, int(kwargs["timeout"]), kwargs.get("env")))
@@ -2608,13 +4254,19 @@ def test_live_eval_runner_uses_prompt_bank_equals_flag(tmp_path: Path, monkeypat
 
     monkeypatch.setattr(evals.subprocess, "run", fake_run)
 
-    result = evals.run_exact_model_eval(max_cases=2, live=True, prompt_id="main.voice_style")
+    result = evals.run_exact_model_eval(
+        max_cases=2,
+        live=True,
+        prompt_id="main.voice_style",
+        case_ids=["case_two", "case_one"],
+    )
 
     assert result["returnCode"] == 0
     assert captured
     assert f"--prompt-bank={prompt_bank}" in captured[0][0]
     assert "--prompt-bank" not in captured[0][0]
     assert "--prompt-id=main.voice_style" in captured[0][0]
+    assert "--case-ids=case_two,case_one" in captured[0][0]
     assert "--local-jwt-fallback" in captured[0][0]
     assert captured[0][1] == 840
     assert captured[0][2] is not None
@@ -2623,8 +4275,59 @@ def test_live_eval_runner_uses_prompt_bank_equals_flag(tmp_path: Path, monkeypat
 
 def test_live_eval_timeout_scales_for_multi_case_exact_model_runs() -> None:
     assert evals._live_eval_timeout_seconds(1, evals.EXACT_MODEL_EVAL_SCRIPT) == 420
-    assert evals._live_eval_timeout_seconds(10, evals.EXACT_MODEL_EVAL_SCRIPT) == 3600
-    assert evals._live_eval_timeout_seconds(30, evals.EXACT_MODEL_EVAL_SCRIPT) == 3600
+    assert evals._live_eval_timeout_seconds(10, evals.EXACT_MODEL_EVAL_SCRIPT) == 4200
+    assert evals._live_eval_timeout_seconds(30, evals.EXACT_MODEL_EVAL_SCRIPT) == 12600
+    assert evals._live_eval_timeout_seconds(100, evals.EXACT_MODEL_EVAL_SCRIPT) == 14400
+
+
+def test_declared_semantic_eval_family_runs_its_rubric_judge(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bank = {
+        "families": [
+            {
+                "id": "semantic_family",
+                "semanticJudge": True,
+                "promptRefs": ["main.conscious_agent"],
+                "cases": [
+                    {
+                        "id": "case_a",
+                        "surface": "web",
+                        "prompt": "Synthetic prompt",
+                        "rubric": ["responds naturally"],
+                    }
+                ],
+            }
+        ]
+    }
+    prompt_bank = tmp_path / "prompt-bank.json"
+    prompt_bank.write_text(json.dumps(bank), encoding="utf-8")
+    private_root = tmp_path / "private"
+    captured: list[list[str]] = []
+
+    monkeypatch.setattr(drafts, "PROMPT_BANK_PATH", prompt_bank)
+    monkeypatch.setattr(drafts, "workbench_private_root", lambda: private_root)
+    monkeypatch.setattr(evals, "PROMPT_BANK_PATH", prompt_bank)
+    monkeypatch.setattr(evals, "workbench_private_root", lambda: private_root)
+    monkeypatch.setattr(evals, "load_eval_bank", lambda: bank)
+
+    def fake_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        captured.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, stdout="ok", stderr="")
+
+    monkeypatch.setattr(evals.subprocess, "run", fake_run)
+
+    result = evals.run_exact_model_eval(
+        max_cases=1,
+        live=True,
+        family="semantic_family",
+        prompt_id="main.conscious_agent",
+    )
+
+    assert result["returnCode"] == 0
+    assert "--semantic-judge" in captured[0]
+    assert result["semanticJudgeRequired"] is True
 
 
 def test_live_eval_timeout_is_saved_as_an_inspectable_run(
@@ -2677,6 +4380,12 @@ def test_live_activation_eval_uses_dedicated_runtime_classifier_runner(
                         "id": "background_activation_routing",
                         "runner": "background_activation",
                         "promptRefs": ["cortex.red_team.activation"],
+                        "activationTargets": [
+                            {
+                                "key": "red_team",
+                                "promptRef": "cortex.red_team.activation",
+                            }
+                        ],
                         "cases": [
                             {
                                 "id": "red_team_explicit",
@@ -2701,7 +4410,7 @@ def test_live_activation_eval_uses_dedicated_runtime_classifier_runner(
     activation_runner = eval_root / "run-activation-model-evals.cjs"
     activation_runner.write_text("// activation runner\n", encoding="utf-8")
     private_root = tmp_path / "private"
-    captured: list[list[str]] = []
+    captured: list[tuple[list[str], dict[str, str] | None]] = []
 
     monkeypatch.setattr(drafts, "PROMPT_BANK_PATH", prompt_bank)
     monkeypatch.setattr(drafts, "workbench_private_root", lambda: private_root)
@@ -2713,8 +4422,11 @@ def test_live_activation_eval_uses_dedicated_runtime_classifier_runner(
         evals, "load_eval_bank", lambda: json.loads(prompt_bank.read_text(encoding="utf-8"))
     )
 
-    def fake_run(cmd: list[str], **_: object) -> subprocess.CompletedProcess[str]:
-        captured.append(cmd)
+    monkeypatch.setenv("VIVENTIUM_QA_USER_NAME", "Synthetic QA")
+    monkeypatch.setenv("VIVENTIUM_CORTEX_LATE_DETECT_TIMEOUT_MS", "6000")
+
+    def fake_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        captured.append((cmd, kwargs.get("env")))
         return subprocess.CompletedProcess(cmd, 0, stdout="activation ok", stderr="")
 
     monkeypatch.setattr(evals.subprocess, "run", fake_run)
@@ -2728,9 +4440,233 @@ def test_live_activation_eval_uses_dedicated_runtime_classifier_runner(
 
     assert result["returnCode"] == 0
     assert captured
-    assert captured[0][1] == str(activation_runner)
-    assert "--family=background_activation_routing" in captured[0]
-    assert "--prompt-id=cortex.red_team.activation" in captured[0]
+    assert captured[0][0][1] == str(activation_runner)
+    assert "--family=background_activation_routing" in captured[0][0]
+    assert "--prompt-id=cortex.red_team.activation" in captured[0][0]
+    assert "--qa-user-context" in captured[0][0]
+    assert "--with-fallbacks" in captured[0][0]
+    assert "--timeout-ms=6000" in captured[0][0]
+    assert captured[0][1] is not None
+    assert captured[0][1]["VIVENTIUM_QA_USER_NAME"] == "Synthetic QA"
+
+    captured.clear()
+    broad_result = evals.run_exact_model_eval(
+        max_cases=1,
+        live=True,
+        family="background_activation_routing",
+        prompt_id="main.conscious_agent",
+    )
+
+    assert broad_result["returnCode"] == 0
+    assert captured
+    assert "--prompt-id=main.conscious_agent" not in captured[0][0]
+
+
+def test_background_execution_eval_targets_the_specialist_agent_directly(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    eval_root = tmp_path / "evals"
+    eval_root.mkdir(parents=True)
+    prompt_bank = eval_root / "prompt-bank.json"
+    bank = {
+        "families": [
+            {
+                "id": "emotional_resonance_execution",
+                "runner": "background_execution",
+                "executionTarget": {
+                    "agentId": "synthetic-eq-agent",
+                    "promptRef": "cortex.emotional_resonance.execution",
+                },
+                "promptRefs": ["cortex.emotional_resonance.execution"],
+                "evalIsolation": {
+                    "savedMemory": True,
+                    "conversationRecall": True,
+                    "feelings": True,
+                    "backgroundCortices": True,
+                },
+                "cases": [
+                    {
+                        "id": "reads_uncertain_subtext_without_inventing",
+                        "surface": "web",
+                        "prompt": "I said yes, but kept rewriting the last sentence.",
+                        "rubric": [
+                            "surfaces plausible emotional subtext as uncertainty rather than fact",
+                            "does not adopt a warm or gentle demeanor as the task",
+                        ],
+                    }
+                ],
+            }
+        ]
+    }
+    prompt_bank.write_text(json.dumps(bank), encoding="utf-8")
+    runner = eval_root / "run-exact-model-evals.cjs"
+    runner.write_text("// synthetic exact runner\n", encoding="utf-8")
+    private_root = tmp_path / "private"
+    captured: list[list[str]] = []
+    monkeypatch.setattr(drafts, "PROMPT_BANK_PATH", prompt_bank)
+    monkeypatch.setattr(drafts, "workbench_private_root", lambda: private_root)
+    monkeypatch.setattr(evals, "PROMPT_BANK_PATH", prompt_bank)
+    monkeypatch.setattr(evals, "EXACT_MODEL_EVAL_SCRIPT", runner)
+    monkeypatch.setattr(evals, "workbench_private_root", lambda: private_root)
+    monkeypatch.setattr(evals, "load_eval_bank", lambda: bank)
+
+    def fake_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        captured.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, stdout="execution ok", stderr="")
+
+    monkeypatch.setattr(evals.subprocess, "run", fake_run)
+
+    result = evals.run_exact_model_eval(
+        max_cases=1,
+        live=True,
+        family="emotional_resonance_execution",
+        prompt_id="cortex.emotional_resonance.execution",
+    )
+
+    assert result["returnCode"] == 0
+    assert "--agent-id=synthetic-eq-agent" in captured[0]
+    assert "--semantic-judge" in captured[0]
+    assert "--prompt-id=cortex.emotional_resonance.execution" in captured[0]
+    assert result["executionTarget"] == {
+        "mode": "direct_background_agent",
+        "agentId": "synthetic-eq-agent",
+        "promptRef": "cortex.emotional_resonance.execution",
+    }
+    assert result["lineageManifest"]["executionTarget"] == result["executionTarget"]
+
+    captured.clear()
+    inferred = evals.run_exact_model_eval(
+        max_cases=1,
+        live=True,
+        prompt_id="cortex.emotional_resonance.execution",
+    )
+    assert inferred["executionTarget"] == result["executionTarget"]
+    assert "--agent-id=synthetic-eq-agent" in captured[0]
+
+
+def test_background_execution_eval_fails_closed_without_structured_target(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bank = {
+        "families": [
+            {
+                "id": "broken_execution",
+                "runner": "background_execution",
+                "promptRefs": ["cortex.red_team.execution"],
+                "cases": [{"id": "case", "surface": "web"}],
+            }
+        ]
+    }
+    monkeypatch.setattr(evals, "load_eval_bank", lambda: bank)
+    monkeypatch.setattr(evals, "workbench_private_root", lambda: tmp_path / "private")
+    monkeypatch.setattr(drafts, "workbench_private_root", lambda: tmp_path / "private")
+
+    with pytest.raises(ValueError, match="structured executionTarget"):
+        evals.run_exact_model_eval(
+            max_cases=1,
+            live=False,
+            family="broken_execution",
+            prompt_id="cortex.red_team.execution",
+        )
+
+
+def test_live_eval_records_public_runner_summary_and_actual_result_count(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bank = {
+        "families": [
+            {
+                "id": "direct_specialist",
+                "runner": "background_execution",
+                "executionTarget": {
+                    "agentId": "synthetic-specialist-agent",
+                    "promptRef": "cortex.red_team.execution",
+                },
+                "promptRefs": ["cortex.red_team.execution"],
+                "cases": [
+                    {"id": "case_a", "surface": "web"},
+                    {"id": "case_b", "surface": "web"},
+                ],
+            }
+        ]
+    }
+    private_root = tmp_path / "private"
+    monkeypatch.setattr(evals, "load_eval_bank", lambda: bank)
+    monkeypatch.setattr(evals, "workbench_private_root", lambda: private_root)
+    monkeypatch.setattr(drafts, "workbench_private_root", lambda: private_root)
+
+    runner_stdout = json.dumps(
+        {
+            "status": "blocked",
+            "blockedReason": "synthetic_dependency_unavailable",
+            "resultCount": 0,
+            "completedCount": 0,
+            "failedCount": 0,
+            "semanticJudgedCount": 0,
+            "semanticPassedCount": 0,
+            "semanticFailedCount": 0,
+            "semanticJudgeUnavailableCount": 1,
+            "duplicateResponseQualityFailureCount": 0,
+            "unresolvedAsyncQualityFailureCount": 0,
+            "publicReport": "/private/path/report.md",
+            "privateJsonPathHash": "private-hash",
+        }
+    )
+    monkeypatch.setattr(
+        evals.subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args[0], 1, stdout=runner_stdout, stderr=""
+        ),
+    )
+
+    result = evals.run_exact_model_eval(
+        max_cases=2,
+        live=True,
+        family="direct_specialist",
+        prompt_id="cortex.red_team.execution",
+    )
+
+    assert result["selectedCaseCount"] == 2
+    assert result["resultCount"] == 0
+    assert result["runnerSummary"] == {
+        "status": "blocked",
+        "blockedReason": "synthetic_dependency_unavailable",
+        "resultCount": 0,
+        "completedCount": 0,
+        "failedCount": 0,
+        "semanticJudgedCount": 0,
+        "semanticPassedCount": 0,
+        "semanticFailedCount": 0,
+        "semanticJudgeUnavailableCount": 1,
+        "duplicateResponseQualityFailureCount": 0,
+        "unresolvedAsyncQualityFailureCount": 0,
+    }
+    assert "publicReport" not in result["runnerSummary"]
+    assert "privateJsonPathHash" not in result["runnerSummary"]
+
+
+def test_prompt_bank_registers_direct_specialist_execution_evals() -> None:
+    bank = prompt_service.load_eval_bank()
+    families = {row["id"]: row for row in bank["families"]}
+
+    emotional = families["emotional_resonance_execution"]
+    red_team = families["red_team_execution_independence"]
+    assert emotional["runner"] == red_team["runner"] == "background_execution"
+    assert emotional["executionTarget"]["promptRef"] == "cortex.emotional_resonance.execution"
+    assert red_team["executionTarget"]["promptRef"] == "cortex.red_team.execution"
+    assert emotional["evalIsolation"] == {
+        "savedMemory": True,
+        "conversationRecall": True,
+        "feelings": True,
+        "backgroundCortices": True,
+    }
+    assert red_team["evalIsolation"] == emotional["evalIsolation"]
+    assert len(emotional["cases"]) >= 2
+    assert len(red_team["cases"]) >= 2
 
 
 def test_eval_preview_blocks_pending_eval_bank_draft(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -2954,6 +4890,192 @@ def test_eval_preview_filters_family_and_surface(tmp_path: Path, monkeypatch: py
     assert prompt_filtered["cases"] == [{"family": "family_b", "case": "b_web", "surface": "web"}]
     assert prompt_filtered["promptHash"]
 
+    explicit_cases = evals.run_exact_model_eval(
+        max_cases=5,
+        live=False,
+        family="family_a",
+        case_ids=["a_voice", "a_web", "a_voice"],
+    )
+
+    assert explicit_cases["cases"] == [
+        {"family": "family_a", "case": "a_web", "surface": "web"},
+        {"family": "family_a", "case": "a_voice", "surface": "voice"},
+    ]
+    assert explicit_cases["selectedCaseIds"] == ["a_web", "a_voice"]
+
+    with pytest.raises(ValueError, match="do not match"):
+        evals.run_exact_model_eval(
+            max_cases=5,
+            live=False,
+            family="family_a",
+            case_ids=["missing_case"],
+        )
+
+    with pytest.raises(ValueError, match="may contain only"):
+        evals.run_exact_model_eval(
+            max_cases=5,
+            live=False,
+            family="family_a",
+            case_ids=["not a valid case id"],
+        )
+
+
+def test_eval_panel_exposes_explicit_case_selection_through_the_api_contract() -> None:
+    panel_source = (WORKBENCH_SRC / "components" / "EvalPanel.tsx").read_text(
+        encoding="utf-8"
+    )
+    api_source = (WORKBENCH_SRC / "api.ts").read_text(encoding="utf-8")
+    app_source = (
+        REPO_ROOT
+        / "viventium_v0_4/prompt-workbench/backend/prompt_workbench/app.py"
+    ).read_text(encoding="utf-8")
+
+    assert 'aria-label={`Include ${row.caseId}`}' in panel_source
+    assert "caseIds: selectedRunCaseIds" in panel_source
+    assert "caseIds?: string[]" in api_source
+    assert "caseIds: list[str]" in app_source
+
+
+def test_feelings_eval_preview_records_complete_prompt_and_runtime_context_lineage(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    private_root = tmp_path / "private"
+    monkeypatch.setattr(evals, "workbench_private_root", lambda: private_root)
+    monkeypatch.setattr(drafts, "workbench_private_root", lambda: private_root)
+
+    result = evals.run_exact_model_eval(
+        max_cases=25,
+        live=False,
+        family="feelings_embodiment_and_reaction",
+        prompt_id="main.conscious_agent",
+    )
+
+    lineage = result["lineageManifest"]
+    prompt_ids = {row["id"] for row in lineage["promptDependencies"]}
+    runtime_contexts = lineage["runtimeContextDependencies"]
+    assert {
+        "main.conscious_agent",
+        "cortex.emotional_reaction.execution",
+        "surface.voice.feeling_expression",
+        "surface.telegram.audio_output",
+        "surface.telegram.audio_provider.xai",
+        "surface.telegram.audio_provider.plain_tts",
+    }.issubset(prompt_ids)
+    assert runtime_contexts == [
+        {
+            "id": "runtime.feelings.current_state",
+            "kind": "runtime_context",
+            "tag": "viventium_feeling_state",
+            "lifecycle": "request_scoped",
+            "owner": "feelings_runtime",
+            "valuePolicy": "private_value_not_recorded",
+            "roleContract": "eligible conscious/speaking synthesis context; not specialist-worker demeanor",
+            "contractHash": runtime_contexts[0]["contractHash"],
+        }
+    ]
+    assert lineage["promptCount"] == len(lineage["promptDependencies"])
+    assert lineage["runtimeContextCount"] == 1
+    assert lineage["manifestHash"]
+    assert all("value" not in row for row in runtime_contexts)
+    saved = json.loads(
+        (private_root / "eval-runs" / result["id"] / "workbench-run.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert saved["lineageManifest"]["manifestHash"] == lineage["manifestHash"]
+
+
+def test_eval_run_history_is_linked_to_every_manifest_prompt_dependency(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    private_root = tmp_path / "private"
+    run_dir = private_root / "eval-runs" / "synthetic-run"
+    run_dir.mkdir(parents=True)
+    (run_dir / "workbench-run.json").write_text(
+        json.dumps(
+            {
+                "id": "synthetic-run",
+                "returnCode": 0,
+                "stdoutTail": "",
+                "stderrTail": "",
+                "outputDir": str(run_dir),
+                "createdAt": "2026-07-15T00:00:00Z",
+                "live": True,
+                "maxCases": 1,
+                "promptId": "main.conscious_agent",
+                "promptHash": "legacy-anchor-hash",
+                "lineageManifest": {
+                    "manifestHash": "manifest-hash",
+                    "promptDependencies": [
+                        {"id": "main.conscious_agent"},
+                        {"id": "cortex.emotional_reaction.execution"},
+                    ],
+                    "runtimeContextDependencies": [],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(evals, "workbench_private_root", lambda: private_root)
+
+    rows = evals.list_eval_runs_for_prompt("cortex.emotional_reaction.execution")
+
+    assert [row["id"] for row in rows] == ["synthetic-run"]
+
+
+def test_eval_run_history_does_not_implicitly_link_unowned_runs_to_main(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    private_root = tmp_path / "private"
+    run_dir = private_root / "eval-runs" / "specialist-only-run"
+    run_dir.mkdir(parents=True)
+    (run_dir / "workbench-run.json").write_text(
+        json.dumps(
+            {
+                "id": "specialist-only-run",
+                "returnCode": 0,
+                "stdoutTail": "",
+                "stderrTail": "",
+                "outputDir": str(run_dir),
+                "createdAt": "2026-07-15T00:00:00Z",
+                "live": True,
+                "maxCases": 1,
+                "promptId": None,
+                "lineageManifest": {
+                    "manifestHash": "specialist-manifest-hash",
+                    "promptDependencies": [
+                        {"id": "cortex.red_team.execution"},
+                    ],
+                    "runtimeContextDependencies": [],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(evals, "workbench_private_root", lambda: private_root)
+
+    main_rows = evals.list_eval_runs_for_prompt("main.conscious_agent")
+    specialist_rows = evals.list_eval_runs_for_prompt("cortex.red_team.execution")
+
+    assert main_rows == []
+    assert [row["id"] for row in specialist_rows] == ["specialist-only-run"]
+
+
+def test_eval_family_links_only_declared_prompt_dependencies() -> None:
+    family = evals._public_family(
+        {
+            "id": "runtime_only",
+            "promptRefs": ["memory.hardener_consolidation"],
+            "cases": [{"id": "case", "surface": "memory_hardening"}],
+        }
+    )
+
+    assert family["promptRefs"] == ["memory.hardener_consolidation"]
+    assert family["cases"][0]["promptRefs"] == ["memory.hardener_consolidation"]
+
 
 def test_eval_case_edit_creates_reviewed_eval_bank_draft(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     prompt_root = tmp_path / "prompts"
@@ -3112,6 +5234,59 @@ def test_runtime_prompt_bundle_status_is_prompt_specific_and_public_safe(monkeyp
     assert "/private/local" not in encoded
 
 
+def test_workbench_context_distinguishes_managed_agent_from_compiled_runtime_delivery(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        sync_engine,
+        "get_status",
+        lambda: {
+            "agents": [
+                {
+                    "agentId": "synthetic-main",
+                    "label": "Viventium",
+                    "sourcePromptId": "main.conscious_agent",
+                    "sourceHash": "source",
+                    "liveHash": "source",
+                    "state": "synced",
+                    "sourceChars": 10,
+                    "liveChars": 10,
+                    "liveTextAvailable": True,
+                }
+            ]
+        },
+    )
+    monkeypatch.setattr(
+        prompt_service,
+        "runtime_prompt_bundle_status",
+        lambda prompt_id: {
+            "status": "ok",
+            "reason": "matched",
+            "promptState": "synced",
+            "promptAffected": False,
+            "liveBundleAvailable": True,
+            "driftCount": 0,
+        },
+    )
+
+    managed = prompt_service.workbench_context("main.identity")
+    runtime = prompt_service.workbench_context("memory.hardener_consolidation")
+
+    assert managed["delivery"]["kind"] == "managed_agent"
+    assert managed["delivery"]["state"] == "synced"
+    assert managed["runtimePromptBundle"] is None
+    assert runtime["delivery"]["kind"] == "compiled_runtime"
+    assert runtime["runtimePromptBundle"]["promptState"] == "synced"
+
+
+def test_prompt_editor_labels_the_real_delivery_owner_instead_of_every_prompt_as_runtime_bundle() -> None:
+    source = (WORKBENCH_SRC / "components" / "PromptEditor.tsx").read_text(encoding="utf-8")
+
+    assert "deliveryLabel(context?.delivery, runtimeBundle)" in source
+    assert "Managed agent:" in source
+    assert "Compiled runtime:" in source
+
+
 def test_workbench_context_surfaces_eval_edit_drafts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     prompt_root = tmp_path / "prompts"
     eval_root = tmp_path / "evals"
@@ -3213,6 +5388,309 @@ def test_prompt_workbench_lifecycle_script_scopes_process_ownership() -> None:
     assert '"__pycache__"' in script
     assert "viventium-librechat-start.sh" not in script
     assert "native_stack.sh" not in script
+
+
+def test_prompt_workbench_process_owner_resolves_relative_app_dir_from_process_cwd(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo_root = tmp_path / "current"
+    root = repo_root / "viventium_v0_4" / "prompt-workbench"
+    monkeypatch.setattr(
+        prompt_workbench_cli,
+        "process_command",
+        lambda pid: (
+            "uvicorn --app-dir viventium_v0_4/prompt-workbench/backend "
+            "prompt_workbench.app:app --host 127.0.0.1 --port 8781"
+        ),
+    )
+    monkeypatch.setattr(prompt_workbench_cli, "process_cwd", lambda pid: repo_root)
+
+    assert prompt_workbench_cli.process_matches_workbench(4312, root) is True
+
+
+def test_prompt_workbench_process_owner_rejects_relative_app_dir_from_another_checkout(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "current" / "viventium_v0_4" / "prompt-workbench"
+    other_repo = tmp_path / "other"
+    monkeypatch.setattr(
+        prompt_workbench_cli,
+        "process_command",
+        lambda pid: (
+            "uvicorn --app-dir viventium_v0_4/prompt-workbench/backend "
+            "prompt_workbench.app:app --host 127.0.0.1 --port 8781"
+        ),
+    )
+    monkeypatch.setattr(prompt_workbench_cli, "process_cwd", lambda pid: other_repo)
+
+    assert prompt_workbench_cli.process_matches_workbench(4312, root) is False
+
+
+def test_prompt_workbench_process_owner_does_not_trust_unrelated_command_substrings(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "current" / "viventium_v0_4" / "prompt-workbench"
+    other_backend = tmp_path / "other" / "viventium_v0_4" / "prompt-workbench" / "backend"
+    monkeypatch.setattr(
+        prompt_workbench_cli,
+        "process_command",
+        lambda pid: (
+            f"uvicorn --app-dir {other_backend} prompt_workbench.app:app "
+            f"--log-config {root}/synthetic-log.yaml"
+        ),
+    )
+
+    assert prompt_workbench_cli.process_matches_workbench(4312, root) is False
+
+
+def test_prompt_workbench_stop_pid_handles_signal_races_without_escaping(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    running = iter([True, False])
+    monkeypatch.setattr(prompt_workbench_cli, "pid_running", lambda _pid: next(running, False))
+    monkeypatch.setattr(prompt_workbench_cli.os, "getpgid", lambda _pid: 4312)
+    monkeypatch.setattr(
+        prompt_workbench_cli.os,
+        "killpg",
+        lambda *_args: (_ for _ in ()).throw(ProcessLookupError()),
+    )
+    monkeypatch.setattr(
+        prompt_workbench_cli.os,
+        "kill",
+        lambda *_args: (_ for _ in ()).throw(ProcessLookupError()),
+    )
+
+    assert prompt_workbench_cli.stop_pid(4312, timeout_seconds=0) is True
+
+
+def test_prompt_workbench_source_freshness_uses_recorded_source_mtime(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(prompt_workbench_cli, "workbench_source_mtime", lambda _root: 200.0)
+
+    assert prompt_workbench_cli.state_source_is_stale({"sourceMtime": 199.0}, tmp_path) is True
+    assert prompt_workbench_cli.state_source_is_stale({"sourceMtime": 200.0}, tmp_path) is False
+
+
+def test_prompt_workbench_legacy_state_fails_stale_when_source_changed_after_start(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(prompt_workbench_cli, "workbench_source_mtime", lambda _root: 200.0)
+    started = datetime.fromtimestamp(150.0, tz=timezone.utc).isoformat()
+
+    assert prompt_workbench_cli.state_source_is_stale({"startedAt": started}, tmp_path) is True
+    assert prompt_workbench_cli.state_source_is_stale({}, tmp_path) is True
+
+
+def test_managed_prompt_workbench_reclaims_only_a_recognized_stale_workbench_listener(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "current" / "viventium_v0_4" / "prompt-workbench"
+    app_support = tmp_path / "app-support"
+    stopped: list[int] = []
+    available_checks = iter([False, True])
+    monkeypatch.setattr(prompt_workbench_cli, "listener_pids", lambda port: [4312])
+    monkeypatch.setattr(
+        prompt_workbench_cli,
+        "read_state",
+        lambda candidate: {"pid": 4312, "port": 8781} if candidate == app_support else {},
+    )
+    monkeypatch.setattr(
+        prompt_workbench_cli,
+        "process_matches_workbench",
+        lambda pid, expected_root, expected_port=None: expected_root == root and expected_port == 8781,
+    )
+    monkeypatch.setattr(
+        prompt_workbench_cli,
+        "stop_pid",
+        lambda pid: stopped.append(pid) or True,
+    )
+    monkeypatch.setattr(prompt_workbench_cli, "port_available", lambda port: next(available_checks))
+    monkeypatch.setattr(prompt_workbench_cli.time, "sleep", lambda seconds: None)
+
+    reclaimed = prompt_workbench_cli.reclaim_stale_managed_workbench_port(8781, root, app_support)
+
+    assert reclaimed is True
+    assert stopped == [4312]
+
+
+def test_managed_prompt_workbench_refuses_to_kill_a_workbench_from_another_checkout(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "current" / "viventium_v0_4" / "prompt-workbench"
+    stopped: list[int] = []
+    monkeypatch.setattr(prompt_workbench_cli, "listener_pids", lambda port: [4312])
+    monkeypatch.setattr(
+        prompt_workbench_cli,
+        "process_matches_workbench",
+        lambda pid, expected_root, expected_port=None: False,
+    )
+    monkeypatch.setattr(
+        prompt_workbench_cli,
+        "stop_pid",
+        lambda pid: stopped.append(pid) or True,
+    )
+
+    reclaimed = prompt_workbench_cli.reclaim_stale_managed_workbench_port(
+        8781,
+        root,
+        tmp_path / "app-support",
+    )
+
+    assert reclaimed is False
+    assert stopped == []
+
+
+def test_dev_scoped_managed_prompt_workbench_never_reclaims_an_existing_listener(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "current" / "viventium_v0_4" / "prompt-workbench"
+    stopped: list[int] = []
+    monkeypatch.setenv("VIVENTIUM_DEV_ENV_SCOPE_ACTIVE", "true")
+    monkeypatch.setattr(prompt_workbench_cli, "listener_pids", lambda port: [4312])
+    monkeypatch.setattr(
+        prompt_workbench_cli,
+        "process_matches_workbench",
+        lambda pid, expected_root, expected_port=None: expected_root == root,
+    )
+    monkeypatch.setattr(
+        prompt_workbench_cli,
+        "stop_pid",
+        lambda pid: stopped.append(pid) or True,
+    )
+    monkeypatch.setattr(prompt_workbench_cli, "port_available", lambda port: False)
+
+    reclaimed = prompt_workbench_cli.reclaim_stale_managed_workbench_port(
+        8781,
+        root,
+        tmp_path / "app-support",
+    )
+
+    assert reclaimed is False
+    assert stopped == []
+
+
+def test_managed_prompt_workbench_does_not_reclaim_without_current_runtime_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "current" / "viventium_v0_4" / "prompt-workbench"
+    stopped: list[int] = []
+    monkeypatch.setattr(prompt_workbench_cli, "port_available", lambda port: False)
+    monkeypatch.setattr(prompt_workbench_cli, "listener_pids", lambda port: [4312])
+    monkeypatch.setattr(prompt_workbench_cli, "read_state", lambda app_support: {})
+    monkeypatch.setattr(prompt_workbench_cli, "process_matches_workbench", lambda *args: True)
+    monkeypatch.setattr(prompt_workbench_cli, "stop_pid", lambda pid: stopped.append(pid) or True)
+
+    reclaimed = prompt_workbench_cli.reclaim_stale_managed_workbench_port(
+        8781,
+        root,
+        tmp_path / "app-support",
+    )
+
+    assert reclaimed is False
+    assert stopped == []
+
+
+def test_prompt_workbench_process_owner_requires_expected_port(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "current" / "viventium_v0_4" / "prompt-workbench"
+    backend = root / "backend"
+    monkeypatch.setattr(
+        prompt_workbench_cli,
+        "process_command",
+        lambda pid: f"uvicorn --app-dir {backend} prompt_workbench.app:app --port 8781",
+    )
+
+    assert prompt_workbench_cli.process_matches_workbench(4312, root, 8781) is True
+    assert prompt_workbench_cli.process_matches_workbench(4312, root, 10781) is False
+
+
+def test_managed_prompt_workbench_restarts_its_current_process_when_compiled_port_changes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(prompt_workbench_cli, "state_source_is_stale", lambda state, root: False)
+    current = {"status": "running", "pid": 4312, "port": 8781}
+
+    assert prompt_workbench_cli.current_workbench_requires_restart(
+        {},
+        current,
+        tmp_path,
+        managed_by_stack=True,
+        preferred_port=10781,
+    ) is True
+    assert prompt_workbench_cli.current_workbench_requires_restart(
+        {},
+        current,
+        tmp_path,
+        managed_by_stack=True,
+        preferred_port=8781,
+    ) is False
+
+
+def test_prompt_workbench_port_selection_does_not_reuse_another_checkout(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "current" / "viventium_v0_4" / "prompt-workbench"
+    monkeypatch.setattr(
+        prompt_workbench_cli,
+        "read_state",
+        lambda app_support: {"pid": 4312, "port": 8781},
+    )
+    monkeypatch.setattr(prompt_workbench_cli, "pid_running", lambda pid: True)
+    monkeypatch.setattr(prompt_workbench_cli, "http_healthy", lambda port: True)
+    monkeypatch.setattr(
+        prompt_workbench_cli,
+        "process_matches_workbench",
+        lambda pid, expected, expected_port=None: False,
+    )
+    monkeypatch.setattr(prompt_workbench_cli, "port_available", lambda port: port == 8782)
+
+    selected = prompt_workbench_cli.choose_port(tmp_path / "app-support", root, 8781)
+
+    assert selected == 8782
+
+
+def test_schedules_panel_prefers_live_query_data_over_a_stale_dock_snapshot() -> None:
+    source = (
+        REPO_ROOT
+        / "viventium_v0_4"
+        / "prompt-workbench"
+        / "src"
+        / "components"
+        / "ScheduledPromptsPanel.tsx"
+    ).read_text(encoding="utf-8")
+
+    live_query = "schedulesQuery.data?.scheduledPrompts ??"
+    dock_snapshot = "scheduledPrompts ??"
+    assert 'queryKey: ["scheduledPrompts", "panel"]' in source
+    assert source.index(live_query) < source.index(dock_snapshot)
+
+
+def test_schedules_panel_only_sends_schedule_for_new_or_touched_drafts() -> None:
+    source = (
+        REPO_ROOT
+        / "viventium_v0_4"
+        / "prompt-workbench"
+        / "src"
+        / "components"
+        / "ScheduledPromptsPanel.tsx"
+    ).read_text(encoding="utf-8")
+
+    assert "includeSchedule: !draft.id || scheduleTouched" in source
+    assert "includeSchedule: !isUserLevelSchedule || scheduleTouched" not in source
 
 
 def test_prompt_workbench_dev_server_ports_are_consistent() -> None:

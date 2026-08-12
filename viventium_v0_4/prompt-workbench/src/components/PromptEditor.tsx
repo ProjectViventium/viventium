@@ -31,7 +31,7 @@ interface Props {
   onLog: (message: string) => void;
   onApplyDraft: (draft: DraftRecord) => void;
   onDiscardDraft: (draft: DraftRecord) => void;
-  onRunEval: (options: { maxCases?: number; live?: boolean; family?: string; surface?: string; promptId?: string }) => void;
+  onRunEval: (options: { maxCases?: number; live?: boolean; family?: string; surface?: string; promptId?: string; caseIds?: string[] }) => void;
   reviewRequestKey?: number;
 }
 
@@ -218,7 +218,7 @@ export function PromptEditor({ prompt, loading, themeMode, onDirtyChange, onSave
         <span><FileDiff size={14} /> Diff compares {diffBaseLabel} to {diffTargetLabel}</span>
         {hasWorkingTreeSourceChange && <span><FileDiff size={14} /> Diff shows working-tree source changes</span>}
         <span><FlaskConical size={14} /> {latestEval ? `Last eval used applied source: ${latestEval.returnCode === 0 ? 'ok' : `code ${latestEval.returnCode}`}` : 'No eval run recorded for this prompt'}</span>
-        <span title={runtimeBundleTitle(runtimeBundle)}><GitCommitHorizontal size={14} /> {runtimeBundleLabel(runtimeBundle)}</span>
+        <span title={deliveryTitle(context?.delivery, runtimeBundle)}><GitCommitHorizontal size={14} /> {deliveryLabel(context?.delivery, runtimeBundle)}</span>
         {pendingDrafts.length > 0 && (
           <button className="workflow-inline-action" onClick={reviewFirstDraft}>
             Review draft
@@ -581,24 +581,36 @@ function humanPromptName(id: string) {
   return label.replace(/[._-]+/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
-function runtimeBundleLabel(bundle?: PromptWorkbenchContext['runtimePromptBundle']) {
-  if (!bundle) return 'Runtime bundle: checking';
+function deliveryLabel(
+  delivery?: PromptWorkbenchContext['delivery'],
+  bundle?: PromptWorkbenchContext['runtimePromptBundle'],
+) {
+  if (delivery?.kind === 'managed_agent') {
+    return `Managed agent: ${humanDeliveryState(delivery.state)}`;
+  }
+  if (!bundle) return 'Compiled runtime: checking';
   switch (bundle.promptState) {
     case 'synced':
-      return 'Runtime bundle: live';
+      return 'Compiled runtime: live';
     case 'source-only':
     case 'drift':
-      return 'Runtime bundle: needs rebuild';
+      return 'Compiled runtime: needs rebuild';
     case 'bundle-unavailable':
-      return 'Runtime bundle: not found';
+      return 'Compiled runtime: not found';
     case 'other-drift':
-      return 'Runtime bundle: other drift';
+      return 'Compiled runtime: other drift';
     default:
-      return 'Runtime bundle: unknown';
+      return 'Compiled runtime: unknown';
   }
 }
 
-function runtimeBundleTitle(bundle?: PromptWorkbenchContext['runtimePromptBundle']) {
+function deliveryTitle(
+  delivery?: PromptWorkbenchContext['delivery'],
+  bundle?: PromptWorkbenchContext['runtimePromptBundle'],
+) {
+  if (delivery?.kind === 'managed_agent') {
+    return `This prompt is delivered through the managed agent source/live sync boundary. Current state: ${humanDeliveryState(delivery.state)}.`;
+  }
   if (!bundle) return 'Checking compiled prompt bundle status.';
   const count = bundle.driftCount ?? 0;
   if (bundle.promptAffected) {
@@ -611,4 +623,13 @@ function runtimeBundleTitle(bundle?: PromptWorkbenchContext['runtimePromptBundle
     return 'No compiled runtime prompt bundle was found for drift comparison.';
   }
   return `Prompt bundle status: ${bundle.status}.`;
+}
+
+function humanDeliveryState(state?: string) {
+  if (state === 'synced') return 'synced';
+  if (state === 'source-ahead') return 'source changed';
+  if (state === 'live-ahead') return 'live changed';
+  if (state === 'conflict') return 'needs merge';
+  if (state === 'not-mapped') return 'unit not mapped';
+  return state || 'unknown';
 }

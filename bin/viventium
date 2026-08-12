@@ -18,6 +18,7 @@ SCRIPT_SOURCE="$(resolve_script_source)"
 SCRIPT_DIR="$(cd -P "$(dirname "$SCRIPT_SOURCE")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 WORKSPACE_ROOT="$(cd "$REPO_ROOT/.." && pwd)"
+export VIVENTIUM_REPO_ROOT="$REPO_ROOT"
 
 # shellcheck source=/dev/null
 source "$REPO_ROOT/scripts/viventium/common.sh"
@@ -87,6 +88,7 @@ LOCK_FILE="${VIVENTIUM_COMPONENTS_LOCK_FILE:-$REPO_ROOT/components.lock.json}"
 CLI_LOCK_DIR="${VIVENTIUM_CLI_LOCK_DIR:-$APP_SUPPORT_DIR/state/cli-operation.lock}"
 CLI_LOCK_OWNER=0
 DETACHED_START_PID=""
+DETACHED_START_LOG_OFFSET=0
 INSTALL_WAIT_PROGRESS_ACTIVE=0
 INSTALL_WAIT_PROGRESS_LINES=0
 INSTALL_WAIT_LAST_MESSAGE=""
@@ -226,6 +228,13 @@ bootstrap_components() {
     "$@"
 }
 
+ensure_viventium_health_runtime() {
+  refresh_repo_python
+  "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/viventium_health_runtime.py" install \
+    --repo-root "$REPO_ROOT" \
+    --app-support-dir "$APP_SUPPORT_DIR"
+}
+
 bootstrap_components_upgrade_checked() {
   local bootstrap_output=""
   if ! bootstrap_output="$(bootstrap_components "$@")"; then
@@ -234,10 +243,44 @@ bootstrap_components_upgrade_checked() {
   fi
 
   printf '%s\n' "$bootstrap_output"
+  local alignment_args=(
+    --repo-root "$REPO_ROOT"
+    --app-support-dir "$APP_SUPPORT_DIR"
+    --no-fetch
+    --json
+  )
+  if [[ -f "$CONFIG_FILE" ]]; then
+    alignment_args+=(--config-file "$CONFIG_FILE")
+  fi
+  if [[ "${ALLOW_DIRTY:-0}" == "1" ]]; then
+    alignment_args+=(--allow-dirty-parent)
+  fi
+  local alignment_json=""
+  alignment_json="$("$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/upgrade_check.py" "${alignment_args[@]}")" || true
+  if ! "$PYTHON_BIN" - "$alignment_json" <<'PY'
+import json
+import sys
 
-  if printf '%s\n' "$bootstrap_output" | grep -q 'kept local dirty checkout'; then
-    echo "Upgrade aborted because at least one selected component has local edits and could not refresh to the pinned ref." >&2
-    echo "Review the reported component checkout, clean or commit those edits, and rerun bin/viventium upgrade." >&2
+try:
+    report = json.loads(sys.argv[1])
+except (IndexError, json.JSONDecodeError):
+    print("Structured component alignment verification failed: unreadable report.", file=sys.stderr)
+    raise SystemExit(1)
+
+drift = report.get("component_lock_drift")
+if not isinstance(drift, list):
+    print("Structured component alignment verification failed: invalid component result.", file=sys.stderr)
+    raise SystemExit(1)
+if drift:
+    for item in drift:
+        if isinstance(item, dict):
+            name = str(item.get("name") or "managed component")
+            status = str(item.get("status") or "not_aligned")
+            print(f"Managed component is not aligned: {name} ({status})", file=sys.stderr)
+    raise SystemExit(1)
+PY
+  then
+    echo "Upgrade aborted because selected components did not reach their declared pinned state." >&2
     return 1
   fi
 }
@@ -369,6 +412,53 @@ print("on" if payload.get("showInStatusBar", True) else "off")
 PY
 )"
   [[ "$status" == "on" ]]
+}
+
+runtime_start_claim_file() {
+  printf '%s\n' "$APP_SUPPORT_DIR/state/runtime/startup-in-progress"
+}
+
+runtime_start_claim_active() {
+  local claim_file=""
+  local owner_pid=""
+  local owner_repo=""
+  local created_at=""
+  local owner_command=""
+  local now=""
+  claim_file="$(runtime_start_claim_file)"
+  [[ -f "$claim_file" && ! -L "$claim_file" ]] || return 1
+  [[ "$(stat -f '%u:%l' "$claim_file" 2>/dev/null || true)" == "$(id -u):1" ]] || return 1
+  owner_pid="$(sed -n '1p' "$claim_file")"
+  owner_repo="$(sed -n '2p' "$claim_file")"
+  created_at="$(sed -n '3p' "$claim_file")"
+  [[ "$owner_pid" =~ ^[0-9]+$ && "$owner_repo" == "$REPO_ROOT" && "$created_at" =~ ^[0-9]+$ ]] || return 1
+  kill -0 "$owner_pid" >/dev/null 2>&1 || return 1
+  now="$(date '+%s')"
+  (( now >= created_at && now - created_at <= 1800 )) || return 1
+  owner_command="$(ps -p "$owner_pid" -o command= 2>/dev/null || true)"
+  [[ "$owner_command" == *"bin/viventium"* ]]
+}
+
+write_runtime_start_claim() {
+  local claim_file=""
+  local temporary_file=""
+  claim_file="$(runtime_start_claim_file)"
+  temporary_file="${claim_file}.tmp.$$"
+  mkdir -p "$(dirname "$claim_file")"
+  (umask 077; printf '%s\n%s\n%s\n' "$$" "$REPO_ROOT" "$(date '+%s')" >"$temporary_file")
+  chmod 600 "$temporary_file"
+  mv -f "$temporary_file" "$claim_file"
+  export VIVENTIUM_RUNTIME_START_CLAIM_FILE="$claim_file"
+  export VIVENTIUM_RUNTIME_START_CLAIM_OWNER_PID="$$"
+  export VIVENTIUM_RUNTIME_START_CLAIM_REPO_ROOT="$REPO_ROOT"
+}
+
+clear_runtime_start_claim() {
+  local claim_file="${VIVENTIUM_RUNTIME_START_CLAIM_FILE:-$(runtime_start_claim_file)}"
+  [[ -f "$claim_file" && ! -L "$claim_file" ]] || return 0
+  [[ "$(sed -n '1p' "$claim_file")" == "${VIVENTIUM_RUNTIME_START_CLAIM_OWNER_PID:-$$}" ]] || return 0
+  [[ "$(sed -n '2p' "$claim_file")" == "${VIVENTIUM_RUNTIME_START_CLAIM_REPO_ROOT:-$REPO_ROOT}" ]] || return 0
+  rm -f "$claim_file"
 }
 
 read_cli_lock_metadata() {
@@ -534,6 +624,9 @@ Commands:
   report-bug        Alias for workflows bug-report flow.
   bug-report        Compatibility alias for report-bug.
   prompt-workbench  Start, stop, open, or inspect the local Prompt Workbench.
+  health            Configure, connect, pull, schedule, or inspect private health evidence.
+  cognitive-integrity
+                    Check composed capability, memory, recall, nightly, and drift contracts.
   preflight         Detect and optionally install missing system prerequisites.
   reset             Factory-reset the local Viventium install state under App Support.
   start             Start the current Viventium stack using generated runtime env.
@@ -541,6 +634,7 @@ Commands:
   continuity-audit  Capture continuity metadata for the current install.
   memory-harden     Dry-run, apply, schedule, status, or roll back saved-memory hardening.
   transcripts       Configure the optional local meeting-transcripts source folder.
+  qa-test-account   Configure the isolated non-admin account used by local QA and Workbench evals.
   memory-dedupe     Dry-run or apply saved-memory/provider-key dedupe and unique indexes.
   stop              Stop the current Viventium stack.
   snapshot          Capture a local state snapshot into App Support.
@@ -624,6 +718,15 @@ Usage:
 Captures metadata-only continuity state for the current install under App Support state.
 USAGE
       ;;
+    cognitive-integrity)
+      cat <<'USAGE'
+Usage:
+  bin/viventium cognitive-integrity [--json]
+
+Reports one public-safe composed view of provider capability transport, saved-memory exposure,
+conversation recall, Prompt Workbench nightly state, memory hardening, and config/prompt drift.
+USAGE
+      ;;
     memory-harden)
       cat <<'USAGE'
 Usage:
@@ -649,6 +752,19 @@ Usage:
 Reads or updates runtime.memory_hardening.transcripts.source_dir in the canonical
 local config.yaml, writes a local backup before changes, and recompiles runtime
 files after set/clear.
+USAGE
+      ;;
+    qa-test-account)
+      cat <<'USAGE'
+Usage:
+  bin/viventium qa-test-account status [--json]
+  bin/viventium qa-test-account set <email> [--json]
+  bin/viventium qa-test-account set --email-stdin [--json]
+  bin/viventium qa-test-account clear [--json]
+
+Stores the explicit non-admin local QA selector in canonical config, recompiles
+runtime files, and keeps the account value out of command output. Live QA still
+fails closed if the selected account is missing or is an admin.
 USAGE
       ;;
     memory-dedupe)
@@ -784,6 +900,31 @@ Manages only the standalone local Prompt Workbench web app. Stop does not stop
 the main Viventium runtime, LibreChat, or native support services.
 USAGE
       ;;
+    health)
+      cat <<'USAGE'
+Usage:
+  bin/viventium health whoop configure [--client-id <id>] [--redirect-uri <uri>] [--json-stdin]
+  bin/viventium health whoop connect [--callback-url <url> | --callback-stdin] [--json]
+  bin/viventium health whoop onboard --callback-stdin [--hour 6] [--minute 0]
+  bin/viventium health whoop status
+  bin/viventium health whoop disconnect
+  bin/viventium health import whoop-export (--input <zip> | --stdin)
+  bin/viventium health import whoop-evidence --stdin --media-type (image/png | image/jpeg)
+  bin/viventium health pull whoop [--lookback-days <days>]
+  bin/viventium health pull whoop --all-history
+  bin/viventium health runs [--provider whoop] [--limit <count>]
+  bin/viventium health records [--provider whoop] [--limit <count>]
+  bin/viventium health read <record-id> [--offset <bytes>] [--max-bytes <bytes>]
+  bin/viventium health schedule install [--hour <0-23>] [--minute <0-59>]
+  bin/viventium health schedule status
+  bin/viventium health schedule uninstall
+
+Health evidence is stored privately and append-only under Viventium App Support.
+Browser onboarding completes authorization, full-history import, and scheduled
+correction acquisition as one owner action. CLI and official-export fallbacks remain available.
+--all-history cannot be combined with --lookback-days.
+USAGE
+      ;;
     heal)
       cat <<'USAGE'
 Usage:
@@ -881,7 +1022,8 @@ USAGE
 Usage:
   bin/viventium restore [options]
 
-Inspects or restores a snapshot using the current App Support directory.
+Validates a complete-bundle candidate without changing target state. The transactional public
+restore/apply engine is not implemented yet, so non-validation requests exit PARTIAL.
 USAGE
       ;;
     uninstall)
@@ -918,8 +1060,32 @@ compile_config() {
   fi
 }
 
+bootstrap_life() {
+  if [[ ! -f "$GENERATED_ENV" ]]; then
+    return 0
+  fi
+  local life_bootstrap_status=0
+  "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/life_bootstrap.py" \
+    --runtime-env "$GENERATED_ENV" \
+    --state-file "$APP_SUPPORT_DIR/state/life-bootstrap.json" \
+    --if-configured || life_bootstrap_status=$?
+  if [[ "$life_bootstrap_status" -ne 0 ]]; then
+    echo "[viventium] Warning: canonical LIFE bootstrap could not complete; chat startup will continue." >&2
+    echo "[viventium] Fix the configured LIFE path, then rerun bin/viventium doctor or start." >&2
+  fi
+  return 0
+}
+
 sync_memory_hardening_schedule() {
   if [[ "$(uname -s)" != "Darwin" || ! -f "$GENERATED_ENV" ]]; then
+    return 0
+  fi
+  # A dev/test/side-by-side config must never install or remove the one user-level
+  # LaunchAgent. Explicit memory-harden schedule commands remain available for an
+  # intentionally selected state root; automatic config sync belongs only to the
+  # canonical installed runtime.
+  local canonical_app_support_dir="$HOME/Library/Application Support/Viventium"
+  if [[ "${APP_SUPPORT_DIR%/}" != "${canonical_app_support_dir%/}" ]]; then
     return 0
   fi
   local enabled schedule plist_path
@@ -968,11 +1134,131 @@ sync_memory_hardening_schedule() {
 }
 
 apply_default_nightly_routines() {
-  [[ -f "$CONFIG_FILE" ]] || return 0
+  local config_path="${1:-$CONFIG_FILE}"
+  [[ -f "$config_path" ]] || return 0
   "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/default_nightly_routines.py" \
-    --config "$CONFIG_FILE" \
+    --config "$config_path" \
     --write \
     --quiet
+}
+
+CONFIG_TRANSACTION_DIR=""
+CONFIG_CANDIDATE_FILE=""
+CONFIG_TRANSACTION_BACKUP=""
+CONFIG_TRANSACTION_HAD_EXISTING="false"
+CONFIG_TRANSACTION_APPLIED=0
+
+prepare_config_candidate() {
+  local config_input="$1"
+  local candidate_root="$APP_SUPPORT_DIR/state/config-candidates"
+  local merged_input=""
+  local transaction_args=()
+  mkdir -p "$candidate_root"
+  chmod 700 "$candidate_root" >/dev/null 2>&1 || true
+  CONFIG_TRANSACTION_DIR="$(mktemp -d "$candidate_root/attempt.XXXXXX")"
+  chmod 700 "$CONFIG_TRANSACTION_DIR" >/dev/null 2>&1 || true
+  merged_input="$CONFIG_TRANSACTION_DIR/merged-input.yaml"
+  CONFIG_CANDIDATE_FILE="$CONFIG_TRANSACTION_DIR/config.yaml"
+
+  transaction_args=(
+    prepare
+    --input "$config_input"
+    --output "$merged_input"
+  )
+  if [[ -f "$CONFIG_FILE" ]]; then
+    transaction_args+=(--existing "$CONFIG_FILE")
+  fi
+  if ! "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/config_transaction.py" "${transaction_args[@]}"; then
+    echo "Unable to prepare a configuration candidate from the supplied settings." >&2
+    return 1
+  fi
+
+  WIZARD_ARGS=(--output "$CONFIG_CANDIDATE_FILE")
+  WIZARD_ARGS+=(--preset "$merged_input" --non-interactive)
+  if ! "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/wizard.py" "${WIZARD_ARGS[@]}"; then
+    if [[ ! -s "$CONFIG_CANDIDATE_FILE" ]]; then
+      echo "Config candidate was not created because the supplied settings failed validation." >&2
+    fi
+    return 1
+  fi
+  if [[ ! -s "$CONFIG_CANDIDATE_FILE" ]]; then
+    echo "Config candidate was not created; the existing Viventium configuration was left unchanged." >&2
+    return 1
+  fi
+  if ! apply_default_nightly_routines "$CONFIG_CANDIDATE_FILE"; then
+    return 1
+  fi
+  if ! "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/config_compiler.py" \
+    --config "$CONFIG_CANDIDATE_FILE" \
+    --output-dir "$CONFIG_TRANSACTION_DIR/runtime" \
+    --dry-run >/dev/null; then
+    return 1
+  fi
+}
+
+apply_config_candidate() {
+  local transaction_status=""
+  transaction_status="$(
+    "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/config_transaction.py" apply \
+      --candidate "$CONFIG_CANDIDATE_FILE" \
+      --config "$CONFIG_FILE" \
+      --backup-dir "$APP_SUPPORT_DIR/state/config-backups"
+  )"
+  CONFIG_TRANSACTION_BACKUP="$(
+    "$PYTHON_BIN" -c 'import json,sys; print(json.loads(sys.argv[1])["backup_path"])' \
+      "$transaction_status"
+  )"
+  CONFIG_TRANSACTION_HAD_EXISTING="$(
+    "$PYTHON_BIN" -c 'import json,sys; print(str(json.loads(sys.argv[1])["had_existing"]).lower())' \
+      "$transaction_status"
+  )"
+  CONFIG_TRANSACTION_APPLIED=1
+  if [[ -n "$CONFIG_TRANSACTION_BACKUP" ]]; then
+    echo "Backed up the previous config to $(display_safe_path "$CONFIG_TRANSACTION_BACKUP")" >&2
+  fi
+}
+
+rollback_config_candidate() {
+  [[ "$CONFIG_TRANSACTION_APPLIED" == "1" ]] || return 0
+  local rollback_args=(
+    rollback
+    --config "$CONFIG_FILE"
+    --had-existing "$CONFIG_TRANSACTION_HAD_EXISTING"
+  )
+  if [[ -n "$CONFIG_TRANSACTION_BACKUP" ]]; then
+    rollback_args+=(--backup "$CONFIG_TRANSACTION_BACKUP")
+  fi
+  "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/config_transaction.py" "${rollback_args[@]}" >/dev/null
+  CONFIG_TRANSACTION_APPLIED=0
+  if [[ "$CONFIG_TRANSACTION_HAD_EXISTING" == "true" ]]; then
+    if ! compile_config; then
+      echo "Config rollback succeeded, but generated runtime refresh failed; run bin/viventium compile-config." >&2
+      return 1
+    fi
+  fi
+  echo "Restored the previous canonical config after the failed operation." >&2
+}
+
+cleanup_config_candidate() {
+  if [[ -z "$CONFIG_TRANSACTION_DIR" ]]; then
+    return 0
+  fi
+  case "$CONFIG_TRANSACTION_DIR" in
+    "$APP_SUPPORT_DIR/state/config-candidates/"*)
+      rm -rf -- "$CONFIG_TRANSACTION_DIR"
+      ;;
+    *)
+      echo "Refusing to remove unexpected config candidate path: $CONFIG_TRANSACTION_DIR" >&2
+      return 1
+      ;;
+  esac
+  CONFIG_TRANSACTION_DIR=""
+  CONFIG_CANDIDATE_FILE=""
+}
+
+finish_config_candidate() {
+  CONFIG_TRANSACTION_APPLIED=0
+  cleanup_config_candidate
 }
 
 continuity_audit_root() {
@@ -1682,13 +1968,84 @@ transcripts_command() {
   esac
 }
 
+qa_test_account_command() {
+  local action="${1:-status}"
+  if [[ "$action" == "--help" || "$action" == "-h" || "$action" == "help" ]]; then
+    subcommand_usage qa-test-account
+    return 0
+  fi
+  shift || true
+
+  ensure_app_support_layout "$APP_SUPPORT_DIR"
+  if [[ ! -f "$CONFIG_FILE" ]]; then
+    echo "Missing config: $CONFIG_FILE" >&2
+    echo "Run: bin/viventium install" >&2
+    return 1
+  fi
+  refresh_repo_python
+
+  local config_tool="$REPO_ROOT/scripts/viventium/config_settings.py"
+  local backup_dir="$APP_SUPPORT_DIR/state/config-backups"
+  case "$action" in
+    status)
+      "$PYTHON_BIN" "$config_tool" \
+        --config-file "$CONFIG_FILE" \
+        qa-test-account-status \
+        "$@"
+      ;;
+    set)
+      if [[ $# -lt 1 ]]; then
+        echo "Missing QA test-account email or --email-stdin." >&2
+        subcommand_usage qa-test-account >&2
+        return 1
+      fi
+      acquire_cli_lock "$COMMAND"
+      local output=""
+      if [[ "$1" == "--email-stdin" ]]; then
+        shift || true
+        output="$("$PYTHON_BIN" "$config_tool" \
+          --config-file "$CONFIG_FILE" \
+          --backup-dir "$backup_dir" \
+          qa-test-account-set --email-stdin \
+          "$@")"
+      else
+        local qa_email="$1"
+        shift || true
+        output="$("$PYTHON_BIN" "$config_tool" \
+          --config-file "$CONFIG_FILE" \
+          --backup-dir "$backup_dir" \
+          qa-test-account-set "$qa_email" \
+          "$@")"
+      fi
+      compile_config >/dev/null
+      printf '%s\n' "$output"
+      ;;
+    clear)
+      acquire_cli_lock "$COMMAND"
+      local output=""
+      output="$("$PYTHON_BIN" "$config_tool" \
+        --config-file "$CONFIG_FILE" \
+        --backup-dir "$backup_dir" \
+        qa-test-account-clear \
+        "$@")"
+      compile_config >/dev/null
+      printf '%s\n' "$output"
+      ;;
+    *)
+      echo "Unknown qa-test-account action: $action" >&2
+      subcommand_usage qa-test-account >&2
+      return 1
+      ;;
+  esac
+}
+
 maybe_reexec_active_runtime_checkout() {
   [[ "${VIVENTIUM_DISABLE_ACTIVE_CHECKOUT_REEXEC:-0}" == "1" ]] && return 0
   local command_name="${1:-}"
   shift || true
 
   case "$command_name" in
-    start|launch|stop|install-helper|uninstall-helper|status-bar|memory-harden|memory-dedupe|transcripts|workflows|heal|feature-request|report-bug|bug-report|prompt-workbench)
+    start|launch|stop|install-helper|uninstall-helper|status-bar|memory-harden|memory-dedupe|transcripts|qa-test-account|workflows|heal|feature-request|report-bug|bug-report|prompt-workbench|health|cognitive-integrity)
       ;;
     *)
       return 0
@@ -1853,6 +2210,94 @@ prepare_runtime_exports() {
   if [[ -f "$generated_telegram_codex_projects" ]]; then
     export VIVENTIUM_TELEGRAM_CODEX_PROJECTS_FILE="$generated_telegram_codex_projects"
   fi
+}
+
+load_selected_runtime_environment_for_children() {
+  [[ -f "$GENERATED_ENV" ]] || return 0
+
+  # A side-by-side wrapper selects the runtime before this process starts. Keep
+  # that identity authoritative while replacing any inherited ownership values
+  # from a canonical or previously selected runtime.
+  local wrapper_scope="${VIVENTIUM_DEV_ENV_SCOPE_ACTIVE:-}"
+  local wrapper_instance_id="${VIVENTIUM_DEV_ENV_INSTANCE_ID:-}"
+  local wrapper_name="${VIVENTIUM_DEV_ENV_NAME:-}"
+  local runtime_profile=""
+  local selected_state_dir="$APP_SUPPORT_DIR/state"
+  local selected_profile_dir=""
+  unset VIVENTIUM_APP_SUPPORT_DIR VIVENTIUM_BASE_STATE_DIR VIVENTIUM_STATE_ROOT
+  unset VIVENTIUM_PUBLIC_NETWORK_STATE_FILE VIVENTIUM_CALL_TUNNEL_LOG_DIR
+  unset VIVENTIUM_RUNTIME_PROFILE
+  unset VIVENTIUM_LOCAL_MONGO_PORT VIVENTIUM_LOCAL_MONGO_DB VIVENTIUM_LOCAL_MONGO_DATA_PATH
+  unset VIVENTIUM_LOCAL_MEILI_PORT VIVENTIUM_LOCAL_MEILI_DATA_PATH
+  unset MEILI_MASTER_KEY VIVENTIUM_LOCAL_MEILI_MASTER_KEY
+  unset MONGO_HOST MEILI_BIND_HOST
+  unset LIVEKIT_HTTP_PORT LIVEKIT_TCP_PORT LIVEKIT_UDP_PORT LIVEKIT_NODE_IP
+  unset VIVENTIUM_LIVEKIT_CFG_DIR
+  unset VIVENTIUM_DEV_ENV_ENABLED VIVENTIUM_DEV_ENV_NAME
+
+  # Child launchers and native lifecycle scripts need the selected generated
+  # values in their environment. Establish the selected structural roots before
+  # the local layer so references inside runtime.local.env cannot expand through
+  # hostile ambient canonical values. The local override layer still loads last.
+  export VIVENTIUM_APP_SUPPORT_DIR="$APP_SUPPORT_DIR"
+  export VIVENTIUM_BASE_STATE_DIR="$selected_state_dir"
+  set -a
+  # shellcheck disable=SC1090
+  source "$GENERATED_ENV"
+  runtime_profile="${VIVENTIUM_RUNTIME_PROFILE:-isolated}"
+  selected_profile_dir="$selected_state_dir/runtime/$runtime_profile"
+  export VIVENTIUM_STATE_ROOT="$selected_profile_dir"
+  if [[ -f "$GENERATED_LOCAL_ENV" ]]; then
+    # shellcheck disable=SC1090
+    source "$GENERATED_LOCAL_ENV"
+  fi
+  set +a
+
+  if [[ -n "$wrapper_scope" ]]; then
+    export VIVENTIUM_DEV_ENV_SCOPE_ACTIVE="$wrapper_scope"
+  fi
+  if [[ -n "$wrapper_instance_id" ]]; then
+    export VIVENTIUM_DEV_ENV_INSTANCE_ID="$wrapper_instance_id"
+  fi
+  if [[ "$wrapper_scope" == "true" || "$wrapper_scope" == "1" ]]; then
+    export VIVENTIUM_DEV_ENV_NAME="$wrapper_name"
+  fi
+
+  runtime_profile="${VIVENTIUM_RUNTIME_PROFILE:-$runtime_profile}"
+  selected_profile_dir="$selected_state_dir/runtime/$runtime_profile"
+  export VIVENTIUM_APP_SUPPORT_DIR="$APP_SUPPORT_DIR"
+  export VIVENTIUM_BASE_STATE_DIR="$selected_state_dir"
+  export VIVENTIUM_STATE_ROOT="$selected_profile_dir"
+  export VIVENTIUM_RUNTIME_PROFILE="$runtime_profile"
+  export VIVENTIUM_PUBLIC_NETWORK_STATE_FILE="$selected_profile_dir/public-network.json"
+  export VIVENTIUM_CALL_TUNNEL_LOG_DIR="$selected_profile_dir/logs"
+
+  if [[ -z "${VIVENTIUM_LOCAL_MONGO_DATA_PATH:-}" ]]; then
+    if [[ -d "$selected_profile_dir/mongo-data" ]]; then
+      VIVENTIUM_LOCAL_MONGO_DATA_PATH="$selected_profile_dir/mongo-data"
+    elif [[ -d "$selected_state_dir/mongo-data" ]]; then
+      VIVENTIUM_LOCAL_MONGO_DATA_PATH="$selected_state_dir/mongo-data"
+    else
+      VIVENTIUM_LOCAL_MONGO_DATA_PATH="$selected_profile_dir/mongo-data"
+    fi
+  fi
+  export VIVENTIUM_LOCAL_MONGO_DATA_PATH
+
+  if [[ -z "${VIVENTIUM_LOCAL_MEILI_DATA_PATH:-}" ]]; then
+    if [[ -d "$selected_profile_dir/meili-data" ]]; then
+      VIVENTIUM_LOCAL_MEILI_DATA_PATH="$selected_profile_dir/meili-data"
+    elif [[ -d "$selected_state_dir/meili-data" ]]; then
+      VIVENTIUM_LOCAL_MEILI_DATA_PATH="$selected_state_dir/meili-data"
+    else
+      VIVENTIUM_LOCAL_MEILI_DATA_PATH="$selected_profile_dir/meili-data"
+    fi
+  fi
+  export VIVENTIUM_LOCAL_MEILI_DATA_PATH
+
+  if [[ -z "${VIVENTIUM_LIVEKIT_CFG_DIR:-}" ]]; then
+    VIVENTIUM_LIVEKIT_CFG_DIR="$selected_profile_dir/livekit"
+  fi
+  export VIVENTIUM_LIVEKIT_CFG_DIR
 }
 
 install_progress_dir() {
@@ -2080,21 +2525,33 @@ backup_install_state_for_removal() {
   local reason="${1:-reset}"
   local backup_root backup_dir timestamp
   backup_root="$(removal_backup_root)"
+  case "$backup_root" in
+    "$APP_SUPPORT_DIR"|"$APP_SUPPORT_DIR"/*)
+      echo "Refusing removal backup root inside the active Viventium App Support directory: $backup_root" >&2
+      return 1
+      ;;
+  esac
   timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
   backup_dir="$backup_root/${timestamp}-${reason}"
-  mkdir -p "$backup_dir"
+  mkdir -p "$backup_root"
+  chmod 700 "$backup_root" >/dev/null 2>&1 || true
+  if [[ -e "$backup_dir" ]]; then
+    echo "Refusing to overwrite an existing Viventium removal backup: $backup_dir" >&2
+    return 1
+  fi
 
-  if [[ -f "$CONFIG_FILE" ]]; then
+  if [[ -e "$APP_SUPPORT_DIR" ]]; then
+    # Services are drained before this function is called. Moving the entire
+    # tree on the same local filesystem preserves databases, state, snapshots,
+    # generated config, logs, and helper metadata without a torn live copy.
+    mv -- "$APP_SUPPORT_DIR" "$backup_dir"
+    chmod 700 "$backup_dir" >/dev/null 2>&1 || true
+  elif [[ -f "$CONFIG_FILE" ]]; then
+    mkdir -p "$backup_dir"
+    chmod 700 "$backup_dir" >/dev/null 2>&1 || true
     cp "$CONFIG_FILE" "$backup_dir/config.yaml"
-  fi
-  if [[ -f "$APP_SUPPORT_DIR/helper-config.json" ]]; then
-    cp "$APP_SUPPORT_DIR/helper-config.json" "$backup_dir/helper-config.json"
-  fi
-  if [[ -f "$GENERATED_ENV" ]]; then
-    cp "$GENERATED_ENV" "$backup_dir/runtime.env"
-  fi
-  if [[ -f "$GENERATED_LOCAL_ENV" ]]; then
-    cp "$GENERATED_LOCAL_ENV" "$backup_dir/runtime.local.env"
+  else
+    return 1
   fi
 
   printf '%s\n' "$backup_dir"
@@ -2132,29 +2589,22 @@ drain_native_stack_before_state_removal() {
   # state is still present for command-line matching.
   prepare_runtime_exports
   if [[ -f "$GENERATED_ENV" ]]; then
-    set +u
-    # shellcheck disable=SC1090
-    source "$GENERATED_ENV"
-    if [[ -f "$GENERATED_LOCAL_ENV" ]]; then
-      # shellcheck disable=SC1090
-      source "$GENERATED_LOCAL_ENV"
-    fi
-    set -u
+    load_selected_runtime_environment_for_children
   fi
   "$REPO_ROOT/scripts/viventium/native_stack.sh" stop >/dev/null 2>&1 || true
 }
 
 reset_local_install_state() {
   local backup_dir=""
-  if [[ -e "$APP_SUPPORT_DIR" || -f "$CONFIG_FILE" ]]; then
-    backup_dir="$(backup_install_state_for_removal "reset")"
-  fi
 
   if is_stack_running; then
     echo "Stopping the current Viventium stack before reset..."
     stop_stack_for_upgrade
   fi
   drain_native_stack_before_state_removal
+  if [[ -e "$APP_SUPPORT_DIR" || -f "$CONFIG_FILE" ]]; then
+    backup_dir="$(backup_install_state_for_removal "reset")"
+  fi
 
   rm -rf "$APP_SUPPORT_DIR"
   if [[ -n "$backup_dir" ]]; then
@@ -2165,15 +2615,15 @@ reset_local_install_state() {
 
 uninstall_local_installation() {
   local backup_dir=""
-  if [[ -e "$APP_SUPPORT_DIR" || -f "$CONFIG_FILE" ]]; then
-    backup_dir="$(backup_install_state_for_removal "uninstall")"
-  fi
 
   if is_stack_running; then
     echo "Stopping the current Viventium stack before uninstall..."
     stop_stack_for_upgrade
   fi
   drain_native_stack_before_state_removal
+  if [[ -e "$APP_SUPPORT_DIR" || -f "$CONFIG_FILE" ]]; then
+    backup_dir="$(backup_install_state_for_removal "uninstall")"
+  fi
 
   run_macos_helper_installer uninstall || true
   rm -rf "$APP_SUPPORT_DIR"
@@ -2279,6 +2729,27 @@ runtime_env_true() {
   [[ "$value" == "1" || "$value" == "true" || "$value" == "yes" || "$value" == "on" ]]
 }
 
+value_is_true() {
+  local value="${1:-false}"
+  value="$(printf '%s' "$value" | tr '[:upper:]' '[:lower:]')"
+  [[ "$value" == "1" || "$value" == "true" || "$value" == "yes" || "$value" == "on" ]]
+}
+
+express_install_experience() {
+  local value=""
+  value="$(read_generated_env_value "VIVENTIUM_INSTALL_EXPERIENCE" "legacy")"
+  value="$(printf '%s' "$value" | tr '[:upper:]' '[:lower:]')"
+  [[ "$value" == "express" ]]
+}
+
+ensure_configured_prerequisites() {
+  if ! express_install_experience; then
+    return 0
+  fi
+  echo "Checking Easy Install prerequisites..."
+  run_preflight apply
+}
+
 runtime_port_listening() {
   local port="${1:-}"
   [[ -n "$port" ]] || return 1
@@ -2315,6 +2786,31 @@ PY
   fi
 
   [[ "$code" =~ ^(2|3)[0-9][0-9]$ ]]
+}
+
+http_json_status_up() {
+  local url="${1:-}"
+  local timeout_seconds="${2:-2}"
+  [[ -n "$url" ]] || return 1
+
+  "$PYTHON_BIN" - "$url" "$timeout_seconds" <<'PY'
+import json
+import sys
+import urllib.request
+
+url = sys.argv[1]
+timeout_seconds = float(sys.argv[2])
+request = urllib.request.Request(url, method="GET")
+try:
+    with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+        if getattr(response, "status", 200) != 200:
+            raise SystemExit(1)
+        payload = json.load(response)
+except Exception:
+    raise SystemExit(1)
+
+raise SystemExit(0 if isinstance(payload, dict) and payload.get("status") == "UP" else 1)
+PY
 }
 
 http_url_reachable() {
@@ -2382,8 +2878,7 @@ rag_api_surface_healthy() {
   base_url="${base_url%/}"
   [[ -n "$base_url" ]] || return 1
 
-  http_url_healthy "${base_url}/health" ||
-    http_url_healthy "${base_url}/"
+  http_json_status_up "${base_url}/health"
 }
 
 searxng_surface_healthy() {
@@ -2564,7 +3059,7 @@ all_user_surfaces_healthy() {
   assign_runtime_ports api_port frontend_port playground_port
   api_surface_healthy "$api_port" &&
     frontend_surface_healthy "$frontend_port" &&
-    frontend_surface_healthy "$playground_port"
+    { express_install_experience || frontend_surface_healthy "$playground_port"; }
 }
 
 install_surfaces_healthy() {
@@ -2576,6 +3071,19 @@ install_surfaces_healthy() {
 
 user_surface_healthy() {
   all_user_surfaces_healthy
+}
+
+capture_detached_start_log_offset() {
+  local launch_log="${1:-}"
+  local byte_count=0
+
+  if [[ -f "$launch_log" ]]; then
+    byte_count="$(wc -c <"$launch_log" 2>/dev/null | tr -d '[:space:]' || true)"
+  fi
+  if [[ ! "$byte_count" =~ ^[0-9]+$ ]]; then
+    byte_count=0
+  fi
+  DETACHED_START_LOG_OFFSET="$byte_count"
 }
 
 launch_stack_detached() {
@@ -2597,6 +3105,10 @@ launch_stack_detached() {
     echo "Viventium is already starting."
     return 0
   fi
+  if type runtime_start_claim_active >/dev/null 2>&1 && runtime_start_claim_active; then
+    echo "Viventium is already starting."
+    return 0
+  fi
   if [[ "$core_surfaces_healthy" == "0" ]]; then
     echo "Viventium core surfaces are running, but enabled sidecars need startup. Repairing..."
   elif is_stack_running; then
@@ -2606,6 +3118,7 @@ launch_stack_detached() {
 
   local launch_log="$APP_SUPPORT_DIR/logs/helper-start.log"
   mkdir -p "$(dirname "$launch_log")"
+  capture_detached_start_log_offset "$launch_log"
   local child_pid
   child_pid="$(
     "$PYTHON_BIN" - "$launch_log" "$REPO_ROOT" "$APP_SUPPORT_DIR" "$CONFIG_FILE" "$RUNTIME_DIR" "$LOCK_FILE" "$@" <<'PY'
@@ -2721,14 +3234,26 @@ firecrawl_install_wait_label() {
 
 launch_log_indicates_startup_failure() {
   local launch_log="${1:-}"
+  local start_offset="${2:-${DETACHED_START_LOG_OFFSET:-0}}"
   [[ -f "$launch_log" ]] || return 1
+  [[ "$start_offset" =~ ^[0-9]+$ ]] || start_offset=0
 
   local tail_output=""
-  tail_output="$(tail -n 160 "$launch_log" 2>/dev/null || true)"
+  tail_output="$(tail -c "+$((start_offset + 1))" "$launch_log" 2>/dev/null | tail -n 200 || true)"
+  [[ -n "$tail_output" ]] || return 1
+
+  # The launcher owns one clean-tree retry after a dependency install error.
+  # Do not let the detached-start watcher abort that recovery path; the final
+  # dependency check/install error remains in the stream and is terminal.
+  tail_output="$({
+    printf '%s\n' "$tail_output" |
+      grep -vF '[viventium] LibreChat dependency install failed; cleaning dependency trees and retrying once...' ||
+      true
+  })"
   [[ -n "$tail_output" ]] || return 1
 
   if printf '%s\n' "$tail_output" | grep -Eq \
-    '(\[viventium\].*(Failed|failed|ERROR|Error|Docker is not running)|Failed to switch pnpm|spawnSync .*pnpm.* ENOENT|ERR_PNPM|Shutting down\.\.\.)'
+    '(\[viventium\].*(Failed|failed|ERROR|Error)|\[viventium\].*Docker is not running([.]|$| \(required for)|Failed to switch pnpm|spawnSync .*pnpm.* ENOENT|ERR_PNPM|Shutting down\.\.\.|error during build:|Build failed in|npm error Lifecycle script|Could not resolve .* from)'
   then
     return 0
   fi
@@ -2739,6 +3264,13 @@ launch_log_indicates_startup_failure() {
 
 detached_start_failed_early() {
   local launch_log="${1:-}"
+
+  # A required build can fail while optional sidecars or a wrapper process are
+  # still alive. Explicit errors from this launch attempt are terminal and
+  # must win over process-liveness signals.
+  if launch_log_indicates_startup_failure "$launch_log"; then
+    return 0
+  fi
 
   if [[ -n "$DETACHED_START_PID" ]]; then
     if pid_is_running "$DETACHED_START_PID"; then
@@ -2753,7 +3285,7 @@ detached_start_failed_early() {
   if detached_launch_process_group_running || is_stack_running || user_surface_healthy; then
     return 1
   fi
-  launch_log_indicates_startup_failure "$launch_log"
+  return 0
 }
 
 install_waiting_on_surfaces() {
@@ -2778,7 +3310,7 @@ install_waiting_on_surfaces() {
       waiting_on+=("LibreChat Frontend :$frontend_port")
     fi
   fi
-  if ! frontend_surface_healthy "$playground_port"; then
+  if ! express_install_experience && ! frontend_surface_healthy "$playground_port"; then
     if [[ "$display_mode" == "compact" ]]; then
       waiting_on+=("Playground :$playground_port")
     else
@@ -3053,7 +3585,9 @@ install_first_run_build_expected() {
   [[ -f "$librechat_dir/packages/api/dist/index.js" ]] || return 0
   [[ -f "$librechat_dir/packages/client/dist/index.js" ]] || return 0
   [[ -f "$librechat_dir/client/dist/index.html" ]] || return 0
-  [[ -d "$playground_dir/node_modules" ]] || return 0
+  if ! express_install_experience && [[ ! -d "$playground_dir/node_modules" ]]; then
+    return 0
+  fi
   return 1
 }
 
@@ -3073,7 +3607,11 @@ print_install_start_expectations() {
 
   echo "Preparing first-run startup..."
   if [[ "$build_note_needed" == "1" ]]; then
-    echo "  - Building LibreChat and playground assets locally. On a clean Mac this can take around 10-15 minutes."
+    if express_install_experience; then
+      echo "  - Building the Viventium web app locally. The deferred voice playground is not part of Easy Install startup."
+    else
+      echo "  - Building LibreChat and playground assets locally. On a clean Mac this can take around 10-15 minutes."
+    fi
   fi
   if [[ "$docker_note_needed" == "1" ]]; then
     echo "  - Starting local web-search services in parallel through Docker Desktop."
@@ -3196,6 +3734,7 @@ start_stack_for_install() {
   # lock before we wait for helper auto-start or submit a detached launch.
   cleanup_cli_lock
   DETACHED_START_PID=""
+  capture_detached_start_log_offset "$launch_log"
 
   if install_surfaces_healthy; then
     return 0
@@ -3293,13 +3832,34 @@ restart_stack_after_upgrade() {
   return 1
 }
 
+recover_running_stack_after_failed_upgrade() {
+  local exit_status=$?
+
+  # Prevent recursive EXIT handling while the recovery launch runs. Preserve
+  # the original upgrade result even when service restoration succeeds.
+  trap - EXIT
+
+  if [[ "$exit_status" -ne 0 && "${UPGRADE_RESTART_RECOVERY_REQUIRED:-0}" == "1" ]]; then
+    UPGRADE_RESTART_RECOVERY_REQUIRED=0
+    echo "Upgrade did not complete. Attempting to restart Viventium from the current on-disk state..." >&2
+    if restart_stack_after_upgrade; then
+      echo "Viventium is running again, but the upgrade may be partially applied. Review the upgrade and continuity audit logs before retrying." >&2
+    else
+      echo "Automatic service recovery also failed. Run: bin/viventium launch" >&2
+    fi
+  fi
+
+  cleanup_cli_lock
+  exit "$exit_status"
+}
+
 stop_stack_for_upgrade() {
   "$REPO_ROOT/bin/viventium" \
     --app-support-dir "$APP_SUPPORT_DIR" \
     --config-file "$CONFIG_FILE" \
     --runtime-dir "$RUNTIME_DIR" \
     --lock-file "$LOCK_FILE" \
-    stop || true
+    stop
 }
 
 stop_native_stack_detached() {
@@ -3339,6 +3899,7 @@ PY
 
 ensure_upgradeable_git_state() {
   local allow_dirty="${1:-0}"
+  local require_remote="${2:-1}"
   local git_root
   git_root="$(git -C "$REPO_ROOT" rev-parse --show-toplevel 2>/dev/null || true)"
   if [[ -z "$git_root" ]]; then
@@ -3353,22 +3914,43 @@ ensure_upgradeable_git_state() {
     exit 1
   fi
 
-  if [[ "$allow_dirty" != "1" ]]; then
-    local tracked_changes
-    tracked_changes="$(git -C "$REPO_ROOT" status --porcelain --untracked-files=no)"
-    if [[ -n "$tracked_changes" ]]; then
-      echo "Upgrade refused because the main repo has local tracked changes." >&2
-      echo "Commit/stash them first, or rerun with --allow-dirty --skip-pull to refresh locally without pulling." >&2
+  if [[ "$require_remote" == "1" ]]; then
+    local configured_remote=""
+    local merge_ref=""
+    configured_remote="$(git -C "$REPO_ROOT" config --get "branch.${current_branch}.remote" || true)"
+    merge_ref="$(git -C "$REPO_ROOT" config --get "branch.${current_branch}.merge" || true)"
+    if [[ -z "$configured_remote" || "$merge_ref" != refs/heads/* ]]; then
+      echo "Upgrade refused because the current branch has no configured Git remote branch." >&2
+      echo "Configure its upstream, or use --skip-pull for an intentional local-only refresh." >&2
       exit 1
     fi
   fi
+
+  # Parent tracked/untracked state is classified once by upgrade_check.py so managed
+  # nested component directories are not mistaken for unrelated parent user work.
+  # Keep the argument in this gate's interface because the structured check applies it.
+  : "$allow_dirty"
 }
 
 pull_current_branch_ff_only() {
   local current_branch
+  local configured_remote
+  local merge_ref
+  local remote_branch
   current_branch="$(git -C "$REPO_ROOT" rev-parse --abbrev-ref HEAD)"
-  git -C "$REPO_ROOT" fetch origin "$current_branch"
-  git -C "$REPO_ROOT" pull --ff-only origin "$current_branch"
+  configured_remote="$(git -C "$REPO_ROOT" config --get "branch.${current_branch}.remote" || true)"
+  merge_ref="$(git -C "$REPO_ROOT" config --get "branch.${current_branch}.merge" || true)"
+  if [[ -z "$configured_remote" ]]; then
+    echo "Upgrade requires the current branch to have a configured Git remote." >&2
+    return 1
+  fi
+  if [[ "$merge_ref" != refs/heads/* ]]; then
+    echo "Upgrade requires the current branch to track a normal remote branch." >&2
+    return 1
+  fi
+  remote_branch="${merge_ref#refs/heads/}"
+  git -C "$REPO_ROOT" fetch "$configured_remote" "$merge_ref"
+  git -C "$REPO_ROOT" pull --ff-only "$configured_remote" "$remote_branch"
 }
 
 if [[ $# -gt 0 ]]; then
@@ -3377,11 +3959,30 @@ if [[ $# -gt 0 ]]; then
   set -- "${PARSED_ARGS[@]}"
 fi
 
-refresh_repo_python
-
 COMMAND="${1:-help}"
 if [[ $# -gt 0 ]]; then
   shift
+fi
+
+SKIP_PYTHON_BOOTSTRAP=0
+case "$COMMAND" in
+  restore)
+    SKIP_PYTHON_BOOTSTRAP=1
+    ;;
+  upgrade|update)
+    for read_only_arg in "$@"; do
+      if [[ "$read_only_arg" == "--check" ]]; then
+        SKIP_PYTHON_BOOTSTRAP=1
+        break
+      fi
+    done
+    ;;
+esac
+if [[ "$SKIP_PYTHON_BOOTSTRAP" == "1" ]]; then
+  PYTHON_BIN="${VIVENTIUM_PYTHON_BIN:-$(command -v python3)}"
+  export PYTHON_BIN
+else
+  refresh_repo_python
 fi
 maybe_reexec_active_runtime_checkout "$COMMAND" "$@"
 
@@ -3394,7 +3995,7 @@ case "$COMMAND" in
     INSTALL_ARGS=()
     CURRENT_INSTALL_STAGE="configure"
     INSTALL_TRAP_ACTIVE=1
-    trap 'install_status=$?; if [[ "${INSTALL_TRAP_ACTIVE:-0}" == "1" && "$install_status" -ne 0 ]]; then write_install_stage "$CURRENT_INSTALL_STAGE"; print_install_recovery_guidance "$CURRENT_INSTALL_STAGE"; fi' EXIT
+    trap 'install_status=$?; if [[ "${INSTALL_TRAP_ACTIVE:-0}" == "1" && "$install_status" -ne 0 ]]; then rollback_config_candidate || true; write_install_stage "$CURRENT_INSTALL_STAGE"; print_install_recovery_guidance "$CURRENT_INSTALL_STAGE"; fi; cleanup_config_candidate || true; exit "$install_status"' EXIT
     if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
       subcommand_usage install
       exit 0
@@ -3453,14 +4054,16 @@ case "$COMMAND" in
     fi
     if [[ ! -f "$CONFIG_FILE" || -n "$CONFIG_INPUT" || "$RECOVERY_ACTION" == "reconfigure" ]]; then
       write_install_stage "configure"
-      WIZARD_ARGS=(--output "$CONFIG_FILE")
       if [[ -n "$CONFIG_INPUT" ]]; then
-        WIZARD_ARGS+=(--preset "$CONFIG_INPUT" --non-interactive)
+        prepare_config_candidate "$CONFIG_INPUT"
+        apply_config_candidate
       elif [[ "$HEADLESS" == "1" ]]; then
         echo "install --headless requires --preset/--config-input/--config <file>" >&2
         exit 1
+      else
+        WIZARD_ARGS=(--output "$CONFIG_FILE")
+        "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/wizard.py" "${WIZARD_ARGS[@]}"
       fi
-      "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/wizard.py" "${WIZARD_ARGS[@]}"
     fi
     apply_default_nightly_routines
     CURRENT_INSTALL_STAGE="preflight"
@@ -3470,6 +4073,7 @@ case "$COMMAND" in
     CURRENT_INSTALL_STAGE="bootstrap-components"
     write_install_stage "$CURRENT_INSTALL_STAGE"
     bootstrap_components
+    ensure_viventium_health_runtime >/dev/null
     CURRENT_INSTALL_STAGE="compile-config"
     write_install_stage "$CURRENT_INSTALL_STAGE"
     if [[ ${#INSTALL_ARGS[@]} -gt 0 ]]; then
@@ -3477,6 +4081,9 @@ case "$COMMAND" in
     else
       compile_config
     fi
+    CURRENT_INSTALL_STAGE="bootstrap-life"
+    write_install_stage "$CURRENT_INSTALL_STAGE"
+    bootstrap_life
     echo "Config written to $CONFIG_FILE"
     echo "Generated runtime files in $RUNTIME_DIR"
     CURRENT_INSTALL_STAGE="doctor"
@@ -3500,6 +4107,7 @@ case "$COMMAND" in
       fi
       INSTALL_TRAP_ACTIVE=0
       trap - EXIT
+      finish_config_candidate
       clear_install_stage
       launch_macos_helper_app
       print_install_summary 1
@@ -3509,6 +4117,7 @@ case "$COMMAND" in
     fi
     INSTALL_TRAP_ACTIVE=0
     trap - EXIT
+    finish_config_candidate
     clear_install_stage
     print_install_summary 0
     ;;
@@ -3546,71 +4155,145 @@ case "$COMMAND" in
           ;;
       esac
     done
-    ensure_app_support_layout "$APP_SUPPORT_DIR"
     if [[ "$CHECK_ONLY" == "1" ]]; then
       check_args=(--repo-root "$REPO_ROOT" --app-support-dir "$APP_SUPPORT_DIR")
+      if [[ -f "$CONFIG_FILE" ]]; then
+        check_args+=(--config-file "$CONFIG_FILE")
+      fi
       if [[ "$CHECK_JSON" == "1" ]]; then
         check_args+=(--json)
       fi
       exec "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/upgrade_check.py" "${check_args[@]}"
     fi
+    if [[ "$ALLOW_DIRTY" == "1" && "$SKIP_PULL" != "1" ]]; then
+      echo "--allow-dirty is only safe with --skip-pull; refusing to fetch or merge into a dirty checkout." >&2
+      exit 1
+    fi
+    ensure_app_support_layout "$APP_SUPPORT_DIR"
     acquire_cli_lock "$COMMAND"
     if [[ ! -f "$CONFIG_FILE" ]]; then
       echo "Missing config: $CONFIG_FILE" >&2
       echo "Run: bin/viventium install" >&2
       exit 1
     fi
-    ensure_upgradeable_git_state "$ALLOW_DIRTY"
-    if [[ "$SKIP_PULL" != "1" ]]; then
-      pull_current_branch_ff_only
+    UPGRADE_REQUIRES_REMOTE=1
+    if [[ "$SKIP_PULL" == "1" ]]; then
+      UPGRADE_REQUIRES_REMOTE=0
     fi
+    ensure_upgradeable_git_state "$ALLOW_DIRTY" "$UPGRADE_REQUIRES_REMOTE"
+    UPGRADE_STACK_WAS_RUNNING=0
     if is_stack_running; then
       if [[ "$AUTO_RESTART" == "1" ]]; then
-        echo "Running Viventium stack detected. Stopping before component refresh..."
-        stop_stack_for_upgrade
+        UPGRADE_STACK_WAS_RUNNING=1
       else
         echo "Upgrade refused because the Viventium stack is currently running." >&2
         echo "Run: bin/viventium stop first, or rerun with --restart." >&2
         exit 1
       fi
     fi
+    UPGRADE_SAFETY_ARGS=(
+      --repo-root "$REPO_ROOT"
+      --app-support-dir "$APP_SUPPORT_DIR"
+      --no-fetch
+      --json
+    )
+    if [[ -f "$CONFIG_FILE" ]]; then
+      UPGRADE_SAFETY_ARGS+=(--config-file "$CONFIG_FILE")
+    fi
+    if [[ "$ALLOW_DIRTY" == "1" ]]; then
+      UPGRADE_SAFETY_ARGS+=(--allow-dirty-parent)
+    fi
+    UPGRADE_SAFETY_STATUS=0
+    UPGRADE_SAFETY_JSON="$("$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/upgrade_check.py" "${UPGRADE_SAFETY_ARGS[@]}")" || UPGRADE_SAFETY_STATUS=$?
+    if [[ "$UPGRADE_SAFETY_STATUS" -ne 0 ]]; then
+      "$PYTHON_BIN" - "$UPGRADE_SAFETY_JSON" <<'PY' >&2
+import json
+import sys
+
+try:
+    report = json.loads(sys.argv[1])
+except (IndexError, json.JSONDecodeError):
+    print("Local upgrade safety inspection did not return readable status.")
+    raise SystemExit(0)
+
+for blocker in report.get("blockers", []):
+    print(f"Upgrade blocker: {blocker}")
+    if blocker == "dirty_checkout":
+        print(
+            "Preserve or remove the untracked/modified parent files, then retry. "
+            "For an intentional local-only refresh, use --skip-pull --allow-dirty."
+        )
+for item in report.get("component_lock_drift", []):
+    name = str(item.get("name") or "managed component")
+    status = str(item.get("status") or "unsafe")
+    print(f"Managed component blocker: {name} ({status})")
+PY
+      echo "Upgrade aborted before pull or component mutation because local safety blockers must be resolved first." >&2
+      exit "$UPGRADE_SAFETY_STATUS"
+    fi
     UPGRADE_AUDIT_TIMESTAMP="$(date -u +%Y%m%dT%H%M%SZ)"
     PRE_UPGRADE_CONTINUITY_AUDIT="$(capture_continuity_audit "pre-upgrade-${UPGRADE_AUDIT_TIMESTAMP}")"
+    PRE_UPGRADE_CONTINUITY_STATUS="$(continuity_audit_status "$PRE_UPGRADE_CONTINUITY_AUDIT")"
     echo "Pre-upgrade continuity audit written to $(display_safe_path "$PRE_UPGRADE_CONTINUITY_AUDIT")"
+    if [[ "$PRE_UPGRADE_CONTINUITY_STATUS" == "error" || "$PRE_UPGRADE_CONTINUITY_STATUS" == "unknown" ]]; then
+      echo "Upgrade aborted because the pre-upgrade continuity audit is not trustworthy." >&2
+      echo "Review $(display_safe_path "$PRE_UPGRADE_CONTINUITY_AUDIT") before changing the installed runtime." >&2
+      exit 1
+    fi
+    if [[ "$UPGRADE_STACK_WAS_RUNNING" == "1" ]]; then
+      echo "Running Viventium stack detected. Stopping before component refresh..."
+      if ! stop_stack_for_upgrade; then
+        echo "Upgrade aborted because the running stack could not be stopped safely." >&2
+        echo "No source pull or component refresh was attempted. Resolve the stop failure, then retry." >&2
+        exit 1
+      fi
+      UPGRADE_RESTART_RECOVERY_REQUIRED=1
+      trap recover_running_stack_after_failed_upgrade EXIT
+    fi
+    if [[ "$SKIP_PULL" != "1" ]]; then
+      pull_current_branch_ff_only
+    fi
     apply_default_nightly_routines
     run_preflight apply
     apply_default_nightly_routines
     bootstrap_components_upgrade_checked
+    ensure_viventium_health_runtime >/dev/null
     compile_config
+    bootstrap_life
     "$REPO_ROOT/scripts/viventium/doctor.sh" \
       --config "$CONFIG_FILE" \
       --runtime-dir "$RUNTIME_DIR" \
       --repo-root "$REPO_ROOT" \
       --lock-file "$LOCK_FILE"
-    maybe_install_macos_helper
+    maybe_install_macos_helper --no-launch
     sync_memory_hardening_schedule
+    # The helper has been installed without launching and the prior running helper has
+    # been stopped. From this point onward, continuity uncertainty must fail closed:
+    # neither the EXIT recovery trap nor helper launch may restart the changed runtime.
+    UPGRADE_RESTART_RECOVERY_REQUIRED=0
     POST_UPGRADE_CONTINUITY_AUDIT="$(capture_continuity_audit "post-upgrade-${UPGRADE_AUDIT_TIMESTAMP}")"
     POST_UPGRADE_CONTINUITY_STATUS="$(continuity_audit_status "$POST_UPGRADE_CONTINUITY_AUDIT")"
     echo "Post-upgrade continuity audit written to $(display_safe_path "$POST_UPGRADE_CONTINUITY_AUDIT")"
-    if [[ "$POST_UPGRADE_CONTINUITY_STATUS" == "error" ]]; then
-      echo "Upgrade completed, but the post-upgrade continuity audit reported an error state." >&2
-      echo "Review $(display_safe_path "$POST_UPGRADE_CONTINUITY_AUDIT") before trusting restored recall or auto-restarting." >&2
-      if [[ "$AUTO_RESTART" == "1" ]]; then
+    case "$POST_UPGRADE_CONTINUITY_STATUS" in
+      ok|warning)
+        if [[ "$POST_UPGRADE_CONTINUITY_STATUS" == "warning" ]]; then
+          echo "Upgrade continuity audit reported warnings. Review $(display_safe_path "$POST_UPGRADE_CONTINUITY_AUDIT") before concluding the install is fully aligned." >&2
+        fi
+        ;;
+      error|unknown|*)
+        echo "Upgrade completed, but the post-upgrade continuity audit did not report a trustworthy state." >&2
+        echo "Review $(display_safe_path "$POST_UPGRADE_CONTINUITY_AUDIT") before trusting restored recall or restarting." >&2
         exit 1
-      fi
-      echo "Next: fix the continuity issue, then run bin/viventium start"
-      exit 1
-    fi
-    if [[ "$POST_UPGRADE_CONTINUITY_STATUS" == "warning" ]]; then
-      echo "Upgrade continuity audit reported warnings. Review $(display_safe_path "$POST_UPGRADE_CONTINUITY_AUDIT") before concluding the install is fully aligned." >&2
-    fi
+        ;;
+    esac
     if [[ "$AUTO_RESTART" == "1" ]]; then
       if ! restart_stack_after_upgrade; then
         exit 1
       fi
+      launch_macos_helper_app
       exit 0
     fi
-    echo "Upgrade complete. Next: bin/viventium start"
+    echo "Upgrade complete. Next: bin/viventium start (the helper remains closed so it cannot auto-start the stack)."
     ;;
   configure|wizard)
     acquire_cli_lock "$COMMAND"
@@ -3640,21 +4323,34 @@ case "$COMMAND" in
     if [[ "$HEADLESS" != "1" ]]; then
       reattach_stdin_from_tty_if_available || true
     fi
-    WIZARD_ARGS=(--output "$CONFIG_FILE")
     if [[ -n "$CONFIG_INPUT" ]]; then
-      WIZARD_ARGS+=(--preset "$CONFIG_INPUT" --non-interactive)
+      if ! prepare_config_candidate "$CONFIG_INPUT"; then
+        cleanup_config_candidate || true
+        exit 1
+      fi
+      if ! apply_config_candidate; then
+        cleanup_config_candidate || true
+        exit 1
+      fi
     elif [[ "$HEADLESS" == "1" ]]; then
       echo "configure --headless requires --preset/--config-input/--config <file>" >&2
       exit 1
+    else
+      WIZARD_ARGS=(--output "$CONFIG_FILE")
+      "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/wizard.py" "${WIZARD_ARGS[@]}"
+      apply_default_nightly_routines
     fi
-    "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/wizard.py" "${WIZARD_ARGS[@]}"
-    apply_default_nightly_routines
-    compile_config
-    sync_memory_hardening_schedule
+    if ! compile_config || ! ensure_configured_prerequisites || ! sync_memory_hardening_schedule; then
+      rollback_config_candidate || true
+      cleanup_config_candidate || true
+      exit 1
+    fi
+    finish_config_candidate
     ;;
   bootstrap-components)
     acquire_cli_lock "$COMMAND"
     bootstrap_components "$@"
+    ensure_viventium_health_runtime >/dev/null
     ;;
   compile-config)
     acquire_cli_lock "$COMMAND"
@@ -3782,6 +4478,21 @@ case "$COMMAND" in
       fi
     fi
     ;;
+  cognitive-integrity)
+    if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+      subcommand_usage cognitive-integrity
+      exit 0
+    fi
+    ensure_brew_paths_on_path
+    exec uv run \
+      --with fastapi \
+      --with PyYAML \
+      --with pydantic \
+      --with croniter \
+      python "$REPO_ROOT/scripts/viventium/cognitive_integrity.py" \
+      --repo-root "$REPO_ROOT" \
+      "$@"
+    ;;
   memory-harden)
     if [[ "${1:-}" == "--help" || "${1:-}" == "-h" || $# -lt 1 ]]; then
       subcommand_usage memory-harden
@@ -3823,6 +4534,9 @@ case "$COMMAND" in
     ;;
   transcripts)
     transcripts_command "$@"
+    ;;
+  qa-test-account)
+    qa_test_account_command "$@"
     ;;
   memory-dedupe)
     if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
@@ -3903,6 +4617,15 @@ case "$COMMAND" in
       --app-support-dir "$APP_SUPPORT_DIR" \
       "$@"
     ;;
+  health)
+    if [[ "${1:-}" == "--help" || "${1:-}" == "-h" || $# -lt 1 ]]; then
+      subcommand_usage health
+      exit 0
+    fi
+    ensure_app_support_layout "$APP_SUPPORT_DIR"
+    ensure_viventium_health_runtime >/dev/null
+    exec "$APP_SUPPORT_DIR/health/runtime/bin/viventium-health" "$@"
+    ;;
   heal)
     if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
       subcommand_usage heal
@@ -3944,7 +4667,17 @@ case "$COMMAND" in
       echo "Run: bin/viventium install" >&2
       exit 1
     fi
+    # === VIVENTIUM START ===
+    # Feature: Bidirectional startup single-flight.
+    # Purpose: A manual start must not preempt the helper-owned startup after the CLI lock is
+    # released for the long-running launcher handoff.
+    # === VIVENTIUM END ===
+    if runtime_start_claim_active; then
+      echo "Viventium is already starting."
+      exit 0
+    fi
     bootstrap_components --prefer-existing-checkout-head
+    ensure_viventium_health_runtime >/dev/null
     # === VIVENTIUM START ===
     # Feature: Canonical runtime regeneration on every start.
     # Purpose: prevent stale generated runtime files from surviving across installer/compiler
@@ -3953,28 +4686,30 @@ case "$COMMAND" in
     # === VIVENTIUM END ===
     apply_default_nightly_routines
     compile_config
+    bootstrap_life
     sync_memory_hardening_schedule
     prepare_runtime_exports
 
     EXTRA_ARGS=()
     if [[ -f "$GENERATED_ENV" ]]; then
-      set -a
-      # shellcheck disable=SC1090
-      source "$GENERATED_ENV"
-      if [[ -f "$GENERATED_LOCAL_ENV" ]]; then
-        # shellcheck disable=SC1090
-        source "$GENERATED_LOCAL_ENV"
-      fi
-      set +a
+      load_selected_runtime_environment_for_children
       if [[ "${VIVENTIUM_INSTALL_MODE:-docker}" == "native" ]]; then
         write_stack_owner_state "$COMMAND"
+        NATIVE_STACK_SKIP_MEILI=0
+        if express_install_experience; then
+          NATIVE_STACK_SKIP_MEILI=1
+        fi
         VIVENTIUM_NATIVE_STACK_SKIP_LIVEKIT=1 \
+          VIVENTIUM_NATIVE_STACK_SKIP_MEILI="$NATIVE_STACK_SKIP_MEILI" \
           "$REPO_ROOT/scripts/viventium/native_stack.sh" start
       else
         write_stack_owner_state "$COMMAND"
       fi
       if [[ "${VIVENTIUM_VOICE_ENABLED:-true}" != "true" ]]; then
         EXTRA_ARGS+=(--skip-voice-gateway --skip-livekit)
+      fi
+      if express_install_experience; then
+        EXTRA_ARGS+=(--skip-playground)
       fi
     fi
 
@@ -4019,7 +4754,7 @@ case "$COMMAND" in
     done
 
     START_CMD=("$REPO_ROOT/viventium_v0_4/viventium-librechat-start.sh")
-    if [[ "$USER_SELECTED_PLAYGROUND" != "1" ]]; then
+    if [[ "$USER_SELECTED_PLAYGROUND" != "1" ]] && ! express_install_experience; then
       if [[ "${PLAYGROUND_VARIANT:-modern}" == "classic" ]]; then
         START_CMD+=(--classic-playground)
       else
@@ -4036,9 +4771,15 @@ case "$COMMAND" in
     # handoff setup. It must not be held by the long-running stack supervisor;
     # otherwise status, Stop/Quit, and manual memory-hardening jobs are blocked
     # while Viventium is healthy and running.
+    if ! write_runtime_start_claim; then
+      echo "Unable to record the active Viventium startup claim." >&2
+      exit 1
+    fi
     cleanup_cli_lock
-    "${START_CMD[@]}"
-    exit $?
+    start_status=0
+    "${START_CMD[@]}" || start_status=$?
+    clear_runtime_start_claim
+    exit "$start_status"
     ;;
   stop)
     acquire_cli_lock "$COMMAND"
@@ -4047,10 +4788,20 @@ case "$COMMAND" in
       exit 0
     fi
     stop_status=0
+    if value_is_true "${VIVENTIUM_DEV_ENV_SCOPE_ACTIVE:-false}"; then
+      if ! compile_config; then
+        echo "Dev-environment stop refused because its runtime identity could not be compiled; no services were stopped." >&2
+        exit 1
+      fi
+    fi
     prepare_runtime_exports
     if [[ -f "$GENERATED_ENV" ]]; then
-      # shellcheck disable=SC1090
-      source "$GENERATED_ENV"
+      load_selected_runtime_environment_for_children
+    fi
+    if value_is_true "${VIVENTIUM_DEV_ENV_SCOPE_ACTIVE:-false}" &&
+      ! value_is_true "${VIVENTIUM_DEV_ENV_ENABLED:-false}"; then
+      echo "Dev-environment stop refused because the compiled runtime identity is not marked as a dev environment; no services were stopped." >&2
+      exit 1
     fi
     write_stack_owner_state "$COMMAND"
     "$REPO_ROOT/viventium_v0_4/viventium-librechat-start.sh" --stop "$@" || stop_status=$?
@@ -4077,16 +4828,13 @@ case "$COMMAND" in
       "$@"
     ;;
   restore)
-    acquire_cli_lock "$COMMAND"
     if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
       subcommand_usage restore
       exit 0
     fi
-    ensure_app_support_layout "$APP_SUPPORT_DIR"
-    prepare_runtime_exports
-    exec "$REPO_ROOT/scripts/viventium/restore.sh" \
-      --config-home "$APP_SUPPORT_DIR" \
-      "$@"
+    VIVENTIUM_DEFAULT_CONFIG_HOME="$APP_SUPPORT_DIR" \
+      VIVENTIUM_PYTHON_BIN="$PYTHON_BIN" \
+      exec "$REPO_ROOT/scripts/viventium/restore.sh" "$@"
     ;;
   uninstall)
     acquire_cli_lock "$COMMAND"

@@ -93,25 +93,25 @@
   "ssml_tags": {
     "emotion": {
       "forms": [
-        "<emotion value=\"calm\"/>",
-        "<emotion value=\"excited\">TEXT</emotion>"
+        "<emotion value=\"EMOTION\"/>",
+        "<emotion value=\"EMOTION\">TEXT</emotion>"
       ],
       "attribute": "value"
     },
     "speed": {
-      "form": "<speed ratio=\"1.1\"/>",
+      "form": "<speed ratio=\"RATIO\"/>",
       "attribute": "ratio",
       "min": 0.6,
       "max": 1.5
     },
     "volume": {
-      "form": "<volume ratio=\"0.9\"/>",
+      "form": "<volume ratio=\"RATIO\"/>",
       "attribute": "ratio",
       "min": 0.5,
       "max": 2.0
     },
     "break": {
-      "form": "<break time=\"500ms\"/>",
+      "form": "<break time=\"DURATION\"/>",
       "attribute": "time",
       "units": [
         "s",
@@ -119,7 +119,7 @@
       ]
     },
     "spell": {
-      "form": "<spell>ABC123</spell>"
+      "form": "<spell>TEXT</spell>"
     }
   },
   "nonverbal_markers": [

@@ -7,7 +7,7 @@ from typing import Any
 
 import yaml
 
-from .paths import AGENTS_SOURCE_PATH, LIBRECHAT_ROOT, LIBRECHAT_SOURCE_PATH, PROMPT_WORKBENCH_QA_COVERAGE_PATH, PROMPTS_ROOT, relative_to_repo
+from .paths import AGENTS_SOURCE_PATH, LIBRECHAT_ROOT, LIBRECHAT_SOURCE_PATH, PROMPT_WORKBENCH_QA_COVERAGE_PATH, PROMPTS_ROOT, REPO_ROOT, relative_to_repo
 
 from scripts.viventium.prompt_registry import (
     DEFAULT_PROMPT_ROOT,
@@ -96,7 +96,22 @@ def workbench_context(prompt_id: str) -> dict[str, Any]:
     from . import drafts, evals, sync_engine
 
     sync_status = sync_engine.get_status()
-    sync_row = next((row for row in sync_status.get("agents") or [] if row.get("sourcePromptId") == prompt_id), None)
+    delivery = prompt_delivery_contract(prompt_id, entry.metadata)
+    sync_row = _sync_row_for_prompt(
+        prompt_id,
+        delivery=delivery,
+        sync_rows=sync_status.get("agents") or [],
+    )
+    runtime_bundle = (
+        runtime_prompt_bundle_status(prompt_id)
+        if delivery["kind"] == "compiled_runtime"
+        else None
+    )
+    delivery["state"] = (
+        sync_row.get("state")
+        if sync_row
+        else (runtime_bundle or {}).get("promptState") or "not-mapped"
+    )
     return {
         "promptId": prompt_id,
         "path": relative_to_repo(entry.path),
@@ -108,9 +123,65 @@ def workbench_context(prompt_id: str) -> dict[str, Any]:
         "evalRuns": evals.list_eval_runs_for_prompt(prompt_id, limit=8),
         "qaCoverage": qa_coverage_for_prompt(prompt_id),
         "sync": sync_row,
-        "runtimePromptBundle": runtime_prompt_bundle_status(prompt_id),
+        "delivery": delivery,
+        "runtimePromptBundle": runtime_bundle,
         "relatedConfig": related_config_for_prompt(prompt_id),
     }
+
+
+def prompt_delivery_contract(
+    prompt_id: str, metadata: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """Describe the real delivery owner without claiming current runtime state."""
+
+    if metadata is None:
+        metadata = load_prompt_registry(PROMPTS_ROOT)[prompt_id].metadata
+    target = str(metadata.get("target") or "")
+    managed = (
+        target in {"main.instructions", "main.instructions.section"}
+        or target.startswith("mainAgent.")
+        or target.startswith("backgroundAgents.")
+        or target.startswith("handoffAgents.")
+    )
+    if managed:
+        return {
+            "kind": "managed_agent",
+            "label": "Managed agent record",
+            "statusSource": "agent_sync",
+            "target": target,
+        }
+    return {
+        "kind": "compiled_runtime",
+        "label": "Compiled runtime prompt bundle",
+        "statusSource": "prompt_bundle_drift",
+        "target": target,
+    }
+
+
+def _sync_row_for_prompt(
+    prompt_id: str,
+    *,
+    delivery: dict[str, Any],
+    sync_rows: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    exact = next(
+        (row for row in sync_rows if row.get("sourcePromptId") == prompt_id), None
+    )
+    if exact or delivery.get("kind") != "managed_agent":
+        return exact
+    if str(delivery.get("target") or "") in {
+        "main.instructions",
+        "main.instructions.section",
+    }:
+        return next(
+            (
+                row
+                for row in sync_rows
+                if row.get("sourcePromptId") == "main.conscious_agent"
+            ),
+            None,
+        )
+    return None
 
 
 def _prompt_context_drafts(drafts_module: Any, prompt_id: str) -> list[dict[str, Any]]:
@@ -573,6 +644,26 @@ def _related_config_row(ref_id: str, ref: dict[str, Any]) -> dict[str, Any] | No
             f"timeout: {server_config.get('timeout')} ms",
             f"headers configured: {len(server_config.get('headers') or {})}",
         ]
+    elif source_kind in {
+        "scheduler.shared_prompt_contract",
+        "scheduler.canonical_output_contract",
+    }:
+        try:
+            source_text = source_path.read_text(encoding="utf-8")
+        except OSError:
+            return None
+        selector = str(ref.get("selector") or "").strip()
+        if not selector or selector not in source_text:
+            return None
+        items = [
+            (
+                "shared scheduler prompt contract"
+                if source_kind == "scheduler.shared_prompt_contract"
+                else "trusted scheduler canonical-output contract"
+            ),
+            f"accessor: {selector}",
+            "public source; runtime state and private prompt text are not included",
+        ]
     else:
         return None
     return {
@@ -592,7 +683,21 @@ def _config_source_path(path_name: str) -> Path | None:
         "local.viventium-agents.yaml": AGENTS_SOURCE_PATH,
         "local.librechat.yaml": LIBRECHAT_SOURCE_PATH,
     }
-    return paths.get(path_name)
+    known = paths.get(path_name)
+    if known:
+        return known
+    candidate = (REPO_ROOT / path_name).resolve()
+    shared_root = (REPO_ROOT / "viventium_v0_4" / "shared").resolve()
+    prompt_runtime_root = (LIBRECHAT_ROOT / "api" / "server" / "services" / "viventium").resolve()
+    if (
+        candidate.is_file()
+        and (
+            candidate.is_relative_to(shared_root)
+            or candidate.is_relative_to(prompt_runtime_root)
+        )
+    ):
+        return candidate
+    return None
 
 
 def _direct_action_server_config(source: dict[str, Any], server: str) -> dict[str, Any]:

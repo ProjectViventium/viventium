@@ -1,5 +1,7 @@
 # 2026-06-25 Heart Prompt Live Sync
 
+<!-- qa-evidence-exempt: Historical prompt-sync record retained for lineage; it is not a complete browser and persistence acceptance report. -->
+
 ## Scope
 
 Surgically update the main Viventium prompt so warmth/playfulness is less compressed while preserving

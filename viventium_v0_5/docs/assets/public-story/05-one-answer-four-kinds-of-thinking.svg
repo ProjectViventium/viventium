@@ -1,0 +1,78 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" role="img" aria-labelledby="title desc">
+  <title id="title">One answer, four kinds of thinking</title>
+  <desc id="desc">A plain-language view of the Viventium philosophy: understand the person's world and keep quiet specialist thinking active together, then check reality and challenge the first answer when useful before answering honestly.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f8faff"/>
+      <stop offset="1" stop-color="#edf8f3"/>
+    </linearGradient>
+    <filter id="shadow" x="-40%" y="-40%" width="180%" height="180%">
+      <feDropShadow dx="0" dy="16" stdDeviation="20" flood-color="#243c54" flood-opacity="0.12"/>
+    </filter>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 0 L10 5 L0 10 Z" fill="#7b8798"/>
+    </marker>
+  </defs>
+
+  <rect width="1600" height="900" fill="url(#bg)"/>
+  <circle cx="135" cy="95" r="190" fill="#e2e9ff" opacity="0.62"/>
+  <circle cx="1510" cy="810" r="250" fill="#dff4ea" opacity="0.65"/>
+
+  <text x="96" y="76" fill="#465369" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="18" font-weight="700" letter-spacing="5">VIVENTIUM</text>
+  <text x="1504" y="76" text-anchor="end" fill="#6d788a" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="18" font-weight="600">05 / 06</text>
+
+  <text x="96" y="170" fill="#192437" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="68" font-weight="780">One answer. Four kinds of thinking.</text>
+  <text x="96" y="228" fill="#526276" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="29">The core principle: do more of the right thinking before speaking.</text>
+
+  <g font-family="Inter, ui-sans-serif, system-ui, sans-serif" text-anchor="middle">
+    <text x="450" y="296" fill="#5b6780" font-size="17" font-weight="760" letter-spacing="3">ALWAYS WORKING TOGETHER</text>
+    <path d="M175 317 H725" stroke="#aeb9cf" stroke-width="2" stroke-linecap="round"/>
+    <text x="1150" y="296" fill="#5b6780" font-size="17" font-weight="760" letter-spacing="3">WHEN MORE TRUTH IS NEEDED</text>
+    <path d="M875 317 H1425" stroke="#aeb9cf" stroke-width="2" stroke-linecap="round"/>
+
+    <g filter="url(#shadow)">
+      <circle cx="275" cy="460" r="128" fill="#687de6"/>
+      <circle cx="625" cy="460" r="128" fill="#8466c7"/>
+      <circle cx="975" cy="460" r="128" fill="#2f9b79"/>
+      <circle cx="1325" cy="460" r="128" fill="#2b6f78"/>
+    </g>
+
+    <text x="275" y="438" fill="#ffffff" font-size="23" font-weight="780">KNOW</text>
+    <text x="275" y="470" fill="#ffffff" font-size="23" font-weight="780">YOUR WORLD</text>
+    <text x="275" y="507" fill="#edf0ff" font-size="16">memory · priorities · work</text>
+
+    <text x="625" y="438" fill="#ffffff" font-size="23" font-weight="780">THINK QUIETLY</text>
+    <text x="625" y="470" fill="#ffffff" font-size="23" font-weight="780">IN BACKGROUND</text>
+    <text x="625" y="507" fill="#f3edff" font-size="16">specialists keep looking</text>
+
+    <text x="975" y="438" fill="#ffffff" font-size="23" font-weight="780">CHECK</text>
+    <text x="975" y="470" fill="#ffffff" font-size="23" font-weight="780">REALITY</text>
+    <text x="975" y="507" fill="#eafff7" font-size="16">evidence · likelihood · experience</text>
+
+    <text x="1325" y="438" fill="#ffffff" font-size="23" font-weight="780">CHALLENGE</text>
+    <text x="1325" y="470" fill="#ffffff" font-size="23" font-weight="780">ITSELF</text>
+    <text x="1325" y="507" fill="#e9fbff" font-size="16">try to disprove the first answer</text>
+
+    <path d="M403 460 H485" fill="none" stroke="#8591a4" stroke-width="3" stroke-dasharray="7 7"/>
+    <path d="M753 460 H825" fill="none" stroke="#8591a4" stroke-width="3" marker-end="url(#arrow)"/>
+    <path d="M1103 460 H1175" fill="none" stroke="#8591a4" stroke-width="3" marker-end="url(#arrow)"/>
+
+    <text x="275" y="630" fill="#4e5a70" font-size="18">What matters now, what came before,</text>
+    <text x="275" y="658" fill="#4e5a70" font-size="18">and the work surrounding you.</text>
+
+    <text x="625" y="630" fill="#4e5a70" font-size="18">Quiet specialists keep searching for</text>
+    <text x="625" y="658" fill="#4e5a70" font-size="18">missed details, risks and useful follow-ups.</text>
+
+    <text x="975" y="630" fill="#4e5a70" font-size="18">When useful, look beyond the conversation</text>
+    <text x="975" y="658" fill="#4e5a70" font-size="18">for evidence and what is actually likely.</text>
+
+    <text x="1325" y="630" fill="#4e5a70" font-size="18">Pressure-test the first idea for blind spots,</text>
+    <text x="1325" y="658" fill="#4e5a70" font-size="18">weak assumptions and pleasing certainty.</text>
+
+    <rect x="220" y="720" width="1160" height="92" rx="46" fill="#20354d"/>
+    <text x="800" y="759" fill="#9fe0c2" font-size="18" font-weight="760" letter-spacing="3">ONE VOICE SPEAKS LAST</text>
+    <text x="800" y="790" fill="#ffffff" font-size="23" font-weight="650">It says what is known, likely, uncertain—or still worth checking.</text>
+  </g>
+
+  <text x="96" y="858" fill="#7b8795" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="17">THE VIVENTIUM WAY · AN ORIGINAL FRAMEWORK</text>
+</svg>

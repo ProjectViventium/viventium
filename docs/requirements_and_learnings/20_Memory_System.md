@@ -1,7 +1,7 @@
 # Memory System: v0_3 vs v0_4 Analysis + Improvement Notes
 
-**Document Version:** 2.8
-**Date:** 2026-05-05
+**Document Version:** 2.9
+**Date:** 2026-07-15
 **Owner:** Viventium Core
 **Scope:** High-level comparison of memory UX in v0_3 (Python) vs v0_4 (LibreChat), with public-safe lessons and implementation notes.
 
@@ -40,6 +40,23 @@ The v0_4 product has four different continuity surfaces that must not be conflat
 2. Conversation recall
 3. Meeting transcript recall
 4. Listen-Only call transcript evidence
+
+### Viventium Immediate Access Memory Keys
+
+**Viventium Immediate Access Memory Keys** is the product name for the existing bounded saved-memory
+profile supplied to the conscious turn: core/top-of-mind context, memories, key summaries, recent
+decisions, and open loops. This is a naming and cognitive-role clarification, not a new database,
+schema, writer, or unbounded prompt dump. The existing opt-in, storage, forgetting, key caps,
+governed 8,000-token ceiling, cache, and detached writer rules remain authoritative.
+
+Immediate Access and deep recall are parallel cognitive surfaces; the AI does not first decide that
+Immediate Access is “enough.” The approved anti-sycophancy design therefore adds a separate
+always-background **Deep Memory Search** cortex using the existing scoped conversation-recall/RAG
+capability. It may remember relevant evidence later and send it through Phase B, but it cannot
+mutate saved memory or inject an unbounded archive into the first-turn prompt. Ordinary Main-Agent
+recall remains model-chosen. See
+[`07_Anti_Sycophancy.md`](../../viventium_v0_5/docs/07_Anti_Sycophancy.md) and
+[`qa/anti-sycophancy/`](../../qa/anti-sycophancy/README.md).
 
 ### Saved memories
 
@@ -192,6 +209,19 @@ The v0_4 product has four different continuity surfaces that must not be conflat
   values, tokens, or database identifiers. QA uses this receipt to prove the macOS scheduled
   maintenance lane without mistaking travel, DST, wake-coalesced launchd fires, or audit-time
   timezone differences for product drift.
+- Trigger receipt schema v3 binds a claimed LaunchAgent run to the exact running process: the
+  wrapper requires `--scheduled`, parent PID 1, and the canonical `/bin/launchctl print` reporting
+  that same PID for
+  `ai.viventium.memory-harden`. A caller-supplied trigger label is not proof. The reader keeps schema
+  v2 `launchd_parent` compatibility open only when exactly one such receipt exists and no schema-v3
+  receipt has ever appeared. The first v3 observation is persisted independently of the prunable
+  receipt directory, so a second v2 or any v3 receipt closes the transition monotonically even if
+  older receipt files are later removed; schema v1, later v2, and incomplete/inconsistent v3
+  receipts are rejected. The LaunchAgent also pins the absolute interpreter captured at
+  reconciliation time rather than resolving `python3` through its runtime `PATH`. This is
+  local-process attestation that protects against accidental/manual false-green evidence, not a
+  cryptographic claim against a malicious logged-in administrator who controls both launchd and
+  local state.
 - Memory-hardening locks are concurrency guards, not durable state. A lock with a live recorded PID
   must fail closed, but a stale lock whose PID no longer exists must be cleared before the next
   manual or scheduled run so recovery does not require hand-editing local state.
@@ -202,7 +232,7 @@ The v0_4 product has four different continuity surfaces that must not be conflat
   whether the selected runtime prompt is compiled into the local prompt bundle or is still
   source-only/drifted, without exposing local runtime paths.
 
-### Listen-Only call transcript evidence
+### Voice call transcript evidence
 
 - Listen-Only Mode is live voice presence without live response. It saves transcribed call turns for
   later consolidation while bypassing the live Agents controller, TTS, tools, background cortices,
@@ -218,19 +248,29 @@ The v0_4 product has four different continuity surfaces that must not be conflat
 - Consecutive Listen-Only entries in the same visible timeline should be threaded linearly under
   the latest Listen-Only row, not as sibling branches under the same live parent. This is a UI tree
   shape rule only; memory and recall keep using the `listen_only_transcript` metadata boundary.
-- The memory hardener receives these entries as `ambient_transcript` evidence. It must treat them
-  like transcript evidence: softer than chat, untrusted as instructions, and insufficient by itself
-  for stable durable memory unless corroborated by user-authored chat.
-- Stable-memory corroboration must count user-authored conversation evidence plus recent ambient
-  evidence, not adjacent rows. Two rows from the same Listen-Only call session are one ambient
-  source for run telemetry, but multiple ambient source ids alone are not enough for stable durable
-  memory. Transcript-scoped keys such as `context` and `moments` can use single-session ambient
-  context.
+- All durable voice-derived memory writes are deferred until post-call hardening. Active-call text
+  must never enter the stable writer while speaker trust can still be revised.
+- New voice messages store `speakerSegments` plus the preserved legacy scalar projection. Readers
+  and the hardener prefer segments, dual-read the scalar, and synthesize a legacy segment for old
+  rows; there is no bulk backfill.
+- Owner-trusted, single-speaker Call content may enter the normal memory writer after the call.
+  Wing, Listen-Only, mixed/shared-microphone, guest, and unverified content remains soft transcript
+  evidence, untrusted as instructions and external-action authority.
+- Stable-memory corroboration counts evidence sources, not adjacent rows or diarized voices. One
+  call session is one source regardless of its segment or speaker count. Multiple provider speaker
+  ids from that call never become corroboration.
+- A late-discovered second speaker revises earlier segment trust through the call-scoped speaker
+  session state before post-call processing. If terminal call state, durable suppression state, or
+  authoritative speaker revisions are unavailable, the hardener fails closed for stable promotion.
+- Cancelled-task results and late suppressed output are never memory evidence. A durable tombstone
+  remains authoritative across API restart and ordinary task-registry pressure.
 - Conversation recall excludes Listen-Only transcript entries at the corpus query boundary and in
   fallback filters so overheard room text does not masquerade as user-authored chat history or
   starve normal messages from the recall window.
-- Same-microphone audio is not true speaker diarization. Speaker labels are trusted only when they
-  arrive from structured LiveKit participant or track identity.
+- AssemblyAI diarization distinguishes call-scoped voices, not identity or authority. A signed
+  participant track is owner-trusted only while exactly one provider speaker is present; a second
+  speaker permanently downgrades the track to shared-device/unverified for that session. Missing,
+  overlapping, unstable, or unsupported local-only attribution remains `Unknown`.
 
 ### Why this distinction matters
 
@@ -356,10 +396,17 @@ installer/compiler ownership layer instead of inheriting historical template def
 - The compiler must assign `memory.agent.provider` and `memory.agent.model` from actually available
   foundation auth (`openai` / `anthropic`), including connected-account auth.
 - Do not silently leave the memory writer on xAI when xAI was never configured for that install.
-- Current compiler policy prefers Anthropic for the memory writer when Anthropic is available, and
-  otherwise falls back to OpenAI.
-- QA and docs must reflect that exact compiler rule instead of assuming memory follows some separate
-  generic foundation ordering contract.
+- By default, the memory writer follows configured foundation priority: the first available
+  foundation provider is selected. An optional `llm.memory: {provider, model}` override may select
+  another already-authenticated OpenAI or Anthropic route, and the compiler must reject an
+  unavailable provider. This override changes only `memory.agent`; it does not add automatic
+  runtime fallback orchestration.
+- A provider failure must remain structured and privacy-safe. Terminal quota exhaustion is not
+  retried immediately on the same route; transient structured failures still get the bounded
+  retry. If a write already applied before a later provider failure, preserve the applied artifact
+  and add an explicit partial-run warning instead of reporting that no update occurred.
+- QA must cover OpenAI-primary, Anthropic-primary, single-provider, and connected-account variants,
+  then prove that the generated provider/model initializes and completes a real writer run.
 - Source-of-truth templates may still carry historical defaults, but generated runtime files are the
   product contract users actually run.
 
@@ -401,12 +448,18 @@ both code and QA:
 
 - The generated runtime contract currently compiles `memory.agent.provider` from foundation
   availability using lower-case values such as `openai`.
+- Operators can explicitly choose a different authenticated foundation route through
+  `llm.memory.provider` and `llm.memory.model`; omission preserves normal foundation priority.
 - Runtime provider resolution now accepts the compiler-emitted canonical values through the shared
   normalization boundary instead of requiring a different alias such as `openAI`.
 - QA must cover both the compiler output and the runtime initialization path so a generated
   provider token cannot silently regress in one resolver while still appearing valid in another.
 - If the memory writer fails before it starts, the system cannot rely on prompt rules like
   “NO DATA LOSS” or contradiction cleanup because the memory agent never gets to run.
+- The agent client must supply the complete memory-store interface expected by the shared memory
+  processor. In particular, writer snapshots require the revision-bearing
+  `getAllUserMemoryStates` method; supplying only the legacy visible-memory methods is an
+  initialization failure, not a successful no-op.
 - Connected-account OpenAI Codex routes are a second runtime contract inside the memory writer:
   - top-level `instructions` must be present on Responses requests
   - `system` / `developer` messages must not remain inside Responses `input`
@@ -449,7 +502,7 @@ both code and QA:
   - treat Anthropic default thinking as active when sanitizing memory-writer config
   - remove `temperature` whenever Anthropic thinking is active by default or explicitly
 - for adaptive-era Anthropic models used by the fallback Viventium memory route
-  (`claude-sonnet-4-5`),
+  (`claude-opus-5`),
     omit explicit `temperature` entirely from the shipped memory-writer config so fresh installs do
     not rely on runtime stripping to stay valid
   - if the memory run is also forcing tool use, remove `thinking` entirely instead of setting it to
@@ -481,9 +534,29 @@ both code and QA:
 - Detached memory writing is asynchronous relative to the visible answer, but it is not lossy.
   Turns for one user must run FIFO without coalescing or dropping an intermediate Telegram, web, or
   voice turn. Different users may continue in parallel.
-- Each writer run must use one memory snapshot for both prompt construction and expected revisions.
+- Each writer run must use one state query for both prompt construction and expected revisions; two
+  separately timed reads are not one snapshot even when they call the same store.
   A later write or delete may apply only if the key still has that revision; creation of an absent
   key uses the same atomic contract and the unique user/key index.
+- Delete is a hidden retained tombstone, not physical row removal. The same user/key record and
+  monotonic revision survive delete/recreate cycles, so stale writes, stale deletes, and stale
+  absent-key creates cannot pass through an ABA revision reset. User-visible reads and prompt
+  formatting exclude tombstones; internal CAS snapshots include them.
+- Lifecycle fields used by storage and maintenance (`_updated`, `_expires`, `_stale_after`,
+  `_confirmed`, and `_v`) are control metadata. They are never rendered as model-visible saved
+  memory. Recency and expiry affect selection/maintenance at the owning layer rather than becoming
+  apparent user facts the model might quote or reason from.
+- The write-policy boundary recognizes only an explicit structural `{NTA}` control marker. It must
+  not delete or reinterpret ordinary memory content because it resembles operational English such
+  as “forget”, “temporary”, “ignore”, or “do not remember”. Semantic judgment belongs to the
+  memory model and deterministic schema/budget validators, not phrase lists in runtime code.
+- The Memories panel is part of the same concurrency contract. GET responses expose the current
+  revision, and edit, rename, and delete submit that revision. A stale panel action returns a
+  refresh-and-retry conflict instead of bypassing the chat/Telegram/voice writer guard. A rename
+  writes/reuses the destination generation first and tombstones the source only after destination
+  success. If the source revision races before finalization, the destination is removed only by an
+  exact compare-and-set compensation; a concurrent destination update is preserved. This ordering
+  supports deleted-destination reuse without losing the source or resetting either generation.
 - A revision conflict preserves the newer value and records a public-safe failed-write audit event.
   Audit logs may contain per-process hashes, key names, outcomes, and error classes, but not raw user,
   conversation, message, or memory values.
@@ -491,6 +564,15 @@ both code and QA:
   closed for missing or stale revisions. Rollback reverses only the exact post-apply revisions
   produced by that run; a newer live write is preserved and reported as a conflict. Legacy rollback
   snapshots without post-apply revision state are not applied destructively.
+- Successful set and delete artifacts carry their post-write revision, including the hidden
+  tombstone revision produced by a delete. The client may apply only an artifact newer than its
+  cached revision and always refetches authoritative state afterward. Delete artifacts and updates
+  for keys absent from the visible cache do not optimistically recreate or erase cache entries;
+  authoritative refetch reconciles tombstones. Missing, duplicate, or delayed revisions cannot
+  regress the visible cache.
+- Online proposal apply fails closed when legacy duplicate rows make one key's revision ambiguous.
+  Duplicate migration is an explicit offline repair, never an unguarded delete/recreate inside the
+  normal apply path.
 
 ### 2.7 Strict Memory Rules
 
@@ -553,8 +635,12 @@ The April 9, 2026 memory-integrity investigation added five concrete product tru
   text whether conversation recall should run.
 - The correct contract is:
   - if conversation recall is enabled, inject the YAML-configured recall instruction into the
-    agent system prompt
+  agent system prompt
   - let the model choose when to use `file_search`
+  - when the selected provider receives `file_search` through a service-backed broker, place the
+  generic broker/resource routing contract in the provider's actual developer-authority message;
+  advertising the tool only in a bootstrap file field that conversation mode does not consume is
+  not sufficient
   - keep degraded recall fallback inside the retrieval/tool path, not in a prompt-text classifier
 - This matters to memory because saved memory and conversation recall are separate continuity
   surfaces and must both stay efficient, auditable, and non-overfit.
@@ -654,6 +740,21 @@ The April 13, 2026 remote QA pass added another concrete continuity boundary:
   2. the adapted non-stream JSON preserves the tool call in `output`
   3. the tool artifact reaches the durable memory store in a real browser flow
 
+#### 2.9.6 Storage-policy rejection is not a successful memory run
+
+- A completed model/provider call does not prove that durable memory changed. The storage layer can
+  still reject the proposed full-key replacement because it exceeds a key or global token budget.
+- A model-correctable budget rejection may receive one bounded correction attempt when no operation
+  from the rejected batch was applied. The retry must use structured policy data, preserve unrelated
+  facts, and keep the configured token limits unchanged.
+- Never retry a rejected batch after any operation in that batch applied; doing so could replay a
+  partial write against stale revisions.
+- Only the final attempt's memory artifact may reach the user-visible stream. If the correction is
+  still rejected, the detached writer must return and log a structured failure instead of reporting
+  success.
+- Real acceptance for a near-full key requires a revision advance and durable cross-conversation
+  recall, not merely an assistant acknowledgement or a completed provider request.
+
 ---
 
 ## Part 3: Public-Safe QA Notes
@@ -682,6 +783,11 @@ Product contract:
 - The LaunchAgent owns one 03:00 `StartCalendarInterval` trigger. Do not add `StartInterval`, cron,
   Workbench, or a helper watchdog as a second model-work cadence. macOS may coalesce a calendar fire
   after sleep; the public-safe trigger receipt records what actually happened.
+- An operator kickstart inside the accepted calendar-jitter window cannot be distinguished from a
+  natural `StartCalendarInterval` launch using the local launchd process contract alone. Operator
+  kickstarts are therefore path/config smokes only and must not be cited as natural cadence
+  evidence; live cadence acceptance remains tied to an observed due window and is labelled as a
+  transition until the first natural schema-v3 receipt lands.
 - Install/configure/upgrade/start reconciliation is loader-only and idempotent: an identical loaded
   plist is a no-op, a matching unloaded plist is bootstrapped without a bootout, and real drift is
   unloaded/replaced/reloaded exactly once with post-action verification. Every lifecycle action
@@ -732,6 +838,11 @@ Product contract:
   performs a dry-run and writes the marker; the next scheduled run can apply
 - the batch hardener must not rewrite `working`, because `working` is owned by the current
   conversation
+- every reviewed proposal apply path, including nightly hardening and Prompt Workbench governed
+  apply, must protect `working` and every proposal-written key from same-pass deterministic
+  maintenance. Model proposals are already policy-validated and budgeted; immediately re-compacting
+  a freshly written key can discard the evidence-backed detail that was just consolidated.
+  Maintenance remains available for eligible untouched stale or over-budget keys.
 - model output is a proposal only; database writes go through the existing memory methods and
   shared memory policy
 - raw proposals and rollback snapshots stay under App Support state
@@ -760,12 +871,23 @@ Product contract:
   `FAIL` for provider errors, inconclusive eligibility, unavailable runtime dependencies, stale
   transcript/vector work that should have run, or an unexpected empty selection.
 - the compiler emits the selected hardening provider/model/effort tuple from configured foundation
-  auth, preferring Codex/OpenAI `gpt-5.6-sol` at `xhigh` when OpenAI is available. Anthropic
-  `claude-opus-4-8` at `xhigh` remains the launch-ready route for an Anthropic-only install or an
-  explicit operator override; fallback attempts must remain visible and must not masquerade as Sol
+  auth, preferring Codex/OpenAI `gpt-5.6-luna` at `medium` when OpenAI is available. This route is a
+  measured memory-workload decision: on the frozen `memory-writer-v1.0.0` bank, Luna medium passed
+  32/32, passed an exact 500,000-character application-ceiling workpack, and matched Sol/xHigh's
+  32/32 correctness at about one fifth of Sol's official normalized cost and lower measured p95
+  latency (9.6 s versus 15.9 s). Terra/high completed every run but failed one exact mixed-constraint
+  mutation (31/32), so it remains ineligible. Anthropic
+  `claude-opus-5` at `xhigh` remains the launch-ready route for an Anthropic-only install or an
+  explicit operator override; fallback attempts must remain visible and must not masquerade as Luna.
+  Scheduled receipts record requested and effective provider/model/effort. Any successful run with
+  a different provider, model, or effort is `execution_mismatch`, and an incomplete tuple is
+  `execution_unverified`; neither is healthy until the operator accepts or repairs it. Health must
+  also compare the latest receipt's requested tuple with the currently generated tuple. A formerly
+  valid Sol receipt cannot certify a newly configured Luna schedule before Luna actually executes.
 - the OpenAI/Codex hardening path must pass a Codex/OpenAI-compatible structured output schema and
   the configured reasoning effort to the Codex CLI, matching the compiler-emitted tuple and
-  configurable fallback list instead of relying on stale internal hardener fallbacks. The
+  configurable fallback list. The hardener's built-in no-generated-env fallback must carry the
+  same Luna/medium default so a degraded launch surface cannot silently regress to Sol/xHigh. The
   provider-facing schema must satisfy OpenAI structured-output constraints such as requiring every
   declared object property and avoiding unsupported composition keywords like `oneOf`; runtime
   validation still owns the final memory/evidence contract after the model returns JSON.
@@ -801,6 +923,9 @@ Product rules:
 
 - `memory.readProfile` in `librechat.yaml` owns the chat-time memory read budget, key priority
   order, per-key read caps, and short cache TTL.
+- The bounded profile must still preserve the complete governed `preferences` key. Truncating an
+  additive preference value to head/tail excerpts can hide a newly stored fact in the middle and
+  violates the requirement that saved memory work without conversation recall.
 - The chat-time read path must call `getAllUserMemories` and format the bounded profile directly.
   It must not initialize the writer agent or run deterministic maintenance before the main model
   starts.
@@ -869,6 +994,116 @@ cd viventium_v0_4/LibreChat
 node scripts/viv-user-sync.js pull --memories --email="$USER_EMAIL"
 node scripts/viventium-sync-agents.js push --prompts-only
 ```
+
+## 2.12 Governed Main-Agent Read Ceiling
+
+The main-agent saved-memory contract now uses an 8,000-token storage and read ceiling. This is a
+governed ceiling, not a target to fill and not a claim that a larger model context makes retrieval
+unnecessary. It is large enough to preserve the ordinary multi-key user model while leaving most of
+the model window for current conversation, tools, results, and reasoning.
+
+| Key | Maximum visible tokens |
+| --- | ---: |
+| `core` | 800 |
+| `preferences` | 600 |
+| `world` | 1,200 |
+| `context` | 1,200 |
+| `working` | 400 |
+| `drafts` | 1,000 |
+| `signals` | 1,000 |
+| `moments` | 1,200 |
+| `me` | 600 |
+
+Entries are selected whole at line/sentence boundaries. If a key or entry cannot fit, the
+model-visible snapshot names the omission instead of silently clipping through a fact. Exact key
+caps sum to the global ceiling, so compiler, source YAML, generated runtime, storage, and read paths
+can be compared mechanically.
+
+Runtime selection uses the persisted tokenizer count produced by the storage policy when that count
+is plausible; a character heuristic is only a defensive fallback for absent or stale metadata. A
+stored value that fits its real per-key token cap must not be truncated merely because English text
+uses more than four characters per token. Oversized single-line/unpunctuated values retain bounded
+head and tail evidence with an explicit incomplete marker rather than becoming a marker with zero
+content. Stale token metadata cannot let later keys cross the global read budget.
+
+Saved-memory read and immediate-writer availability are separate runtime health signals. Each turn
+writes a privacy-safe, user-hash-keyed receipt under App Support. A failed read adds a model-visible
+availability note stating that the failure is not evidence of no memory. Writer auth and other
+initialization failures surface a structured degraded attachment, and a successful account
+reconnection clears every suppressed model for that user/provider. Direct Memories-panel create,
+rename, edit, delete, or preference changes invalidate the short read cache immediately.
+
+The nightly hardener is separately crash-safe: it records each applied revision in the private
+rollback ledger immediately after the mutation, and its process lock binds both PID and process-start
+identity so PID reuse cannot wedge future runs. Its user-level LaunchAgent may be installed or
+removed only from the canonical passwd-database-derived App Support root; a spoofed `HOME` or
+side-by-side runtime cannot target the singleton schedule.
+
+This ceiling is intentionally paired with scoped recall. Research shows that merely placing more
+tokens in a long context does not guarantee that information in the middle will be used reliably
+([Lost in the Middle](https://arxiv.org/abs/2307.03172)). Retrieval should add the most relevant
+evidence close to the current turn, with provenance, rather than treating the whole archive as a
+prompt. Contextual retrieval and reranking are the preferred direction for larger corpora
+([Anthropic, Contextual Retrieval](https://www.anthropic.com/engineering/contextual-retrieval)).
+
+Acceptance requires both a boundary test (facts near every governed key limit remain whole or are
+explicitly omitted) and a user case where an older named entity is available without a
+prompt-specific curiosity rule.
+
+### 2.13 Memory-model selection and re-evaluation
+
+Immediate writing and nightly hardening share the Luna/medium default because both require exact,
+schema-valid, policy-bounded memory proposals. Prompt Workbench deep reflection and the optional
+Codex observer remain Sol/xHigh because they perform broader analysis and neither owns memory
+mutation. A connected GlassHive `/host` CLI session is not a substitute for the signed-in
+LibreChat user's connected account; each lane must prove its own authentication and tool contract.
+
+Model selection is re-opened when model versions/pricing, schema, memory policy, or representative
+workpack shape changes. The gate is 100% correctness and structured completion, zero rejected
+operations, repeated runs, a near-ceiling probe, and a real account-scoped writer/hardener smoke.
+Average benchmark accuracy or a single memorable entity is insufficient. Current public-safe
+evidence lives in `qa/memory-hardening/reports/2026-08-09-gpt-5.6-memory-model-eval.md` and
+`qa/memory-hardening/reports/2026-08-09-gpt-5.6-luna-500k-application-ceiling.md`.
+
+The live acceptance gate includes a real installed LaunchAgent execution receipt. An operator
+kickstart may prove the installed executable/config/model path, but it does not pretend to be a
+wall-clock fire; calendar delivery is evidenced separately by a naturally due receipt. Any memory
+mutation created by a QA kickstart must be rolled back exactly and conflicts must fail closed.
+
+### 2.14 Universal continuity and authentication truth
+
+The system must generalize across relationships, preferences, projects, corrections, numbers,
+dates, absent evidence, distractors, languages, and ordinary conversational phrasing. A regression
+test may preserve an escaped incident shape, but production code and prompts must not contain an
+entity-specific rescue rule, a phrase list, or a forced curiosity script. If evidence was never
+stored, is outside the signed-in identity, is unauthorized, or cannot be retrieved, the main agent
+must say so; no cognitive system can manufacture unavailable truth.
+
+Continuity has separate control planes that must each prove health:
+
+- saved-memory storage/read/write for the signed-in LibreChat identity;
+- conversation recall/RAG corpus and its brokered `file_search` capability;
+- main-agent or GlassHive execution and the signed capability grant for that turn;
+- provider authentication for each signed-in user's OpenAI or Anthropic model account;
+- local `/host` worker authentication for the machine/operator CLI session;
+- nightly LaunchAgent hardening, Prompt Workbench scheduled prompts, and observer-only Codex
+  automations.
+
+`/host` connectivity proves only the local worker plane. It does not prove or replace a LibreChat
+user's provider OAuth, memory ownership, recall ACL, Google/Microsoft account, or scheduled-run
+receipt. Parity means every supported route receives the same authorized cognitive evidence and
+honestly reports unavailable capabilities; it does not mean credentials are copied across planes.
+
+Connected-account status is outcome-backed, not row-backed. A decryptable credential row is only a
+candidate connection. Terminal provider rejection (`invalid_grant`, 401, or 403 during refresh)
+persists a non-secret `oauthReconnectRequired` state inside the encrypted credential payload, so
+Settings reports Disconnected after reload. A successful refresh clears the state. Timeouts, 5xx,
+and other transient refresh errors must remain retryable and must not be mislabeled as reconnect.
+
+Saved-memory entries use `/api/memories/entries/:key` for edit/delete. Control endpoints such as
+`/api/memories/preferences` remain in a separate namespace, so arbitrary valid keys—including
+`preferences`—cannot collide with control routes. Legacy non-reserved entry routes remain only as a
+compatibility surface.
 
 ---
 

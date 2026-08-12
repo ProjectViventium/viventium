@@ -1,13 +1,223 @@
 import AppKit
+import CoreFoundation
 import Darwin
 import Foundation
 import SwiftUI
+
+private extension Notification.Name {
+    static let viventiumWhoopOAuthCallback = Notification.Name(
+        "ai.viventium.helper.whoop-oauth-callback"
+    )
+}
+
+private enum WhoopOAuthCallbackURL {
+    static func isAccepted(_ url: URL) -> Bool {
+        guard
+            url.scheme?.lowercased() == "viventium",
+            url.host?.lowercased() == "oauth",
+            url.path == "/whoop",
+            let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        else {
+            return false
+        }
+        let keys = Set((components.queryItems ?? []).map(\.name))
+        return keys.contains("state") && (keys.contains("code") || keys.contains("error"))
+    }
+}
+
+private final class ViventiumHelperApplicationDelegate: NSObject, NSApplicationDelegate {
+    func application(_ application: NSApplication, open urls: [URL]) {
+        for url in urls where WhoopOAuthCallbackURL.isAccepted(url) {
+            NotificationCenter.default.post(
+                name: .viventiumWhoopOAuthCallback,
+                object: url
+            )
+        }
+    }
+}
+
+enum RuntimeDesiredState: String, Codable, Equatable {
+    case running
+    case stopped
+}
+
+struct RuntimeSupervisionState: Codable, Equatable {
+    let schemaVersion: Int
+    var desiredState: RuntimeDesiredState
+    var consecutiveLaunchAttempts: Int
+    var nextLaunchAttemptAt: Date?
+    var healthySince: Date?
+
+    static let defaultRunning = RuntimeSupervisionState(
+        schemaVersion: 1,
+        desiredState: .running,
+        consecutiveLaunchAttempts: 0,
+        nextLaunchAttemptAt: nil,
+        healthySince: nil
+    )
+
+    func shouldLaunch(at date: Date) -> Bool {
+        guard self.desiredState == .running else {
+            return false
+        }
+        return self.nextLaunchAttemptAt.map { $0 <= date } ?? true
+    }
+
+    mutating func requestRunning() {
+        self.desiredState = .running
+        self.resetBackoff()
+    }
+
+    mutating func requestStopped() {
+        self.desiredState = .stopped
+        self.resetBackoff()
+    }
+
+    mutating func recordLaunchAttempt(
+        at date: Date,
+        baseDelay: TimeInterval,
+        maximumDelay: TimeInterval
+    ) {
+        self.healthySince = nil
+        self.consecutiveLaunchAttempts = min(self.consecutiveLaunchAttempts + 1, 16)
+        self.nextLaunchAttemptAt = date.addingTimeInterval(
+            self.backoffDelay(baseDelay: baseDelay, maximumDelay: maximumDelay)
+        )
+    }
+
+    mutating func recordLaunchFailure(
+        at date: Date,
+        baseDelay: TimeInterval,
+        maximumDelay: TimeInterval
+    ) {
+        self.healthySince = nil
+        self.nextLaunchAttemptAt = date.addingTimeInterval(
+            self.backoffDelay(baseDelay: baseDelay, maximumDelay: maximumDelay)
+        )
+    }
+
+    mutating func recordHealthy(at date: Date, stabilityWindow: TimeInterval) {
+        guard self.desiredState == .running, self.consecutiveLaunchAttempts > 0 else {
+            return
+        }
+        guard let healthySince else {
+            self.healthySince = date
+            return
+        }
+        if date.timeIntervalSince(healthySince) >= stabilityWindow {
+            self.resetBackoff()
+        }
+    }
+
+    mutating func recordUnhealthy(
+        at date: Date,
+        stabilityWindow: TimeInterval,
+        baseDelay: TimeInterval,
+        maximumDelay: TimeInterval
+    ) {
+        guard let healthySince else {
+            return
+        }
+        if date.timeIntervalSince(healthySince) >= stabilityWindow {
+            self.resetBackoff()
+            return
+        }
+        self.healthySince = nil
+        if self.consecutiveLaunchAttempts > 0 {
+            self.nextLaunchAttemptAt = date.addingTimeInterval(
+                self.backoffDelay(baseDelay: baseDelay, maximumDelay: maximumDelay)
+            )
+        }
+    }
+
+    private func backoffDelay(
+        baseDelay: TimeInterval,
+        maximumDelay: TimeInterval
+    ) -> TimeInterval {
+        let exponent = max(0, min(self.consecutiveLaunchAttempts - 1, 16))
+        return min(maximumDelay, baseDelay * pow(2.0, Double(exponent)))
+    }
+
+    private mutating func resetBackoff() {
+        self.consecutiveLaunchAttempts = 0
+        self.nextLaunchAttemptAt = nil
+        self.healthySince = nil
+    }
+}
 
 private struct HelperConfig: Codable, Equatable {
     let repoRoot: String
     let appSupportDir: String
     var allowProtectedRepoRoot: Bool?
     var showInStatusBar: Bool?
+    var runtimeSupervision: RuntimeSupervisionState? = nil
+}
+
+private enum HelperConfigPreservingEncoder {
+    private enum EncodingFailure: Error {
+        case invalidRoot
+    }
+
+    static func encode(config: HelperConfig, existingData: Data?) throws -> Data {
+        let typedData = try JSONEncoder().encode(config)
+        guard
+            let typedRoot = try JSONSerialization.jsonObject(with: typedData)
+                as? [String: Any]
+        else {
+            throw EncodingFailure.invalidRoot
+        }
+        let existingRoot: [String: Any]
+        if let existingData,
+           let decoded = try? JSONSerialization.jsonObject(with: existingData)
+                as? [String: Any]
+        {
+            existingRoot = decoded
+        } else {
+            existingRoot = [:]
+        }
+        let merged = self.merge(typedRoot, into: existingRoot)
+        return try JSONSerialization.data(
+            withJSONObject: merged,
+            options: [.prettyPrinted, .sortedKeys]
+        )
+    }
+
+    private static func merge(
+        _ typed: [String: Any],
+        into existing: [String: Any]
+    ) -> [String: Any] {
+        var merged = existing
+        for (key, typedValue) in typed {
+            if let typedObject = typedValue as? [String: Any],
+               let existingObject = existing[key] as? [String: Any]
+            {
+                merged[key] = self.merge(typedObject, into: existingObject)
+            } else {
+                merged[key] = typedValue
+            }
+        }
+        return merged
+    }
+}
+
+private enum HelperConfigPreservingStore {
+    static func save(config: HelperConfig, to configURL: URL) throws {
+        let existingData = try? Data(contentsOf: configURL)
+        let data = try HelperConfigPreservingEncoder.encode(
+            config: config,
+            existingData: existingData
+        )
+        try FileManager.default.createDirectory(
+            at: configURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true,
+            attributes: nil
+        )
+        try data.write(to: configURL, options: .atomic)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o600],
+            ofItemAtPath: configURL.path
+        )
+    }
 }
 
 private struct ActiveRuntimeCheckout: Decodable {
@@ -38,10 +248,11 @@ private struct StackHealthSnapshot {
     let apiReady: Bool
     let frontendReady: Bool
     let playgroundReady: Bool
+    let requiresPlayground: Bool
     let optionalSurfacesReady: Bool
 
     var coreHealthy: Bool {
-        self.apiReady && self.frontendReady && self.playgroundReady
+        self.apiReady && self.frontendReady && (!self.requiresPlayground || self.playgroundReady)
     }
 
     var healthy: Bool {
@@ -149,32 +360,53 @@ final class HelperController: ObservableObject {
     private let helperLogURL: URL?
     private var timer: Timer?
     private let envParser = RuntimeEnvParser()
-    private let launchDate = Date()
-    private let autoStartRetryWindowSeconds: TimeInterval = 45
     private let launchHealthTimeoutSeconds: Int = 1800
     private let stopHealthTimeoutSeconds: Int = 120
     private let postTimeoutStopGraceSeconds: Int = 30
     private let busyStateHandoffGraceSeconds: TimeInterval = 8
+    private let runtimeSupervisionBaseDelaySeconds: TimeInterval = 15
+    private let runtimeSupervisionMaximumDelaySeconds: TimeInterval = 900
+    private let runtimeSupervisionStableHealthSeconds: TimeInterval = 300
     private static let transcriptPartialExitStatus: Int32 = 2
     // Heavy local stacks can legitimately take several minutes to drain all owned sidecars
     // after the initial bounded stop command has returned.
     private let delayedQuitWatchTimeoutSeconds: Int = 420
-    private var didAttemptLaunchAutostart = false
+    private var runtimeSupervision = RuntimeSupervisionState.defaultRunning
+    private var runtimeSupervisionCheckInFlight = false
+    // `start --restart` temporarily replaces its detached process-group receipt.
+    // Keep the controller operation single-flight across that replacement window
+    // so no second launch can restart the first one mid-boot.
+    private var stackLaunchInProgress = false
     private var delayedQuitWatchTask: Task<Void, Never>?
     private var busyStateGraceDeadline: Date?
     private var activatedHelperLifecycle = false
     private var launchAtLoginRefreshTask: Task<Void, Never>?
     private var steadyStateHealthSnapshot: (runtime: RuntimePorts, checkedAt: Date, snapshot: StackHealthSnapshot)?
+    private var steadyStateHealthSnapshotTask: (runtime: RuntimePorts, task: Task<StackHealthSnapshot, Never>)?
+    private var whoopOAuthObserver: NSObjectProtocol?
     private let steadyStateHealthRefreshInterval: TimeInterval = 30
     private let automaticTerminationReason = "Viventium status-bar helper keeps the local runtime available after login."
 
     init() {
         ProcessInfo.processInfo.disableAutomaticTermination(self.automaticTerminationReason)
         self.config = Self.loadConfig()
+        self.runtimeSupervision = self.config?.runtimeSupervision ?? .defaultRunning
         self.helperLogURL = Self.makeHelperLogURL(appSupportDir: self.config?.appSupportDir)
         self.launchAtLoginEnabled = Self.launchAtLoginFastPathEnabled()
         self.showInStatusBarEnabled = self.config?.showInStatusBar ?? true
         self.log("Helper launched")
+        self.whoopOAuthObserver = NotificationCenter.default.addObserver(
+            forName: .viventiumWhoopOAuthCallback,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            guard let url = notification.object as? URL else {
+                return
+            }
+            Task { @MainActor in
+                self?.handleWhoopOAuthCallback(url)
+            }
+        }
         if self.showInStatusBarEnabled {
             self.activateHelperLifecycle()
         } else {
@@ -382,16 +614,32 @@ final class HelperController: ObservableObject {
                 logFileName: "helper-snapshot.log"
             )
             let snapshotPath = Self.latestSnapshotPath(appSupportDir: config.appSupportDir)
+            let snapshotProof = Self.snapshotProofStatus(snapshotPath: snapshotPath)
             await MainActor.run {
                 self.snapshotInProgress = false
                 if exitStatus == 0 {
-                    self.log("Manual backup snapshot completed")
                     let alert = NSAlert()
-                    alert.messageText = "Backup snapshot created"
-                    alert.informativeText =
-                        snapshotPath.map { "Saved to \($0)" } ??
-                        "The snapshot completed, but the latest snapshot path was not recorded."
-                    alert.alertStyle = .informational
+                    switch snapshotProof {
+                    case .metadataOnly:
+                        self.log("Continuity metadata captured without a backup payload")
+                        alert.messageText = "Continuity metadata captured"
+                        alert.informativeText = snapshotPath.map {
+                            "Saved metadata to \($0). No recoverable backup payload was created."
+                        } ?? "No recoverable backup payload was created, and the metadata path was not recorded."
+                        alert.alertStyle = .warning
+                    case .complete:
+                        self.log("Manual backup snapshot completed")
+                        alert.messageText = "Backup snapshot created"
+                        alert.informativeText =
+                            snapshotPath.map { "Saved to \($0)" } ??
+                            "The snapshot completed, but the latest snapshot path was not recorded."
+                        alert.alertStyle = .informational
+                    case .invalid:
+                        self.log("Snapshot command returned without valid complete-bundle proof")
+                        alert.messageText = "Backup snapshot failed"
+                        alert.informativeText = "The snapshot did not contain valid complete-bundle proof. No backup was published; check helper-snapshot.log."
+                        alert.alertStyle = .warning
+                    }
                     if snapshotPath != nil {
                         alert.addButton(withTitle: "Reveal")
                     }
@@ -640,7 +888,7 @@ final class HelperController: ObservableObject {
             await MainActor.run {
                 self.workflowActionInProgress = false
                 let alert = NSAlert()
-                if result.exitStatus != 0 {
+                if result.exitStatus != 0 && !summary.statusReadable {
                     alert.messageText = "Could not check for updates"
                     alert.informativeText = "Viventium could not complete the update check. Check helper-update-check.log, then try again."
                     alert.alertStyle = .warning
@@ -952,12 +1200,12 @@ final class HelperController: ObservableObject {
         self.timer = Timer.scheduledTimer(withTimeInterval: 4.0, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.refreshState()
-                self?.maybeAutoStartOnLaunch(trigger: "poll")
+                self?.reconcileRuntimeSupervision(trigger: "poll")
             }
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.75) { [weak self] in
             Task { @MainActor in
-                self?.maybeAutoStartOnLaunch(trigger: "launch")
+                self?.reconcileRuntimeSupervision(trigger: "launch")
             }
         }
     }
@@ -976,7 +1224,12 @@ final class HelperController: ObservableObject {
         }
     }
 
-    private func startStack(openWhenReady: Bool, launchReason: String = "manual") {
+    private func startStack(
+        openWhenReady: Bool,
+        launchReason: String = "manual",
+        recordsDesiredRunning: Bool = true,
+        supervisedLaunch: Bool = false
+    ) {
         self.cancelDelayedQuitWatch()
         guard let config else {
             self.log("Start requested without helper config")
@@ -986,6 +1239,14 @@ final class HelperController: ObservableObject {
         guard !Self.configUsesProtectedRepoRoot(config) else {
             self.presentProtectedCheckoutAlert(action: "start Viventium")
             return
+        }
+        guard !self.stackLaunchInProgress else {
+            self.log("Start ignored because a stack launch is already in progress (\(launchReason))")
+            return
+        }
+        self.stackLaunchInProgress = true
+        if recordsDesiredRunning {
+            self.setRuntimeDesiredState(.running)
         }
         self.log("Starting stack (\(launchReason))")
         self.beginBusyState(.starting)
@@ -997,6 +1258,7 @@ final class HelperController: ObservableObject {
                 expectedRepoRoot: config.repoRoot
             ) {
                 await MainActor.run {
+                    self.stackLaunchInProgress = false
                     self.log("Start blocked; another workspace owns the running stack")
                     self.stackState = .unavailable("Split Workspace")
                     let alert = NSAlert()
@@ -1013,12 +1275,27 @@ final class HelperController: ObservableObject {
                 logFileName: "helper-start.log"
             )
             let startLogOffset = Self.fileSize(startLogURL)
+            if let inFlightState = Self.inFlightStackState(
+                appSupportDir: config.appSupportDir,
+                runtimeProfile: runtime.runtimeProfile
+            ) {
+                await MainActor.run {
+                    self.stackLaunchInProgress = false
+                    self.stackState = inFlightState
+                    self.log("Start deferred because another stack operation is already in progress (\(launchReason))")
+                }
+                return
+            }
             guard let detachedStartPID = Self.submitDetachedStart(
                 repoRoot: config.repoRoot,
                 appSupportDir: config.appSupportDir,
                 logFileName: "helper-start.log"
             ) else {
                 await MainActor.run {
+                    self.stackLaunchInProgress = false
+                    if supervisedLaunch {
+                        self.recordSupervisedLaunchFailure()
+                    }
                     self.log("CLI detached start submission failed (\(launchReason))")
                     self.refreshState(force: true)
                     self.log("Stack did not become healthy after \(launchReason)")
@@ -1046,6 +1323,18 @@ final class HelperController: ObservableObject {
                 startLogOffset: startLogOffset
             )
             await MainActor.run {
+                self.stackLaunchInProgress = false
+                if supervisedLaunch {
+                    if started {
+                        self.runtimeSupervision.recordHealthy(
+                            at: Date(),
+                            stabilityWindow: self.runtimeSupervisionStableHealthSeconds
+                        )
+                        self.persistRuntimeSupervision()
+                    } else {
+                        self.recordSupervisedLaunchFailure()
+                    }
+                }
                 self.refreshState(force: true)
                 self.log(started ? "Stack healthy after \(launchReason)" : "Stack did not become healthy after \(launchReason)")
                 if started && openWhenReady {
@@ -1078,6 +1367,7 @@ final class HelperController: ObservableObject {
             self.presentProtectedCheckoutAlert(action: "stop Viventium")
             return
         }
+        self.setRuntimeDesiredState(.stopped)
         self.log(terminateWhenDone ? "Stopping stack before helper exit" : "Stopping stack")
         self.beginBusyState(.stopping)
         Task.detached(priority: .userInitiated) {
@@ -1210,7 +1500,10 @@ final class HelperController: ObservableObject {
                 knownSnapshot: snapshot
             )
             self.openURLString = preferredOpenURLString
-            let inFlightState = Self.inFlightStackState(appSupportDir: config.appSupportDir)
+            let inFlightState = Self.inFlightStackState(
+                appSupportDir: config.appSupportDir,
+                runtimeProfile: runtime.runtimeProfile
+            )
             let busyStateGraceActive = (self.busyStateGraceDeadline ?? .distantPast) > Date()
             let shouldPreserveBusyState =
                 !allowBusyStateTransition &&
@@ -1247,7 +1540,20 @@ final class HelperController: ObservableObject {
             return cached.snapshot
         }
 
-        let snapshot = await Self.stackHealthSnapshot(runtime: runtime, appSupportDir: self.config?.appSupportDir)
+        if let inFlight = self.steadyStateHealthSnapshotTask,
+           inFlight.runtime == runtime {
+            return await inFlight.task.value
+        }
+
+        let appSupportDir = self.config?.appSupportDir
+        let task = Task {
+            await Self.stackHealthSnapshot(runtime: runtime, appSupportDir: appSupportDir)
+        }
+        self.steadyStateHealthSnapshotTask = (runtime, task)
+        let snapshot = await task.value
+        if self.steadyStateHealthSnapshotTask?.runtime == runtime {
+            self.steadyStateHealthSnapshotTask = nil
+        }
         if snapshot.healthy {
             self.steadyStateHealthSnapshot = (runtime, Date(), snapshot)
         } else {
@@ -1430,75 +1736,133 @@ final class HelperController: ObservableObject {
         alert.runModal()
     }
 
-    private func maybeAutoStartOnLaunch(trigger: String) {
-        guard !self.didAttemptLaunchAutostart else {
+    private func reconcileRuntimeSupervision(trigger: String) {
+        guard !self.runtimeSupervisionCheckInFlight,
+              !self.stackLaunchInProgress,
+              self.runtimeSupervision.desiredState == .running,
+              let config,
+              !Self.configUsesProtectedRepoRoot(config)
+        else {
             return
         }
-        guard let config else {
-            self.log("Auto-start skipped; missing helper config")
-            self.didAttemptLaunchAutostart = true
-            return
-        }
-        guard !Self.configUsesProtectedRepoRoot(config) else {
-            self.log("Auto-start skipped; helper is still bound to a protected-folder checkout")
-            self.stackState = .unavailable("Protected Checkout")
-            self.didAttemptLaunchAutostart = true
-            return
-        }
-        if Date().timeIntervalSince(self.launchDate) > self.autoStartRetryWindowSeconds {
-            self.log("Auto-start window expired before a launch attempt")
-            self.didAttemptLaunchAutostart = true
+        let now = Date()
+        if self.runtimeSupervision.healthySince == nil,
+           !self.runtimeSupervision.shouldLaunch(at: now)
+        {
             return
         }
 
-        Task.detached(priority: .utility) {
+        self.runtimeSupervisionCheckInFlight = true
+        Task { @MainActor in
+            defer {
+                self.runtimeSupervisionCheckInFlight = false
+            }
             let runtime = RuntimeEnvParser().readRuntime(appSupportDir: config.appSupportDir)
+            let snapshot = await self.stackHealthSnapshot(runtime: runtime)
             if await Self.stackOwnedByDifferentRepo(
                 runtime: runtime,
                 appSupportDir: config.appSupportDir,
-                expectedRepoRoot: config.repoRoot
+                expectedRepoRoot: config.repoRoot,
+                knownSnapshot: snapshot
             ) {
-                await MainActor.run {
-                    self.log("Auto-start blocked; split-workspace state detected (\(trigger))")
-                    self.stackState = .unavailable("Split Workspace")
-                    self.didAttemptLaunchAutostart = true
+                if self.stackState != .unavailable("Split Workspace") {
+                    self.log("Runtime supervision blocked; split-workspace state detected (\(trigger))")
                 }
-                return
-            }
-            let snapshot = await Self.stackHealthSnapshot(runtime: runtime, appSupportDir: config.appSupportDir)
-            if snapshot.healthy {
-                await MainActor.run {
-                    self.log("Auto-start skipped; stack already healthy (\(trigger))")
-                    self.stackState = .running
-                    self.didAttemptLaunchAutostart = true
-                }
-                return
-            }
-            if snapshot.needsAttention {
-                await MainActor.run {
-                    self.log("Auto-start skipped; stack needs attention (\(trigger))")
-                    self.stackState = .needsAttention
-                    self.didAttemptLaunchAutostart = true
-                }
-                return
-            }
-            if Self.cliOperationStillRunning(appSupportDir: config.appSupportDir) {
-                await MainActor.run {
-                    self.log("Auto-start deferred; CLI operation already running (\(trigger))")
-                }
+                self.stackState = .unavailable("Split Workspace")
                 return
             }
 
-            await MainActor.run {
-                guard !self.stackState.actionBusy else {
-                    self.log("Auto-start deferred; helper busy as \(self.statusLabel) (\(trigger))")
-                    return
-                }
-                self.didAttemptLaunchAutostart = true
-                self.log("Auto-start launching stack (\(trigger))")
-                self.startStack(openWhenReady: false, launchReason: "auto-start:\(trigger)")
+            guard self.runtimeSupervision.desiredState == .running else {
+                return
             }
+            let observedAt = Date()
+            if snapshot.healthy {
+                let previous = self.runtimeSupervision
+                self.runtimeSupervision.recordHealthy(
+                    at: observedAt,
+                    stabilityWindow: self.runtimeSupervisionStableHealthSeconds
+                )
+                if self.runtimeSupervision != previous {
+                    self.persistRuntimeSupervision()
+                }
+                self.stackState = .running
+                return
+            }
+
+            let previous = self.runtimeSupervision
+            self.runtimeSupervision.recordUnhealthy(
+                at: observedAt,
+                stabilityWindow: self.runtimeSupervisionStableHealthSeconds,
+                baseDelay: self.runtimeSupervisionBaseDelaySeconds,
+                maximumDelay: self.runtimeSupervisionMaximumDelaySeconds
+            )
+            if self.runtimeSupervision != previous {
+                self.persistRuntimeSupervision()
+            }
+            if snapshot.needsAttention {
+                self.stackState = .needsAttention
+            }
+            guard self.runtimeSupervision.shouldLaunch(at: observedAt),
+                  !Self.cliOperationStillRunning(appSupportDir: config.appSupportDir),
+                  Self.inFlightStackState(
+                      appSupportDir: config.appSupportDir,
+                      runtimeProfile: runtime.runtimeProfile
+                  ) == nil,
+                  !self.stackState.actionBusy
+            else {
+                return
+            }
+
+            self.runtimeSupervision.recordLaunchAttempt(
+                at: observedAt,
+                baseDelay: self.runtimeSupervisionBaseDelaySeconds,
+                maximumDelay: self.runtimeSupervisionMaximumDelaySeconds
+            )
+            self.persistRuntimeSupervision()
+            self.log(
+                "Runtime supervision launching stack attempt \(self.runtimeSupervision.consecutiveLaunchAttempts) (\(trigger))"
+            )
+            self.startStack(
+                openWhenReady: false,
+                launchReason: "supervisor:\(trigger)",
+                recordsDesiredRunning: false,
+                supervisedLaunch: true
+            )
         }
+    }
+
+    private func setRuntimeDesiredState(_ desiredState: RuntimeDesiredState) {
+        if desiredState == .running {
+            self.runtimeSupervision.requestRunning()
+        } else {
+            self.runtimeSupervision.requestStopped()
+        }
+        self.persistRuntimeSupervision()
+    }
+
+    private func recordSupervisedLaunchFailure() {
+        self.runtimeSupervision.recordLaunchFailure(
+            at: Date(),
+            baseDelay: self.runtimeSupervisionBaseDelaySeconds,
+            maximumDelay: self.runtimeSupervisionMaximumDelaySeconds
+        )
+        self.persistRuntimeSupervision()
+        if let nextAttemptAt = self.runtimeSupervision.nextLaunchAttemptAt {
+            let delay = max(0, Int(nextAttemptAt.timeIntervalSinceNow.rounded()))
+            self.log("Runtime supervision backing off for \(delay) seconds")
+        }
+    }
+
+    private func persistRuntimeSupervision() {
+        guard var config, config.runtimeSupervision != self.runtimeSupervision else {
+            return
+        }
+        config.runtimeSupervision = self.runtimeSupervision
+        guard Self.saveConfig(config) else {
+            self.log("Runtime supervision state could not be saved")
+            return
+        }
+        self.config = config
     }
 
     private func log(_ message: String) {
@@ -1541,16 +1905,8 @@ final class HelperController: ObservableObject {
     private static func saveConfig(_ config: HelperConfig) -> Bool {
         let configURL = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Application Support/Viventium/helper-config.json")
-        guard let data = try? JSONEncoder().encode(config) else {
-            return false
-        }
         do {
-            try FileManager.default.createDirectory(
-                at: configURL.deletingLastPathComponent(),
-                withIntermediateDirectories: true,
-                attributes: nil
-            )
-            try data.write(to: configURL, options: .atomic)
+            try HelperConfigPreservingStore.save(config: config, to: configURL)
             return true
         } catch {
             return false
@@ -1563,7 +1919,8 @@ final class HelperController: ObservableObject {
                 repoRoot: self.normalizedFileSystemPath(config.repoRoot),
                 appSupportDir: config.appSupportDir,
                 allowProtectedRepoRoot: config.allowProtectedRepoRoot,
-                showInStatusBar: config.showInStatusBar
+                showInStatusBar: config.showInStatusBar,
+                runtimeSupervision: config.runtimeSupervision
             )
         }
         let resolvedRepoRoot = self.resolveSafeRuntimeRepoRoot(config.repoRoot)
@@ -1574,7 +1931,8 @@ final class HelperController: ObservableObject {
             repoRoot: resolvedRepoRoot,
             appSupportDir: config.appSupportDir,
             allowProtectedRepoRoot: false,
-            showInStatusBar: config.showInStatusBar
+            showInStatusBar: config.showInStatusBar,
+            runtimeSupervision: config.runtimeSupervision
         )
     }
 
@@ -1599,7 +1957,8 @@ final class HelperController: ObservableObject {
             repoRoot: normalizedRepoRoot,
             appSupportDir: config.appSupportDir,
             allowProtectedRepoRoot: activeCheckout.allowProtectedFolderAccess == true,
-            showInStatusBar: config.showInStatusBar
+            showInStatusBar: config.showInStatusBar,
+            runtimeSupervision: config.runtimeSupervision
         )
     }
 
@@ -1723,20 +2082,68 @@ final class HelperController: ObservableObject {
     private nonisolated static func makeNamedHelperLogURL(appSupportDir: String, logFileName: String) -> URL {
         let logDir = URL(fileURLWithPath: appSupportDir, isDirectory: true)
             .appendingPathComponent("logs", isDirectory: true)
-        try? FileManager.default.createDirectory(at: logDir, withIntermediateDirectories: true)
         return logDir.appendingPathComponent(logFileName)
+    }
+
+    private nonisolated static func privateDirectoryMetadata(_ path: String) -> stat? {
+        var metadata = stat()
+        guard lstat(path, &metadata) == 0,
+              metadata.st_mode & S_IFMT == S_IFDIR,
+              metadata.st_uid == getuid(),
+              metadata.st_mode & 0o077 == 0
+        else {
+            return nil
+        }
+        return metadata
+    }
+
+    private nonisolated static func ensurePrivateLogDirectory(_ logURL: URL) -> Bool {
+        let logDirectory = logURL.deletingLastPathComponent()
+        if self.privateDirectoryMetadata(logDirectory.path) != nil {
+            return true
+        }
+        guard errno == ENOENT,
+              self.privateDirectoryMetadata(logDirectory.deletingLastPathComponent().path) != nil,
+              mkdir(logDirectory.path, S_IRWXU) == 0 || errno == EEXIST,
+              self.privateDirectoryMetadata(logDirectory.path) != nil
+        else {
+            return false
+        }
+        return true
+    }
+
+    private nonisolated static func openPrivateAppendLog(_ logURL: URL) -> FileHandle? {
+        guard self.ensurePrivateLogDirectory(logURL) else {
+            return nil
+        }
+        let descriptor = Darwin.open(
+            logURL.path,
+            O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC | O_NOFOLLOW,
+            S_IRUSR | S_IWUSR
+        )
+        guard descriptor >= 0 else {
+            return nil
+        }
+        var metadata = stat()
+        guard fstat(descriptor, &metadata) == 0,
+              metadata.st_mode & S_IFMT == S_IFREG,
+              metadata.st_uid == getuid(),
+              metadata.st_nlink == 1,
+              fchmod(descriptor, S_IRUSR | S_IWUSR) == 0,
+              fstat(descriptor, &metadata) == 0,
+              metadata.st_mode & 0o077 == 0
+        else {
+            Darwin.close(descriptor)
+            return nil
+        }
+        return FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
     }
 
     private nonisolated static func appendHelperLog(_ url: URL?, _ message: String) {
         guard let url, let data = "[\(ISO8601DateFormatter().string(from: Date()))] \(message)\n".data(using: .utf8) else {
             return
         }
-        if !FileManager.default.fileExists(atPath: url.path) {
-            try? data.write(to: url, options: .atomic)
-            return
-        }
-        guard let handle = try? FileHandle(forWritingTo: url) else {
-            try? data.write(to: url, options: .atomic)
+        guard let handle = self.openPrivateAppendLog(url) else {
             return
         }
         defer {
@@ -1744,6 +2151,7 @@ final class HelperController: ObservableObject {
         }
         _ = try? handle.seekToEnd()
         try? handle.write(contentsOf: data)
+        try? handle.synchronize()
     }
 
     private nonisolated static func loopbackCandidateURLs(port: Int, path: String) -> [URL] {
@@ -1809,9 +2217,14 @@ final class HelperController: ObservableObject {
     ) async -> StackHealthSnapshot {
         let apiReady = await self.apiHealthy(port: runtime.apiPort)
         let frontendReady = apiReady ? await self.frontendHealthy(port: runtime.frontendPort) : false
-        // Voice-call deep links land on the dedicated modern playground. Probe it separately so
-        // the helper can still prefer that surface when it is the only user-facing surface ready.
-        let playgroundReady = await self.playgroundHealthy(port: runtime.playgroundPort)
+        // Easy Install deliberately defers voice/playground. Other installs retain the three-surface
+        // health contract and voice-call deep-link fallback.
+        let playgroundReady: Bool
+        if runtime.requiresPlayground {
+            playgroundReady = await self.playgroundHealthy(port: runtime.playgroundPort)
+        } else {
+            playgroundReady = false
+        }
         let optionalSurfacesReady = self.optionalSurfacesReady(
             runtime: runtime,
             appSupportDir: appSupportDir
@@ -1820,6 +2233,7 @@ final class HelperController: ObservableObject {
             apiReady: apiReady,
             frontendReady: frontendReady,
             playgroundReady: playgroundReady,
+            requiresPlayground: runtime.requiresPlayground,
             optionalSurfacesReady: optionalSurfacesReady
         )
     }
@@ -1842,20 +2256,6 @@ final class HelperController: ObservableObject {
             return false
         }
         return true
-    }
-
-    private nonisolated static func stackHealthy(apiPort: Int, frontendPort: Int, playgroundPort: Int) async -> Bool {
-        await self.stackHealthSnapshot(
-            runtime: RuntimePorts(
-                apiPort: apiPort,
-                frontendPort: frontendPort,
-                playgroundPort: playgroundPort,
-                runtimeProfile: "isolated",
-                startTelegram: false,
-                startTelegramCodex: false,
-                managedStopCheckURLs: []
-            )
-        ).healthy
     }
 
     private nonisolated static func frontendURLString(host: String, port: Int) -> String {
@@ -2147,15 +2547,72 @@ final class HelperController: ObservableObject {
         return command
     }
 
-    private nonisolated static func inFlightStackState(appSupportDir: String) -> StackState? {
+    private nonisolated static func inFlightStackState(
+        appSupportDir: String,
+        runtimeProfile: String
+    ) -> StackState? {
         switch self.cliOperationCommand(appSupportDir: appSupportDir) {
         case "launch", "start":
             return .starting
         case "stop":
             return .stopping
         default:
-            return nil
+            return self.detachedLaunchProcessGroupRunning(
+                appSupportDir: appSupportDir,
+                runtimeProfile: runtimeProfile
+            ) ? .starting : nil
         }
+    }
+
+    private nonisolated static func hasNoSymlinkComponents(_ path: String) -> Bool {
+        let normalized = URL(fileURLWithPath: path).standardizedFileURL.path
+        let components = URL(fileURLWithPath: normalized).pathComponents
+        guard !components.isEmpty else {
+            return false
+        }
+        var current = components[0]
+        for component in components.dropFirst() {
+            current = URL(fileURLWithPath: current, isDirectory: true)
+                .appendingPathComponent(component)
+                .path
+            var metadata = stat()
+            if lstat(current, &metadata) != 0 ||
+                metadata.st_mode & S_IFMT == S_IFLNK
+            {
+                return false
+            }
+        }
+        return true
+    }
+
+    private nonisolated static func privateOwnedRegularFile(_ path: String) -> Bool {
+        var metadata = stat()
+        return self.hasNoSymlinkComponents(path) &&
+            lstat(path, &metadata) == 0 &&
+            metadata.st_mode & S_IFMT == S_IFREG &&
+            metadata.st_uid == getuid() &&
+            metadata.st_nlink == 1 &&
+            metadata.st_mode & 0o077 == 0
+    }
+
+    private nonisolated static func detachedLaunchProcessGroupRunning(
+        appSupportDir: String,
+        runtimeProfile: String
+    ) -> Bool {
+        let processGroupURL = URL(fileURLWithPath: appSupportDir, isDirectory: true)
+            .appendingPathComponent("state/runtime/\(runtimeProfile)", isDirectory: true)
+            .appendingPathComponent("detached-launch.pgid")
+        guard self.privateOwnedRegularFile(processGroupURL.path),
+              let raw = try? String(contentsOf: processGroupURL, encoding: .utf8),
+              let processGroup = Int32(
+                  raw.trimmingCharacters(in: .whitespacesAndNewlines)
+              ),
+              processGroup > 1,
+              processGroup != getpgrp()
+        else {
+            return false
+        }
+        return kill(-processGroup, 0) == 0 || errno == EPERM
     }
 
     private nonisolated static func defaultCLIPath(homeDirectory: String, inheritedPath: String?) -> String {
@@ -2168,8 +2625,8 @@ final class HelperController: ObservableObject {
             "/bin",
             "/usr/sbin",
             "/sbin",
-            "/opt/homebrew/opt/node@20/bin",
-            "/usr/local/opt/node@20/bin",
+            "/opt/homebrew/opt/node@24/bin",
+            "/usr/local/opt/node@24/bin",
             "/opt/homebrew/opt/python@3.12/libexec/bin",
             "/usr/local/opt/python@3.12/libexec/bin",
             "/Applications/Docker.app/Contents/Resources/bin",
@@ -2382,14 +2839,11 @@ final class HelperController: ObservableObject {
         process.standardInput = FileHandle.nullDevice
 
         if let logFileName {
-            let logDir = URL(fileURLWithPath: appSupportDir, isDirectory: true)
-                .appendingPathComponent("logs", isDirectory: true)
-            try? FileManager.default.createDirectory(at: logDir, withIntermediateDirectories: true)
-            let logURL = logDir.appendingPathComponent(logFileName)
-            if !FileManager.default.fileExists(atPath: logURL.path) {
-                FileManager.default.createFile(atPath: logURL.path, contents: Data())
-            }
-            if let handle = try? FileHandle(forWritingTo: logURL) {
+            let logURL = self.makeNamedHelperLogURL(
+                appSupportDir: appSupportDir,
+                logFileName: logFileName
+            )
+            if let handle = self.openPrivateAppendLog(logURL) {
                 _ = try? handle.seekToEnd()
                 process.standardOutput = handle
                 process.standardError = handle
@@ -2419,6 +2873,74 @@ final class HelperController: ObservableObject {
             return process
         } catch {
             return nil
+        }
+    }
+
+    private nonisolated static func runWhoopOAuthCallback(
+        repoRoot: String,
+        appSupportDir: String,
+        callback: String
+    ) -> Int32 {
+        guard let callbackData = "\(callback)\n".data(using: .utf8) else {
+            return 1
+        }
+        let process = self.makeCLIProcess(
+            repoRoot: repoRoot,
+            appSupportDir: appSupportDir,
+            arguments: ["health", "whoop", "onboard", "--callback-stdin"]
+        )
+        let stdinPipe = Pipe()
+        process.standardInput = stdinPipe
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        do {
+            try process.run()
+            stdinPipe.fileHandleForWriting.write(callbackData)
+            try? stdinPipe.fileHandleForWriting.close()
+            process.waitUntilExit()
+            return process.terminationStatus
+        } catch {
+            try? stdinPipe.fileHandleForWriting.close()
+            return 1
+        }
+    }
+
+    private func handleWhoopOAuthCallback(_ url: URL) {
+        guard WhoopOAuthCallbackURL.isAccepted(url), let config = self.config else {
+            return
+        }
+        let callback = url.absoluteString
+        let repoRoot = config.repoRoot
+        let appSupportDir = config.appSupportDir
+        self.openWhoopSetup()
+        Task { [weak self] in
+            let status = await Task.detached(priority: .utility) {
+                Self.runWhoopOAuthCallback(
+                    repoRoot: repoRoot,
+                    appSupportDir: appSupportDir,
+                    callback: callback
+                )
+            }.value
+            guard let self else {
+                return
+            }
+            self.log(
+                status == 0
+                    ? "WHOOP authorization and initial import completed"
+                    : "WHOOP authorization flow needs attention"
+            )
+        }
+    }
+
+    private func openWhoopSetup() {
+        guard var components = URLComponents(string: self.openURLString) else {
+            return
+        }
+        var queryItems = (components.queryItems ?? []).filter { $0.name != "setup" }
+        queryItems.append(URLQueryItem(name: "setup", value: "whoop"))
+        components.queryItems = queryItems
+        if let url = components.url {
+            NSWorkspace.shared.open(url)
         }
     }
 
@@ -2466,7 +2988,9 @@ final class HelperController: ObservableObject {
         }
         let logURL = Self.makeNamedHelperLogURL(appSupportDir: appSupportDir, logFileName: logFileName)
         self.rotateHelperLogIfNeeded(logURL)
-        let logPath = logURL.path
+        guard let logHandle = self.openPrivateAppendLog(logURL) else {
+            return nil
+        }
         let pidFileURL = URL(fileURLWithPath: appSupportDir, isDirectory: true)
             .appendingPathComponent("runtime/\(pidFileName)")
         let runnerScriptURL = URL(fileURLWithPath: self.helperDetachedCommandScriptPath(
@@ -2489,7 +3013,6 @@ final class HelperController: ObservableObject {
         try? FileManager.default.removeItem(at: runnerScriptURL)
         try? FileManager.default.removeItem(at: legacyRunnerScriptURL)
         let escapedAppSupportDir = self.shellQuoted(appSupportDir)
-        let escapedLogPath = self.shellQuoted(logPath)
         let escapedPidPath = self.shellQuoted(pidFileURL.path)
         let escapedCommand = (["/bin/bash", binViventiumPath, "--app-support-dir", appSupportDir] + commandArguments)
             .map(self.shellQuoted)
@@ -2497,7 +3020,7 @@ final class HelperController: ObservableObject {
         let detachedCommand = """
 set -euo pipefail
 cd \(escapedAppSupportDir)
-nohup \(escapedCommand) >> \(escapedLogPath) 2>&1 < /dev/null &
+nohup \(escapedCommand) 2>&1 < /dev/null &
 pid=$!
 printf '%s\\n' "$pid" > \(escapedPidPath)
 """
@@ -2512,9 +3035,8 @@ printf '%s\\n' "$pid" > \(escapedPidPath)
             environmentOverrides: environmentOverrides
         )
         process.standardInput = FileHandle.nullDevice
-        let outputPipe = Pipe()
-        process.standardOutput = outputPipe
-        process.standardError = outputPipe
+        process.standardOutput = logHandle
+        process.standardError = logHandle
 
         do {
             try process.run()
@@ -2524,16 +3046,6 @@ printf '%s\\n' "$pid" > \(escapedPidPath)
         }
 
         guard process.terminationStatus == 0 else {
-            if
-                let outputData = try? outputPipe.fileHandleForReading.readToEnd(),
-                let output = String(data: outputData, encoding: .utf8),
-                !output.isEmpty
-            {
-                try? output.data(using: .utf8)?.write(
-                    to: URL(fileURLWithPath: logPath),
-                    options: .atomic
-                )
-            }
             return nil
         }
 
@@ -2683,43 +3195,79 @@ printf '%s\\n' "$pid" > \(escapedPidPath)
         let message: String
         let updateAvailable: Bool
         let blockers: [String]
+        let statusReadable: Bool
     }
 
     private nonisolated static func updateCheckSummary(stdout: String) -> UpdateCheckSummary {
         guard
-            let root = self.parseJSONObject(stdout)
+            let root = self.parseJSONObject(stdout),
+            root["schema_version"] as? Int == 1,
+            self.jsonValueIsStrictInteger(root["schema_version"]),
+            let readyToUpgrade = root["ready_to_upgrade"] as? Bool,
+            let updateAvailable = root["update_available"] as? Bool,
+            let blockers = root["blockers"] as? [String],
+            let behind = root["commits_behind"] as? Int,
+            self.jsonValueIsStrictInteger(root["commits_behind"]),
+            let componentRefresh = root["component_refresh_required"] as? [[String: Any]]
         else {
             return UpdateCheckSummary(
                 title: "Could not read update check",
                 message: "The update check did not return readable status.",
                 updateAvailable: false,
-                blockers: ["invalid_json"]
+                blockers: ["invalid_json"],
+                statusReadable: false
             )
         }
-        let updateAvailable = (root["update_available"] as? Bool) ?? false
-        let blockers = (root["blockers"] as? [String]) ?? []
+        if !readyToUpgrade && blockers.isEmpty {
+            return UpdateCheckSummary(
+                title: "Could not read update check",
+                message: "The update check returned an inconsistent readiness result.",
+                updateAvailable: false,
+                blockers: ["invalid_readiness"],
+                statusReadable: false
+            )
+        }
+        if blockers.contains("fetch_failed") {
+            return UpdateCheckSummary(
+                title: "Could not check for updates",
+                message: "Viventium could not reach the configured Git remote. Check the network connection and helper-update-check.log, then try again.",
+                updateAvailable: updateAvailable,
+                blockers: blockers,
+                statusReadable: true
+            )
+        }
         if !blockers.isEmpty {
             return UpdateCheckSummary(
                 title: "Update blocked",
                 message: "Viventium found blockers: \(blockers.joined(separator: ", ")). Resolve them, then check again.",
                 updateAvailable: updateAvailable,
-                blockers: blockers
+                blockers: blockers,
+                statusReadable: true
             )
         }
         if updateAvailable {
-            let behind = (root["commits_behind"] as? Int) ?? 0
+            let message: String
+            if !componentRefresh.isEmpty && behind == 0 {
+                message = "Viventium found \(componentRefresh.count) managed component(s) ready to refresh to their pinned versions."
+            } else if !componentRefresh.isEmpty {
+                message = "Viventium is \(behind) commit(s) behind and found \(componentRefresh.count) managed component(s) ready to refresh."
+            } else {
+                message = "Viventium is \(behind) commit(s) behind the configured upstream branch."
+            }
             return UpdateCheckSummary(
                 title: "Update available",
-                message: "Viventium is \(behind) commit(s) behind the configured upstream branch.",
+                message: message,
                 updateAvailable: true,
-                blockers: []
+                blockers: [],
+                statusReadable: true
             )
         }
         return UpdateCheckSummary(
             title: "Viventium is up to date",
             message: "No updates were found for the current branch.",
             updateAvailable: false,
-            blockers: []
+            blockers: [],
+            statusReadable: true
         )
     }
 
@@ -2731,6 +3279,13 @@ printf '%s\\n' "$pid" > \(escapedPidPath)
             return nil
         }
         return root
+    }
+
+    private nonisolated static func jsonValueIsStrictInteger(_ value: Any?) -> Bool {
+        guard let number = value as? NSNumber else {
+            return false
+        }
+        return CFGetTypeID(number) != CFBooleanGetTypeID()
     }
 
     private nonisolated static func workflowStatusLabel(appSupportDir: String) -> String? {
@@ -2968,6 +3523,27 @@ printf '%s\\n' "$pid" > \(escapedPidPath)
         return value
     }
 
+    private enum SnapshotProofStatus {
+        case metadataOnly
+        case complete
+        case invalid
+    }
+
+    private nonisolated static func snapshotProofStatus(snapshotPath: String?) -> SnapshotProofStatus {
+        guard let snapshotPath else {
+            return .invalid
+        }
+        let manager = FileManager.default
+        if manager.fileExists(atPath: "\(snapshotPath)/.viventium-metadata-only") {
+            return .metadataOnly
+        }
+        if manager.fileExists(atPath: "\(snapshotPath)/.viventium-recoverable"),
+           manager.fileExists(atPath: "\(snapshotPath)/recoverable-manifest.json") {
+            return .complete
+        }
+        return .invalid
+    }
+
     private func openBrowser() {
         guard let url = URL(string: self.openURLString) else { return }
         NSWorkspace.shared.open(url)
@@ -2979,6 +3555,7 @@ private struct RuntimePorts: Equatable {
     let frontendPort: Int
     let playgroundPort: Int
     let runtimeProfile: String
+    let requiresPlayground: Bool
     let startTelegram: Bool
     let startTelegramCodex: Bool
     let managedStopCheckURLs: [String]
@@ -2996,6 +3573,7 @@ private struct RuntimeEnvParser {
             frontendPort: frontendPort,
             playgroundPort: playgroundPort,
             runtimeProfile: runtimeProfile,
+            requiresPlayground: values["VIVENTIUM_INSTALL_EXPERIENCE"] != "express",
             startTelegram: self.boolValue(values["START_TELEGRAM"]),
             startTelegramCodex: self.boolValue(values["START_TELEGRAM_CODEX"]),
             managedStopCheckURLs: self.managedStopCheckURLs(values: values)
@@ -3344,6 +3922,8 @@ private enum LocalNetworkAddressResolver {
 
 @main
 struct ViventiumHelperApp: App {
+    @NSApplicationDelegateAdaptor(ViventiumHelperApplicationDelegate.self)
+    private var applicationDelegate
     @StateObject private var controller = HelperController()
 
     var body: some Scene {

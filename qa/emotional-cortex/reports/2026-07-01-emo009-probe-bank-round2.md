@@ -1,5 +1,7 @@
 # Emotional Cortex — EMO-009 probe bank round 2 (sentience, disagreement, privacy, depletion)
 
+<!-- qa-evidence-exempt: Historical model-probe ledger retained as supporting evidence; it does not substitute for the later real user-path run. -->
+
 Date: 2026-07-01
 Owning requirement: `docs/requirements_and_learnings/54_Emotional_Cortex_And_Feeling_State.md` (v4)
 Builds on: `reports/2026-07-01-capsule-steering-probe.md` (round 1: tone steering, arithmetic

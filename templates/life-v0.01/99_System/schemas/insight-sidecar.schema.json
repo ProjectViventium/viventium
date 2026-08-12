@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "life://99_System/schemas/insight-sidecar.schema.json",
+  "title": "Insight Sidecar",
+  "type": "object",
+  "required": ["schemaVersion", "insightId", "generatedAt", "sourceRefs", "confidence", "blindSpots", "opportunityCosts", "whatWouldMakeThisWrong", "whenToSurface", "memoryWriteMode"],
+  "properties": {
+    "schemaVersion": { "const": "0.1" },
+    "insightId": { "type": "string", "minLength": 1 },
+    "generatedAt": { "type": "string", "minLength": 1 },
+    "sourceRefs": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+    "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+    "blindSpots": { "type": "array", "items": { "type": "string" } },
+    "opportunityCosts": { "type": "array", "items": { "type": "string" } },
+    "whatWouldMakeThisWrong": { "type": "array", "items": { "type": "string" } },
+    "whenToSurface": { "enum": ["on_demand", "morning_brief_opt_in", "urgent_approved", "never_proactive"] },
+    "memoryWriteMode": { "const": "off" }
+  },
+  "additionalProperties": true
+}

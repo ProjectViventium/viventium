@@ -1,0 +1,17 @@
+{
+  "schemaVersion": "0.1",
+  "questionId": "question-example",
+  "missionId": "mission-example",
+  "type": "clarification",
+  "status": "draft",
+  "blocking": true,
+  "createdAt": "YYYY-MM-DDTHH:MM:SSZ",
+  "prompt": "Synthetic example: which approved option should the worker use?",
+  "evidenceRefs": [],
+  "transport": {
+    "event": "checkpoint.ready",
+    "callbackRef": null
+  },
+  "response": null,
+  "respondedAt": null
+}

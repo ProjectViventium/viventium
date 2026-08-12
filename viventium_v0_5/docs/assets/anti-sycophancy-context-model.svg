@@ -1,0 +1,200 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1240" height="1820" viewBox="0 0 1240 1820" role="img" aria-labelledby="title desc">
+  <title id="title">Viventium anti-sycophancy A to F flow</title>
+  <desc id="desc">Top-to-bottom flow from user input, through background cortices and My World context preparation, into the Main Conscious Cortex. The optional GlassHive Reality Check consult returns to Main; Main either synthesizes directly or optionally consults Red Team before synthesizing, followed by the final answer and later nonblocking Phase B value gating.</desc>
+
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 Z" class="arrow-head"/>
+    </marker>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="3" stdDeviation="7" flood-opacity="0.08"/>
+    </filter>
+  </defs>
+
+  <style>
+    .diagram {
+      --canvas: #f7f9fc;
+      --ink: #172033;
+      --muted: #5d6878;
+      --line: #738096;
+      --border: #c9d3e1;
+      --card: #ffffff;
+      --blue: #2f6fed;
+      --blue-soft: #eef4ff;
+      --violet: #7257c7;
+      --violet-soft: #f3efff;
+      --green: #18775b;
+      --green-soft: #eaf7f1;
+      --amber: #9a5b0b;
+      --amber-soft: #fff5df;
+      --slate: #243248;
+    }
+    @media (prefers-color-scheme: dark) {
+      .diagram {
+        --canvas: #0f141d;
+        --ink: #edf2f7;
+        --muted: #b5c0cf;
+        --line: #8390a4;
+        --border: #465266;
+        --card: #1d2634;
+        --blue: #315fbd;
+        --blue-soft: #182846;
+        --violet: #b29df3;
+        --violet-soft: #292141;
+        --green: #176447;
+        --green-soft: #153328;
+        --amber: #eab85f;
+        --amber-soft: #3a2a13;
+        --slate: #31415a;
+      }
+    }
+
+    text { font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: var(--ink); }
+    .canvas { fill: var(--canvas); }
+    .card { fill: var(--card); stroke: var(--border); stroke-width: 1.5; filter: url(#shadow); }
+    .blue { fill: var(--blue-soft); stroke: var(--blue); }
+    .violet { fill: var(--violet-soft); stroke: var(--violet); }
+    .green { fill: var(--green-soft); stroke: var(--green); }
+    .amber { fill: var(--amber-soft); stroke: var(--amber); }
+    .main { fill: var(--blue); stroke: var(--blue); filter: url(#shadow); }
+    .answer { fill: var(--green); stroke: var(--green); filter: url(#shadow); }
+    .output { fill: var(--slate); stroke: var(--slate); filter: url(#shadow); }
+    .stage { font-size: 14px; font-weight: 750; letter-spacing: 0.12em; fill: var(--muted); }
+    .target { font-size: 12px; font-weight: 800; letter-spacing: 0.16em; fill: var(--amber); }
+    .title { font-size: 24px; font-weight: 750; }
+    .subtitle { font-size: 15px; fill: var(--muted); }
+    .copy { font-size: 15px; fill: var(--muted); }
+    .small { font-size: 13px; fill: var(--muted); }
+    .strong { font-size: 16px; font-weight: 700; }
+    .white { fill: #ffffff; }
+    .connector { fill: none; stroke: var(--line); stroke-width: 2.2; marker-end: url(#arrow); }
+    .parallel { fill: none; stroke: var(--violet); stroke-width: 2.2; stroke-dasharray: 8 7; marker-end: url(#arrow); }
+    .background { fill: none; stroke: var(--violet); stroke-width: 2.2; stroke-dasharray: 8 7; marker-end: url(#arrow); }
+    .bypass { fill: none; stroke: var(--line); stroke-width: 2; stroke-dasharray: 6 7; marker-end: url(#arrow); }
+    .arrow-head { fill: #738096; }
+    .lane { fill: none; stroke: var(--border); stroke-width: 1.5; stroke-dasharray: 6 7; }
+    .pill { fill: var(--card); stroke: var(--border); stroke-width: 1.2; }
+    @media (prefers-color-scheme: dark) { .arrow-head { fill: #8390a4; } }
+  </style>
+
+  <g class="diagram">
+    <rect class="canvas" x="0" y="0" width="1240" height="1820" rx="26"/>
+    <text class="target" x="620" y="23" text-anchor="middle">MY WORLD + OUTSIDE WORLD · MAIN AGENT OWNS THE FINAL ANSWER</text>
+
+    <!-- A -->
+    <rect class="card" x="220" y="35" width="800" height="86" rx="18"/>
+    <text class="stage" x="255" y="69">A · USER INPUT</text>
+    <text class="title" x="620" y="98" text-anchor="middle">One request enters Viventium</text>
+
+    <!-- split A into B + C -->
+    <path class="connector" d="M620 121 L620 150 L275 150 L275 180"/>
+    <path class="connector" d="M620 121 L620 180"/>
+    <text class="small" x="355" y="143">starts together</text>
+
+    <!-- B -->
+    <rect class="card violet" x="55" y="180" width="440" height="318" rx="20"/>
+    <text class="stage" x="85" y="216">B · PARALLEL SUBCONSCIOUS</text>
+    <text class="title" x="85" y="250">Regular Background Agent /</text>
+    <text class="title" x="85" y="278">Subconscious Cortex</text>
+    <text class="copy" x="85" y="315">Detect → activate → work in background</text>
+    <text class="copy" x="85" y="343">using the existing system.</text>
+    <text class="copy" x="85" y="382">No waiting to decide whether context is “enough.”</text>
+    <text class="copy" x="85" y="411">If detection is fast, Main receives who + why.</text>
+    <text class="small" x="85" y="432">Text + voice: start together · Main runs exactly once</text>
+    <rect class="pill" x="85" y="445" width="380" height="38" rx="12"/>
+    <text class="strong" x="275" y="470" text-anchor="middle">results continue toward Phase B</text>
+
+    <!-- C -->
+    <rect class="card blue" x="535" y="180" width="650" height="445" rx="20"/>
+    <text class="stage" x="565" y="216">C · CONTEXT PREPARATION · MY WORLD</text>
+
+    <rect class="pill" x="565" y="242" width="590" height="125" rx="15"/>
+    <text class="title" x="595" y="278">Viventium Immediate Access Memory Keys</text>
+    <text class="copy" x="595" y="311">Short-term · top of mind · context · memories</text>
+    <text class="copy" x="595" y="339">key summaries · recent decisions · open loops</text>
+
+    <rect class="pill" x="565" y="389" width="590" height="207" rx="15"/>
+    <text class="title" x="595" y="425">Immediate Context Map</text>
+    <text class="copy" x="595" y="460">Memory / RAG search</text>
+    <text class="copy" x="595" y="489">Life/ · CRMs · files · scratchpads · projects</text>
+    <text class="copy" x="595" y="518">Tools / MCPs · Scheduling Cortex · all authorized tools</text>
+    <text class="copy" x="595" y="547">Deeper access stays available to Main under the Golden Rule</text>
+    <text class="small" x="595" y="578">No forced duplicate tool mentions · Deep Memory Search continues regardless → F</text>
+
+    <!-- B/C into D -->
+    <path class="parallel" d="M495 364 L515 364 L515 673 L300 673 L300 700"/>
+    <text class="small" x="315" y="650" text-anchor="middle">activation awareness if ready</text>
+    <path class="connector" d="M860 625 L860 663 L620 663 L620 700"/>
+
+    <!-- D -->
+    <rect class="main" x="170" y="700" width="900" height="142" rx="22"/>
+    <text class="stage white" x="205" y="737">D · MAIN AGENT / CONSCIOUS CORTEX</text>
+    <text class="title white" x="620" y="775" text-anchor="middle">Full prepared picture + awareness + deeper reach</text>
+    <text class="subtitle white" x="620" y="807" text-anchor="middle">Uses Life, tools, MCPs, browser and computer when helpful—without over-explaining</text>
+
+    <!-- optional consult lane -->
+    <rect class="lane" x="170" y="885" width="900" height="465" rx="22"/>
+    <text class="stage" x="205" y="919">OPTIONAL FOREGROUND OUTSIDE WORLD + CHALLENGE</text>
+    <rect class="pill" x="220" y="940" width="800" height="45" rx="12"/>
+    <text class="small" x="620" y="968" text-anchor="middle">SHARED STATE · conversation · memory/RAG · prior files · evidence · each agent's assigned tools</text>
+
+    <rect class="card green" x="220" y="1000" width="800" height="90" rx="16"/>
+    <text class="stage" x="250" y="1031">REALITY CHECK · IF NEEDED</text>
+    <text class="title" x="250" y="1063">GlassHive Reality Check consult</text>
+    <text class="copy" x="680" y="1037">trusted sources · data · experiences</text>
+    <text class="copy" x="680" y="1067">likelihoods · realities · NO ASSUMPTIONS</text>
+
+    <path class="connector" d="M620 1090 L620 1110"/>
+    <rect class="pill blue" x="260" y="1110" width="720" height="62" rx="15"/>
+    <text class="stage" x="620" y="1135" text-anchor="middle">REALITY RETURNS TO MAIN</text>
+    <text class="strong" x="620" y="1160" text-anchor="middle">Main evaluates the evidence and decides what happens next</text>
+
+    <path class="connector" d="M620 1172 L620 1190"/>
+    <text class="small" x="645" y="1187">if challenge is useful</text>
+
+    <rect class="card violet" x="220" y="1190" width="800" height="80" rx="16"/>
+    <text class="stage" x="250" y="1221">RED TEAM · OPTIONAL AFTER REALITY</text>
+    <text class="title" x="250" y="1251">Same cortex, additional consult-and-return role</text>
+
+    <!-- D enters the optional lane; the envelope then reaches Reality Check -->
+    <path class="connector" d="M620 842 L620 885"/>
+    <path class="connector" d="M620 985 L620 1000"/>
+
+    <!-- Reality always returns to Main; Main either synthesizes or optionally calls Red Team -->
+    <path class="connector" d="M980 1141 C1115 1165 1115 1390 980 1426"/>
+    <text class="small" x="1065" y="1260" text-anchor="middle" transform="rotate(90 1065 1260)">no Red Team needed</text>
+    <path class="connector" d="M620 1270 L620 1290"/>
+    <rect class="pill blue" x="260" y="1290" width="720" height="55" rx="15"/>
+    <text class="stage" x="620" y="1313" text-anchor="middle">RED TEAM RETURNS TO MAIN</text>
+    <text class="strong" x="620" y="1336" text-anchor="middle">Main owns synthesis</text>
+    <path class="bypass" d="M250 842 C120 920 120 1426 170 1426"/>
+    <text class="small" x="140" y="1130" text-anchor="middle" transform="rotate(-90 140 1130)">no foreground consult needed</text>
+
+    <!-- E -->
+    <path class="connector" d="M620 1345 L620 1360"/>
+    <rect class="answer" x="170" y="1360" width="900" height="132" rx="22"/>
+    <text class="stage white" x="205" y="1395">E · MAIN AGENT FINAL ANSWER</text>
+    <text class="title white" x="620" y="1433" text-anchor="middle">CONTEXT + TOOLS + REALITY + CHALLENGED</text>
+    <text class="subtitle white" x="620" y="1465" text-anchor="middle">Truly Confident True response—or clearly uncertain</text>
+
+    <!-- Background rails into F -->
+    <path class="background" d="M85 498 L85 1580 L170 1580"/>
+    <path class="background" d="M1140 596 L1210 596 L1210 1610 L1070 1610"/>
+    <text class="small" x="98" y="995" transform="rotate(90 98 995)">regular cortex results</text>
+    <text class="small" x="1196" y="998" transform="rotate(90 1196 998)">deep memory remembers later</text>
+
+    <!-- F -->
+    <rect class="card violet" x="170" y="1540" width="900" height="116" rx="20"/>
+    <text class="stage" x="205" y="1575">F · PHASE B · LATER + NONBLOCKING</text>
+    <text class="title" x="620" y="1610" text-anchor="middle">Phase B surfaces insights to the Main Agent</text>
+    <text class="copy" x="620" y="1639" text-anchor="middle">Main decides: is this new · worthwhile · valuable? Otherwise silent.</text>
+
+    <!-- E answers immediately; F may add a later valuable follow-up -->
+    <path class="connector" d="M930 1492 C1125 1530 1125 1700 980 1767"/>
+    <text class="small" x="1093" y="1615" text-anchor="middle" transform="rotate(90 1093 1615)">initial answer</text>
+    <path class="background" d="M620 1656 L620 1735"/>
+    <text class="small" x="645" y="1700">later · only if new value</text>
+    <rect class="output" x="260" y="1735" width="720" height="65" rx="17"/>
+    <text class="strong white" x="620" y="1775" text-anchor="middle">USER OUTPUT · initial E answer or valuable F follow-up</text>
+  </g>
+</svg>

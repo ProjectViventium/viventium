@@ -4,6 +4,8 @@
 # feature QA case catalog that already exists; use release-readiness for broad
 # public packaging and boundary checks.
 release_tests:
+  tests/release/test_anti_sycophancy_architecture_contract.py:
+    qa_owner: qa/anti-sycophancy/cases.md
   tests/release/test_agent_sync_review_contract.py:
     qa_owner: qa/release-readiness/cases.md
   tests/release/test_background_agent_browser_qa_harness.py:
@@ -20,9 +22,15 @@ release_tests:
     qa_owner: qa/release-readiness/cases.md
   tests/release/test_config_settings.py:
     qa_owner: qa/meeting-transcript-memory/cases.md
+  tests/release/test_config_transaction.py:
+    qa_owner: qa/installer-resilience/cases.md
+  tests/release/test_connected_accounts_onboarding_contract.py:
+    qa_owner: qa/installer-resilience/cases.md
   tests/release/test_config_compiler.py:
     qa_owner: qa/installer-resilience/cases.md
   tests/release/test_continuity_audit.py:
+    qa_owner: qa/continuity-ops/cases.md
+  tests/release/test_continuity_bundle.py:
     qa_owner: qa/continuity-ops/cases.md
   tests/release/test_cursor_claude_bridge.py:
     qa_owner: qa/release-readiness/cases.md
@@ -32,15 +40,23 @@ release_tests:
     qa_owner: qa/stable-dev-runtime/cases.md
   tests/release/test_feelings_contract.py:
     qa_owner: qa/emotional-cortex/cases.md
+  tests/release/test_feelings_navigation_contract.py:
+    qa_owner: qa/emotional-cortex/cases.md
   tests/release/test_directory_link.py:
     qa_owner: qa/installer-resilience/cases.md
   tests/release/test_default_nightly_routines.py:
     qa_owner: qa/installer-resilience/cases.md
+  tests/release/test_delivery_controls_contract.py:
+    qa_owner: qa/telegram-voice-replies/cases.md
   tests/release/test_doctor_sh.py:
     qa_owner: qa/installer-resilience/cases.md
   tests/release/test_git_helper.py:
     qa_owner: qa/release-readiness/cases.md
+  tests/release/test_glasshive_codex_app_server_probe.py:
+    qa_owner: qa/glasshive_host_workers/cases.md
   tests/release/test_install_summary.py:
+    qa_owner: qa/installer-resilience/cases.md
+  tests/release/test_install_experience_labels.py:
     qa_owner: qa/installer-resilience/cases.md
   tests/release/test_installer_ui.py:
     qa_owner: qa/installer-resilience/cases.md
@@ -50,11 +66,17 @@ release_tests:
     qa_owner: qa/stable-dev-runtime/cases.md
   tests/release/test_librechat_package_rebuild_contract.py:
     qa_owner: qa/release-readiness/cases.md
+  tests/release/test_life_bootstrap.py:
+    qa_owner: qa/glasshive-core-provider/cases.md
   tests/release/test_local_web_search_compose.py:
     qa_owner: qa/release-readiness/cases.md
   tests/release/test_macos_helper_install.py:
     qa_owner: qa/stable-dev-runtime/cases.md
+  tests/release/test_macos_helper_supervision.py:
+    qa_owner: qa/stable-dev-runtime/cases.md
   tests/release/test_memory_hardening_contract.py:
+    qa_owner: qa/memory-hardening/cases.md
+  tests/release/test_memory_model_eval_harness.py:
     qa_owner: qa/memory-hardening/cases.md
   tests/release/test_meilisearch_resource_guardrails.py:
     qa_owner: qa/local-docker-services/cases.md
@@ -62,6 +84,8 @@ release_tests:
     qa_owner: qa/release-readiness/cases.md
   tests/release/test_native_stack_helpers.py:
     qa_owner: qa/stable-dev-runtime/cases.md
+  tests/release/test_native_payload.py:
+    qa_owner: qa/installer-resilience/cases.md
   tests/release/test_no_runtime_nlu.py:
     qa_owner: qa/release-readiness/cases.md
   tests/release/test_ollama_embeddings_prereqs.py:
@@ -70,6 +94,10 @@ release_tests:
     qa_owner: qa/config-alignment/cases.md
   tests/release/test_periphery_eval_harness.py:
     qa_owner: qa/periphery-nightly-insights/cases.md
+  tests/release/test_health_context_workbench.py:
+    qa_owner: qa/periphery-nightly-insights/cases.md
+  tests/release/test_playground_loopback_contract.py:
+    qa_owner: qa/modern-playground-voice/cases.md
   tests/release/test_preflight.py:
     qa_owner: qa/installer-resilience/cases.md
   tests/release/test_private_repo_resolution_contract.py:
@@ -116,7 +144,15 @@ release_tests:
     qa_owner: qa/telegram-media-prereqs/cases.md
   tests/release/test_telegram_transcription_error_contract.py:
     qa_owner: qa/telegram-runtime/cases.md
+  tests/release/test_voice_endurance_qa_contract.py:
+    qa_owner: qa/modern-playground-voice/cases.md
   tests/release/test_voice_playground_dispatch_contract.py:
     qa_owner: qa/modern-playground-voice/cases.md
+  tests/release/test_viventium_health_integration.py:
+    qa_owner: qa/installer-resilience/cases.md
+  tests/release/test_viventium_health_runtime.py:
+    qa_owner: qa/periphery-nightly-insights/cases.md
   tests/release/test_wizard.py:
+    qa_owner: qa/installer-resilience/cases.md
+  tests/release/test_express_launcher_summary.py:
     qa_owner: qa/installer-resilience/cases.md

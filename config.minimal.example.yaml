@@ -1,11 +1,16 @@
 version: 1
 install:
   mode: native
+  # Public label: Easy Install. Keep this compatibility value as `express`.
+  experience: express
 settings:
   timezone: local
 runtime:
   log_level: info
   profile: isolated
+  background_activation:
+    primary_attempt_timeout_ms: 1600
+    fallback_attempt_timeout_ms: 2500
   auth:
     # Browser account creation is open by default for a brand-new local install.
     # Close it once your real accounts exist and the install is reachable from outside your network.
@@ -34,18 +39,28 @@ runtime:
     public_api_origin: ""
     public_playground_origin: ""
     public_livekit_url: ""
+    # Optional HTTPS origin for expiring signed GlassHive workspace and artifact links.
+    public_glasshive_origin: ""
     livekit_node_ip: ""
   personalization:
     default_conversation_recall: false
   nightly_routines:
-    enabled: true
+    enabled: false
     defaults_version: 1
     auto_worker_profile: true
+  scheduled_agent:
+    provider: openai
+    model: gpt-5.6-sol
+    reasoning_effort: xhigh
   prompt_workbench:
-    enabled: true
+    enabled: false
     seed_nightly:
-      enabled: true
-      active: true
+      enabled: false
+      active: false
+      executor: glasshive_host
+    seed_health_context:
+      enabled: false
+      active: false
       executor: glasshive_host
   feelings:
     available: true
@@ -61,7 +76,7 @@ runtime:
       service_tier: priority
       timeout_ms: 15000
       fallback_provider: anthropic
-      fallback_model: claude-opus-4-8
+      fallback_model: claude-opus-5
       activation_provider: groq
       activation_model: qwen/qwen3.6-27b
       activation_confidence_threshold: 0.55
@@ -77,7 +92,7 @@ runtime:
       openness: { enabled: true, baseline: 55, half_life_minutes: 180 }
       play: { enabled: true, baseline: 48, half_life_minutes: 90 }
   memory_hardening:
-    enabled: true
+    enabled: false
     schedule: "0 3 * * *"
     timezone: local
     operator_user_email: ""
@@ -89,10 +104,10 @@ runtime:
     require_full_lookback: true
     dry_run_first: true
     provider_profile: launch_ready_only
-    anthropic_model: claude-opus-4-8
+    anthropic_model: claude-opus-5
     anthropic_effort: xhigh
-    openai_model: gpt-5.6-sol
-    openai_reasoning_effort: xhigh
+    openai_model: gpt-5.6-luna
+    openai_reasoning_effort: medium
     transcripts:
       source_dir: ""
       max_files_per_run: 20
@@ -101,25 +116,26 @@ runtime:
       stable_evidence_max_age_days: 90
       rag_mode: detailed_summary_only
   background_followup_window_s: 30
+  # Optional foreground Agent Provider deadline. Omit by default; operators may set 30-1800.
   ports:
     lc_api_port: 3180
     lc_frontend_port: 3190
     playground_port: 3300
+    prompt_workbench_port: 8781
     mongo_port: 27117
     meili_port: 7700
     livekit_http_port: 7888
     livekit_tcp_port: 7889
     livekit_udp_port: 7890
   playground_variant: modern
-  call_session_secret:
-    secret_ref: keychain://viventium/call_session_secret
+  # Generated locally during setup; never copy a machine secret into this public preset.
+  call_session_secret: {}
 agents:
   default_main_agent_id: agent_viventium_main_95aeb3
 llm:
   activation:
     provider: groq
     auth_mode: api_key
-    secret_ref: keychain://viventium/groq_api_key
   primary:
     provider: openai
     auth_mode: connected_account
@@ -127,7 +143,7 @@ llm:
     provider: none
     auth_mode: disabled
 voice:
-  mode: local
+  mode: disabled
   stt_provider: whisper_local
   tts_provider: browser
   tts:
@@ -136,8 +152,16 @@ voice:
   wing_mode:
     default_enabled: false
 integrations:
+  health:
+    enabled: false
+    life_projection_dir: ""
   glasshive:
+    # Core provider and canonical LIFE runtime. Harness auth can be completed later.
     enabled: true
+    provider:
+      enabled: true
+      # Used automatically when GlassHive itself is enabled.
+      # life_dir: ~/Documents/Viventium/Life
     host_worker:
       enabled: true
       workspace_root: ~/viventium
@@ -145,6 +169,10 @@ integrations:
       # Separate from the integrations.openclaw lab toggle below.
       default_worker_profile: codex-cli
       default_execution_mode: host
+      plugin_denylist: ["viventium-feelings@project-viventium"]
+      codex_personality: none
+      codex_conversation_project_instructions: inherit
+      codex_app_server_qa_enabled: false
       codex_model: gpt-5.6-sol
       codex_reasoning_effort: xhigh
       codex_xhigh_route_proven: true

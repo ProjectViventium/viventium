@@ -1,5 +1,7 @@
 # Telegram Fallback, Audio Prompt, And Table QA Rerun - 2026-06-28
 
+<!-- qa-evidence-exempt: Historical focused Telegram rerun retained as supporting evidence; current full user-path evidence lives in later reports. -->
+
 ## Scope
 
 Follow-up public-safe QA after the Telegram bridge/audio/table fixes and the follow-up fallback

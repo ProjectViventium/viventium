@@ -208,14 +208,20 @@ def _agent_rows(*, source: dict[str, Any], live: dict[str, Any] | None, ledger: 
         )
     )
 
-    source_agents = {str(agent.get("id") or agent.get("agent_id")): agent for agent in source.get("agents") or []}
-    live_agents = {str(agent.get("id") or agent.get("agent_id")): agent for agent in (live or {}).get("agents") or []}
+    source_agents = {
+        str(agent.get("id") or agent.get("agent_id")): agent
+        for agent in _background_agents(source)
+    }
+    live_agents = {
+        str(agent.get("id") or agent.get("agent_id")): agent
+        for agent in _background_agents(live or {})
+    }
     for agent_id in sorted(set(source_agents) | set(live_agents)):
         if not agent_id or agent_id == "None":
             continue
         source_agent = source_agents.get(agent_id) or {}
         live_agent = live_agents.get(agent_id) or {}
-        prompt_id = _guess_source_prompt_id(source_agent)
+        prompt_id = _source_prompt_id_for_background_agent(agent_id, source_agent)
         rows.append(
             _row_for_agent(
                 agent_id=agent_id,
@@ -227,6 +233,23 @@ def _agent_rows(*, source: dict[str, Any], live: dict[str, Any] | None, ledger: 
                 records=records,
             )
         )
+    return rows
+
+
+def _background_agents(bundle: dict[str, Any]) -> list[dict[str, Any]]:
+    """Read the canonical source shape while retaining legacy artifact compatibility."""
+
+    rows: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for key in ("backgroundAgents", "agents"):
+        for candidate in bundle.get(key) or []:
+            if not isinstance(candidate, dict):
+                continue
+            agent_id = str(candidate.get("id") or candidate.get("agent_id") or "")
+            if not agent_id or agent_id in seen:
+                continue
+            seen.add(agent_id)
+            rows.append(candidate)
     return rows
 
 
@@ -263,20 +286,38 @@ def _row_for_agent(
     }
 
 
-def _guess_source_prompt_id(agent: dict[str, Any]) -> str | None:
+def _source_prompt_id_for_background_agent(
+    agent_id: str, agent: dict[str, Any]
+) -> str | None:
     from scripts.viventium.prompt_registry import load_prompt_registry, render_prompt
+
+    try:
+        registry = load_prompt_registry()
+    except Exception:
+        return None
+
+    target_candidates = {
+        f"backgroundAgents.{agent_id}.instructions",
+        f"agents.{agent_id}.instructions",
+    }
+    for prompt_id, entry in registry.items():
+        if str(entry.metadata.get("target") or "") in target_candidates:
+            return prompt_id
 
     instructions = agent.get("instructions")
     if not isinstance(instructions, str) or not instructions.strip():
         return None
     try:
-        registry = load_prompt_registry()
         normalized = instructions.strip()
         for prompt_id in sorted(registry):
-            if render_prompt(prompt_id, registry).strip() == normalized:
+            try:
+                rendered = render_prompt(prompt_id, registry).strip()
+            except Exception:
+                continue
+            if rendered == normalized:
                 return prompt_id
     except Exception:
-        return None
+        pass
     return None
 
 
@@ -287,7 +328,7 @@ def _live_text_from_latest_bundle(agent_id: str) -> str | None:
     main = live.get("mainAgent") or {}
     if str(main.get("id") or "") == agent_id:
         return str(main.get("instructions") or "")
-    for agent in live.get("agents") or []:
+    for agent in _background_agents(live):
         if str(agent.get("id") or agent.get("agent_id") or "") == agent_id:
             return str(agent.get("instructions") or "")
     return None

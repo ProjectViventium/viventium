@@ -1,0 +1,51 @@
+# Background Agent Visible Cards Browser QA
+
+<!-- qa-evidence-exempt: Machine-generated browser ledger retained as supporting evidence; the full feature report owns traceability and public-safety review. -->
+- Started: 2026-07-16T03:27:51.543Z
+- Scope: local synthetic browser run with public-safe hashes only; release approval still requires committed diffs, nested pin agreement, scans, and review-only gates.
+- Agent ID configuration: default local QA agent IDs are used unless VIVENTIUM_QA_REQUIRED_CORTEX_AGENT_IDS_JSON overrides them.
+- Client hash: `1907c09a5927cc92`
+- API hash: `49e73564e9d328ef`
+- QA user hash: `479068cb2231520a`
+- Agent hash: `ed61775c0d925dba`
+- Prompt hash: `4f34af0aa3063cf2`
+- Conversation hash: `3e302c3081bd9c10`
+- Required visible cards: Red Team, Confirmation Bias
+- Runtime required agents: 3
+- Runtime missing required agent hashes: none
+- Runtime cortex fallback agents configured: Red Team, Confirmation Bias
+- Runtime activation expected provider: groq
+- Runtime activation expected model hash: `652416cec0732fa5`
+- Runtime activation drift agents: none
+- Runtime activation config pass: true
+- Runtime provisioning pass: true
+- Conversation fallback navigation used: false
+- Direct local access-token fallback used: false
+- Expected local-QA bootstrap HTTP 401s: 0
+- Initial visible cards: Red Team, Confirmation Bias
+- Reload visible cards: Red Team, Confirmation Bias
+- Parent assistant hash: `b9c4b201c1be7bbb`
+- Parent visible answer text length: 1171
+- Parent visible answer present: true
+- Parent cortex-only failure: false
+- Initial parent answer visible: true
+- Reload parent answer visible: true
+- Phase B follow-up message count: 0
+- Background-agent footer visible: true
+- Terminal state visible: true
+- Why-this-ran visible: true
+- Forbidden main-agent wording matches: 0
+- Main error banner matches: 0
+- Stored assistant message count: 1
+- Stored cortex part count: 2
+- Stored cortex cards: Red Team, Confirmation Bias
+- Stored terminal cortex results: Red Team, Confirmation Bias
+- Stored successful cortex insights: Red Team, Confirmation Bias
+- Stored cortex errors: none
+- Console error count: 0
+- Failed request count: 0
+- Failed request route classes: none
+- Critical HTTP error count: 0
+- Critical HTTP error routes: none
+- Result: PASS
+- Interpretation: PASS: required cards were visible, the parent answer was visible and durable, and terminal insights persisted after reload.

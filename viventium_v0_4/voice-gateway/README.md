@@ -39,6 +39,15 @@ This service is the **voice bridge** between:
   - `VIVENTIUM_LIBRECHAT_ORIGIN` (e.g. `http://localhost:3180`)
   - `VIVENTIUM_CALL_SESSION_SECRET` (must match LibreChat)
 
+- **Worker and health listeners (optional)**
+  - `VIVENTIUM_VOICE_WORKER_HTTP_PORT`
+    - LiveKit Agents worker-internal HTTP listener. Defaults to `0` so the operating system assigns
+      a collision-free port for side-by-side local workers.
+    - Set an integer from `0` through `65535` only when a deployment requires a fixed internal port.
+      Invalid values fail startup.
+  - `VIVENTIUM_VOICE_GATEWAY_HEALTH_PORT` (legacy fallback: `VOICE_GATEWAY_PORT`)
+    - Stable Viventium health/capabilities endpoint. It is independent of the worker-internal port.
+
 - **STT provider (optional)**
   - `VIVENTIUM_VOICE_STT_PROVIDER` (overrides voice only)
   - `VIVENTIUM_STT_PROVIDER` (fallback)
@@ -89,11 +98,13 @@ This service is the **voice bridge** between:
       and control ranges are sourced from
       `viventium_v0_4/shared/voice/cartesia_sonic3_capabilities.json`; update that contract
       first when Cartesia changes the documented Sonic-3 surface.
+    - Model-facing syntax forms use neutral `EMOTION`, `RATIO`, `DURATION`, and `TEXT`
+      placeholders from that same contract; do not teach fixed calm/excited performances in code.
   - **xAI standalone TTS**
     - User-facing label: `xAI`
     - Requires: `VIVENTIUM_XAI_TTS_API_KEY` or compatibility `XAI_API_KEY`
     - Optional knobs:
-      - `VIVENTIUM_XAI_TTS_API` (default `tts`; set `voice_agent` only for the legacy Grok Voice Agent adapter)
+      - `VIVENTIUM_XAI_TTS_API` (only supported value: `tts`; retired `voice_agent` settings fail closed with migration guidance)
       - `VIVENTIUM_XAI_VOICE` (default `Sal`; choices from xAI docs: `Ara`, `Eve`, `Leo`, `Rex`, `Sal`)
       - `VIVENTIUM_XAI_LANGUAGE` (default `en`; `auto` is also supported by xAI)
       - `VIVENTIUM_XAI_TTS_WS_URL` (documented standalone TTS WebSocket: `wss://api.x.ai/v1/tts`)
@@ -103,11 +114,24 @@ This service is the **voice bridge** between:
     - The xAI prompt may use documented xAI speech tags from
       `viventium_v0_4/shared/voice/xai_tts_capabilities.json`. These are not SSML and must not be
       mixed with Cartesia controls.
-  - **xAI Grok Voice Agent legacy mode**
-    - Enable only with `VIVENTIUM_XAI_TTS_API=voice_agent`.
-    - Optional knobs:
-      - `VIVENTIUM_XAI_VOICE_AGENT_WSS_URL` or legacy `VIVENTIUM_XAI_WSS_URL` (default `wss://api.x.ai/v1/realtime`)
-      - `VIVENTIUM_XAI_INSTRUCTIONS` (optional strict prompt override)
+  - **OpenAI TTS**
+    - Default model: `gpt-4o-mini-tts`.
+    - The route is markup-free: provider-control tags are stripped before synthesis.
+    - OpenAI's documented `instructions` side channel is configured once through
+      `VIVENTIUM_OPENAI_TTS_INSTRUCTIONS`; it is not currently recomputed from Feelings per turn.
+  - **ElevenLabs TTS**
+    - Current runtime model: `eleven_turbo_v2_5` (passed explicitly to the LiveKit adapter).
+    - The route is markup-free and SSML parsing remains disabled. Eleven v3 audio tags must not be
+      sent to this v2.5 route.
+    - Stability, similarity, style, speed, and speaker boost are provider settings, currently not
+      recomputed from Feelings per turn.
+
+The cross-provider truth lives in
+`viventium_v0_4/shared/voice/tts_provider_capabilities.json`. Provider-specific xAI and Cartesia
+dialects remain in their dedicated contracts; Local Chatterbox's exact marker set is declared in the
+cross-provider contract. Missing per-turn side-channel wiring is recorded there as a gap rather than
+approximated with unsupported markup. The cross-provider contract is a required shipped artifact;
+the worker exits with an actionable startup error if it is missing or invalid.
 
 - **Turn detection (optional)**
   - `VIVENTIUM_TURN_DETECTION`
@@ -173,6 +197,52 @@ This service is the **voice bridge** between:
     - Logs `[VoiceTTSInput]` at the final TTS provider boundary without requiring broader LLM delta
       logging. These lines preserve leading/trailing spaces in `text_json` and mark whether a chunk
       was forwarded, dropped, suppressed, or a provider control message.
+  - `[VoiceRendering][voice_gateway]` is always-on, metadata-only provider-boundary telemetry.
+    It records the selected provider/model, primary/fallback role, inline-control capability, preserve/
+    strip policy, and structural control result. It never includes prompt, user, or synthesized
+    text; use the opt-in payload logger only when a transcript-level incident requires it.
+
+### Live call contracts
+
+- The configured STT route remains authoritative. AssemblyAI diarization is enabled with
+  `speaker_labels`; this does not select AssemblyAI or send local-only audio to a cloud route.
+- The signed job publisher is the owner input. Additional participant microphone tracks are
+  transcribed independently and sent to `/api/viventium/voice/ambient-transcript` as soft evidence;
+  they never create another speaking agent or authorize tools and side effects.
+- Provider speaker IDs are call-scoped. A second provider speaker on one track downgrades every
+  speaker on that track to unverified `Speaker N`; missing or ambiguous attribution is `Unknown`.
+- The gateway polls `/api/viventium/voice/call-sessions/:callSessionId/state` with the existing call
+  secret. Mode updates apply without reconnecting. `listen_only` clears pending progress speech and
+  interrupts active progress audio; an unavailable state endpoint fails closed for new progress TTS.
+- Authoritative `voice_task_event` SSE objects are validated and relayed unchanged over reliable
+  LiveKit data packets on `viventium.task.v1`. `SpeakerSegmentV1` uses
+  `viventium.speaker.v1`. Both topics use `publish_data` and are targeted only to the signed owner
+  identity; missing owner binding fails closed instead of broadcasting transcripts or task data.
+- Before the exact job is marked ready, one supervised call-lifetime subscription to
+  `/api/viventium/voice/tasks/events?callSessionId=<exact>` must complete an authenticated 2xx
+  handshake and receive the strict call-scoped `voice_task_sync` / `synchronized` marker emitted
+  after durable replay. It receives initial snapshots and later child-task events. A 2xx without
+  that marker or any startup rejection never enables the response plane. Disconnect, terminal auth,
+  or consumer death interrupts and suspends main, progress, and follow-up speech; a reconnect restores
+  speech only after a fresh authoritative call-state snapshot. The stream uses full call/job/worker
+  auth, reconnects with bounded backoff, and shares the same monotonic gate as the parent generation
+  stream, so retries and GlassHive completions stay live without polling or duplicate publication.
+- Barge-in or stream disposal stops speech only. Explicit task cancellation uses
+  `/api/viventium/voice/tasks/:taskId/cancel`; the gateway never infers cancellation from transcript
+  words and never cancels backend work merely because LiveKit stopped consuming it. Accepted
+  cancellations install a separate 24-hour suppression tombstone; ordinary task cursor pressure
+  cannot evict that zero-output barrier before its TTL.
+- Hop telemetry carries correlation IDs and timestamps, not transcript content. The shared sequence
+  is utterance end, gateway dispatch, agent/tool work, first model token, TTS first byte, and audio
+  output so the first breached latency hop can be identified deterministically.
+
+### Dependency baseline
+
+- `requirements.txt` pins `livekit-agents` and every LiveKit plugin to `1.5.10` as one tested set.
+- `1.6.9` was evaluated separately against the same behavior, latency, diarization, reconnect, and
+  packaging gates. It produced no accepted improvement and added the turn-detector deprecation
+  warning, so it was not promoted. Future dependency changes must rerun the same comparison and the
+  real audible/installed call gates before changing the pin.
 
 ### Run
 

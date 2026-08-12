@@ -49,8 +49,8 @@ set -euo pipefail
 if [[ -d "/opt/homebrew/bin" ]]; then
   export PATH="/opt/homebrew/bin:${PATH}"
 fi
-if [[ -d "/opt/homebrew/opt/node@20/bin" ]]; then
-  export PATH="/opt/homebrew/opt/node@20/bin:${PATH}"
+if [[ -d "/opt/homebrew/opt/node@24/bin" ]]; then
+  export PATH="/opt/homebrew/opt/node@24/bin:${PATH}"
 fi
 
 # Colors

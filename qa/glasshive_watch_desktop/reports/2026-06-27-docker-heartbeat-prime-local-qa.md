@@ -1,5 +1,7 @@
 # 2026-06-27 Docker Active-Run Heartbeat And Desktop Prime Local QA
 
+<!-- qa-evidence-exempt: Historical environment-specific regression record retained as supporting evidence; it is not a release-wide user-path report. -->
+
 ## Scope
 
 - Local-only GlassHive QA for `GHWATCH-011` and the workstation slice of `GHHOST-006`.

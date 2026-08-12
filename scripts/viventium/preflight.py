@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import platform
@@ -11,11 +12,15 @@ import shutil
 import socket
 import subprocess
 import sys
+import tarfile
+import tempfile
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from pathlib import PurePosixPath
 from typing import Any
 
 import yaml
@@ -53,6 +58,27 @@ DEFAULT_CLI_RUNTIME_PROBE_TIMEOUT_SECONDS = 3.0
 MIN_GLASSHIVE_FOLLOWUP_TIMEOUT_S = 30
 MAX_GLASSHIVE_FOLLOWUP_TIMEOUT_S = 86400
 CODEX_APP_CLI = Path("/Applications/Codex.app/Contents/Resources/codex")
+MONGODB_NATIVE_VERSION = "8.0.23"
+MONGODB_NATIVE_TEAM_ID = "4XWMY46275"
+MONGODB_NATIVE_ARCHIVES = {
+    "arm64": {
+        "url": "https://fastdl.mongodb.org/osx/mongodb-macos-arm64-8.0.23.tgz",
+        "sha256": "811f2341b8458fe30105aff470b7cf4df75c2b9659729217ec48dd2c4cc8d64c",
+    },
+    "x86_64": {
+        "url": "https://fastdl.mongodb.org/osx/mongodb-macos-x86_64-8.0.23.tgz",
+        "sha256": "f5d803151258e8c304af630c070db149bd00883fbf7c70fdf8925f3b31e360dd",
+    },
+}
+MONGODB_NATIVE_MAX_ARCHIVE_BYTES = 200 * 1024 * 1024
+MONGODB_NATIVE_MAX_UNCOMPRESSED_BYTES = 500 * 1024 * 1024
+MONGODB_NATIVE_ALLOWED_FILES = {
+    "LICENSE-Community.txt": 0o644,
+    "MPL-2": 0o644,
+    "README": 0o644,
+    "THIRD-PARTY-NOTICES": 0o644,
+    "bin/mongod": 0o755,
+}
 
 
 @dataclass
@@ -211,6 +237,198 @@ def ffmpeg_runtime_ready() -> bool:
 
 def mongod_runtime_ready() -> bool:
     return command_runtime_ready("mongod", ["--version"])
+
+
+def mongodb_native_runtime_ready() -> bool:
+    binary = mongodb_native_bin_dir() / "mongod"
+    if not binary.is_file():
+        return False
+    try:
+        return verify_mongodb_native_binary(binary)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+def mongodb_native_install_root() -> Path:
+    app_support = Path(
+        os.environ.get(
+            "VIVENTIUM_APP_SUPPORT_DIR",
+            str(Path.home() / "Library" / "Application Support" / "Viventium"),
+        )
+    )
+    return app_support / "runtime-tools" / "mongodb" / MONGODB_NATIVE_VERSION / platform.machine()
+
+
+def mongodb_native_bin_dir() -> Path:
+    return mongodb_native_install_root() / "bin"
+
+
+def _safe_mongodb_archive_path(raw: str) -> PurePosixPath:
+    if not raw or "\x00" in raw or "\\" in raw or raw.startswith("/") or len(raw) > 1024:
+        raise SystemExit(f"MongoDB archive contains an unsafe path: {raw!r}")
+    path = PurePosixPath(raw)
+    if any(part in {"", ".", ".."} for part in path.parts):
+        raise SystemExit(f"MongoDB archive contains an unsafe path: {raw!r}")
+    return path
+
+
+def extract_mongodb_native_archive(archive_path: Path, destination: Path) -> None:
+    destination = Path(destination)
+    destination.mkdir(parents=True, exist_ok=False, mode=0o700)
+    selected: dict[str, tarfile.TarInfo] = {}
+    seen: set[str] = set()
+    total_size = 0
+    with tarfile.open(archive_path, "r:gz") as archive:
+        members = archive.getmembers()
+        if len(members) > 1000:
+            raise SystemExit("MongoDB archive has an unexpected number of entries.")
+        for member in members:
+            path = _safe_mongodb_archive_path(member.name.rstrip("/"))
+            folded = path.as_posix().casefold()
+            if folded in seen:
+                raise SystemExit("MongoDB archive contains a case-insensitive path collision.")
+            seen.add(folded)
+            if not (member.isfile() or member.isdir()):
+                raise SystemExit("MongoDB archive contains links or special files; refusing extraction.")
+            if member.isfile():
+                total_size += member.size
+                if total_size > MONGODB_NATIVE_MAX_UNCOMPRESSED_BYTES:
+                    raise SystemExit("MongoDB archive exceeds the uncompressed size limit.")
+                for suffix in MONGODB_NATIVE_ALLOWED_FILES:
+                    if path.as_posix().endswith(f"/{suffix}"):
+                        if suffix in selected:
+                            raise SystemExit(f"MongoDB archive contains duplicate required file: {suffix}")
+                        selected[suffix] = member
+                        break
+
+        missing = sorted(set(MONGODB_NATIVE_ALLOWED_FILES) - set(selected))
+        if missing:
+            raise SystemExit(f"MongoDB archive is missing required files: {', '.join(missing)}")
+
+        for relative_path, mode in MONGODB_NATIVE_ALLOWED_FILES.items():
+            member = selected[relative_path]
+            source = archive.extractfile(member)
+            if source is None:
+                raise SystemExit(f"MongoDB archive file could not be read: {relative_path}")
+            output = destination / relative_path
+            output.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            descriptor = os.open(
+                output,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+                0o600,
+            )
+            try:
+                with source, os.fdopen(descriptor, "wb") as target:
+                    descriptor = -1
+                    copied = 0
+                    while True:
+                        chunk = source.read(1024 * 1024)
+                        if not chunk:
+                            break
+                        copied += len(chunk)
+                        if copied > member.size:
+                            raise SystemExit(
+                                f"MongoDB archive expanded beyond its declared size: {relative_path}"
+                            )
+                        target.write(chunk)
+                    target.flush()
+                    os.fsync(target.fileno())
+                if copied != member.size:
+                    raise SystemExit(f"MongoDB archive file was truncated: {relative_path}")
+            finally:
+                if descriptor >= 0:
+                    os.close(descriptor)
+            os.chmod(output, mode)
+
+
+def verify_mongodb_native_binary(binary: Path) -> bool:
+    signature = subprocess.run(
+        ["/usr/bin/codesign", "--verify", "--strict", "--verbose=2", str(binary)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if signature.returncode != 0:
+        return False
+    details = subprocess.run(
+        ["/usr/bin/codesign", "-dv", "--verbose=4", str(binary)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    signing_details = f"{details.stdout}\n{details.stderr}"
+    if details.returncode != 0 or f"TeamIdentifier={MONGODB_NATIVE_TEAM_ID}" not in signing_details:
+        return False
+    version = subprocess.run(
+        [str(binary), "--version"],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    return version.returncode == 0 and f"db version v{MONGODB_NATIVE_VERSION}" in version.stdout
+
+
+def download_mongodb_native_archive(url: str, expected_sha256: str, destination: Path) -> None:
+    request = urllib.request.Request(url, headers={"User-Agent": "Viventium-Installer/1"})
+    digest = hashlib.sha256()
+    downloaded = 0
+    try:
+        with urllib.request.urlopen(request, timeout=60) as response, destination.open("xb") as target:
+            while True:
+                chunk = response.read(1024 * 1024)
+                if not chunk:
+                    break
+                downloaded += len(chunk)
+                if downloaded > MONGODB_NATIVE_MAX_ARCHIVE_BYTES:
+                    raise SystemExit("MongoDB archive exceeds the compressed size limit.")
+                digest.update(chunk)
+                target.write(chunk)
+            target.flush()
+            os.fsync(target.fileno())
+    except (OSError, urllib.error.URLError) as error:
+        raise SystemExit(f"Could not download the pinned MongoDB runtime: {error}") from error
+    if digest.hexdigest() != expected_sha256:
+        raise SystemExit("MongoDB archive SHA-256 does not match the pinned Viventium manifest value.")
+
+
+def install_mongodb_native_archive(ui: InstallerUI | None = None) -> None:
+    ui = ui or InstallerUI()
+    architecture = platform.machine()
+    release = MONGODB_NATIVE_ARCHIVES.get(architecture)
+    if release is None:
+        raise SystemExit(f"No pinned MongoDB Native archive is available for {architecture}.")
+    final_root = mongodb_native_install_root()
+    final_binary = final_root / "bin" / "mongod"
+    if final_root.exists():
+        if verify_mongodb_native_binary(final_binary):
+            refresh_brew_paths()
+            return
+        raise SystemExit(
+            "The existing Viventium MongoDB runtime failed publisher verification. "
+            "Run the preserve-data repair flow before retrying."
+        )
+
+    versions_root = final_root.parent
+    staging_root = versions_root / ".staging"
+    staging_root.mkdir(parents=True, exist_ok=True, mode=0o700)
+    attempt = Path(tempfile.mkdtemp(prefix="mongodb.", dir=staging_root))
+    archive_path = attempt / "mongodb.tgz"
+    extracted = attempt / "runtime"
+    ui.print_note(f"Installing pinned MongoDB {MONGODB_NATIVE_VERSION} runtime...")
+    try:
+        download_mongodb_native_archive(release["url"], release["sha256"], archive_path)
+        extract_mongodb_native_archive(archive_path, extracted)
+        if not verify_mongodb_native_binary(extracted / "bin" / "mongod"):
+            raise SystemExit("MongoDB runtime failed its Developer ID publisher verification.")
+        archive_path.unlink()
+        final_root.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        os.replace(extracted, final_root)
+        (final_root / "VERSION").write_text(f"{MONGODB_NATIVE_VERSION}\n", encoding="utf-8")
+        ui.print_success(f"MongoDB {MONGODB_NATIVE_VERSION} runtime is ready.")
+    finally:
+        shutil.rmtree(attempt, ignore_errors=True)
+    refresh_brew_paths()
 
 
 def meilisearch_runtime_ready() -> bool:
@@ -445,7 +663,7 @@ def node_major_version() -> int | None:
 
 def node_runtime_supported() -> bool:
     major = node_major_version()
-    return major == 20
+    return major == 24
 
 
 def python_version(command: str) -> tuple[int, int] | None:
@@ -652,6 +870,9 @@ def local_firecrawl_memory_warning(config: dict[str, Any]) -> str | None:
 
 def compute_install_context(config: dict[str, Any]) -> dict[str, Any]:
     install_mode = str(config.get("install", {}).get("mode", "docker")).strip().lower() or "docker"
+    install_experience = (
+        str(config.get("install", {}).get("experience", "legacy")).strip().lower() or "legacy"
+    )
     voice_mode = str(config.get("voice", {}).get("mode", "disabled")).strip().lower() or "disabled"
     runtime = config.get("runtime", {}) or {}
     network = runtime.get("network", {}) or {}
@@ -663,6 +884,7 @@ def compute_install_context(config: dict[str, Any]) -> dict[str, Any]:
     telegram_local_bot_api = telegram.get("local_bot_api") or {}
     return {
         "install_mode": install_mode,
+        "install_experience": install_experience,
         "voice_mode": voice_mode,
         "remote_call_mode": remote_call_mode,
         "conversation_recall": conversation_recall_enabled(config),
@@ -743,13 +965,13 @@ def build_preflight_items(config: dict[str, Any]) -> list[PreflightItem]:
     node_ok = node_runtime_supported()
     items.append(
         PreflightItem(
-            key="node20",
-            label="node@20",
+            key="node24",
+            label="node@24",
             category="runtime",
             reason="run LibreChat and the modern playground on the validated Node runtime",
             status="ok" if node_ok else "missing",
             install_kind="brew_formula" if not node_ok else "none",
-            formula="node@20" if not node_ok else "",
+            formula="node@24" if not node_ok else "",
             command="node",
         )
     )
@@ -962,20 +1184,39 @@ def build_preflight_items(config: dict[str, Any]) -> list[PreflightItem]:
     public_edge_remote_requested = remote_call_mode == "public_https_edge"
 
     if install_mode == "native":
-        mongod_ready = mongod_runtime_ready()
-        meilisearch_ready = meilisearch_runtime_ready()
-        items.extend(
-            [
-                PreflightItem(
-                    key="mongod",
-                    label="mongodb-community@8.0",
-                    category="native services",
-                    reason="local LibreChat and Viventium state storage",
-                    status="ok" if mongod_ready else "missing",
-                    install_kind="brew_formula" if not mongod_ready else "none",
-                    formula="mongodb/brew/mongodb-community@8.0" if not mongod_ready else "",
-                    command="mongod",
+        express_native = ctx["install_experience"] == "express"
+        mongod_ready = (
+            mongodb_native_runtime_ready() if express_native else mongod_runtime_ready()
+        )
+        items.append(
+            PreflightItem(
+                key="mongod",
+                label=(
+                    f"MongoDB Community {MONGODB_NATIVE_VERSION} (verified archive)"
+                    if express_native
+                    else "mongodb-community@8.0"
                 ),
+                category="native services",
+                reason="local LibreChat and Viventium state storage",
+                status="ok" if mongod_ready else "missing",
+                install_kind=(
+                    "mongodb_native_archive"
+                    if not mongod_ready and express_native
+                    else "brew_formula"
+                    if not mongod_ready
+                    else "none"
+                ),
+                formula=(
+                    "mongodb/brew/mongodb-community@8.0"
+                    if not mongod_ready and not express_native
+                    else ""
+                ),
+                command="mongod",
+            )
+        )
+        if ctx["install_experience"] != "express":
+            meilisearch_ready = meilisearch_runtime_ready()
+            items.append(
                 PreflightItem(
                     key="meilisearch",
                     label="meilisearch",
@@ -985,9 +1226,8 @@ def build_preflight_items(config: dict[str, Any]) -> list[PreflightItem]:
                     install_kind="brew_formula" if not meilisearch_ready else "none",
                     formula="meilisearch" if not meilisearch_ready else "",
                     command="meilisearch",
-                ),
-            ]
-        )
+                )
+            )
         docker_features: list[str] = []
         if ctx["ms365"]:
             docker_features.append("MS365")
@@ -1313,6 +1553,8 @@ def manual_missing_items(items: list[PreflightItem]) -> list[PreflightItem]:
 
 
 def install_action(item: PreflightItem) -> str:
+    if item.install_kind == "mongodb_native_archive":
+        return f"download and verify MongoDB Community {MONGODB_NATIVE_VERSION} from MongoDB"
     if item.install_kind == "brew_formula":
         return f"brew install {item.formula}"
     if item.install_kind == "brew_cask":
@@ -1399,8 +1641,9 @@ def refresh_brew_paths() -> None:
     if os.environ.get("VIVENTIUM_PREFLIGHT_DISABLE_HOST_PATH_DISCOVERY") == "1":
         return
     candidates = [
-        "/opt/homebrew/opt/node@20/bin",
-        "/usr/local/opt/node@20/bin",
+        str(mongodb_native_bin_dir()),
+        "/opt/homebrew/opt/node@24/bin",
+        "/usr/local/opt/node@24/bin",
         "/opt/homebrew/bin",
         "/opt/homebrew/sbin",
         "/usr/local/bin",
@@ -1461,7 +1704,7 @@ def install_brew_casks(casks: list[str], ui: InstallerUI | None = None) -> None:
 def formula_usable(formula: str) -> bool:
     refresh_brew_paths()
     checks: dict[str, Any] = {
-        "node@20": node_runtime_supported,
+        "node@24": node_runtime_supported,
         "pnpm": pnpm_runtime_ready,
         "uv": uv_runtime_ready,
         "ollama": ollama_cli_runtime_ready,
@@ -1641,6 +1884,9 @@ def apply_missing_items(
 
     if any(item.install_kind.startswith("brew_") and item.status != "ok" for item in missing):
         install_homebrew()
+
+    if any(item.install_kind == "mongodb_native_archive" for item in missing):
+        install_mongodb_native_archive(ui)
 
     formulas = sorted({item.formula for item in missing if item.install_kind == "brew_formula" and item.formula})
     casks = sorted({item.cask for item in missing if item.install_kind == "brew_cask" and item.cask})

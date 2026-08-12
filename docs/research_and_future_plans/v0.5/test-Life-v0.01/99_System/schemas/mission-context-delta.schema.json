@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "life://99_System/schemas/mission-context-delta.schema.json",
+  "title": "Mission Context Delta",
+  "type": "object",
+  "required": ["schemaVersion", "deltaId", "missionId", "createdAt", "author", "type", "body", "callback"],
+  "properties": {
+    "schemaVersion": { "const": "0.1" },
+    "deltaId": { "type": "string", "minLength": 1 },
+    "missionId": { "type": "string", "minLength": 1 },
+    "createdAt": { "type": "string", "minLength": 1 },
+    "author": {
+      "type": "object",
+      "required": ["kind", "ref"],
+      "properties": {
+        "kind": { "enum": ["user", "parent", "worker", "system"] },
+        "ref": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "type": { "enum": ["addition", "correction", "constraint", "answer", "cancel"] },
+    "body": { "type": "string" },
+    "supersedes": { "type": "array", "items": { "type": "string" } },
+    "attachments": { "type": "array", "items": { "type": "string" } },
+    "callback": {
+      "type": "object",
+      "required": ["event", "ref"],
+      "properties": {
+        "event": { "enum": ["checkpoint.ready", "takeover.requested"] },
+        "ref": { "type": "string" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

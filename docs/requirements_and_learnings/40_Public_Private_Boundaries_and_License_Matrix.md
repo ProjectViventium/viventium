@@ -43,6 +43,19 @@ This document defines what belongs in public, private personal, and private ente
 
 ## Leak Scenarios To Prevent
 
+## GlassHive provider and LIFE boundary
+
+- The empty canonical LIFE template is public-safe product scaffolding and may ship with the public
+  installer. Personalized LIFE content is private user data and must never enter source control,
+  release artifacts, QA fixtures, support bundles, or public screenshots.
+- LIFE contains user-authored working files only. GlassHive transcripts, context manifests, session
+  state, tool evidence, activity logs, broker grants, and harness configuration live under private
+  App Support state with owner-only permissions.
+- Generated provider credentials and broker grants remain secret-bearing runtime values. Public QA
+  may record only redacted provider/model/state metadata and synthetic content.
+- A custom GlassHive working folder is an explicit authenticated user choice. It changes the harness
+  current directory but does not change the rule that runtime artifacts stay outside that folder.
+
 - Unsafe local folder names:
   - A plain `private-companion-repo/` or `enterprise-deployment-repo/` directory inside the public
     checkout is not sufficient isolation.
@@ -78,6 +91,19 @@ This document defines what belongs in public, private personal, and private ente
 - Public-facing docs for FSL repos must say source-available / Fair Source today, not OSI open
   source before the future Apache-2.0 conversion date applies.
 - The public surface must use a license matrix; it must not claim a single blanket license over every component.
+
+### Easy Install Native Runtime Candidates
+
+| Runtime/artifact | Current license/distribution boundary | Easy Install Native decision |
+| --- | --- | --- |
+| Node.js supported LTS official macOS runtime | Node is MIT with bundled third-party notices; preserve the complete upstream license/notice set. Node 20 is EOL. | Compatibility-test and pin the latest supported Node 24 LTS patch per architecture; Node 22 is fallback only if required by proven compatibility. Do not ship Node 20. |
+| MongoDB Community Server 8 macOS archive | SSPL is source-available, not OSI open source. MongoDB documents redistribution, but public conveyance still needs explicit notice/compliance/legal review. | First implementation downloads one exact official archive directly from MongoDB and verifies it against the Viventium signed manifest. Do not bundle it in a public Viventium artifact until approved. |
+| Meilisearch Community Edition | Community code/assets are MIT; the repository also has separately licensed enterprise functionality. | If runtime evidence proves chat works without it, defer it. Otherwise select only an exact Community Edition asset, preserve MIT notices, and cap memory/threads. Never select an enterprise asset by pattern or `latest`. |
+| Sparkle updater | Sparkle is MIT; archive/feed signing does not replace Apple code signing/notarization or Viventium's runtime/data health gate. | Candidate for the small macOS helper only after dependency/security review. Runtime payload activation remains Viventium-owned and health-gated. |
+| Viventium runtime/helper bundles | Viventium license plus all nested third-party notices. Apple distribution requirements are separate from copyright licenses. | Sign nested code first, then enclosing bundles; notarize every downloaded executable payload; publish SBOM, exact manifest, notices, and installed-artifact evidence before release. |
+
+Version numbers and hashes belong in a signed release manifest, not this policy document. The
+release process must update notices/SBOM and rerun the license scan whenever any candidate changes.
 
 ## Release Artifacts
 

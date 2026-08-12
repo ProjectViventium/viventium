@@ -326,6 +326,7 @@ export function runEval(
     family?: string;
     surface?: string;
     promptId?: string;
+    caseIds?: string[];
   } = {},
 ) {
   return api<EvalRun>("/api/evals/run", {
@@ -336,6 +337,7 @@ export function runEval(
       family: options.family || undefined,
       surface: options.surface || undefined,
       promptId: options.promptId || undefined,
+      caseIds: options.caseIds?.length ? options.caseIds : undefined,
     }),
   });
 }

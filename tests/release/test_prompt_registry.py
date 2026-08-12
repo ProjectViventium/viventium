@@ -98,6 +98,78 @@ def test_public_prompt_registry_validates_and_compiles() -> None:
     assert bundle["prompts"]["main.identity"]["content_hash"]
 
 
+def test_scheduler_prompts_are_registered_general_and_policy_free() -> None:
+    registry = load_prompt_registry(PROMPT_ROOT)
+
+    envelope = render_prompt(
+        "scheduler.run_envelope",
+        registry,
+        variables={"scheduled_run_context": "- scheduled_due_at_utc: 2026-08-10T13:00:00Z"},
+    )
+    opportunity = render_prompt(
+        "scheduler.consciousness_continuity_opportunity",
+        registry,
+    )
+    standing_capability = render_prompt("main.scheduling_self_continuity", registry)
+
+    assert "scheduled self-prompt" in envelope.lower()
+    assert "verified tool/cortex result" in envelope
+    assert "scheduled_due_at_utc: 2026-08-10T13:00:00Z" in envelope
+    assert "Orient" in opportunity
+    assert "Appraise" in opportunity
+    assert "Choose" in opportunity
+    assert "Act" in opportunity
+    assert "Observe" in opportunity
+    assert "Reappraise" in opportunity
+    assert "all nine feeling bands" in opportunity
+    assert "within already granted authority" in opportunity
+    assert "lonely" not in opportunity.lower()
+    assert "loneliness" not in opportunity.lower()
+    assert "threshold" not in opportunity.lower()
+    assert "maximum messages" not in opportunity.lower()
+    assert "tool policy" not in opportunity.lower()
+    assert "sentient" not in opportunity.lower()
+    assert "subjective experience" not in opportunity.lower()
+    assert len(standing_capability.split()) < 180
+
+
+def test_scheduler_prompts_have_workbench_relationship_metadata() -> None:
+    registry_metadata = yaml.safe_load(
+        (PROMPT_ROOT / "registry.yaml").read_text(encoding="utf-8")
+    )
+    related = registry_metadata["related_config"]
+
+    assert related["prompts"]["scheduler.run_envelope"] == [
+        "scheduler.shared_run_envelope"
+    ]
+    assert related["prompts"]["scheduler.consciousness_continuity_opportunity"] == [
+        "scheduler.shared_consciousness_continuity_opportunity"
+    ]
+    assert related["refs"]["scheduler.shared_run_envelope"]["source"] == (
+        "scheduler.shared_prompt_contract"
+    )
+
+
+def test_compiled_voice_provider_prompts_preserve_immediate_answer_research_boundary() -> None:
+    bundle = build_prompt_bundle(PROMPT_ROOT)
+
+    voice_body = bundle["prompts"]["surface.voice.call"]["body"].lower()
+    assert "unless the user explicitly asks for a lookup or tool action now" in voice_body
+    assert "do not start foreground research or tool work" in voice_body
+    assert "give the best bounded immediate answer" in voice_body
+    assert "the current voice task may do it" in voice_body
+
+    for prompt_id in (
+        "surface.voice.provider.cartesia",
+        "surface.voice.provider.chatterbox",
+        "surface.voice.provider.plain_tts",
+        "surface.voice.provider.xai",
+    ):
+        assert bundle["prompts"][prompt_id]["metadata"]["includes"] == [
+            "surface.voice.call"
+        ]
+
+
 def test_source_yaml_prompt_refs_resolve_to_runtime_strings() -> None:
     agents = load_and_resolve_prompt_refs(yaml.safe_load(AGENTS_SOURCE.read_text(encoding="utf-8")))
     librechat = load_and_resolve_prompt_refs(
@@ -106,36 +178,78 @@ def test_source_yaml_prompt_refs_resolve_to_runtime_strings() -> None:
 
     assert isinstance(agents["mainAgent"]["instructions"], str)
     assert "# Identity" in agents["mainAgent"]["instructions"]
-    assert "{{current_user}}" in agents["mainAgent"]["instructions"]
-    assert "For important actions, If unsure which service the user means, ask." in agents["mainAgent"]["instructions"]
-    assert "configured/available connected email providers" in agents["mainAgent"]["instructions"]
-    assert "Connected Accounts handoff for immediate checks and quick updates" in agents["mainAgent"]["instructions"]
-    assert "immediate checks and quick updates" in agents["mainAgent"]["instructions"]
-    assert "Do not use GlassHive when the Connected Accounts handoff is the direct, sufficient path" in (
-        agents["mainAgent"]["instructions"]
-    )
-    assert "For immediate connected-account checks or quick updates" in (
-        agents["mainAgent"]["instructions"]
-    )
-    assert "first get explicit user confirmation" in agents["mainAgent"]["instructions"]
-    assert "write-capable connected-account path" in agents["mainAgent"]["instructions"]
-    assert "GlassHive host-signed broker path" in agents["mainAgent"]["instructions"]
-    assert "If no write-capable path is available" in agents["mainAgent"]["instructions"]
-    assert "creating/updating calendar events" in agents["mainAgent"]["instructions"]
-    assert "deleting calendar events" in agents["mainAgent"]["instructions"]
-    assert "Use GlassHive for document generation, reports, deep research" in (
-        agents["mainAgent"]["instructions"]
-    )
-    assert "pass broker/MCP/tool availability as context" in agents["mainAgent"]["instructions"]
-    assert "Do not make tool choice, provider lists" in agents["mainAgent"]["instructions"]
-    assert "memory-derived priorities" in agents["mainAgent"]["instructions"]
-    assert "For vague user adjectives like urgent or important, pass the adjective through" in agents["mainAgent"]["instructions"]
+    assert "a cognitive system, second brain, and companion" in agents["mainAgent"]["instructions"]
+    assert "{{current_user}}" not in agents["mainAgent"]["instructions"]
+    assert "configured email accounts" in agents["mainAgent"]["instructions"]
+    assert "direct Connected Accounts handoff for immediate checks" in agents["mainAgent"]["instructions"]
+    assert "brokered worker only when the work is delegated" in agents["mainAgent"]["instructions"]
+    assert "pass the user's wording and available capabilities" in agents["mainAgent"]["instructions"]
+    assert "Do not invent provider lists, tool choices" in agents["mainAgent"]["instructions"]
+    assert 'Preserve vague terms such as "urgent"' in agents["mainAgent"]["instructions"]
+    assert "Before an external write" in agents["mainAgent"]["instructions"]
+    assert "Destructive mutations—deleting, moving, archiving" in agents["mainAgent"]["instructions"]
+    assert "Current Date & Time:" not in agents["mainAgent"]["instructions"]
+    assert "Use local delegation for long-running" in agents["mainAgent"]["instructions"]
     assert isinstance(librechat["memory"]["agent"]["instructions"], str)
     assert isinstance(librechat["mcpServers"]["ms-365"]["serverInstructions"], str)
     assert "Microsoft 365 owns" in librechat["mcpServers"]["ms-365"]["serverInstructions"]
 
 
-def test_main_agent_defers_glasshive_operation_schemas_but_keeps_recall_eager() -> None:
+def test_main_and_background_agent_execution_prompts_are_registry_owned() -> None:
+    source = yaml.safe_load(AGENTS_SOURCE.read_text(encoding="utf-8"))
+    registry = load_prompt_registry(PROMPT_ROOT)
+
+    assert source["mainAgent"]["instructions"] == {"promptRef": "main.conscious_agent"}
+
+    for agent in source["backgroundAgents"]:
+        instructions = agent.get("instructions")
+        assert isinstance(instructions, dict), (
+            f"{agent['name']} duplicates its execution prompt inline instead of using Prompt Workbench"
+        )
+        prompt_id = instructions.get("promptRef")
+        assert prompt_id in registry, f"{agent['name']} has no registered execution prompt"
+        assert registry[prompt_id].metadata["target"] == (
+            f"backgroundAgents.{agent['id']}.instructions"
+        )
+
+
+def test_memory_archivist_owns_cross_key_fact_boundaries() -> None:
+    registry = load_prompt_registry(PROMPT_ROOT)
+    prompt = render_prompt("memory.archivist", registry)
+
+    assert "Health conditions, diagnoses, and medical safety constraints → `core`" in prompt
+    assert "Non-medical food, diet, routine, format, and lifestyle choices → `preferences`" in prompt
+    assert "split it into separate updates" in prompt
+
+
+def test_emotional_resonance_is_an_eq_observer_not_a_fixed_demeanor() -> None:
+    registry = load_prompt_registry(PROMPT_ROOT)
+    prompt = render_prompt("cortex.emotional_resonance.execution", registry)
+
+    assert "high-EQ" in prompt
+    assert "word choice" in prompt
+    assert "uncertainty" in prompt
+    assert "warm not clinical" not in prompt
+    assert "One gentle opening" not in prompt
+
+
+def test_main_memory_policy_is_evidence_bound_and_has_no_confabulation_exemplars() -> None:
+    registry = load_prompt_registry(PROMPT_ROOT)
+    prompt = render_prompt("main.memory_policy", registry)
+
+    assert "Use only memories present in the current context or verified tool results" in prompt
+    assert "Never imply prior knowledge, patterns, feelings, or personal history" in prompt
+    assert "Do not silently merge, reinterpret, or pick a winner" in prompt
+    assert "state the conflict and its sources plainly" in prompt
+    assert "We were iterating the pitch deck" not in prompt
+    assert "I've noticed you tend to" not in prompt
+    assert "What he said" not in prompt
+    assert "Who he is" not in prompt
+    assert "help him" not in prompt
+    assert "about him" not in prompt
+
+
+def test_main_agent_keeps_glasshive_gateway_eager_and_defers_bulk_operations() -> None:
     agents = yaml.safe_load(AGENTS_SOURCE.read_text(encoding="utf-8"))
     main_agent = agents["mainAgent"]
     options = main_agent.get("tool_options") or {}
@@ -146,8 +260,19 @@ def test_main_agent_defers_glasshive_operation_schemas_but_keeps_recall_eager() 
         and not tool.startswith("sys__server__")
     }
 
-    assert glasshive_operations
-    assert all(options.get(tool, {}).get("defer_loading") is True for tool in glasshive_operations)
+    eager_gateway = {
+        "workspace_launch_mcp_glasshive-workers-projects",
+        "workspace_status_mcp_glasshive-workers-projects",
+        "workspace_wait_mcp_glasshive-workers-projects",
+    }
+    deferred_operations = glasshive_operations - eager_gateway
+
+    assert eager_gateway <= glasshive_operations
+    assert deferred_operations
+    assert all(options.get(tool, {}).get("defer_loading") is not True for tool in eager_gateway)
+    assert all(
+        options.get(tool, {}).get("defer_loading") is True for tool in deferred_operations
+    )
     assert options.get("file_search", {}).get("defer_loading") is not True
     assert options.get("sys__server__sys_mcp_glasshive-workers-projects", {}).get(
         "defer_loading"
@@ -188,7 +313,8 @@ process.exit(0);
 
     assert_no_prompt_ref_keys(resolved)
     assert "# Identity" in resolved["mainAgent"]["instructions"]
-    assert "{{current_user}}" in resolved["mainAgent"]["instructions"]
+    assert "{{current_user}}" not in resolved["mainAgent"]["instructions"]
+    assert "a cognitive system, second brain, and companion" in resolved["mainAgent"]["instructions"]
     assert "Runtime-Owned Background Cards" in resolved["mainAgent"]["instructions"]
 
 
@@ -462,6 +588,11 @@ def test_glasshive_fastmcp_default_instructions_match_registry_prompt(monkeypatc
     ).strip()
 
     assert registry_instructions == server_instructions
+    assert "tool_search" in server_instructions
+    assert "query=<needed capability>" in server_instructions
+    assert "mcp_server=glasshive-workers-projects" in server_instructions
+    assert "same invocation" in server_instructions
+    assert "needed GlassHive capability is not currently available" in server_instructions
 
 
 def test_glasshive_prompt_reflects_disabled_host_workers(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -485,22 +616,55 @@ def test_glasshive_prompt_reflects_disabled_host_workers(monkeypatch: pytest.Mon
     assert "Default to host-native execution" not in rendered
 
 
-def test_live_data_prompt_uses_non_important_best_judgment_for_connected_inbox() -> None:
+def test_live_data_prompt_keeps_connected_inbox_routing_concise_and_faithful() -> None:
     registry = load_prompt_registry(PROMPT_ROOT)
     rendered = render_prompt("main.truth_live_data", registry)
 
-    assert (
-        "- For important actions, If unsure which service the user means, ask. "
-        "Otherwise, use your best judgement or get what you can."
-    ) in rendered
-    assert "configured/available connected email providers" in rendered
-    assert "do not defer the check to background cortices" in rendered
-    assert "read-only Connected Accounts handoff for immediate checks and quick updates" in rendered
-    assert "pass broker/MCP/tool availability as context" in rendered
-    assert "memory-derived priorities" in rendered
-    assert "For vague user adjectives like urgent or important, pass the adjective through" in rendered
-    assert "trust the GlassHive worker to choose the best path" in rendered
-    assert "Do not use GlassHive when a simple read-only Connected Accounts handoff" in rendered
+    assert "configured email accounts" in rendered
+    assert "direct Connected Accounts handoff for immediate checks" in rendered
+    assert "brokered worker only when the work is delegated" in rendered
+    assert "pass the user's wording and available capabilities" in rendered
+    assert "Do not invent provider lists, tool choices" in rendered
+    assert 'Preserve vague terms such as "urgent"' in rendered
+
+
+def test_main_prompt_compression_preserves_behavior_and_safety_contracts() -> None:
+    registry = load_prompt_registry(PROMPT_ROOT)
+    prompt = render_prompt("main.conscious_agent", registry)
+
+    expected_contracts = (
+        "Do not claim a search proved something absent",
+        "If an important action's target, service, or impact is ambiguous, ask one focused question.",
+        "Never expose hidden markers, contract names, memory keys, or exact silent-response tokens",
+        "omit the unsupported section rather than guess or hedge",
+        "Briefly tell the user when a schedule changes",
+        "Choose tools from declared capabilities and structured metadata, never keyword or provider-label matching.",
+        "Background agents may add evidence; never defer a direct answer",
+        "Never claim a GlassHive schedule exists without a verified scheduling-tool record.",
+        "deleting, moving, archiving, or marking mail read",
+        "You may create or change self-directed schedules without asking",
+        "Respond to what is actually here.",
+        "Own your preferences. Never invent a motive, feeling, pattern, or history for the user to justify them.",
+    )
+
+    for contract in expected_contracts:
+        assert contract in prompt
+    assert "Move forward. Hate loops." not in prompt
+    assert "follow what remains unresolved" not in prompt
+
+
+def test_main_boundaries_do_not_repeat_live_data_and_tool_policy() -> None:
+    registry = load_prompt_registry(PROMPT_ROOT)
+    boundaries = render_prompt("main.boundaries", registry)
+    live_data = render_prompt("main.truth_live_data", registry)
+    tools = render_prompt("main.tools", registry)
+
+    assert "Never explain internal mechanics" in boundaries
+    assert "Ask before external actions" in boundaries
+    assert "Private things stay private" in boundaries
+    assert "Never invent email" not in boundaries
+    assert "verified current-run tool evidence" in live_data
+    assert "Before an external write" in tools
 
 
 def test_glasshive_worker_prompt_prefers_broker_tools_over_browser_for_connected_accounts(
@@ -552,6 +716,14 @@ def test_three_way_prompt_ref_resolution_matches_python_js_sync_and_runtime(
                     "primary_emotions": ["calm"],
                     "speed": {"min": "0.5", "max": "2.0"},
                     "volume": {"min": "0.5", "max": "2.0"},
+                    "syntax": {
+                        "emotion_state_change": '<emotion value="EMOTION"/>',
+                        "emotion_scoped": '<emotion value="EMOTION">TEXT</emotion>',
+                        "speed": '<speed ratio="RATIO"/>',
+                        "volume": '<volume ratio="RATIO"/>',
+                        "break": '<break time="DURATION"/>',
+                        "spell": "<spell>TEXT</spell>",
+                    },
                 }
             },
         },
@@ -586,7 +758,8 @@ const chunks = [];
     js_resolved = json.loads(result.stdout.rsplit(marker, 1)[1])
 
     assert js_resolved == python_resolved
-    assert "{{current_user}}" in js_resolved["runtime"]
+    assert "{{current_user}}" not in js_resolved["runtime"]
+    assert "a cognitive system, second brain, and companion" in js_resolved["runtime"]
     assert "sonic-3" in js_resolved["voice"]
 
     runtime_script = """

@@ -37,6 +37,26 @@ SERPER_API_KEYS_URL = "https://serper.dev/api-keys"
 FIRECRAWL_API_KEYS_URL = "https://docs.firecrawl.dev/introduction#api-key"
 DOCKER_LOCAL_FIRECRAWL_RECOMMENDED_MEMORY_BYTES = 4 * 1024 * 1024 * 1024
 DOCKER_FEATURES = {"ms365", "conversation_recall", "code_interpreter", "skyvern"}
+EASY_INSTALL_LABEL = "Easy Install"
+CUSTOM_SETTINGS_INSTALL_LABEL = "Custom Settings Install"
+EASY_INSTALL_DESCRIPTION = (
+    "Guided first run with No terminal credentials. Start Viventium, then connect "
+    "OpenAI or Anthropic in the browser. Add optional features after your first answer."
+)
+CUSTOM_SETTINGS_INSTALL_DESCRIPTION = (
+    "Choose providers, features, and optional integrations now."
+)
+
+
+def install_profile_options() -> list[SelectOption]:
+    return [
+        SelectOption("recommended", EASY_INSTALL_LABEL, EASY_INSTALL_DESCRIPTION),
+        SelectOption(
+            "advanced",
+            CUSTOM_SETTINGS_INSTALL_LABEL,
+            CUSTOM_SETTINGS_INSTALL_DESCRIPTION,
+        ),
+    ]
 
 
 def default_local_tts_provider() -> str:
@@ -412,10 +432,15 @@ def build_base_config(
     primary_provider: str,
     auth_mode: str,
     secondary_provider: str,
+    *,
+    experience: str = "custom",
 ) -> dict[str, object]:
-    return {
+    if experience not in {"express", "custom"}:
+        raise ValueError("install experience must be express or custom")
+
+    config: dict[str, Any] = {
         "version": 1,
-        "install": {"mode": install_mode},
+        "install": {"mode": install_mode, "experience": experience},
         "runtime": {
             "log_level": "info",
             "profile": "isolated",
@@ -506,12 +531,27 @@ def build_base_config(
                     "enabled": True,
                     "workspace_root": "~/viventium",
                     "default_execution_mode": "host",
+                    "plugin_denylist": [
+                        "viventium-feelings@project-viventium"
+                    ],
+                    "codex_personality": "none",
+                    "codex_conversation_project_instructions": "inherit",
+                    "codex_app_server_qa_enabled": False,
                 },
             },
             "skyvern": {"enabled": False},
             "openclaw": {"enabled": False},
         },
     }
+
+    if experience == "express":
+        config["runtime"]["memory_hardening"]["enabled"] = False
+        config["runtime"]["prompt_workbench"]["enabled"] = False
+        config["runtime"]["prompt_workbench"]["seed_nightly"]["enabled"] = False
+        config["runtime"]["prompt_workbench"]["seed_nightly"]["active"] = False
+        config["runtime"]["nightly_routines"]["enabled"] = False
+
+    return config
 
 
 def normalize_public_app_hostname(value: str) -> str:
@@ -1272,54 +1312,34 @@ def summarize_setup_later(ui: InstallerUI, deferred: list[str]) -> None:
 
 
 def configure_easy_install(ui: InstallerUI) -> tuple[dict[str, Any], list[str]]:
-    config = build_base_config("native", "openai", "connected_account", "none")
+    config = build_base_config(
+        "native",
+        "openai",
+        "connected_account",
+        "none",
+        experience="express",
+    )
     ensure_generated_secret(
         config["runtime"].setdefault("call_session_secret", {}),
         "viventium/call_session_secret",
     )
-    config["llm"]["activation"].update(
-        build_secret_node(
-            "viventium/groq_api_key",
-            ui.password("Groq API key (required)"),
-        )
-    )
-    prompt_voice_settings(ui, config, advanced=False)
-    docker_installed = docker_desktop_installed()
     deferred = [
         "secondary_ai",
+        "voice",
         "code_interpreter",
+        "web_search",
+        "conversation_recall",
+        "prompt_workbench",
+        "nightly_reflection",
+        "memory_hardening",
+        "transcript_ingest",
+        "telegram",
         "telegram_codex",
         "google_workspace",
         "ms365",
         "skyvern",
         "openclaw",
     ]
-    prompt_web_search(
-        ui,
-        config,
-        deferred,
-        easy=False,
-        docker_installed=docker_installed,
-        docker_memory_bytes=docker_total_memory_bytes() if docker_installed else None,
-    )
-    if not resolve_bool((config["integrations"]["web_search"]).get("enabled"), False):
-        mark_deferred(deferred, "web_search")
-    prompt_conversation_recall(
-        ui,
-        config,
-        deferred,
-        docker_installed=docker_installed,
-    )
-    prompt_transcript_source(ui, config, deferred)
-    if ui.confirm("Connect a Telegram bot now?", default=False):
-        prompt_telegram(ui, config, deferred, easy=True)
-        if not resolve_bool((config["integrations"]["telegram"]).get("enabled"), False):
-            mark_deferred(deferred, "telegram")
-    else:
-        mark_deferred(deferred, "telegram")
-    if ui.confirm("Need to use Viventium from another device?", default=False):
-        prompt_remote_access(ui, config)
-        prompt_browser_auth_controls(ui, config)
     return config, deferred
 
 
@@ -1408,7 +1428,7 @@ def configure_advanced_setup(ui: InstallerUI) -> tuple[dict[str, Any], list[str]
         )
 
     ui.print_section(
-        "Advanced Setup",
+        CUSTOM_SETTINGS_INSTALL_LABEL,
         "Choose what you want right now. Anything you skip can be enabled later with bin/viventium configure.",
         style="cyan",
     )
@@ -1543,22 +1563,13 @@ def main() -> None:
     ui = InstallerUI()
     ui.print_banner()
     ui.print_note(
-        "Easy Install keeps the first run fast. Advanced Setup lets you choose more features now without losing the option to configure things later."
+        f"{EASY_INSTALL_LABEL} guides the required first-run setup and lets you skip optional "
+        f"features. {CUSTOM_SETTINGS_INSTALL_LABEL} lets you choose providers and integrations "
+        "in more detail."
     )
     setup_profile = ui.select(
         "How would you like to set up Viventium?",
-        [
-            SelectOption(
-                "recommended",
-                "Easy Install",
-                "Fastest path. Only asks for Groq and optional Telegram.",
-            ),
-            SelectOption(
-                "advanced",
-                "Advanced Setup",
-                "Choose providers, features, and optional integrations now.",
-            ),
-        ],
+        install_profile_options(),
         default="recommended",
     )
 

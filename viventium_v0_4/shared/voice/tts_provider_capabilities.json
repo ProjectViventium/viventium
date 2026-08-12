@@ -1,0 +1,202 @@
+{
+  "schema_version": 1,
+  "contract": "viventium_tts_provider_capabilities",
+  "providers": {
+    "openai": {
+      "display_label": "OpenAI",
+      "default_model": "gpt-4o-mini-tts",
+      "default_renderer_instruction": "Speak naturally with clear pacing. Keep the delivery conversational, grounded, and human. Avoid robotic emphasis or exaggerated pauses.",
+      "runtime_models": [
+        {
+          "id": "gpt-4o-mini-tts",
+          "side_channels": {
+            "instructions": true,
+            "speed": true
+          }
+        },
+        {
+          "id": "gpt-4o-mini-tts-2025-12-15",
+          "side_channels": {
+            "instructions": true,
+            "speed": true
+          }
+        },
+        {
+          "id": "tts-1",
+          "side_channels": {
+            "instructions": false,
+            "speed": true
+          }
+        },
+        {
+          "id": "tts-1-hd",
+          "side_channels": {
+            "instructions": false,
+            "speed": true
+          }
+        }
+      ],
+      "inline_controls": {
+        "supported": false,
+        "mode": "plain_text_only",
+        "exact_tokens": [],
+        "runtime_policy": "strip_structural_voice_markup"
+      },
+      "side_channels": {
+        "instructions": {
+          "supported_models": [
+            "gpt-4o-mini-tts",
+            "gpt-4o-mini-tts-2025-12-15"
+          ],
+          "runtime_mode": "static_provider_config"
+        },
+        "speed": {
+          "runtime_mode": "static_provider_config"
+        }
+      },
+      "dynamic_expression": {
+        "per_turn_wired": false,
+        "status": "gap_side_channel_not_yet_driven_per_turn",
+        "notes": "The configured model supports an instructions side channel, but Viventium currently supplies one stable neutral renderer instruction when the provider is built. Feelings must not be converted into invented inline tags."
+      },
+      "sources": [
+        "https://developers.openai.com/api/docs/guides/text-to-speech",
+        "https://developers.openai.com/api/reference/resources/audio/subresources/speech/methods/create"
+      ]
+    },
+    "elevenlabs": {
+      "display_label": "ElevenLabs",
+      "default_model": "eleven_turbo_v2_5",
+      "runtime_models": [
+        {
+          "id": "eleven_turbo_v2_5",
+          "side_channels": {
+            "voice_settings": true,
+            "speed": true
+          }
+        }
+      ],
+      "inline_controls": {
+        "supported": false,
+        "mode": "plain_text_only",
+        "exact_tokens": [],
+        "runtime_policy": "strip_structural_voice_markup",
+        "notes": "Viventium's current LiveKit route uses eleven_turbo_v2_5 with SSML parsing disabled. Eleven v3 audio tags are not generic ElevenLabs controls."
+      },
+      "side_channels": {
+        "voice_settings": {
+          "fields": [
+            "stability",
+            "similarity_boost",
+            "style",
+            "speed",
+            "use_speaker_boost"
+          ],
+          "runtime_mode": "static_provider_config"
+        }
+      },
+      "dynamic_expression": {
+        "per_turn_wired": false,
+        "status": "gap_side_channel_not_yet_driven_per_turn"
+      },
+      "model_specific_controls_not_enabled": {
+        "eleven_v3": {
+          "control_type": "natural_language_audio_tags",
+          "reason": "The current Viventium route is eleven_turbo_v2_5, not eleven_v3."
+        }
+      },
+      "sources": [
+        "https://elevenlabs.io/docs/api-reference/text-to-speech/convert",
+        "https://elevenlabs.io/docs/overview/capabilities/text-to-speech/best-practices"
+      ]
+    },
+    "cartesia": {
+      "display_label": "Cartesia",
+      "default_model": "sonic-3",
+      "runtime_models": [
+        {
+          "id": "sonic-3",
+          "side_channels": {
+            "generation_config": true
+          }
+        }
+      ],
+      "inline_controls": {
+        "supported": true,
+        "mode": "cartesia_sonic3_ssml",
+        "dialect_contract": "cartesia_sonic3_capabilities.json",
+        "runtime_policy": "preserve_documented_controls"
+      },
+      "side_channels": {
+        "generation_config": {
+          "fields": [
+            "emotion",
+            "speed",
+            "volume"
+          ],
+          "runtime_mode": "provider_config_plus_model_authored_segment_controls"
+        }
+      },
+      "dynamic_expression": {
+        "per_turn_wired": true,
+        "status": "model_authored_inline_controls"
+      },
+      "sources": [
+        "https://docs.cartesia.ai/build-with-cartesia/capability-guides/ssml-tags",
+        "https://docs.cartesia.ai/build-with-cartesia/capability-guides/volume-speed-emotion"
+      ]
+    },
+    "xai": {
+      "display_label": "xAI",
+      "default_model": "xai-tts",
+      "runtime_models": [
+        {
+          "id": "xai-tts",
+          "api_route": "tts",
+          "legacy": false
+        }
+      ],
+      "inline_controls": {
+        "supported": true,
+        "mode": "xai_speech_tags",
+        "dialect_contract": "xai_tts_capabilities.json",
+        "runtime_policy": "preserve_documented_controls"
+      },
+      "dynamic_expression": {
+        "per_turn_wired": true,
+        "status": "model_authored_inline_controls"
+      },
+      "sources": [
+        "https://docs.x.ai/developers/model-capabilities/audio/text-to-speech",
+        "https://docs.x.ai/developers/model-capabilities/audio/voice-agent"
+      ]
+    },
+    "local_chatterbox_turbo_mlx_8bit": {
+      "display_label": "Local Chatterbox",
+      "default_model": "mlx-community/chatterbox-turbo-8bit",
+      "runtime_models": [
+        {
+          "id": "mlx-community/chatterbox-turbo-8bit",
+          "local": true
+        }
+      ],
+      "inline_controls": {
+        "supported": true,
+        "mode": "chatterbox_nonverbal_markers",
+        "exact_tokens": [
+          "[laugh]",
+          "[sigh]",
+          "[gasp]"
+        ],
+        "runtime_policy": "preserve_exact_tokens"
+      },
+      "dynamic_expression": {
+        "per_turn_wired": true,
+        "status": "model_authored_inline_controls"
+      },
+      "sources": [
+        "https://github.com/resemble-ai/chatterbox"
+      ]
+    }
+  }
+}

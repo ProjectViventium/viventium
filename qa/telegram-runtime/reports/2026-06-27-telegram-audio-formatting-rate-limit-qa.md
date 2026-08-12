@@ -1,5 +1,7 @@
 # Telegram Audio Formatting And Rate-Limit QA - 2026-06-27
 
+<!-- qa-evidence-exempt: Historical focused Telegram regression record retained as supporting evidence; it predates the full-view report format. -->
+
 ## Scope
 
 Public-safe QA for three escaped Telegram issues:

@@ -70,7 +70,7 @@ development pass.
 
 ## Remaining Release Gates
 
-- Run a clean public entrypoint Express install in a new directory or separate Mac.
+- Run a clean public-entrypoint Easy Install in a new directory or separate Mac.
 - Run browser first-admin Brain Setup with Playwright:
   connect later, connect provider, enable Recall/RAG, add transcript folder, open Workbench.
 - Prove the full visible nightly chain on the clean install:

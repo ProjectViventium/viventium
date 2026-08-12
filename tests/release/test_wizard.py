@@ -4,6 +4,9 @@ import importlib.util
 import subprocess
 from pathlib import Path
 
+import pytest
+import yaml
+
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WIZARD_PATH = REPO_ROOT / "scripts" / "viventium" / "wizard.py"
@@ -15,6 +18,38 @@ def load_wizard_module():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def test_easy_install_copy_promises_browser_first_account_setup_without_terminal_credentials() -> None:
+    wizard = load_wizard_module()
+
+    description = wizard.EASY_INSTALL_DESCRIPTION
+    assert "No terminal credentials" in description
+    assert "OpenAI or Anthropic" in description
+    assert "browser" in description
+    assert "after your first answer" in description
+    assert "Groq key" not in description
+    assert "Codex or Claude" not in description
+    assert "Only asks" not in description
+
+    options = wizard.install_profile_options()
+    assert [(option.value, option.label) for option in options] == [
+        ("recommended", "Easy Install"),
+        ("advanced", "Custom Settings Install"),
+    ]
+
+    source = WIZARD_PATH.read_text(encoding="utf-8")
+    assert '"Express Install"' not in source
+    assert '"Advanced Setup"' not in source
+    assert '"Fastest path. Only asks for Groq and optional Telegram."' not in source
+
+
+@pytest.mark.parametrize("filename", ["config.minimal.example.yaml", "config.full.example.yaml"])
+def test_shipped_install_presets_are_internally_consistent(filename: str) -> None:
+    wizard = load_wizard_module()
+    config = yaml.safe_load((REPO_ROOT / filename).read_text(encoding="utf-8"))
+
+    wizard.validate_non_interactive_integrations(config)
 
 
 def test_store_keychain_secret_returns_none_on_failure(monkeypatch, capsys) -> None:
@@ -153,7 +188,7 @@ def test_normalize_preset_keeps_local_secret_values_when_keychain_write_fails(mo
     )
 
 
-def test_build_base_config_matches_easy_install_defaults() -> None:
+def test_build_base_config_preserves_custom_install_defaults() -> None:
     wizard = load_wizard_module()
     wizard.docker_desktop_installed = lambda: False
 
@@ -164,6 +199,7 @@ def test_build_base_config_matches_easy_install_defaults() -> None:
         secondary_provider="none",
     )
 
+    assert config["install"] == {"mode": "native", "experience": "custom"}
     assert config["runtime"]["personalization"]["default_conversation_recall"] is False
     assert config["runtime"]["nightly_routines"]["enabled"] is True
     assert config["runtime"]["prompt_workbench"]["enabled"] is True
@@ -189,12 +225,55 @@ def test_build_base_config_matches_easy_install_defaults() -> None:
     assert config["runtime"]["auth"]["allow_password_reset"] is False
     assert config["integrations"]["glasshive"]["enabled"] is True
     assert config["integrations"]["glasshive"]["host_worker"]["enabled"] is True
+    assert config["integrations"]["glasshive"]["host_worker"]["plugin_denylist"] == [
+        "viventium-feelings@project-viventium"
+    ]
+    assert config["integrations"]["glasshive"]["host_worker"]["codex_personality"] == "none"
+    assert (
+        config["integrations"]["glasshive"]["host_worker"]
+        ["codex_conversation_project_instructions"]
+        == "inherit"
+    )
     assert config["integrations"]["code_interpreter"]["enabled"] is False
     assert config["integrations"]["web_search"]["enabled"] is False
     assert config["integrations"]["web_search"]["search_provider"] == "searxng"
     assert config["integrations"]["web_search"]["scraper_provider"] == "firecrawl"
     assert config["llm"]["primary"]["auth_mode"] == "connected_account"
     assert "fast_llm_provider" not in config["voice"]
+
+
+def test_build_base_config_express_defers_every_non_core_capability() -> None:
+    wizard = load_wizard_module()
+
+    config = wizard.build_base_config(
+        install_mode="native",
+        primary_provider="openai",
+        auth_mode="connected_account",
+        secondary_provider="none",
+        experience="express",
+    )
+
+    assert config["install"] == {"mode": "native", "experience": "express"}
+    assert config["runtime"]["personalization"]["default_conversation_recall"] is False
+    assert config["runtime"]["nightly_routines"]["enabled"] is False
+    assert config["runtime"]["prompt_workbench"]["enabled"] is False
+    assert config["runtime"]["prompt_workbench"]["seed_nightly"]["enabled"] is False
+    assert config["runtime"]["prompt_workbench"]["seed_nightly"]["active"] is False
+    assert config["runtime"]["memory_hardening"]["enabled"] is False
+    assert config["integrations"]["glasshive"]["enabled"] is True
+    assert config["integrations"]["glasshive"]["host_worker"]["enabled"] is True
+    assert config["integrations"]["glasshive"]["host_worker"]["plugin_denylist"] == [
+        "viventium-feelings@project-viventium"
+    ]
+    assert config["integrations"]["glasshive"]["host_worker"]["codex_personality"] == "none"
+    assert (
+        config["integrations"]["glasshive"]["host_worker"]
+        ["codex_conversation_project_instructions"]
+        == "inherit"
+    )
+    assert config["integrations"]["web_search"]["enabled"] is False
+    assert config["integrations"]["code_interpreter"]["enabled"] is False
+    assert config["voice"]["mode"] == "disabled"
 
 
 def test_build_base_config_keeps_recall_off_even_when_docker_desktop_present(monkeypatch) -> None:
@@ -216,6 +295,7 @@ def test_normalize_preset_keeps_recall_off_even_when_docker_desktop_present(
 ) -> None:
     wizard = load_wizard_module()
     monkeypatch.setattr(wizard, "docker_desktop_installed", lambda: True)
+    monkeypatch.setattr(wizard, "store_keychain_secret", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(wizard.secrets, "token_hex", lambda _nbytes: "generated-call-secret")
 
     normalized = wizard.normalize_preset({"version": 1, "runtime": {}, "llm": {}, "integrations": {}})
@@ -223,112 +303,48 @@ def test_normalize_preset_keeps_recall_off_even_when_docker_desktop_present(
     assert normalized["runtime"]["personalization"]["default_conversation_recall"] is False
 
 
-def test_configure_easy_install_keeps_conversation_recall_deferred_when_docker_desktop_present(
+def test_configure_easy_install_asks_no_terminal_questions_and_defers_optional_setup(
     monkeypatch,
 ) -> None:
     wizard = load_wizard_module()
 
     class FakeUI:
-        def password(self, _prompt: str, allow_empty: bool = False) -> str:
-            assert allow_empty is False
-            return "groq-test"
+        def __getattr__(self, name: str):
+            raise AssertionError(f"Express Native must not call InstallerUI.{name}")
 
-        def confirm(self, _prompt: str, default: bool = False) -> bool:
-            return False
-
-        def print_note(self, *_args, **_kwargs) -> None:
-            return None
-
-    prompt_web_search_calls: list[bool] = []
-    prompt_recall_calls: list[bool] = []
-    prompt_transcript_calls: list[bool] = []
-
-    monkeypatch.setattr(wizard, "docker_desktop_installed", lambda: True)
-    monkeypatch.setattr(wizard, "docker_total_memory_bytes", lambda: None)
     monkeypatch.setattr(
         wizard,
-        "prompt_web_search",
-        lambda *_args, **_kwargs: prompt_web_search_calls.append(True),
-    )
-    monkeypatch.setattr(
-        wizard,
-        "prompt_conversation_recall",
-        lambda *_args, **_kwargs: prompt_recall_calls.append(True),
-    )
-    monkeypatch.setattr(
-        wizard,
-        "prompt_transcript_source",
-        lambda *_args, **_kwargs: prompt_transcript_calls.append(True),
-    )
-    monkeypatch.setattr(wizard, "prompt_voice_settings", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(wizard, "ensure_generated_secret", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(
-        wizard,
-        "build_secret_node",
-        lambda _service, value: {"secret_value": value},
+        "ensure_generated_secret",
+        lambda node, _service: node.update({"secret_value": "generated-test-secret"}),
     )
 
     config, deferred = wizard.configure_easy_install(FakeUI())
 
+    assert config["install"] == {"mode": "native", "experience": "express"}
+    assert config["runtime"]["call_session_secret"]["secret_value"] == "generated-test-secret"
     assert config["runtime"]["personalization"]["default_conversation_recall"] is False
     assert config["integrations"]["glasshive"]["enabled"] is True
-    assert config["runtime"]["prompt_workbench"]["enabled"] is True
-    assert config["runtime"]["memory_hardening"]["enabled"] is True
-    assert prompt_web_search_calls == [True]
-    assert prompt_recall_calls == [True]
-    assert prompt_transcript_calls == [True]
-
-
-def test_configure_easy_install_defers_conversation_recall_without_docker(monkeypatch) -> None:
-    wizard = load_wizard_module()
-
-    class FakeUI:
-        def password(self, _prompt: str, allow_empty: bool = False) -> str:
-            assert allow_empty is False
-            return "groq-test"
-
-        def confirm(self, _prompt: str, default: bool = False) -> bool:
-            return False
-
-        def print_note(self, *_args, **_kwargs) -> None:
-            return None
-
-    monkeypatch.setattr(wizard, "docker_desktop_installed", lambda: False)
-    prompt_web_search_calls: list[dict[str, object]] = []
-    prompt_recall_calls: list[dict[str, object]] = []
-    prompt_transcript_calls: list[bool] = []
-
-    monkeypatch.setattr(
-        wizard,
-        "prompt_web_search",
-        lambda *_args, **kwargs: prompt_web_search_calls.append(dict(kwargs)),
-    )
-    monkeypatch.setattr(
-        wizard,
-        "prompt_conversation_recall",
-        lambda *_args, **kwargs: prompt_recall_calls.append(dict(kwargs)),
-    )
-    monkeypatch.setattr(
-        wizard,
-        "prompt_transcript_source",
-        lambda *_args, **_kwargs: prompt_transcript_calls.append(True),
-    )
-    monkeypatch.setattr(wizard, "prompt_voice_settings", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(wizard, "ensure_generated_secret", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(
-        wizard,
-        "build_secret_node",
-        lambda _service, value: {"secret_value": value},
-    )
-
-    config, deferred = wizard.configure_easy_install(FakeUI())
-
-    assert config["runtime"]["personalization"]["default_conversation_recall"] is False
-    assert prompt_web_search_calls == [
-        {"easy": False, "docker_installed": False, "docker_memory_bytes": None}
-    ]
-    assert prompt_recall_calls == [{"docker_installed": False}]
-    assert prompt_transcript_calls == [True]
+    assert config["runtime"]["prompt_workbench"]["enabled"] is False
+    assert config["runtime"]["memory_hardening"]["enabled"] is False
+    assert "secret_ref" not in config["llm"]["activation"]
+    assert "secret_value" not in config["llm"]["activation"]
+    assert set(deferred) == {
+        "secondary_ai",
+        "voice",
+        "code_interpreter",
+        "web_search",
+        "conversation_recall",
+        "prompt_workbench",
+        "nightly_reflection",
+        "memory_hardening",
+        "transcript_ingest",
+        "telegram",
+        "telegram_codex",
+        "google_workspace",
+        "ms365",
+        "skyvern",
+        "openclaw",
+    }
 
 
 def test_normalize_preset_preserves_dormant_voice_provider_keys(monkeypatch) -> None:

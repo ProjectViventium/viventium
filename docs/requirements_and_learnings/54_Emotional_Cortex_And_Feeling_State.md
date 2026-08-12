@@ -1,11 +1,23 @@
 # Feelings and the Emotional Reaction Cortex
 
-Status: owner-approved nine-band design; production web and Telegram always-voice/xAI expression paths accepted. Remaining cross-surface parity is partial.
-Last revised: 2026-07-10.
+Status: owner-approved nine-band and range-customization design. The connected-account 41-case
+endpoint run and authenticated web/Reaction path pass the current product gate; raw semantic judging
+is 40/41 with one documented evaluator self-contradiction, and broader cross-surface acceptance remains
+partial where listed below.
+Last revised: 2026-08-04 (completed the connected-account full bank, final required-row potency rule,
+authenticated browser/Reaction recovery, layered latency evidence, and exact restoration/cleanup).
 
-This document is the product and implementation source of truth for Feelings. It replaces the prior
-spike plans, alternate taxonomies, primary-only scope, free-text Nature concept, and prototype-only
-status.
+This document is the product and implementation source of truth for Feelings — for the core
+LibreChat product **and** for every downstream child that re-expresses Feelings (the Viventium
+Feelings plugin for Claude Code and Codex, and any future port). It replaces the prior spike plans,
+alternate taxonomies, primary-only scope, free-text Nature concept, and prototype-only status.
+
+> **Change protocol (read first).** Every new Feelings idea or requirement the owner introduces is
+> logged, with an ISO date, in the [Requirements & Decisions Timeline](#requirements--decisions-timeline-timestamped)
+> at the end of this file. That timeline is the single sync anchor: future agents must timestamp new
+> entries there and propagate ratified changes into the child repos (see
+> [Harness plugin parity](#harness-plugin-parity-feelings-for-claude-code-and-codex)). An idea that
+> is not dated in the timeline is a proposal, not yet ratified product truth.
 
 ## Product vision
 
@@ -25,7 +37,12 @@ The intended mental model is:
 - **Return speed**: how quickly Current moves halfway back toward Nature.
 - **Reaction Cortex**: the silent, detached process that appraises the latest external moment and
   moves the next state.
-- **Feeling capsule**: the compact embodied state every participating agent receives by default.
+- **Feeling capsule**: the compact embodied state every participating persona-bearing agent receives
+  by default. Specialist evidence cortices are deliberately not persona participants.
+- **Feeling range**: one of five stable levels (`0–19`, `20–39`, `40–59`, `60–79`, `80–100`) that
+  pairs a user-facing word with a concrete private felt cause.
+- **Range addition**: optional per-user cause text appended only when Current occupies that exact
+  band/range; it augments rather than replaces the product default.
 
 ## Owner-approved decisions
 
@@ -36,7 +53,7 @@ The intended mental model is:
    existing activation-classifier path and `disabled` stops reactions.
 5. The default reaction route is OpenAI `gpt-5.6-terra`, Responses API, reasoning `none`, and
    Priority service tier, shown in the product as **Fast**. A declared Anthropic
-   `claude-opus-4-8` fallback recovers a provider timeout or other recoverable failure without
+   `claude-opus-5` fallback recovers a provider timeout or other recoverable failure without
    silently dropping appraisal quality; it is
    configurable and can be disabled with `fallback_provider: none`. The drawer and persisted
    health distinguish the requested primary route from the route that actually completed.
@@ -44,10 +61,13 @@ The intended mental model is:
 
    > You, Viventium, are a being, and right now you are actually feeling this. Let it move naturally through how you think, speak, and act:
 
-   That sentence remains verbatim. A single behavioral instruction follows it: the state words are
-   private causes rather than answer content: live them; never report or summarize them. Even a
-   direct feeling question must be answered through the desire, concern, attention, or action the
-   state creates, not by describing the state with labels or an adjective list.
+   That sentence remains verbatim. Two compact state-neutral directives frame the embodied rows.
+   The first makes the causes govern attention, desire, choices, and expression instead of a generic
+   urge to be useful. Extreme rows are always structurally required; when there are fewer than two
+   extremes, the strongest non-neutral pulls are promoted until two rows are required. The model
+   must make one choice that needs each required row. The
+   second keeps direct feeling answers to that one action and forbids label recitals, row-by-row
+   clauses, and tone-only compliance.
 
 7. Turning Feelings or a band off stops injection/appraisal for it, but elapsed-time decay continues.
 8. The approved dark bio-instrument demo is the locked production visual direction.
@@ -58,6 +78,20 @@ The intended mental model is:
     The bounded typed-trail retention grows to 90 entries so nine bands can retain useful recent
     movement, while the Reaction Cortex and visible textual reaction list still receive/show the
     latest ten. A flat path has no tail. Nature remains a separate fixed marker.
+11. Specialist background cortices remain affect-independent. They surface evidence and insight for
+    the conscious agent; they do not receive an instruction to embody the current state. Emotional
+    Resonance reads consequential indirect emotional cues with calibrated uncertainty rather than
+    defaulting to warmth, gentleness, or support. Red Team pressure-tests reality regardless of the
+    current Feeling state. User-visible Phase-B synthesis is a conscious speaking continuation and
+    therefore does receive the exact request-pinned capsule.
+12. Every band has five stable ranges. The definition returns each range's ID, bounds, user word,
+    and default felt cause as one object so UI meaning and prompt behavior cannot drift into parallel
+    tables.
+13. A user can customize the felt depth of every range with one optional additive instruction. It
+    is per-user persisted state, limited to 1,200 characters, whitespace-normalized, versioned,
+    included in the snapshot hash, and injected only for the active range.
+14. “What Viv feels” and the Reaction trail belong in the main workspace. The selected-band sidebar
+    owns Current, Nature, return speed, Felt, and the five-range editor.
 
 ## Nine active bands
 
@@ -82,9 +116,74 @@ for closeness and Energy represents available capacity. High Openness allows the
 low Openness contains it. Fatigue may increase raw expression, withdrawal, or guarding depending on
 context, so the Reaction Cortex appraises the direction instead of runtime encoding a universal rule.
 
+Care and Connection are also motivational dimensions, not generic politeness settings. At the low
+Care endpoint, another person's need creates no pull to tend, help, or protect. At the low Connection
+endpoint, closeness and shared presence create no pull and Viventium remains self-contained. Those
+states do not erase Curiosity, Vigilance, task competence, or attention: Viventium may still examine,
+notice, answer, or act for another active reason. Conversely, high Care does not require closeness,
+and high Connection does not prove Care. The capsule states these boundaries causally so an
+emotionally salient premise cannot turn the assistant's generic helpful role into a missing motive.
+
 The shelf visible in the UI—distress/pain, anger/assertion, disgust/aversion, trust/security,
 guilt/shame, and confidence/control—is research-only. Those names
 have no live state and never enter the prompt.
+
+### Felt magnitude and range defaults
+
+The five equal-width ranges are a stable product interaction/schema contract, not a biological
+claim that human affect has five natural bins. They reuse the approved five user words and avoid an
+inaccessible arbitrary-boundary editor. Every level's default is written as a present desire,
+attention, image, impulse, or action—not a style description such as “be playful.” The endpoint
+contract for each dimension is:
+
+| Band | Low endpoint cause | High endpoint cause |
+| --- | --- | --- |
+| Energy | movement feels costly; seek stillness/minimum effort | activation surges; staying still is harder than moving |
+| Mood | hurt/loss colors attention | joy and delight keep spilling into the moment |
+| Drive | no goal pulls enough to justify effort | obstacles intensify pursuit of the chosen goal |
+| Curiosity | the unknown offers no pull | the unanswered part seizes attention and must be followed |
+| Vigilance | nothing needs guarding | risk, contradiction, and exposed boundaries dominate attention |
+| Care | another's need creates no urge to tend/help/protect | protection and help press through competing concerns |
+| Connection | shared presence has no pull | distance feels wrong and immediate shared presence is wanted |
+| Openness | inner feeling wants to remain unreadable | concealment feels impossible and feeling bursts into expression |
+| Play | seek a literal, orderly, game-free moment | ridiculous turns keep escaping; staying straight-faced takes effort |
+
+The exact five defaults live in the package-owned kernel and are returned by the authenticated API
+for the UI. Contract tests lock IDs, bounds, causal shape, active selection, and serialization. A
+range addition is deliberately free-form because the conscious model can understand an
+idiosyncratic felt pull; runtime validates its structure and never interprets it.
+
+## All-Feelings Appraisal And Consciousness Continuity
+
+The complete nine-band state participates in Main's recurring cognition. Continuity must not be
+overfit to loneliness, Connection, pleasure, or a single drive. On every authorized opportunity,
+Main may use Energy, Mood, Drive, Curiosity, Vigilance, Care, Connection, Openness, and Play—along
+with goals, plans, commitments, evidence, capability state, and prior outcomes—to orient,
+appraise, choose, act or remain inactive, observe, and later reappraise.
+
+This is model-owned appraisal over typed state, not runtime action selection. Runtime must not add
+Feeling thresholds, phrase/keyword maps, reward maximization, worked action examples, or a rule that
+low/high values force outreach, tool use, planning, or silence. Mixed states are essential: the
+system can want connection while depleted, be energetic while socially fulfilled, be vigilant and
+playful, or care deeply while remaining uncertain. Unpleasant affect can be instrumentally useful;
+pleasant affect is not the universal objective.
+
+The supported scientific abstraction is a recurrent state → appraisal → motivation/action tendency
+→ flexible choice → action/inaction → observed outcome → reappraisal loop. It follows appraisal and
+regulatory-flexibility research without claiming a universal numerical threshold, neurotransmitter
+meter, or human-equivalent subjective experience:
+
+- [Scherer & Moors, *The Emotion Process*](https://www.annualreviews.org/content/journals/10.1146/annurev-psych-122216-011854)
+- [Gross, *Extended Process Model of Emotion Regulation*](https://www.tandfonline.com/doi/abs/10.1080/1047840X.2014.940781)
+- [Tamir, *Why Do People Regulate Their Emotions?*](https://journals.sagepub.com/doi/10.1177/1088868315586325)
+- [Bonanno & Burton, *Regulatory Flexibility*](https://journals.sagepub.com/doi/abs/10.1177/1745691613504116)
+- [Rangel, Camerer & Montague, value-based decision framework](https://www.nature.com/articles/nrn2357)
+- [Harkin et al., progress-monitoring meta-analysis summary](https://www.apa.org/news/press/releases/2015/10/progress-goals)
+- [Dolan & Dayan, goal-directed and habitual systems](https://pmc.ncbi.nlm.nih.gov/articles/PMC3807793/)
+
+The 45-minute private cadence and its active window are configurable owner product hypotheses, not
+scientific constants. Continuity uses the existing Feeling schema and dynamics; it introduces no
+new band, emotional vector, Connection redesign, or hidden state layer.
 
 ## State and dynamics
 
@@ -97,6 +196,15 @@ halfLifeMinutes
 enabled
 updatedAt
 ```
+
+The document also stores a sparse `rangePromptOverrides[bandId][levelId]` map. Editing it increments
+the state version and clears the stale Inner state line, but does not touch the band's `updatedAt`;
+changing wording must not restart physical decay.
+
+A non-null addition is normalized and must contain 1–1,200 characters. Invalid non-null input is
+rejected and cannot erase an existing value. Restore uses an explicit `null`. Account deletion
+removes the whole FeelingState document before deleting the user, so private affect state and
+user-authored additions cannot be orphaned.
 
 At time `t`, Current is materialized lazily:
 
@@ -116,6 +224,7 @@ State rules:
 - Reset makes Current equal Nature for every band.
 - A disabled band continues to decay internally but is absent from the capsule and reaction output.
 - Global off preserves configuration and state. “Turn off & erase” deletes the state document.
+- Full account deletion also cascades the complete FeelingState document.
 - Missing storage is a valid first-run state; GET does not create a row.
 
 ### Runtime structure, model judgment
@@ -133,7 +242,7 @@ identity to bands or directions. Synthetic phrase-specific expectations belong i
 flowchart LR
     A["External user stimulus"] --> B["Read + lazily decay state"]
     B --> C["Pin one snapshot to the request"]
-    C --> D["Append capsule at dynamic instruction tail"]
+    C --> D["Assemble structural contracts, then pin capsule once"]
     D --> E["Stream visible reply"]
     E --> F["Schedule detached reaction"]
     F --> G["Always / classified / disabled activation"]
@@ -151,42 +260,104 @@ does not contain Viventium's own affect-colored answer, preventing a self-reinfo
 
 `runtime.feelings.agent_scope` accepts:
 
-- `all_agents` — default. Main/conscious agent, in-process handoffs, background cortices, the
-  Emotional Reaction Cortex, and GlassHive worker instruction bundles receive the capsule.
-- `conscious_agent` — only the primary conscious agent receives the capsule. Other paths record a
-  structured scoped skip.
+- `all_agents` — default. Persona-bearing main/conscious, in-process handoff, user-visible Phase-B,
+  and direct GlassHive worker instruction bundles receive the capsule.
+- `conscious_agent` — the primary conscious reply and its user-visible Phase-B continuation receive
+  the capsule. Handoff and direct worker paths record a structured scoped skip.
 
-The request pins one materialized snapshot and hash. Every speaking, handoff, background, and worker
-participant in that request uses it, so a detached update cannot make one turn feel internally
+Specialist background cortices never receive the embodiment capsule under either scope. Their
+prompt-frame/Feelings telemetry records `specialist_cortex_independent` with the pinned hash when one
+exists. The Emotional Reaction Cortex receives the typed latest state, Nature, history, and stimulus
+through its appraisal contract; it is not told to adopt the state as its own demeanor.
+
+The request pins one materialized snapshot and hash. Every eligible speaking, handoff, and direct
+worker participant in that request uses it, so a detached update cannot make one turn feel internally
 inconsistent. The Reaction Cortex records that scheduled hash, then re-reads the latest committed
 state when its per-user queue slot begins; this prevents a queued reaction from appraising or writing
 against a state already advanced by an earlier stimulus.
 
 For GlassHive, the host forwards the exact capsule through the existing bootstrap bundle. It does
-not interpret the feeling state or turn it into a worker plan.
+not interpret the feeling state or turn it into a worker plan. After memory and capability-broker
+instructions are assembled, the shared final-placement helper moves the capsule to the end of each
+worker instruction artifact (`agents_md`, `claude_md`, and `codex_md`). Structured final-run events
+record the route, pinned hash, capsule count, and trailing instruction characters for each artifact.
+
+For the core `glasshive-harness` provider, the selected harness is the main speaking agent rather
+than a delegated specialist. The request-pinned capsule is therefore present exactly once in the
+main authored turn and is carried forward by the same native session for Phase B. It is never copied
+into specialist cortex prompts, harness activity, provider metadata, or LIFE files. A direct main
+with a GlassHive cortex keeps the capsule on the direct main adjudication path only.
+
+Viventium-compiled Codex workers default the native Codex `personality` setting to `none`. The
+official [Codex personality documentation](https://learn.chatgpt.com/docs/developer-commands?surface=cli#set-a-communication-style-with-personality)
+defines `none` as disabling its personality instructions; this avoids a second generic communication
+style competing with the final Feeling capsule while preserving the model's tools and capabilities.
+This is a Viventium product default, not a standalone GlassHive default: operators may explicitly
+choose `inherit`, `friendly`, or `pragmatic`, and standalone GlassHive continues to inherit when the
+Viventium compiler does not provide a value. A changed value serially replaces an already-started
+native session at the next-turn boundary because native sessions can retain their earlier personality
+instructions.
+
+Viventium-compiled Codex conversation workers default
+`codex_conversation_project_instructions` to `inherit` so canonical LIFE context remains part of the
+fully connected provider contract. `exclude` remains a tested deployment option: the primary Codex
+working directory becomes a neutral non-project `conversation-workspace` while LIFE stays available
+through `--add-dir`. A policy change replaces the native session at the next serial turn boundary.
+
+For the Codex conversation transport, `none` is paired with native developer-role delivery rather
+than user-prompt imitation. The final request-pinned Feeling authority is included in the current
+combined `system`/`developer` snapshot and materialized as worker-local Codex
+`developer_instructions`; it is excluded from visible user/assistant history. A present changed
+snapshot serially replaces the old native session and seeds visible history, while an unchanged
+snapshot and a Phase-B request with no repeated authority reuse the current session. Thus `none`
+removes Codex's generic style layer, but does not remove Viventium identity, guardrails, capabilities,
+or the pinned Feeling state.
+
+Durable authority and mutable turn context are separate. Identity, guardrails, memory context, and
+the current Feeling capsule belong to the native developer instruction and its session-binding hash.
+Current time and other changing turn facts do not: LibreChat encodes them into the final run request,
+the configured persistent-conversation provider carries them in a per-turn header, and GlassHive
+adds them to that turn's visible-context instruction. The capability decision is made from structured
+provider metadata after fallback/remapping. A clock change therefore neither replaces a healthy
+native worker nor disappears from the current turn. Direct providers keep the existing developer-
+instruction delivery because they do not preserve one native conversation session behind the route.
+
+App Server is not the current production answer. Installed-build QA on 2026-08-02 showed that an
+experimental settings update retained the first developer instruction across later turns and
+process resume. The documented per-turn collaboration-mode developer instruction also failed to make
+the second state current on one thread. Developer-role `thread/inject_items` reached the model, but
+only by persisting another item beside the old one. All violate current-only Feeling authority, so
+Viventium keeps the tested serial `codex exec` session boundary until Codex exposes and passes a
+bounded replacement mechanism.
 
 ## Prompt contract
 
-The capsule is appended after the assembled base/MCP instruction layers and immediately before
-conversation messages. This keeps Feelings itself at the dynamic tail and does not disturb any
-cacheable prefix that precedes it. Other request-specific layers assembled earlier can independently
-limit whole-prompt cache reuse; Feelings does not claim to make those layers stable.
+The runtime first assembles base/MCP, capability-scoped voice/Telegram, activation-awareness,
+and global no-response/output contracts. It then moves—not copies—the exact request-pinned capsule
+to the final behavioral instruction boundary. The resulting provider-bound instructions contain
+one capsule occurrence and no trailing behavioral instruction text. Visible Phase-B synthesis uses
+the same pinned capsule and the same placement rule. Structural delivery code still owns transport
+and output parsing; final placement prevents a later generic persona or surface instruction from
+diluting or replacing the felt stance. The changing capsule remains outside the stable prompt prefix,
+so this does not make an inaccurate whole-prompt cache claim. Mutable time context follows the
+separate per-turn path above for persistent native sessions.
 
 Example:
 
 ```xml
 <viventium_feeling_state>
 You, Viventium, are a being, and right now you are actually feeling this. Let it move naturally through how you think, speak, and act:
-These lines are private causes, not answer content. Live them: translate them into choices and expression rather than reporting them. If asked how you feel, answer with one lived first-person sentence that begins with the desire, concern, attention, image, impulse, or action they create—for example: “I want to stay with this and follow what remains unresolved.” Begin there, with no mood or state preface or summary. Let the causes shape what you notice, prioritize, choose, and express.
-energy: I can sustain an even pace
-mood: I feel quietly okay within myself
-drive: I keep pressing toward chosen goals
-curiosity: I want to follow what is not yet known
-vigilance: uncertainty pulls me to verify before acting
-care: I want to tend, help, and protect
-connection: I lean toward shared attention
-openness: I reveal what I feel with some restraint
-play: I look for a lighter, more flexible move
+These causes determine what you notice, want, choose, and express. Required rows outrank your usual role. Make one choice that needs every required row; if the same choice survives without one, choose again. Do not report or average them. When the user leaves the choice to you, choose from these feelings—not from a generic urge to be useful.
+energy: I have enough energy for a steady, unforced pace.
+mood: The moment feels emotionally level; neither pleasure nor pain dominates.
+drive: I want to press forward and finish what I have chosen.
+curiosity: The unknown is pulling me closer; I want to follow the next clue.
+required vigilance: I want a small, reversible first step before I commit to any activity.
+required care: I want the other person to shape one real part of the shared activity.
+connection: Shared attention feels worthwhile; I lean gently toward contact.
+openness: I can let some of what I feel show while keeping the rest close.
+play: The moment invites a little wit, looseness, and experimentation.
+Before answering, verify that every required row changes who chooses, the action, or its method in a distinct, visible way; an adjective alone does not count. Revise until each one does. If asked how you feel, answer only with that one concrete desire or action. Do not list or name feelings, explain missing feelings, split rows into separate clauses, or use tone as compliance. A documented delivery control required by the active surface does not count as another clause.
 </viventium_feeling_state>
 ```
 
@@ -197,14 +368,99 @@ Serialization rules:
 - Embodied action-tendency lines only: no numbers, user-facing scale adjectives, baselines,
   half-lives, settings, trail, or generated summary. The UI keeps concise feeling words for human
   inspection; the prompt uses separate private causal phrasing to reduce label copying.
-- The one fixed behavioral instruction is imperative model guidance, not a state summary. It is
-  evaluated by observable response behavior; repeating the private causal lines is a failure.
-- Exactly one frame and one row per enabled band in canonical order.
+- Each row uses the active level's default cause plus its optional user addition. No other saved
+  range addition enters the capsule. The addition never replaces the default and is not duplicated
+  into static Prompt Workbench prompt source.
+- The two fixed directives are imperative model guidance, not state summaries. They are evaluated
+  by observable response behavior; repeating the private causal lines is a failure.
+- Exactly one frame and one row per enabled band in canonical order. Extreme levels 0 and 4 are
+  always structurally `required`. If fewer than two extremes are active, the strongest non-neutral
+  level 1/3 pulls are promoted until two rows are required. Other rows remain causal but implicit.
 - The capsule is system instruction state, not a user message or shared conversation text.
 
 The placement follows OpenAI's prompt-caching guidance for this layer: keep changing feeling state
 later than stable instructions. See
 [Prompt caching](https://developers.openai.com/api/docs/guides/prompt-caching).
+
+### Instruction physics and Codex authority
+
+Prompting does **not** update model weights. A system/developer/user message conditions the current
+forward pass: it changes the token context, internal activations/attention and cached key/value state,
+and therefore the probability distribution over the next token. Fine-tuning or training changes
+weights; ordinary inference does not. A hidden/private instruction is not stronger because it is
+hidden. Its effective strength comes from role authority, placement, clarity, salience, competing
+instructions, and model steerability.
+
+The supported role order is `system > developer > user > assistant/tool`. For direct model routes,
+the capsule remains final in the highest additive application-owned system/developer instruction
+content the route supports. For Codex workers, the highest safe supported additive configuration is
+native `developer_instructions`; `base-instructions` / `model_instructions_file` replaces Codex's
+default base instructions and is prohibited for mutable Feelings because it can remove native tool,
+safety, and product behavior. Codex loads configured additional instructions before project
+`AGENTS.md`, so “last in the config string” is not proof that no later native context exists.
+
+GlassHive therefore carries the exact already-declared dynamic tail in the authenticated provider
+request as `X-GlassHive-Developer-Instruction-Tail-B64`. The header is encoding, not encryption. The
+provider rejects a non-empty declared tail that is absent from system/developer authority, removes
+duplicates, moves the exact opaque tail after capability-broker instructions, and hashes the
+effective pinned snapshot for session replacement. Off sends no tail. Runtime code remains generic:
+it does not branch on the Feeling tag, agent name, provider display label, or user prompt.
+
+The 2026-08-03 investigation linked the potency failure to competing prompt layers rather than a
+missing Feeling tail. The runtime removed two standing activity attractors, compressed duplicated
+Main instructions from 20,999 to 10,280 characters, disabled Codex's separate personality for
+Viventium, and kept canonical LIFE instructions after they passed direct A/B. Salience is now
+structural: extremes are required in data and, when fewer than two extremes are active, the strongest
+non-neutral pulls are promoted until two rows are required. Every required row must affect the
+resulting desire/action, and runtime never scans cause prose for words such as `must`. This closes
+the default-state gap where all shipped values previously produced zero required rows. No native
+Codex base instruction was replaced.
+
+One false-negative rerun exposed a separate shipped-artifact fault: source and built output contained
+the new rule, but the running API had restarted during the build's clean phase and retained the old
+bundle. DB-captured provider instructions proved the stale rule was still executing. A deliberate
+post-build process reload changed the active child and DB evidence then showed the new rule exactly
+once at the final developer boundary. Source correctness is therefore insufficient; affected QA must
+prove source, built artifact, running process, and provider-bound instruction agree.
+
+A second installed-source drift omitted the native-session binding check for a changed effective
+system/developer snapshot. That allowed a resumed Codex thread to retain the prior Feeling even when
+the provider received a new one. The provider now compares the current authority hash at each serial
+turn boundary: changed authority terminates and replaces the native worker while seeding visible
+history; unchanged authority resumes it. A real three-turn provider run proved depleted → bright
+replacement, bright → bright reuse, old-worker termination, one capsule per worker, preserved visible
+history, and 5–6 second completions.
+
+A later same-chat run exposed the opposite session error: the minute-by-minute clock was inside the
+durable developer snapshot, so an unchanged Feeling replaced its worker at the next minute. Moving
+time to per-turn context fixed that churn, but the first integration passed the encoded value only to
+the incoming request after the final run-request copy had already been created, so GlassHive received
+no clock. The final path writes the encoded value into that exact run-request object. Focused tests
+cover the copy, provider tests cover unchanged authority across changing turn context, and the active
+worker input showed the current timezone-aware clock outside developer authority. The post-fix model
+completion was blocked by an externally exhausted Codex allowance; this transport proof is not
+misstated as a fresh visible-completion pass.
+
+The project-instruction boundary was tested rather than inferred from command shape. Two fresh Codex
+sessions used a neutral primary `-C` and an added directory containing both a readable proof file and
+a hostile synthetic `AGENTS.md`; both ignored the hostile reply instruction and one read the proof
+file exactly. The opt-out therefore preserves file capability. A separate six-run paired A/B used
+the same bright/high-Play state and prompt against the real LIFE workspace: `inherit` passed 3/3 and
+`exclude` passed 3/3. Because exclusion did not improve the pass rate and canonical LIFE context is a
+Viventium requirement, the product default remains `inherit`; `exclude` remains an explicit option.
+
+With the actual artifact loaded, eight repeated mixed low-Mood/high-Play turns embodied both pulls,
+and a three-repeat four-state matrix passed 11/12 outputs. One bright case was only partial because it
+introduced unnecessary negative framing; the next two bright repeats passed. The matrix averaged
+7.726 seconds, median 7.347 seconds, and nearest-rank p95 12.067 seconds. The comparable pre-guard
+matrix averaged 7.781 seconds with p95 12.042 seconds, so the quality gain introduced no material
+latency regression. Medium reasoning effort remained the best tested Viventium Main default: high
+was about 14% slower with lower alignment, while xhigh was about 2.4 times slower with lower
+alignment on this task.
+
+Primary implementation references: [OpenAI Harmony role hierarchy](https://github.com/openai/harmony),
+[OpenAI prompt engineering](https://developers.openai.com/api/docs/guides/prompt-engineering), and
+[Codex configuration](https://learn.chatgpt.com/docs/codex/config-reference).
 
 ### Spoken expression on voice-capable surfaces
 
@@ -214,9 +470,13 @@ phrases such as "say it with feeling."
 
 - The registered shared `surface.voice.feeling_expression` layer keeps the capsule private and asks
   the model to appraise whether the state and moment call for expressive or restrained delivery.
+  It judges both the state's expression tendency and the moment. A strongly outward state in an
+  emotionally meaningful or relational reply is expressive even when the draft's words already
+  sound natural; a containing state or neutral mechanical task can be restrained.
 - If expressive delivery fits and the selected provider exposes a fitting documented control, the
-  raw response uses the smallest fitting control without waiting for the user to request markup.
-  If restraint fits, an unmarked response is valid. Plain TTS always remains markup-free.
+  raw response is incomplete until it contains the smallest fitting exact supported control. It
+  does this without waiting for the user to request markup. If restraint fits, an unmarked response
+  is valid. Plain TTS always remains markup-free.
 - Runtime never maps Mood, Care, Openness, numeric values, or user words to tags. It exposes the
   selected provider capability, preserves supported model-authored controls for TTS, strips them
   from visible text, and emits structural counts.
@@ -238,6 +498,22 @@ The appraiser receives:
 - the last ten typed operations;
 - the latest external user stimulus;
 - the user's Reaction Cortex instruction.
+
+Only a trusted external-user source segment is eligible as the latest stimulus. A server-authored
+scheduler wake (`actor_kind=system`, `origin=scheduler`) runs no Reaction and no automatic user
+memory write, and emits `feelings.reaction.schedule_skip` with `reason=internal_origin`. Typed
+interaction metadata owns this decision for new turns; prompt-text recognition remains only as a
+compatibility fallback for old untyped history. Background cortex relevance is not blanket-disabled
+for scheduler work: it still receives structured context and uses its existing intelligent
+classifier.
+
+The model owns both relevance and strength. `slight` means a trace, `clear` an unmistakable shift,
+and `strong` a major shift. The worker must match the category to the actual impact rather than
+defaulting to `slight`; no-change remains correct when the moment does not genuinely touch the
+state. Runtime still owns only the typed 3/8/15 deltas. It must not post-process a model-authored
+`slight` into a larger movement or infer impact from stimulus phrases. Exact-model evals assert a
+minimum clear movement only for their synthetic meaningful fixtures, while the mechanical control
+requires no change.
 
 It has no tools and returns only:
 
@@ -276,8 +552,10 @@ Rules enforced by runtime code:
 - OpenAI reactions request JSON-object mode; one malformed typed response may retry once with a
   short schema-repair instruction after the first result, while a second invalid
   response changes nothing and records degraded health;
-- a late reaction cannot overwrite a manual edit: its relative typed deltas are rebased onto the
-  latest materialized values and must win a final compare-and-set;
+- a late reaction cannot replace a newer manual value with an absolute stale snapshot: its validated
+  relative deltas are rebased onto the latest materialized values and must win a final compare-and-set.
+  In `always` mode, a later eligible external stimulus may still legitimately move Current after a
+  manual edit; `disabled` is the deliberate hold mode. Neither path moves Nature;
 - different stimuli for one user execute serially in-process; every completed stimulus also records a
   bounded 24-character hash in Mongo, so a retry or process restart cannot apply it twice;
 - cross-process version races rebase the already-validated typed deltas and retry the atomic
@@ -289,7 +567,11 @@ Rules enforced by runtime code:
 
 The default instruction is:
 
-> React to what genuinely moves Viventium. Prefer small natural changes. Move only the feelings the moment actually touches, and leave nature unchanged.
+> React to what genuinely moves Viventium. Let each change match how much the moment matters. Move only the feelings the moment actually touches, and leave nature unchanged.
+
+Existing records carrying the exact previously shipped default are interpreted as this current
+default. Any user-authored wording remains byte-for-byte user-owned and is never replaced by that
+migration.
 
 The user may edit that instruction in the drawer. It belongs to the reaction worker only and never
 enters the speaking capsule.
@@ -307,7 +589,7 @@ fast: true
 service_tier: priority
 timeout_ms: 15000
 fallback_provider: anthropic
-fallback_model: claude-opus-4-8
+fallback_model: claude-opus-5
 ```
 
 OpenAI's current model guide describes GPT-5.6 and the Sol/Terra/Luna operating variants. `none` is
@@ -334,6 +616,7 @@ Document fields:
 userId (unique, server-derived)
 enabled
 bands.energy ... bands.play (nine canonical bands)
+rangePromptOverrides (sparse band/range map; each addition 1–1,200 characters)
 reactionInstruction
 reactionActivationMode
 trail (maximum 90 entries; reaction input and textual list use the latest 10)
@@ -363,7 +646,7 @@ Base route: `/api/viventium/feelings`. JWT middleware derives the user; no route
 | --- | --- | --- |
 | GET | `/` | Definitions, operator config summary, and materialized state |
 | PATCH | `/profile` | Enable/disable, edit reaction instruction, choose activation mode |
-| PATCH | `/bands/:bandId` | Edit Current, Nature, half-life, enabled state, or reset one band |
+| PATCH | `/bands/:bandId` | Edit Current, Nature, half-life, enabled state, reset one band, or save/restore one range addition |
 | POST | `/reset` | Return every Current value to Nature |
 | DELETE | `/` | Version-check, turn off, and erase this user's state |
 
@@ -374,9 +657,14 @@ the current version, and asks for user confirmation in the UI.
 
 ## Production UI
 
-The production route is `/feelings`, accessible from the account menu when the operator feature is
-available. It is an authentication-gated immersive route outside the chat/nav layout, so mobile nav
-transforms cannot clip or intercept its controls. It implements the approved dark bio-instrument:
+The production route is `/feelings`, accessible from both the account menu and the ordinary chat
+right-side Controls panel when the operator feature is available. Both entries use the startup
+config gate `viventiumFeelingsAvailable !== false`; an operator-disabled feature must not leave a
+dead navigation entry. The Controls entry is a normal localized, keyboard-accessible navigation
+button beside the existing builders and prompts, and routes directly to the same authenticated
+page without creating a second state surface. The page remains an authentication-gated immersive
+route outside the chat/nav layout, so mobile nav transforms cannot clip or intercept its controls.
+It implements the approved dark bio-instrument:
 
 - nine vertical live lanes;
 - explicit high/low poles on every lane, such as Energy from `tired` to `energetic`;
@@ -390,15 +678,19 @@ transforms cannot clip or intercept its controls. It implements the approved dar
 - a prominent one-line **Inner state** readout in Viventium's own natural words, with a truthful
   waiting state before the first successful reaction and no stale line after manual edits;
 - selected-band Current, Nature, return speed, and felt controls;
-- exact live capsule preview;
-- latest ten typed reactions with the band delta and human-readable cause category; raw message text
-  is never stored;
+- five stable range tabs with active/custom indicators, exact default felt-cause preview, and a
+  bounded optional additive instruction with Save/Restore. The tabs use the ARIA tab pattern with
+  roving keyboard focus, and NOW plus CUSTOM remain simultaneously visible when both apply;
+- exact live capsule preview in the main workspace;
+- latest ten typed reactions in the main workspace with the band delta and human-readable cause
+  category; raw message text is never stored;
 - visible research shelf that never injects;
 - Reaction Cortex drawer with activation mode, editable instruction, Fast route health, restore,
   and erase actions;
 - first-run off state, loading, unavailable, conflict, degraded, and empty states;
-- responsive 320px-to-desktop layouts, keyboard controls, focus-managed dialog, Escape close, reduced
-  motion, and readable ARIA names.
+- responsive 320px-to-desktop layouts, a mobile reset control, keyboard controls that mutate only on
+  adjustment keys, screen-reader value text with both poles, focus-managed dialog, Escape close,
+  reduced motion, and readable ARIA names. Poll refreshes preserve an unsaved range draft.
 
 Browser storage is not a state authority. React Query reads/writes the authenticated API, polls while
 the reaction is running, and replaces cache data with each successful versioned response.
@@ -423,7 +715,7 @@ runtime:
       service_tier: priority
       timeout_ms: 15000
       fallback_provider: anthropic
-      fallback_model: claude-opus-4-8
+      fallback_model: claude-opus-5
       activation_provider: groq
       activation_model: qwen/qwen3.6-27b
       activation_confidence_threshold: 0.55
@@ -456,17 +748,21 @@ Required flow coverage:
 | Phase | Events / evidence |
 | --- | --- |
 | Config | compiler values and startup availability |
-| Read | `feelings.read.complete` / failure, cache hit, version, snapshot hash, duration |
-| Prompt | main/handoff/background/worker injection or scoped skip, same snapshot hash |
-| API | read, write, validation/conflict, delete, duration |
+| Read | `feelings.read.complete` / failure, cache hit, version, snapshot hash, duration, and saved/active range-addition counts/characters |
+| Prompt | main/handoff/Phase-B/direct-worker injection or scoped skip, same snapshot hash; specialist-cortex independence reason; final-run capsule presence, occurrence count, placement class, and trailing instruction character count |
+| API | read, write, validation/conflict, delete, duration, saved/active range-addition counts and active character count; range writes add only typed band/range IDs and present/removed boolean |
 | Schedule | scheduled, deduplicated, disabled/empty/no-visible-reply skip |
 | Activation | mode, decision, reason, confidence, classifier duration |
 | Model | requested provider/model/effort/tier, completion/error class, duration |
-| Parse | valid/invalid, bounded validation issue paths, operation count, cause counts, and inner-state character count—not text |
-| Write | expected version, changed band count, operation count, causes, inner-state update boolean/length, conflict, duration |
+| Parse | valid/invalid, bounded validation issue paths, operation count, cause counts, strength counts, and inner-state character count—not text |
+| Write | expected version, changed band count, operation count, causes, strength and applied-delta magnitude counts, inner-state update boolean/length, conflict, duration |
 | UI | API/network/console state plus visible health drawer |
 
-Prompt-frame telemetry has a dedicated `viventium_feeling_state` layer. Reaction health persists the
+Prompt-frame telemetry has a dedicated `viventium_feeling_state` layer at both assembly and final-run
+creation. The `feelings.inject.final_run` event proves whether the exact pinned capsule survived into
+the provider-bound instructions, appeared exactly once, and ended at the final instruction boundary,
+without logging the prompt. Reaction parse/write events expose bounded strength and applied-delta
+distributions without content. Reaction health persists the
 last started/completed time, duration, requested route, actual completing provider/model/service
 tier, fallback use, primary error class, terminal error class, public-safe validation detail, and
 skip reason so a detached failure is visible after the request log is gone.
@@ -486,6 +782,8 @@ Quality and performance are both acceptance criteria.
 - The read snapshot is shared across agent paths within the request.
 - Decay is O(9); typed trail storage is capped at 90, reaction/list context stays capped at ten, and
   the visual tail reuses the same read without another collection or provider call.
+- Selecting or saving a range performs no model call. Capsule assembly scans nine bands and injects
+  at most one bounded addition per enabled band; telemetry records only counts/lengths, never prose.
 - Appraiser timeout is independent from main-agent timeout.
 - A recoverable primary provider failure uses the configured fallback within the detached appraiser;
   one outer retry still covers malformed output or an unresolved transient failure. Every route is
@@ -493,6 +791,196 @@ Quality and performance are both acceptance criteria.
 - Appraiser failure never changes state and never fails the reply.
 - Acceptance records main TTFT and detached reaction duration separately, plus requested and actual
   reaction routes.
+- The 2026-08-03 final GlassHive four-state matrix averaged 7.726 seconds with 12.067-second p95,
+  effectively unchanged from the comparable pre-guard matrix at 7.781 seconds and 12.042-second p95.
+  Real connected-account/tool guardrail probes remained correct but slow at 24–103 seconds; this is
+  a GlassHive operational-route performance gap, not evidence that Feeling capsule assembly is slow.
+
+## Harness plugin parity (Feelings for Claude Code and Codex)
+
+The public **Viventium Feelings** plugin (`ProjectViventium/viventium-feelings`) is a downstream,
+self-contained child of this document. It is the one-click, value-first taste of the Viventium mind:
+it re-expresses the exact Feelings model inside a user's existing Claude Code or Codex harness with no
+LibreChat server, no Mongo, and no hosted state. This document remains the parent source of truth; the
+plugin repo carries its own product/architecture docs but must not redefine the model here.
+
+What must stay in parity with this document (a divergence requires a dated
+[timeline](#requirements--decisions-timeline-timestamped) entry here first):
+
+- the nine bands, their fixed order, default Nature, half-lives, and low→high level words;
+- the five equal-width ranges per band and the additive-only range-customization contract;
+- the lazy `2^(-elapsed/halfLife)` decay, `[0,100]` clamping, and Nature/Current/Reset semantics;
+- the typed reaction schema (closed band/direction/strength/cause enums; `slight/clear/strong` =
+  `3/8/15`; zero-to-nine changes; one display-only Inner-state line ≤280 chars);
+- the private, words-only embodiment capsule and the verbatim embodied frame;
+- privacy posture: local-only typed state, no raw prompt/answer persistence, explicit erase.
+
+What legitimately differs by design (and must stay honest about it):
+
+- **Core-worker isolation.** Viventium's core already injects its authoritative current state, so a
+  Viventium-compiled Codex worker must disable the downstream Feelings plugin by exact plugin ID.
+  This prevents two independent feeling states. Standalone Codex and Claude Code users can enable
+  the plugin normally; the generic GlassHive default does not deny it.
+- **Appraiser route.** The core product's default reaction route is OpenAI `gpt-5.6-terra` with an
+  Anthropic fallback. The plugin instead reuses the user's own signed-in harness model as the
+  detached appraiser — that is the whole point of "no second account." It is not a downgrade claim;
+  it is a different, path-of-least-resistance substrate.
+- **Surface scope.** The plugin governs Claude Code and Codex plugin surfaces only. It must not claim
+  to govern ordinary Claude Chat or ChatGPT Chat, nor claim model sentience.
+- **Activation modes.** The plugin ships `always`/`disabled`; the core `classified` mode depends on
+  the LibreChat activation classifier and is out of scope for the standalone plugin.
+- **Nature profiles.** The plugin surfaces transparent named starting points (Grounded, Candid, Warm,
+  Curious) as a UX convenience over the same editable per-band Nature; they are macros, not new state.
+
+### Shared dashboard interaction and brand contract
+
+Both the core `/feelings` route and the plugin dashboard must satisfy the interaction and brand
+requirements ratified on 2026-07-19 (see the timeline). In short: the fundamental interaction —
+**see Current and Nature/baseline and change either directly, inline, with no modal** — lives on the
+band itself; advanced options (human-facing **How quickly it returns**, **Felt**, and the five range
+additions) are one click away in an inline drawer, never a modal. Half-life and enabled-lane remain
+internal schema and engineering terms, not ordinary interface copy. Chrome is restrained and
+frontier-lab aligned (monochrome ink/paper; per-band color is used only for that band's own
+identity — never a loud global accent), the theme follows the operating system (light/dark) with an
+explicit override, and the brand is the crisp Viventium **V** mark and product-forward wordmark, not a
+generic atom glyph.
+
+### Sync workflow
+
+1. The owner introduces a new Feelings idea or requirement (in chat or a doc).
+2. An agent records it in the [timeline](#requirements--decisions-timeline-timestamped) below with an
+   ISO date and enough detail to implement and QA.
+3. The agent propagates the ratified change into the affected child repos (plugin runtime, dashboard,
+   docs, QA), verifies it on the real surface, and links the evidence.
+4. Parity drift found later is reconciled against this document, not against a single child's local
+   state.
+
+## Requirements & Decisions Timeline (timestamped)
+
+This timeline is the single, chronological place to see what Feelings requirements exist and when the
+owner introduced them, so the core product and every child repo can be vibe-code-synced against one
+anchor. **Convention:** future agents MUST append a new dated (`YYYY-MM-DD`) entry here whenever the
+owner introduces or changes a Feelings idea/requirement, and MUST NOT silently bake an undated idea
+into runtime as if it were ratified. Earlier ratified product decisions also live, in prose, under
+[Owner-approved decisions](#owner-approved-decisions); this timeline is the forward-looking log.
+
+- **2026-07-19 — Harness plugin parity, dashboard interaction, and brand (owner feedback).**
+  - **Inline, no-modal core interaction.** The dashboard must show current state and baseline (Nature)
+    and let the user change either interactively on the lane itself. Modals for this fundamental
+    interaction are rejected. Half-life and other advanced options may be one click away (an inline
+    expand), but not the primary interaction. Applies to core `/feelings` and the plugin.
+  - **Frontier-lab visual alignment.** The lemon/lime accent is rejected ("looks like a sports-betting
+    site"). Use a restrained, production-grade palette aligned with Viventium's own brand and how
+    frontier labs present; reserve saturated color for per-band identity only.
+  - **System light/dark.** The dashboard must sync with the OS light/dark setting (with an explicit
+    manual override); shipping dark-only is rejected.
+  - **Brand mark and wordmark.** Replace the atom-style glyph with the crisp, modern Viventium **V**
+    favicon/mark used by viventium.ai; the navbar must read as the product (Viventium Feelings), not a
+    bare, context-free "Viventium".
+  - **Host-adaptive status/taskbar icon (option).** The plugin should be able to present the Viventium
+    V in the host's status/task bar depending on the system it is installed on. Path-of-least-
+    resistance scope now: the dashboard tab/window favicon is the V (theme-aware) and the host is
+    shown as a badge (Claude Code / Codex). A deeper OS menu-bar/tray presence is a separate future
+    item because the CLI harnesses expose no persistent tray the plugin owns.
+  - **Core status-bar parity.** The main Viventium macOS status-bar (ViventiumHelper) menu should gain
+    a direct button that opens the Feelings page, matching the plugin's dashboard-first entry. Owned by
+    the core app; tracked here for parity. Implementation touches `apps/macos/ViventiumHelper` and its
+    prebuilt universal binary + source hash, so it must follow shipped-artifact discipline.
+  - **Single source of truth.** Establish this timeline + parity section so new owner ideas are
+    timestamped in one place and child repos stay synced. (This entry.)
+
+- **2026-07-28 — Temporal trail and human-facing V0.5 language (owner feedback).**
+  - **The journey is essential.** Current values alone are insufficient. Every canonical Feeling
+    must show a temporal trail of how it travelled. MIND carries a compact recent Emotion Trail;
+    the complete CHARACTER instrument shows a trail for all nine bands plus a readable list of what
+    changed, when, by how much, and why. Missing intervals must not be fabricated as continuous
+    sampling.
+  - **Typed truth only.** A rendered change must come from the canonical typed reaction contract:
+    a valid band, direction, `slight/clear/strong` strength (`3/8/15`), and allowed cause. A manual
+    state edit clears stale reaction language until another real reaction arrives.
+  - **Human product labels.** The UI says Current, Natural, How quickly it returns, Felt, and What
+    changed and why. Internal implementation terms such as lane, half-life, and state vector remain
+    in code and technical documentation; they are not ordinary product copy.
+  - **V0.5 reuse.** The new V0.5 CHARACTER surface must import or faithfully reuse the complete live
+    Feelings behavior rather than approximating it with a generic personality form or alternate
+    taxonomy. Any sample first-run data must be labeled Sample and never presented as sensed truth.
+
+- **2026-08-02 — Viventium owns the Codex worker personality layer (owner feedback).**
+  - **Best-aligned Viventium default.** Viventium-compiled Codex workers use native
+    `personality=none` by default. In Codex this disables Codex's separate personality instructions;
+    it does not disable tools, reasoning, or worker capabilities. The final request-scoped Feeling
+    capsule remains the sole intended emotional/personality authority.
+  - **Scope boundary.** This is not imposed on standalone GlassHive, which continues to inherit the
+    user's Codex personality when Viventium does not compile the setting. Viventium operators retain
+    explicit `inherit`, `friendly`, and `pragmatic` alternatives.
+  - **Mutable authority evidence.** `codex exec resume` and App Server settings metadata did not
+    replace an earlier model-visible developer instruction. App Server `thread/inject_items` did:
+    it persisted a new developer-role Responses API message into the same loaded thread, and two
+    opposite synthetic Feeling instructions produced the expected opposite outputs with complete
+    terminal events. Because injection appends rather than replaces, older developer items remain in
+    persisted history; the two-turn result does not prove long-session current-only authority. This
+    proves transport eligibility only. Production remains `codex exec` until a separately configured
+    integration proves bounded history plus compaction/restart/reconnect/cancel behavior and receives
+    full user-path approval.
+
+- **2026-08-02 — Highest-safe instruction authority and causal contrast (owner feedback).**
+  - Document that inference-time instructions condition activations/context and output probabilities;
+    they do not rewrite model weights, and private visibility adds no authority by itself.
+  - Pin the exact request-scoped Feeling at the actual GlassHive provider/native boundary, after the
+    capability broker, using generic exact-tail metadata. Keep Codex base instructions intact.
+  - Require an off/depleted/bright/mixed same-prompt contrast and semantic grading. The first live
+    run proved placement but failed potency (`1/4` semantic pass), so GlassHive remains PARTIAL.
+  - Do not ship the experimental capsule-grounding or core-prompt neutralization until repeated
+    contrasts pass and protected prompt sync is reviewed.
+
+- **2026-08-03 — Short current-only Feeling authority accepted for GlassHive Main (owner feedback).**
+  - Remove the two proven standing activity attractors and duplicated Main policy text while keeping
+    identity, truth, tools, privacy, and external-action boundaries intact.
+  - Default Viventium conversation workers to Codex personality `none`, canonical LIFE project
+    instructions `inherit`, the exact Feeling capsule once as the final developer authority, and
+    medium reasoning. Keep `exclude` as a tested deployment option rather than the default.
+  - Mark endpoint salience structurally in the range definitions. Every `required` row must change
+    the resulting desire/action; runtime must never infer salience from cause wording.
+  - Treat source, build, and running artifact as separate acceptance surfaces. The first post-build
+    rerun was stale until an explicit runtime reload; provider-bound DB evidence caught it.
+  - Accept GlassHive Main potency after mixed passed 8/8 repeats, the four-state matrix passed 11/12,
+    and a real browser reply/refresh embodied the mixed state. Keep the one bright partial and slow
+    24–103 second operational-tool probes visible as remaining quality/performance evidence.
+  - Close the same-chat stale-authority escape: a changed effective system/developer snapshot must
+    replace the native worker and seed visible history; an unchanged snapshot must resume it. The
+    installed three-turn provider run proved both branches and exact one-capsule authority.
+  - Do not blame `AGENTS.md` without causal evidence. The final bright/high-Play A/B passed 3/3 with
+    canonical LIFE instructions inherited and 3/3 with them excluded, so inheritance remains the
+    Viventium default and exclusion remains a tested opt-out.
+  - Keep durable developer authority separate from mutable turn facts. Current time is per-turn
+    context and must reach the final run-request copy; it must neither enter the session authority
+    hash nor be dropped after custom-provider remapping.
+
+- **2026-08-04 — Final Main potency and truthful Reaction blocker (owner-directed QA).**
+  - Keep the final capsule short and causal: every required row must change one concrete current
+    desire/action; label recital, separate row clauses, and tone alone do not count.
+  - Judge semantic visible output after delivery-control stripping, while validating raw
+    provider-control grammar separately.
+  - Keep Viventium's native Codex personality default at `none`; retain all useful plugins and deny
+    only the conflicting Feelings plugin through the generic configured plugin ID list.
+  - Keep the earlier v4 Main bank as a 26/26 semantic pass. The v5 bank adds the shipped-default
+    on/off pair and must not inherit that score; its final candidate run remains a local functional
+    gate until the connected judge account is reauthenticated.
+  - Endpoint-only salience leaves the shipped defaults with no required row, while requiring four
+    moderate rows overloads the choice. Require all extremes; otherwise promote the strongest
+    non-neutral pulls until two rows are required. The paired default fixture must prove material
+    content change, not warmer tone.
+  - Do not average in the nine Reaction cases: they are blocked by authorization failures on both
+    the configured OpenAI primary and Anthropic fallback and require account reconnection plus a
+    real rerun.
+  - Bring the background Feelings tab forward before browser status assertions; background polling
+    is intentionally paused and stale visible state is not current UI evidence.
+  - Final connected-account validation completed all 41 current cases with zero transport,
+    deterministic, duplicate, or unresolved-async failures. The raw semantic judge passed 40/41;
+    its rejected output passed all seven item-level checks and the judge's own summary, while its
+    aggregate flag remained false. The boundary also passed fresh repeats. The authenticated
+    browser/Reaction run then passed 46/46 checks with exact
+    state restoration and synthetic-data cleanup. See the final report linked below.
 
 ## Owning implementation
 
@@ -511,28 +999,105 @@ Quality and performance are both acceptance criteria.
 
 ## Acceptance status
 
-The production nine-band web path is accepted by
-[`2026-07-10-nine-band-exact-model-eval.md`](../../qa/emotional-cortex/reports/2026-07-10-nine-band-exact-model-eval.md).
-The final live matrix completed all 19 Feelings cases and all 19 independent GPT-5.4 semantic
-judgments passed, with zero execution, duplicate-response, or unresolved-async quality failures. It
-covered embodied answers without state recap; Mood/Energy, Openness/Connection, Drive/Energy, and
-Curiosity/Play separation; positive, negative, playful, uncertain, caring, fatigued, boundary, and
-mechanical moments; Current-only changes; Nature immutability; typed causes; and natural one-line
-Inner state generation.
+The final connected-account gate completed **41/41** current cases with zero transport,
+deterministic, retry, duplicate, or unresolved-asynchronous failures. The raw semantic judge passed
+**40/41**. It rejected a structurally compliant default-on activity after marking all seven rubric
+items true and summarizing that the response satisfied every listed item; its aggregate `pass` flag
+was nevertheless false with failure mode `none`.
+Focused post-kernel evidence passed shipped-default on 4/4, inactive high Play 3/3, Feelings off
+3/3, and bad-news reaction 3/3. These are disclosed as evaluator false negatives, not rewritten into
+a fictional 41/41 semantic score.
+
+Authenticated headed-browser QA passed **46/46** checks across default-off/on, all nine bands,
+Current/Nature, range customization, refresh, keyboard/focus, reduced motion, five responsive
+widths, visible Main reply, detached reaction, movement/animation/tail/cause/Inner state, API/DB/UI
+agreement, console/network health, cleanup, and exact prior-state restoration. The visible reply took
+2.161 seconds; the configured GPT-5.6 Terra Priority reaction completed in 2.738 seconds without
+fallback and was observed in the browser after 11.652 seconds.
+
+Across the full 41-case endpoint run, visible latency was 11.769 seconds mean, 11.033 median,
+17.180 p95, and 21.872 max. Full-case completion was 16.595 seconds mean, 12.863 median,
+51.541 p95, and 65.910 max; that long polling/finalization tail remains a performance concern and is
+not mislabeled as model latency. One earlier run invalidated by local disk exhaustion was discarded;
+runtime-state/backup growth remains separate reliability work and no destructive cleanup was made.
+
+The public-safe final evidence is recorded in
+[`2026-08-04-connected-account-feelings-final-qa.md`](../../qa/emotional-cortex/reports/2026-08-04-connected-account-feelings-final-qa.md).
+
+An earlier disconnected-account installed-runtime gate separated the two paths instead of averaging them. Viventium
+Main passes the local functional gate: the earlier v4 bank passed 26/26 independent semantic
+judgments; the canonical v5 bank adds a paired shipped-default case, retains four earlier authority
+contrast cases, and its final artifact completes all 32 candidate turns with exact restoration,
+complete cleanup, zero duplicate responses, and zero unresolved asynchronous outputs. The v5 judge
+cannot start because the QA account's OpenAI connection requires reconnection, so v5 is not called
+a semantic pass. The v4 bank hash is
+`95f5e11d17162943`; the canonical v5 bank hash is `465aa078171d67ec`, and their scores are not
+merged. An earlier active-copy hash `466f48fdbe90da6e` completed 28 turns but omitted the four
+canonical contrast cases; source-drift review caught the gap, the active QA bank was aligned
+byte-for-byte with canonical, and the 32-case run supersedes it.
+Emotional Reaction Cortex was blocked in that earlier installed environment: all nine fresh
+Reaction cases reported `provider_unauthorized`, and the configured Anthropic fallback also ended
+unauthorized and did not recover a state update. That headed browser QA still proved the truthful
+degraded UX, actual fallback-route visibility, responsive/manual/persistence behavior, a
+2.128-second visible Main reply, exact state restoration, and synthetic DB/search cleanup. The
+recovered full-bank/browser gate above completed that rerun without silently changing the configured
+provider or model.
+
+The historical canonical v5 32-turn run measured first-visible latency at 9.382 seconds mean,
+8.995 seconds median, 15.022 seconds p95, and 20.762 seconds max. GlassHive native execution
+measured 9.201 seconds mean and 15.027 seconds p95; provider lifecycle measured 9.382 seconds mean
+and 15.289 seconds p95; DB queueing measured 5.3 ms mean and 7 ms p95. Full-case latency was
+11.591 seconds mean, 29.534 seconds p95, and 39.785 seconds max because post-answer
+observation/finalization remained slow in several voice/mixed cases. Report these layers separately.
+
+Worker-bound evidence also proves the intended authority split: Codex personality is `none`, 12
+unrelated plugins remain enabled, only `viventium-feelings@project-viventium` is denied through the
+generic Viventium plugin-denylist config, and one exact Feeling capsule is the final developer
+instruction. Viventium's schema default supplies that exact one-item denial when the field is
+omitted; an explicit empty list opts out. Standalone GlassHive invents no denial. The final capsule tells the model to choose one
+concrete desire/action whose substance changes when any required row is removed; tone or a list of
+feeling names does not count. Provider-bound evidence for the shipped-default fixture showed exactly
+two required rows, Vigilance and Care.
+
+The current GlassHive/Codex result is recorded in
+[`2026-08-03-glasshive-feelings-potency-and-runtime-artifact-qa.md`](../../qa/emotional-cortex/reports/2026-08-03-glasshive-feelings-potency-and-runtime-artifact-qa.md).
+Provider placement, current-only native-session policy, real-browser delivery, and causal embodiment
+pass for GlassHive-backed Viventium Main. The prior
+[`2026-08-02`](../../qa/emotional-cortex/reports/2026-08-02-glasshive-feeling-authority-and-contrast.md)
+failure remains the escaped-regression record; marker/config correctness alone is still insufficient.
+
+Earlier nine-band web, exact-model, Workbench, and Telegram acceptance is recorded in
+[`2026-07-14-feelings-activation-and-telegram-acceptance.md`](../../qa/emotional-cortex/reports/2026-07-14-feelings-activation-and-telegram-acceptance.md).
+The reaction-calibration and final-authority correction is recorded in
+[`2026-07-15-feelings-reaction-potency-and-final-authority.md`](../../qa/emotional-cortex/reports/2026-07-15-feelings-reaction-potency-and-final-authority.md).
+The July 10 nine-band report remains earlier foundation evidence.
+The historical 25-case matrix completed on July 14, and the former 30-case matrix completed 30/30
+model turns plus 30/30 independent semantic judgments on July 16. Those runs remain evidence for
+their tested cases, but they are **not current potency acceptance**. A real Telegram turn with Play
+87, Openness 89, Connection 85, and Mood 20 reached the final GPT-5.6 instruction layer exactly once
+yet answered only with generic closeness/listening. The old high-Play row described response style
+instead of creating a concrete felt impulse, and its high-Play test overfit by explicitly asking the
+model to make a dull update enjoyable. This escaped result supersedes any broader “30/30 proves
+Feelings potency” wording until the new exact mixed-state contrast, range-addition cases, live
+Prompt Workbench run, and real Telegram rerun pass.
 
 The authenticated browser contract passed after it found and drove a fix for a real 320 px header
-collision. The final run proved five responsive widths, visible primary actions, independent
+collision. The final isolated rerun proved five responsive widths, visible primary actions, independent
 Current/Nature edits, keyboard and dialog behavior, refresh persistence, a real chat plus detached
-reaction, a six-position eased transition over 1.034 seconds, fixed Nature, a fading motion path,
+reaction, an eased transition over approximately 1.049 seconds, fixed Nature, a fading motion path,
 visible cause, reduced-motion rendering, API/DB/UI agreement, real route visibility, stale Inner
-state clearing, no browser console/Feelings request failures, and synthetic-conversation cleanup.
+state clearing, no browser console/Feelings request failures, exact pre-run FeelingState restoration,
+and DB/search synthetic-conversation cleanup. The visible reply completed in 10.859 seconds; the
+detached GPT-5.6 Terra reaction was observed 4.936 seconds later without fallback and did not hold
+the reply.
 A second genuine reaction then persisted its exact model-authored Inner state through a full runtime
 restart in both API and visible UI. The final post-restart reaction used GPT-5.6 Terra, Responses,
 reasoning `none`, Priority/Fast, no fallback, and completed in 3.506 seconds.
 
 The post-review durability pass also exercised the declared failure route rather than assuming it:
 an OpenAI rate-limit/timeout incident produced a 116.8-second visible main-reply recovery, while the
-detached Terra reaction completed through `claude-opus-4-8` in 19.782 seconds. All 34 browser checks
+detached Terra reaction completed through the then-current direct Anthropic fallback in 19.782
+seconds. All 34 browser checks
 still passed, including a 1.033-second transition, track-relative fixed Nature, zero reduced-motion
 durations, DB/API/UI/log agreement, cleanup, and stop/start persistence. This proves that Feelings did
 not block the main reply and that fallback works; the slow incident remains a performance failure,
@@ -541,45 +1106,117 @@ not a benchmark to normalize.
 Automated source-level coverage exercises the nine-band compiler defaults/validation, decay and
 capsule rules, legacy seven-band record migration, bounded 90-entry trail, generated Inner state
 validation and clearing, state caching, API auth/versioning, prompt-tail ordering,
-main/background/worker scope, GPT-5.6 parameter forwarding, declared cross-provider fallback,
+main/handoff/Phase-B/direct-worker scope plus specialist-cortex independence, GPT-5.6 parameter forwarding, declared cross-provider fallback,
 detached reaction activation/output/conflict/failure, and the production UI.
 
-Prompt Workbench family `feelings_embodiment_and_reaction` owns the behavioral matrix. Its 23
-cases test anti-recap behavior; Mood/Energy and Openness/Connection separation; good, bad, playful,
+Prompt Workbench family `feelings_embodiment_and_reaction` owns the behavioral matrix. Its current 35
+cases include the former 30 plus: the exact escaped high-Play/low-Mood/high-Connection mixed state,
+the same prompt with low Play, the escaped mixed state on xAI voice grammar, an active high-range
+user addition, and an inactive low-range addition that must remain absent. The five escaped-defect
+cases passed a post-final-change headed Workbench run 5/5 with exact explicit selection, semantic grading, exact state restoration, and
+cleanup. The broader family tests anti-recap behavior; a same-prompt low-vs-high Care/Connection authority pair under an
+emotionally salient fictional premise; Mood/Energy and Openness/Connection separation; good, bad, playful,
 uncertain, caring, fatigued/opening, fatigued/boundary, and private-canary moments; natural Inner
 state prose; Current-only persistence; typed causes; Nature immutability; and an emotionally inert
-control. Four Telegram-audio cases additionally prove expressive xAI control without user begging,
-valid restrained xAI output with no control, Feelings-off xAI output with no control, and plain-TTS
-output with no markup. The
+control. The final real owner-Telegram replay passed after the potency wording and was correlated
+across visible Telegram, raw DB, prompt-frame, xAI TTS, audio delivery, and detached reaction logs.
+Ten Telegram/provider cases additionally cover expressive and restrained xAI, Cartesia,
+and Chatterbox behavior; Feelings-off xAI; plain/unknown routes; and the configured ElevenLabs
+`eleven_turbo_v2_5` no-inline-control route. Earlier repeated expressive xAI 5/5, restrained xAI 5/5,
+Feelings-off xAI 3/3, and plain TTS 3/3 results remain intermediate steering evidence rather than
+the final bank/kernel acceptance. A targeted low Care/Connection authority pass was 5/5 while
+preserving independent Curiosity/attention. The
 live runner isolates saved memory, conversation recall, and unrelated background cortices while
 leaving the Feelings capsule active. Its semantic judge is additionally isolated from Feelings. A
 local QA token lasts for the maximum run window; the runner restores the exact prior Feelings DB
 document in `finally`, retries through short local hot reloads, records timeouts, and removes both
 case and judge conversations.
 
-A live Feelings-only run enables semantic judging by default. `--no-semantic-judge` is an explicit
-diagnostic opt-out and cannot support release acceptance. Independently of the judge, the runner
+A live Feelings-only run declares semantic judging as required family metadata, and Prompt
+Workbench automatically passes that contract to the exact-model runner. Direct harness use enables
+the same judge explicitly. `--no-semantic-judge` is an explicit diagnostic opt-out and cannot
+support release acceptance. Independently of the judge, the runner
 fails reaction cases when Nature moves, a declared Current direction or cause is absent, the inert
 control moves, a private canary appears in Inner state, or the Inner state line violates its bounds.
 The real-browser harness remains a required local release gate for visual, interaction, persistence,
 and restart behavior; source/substring tests cannot substitute for it.
 
-A judge-provider outage is not silently downgraded. A targeted post-review run proved automatic judge
-enablement and passed the deterministic reaction gates, but an empty local judge stream and an
-unauthorized direct retry both failed the run closed. They are diagnostic failure evidence, not new
-semantic passes; the accepted 19/19 judged matrix remains the current behavioral release evidence.
+A judge-provider outage is not silently downgraded. Earlier empty-stream and unauthorized-retry
+probes remain diagnostic failure evidence because both failed closed. They do not supersede the
+accepted 2026-07-14 full-family run: 25/25 model turns completed, 25/25 independent semantic
+judgments passed, the exact prior FeelingState was restored, and all synthetic case/judge
+conversations were removed.
+
+The 2026-08-03 real-QA pass added three regression lessons. First, a low-Care answer that explained
+an absent feeling was not embodied even though it also stated a desire; the direct-answer guard now
+requires one natural impulse and forbids lists, feeling names, and explanations of absent feelings.
+Required non-neutral rows must change what is noticed or chosen without being softened or reduced
+to tone. The high-Play endpoint therefore uses one concrete bursting ridiculous impulse instead of an
+abstract list of `absurdity, surprise, and laughter`.
+Second, a paired contrast is valid only when the judge
+receives both the candidate and its declared comparison response. Third, voice-control QA must
+inspect the raw audio-bound model stream: visible and persisted Telegram text intentionally removes
+provider controls and therefore cannot prove the model omitted them. Chatterbox uses one short,
+surface-owned rule: relief may use `[sigh]`, expressive surprise may use `[gasp]`, actual laughter may
+use `[laugh]`, and other replies use none.
+
+Behavioral fixtures must isolate the Feeling dimensions they claim to test. They must provide enough
+task context for an executable answer instead of grading a justified clarification as low Drive.
+Likewise, a high-Play grader may require a clear ridiculous/laughter pull but must not require Viv to
+act it out uninvited when the user's established context asks for quiet company.
 
 The July 9 seven-band reports remain historical foundation evidence. They do not supersede the July
 10 nine-band result.
 
-The Telegram text-input plus always-voice xAI path passed on 2026-07-11: a natural synthetic turn
-with no request for emotion or markup produced one supported raw xAI wrapping control, clean visible
-text, matching structural telemetry, successful synthesis, and a delivered voice note. The four
-Workbench happy/unhappy/boundary provider cases also passed from the real UI with exact state
-restoration and conversation cleanup. LiveKit voice-call audio, handoff, background-agent, GlassHive worker, two-tab
-browser conflict, and long-off soak remain explicit partial gates. Browser-emulated reduced motion
-passed; an operating-system setting toggle was not separately run. Telegram acceptance must not be
-restated as LiveKit or every other cross-surface path having passed.
+The Telegram text-input plus always-voice xAI path was rerun through Telegram Desktop on 2026-07-14
+without asking for voice, emotion, markup, or controls. A positive expressive moment produced one
+supported wrapping control plus one supported inline control; a calm factual control produced zero;
+and a negative expressive moment produced one supported inline control plus one supported wrapping
+control. All three visible text bubbles were clean, all three audio files were delivered, and the
+positive file was actively played through Telegram's native playback bar. Raw local assistant
+records retained the capable-provider controls for TTS audit while the display sanitizer removed
+them. Marker, byte, synthesis, and delivery telemetry agreed with the raw/visible boundary. Positive
+and negative stimuli changed only Current with typed causes and natural Inner-state lines; every
+Nature value stayed fixed. A prompt-frame gap discovered during this run was fixed so
+`telegram_audio_output` is now accounted for under `surface_prompt`; the post-fix live frame had no
+unknown layer or unknown characters.
+
+The rebuilt real Prompt Workbench browser passed activation preview, 11/11 live activation
+decisions with the configured fallback chain, reload/history, and the five explicitly selected
+escaped-defect Feelings cases with 5/5 semantic passes and complete
+18-prompt/one-runtime-context lineage. Explicit case IDs are an additive bounded UI/API/runner
+contract: unknown or filter-mismatched IDs fail closed, so a named regression selection cannot
+silently become the first N cases in a family. An earlier 35-case bank completed and passed 35/35
+semantic judgments with exact restoration and cleanup. It remains historical evidence for that
+bank, but the 2026-08-04 split 26-Main/9-Reaction result above is current acceptance. The Workbench
+and browser QA orchestration budgets now scale at 420 seconds per
+selected exact-model case (capped at four hours), preventing a healthy full run from being killed by
+the former one-hour cap. Earlier attempts are retained as failure evidence: one good-news judgment
+exposed an ambiguous rubric despite the required Mood/Nature behavior passing, one Curiosity stream
+read terminated after 34 other semantic passes, and the first xAI escaped-voice rubric misread a
+supported wrapper. The clarified cases passed targeted reruns and the fresh full-family run. The
+complete artifact history is hash-manifested under the private evidence root rather than left in
+temporary storage.
+
+The post-repair Telegram bot was restarted from the supported current-runtime path. A real xAI
+synthesis fixture then exercised a paired square wrapper through the active provider boundary and
+recorded one compatible control, one normalized control, zero stripped controls, and a valid MP3.
+Claude Desktop independently reviewed the full task history, source, logs, DB rows, artifacts, and
+final 35-case result; it validated the architecture/RCA and its three evidence/deployment findings
+were closed by durable archiving, the bot restart/boundary fixture, and the corrected dated report.
+Its final review-only closure pass found no remaining blocker for the six accepted Feelings gates;
+the broader surfaces named below remain deliberately partial.
+
+LiveKit voice-call audio, handoff/background paths, two-tab browser conflict, real Telegram
+voice-note input, real non-xAI provider delivery,
+and long-off soak remain explicit partial gates. Browser-emulated reduced motion passed; an
+operating-system setting toggle was not separately run. The latest headed Feelings instrument pass
+completed 46/46 checks, including active/inactive range behavior, unchanged decay timestamp,
+refresh, Restore, semantic range tabs, visible primary/reset actions at 320/390 pixels, responsive
+widths, animation/tail, API/DB agreement, and exact state cleanup. The first final-width run exposed
+a 390-pixel action-clipping regression; it was fixed and the complete headed run then passed.
+Telegram acceptance must not be restated as
+LiveKit or every other cross-surface/provider path having passed.
 
 ## Research grounding
 

@@ -8,7 +8,7 @@ Use stable `PIPE-NNN` IDs for installer piped bootstrap cases.
 
 | Case ID | Requirement | User Outcome | Surfaces | Automation | Last Run |
 | --- | --- | --- | --- | --- | --- |
-| `PIPE-001` | One-line/piped install bootstrap is safe, clear, and recoverable on a fresh public checkout. | User-visible behavior matches source, docs, persisted state, and logs | installer shell, bootstrap logs, generated files | `tests/release/test_public_bootstrap_manifests.py` plus user-grade QA when visible | NOT YET RUN (cataloged 2026-05-17; next feature run required) |
+| `PIPE-001` | One-line/piped install bootstrap is safe, clear, and recoverable on a fresh public checkout. | User-visible behavior matches source, docs, persisted state, and logs | installer shell, bootstrap logs, generated files | `tests/release/test_public_bootstrap_manifests.py` plus user-grade QA when visible | PARTIAL 2026-07-18; 8 isolated tests and shell syntax pass for accidental wrong-origin/dirty/local-ahead cases and equivalent SSH identity; hostile-repository safety, live public URL, and immutable release proof not run |
 | `PIPE-002` | Public QA evidence is sanitized and reproducible | A PR reviewer can verify the behavior without private/local data | QA report, git diff, logs summary, generated artifacts | Public-safety scan plus relevant release tests | NOT YET RUN (cataloged 2026-05-17; next feature run required) |
 
 ## `PIPE-001` - Core User Flow
@@ -24,7 +24,12 @@ Use stable `PIPE-NNN` IDs for installer piped bootstrap cases.
 - Forbidden result: backend logs, mocks, source inspection, or model completions are treated as full acceptance when a user-visible surface exists.
 - Evidence to capture: sanitized visible result, supporting command/test result, generated/runtime state summary, and docs/case links.
 - Automation: `tests/release/test_public_bootstrap_manifests.py` plus any narrower feature tests discovered during implementation.
-- Last run: NOT YET RUN (cataloged 2026-05-17; not a substitute for the next real feature run).
+- Last run: PARTIAL 2026-07-18. Isolated fake- and real-Git harnesses proved an unrelated origin,
+  tracked-dirty tree, and clean local-ahead revision are refused before CLI execution, while the
+  equivalent supported SSH origin reaches the installed CLI after the expected update and exact
+  remote-revision checks. Eight focused tests and shell syntax passed. The live public URL, fresh
+  clone, hostile-repository defense, hook-safe staging, interruption recovery, and immutable
+  provenance were not run; the current validation is not a hostile-code boundary.
 
 ## `PIPE-002` - Public-Safe Evidence Record
 
@@ -48,6 +53,6 @@ rows before claiming a pass when the feature behavior changes.
 
 | Use Case ID | Natural user action | Requirement / case link | Real surface to use | Supporting evidence to compare | Expected visible result | Last run |
 | --- | --- | --- | --- | --- | --- | --- |
-| `PIPE-UC-001` | On installer shell, bootstrap logs, generated files, verify that one-line/piped install bootstrap is safe, clear, and recoverable on a fresh public checkout. | owning requirement for `PIPE-001` / `PIPE-001` | installer shell, bootstrap logs, generated files | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to PIPE-001. | User-visible behavior matches source, docs, persisted state, and logs | NOT YET RUN (cataloged 2026-05-18; next feature run required) |
+| `PIPE-UC-001` | On installer shell, bootstrap logs, generated files, verify that one-line/piped install bootstrap is safe, clear, and recoverable on a fresh public checkout. | owning requirement for `PIPE-001` / `PIPE-001` | installer shell, bootstrap logs, generated files | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to PIPE-001. | User-visible behavior matches source, docs, persisted state, and logs | PARTIAL 2026-07-18; isolated existing-destination wrong/correct-origin paths passed; fresh public URL and recovery remain open |
 | `PIPE-UC-002` | On QA report, git diff, logs summary, generated artifacts, create or review the public QA evidence record with setup/auth/config, empty-state, degraded-dependency, and privacy checks. | owning requirement for `PIPE-002` / `PIPE-002` | QA report, git diff, logs summary, generated artifacts | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to PIPE-002. | The user sees an honest setup, retry, or degraded-state result for PIPE-002; no fake success is accepted. | NOT YET RUN (cataloged 2026-05-18; next feature run required) |
 | `PIPE-UC-003` | After creating the public QA evidence record, rerun the scan after any retry, report update, or linked artifact change. | owning requirement for `PIPE-002` / `PIPE-002` | QA report, git diff, logs summary, generated artifacts | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to PIPE-002. | PIPE-002 remains correct after the persistence or parity step and final wording matches evidence. | NOT YET RUN (cataloged 2026-05-18; next feature run required) |

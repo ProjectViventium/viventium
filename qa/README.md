@@ -102,7 +102,21 @@ Each case should make these fields obvious:
 - `Steps`: human-repeatable steps, plus automation command when available
 - `Expected Result`: visible pass criteria, persistence criteria, and any forbidden output
 - `Evidence`: where to find sanitized reports, logs, screenshots, traces, hashes, or DB counts
-- `Last Run`: date, result, environment, and report link
+- `Last Run`: a structured record containing:
+  - `Status`: exactly `PASS`, `FAIL`, `PARTIAL`, or `BLOCKED`
+  - `Date` and `Environment`: dev, installed local production, clean install, or another named
+    supported surface
+  - `Artifact identity`: source/nested commit, parent pin, built artifact, and active installed
+    artifact identity when applicable
+  - `Actual user path`: what was clicked, spoken, heard, viewed, refreshed, or delivered
+  - `Visible/audible evidence`: the user-facing outcome that proves or disproves the requirement
+  - `Supporting evidence`: relevant network, logs, DB/state, generated config, and artifact parity
+  - `Not run / residual gap`: every required branch or surface still missing
+  - `Report`: the dated public-safe result link
+
+Focused automation may be recorded as a supporting sub-result. If the case requires a real user
+path and that path was not run, the overall Last Run remains `PARTIAL` or `BLOCKED`; an automated
+pass is never promoted to user-grade `PASS`.
 
 ## User-Grade QA Bar
 

@@ -21,6 +21,7 @@ APP_FACING_PORT_KEYS = (
     "lc_api_port",
     "lc_frontend_port",
     "playground_port",
+    "prompt_workbench_port",
     "voice_gateway_health_port",
 )
 
@@ -187,6 +188,11 @@ def run_in_env(args: argparse.Namespace) -> int:
     command = args.command or ["status"]
     env = os.environ.copy()
     env["VIVENTIUM_DEV_ENV_NAME"] = payload["name"]
+    # This wrapper-owned identity is available even before the dev env has ever compiled.
+    # Stop logic must fail closed to runtime-scoped ownership instead of trusting a generated
+    # runtime.env that may be absent or stale.
+    env["VIVENTIUM_DEV_ENV_SCOPE_ACTIVE"] = "true"
+    env["VIVENTIUM_DEV_ENV_INSTANCE_ID"] = payload["name"]
     env["VIVENTIUM_SHARED_SINGLETON_SERVICES"] = ",".join(payload["shared_singleton_services"])
     exec_args = [
         str(repo_root / "bin" / "viventium"),

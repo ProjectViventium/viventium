@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 import plistlib
+import pwd
 import re
 import subprocess
 import sys
@@ -33,9 +34,18 @@ import power_budget
 DEFAULT_SCHEDULE = "0 3 * * *"
 DEFAULT_TIMEZONE = "local"
 LAUNCH_AGENT_LABEL = "ai.viventium.memory-harden"
+LAUNCHCTL_PATH = "/bin/launchctl"
 PARTIAL_BACKFILL_EXIT = 2
-TRIGGER_EVENT_SCHEMA_VERSION = 1
+TRIGGER_EVENT_SCHEMA_VERSION = 3
+SCHEDULE_V3_OBSERVATION_SCHEMA_VERSION = 1
 SCHEDULE_LIFECYCLE_SCHEMA_VERSION = 1
+DEFAULT_OPENAI_MEMORY_EFFORT_BY_MODEL = {
+    "gpt-5.5": "xhigh",
+    "gpt-5.6-sol": "xhigh",
+    "gpt-5.6-terra": "high",
+    "gpt-5.6-luna": "medium",
+}
+DEFAULT_OPENAI_MEMORY_EFFORT = "high"
 
 
 def parse_env_file(path: Path) -> dict[str, str]:
@@ -102,18 +112,51 @@ def iso_z(value: datetime) -> str:
     return value.astimezone(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
-def local_timezone_name() -> str:
-    tz = os.environ.get("TZ", "").strip()
-    if tz:
-        return tz
+def _valid_timezone_name(value: str) -> bool:
     try:
-        localtime = os.path.realpath("/etc/localtime")
+        ZoneInfo(value)
+    except (ValueError, ZoneInfoNotFoundError):
+        return False
+    return True
+
+
+def local_timezone_name() -> str:
+    for candidate_path in (Path("/etc/localtime"), Path("/var/db/timezone/localtime")):
+        try:
+            resolved = os.path.realpath(candidate_path)
+        except OSError:
+            continue
         marker = "/zoneinfo/"
-        if marker in localtime:
-            return localtime.split(marker, 1)[1]
+        if marker in resolved:
+            candidate = resolved.split(marker, 1)[1]
+            if _valid_timezone_name(candidate):
+                return candidate
+
+    try:
+        candidate = Path("/etc/timezone").read_text(encoding="utf-8").strip()
     except OSError:
-        pass
-    return time.tzname[time.localtime().tm_isdst > 0] or "local"
+        candidate = ""
+    if candidate and _valid_timezone_name(candidate):
+        return candidate
+
+    if sys.platform == "darwin":
+        try:
+            result = subprocess.run(
+                ["/usr/sbin/systemsetup", "-gettimezone"],
+                text=True,
+                capture_output=True,
+                check=False,
+                timeout=2,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            result = None
+        match = re.search(r"Time Zone:\s*(\S+)", result.stdout if result else "")
+        if match and _valid_timezone_name(match.group(1)):
+            return match.group(1)
+
+    tzinfo = datetime.now().astimezone().tzinfo
+    candidate = str(getattr(tzinfo, "key", "") or getattr(tzinfo, "zone", "")).strip()
+    return candidate if candidate and _valid_timezone_name(candidate) else "UTC"
 
 
 def configured_timezone(env: dict[str, str]) -> tuple[str, object]:
@@ -123,7 +166,8 @@ def configured_timezone(env: dict[str, str]) -> tuple[str, object]:
     try:
         return name, ZoneInfo(name)
     except (ValueError, ZoneInfoNotFoundError):
-        return local_timezone_name(), datetime.now().astimezone().tzinfo or timezone.utc
+        fallback = local_timezone_name()
+        return fallback, ZoneInfo(fallback)
 
 
 def public_hash(value: object, length: int = 16) -> str:
@@ -134,8 +178,67 @@ def trigger_events_dir(app_support_dir: Path) -> Path:
     return app_support_dir / "state" / "memory-hardening" / "schedule-events"
 
 
+def schedule_v3_observation_path(app_support_dir: Path) -> Path:
+    return app_support_dir / "state" / "memory-hardening" / "schedule-v3-observed.public.json"
+
+
+def launchd_invocation_proof(args: argparse.Namespace) -> dict[str, object]:
+    """Bind the running process to the loaded LaunchAgent's current job PID.
+
+    This protects cadence health from ordinary manual calls, labels, and orphan/double-forked
+    processes. The local logged-in operator still owns launchd and the receipt store; resisting a
+    malicious local administrator is intentionally outside this local-user trust boundary.
+    """
+    cached = getattr(args, "_launchd_invocation_proof", None)
+    if isinstance(cached, dict):
+        return cached
+    proof: dict[str, object] = {
+        "version": 1,
+        "method": "launchctl_job_pid",
+        "verified": False,
+        "label": LAUNCH_AGENT_LABEL,
+        "pid": os.getpid(),
+        "parent_pid": os.getppid(),
+        "launchctl_status": "not_checked",
+    }
+    if not getattr(args, "scheduled", False):
+        proof["launchctl_status"] = "scheduled_flag_missing"
+    elif sys.platform != "darwin":
+        proof["launchctl_status"] = "unsupported_platform"
+    elif os.getppid() != 1:
+        proof["launchctl_status"] = "parent_not_launchd"
+    else:
+        try:
+            completed = subprocess.run(
+                [LAUNCHCTL_PATH, "print", f"gui/{os.getuid()}/{LAUNCH_AGENT_LABEL}"],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+        except (OSError, subprocess.SubprocessError):
+            proof["launchctl_status"] = "query_failed"
+        else:
+            match = re.search(r"^\s*pid\s*=\s*(\d+)\s*$", completed.stdout or "", re.MULTILINE)
+            observed_pid = int(match.group(1)) if match else None
+            proof["launchctl_status"] = "ok" if completed.returncode == 0 else "job_unavailable"
+            proof["observed_job_pid"] = observed_pid
+            proof["verified"] = bool(
+                completed.returncode == 0 and observed_pid == os.getpid()
+            )
+    setattr(args, "_launchd_invocation_proof", proof)
+    return proof
+
+
+def is_verified_launchd_invocation(args: argparse.Namespace) -> bool:
+    """Return true only when launchd, rather than a caller label, owns this run."""
+    return bool(launchd_invocation_proof(args).get("verified"))
+
+
 def trigger_source_for_args(args: argparse.Namespace) -> str:
     explicit = str(getattr(args, "trigger", "") or "").strip().lower()
+    if explicit == "launchd":
+        return "launchd" if is_verified_launchd_invocation(args) else "launchd_unverified"
     if explicit:
         return explicit
     if getattr(args, "scheduled", False):
@@ -200,13 +303,25 @@ def start_trigger_event(args: argparse.Namespace, env: dict[str, str]) -> tuple[
     if not trigger_source:
         return None
     fired_at = utc_now()
-    local_fired_at = fired_at.astimezone()
+    local_fired_at = fired_at.astimezone(ZoneInfo(local_timezone_name()))
     event_id = f"{trigger_source}-{fired_at.strftime('%Y%m%dT%H%M%SZ')}-{os.getpid()}"
+    trigger_proof = (
+        launchd_invocation_proof(args)
+        if str(getattr(args, "trigger", "") or "").strip().lower() == "launchd"
+        else {
+            "version": 1,
+            "method": "none",
+            "verified": False,
+            "launchctl_status": "not_applicable",
+        }
+    )
     payload: dict[str, object] = {
         "schemaVersion": TRIGGER_EVENT_SCHEMA_VERSION,
         "event_id": event_id,
         "status": "started",
         "trigger_source": trigger_source,
+        "trigger_claim": str(getattr(args, "trigger", "") or "").strip().lower(),
+        "trigger_proof": trigger_proof,
         "scheduled_invocation": bool(getattr(args, "scheduled", False)),
         "schedule_label": LAUNCH_AGENT_LABEL if trigger_source == "launchd" else "",
         "schedule": trigger_schedule_payload(env),
@@ -217,9 +332,23 @@ def start_trigger_event(args: argparse.Namespace, env: dict[str, str]) -> tuple[
         "pid": os.getpid(),
         "repo_root_hash": public_hash(getattr(args, "repo_root", "")),
         "runtime_dir_hash": public_hash(getattr(args, "runtime_dir", "")),
+        "requested_provider": str(env.get("VIVENTIUM_MEMORY_HARDENING_PROVIDER") or "").strip(),
+        "requested_model": str(env.get("VIVENTIUM_MEMORY_HARDENING_MODEL") or "").strip(),
+        "requested_effort": str(env.get("VIVENTIUM_MEMORY_HARDENING_EFFORT") or "").strip(),
     }
     path = trigger_events_dir(args.app_support_dir) / f"{event_id}.json"
     write_json_private(path, payload)
+    if trigger_source == "launchd" and TRIGGER_EVENT_SCHEMA_VERSION >= 3:
+        observation_path = schedule_v3_observation_path(args.app_support_dir)
+        if not observation_path.exists():
+            write_json_private(
+                observation_path,
+                {
+                    "schemaVersion": SCHEDULE_V3_OBSERVATION_SCHEMA_VERSION,
+                    "observedReceiptSchemaVersion": TRIGGER_EVENT_SCHEMA_VERSION,
+                    "firstObservedAtUtc": iso_z(fired_at),
+                },
+            )
     return path, fired_at
 
 
@@ -255,12 +384,34 @@ def finish_trigger_event(
     if latest_summary:
         payload["run_id"] = latest_summary.get("run_id")
         payload["run_status"] = latest_summary.get("status")
+        payload["effective_provider"] = latest_summary.get("provider")
+        payload["effective_model"] = latest_summary.get("model")
+        payload["effective_effort"] = latest_summary.get("effort")
     write_json_private(path, payload)
     return exit_code
 
 
+def canonical_user_home() -> Path:
+    return Path(pwd.getpwuid(os.getuid()).pw_dir).expanduser()
+
+
 def launch_agent_path() -> Path:
-    return Path.home() / "Library" / "LaunchAgents" / f"{LAUNCH_AGENT_LABEL}.plist"
+    return canonical_user_home() / "Library" / "LaunchAgents" / f"{LAUNCH_AGENT_LABEL}.plist"
+
+
+def canonical_app_support_dir() -> Path:
+    """Resolve the one user-level runtime root independently of a spoofed HOME."""
+    return canonical_user_home() / "Library" / "Application Support" / "Viventium"
+
+
+def require_canonical_schedule_scope(args: argparse.Namespace) -> None:
+    requested = Path(args.app_support_dir).expanduser().resolve(strict=False)
+    canonical = canonical_app_support_dir().resolve(strict=False)
+    if requested != canonical:
+        raise SystemExit(
+            "memory-hardening LaunchAgent schedule changes require the canonical "
+            "Viventium App Support root"
+        )
 
 
 def schedule_lifecycle_events_dir(app_support_dir: Path) -> Path:
@@ -290,7 +441,7 @@ def launch_agent_target() -> str:
 
 def launch_agent_loaded() -> tuple[bool, subprocess.CompletedProcess[str]]:
     result = subprocess.run(
-        ["launchctl", "print", launch_agent_target()],
+        [LAUNCHCTL_PATH, "print", launch_agent_target()],
         check=False,
         capture_output=True,
         text=True,
@@ -315,12 +466,14 @@ def desired_launch_agent_payload(
     schedule: str,
 ) -> dict[str, object]:
     hour, minute = cron_to_launchd_time(schedule)
+    user_home = canonical_user_home()
     logs_dir = args.app_support_dir / "logs"
     logs_dir.mkdir(parents=True, exist_ok=True)
     launch_path = ":".join(
         [
-            str(Path.home() / ".local" / "bin"),
-            str(Path.home() / ".codex" / "bin"),
+            str(user_home / ".local" / "bin"),
+            str(user_home / ".codex" / "bin"),
+            "/Applications/ChatGPT.app/Contents/Resources",
             "/Applications/Codex.app/Contents/Resources",
             "/opt/homebrew/bin",
             "/opt/homebrew/sbin",
@@ -334,14 +487,14 @@ def desired_launch_agent_payload(
     program_arguments = [
         "/usr/bin/env",
         "-i",
-        f"HOME={str(Path.home())}",
+        f"HOME={str(user_home)}",
         f"USER={os.environ.get('USER', '')}",
         f"LOGNAME={os.environ.get('LOGNAME', os.environ.get('USER', ''))}",
         "SHELL=/bin/zsh",
         f"PATH={launch_path}",
         "LANG=en_US.UTF-8",
         "LC_ALL=en_US.UTF-8",
-        "python3",
+        str(Path(sys.executable).resolve()),
         str(args.repo_root / "scripts" / "viventium" / "memory_harden.py"),
         "--repo-root",
         str(args.repo_root),
@@ -407,7 +560,9 @@ def write_schedule_lifecycle_receipt(
         "schemaVersion": SCHEDULE_LIFECYCLE_SCHEMA_VERSION,
         "event_id": event_id,
         "recorded_at_utc": iso_z(now),
-        "recorded_at_local": now.astimezone().isoformat(timespec="milliseconds"),
+        "recorded_at_local": now.astimezone(ZoneInfo(local_timezone_name())).isoformat(
+            timespec="milliseconds"
+        ),
         "action": action,
         "status": status,
         "label": LAUNCH_AGENT_LABEL,
@@ -492,7 +647,7 @@ def _install_schedule_locked(args: argparse.Namespace, runtime_env: dict[str, st
     bootout_returncode: int | None = None
     if prior_loaded and not payload_matches:
         bootout = subprocess.run(
-            ["launchctl", "bootout", launch_agent_target()],
+            [LAUNCHCTL_PATH, "bootout", launch_agent_target()],
             check=False,
             capture_output=True,
             text=True,
@@ -518,7 +673,7 @@ def _install_schedule_locked(args: argparse.Namespace, runtime_env: dict[str, st
         write_launch_agent_payload(plist_path, desired_payload)
 
     bootstrap = subprocess.run(
-        ["launchctl", "bootstrap", f"gui/{os.getuid()}", str(plist_path)],
+        [LAUNCHCTL_PATH, "bootstrap", f"gui/{os.getuid()}", str(plist_path)],
         check=False,
         capture_output=True,
         text=True,
@@ -567,6 +722,7 @@ def _install_schedule_locked(args: argparse.Namespace, runtime_env: dict[str, st
 def install_schedule(args: argparse.Namespace, runtime_env: dict[str, str]) -> dict[str, object]:
     if sys.platform != "darwin":
         raise SystemExit("install-schedule currently supports macOS LaunchAgents. Use cron/systemd on Linux.")
+    require_canonical_schedule_scope(args)
     with schedule_loader_lock(args.app_support_dir):
         return _install_schedule_locked(args, runtime_env)
 
@@ -586,7 +742,7 @@ def _uninstall_schedule_locked(args: argparse.Namespace) -> dict[str, object]:
     bootout_returncode: int | None = None
     if prior_loaded:
         bootout = subprocess.run(
-            ["launchctl", "bootout", launch_agent_target()],
+            [LAUNCHCTL_PATH, "bootout", launch_agent_target()],
             check=False,
             capture_output=True,
             text=True,
@@ -635,6 +791,7 @@ def _uninstall_schedule_locked(args: argparse.Namespace) -> dict[str, object]:
 
 
 def uninstall_schedule(args: argparse.Namespace) -> dict[str, object]:
+    require_canonical_schedule_scope(args)
     with schedule_loader_lock(args.app_support_dir):
         return _uninstall_schedule_locked(args)
 
@@ -646,6 +803,49 @@ def model_for_provider(provider: str | None, runtime_env: dict[str, str]) -> str
     if normalized in {"openai", "openai_api", "codex"}:
         return runtime_env.get("VIVENTIUM_MEMORY_HARDENING_OPENAI_MODEL", "")
     return ""
+
+
+def normalize_memory_provider(provider: str | None) -> str:
+    normalized = str(provider or "").strip().lower().replace("-", "_")
+    if normalized in {"anthropic", "claude", "claude_code"}:
+        return "anthropic"
+    if normalized in {"openai", "openai_api", "codex"}:
+        return "openai"
+    return normalized
+
+
+def default_memory_hardening_effort(args: argparse.Namespace, env: dict[str, str]) -> str:
+    provider = normalize_memory_provider(
+        getattr(args, "provider", None) or env.get("VIVENTIUM_MEMORY_HARDENING_PROVIDER")
+    )
+    if not provider:
+        configured_providers = {
+            normalize_memory_provider(env.get("VIVENTIUM_PRIMARY_PROVIDER")),
+            normalize_memory_provider(env.get("VIVENTIUM_SECONDARY_PROVIDER")),
+        }
+        if "openai" in configured_providers:
+            provider = "openai"
+        elif "anthropic" in configured_providers:
+            provider = "anthropic"
+        else:
+            provider = "openai"
+
+    model = str(getattr(args, "model", None) or "").strip()
+    if not model:
+        explicit_provider = getattr(args, "provider", None)
+        model = (
+            (model_for_provider(explicit_provider, env) if explicit_provider else "")
+            or str(env.get("VIVENTIUM_MEMORY_HARDENING_MODEL") or "").strip()
+            or model_for_provider(provider, env)
+        )
+    if not model:
+        model = "gpt-5.6-luna" if provider == "openai" else "claude-opus-5"
+    if provider == "openai":
+        return DEFAULT_OPENAI_MEMORY_EFFORT_BY_MODEL.get(
+            model,
+            DEFAULT_OPENAI_MEMORY_EFFORT,
+        )
+    return "xhigh"
 
 
 def user_email_for_run(args: argparse.Namespace, runtime_env: dict[str, str]) -> str:
@@ -900,6 +1100,10 @@ def run_status(
         latest.get("exit_code") not in {None, 0}
     ):
         health_state = "failed"
+    elif schedule_health.get("execution_mismatch"):
+        health_state = "execution_mismatch"
+    elif schedule_health.get("execution_unverified"):
+        health_state = "execution_unverified"
     elif latest.get("status") == "started":
         health_state = "running"
     elif latest.get("status") == "skipped":
@@ -1001,9 +1205,10 @@ def run_node(args: argparse.Namespace, runtime_env: dict[str, str]) -> int:
     env.setdefault("VIVENTIUM_MEMORY_HARDENING_TIMEZONE", DEFAULT_TIMEZONE)
     env.setdefault("VIVENTIUM_MEMORY_HARDENING_PROVIDER", env.get("VIVENTIUM_MEMORY_HARDENING_PROVIDER", ""))
     env.setdefault("VIVENTIUM_MEMORY_HARDENING_MODEL", env.get("VIVENTIUM_MEMORY_HARDENING_MODEL", ""))
-    env.setdefault("VIVENTIUM_MEMORY_HARDENING_EFFORT", "xhigh")
-    env.setdefault("VIVENTIUM_MEMORY_HARDENING_ANTHROPIC_EFFORT", env["VIVENTIUM_MEMORY_HARDENING_EFFORT"])
-    env.setdefault("VIVENTIUM_MEMORY_HARDENING_OPENAI_REASONING_EFFORT", env["VIVENTIUM_MEMORY_HARDENING_EFFORT"])
+    env.setdefault(
+        "VIVENTIUM_MEMORY_HARDENING_EFFORT",
+        default_memory_hardening_effort(args, env),
+    )
     if args.command == "status":
         return run_status(args, runtime_env, env)
     trigger_event = start_trigger_event(args, env)

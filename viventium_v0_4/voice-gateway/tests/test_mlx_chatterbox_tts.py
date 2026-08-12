@@ -16,6 +16,7 @@
 
 import os
 import sys
+import threading
 import unittest
 from types import SimpleNamespace
 from unittest import mock
@@ -168,6 +169,23 @@ class _MultiChunkModel:
         yield SimpleNamespace(sample_rate=24000, audio=np.array([0.4, -0.3], dtype=np.float32))
 
 
+class _ThreadBoundModel:
+    """Mimics MLX arrays whose streams are valid only on their creator thread."""
+
+    def __init__(self) -> None:
+        self.owner_thread: threading.Thread | None = None
+        self.generate_calls = 0
+
+    def generate(self, **_: object):
+        current_thread = threading.current_thread()
+        if self.owner_thread is None:
+            self.owner_thread = current_thread
+        elif self.owner_thread is not current_thread:
+            raise RuntimeError("cached model crossed an MLX thread boundary")
+        self.generate_calls += 1
+        yield SimpleNamespace(sample_rate=24000, audio=np.array([0.2, -0.1], dtype=np.float32))
+
+
 # ---------------------------------------------------------------------------
 # Sample rate handling
 # ---------------------------------------------------------------------------
@@ -197,6 +215,24 @@ class TestMlxChatterboxSampleRate(unittest.IsolatedAsyncioTestCase):
 # generate() parameter forwarding
 # ---------------------------------------------------------------------------
 class TestMlxChatterboxGenerateParams(unittest.IsolatedAsyncioTestCase):
+    async def test_reuses_one_dedicated_mlx_thread_across_sentence_streams(self) -> None:
+        model = _ThreadBoundModel()
+        tts = MlxChatterboxTTS(
+            config=MlxChatterboxConfig(model_id="thread-bound-model", prebuffer_ms=0.0)
+        )
+
+        with mock.patch("mlx_chatterbox_tts._load_mlx_model", return_value=model):
+            first = tts.synthesize("first sentence")
+            await first._run(_DummyEmitter())
+            second = tts.synthesize("second sentence")
+            await second._run(_DummyEmitter())
+
+        # LiveKit may also invoke each stream's internal task; every invocation must remain
+        # on the same MLX-owning worker thread.
+        self.assertGreaterEqual(model.generate_calls, 2)
+        self.assertIsNotNone(model.owner_thread)
+        self.assertTrue(model.owner_thread.name.startswith("mlx-chatterbox"))
+
     async def test_does_not_pass_sample_rate_to_generate(self) -> None:
         """Upstream sample_rate param is for input ref_audio, not output. We must not send it."""
         recording = _RecordingModel()

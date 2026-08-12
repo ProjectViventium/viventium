@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" role="img" aria-labelledby="title desc">
+  <title id="title">The fix is a fuller picture</title>
+  <desc id="desc">Three overlapping circles show the Viventium proposal: understand the person's world, check the outside world, and challenge the first answer before responding.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f7fbff"/>
+      <stop offset="1" stop-color="#eef8f4"/>
+    </linearGradient>
+    <filter id="softShadow" x="-40%" y="-40%" width="180%" height="180%">
+      <feDropShadow dx="0" dy="18" stdDeviation="24" flood-color="#234052" flood-opacity="0.12"/>
+    </filter>
+  </defs>
+
+  <rect width="1600" height="900" fill="url(#bg)"/>
+  <circle cx="170" cy="130" r="210" fill="#e0eaff" opacity="0.55"/>
+  <circle cx="1490" cy="760" r="250" fill="#dff4ea" opacity="0.6"/>
+
+  <text x="96" y="76" fill="#465369" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="18" font-weight="700" letter-spacing="5">VIVENTIUM</text>
+  <text x="1504" y="76" text-anchor="end" fill="#6d788a" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="18" font-weight="600">04 / 06</text>
+
+  <text x="96" y="178" fill="#192437" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="66" font-weight="760">The fix is not more disagreement.</text>
+  <text x="96" y="240" fill="#355d58" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="36" font-weight="680">It is a fuller picture before the answer.</text>
+
+  <g transform="translate(800 500)" filter="url(#softShadow)">
+    <circle cx="-230" cy="-30" r="190" fill="#6379e6" fill-opacity="0.83"/>
+    <circle cx="230" cy="-30" r="190" fill="#2d9a76" fill-opacity="0.82"/>
+    <circle cx="0" cy="170" r="190" fill="#8466c7" fill-opacity="0.78"/>
+  </g>
+
+  <g font-family="Inter, ui-sans-serif, system-ui, sans-serif" text-anchor="middle">
+    <text x="570" y="392" fill="#ffffff" font-size="24" font-weight="760">UNDERSTAND</text>
+    <text x="570" y="425" fill="#ffffff" font-size="24" font-weight="760">YOUR WORLD</text>
+    <text x="570" y="462" fill="#edf0ff" font-size="16">priorities · history · commitments</text>
+    <text x="1030" y="392" fill="#ffffff" font-size="24" font-weight="760">CHECK THE</text>
+    <text x="1030" y="425" fill="#ffffff" font-size="24" font-weight="760">REAL WORLD</text>
+    <text x="1030" y="462" fill="#ebfff7" font-size="16">evidence · likelihood · experience</text>
+    <text x="800" y="688" fill="#ffffff" font-size="24" font-weight="760">CHALLENGE THE</text>
+    <text x="800" y="721" fill="#ffffff" font-size="24" font-weight="760">FIRST ANSWER</text>
+    <text x="800" y="758" fill="#f3edff" font-size="16">blind spots · weak assumptions</text>
+    <text x="800" y="785" fill="#f3edff" font-size="16">wishful thinking</text>
+
+    <circle cx="800" cy="520" r="105" fill="#ffffff" stroke="#d6e1e6" stroke-width="2"/>
+    <text x="800" y="504" fill="#18352f" font-size="20" font-weight="760">A GROUNDED</text>
+    <text x="800" y="538" fill="#18352f" font-size="30" font-weight="800">ANSWER</text>
+    <text x="800" y="570" fill="#687b78" font-size="16">honest about certainty</text>
+  </g>
+
+  <text x="96" y="858" fill="#7b8795" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="17">THE VIVENTIUM WAY · AN ORIGINAL FRAMEWORK</text>
+</svg>

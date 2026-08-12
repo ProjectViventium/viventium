@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-labelledby="title">
+  <title id="title">Instagram</title>
+  <defs><radialGradient id="a" cx="30%" cy="107%" r="120%"><stop offset="0" stop-color="#ffd600"/><stop offset=".28" stop-color="#ff7a00"/><stop offset=".55" stop-color="#ff0169"/><stop offset=".82" stop-color="#d300c5"/><stop offset="1" stop-color="#7638fa"/></radialGradient></defs>
+  <rect width="32" height="32" rx="8" fill="url(#a)"/>
+  <rect x="7.2" y="7.2" width="17.6" height="17.6" rx="5.4" fill="none" stroke="#fff" stroke-width="2.2"/>
+  <circle cx="16" cy="16" r="4.15" fill="none" stroke="#fff" stroke-width="2.2"/>
+  <circle cx="22.1" cy="9.95" r="1.25" fill="#fff"/>
+</svg>

@@ -1,5 +1,7 @@
 # GlassHive Callback Placeholder And Evidence Status QA
 
+<!-- qa-evidence-exempt: Historical focused regression note retained as supporting evidence; full user-path acceptance is recorded in later reports. -->
+
 Date: 2026-06-25
 Case: `GHHOST-009`
 Status: PASS

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import shutil
@@ -190,8 +191,52 @@ def http_ok(url: str) -> bool:
         return False
 
 
+def http_json(url: str) -> dict[str, Any] | None:
+    curl_cmd = shutil.which("curl")
+    if curl_cmd:
+        try:
+            completed = subprocess.run(
+                [curl_cmd, "-fsS", "--max-time", "2", url],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=3,
+            )
+        except Exception:
+            completed = None
+        if completed is not None and completed.returncode == 0:
+            try:
+                payload = json.loads(completed.stdout)
+            except json.JSONDecodeError:
+                payload = None
+            if isinstance(payload, dict):
+                return payload
+
+    request = urllib.request.Request(url, method="GET")
+    try:
+        with urllib.request.urlopen(request, timeout=2) as response:
+            if getattr(response, "status", 200) != 200:
+                return None
+            payload = json.load(response)
+    except Exception:
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
 def any_http_ok(*urls: str) -> bool:
     return any(url and http_ok(url) for url in urls)
+
+
+def http_json_status_up(url: str) -> bool:
+    request = urllib.request.Request(url, method="GET")
+    try:
+        with urllib.request.urlopen(request, timeout=2) as response:
+            if getattr(response, "status", 200) != 200:
+                return False
+            payload = json.load(response)
+    except Exception:
+        return False
+    return isinstance(payload, dict) and payload.get("status") == "UP"
 
 
 def url_with_path(url: str, path: str) -> str:
@@ -387,6 +432,40 @@ def runtime_state_root_candidates(
             repo_root / ".viventium" / "runtime" / runtime_profile_name(config, runtime_env),
         )
     return roots
+
+
+def prompt_workbench_runtime_url(
+    runtime_env: dict[str, str],
+    runtime_dir: Path | None,
+    repo_root: Path | None,
+) -> str | None:
+    app_support_value = str(runtime_env.get("VIVENTIUM_APP_SUPPORT_DIR") or "").strip()
+    if app_support_value:
+        app_support_dir = Path(app_support_value).expanduser()
+    elif runtime_dir is not None:
+        app_support_dir = runtime_dir.expanduser().resolve().parent
+    else:
+        return None
+    state_file = app_support_dir / "state" / "prompt-workbench" / "state.json"
+    try:
+        payload = json.loads(state_file.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    recorded_repo_root = str(payload.get("repoRoot") or "").strip()
+    if repo_root is not None:
+        if not recorded_repo_root:
+            return None
+        if Path(recorded_repo_root).expanduser().resolve() != repo_root.expanduser().resolve():
+            return None
+    try:
+        port = int(payload.get("port"))
+    except (TypeError, ValueError):
+        return None
+    if not 1 <= port <= 65535:
+        return None
+    return f"http://localhost:{port}"
 
 
 def stack_owner_state_file(
@@ -1099,6 +1178,24 @@ def scheduler_ledger_has_latest_issue(path: Path | None) -> bool:
         conn.close()
 
 
+def scheduler_health_matches(url: str, db_path: Path | None) -> tuple[bool, str]:
+    payload = http_json(url)
+    if payload is None:
+        return False, "Scheduler health endpoint is unavailable or invalid"
+    if payload.get("status") != "ok":
+        return False, "Scheduler health status is not ok"
+    if payload.get("service") != "scheduling-cortex":
+        return False, "Scheduler service identity does not match"
+    if db_path is None:
+        return False, "Scheduler ledger identity is unavailable"
+    expected_db_hash = hashlib.sha256(
+        str(db_path.expanduser().resolve()).encode("utf-8")
+    ).hexdigest()
+    if payload.get("db_path_sha256") != expected_db_hash:
+        return False, "Scheduler ledger identity does not match"
+    return True, ""
+
+
 def scheduler_status_and_detail(
     config: dict[str, Any],
     runtime_env: dict[str, str],
@@ -1114,16 +1211,65 @@ def scheduler_status_and_detail(
     ledger = scheduler_ledger_summary(db_path)
     ledger_has_issue = scheduler_ledger_has_latest_issue(db_path)
     if probe_live and url:
-        if http_ok(scheduler_health_url(url)):
+        health_url = scheduler_health_url(url)
+        healthy, health_reason = scheduler_health_matches(health_url, db_path)
+        if healthy:
             if ledger_has_issue:
                 return "Running with issues", f"{url} | {ledger}"
             return "Running", f"{url} | {ledger}"
         if stack_should_be_live and start_enabled:
             return (
                 "Starting" if startup_in_progress else "Action Required",
-                f"Endpoint not reachable at {scheduler_health_url(url) or url} | {ledger}",
+                f"{health_reason} at {health_url or url} | {ledger}",
             )
+        return "Configured", f"{health_reason} at {health_url or url} | {ledger}"
     return "Configured", f"{url or 'Local Scheduling Cortex MCP'} | {ledger}"
+
+
+def memory_hardening_status_payload(
+    *,
+    repo_root: Path | None,
+    runtime_dir: Path | None,
+    runtime_env: dict[str, str],
+) -> dict[str, Any] | None:
+    if runtime_dir is None:
+        return None
+    resolved_repo_root = (repo_root or SCRIPT_DIR.parents[1]).expanduser().resolve()
+    resolved_runtime_dir = runtime_dir.expanduser().resolve()
+    app_support_dir = Path(
+        runtime_env.get("VIVENTIUM_APP_SUPPORT_DIR") or resolved_runtime_dir.parent
+    ).expanduser().resolve()
+    script = resolved_repo_root / "scripts" / "viventium" / "memory_harden.py"
+    if not script.is_file():
+        return None
+    try:
+        completed = subprocess.run(
+            [
+                sys.executable,
+                str(script),
+                "--repo-root",
+                str(resolved_repo_root),
+                "--app-support-dir",
+                str(app_support_dir),
+                "--runtime-dir",
+                str(resolved_runtime_dir),
+                "status",
+                "--json",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=12,
+        )
+    except Exception:
+        return None
+    if completed.returncode != 0:
+        return None
+    try:
+        payload = json.loads(completed.stdout)
+    except json.JSONDecodeError:
+        return None
+    return payload if isinstance(payload, dict) else None
 
 
 def secondary_ai_configured(config: dict[str, Any]) -> bool:
@@ -1141,6 +1287,11 @@ def secondary_ai_configured(config: dict[str, Any]) -> bool:
     )
 
 
+def configured_unverified(detail: str) -> tuple[str, str]:
+    """Report configured intent without claiming unobserved runtime success."""
+    return "Configured", f"{detail}; verify with the live status or self-test before relying on it."
+
+
 def brain_setup_state(
     key: str,
     config: dict[str, Any],
@@ -1153,14 +1304,14 @@ def brain_setup_state(
 
     if key == "primary_ai":
         if foundation_api_key_present(config):
-            return "Ready", "Foundation provider API-key fallback is configured"
+            return configured_unverified("Foundation provider API-key fallback is configured")
         if any(
             foundation_connected_account_runtime_configured(config, runtime_env, provider)
             for provider in ("openai", "anthropic")
         ):
             return (
-                "Needs setup",
-                "Connected-account route is configured; create or sign in to the local account and verify the provider connection in Settings > Connected Accounts.",
+                "Configured",
+                "Account-scoped provider route is configured; readiness varies by signed-in user. Verify that user's provider connection in Settings > Connected Accounts.",
             )
         return "Needs setup", feature_guidance(key)
     if key == "secondary_ai":
@@ -1173,36 +1324,36 @@ def brain_setup_state(
     if key == "transcript_ingest":
         source = transcript_source_dir(config, runtime_env)
         if source:
-            return "Ready", "Transcript source folder configured"
+            return configured_unverified("Transcript source folder configured")
         return "Needs setup", feature_guidance(key)
     if key == "conversation_recall":
         if resolve_bool(personalization.get("default_conversation_recall"), False):
-            return "Ready", "Local recall/RAG enabled; verify RAG health before declaring full brain readiness."
+            return configured_unverified("Local recall/RAG enabled")
         return "Needs setup", feature_guidance(key)
     if key == "web_search":
         if resolve_bool((integrations.get("web_search") or {}).get("enabled"), False):
-            return "Ready", web_search_summary(config)
+            return configured_unverified(web_search_summary(config))
         return "Needs setup", feature_guidance(key)
     if key == "voice":
         mode = str(voice.get("mode") or "disabled").strip().lower()
         if mode in {"local", "hosted"}:
-            return "Ready", voice_status(config)
+            return configured_unverified(voice_status(config))
         return "Needs setup", feature_guidance(key)
     if key == "telegram":
         if resolve_bool((integrations.get("telegram") or {}).get("enabled"), False):
-            return "Ready", "Telegram bridge configured; live status row verifies token/process/API health."
+            return configured_unverified("Telegram bridge configured")
         return "Needs setup", feature_guidance(key)
     if key == "telegram_codex":
         if resolve_bool((integrations.get("telegram_codex") or {}).get("enabled"), False):
-            return "Ready", "Telegram Codex configured; live status row verifies token/process health."
+            return configured_unverified("Telegram Codex configured")
         return "Needs setup", feature_guidance(key)
     if key == "google_workspace":
         if resolve_bool((integrations.get("google_workspace") or {}).get("enabled"), False):
-            return "Ready", "Google Workspace MCP configured"
+            return configured_unverified("Google Workspace MCP configured")
         return "Needs setup", feature_guidance(key)
     if key == "ms365":
         if resolve_bool((integrations.get("ms365") or {}).get("enabled"), False):
-            return "Ready", "Microsoft 365 MCP configured"
+            return configured_unverified("Microsoft 365 MCP configured")
         return "Needs setup", feature_guidance(key)
     if key == "whatsapp":
         return "Not available", feature_guidance(key)
@@ -1213,9 +1364,11 @@ def brain_setup_state(
         else:
             enabled = resolve_bool((integrations.get(key) or {}).get("enabled"), False)
         if enabled:
-            return "Ready", "Explicitly enabled by this install"
+            return configured_unverified("Explicitly enabled by this install")
         return "Disabled by choice", feature_guidance(key)
-    return "Ready", FEATURE_BY_KEY.get(key).health_probe if key in FEATURE_BY_KEY else ""
+    return configured_unverified(
+        FEATURE_BY_KEY.get(key).health_probe if key in FEATURE_BY_KEY else "Configuration present"
+    )
 
 
 def build_brain_setup_rows(
@@ -1270,10 +1423,14 @@ def build_service_rows(
     )
 
     frontend_url = f"http://localhost:{frontend_port}"
-    lan_host = local_network_host()
-    lan_url = f"http://{lan_host}:{frontend_port}" if lan_host else ""
     api_url = f"http://localhost:{api_port}/api"
     playground_url = runtime_env.get("VIVENTIUM_PLAYGROUND_URL") or f"http://localhost:{playground_port}"
+    install_experience = str(
+        runtime_env.get("VIVENTIUM_INSTALL_EXPERIENCE")
+        or (config.get("install", {}) or {}).get("experience")
+        or "legacy"
+    ).strip().lower()
+    express_experience = install_experience == "express"
     livekit_url = runtime_env.get("LIVEKIT_URL", "ws://localhost:7880")
     stack_should_be_live = stack_expected_live(config, runtime_env, runtime_dir)
     startup_in_progress = cli_operation_running(runtime_dir)
@@ -1293,8 +1450,27 @@ def build_service_rows(
     searxng_url = runtime_env.get("SEARXNG_INSTANCE_URL", "")
     firecrawl_url = runtime_env.get("FIRECRAWL_API_URL") or runtime_env.get("FIRECRAWL_BASE_URL", "")
     glasshive_url = runtime_env.get("GLASSHIVE_OPERATOR_BASE_URL") or runtime_env.get("GLASSHIVE_MCP_URL", "")
+    glasshive_probe_url = glasshive_url
+    if resolve_bool(runtime_env.get("GLASSHIVE_PUBLIC_LINKS_ONLY"), False):
+        glasshive_ui_port = str(runtime_env.get("GLASSHIVE_UI_PORT") or "8780").strip()
+        glasshive_probe_url = f"http://127.0.0.1:{glasshive_ui_port}"
     prompt_workbench_port = str(runtime_env.get("VIVENTIUM_PROMPT_WORKBENCH_PORT") or "8781").strip()
-    prompt_workbench_url = f"http://localhost:{prompt_workbench_port}" if prompt_workbench_port else ""
+    owned_prompt_workbench_url = prompt_workbench_runtime_url(
+        runtime_env,
+        runtime_dir,
+        repo_root,
+    )
+    configured_prompt_workbench_url = (
+        f"http://localhost:{prompt_workbench_port}" if prompt_workbench_port else ""
+    )
+    prompt_workbench_url = owned_prompt_workbench_url or configured_prompt_workbench_url
+    # With a known checkout, only a matching runtime ownership record may prove
+    # that the Workbench listener belongs to this Viventium installation. Keep
+    # showing the configured URL as useful operator context, but do not probe a
+    # listener that could have been started by another checkout.
+    prompt_workbench_probe_url = (
+        owned_prompt_workbench_url if repo_root is not None else prompt_workbench_url
+    )
 
     frontend_ok = (
         any_http_ok(
@@ -1326,20 +1502,18 @@ def build_service_rows(
     missing_core_status = (
         "Starting"
         if probe_live and stack_should_be_live
-        else ("Configured" if probe_live else "Ready")
+        else "Configured"
     )
 
-    frontend_detail = frontend_url
-    if lan_url:
-        frontend_detail = f"Local: {frontend_url} | Network: {lan_url}"
-
     rows: list[tuple[str, str, str]] = [
-        ("LibreChat Frontend", "Running" if frontend_ok else missing_core_status, frontend_detail),
+        ("LibreChat Frontend", "Running" if frontend_ok else missing_core_status, frontend_url),
         ("LibreChat API", "Running" if api_ok else missing_core_status, api_url),
         (
             "Modern Playground",
-            "Running" if playground_ok else missing_core_status,
-            playground_url,
+            "Running" if playground_ok else ("Deferred" if express_experience else missing_core_status),
+            playground_url
+            if playground_ok or not express_experience
+            else "Disabled by Easy Install; enable Voice when you want the playground.",
         ),
         (
             "Voice",
@@ -1383,7 +1557,7 @@ def build_service_rows(
                 "Connected Accounts page for OAuth state"
             )
         else:
-            primary_status = "Action Required"
+            primary_status = "Connect in browser" if express_experience else "Action Required"
             primary_detail = (
                 f"Connect {primary_label} in Settings > Account > Connected Accounts"
             )
@@ -1420,9 +1594,9 @@ def build_service_rows(
     )
 
     if resolve_bool((integrations.get("glasshive") or {}).get("enabled"), False) or resolve_bool(runtime_env.get("START_GLASSHIVE"), False):
-        glasshive_running = probe_live and glasshive_url and any_http_ok(
-            glasshive_url,
-            url_with_path(glasshive_url, "/health"),
+        glasshive_running = probe_live and glasshive_probe_url and any_http_ok(
+            glasshive_probe_url,
+            url_with_path(glasshive_probe_url, "/health"),
         )
         if glasshive_running:
             glasshive_status = "Running"
@@ -1440,9 +1614,9 @@ def build_service_rows(
         )
 
     if resolve_bool(((runtime.get("prompt_workbench") or {}).get("enabled")), False) or resolve_bool(runtime_env.get("START_PROMPT_WORKBENCH"), False):
-        workbench_running = probe_live and prompt_workbench_url and any_http_ok(
-            prompt_workbench_url,
-            url_with_path(prompt_workbench_url, "/api/health"),
+        workbench_running = probe_live and prompt_workbench_probe_url and any_http_ok(
+            prompt_workbench_probe_url,
+            url_with_path(prompt_workbench_probe_url, "/api/health"),
         )
         if workbench_running:
             workbench_status = "Running"
@@ -1482,10 +1656,31 @@ def build_service_rows(
             f"{runtime_env.get('VIVENTIUM_MEMORY_HARDENING_SCHEDULE') or memory_hardening.get('schedule') or '0 3 * * *'} local; "
             f"{memory_scope}; dry-run-first {'on' if dry_run_first else 'off'}"
         )
+        memory_status = "Scheduled"
+        if probe_live:
+            hardening_status = memory_hardening_status_payload(
+                repo_root=repo_root,
+                runtime_dir=runtime_dir,
+                runtime_env=runtime_env,
+            )
+            schedule_health = (
+                hardening_status.get("schedule_health")
+                if isinstance(hardening_status, dict)
+                and isinstance(hardening_status.get("schedule_health"), dict)
+                else {}
+            )
+            health_state = str(schedule_health.get("state") or "unavailable").strip().lower()
+            memory_status = {
+                "healthy": "Healthy",
+                "running": "Running",
+                "awaiting_first_run": "Scheduled",
+                "retry_pending": "Retry Pending",
+            }.get(health_state, "Action Required")
+            memory_detail = f"{memory_detail}; health {health_state}"
         rows.append(
             (
                 "Memory Hardening",
-                "Scheduled",
+                memory_status,
                 memory_detail,
             )
         )
@@ -1532,9 +1727,10 @@ def build_service_rows(
         rows.append(("Telegram Codex", telegram_codex_status, telegram_codex_detail))
     if resolve_bool((((config.get("runtime") or {}).get("personalization") or {}).get("default_conversation_recall")), False):
         conversation_recall_health_url = f"{rag_api_url.rstrip('/')}/health" if rag_api_url else ""
-        conversation_recall_running = probe_live and rag_api_url and any_http_ok(
-            conversation_recall_health_url,
-            rag_api_url,
+        conversation_recall_running = (
+            probe_live
+            and bool(rag_api_url)
+            and http_json_status_up(conversation_recall_health_url)
         )
         if conversation_recall_running:
             conversation_recall_status = "Running"
@@ -1636,9 +1832,10 @@ def build_service_rows(
 
 def live_core_services_ready(rows: list[tuple[str, str, str]]) -> bool:
     statuses = {name: status for name, status, _detail in rows}
-    return all(
-        statuses.get(name) == "Running"
-        for name in ("LibreChat Frontend", "LibreChat API", "Modern Playground")
+    return (
+        statuses.get("LibreChat Frontend") == "Running"
+        and statuses.get("LibreChat API") == "Running"
+        and statuses.get("Modern Playground") in {"Running", "Deferred"}
     )
 
 
@@ -1732,7 +1929,6 @@ def build_next_steps(
         "lc_frontend_port",
         3190,
     )
-    lan_host = local_network_host()
     public_state = load_public_network_state(config, runtime_env, runtime_dir)
     remote_error = str(public_state.get("last_error") or "").strip()
     public_client_url = str(
@@ -1751,10 +1947,6 @@ def build_next_steps(
             f"Open [cyan]http://localhost:{frontend_port}[/cyan] on this Mac.",
         ]
     )
-    if lan_host:
-        next_steps.append(
-            f"Open [cyan]http://{lan_host}:{frontend_port}[/cyan] from another device on your local network."
-        )
     if remote_error:
         next_steps.append(
             "Remote access could not start on this run. Fix the blocker shown in "

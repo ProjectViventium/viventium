@@ -10,6 +10,8 @@ import sys
 import time
 from pathlib import Path
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[2]
 CONFIG_COMPILER_SPEC = importlib.util.spec_from_file_location(
@@ -92,14 +94,36 @@ def test_memory_hardening_defaults_are_launch_ready_and_opt_in() -> None:
     assert settings["provider_profile"] == "launch_ready_only"
     assert settings["anthropic_model"] in config_compiler.MEMORY_HARDENING_LAUNCH_READY_MODELS["anthropic"]
     assert settings["openai_model"] in config_compiler.MEMORY_HARDENING_LAUNCH_READY_MODELS["openai"]
-    assert settings["openai_model"] == "gpt-5.6-sol"
+    assert settings["openai_model"] == "gpt-5.6-luna"
     assert settings["anthropic_effort"] == "xhigh"
-    assert settings["openai_reasoning_effort"] == "xhigh"
+    assert settings["openai_reasoning_effort"] == "medium"
     assert settings["transcripts"]["rag_mode"] == "detailed_summary_only"
     assert settings["transcripts"]["min_files_per_run"] == 5
     assert settings["transcripts"]["max_batches_per_invocation"] == 1
     assert settings["transcripts"]["reference_memory_max_chars"] == 24000
     assert settings["transcripts"]["reference_messages_max_chars"] == 36000
+
+
+def test_memory_hardening_effort_defaults_cover_each_evaluated_gpt56_tier() -> None:
+    assert memory_harden.DEFAULT_OPENAI_MEMORY_EFFORT_BY_MODEL == {
+        "gpt-5.5": "xhigh",
+        "gpt-5.6-sol": "xhigh",
+        "gpt-5.6-terra": "high",
+        "gpt-5.6-luna": "medium",
+    }
+
+    script = """
+const hardener = require('./viventium_v0_4/LibreChat/scripts/viventium-memory-hardening.js');
+process.stdout.write(JSON.stringify(hardener.DEFAULT_OPENAI_MEMORY_EFFORT_BY_MODEL));
+"""
+    result = subprocess.run(
+        ["node", "-e", script],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    assert json.loads(result.stdout) == memory_harden.DEFAULT_OPENAI_MEMORY_EFFORT_BY_MODEL
 
 
 def test_memory_hardening_model_timeout_matches_large_overnight_workload() -> None:
@@ -359,12 +383,12 @@ process.stdout.write(JSON.stringify({ defaultCandidates, explicitCandidates }));
     payload = json.loads(result.stdout)
 
     assert {candidate["provider"] for candidate in payload["defaultCandidates"]} == {"anthropic"}
-    assert any(candidate["model"] == "claude-opus-4-8" for candidate in payload["defaultCandidates"])
+    assert any(candidate["model"] == "claude-opus-5" for candidate in payload["defaultCandidates"])
     assert any(candidate["model"] == "opus" for candidate in payload["defaultCandidates"])
     assert any(candidate["provider"] == "openai" for candidate in payload["explicitCandidates"])
 
 
-def test_memory_hardening_prefers_sol_xhigh_when_both_providers_are_available() -> None:
+def test_memory_hardening_prefers_luna_medium_when_both_providers_are_available() -> None:
     script = """
 const hardener = require('./viventium_v0_4/LibreChat/scripts/viventium-memory-hardening.js');
 process.env.VIVENTIUM_PRIMARY_PROVIDER = 'openai';
@@ -386,8 +410,42 @@ process.stdout.write(JSON.stringify(selected));
     payload = json.loads(result.stdout)
 
     assert payload["provider"] == "openai"
-    assert payload["model"] == "gpt-5.6-sol"
-    assert payload["effort"] == "xhigh"
+    assert payload["model"] == "gpt-5.6-luna"
+    assert payload["effort"] == "medium"
+
+
+def test_memory_hardening_provider_model_defaults_are_model_aware() -> None:
+    script = """
+const hardener = require('./viventium_v0_4/LibreChat/scripts/viventium-memory-hardening.js');
+for (const key of [
+  'VIVENTIUM_PRIMARY_PROVIDER',
+  'VIVENTIUM_SECONDARY_PROVIDER',
+  'VIVENTIUM_MEMORY_HARDENING_PROVIDER',
+  'VIVENTIUM_MEMORY_HARDENING_MODEL',
+  'VIVENTIUM_MEMORY_HARDENING_EFFORT',
+  'VIVENTIUM_MEMORY_HARDENING_ANTHROPIC_EFFORT',
+  'VIVENTIUM_MEMORY_HARDENING_OPENAI_REASONING_EFFORT',
+]) delete process.env[key];
+const luna = hardener.resolveProvider({ provider: 'openai', model: 'gpt-5.6-luna' });
+const sol = hardener.resolveProvider({ provider: 'openai', model: 'gpt-5.6-sol' });
+const unknownOpenAI = hardener.resolveProvider({ provider: 'openai', model: 'synthetic-model' });
+const opus = hardener.resolveProvider({ provider: 'anthropic', model: 'claude-opus-5' });
+process.stdout.write(JSON.stringify({ luna, sol, unknownOpenAI, opus }));
+"""
+    result = subprocess.run(
+        ["node", "-e", script],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=True,
+        timeout=30,
+    )
+    payload = json.loads(result.stdout)
+
+    assert payload["luna"]["effort"] == "medium"
+    assert payload["sol"]["effort"] == "xhigh"
+    assert payload["unknownOpenAI"]["effort"] == "high"
+    assert payload["opus"]["effort"] == "xhigh"
 
 
 def test_memory_hardening_vector_presence_failures_are_not_model_failures() -> None:
@@ -528,10 +586,12 @@ def test_memory_hardening_status_reports_scheduled_trigger_health(tmp_path: Path
     (events_dir / "launchd-old.json").write_text(
         json.dumps(
             {
-                "schemaVersion": 1,
+                "schemaVersion": 2,
                 "status": "success",
                 "trigger_source": "launchd",
+                "trigger_proof": "launchd_parent",
                 "scheduled_invocation": True,
+                "schedule_label": memory_harden.LAUNCH_AGENT_LABEL,
                 "fired_at_utc": "2020-01-01T08:00:00.000Z",
                 "fired_at_local": "2020-01-01T03:00:00.000-05:00",
                 "finished_at_utc": "2020-01-01T08:01:00.000Z",
@@ -543,18 +603,239 @@ def test_memory_hardening_status_reports_scheduled_trigger_health(tmp_path: Path
         + "\n",
         encoding="utf-8",
     )
+    (events_dir / "legacy-newer.json").write_text(
+        json.dumps(
+            {
+                "schemaVersion": 1,
+                "status": "success",
+                "trigger_source": "scheduled_legacy",
+                "scheduled_invocation": True,
+                "fired_at_utc": "2021-01-01T08:00:00.000Z",
+                "fired_at_local": "2021-01-01T03:00:00.000-05:00",
+                "finished_at_utc": "2021-01-01T08:01:00.000Z",
+                "exit_code": 0,
+                "run_id": "legacy-run",
+                "run_status": "success",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    system_timezone = memory_harden.local_timezone_name()
+    configured_timezone = (
+        "Pacific/Honolulu" if system_timezone != "Pacific/Honolulu" else "America/New_York"
+    )
     script = """
 const assert = require('assert');
 const hardener = require('./viventium_v0_4/LibreChat/scripts/viventium-memory-hardening.js');
 const status = hardener.status({stateDir: process.argv[1]});
 assert.strictEqual(status.schedule_health.schedule, '0 3 * * *');
-assert.strictEqual(status.schedule_health.timezone, 'America/Toronto');
+assert.strictEqual(status.schedule_health.timezone, process.argv[3]);
+assert.strictEqual(status.schedule_health.system_timezone, process.argv[3]);
+assert.strictEqual(status.schedule_health.configured_timezone, process.argv[4]);
 assert.strictEqual(status.schedule_health.latest_scheduled_trigger.run_id, 'old-run');
+assert.strictEqual(status.schedule_health.trigger_receipt_count, 1);
 assert.strictEqual(status.schedule_health.missed_expected_window, true);
 assert(!JSON.stringify(status.schedule_health).includes(process.argv[2]));
 """
     subprocess.run(
-        ["node", "-e", script, str(state_dir), str(tmp_path)],
+        [
+            "node",
+            "-e",
+            script,
+            str(state_dir),
+            str(tmp_path),
+            system_timezone,
+            configured_timezone,
+        ],
+        cwd=ROOT,
+        check=True,
+        env={
+            **os.environ,
+            "VIVENTIUM_MEMORY_HARDENING_SCHEDULE": "0 3 * * *",
+            "VIVENTIUM_MEMORY_HARDENING_TIMEZONE": configured_timezone,
+        },
+    )
+
+
+def test_memory_hardening_health_rejects_legacy_or_unattested_schedule_receipts(
+    tmp_path: Path,
+) -> None:
+    events_dir = tmp_path / "schedule-events"
+    events_dir.mkdir()
+    (events_dir / "legacy.json").write_text(
+        json.dumps(
+            {
+                "schemaVersion": 1,
+                "status": "success",
+                "trigger_source": "launchd",
+                "scheduled_invocation": True,
+                "schedule_label": memory_harden.LAUNCH_AGENT_LABEL,
+                "fired_at_utc": "2026-07-14T07:00:00.000Z",
+                "exit_code": 0,
+            }
+        ),
+        encoding="utf-8",
+    )
+    script = """
+const assert = require('assert');
+const hardener = require('./viventium_v0_4/LibreChat/scripts/viventium-memory-hardening.js');
+const health = hardener.buildScheduleHealth(
+  {scheduleEventsDir: process.argv[1]},
+  {now: new Date('2026-07-14T07:05:00.000Z'), systemTimeZone: 'America/Toronto'},
+);
+assert.strictEqual(health.latest_scheduled_trigger, null);
+assert.strictEqual(health.latest_launchd_invocation.trigger_attested, false);
+assert.strictEqual(health.latest_launchd_invocation.trigger_attestation_reason, 'receipt_schema_unsupported');
+assert.strictEqual(health.trigger_receipt_count, 0);
+assert.strictEqual(health.rejected_launchd_invocation_receipt_count, 1);
+assert.strictEqual(health.healthy, false);
+"""
+    subprocess.run(["node", "-e", script, str(events_dir)], cwd=ROOT, check=True)
+
+
+def test_memory_hardening_health_accepts_only_complete_schema_v3_launchd_pid_proof(
+    tmp_path: Path,
+) -> None:
+    events_dir = tmp_path / "schedule-events"
+    events_dir.mkdir()
+    base_event = {
+        "schemaVersion": 3,
+        "status": "success",
+        "trigger_source": "launchd",
+        "scheduled_invocation": True,
+        "schedule_label": memory_harden.LAUNCH_AGENT_LABEL,
+        "fired_at_utc": "2026-07-14T07:00:00.000Z",
+        "fired_at_local": "2026-07-14T03:00:00.000-04:00",
+        "exit_code": 0,
+        "run_id": "schema-v3-run",
+        "run_status": "success",
+        "pid": 4242,
+        "requested_provider": "openai",
+        "requested_model": "gpt-5.6-luna",
+        "requested_effort": "medium",
+        "effective_provider": "openai",
+        "effective_model": "gpt-5.6-luna",
+        "effective_effort": "medium",
+        "trigger_proof": {
+            "version": 1,
+            "method": "launchctl_job_pid",
+            "verified": True,
+            "pid": 4242,
+            "observed_job_pid": 4242,
+            "parent_pid": 1,
+            "launchctl_status": "ok",
+        },
+    }
+    (events_dir / "valid.json").write_text(json.dumps(base_event), encoding="utf-8")
+    script = """
+const assert = require('assert');
+const fs = require('fs');
+const path = require('path');
+const hardener = require('./viventium_v0_4/LibreChat/scripts/viventium-memory-hardening.js');
+const eventsDir = process.argv[1];
+const options = {now: new Date('2026-07-14T07:05:00.000Z'), systemTimeZone: 'America/Toronto'};
+const valid = hardener.buildScheduleHealth({scheduleEventsDir: eventsDir}, options);
+assert.strictEqual(valid.latest_scheduled_trigger.run_id, 'schema-v3-run');
+assert.strictEqual(valid.latest_scheduled_trigger.trigger_attested, true);
+assert.strictEqual(valid.latest_scheduled_trigger.trigger_proof_method, 'launchctl_job_pid');
+assert.strictEqual(valid.trigger_receipt_count, 1);
+const tampered = JSON.parse(fs.readFileSync(path.join(eventsDir, 'valid.json'), 'utf8'));
+tampered.trigger_proof.observed_job_pid = 9999;
+fs.writeFileSync(path.join(eventsDir, 'valid.json'), JSON.stringify(tampered));
+const rejected = hardener.buildScheduleHealth({scheduleEventsDir: eventsDir}, options);
+assert.strictEqual(rejected.latest_scheduled_trigger, null);
+assert.strictEqual(rejected.latest_launchd_invocation.trigger_attested, false);
+assert.strictEqual(rejected.latest_launchd_invocation.trigger_attestation_reason, 'launchd_job_pid_unverified');
+assert.strictEqual(rejected.rejected_launchd_invocation_receipt_count, 1);
+assert.strictEqual(rejected.healthy, false);
+"""
+    subprocess.run(["node", "-e", script, str(events_dir)], cwd=ROOT, check=True)
+
+
+def test_memory_hardening_legacy_v2_attestation_is_single_use_and_closes_after_v3(
+    tmp_path: Path,
+) -> None:
+    events_dir = tmp_path / "schedule-events"
+    events_dir.mkdir()
+    legacy_event = {
+        "schemaVersion": 2,
+        "status": "success",
+        "trigger_source": "launchd",
+        "trigger_proof": "launchd_parent",
+        "scheduled_invocation": True,
+        "schedule_label": memory_harden.LAUNCH_AGENT_LABEL,
+        "fired_at_utc": "2026-07-14T07:00:00.000Z",
+        "fired_at_local": "2026-07-14T03:00:00.000-04:00",
+        "exit_code": 0,
+        "run_id": "legacy-one",
+        "run_status": "success",
+    }
+    (events_dir / "legacy-one.json").write_text(json.dumps(legacy_event), encoding="utf-8")
+    script = """
+const assert = require('assert');
+const fs = require('fs');
+const path = require('path');
+const hardener = require('./viventium_v0_4/LibreChat/scripts/viventium-memory-hardening.js');
+const eventsDir = process.argv[1];
+const options = {now: new Date('2026-07-14T07:05:00.000Z'), systemTimeZone: 'America/Toronto'};
+const oneLegacy = hardener.buildScheduleHealth({scheduleEventsDir: eventsDir}, options);
+assert.strictEqual(oneLegacy.latest_scheduled_trigger.run_id, 'legacy-one');
+assert.strictEqual(oneLegacy.legacy_v2_transition_open, true);
+assert.strictEqual(oneLegacy.legacy_v2_receipt_count, 1);
+
+const secondLegacy = JSON.parse(fs.readFileSync(path.join(eventsDir, 'legacy-one.json'), 'utf8'));
+secondLegacy.run_id = 'legacy-two';
+secondLegacy.fired_at_utc = '2026-07-14T07:00:30.000Z';
+fs.writeFileSync(path.join(eventsDir, 'legacy-two.json'), JSON.stringify(secondLegacy));
+const repeatedLegacy = hardener.buildScheduleHealth({scheduleEventsDir: eventsDir}, options);
+assert.strictEqual(repeatedLegacy.latest_scheduled_trigger, null);
+assert.strictEqual(repeatedLegacy.legacy_v2_transition_open, false);
+assert.strictEqual(repeatedLegacy.legacy_v2_receipt_count, 2);
+
+fs.rmSync(path.join(eventsDir, 'legacy-two.json'));
+const v3 = {...secondLegacy, schemaVersion: 3, run_id: 'v3-invalid', trigger_proof: {}};
+fs.writeFileSync(path.join(eventsDir, 'v3-invalid.json'), JSON.stringify(v3));
+const postV3 = hardener.buildScheduleHealth({scheduleEventsDir: eventsDir}, options);
+assert.strictEqual(postV3.latest_scheduled_trigger, null);
+assert.strictEqual(postV3.legacy_v2_transition_open, false);
+assert.strictEqual(postV3.legacy_v2_receipt_count, 1);
+assert.strictEqual(postV3.rejected_launchd_invocation_receipt_count, 2);
+assert.strictEqual(postV3.schema_v3_observed, true);
+assert.strictEqual(postV3.schema_v3_observation_persisted, true);
+
+fs.rmSync(path.join(eventsDir, 'v3-invalid.json'));
+const afterReceiptPrune = hardener.buildScheduleHealth({scheduleEventsDir: eventsDir}, options);
+assert.strictEqual(afterReceiptPrune.latest_scheduled_trigger, null);
+assert.strictEqual(afterReceiptPrune.legacy_v2_transition_open, false);
+assert.strictEqual(afterReceiptPrune.schema_v3_observed, true);
+assert.strictEqual(afterReceiptPrune.schema_v3_observation_persisted, true);
+"""
+    subprocess.run(["node", "-e", script, str(events_dir)], cwd=ROOT, check=True)
+
+
+def test_memory_hardening_expected_fire_uses_system_timezone_not_generated_context(
+    tmp_path: Path,
+) -> None:
+    events_dir = tmp_path / "schedule-events"
+    events_dir.mkdir()
+    script = """
+const assert = require('assert');
+const hardener = require('./viventium_v0_4/LibreChat/scripts/viventium-memory-hardening.js');
+const health = hardener.buildScheduleHealth(
+  {scheduleEventsDir: process.argv[1]},
+  {
+    now: new Date('2026-01-15T15:00:00.000Z'),
+    systemTimeZone: 'America/Los_Angeles',
+  },
+);
+assert.strictEqual(health.configured_timezone, 'America/Toronto');
+assert.strictEqual(health.system_timezone, 'America/Los_Angeles');
+assert.strictEqual(health.timezone, 'America/Los_Angeles');
+assert.strictEqual(health.expected_latest_fire_at_utc, '2026-01-15T11:00:00.000Z');
+"""
+    subprocess.run(
+        ["node", "-e", script, str(events_dir)],
         cwd=ROOT,
         check=True,
         env={
@@ -565,7 +846,196 @@ assert(!JSON.stringify(status.schedule_health).includes(process.argv[2]));
     )
 
 
-def test_memory_hardening_status_does_not_flag_fresh_scheduled_trigger_as_missed(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("effective_provider", "effective_model", "effective_effort", "mismatch_field"),
+    [
+        ("anthropic", "claude-opus-5", "xhigh", "provider_mismatch"),
+        ("openai", "gpt-5.6-terra", "xhigh", "model_mismatch"),
+        ("openai", "gpt-5.6-sol", "medium", "effort_mismatch"),
+    ],
+)
+def test_memory_hardening_execution_tuple_mismatch_is_not_healthy(
+    tmp_path: Path,
+    effective_provider: str,
+    effective_model: str,
+    effective_effort: str,
+    mismatch_field: str,
+) -> None:
+    events_dir = tmp_path / "schedule-events"
+    events_dir.mkdir()
+    (events_dir / "launchd-now.json").write_text(
+        json.dumps(
+            {
+                "schemaVersion": 2,
+                "status": "success",
+                "trigger_source": "launchd",
+                "trigger_proof": "launchd_parent",
+                "scheduled_invocation": True,
+                "schedule_label": memory_harden.LAUNCH_AGENT_LABEL,
+                "fired_at_utc": "2026-07-14T07:00:00.000Z",
+                "fired_at_local": "2026-07-14T03:00:00.000-04:00",
+                "exit_code": 0,
+                "run_id": "fallback-run",
+                "run_status": "success",
+                "requested_provider": "openai",
+                "requested_model": "gpt-5.6-sol",
+                "requested_effort": "xhigh",
+                "effective_provider": effective_provider,
+                "effective_model": effective_model,
+                "effective_effort": effective_effort,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    script = """
+const assert = require('assert');
+const hardener = require('./viventium_v0_4/LibreChat/scripts/viventium-memory-hardening.js');
+const health = hardener.buildScheduleHealth(
+  {scheduleEventsDir: process.argv[1]},
+  {now: new Date('2026-07-14T07:05:00.000Z'), systemTimeZone: 'America/Toronto'},
+);
+assert.strictEqual(health.missed_expected_window, false);
+assert.strictEqual(health.execution_tuple_complete, true);
+assert.strictEqual(health.execution_mismatch, true);
+assert.strictEqual(health[process.argv[2]], true);
+assert.strictEqual(health.state, 'execution_mismatch');
+assert.strictEqual(health.healthy, false);
+assert.strictEqual(health.latest_scheduled_trigger.requested_provider, 'openai');
+"""
+    subprocess.run(
+        ["node", "-e", script, str(events_dir), mismatch_field], cwd=ROOT, check=True
+    )
+
+
+def test_memory_hardening_stale_scheduled_configuration_is_not_healthy(tmp_path: Path) -> None:
+    events_dir = tmp_path / "schedule-events"
+    events_dir.mkdir()
+    (events_dir / "launchd-now.json").write_text(
+        json.dumps(
+            {
+                "schemaVersion": 2,
+                "status": "success",
+                "trigger_source": "launchd",
+                "trigger_proof": "launchd_parent",
+                "scheduled_invocation": True,
+                "schedule_label": memory_harden.LAUNCH_AGENT_LABEL,
+                "fired_at_utc": "2026-07-14T07:00:00.000Z",
+                "fired_at_local": "2026-07-14T03:00:00.000-04:00",
+                "exit_code": 0,
+                "run_id": "old-config-run",
+                "run_status": "success",
+                "requested_provider": "openai",
+                "requested_model": "gpt-5.6-sol",
+                "requested_effort": "xhigh",
+                "effective_provider": "openai",
+                "effective_model": "gpt-5.6-sol",
+                "effective_effort": "xhigh",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    script = """
+const assert = require('assert');
+const hardener = require('./viventium_v0_4/LibreChat/scripts/viventium-memory-hardening.js');
+const health = hardener.buildScheduleHealth(
+  {scheduleEventsDir: process.argv[1]},
+  {now: new Date('2026-07-14T07:05:00.000Z'), systemTimeZone: 'America/Toronto'},
+);
+assert.strictEqual(health.execution_tuple_complete, true);
+assert.strictEqual(health.receipt_execution_mismatch, false);
+assert.strictEqual(health.configured_execution_tuple_complete, true);
+assert.strictEqual(health.configured_execution_mismatch, true);
+assert.strictEqual(health.configured_provider_mismatch, false);
+assert.strictEqual(health.configured_model_mismatch, true);
+assert.strictEqual(health.configured_effort_mismatch, true);
+assert.strictEqual(health.execution_mismatch, true);
+assert.strictEqual(health.state, 'execution_mismatch');
+assert.strictEqual(health.healthy, false);
+assert.strictEqual(health.configured_model, 'gpt-5.6-luna');
+assert.strictEqual(health.latest_scheduled_trigger.effective_model, 'gpt-5.6-sol');
+"""
+    subprocess.run(
+        ["node", "-e", script, str(events_dir)],
+        cwd=ROOT,
+        check=True,
+        env={
+            **os.environ,
+            "VIVENTIUM_MEMORY_HARDENING_SCHEDULE": "0 3 * * *",
+            "VIVENTIUM_MEMORY_HARDENING_TIMEZONE": "America/Toronto",
+            "VIVENTIUM_MEMORY_HARDENING_PROVIDER": "openai",
+            "VIVENTIUM_MEMORY_HARDENING_MODEL": "gpt-5.6-luna",
+            "VIVENTIUM_MEMORY_HARDENING_EFFORT": "medium",
+        },
+    )
+
+
+def test_memory_hardening_incomplete_execution_tuple_is_not_healthy(tmp_path: Path) -> None:
+    events_dir = tmp_path / "schedule-events"
+    events_dir.mkdir()
+    (events_dir / "launchd-now.json").write_text(
+        json.dumps(
+            {
+                "schemaVersion": 2,
+                "status": "success",
+                "trigger_source": "launchd",
+                "trigger_proof": "launchd_parent",
+                "scheduled_invocation": True,
+                "schedule_label": memory_harden.LAUNCH_AGENT_LABEL,
+                "fired_at_utc": "2026-07-14T07:00:00.000Z",
+                "exit_code": 0,
+                "run_status": "success",
+                "requested_provider": "openai",
+                "requested_model": "gpt-5.6-sol",
+                "requested_effort": "xhigh",
+                "effective_provider": "openai",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    script = """
+const assert = require('assert');
+const hardener = require('./viventium_v0_4/LibreChat/scripts/viventium-memory-hardening.js');
+const health = hardener.buildScheduleHealth(
+  {scheduleEventsDir: process.argv[1]},
+  {now: new Date('2026-07-14T07:05:00.000Z'), systemTimeZone: 'America/Toronto'},
+);
+assert.strictEqual(health.execution_tuple_complete, false);
+assert.strictEqual(health.execution_unverified, true);
+assert.strictEqual(health.state, 'execution_unverified');
+assert.strictEqual(health.healthy, false);
+"""
+    subprocess.run(["node", "-e", script, str(events_dir)], cwd=ROOT, check=True)
+
+
+def test_memory_hardening_system_timezone_ignores_stale_process_tz(
+    monkeypatch,
+) -> None:
+    system_timezone = memory_harden.local_timezone_name()
+    stale_timezone = (
+        "Pacific/Honolulu" if system_timezone != "Pacific/Honolulu" else "America/New_York"
+    )
+
+    monkeypatch.setenv("TZ", stale_timezone)
+
+    assert memory_harden.local_timezone_name() == system_timezone
+
+    script = """
+const assert = require('assert');
+const hardener = require('./viventium_v0_4/LibreChat/scripts/viventium-memory-hardening.js');
+assert.strictEqual(hardener.resolveSystemTimezone(), process.argv[1]);
+"""
+    subprocess.run(
+        ["node", "-e", script, system_timezone],
+        cwd=ROOT,
+        check=True,
+        env={**os.environ, "TZ": stale_timezone},
+    )
+
+
+def test_memory_hardening_status_does_not_flag_on_window_scheduled_trigger_as_missed(tmp_path: Path) -> None:
     state_dir = tmp_path / "state" / "memory-hardening"
     events_dir = state_dir / "schedule-events"
     events_dir.mkdir(parents=True)
@@ -577,19 +1047,26 @@ const hardener = require('./viventium_v0_4/LibreChat/scripts/viventium-memory-ha
 const stateDir = process.argv[1];
 const eventsDir = path.join(stateDir, 'schedule-events');
 fs.writeFileSync(path.join(eventsDir, 'launchd-now.json'), JSON.stringify({
-  schemaVersion: 1,
+  schemaVersion: 2,
   status: 'success',
   trigger_source: 'launchd',
+  trigger_proof: 'launchd_parent',
   scheduled_invocation: true,
-  fired_at_utc: new Date().toISOString(),
-  fired_at_local: new Date().toISOString(),
+  schedule_label: 'ai.viventium.memory-harden',
+  fired_at_utc: '2026-07-14T07:00:00.000Z',
+  fired_at_local: '2026-07-14T03:00:00.000-04:00',
   exit_code: 0,
   run_id: 'fresh-run',
   run_status: 'success',
 }) + '\\n');
-const status = hardener.status({stateDir});
-assert.strictEqual(status.schedule_health.latest_scheduled_trigger.run_id, 'fresh-run');
-assert.strictEqual(status.schedule_health.missed_expected_window, false);
+const health = hardener.buildScheduleHealth(
+  {scheduleEventsDir: eventsDir},
+  {now: new Date('2026-07-14T07:05:00.000Z'), systemTimeZone: 'America/Toronto'},
+);
+assert.strictEqual(health.latest_scheduled_trigger.run_id, 'fresh-run');
+assert.strictEqual(health.latest_launchd_invocation.run_id, 'fresh-run');
+assert.strictEqual(health.latest_launchd_invocation.schedule_window_aligned, true);
+assert.strictEqual(health.missed_expected_window, false);
 """
     subprocess.run(
         ["node", "-e", script, str(state_dir)],
@@ -599,6 +1076,67 @@ assert.strictEqual(status.schedule_health.missed_expected_window, false);
             **os.environ,
             "VIVENTIUM_MEMORY_HARDENING_SCHEDULE": "0 3 * * *",
             "VIVENTIUM_MEMORY_HARDENING_TIMEZONE": "America/Toronto",
+        },
+    )
+
+
+def test_memory_hardening_off_window_launchd_kickstart_cannot_mask_missed_schedule(
+    tmp_path: Path,
+) -> None:
+    events_dir = tmp_path / "schedule-events"
+    events_dir.mkdir()
+    (events_dir / "launchd-operator-kickstart.json").write_text(
+        json.dumps(
+            {
+                "schemaVersion": 2,
+                "status": "success",
+                "trigger_source": "launchd",
+                "trigger_proof": "launchd_parent",
+                "scheduled_invocation": True,
+                "schedule_label": memory_harden.LAUNCH_AGENT_LABEL,
+                "fired_at_utc": "2026-07-14T03:33:00.000Z",
+                "fired_at_local": "2026-07-13T23:33:00.000-04:00",
+                "exit_code": 0,
+                "run_id": "operator-kickstart-run",
+                "run_status": "success",
+                "requested_provider": "openai",
+                "requested_model": "gpt-5.6-luna",
+                "requested_effort": "medium",
+                "effective_provider": "openai",
+                "effective_model": "gpt-5.6-luna",
+                "effective_effort": "medium",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    script = """
+const assert = require('assert');
+const hardener = require('./viventium_v0_4/LibreChat/scripts/viventium-memory-hardening.js');
+const health = hardener.buildScheduleHealth(
+  {scheduleEventsDir: process.argv[1]},
+  {now: new Date('2026-07-14T07:05:00.000Z'), systemTimeZone: 'America/Toronto'},
+);
+assert.strictEqual(health.latest_scheduled_trigger, null);
+assert.strictEqual(health.latest_launchd_invocation.run_id, 'operator-kickstart-run');
+assert.strictEqual(health.latest_launchd_invocation.schedule_window_aligned, false);
+assert.strictEqual(health.trigger_receipt_count, 0);
+assert.strictEqual(health.launchd_invocation_receipt_count, 1);
+assert.strictEqual(health.missed_expected_window, true);
+assert.strictEqual(health.state, 'missed');
+assert.strictEqual(health.healthy, false);
+"""
+    subprocess.run(
+        ["node", "-e", script, str(events_dir)],
+        cwd=ROOT,
+        check=True,
+        env={
+            **os.environ,
+            "VIVENTIUM_MEMORY_HARDENING_SCHEDULE": "0 3 * * *",
+            "VIVENTIUM_MEMORY_HARDENING_TIMEZONE": "America/Toronto",
+            "VIVENTIUM_MEMORY_HARDENING_PROVIDER": "openai",
+            "VIVENTIUM_MEMORY_HARDENING_MODEL": "gpt-5.6-luna",
+            "VIVENTIUM_MEMORY_HARDENING_EFFORT": "medium",
         },
     )
 
@@ -864,12 +1402,98 @@ def test_memory_hardening_wrapper_prefers_compiled_runtime_over_ambient_shell_en
         {
             "RAG_API_URL": "http://compiled-rag",
             "VIVENTIUM_MEMORY_HARDENING_PROVIDER": "anthropic",
-            "VIVENTIUM_MEMORY_HARDENING_MODEL": "claude-opus-4-8",
+            "VIVENTIUM_MEMORY_HARDENING_MODEL": "claude-opus-5",
         },
     )
 
     assert status == 0
     assert calls[0][1]["env"]["RAG_API_URL"] == "http://compiled-rag"
+
+
+@pytest.mark.parametrize(
+    ("provider", "model", "expected_effort"),
+    [
+        (None, None, "medium"),
+        ("openai", "gpt-5.6-luna", "medium"),
+        ("openai", "gpt-5.6-sol", "xhigh"),
+        ("openai", "synthetic-model", "high"),
+        ("anthropic", "claude-opus-5", "xhigh"),
+    ],
+)
+def test_memory_hardening_wrapper_default_effort_matches_selected_model(
+    monkeypatch,
+    tmp_path: Path,
+    provider: str | None,
+    model: str | None,
+    expected_effort: str,
+) -> None:
+    args = make_memory_harden_args(
+        repo_root=ROOT,
+        app_support_dir=tmp_path / "app-support",
+        runtime_dir=tmp_path / "runtime",
+        command="status",
+        provider=provider,
+        model=model,
+    )
+    for key in (
+        "VIVENTIUM_PRIMARY_PROVIDER",
+        "VIVENTIUM_SECONDARY_PROVIDER",
+        "VIVENTIUM_MEMORY_HARDENING_PROVIDER",
+        "VIVENTIUM_MEMORY_HARDENING_MODEL",
+        "VIVENTIUM_MEMORY_HARDENING_EFFORT",
+        "VIVENTIUM_MEMORY_HARDENING_ANTHROPIC_EFFORT",
+        "VIVENTIUM_MEMORY_HARDENING_OPENAI_REASONING_EFFORT",
+    ):
+        monkeypatch.delenv(key, raising=False)
+
+    captured: dict[str, str] = {}
+
+    def fake_status(_args, _runtime_env, env):
+        captured.update(env)
+        return 0
+
+    monkeypatch.setattr(memory_harden, "run_status", fake_status)
+
+    assert memory_harden.run_node(args, {}) == 0
+    assert captured["VIVENTIUM_MEMORY_HARDENING_EFFORT"] == expected_effort
+
+
+def test_memory_hardening_wrapper_preserves_failed_receipt_precedence(
+    monkeypatch,
+    capsys,
+) -> None:
+    status_payload = {
+        "schedule_health": {
+            "state": "failed",
+            "healthy": False,
+            "execution_mismatch": True,
+            "execution_unverified": False,
+            "missed_expected_window": False,
+            "latest_scheduled_trigger": {
+                "status": "failed",
+                "exit_code": 1,
+            },
+        }
+    }
+
+    class Completed:
+        returncode = 0
+        stdout = json.dumps(status_payload)
+        stderr = ""
+
+    monkeypatch.setattr(memory_harden, "node_command", lambda *_args: ["node"])
+    monkeypatch.setattr(memory_harden.subprocess, "run", lambda *_args, **_kwargs: Completed())
+    monkeypatch.setattr(
+        memory_harden,
+        "launch_agent_status",
+        lambda _env: {"installed": True, "loaded": True},
+    )
+    args = make_memory_harden_args(repo_root=ROOT, command="status")
+
+    assert memory_harden.run_status(args, {}, {}) == 0
+    rendered = json.loads(capsys.readouterr().out)
+    assert rendered["schedule_health"]["state"] == "failed"
+    assert rendered["schedule_health"]["healthy"] is False
 
 
 def test_memory_hardening_wrapper_uses_provider_specific_model_for_override() -> None:
@@ -900,7 +1524,7 @@ def test_memory_hardening_wrapper_uses_provider_specific_model_for_override() ->
         Args(),
         {
             "VIVENTIUM_MEMORY_HARDENING_PROVIDER": "anthropic",
-            "VIVENTIUM_MEMORY_HARDENING_MODEL": "claude-opus-4-8",
+            "VIVENTIUM_MEMORY_HARDENING_MODEL": "claude-opus-5",
             "VIVENTIUM_MEMORY_HARDENING_OPENAI_MODEL": "gpt-5.6-sol",
         },
     )
@@ -937,7 +1561,7 @@ def test_memory_hardening_cli_user_email_overrides_compiled_operator_scope() -> 
         Args(),
         {
             "VIVENTIUM_MEMORY_HARDENING_PROVIDER": "anthropic",
-            "VIVENTIUM_MEMORY_HARDENING_MODEL": "claude-opus-4-8",
+            "VIVENTIUM_MEMORY_HARDENING_MODEL": "claude-opus-5",
             "VIVENTIUM_MEMORY_HARDENING_USER_EMAIL": "compiled@example.com",
         },
     )
@@ -982,7 +1606,7 @@ def test_ingest_transcripts_defaults_to_zero_saved_memory_changes() -> None:
         Args(),
         {
             "VIVENTIUM_MEMORY_HARDENING_PROVIDER": "anthropic",
-            "VIVENTIUM_MEMORY_HARDENING_MODEL": "claude-opus-4-8",
+            "VIVENTIUM_MEMORY_HARDENING_MODEL": "claude-opus-5",
         },
     )
 
@@ -1099,7 +1723,7 @@ def test_memory_hardening_efficiency_override_is_separate_from_power_override() 
         args,
         {
             "VIVENTIUM_MEMORY_HARDENING_PROVIDER": "anthropic",
-            "VIVENTIUM_MEMORY_HARDENING_MODEL": "claude-opus-4-8",
+            "VIVENTIUM_MEMORY_HARDENING_MODEL": "claude-opus-5",
         },
     )
 
@@ -1351,6 +1975,38 @@ def test_ingest_transcripts_until_caught_up_exits_partial_on_max_batches(monkeyp
     assert "max_batches_reached" in capsys.readouterr().out
 
 
+def test_memory_hardening_schedule_owner_rejects_noncanonical_root_before_launchctl(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    canonical_root = tmp_path / "canonical-app-support"
+    args = make_memory_harden_args(
+        repo_root=ROOT,
+        app_support_dir=tmp_path / "noncanonical-app-support",
+        runtime_dir=tmp_path / "noncanonical-app-support" / "runtime",
+        command="install-schedule",
+        json=True,
+    )
+    args.schedule = "0 3 * * *"
+    args.user_email = None
+    calls: list[list[str]] = []
+
+    monkeypatch.setattr(memory_harden, "canonical_app_support_dir", lambda: canonical_root)
+    monkeypatch.setattr(memory_harden.sys, "platform", "darwin")
+    monkeypatch.setattr(
+        memory_harden.subprocess,
+        "run",
+        lambda command, **_kwargs: calls.append(command),
+    )
+
+    with pytest.raises(SystemExit, match="canonical Viventium App Support root"):
+        memory_harden.install_schedule(args, {})
+    with pytest.raises(SystemExit, match="canonical Viventium App Support root"):
+        memory_harden.uninstall_schedule(args)
+
+    assert calls == []
+
+
 def test_memory_hardening_schedule_runs_wrapper_directly_without_cli_lock(tmp_path, monkeypatch) -> None:
     plist_path = tmp_path / "ai.viventium.memory-harden.plist"
     app_support_dir = tmp_path / "app-support"
@@ -1377,15 +2033,16 @@ def test_memory_hardening_schedule_runs_wrapper_directly_without_cli_lock(tmp_pa
 
     def fake_run(command, **kwargs):
         launchctl_calls.append(command)
-        if command[0:2] == ["launchctl", "print"]:
+        if command[0:2] == [memory_harden.LAUNCHCTL_PATH, "print"]:
             return Completed(0 if launchd["loaded"] else 113)
-        if command[0:2] == ["launchctl", "bootstrap"]:
+        if command[0:2] == [memory_harden.LAUNCHCTL_PATH, "bootstrap"]:
             launchd["loaded"] = True
-        elif command[0:2] == ["launchctl", "bootout"]:
+        elif command[0:2] == [memory_harden.LAUNCHCTL_PATH, "bootout"]:
             launchd["loaded"] = False
         return Completed()
 
     monkeypatch.setattr(memory_harden, "launch_agent_path", lambda: plist_path)
+    monkeypatch.setattr(memory_harden, "canonical_app_support_dir", lambda: app_support_dir)
     monkeypatch.setattr(memory_harden.subprocess, "run", fake_run)
     monkeypatch.setattr(memory_harden.sys, "platform", "darwin")
 
@@ -1413,10 +2070,13 @@ def test_memory_hardening_schedule_runs_wrapper_directly_without_cli_lock(tmp_pa
         f"PATH={Path.home()}/.local/bin:{Path.home()}/.codex/bin:" in item
         for item in program_arguments
     )
+    assert any("/Applications/ChatGPT.app/Contents/Resources" in item for item in program_arguments)
     assert any(item == "/Applications/Codex.app/Contents/Resources" or "/Applications/Codex.app/Contents/Resources" in item for item in program_arguments)
     assert any("/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin" in item for item in program_arguments)
     assert "bin/viventium" not in " ".join(program_arguments)
     assert str(ROOT / "scripts" / "viventium" / "memory_harden.py") in program_arguments
+    assert str(Path(sys.executable).resolve()) in program_arguments
+    assert "python3" not in program_arguments
     assert "--runtime-dir" in program_arguments
     assert program_arguments[program_arguments.index("--user-email") + 1] == "qa@example.com"
     assert program_arguments[-6:] == [
@@ -1427,8 +2087,10 @@ def test_memory_hardening_schedule_runs_wrapper_directly_without_cli_lock(tmp_pa
         "--user-email",
         "qa@example.com",
     ]
-    assert [call[0:2] for call in launchctl_calls].count(["launchctl", "bootstrap"]) == 1
-    assert launchctl_calls[-1][0:2] == ["launchctl", "print"]
+    assert [call[0:2] for call in launchctl_calls].count(
+        [memory_harden.LAUNCHCTL_PATH, "bootstrap"]
+    ) == 1
+    assert launchctl_calls[-1][0:2] == [memory_harden.LAUNCHCTL_PATH, "print"]
 
     launchctl_calls.clear()
     second = memory_harden.install_schedule(
@@ -1440,7 +2102,9 @@ def test_memory_hardening_schedule_runs_wrapper_directly_without_cli_lock(tmp_pa
     )
     assert second["action"] == "noop"
     assert second["changed"] is False
-    assert [call[0:2] for call in launchctl_calls] == [["launchctl", "print"]]
+    assert [call[0:2] for call in launchctl_calls] == [
+        [memory_harden.LAUNCHCTL_PATH, "print"]
+    ]
 
     receipts = sorted(memory_harden.schedule_lifecycle_events_dir(app_support_dir).glob("event-*.json"))
     assert len(receipts) == 2
@@ -1487,15 +2151,16 @@ def test_memory_hardening_schedule_repairs_drift_once_and_verifies_reload(tmp_pa
 
     def fake_run(command, **_kwargs):
         calls.append(command)
-        if command[0:2] == ["launchctl", "print"]:
+        if command[0:2] == [memory_harden.LAUNCHCTL_PATH, "print"]:
             return Completed(0 if launchd["loaded"] else 113)
-        if command[0:2] == ["launchctl", "bootout"]:
+        if command[0:2] == [memory_harden.LAUNCHCTL_PATH, "bootout"]:
             launchd["loaded"] = False
-        if command[0:2] == ["launchctl", "bootstrap"]:
+        if command[0:2] == [memory_harden.LAUNCHCTL_PATH, "bootstrap"]:
             launchd["loaded"] = True
         return Completed()
 
     monkeypatch.setattr(memory_harden, "launch_agent_path", lambda: plist_path)
+    monkeypatch.setattr(memory_harden, "canonical_app_support_dir", lambda: app_support_dir)
     monkeypatch.setattr(memory_harden.subprocess, "run", fake_run)
     monkeypatch.setattr(memory_harden.sys, "platform", "darwin")
 
@@ -1505,8 +2170,12 @@ def test_memory_hardening_schedule_repairs_drift_once_and_verifies_reload(tmp_pa
     assert result["action"] == "reinstall"
     assert payload["StartCalendarInterval"] == {"Hour": 4, "Minute": 0}
     assert "StartInterval" not in payload
-    assert [call[0:2] for call in calls].count(["launchctl", "bootout"]) == 1
-    assert [call[0:2] for call in calls].count(["launchctl", "bootstrap"]) == 1
+    assert [call[0:2] for call in calls].count(
+        [memory_harden.LAUNCHCTL_PATH, "bootout"]
+    ) == 1
+    assert [call[0:2] for call in calls].count(
+        [memory_harden.LAUNCHCTL_PATH, "bootstrap"]
+    ) == 1
 
 
 def test_memory_hardening_schedule_bootstraps_matching_unloaded_agent_without_bootout(
@@ -1536,21 +2205,26 @@ def test_memory_hardening_schedule_bootstraps_matching_unloaded_agent_without_bo
 
     def fake_run(command, **_kwargs):
         calls.append(command)
-        if command[0:2] == ["launchctl", "print"]:
+        if command[0:2] == [memory_harden.LAUNCHCTL_PATH, "print"]:
             return Completed(0 if launchd["loaded"] else 113)
-        if command[0:2] == ["launchctl", "bootstrap"]:
+        if command[0:2] == [memory_harden.LAUNCHCTL_PATH, "bootstrap"]:
             launchd["loaded"] = True
         return Completed()
 
     monkeypatch.setattr(memory_harden, "launch_agent_path", lambda: plist_path)
+    monkeypatch.setattr(memory_harden, "canonical_app_support_dir", lambda: app_support_dir)
     monkeypatch.setattr(memory_harden.subprocess, "run", fake_run)
     monkeypatch.setattr(memory_harden.sys, "platform", "darwin")
 
     result = memory_harden.install_schedule(args, {})
 
     assert result["action"] == "bootstrap"
-    assert [call[0:2] for call in calls].count(["launchctl", "bootout"]) == 0
-    assert [call[0:2] for call in calls].count(["launchctl", "bootstrap"]) == 1
+    assert [call[0:2] for call in calls].count(
+        [memory_harden.LAUNCHCTL_PATH, "bootout"]
+    ) == 0
+    assert [call[0:2] for call in calls].count(
+        [memory_harden.LAUNCHCTL_PATH, "bootstrap"]
+    ) == 1
 
 
 def test_memory_hardening_schedule_records_failed_post_bootstrap_verification(
@@ -1575,11 +2249,12 @@ def test_memory_hardening_schedule_records_failed_post_bootstrap_verification(
             self.stderr = stderr
 
     def fake_run(command, **_kwargs):
-        if command[0:2] == ["launchctl", "print"]:
+        if command[0:2] == [memory_harden.LAUNCHCTL_PATH, "print"]:
             return Completed(113)
         return Completed()
 
     monkeypatch.setattr(memory_harden, "launch_agent_path", lambda: plist_path)
+    monkeypatch.setattr(memory_harden, "canonical_app_support_dir", lambda: app_support_dir)
     monkeypatch.setattr(memory_harden.subprocess, "run", fake_run)
     monkeypatch.setattr(memory_harden.sys, "platform", "darwin")
 
@@ -1628,13 +2303,14 @@ def test_memory_hardening_schedule_records_failed_bootout(tmp_path, monkeypatch)
             self.stderr = stderr
 
     def fake_run(command, **_kwargs):
-        if command[0:2] == ["launchctl", "print"]:
+        if command[0:2] == [memory_harden.LAUNCHCTL_PATH, "print"]:
             return Completed(0)
-        if command[0:2] == ["launchctl", "bootout"]:
+        if command[0:2] == [memory_harden.LAUNCHCTL_PATH, "bootout"]:
             return Completed(1, stderr="synthetic bootout failure")
         return Completed()
 
     monkeypatch.setattr(memory_harden, "launch_agent_path", lambda: plist_path)
+    monkeypatch.setattr(memory_harden, "canonical_app_support_dir", lambda: app_support_dir)
     monkeypatch.setattr(memory_harden.subprocess, "run", fake_run)
     monkeypatch.setattr(memory_harden.sys, "platform", "darwin")
 
@@ -1731,6 +2407,16 @@ def test_memory_hardening_scheduled_trigger_writes_public_safe_receipt(tmp_path,
 
     monkeypatch.setattr(memory_harden, "running_on_battery_power", lambda: False)
     monkeypatch.setattr(memory_harden, "thermal_state_constrained", lambda: False)
+    args._launchd_invocation_proof = {
+        "version": 1,
+        "method": "launchctl_job_pid",
+        "verified": True,
+        "label": memory_harden.LAUNCH_AGENT_LABEL,
+        "pid": os.getpid(),
+        "parent_pid": 1,
+        "launchctl_status": "ok",
+        "observed_job_pid": os.getpid(),
+    }
     monkeypatch.setattr(memory_harden.subprocess, "run", lambda *_args, **_kwargs: Completed())
 
     status = memory_harden.run_node(
@@ -1739,27 +2425,115 @@ def test_memory_hardening_scheduled_trigger_writes_public_safe_receipt(tmp_path,
             "VIVENTIUM_MEMORY_HARDENING_DRY_RUN_FIRST": "false",
             "VIVENTIUM_MEMORY_HARDENING_SCHEDULE": "0 3 * * *",
             "VIVENTIUM_MEMORY_HARDENING_TIMEZONE": "America/Toronto",
+            "VIVENTIUM_MEMORY_HARDENING_PROVIDER": "openai",
+            "VIVENTIUM_MEMORY_HARDENING_MODEL": "gpt-5.6-sol",
+            "VIVENTIUM_MEMORY_HARDENING_EFFORT": "xhigh",
         },
     )
 
     events = list(memory_harden.trigger_events_dir(app_support_dir).glob("*.json"))
     assert status == 0
     assert len(events) == 1
+    marker = json.loads(
+        memory_harden.schedule_v3_observation_path(app_support_dir).read_text(encoding="utf-8")
+    )
+    assert marker["schemaVersion"] == memory_harden.SCHEDULE_V3_OBSERVATION_SCHEMA_VERSION
+    assert marker["observedReceiptSchemaVersion"] == memory_harden.TRIGGER_EVENT_SCHEMA_VERSION
     payload = json.loads(events[0].read_text(encoding="utf-8"))
     assert payload["schemaVersion"] == memory_harden.TRIGGER_EVENT_SCHEMA_VERSION
     assert payload["status"] == "success"
     assert payload["trigger_source"] == "launchd"
+    assert payload["trigger_claim"] == "launchd"
+    assert payload["trigger_proof"]["method"] == "launchctl_job_pid"
+    assert payload["trigger_proof"]["verified"] is True
+    assert payload["trigger_proof"]["observed_job_pid"] == os.getpid()
     assert payload["scheduled_invocation"] is True
     assert payload["schedule_label"] == memory_harden.LAUNCH_AGENT_LABEL
     assert payload["schedule"]["hour"] == 3
     assert payload["schedule"]["minute"] == 0
     assert payload["timezone_at_fire"]
     assert payload["exit_code"] == 0
+    assert payload["requested_provider"] == "openai"
+    assert payload["requested_model"] == "gpt-5.6-sol"
+    assert payload["requested_effort"] == "xhigh"
     assert "repo_root_hash" in payload
     assert "runtime_dir_hash" in payload
     public_blob = json.dumps(payload)
     assert str(tmp_path) not in public_blob
     assert "qa@example.com" not in public_blob
+
+
+def test_memory_hardening_caller_label_cannot_forge_launchd_receipt(tmp_path, monkeypatch) -> None:
+    app_support_dir = tmp_path / "app-support"
+    args = make_memory_harden_args(
+        repo_root=ROOT,
+        app_support_dir=app_support_dir,
+        runtime_dir=app_support_dir / "runtime",
+        command="apply",
+        scheduled=True,
+        trigger="launchd",
+        json=False,
+    )
+
+    class Completed:
+        returncode = 0
+
+    monkeypatch.setattr(memory_harden, "running_on_battery_power", lambda: False)
+    monkeypatch.setattr(memory_harden, "thermal_state_constrained", lambda: False)
+    args._launchd_invocation_proof = {
+        "version": 1,
+        "method": "launchctl_job_pid",
+        "verified": False,
+        "label": memory_harden.LAUNCH_AGENT_LABEL,
+        "pid": os.getpid(),
+        "parent_pid": os.getppid(),
+        "launchctl_status": "parent_not_launchd",
+    }
+    monkeypatch.setattr(memory_harden.subprocess, "run", lambda *_args, **_kwargs: Completed())
+
+    assert memory_harden.run_node(args, {"VIVENTIUM_MEMORY_HARDENING_DRY_RUN_FIRST": "false"}) == 0
+
+    [event_path] = list(memory_harden.trigger_events_dir(app_support_dir).glob("*.json"))
+    payload = json.loads(event_path.read_text(encoding="utf-8"))
+    assert payload["trigger_source"] == "launchd_unverified"
+    assert payload["trigger_claim"] == "launchd"
+    assert payload["trigger_proof"]["verified"] is False
+    assert payload["trigger_proof"]["launchctl_status"] == "parent_not_launchd"
+    assert payload["schedule_label"] == ""
+
+
+def test_memory_hardening_launchd_proof_requires_the_loaded_job_pid(monkeypatch) -> None:
+    args = make_memory_harden_args(scheduled=True, trigger="launchd")
+    monkeypatch.setattr(memory_harden.sys, "platform", "darwin")
+    monkeypatch.setattr(memory_harden.os, "getpid", lambda: 4242)
+    monkeypatch.setattr(memory_harden.os, "getppid", lambda: 1)
+
+    def launchctl_with_pid(pid: int):
+        return subprocess.CompletedProcess(
+            ["launchctl"],
+            0,
+            stdout=f"service = {{\n\tpid = {pid}\n}}\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr(
+        memory_harden.subprocess,
+        "run",
+        lambda *_args, **_kwargs: launchctl_with_pid(9999),
+    )
+    mismatched = memory_harden.launchd_invocation_proof(args)
+    assert mismatched["verified"] is False
+    assert mismatched["observed_job_pid"] == 9999
+
+    delattr(args, "_launchd_invocation_proof")
+    monkeypatch.setattr(
+        memory_harden.subprocess,
+        "run",
+        lambda *_args, **_kwargs: launchctl_with_pid(4242),
+    )
+    matched = memory_harden.launchd_invocation_proof(args)
+    assert matched["verified"] is True
+    assert matched["method"] == "launchctl_job_pid"
 
 
 def test_memory_hardening_manual_run_does_not_write_scheduled_trigger_receipt(tmp_path, monkeypatch) -> None:
@@ -1803,6 +2577,16 @@ def test_memory_hardening_scheduled_power_skip_finalizes_trigger_receipt(tmp_pat
     )
 
     calls = []
+    args._launchd_invocation_proof = {
+        "version": 1,
+        "method": "launchctl_job_pid",
+        "verified": True,
+        "label": memory_harden.LAUNCH_AGENT_LABEL,
+        "pid": os.getpid(),
+        "parent_pid": 1,
+        "launchctl_status": "ok",
+        "observed_job_pid": os.getpid(),
+    }
     monkeypatch.setattr(memory_harden, "running_on_battery_power", lambda: True)
     monkeypatch.setattr(memory_harden, "thermal_state_constrained", lambda: False)
     monkeypatch.setattr(memory_harden.subprocess, "run", lambda *_args, **_kwargs: calls.append(1))
@@ -1924,7 +2708,7 @@ def test_scheduled_transcript_ingest_honors_dry_run_first_marker(tmp_path, monke
         Args(),
         {
             "VIVENTIUM_MEMORY_HARDENING_PROVIDER": "anthropic",
-            "VIVENTIUM_MEMORY_HARDENING_MODEL": "claude-opus-4-8",
+            "VIVENTIUM_MEMORY_HARDENING_MODEL": "claude-opus-5",
             "VIVENTIUM_MEMORY_HARDENING_DRY_RUN_FIRST": "true",
         },
     )

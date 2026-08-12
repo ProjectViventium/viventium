@@ -8,8 +8,10 @@ Use stable `REMOTE-NNN` IDs for remote access cases.
 
 | Case ID | Requirement | User Outcome | Surfaces | Automation | Last Run |
 | --- | --- | --- | --- | --- | --- |
-| `REMOTE-001` | Remote/local network access exposes only supported surfaces and reports disabled/degraded states truthfully. | User-visible behavior matches source, docs, persisted state, and logs | CLI/status, browser origin, tunnel config, voice origin | `tests/release/test_remote_call_tunnel.py` plus user-grade QA when visible | NOT YET RUN (cataloged 2026-05-17; next feature run required) |
-| `REMOTE-002` | Public QA evidence is sanitized and reproducible | A PR reviewer can verify the behavior without private/local data | QA report, git diff, logs summary, generated artifacts | Public-safety scan plus relevant release tests | NOT YET RUN (cataloged 2026-05-17; next feature run required) |
+| `REMOTE-001` | Remote/local network access exposes only supported surfaces and reports disabled/degraded states truthfully. | User-visible behavior matches source, docs, persisted state, and logs | CLI/status, browser origin, tunnel config, voice origin | `tests/release/test_remote_call_tunnel.py` plus user-grade QA when visible | PASS 2026-07-15; see `reports/2026-07-15-public-call-and-glasshive-links.md`. |
+| `REMOTE-002` | Public QA evidence is sanitized and reproducible | A PR reviewer can verify the behavior without private/local data | QA report, git diff, logs summary, generated artifacts | Public-safety scan plus relevant release tests | PASS 2026-07-15; see `reports/2026-07-15-public-call-and-glasshive-links.md`. |
+| `REMOTE-003` | Custom-domain voice and GlassHive links remain externally usable without exposing local control surfaces. | A phone off-LAN can open one-time call and opaque GlassHive links; same-Wi-Fi hairpin failure is diagnosed truthfully. | Phone/cellular browser, Telegram `/call`, public Caddy edge, GlassHive signed refs | Remote helper/compiler/UI tests plus `TR-012`, `MPV-045`, and real external/browser QA | PARTIAL 2026-07-15; off-LAN public voice/media passed, while current one-time launch/replay security and same-Wi-Fi NAT-loopback paths remain separate pending gates. See `reports/2026-07-15-public-call-and-glasshive-links.md`. |
+| `REMOTE-004` | Public voice acceptance proves the WebRTC media path, not only the page and signaling path. | An off-LAN caller connects over a public ICE candidate and delivers synthetic voice to the real worker. | Public Playground, LiveKit TCP/UDP/TURN, voice worker, Mongo | `livekit_synthetic_audio_qa.js`, release contract tests, runtime logs/DB | PASS off-LAN 2026-07-15; same-Wi-Fi public hostname remains BLOCKED by router NAT loopback. See the dated report. |
 
 ## `REMOTE-001` - Core User Flow
 
@@ -24,7 +26,8 @@ Use stable `REMOTE-NNN` IDs for remote access cases.
 - Forbidden result: backend logs, mocks, source inspection, or model completions are treated as full acceptance when a user-visible surface exists.
 - Evidence to capture: sanitized visible result, supporting command/test result, generated/runtime state summary, and docs/case links.
 - Automation: `tests/release/test_remote_call_tunnel.py` plus any narrower feature tests discovered during implementation.
-- Last run: NOT YET RUN (cataloged 2026-05-17; not a substitute for the next real feature run).
+- Last run: PASS 2026-07-15; live CLI, browser, config, state, and edge evidence is recorded in
+  `reports/2026-07-15-public-call-and-glasshive-links.md`.
 
 ## `REMOTE-002` - Public-Safe Evidence Record
 
@@ -39,7 +42,61 @@ Use stable `REMOTE-NNN` IDs for remote access cases.
 - Forbidden result: a report includes private transcripts, account identifiers, raw runtime dumps, local home paths, tokens, or secret-bearing command lines.
 - Evidence to capture: public-safety scan result and link to the sanitized report.
 - Automation: public-safety pattern scan plus relevant release tests.
-- Last run: NOT YET RUN (cataloged 2026-05-17; run on each new public report).
+- Last run: PASS 2026-07-15; public-safety review is recorded in
+  `reports/2026-07-15-public-call-and-glasshive-links.md`.
+
+## `REMOTE-003` - Public Call And GlassHive Link Boundary
+
+- Requirement: public links use the configured HTTPS origins, while the GlassHive operator surface stays closed unless an opaque signed ref/session authorizes the request.
+- Risk covered: Telegram `/call` or GlassHive returns localhost; a same-Wi-Fi NAT-loopback failure is misdiagnosed as a dead edge; or port 8780 is exposed as an unauthenticated control plane.
+- Preconditions: custom-domain public edge is active, GlassHive is enabled, synthetic public-safe worker/artifact data is available, and an off-LAN phone or external fetch path exists.
+- Steps:
+  1. Send Telegram `/call`, verify the returned URL uses the configured public playground origin, then open it with phone Wi-Fi disabled.
+  2. Generate synthetic GlassHive workspace and artifact refs and verify their visible URLs use `public_glasshive_origin`, contain opaque refs, and contain no localhost/raw token.
+  3. Fetch GlassHive `/health` externally; verify `/`, `/docs`, `/api/bootstrap`, raw worker routes, and raw signed-token routes fail without a signed session.
+  4. Open the workspace ref in a real browser, verify the tokenless Watch / Steer page, expand status/detail, and refresh. Open/download the artifact ref and verify synthetic content.
+  5. Correlate Caddy state/config, generated runtime env, UI/runtime logs, and short-ref DB state without preserving secrets or raw refs in public evidence.
+- Expected result: cellular/off-LAN call and opaque GlassHive links work; same-Wi-Fi-only failure is labeled NAT hairpin/loopback; GlassHive control surfaces fail closed.
+- Forbidden result: a localhost URL is returned, public root/control UI is available without a signed session, a raw signed token is visible, or local mocks are treated as the phone/browser result.
+- Evidence to capture: sanitized host/status codes, visible browser outcome, synthetic artifact marker/hash, generated-config key presence, external fetch proof, and exact remaining phone action if cellular audio cannot be completed in-session.
+- Automation: `tests/release/test_remote_call_tunnel.py`, `tests/release/test_config_compiler.py`,
+  `tests/release/test_install_summary.py`, `tests/release/test_voice_playground_dispatch_contract.py`,
+  `qa/modern-playground-voice/scripts/livekit_synthetic_audio_qa.js`, and
+  `frontends/glass-drive-ui/tests/test_server.py`.
+- Last run: PARTIAL 2026-07-15. The post-change browser used the public Playground through an
+  off-LAN proxy, selected the public LiveKit TCP candidate, delivered a synthetic microphone fixture
+  to the real worker, and persisted the expected transcript. Same-Wi-Fi public-host access still
+  times out because the router lacks NAT loopback. See the dated report.
+
+## `REMOTE-004` - Public Voice Media, Not Page-Only Acceptance
+
+- Requirement: a public call is usable only when the browser establishes a public ICE pair and
+  delivers media; page render, settings load, signaling, or a listening TURN port alone is not
+  acceptance.
+- Risk covered: private-only LiveKit candidates or an unforwarded TURN relay range let the public
+  page look healthy while every off-LAN call fails with `could not establish pc connection`.
+- Preconditions: canonical local-prod runtime, public-safe synthetic call session/audio, public
+  Playground and LiveKit DNS, and an independently routed browser path.
+- Steps:
+  1. Run the public Playground browser through an off-LAN SOCKS path and disable non-proxied UDP so
+     the test cannot silently use the LAN.
+  2. Start the real call with a fake microphone WAV and assert the LiveKit client selects TCP media.
+  3. Correlate the selected public candidate and external peer class in LiveKit logs, worker join,
+     expected STT transcript persistence, and targeted DB cleanup.
+  4. Force TURN/TLS separately when it is claimed as fallback; require a selected relay pair, not
+     only a relay candidate or successful TLS handshake.
+  5. Probe the same public hostname without the off-LAN proxy and classify a same-Wi-Fi timeout as
+     NAT loopback/split-DNS work, not as an application regression.
+- Expected result: off-LAN browser and TCP media connect, the worker receives the synthetic audio,
+  expected transcript persists once, and all synthetic records are removed. Same-Wi-Fi status is
+  reported independently.
+- Forbidden result: accepting HTTP `200`, loaded voice settings, WebSocket signaling, private-only
+  server candidates, or a TURN/TLS allocation with no selected relay pair as proof of a call.
+- Evidence to capture: sanitized selected-pair protocol/candidate types, worker/session presence,
+  transcript match/count, cleanup counts, public runtime config alignment, and same-Wi-Fi result.
+- Last run: PASS off-LAN 2026-07-15. The public page and media traversed a Tor exit, LiveKit selected
+  the public TCP candidate, and the real worker persisted the expected synthetic transcript.
+  Same-Wi-Fi public-host access remains BLOCKED by router NAT loopback.
 
 ## Natural User Use Case Checklist
 
@@ -48,9 +105,11 @@ rows before claiming a pass when the feature behavior changes.
 
 | Use Case ID | Natural user action | Requirement / case link | Real surface to use | Supporting evidence to compare | Expected visible result | Last run |
 | --- | --- | --- | --- | --- | --- | --- |
-| `REMOTE-UC-001` | On CLI/status, browser origin, tunnel config, voice origin, verify that remote/local network access exposes only supported surfaces and reports disabled/degraded states truthfully. | owning requirement for `REMOTE-001` / `REMOTE-001` | CLI/status, browser origin, tunnel config, voice origin | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to REMOTE-001. | User-visible behavior matches source, docs, persisted state, and logs | NOT YET RUN (cataloged 2026-05-18; next feature run required) |
-| `REMOTE-UC-002` | On QA report, git diff, logs summary, generated artifacts, create or review the public QA evidence record with setup/auth/config, empty-state, degraded-dependency, and privacy checks. | owning requirement for `REMOTE-002` / `REMOTE-002` | QA report, git diff, logs summary, generated artifacts | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to REMOTE-002. | The user sees an honest setup, retry, or degraded-state result for REMOTE-002; no fake success is accepted. | NOT YET RUN (cataloged 2026-05-18; next feature run required) |
-| `REMOTE-UC-003` | After creating the public QA evidence record, rerun the scan after any retry, report update, or linked artifact change. | owning requirement for `REMOTE-002` / `REMOTE-002` | QA report, git diff, logs summary, generated artifacts | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to REMOTE-002. | REMOTE-002 remains correct after the persistence or parity step and final wording matches evidence. | NOT YET RUN (cataloged 2026-05-18; next feature run required) |
+| `REMOTE-UC-001` | On CLI/status, browser origin, tunnel config, voice origin, verify that remote/local network access exposes only supported surfaces and reports disabled/degraded states truthfully. | owning requirement for `REMOTE-001` / `REMOTE-001` | CLI/status, browser origin, tunnel config, voice origin | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to REMOTE-001. | User-visible behavior matches source, docs, persisted state, and logs | PASS 2026-07-15; see `reports/2026-07-15-public-call-and-glasshive-links.md`. |
+| `REMOTE-UC-002` | On QA report, git diff, logs summary, generated artifacts, create or review the public QA evidence record with setup/auth/config, empty-state, degraded-dependency, and privacy checks. | owning requirement for `REMOTE-002` / `REMOTE-002` | QA report, git diff, logs summary, generated artifacts | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to REMOTE-002. | The user sees an honest setup, retry, or degraded-state result for REMOTE-002; no fake success is accepted. | PASS 2026-07-15; see `reports/2026-07-15-public-call-and-glasshive-links.md`. |
+| `REMOTE-UC-003` | After creating the public QA evidence record, rerun the scan after any retry, report update, or linked artifact change. | owning requirement for `REMOTE-002` / `REMOTE-002` | QA report, git diff, logs summary, generated artifacts | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to REMOTE-002. | REMOTE-002 remains correct after the persistence or parity step and final wording matches evidence. | PASS 2026-07-15 after final compile/restart and regenerated links; see the dated report. |
+| `REMOTE-UC-004` | From an off-LAN browser, open the latest Telegram `/call` URL, replay it from another browser, and open one synthetic GlassHive workspace/artifact link. | `REMOTE-003`, `REMOTE-004`, `TR-012`, `MPV-045` | Telegram, two cellular/off-LAN browser contexts, public edge, Watch / Steer | Fragment/exchange/replay statuses, selected ICE pair, public state/Caddy, logs, ref DB summary, external checks | First call connects with delivered media; replay is denied; opaque GlassHive links open; raw control paths remain closed. | PARTIAL: public media passed 2026-07-15; one-time exchange/replay was not part of that historical run and remains pending. |
+| `REMOTE-UC-005` | On the home Wi-Fi, open the same public Playground hostname. | `REMOTE-003`, `REMOTE-004` | Phone/browser on the serving LAN | DNS result, TCP/HTTPS timing, router hairpin/split-DNS state | The public hostname reaches a trusted HTTPS edge without changing the public/off-LAN path. | BLOCKED 2026-07-15: router provides no NAT loopback and no split-horizon DNS path is configured. |
 
 ## Release Test Traceability
 

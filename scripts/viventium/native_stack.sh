@@ -64,6 +64,9 @@ else
 fi
 MONGO_PID_FILE="$NATIVE_STATE_DIR/mongod.pid"
 MONGO_LOG_FILE="$NATIVE_LOG_DIR/mongod.log"
+MONGODB_NATIVE_VERSION="8.0.23"
+MONGODB_NATIVE_TEAM_ID="4XWMY46275"
+MONGODB_NATIVE_BINARY="${APP_SUPPORT_DIR}/runtime-tools/mongodb/${MONGODB_NATIVE_VERSION}/$(uname -m)/bin/mongod"
 
 MEILI_PORT="${VIVENTIUM_LOCAL_MEILI_PORT:-7700}"
 MEILI_HOST="${MEILI_BIND_HOST:-127.0.0.1}"
@@ -125,6 +128,7 @@ LIVEKIT_TURN_TLS_PORT="${LIVEKIT_TURN_TLS_PORT:-}"
 LIVEKIT_TURN_CERT_FILE="${LIVEKIT_TURN_CERT_FILE:-}"
 LIVEKIT_TURN_KEY_FILE="${LIVEKIT_TURN_KEY_FILE:-}"
 NATIVE_STACK_SKIP_LIVEKIT="${VIVENTIUM_NATIVE_STACK_SKIP_LIVEKIT:-0}"
+NATIVE_STACK_SKIP_MEILI="${VIVENTIUM_NATIVE_STACK_SKIP_MEILI:-0}"
 VOICE_ENABLED="${VIVENTIUM_VOICE_ENABLED:-true}"
 
 mkdir -p "$NATIVE_STATE_DIR" "$NATIVE_LOG_DIR" "$PROFILE_STATE_DIR" "$MONGO_DATA_DIR" "$MEILI_DATA_DIR" "$LIVEKIT_CFG_DIR"
@@ -134,9 +138,201 @@ port_listening() {
   viventium_port_listener_active "$port"
 }
 
+resolve_unique_listener_pid() {
+  local port="$1"
+  local pid=""
+  local selected_pid=""
+  local count=0
+
+  if ! command -v lsof >/dev/null 2>&1; then
+    echo "[native] ERROR: cannot resolve listener ownership on port ${port} because lsof is unavailable" >&2
+    return 1
+  fi
+
+  while IFS= read -r pid; do
+    [[ "$pid" =~ ^[0-9]+$ ]] || continue
+    count=$((count + 1))
+    selected_pid="$pid"
+  done < <(lsof -nP -iTCP:"$port" -sTCP:LISTEN -t 2>/dev/null | sort -u || true)
+
+  if [[ "$count" -eq 0 ]]; then
+    echo "[native] ERROR: port ${port} reported active but no listener PID could be resolved" >&2
+    return 1
+  fi
+  if [[ "$count" -ne 1 ]]; then
+    echo "[native] ERROR: port ${port} has multiple listener PIDs; refusing ambiguous ownership" >&2
+    return 1
+  fi
+  printf '%s\n' "$selected_pid"
+}
+
 process_command_line() {
   local pid="$1"
-  ps -p "$pid" -o command= 2>/dev/null || true
+  # BSD/macOS ps truncates long argv output to the display width unless -ww is
+  # requested. Runtime-owned data paths occur late in the MongoDB and
+  # Meilisearch argv, so truncated output makes a valid PID look foreign.
+  ps -ww -p "$pid" -o command= 2>/dev/null || true
+}
+
+process_executable_identity() {
+  local pid="$1"
+  # macOS truncates `comm` to MAXCOMLEN even with -ww. These managed service
+  # basenames fit within `ucomm`, which avoids depending on the truncated path.
+  ps -ww -p "$pid" -o ucomm= 2>/dev/null |
+    head -n 1 |
+    sed 's/^[[:space:]]*//; s/[[:space:]]*$//' || true
+}
+
+process_executable_basename_matches() {
+  local pid="$1"
+  local expected_basename="$2"
+  local executable_identity executable_basename
+  executable_identity="$(process_executable_identity "$pid")"
+  [[ -n "$executable_identity" ]] || return 1
+  executable_basename="${executable_identity##*/}"
+  [[ "$executable_basename" == "$expected_basename" ]]
+}
+
+canonical_existing_path() {
+  local candidate="$1"
+  [[ -e "$candidate" ]] || return 1
+  if command -v realpath >/dev/null 2>&1; then
+    realpath "$candidate" 2>/dev/null
+    return $?
+  fi
+
+  local candidate_dir candidate_name
+  candidate_dir="$(dirname "$candidate")"
+  candidate_name="$(basename "$candidate")"
+  (cd "$candidate_dir" >/dev/null 2>&1 && printf '%s/%s\n' "$(pwd -P)" "$candidate_name")
+}
+
+process_executable_path() {
+  local pid="$1"
+  local output=""
+  local record=""
+  local process_count=0
+  local current_process_matches=0
+  local primary_path=""
+
+  if ! command -v lsof >/dev/null 2>&1; then
+    return 1
+  fi
+  output="$(lsof -a -p "$pid" -d txt -Fn 2>/dev/null)" || return 1
+
+  while IFS= read -r record; do
+    case "$record" in
+      p*)
+        process_count=$((process_count + 1))
+        if [[ "${record#p}" == "$pid" ]]; then
+          current_process_matches=1
+        else
+          current_process_matches=0
+        fi
+        ;;
+      n*)
+        if [[ "$current_process_matches" == "1" && -z "$primary_path" ]]; then
+          primary_path="${record#n}"
+        fi
+        ;;
+    esac
+  done <<<"$output"
+
+  [[ "$process_count" -eq 1 && -n "$primary_path" ]] || return 1
+  canonical_existing_path "$primary_path"
+}
+
+mongo_executable_matches_expected() {
+  local pid="$1"
+  if [[ "${VIVENTIUM_INSTALL_EXPERIENCE:-legacy}" == "express" ]]; then
+    local running_path pinned_path
+    running_path="$(process_executable_path "$pid")" || return 1
+    pinned_path="$(canonical_existing_path "$MONGODB_NATIVE_BINARY")" || return 1
+    [[ "$running_path" == "$pinned_path" ]]
+    return
+  fi
+  process_executable_basename_matches "$pid" "mongod"
+}
+
+command_line_has_option_value() {
+  local command_line="$1"
+  local option="$2"
+  local expected_value="$3"
+  [[ " $command_line " == *" $option $expected_value "* ]]
+}
+
+canonical_existing_dir() {
+  local candidate="$1"
+  (cd "$candidate" >/dev/null 2>&1 && pwd -P)
+}
+
+mongo_process_matches_expected() {
+  local pid="$1"
+  local command_line expected_data_dir
+  command_line="$(process_command_line "$pid")"
+  [[ -n "$command_line" ]] || return 1
+  expected_data_dir="$(canonical_existing_dir "$MONGO_DATA_DIR")" || return 1
+  mongo_executable_matches_expected "$pid" || return 1
+  command_line_has_option_value "$command_line" "--port" "$MONGO_PORT" || return 1
+  command_line_has_option_value "$command_line" "--dbpath" "$expected_data_dir"
+}
+
+meili_process_matches_expected() {
+  local pid="$1"
+  local command_line expected_data_dir
+  command_line="$(process_command_line "$pid")"
+  [[ -n "$command_line" ]] || return 1
+  expected_data_dir="$(canonical_existing_dir "$MEILI_DATA_DIR")" || return 1
+  process_executable_basename_matches "$pid" "meilisearch" || return 1
+  command_line_has_option_value "$command_line" "--http-addr" "${MEILI_HOST}:${MEILI_PORT}" || return 1
+  command_line_has_option_value "$command_line" "--db-path" "$expected_data_dir"
+}
+
+mongo_listener_data_dir() {
+  if ! command -v mongosh >/dev/null 2>&1; then
+    return 1
+  fi
+
+  local mongo_admin_uri="mongodb://${MONGO_HOST}:${MONGO_PORT}/admin?directConnection=true&serverSelectionTimeoutMS=3000"
+  mongosh "$mongo_admin_uri" --quiet --eval '
+const result = db.adminCommand({ getCmdLineOpts: 1 });
+if (!result.ok || !result.parsed || !result.parsed.storage || !result.parsed.storage.dbPath) {
+  quit(2);
+}
+print(result.parsed.storage.dbPath);
+' 2>/dev/null | tail -n 1
+}
+
+mongo_listener_matches_expected() {
+  local listener_pid="${1:-}"
+  if [[ "${VIVENTIUM_INSTALL_EXPERIENCE:-legacy}" == "express" ]]; then
+    express_mongo_listener_matches_expected "$listener_pid"
+    return $?
+  fi
+
+  local listener_data_dir expected_data_dir canonical_listener_data_dir
+  listener_data_dir="$(mongo_listener_data_dir)" || return 1
+  [[ -n "$listener_data_dir" ]] || return 1
+  expected_data_dir="$(canonical_existing_dir "$MONGO_DATA_DIR")" || return 1
+  canonical_listener_data_dir="$(canonical_existing_dir "$listener_data_dir")" || return 1
+  [[ "$canonical_listener_data_dir" == "$expected_data_dir" ]]
+}
+
+express_mongo_listener_matches_expected() {
+  local pid="${1:-}"
+  if [[ -z "$pid" ]]; then
+    [[ -f "$MONGO_PID_FILE" ]] || return 1
+    pid="$(tr -d '[:space:]' <"$MONGO_PID_FILE" 2>/dev/null || true)"
+  fi
+  local command_line expected_data_dir
+  [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+  kill -0 "$pid" >/dev/null 2>&1 || return 1
+  command_line="$(process_command_line "$pid")"
+  [[ -n "$command_line" ]] || return 1
+  expected_data_dir="$(canonical_existing_dir "$MONGO_DATA_DIR")" || return 1
+  mongo_executable_matches_expected "$pid" || return 1
+  command_line_has_option_value "$command_line" "--port" "$MONGO_PORT" || return 1
+  command_line_has_option_value "$command_line" "--dbpath" "$expected_data_dir" || return 1
 }
 
 wait_for_port() {
@@ -160,7 +356,12 @@ wait_for_port() {
 write_pid() {
   local pid="$1"
   local path="$2"
-  printf '%s\n' "$pid" >"$path"
+  local temp_path="${path}.tmp.$$"
+  (
+    umask 077
+    printf '%s\n' "$pid" >"$temp_path"
+  )
+  mv -f "$temp_path" "$path"
 }
 
 stop_pid() {
@@ -191,6 +392,25 @@ stop_pid_file() {
   local pid
   pid="$(tr -d '[:space:]' <"$path" || true)"
   stop_pid "$pid" "$label"
+  rm -f "$path"
+}
+
+stop_pid_file_if_matches() {
+  local path="$1"
+  local label="$2"
+  local matcher="$3"
+  if [[ ! -f "$path" ]]; then
+    return 0
+  fi
+  local pid
+  pid="$(tr -d '[:space:]' <"$path" || true)"
+  if [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" >/dev/null 2>&1; then
+    if "$matcher" "$pid"; then
+      stop_pid "$pid" "$label"
+    else
+      echo "[native] WARNING: Skipping stale ${label} PID ${pid}; process identity does not match this runtime" >&2
+    fi
+  fi
   rm -f "$path"
 }
 
@@ -244,8 +464,12 @@ livekit_command_matches_expected() {
   local command_line
   command_line="$(process_command_line "$pid")"
   [[ -n "$command_line" ]] || return 1
-  [[ "$command_line" == *"$LIVEKIT_CFG_FILE"* ]] || return 1
-  [[ "$command_line" == *"--node-ip"*"$LIVEKIT_NODE_IP"* ]] || return 1
+  if ! process_executable_basename_matches "$pid" "livekit-server" &&
+    ! process_executable_basename_matches "$pid" "livekit"; then
+    return 1
+  fi
+  command_line_has_option_value "$command_line" "--config" "$LIVEKIT_CFG_FILE" || return 1
+  command_line_has_option_value "$command_line" "--node-ip" "$LIVEKIT_NODE_IP" || return 1
 }
 
 managed_livekit_listener_pid() {
@@ -271,7 +495,7 @@ managed_livekit_listener_pid() {
 }
 
 stop_livekit() {
-  stop_pid_file "$LIVEKIT_PID_FILE" "LiveKit"
+  stop_pid_file_if_matches "$LIVEKIT_PID_FILE" "LiveKit" livekit_command_matches_expected
   local pid
   pid="$(managed_livekit_listener_pid || true)"
   if [[ -n "$pid" ]]; then
@@ -347,15 +571,68 @@ ensure_livekit_binary() {
   return 1
 }
 
-start_mongo() {
-  if port_listening "$MONGO_PORT"; then
-    echo "[native] MongoDB already listening on ${MONGO_PORT}"
+verify_express_mongod_binary() {
+  local binary="$MONGODB_NATIVE_BINARY"
+  if [[ ! -x "$binary" ]]; then
+    echo "[native] ERROR: pinned MongoDB ${MONGODB_NATIVE_VERSION} runtime is missing; rerun bin/viventium preflight --apply before starting Easy Install." >&2
+    return 1
+  fi
+  if ! /usr/bin/codesign --verify --strict --verbose=2 "$binary" >/dev/null 2>&1; then
+    echo "[native] ERROR: pinned MongoDB runtime failed code-signature verification; rerun the preserve-data repair flow." >&2
+    return 1
+  fi
+  local signing_details=""
+  signing_details="$(/usr/bin/codesign -dv --verbose=4 "$binary" 2>&1 || true)"
+  if ! printf '%s\n' "$signing_details" | grep -Fq "TeamIdentifier=${MONGODB_NATIVE_TEAM_ID}"; then
+    echo "[native] ERROR: pinned MongoDB runtime publisher does not match the approved MongoDB Team ID." >&2
+    return 1
+  fi
+  local version_output=""
+  version_output="$("$binary" --version 2>/dev/null || true)"
+  if ! printf '%s\n' "$version_output" | grep -Fq "db version v${MONGODB_NATIVE_VERSION}"; then
+    echo "[native] ERROR: pinned MongoDB runtime version does not match ${MONGODB_NATIVE_VERSION}." >&2
+    return 1
+  fi
+}
+
+select_mongod_binary() {
+  if [[ "${VIVENTIUM_INSTALL_EXPERIENCE:-legacy}" == "express" ]]; then
+    if ! verify_express_mongod_binary; then
+      echo "[native] ERROR: Easy Install will not fall back to Homebrew or an unverified PATH mongod; repair the pinned MongoDB runtime first." >&2
+      return 1
+    fi
+    printf '%s\n' "$MONGODB_NATIVE_BINARY"
     return 0
   fi
-  ensure_brew_pkg mongodb/brew/mongodb-community@8.0 mongod
+
+  ensure_brew_pkg mongodb/brew/mongodb-community@8.0 mongod >&2 || return 1
+  command -v mongod
+}
+
+start_mongo() {
+  local mongod_binary=""
+  if port_listening "$MONGO_PORT"; then
+    local listener_pid=""
+    if [[ "${VIVENTIUM_INSTALL_EXPERIENCE:-legacy}" == "express" ]] && ! verify_express_mongod_binary; then
+      return 1
+    fi
+    if ! listener_pid="$(resolve_unique_listener_pid "$MONGO_PORT")"; then
+      echo "[native] ERROR: MongoDB port ${MONGO_PORT} cannot be attributed to one process; refusing ambiguous listener ownership." >&2
+      return 1
+    fi
+    if ! mongo_process_matches_expected "$listener_pid" ||
+      ! mongo_listener_matches_expected "$listener_pid"; then
+      echo "[native] ERROR: MongoDB port ${MONGO_PORT} is already in use, but its data directory does not match the configured Viventium data directory; refusing to use an unexpected persistence store." >&2
+      return 1
+    fi
+    write_pid "$listener_pid" "$MONGO_PID_FILE"
+    echo "[native] MongoDB already listening on ${MONGO_PORT}; verified configured persistence identity and adopted listener PID ${listener_pid}"
+    return 0
+  fi
+  mongod_binary="$(select_mongod_binary)" || return 1
   ensure_soft_open_file_limit 65536
   echo "[native] Starting MongoDB on ${MONGO_HOST}:${MONGO_PORT}"
-  nohup mongod \
+  nohup "$mongod_binary" \
     --bind_ip "$MONGO_HOST" \
     --port "$MONGO_PORT" \
     --dbpath "$MONGO_DATA_DIR" \
@@ -412,7 +689,17 @@ start_meili() {
   }
 
   if port_listening "$MEILI_PORT"; then
-    echo "[native] Meilisearch already listening on ${MEILI_PORT}"
+    local listener_pid=""
+    if ! listener_pid="$(resolve_unique_listener_pid "$MEILI_PORT")"; then
+      echo "[native] ERROR: Meilisearch port ${MEILI_PORT} cannot be attributed to one process; refusing ambiguous listener ownership." >&2
+      return 1
+    fi
+    if ! meili_process_matches_expected "$listener_pid"; then
+      echo "[native] ERROR: Meilisearch port ${MEILI_PORT} is owned by a foreign process or persistence path; refusing to adopt it." >&2
+      return 1
+    fi
+    write_pid "$listener_pid" "$MEILI_PID_FILE"
+    echo "[native] Meilisearch already listening on ${MEILI_PORT}; verified configured persistence identity and adopted listener PID ${listener_pid}"
     return 0
   fi
   ensure_brew_pkg meilisearch meilisearch
@@ -449,20 +736,23 @@ start_livekit() {
     return 0
   fi
   if port_listening "$LIVEKIT_HTTP_PORT"; then
-    local existing_pid
-    existing_pid="$(managed_livekit_listener_pid || true)"
-    if [[ -n "$existing_pid" ]]; then
-      if livekit_meta_matches_expected && livekit_command_matches_expected "$existing_pid"; then
-        echo "[native] LiveKit already listening on ${LIVEKIT_HTTP_PORT}"
-        return 0
-      fi
-      echo "[native] Restarting LiveKit on ${LIVEKIT_HTTP_PORT} to apply updated network/runtime config"
-      stop_pid "$existing_pid" "LiveKit"
-      rm -f "$LIVEKIT_PID_FILE" "$LIVEKIT_META_FILE"
-    else
-      echo "[native] LiveKit already listening on ${LIVEKIT_HTTP_PORT}"
+    local existing_pid=""
+    if ! existing_pid="$(resolve_unique_listener_pid "$LIVEKIT_HTTP_PORT")"; then
+      echo "[native] ERROR: LiveKit port ${LIVEKIT_HTTP_PORT} cannot be attributed to one process; refusing ambiguous listener ownership." >&2
+      return 1
+    fi
+    if ! livekit_command_matches_expected "$existing_pid"; then
+      echo "[native] ERROR: LiveKit port ${LIVEKIT_HTTP_PORT} is owned by a foreign process; refusing to adopt it." >&2
+      return 1
+    fi
+    if livekit_meta_matches_expected; then
+      write_pid "$existing_pid" "$LIVEKIT_PID_FILE"
+      echo "[native] LiveKit already listening on ${LIVEKIT_HTTP_PORT}; verified runtime identity and adopted listener PID ${existing_pid}"
       return 0
     fi
+    echo "[native] Restarting LiveKit on ${LIVEKIT_HTTP_PORT} to apply updated network/runtime config"
+    stop_pid "$existing_pid" "LiveKit"
+    rm -f "$LIVEKIT_PID_FILE" "$LIVEKIT_META_FILE"
   fi
   local livekit_bin
   livekit_bin="$(ensure_livekit_binary)"
@@ -499,14 +789,16 @@ EOF
 case "${1:-}" in
   start)
     start_mongo
-    start_meili
+    if [[ "$NATIVE_STACK_SKIP_MEILI" != "1" ]]; then
+      start_meili
+    fi
     start_livekit
     ;;
   stop)
     stop_livekit
-    stop_pid_file "$MEILI_PID_FILE" "Meilisearch"
+    stop_pid_file_if_matches "$MEILI_PID_FILE" "Meilisearch" meili_process_matches_expected
     if [[ -f "$MONGO_PID_FILE" ]]; then
-      stop_pid_file "$MONGO_PID_FILE" "MongoDB"
+      stop_pid_file_if_matches "$MONGO_PID_FILE" "MongoDB" mongo_process_matches_expected
     fi
     ;;
   *)

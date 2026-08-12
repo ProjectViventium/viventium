@@ -65,10 +65,14 @@ background-cortex behavior.
   classes stay in parity. Full URLs and `www.` links are speech artifacts; bare dot-heavy technical
   tokens such as `.NET`, `asp.net`, `node.js`, and version-like strings must not be treated as raw
   URL artifacts merely because they contain periods.
-- If asynchronous/speculative background detection starts a main-provider run and no background
-  cortex activates, any provider failure from that speculative run must propagate into the normal
-  fallback/error path. Only an intentional abort caused by a real activated cortex may suppress a
-  late stream-abort error.
+- When asynchronous background detection and Main start together, Main authors exactly once. Any
+  provider failure must propagate into the normal fallback/error path; detector completion or
+  activation is never a reason to cancel and replay the provider run.
+- A live voice turn must not start unsolicited foreground research or tool work. When evidence is
+  not already verified, Main gives the best bounded immediate answer, states what remains
+  unverified, and lets nonblocking background work surface later value through Phase B. An explicit
+  user request to look something up or use a tool now remains valid current-turn authority; that
+  work stays interruptible/cancellable and cannot be claimed before authoritative evidence returns.
 - Provider-bound Anthropic histories must drop malformed thinking blocks before execution.
 - Voice input mode must be propagated to main agents and background cortices.
 - A connected call must not die just because the user is quiet for a long time.
@@ -76,6 +80,14 @@ background-cortex behavior.
 - Listen-Only Mode must be a listening-only voice behavior that saves ambient transcript records without
   producing an assistant response.
 - Only one LiveKit worker may speak for a call session at a time.
+- A voice worker's LiveKit Agents internal HTTP listener must not compete with Viventium's stable
+  health endpoint or another side-by-side local runtime.
+- Provider-bound function schemas must be unique by callable name. Request-scoped dynamic tool
+  binding must not feed the same schema back into its own event-driven merge; providers that reject
+  duplicate function names must receive the same unique tool set as providers that tolerate them.
+- A recoverable initialization failure in an optional handoff participant must remove that
+  participant and its incident graph edges before compilation. The healthy main agent must not fail
+  with an unknown-node graph error because an unrelated connected account needs reconnection.
 
 ## Public-Safe Specifications
 
@@ -83,8 +95,16 @@ background-cortex behavior.
 - The main agent provider/model is the default LLM for live voice calls.
 - The agent may optionally expose a dedicated Voice Call LLM via explicit `voice_llm_provider` and
   `voice_llm_model` fields.
+- A dedicated Voice Call LLM must pass the same prompt-owned recall/tool-ownership acceptance case
+  as the text route. Lower latency is not parity when explicit prior-conversation questions skip
+  healthy retrieval and produce an unsupported no-memory answer.
 - If the Voice Call LLM is unset, runtime must use the agent's primary provider/model exactly as
   selected in Agent Builder.
+- When a user changes the provider of an optional Voice Call or fallback route in Agent Builder,
+  the prior provider's parameter bag must be cleared before the new route is rendered or saved.
+  Initial form hydration, including a mounted panel's transient empty-to-persisted-provider reset,
+  must preserve the persisted route exactly. OpenAI-only settings such as `useResponsesApi` must
+  never survive a real switch from OpenAI to xAI or another provider.
 - A dedicated Voice Call LLM may inherit provider-neutral generation settings, but it must not
   inherit a provider-specific API transport from the primary route. In particular, an OpenAI
   primary's `useResponsesApi` selection must not silently switch an xAI Voice Call LLM from its
@@ -101,6 +121,10 @@ background-cortex behavior.
 - Agent Builder must expose a user-visible `Fallback Model` route from the Model Parameters page.
   It uses explicit `fallback_llm_provider`, `fallback_llm_model`, and
   `fallback_llm_model_parameters` fields.
+- The fallback panel receives the same compiled provider-capability metadata as the primary model
+  panel. A GlassHive fallback must therefore show authenticated readiness, the friendly
+  `Claude / Opus 5` label, and its route-scoped effort selector; saving `High` must persist under
+  `fallback_llm_model_parameters.reasoning_effort` and survive reload.
 - Agent Builder must also expose a fallback route inside the Voice Chat Model page. It uses
   explicit `voice_fallback_llm_provider`, `voice_fallback_llm_model`, and
   `voice_fallback_llm_model_parameters` fields so voice calls can recover independently of the
@@ -143,14 +167,11 @@ background-cortex behavior.
   speak. Wing Mode must not answer with support, reflection, or "space to talk" unless the user
   directly addresses Viventium, asks for help, or there is a clear time-sensitive/safety-critical
   intervention.
-- The first-enable disclosure should show the current STT route, TTS route, and effective assistant
-  call LLM route for the owning agent.
-- The assistant disclosure must show the concrete provider/model and whether that route comes from
-  the agent Voice Call LLM or from inheritance of the agent primary LLM.
-- When configured, the assistant disclosure may also show the fallback provider/model separately
-  from the effective call LLM so users understand resilience without confusing it with STT/TTS
-  route selection.
-- Runtime should use the persisted call-session flag as the source of truth for whether Wing Mode is on.
+- Wing Mode has no first-enable click-through or provider disclosure in the primary call path. A
+  persistent, non-blocking listening indicator communicates the active state. Effective STT, TTS,
+  assistant, and fallback routes remain available in Advanced settings and diagnostics.
+- Runtime uses the persisted call-session `mode` as the source of truth. `wing` is one value of the
+  canonical `call|wing|listen_only` enum; legacy booleans are compatibility projections only.
 - Wing Mode suppresses background-cortex activation for that turn. Ambient voice presence is not a
   permission to spend cortex tokens or surface delayed follow-ups; only direct, explicit user
   engagement should route through the normal assistant/cortex path after Wing Mode is no longer the
@@ -166,15 +187,17 @@ background-cortex behavior.
   transcribed and saved, but Viventium must not answer, speak, run tools, call the Agents
   controller, generate a title through an LLM, invoke background cortices, or trigger the live
   LibreChat Memory Agent.
-- Runtime must use a persisted call-session flag as the source of truth. Listen-Only Mode and Wing
-  Mode are mutually exclusive; enabling one clears the other.
+- Runtime must use persisted call-session `mode=listen_only` as the source of truth. Call, Wing,
+  and Listen-Only are mutually exclusive enum values and switch atomically without reconnecting;
+  legacy booleans remain migration inputs and projections only.
 - The modern playground exposes Listen-Only as an icon-sized control beside the voice-mode controls.
   Its user-facing copy must feel like cognitive presence, not surveillance, logging, or recordkeeping:
   Viventium is here with the user, only listening and remembering later. The tooltip must still make
-  the boundaries clear: the conversation is kept for later memory consolidation, no live
-  response/tool/memory path runs, and same-microphone audio does not provide true speaker
-  diarization. Separate speaker labels are only available when structured LiveKit participant/track
-  identity is available.
+  the boundaries clear: the conversation is kept for later memory consolidation and no live
+  response/tool/memory path runs. When the configured route supplies diarization, same-microphone
+  voices receive call-scoped generic labels; uncertainty, overlap, local-only routes without an
+  approved diarizer, and unstable attribution remain `Unknown`. Separate participant tracks remain
+  distinct automatically.
 - Listen-Only uses the current listening route. For the intended low-cost setup, choose the local
   `pywhispercpp` / WhisperCPP route; the mode itself must not silently remap STT providers.
 - The voice route may still use the existing turn coalescing boundary so one spoken thought becomes
@@ -214,16 +237,15 @@ background-cortex behavior.
 ### Voice Gateway Contract
 - `POST /api/viventium/calls` returns the call session id, room name, conversation id, and playground URL.
 - `GET /api/viventium/calls/:callSessionId/state` returns the current session state.
-- `POST /api/viventium/calls/:callSessionId/state` renews the session TTL and can update Wing Mode
-  and Listen-Only Mode.
+- `POST /api/viventium/calls/:callSessionId/state` renews the session TTL and atomically updates the
+  canonical call mode without reconnecting.
 - Voice gateway requests must carry the shared call-session secret and session identity.
 - Agent dispatch metadata for modern-playground calls must be hydrated from the authoritative
   call-session voice settings server-side before issuing the dispatch-bearing participant token; do
   not rely on the browser's async voice-settings fetch completing first.
-- The browser's pre-call voice-settings display fetch is advisory and must never block the primary
-  Start Chat action. If the settings request is still loading or times out, the page should keep the
-  call start available and let `/api/connection-details` perform authoritative server-side
-  hydration when the user starts the call.
+- The browser's voice-settings fetch is advisory and must never add a pre-call gate. Clicking
+  **Call** validates and connects automatically when microphone permission is already granted;
+  `/api/connection-details` performs authoritative server-side hydration for that same action.
 - Browser and proxy voice-settings startup fetches must be timeout-bounded. A slow LibreChat
   runtime, restart, or Next.js dev cold compile should produce Viventium-specific recovery text and
   a retry path, not an indefinite `Loading your voice settings...` state.
@@ -255,12 +277,12 @@ background-cortex behavior.
   token and dispatch metadata, and browser-side pre-connect microphone publication must not race
   that work into LiveKit's signal-engine timeout. This means explicit-dispatch calls intentionally
   do not buffer microphone audio before the room is connected.
-- The Start Chat gesture must be single-flight. The first click owns connection, dispatch
-  preparation, room join, and post-connect microphone enablement; the UI must disable duplicate
-  start clicks and show startup/microphone progress instead of requiring a second click.
+- Call startup must be single-flight. The originating **Call** click owns connection, dispatch
+  preparation, room join, and post-connect microphone enablement; the UI must prevent duplicate
+  starts and show startup/microphone progress instead of requiring a second click.
 - The microphone may be technically disabled during the pre-connect phase only to avoid LiveKit's
   pre-connect publish timeout. After the room is connected, Viventium must automatically publish the
-  user's microphone as part of the same start gesture unless the browser denies microphone access.
+  user's microphone as part of the same **Call** action unless the browser denies microphone access.
   A connected call must not look muted by default because the user did not press a second control;
   browser permission and missing-device failures must surface as explicit microphone errors.
 - Browser-visible voice startup errors must not expose raw fetch exceptions such as
@@ -273,6 +295,17 @@ background-cortex behavior.
 - Background/sleep recovery must not treat an intentional visible-page disconnect as a dropped
   connection. End Call should leave the page in the pre-connect state without silently starting a
   new LiveKit participant or duplicate worker job.
+
+### Voice Worker Process Port Contract
+- `VIVENTIUM_VOICE_GATEWAY_HEALTH_PORT` (or legacy `VOICE_GATEWAY_PORT`) owns Viventium's stable
+  health/capabilities endpoint.
+- The separate LiveKit Agents worker-internal listener defaults to port `0`, allowing the operating
+  system to assign a collision-free port. Deployments that need a fixed internal port may set
+  `VIVENTIUM_VOICE_WORKER_HTTP_PORT` explicitly.
+- The explicit worker port must be an integer from `0` through `65535`; invalid values fail startup
+  instead of silently falling back or stealing the health port.
+- Do not restore LiveKit Agents' implicit fixed `8081` default for local workers. Side-by-side prod,
+  dev, and QA workers must coexist without a hidden port race.
 
 ### Live Response Streaming
 - Live voice calls should stream the response after the user finishes speaking.
@@ -299,16 +332,46 @@ background-cortex behavior.
   scaffolding, unknown angle tags, and stray spaces before punctuation. This cleanup must preserve
   leading whitespace needed for provider continuation and must not silently change the selected
   model or provider.
+- Email-address replacement must remain natural on both speech and linked-chat persistence paths:
+  an input such as `Email qa@example.com` becomes `Email address available`, never the adjacent
+  duplicate `Email email available`.
 - Provider voice controls are capability-scoped at the TTS boundary. Routes whose capability
   metadata declares inline voice-control support may keep known provider controls for synthesis;
   routes without that capability, including OpenAI/ElevenLabs plain TTS and fallbacks, must strip
   voice-control tags/stage directions before synthesis while preserving spoken inner text.
+- The provider/model classification is versioned in
+  `viventium_v0_4/shared/voice/tts_provider_capabilities.json`. Runtime capability APIs, prompt
+  builders, fallback sanitization, and tests must agree with it. A capable route names an exact
+  provider dialect contract or exact tokens; a markup-free route declares an empty token set and a
+  strip policy. Do not infer generic capabilities from a provider brand. This JSON contract is a
+  required shipped artifact: Telegram and the voice gateway must fail startup with an actionable
+  error if it is missing or invalid rather than silently producing an empty provider/model table.
+- OpenAI `gpt-4o-mini-tts` supports the Speech API `instructions` side channel, not documented
+  inline SSML/emotion tags. Both the LiveKit and Telegram renderers currently supply one shared,
+  stable, affect-neutral instruction, configurable through `VIVENTIUM_OPENAI_TTS_INSTRUCTIONS`;
+  dynamic per-turn Feelings-to-`instructions` rendering is an explicit open gap. `tts-1` and
+  `tts-1-hd` do not support that instructions field and must omit it. See the
+  official [OpenAI Text-to-Speech guide](https://developers.openai.com/api/docs/guides/text-to-speech)
+  and [Speech API reference](https://developers.openai.com/api/reference/resources/audio/subresources/speech/methods/create).
+- Viventium's current ElevenLabs route is pinned explicitly to `eleven_turbo_v2_5`, uses static
+  voice settings, and leaves SSML parsing disabled, so its model-facing text is markup-free.
+  Eleven v3 natural-language audio tags are model-specific and must not be taught to or preserved
+  for the v2.5 route. Dynamic per-turn use of an applicable ElevenLabs side channel is also an open
+  gap, not a reason to invent inline tags. See the official
+  [ElevenLabs TTS API](https://elevenlabs.io/docs/api-reference/text-to-speech/convert) and
+  [model-specific prompting guidance](https://elevenlabs.io/docs/overview/capabilities/text-to-speech/best-practices).
 - Feeling-aware spoken expression is also capability-scoped. When the request contains the private
-  Feelings capsule, the model decides from the state and moment whether delivery should be
-  expressive or restrained. Expressive delivery on a capable route uses the smallest fitting
-  documented provider control without an explicit user request; restrained delivery may remain
-  unmarked, and plain TTS remains markup-free. Runtime must not translate bands, values, or user
-  phrases into tags.
+  Feelings capsule, the model decides from both the state's expression tendency and the moment
+  whether delivery should be expressive or restrained. A strongly outward state in an emotionally
+  meaningful or relational reply is expressive even when plain wording already carries tone; a
+  containing state or neutral mechanical task can be restrained. Once expressive delivery is
+  selected on a capable route, the raw response is unfinished until it uses the smallest fitting
+  exact documented provider control without an explicit user request. Restrained delivery may
+  remain unmarked, and plain TTS remains markup-free. Runtime must not translate bands, values, or
+  user phrases into tags or replace model judgment with a numeric threshold.
+- Feelings may shape delivery, but they do not own Viventium's stable voice traits. Honesty and
+  permission for natural profanity remain persona/voice-style truth and must not rise or fall with
+  a Feeling band.
 - The shared `surface.voice.feeling_expression` prompt owns that cross-surface rule. Voice-call and
   Telegram-audio prompts include it alongside exactly one resolved provider dialect. Prompt
   registry, compiled bundle, runtime fallback, and Prompt Workbench eval references must remain in
@@ -378,6 +441,9 @@ background-cortex behavior.
   `<emotion>`, `<speed>`, `<volume>`, `<break>`, and `<spell>` tags, plus the `[laughter]`
   nonverbal marker. Future Cartesia model/provider upgrades should add a new provider/model
   capability contract or update this one, then wire prompts/runtime from that contract.
+- Model-facing Cartesia syntax must also come from that contract. Capability forms use neutral
+  placeholders such as `EMOTION`, `RATIO`, `DURATION`, and `TEXT`; prompts reveal the valid values
+  and ranges for the selected Sonic-3 route without teaching one fixed calm/excited performance.
 - Runtime must validate provider-control config against the shared contract before making Cartesia
   requests. Out-of-range speed/volume should be clamped with a warning instead of causing a
   provider 4xx or silently diverging between Telegram and LiveKit.
@@ -425,6 +491,16 @@ background-cortex behavior.
   `[laughter]`, emotion, break, speed, volume, and spell counts; xAI fields include inline,
   wrapping, and total counts. Incidents must be able to distinguish generation omission from
   downstream loss without dumping private transcript text.
+- Telegram emits one always-on metadata-only `[VoiceRendering][telegram]` event per provider
+  attempt. It records the bounded provider/model, primary/fallback role, declared control capability,
+  whether compatible controls reached that provider, incompatible/stripped control counts, and the
+  unmarked/controlled result. It must never record prompt text, user text, or synthesized text.
+- LiveKit call synthesis emits the parallel always-on metadata-only
+  `[VoiceRendering][voice_gateway]` event for provider attempts, completed inputs, and selections.
+  It records provider/model, primary/fallback role, markup preserve/strip policy, and the structural
+  control outcome (`preserved`, `stripped`, `none`, or `pending`) without recording the response
+  text or credentials. This event is the provider/fallback audit surface; opt-in `[VoiceTTSInput]`
+  payload logging remains a separate incident-debug tool.
 - When a TTS provider does not support native incremental text input, runtime may adapt it to an
   incremental streaming surface, but native continuation/WebSocket APIs are the preferred contract
   for voice-first providers.
@@ -434,7 +510,7 @@ background-cortex behavior.
 - In live voice, only the main agent's user-facing outputs may be spoken:
   - the immediate Phase A main response
   - a persisted Phase B `cortex_followup` main-agent continuation, when one exists
-  - whether Phase A blocks on detection or runs speculatively (voice async "nevermind+redo") is owned
+  - whether Phase A blocks on detection or uses one-pass parallel Main + detection is owned
     by the canonical two-mode contract in `docs/requirements_and_learnings/02_Background_Agents.md`
     ("2026-05-30 … Two Independent Modes"): voice uses `VIVENTIUM_VOICE_BACKGROUND_AGENT_DETECTION_ASYNC`
     + `VIVENTIUM_VOICE_PHASE_A_AWAIT_MS=690`. These speakable-output rules are unchanged either way.
@@ -580,6 +656,10 @@ background-cortex behavior.
   - replacement idle-process prewarm must wait while active voice calls are running and must not
     prewarm local Chatterbox TTS by default on the local Whisper route; this avoids local model
     warmup competing with active whisper.cpp transcription on the same machine
+  - all local Chatterbox model load, prewarm, WAV, and streaming generation in one process must use
+    one stable process-local MLX executor thread. MLX streams are thread-local; reusing a cached
+    model from a fresh per-sentence thread can terminate the native process. A forked job process
+    must discard any inherited executor and model cache before synthesis.
   - local Whisper latency logs must decompose the final transcript path at sub-10ms resolution:
     VAD end, frame merge, pywhispercpp recognition, final transcript send, and LiveKit EOU metric
     event lag. LiveKit `transcription_delay` must be interpreted as user-stopped-speaking to final
@@ -641,18 +721,16 @@ background-cortex behavior.
   must widen the structural runtime contract, not hardcode one reproduced sentence shape.
 
 ### xAI Standalone TTS Contract
-- xAI is a first-class TTS provider separate from the older Grok Voice Agent API adapter. The
-  user-facing provider label is **xAI**; engineering docs may still call the underlying API
-  "standalone xAI TTS" when the distinction from the legacy Voice Agent adapter matters.
+- xAI is a first-class TTS provider. The user-facing provider label is **xAI**; the only supported
+  synthesis route is standalone xAI TTS at `/v1/tts`.
 - Recommendation order for Speaking providers:
   - Local Chatterbox remains the preferred first choice when available because it is local and
     covered.
   - After Local Chatterbox, xAI Voice is the recommended hosted voice route for general use because
-    as of 2026-05-07 the official xAI TTS pricing page lists $4.20 per 1M TTS input characters
-    (`https://docs.x.ai/developers/models/text-to-speech`), materially below the effective public
-    Cartesia bundled-character cost from Cartesia's published pricing (`https://cartesia.ai/pricing`),
-    and local QA found it fast and high quality. Keep this as product guidance, not a runtime
-    default flip.
+    local QA found it fast and high quality. As of 2026-07-16, the official xAI TTS model page lists
+    $15 per 1M TTS input characters (`https://docs.x.ai/developers/models/text-to-speech`). Cartesia
+    now publishes credit/minute plan pricing (`https://cartesia.ai/pricing`), so do not preserve the
+    old character-price comparison. Keep this as product guidance, not a runtime default flip.
   - Cartesia remains the recommended expressive/Sonic-3 route when the use case specifically needs
     Cartesia emotion controls, `[laughter]`, or Sonic-3 SSML-like markup.
 - Default xAI voice calls use standalone TTS:
@@ -661,8 +739,9 @@ background-cortex behavior.
   - the LiveKit websocket includes `optimize_streaming_latency=1` by default; operators may set
     `VIVENTIUM_XAI_TTS_OPTIMIZE_STREAMING_LATENCY=0` to disable the query parameter for provider
     compatibility testing
-  - legacy Grok Voice Agent routing is allowed only when explicitly configured with
-    `VIVENTIUM_XAI_TTS_API=voice_agent`
+  - `VIVENTIUM_XAI_TTS_API` supports only `tts`; the retired `voice_agent` value fails closed with
+    actionable migration guidance and is never silently remapped
+  - the conversational `/v1/realtime` Grok Voice Agent adapter is not shipped or selectable
 - Inter-word spacing into xAI is a TTS-input formatting requirement, not a sanitization concern:
   - `livekit-plugins-xai` streams synthesis text to `wss://api.x.ai/v1/tts` as per-word
     `text.delta` frames and the xAI server concatenates those frames verbatim. The plugin tokenizes
@@ -692,12 +771,17 @@ background-cortex behavior.
   - Cartesia routes may preserve Cartesia Sonic-3 SSML-like tags and `[laughter]`
   - xAI routes may preserve xAI speech tags but must strip Cartesia-only tags and Cartesia-only
     bracket aliases before xAI synthesis
+  - a complete paired square wrapper for a documented xAI wrapping control is canonicalized to
+    the official angle form before xAI synthesis so the model's explicit delivery choice survives;
+    this structural repair does not choose an emotion or control, and unpaired/unknown wrappers
+    remain stripped
   - OpenAI/ElevenLabs fallbacks strip all provider voice-control markup before synthesis
   - LiveKit call-history and displayed assistant text strip provider markup while preserving spoken
     inner text; Telegram's local raw generation record and sanitized outgoing bubble follow the
     separate contract in `03_Telegram_Bridge.md`
-  - display sanitizers must also strip malformed xAI wrapper remnants such as `[soft]...[/soft]`
-    and orphan closing tags like `[/soft]`; malformed provider markup is never user-facing text
+  - display sanitizers must strip canonical controls and malformed xAI wrapper remnants such as
+    `[soft]...[/soft]` and orphan closing tags like `[/soft]`; provider markup is never
+    user-facing text
 - Telegram voice-note and always-voice replies must use the same saved Speaking route as the modern
   playground for xAI TTS too. The resolved xAI route variant is the xAI `voice_id`, and Telegram
   must prefer `VIVENTIUM_XAI_TTS_API_KEY` over a generic `XAI_API_KEY` just like the LiveKit
@@ -715,8 +799,15 @@ background-cortex behavior.
   those origins must be explicitly allowed as Next dev origins instead of relying on implicit
   cross-origin tolerance.
 - Public-browser access also needs the non-HTTP media path:
-  - direct LiveKit TCP/UDP media where available
-  - TURN/TLS fallback when the public HTTPS edge is active
+  - a reachable direct LiveKit TCP/UDP candidate, or a TURN relay pair that is actually selected
+  - a listening TURN/TLS port or allocated relay candidate is not fallback proof unless the bounded
+    relay UDP range is reachable
+- Public acceptance must prove an off-LAN selected ICE pair, the real worker joining, and delivered
+  synthetic media/transcript. A loaded page, healthy settings API, certificate, or signaling
+  WebSocket is supporting evidence only.
+- Same-Wi-Fi access through the public hostname is a separate NAT-loopback/split-DNS result and must
+  not be inferred from off-LAN success.
+- `REMOTE-004` and `MPV-023` are the reusable escaped-regression gates for this path.
 - The stable public answer for arbitrary browsers is the public HTTPS edge with explicit custom
   domains; private mesh modes remain separate operator-owned access modes for enrolled devices.
 
@@ -725,3 +816,110 @@ background-cortex behavior.
 - Keep the UI label aligned with the effective provider actually speaking.
 - Keep TTS/STT route reporting separate from fallback routing.
 - Do not embed personal paths, private machine labels, or secret-store internals into the public doc.
+
+## Automatic World-Class Call Contract
+
+### Zero-Setup Interaction
+
+- Clicking **Call** is the only product action required to enter a valid call. A signed call-session
+  deep link with `autoConnect=1` validates its session/route and connects automatically when browser
+  microphone permission is already granted. The browser permission prompt is the only unavoidable
+  first-use step.
+- Call, Wing, and Listen-Only are the complete user-facing mode set. Modes switch atomically inside
+  the current room and are represented by `mode=call|wing|listen_only`; legacy booleans remain a
+  compatibility projection during migration.
+- Provider/STT/TTS selection is not part of the call-start surface. Existing saved configuration is
+  authoritative and provider controls remain in Advanced/settings. Runtime never silently remaps a
+  local-only route to cloud processing.
+- Wing uses a persistent non-blocking listening indicator rather than a first-use click-through
+  modal. Intentional hangup ends audio while already-started work continues in the linked chat.
+- Expired auth, invalid session, denied microphone, missing configured route, gateway outage, and
+  provider failure are distinct inline states. A generic microphone error must not hide another
+  failure class.
+
+### Versioned Voice Contracts
+
+- `VoiceCallStateV1` uses numeric `version=1`, the mode enum, lifecycle status, update time,
+  capability metadata, and a classified optional error.
+- `VoiceTaskEventV1` uses numeric `version=1`, monotonic per-task sequence/event ids, correlation
+  ids, authoritative task state/phase, real-only progress, sources, input/cancel/retry capability,
+  owner, result reference, and classified error. LiveKit topic: `viventium.task.v1`.
+- `SpeakerSegmentV1` uses numeric `version=1`, monotonic segment sequence/revision, call/turn ids,
+  time range, text/finality, call-scoped speaker metadata, attribution class, actor trust, and
+  uncertainty/overlap state. LiveKit topic: `viventium.speaker.v1`.
+- `SpeakerSessionStateV1` records call-scoped track trust changes. Discovery of a second provider
+  speaker on one microphone track permanently downgrades that track to shared-device/unverified for
+  the session and authoritatively revises earlier segment trust before post-call processing.
+- New messages persist `speakerSegments` before text coalescing and keep the legacy scalar speaker
+  projection. Readers dual-read; old rows are interpreted as synthetic legacy segments at read
+  time. There is no bulk backfill or irreversible database migration.
+
+### Browser, Telegram, And Agent Authority
+
+- A normal signed web call enters through `/call-bootstrap` with an exact-session browser
+  capability in the URL fragment. Bootstrap strips the fragment before navigation or evidence
+  capture and stores the capability only under that call session. Browser BFF task, speaker, state,
+  and event operations require both server call authentication and the exact browser capability;
+  knowing a raw session id grants no authority.
+- Telegram `/call` links carry a single-use `call_browser_launch_v1` bearer in the fragment. The
+  browser strips it before a same-origin exchange, generates a 32-byte idempotency capability, and
+  receives `call_browser_v1` authority. A lost response may retry with the same idempotency value;
+  another value or browser replay is denied. Launch values are never accepted in query/body fields,
+  logged, cached, or stored after successful exchange.
+- The canonical session agent must pass global Agents `USE` and resource `VIEW` checks at web call
+  creation, Telegram call-link creation, and every Call/Wing turn. Body metadata cannot substitute a
+  decoy agent, and revocation takes effect on the next turn. Listen-Only bypasses this check because
+  it never executes an agent.
+
+### Interruption, Cancellation, And Progress
+
+- Speech interruption stops active TTS only. Stream closure, browser disconnect, and hangup do not
+  cancel the authoritative task.
+- Explicit cancellation is task-id scoped. The internal terminal set is `completed`, `failed`,
+  `cancelled_confirmed`, and `cancelled_unenforceable`; an already-completed external side effect is
+  reported truthfully instead of being relabelled cancelled.
+- Accepting cancellation installs a task-id suppression barrier at TTS, conversation-result,
+  memory, follow-up, and user-visible result boundaries. Late uncancellable work may finish for
+  cleanup/audit but must not cross those boundaries.
+- Task state and suppression tombstones are durable across API restart and in-memory task pressure.
+  Every output boundary rechecks durable suppression and fails closed when the authoritative state
+  is unavailable.
+- Task list/reconnect reads use a complete compound paging cursor. The event stream subscribes
+  before replay, traverses every durable task-snapshot page, emits `synchronized` only after the
+  full replay, and then tails durable writes from other API process instances without requiring a
+  browser reconnect. Repeated or malformed cursors fail visibly rather than certifying partial
+  state as synchronized.
+- A task may enter `needs_input` only when its owning runtime advertises a real input adapter. A
+  supported response is delivered idempotently through that adapter. If an owner requests input
+  without the capability, the task fails visibly as `task_input_unsupported`; the UI never offers a
+  dead input control. Listen-Only exposes no retry or new-work input authority.
+- Spoken acknowledgements and progress derive only from authoritative task events, never transcript
+  keywords. A neutral fallback may speak after 1.2 seconds only when real work is running and the
+  model has not acknowledged it. Meaningful phase changes may speak; otherwise active-work silence
+  may not exceed five seconds.
+
+### Automatic Speaker And Trust Rules
+
+- AssemblyAI calls enable provider `speaker_labels` automatically. Existing `speaker_id` values are
+  scoped to the current call and displayed generically; they are not biometric identity.
+- A signed participant/track may be treated as the displayed speaker only while it carries one
+  detected speaker. When a second provider speaker appears on the same track, participant identity
+  becomes device ownership only; all speakers on that track are unverified for the session and
+  earlier segment trust is revised deterministically.
+- Separate participant tracks remain distinct. Missing, unstable, overlapping, or too-short
+  attribution abstains to `Unknown`. ASR word confidence must never be used as speaker-identity
+  confidence.
+- Shared-mic/guest/unverified speech may inform context but cannot authorize an external side
+  effect. Listen-Only retains its strict no-TTS/no-tools/no-controller/no-cortex/no-live-memory/no-
+  recall contract.
+- Raw audio is not retained. Speaker maps expire with the call. Derived transcripts use existing
+  conversation retention/deletion/export controls.
+
+### Memory Boundary
+
+- Conversation context and memory reads remain live. Durable voice-derived memory writes are
+  deferred until post-call hardening so a late-discovered second speaker cannot contaminate stable
+  memory.
+- Owner-trusted single-speaker Call content may enter the existing writer after the call. Wing,
+  Listen-Only, mixed/shared-mic, guest, and unverified content remains soft evidence. One call
+  session is one evidence source regardless of how many diarized speakers it contains.

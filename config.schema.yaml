@@ -16,6 +16,10 @@ properties:
       mode:
         type: string
         enum: [docker, native]
+      experience:
+        type: string
+        description: Fresh-install journey. Omitted configs retain their existing feature state.
+        enum: [express, custom]
   settings:
     type: object
     properties:
@@ -59,12 +63,33 @@ properties:
             type: integer
           auto_worker_profile:
             type: boolean
+      scheduled_agent:
+        type: object
+        properties:
+          provider:
+            type: string
+            enum: [openai]
+          model:
+            type: string
+          reasoning_effort:
+            type: string
+            enum: [xhigh]
       prompt_workbench:
         type: object
         properties:
           enabled:
             type: boolean
           seed_nightly:
+            type: object
+            properties:
+              enabled:
+                type: boolean
+              active:
+                type: boolean
+              executor:
+                type: string
+                enum: [glasshive_host, viventium_agent]
+          seed_health_context:
             type: object
             properties:
               enabled:
@@ -201,12 +226,44 @@ properties:
                 enum: [detailed_summary_only, raw_and_summary, raw_only]
       background_followup_window_s:
         type: number
+        minimum: 0
+        maximum: 86400
+      background_activation:
+        type: object
+        description: Bounded per-provider attempt budgets inside the shared and late activation-detection windows.
+        properties:
+          primary_attempt_timeout_ms:
+            type: integer
+            minimum: 100
+            maximum: 30000
+            default: 1600
+          fallback_attempt_timeout_ms:
+            type: integer
+            minimum: 100
+            maximum: 30000
+            default: 2500
+          execution_timeout_s:
+            description: Optional total runtime cap for one background-cortex provider attempt. Omit or set null for no automatic execution deadline; provider fallback remains governed by provider health and the cortex's own terminal result.
+            default: null
+            oneOf:
+              - type: integer
+                minimum: 1
+                maximum: 86400
+              - type: 'null'
       glasshive_followup_timeout_s:
         type: number
         description: Seconds that Web, Telegram, and Voice should keep listening for GlassHive worker callbacks after the main response returns.
         default: 600
         minimum: 30
         maximum: 86400
+      glasshive_foreground_response_timeout_s:
+        description: Optional ingress-anchored response budget, in seconds, for a synchronous GlassHive Agent Provider turn. Omit or set null for no automatic foreground deadline. Cold synchronous session startup has the documented non-preemption caveat. This does not cap autonomous, MCP, or background worker runs.
+        default: null
+        oneOf:
+          - type: integer
+            minimum: 30
+            maximum: 1800
+          - type: 'null'
       network:
         type: object
         properties:
@@ -221,6 +278,8 @@ properties:
             type: string
           public_livekit_url:
             type: string
+          public_glasshive_origin:
+            type: string
           livekit_node_ip:
             type: string
       ports:
@@ -231,6 +290,8 @@ properties:
           lc_frontend_port:
             type: integer
           playground_port:
+            type: integer
+          prompt_workbench_port:
             type: integer
           voice_gateway_health_port:
             type: integer
@@ -272,7 +333,6 @@ properties:
         required:
           - provider
           - auth_mode
-          - secret_ref
       primary:
         type: object
         required:
@@ -280,6 +340,20 @@ properties:
           - auth_mode
       secondary:
         type: object
+      memory:
+        type: object
+        description: Optional saved-memory writer route. It must use an authenticated configured foundation provider and affects only memory.agent.
+        required:
+          - provider
+          - model
+        additionalProperties: false
+        properties:
+          provider:
+            type: string
+            enum: [openai, anthropic]
+          model:
+            type: string
+            minLength: 1
       extra_provider_keys:
         type: object
   voice:
@@ -375,6 +449,13 @@ properties:
   integrations:
     type: object
     properties:
+      health:
+        type: object
+        properties:
+          enabled:
+            type: boolean
+          life_projection_dir:
+            type: string
       code_interpreter:
         type: object
         properties:
@@ -443,6 +524,18 @@ properties:
         properties:
           enabled:
             type: boolean
+          provider:
+            type: object
+            description: Core Agent Builder provider surface backed by GlassHive harness workers.
+            properties:
+              enabled:
+                type: boolean
+              base_url:
+                type: string
+                description: OpenAI-compatible GlassHive base URL as reached by LibreChat.
+              life_dir:
+                type: string
+                description: Canonical per-user Viventium LIFE folder on the GlassHive host.
           host_worker:
             type: object
             properties:
@@ -473,6 +566,28 @@ properties:
                   - type: array
                     items:
                       type: string
+              plugin_denylist:
+                description: Canonical name@marketplace plugin IDs disabled only in host Codex and Claude workers.
+                default: [viventium-feelings@project-viventium]
+                oneOf:
+                  - type: string
+                  - type: array
+                    items:
+                      type: string
+              codex_personality:
+                type: string
+                description: Worker-local Codex communication style. Viventium defaults to none so its final Feeling capsule remains the sole personality authority; inherit preserves the user's native Codex setting.
+                enum: [inherit, none, friendly, pragmatic]
+                default: none
+              codex_conversation_project_instructions:
+                type: string
+                description: Project-instruction policy for Codex conversation workers. Viventium defaults to inherit so the harness runs in the exact chosen folder and honors its canonical AGENTS.md; exclude is an explicit opt-out for deployments that prohibit workspace instructions.
+                enum: [inherit, exclude]
+                default: inherit
+              codex_app_server_qa_enabled:
+                type: boolean
+                description: Opt-in QA probe only. Production GlassHive conversation transport remains codex exec.
+                default: false
               codex_plugin_cache:
                 type: string
               codex_ignore_user_config:
@@ -483,6 +598,11 @@ properties:
                   - type: array
                     items:
                       type: string
+              native_web_access:
+                type: string
+                description: Host-worker native web policy compiled to the authoritative WPR_HOST_NATIVE_WEB_ACCESS value. Inherit preserves the selected CLI's ordinary native browsing; disabled is an explicit QA/enterprise lockdown that leaves declared broker MCP tools available.
+                enum: [inherit, disabled]
+                default: inherit
               codex_model:
                 type: string
               codex_reasoning_effort:

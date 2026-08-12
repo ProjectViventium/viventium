@@ -43,6 +43,7 @@ export function ScheduledPromptsPanel({
   newRequestNonce = 0,
   objectMode = false,
   onSelectScheduledPrompt,
+  onOpenPrompt,
 }: {
   onLog: (message: string) => void;
   selectedScheduledPromptId?: string;
@@ -50,6 +51,7 @@ export function ScheduledPromptsPanel({
   newRequestNonce?: number;
   objectMode?: boolean;
   onSelectScheduledPrompt?: (id: string) => void;
+  onOpenPrompt?: (id: string) => void;
 }) {
   const queryClient = useQueryClient();
   const authQuery = useQuery({
@@ -67,16 +69,17 @@ export function ScheduledPromptsPanel({
     enabled: Boolean(authQuery.data?.admin),
   });
   const schedulesQuery = useQuery({
-    queryKey: ["scheduledPrompts"],
+    queryKey: ["scheduledPrompts", "panel"],
     queryFn: getScheduledPrompts,
     enabled: Boolean(authQuery.data?.admin),
     refetchInterval: 10_000,
   });
   const schedules =
-    scheduledPrompts ?? schedulesQuery.data?.scheduledPrompts ?? [];
+    schedulesQuery.data?.scheduledPrompts ?? scheduledPrompts ?? [];
   const [selectedId, setSelectedId] = useState<string>("");
+  const effectiveSelectedId = selectedScheduledPromptId || selectedId;
   const selected =
-    schedules.find((item) => item.id === selectedId) ??
+    schedules.find((item) => item.id === effectiveSelectedId) ??
     (objectMode ? undefined : schedules[0]);
   const isUserLevelSchedule = selected?.sourceKind === "user_schedule";
   const supportsWorkbenchVariables = !isUserLevelSchedule;
@@ -90,7 +93,7 @@ export function ScheduledPromptsPanel({
   const [artifactDetailId, setArtifactDetailId] = useState("");
 
   useEffect(() => {
-    if (selectedId && !selected) return;
+    if (effectiveSelectedId && !selected) return;
     const next = draftFromPrompt(selected, templateQuery.data);
     setDraft((current) => {
       if (selected && current.id === selected.id) {
@@ -98,12 +101,19 @@ export function ScheduledPromptsPanel({
           ...current,
           scheduleType: next.scheduleType,
           time: next.time,
+          intervalEvery: next.intervalEvery,
+          intervalUnit: next.intervalUnit,
+          activeWindowStart: next.activeWindowStart,
+          activeWindowEnd: next.activeWindowEnd,
+          restartDaily: next.restartDaily,
           timezone: next.timezone,
           active: next.active,
           memoryWriteMode: next.memoryWriteMode,
           executor: next.executor,
           conversationPolicy: next.conversationPolicy,
           glasshiveWorkerStrategy: next.glasshiveWorkerStrategy,
+          deliveryLibreChat: next.deliveryLibreChat,
+          deliveryTelegram: next.deliveryTelegram,
         };
       }
       return next;
@@ -112,13 +122,16 @@ export function ScheduledPromptsPanel({
     selected?.id,
     selected?.active,
     selected?.memoryWriteMode,
+    selected?.channel,
     selected?.executor,
     selected?.conversationPolicy,
     selected?.glasshiveWorkerStrategy,
     selected?.schedule?.type,
     selected?.schedule?.time,
+    selected?.schedule?.interval,
+    selected?.schedule?.active_window,
     selected?.schedule?.timezone,
-    selectedId,
+    effectiveSelectedId,
     templateQuery.data?.promptText,
   ]);
 
@@ -199,7 +212,8 @@ export function ScheduledPromptsPanel({
   const saveMutation = useMutation({
     mutationFn: () => {
       const payload = draftPayload(draft, {
-        includeSchedule: !isUserLevelSchedule || scheduleTouched,
+        // VIVENTIUM: preserve managed-local timezone mode on unrelated edits.
+        includeSchedule: !draft.id || scheduleTouched,
         includeMemoryWriteMode: !isUserLevelSchedule,
       });
       return draft.id
@@ -307,6 +321,19 @@ export function ScheduledPromptsPanel({
   );
   const previewError =
     previewQuery.error instanceof Error ? previewQuery.error.message : "";
+  const projectedDailyRuns = projectedRunsPerDay(draft);
+  const scheduleError =
+    draft.scheduleType === "interval" &&
+    draft.restartDaily &&
+    projectedDailyRuns === null
+      ? "The active window must end at or after its start, with a positive interval."
+      : "";
+  const deliveryError =
+    draft.executor === "viventium_agent" &&
+    !draft.deliveryLibreChat &&
+    !draft.deliveryTelegram
+      ? "Choose at least one destination channel."
+      : "";
   const updateDraft = (patch: Partial<EditorDraft>) =>
     setDraft((current) => ({ ...current, ...patch }));
 
@@ -339,6 +366,9 @@ export function ScheduledPromptsPanel({
   };
   const currentExecutor =
     draft.executor || selected?.executor || "glasshive_host";
+  const effectiveScheduledRun =
+    selected?.latestScheduledRun ??
+    selected?.recentRuns.find((run) => run.triggerKind === "scheduled");
 
   if (authQuery.data && !authQuery.data.admin) {
     return (
@@ -375,29 +405,37 @@ export function ScheduledPromptsPanel({
           </div>
           <div className="schedule-list">
             {schedules.map((item) => (
-              <button
+              <div
                 key={item.id}
                 className={`schedule-row ${item.id === draft.id ? "active" : ""}`}
-                onClick={() => setSelectedId(item.id)}
               >
-                <span
+                <button
+                  type="button"
                   className={`schedule-toggle ${item.active ? "enabled" : ""}`}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    toggleMutation.mutate(item);
-                  }}
+                  role="switch"
+                  aria-checked={item.active}
+                  aria-label={`${item.active ? "Disable" : "Enable"} ${item.title}`}
+                  onClick={() => toggleMutation.mutate(item)}
                 />
-                <span>
-                  <strong>{item.title}</strong>
-                  <small>
-                    {item.nextRunAt
-                      ? `Next ${formatDate(item.nextRunAt)}`
-                      : "No next run"}{" "}
-                    · {item.sourceLabel ?? "Scheduled prompt"}
-                  </small>
-                </span>
-                <Clock3 size={15} />
-              </button>
+                <button
+                  type="button"
+                  className="schedule-row-select"
+                  aria-pressed={item.id === draft.id}
+                  aria-label={`Open ${item.title}`}
+                  onClick={() => setSelectedId(item.id)}
+                >
+                  <span>
+                    <strong>{item.title}</strong>
+                    <small>
+                      {item.nextRunAt
+                        ? `Next ${formatDate(item.nextRunAt)}`
+                        : "No next run"}{" "}
+                      · {item.sourceLabel ?? "Scheduled prompt"}
+                    </small>
+                  </span>
+                  <Clock3 size={15} aria-hidden="true" />
+                </button>
+              </div>
             ))}
           </div>
         </div>
@@ -467,7 +505,7 @@ export function ScheduledPromptsPanel({
                 <code>{selected.executor ?? "viventium_agent"}</code>
               </div>
               <div>
-                <span>Channel</span>
+                <span>Destination channels</span>
                 <code>
                   {Array.isArray(selected.channel)
                     ? selected.channel.join(", ")
@@ -492,18 +530,28 @@ export function ScheduledPromptsPanel({
                       : "scheduler delivery")}
                 </code>
               </div>
-              {selected.executionModel && (
-                <div>
-                  <span>Model</span>
-                  <code>{selected.executionModel}</code>
-                </div>
-              )}
-              {selected.reasoningEffort && (
-                <div>
-                  <span>Requested effort</span>
-                  <code>{selected.reasoningEffort}</code>
-                </div>
-              )}
+              <div>
+                <span>Effective scheduled model</span>
+                <code>
+                  {effectiveScheduledRun?.effectiveModel ??
+                    selected.executionModel ??
+                    "not recorded"}
+                </code>
+              </div>
+              <div>
+                <span>Effective scheduled effort</span>
+                <code>
+                  {effectiveScheduledRun?.effectiveReasoningEffort ??
+                    selected.reasoningEffort ??
+                    "not recorded"}
+                </code>
+              </div>
+              <div>
+                <span>Last disposition</span>
+                <code>
+                  {effectiveScheduledRun?.disposition ?? "not recorded"}
+                </code>
+              </div>
               {selected.workspaceRoot && (
                 <div className="wide">
                   <span>Workspace</span>
@@ -531,6 +579,68 @@ export function ScheduledPromptsPanel({
                   ? selected.channel.join(", ")
                   : (selected.channel ?? "workbench")}
               </code>
+              {selected.sourcePromptId ? (
+                <button
+                  type="button"
+                  className="schedule-prompt-link"
+                  onClick={() => onOpenPrompt?.(selected.sourcePromptId!)}
+                  disabled={!onOpenPrompt}
+                  title="Open the registered source prompt"
+                >
+                  Source prompt: {selected.sourcePromptId}
+                </button>
+              ) : (
+                <span>Source prompt: not linked</span>
+              )}
+              {selected.effectivePromptId ? (
+                <button
+                  type="button"
+                  className="schedule-prompt-link"
+                  onClick={() => onOpenPrompt?.(selected.effectivePromptId!)}
+                  disabled={!onOpenPrompt}
+                  title="Open the effective registered prompt"
+                >
+                  Effective prompt: {selected.effectivePromptId}
+                  {selected.effectivePromptHash
+                    ? ` · ${selected.effectivePromptHash}`
+                    : ""}
+                </button>
+              ) : (
+                <span>Effective prompt: not recorded</span>
+              )}
+              {selected.runEnvelopePromptId && (
+                <button
+                  type="button"
+                  className="schedule-prompt-link"
+                  onClick={() => onOpenPrompt?.(selected.runEnvelopePromptId!)}
+                  disabled={!onOpenPrompt}
+                  title="Open the registry-owned wrapper applied to scheduled runs"
+                >
+                  Run envelope: {selected.runEnvelopePromptId}
+                </button>
+              )}
+              {selected.canonicalOutputPromptId && (
+                <button
+                  type="button"
+                  className="schedule-prompt-link"
+                  onClick={() => onOpenPrompt?.(selected.canonicalOutputPromptId!)}
+                  disabled={!onOpenPrompt}
+                  title="Open the channel-neutral scheduled output contract"
+                >
+                  Canonical output: {selected.canonicalOutputPromptId}
+                </button>
+              )}
+              {selected.standingCapabilityPromptId && (
+                <button
+                  type="button"
+                  className="schedule-prompt-link"
+                  onClick={() => onOpenPrompt?.(selected.standingCapabilityPromptId!)}
+                  disabled={!onOpenPrompt}
+                  title="Open the standing Main continuity capability"
+                >
+                  Standing Main capability: {selected.standingCapabilityPromptId}
+                </button>
+              )}
             </div>
           )}
           <label>
@@ -589,10 +699,36 @@ export function ScheduledPromptsPanel({
                   })
                 }
               >
-                <option value="new">New conversation</option>
-                <option value="same">Same conversation</option>
+                <option value="new">Dedicated conversation per run</option>
+                <option value="same">Dedicated durable conversation</option>
               </select>
             </label>
+          )}
+          {currentExecutor === "viventium_agent" && (
+            <fieldset className="schedule-destination-fieldset">
+              <legend>Destination channels</legend>
+              <label className="schedule-enable-line">
+                <input
+                  type="checkbox"
+                  checked={draft.deliveryLibreChat}
+                  onChange={(event) =>
+                    updateDraft({ deliveryLibreChat: event.target.checked })
+                  }
+                />
+                <span>LibreChat chat</span>
+              </label>
+              <label className="schedule-enable-line">
+                <input
+                  type="checkbox"
+                  checked={draft.deliveryTelegram}
+                  onChange={(event) =>
+                    updateDraft({ deliveryTelegram: event.target.checked })
+                  }
+                />
+                <span>Telegram</span>
+              </label>
+              {deliveryError && <small role="alert">{deliveryError}</small>}
+            </fieldset>
           )}
           <label>
             <span>Schedule</span>
@@ -609,24 +745,113 @@ export function ScheduledPromptsPanel({
               <option value="daily">Daily</option>
               <option value="weekdays">Weekdays</option>
               <option value="weekly">Weekly</option>
+              <option value="interval">Interval</option>
               <option value="cron">Cron</option>
             </select>
           </label>
-          <label>
-            <span>Time</span>
-            <input
-              type="time"
-              value={draft.time}
-              onInput={(event) => {
-                setScheduleTouched(true);
-                updateDraft({ time: event.currentTarget.value });
-              }}
-              onChange={(event) => {
-                setScheduleTouched(true);
-                updateDraft({ time: event.target.value });
-              }}
-            />
-          </label>
+          {draft.scheduleType === "interval" ? (
+            <>
+              <label>
+                <span>Every</span>
+                <input
+                  type="number"
+                  min="1"
+                  inputMode="numeric"
+                  aria-describedby="interval-projection"
+                  value={draft.intervalEvery}
+                  onChange={(event) => {
+                    setScheduleTouched(true);
+                    updateDraft({ intervalEvery: event.target.value });
+                  }}
+                />
+              </label>
+              <label>
+                <span>Interval unit</span>
+                <select
+                  value={draft.intervalUnit}
+                  aria-describedby="interval-projection"
+                  onChange={(event) => {
+                    setScheduleTouched(true);
+                    updateDraft({
+                      intervalUnit: event.target
+                        .value as EditorDraft["intervalUnit"],
+                    });
+                  }}
+                >
+                  <option value="minute">Minutes</option>
+                  <option value="hour">Hours</option>
+                </select>
+              </label>
+              <label>
+                <span>Active window starts</span>
+                <input
+                  type="time"
+                  aria-describedby="interval-projection"
+                  value={draft.activeWindowStart}
+                  onChange={(event) => {
+                    setScheduleTouched(true);
+                    updateDraft({ activeWindowStart: event.target.value });
+                  }}
+                />
+              </label>
+              <label>
+                <span>Active window ends</span>
+                <input
+                  type="time"
+                  aria-describedby="interval-projection"
+                  value={draft.activeWindowEnd}
+                  onChange={(event) => {
+                    setScheduleTouched(true);
+                    updateDraft({ activeWindowEnd: event.target.value });
+                  }}
+                />
+              </label>
+              <label className="schedule-enable-line">
+                <input
+                  type="checkbox"
+                  checked={draft.restartDaily}
+                  aria-describedby="interval-projection"
+                  onChange={(event) => {
+                    setScheduleTouched(true);
+                    updateDraft({ restartDaily: event.target.checked });
+                  }}
+                />
+                <span>Restart cadence daily</span>
+              </label>
+              <div
+                id="interval-projection"
+                className={`schedule-projection ${scheduleError ? "invalid" : ""}`}
+                role={scheduleError ? "alert" : "status"}
+              >
+                <span>Projected runs/day</span>
+                <strong>
+                  {draft.restartDaily
+                    ? (projectedDailyRuns ?? "Fix schedule")
+                    : "Continuous interval"}
+                </strong>
+                <small>
+                  {scheduleError ||
+                    "Local-time estimate; daylight-saving transitions can change one day's actual count."}
+                </small>
+              </div>
+            </>
+          ) : (
+            <label>
+              <span>Time</span>
+              <input
+                type="time"
+                value={draft.time}
+                onInput={(event) => {
+                  setScheduleTouched(true);
+                  updateDraft({ time: event.currentTarget.value });
+                }}
+                onChange={(event) => {
+                  setScheduleTouched(true);
+                  updateDraft({ time: event.target.value });
+                }}
+              />
+            </label>
+          )}
           <label>
             <span>Timezone</span>
             <input
@@ -743,8 +968,11 @@ export function ScheduledPromptsPanel({
           <button
             className="toolbar-button primary"
             onClick={() => saveMutation.mutate()}
-            disabled={saveMutation.isPending || Boolean(previewError)}
-            title={previewError || "Save scheduled prompt"}
+            disabled={
+              saveMutation.isPending ||
+              Boolean(previewError || scheduleError || deliveryError)
+            }
+            title={previewError || scheduleError || deliveryError || "Save scheduled prompt"}
           >
             <Save size={15} />
             Save
@@ -813,11 +1041,26 @@ export function ScheduledPromptsPanel({
         </div>
         <div className="run-history">
           <strong>Recent Runs</strong>
+          <small className="run-history-legend">
+            Outcomes may be silent, delivered, partial, superseded, or failed.
+            Workbench is an audit sink, not user delivery; destination-channel
+            outcomes are shown separately.
+          </small>
           {(selected?.recentRuns ?? []).map((run) => (
             <div key={run.runId} className="run-row">
               <span className={`run-state ${run.status}`}>{run.status}</span>
+              <small>{labelize(run.triggerKind ?? "unknown")} run</small>
               <small>
                 {run.startedAt ? formatDate(run.startedAt) : run.runId}
+              </small>
+              <small>
+                Disposition: {run.disposition ?? "not recorded"}
+              </small>
+              <small>
+                Model: {run.effectiveModel ?? "not recorded"}
+              </small>
+              <small>
+                Latency: {formatLatency(run.latencyMs)}
               </small>
               {run.effectiveReasoningEffort && (
                 <small>
@@ -830,6 +1073,26 @@ export function ScheduledPromptsPanel({
                   {run.reasoningFallbackReason
                     ? ` (${labelize(run.reasoningFallbackReason)})`
                     : ""}
+                </small>
+              )}
+              <small>{formatUsage(run.usage)}</small>
+              {Object.keys(run.channelOutcomes ?? {}).length ? (
+                <div className="run-channel-outcomes" aria-label="Channel outcomes">
+                  {Object.entries(run.channelOutcomes ?? {}).map(
+                    ([channel, outcome]) => (
+                      <span key={channel}>
+                        <strong>{channel}</strong>: {outcome.outcome ?? outcome.status ?? "unknown"}
+                        {outcome.reason ? ` · ${outcome.reason}` : ""}
+                      </span>
+                    ),
+                  )}
+                </div>
+              ) : (
+                <small>Channel outcomes: not recorded</small>
+              )}
+              {Boolean(run.degradedDependencies?.length) && (
+                <small className="run-degraded">
+                  Degraded dependencies: {run.degradedDependencies?.join(", ")}
                 </small>
               )}
               {run.resultSummary && <p>{run.resultSummary}</p>}
@@ -1117,14 +1380,21 @@ interface EditorDraft {
   id: string;
   title: string;
   promptText: string;
-  scheduleType: "daily" | "weekdays" | "weekly" | "cron";
+  scheduleType: "daily" | "weekdays" | "weekly" | "interval" | "cron";
   time: string;
+  intervalEvery: string;
+  intervalUnit: "minute" | "hour";
+  activeWindowStart: string;
+  activeWindowEnd: string;
+  restartDaily: boolean;
   timezone: string;
   active: boolean;
   memoryWriteMode: string;
   executor: "glasshive_host" | "viventium_agent";
   conversationPolicy: "new" | "same";
   glasshiveWorkerStrategy: "same_worker" | "new_worker_each_run";
+  deliveryLibreChat: boolean;
+  deliveryTelegram: boolean;
 }
 
 function draftFromPrompt(
@@ -1132,6 +1402,19 @@ function draftFromPrompt(
   template?: ScheduledPromptTemplate,
 ): EditorDraft {
   const schedule = prompt?.schedule ?? template?.schedule ?? {};
+  const interval =
+    schedule.interval && typeof schedule.interval === "object"
+      ? (schedule.interval as Record<string, unknown>)
+      : {};
+  const activeWindow =
+    schedule.active_window && typeof schedule.active_window === "object"
+      ? (schedule.active_window as Record<string, unknown>)
+      : {};
+  const deliveryChannels = Array.isArray(prompt?.channel)
+    ? prompt.channel
+    : prompt?.channel
+      ? [prompt.channel]
+      : ["librechat", "telegram"];
   return {
     id: prompt?.id ?? "",
     title:
@@ -1141,6 +1424,13 @@ function draftFromPrompt(
     promptText: prompt?.promptText ?? template?.promptText ?? "",
     scheduleType: (schedule.type as EditorDraft["scheduleType"]) || "daily",
     time: String(schedule.time || "03:00"),
+    intervalEvery: String(interval.every || "45"),
+    intervalUnit:
+      (interval.unit as EditorDraft["intervalUnit"]) || "minute",
+    activeWindowStart: String(activeWindow.start_local || "09:00"),
+    activeWindowEnd: String(activeWindow.end_local || "21:00"),
+    restartDaily:
+      activeWindow.cadence === "restart_daily" || schedule.type !== "interval",
     timezone: String(
       schedule.timezone ||
         Intl.DateTimeFormat().resolvedOptions().timeZone ||
@@ -1156,6 +1446,8 @@ function draftFromPrompt(
     glasshiveWorkerStrategy:
       (prompt?.glasshiveWorkerStrategy as EditorDraft["glasshiveWorkerStrategy"]) ??
       "same_worker",
+    deliveryLibreChat: deliveryChannels.includes("librechat"),
+    deliveryTelegram: deliveryChannels.includes("telegram"),
   };
 }
 
@@ -1167,14 +1459,29 @@ function draftPayload(
   const includeMemoryWriteMode = options.includeMemoryWriteMode ?? true;
   const schedule: Record<string, unknown> = {
     type: draft.scheduleType,
-    time: draft.time || "03:00",
     timezone: draft.timezone || "UTC",
   };
+  if (draft.scheduleType !== "interval") {
+    schedule.time = draft.time || "03:00";
+  }
   if (draft.scheduleType === "weekly") {
     schedule.days_of_week = ["monday"];
   }
   if (draft.scheduleType === "cron") {
     schedule.cron = `0 ${Number((draft.time || "03:00").split(":")[0] || 3)} * * *`;
+  }
+  if (draft.scheduleType === "interval") {
+    schedule.interval = {
+      every: Math.max(1, Number(draft.intervalEvery) || 1),
+      unit: draft.intervalUnit,
+    };
+    if (draft.restartDaily) {
+      schedule.active_window = {
+        start_local: draft.activeWindowStart,
+        end_local: draft.activeWindowEnd,
+        cadence: "restart_daily",
+      };
+    }
   }
   const payload: Partial<ScheduledPrompt> & {
     title: string;
@@ -1189,9 +1496,37 @@ function draftPayload(
   payload.executor = draft.executor;
   payload.conversationPolicy = draft.conversationPolicy;
   payload.glasshiveWorkerStrategy = draft.glasshiveWorkerStrategy;
-  payload.channel =
-    draft.executor === "glasshive_host" ? "workbench" : "librechat";
+  if (draft.executor === "glasshive_host") {
+    payload.channel = "workbench";
+  } else {
+    const destinations = [
+      ...(draft.deliveryLibreChat ? ["librechat"] : []),
+      ...(draft.deliveryTelegram ? ["telegram"] : []),
+    ];
+    payload.channel = destinations.length === 1 ? destinations[0] : destinations;
+  }
   return payload;
+}
+
+function projectedRunsPerDay(draft: EditorDraft): number | null {
+  if (draft.scheduleType !== "interval" || !draft.restartDaily) return null;
+  const start = timeInMinutes(draft.activeWindowStart);
+  const end = timeInMinutes(draft.activeWindowEnd);
+  const every = Number(draft.intervalEvery);
+  if (start === null || end === null || end < start || !Number.isFinite(every) || every <= 0) {
+    return null;
+  }
+  const intervalMinutes = draft.intervalUnit === "hour" ? every * 60 : every;
+  return Math.floor((end - start) / intervalMinutes) + 1;
+}
+
+function timeInMinutes(value: string): number | null {
+  const match = /^(\d{2}):(\d{2})$/.exec(value);
+  if (!match) return null;
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  if (hour > 23 || minute > 59) return null;
+  return hour * 60 + minute;
 }
 
 function formatDate(value: string) {
@@ -1203,6 +1538,19 @@ function formatDate(value: string) {
     hour: "numeric",
     minute: "2-digit",
   });
+}
+
+function formatLatency(value?: number | null) {
+  if (typeof value !== "number") return "not recorded";
+  return value < 1000 ? `${value} ms` : `${(value / 1000).toFixed(2)} s`;
+}
+
+function formatUsage(usage?: ScheduledPrompt["recentRuns"][number]["usage"]) {
+  if (!usage) return "Tokens / cost: not recorded";
+  const tokens = usage.totalTokens ??
+    ((usage.inputTokens ?? 0) + (usage.outputTokens ?? 0) || undefined);
+  const cost = typeof usage.costUsd === "number" ? `$${usage.costUsd.toFixed(4)}` : "not recorded";
+  return `Tokens: ${tokens ?? "not recorded"} · Cost: ${cost}`;
 }
 
 function labelize(value: string) {

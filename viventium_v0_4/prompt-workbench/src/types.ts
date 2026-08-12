@@ -118,12 +118,20 @@ export interface DraftRecord {
 export interface EvalFamily {
   id: string;
   goal: string;
+  runner?: "background_activation" | "background_execution" | string;
+  executionTarget?: {
+    agentId: string;
+    promptRef: string;
+  };
+  semanticJudge?: boolean;
   promptRefs?: string[];
+  runtimeContextRefs?: string[];
   cases: Array<{
     id: string;
     surface: string;
     prompt: string;
     promptRefs?: string[];
+    semanticJudge?: boolean;
     rubric?: string[];
     expected_decision?: string;
     expected_surface?: string;
@@ -155,6 +163,55 @@ export interface EvalRun {
   promptId?: string;
   promptHash?: string;
   selectedCaseIds?: string[];
+  selectedCaseCount?: number;
+  semanticJudgeRequired?: boolean;
+  runnerSummary?: {
+    status?: string;
+    blockedReason?: string;
+    resultCount?: number;
+    completedCount?: number;
+    failedCount?: number;
+    semanticJudgedCount?: number;
+    semanticPassedCount?: number;
+    semanticFailedCount?: number;
+    semanticJudgeUnavailableCount?: number;
+    duplicateResponseQualityFailureCount?: number;
+    unresolvedAsyncQualityFailureCount?: number;
+  } | null;
+  executionTarget?: {
+    mode: "direct_background_agent";
+    agentId: string;
+    promptRef: string;
+  } | null;
+  lineageManifest?: {
+    schemaVersion?: number;
+    manifestHash: string;
+    familyIds?: string[];
+    caseIds?: string[];
+    rootPromptIds?: string[];
+    promptCount?: number;
+    runtimeContextCount?: number;
+    promptDependencies: Array<{
+      id: string;
+      kind?: string;
+      status?: string;
+      direct?: boolean;
+      contentHash?: string | null;
+      renderedHash?: string | null;
+      deliveryKind?: string;
+    }>;
+    runtimeContextDependencies: Array<{
+      id: string;
+      kind: string;
+      tag?: string;
+      lifecycle?: string;
+      owner?: string;
+      valuePolicy?: string;
+      roleContract?: string;
+      contractHash?: string;
+      status?: string;
+    }>;
+  };
 }
 
 export interface PromptWorkbenchContext {
@@ -188,6 +245,13 @@ export interface PromptWorkbenchContext {
     gitHistory: GitHistoryRow[];
   }>;
   sync?: SyncAgent;
+  delivery?: {
+    kind: "managed_agent" | "compiled_runtime";
+    label: string;
+    statusSource: string;
+    target: string;
+    state: string;
+  };
   runtimePromptBundle?: {
     status: string;
     reason: string;
@@ -199,7 +263,7 @@ export interface PromptWorkbenchContext {
     sourcePromptCount?: number | null;
     livePromptCount?: number | null;
     compareReviewed?: boolean;
-  };
+  } | null;
 }
 
 export interface FrameLog {
@@ -266,6 +330,8 @@ export interface ScheduledPromptRun {
   startedAt?: string;
   completedAt?: string;
   status: string;
+  triggerKind?: "manual" | "scheduled" | "unknown";
+  triggerSource?: "scheduler_loop" | "workbench_manual" | string | null;
   executor: string;
   renderedHash?: string;
   variableSnapshotHash?: string;
@@ -274,9 +340,23 @@ export interface ScheduledPromptRun {
   glasshiveRunId?: string;
   resultSummary?: string;
   errorClass?: string;
+  disposition?: string | null;
+  effectiveModel?: string | null;
   requestedReasoningEffort?: string | null;
   effectiveReasoningEffort?: string | null;
   reasoningFallbackReason?: string | null;
+  channelOutcomes?: Record<
+    string,
+    { outcome?: string; status?: string; reason?: string }
+  >;
+  latencyMs?: number | null;
+  usage?: {
+    inputTokens?: number;
+    outputTokens?: number;
+    totalTokens?: number;
+    costUsd?: number;
+  } | null;
+  degradedDependencies?: string[];
   privateDetailPointer?: string;
   updatedAt?: string;
 }
@@ -287,6 +367,11 @@ export interface ScheduledPrompt {
   userId?: string;
   title: string;
   sourcePromptId?: string;
+  effectivePromptId?: string;
+  effectivePromptHash?: string;
+  runEnvelopePromptId?: string;
+  canonicalOutputPromptId?: string;
+  standingCapabilityPromptId?: string;
   templateId?: string;
   promptText: string;
   schedule: Record<string, unknown>;
@@ -314,6 +399,8 @@ export interface ScheduledPrompt {
     createdAt: string;
   };
   recentRuns: ScheduledPromptRun[];
+  latestScheduledRun?: ScheduledPromptRun | null;
+  latestManualRun?: ScheduledPromptRun | null;
   sourceKind?: "workbench_definition" | "user_schedule";
   sourceLabel?: string;
   createdAt: string;

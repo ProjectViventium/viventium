@@ -27,13 +27,26 @@ A local Viventium install can give you:
 
 ## Quick Start
 
-**Current verified install path:** macOS, fresh-clone or repo-local install via `./install.sh`.
+### Easy Install (Recommended)
+
+Easy Install is the guided, native-first path for a new Mac. It installs the useful local core
+without requiring Docker, then opens the browser so you can connect OpenAI or Anthropic. Optional
+providers, channels, voice, recall, and automation can be added after the first working answer.
+
+**Current source-checkout entrypoint:** copy and run this line on macOS:
 
 ```bash
-git clone https://github.com/ProjectViventium/viventium.git
-cd viventium
-./install.sh
+git clone https://github.com/ProjectViventium/viventium.git && cd viventium && ./install.sh
 ```
+
+Choose **Easy Install** when prompted. The current public release gate is still being proven; this
+source-checkout path is not a substitute for the future signed and notarized installer.
+
+### Custom Settings Install
+
+Choose **Custom Settings Install** in the same installer when you deliberately want to select the
+runtime mode, providers, integrations, or optional capabilities during installation. Settings you
+skip can still be added later with `bin/viventium configure`.
 
 On macOS, install also adds `Viventium Helper` to the status bar so you can open, start, stop,
 snapshot the local stack, and open the local Prompt Workbench without going back to Terminal.

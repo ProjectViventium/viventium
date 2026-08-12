@@ -1,5 +1,7 @@
 # 2026-06-08 Nightly Routines Health Review
 
+<!-- qa-evidence-exempt: Historical operational health snapshot retained verbatim; current acceptance uses the full evidence template. -->
+
 ## Summary
 
 - Result: PARTIAL.

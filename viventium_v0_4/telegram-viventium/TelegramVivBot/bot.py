@@ -71,8 +71,20 @@ from utils.librechat_attachments import (
     fetch_librechat_bytes,
     send_librechat_attachments,
 )
+from delivery_controls import parse_delivery_controls
 
 _PENDING_INFO_CALL_REFRESHES = set()
+
+
+def _telegram_source_event_id(chat_id, message_id=None, update_id=None) -> str:
+    """Build a stable opaque ingress identity without authoring trusted turn policy."""
+
+    chat_part = str(chat_id or "").strip()
+    if message_id is not None and str(message_id).strip():
+        return f"telegram:chat:{chat_part}:message:{str(message_id).strip()}"
+    if update_id is not None and str(update_id).strip():
+        return f"telegram:update:{str(update_id).strip()}"
+    return ""
 
 
 def _info_call_refresh_key(chatid, message_id):
@@ -1062,6 +1074,11 @@ async def getViventiumResponse(
     
     result = ""
     tmpresult = ""
+    delivery_plan = parse_delivery_controls("")
+    final_segments = []
+    logical_turn_id = ""
+    logical_turn_revision = None
+    delivered_message_ids = []
     time_out = 600
     image_has_send = 0
     # === VIVENTIUM START ===
@@ -1212,7 +1229,13 @@ async def getViventiumResponse(
 
     # === VIVENTIUM START ===
     # Feature: Create the response message lazily once we have content.
-    async def _ensure_answer_message(rendered_text, parse_mode, *, fallback_text=None):
+    async def _ensure_answer_message(
+        rendered_text,
+        parse_mode,
+        *,
+        fallback_text=None,
+        reply_to_original=True,
+    ):
         nonlocal answer_messageid, lastresult
         if answer_messageid:
             return answer_messageid
@@ -1226,8 +1249,9 @@ async def getViventiumResponse(
             "write_timeout": time_out,
             "pool_timeout": time_out,
             "connect_timeout": time_out,
-            "reply_to_message_id": messageid,
         }
+        if reply_to_original and messageid:
+            send_kwargs["reply_to_message_id"] = messageid
         try:
             send_start_ts = time.monotonic() if _tg_deep_enabled() else None
             msg = await context.bot.send_message(**send_kwargs)
@@ -1257,7 +1281,11 @@ async def getViventiumResponse(
                     write_timeout=time_out,
                     pool_timeout=time_out,
                     connect_timeout=time_out,
-                    reply_to_message_id=messageid,
+                    **(
+                        {"reply_to_message_id": messageid}
+                        if reply_to_original and messageid
+                        else {}
+                    ),
                 )
                 if send_start_ts is not None:
                     _tg_deep_log(
@@ -1281,13 +1309,14 @@ async def getViventiumResponse(
     stream_preview_task: Optional[asyncio.Task] = None
     stream_preview_lock = asyncio.Lock()
     stream_preview_last_sent_ts = 0.0
+    stream_preview_superseded = False
 
     async def _apply_stream_preview(preview: dict[str, Any]) -> None:
         nonlocal answer_messageid, lastresult, stream_preview_last_sent_ts
         rendered_text = str(preview.get("rendered_text") or "")
         parse_mode = preview.get("parse_mode")
         fallback_text = preview.get("fallback_text")
-        if not rendered_text or lastresult == rendered_text:
+        if stream_preview_superseded or not rendered_text or lastresult == rendered_text:
             return
         if answer_messageid is None:
             await _ensure_answer_message(
@@ -1380,7 +1409,7 @@ async def getViventiumResponse(
         force: bool = False,
     ) -> None:
         nonlocal stream_preview_pending, stream_preview_task
-        if not rendered_text:
+        if stream_preview_superseded or not rendered_text:
             return
         async with stream_preview_lock:
             prev_force = bool(stream_preview_pending.get("force")) if stream_preview_pending else False
@@ -1417,6 +1446,81 @@ async def getViventiumResponse(
                 await asyncio.gather(task, return_exceptions=True)
             except Exception:
                 pass
+
+    async def _supersede_stream_preview() -> bool:
+        nonlocal answer_messageid, lastresult, stream_preview_superseded
+        stream_preview_superseded = True
+        await _cancel_stream_previews()
+        preview_message_id = answer_messageid
+        answer_messageid = None
+        lastresult = ""
+        if preview_message_id is None:
+            return True
+        try:
+            await context.bot.delete_message(
+                chat_id=chatid,
+                message_id=preview_message_id,
+            )
+            return True
+        except Exception as exc:
+            logger.debug(
+                "Stream preview superseded but could not be deleted: %s",
+                type(exc).__name__,
+            )
+            return False
+
+    async def _deliver_final_message_segments(segments) -> list[int]:
+        nonlocal answer_messageid, lastresult
+        message_ids = []
+        for index, segment in enumerate(segments):
+            rendered, parse_mode = _render_telegram_response(segment)
+            if not rendered:
+                message_ids.append(answer_messageid)
+                continue
+            fallback = (
+                sanitize_telegram_display_text(segment)
+                if telegram_audio_requested
+                else sanitize_telegram_text(segment)
+            )
+            if index == 0 and answer_messageid:
+                try:
+                    await context.bot.edit_message_text(
+                        chat_id=chatid,
+                        message_id=answer_messageid,
+                        text=rendered,
+                        parse_mode=parse_mode,
+                        disable_web_page_preview=True,
+                        read_timeout=time_out,
+                        write_timeout=time_out,
+                        pool_timeout=time_out,
+                        connect_timeout=time_out,
+                    )
+                except Exception as error:
+                    if parse_mode and "parse entities" in str(error):
+                        await context.bot.edit_message_text(
+                            chat_id=chatid,
+                            message_id=answer_messageid,
+                            text=fallback,
+                            disable_web_page_preview=True,
+                            read_timeout=time_out,
+                            write_timeout=time_out,
+                            pool_timeout=time_out,
+                            connect_timeout=time_out,
+                        )
+                    else:
+                        raise
+                lastresult = rendered
+                continue
+
+            answer_messageid = None
+            delivered_id = await _ensure_answer_message(
+                rendered,
+                parse_mode,
+                fallback_text=fallback,
+                reply_to_original=index == 0,
+            )
+            message_ids.append(delivered_id)
+        return message_ids
     # === VIVENTIUM END ===
 
     try:
@@ -1447,6 +1551,11 @@ async def getViventiumResponse(
             telegram_username=telegram_username,
             telegram_message_id=telegram_message_id,
             telegram_update_id=telegram_update_id,
+            source_event_id=_telegram_source_event_id(
+                chatid,
+                telegram_message_id if telegram_message_id is not None else messageid,
+                telegram_update_id,
+            ),
             voice_mode=voice_mode,
             input_mode=input_mode,
             audio_requested=telegram_audio_requested,
@@ -1465,6 +1574,28 @@ async def getViventiumResponse(
                     if not data:
                         continue
                 else:
+                    if data.get("type") == "logical_turn":
+                        logical_turn_id = str(data.get("logical_turn_id") or "").strip()
+                        logical_turn_revision = data.get("revision")
+                        continue
+                    if data.get("type") == "superseded":
+                        logical_turn_id = str(
+                            data.get("logical_turn_id") or logical_turn_id or ""
+                        ).strip()
+                        logical_turn_revision = data.get("revision", logical_turn_revision)
+                        preview_removed = await _supersede_stream_preview()
+                        if (
+                            logical_turn_id
+                            and logical_turn_revision is not None
+                            and hasattr(robot, "ack_delivery")
+                        ):
+                            await robot.ack_delivery(
+                                logical_turn_id,
+                                logical_turn_revision,
+                                "partial_removed" if preview_removed else "failed",
+                                f"telegram:{chatid}",
+                            )
+                        return
                     if data.get("type") == "attachment":
                         attachment = data.get("attachment")
                         if isinstance(attachment, dict):
@@ -1643,6 +1774,12 @@ async def getViventiumResponse(
                 except Exception:
                     pass
             return
+        delivery_plan = parse_delivery_controls(result)
+        result = delivery_plan.clean_text
+        final_segments = list(delivery_plan.segments)
+        if title and final_segments:
+            final_segments[0] = f"{title}{final_segments[0]}"
+        tmpresult = f"{title or ''}{result}"
         # === VIVENTIUM END ===
         _tg_timing_log(trace_id, "stream_complete", stream_start_ts)
         _tg_deep_log(trace_id, "stream_complete", stream_start_ts, base_ts=response_start_ts)
@@ -1825,8 +1962,13 @@ async def getViventiumResponse(
             except Exception as e:
                 logger.warning(f"Failed to send image(s): {str(e)}")
 
-    now_result, now_parse_mode = _render_telegram_response(tmpresult)
-    if lastresult != now_result:
+    if len(final_segments) > 1:
+        await _supersede_stream_preview()
+        delivered_message_ids = await _deliver_final_message_segments(final_segments)
+        now_result, now_parse_mode = _render_telegram_response(final_segments[-1])
+    else:
+        now_result, now_parse_mode = _render_telegram_response(tmpresult)
+    if len(final_segments) <= 1 and lastresult != now_result:
         if "Can't parse entities: can't find end of code entity at byte offset" in tmpresult:
             # === VIVENTIUM START ===
             # Strip citations before plain-text fallback replies.
@@ -1880,6 +2022,43 @@ async def getViventiumResponse(
                     ),
                 )
 
+    if not delivered_message_ids and answer_messageid:
+        delivered_message_ids = [answer_messageid]
+    delivery_ack_status = "unavailable"
+    if (
+        logical_turn_id
+        and logical_turn_revision is not None
+        and delivered_message_ids
+        and (hasattr(robot, "ack_delivery_status") or hasattr(robot, "ack_delivery"))
+    ):
+        try:
+            ack_args = (
+                logical_turn_id,
+                logical_turn_revision,
+                "committed",
+                f"telegram:{chatid}:{delivered_message_ids[-1]}",
+            )
+            if hasattr(robot, "ack_delivery_status"):
+                delivery_ack_status = await robot.ack_delivery_status(*ack_args)
+            elif await robot.ack_delivery(*ack_args):
+                delivery_ack_status = "recorded"
+        except Exception as exc:
+            logger.debug("Delivery acknowledgement failed after visible success: %s", type(exc).__name__)
+
+    if delivery_ack_status in {"stale_revision", "conflict"}:
+        for delivered_message_id in delivered_message_ids:
+            try:
+                await context.bot.delete_message(
+                    chat_id=chatid,
+                    message_id=delivered_message_id,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Obsolete final response could not be retracted: %s",
+                    type(exc).__name__,
+                )
+        return
+
     # === VIVENTIUM START ===
     # Feature: Centralized gating for voice replies.
     # Reuse the same preference snapshot used before generation so audio delivery
@@ -1890,15 +2069,34 @@ async def getViventiumResponse(
         voice_enabled=voice_responses_active,
         text=tmpresult,
     )
+    model_skip_requested = bool(delivery_plan.skip_voice)
+    model_skip_effective = bool(
+        model_skip_requested and should_send_voice and bridge_error_audio_allowed
+    )
+    voice_decision = "sent" if should_send_voice else "disabled_user"
+    if model_skip_requested:
+        should_send_voice = False
+        if model_skip_effective:
+            voice_decision = "skipped_model"
     if not bridge_error_audio_allowed:
         should_send_voice = False
+        voice_decision = "transport_error"
     logger.info(
-        "[TG_VOICE] trace=%s gate voice_note=%s always_voice=%s voice_enabled=%s send=%s",
+        "[TG_VOICE] trace=%s gate voice_note=%s always_voice=%s voice_enabled=%s "
+        "send=%s voice_decision=%s model_skip_requested=%s model_skip_effective=%s "
+        "tts_avoided_chars=%s msg_breaks=%s segments=%s segment_merge=%s",
         trace_id,
         int(bool(voice_note_detected)),
         int(always_voice_active),
         int(voice_responses_active),
         int(bool(should_send_voice)),
+        voice_decision,
+        int(model_skip_requested),
+        int(model_skip_effective),
+        len(tmpresult) if model_skip_effective else 0,
+        delivery_plan.message_break_count,
+        len(delivery_plan.segments),
+        delivery_plan.merged_break_count,
     )
     _tg_timing_log(
         trace_id,
@@ -1908,7 +2106,13 @@ async def getViventiumResponse(
             f"voice_note={int(bool(voice_note_detected))} "
             f"always_voice={int(always_voice_active)} "
             f"voice_enabled={int(voice_responses_active)} "
-            f"send={int(bool(should_send_voice))}"
+            f"send={int(bool(should_send_voice))} voice_decision={voice_decision} "
+            f"model_skip_requested={int(model_skip_requested)} "
+            f"model_skip_effective={int(model_skip_effective)} "
+            f"tts_avoided_chars={len(tmpresult) if model_skip_effective else 0} "
+            f"msg_breaks={delivery_plan.message_break_count} "
+            f"segments={len(delivery_plan.segments)} "
+            f"segment_merge={delivery_plan.merged_break_count}"
         ),
     )
     _tg_deep_log(
@@ -1920,7 +2124,13 @@ async def getViventiumResponse(
             f"voice_note={int(bool(voice_note_detected))} "
             f"always_voice={int(always_voice_active)} "
             f"voice_enabled={int(voice_responses_active)} "
-            f"send={int(bool(should_send_voice))}"
+            f"send={int(bool(should_send_voice))} voice_decision={voice_decision} "
+            f"model_skip_requested={int(model_skip_requested)} "
+            f"model_skip_effective={int(model_skip_effective)} "
+            f"tts_avoided_chars={len(tmpresult) if model_skip_effective else 0} "
+            f"msg_breaks={delivery_plan.message_break_count} "
+            f"segments={len(delivery_plan.segments)} "
+            f"segment_merge={delivery_plan.merged_break_count}"
         ),
     )
     # === VIVENTIUM END ===
@@ -1957,7 +2167,8 @@ async def getViventiumResponse(
                 logger.info(
                     "[VoiceMarkup][telegram] trace=%s tts_markers laughter=%s "
                     "emotion_tags=%s break_tags=%s speed_tags=%s volume_tags=%s "
-                    "xai_inline_tags=%s xai_wrapping_tags=%s xai_total=%s",
+                    "xai_inline_tags=%s xai_wrapping_tags=%s "
+                    "xai_square_wrapping_tags=%s xai_total=%s",
                     trace_id,
                     voice_markup["laughter"],
                     voice_markup["emotion"],
@@ -1966,6 +2177,7 @@ async def getViventiumResponse(
                     voice_markup["volume"],
                     voice_markup["xai_inline"],
                     voice_markup["xai_wrapping"],
+                    voice_markup["xai_square_wrapping"],
                     voice_markup["xai_total"],
                 )
                 # === VIVENTIUM START ===

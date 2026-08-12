@@ -12,6 +12,7 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
    - wizard/config selection
    - preflight prerequisite detection and install
    - component bootstrap
+   - pinned Viventium-Health runtime materialization under owner-only App Support state
    - config compilation
    - doctor validation
    - helper install
@@ -23,6 +24,11 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
    - `viventium_v0_4/viventium-librechat-start.sh`
    - `viventium_v0_4/LibreChat/scripts/viventium-seed-agents.js`
    - `viventium_v0_4/LibreChat/viventium/source_of_truth/local.viventium-agents.yaml`
+
+The health runtime is a generated installed artifact, not an authoring surface. Install, upgrade,
+component bootstrap, and start rebuild it atomically from the exact `components.lock.json` ref,
+reject a mismatched or dirty component package, and preserve OAuth/archive state outside the runtime
+directory. The public `bin/viventium health ...` command uses the same materialized executable.
 
 ## Installer UX Requirements
 
@@ -42,6 +48,225 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
   - hold around five seconds once fully shown
   - rotate randomly
   - avoid immediately repeating the same line
+
+## Easy Install Native And Docker Product Contract
+
+### Objective
+
+The supported Easy Install journey is for a nontechnical person on a clean Mac. One public command must
+install an exact Viventium release, open browser setup, connect one preferred model provider, prove
+that provider with a real request, and land in a useful persistent chat. Optional capabilities must
+never block the first useful answer.
+
+`Easy Install Native` and `Easy Install Docker` are public capability profiles over one installer transaction,
+canonical config compiler, service supervisor, setup UI, connection-state model, upgrade/rollback
+path, and QA contract. They must not become separate installers or duplicate onboarding flows.
+
+- `Easy Install Native` is the first clean-machine acceptance lane. Its required core is local account,
+  provider connection, text chat, chat history, saved memory, built-in agents, Prompt Templates,
+  Agent Builder, Feelings, restart persistence, repair, upgrade/rollback, and preserve-data
+  uninstall/restore.
+- `Easy Install Docker` uses the same state machine and adds Docker Desktop plus the capabilities whose
+  current owning runtimes require containers. A Docker failure must degrade only those capabilities
+  and must not falsify the native core's readiness.
+- “80% covered in the VM” means installer, onboarding, continuity, recovery, and core-product
+  reliability—not a claim that 80% of all optional features run without Docker.
+
+### First-Use Sequence
+
+The normative Easy Install sequence is:
+
+`verified bootstrap -> read-only preflight -> recovery checkpoint -> journaled install -> live core health -> browser first-user setup -> provider connection -> live provider probe -> first rendered answer -> optional setup`
+
+- The terminal asks no provider secret and no optional-integration question before browser setup.
+- Browser setup asks only what is necessary for the first useful answer. It preserves a drafted
+  first prompt across authentication, failure, retry, and reload.
+- OAuth-capable providers use the external system browser with state and PKCE. Providers that only
+  support API credentials use one browser secret field backed by macOS Keychain.
+- Consumer subscriptions and API entitlements are distinct. In particular, Groq API access and
+  xAI API access must not be inferred from a Groq or Grok consumer account.
+- `Configured` is never rendered as `Ready`. Readiness requires a current live self-test, records
+  when it was tested, and classifies authentication, authorization/scope, quota/rate limit,
+  network, unhealthy dependency, unsupported configuration, and update-required failures.
+
+### Public Install Names And Compatibility Values
+
+The installer uses plain user-facing names while preserving the existing machine-readable contract:
+
+| Public installer choice | Canonical config value | Intended use |
+| --- | --- | --- |
+| **Easy Install** | `install.experience: express` | Recommended guided native-first setup with optional capabilities deferred until after the first working answer. |
+| **Custom Settings Install** | `install.experience: custom` | Deliberate selection of runtime mode, providers, integrations, and optional capabilities during installation. |
+
+The public labels must never leak the internal `express` name into installer, startup, status, or
+recovery copy. The schema/API/runtime values remain `express`, `custom`, and the existing `legacy`
+compatibility state so current configs, upgrades, browser onboarding, and generated artifacts do not
+break. Missing `install.experience` continues to resolve through the documented legacy-existing-user
+path; it must not be silently rewritten merely to change a label.
+
+### Native Core And Deferred Capabilities
+
+The product-grade Native core must use prebuilt, versioned artifacts and a pinned runtime. A fresh
+user must not need Docker, Homebrew, Git, Xcode Command Line Tools, pnpm, uv, Python, or a system
+Node installation to reach the first answer.
+
+Required before Native core readiness:
+
+- a pinned production Node runtime plus prebuilt LibreChat/Viventium server and client;
+- the smallest current persistence runtime required by LibreChat, bound to loopback and limited by
+  an explicit memory budget;
+- local first-user creation, one working provider, text chat, persistence, built-in product
+  surfaces, helper/supervisor health, and recovery metadata.
+
+Deferred until the core is ready unless a later accepted requirement proves otherwise:
+
+- Groq or xAI activation credentials beyond the user's selected first provider;
+- GlassHive worker authentication, Prompt Workbench schedules, and nightly automation;
+- voice, LiveKit, local speech models, and the modern voice playground;
+- conversation Recall/RAG, local SearXNG/Firecrawl, Code Interpreter, Microsoft 365 MCP, Skyvern,
+  and GlassHive Docker workstation execution;
+- Telegram, Google Workspace, Slack, WhatsApp, remote access, transcript ingestion, and additional
+  providers.
+
+Meilisearch is not assumed to be a core prerequisite merely because the current source launcher
+starts it. The implementation must prove whether current chat startup requires it. If conversation
+search can be disabled safely, Easy Install Native defers Meilisearch and exposes it as an optional
+capability; otherwise the acceptance evidence must record why it remains in the core.
+
+### Packaging, Install, And Upgrade Boundary
+
+- The public command is a thin bootstrap. It detects supported OS/architecture, downloads an
+  immutable versioned manifest and payload, verifies integrity and publisher identity, stages into
+  a new release directory, starts it, waits on real readiness, and rolls back automatically on
+  failure.
+- Source clone, package-manager dependency resolution, arbitrary `postinstall` execution, and
+  compilation on the user's Mac are developer flows, not the final Easy Install product path.
+- Release directories are immutable. Upgrade stages and validates the next version before an atomic
+  active-version switch. Failed readiness returns to the last known-good compatible release.
+- Data/schema migration and binary activation are separate gates. A pre-migration recovery point is
+  mandatory, and automatic binary rollback must not pretend an incompatible data migration was
+  reversed.
+- Public distribution requires the applicable Developer ID signature, hardened runtime,
+  notarization, stapled ticket, manifest digests, exact component pins, and independent installed-
+  artifact verification. Local unsigned QA artifacts must say they are local QA artifacts and are
+  not public-release evidence.
+- MongoDB or any other third-party runtime may be bundled only after its redistribution/license
+  boundary is accepted and recorded in the public/private/license matrix. Until then, an exact
+  publisher-hosted, digest-verified download is the safer implementation boundary.
+
+The historical source runtime's Node 20 requirement was not a shippable Native artifact decision;
+Node 20 is end-of-life. A July 18, 2026 source-candidate production client/data-provider build
+passes on Node `24.16.0`. Post-review remediation now aligns preflight, shared PATH setup, doctor,
+dependency repair, the LibreChat launcher, the optional Skyvern launcher, and the macOS helper CLI
+PATH on Node 24, with a six-surface regression contract; 90 focused preflight/launcher tests and a
+fresh helper build pass. That is source-candidate evidence, not exact-artifact
+acceptance. The first packaged candidate must ship one pinned official supported runtime and repeat
+build/start/restart/process-path proof on the exact installed artifact. Node single-executable
+applications remain active-development and are not the first packaging boundary; ship a pinned
+official runtime plus immutable production code first.
+
+### Current Local Implementation Status — 2026-07-18
+
+The local source candidate implements public **Easy Install** through the shared internal
+`install.experience: express` profile with Native
+mode, API/web-only core readiness, deferred heavy services, browser Connected Accounts handoff,
+truthful Easy Install startup copy, and current-attempt build-failure detection. Easy Install
+preflight fetches
+the exact MongoDB `8.0.23` publisher archive, verifies its pinned digest, bounded extraction,
+Developer ID team, and reported version, and installs the allowed runtime files under app-owned
+state rather than requiring the Homebrew tap. Easy Install preflight and startup fail closed unless that
+exact app-owned binary and its loopback listener/process arguments match; arbitrary `PATH` or
+Homebrew Mongo remains a legacy/custom-path option only. API, web, status output, and the startup
+banner use loopback truth in local mode.
+
+The browser handoff persists `setup=accounts` across registration/login, requires a configured
+trusted server origin for OAuth instead of trusting the request `Host`, and scopes popup/poll/manual
+completion work to one attempt identity so stale async results cannot corrupt a newer connection.
+The disposable browser lane proves two consecutive popup cancellation/retry attempts, but no grant
+or first provider answer; provider readiness therefore remains setup-pending.
+
+`scripts/viventium/native_payload.py` and its tests implement a reference signed-manifest,
+hostile-archive, immutable-activation, journal/lock, health-gated rollback boundary. This reference
+is not wired into `install.sh` or the public bootstrap, and the current disposable-VM run still used
+a sanitized source candidate and package-manager build. It therefore does not satisfy the final
+no-developer-tools or signed/notarized installed-artifact requirement. The authoritative result and
+remaining gates are recorded in `qa/installer-resilience/reports/2026-07-18-express-installer-and-onboarding-audit.md`.
+
+### Easy Install Threat Model
+
+Assets: provider credentials and refresh tokens, local user/session data, canonical config,
+conversation/memory databases, recovery payloads, code-signing/update trust, and the last-known-good
+runtime.
+
+| Trust boundary | Abuse case | Required control and evidence |
+| --- | --- | --- |
+| Network bootstrap -> local machine | DNS/TLS compromise, mutable branch, replayed or downgraded manifest | Minimal bootstrap, embedded trust root, signed monotonic manifest, exact digest, supported-version policy, replay/downgrade tests |
+| Download -> staging/extraction | Corrupt archive, path traversal, symlink escape, decompression bomb, executable substitution | Size limits, allowlisted archive paths/types, private attempt directory, no-follow extraction, per-file manifest, signature/notarization verification, hostile-archive tests |
+| Existing install -> candidate | Partial overwrite, concurrent installers, cancellation or power loss | Exclusive lock, append-only stage journal, immutable releases, recovery checkpoint, atomic pointer, kill/reboot-at-each-stage tests |
+| Candidate -> active data | Incompatible or malicious migration, rollback with newer data | Declared schema compatibility, pre-migration backup, migration journal, independent restore proof, no binary rollback claim without data rollback |
+| Local browser -> setup API | LAN attacker creates first admin, CSRF, origin confusion, session theft | Explicit loopback bind, one-time setup nonce, strict Origin/Host validation, CSRF/session controls, registration closes by policy, loopback/LAN and replay tests |
+| System browser -> OAuth callback | Redirect interception, code injection, state replay, wrong account/scope | External browser, PKCE-S256, unpredictable state, exact loopback callback, single use/expiry, least scopes, live identity/capability display, denial/replay/wrong-account tests |
+| App -> Keychain/helper | Plaintext secret fallback, logs/process args leak, over-privileged persistent service | Keychain references, no secret CLI args/env/logs, user-level least-privilege service, redacted diagnostics, secret/process-list/filesystem tests |
+| Optional capability -> core | Docker/worker/voice outage blocks chat or reports false Ready | Declared capability graph, independent health states, timeouts, circuit/degraded behavior, core-first readiness and dependency-failure matrix |
+| VM guest -> personal host | Writable mount, clipboard/audio leakage, host credential reuse | No host/home mounts, clipboard/audio off by default, dedicated synthetic accounts/SSH key, pinned guest host key, immutable stopped baseline and disposable clones |
+
+The bootstrap script, manifest/archive contents, browser inputs, OAuth responses, provider results,
+and migration metadata are all untrusted inputs. Installer/runtime code must validate them at their
+owning boundary; prompts and model output are never security controls.
+
+### Commands And Owning Structure
+
+- Public entrypoint: `./install.sh` and the future verified one-line bootstrap that invokes the same
+  installer contract.
+- Public lifecycle: `bin/viventium install`, `bin/viventium configure`, `bin/viventium status`,
+  `bin/viventium doctor`, `bin/viventium upgrade --restart`, snapshot/restore, and uninstall.
+- Installer/config/compiler/runtime ownership remains under `scripts/viventium/` and
+  `bin/viventium`; browser onboarding remains in the LibreChat nested repository and must follow
+  the nested commit -> parent pin -> built artifact -> installed artifact delivery chain.
+- Requirements stay in this document. Reusable cases and dated public-safe evidence stay under
+  `qa/installer-resilience/` and linked feature-owner QA folders.
+
+Implementation style follows the existing structural boundaries: canonical schema fields and
+declared capabilities instead of prompt, provider-label, machine, or user-name heuristics; one
+shared state transition model instead of per-surface booleans; additive, rollback-friendly slices;
+and no edits to generated App Support outputs as a product fix.
+
+### Testing And Acceptance
+
+- Every behavior change starts with a failing synthetic test and a linked installer QA case.
+- Disposable Apple Silicon macOS VM acceptance covers exact bootstrap/payload, no-developer-tools
+  install, account-first browser setup, first real model answer, persistence, idempotence,
+  interruption, offline/corrupt payload, low resources, port collisions, auth failure classes,
+  restart, repair, upgrade rollback, uninstall-preserve, and restore.
+- A physical disposable Mac remains mandatory for Docker Desktop first-launch/permissions,
+  Docker-only services, microphone/audio, sleep/wake, LAN/device behavior, and final full-Easy-Install
+  resource acceptance.
+- Required browser evidence is visible action -> visible result/detail -> refresh/restart ->
+  supporting log/DB/state/config/artifact evidence. Source, mocks, unit tests, or model review do not
+  replace the user path.
+- Initial measurable budgets are setup page within five minutes on a normal broadband connection,
+  warm startup under twenty seconds, idle core memory under 1.5 GB, normal text chat under 3 GB,
+  loopback-only default listeners, and no undeclared system prerequisite. These are acceptance
+  targets until a dated clean-machine run proves or revises them.
+
+### Boundaries
+
+- Always: protect existing-user continuity; use attempt-scoped state; redact diagnostics; verify
+  exact artifacts; keep optional capabilities deferrable; fail with one specific recovery action.
+- Ask before: adding dependencies, changing persistence schema, accepting a redistribution license,
+  requesting privileged macOS permissions, destructive clean-machine reset, or any cloud action.
+- Never: use personal state as a clean-install prerequisite; store provider secrets in tracked or
+  generated plaintext config; call configured-only state ready; silently install Docker-only
+  capabilities in Easy Install Native; publish or push without explicit approval.
+
+### Success Criteria
+
+Easy Install Native is accepted only when the exact candidate artifact completes the first-use sequence
+in a disposable clean macOS VM, every applicable happy/unhappy/recovery case has evidence, restart
+and restore preserve the promised state, and the measured resource budgets are recorded. Easy Install
+Docker is accepted only after the same artifact/state machine passes the Docker and physical-device
+delta on the disposable MacBook Air. Until those gates pass, release wording remains `PARTIAL` or
+`BLOCKED`; source implementation alone is not “done.”
 
 ## Config Compiler Boundary
 
@@ -127,6 +352,15 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
     `VIVENTIUM_CONNECTED_ACCOUNTS_RETURN_ORIGIN`; leave blank for the normal configured
     `DOMAIN_SERVER`/public API return path, and set it only for local/off-network connected-account
     OAuth QA when the completion page must return to a localhost browser
+- Scheduled agent automation is a separate compiler-owned policy under
+  `runtime.scheduled_agent`; supported installs currently emit the atomic
+  `openai` / `gpt-5.6-sol` / `xhigh` tuple as:
+  - `VIVENTIUM_SCHEDULED_AGENT_PROVIDER`
+  - `VIVENTIUM_SCHEDULED_AGENT_MODEL`
+  - `VIVENTIUM_SCHEDULED_AGENT_REASONING_EFFORT`
+  This override is scoped to the scheduler-secret-authenticated generation route. It must not alter
+  the conscious agent's ordinary interactive model/effort settings or be inferred from prompt text,
+  schedule names, agent names, or user identity.
 - Generated runtime config must not silently preserve hidden provider defaults from the source
   template when the installer/compiler already knows the machine's real auth surface.
 - The local launcher owns the fallback OpenAI picker inventory written to LibreChat runtime env:
@@ -142,18 +376,23 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
 - `librechat.yaml` memory-writer provider/model must be compiled from the actually available
   foundation providers (`openai` / `anthropic`), including connected-account auth:
   - do not leave memory on a hardcoded xAI default when xAI was never configured
-  - current product policy prefers Anthropic for memory when Anthropic is available and otherwise
-    falls back to OpenAI
+  - omission of `llm.memory` follows the configured foundation priority
+  - optional `llm.memory.provider` / `llm.memory.model` may select another already-authenticated
+    OpenAI or Anthropic route, must fail closed when that provider is unavailable, and compiles only
+    `memory.agent`; it does not create automatic runtime fallback
   - docs, tests, and generated runtime outputs must all reflect that exact compiler rule
   - the generated provider token is part of the public product contract; downstream runtime
     initialization must accept the compiler-emitted canonical value instead of requiring a
     different alias such as `openAI`
-- The supported local nightly-routines default is installed from canonical config, not from owner
+- The supported local nightly-routines policy is installed from canonical config, not from owner
   machine leftovers:
-  - Express/Easy and Advanced installs enable GlassHive, Prompt Workbench, the built-in Workbench
-    nightly reflection schedule, and memory hardening by default
-  - upgrades reconcile the same defaults into existing canonical configs once, then compile the
-    generated runtime from that config
+  - new Easy Install Native installs include the feature definitions but defer GlassHive worker
+    activation, Prompt Workbench schedules, nightly reflection, and memory hardening until after the
+    first useful answer and explicit worker setup
+  - Custom Settings Install may activate the workflow during setup; upgrades preserve an existing
+    explicit active or disabled posture instead of forcing the new-user default over it
+  - the canonical `install.experience` plus declared feature enablement owns this distinction;
+    missing `install.experience` is legacy existing-user state and must not be silently reclassified
   - `bin/viventium install`, `upgrade`, `configure`, `compile-config`, and `start` all run the same
     default-nightly reconciler before compiling runtime artifacts, so later CLI auth can be picked up
     without hand-editing App Support files
@@ -164,9 +403,9 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
     otherwise Claude when `claude auth status` succeeds
   - the reconciler must not overwrite an explicit configured worker profile on later `start`,
     `compile-config`, `configure`, or `upgrade`; user choice beats auto-detection
-  - GlassHive host-worker preflight requires at least one signed-in Codex or Claude CLI; if neither
-    is usable, the installer must stop with one clear action to sign in to one of them, not ask the
-    user product-design questions
+  - when GlassHive host-worker activation is explicitly enabled, preflight requires at least one
+    signed-in Codex or Claude CLI and gives one clear sign-in action if neither is usable; a disabled
+    or setup-pending worker must not block Easy Install Native core readiness
   - OpenClaw may be reported as optional, but missing OpenClaw must not block the default nightly
     workflow when Codex or Claude is ready
   - worker CLI auth is not the same as model-provider API or connected-account auth for memory
@@ -182,14 +421,15 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
     must not guess a personal account. The supported automatic path is the normal first-admin local
     install; multi-admin ambiguity is an operator-visible setup limitation until a deterministic
     owner is available.
-- Express Rich Brain Readiness is a first-class installer contract, owned by the shared
+- Easy Install Brain Readiness is a first-class installer contract, owned by the shared
   `scripts/viventium/brain_readiness.py` registry and reflected in wizard prompts, preflight,
   generated config, install/status output, doctor-style health, and QA rows:
-  - Express installs the core spine automatically: core app/helper, Scheduler, GlassHive, Prompt
-    Workbench, built-in nightly reflection, memory hardening with dry-run-first, and viable local
-    voice on Apple Silicon
-  - GlassHive is mandatory for Express moving forward; host-worker preflight must detect Codex CLI
-    or Claude CLI sign-in and fail with one clear action when neither worker can run
+  - Easy Install Native installs the useful first-answer spine automatically: core app/helper, local
+    account, foundation-provider connection, text chat/persistence, built-in agents, Prompt
+    Templates, Agent Builder, Feelings, and the setup/status shell
+  - Scheduler, GlassHive, Prompt Workbench, nightly reflection, memory hardening, and local voice
+    remain first-class supported capabilities, but their activation is post-ready for a new Easy Install
+    Native install and missing prerequisites degrade only those capabilities
   - the built-in nightly flow is documented and tested as: scheduled prompt -> filled placeholders
     -> GlassHive run -> callback -> scheduler ledger -> Workbench shows completed
   - the built-in nightly schedule must be active for the resolved first local admin and carry a
@@ -207,11 +447,11 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
   - Transcript ingest is pending until `runtime.memory_hardening.transcripts.source_dir` is set by
     the wizard, helper, or `bin/viventium transcripts source set <folder>`; an empty source is a
     setup-pending state, not a failure
-  - Web Search is guided in Express: local Docker-backed SearXNG/Firecrawl or hosted Serper/
-    Firecrawl keys are both valid, and status must identify the exact degraded local service when
-    enabled health is incomplete
+  - Web Search is deferred until after Easy Install reaches a working first answer. Its later guided
+    setup may use local Docker-backed SearXNG/Firecrawl or hosted Serper/Firecrawl keys, and status
+    must identify the exact degraded local service when enabled health is incomplete
   - Code Interpreter, Skyvern, OpenClaw, and Remote Access remain off by default. They are
-    Advanced/Lab or explicit guided opt-in surfaces and must not appear enabled in public examples
+    Custom Settings Install or later guided opt-in surfaces and must not appear enabled in public examples
     unless that example is clearly lab-scoped
   - WhatsApp must not be advertised as installed or configured until an owning runtime integration,
     requirement doc, and QA surface exist
@@ -295,7 +535,7 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
   - non-macOS operators must wire an equivalent cron/systemd timer; the public CLI currently
     auto-installs schedules only through macOS LaunchAgents
   - `provider_profile` must stay `launch_ready_only`
-  - default Anthropic hardening tuple is `anthropic / claude-opus-4-8 / xhigh`; the root wrapper
+  - default Anthropic hardening tuple is `anthropic / claude-opus-5 / xhigh`; the root wrapper
     passes it to the Claude Code CLI path as the explicit provider/model plus
     `VIVENTIUM_MEMORY_HARDENING_ANTHROPIC_EFFORT=xhigh`
   - default OpenAI hardening tuple is `openai / gpt-5.6-sol / xhigh`; the compiler emits
@@ -339,7 +579,7 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
 - Endpoint helper config must not hide unavailable provider dependencies:
   - Anthropic conversation-title generation must stay on Anthropic instead of routing through xAI
   - xAI custom endpoint inventory is an explicit compiler/source-template contract:
-    `grok-4.3` is the default and title/summary model, current 4.20 stable IDs use the dated
+    `grok-4.5` is the default and title/summary model, current 4.20 stable IDs use the dated
     `0309` forms documented by xAI, and model IDs scheduled for xAI's May 15, 2026 retirement must
     not be used as generated defaults
   - Keep the compiler fallback and `local.librechat.yaml` source-template xAI endpoint aligned;
@@ -422,6 +662,37 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
     flags, and Claude Chrome/effort launch flags. These compile into canonical runtime env so
     operators do not need undocumented `runtime.extra_env` escape hatches for the capability
     contract.
+  - `integrations.glasshive.host_worker.plugin_denylist` accepts canonical `name@marketplace`
+    plugin IDs and compiles them into `GLASSHIVE_HOST_PLUGIN_DENYLIST`. The runtime applies the
+    denylist only to worker-local Codex config and Claude launch settings; it must not encode plugin
+    policy in worker prompts or disable plugins outside the selected worker. The generic compiler
+    and schema do not invent a denied plugin ID; Viventium's canonical config and examples explicitly
+    select `viventium-feelings@project-viventium`.
+  - `integrations.glasshive.host_worker.codex_personality` is optional and accepts `inherit`,
+    `none`, `friendly`, or `pragmatic`. Viventium defaults to `none`: Codex documents this as
+    disabling its own personality instructions, which leaves Viventium's final Feeling capsule as
+    the sole intended personality/emotional authority. `inherit` remains an explicit operator option
+    and standalone GlassHive still inherits when Viventium does not compile this setting. The value
+    is written only to worker-local Codex config and never becomes Viventium prompt text.
+  - `integrations.glasshive.host_worker.codex_conversation_project_instructions` accepts `inherit`
+    or `exclude`. Viventium defaults to `inherit` so conversation workers keep canonical LIFE context.
+    `exclude` is a tested deployment opt-out: it uses a neutral non-project working directory while
+    retaining real LIFE file access through an additional directory grant. Mission-worker project
+    behavior is unchanged.
+  - `integrations.glasshive.host_worker.codex_app_server_qa_enabled` defaults false and compiles to
+    `WPR_CODEX_APP_SERVER_QA_ENABLED`. It enables only the isolated App Server compatibility probe;
+    production conversation workers remain on `codex exec`. The 2026-08-02 installed-build probe
+    rejected App Server for production: both `thread/settings/update` and the documented per-turn
+    `turn/start.collaborationMode.settings.developer_instructions` failed to make a changed state
+    current, while developer-role `thread/inject_items` was model-visible but append-only. A later
+    transport change requires a separately reviewed current-only authority mechanism and full
+    lifecycle QA.
+  - The compiled Viventium default therefore uses native-session lifecycle as the state boundary:
+    current `system`/`developer` content is worker-local Codex `developer_instructions`; present and
+    changed authority serially replaces the old worker and seeds visible history; present and
+    unchanged authority resumes; and an absent Phase-B snapshot carries the pinned state forward.
+    User text never carries developer authority, and no provider/plugin name is hardcoded into the
+    lifecycle decision.
   - when `integrations.glasshive.host_worker.enabled=false`, the compiler must emit
     `GLASSHIVE_HOST_WORKERS_ENABLED=false`, force the generated default execution mode to `docker`,
     and generate MCP instructions that do not tell agents to create host-native workers
@@ -441,6 +712,9 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
     - when local enterprise simulation URLs include explicit ports, emit matching
       `GLASSHIVE_MCP_PORT` and `GLASSHIVE_UI_PORT` so the launcher binds the same ports that
       LibreChat is configured to call
+    - in local non-enterprise mode, when no explicit `integrations.glasshive.mcp_url` is set,
+      derive `GLASSHIVE_MCP_URL` from the compiled `GLASSHIVE_MCP_PORT`; dev-env port offsets must
+      change the listener and LibreChat caller together
     - default service-token delivery to a trusted reverse proxy and therefore omit `X-WPR-Token`
       from LibreChat YAML unless `service_token_delivery=client_header` is explicitly configured
     - add `X-Viventium-Tenant-Id` and LibreChat user/request/upload headers to the generated
@@ -465,6 +739,10 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
     interactive shell. On macOS, a valid app-bundled Codex CLI path is a supported Codex host-worker
     runtime and the compiler must emit it as `WPR_CODEX_BIN` when `codex` is not on the service
     `PATH`; discovery checks `/Applications`, `~/Applications`, and `VIVENTIUM_CODEX_APP_DIRS`.
+    The same service-visible rule applies to Claude: a current-user executable under
+    `~/.local/bin` is a supported discovery result and must compile to `WPR_CLAUDE_CODE_BIN` rather
+    than being reported unavailable only because the helper's launch `PATH` is narrower than the
+    interactive shell.
   - generated GlassHive MCP headers must include user, agent, conversation, parent message, and
     current message context so `worker_find_or_resume` can seed same-chat callback metadata without
     a controller-level mention parser
@@ -512,10 +790,24 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
 - Voice turn-taking follows the same compiler/runtime ownership rule:
   - canonical runtime config owns the shared background follow-up window:
     - `runtime.background_followup_window_s`
+    - valid range: 0-86400 seconds; zero explicitly disables ordinary automatic surface listening
     - compiles to:
       - `VIVENTIUM_CORTEX_FOLLOWUP_GRACE_S`
       - `VIVENTIUM_VOICE_FOLLOWUP_GRACE_S`
       - `VIVENTIUM_TELEGRAM_FOLLOWUP_GRACE_S`
+    - the LibreChat server projects the canonical cortex value into authenticated startup config as
+      `viventiumBackgroundFollowupWindowS`; Web uses it as a post-stream query-refresh window, not
+      as a Main/cortex/Phase-B execution deadline
+    - an older or mismatched Web bundle without that startup field receives one catch-up refresh;
+      the client must not substitute another hardcoded duration; an explicit canonical zero remains
+      zero and disables automatic Web refreshes
+    - Telegram uses the same value for both its raw SSE listener and DB-backed follow-up poll by
+      default. It has no implicit 180-second listener. A bounded explicit
+      `VIVENTIUM_TELEGRAM_FOLLOWUP_TIMEOUT_S` may extend the total listener window; deprecated
+      `VIVENTIUM_TELEGRAM_INSIGHT_*` values are standalone compatibility inputs only when the
+      canonical value is absent
+    - ending a surface listener never cancels Main, cortex execution, Phase B, or the separately
+      configured GlassHive callback wait
     - note:
       - the umbrella product phrase is now `background follow-up window`
       - the env var names intentionally keep the older `FOLLOWUP_GRACE` suffix for backward compatibility
@@ -527,13 +819,22 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
       - `VIVENTIUM_TELEGRAM_GLASSHIVE_TIMEOUT_S`
     - default:
       - 600 seconds, because host-native browser/desktop work can legitimately take several minutes
+    - this timeout must not inherit the shorter background follow-up grace window
+    - valid range:
+      - 30-86400 seconds; compiler and preflight should reject values outside that range
   - GlassHive callback delivery health is runtime state, not generated config. Generated config owns
     callback URL/secret/wait-window inputs, but runtime health and nightly QA must prove callback
     outbox delivery, active backlog, active retry attempts, stale delivering reclaim, and dead-letter
     delta from the live store.
-      - this timeout must not inherit the shorter background follow-up grace window
-    - valid range:
-      - 30-86400 seconds; compiler and preflight should reject values outside that range
+  - canonical runtime config also owns the separate synchronous GlassHive Agent Provider deadline:
+    - `runtime.glasshive_foreground_response_timeout_s`
+    - compiles into the generated `runtime.env` as `GLASSHIVE_PROVIDER_RESPONSE_TIMEOUT_S`
+    - default: unset; no automatic foreground deadline
+    - valid range: 30-1800 whole seconds; compiler rejects invalid or out-of-range values
+    - this bounds only a user-blocking `/v1/chat/completions` response; it does not cap GlassHive
+      missions, MCP jobs, background work, or the longer callback-listening window above
+    - the launcher loads generated `runtime.env` before starting GlassHive, so the runtime process
+      inherits this value without a second service-specific config surface
   - canonical voice config owns `VIVENTIUM_TURN_DETECTION`
   - canonical voice turn-handling config owns:
     - `VIVENTIUM_VOICE_MIN_INTERRUPTION_DURATION_S`
@@ -573,13 +874,14 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
     - background detection budgets/flags are owner-canonical in
       `docs/requirements_and_learnings/02_Background_Agents.md` ("2026-05-30 … Two Independent Modes").
       The compiler emits, for the two independent modes (neither flag affects the other mode):
-    - `VIVENTIUM_VOICE_BACKGROUND_AGENT_DETECTION_ASYNC=true` (voice async "nevermind+redo" default
-      ON)
-    - `VIVENTIUM_TEXT_BACKGROUND_AGENT_DETECTION_ASYNC=false` (text async opt-in; default OFF)
+    - `VIVENTIUM_VOICE_BACKGROUND_AGENT_DETECTION_ASYNC=true` (voice one-pass parallel default ON)
+    - `VIVENTIUM_TEXT_BACKGROUND_AGENT_DETECTION_ASYNC=true` (text detection runs in parallel by default)
     - `VIVENTIUM_VOICE_PHASE_A_AWAIT_MS=690` (voice detection budget)
     - `VIVENTIUM_TEXT_PHASE_A_AWAIT_MS=1300` (text detection budget)
     - `VIVENTIUM_CORTEX_DETECT_TIMEOUT_MS=2000` (shared fallback budget)
-    - `VIVENTIUM_CORTEX_LATE_DETECT_TIMEOUT_MS=4000` (non-blocking recovery budget after a zero-activation fast-pass timeout; reuses canonical classifier/fallback/Phase B paths and does not delay the main answer)
+    - `VIVENTIUM_CORTEX_LATE_DETECT_TIMEOUT_MS=6000` (non-blocking recovery budget after a zero-activation fast-pass timeout; reuses canonical classifier/fallback/Phase B paths and does not delay the main answer)
+    - `VIVENTIUM_ACTIVATION_PRIMARY_ATTEMPT_TIMEOUT_MS=1600`
+    - `VIVENTIUM_ACTIVATION_FALLBACK_ATTEMPT_TIMEOUT_MS=2500`
     - `VIVENTIUM_VOICE_PHASE_A_ASYNC_ALLOW_TOOL_HOLD=true` (voice stays async even when a
       configured tool-hold cortex exists; Phase B/follow-up owns late or side-effecting evidence)
     - `VIVENTIUM_VOICE_LOG_LATENCY=1`
@@ -588,11 +890,67 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
   - when the optional semantic turn-detector plugin is installed, launcher startup owns the model
     pre-download so a fresh boot does not die on a missing turn-detector ONNX cache
 
+## Transactional Configuration Boundary
+
+- Headless `install` and `configure` inputs are patches over the existing canonical config, not
+  replacement documents. Unknown forward-compatible fields and explicit user choices must survive.
+- The CLI prepares each headless change in a private, attempt-scoped candidate directory under App
+  Support, runs the wizard normalizer and default reconciler against that candidate, then runs a
+  compiler dry-run before canonical state changes.
+- Applying a validated candidate first writes a mode-`0600` backup under a mode-`0700` App Support
+  backup directory and then replaces canonical config atomically. A later compile or schedule-sync
+  failure restores the prior canonical config.
+- Failed input parsing or candidate validation leaves canonical config byte-for-byte unchanged and
+  removes attempt-scoped candidate files.
+- Interactive configure, helper-driven configure, redacted preview/diff, post-reload health proof,
+  and crash/power-loss journaling still need to converge on this same transaction before the whole
+  `INST-006` contract can be called complete.
+- The current interactive wizard remains outside this boundary: it writes canonical YAML directly
+  and can update Keychain items while prompts are still in progress. Completing the transaction
+  requires staging secret references and values, validating first, then committing Keychain,
+  canonical config, generated outputs, schedules, helper state, and process/reload effects with a
+  local compensation journal. Canonical config rollback alone is not sufficient.
+
+## Bootstrap Destination Identity Boundary
+
+- Before `install.sh` fetches, checks out, or pulls an existing destination, it must read that
+  checkout's `origin` and compare its canonical repository identity with the requested repository.
+- The supported ProjectViventium HTTPS, GitHub SCP-style SSH, and `ssh://git@github.com/` spellings
+  are equivalent identities. An explicit `VIVENTIUM_REPO_URL` remains the requested identity for
+  controlled local/private bootstrap testing.
+- A missing or unrelated origin fails closed with guidance to choose an empty install directory or
+  explicitly repair the checkout. The bootstrap must not run a mutating Git command first.
+- An existing checkout with tracked changes also fails before fetch/checkout/pull. After the
+  fast-forward update, the tracked tree must still be clean and local `HEAD` must exactly equal the
+  fetched `origin/<branch>` revision before its CLI can execute; a clean local-ahead commit is not a
+  verified public artifact.
+- Origin identity is the immediate destination-safety gate. Immutable release selection,
+  signature/digest verification, interruption recovery, and exact installed-artifact proof remain
+  required before the complete `INST-007` provenance contract passes.
+- This immediate gate covers accidental wrong destinations only. Running `git -C` inside an
+  existing repository can execute repository-controlled hooks or filesystem-monitor configuration;
+  same-origin spoofing, the local-checkout fast path, and surviving untracked files also remain
+  outside the protection. The secure public boundary requires hook-disabled clean staging and an
+  immutable verified release before any destination-controlled Git operation is trusted.
+
 ## Continuity-Aware Snapshot / Restore / Upgrade Boundary
 
 - `bin/viventium snapshot` is the supported manual snapshot entrypoint for local installs.
-- The public snapshot wrapper must always write a metadata-only `continuity-manifest.json` under
-  the selected snapshot root, even when no private companion helper exists.
+- The public snapshot wrapper must always write a metadata-only `continuity-manifest.json` under a
+  newly allocated snapshot-attempt directory, even when no private companion helper exists.
+- A metadata-only attempt is a continuity audit, not a recoverable backup. CLI/helper wording must
+  say that no recoverable payload was created, and the attempt must carry an explicit machine-local
+  metadata-only marker.
+- The wrapper must never discover the latest prior snapshot and write into it as fallback. Repeated
+  metadata-only attempts allocate distinct directories and leave every prior manifest/payload
+  byte-for-byte unchanged.
+- `LATEST_PATH` is a commit pointer: publish it atomically only after the new continuity manifest
+  succeeds. Capture failure or interruption must preserve the prior last-good pointer; an
+  incomplete attempt directory is not promoted.
+- `LATEST_PATH` may therefore name the newest completed metadata audit. Restore must inspect the
+  explicit metadata-only marker and refuse that directory before capturing live state or applying
+  any restore-side mutation; a continuity audit is never a restore source merely because it is
+  latest.
 - That manifest is evidence, not authorship. It may include:
   - sanitized path labels
   - repo heads
@@ -608,26 +966,78 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
   - absolute private home-directory paths
 - App Support is the primary machine-local manifest destination. A private companion helper may add
   richer secret-bearing payload into the same machine-local snapshot flow or a private companion
-  backup root, but the public wrapper must not require that helper to succeed.
+  backup root. The helper must record a new snapshot path for the current attempt and that path must
+  pass the public complete-bundle validator before publication; otherwise the public wrapper preserves
+  all prior snapshots and creates a separate metadata-only audit.
 - The product default is operator-triggered manual snapshots, not mandatory daily full backups.
   Bounded private automation may exist later, but the shipped public contract must stay explicit and
   storage-aware.
-- `bin/viventium restore` must capture a live continuity audit, compare the selected snapshot
-  manifest against live state, and refuse an older snapshot by default unless the operator passes
-  `--allow-older-snapshot`.
-- Restore must make a pre-apply safety copy of directly affected local state before overwriting it.
-- If restore follow-through can leave recall-derived state older than live continuity, restore must
-  write the recall rebuild-required marker and runtime must refuse vector-backed recall until the
-  operator rebuilds and intentionally clears that marker.
+- `bin/viventium restore` must first refuse any default or explicitly selected metadata-only
+  attempt and any source/target overlap. Marker-less, partial, corrupt, or resource-abusive inputs
+  fail before target creation. The validator must run from a stock standard-library Python without
+  bootstrapping App Support, and must reject boolean schema versions, oversized artifacts, and
+  excessive declared or observed archive expansion.
+- A producer's positive marker, complete domain ledger, typed artifacts, size/hash checks, and
+  format checks establish only a structurally valid complete-bundle candidate. They do not prove
+  recoverability. The CLI must keep `recoverable: false` and name the apply engine as unavailable
+  until a public capture/apply path restores an independent target and the required user-visible,
+  database, schedule, recall, channel, and reauthentication checks pass.
+- Structural and gzip validation do not prove Mongo archive semantics; the candidate result must say
+  `semanticValidation: not_performed` until a data-plane adapter verifies the contents.
+- The public apply engine is currently unavailable. After candidate validation, every non-validation
+  request exits `4` before live-audit creation, safety copies, channel writes, Recall markers, or any
+  target mutation. `--allow-older-snapshot`, `--apply-telegram`, and `--mark-recall-stale` are reserved
+  compatibility flags, not partial mutation paths.
+- A future transactional apply engine must stage into an independent target, make pre-apply safety
+  copies of directly affected state, validate every adapter, activate atomically, and write the
+  Recall rebuild-required and reauthentication ledgers before this contract can change.
 - `bin/viventium continuity-audit` owns the operator review surface for current continuity metadata
   and the explicit `--clear-recall-marker` acknowledgement after rebuild.
 - `bin/viventium upgrade` must capture pre/post continuity audits and treat their severity as part
   of the supported upgrade contract:
   - `error`: do not auto-restart
+  - `unknown`, malformed, or capture failure: do not auto-restart
   - `warning`: finish upgrade but require operator review
   - `ok`: continue normally
+- When `--restart` is used, stop must succeed before source pull. Helper refresh uses `--no-launch`;
+  only an accepted post-audit followed by a successful runtime restart may relaunch the helper, so
+  its login auto-start loop cannot race the continuity gate.
 - The macOS helper may expose a manual `Create Backup Snapshot` action, but it must call the same
-  supported snapshot path as the CLI rather than inventing a second backup implementation.
+  supported snapshot path as the CLI rather than inventing a second backup implementation. It may
+  show backup success only for positive marker+manifest proof and must show a warning for metadata-only
+  or invalid/missing proof.
+
+## GlassHive provider and canonical LIFE compiler contract
+
+- Supported new installs, including the express/minimal path, enable the core GlassHive provider and
+  host runtime by default so every local user receives the canonical LIFE bootstrap and can select
+  GlassHive in Agent Builder. Missing Codex/Claude authentication is a visible readiness state, not
+  a reason to omit the provider. Custom configurations may explicitly disable the integration.
+- When GlassHive and its provider surface are enabled, compilation registers the exact custom
+  endpoint ID `glasshive-harness` with visible label **GlassHive**, exact model inventory, context
+  limits, title generation pinned to a configured fast direct model, and unsupported OpenAI request
+  parameters removed.
+- Compilation publishes provider capabilities under the Agent endpoint. Main chat, cortex execution,
+  Phase B, workspace binding, native tools, activity stream, the generic text fallback target, and
+  the optional provider-internal serial fallback are enabled; activation classifier and real-time
+  voice remain disabled. Every built-in Main/background/handoff Agent uses
+  `fallback_llm_provider: glasshive-harness`, `fallback_llm_model: claude-code:opus`, and fallback
+  reasoning effort `high`. `glasshive_options.fallback_*` remains an explicitly
+  configurable advanced option and is disabled by default. When GlassHive is disabled for an install,
+  runtime normalization replaces the built-in GlassHive fallback with a distinct direct-provider
+  fallback instead of silently dropping recovery.
+- The generated runtime carries the GlassHive provider base URL, authenticated provider secret, and
+  `VIVENTIUM_LIFE_DIR`. Disabled or unavailable GlassHive provider configuration is pruned from both
+  custom endpoints and model picker additions; stale picker entries are forbidden.
+- Install, upgrade, and start additively bootstrap the configured LIFE directory from the public-safe
+  fixture. Missing directories/files are created owner-only, existing personalized content is never
+  overwritten, and destination/root symlinks are skipped or rejected rather than followed. Template
+  version/digest state is written under private Viventium App Support—not inside LIFE. A malformed or
+  unavailable LIFE path is reported clearly but never prevents the core chat runtime from starting.
+- Bootstrap excludes `.git`, `CLAUDE.md`, `CODEX.md`, delegated-mission scaffolding, night-run
+  receipts, and runtime logs. The canonical `AGENTS.md` is shared by both harnesses.
+- Generated runtime files remain compiler outputs. Operators must not patch App Support YAML/env or
+  the live LIFE folder and call that a source fix.
 
 ## Feelings compiler contract
 
@@ -685,6 +1095,15 @@ config and recompile/restart; they do not patch generated App Support env files.
   - if router mappings or edge startup fail, local LibreChat/API/playground startup must continue
   - the remote access state file must persist the exact blocker so `bin/viventium status` can show
     an action-required message and the next `bin/viventium start` can retry cleanly
+- Public LiveKit media keeps the same canonical-config ownership rule:
+  - blank `runtime.network.livekit_node_ip` preserves the local-first LAN-address default
+  - a deployed direct-public edge must set an explicit public node address until the compiler
+    exposes dual internal/external candidate fields
+  - the compiler must carry that value through generated runtime env and `livekit.yaml`; the active
+    process and `public-network.json` must agree after restart
+  - App Support generated files remain outputs and must never become the manual authoring surface
+  - an external page or signaling check is not compiler/runtime acceptance; `REMOTE-004` and
+    `MPV-023` require selected off-LAN media and a delivered synthetic turn
 - Deferred Telegram startup must survive clean first-run build time:
   - LibreChat can spend several minutes rebuilding packages and the client bundle on a clean Mac
   - any Telegram startup path that waits inline against the API before those builds finish will
@@ -719,8 +1138,11 @@ config and recompile/restart; they do not patch generated App Support env files.
 - The shipped macOS helper binary is the reliable clean-install path on April 7, 2026:
   - clean x86_64 CommandLineTools hosts can fail SwiftPM manifest linking before any app code builds
   - when `apps/macos/ViventiumHelper/prebuilt/source.sha256` matches current helper sources, the
-    installer should use that shipped binary by default instead of surfacing brittle source-build
-    failures to end users
+    installer may use that shipped binary only when `prebuilt/binary.sha256` also matches the exact
+    executable and the executable contains both supported macOS architectures; source hash alone is
+    not binary integrity or publisher provenance
+  - the binary sidecar detects accidental replacement/corruption but does not replace Developer ID
+    signing, notarization, or an immutable signed release manifest
   - when helper install runs from a checkout under macOS protected user folders such as
     `~/Documents`, `~/Desktop`, or `~/Downloads`, the helper runtime binding must prefer the
     supported public checkout outside those folders (default `~/viventium`) when that checkout is
@@ -916,6 +1338,19 @@ config and recompile/restart; they do not patch generated App Support env files.
   - the parent component pin itself must be the exact published full commit SHA from the nested
     component repo; a mistyped or locally copied hash is enough to break the supported fetch path
     even when the intended nested fix is already live on origin
+  - a later July 19, 2026 audit separated clean refresh work from protected local work: a clean
+    selected checkout at a different HEAD is `refresh_required` and may move to the exact pin, while
+    dirty, unreadable, orphan-risk, unrelated, or unverifiable component state blocks before parent
+    pull, stack stop, or any component mutation
+  - update inspection is a real read-only operation: remote observation must not run `git fetch`,
+    create App Support layout, compile config, install the helper, or touch the running stack
+  - a policy blocker returns a nonzero machine status while preserving structured JSON for the
+    helper; clean refresh-required state remains safe to attempt
+  - mutating upgrade must refuse a running stack without `--restart` before pulling, gate the
+    pre-upgrade continuity baseline while services are still available, fail when stop fails, and
+    never describe an availability restart from partially changed disk state as a rollback
+  - post-upgrade continuity `error` means do not auto-restart; `--allow-dirty` never authorizes a
+    fetch/pull and therefore requires `--skip-pull`
 - The same April 14, 2026 continuity hardening pass clarified the operator-state boundary:
   - chat history, saved memory, recall corpora, schedules, and runtime/provider state can drift
     independently
@@ -958,9 +1393,11 @@ config and recompile/restart; they do not patch generated App Support env files.
     agree when GlassHive is off
   - otherwise a missing local GlassHive MCP can surface to fresh users as a generic `No key found`
     error even though foundation-model auth is healthy
-- On May 31, 2026, the nightly-routines QA follow-up superseded the old local default: GlassHive is
-  part of the supported local install and upgrade path because the built-in nightly reflection uses
-  scheduled Workbench prompts delivered through GlassHive.
+- On May 31, 2026, the nightly-routines QA follow-up made GlassHive part of the supported local
+  install and upgrade path because the built-in nightly reflection uses scheduled Workbench prompts
+  delivered through GlassHive. The approved July 18, 2026 Easy Install Native contract narrows when it
+  activates: the capability remains supported, existing explicit state is preserved, and new
+  Easy Install Native installs defer worker auth and schedules until after the first useful answer.
 - The same April 13, 2026 remote clean-machine pass exposed the public-clone bootstrap boundary:
   - a shipped public checkout can contain vendored component source without nested git history
   - `bootstrap_components.py` must therefore treat a bootable vendored component tree as valid
@@ -976,6 +1413,24 @@ config and recompile/restart; they do not patch generated App Support env files.
   - first-message auth aborts on a brand-new conversation must not queue title generation against a
     transient stream id; otherwise clean installs surface a misleading `/api/convos/gen_title/...`
     404 after the real `connected_account_required` error
+- On July 13, 2026, scheduled-provider QA exposed two connected-account truthfulness boundaries:
+  - a stored key row is not proof of connectivity; status must first prove the active runtime can
+    decrypt the value, otherwise Settings reports disconnected and guides a supported reconnect
+  - an OAuth provider may reject an access token before its stored expiry; the Codex route refreshes
+    and replays exactly once on the first provider 401, deduplicates concurrent refreshes per user,
+    and preserves the original authenticated fallback/error path if refresh fails
+- On August 4, 2026, a real reconnect with an already-usable credential exposed a separate browser
+  attempt boundary:
+  - saved credential expiry is account state, not proof that the newly opened popup completed; each
+    start returns an unpredictable `attemptId`, and the browser polls authenticated status for that
+    user, provider, and attempt
+  - starting again supersedes the older attempt; stale callbacks, popup messages, and in-flight
+    exchanges cannot complete or overwrite the newer attempt
+  - attempt state is process-local and expires after 30 minutes; a server restart during consent
+    asks the user to retry instead of accepting stale completion
+  - real Chrome acceptance with a pre-existing credential kept the provider chooser/consent popup
+    open beyond the old false-close window, then closed it only after the matching callback and
+    displayed the saved state
 - On April 9, 2026, a local restart verified the memory-writer contract end to end:
   - before restart, the live generated runtime still pointed memory at `openai / gpt-5.4` and the
     running helper logs showed the unsupported-provider initialization failure
@@ -1026,7 +1481,10 @@ config and recompile/restart; they do not patch generated App Support env files.
 - On May 7, 2026, xAI standalone TTS added a provider-id and secret-routing rule:
   - canonical voice TTS provider id is `xai`
   - legacy aliases `x_ai`, `grok`, and `xai_grok_voice` are accepted at config/compiler/runtime
-    boundaries but compile to `xai`
+    boundaries but compile to the standalone `xai` TTS provider; they do not select the retired
+    Grok Voice Agent model
+  - `voice.tts.xai.tts_api: voice_agent` is retired and must fail closed with guidance to use
+    `tts`; it is never silently remapped
   - hosted voice setup must be able to collect a TTS-only xAI API key and store it under
     `voice.provider_keys.xai` / `keychain://viventium/x_ai_api_key`
   - xAI TTS secret precedence is voice provider key, selected `voice.tts`, keychain fallback, then
@@ -1036,3 +1494,36 @@ config and recompile/restart; they do not patch generated App Support env files.
     and dedicated TTS key as LiveKit calls
   - the hosted wizard must not silently default new installs to xAI before the user has explicitly
     configured and QA'd that provider
+
+## August 8, 2026 Cognitive Integrity Contract
+
+The compiler now owns these continuity-critical values across source and generated runtime:
+
+- the saved-memory 8,000-token storage/read ceiling and exact per-key read profile
+- GlassHive provider `worker_native_tools`, `host_tools_transport: broker_mcp`, and declared
+  `host_tools: [file_search]`
+- a canonical Codex CLI invocation path whose sibling code-mode host exists when the enabled
+  runtime requires it; symlink paths are canonicalized only when the companion is proven
+- an optional `runtime.extra_env.VIVENTIUM_QA_EMAIL` selector used solely to resolve one non-admin
+  local Test Account for model QA; status output is redacted and writes use the supported CLI
+
+`bin/viventium cognitive-integrity --json` is the read-only convergence check. It compares tracked
+source, generated runtime, live provider capability transport, memory exposure, prompt bundle
+drift, Test Account selection, host-worker prerequisites, memory-hardening state, Prompt Workbench
+nightly state, and the optional Codex observer boundary. It does not repair or sync state.
+
+Compiler acceptance must cover direct binary paths and symlinked installed paths, missing
+companions, source/live drift, missing or admin QA selectors, and observer-only automation status.
+
+Automatic memory-hardening schedule sync is restricted to canonical installed App Support. A test,
+side-by-side dev environment, or explicitly redirected config may compile its own
+`VIVENTIUM_MEMORY_HARDENING_ENABLED` value, but that value must never install or remove the one
+user-level LaunchAgent. Release tests must isolate `HOME` and preserve a canonical-schedule sentinel
+while exercising noncanonical config writes. Explicit `memory-harden install-schedule` and
+`uninstall-schedule` remain the intentional operator surface.
+
+Startup diagnostics must never serialize the interpolated LibreChat/Viventium config. The loader may
+log only a secret-safe structural summary such as top-level keys and endpoint/MCP/capability names;
+tests must inject a sentinel secret and prove it is absent from every info/debug call. Generated
+runtime files and historical owner-only logs remain machine-local protected state, not public QA or
+authoring surfaces, and credential rotation/reconnection remains an explicit user action.

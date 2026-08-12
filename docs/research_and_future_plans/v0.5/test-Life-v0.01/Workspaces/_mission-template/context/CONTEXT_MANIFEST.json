@@ -1,0 +1,44 @@
+{
+  "schemaVersion": "0.1",
+  "missionId": "mission-example",
+  "createdAt": "YYYY-MM-DDTHH:MM:SSZ",
+  "parent": {
+    "host": "example",
+    "surface": "example",
+    "taskRef": "source://task/example"
+  },
+  "bundle": {
+    "immutable": true,
+    "conversationFile": "conversation.jsonl",
+    "visibleMessages": 0,
+    "visibleToolEvents": 0,
+    "attachmentRecords": 0,
+    "lifeReferences": 0
+  },
+  "included": [
+    "full visible conversation available to the caller",
+    "visible tool calls, results, and failures",
+    "explicit user constraints and success condition",
+    "authorized attachments and Life references"
+  ],
+  "excluded": [
+    "hidden chain-of-thought",
+    "private platform system instructions",
+    "credentials and browser secrets",
+    "unrelated private sources",
+    "data outside the permission scope"
+  ],
+  "permissionScope": {
+    "read": ["life://CURRENT.md"],
+    "write": ["life://Workspaces/example/YYYY-MM-DD-example/"],
+    "externalActions": []
+  },
+  "feelingContext": {
+    "eligible": false,
+    "instructionArtifactRef": null,
+    "capsuleHash": null,
+    "reason": "template; capsule content appears at most once in the worker instruction artifact"
+  },
+  "sourceHealth": [],
+  "deltaFile": "deltas.jsonl"
+}

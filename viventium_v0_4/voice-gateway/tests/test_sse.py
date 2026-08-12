@@ -52,6 +52,45 @@ class TestSSEParser(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(events[1].get("_sse_event"), "error")
         self.assertEqual(events[1].get("error"), "boom")
 
+    async def test_parses_canonical_named_voice_task_event(self) -> None:
+        task_event = {
+            "version": 1,
+            "eventId": "event_1",
+            "sequence": 1,
+            "taskId": "task_1",
+            "state": "running",
+        }
+        payload = (
+            "event: voice_task_event\n"
+            f"data: {json.dumps({'voiceTaskEvent': task_event})}\n\n"
+        )
+        events = []
+        async for event in iter_sse_json_events(
+            content=_FakeContent([payload.encode("utf-8")])
+        ):
+            events.append(event)
+
+        self.assertEqual(events, [{"voiceTaskEvent": task_event, "_sse_event": "voice_task_event"}])
+
+    async def test_parses_canonical_named_voice_task_sync_marker(self) -> None:
+        marker = {
+            "version": 1,
+            "callSessionId": "call_1",
+            "state": "synchronized",
+            "emittedAt": "2026-08-09T20:37:59.000Z",
+        }
+        payload = (
+            "event: voice_task_sync\n"
+            f"data: {json.dumps(marker)}\n\n"
+        )
+        events = []
+        async for event in iter_sse_json_events(
+            content=_FakeContent([payload.encode("utf-8")])
+        ):
+            events.append(event)
+
+        self.assertEqual(events, [{**marker, "_sse_event": "voice_task_sync"}])
+
     # === VIVENTIUM START ===
     def test_extracts_cortex_canonical_message_id(self) -> None:
         payload = {
@@ -278,7 +317,14 @@ class TestSSEParser(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("www.example.org", cleaned)
         self.assertNotIn("qa@example.com", cleaned)
         self.assertIn("link available", cleaned)
-        self.assertIn("email available", cleaned)
+        self.assertIn("address available", cleaned)
+        self.assertNotIn("email email", cleaned.lower())
+
+    def test_sanitize_voice_tts_text_keeps_email_replacement_natural(self) -> None:
+        self.assertEqual(
+            sanitize_voice_tts_text("Email qa@example.com."),
+            "Email address available.",
+        )
 
     def test_sanitize_voice_tts_text_preserves_dot_heavy_technical_tokens(self) -> None:
         text = "Use .NET, asp.net, v1.2A, U.S.A., and node.js. Done.Next."

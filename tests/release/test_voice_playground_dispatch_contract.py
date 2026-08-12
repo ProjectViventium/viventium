@@ -31,9 +31,22 @@ ROUTE_FILE = AGENT_STARTER_REACT_ROOT / "app" / "api" / "connection-details" / "
 CALL_SESSION_VOICE_SETTINGS_ROUTE_FILE = (
     AGENT_STARTER_REACT_ROOT / "app" / "api" / "call-session-voice-settings" / "route.ts"
 )
+AUTHORITATIVE_CALL_SESSION_FILE = (
+    AGENT_STARTER_REACT_ROOT / "lib" / "authoritative-call-session.ts"
+)
 NEXT_CONFIG_FILE = AGENT_STARTER_REACT_ROOT / "next.config.ts"
 TS_CONFIG_FILE = AGENT_STARTER_REACT_ROOT / "tsconfig.json"
 START_SCRIPT = ROOT / "viventium_v0_4" / "viventium-librechat-start.sh"
+VOICE_GATEWAY_WORKER = ROOT / "viventium_v0_4" / "voice-gateway" / "worker.py"
+RETIRED_XAI_VOICE_AGENT_ADAPTER = (
+    ROOT / "viventium_v0_4" / "voice-gateway" / "xai_grok_voice_tts.py"
+)
+TTS_PROVIDER_CAPABILITIES = (
+    ROOT / "viventium_v0_4" / "shared" / "voice" / "tts_provider_capabilities.json"
+)
+SYNTHETIC_AUDIO_QA_SCRIPT = (
+    ROOT / "qa" / "modern-playground-voice" / "scripts" / "livekit_synthetic_audio_qa.js"
+)
 TYPESCRIPT_FILE = AGENT_STARTER_REACT_ROOT / "node_modules" / "typescript" / "lib" / "typescript.js"
 
 
@@ -197,6 +210,79 @@ def _run_connection_details_route_case(
           if (specifier === 'next/server') {{
             return {{ NextResponse }};
           }}
+          if (specifier === '@/lib/call-proxy') {{
+            return {{
+              parseCallIdentifier(value) {{
+                return typeof value === 'string' && /^[A-Za-z0-9_-]{{1,200}}$/.test(value)
+                  ? value
+                  : null;
+              }},
+            }};
+          }}
+          if (specifier === '@/lib/call-browser-capability') {{
+            const CALL_CAPABILITY_HEADER = 'X-VIVENTIUM-CALL-CAPABILITY';
+            return {{
+              CALL_CAPABILITY_HEADER,
+              readRequestCallBrowserCapability(request) {{
+                const value = request?.headers?.get(CALL_CAPABILITY_HEADER);
+                return typeof value === 'string' && value.length > 0 ? value : null;
+              }},
+            }};
+          }}
+          if (specifier === '@/lib/authoritative-call-session') {{
+            class AuthoritativeCallSessionError extends Error {{
+              constructor(code, message, status, retryable) {{
+                super(message);
+                this.code = code;
+                this.status = status;
+                this.retryable = retryable;
+              }}
+            }}
+            return {{
+              AuthoritativeCallSessionError,
+              async fetchAuthoritativeCallSession(callSessionId, browserCapability) {{
+                if (!browserCapability) {{
+                  throw new AuthoritativeCallSessionError(
+                    'auth_expired',
+                    'The call capability is missing or invalid.',
+                    401,
+                    false
+                  );
+                }}
+                let metadata = {{}};
+                try {{ metadata = JSON.parse(caseData.requestBody.agentMetadata || '{{}}'); }} catch {{}}
+                const settings = caseData.fetchResponses.find((item) =>
+                  String(item.match).endsWith(`/api/viventium/calls/${{callSessionId}}/voice-settings`)
+                );
+                const requestedVoiceRoute =
+                  settings?.json?.requestedVoiceRoute ||
+                  metadata.requestedVoiceRoute || {{
+                    stt: {{ provider: 'assemblyai', variant: 'u3-rt-pro' }},
+                    tts: {{ provider: 'local_chatterbox_turbo_mlx_8bit', variant: 'local' }},
+                  }};
+                return {{
+                  callSessionId,
+                  roomName: caseData.requestBody.room_name || `room-${{callSessionId}}`,
+                  gatewayAgentName: caseData.requestBody.agentName || 'librechat-voice-gateway',
+                  ownerParticipantIdentity:
+                    caseData.requestBody.participant_identity || `owner-${{callSessionId}}`,
+                  status: 'created',
+                  requestedVoiceRoute,
+                }};
+              }},
+              applyAuthoritativeCallSession(options, canonical) {{
+                options.room_name = canonical.roomName;
+                options.roomName = canonical.roomName;
+                options.participant_identity = canonical.ownerParticipantIdentity;
+                options.participantIdentity = canonical.ownerParticipantIdentity;
+                options.agentName = canonical.gatewayAgentName;
+                options.agentMetadata = JSON.stringify({{
+                  callSessionId: canonical.callSessionId,
+                  requestedVoiceRoute: canonical.requestedVoiceRoute,
+                }});
+              }},
+            }};
+          }}
           if (specifier === 'livekit-server-sdk') {{
             return {{
               AccessToken: FakeAccessToken,
@@ -219,7 +305,10 @@ def _run_connection_details_route_case(
         routeModule._compile(transpiled.outputText, routePath);
 
         const request = {{
-          headers: new Headers({{ 'content-type': 'application/json' }}),
+          headers: new Headers({{
+            'content-type': 'application/json',
+            'X-VIVENTIUM-CALL-CAPABILITY': 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+          }}),
           async json() {{
             return caseData.requestBody;
           }},
@@ -308,23 +397,35 @@ def test_playground_client_merges_deeplink_token_options_into_connection_details
     assert ": getConnectionDetailsTokenSource(effectiveTokenOptions);" in content
 
 
-def test_connection_details_route_recovers_agent_dispatch_inputs_from_deeplink_referer() -> None:
+def test_connection_details_route_accepts_only_call_session_identity_from_deeplink() -> None:
     content = ROUTE_FILE.read_text()
 
     assert "function extractDeepLinkFallbacks(req: Request)" in content
     assert "const referer = req.headers.get('referer') || req.headers.get('referrer') || '';" in content
     assert "const deepLinkFallbacks = extractDeepLinkFallbacks(req);" in content
-    assert "if (!options.agentName && deepLinkFallbacks.agentName)" in content
-    assert "if (!currentCallSessionId && deepLinkFallbacks.callSessionId)" in content
-    assert "const metadata = JSON.stringify({ callSessionId: deepLinkFallbacks.callSessionId });" in content
+    assert "const currentCallSessionId = parseCallIdentifier(" in content
+    assert "const browserCapability = readRequestCallBrowserCapability(req);" in content
+    assert "const canonical = await fetchAuthoritativeCallSession(" in content
+    assert "currentCallSessionId," in content
+    assert "browserCapability" in content
+    assert "applyAuthoritativeCallSession(options, canonical);" in content
+    assert "!currentCallSessionId &&" in content
+    assert "!VIVENTIUM_LIBRECHAT_ORIGIN &&" in content
+    assert "!VIVENTIUM_CALL_SESSION_SECRET &&" in content
+    assert "!ALLOW_DIRECT_AGENT_DISPATCH &&" in content
+    assert "deepLinkFallbacks.agentName" in content
 
 
-def test_call_session_deeplink_requires_browser_mic_gesture_before_connect() -> None:
-    content = APP_FILE.read_text()
+def test_signed_call_session_deeplink_autoconnects_without_an_app_setup_step() -> None:
+    app = APP_FILE.read_text()
+    call_start = (AGENT_STARTER_REACT_ROOT / "lib" / "call-start.ts").read_text()
 
-    assert "const shouldAutoConnect = params.get('autoConnect') === '1';" in content
-    assert "autoConnect: shouldAutoConnect && !callSessionId," in content
-    assert "Tap Start chat to turn on your mic. Viventium joins right after." in content
+    assert "autoConnect: params.get('autoConnect') === '1'," in call_start
+    assert "if (deepLink.autoConnect)" in app
+    assert "setAutoConnect(true);" in app
+    assert "if (!autoConnect || hasAutoStarted || !canStartCall)" in app
+    assert "startCall().finally(() =>" in app
+    assert "Tap Start chat to turn on your mic" not in app
 
 
 def test_call_session_start_click_is_single_flight_and_disables_duplicate_starts() -> None:
@@ -338,17 +439,20 @@ def test_call_session_start_click_is_single_flight_and_disables_duplicate_starts
     assert "startPromiseRef.current = startPromise;" in content
     assert "startPromiseRef.current = null;" in content
     assert "const START_LATCH_WATCHDOG_MS = 1_000;" in content
-    assert "const effectiveCanStartCall = canStartCall && !isStartInProgress;" in content
+    assert "const effectiveCanStartCall = canStartCall && !isStartInProgress && !hasEnded;" in content
     assert "Starting call..." in content
 
 
-def test_voice_settings_loading_does_not_block_call_start() -> None:
+def test_voice_route_preflight_blocks_connection_until_the_exact_saved_route_is_valid() -> None:
     content = APP_FILE.read_text()
 
     assert "const voiceSettingsStillLoading = Boolean(expectedCallSessionId) && voiceSettings.isLoading;" in content
-    assert "!voiceSettings.isSaving;" in content
-    assert "!(Boolean(expectedCallSessionId) && voiceSettings.isLoading)" not in content
-    assert "Tap Start chat to turn on your mic. Voice settings are still loading." in content
+    assert "!voiceSettings.isSaving &&" in content
+    assert "!voiceSettingsStillLoading" in content
+    assert "!voiceSettings.error" in content
+    assert "hasAuthoritativeRoute" in content
+    assert "Preparing your configured voice route..." in content
+    assert "Viventium did not switch providers automatically." in content
 
 
 def test_call_session_playground_extends_agent_join_timeout_for_local_cold_starts() -> None:
@@ -370,12 +474,15 @@ def test_explicit_dispatch_call_connects_room_before_enabling_microphone() -> No
     assert "enabled: false," in content
     assert "setIsMicrophoneStartupPending(true);" in content
     assert "const MICROPHONE_START_TIMEOUT_MS = 15_000;" in content
-    assert "async function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T>" in content
-    assert "await withTimeout(" in content
-    assert "session.room.localParticipant.setMicrophoneEnabled(true)," in content
-    assert "MICROPHONE_START_TIMEOUT_MS," in content
-    assert "Microphone permission was denied. Allow microphone access for this site and start the call again." in content
-    assert "Viventium could not find a microphone. Connect or enable a microphone and start the call again." in content
+    assert "const permissionState = await queryMicrophonePermissionState();" in content
+    assert "await enableCallMicrophone({" in content
+    assert "permissionState," in content
+    assert "enable: () => session.room.localParticipant.setMicrophoneEnabled(true)," in content
+    assert "disable: () => session.room.localParticipant.setMicrophoneEnabled(false)," in content
+    assert "grantedTimeoutMs: MICROPHONE_START_TIMEOUT_MS," in content
+    assert "classifyCallIssue" in content
+    assert "const issue = classifyCallIssue(error);" in content
+    assert "setStartError(issue);" in content
     assert "Turning on your microphone..." in content
     assert "Turning on mic..." in content
     assert "await session.end().catch((disconnectError) => {" in content
@@ -411,13 +518,89 @@ def test_modern_playground_prewarm_is_bounded_and_warning_only() -> None:
     assert "connection-details route did not prewarm before timeout" in content
 
 
+def test_xai_voice_runtime_exposes_only_standalone_tts() -> None:
+    launcher = START_SCRIPT.read_text()
+    worker = VOICE_GATEWAY_WORKER.read_text()
+    capabilities = json.loads(TTS_PROVIDER_CAPABILITIES.read_text())
+
+    assert not RETIRED_XAI_VOICE_AGENT_ADAPTER.exists()
+    assert "VIVENTIUM_XAI_WSS_URL" not in launcher
+    assert "VIVENTIUM_XAI_INSTRUCTIONS" not in launcher
+    assert "_build_legacy_xai_voice_agent_tts" not in worker
+    assert capabilities["providers"]["xai"]["runtime_models"] == [
+        {"id": "xai-tts", "api_route": "tts", "legacy": False}
+    ]
+
+
+def test_synthetic_audio_qa_can_force_an_external_relay_media_path() -> None:
+    content = SYNTHETIC_AUDIO_QA_SCRIPT.read_text()
+
+    assert "VIVENTIUM_QA_EXTERNAL_TURN_URLS" in content
+    assert "VIVENTIUM_QA_EXTERNAL_TURN_USERNAME" in content
+    assert "VIVENTIUM_QA_EXTERNAL_TURN_CREDENTIAL" in content
+    assert "VIVENTIUM_QA_FORCE_RELAY" in content
+    assert "installExternalTurnProbe" in content
+    assert "collectRtcEvidence" in content
+    assert 'iceTransportPolicy: forceRelay ? "relay"' in content
+    assert "selectedCandidatePairs" in content
+    assert "externalTurnConfigured" in content
+    assert "openrelayprojectsecret" not in content
+
+
+def test_synthetic_audio_qa_can_tunnel_public_tcp_candidates_for_off_lan_qa() -> None:
+    content = SYNTHETIC_AUDIO_QA_SCRIPT.read_text()
+
+    assert "VIVENTIUM_QA_PUBLIC_MEDIA_CANDIDATE" in content
+    assert "VIVENTIUM_QA_PUBLIC_MEDIA_PROXY" in content
+    assert "rewriteRemoteCandidate" in content
+    assert "publicCandidateRewriteCount" in content
+    assert "externalTcpMediaSelected" in content
+
+
+def test_synthetic_audio_qa_can_force_livekit_turn_tls_through_an_off_lan_proxy() -> None:
+    content = SYNTHETIC_AUDIO_QA_SCRIPT.read_text()
+
+    assert "VIVENTIUM_QA_TURN_PROXY_URL" in content
+    assert "VIVENTIUM_QA_TURN_PROXY_HOST_RULE" in content
+    assert "turnProxyConfigured" in content
+    assert "turnTlsRelaySelected" in content
+    assert "configuration?.iceServers" in content
+
+
+def test_synthetic_audio_qa_can_run_the_entire_browser_from_an_off_lan_proxy() -> None:
+    content = SYNTHETIC_AUDIO_QA_SCRIPT.read_text()
+
+    assert "VIVENTIUM_QA_BROWSER_PLAYGROUND_URL" in content
+    assert "VIVENTIUM_QA_BROWSER_PROXY" in content
+    assert "VIVENTIUM_QA_DISABLE_NON_PROXIED_UDP" in content
+    assert "browserProxyConfigured" in content
+    assert "browserProxyMediaSelected" in content
+
+
+def test_synthetic_audio_qa_requires_received_audio_not_only_an_attached_element() -> None:
+    content = SYNTHETIC_AUDIO_QA_SCRIPT.read_text()
+
+    assert '"inbound-rtp"' in content
+    assert 'stat.kind !== "audio"' in content
+    assert "inboundAudioBytesReceived" in content
+    assert "receivedAudioEnergy" in content
+    assert "deliveredAudioBytesDelta" in content
+    assert "finalInteractiveMessages" in content
+    assert "waitForDeliveredAudio" in content
+    assert "waitForCompletedPlayback" in content
+    assert "playbackCompleted" in content
+    assert "waitForCompletedInteractiveTask" in content
+    assert "audioState.delivered" not in content
+
+
 def test_call_session_hooks_normalize_transient_fetch_failures_and_retry_initial_loads() -> None:
     state_hook = CALL_SESSION_STATE_HOOK_FILE.read_text()
     voice_settings_hook = CALL_SESSION_VOICE_SETTINGS_HOOK_FILE.read_text()
 
     assert "const INITIAL_STATE_RETRY_MS = 1500;" in state_hook
     assert "const INITIAL_STATE_MAX_ATTEMPTS = 2;" in state_hook
-    assert "function isLikelyFetchNetworkError(error: unknown): boolean {" in state_hook
+    assert "function isAbortError(error: unknown): boolean {" in state_hook
+    assert "error instanceof CallRequestError ? error.retryable : error instanceof TypeError" in state_hook
     assert "Viventium is reconnecting to the voice runtime. Retrying call state..." in state_hook
     assert "Viventium could not reach the voice runtime for call state." in state_hook
     assert "loadState(attempt + 1);" in state_hook
@@ -426,8 +609,7 @@ def test_call_session_hooks_normalize_transient_fetch_failures_and_retry_initial
     assert "const INITIAL_LOAD_RETRY_MS = 1500;" in voice_settings_hook
     assert "const INITIAL_LOAD_MAX_ATTEMPTS = 2;" in voice_settings_hook
     assert "const VOICE_SETTINGS_REQUEST_TIMEOUT_MS = 5000;" in voice_settings_hook
-    assert "function isLikelyFetchNetworkError(error: unknown): boolean {" in voice_settings_hook
-    assert "class VoiceSettingsTimeoutError extends Error" in voice_settings_hook
+    assert "class VoiceSettingsTimeoutError extends CallRequestError" in voice_settings_hook
     assert "function isTransientVoiceSettingsLoadError(error: unknown): boolean {" in voice_settings_hook
     assert "Viventium is reconnecting to the voice runtime. Retrying voice settings..." in voice_settings_hook
     assert "Viventium could not reach the voice runtime for voice settings." in voice_settings_hook
@@ -439,7 +621,7 @@ def test_call_session_hooks_normalize_transient_fetch_failures_and_retry_initial
 
 def test_voice_settings_proxy_and_start_hydration_are_timeout_bounded() -> None:
     proxy_route = CALL_SESSION_VOICE_SETTINGS_ROUTE_FILE.read_text()
-    connection_details_route = ROUTE_FILE.read_text()
+    authoritative_session = AUTHORITATIVE_CALL_SESSION_FILE.read_text()
 
     assert "const VOICE_SETTINGS_PROXY_TIMEOUT_MS = 4500;" in proxy_route
     assert "function getVoiceSettingsProxyTimeoutMs()" in proxy_route
@@ -448,11 +630,11 @@ def test_voice_settings_proxy_and_start_hydration_are_timeout_bounded() -> None:
     assert "status: 504" in proxy_route
     assert "Viventium could not load voice settings before the voice runtime responded." in proxy_route
 
-    assert "const CALL_SESSION_VOICE_SETTINGS_TIMEOUT_MS = 5000;" in connection_details_route
-    assert "function getCallSessionVoiceSettingsTimeoutMs()" in connection_details_route
-    assert "VIVENTIUM_CALL_SESSION_VOICE_SETTINGS_TIMEOUT_MS" in connection_details_route
-    assert "signal: controller.signal" in connection_details_route
-    assert "error instanceof Error && error.name === 'AbortError'" in connection_details_route
+    assert "function canonicalRequestTimeoutMs()" in authoritative_session
+    assert "VIVENTIUM_CALL_SESSION_VOICE_SETTINGS_TIMEOUT_MS" in authoritative_session
+    assert "signal: controller.signal" in authoritative_session
+    assert "controller.abort();" in authoritative_session
+    assert "timedOut ? 504 : 503" in authoritative_session
 
 
 def test_playground_client_retries_connection_details_fetch_and_hides_raw_browser_fetch_error() -> None:
@@ -460,10 +642,11 @@ def test_playground_client_retries_connection_details_fetch_and_hides_raw_browse
 
     assert "const CONNECTION_DETAILS_RETRY_MS = 1500;" in content
     assert "const CONNECTION_DETAILS_MAX_ATTEMPTS = 2;" in content
-    assert "function isLikelyFetchNetworkError(error: unknown): boolean {" in content
+    assert "error instanceof TypeError && attempt + 1 < CONNECTION_DETAILS_MAX_ATTEMPTS" in content
     assert "await wait(CONNECTION_DETAILS_RETRY_MS);" in content
     assert "Viventium could not reach the voice runtime." in content
-    assert "throw new Error(normalizeStartError(error));" in content
+    assert "const issue = classifyCallIssue(error);" in content
+    assert "setStartError(issue);" in content
 
 
 def test_cartesia_playground_selector_exposes_named_voices_not_model_choices() -> None:
@@ -478,16 +661,20 @@ def test_cartesia_playground_selector_exposes_named_voices_not_model_choices() -
     assert "{ id: 'sonic-3', label: 'sonic-3' }" not in content
 
 
-def test_connection_details_route_hydrates_requested_voice_route_from_call_session_settings() -> None:
-    content = ROUTE_FILE.read_text()
+def test_connection_details_route_uses_the_server_owned_session_route_and_identity() -> None:
+    route = ROUTE_FILE.read_text()
+    authoritative = AUTHORITATIVE_CALL_SESSION_FILE.read_text()
 
-    assert "async function fetchCallSessionVoiceSettings(" in content
-    assert "async function hydrateAgentMetadataWithVoiceSettings(" in content
-    assert "const authoritativeRequestedVoiceRoute =" in content
-    assert "voiceSettings?.requestedVoiceRoute ?? voiceSettings?.savedVoiceRoute" in content
-    assert "Hydrated Viventium requestedVoiceRoute from authoritative call-session settings" in content
-    assert "requestedVoiceRoute: authoritativeRequestedVoiceRoute" in content
-    assert "const hydratedAgentMetadata = await hydrateAgentMetadataWithVoiceSettings(" in content
+    assert "fetchAuthoritativeCallSession" in route
+    assert "applyAuthoritativeCallSession" in route
+    assert "roomName" in authoritative
+    assert "gatewayAgentName" in authoritative
+    assert "ownerParticipantIdentity" in authoritative
+    assert "requestedVoiceRoute" in authoritative
+    assert "options.room_name = canonical.roomName;" in authoritative
+    assert "options.participant_identity = canonical.ownerParticipantIdentity;" in authoritative
+    assert "options.agentName = canonical.gatewayAgentName;" in authoritative
+    assert "requestedVoiceRoute: canonical.requestedVoiceRoute" in authoritative
 
 
 def test_modern_playground_launcher_isolates_next_dev_output_and_allows_public_dev_origins() -> None:
@@ -624,7 +811,7 @@ def test_connection_details_route_runtime_preserves_existing_requested_voice_rou
     )
 
 
-def test_connection_details_route_runtime_keeps_original_metadata_when_voice_settings_fetch_fails() -> None:
+def test_connection_details_route_replaces_browser_metadata_when_legacy_settings_fetch_fails() -> None:
     original_metadata = {
         "callSessionId": "call-fail",
         "note": "keep-me",
@@ -666,11 +853,14 @@ def test_connection_details_route_runtime_keeps_original_metadata_when_voice_set
     )
 
     dispatch_call = _single_explicit_dispatch(result, room_name="room-fail")
-    assert json.loads(dispatch_call["options"]["metadata"]) == original_metadata
+    metadata = json.loads(dispatch_call["options"]["metadata"])
+    assert metadata["callSessionId"] == "call-fail"
+    assert "requestedVoiceRoute" in metadata
+    assert "note" not in metadata
     _assert_no_token_dispatch(result)
 
 
-def test_connection_details_route_runtime_keeps_original_metadata_when_voice_settings_have_no_route() -> None:
+def test_connection_details_route_replaces_browser_metadata_when_legacy_settings_are_empty() -> None:
     original_metadata = {
         "callSessionId": "call-empty",
         "note": "still-here",
@@ -712,7 +902,10 @@ def test_connection_details_route_runtime_keeps_original_metadata_when_voice_set
     )
 
     dispatch_call = _single_explicit_dispatch(result, room_name="room-empty")
-    assert json.loads(dispatch_call["options"]["metadata"]) == original_metadata
+    metadata = json.loads(dispatch_call["options"]["metadata"])
+    assert metadata["callSessionId"] == "call-empty"
+    assert "requestedVoiceRoute" in metadata
+    assert "note" not in metadata
     _assert_no_token_dispatch(result)
 
 

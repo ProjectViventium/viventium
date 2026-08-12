@@ -1,5 +1,7 @@
 # Emotional Cortex — nature variable + band poles refinement
 
+<!-- qa-evidence-exempt: Historical design-refinement record retained for lineage; current visible acceptance is owned by later feature reports. -->
+
 Date: 2026-07-01
 Prototype: `qa/emotional-cortex/prototypes/feeling-spectrum.html`
 Owning requirement: `docs/requirements_and_learnings/54_Emotional_Cortex_And_Feeling_State.md` (v4)

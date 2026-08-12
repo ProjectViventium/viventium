@@ -1,5 +1,7 @@
 # GlassHive Workspace Native Browser Connectors QA - 2026-06-23
 
+<!-- qa-evidence-exempt: Historical implementation investigation retained as supporting evidence; it predates the complete user-path report format. -->
+
 ## Scope
 
 This pass covers the GlassHive Docker workstation bootstrap for AI-worker browser connector

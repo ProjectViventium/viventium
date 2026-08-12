@@ -38,6 +38,108 @@ ClaudeViv review conclusion:
 
 ## Implementation Log
 
+### 2026-08-11 Truth-Seeking Prompt And Evaluation Ownership
+
+- Anti-sycophancy means calibrated truth-seeking, not reflexive opposition. Main and the decision
+  cortices must plainly support a user conclusion when evidence supports it, challenge it when the
+  evidence refutes it, preserve mixed or insufficient boundaries, and update quantitatively.
+- The concise always-on Main policy is split between `main.core_behaviors` and
+  `main.reality_and_challenge`. The latter is a standing decision-policy layer, not a tool manual;
+  its added token cost must remain visible in prompt-frame telemetry and exact-model QA.
+- The paired decision-quality bank derives subject input from structured evidence packets. Pair
+  relationships, weighted dimensions, and semantic-required declarations are runner-enforced; no
+  transport-only or annotation-only result may satisfy semantic acceptance.
+- The current source/eval state remains `PARTIAL` until exact-model, real Web, and audible paired
+  runs pass. Nested prompt files also remain a separate component/pin delivery gate.
+
+### 2026-08-09 Anti-Sycophancy Consult And Deep-Memory Prompt Ownership
+
+The approved A–F design in
+[`viventium_v0_5/docs/07_Anti_Sycophancy.md`](../../viventium_v0_5/docs/07_Anti_Sycophancy.md)
+uses existing prompt owners rather than expanding Main into a tool manual:
+
+- Main's Prompt Workbench contract gets only the short decision policy for when an Outside World
+  Reality Check is warranted and when Reality's returned evidence warrants optional Red Team
+  challenge. It must not mechanically consult on every turn or route from runtime keywords.
+- Reality Check owns its own evidence/source/no-assumption instructions and tool-use rules. It is a
+  new GlassHive Agent Builder agent, separate from the existing Deep Research cortex.
+- Red Team owns one execution prompt reused by its background and foreground roles. Do not fork or
+  duplicate its epistemic contract.
+- Deep Memory Search owns an always-background execution prompt that searches the existing scoped
+  recall capability. Generic `activation.mode: always` starts it without a classifier or fake
+  always-true activation prompt.
+- Main, Reality Check, and Red Team return instructions must be short and graph-role specific:
+  consultants return evidence once; Main synthesizes and speaks last. Use ordinary bidirectional
+  handoff edges and prove the cycle before designing a new edge or fan-in mechanism.
+- Existing handoff state carries conversation, saved-memory/RAG context, and prior files. Each agent
+  retains its explicitly declared tool set. Prompt text must not claim automatic parent-tool or
+  parent-capability inheritance.
+- Approved generic seams include `activation.mode: always`, the existing signed handoff capability
+  bundle, and GlassHive's request-scoped standard OpenAI `tools` → `tool_calls` bridge. The bridge
+  keeps a structural per-agent/user-turn completed-target receipt solely to prevent repeat
+  consultation. None of these seams owns user intent.
+- Phase B's existing value-gate prompt and ownership remain unchanged. The completed-target receipt
+  is not background-versus-foreground evidence deduplication or a Phase B rewrite; do not add either
+  without measured evidence and a separate product decision.
+
+Exact-model evals need happy, no-consult, consult-chain, loop, failure-honesty, evidence-class, and
+tool-availability cases. They support—but do not replace—the real Web, Telegram, and voice cases in
+[`qa/anti-sycophancy/`](../../qa/anti-sycophancy/README.md).
+
+### 2026-08-04 Feeling Authority And Eval Fidelity
+
+- Inference-time developer instructions condition activations and token probabilities; they do not
+  change model weights. Put the current Feeling in the highest supported additive developer layer,
+  keep the user request in the user role, and leave changing facts outside durable session authority.
+- The final Feeling rule is deliberately direct: choose one concrete desire/action, fuse every
+  required row into that choice, and rewrite it if removing a required row would not change the
+  action. Tone, label recital, and one clause per row are not compliance.
+- Native Codex personality `none` is the Viventium default so Codex does not add a competing
+  communication persona. This does not disable reasoning or tools. Plugin suppression is an
+  independent generic config: keep useful plugins enabled and deny only the exact conflicting
+  Feelings plugin ID.
+- Semantic judges receive the visible/persisted answer after surface delivery controls are stripped.
+  Raw provider markers remain separately validated against the provider grammar. Mixing these two
+  views creates false semantic failures.
+- Behavioral fixtures must be executable. If the task lacks required source material, a sharply
+  targeted question may be the aligned high-Drive action; do not grade invented work as better than
+  a necessary clarification. A high-Play state must alter a real choice, but the rubric must not
+  force an unsolicited joke performance.
+- Candidate completion, semantic-judge availability, and detached Reaction provider health are
+  separate gates. A blocked judge is not a failed candidate, and a provider-auth failure is not
+  evidence to rewrite prompts or silently remap the configured route.
+- Browser QA must foreground a previously backgrounded polling surface before asserting current
+  status. A paused hidden tab can truthfully contain stale text even when the API/DB state is fresh.
+- Default-state QA is mandatory. Endpoint-only fixtures can pass while shipped mid-high defaults
+  exert no reliable force. Always require extremes; otherwise promote the strongest non-neutral
+  pulls until two rows are required. Keep the removal self-check in the universal choice rule, not
+  only the direct `how do you feel?` branch.
+- Performance evidence must separate queue delay, native model execution, first visible stream
+  delta, and full-case completion. A slow post-stream surface/harness finalizer is not native model
+  latency, and a fast queue does not make a slow visible response acceptable.
+
+### 2026-08-03 Durable Authority And Mutable Turn Context
+
+Inference-time instructions do not change model weights. They condition the current context and
+therefore change internal activations and output probabilities. Hidden text is not inherently
+stronger; effective influence comes from role authority, clarity, placement, salience, and the
+absence of competing instructions.
+
+Viventium applies that rule as follows:
+
+- Keep durable identity, policy, guardrails, memory context, and the current Feeling capsule in the
+  highest supported additive developer authority. Do not replace Codex base instructions.
+- Keep the user's request in the user role. Do not rewrite it into policy or a worker plan.
+- Send mutable facts such as current time as per-turn context, outside the native-session authority
+  hash, so they stay current without replacing an otherwise reusable worker.
+- Resolve the delivery path from structured provider capabilities after fallback/remapping, then
+  project mutable context into the final provider request—not only the incoming request object.
+- For Viventium Codex conversation workers, use native personality `none` by default so the current
+  Feeling remains the intended emotional authority. Standalone GlassHive keeps its own default.
+
+This is the shortest safe role/state split: stable authority binds the session; changing facts bind
+only the turn.
+
 ### 2026-06-24 Viventium Periphery And Nightly Insight Vision
 
 Viventium's prediction, blind-spot, risk, opportunity-cost, emotional mirroring, empathy, and
@@ -213,6 +315,13 @@ of reformatting unrelated cases. The create-new-case form must remain responsive
 click and keyboard input; form text is read at save time so typing does not create source writes or
 intermediate draft churn.
 
+An operator may explicitly check one or more named cases. That additive selection is one bounded
+`caseIds` contract across browser, API, bank selection, dependency lineage, saved run, and canonical
+runner. It overrides the numeric first-N limit, preserves canonical bank order, deduplicates IDs,
+and fails closed when an ID is unknown or excluded by the chosen family/surface/prompt filters.
+The UI must show whether it will run an exact selection or the first N visible cases; it must never
+display named cases while silently executing different family entries.
+
 The former `Frames` tab is now `Prompt Traces`. A prompt trace is local metadata about a prompt run:
 surface, model/provider, assembled layers, token estimates, and routing/decision metadata. The
 public-safe UI must explain that concept plainly and must not expose raw private prompt text or
@@ -380,11 +489,23 @@ Workbench/GlassHive automations use the compiled host-worker tuple, currently `g
 `xhigh` reasoning. Workbench startup reconciles built-in metadata to that tuple; Scheduling Cortex
 projects it into GlassHive; the run ledger and Workbench UI expose the requested/effective route.
 Stale definition metadata or ambient CLI settings must not silently override the compiled tuple.
+Startup reconciliation must update the Scheduler task's authoritative top-level `executor`, not only
+nested Workbench metadata, because dispatch reads the top-level field first.
 
 The built-in nightly reflection must also carry a bounded structured catch-up policy. Its schedule
 timezone controls the real due time, so QA must compare the Workbench `next_run_at` and configured
 timezone before declaring a miss; a safe late tick inside the catch-up window should still queue one
 GlassHive run and show the completed result in Workbench.
+The managed built-in timezone reads the Mac's current system-local IANA timezone during startup
+reconciliation; it must not be pinned by a stale compiled runtime timezone after travel. Unrelated
+Workbench edits must omit schedule fields so they do not silently pin the current city. Once a user
+explicitly edits the schedule or timezone, including explicitly choosing the current local
+timezone, that field becomes fixed and startup reconciliation preserves it with the other
+user-owned schedule fields.
+Legacy managed built-in rows created before timezone-mode metadata existed are migrated by shape:
+an untagged daily `03:00` definition becomes `local` and follows the current Mac timezone, while
+other untagged schedules become `fixed`. This one-time migration prevents a pre-upgrade city from
+remaining frozen after travel without overwriting an explicitly customized schedule.
 
 Pre-assignment GlassHive failures must stay structured. If GlassHive reports host substrate failure
 such as `runtime_dependency_missing`, Scheduling Cortex records that failure class instead of
@@ -725,7 +846,8 @@ Known validation from that run:
 - Voice gateway follow-up scheduler tests: `7 passed`
 - Telegram bridge/NTA/voice preference tests: `111 passed`
 - Productivity activation eval: `24/24 passed`
-- Product-route probes passed for `openAI / gpt-5.4` and `anthropic / claude-opus-4-8`
+- Historical product-route probes passed for `openAI / gpt-5.4` and the then-current direct
+  Anthropic route; current direct Anthropic defaults use `claude-opus-5`.
 - Follow-up micro-evals passed for redundant voice, new web fact, and Telegram question-only cases
 
 Remaining validation gaps:
@@ -765,6 +887,10 @@ workload rather than a conscious-agent reasoning route.
   `BackgroundCortexService.checkCortexActivation` path and resolves registry `promptRef` values from
   the canonical agent bundle. Preview mode makes no model calls; live mode writes private raw
   results and a public-safe aggregate report.
+- A live Workbench activation run must pass the configured non-owner QA-user context, enable the
+  runtime fallback chain, and use the configured late-detection timeout. A generally selected atlas
+  prompt must not accidentally filter activation targets: only a prompt id that exactly matches an
+  `activationTargets[].promptRef` may be forwarded as the activation runner's `prompt-id` filter.
 - The public-safe bank covers all 11 cortex scopes with positive, sibling-negative, latest-turn,
   quoted/hypothetical/negated, strict-output, direct-action, multilingual, typo, combined-intent,
   and prompt-injection scenarios. It uses synthetic transformations inspired by public
@@ -775,12 +901,38 @@ workload rather than a conscious-agent reasoning route.
 - Groq's strict GPT-OSS schema path is not used as the primary/fallback output mode: a real
   220-decision comparison produced 28 provider-side `JSON_VALIDATE_FAILED` responses even with a
   primitive strict schema. JSON-object mode plus Viventium's parser is the measured reliable path.
+- The 2026-07-14 final exact-runtime gate completed and passed all `63 × 11 = 693` decisions with
+  zero unavailable rows, zero false positives/negatives, 100% required recall and activation
+  precision, and the configured fallbacks enabled. Its p50/p95/max classifier latency was
+  `735/2,206/2,730 ms`; tail latency is absorbed by bounded fallback/late recovery rather than by
+  weakening classifier semantics or adding runtime text heuristics.
+- The 2026-07-15 specialist-boundary extension completed and passed all `67 × 11 = 737` decisions
+  with zero unavailable rows or semantic errors and `551/779/1,319 ms` p50/p95/max latency. Every
+  Groq/Qwen primary attempt was rejected during that run, while the declared xAI fallback recovered
+  all 737 decisions. Report semantic correctness and provider health separately: this is a passing
+  classifier/fallback result and a degraded primary-provider result, not evidence to rewrite the
+  configured route.
+- Prompt Workbench owns direct execution families for Emotional Resonance and Red Team. Each family
+  links only its actual specialist execution prompt, invokes that specialist directly, uses an
+  independent semantic judge, and records zero Feelings runtime-context dependencies. Feelings evals
+  separately declare the request-scoped `runtime.feelings.current_state` dependency; versioned run
+  lineage stores the context id, scope, and hashes, never the private state value. An unmapped prompt
+  is displayed as having no managed live row and cannot mutate an unrelated agent.
+- Exact-model behavior and semantic-judge availability are separate gates. Only a valid,
+  schema-checked judge verdict with `pass=false` is a semantic behavior failure. Missing/invalid
+  credentials, provider rejection, timeout/transport failure, unsupported judge route, malformed
+  judge JSON, or invalid judge schema is `blocked_semantic_judge` with an unavailable count; it must
+  never be counted as a failed candidate response. Workbench history and UI expose aggregate counts
+  and the sanitized blocker class, not raw provider bodies, prompts, responses, or credential
+  fragments. Secret scrubbing must also remove provider-returned partially masked tokens.
 
 ### GPT-5.6 conscious and subconscious routes
 
-Current conscious/subconscious execution uses GPT-5.6 Sol/Terra with Responses API. The exact
+Current conscious/subconscious execution uses the GPT-5.6 family with Responses API. The exact
 workload and effort map lives in `02_Background_Agents.md` and must remain a model-config decision,
-not prompt prose.
+not prompt prose. Operational memory is evaluated separately: immediate writing and hardening use
+Luna/medium after a repeated fail-closed memory bank, while deep reflection and the independent
+observer retain Sol/xHigh. Terra is not a durable-memory fallback unless it clears the same gate.
 
 - Keep the core prompt outcome-oriented rather than process-heavy.
 - Preserve explicit completion criteria, evidence boundaries, permissions, and output contracts.
@@ -791,13 +943,31 @@ not prompt prose.
 - Preserve provider-appropriate `reasoning_effort`: `xhigh` only for Deep Research and Red Team,
   `high` for Strategic Planning, `medium` for balanced cognition, and `low` for latency-sensitive or
   tool-heavy work.
+- Scheduled and manual Workbench runs must persist distinct provenance. Health uses the latest
+  scheduled receipt; a later manual success may be displayed as recovery evidence but cannot make a
+  failed or missed unattended run green. Historical rows without explicit provenance may be
+  classified only from their stored due time, recurrence, and timezone.
+- A current Workbench nightly row is scheduled evidence only when its persisted execution metadata
+  says `triggerKind=scheduled` and `triggerSource=scheduler_loop`. A projected/manual row, even at
+  the right wall-clock time and with a successful artifact, cannot satisfy nightly health.
+- Codex observer/companion health also fails closed when the feature probe is empty, malformed, or
+  lacks the expected `code_mode_host` capability. Process existence and a zero exit code alone do
+  not certify that the current app/runtime exposes the required feature.
+- Memory-maintenance health has the same no-false-green rule at its own boundary: requested and
+  effective receipt tuples must match each other and the current generated provider/model/effort.
+  Compiler defaults and direct-runtime fallbacks must agree, so loss of generated environment does
+  not silently change the selected memory model.
+- Workbench runtime ownership includes the source checkout. A healthy listener is current only when
+  its absolute or working-directory-resolved `--app-dir` belongs to that checkout. Restart may
+  reclaim that exact stale listener but must never kill another checkout or unrelated process.
 
-### Claude Opus 4.8 fallback
+### GlassHive Claude / Opus 5 fallback
 
-Every conscious/subconscious text route declares Claude Opus 4.8 as fallback. Fallback prompt
-behavior must preserve the same user-visible outcome and tool/evidence contract without carrying
-OpenAI-only `reasoning_effort` or `useResponsesApi` fields into Anthropic requests. Missing Anthropic
-auth is a classified fallback-availability blocker, not permission to downgrade silently.
+Every conscious/subconscious text route declares `glasshive-harness / claude-code:opus` at high
+effort as its generic Agent fallback. Fallback prompt behavior must preserve the same user-visible
+outcome and tool/evidence contract, and provider parameter sanitization must retain the supported
+GlassHive effort while dropping unrelated direct-provider fields. Missing GlassHive capability is a
+classified fallback-availability blocker, not permission to downgrade silently.
 
 ### GPT-5.5
 
@@ -1082,8 +1252,8 @@ Improvements:
   Cartesia-style emotion parameter, so the xAI branch may only expose documented xAI speech tags and
   natural-language tone guidance.
 - User-facing provider labels should stay simple even when model-facing prompt branches are precise:
-  show `xAI` in voice pickers, while keeping prompt/runtime wording explicit about standalone xAI
-  TTS versus the legacy Grok Voice Agent adapter.
+  show `xAI` in voice pickers, while keeping prompt/runtime wording explicit that the supported
+  renderer is standalone xAI TTS.
 
 Acceptance:
 
@@ -1102,6 +1272,32 @@ Acceptance:
   parity test; bundle/source sync alone does not prove fallback/source parity.
 - Provider dialects remain isolated: Cartesia prompts never leak into xAI routes, xAI tags never
   leak into Cartesia routes, and OpenAI/ElevenLabs routes prohibit provider markup entirely.
+
+### Fix 7a: Keep messaging delivery intent model-owned and adapter-neutral
+
+Natural message bubbles and optional audio are surface decisions, not runtime classification tasks.
+The registered `surface.messaging.optional_audio` and `surface.messaging.bubble_boundaries` prompts
+teach the Main Agent the shared `{SKIP_VOICE}` and `{MSG_BREAK}` contract. Telegram audio and text
+prompts include those layers explicitly so Prompt Workbench can show source, compiled, live,
+include/dependent, and eval lineage.
+
+The runtime recognizes only standalone reserved control lines outside code fences and block quotes.
+It must not decide that an answer is an email, non-conversational, too long, or better split by
+matching words or prompt text. JavaScript and Python parsers share a versioned grammar and parity
+test. A compatible future Slack, WhatsApp, or other messaging adapter consumes that same parsed
+intent while applying its own transport limits.
+
+Acceptance:
+
+- a copy-ready email returns complete text plus `{SKIP_VOICE}` when optional audio would be wasteful;
+- ordinary conversation keeps audio unless the agent has a semantic reason to suppress it;
+- an explicit request to hear/read/speak the answer never emits `{SKIP_VOICE}`;
+- short natural conversation may use zero or one `{MSG_BREAK}`, never more than two;
+- copy-ready artifacts do not receive semantic bubble breaks;
+- no control or incomplete streaming prefix appears in visible or persisted chat text;
+- one logical assistant turn remains one persisted turn, and at most one audio attachment is sent;
+- Prompt Workbench's exact-model bank evaluates positive and negative cases rather than treating
+  parser correctness as proof of model judgment.
 
 ### Fix 8: Tier memory context instead of dumping everything blindly
 
@@ -1248,6 +1444,8 @@ Prompt changes are not accepted unless QA can show:
 - NTA/silence rates by surface
 - tool-call selection rates for direct-action tasks
 - provider-control marker counts for voice
+- voice marker counts from the raw audio-bound model stream, not sanitized visible or persisted text
+- both responses supplied to the judge for every declared paired comparison
 - no raw private transcript or secret leakage in public artifacts
 
 ## Rollout Plan
@@ -1274,6 +1472,12 @@ Prompt changes are not accepted unless QA can show:
   per-case filtering, repetitions, latency metrics, and unavailable-result accounting.
 - Connected-account OpenAI support and broader old-vs-new prompt-stack coverage remain part of the
   general exact-model runner.
+- Exact-model judging resolves declared comparison cases from the same run and gives the judge both
+  responses. Voice assertions inspect raw streamed output before surface sanitization while public
+  reports retain only safe hashes and counts.
+- A behavioral fixture must contain the information needed for the action it grades. Semantic
+  rubrics may require clear affective evidence, but must not demand an uninvited action that conflicts
+  with the synthetic user's established boundary merely to make the marker easier to score.
 
 ### Phase 3: Follow-up structured decision
 
@@ -1303,6 +1507,31 @@ Prompt changes are not accepted unless QA can show:
 - Add compiled `librechat.yaml` A/B/C prompt/config diff.
 - Fix provider readiness probes to match product auth routes.
 - Add CI/local QA for false provider-action-required status.
+
+## Scheduler Prompt Sources And Workbench Visibility
+
+Scheduling uses registered sources rather than hidden runtime prose:
+
+- `main.scheduling_self_continuity` remains Main's concise standing capability and permission;
+- `scheduler.run_envelope` owns the hidden factual scheduler prefix and structured-context
+  contract;
+- `scheduler.consciousness_continuity_opportunity` owns the per-occurrence orient → appraise →
+  choose → act/inaction → observe contract;
+- `scheduler.canonical_output` owns the single channel-neutral semantic result, exact `{NTA}`
+  silence, and truthful failure/no-action contract consumed by downstream delivery adapters.
+
+The Python scheduler consumes the compiled shared cross-language contract. Release tests must prove
+registry source, compiled artifact, and runtime text agree. The continuity scheduled object remains
+editable and versioned in the existing Prompt Workbench and does not duplicate Main identity,
+Feelings content, tool policy, or per-user memory expansion.
+
+The generic scheduled-object panel shows title/active state, next opportunity, timezone, cadence,
+active window, projected daily runs, channels, durable conversation, source prompt, effective
+scheduled model, and last disposition. Effective Prompt explains source/evaluated/runtime layers
+without exposing private memory expansion. History displays silent/delivered/partial/superseded/
+failed states, latency, token/cost data when measured, effective model, channel outcomes, and
+structured degraded dependencies. Any scheduled prompt with the same structured metadata receives
+the same controls; runtime/UI must not branch on the title `Consciousness Continuity`.
 
 ## Non-Goals
 

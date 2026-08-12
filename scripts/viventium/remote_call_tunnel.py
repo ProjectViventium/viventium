@@ -36,6 +36,7 @@ DEFAULT_PUBLIC_EDGE_HOST_PREFIXES = {
     "api": "api",
     "playground": "playground",
     "livekit": "livekit",
+    "glasshive": "glasshive",
 }
 DEFAULT_PUBLIC_EDGE_HTTP_EXTERNAL_PORT = 80
 DEFAULT_PUBLIC_EDGE_HTTPS_EXTERNAL_PORT = 443
@@ -47,7 +48,7 @@ UPNPC_EXTERNAL_IP_RE = re.compile(r"ExternalIPAddress\s*=\s*([0-9.]+)")
 UPNPC_LOCAL_IP_RE = re.compile(r"Local LAN ip address\s*:\s*([0-9.]+)")
 UPNPC_MAPPING_RE = re.compile(r"^\s*\d+\s+([A-Z]+)\s+(\d+)->([0-9.]+):(\d+)\b")
 LOCAL_INET_RE = re.compile(r"\binet\s+([0-9]+(?:\.[0-9]+){3})\b")
-SURFACE_KEYS = ("client", "api", "playground", "livekit")
+SURFACE_KEYS = ("client", "api", "playground", "livekit", "glasshive")
 COMMON_BINARY_PATHS: dict[str, tuple[str, ...]] = {
     "brew": (
         "/opt/homebrew/bin/brew",
@@ -112,6 +113,7 @@ def parse_args() -> argparse.Namespace:
     start.add_argument("--api-port", type=int, default=0)
     start.add_argument("--playground-port", type=int, default=0)
     start.add_argument("--livekit-port", type=int, default=0)
+    start.add_argument("--glasshive-port", type=int, default=0)
     start.add_argument("--livekit-tcp-port", type=int, default=0)
     start.add_argument("--livekit-udp-port", type=int, default=0)
     start.add_argument("--livekit-turn-tls-port", type=int, default=DEFAULT_PUBLIC_EDGE_TURN_TLS_EXTERNAL_PORT)
@@ -119,6 +121,7 @@ def parse_args() -> argparse.Namespace:
     start.add_argument("--public-api-origin", default="")
     start.add_argument("--public-playground-origin", default="")
     start.add_argument("--public-livekit-url", default="")
+    start.add_argument("--public-glasshive-origin", default="")
     start.add_argument("--livekit-node-ip", default="")
     start.add_argument("--caddy-data-dir", default="")
     start.add_argument("--upnp-lease-seconds", type=int, default=DEFAULT_PUBLIC_EDGE_UPNP_LEASE_SECONDS)
@@ -440,6 +443,52 @@ def state_matches_requested_livekit_node_ip(
     return True
 
 
+def state_matches_requested_public_edge_surfaces(
+    args: argparse.Namespace,
+    state: dict[str, Any],
+) -> bool:
+    requested_ports = {
+        "client": int(getattr(args, "client_port", 0) or 0),
+        "api": int(getattr(args, "api_port", 0) or 0),
+        "playground": int(getattr(args, "playground_port", 0) or 0),
+        "livekit": int(getattr(args, "livekit_port", 0) or 0),
+        "glasshive": int(getattr(args, "glasshive_port", 0) or 0),
+    }
+    requested_keys = {key for key, port in requested_ports.items() if port > 0}
+    current_keys = {key for key, _surface in iter_surfaces(state)}
+    if current_keys != requested_keys:
+        return False
+
+    explicit_values = {
+        "client": str(getattr(args, "public_client_origin", "") or "").strip(),
+        "api": str(getattr(args, "public_api_origin", "") or "").strip(),
+        "playground": str(getattr(args, "public_playground_origin", "") or "").strip(),
+        "livekit": str(getattr(args, "public_livekit_url", "") or "").strip(),
+        "glasshive": str(getattr(args, "public_glasshive_origin", "") or "").strip(),
+    }
+    for key in requested_keys:
+        surface = state.get(key) or {}
+        if str(surface.get("target") or "").strip() != surface_target_url(requested_ports[key]):
+            return False
+        explicit = explicit_values[key]
+        if not explicit:
+            continue
+        try:
+            if key == "livekit":
+                parsed = require_public_https_edge_livekit_url(explicit)
+                expected = format_wss_origin(strip_trailing_dot(parsed.hostname), 443)
+                current = str(surface.get("public_ws_url") or "").strip()
+            else:
+                parsed = require_public_https_edge_origin(explicit, f"public_{key}_origin")
+                expected = format_https_origin(strip_trailing_dot(parsed.hostname), 443)
+                current = str(surface.get("public_url") or "").strip()
+        except RuntimeError:
+            return False
+        if current.rstrip("/") != expected.rstrip("/"):
+            return False
+    return True
+
+
 def with_lock(lock_path: Path):
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     handle = lock_path.open("a+", encoding="utf-8")
@@ -488,6 +537,8 @@ def build_state(provider: str, surfaces: dict[str, dict[str, Any]], *, livekit_n
                 state["public_livekit_url"] = public_ws_url
             elif public_url:
                 state["public_livekit_url"] = re.sub(r"^https://", "wss://", public_url)
+        elif key == "glasshive" and public_url:
+            state["public_glasshive_url"] = public_url
 
     if extras:
         state.update(extras)
@@ -1067,6 +1118,13 @@ def render_caddyfile(
     lines = [
         "{",
         f"    admin 127.0.0.1:{admin_port}",
+        "    log {",
+        "        format filter {",
+        '            request>uri regexp "^(/(?:r|v1/link-refs)/)[^/?]+(.*)$" "${1}<redacted>${2}"',
+        "            request>headers>Referer delete",
+        "            wrap json",
+        "        }",
+        "    }",
     ]
     if http_port:
         lines.append(f"    http_port {http_port}")
@@ -1428,7 +1486,8 @@ def start_public_https_edge(
     state_path: Path,
     log_dir: Path,
 ) -> dict[str, Any]:
-    if args.client_port <= 0 and args.api_port <= 0 and args.playground_port <= 0 and args.livekit_port <= 0:
+    glasshive_port = int(getattr(args, "glasshive_port", 0) or 0)
+    if args.client_port <= 0 and args.api_port <= 0 and args.playground_port <= 0 and args.livekit_port <= 0 and glasshive_port <= 0:
         raise RuntimeError("At least one local surface port is required for public HTTPS edge access")
 
     caddy_bin = ensure_caddy(args.auto_install)
@@ -1521,13 +1580,26 @@ def start_public_https_edge(
         caddy_sites.append((livekit_host, args.livekit_port))
         caddy_hosts.append(livekit_host)
 
+    if glasshive_port > 0:
+        host, public_url = resolve_public_https_edge_surface(
+            "glasshive",
+            str(getattr(args, "public_glasshive_origin", "") or ""),
+            public_ip=public_ip,
+        )
+        surfaces["glasshive"] = build_surface(
+            target_url=surface_target_url(glasshive_port),
+            public_url=public_url,
+        )
+        caddy_sites.append((host, glasshive_port))
+        caddy_hosts.append(host)
+
     site_targets: dict[str, int] = {}
     for host, upstream_port in caddy_sites:
         existing = site_targets.get(host)
         if existing is not None and existing != upstream_port:
             raise RuntimeError(
                 "public_https_edge currently requires unique hostnames per surface. "
-                "Use separate subdomains for the app, API, playground, and LiveKit signaling origins."
+                "Use separate subdomains for the app, API, playground, LiveKit signaling, and GlassHive origins."
             )
         site_targets[host] = upstream_port
 
@@ -1791,9 +1863,16 @@ def cmd_start(args: argparse.Namespace) -> int:
         if existing and str(existing.get("provider") or "").strip() != provider:
             stop_state(existing)
             existing = {}
-        elif existing and not state_matches_requested_livekit_node_ip(provider, args, existing):
-            stop_state(existing)
-            existing = {}
+        elif existing:
+            requested_state_matches = state_matches_requested_livekit_node_ip(provider, args, existing)
+            if provider == "public_https_edge":
+                requested_state_matches = requested_state_matches and state_matches_requested_public_edge_surfaces(
+                    args,
+                    existing,
+                )
+            if not requested_state_matches:
+                stop_state(existing)
+                existing = {}
         if state_is_healthy(existing):
             print(json.dumps(existing))
             return 0

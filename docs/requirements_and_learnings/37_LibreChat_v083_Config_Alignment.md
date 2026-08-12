@@ -88,8 +88,18 @@ For Viventium's large operational tool set, deferred discovery must remain reque
 inside the same model invocation that discovers a tool. The fallback binding path resolves the
 current event-driven tool set dynamically; it must not snapshot tools before discovery or mutate a
 shared global binding that could leak one request's tools into another. `file_search` remains eager
-for recall continuity, while bulk operational schemas may use `tool_options.defer_loading: true`.
+for recall continuity. GlassHive keeps `workspace_launch`, `workspace_status`, and `workspace_wait`
+eager as its stable cross-surface gateway; bulk operational schemas use
+`tool_options.defer_loading: true` and MCP-owned instructions direct scoped `tool_search` discovery.
 Agent compare/sync/reload must preserve `tool_options` as protected structured configuration.
+Optional handoff-agent initialization failures must be isolated structurally: remove the failed
+participant and its incident edges before graph compilation while preserving the main agent and
+other healthy participants. A configured provider-auth fallback may retry initialization once for
+structured authentication/rate-limit failures, but never for cancellation or graph/tool invariants.
+
+Direct LibreChat startup and the full-stack launcher must share the caller-selected Python
+interpreter for generated config and prompt-registry compilation. A host `python3` upgrade must not
+silently bypass the dependency-complete runtime selected by the outer launcher.
 
 ### Mechanical Flow
 
@@ -131,6 +141,8 @@ With `deferred_tools` enabled:
 - the model uses `tool_search` to discover relevant deferred tools
 - once discovered, those tools stay valid in later turns
 - this is especially useful when an MCP server exposes a large number of tools
+- a small stable gateway can remain eager so terse requests and follow-ups never depend on the model
+  first discovering the server's primary launch/status/wait contract
 
 ### What It Does Not Mean
 
@@ -236,7 +248,8 @@ compatible only at effective reasoning `none`.
 
 The July 9, 2026 built-in model migration is a separate, evaluated source/compiler/runtime change:
 the conscious agent and quality-first cortices use explicit Sol; balanced and latency-sensitive
-cortices use explicit Terra; every text route uses Opus 4.8 fallback; and the voice route remains
+cortices use explicit Terra; every Agent text route uses GlassHive Claude / Opus 5 at high effort as
+its generic fallback; and the voice route remains
 Grok 4.3. The exact map and efforts live in `02_Background_Agents.md`. This does not add Pro mode,
 persisted reasoning, Programmatic Tool Calling, explicit caching, or multi-agent orchestration.
 There is no `gpt-5.6-pro` model slug; Pro is a reasoning mode.

@@ -8,6 +8,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 
@@ -23,13 +24,40 @@ def write_executable(path: Path, content: str) -> None:
 def copy_cli_fixture(repo_root: Path) -> None:
     shutil.copy2(REPO_ROOT / "bin" / "viventium", repo_root / "bin" / "viventium")
     (repo_root / "scripts" / "viventium").mkdir(parents=True, exist_ok=True)
-    shutil.copy2(
-        REPO_ROOT / "scripts" / "viventium" / "default_nightly_routines.py",
+    write_executable(
         repo_root / "scripts" / "viventium" / "default_nightly_routines.py",
+        "#!/usr/bin/env python3\nraise SystemExit(0)\n",
     )
     shutil.copy2(
         REPO_ROOT / "scripts" / "viventium" / "host_cli_auth.py",
         repo_root / "scripts" / "viventium" / "host_cli_auth.py",
+    )
+    shutil.copy2(
+        REPO_ROOT / "scripts" / "viventium" / "life_bootstrap.py",
+        repo_root / "scripts" / "viventium" / "life_bootstrap.py",
+    )
+    write_executable(
+        repo_root / "scripts" / "viventium" / "viventium_health_runtime.py",
+        "#!/usr/bin/env python3\nraise SystemExit(0)\n",
+    )
+    write_executable(
+        repo_root / "scripts" / "viventium" / "upgrade_check.py",
+        "#!/usr/bin/env python3\n"
+        "import json, os\n"
+        "from pathlib import Path\n"
+        "marker = Path(os.environ.get('TEST_ROOT', '.')) / 'component-drift-after-bootstrap'\n"
+        "drift = [{'name': 'LibreChat', 'status': 'dirty_worktree'}] if marker.exists() else []\n"
+        "print(json.dumps({'blockers': ['component_lock_drift'] if drift else [], 'component_lock_drift': drift, 'ready_to_upgrade': not drift}))\n"
+        "raise SystemExit(3 if drift else 0)\n",
+    )
+    write_executable(
+        repo_root / "scripts" / "viventium" / "continuity_audit.py",
+        "#!/usr/bin/env python3\n"
+        "import json, sys\n"
+        "from pathlib import Path\n"
+        "output = Path(sys.argv[sys.argv.index('--output') + 1])\n"
+        "output.parent.mkdir(parents=True, exist_ok=True)\n"
+        "output.write_text(json.dumps({'status': 'warning'}) + '\\n', encoding='utf-8')\n",
     )
 
 
@@ -146,6 +174,25 @@ def test_install_autostart_hands_off_to_detached_health_checked_start() -> None:
     assert 'local timeout_seconds="${2:-2}"' in cli_source
 
 
+def test_express_native_readiness_requires_only_api_and_web_and_skips_playground_build() -> None:
+    cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
+
+    experience_function = extract_shell_function(cli_source, "express_install_experience")
+    user_surfaces_function = extract_shell_function(cli_source, "all_user_surfaces_healthy")
+    waiting_function = extract_shell_function(cli_source, "install_waiting_on_surfaces")
+    build_function = extract_shell_function(cli_source, "install_first_run_build_expected")
+
+    assert 'read_generated_env_value "VIVENTIUM_INSTALL_EXPERIENCE" "legacy"' in experience_function
+    assert 'express_install_experience || frontend_surface_healthy "$playground_port"' in user_surfaces_function
+    assert 'if ! express_install_experience && ! frontend_surface_healthy "$playground_port"; then' in waiting_function
+    assert 'if ! express_install_experience && [[ ! -d "$playground_dir/node_modules" ]]; then' in build_function
+
+    launcher_source = (
+        REPO_ROOT / "viventium_v0_4" / "viventium-librechat-start.sh"
+    ).read_text(encoding="utf-8")
+    assert launcher_source.count('if is_truthy "${SEARCH:-false}"; then\n    if ! ensure_meilisearch_ready; then') == 2
+
+
 def test_destructive_flows_drain_native_stack_before_removing_app_support() -> None:
     cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
     install_section = cli_source.split('if [[ "$AUTO_START" == "1" ]]; then', 1)[1].split(
@@ -158,16 +205,20 @@ def test_destructive_flows_drain_native_stack_before_removing_app_support() -> N
     )[0]
     install_surfaces_function = extract_shell_function(cli_source, "install_surfaces_healthy")
     drain_function = extract_shell_function(cli_source, "drain_native_stack_before_state_removal")
+    removal_backup_function = extract_shell_function(cli_source, "backup_install_state_for_removal")
     reset_function = extract_shell_function(cli_source, "reset_local_install_state")
     uninstall_function = extract_shell_function(cli_source, "uninstall_local_installation")
 
     assert "prepare_runtime_exports" in drain_function
-    assert 'source "$GENERATED_ENV"' in drain_function
+    assert "load_selected_runtime_environment_for_children" in drain_function
     assert 'scripts/viventium/native_stack.sh" stop' in drain_function
     assert "drain_native_stack_before_state_removal" in reset_function
     assert "drain_native_stack_before_state_removal" in uninstall_function
-    assert reset_function.index("drain_native_stack_before_state_removal") < reset_function.index('rm -rf "$APP_SUPPORT_DIR"')
-    assert uninstall_function.index("drain_native_stack_before_state_removal") < uninstall_function.index('rm -rf "$APP_SUPPORT_DIR"')
+    assert 'mv -- "$APP_SUPPORT_DIR" "$backup_dir"' in removal_backup_function
+    assert 'cp "$GENERATED_ENV"' not in removal_backup_function
+    assert "preserves databases, state, snapshots" in removal_backup_function
+    assert reset_function.index("drain_native_stack_before_state_removal") < reset_function.index("backup_install_state_for_removal")
+    assert uninstall_function.index("drain_native_stack_before_state_removal") < uninstall_function.index("backup_install_state_for_removal")
     assert 'local_http_surface_healthy "$port" "/api/health"' in cli_source
     assert 'local_http_surface_healthy "$port" "/"' in cli_source
     assert 'http_url_healthy "${base_url}/" 5' in cli_source
@@ -179,6 +230,9 @@ def test_destructive_flows_drain_native_stack_before_removing_app_support() -> N
     assert 'if runtime_env_true "START_SEARXNG" "false" && ! searxng_surface_healthy; then' in cli_source
     assert 'if runtime_env_true "START_FIRECRAWL" "false" && ! firecrawl_surface_healthy; then' in cli_source
     runtime_optional_function = extract_shell_function(cli_source, "runtime_optional_surfaces_healthy")
+    rag_surface_function = extract_shell_function(cli_source, "rag_api_surface_healthy")
+    assert 'http_json_status_up "${base_url}/health"' in rag_surface_function
+    assert 'http_url_healthy "${base_url}/"' not in rag_surface_function
     assert 'if runtime_env_true "START_RAG_API" "false" && ! rag_api_surface_healthy; then' in runtime_optional_function
     assert 'if runtime_env_true "START_GOOGLE_MCP" "false" && ! mcp_url_surface_reachable "GOOGLE_WORKSPACE_MCP_URL" "http://localhost:8111/mcp"; then' in runtime_optional_function
     assert 'if runtime_env_true "START_MS365_MCP" "false" && ! mcp_url_surface_reachable "MS365_MCP_SERVER_URL" "http://localhost:6274/mcp"; then' in runtime_optional_function
@@ -231,7 +285,7 @@ def test_destructive_flows_drain_native_stack_before_removing_app_support() -> N
 
 def test_upgrade_restart_hands_off_to_detached_health_checked_start() -> None:
     cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
-    upgrade_section = cli_source.split("  upgrade|update)", 1)[1].split("  configure|wizard)", 1)[0]
+    upgrade_section = cli_source.rsplit("  upgrade|update)", 1)[1].split("  configure|wizard)", 1)[0]
     autorestart_section = upgrade_section.split('if [[ "$AUTO_RESTART" == "1" ]]; then', 1)[1].split(
         '    fi\n    echo "Upgrade complete. Next: bin/viventium start"',
         1,
@@ -247,7 +301,8 @@ def test_upgrade_restart_hands_off_to_detached_health_checked_start() -> None:
     assert "continuity-audit  Capture continuity metadata for the current install." in cli_source
     assert "Pre-upgrade continuity audit written to" in upgrade_section
     assert "Post-upgrade continuity audit written to" in upgrade_section
-    assert 'if [[ "$POST_UPGRADE_CONTINUITY_STATUS" == "error" ]]; then' in upgrade_section
+    assert 'case "$POST_UPGRADE_CONTINUITY_STATUS" in' in upgrade_section
+    assert "error|unknown|*)" in upgrade_section
     assert "cleanup_cli_lock" in restart_section
     assert "launch_stack_detached" in restart_section
     assert "wait_for_install_stack_health" in restart_section
@@ -257,6 +312,191 @@ def test_upgrade_restart_hands_off_to_detached_health_checked_start() -> None:
     assert "if ! restart_stack_after_upgrade; then" in upgrade_section
     assert '"$REPO_ROOT/bin/viventium" \\' not in autorestart_section
     assert "        start" not in autorestart_section
+
+
+def test_upgrade_stop_failure_is_terminal_and_not_suppressed() -> None:
+    cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
+    stop_function = extract_shell_function(cli_source, "stop_stack_for_upgrade")
+    upgrade_section = cli_source.rsplit("  upgrade|update)", 1)[1].split("  configure|wizard)", 1)[0]
+
+    assert "stop || true" not in stop_function
+    assert 'if ! stop_stack_for_upgrade; then' in upgrade_section
+    assert "Upgrade aborted because the running stack could not be stopped safely." in upgrade_section
+
+
+def test_failed_upgrade_recovery_does_not_claim_rollback() -> None:
+    cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
+    recovery_function = extract_shell_function(cli_source, "recover_running_stack_after_failed_upgrade")
+
+    assert "the upgrade remains unapplied" not in recovery_function
+    assert "Restoring the previously running" not in recovery_function
+    assert "may be partially applied" in recovery_function
+    assert "current on-disk state" in recovery_function
+
+
+def test_continuity_error_disables_automatic_restart() -> None:
+    cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
+    upgrade_section = cli_source.rsplit("  upgrade|update)", 1)[1].split("  configure|wizard)", 1)[0]
+    autorestart_section = upgrade_section.rsplit('if [[ "$AUTO_RESTART" == "1" ]]; then', 1)[1]
+    post_capture = upgrade_section.index('POST_UPGRADE_CONTINUITY_AUDIT="$(capture_continuity_audit')
+    recovery_disarm = upgrade_section.rindex("UPGRADE_RESTART_RECOVERY_REQUIRED=0", 0, post_capture)
+
+    assert recovery_disarm < post_capture
+    assert "maybe_install_macos_helper --no-launch" in upgrade_section
+    assert 'case "$POST_UPGRADE_CONTINUITY_STATUS" in' in upgrade_section
+    assert 'ok|warning)' in upgrade_section
+    assert "launch_macos_helper_app" in autorestart_section
+
+
+def test_upgrade_refuses_running_stack_and_bad_baseline_before_pull_or_stop() -> None:
+    cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
+    upgrade_section = cli_source.rsplit("  upgrade|update)", 1)[1].split("  configure|wizard)", 1)[0]
+
+    running_gate = upgrade_section.index("if is_stack_running; then")
+    safety_check = upgrade_section.index('UPGRADE_SAFETY_JSON="$("$PYTHON_BIN"')
+    pull = upgrade_section.index("pull_current_branch_ff_only")
+    pre_capture = upgrade_section.index('capture_continuity_audit "pre-upgrade-')
+    pre_status = upgrade_section.index('PRE_UPGRADE_CONTINUITY_STATUS="$(continuity_audit_status')
+    stop = upgrade_section.index("if ! stop_stack_for_upgrade; then")
+    assert running_gate < safety_check < pre_capture < pre_status < stop < pull
+    assert '[[ "$PRE_UPGRADE_CONTINUITY_STATUS" == "error" || "$PRE_UPGRADE_CONTINUITY_STATUS" == "unknown" ]]' in upgrade_section
+    assert "Upgrade aborted because the pre-upgrade continuity audit is not trustworthy." in upgrade_section
+
+
+def test_upgrade_check_does_not_create_app_support_layout() -> None:
+    cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
+    upgrade_section = cli_source.rsplit("  upgrade|update)", 1)[1].split("  configure|wizard)", 1)[0]
+
+    check_gate = upgrade_section.index('if [[ "$CHECK_ONLY" == "1" ]]; then')
+    layout = upgrade_section.index('ensure_app_support_layout "$APP_SUPPORT_DIR"')
+    assert check_gate < layout
+
+
+def test_public_upgrade_check_does_not_bootstrap_or_create_app_support(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    (repo / "bin").mkdir(parents=True)
+    (repo / "scripts" / "viventium").mkdir(parents=True)
+    shutil.copy2(REPO_ROOT / "bin" / "viventium", repo / "bin" / "viventium")
+    shutil.copy2(REPO_ROOT / "scripts" / "viventium" / "common.sh", repo / "scripts" / "viventium" / "common.sh")
+    shutil.copy2(REPO_ROOT / "scripts" / "viventium" / "upgrade_check.py", repo / "scripts" / "viventium" / "upgrade_check.py")
+    (repo / "scripts" / "viventium" / "requirements-installer.txt").write_text("", encoding="utf-8")
+    (repo / "components.lock.json").write_text('{"components": []}\n', encoding="utf-8")
+    subprocess.run(["git", "init"], cwd=repo, check=True, stdout=subprocess.PIPE)
+    subprocess.run(["git", "add", "."], cwd=repo, check=True)
+    subprocess.run(
+        ["git", "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "fixture"],
+        cwd=repo,
+        check=True,
+        stdout=subprocess.PIPE,
+    )
+    branch = subprocess.run(
+        ["git", "branch", "--show-current"], cwd=repo, check=True, text=True, stdout=subprocess.PIPE
+    ).stdout.strip()
+    subprocess.run(["git", "config", f"branch.{branch}.remote", "."], cwd=repo, check=True)
+    subprocess.run(["git", "config", f"branch.{branch}.merge", f"refs/heads/{branch}"], cwd=repo, check=True)
+    app_support = tmp_path / "must-remain-absent"
+
+    result = subprocess.run(
+        [str(repo / "bin" / "viventium"), "--app-support-dir", str(app_support), "upgrade", "--check", "--json"],
+        cwd=repo,
+        check=False,
+        capture_output=True,
+        text=True,
+        env={**os.environ, "VIVENTIUM_PYTHON_BIN": sys.executable},
+    )
+
+    assert result.returncode == 0
+    assert json.loads(result.stdout)["schema_version"] == 1
+    assert not app_support.exists()
+
+
+def test_public_restore_rejects_invalid_bundle_before_default_or_target_mutation(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    (repo / "bin").mkdir(parents=True)
+    (repo / "scripts" / "viventium").mkdir(parents=True)
+    shutil.copy2(REPO_ROOT / "bin" / "viventium", repo / "bin" / "viventium")
+    for name in ("common.sh", "restore.sh", "continuity_bundle.py"):
+        shutil.copy2(REPO_ROOT / "scripts" / "viventium" / name, repo / "scripts" / "viventium" / name)
+    (repo / "scripts" / "viventium" / "requirements-installer.txt").write_text("", encoding="utf-8")
+    invalid_bundle = tmp_path / "invalid-bundle"
+    invalid_bundle.mkdir()
+    default_home = tmp_path / "default-app-support"
+    target_home = tmp_path / "independent-target"
+
+    result = subprocess.run(
+        [
+            str(repo / "bin" / "viventium"),
+            "--app-support-dir",
+            str(default_home),
+            "restore",
+            "--target-config-home",
+            str(target_home),
+            "--snapshot-dir",
+            str(invalid_bundle),
+        ],
+        cwd=repo,
+        check=False,
+        capture_output=True,
+        text=True,
+        env={**os.environ, "VIVENTIUM_PYTHON_BIN": sys.executable},
+    )
+
+    assert result.returncode == 3
+    assert "producer completeness marker is missing" in result.stderr
+    assert "ModuleNotFoundError" not in result.stderr
+    assert not default_home.exists()
+    assert not target_home.exists()
+
+
+def test_mutating_upgrade_runs_structured_local_safety_check_before_pull_and_stop() -> None:
+    cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
+    upgrade_section = cli_source.rsplit("  upgrade|update)", 1)[1].split("  configure|wizard)", 1)[0]
+
+    safety_check = upgrade_section.index('UPGRADE_SAFETY_JSON="$("$PYTHON_BIN"')
+    pull = upgrade_section.index("pull_current_branch_ff_only")
+    stop = upgrade_section.index("if ! stop_stack_for_upgrade; then")
+    assert safety_check < stop < pull
+    assert '"$REPO_ROOT/scripts/viventium/upgrade_check.py"' in upgrade_section
+    assert "--no-fetch" in upgrade_section
+    assert "--config-file" in upgrade_section
+    assert "Upgrade aborted before pull or component mutation" in upgrade_section
+
+
+def test_allow_dirty_upgrade_requires_skip_pull() -> None:
+    cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
+    upgrade_section = cli_source.rsplit("  upgrade|update)", 1)[1].split("  configure|wizard)", 1)[0]
+
+    assert 'if [[ "$ALLOW_DIRTY" == "1" && "$SKIP_PULL" != "1" ]]; then' in upgrade_section
+    assert "--allow-dirty is only safe with --skip-pull" in upgrade_section
+
+
+def test_upgrade_uses_the_same_configured_remote_for_check_and_pull_and_protects_untracked_work() -> None:
+    cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
+    git_gate = extract_shell_function(cli_source, "ensure_upgradeable_git_state")
+    pull = extract_shell_function(cli_source, "pull_current_branch_ff_only")
+
+    upgrade_check_source = (REPO_ROOT / "scripts" / "viventium" / "upgrade_check.py").read_text(encoding="utf-8")
+    assert '"--untracked-files=normal"' in upgrade_check_source
+    assert "untracked-files=no" not in git_gate
+    assert 'local require_remote="${2:-1}"' in git_gate
+    assert "current branch has no configured Git remote" in git_gate
+    assert 'ensure_upgradeable_git_state "$ALLOW_DIRTY" "$UPGRADE_REQUIRES_REMOTE"' in cli_source
+    assert 'config --get "branch.${current_branch}.remote"' in pull
+    assert 'config --get "branch.${current_branch}.merge"' in pull
+    assert 'fetch "$configured_remote" "$merge_ref"' in pull
+    assert 'pull --ff-only "$configured_remote" "$remote_branch"' in pull
+    assert "fetch origin" not in pull
+    assert "Preserve or remove the untracked/modified parent files" in cli_source
+    assert "--skip-pull --allow-dirty" in cli_source
+
+
+def test_upgrade_rechecks_component_alignment_structurally_after_bootstrap() -> None:
+    cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
+    checked_bootstrap = extract_shell_function(cli_source, "bootstrap_components_upgrade_checked")
+
+    assert 'report.get("component_lock_drift")' in checked_bootstrap
+    assert "kept local dirty checkout" not in checked_bootstrap
+    assert "Structured component alignment verification failed" in checked_bootstrap
 
 
 def test_remote_access_failure_does_not_abort_local_launcher_progress(tmp_path: Path) -> None:
@@ -500,7 +740,7 @@ fi
 
     completed = subprocess.run(
         ["bash", "-lc", script],
-        check=True,
+        check=False,
         text=True,
         capture_output=True,
     )
@@ -565,7 +805,7 @@ def test_cli_usage_lists_runtime_recovery_commands() -> None:
 
 def test_cli_reconciles_default_nightly_routines_on_supported_entrypoints() -> None:
     cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
-    command_cases = cli_source.split('case "$COMMAND" in', 1)[1]
+    command_cases = cli_source.rsplit('case "$COMMAND" in', 1)[1]
     install_section = command_cases.split("  install|bootstrap)", 1)[1].split("  upgrade|update)", 1)[0]
     upgrade_section = command_cases.split("  upgrade|update)", 1)[1].split("  configure|wizard)", 1)[0]
     configure_section = command_cases.split("  configure|wizard)", 1)[1].split("  reset)", 1)[0]
@@ -771,6 +1011,119 @@ def test_launch_log_indicates_startup_failure_treats_playground_pnpm_bootstrap_e
     )
 
     assert "RESULT=true" in completed.stdout
+
+
+def test_launch_log_failure_detection_is_scoped_to_the_current_start_attempt(tmp_path: Path) -> None:
+    cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
+    function_def = extract_shell_function(cli_source, "launch_log_indicates_startup_failure")
+    launch_log = tmp_path / "helper-start.log"
+    launch_log.write_text(
+        "npm error Lifecycle script build failed\n",
+        encoding="utf-8",
+    )
+    start_offset = launch_log.stat().st_size
+    with launch_log.open("a", encoding="utf-8") as handle:
+        handle.write("[viventium] Beginning a new detached start attempt\n")
+
+    completed = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                "set -euo pipefail\n"
+                f"{function_def}"
+                f"if launch_log_indicates_startup_failure '{launch_log}' '{start_offset}'; then\n"
+                "  printf 'clean_attempt=failed\\n'\n"
+                "else\n"
+                "  printf 'clean_attempt=clean\\n'\n"
+                "fi\n"
+                f"printf '%s\\n' 'npm error Lifecycle script build failed' >> '{launch_log}'\n"
+                f"if launch_log_indicates_startup_failure '{launch_log}' '{start_offset}'; then\n"
+                "  printf 'failed_attempt=failed\\n'\n"
+                "else\n"
+                "  printf 'failed_attempt=clean\\n'\n"
+                "fi\n"
+            ),
+        ],
+        cwd=REPO_ROOT,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+    assert "clean_attempt=clean" in completed.stdout
+    assert "failed_attempt=failed" in completed.stdout
+
+
+def test_launch_log_does_not_treat_express_docker_cleanup_skip_as_failure(tmp_path: Path) -> None:
+    cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
+    function_def = extract_shell_function(cli_source, "launch_log_indicates_startup_failure")
+    launch_log = tmp_path / "helper-start.log"
+    launch_log.write_text(
+        "[viventium] Docker is not running; skipping container cleanup\n",
+        encoding="utf-8",
+    )
+
+    completed = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                "set -euo pipefail\n"
+                f"{function_def}"
+                f"if launch_log_indicates_startup_failure '{launch_log}'; then\n"
+                "  printf 'RESULT=failed\\n'\n"
+                "else\n"
+                "  printf 'RESULT=clean\\n'\n"
+                "fi\n"
+            ),
+        ],
+        cwd=REPO_ROOT,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+    assert completed.stdout.strip() == "RESULT=clean"
+
+
+def test_launch_log_allows_dependency_install_retry_before_terminal_failure(tmp_path: Path) -> None:
+    cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
+    function_def = extract_shell_function(cli_source, "launch_log_indicates_startup_failure")
+    launch_log = tmp_path / "helper-start.log"
+    launch_log.write_text(
+        "[viventium] LibreChat dependency install failed; cleaning dependency trees and retrying once...\n",
+        encoding="utf-8",
+    )
+
+    completed = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                "set -euo pipefail\n"
+                f"{function_def}"
+                f"if launch_log_indicates_startup_failure '{launch_log}'; then\n"
+                "  printf 'retry=failed\\n'\n"
+                "else\n"
+                "  printf 'retry=clean\\n'\n"
+                "fi\n"
+                f"printf '%s\\n' '[viventium] LibreChat dependency check failed: @google/genai not found' >> '{launch_log}'\n"
+                f"if launch_log_indicates_startup_failure '{launch_log}'; then\n"
+                "  printf 'terminal=failed\\n'\n"
+                "else\n"
+                "  printf 'terminal=clean\\n'\n"
+                "fi\n"
+            ),
+        ],
+        cwd=REPO_ROOT,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+    assert "retry=clean" in completed.stdout
+    assert "terminal=failed" in completed.stdout
 
 
 def test_cli_usage_documents_status_bar_and_shell_init_commands() -> None:
@@ -988,7 +1341,7 @@ exit 1
     assert completed.returncode == 0
 
 
-def test_detached_start_failed_early_keeps_waiting_while_detached_group_is_alive() -> None:
+def test_detached_start_failed_early_prioritizes_explicit_log_failure_over_live_sidecars() -> None:
     cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
     function_def = extract_shell_function(cli_source, "detached_start_failed_early")
 
@@ -1018,7 +1371,7 @@ def test_detached_start_failed_early_keeps_waiting_while_detached_group_is_alive
         capture_output=True,
     )
 
-    assert completed.stdout.strip() == "result=waiting"
+    assert completed.stdout.strip() == "result=failed"
 
 
 def test_launch_stack_detached_skips_restart_while_detached_group_is_alive() -> None:
@@ -1056,6 +1409,115 @@ def test_launch_stack_detached_skips_restart_while_detached_group_is_alive() -> 
         "ok",
     ]
     assert "stack-check" not in completed.stderr
+
+
+def test_launch_stack_detached_defers_to_active_manual_start_claim(tmp_path: Path) -> None:
+    cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
+    function_defs = "".join(
+        extract_shell_function(cli_source, name)
+        for name in (
+            "runtime_start_claim_file",
+            "runtime_start_claim_active",
+            "launch_stack_detached",
+        )
+    )
+    fake_repo = tmp_path / "repo"
+    fake_runner = fake_repo / "bin" / "viventium"
+    write_executable(fake_runner, "#!/bin/bash\nsleep 30\n")
+    owner = subprocess.Popen([str(fake_runner)], start_new_session=True)
+    app_support = tmp_path / "app-support"
+    claim = app_support / "state" / "runtime" / "startup-in-progress"
+    claim.parent.mkdir(parents=True)
+    claim.write_text(f"{owner.pid}\n{fake_repo}\n{int(time.time())}\n", encoding="utf-8")
+    config = tmp_path / "config.yaml"
+    config.write_text("version: 1\n", encoding="utf-8")
+
+    try:
+        completed = subprocess.run(
+            [
+                "bash",
+                "-lc",
+                (
+                    "set -euo pipefail\n"
+                    f"{function_defs}"
+                    f"APP_SUPPORT_DIR='{app_support}'\n"
+                    f"CONFIG_FILE='{config}'\n"
+                    f"REPO_ROOT='{fake_repo}'\n"
+                    "ensure_app_support_layout() { :; }\n"
+                    "initialize_telegram_user_config_authority() { return 0; }\n"
+                    "user_surface_healthy() { return 1; }\n"
+                    "detached_launch_process_group_running() { return 1; }\n"
+                    "is_stack_running() { printf 'stack-check\\n' >&2; return 0; }\n"
+                    "stop_stack_for_upgrade() { printf 'unexpected-stop\\n'; }\n"
+                    "launch_stack_detached\n"
+                ),
+            ],
+            cwd=REPO_ROOT,
+            check=True,
+            text=True,
+            capture_output=True,
+        )
+    finally:
+        owner.kill()
+        owner.wait(timeout=5)
+
+    assert completed.stdout.strip() == "Viventium is already starting."
+    assert "stack-check" not in completed.stderr
+
+
+def test_launch_stack_detached_live_receipt_suppresses_partial_stack_restart(
+    tmp_path: Path,
+) -> None:
+    cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
+    function_defs = "".join(
+        extract_shell_function(cli_source, name)
+        for name in (
+            "detached_launch_process_group_file",
+            "read_detached_launch_process_group",
+            "detached_launch_process_group_running",
+            "launch_stack_detached",
+        )
+    )
+    app_support = tmp_path / "app-support"
+    config = tmp_path / "config.yaml"
+    restart_marker = tmp_path / "restart-attempted"
+    config.write_text("version: 1\n", encoding="utf-8")
+    sleeper = subprocess.Popen(["/bin/sleep", "30"], start_new_session=True)
+    process_group = os.getpgid(sleeper.pid)
+    receipt = app_support / "state" / "runtime" / "isolated" / "detached-launch.pgid"
+    receipt.parent.mkdir(parents=True)
+    receipt.write_text(f"{process_group}\n", encoding="utf-8")
+
+    try:
+        completed = subprocess.run(
+            [
+                "bash",
+                "-lc",
+                (
+                    "set -euo pipefail\n"
+                    f"{function_defs}"
+                    f"APP_SUPPORT_DIR='{app_support}'\n"
+                    f"CONFIG_FILE='{config}'\n"
+                    "VIVENTIUM_RUNTIME_PROFILE=isolated\n"
+                    "ensure_app_support_layout() { :; }\n"
+                    "user_surface_healthy() { return 1; }\n"
+                    "runtime_optional_surfaces_healthy() { return 1; }\n"
+                    f"is_stack_running() {{ : >'{restart_marker}'; return 0; }}\n"
+                    f"stop_stack_for_upgrade() {{ : >'{restart_marker}'; }}\n"
+                    "launch_stack_detached\n"
+                ),
+            ],
+            cwd=REPO_ROOT,
+            check=True,
+            text=True,
+            capture_output=True,
+        )
+    finally:
+        sleeper.kill()
+        sleeper.wait(timeout=5)
+
+    assert completed.stdout.strip() == "Viventium is already starting."
+    assert not restart_marker.exists()
 
 
 def test_launch_stack_detached_waits_when_sidecar_repair_is_already_starting(
@@ -1388,6 +1850,7 @@ ensure_python_module() {
 from __future__ import annotations
 
 import os
+import shlex
 import sys
 from pathlib import Path
 
@@ -1396,7 +1859,7 @@ fake_python.parent.mkdir(parents=True, exist_ok=True)
 fake_python.write_text(
     "#!/bin/sh\\n"
     "export VIVENTIUM_SELECTED_PYTHON=python3.12\\n"
-    f"exec {sys.executable} \\\"$@\\\"\\n",
+    f"exec {shlex.quote(sys.executable)} \\\"$@\\\"\\n",
     encoding="utf-8",
 )
 fake_python.chmod(0o755)
@@ -1479,7 +1942,7 @@ exit 1
             "--allow-dirty",
         ],
         cwd=repo_root,
-        check=True,
+        check=False,
         text=True,
         capture_output=True,
         env={
@@ -1490,6 +1953,7 @@ exit 1
     )
 
     assert "Upgrade complete. Next: bin/viventium start" in completed.stdout
+    assert completed.returncode == 0, completed.stderr
     assert (tmp_path / "selected-python.txt").read_text(encoding="utf-8") == "python3.12"
 
 
@@ -1680,7 +2144,7 @@ exit 1
     assert (tmp_path / "bootstrap-observed-stop.txt").read_text(encoding="utf-8") == "yes"
 
 
-def test_upgrade_refuses_dirty_selected_component_refresh(tmp_path: Path) -> None:
+def test_upgrade_restart_recovers_running_stack_after_structured_component_refusal(tmp_path: Path) -> None:
     repo_root = tmp_path / "repo"
     repo_root.mkdir(parents=True, exist_ok=True)
     (repo_root / "bin").mkdir(parents=True, exist_ok=True)
@@ -1707,7 +2171,9 @@ ensure_app_support_layout() {
   mkdir -p "$dir/runtime" "$dir/state"
 }
 
-viventium_port_listener_active() { return 1; }
+viventium_port_listener_active() {
+  [[ ! -f "${TEST_ROOT}/stop-called" ]]
+}
 python_has_module() { return 0; }
 resolve_repo_python() { printf '%s\\n' "${TEST_PYTHON:-python3}"; }
 ensure_python_module() { return 0; }
@@ -1717,7 +2183,11 @@ ensure_python_requirements_file() { printf '%s\\n' "${TEST_PYTHON:-$1}"; }
     write_executable(repo_root / "scripts" / "viventium" / "preflight.py", "#!/usr/bin/env python3\nraise SystemExit(0)\n")
     write_executable(
         repo_root / "scripts" / "viventium" / "bootstrap_components.py",
-        "#!/usr/bin/env python3\nprint('kept local dirty checkout for LibreChat -> deadbeef')\n",
+        "#!/usr/bin/env python3\n"
+        "import os\n"
+        "from pathlib import Path\n"
+        "Path(os.environ['TEST_ROOT'], 'component-drift-after-bootstrap').touch()\n"
+        "print('component bootstrap finished; structured verification follows')\n",
     )
 
     config_compiler_py = """#!/usr/bin/env python3
@@ -1732,23 +2202,66 @@ parser.add_argument("--output-dir", required=True)
 args = parser.parse_args()
 out = Path(args.output_dir)
 out.mkdir(parents=True, exist_ok=True)
-(out / "runtime.env").write_text("VIVENTIUM_CALL_SESSION_SECRET=test\\n", encoding="utf-8")
+(out / "runtime.env").write_text(
+    "VIVENTIUM_CALL_SESSION_SECRET=test\\n"
+    "VIVENTIUM_INSTALL_EXPERIENCE=express\\n"
+    "VIVENTIUM_LC_API_PORT=3180\\n"
+    "VIVENTIUM_LC_FRONTEND_PORT=3190\\n"
+    "VIVENTIUM_PLAYGROUND_PORT=3300\\n",
+    encoding="utf-8",
+)
 (out / "runtime.local.env").write_text("", encoding="utf-8")
 (out / "librechat.yaml").write_text("version: 1\\n", encoding="utf-8")
 """
     write_executable(repo_root / "scripts" / "viventium" / "config_compiler.py", config_compiler_py)
     write_executable(repo_root / "scripts" / "viventium" / "doctor.sh", "#!/usr/bin/env bash\nset -euo pipefail\nexit 0\n")
     write_executable(repo_root / "scripts" / "viventium" / "install_macos_helper.sh", "#!/usr/bin/env bash\nset -euo pipefail\nexit 0\n")
-    write_executable(repo_root / "viventium_v0_4" / "viventium-librechat-start.sh", "#!/usr/bin/env bash\nset -euo pipefail\nexit 0\n")
+    write_executable(
+        repo_root / "viventium_v0_4" / "viventium-librechat-start.sh",
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        "if [[ \"${1:-}\" == \"--stop\" ]]; then\n"
+        "  touch \"${TEST_ROOT}/stop-called\"\n"
+        "else\n"
+        "  touch \"${TEST_ROOT}/restarted-after-refusal\"\n"
+        "fi\n",
+    )
+    write_executable(
+        repo_root / "scripts" / "viventium" / "native_stack.sh",
+        "#!/usr/bin/env bash\nset -euo pipefail\nexit 0\n",
+    )
 
     fake_bin = tmp_path / "fakebrew" / "bin"
     fake_bin.mkdir(parents=True, exist_ok=True)
     (fake_bin / "lsof").write_text("#!/usr/bin/env bash\nset -euo pipefail\nexit 1\n", encoding="utf-8")
     (fake_bin / "lsof").chmod(0o755)
+    (fake_bin / "curl").write_text(
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        "if [[ -f \"${TEST_ROOT}/restarted-after-refusal\" ]]; then\n"
+        "  printf '200'\n"
+        "  exit 0\n"
+        "fi\n"
+        "printf '000'\n"
+        "exit 1\n",
+        encoding="utf-8",
+    )
+    (fake_bin / "curl").chmod(0o755)
 
     config_path = tmp_path / "app-support" / "config.yaml"
     config_path.parent.mkdir(parents=True, exist_ok=True)
     config_path.write_text("version: 1\ninstall:\n  mode: native\nvoice:\n  mode: local\n", encoding="utf-8")
+    runtime_dir = config_path.parent / "runtime"
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+    (runtime_dir / "runtime.env").write_text(
+        "VIVENTIUM_CALL_SESSION_SECRET=test\n"
+        "VIVENTIUM_INSTALL_EXPERIENCE=express\n"
+        "VIVENTIUM_LC_API_PORT=3180\n"
+        "VIVENTIUM_LC_FRONTEND_PORT=3190\n"
+        "VIVENTIUM_PLAYGROUND_PORT=3300\n",
+        encoding="utf-8",
+    )
+    (runtime_dir / "runtime.local.env").write_text("", encoding="utf-8")
 
     init_git_repo(repo_root)
 
@@ -1760,6 +2273,7 @@ out.mkdir(parents=True, exist_ok=True)
             "upgrade",
             "--skip-pull",
             "--allow-dirty",
+            "--restart",
         ],
         cwd=repo_root,
         check=False,
@@ -1769,8 +2283,13 @@ out.mkdir(parents=True, exist_ok=True)
     )
 
     assert completed.returncode != 0
-    assert "kept local dirty checkout for LibreChat -> deadbeef" in completed.stdout
-    assert "could not refresh to the pinned ref" in completed.stderr
+    assert "component bootstrap finished; structured verification follows" in completed.stdout
+    assert "Managed component is not aligned: LibreChat (dirty_worktree)" in completed.stderr
+    assert "selected components did not reach their declared pinned state" in completed.stderr
+    assert "restart Viventium from the current on-disk state" in completed.stderr
+    assert "upgrade may be partially applied" in completed.stderr
+    assert (tmp_path / "stop-called").exists()
+    assert (tmp_path / "restarted-after-refusal").exists()
 
 
 def test_start_uses_generated_librechat_yaml_at_runtime(tmp_path: Path) -> None:
@@ -2013,7 +2532,9 @@ exit 0
     assert (tmp_path / "compile-count.txt").read_text(encoding="utf-8") == "1"
 
 
-def test_start_in_native_mode_does_not_force_skip_docker(tmp_path: Path) -> None:
+def test_start_native_preserves_custom_surfaces_and_skips_deferred_express_surfaces(
+    tmp_path: Path,
+) -> None:
     repo_root = tmp_path / "repo"
     repo_root.mkdir(parents=True, exist_ok=True)
     (repo_root / "bin").mkdir(parents=True, exist_ok=True)
@@ -2062,10 +2583,14 @@ parser.add_argument("--output-dir", required=True)
 args = parser.parse_args()
 out = Path(args.output_dir)
 out.mkdir(parents=True, exist_ok=True)
+config_text = Path(args.config).read_text(encoding="utf-8")
+experience = "express" if "experience: express" in config_text else "legacy"
+voice_enabled = "false" if experience == "express" else "true"
 (out / "runtime.env").write_text(
     "VIVENTIUM_CALL_SESSION_SECRET=test\\n"
     "VIVENTIUM_INSTALL_MODE=native\\n"
-    "VIVENTIUM_VOICE_ENABLED=true\\n",
+    f"VIVENTIUM_INSTALL_EXPERIENCE={experience}\\n"
+    f"VIVENTIUM_VOICE_ENABLED={voice_enabled}\\n",
     encoding="utf-8",
 )
 (out / "runtime.local.env").write_text("", encoding="utf-8")
@@ -2083,6 +2608,7 @@ exit 0
     native_stack_sh = """#!/usr/bin/env bash
 set -euo pipefail
 printf '%s\\n' "$1" > "${TEST_ROOT}/native-stack-action.txt"
+printf '%s\\n' "${VIVENTIUM_NATIVE_STACK_SKIP_MEILI:-0}" > "${TEST_ROOT}/native-stack-skip-meili.txt"
 exit 0
 """
     write_executable(repo_root / "scripts" / "viventium" / "native_stack.sh", native_stack_sh)
@@ -2116,6 +2642,34 @@ exit 0
     assert (tmp_path / "native-stack-action.txt").read_text(encoding="utf-8").strip() == "start"
     start_args = (tmp_path / "start-args.txt").read_text(encoding="utf-8").strip()
     assert "--skip-docker" not in start_args
+    assert "--skip-playground" not in start_args
+    assert (tmp_path / "native-stack-skip-meili.txt").read_text(encoding="utf-8").strip() == "0"
+
+    config_path.write_text(
+        "version: 1\ninstall:\n  mode: native\n  experience: express\nvoice:\n  mode: disabled\n",
+        encoding="utf-8",
+    )
+    express_completed = subprocess.run(
+        [
+            str(repo_root / "bin" / "viventium"),
+            "--app-support-dir",
+            str(config_path.parent),
+            "start",
+        ],
+        cwd=repo_root,
+        check=True,
+        text=True,
+        capture_output=True,
+        env={**dict(os.environ), "TEST_ROOT": str(tmp_path)},
+    )
+
+    assert express_completed.returncode == 0
+    express_start_args = (tmp_path / "start-args.txt").read_text(encoding="utf-8").strip()
+    assert "--skip-docker" not in express_start_args
+    assert "--skip-playground" in express_start_args
+    assert "--skip-voice-gateway" in express_start_args
+    assert "--skip-livekit" in express_start_args
+    assert (tmp_path / "native-stack-skip-meili.txt").read_text(encoding="utf-8").strip() == "1"
 
 
 def test_cli_refuses_concurrent_operation_when_lock_is_active(tmp_path: Path) -> None:

@@ -1,5 +1,7 @@
 # Emotional Cortex Nature Variable Prototype QA - 2026-06-30
 
+<!-- qa-evidence-exempt: Historical prototype record retained for design lineage; it is not a complete runtime user-path acceptance report. -->
+
 Owning requirement: `docs/requirements_and_learnings/54_Emotional_Cortex_And_Feeling_State.md`
 QA cases: `EMO-001`, `EMO-006`, `EMO-007`, `EMO-011`, `EMO-017`
 Surface tested: `qa/emotional-cortex/prototypes/feeling-spectrum.html`
