@@ -53,7 +53,11 @@
   QA workspace was closed, explicit rejection restored the predecessor, and stable/out-of-scope
   surfaces again remained unchanged. Auto-resume now uses that same user-visible state and is limited to actual paused/idle/stopped named
   workspaces; completed work requires explicit Continue/Send.
-- All three escaped failures now have synthetic regressions. Exact post-fix installed browser and client
+- A third sealed candidate proved the catalog object still retained raw `paused` even after the card
+  refreshed visibly to `Completed`. Its click displayed `Resuming…`; acceptance was again rejected,
+  the synthetic QA workspace was closed, and the predecessor was restored. The final policy now reads
+  the rendered card state itself and uses catalog state only before a card has rendered live state.
+- All four escaped failures now have synthetic regressions. Exact post-fix installed browser and client
   reruns remain required before this report can mark the hosted release PASS.
 
 ## Expected And Forbidden Outcomes
