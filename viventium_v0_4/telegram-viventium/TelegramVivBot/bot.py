@@ -1093,6 +1093,9 @@ async def getViventiumResponse(
     tmpresult = ""
     delivery_plan = parse_delivery_controls("")
     final_segments = []
+    logical_turn_id = ""
+    logical_turn_revision = None
+    delivered_message_ids = []
     time_out = 600
     image_has_send = 0
     # === VIVENTIUM START ===
@@ -1271,6 +1274,8 @@ async def getViventiumResponse(
             "pool_timeout": time_out,
             "connect_timeout": time_out,
         }
+        if reply_to_original and messageid:
+            send_kwargs["reply_to_message_id"] = messageid
         delivered_text = rendered_text
         try:
             send_start_ts = time.monotonic() if _tg_deep_enabled() else None
@@ -1493,7 +1498,7 @@ async def getViventiumResponse(
             return False
 
     async def _deliver_final_message_segments(segments) -> bool:
-        nonlocal answer_messageid, lastresult
+        nonlocal answer_messageid, delivered_message_ids, lastresult
 
         async def _notify_interrupted_delivery() -> None:
             try:
@@ -1522,6 +1527,8 @@ async def getViventiumResponse(
             fallback = strip_html_tags(rendered)
             if index == 0 and answer_messageid:
                 if lastresult == rendered:
+                    if answer_messageid not in delivered_message_ids:
+                        delivered_message_ids.append(answer_messageid)
                     continue
                 try:
                     await context.bot.edit_message_text(
@@ -1539,6 +1546,8 @@ async def getViventiumResponse(
                     error_text = str(error).lower()
                     if "message is not modified" in error_text:
                         lastresult = rendered
+                        if answer_messageid not in delivered_message_ids:
+                            delivered_message_ids.append(answer_messageid)
                         continue
                     if parse_mode and "parse entities" in error_text:
                         try:
@@ -1561,6 +1570,8 @@ async def getViventiumResponse(
                             await _notify_interrupted_delivery()
                             return False
                         lastresult = fallback
+                        if answer_messageid not in delivered_message_ids:
+                            delivered_message_ids.append(answer_messageid)
                         continue
                     else:
                         try:
@@ -1584,14 +1595,17 @@ async def getViventiumResponse(
                             await _notify_interrupted_delivery()
                             return False
                 lastresult = rendered
+                if answer_messageid not in delivered_message_ids:
+                    delivered_message_ids.append(answer_messageid)
                 continue
 
             answer_messageid = None
             try:
-                await _ensure_answer_message(
+                delivered_message_id = await _ensure_answer_message(
                     rendered,
                     parse_mode,
                     fallback_text=fallback,
+                    reply_to_original=index == 0,
                 )
             except Exception as error:
                 logger.warning(
@@ -1601,6 +1615,7 @@ async def getViventiumResponse(
                 )
                 await _notify_interrupted_delivery()
                 return False
+            delivered_message_ids.append(delivered_message_id)
         return True
     # === VIVENTIUM END ===
 

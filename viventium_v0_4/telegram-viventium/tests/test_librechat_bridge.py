@@ -1279,7 +1279,17 @@ async def test_ask_stream_async_does_not_retry_prestart_http_503():
 
 
 @pytest.mark.asyncio
-async def test_ask_stream_async_listens_for_followup_events_even_when_raw_insights_disabled():
+async def test_ask_stream_async_listens_for_followup_events_even_when_raw_insights_disabled(
+    monkeypatch,
+):
+    for name in (
+        "VIVENTIUM_TELEGRAM_FOLLOWUP_GRACE_S",
+        "VIVENTIUM_TELEGRAM_FOLLOWUP_TIMEOUT_S",
+        "VIVENTIUM_TELEGRAM_INSIGHT_GRACE_S",
+        "VIVENTIUM_TELEGRAM_INSIGHT_MAX_S",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("VIVENTIUM_TELEGRAM_FOLLOWUP_GRACE_S", "30")
     bridge = _make_bridge()
     bridge.include_insights = False
     bridge.allow_insight_fallback = False
@@ -1360,6 +1370,14 @@ async def test_ask_stream_async_caches_voice_route_from_chat_start_for_all_deliv
 
 @pytest.mark.asyncio
 async def test_insight_listener_treats_missing_completed_stream_as_benign(monkeypatch):
+    for name in (
+        "VIVENTIUM_TELEGRAM_FOLLOWUP_GRACE_S",
+        "VIVENTIUM_TELEGRAM_FOLLOWUP_TIMEOUT_S",
+        "VIVENTIUM_TELEGRAM_INSIGHT_GRACE_S",
+        "VIVENTIUM_TELEGRAM_INSIGHT_MAX_S",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("VIVENTIUM_TELEGRAM_FOLLOWUP_GRACE_S", "30")
     bridge = _make_bridge()
     warnings = []
 
@@ -3600,7 +3618,7 @@ async def test_chunked_callback_failure_reports_visible_interruption_without_aud
 
 def test_sanitize_telegram_text_hides_delivery_controls_and_streaming_prefixes():
     complete = sanitize_telegram_text("First beat.\n{MSG_BREAK}\nSecond beat.\n{SKIP_VOICE}")
-    partial = sanitize_telegram_text("First beat.\n{MSG_")
+    partial = sanitize_telegram_text("First beat.\n{MSG_", streaming_preview=True)
     protected = sanitize_telegram_text("```text\n{MSG_BREAK}\n```")
 
     assert complete == "First beat.\n\nSecond beat."
@@ -3630,6 +3648,14 @@ async def test_followup_text_resolves_nested_blockquote_formatting():
         in captured["message"]
     )
     assert "\x00PH" not in captured["message"]
+
+
+_TELEGRAM_FOLLOWUP_WINDOW_ENV = (
+    "VIVENTIUM_TELEGRAM_FOLLOWUP_GRACE_S",
+    "VIVENTIUM_TELEGRAM_FOLLOWUP_TIMEOUT_S",
+    "VIVENTIUM_TELEGRAM_INSIGHT_GRACE_S",
+    "VIVENTIUM_TELEGRAM_INSIGHT_MAX_S",
+)
 
 
 def _clear_telegram_followup_window_env(monkeypatch):

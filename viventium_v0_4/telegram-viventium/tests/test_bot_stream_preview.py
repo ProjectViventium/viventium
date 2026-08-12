@@ -45,6 +45,7 @@ class _FakeTelegramBot:
         self.messages = []
         self.edits = []
         self.audios = []
+        self.deletes = []
         self.next_id = 1000
         self.edit_error = None
         self.edit_errors = []
@@ -79,6 +80,8 @@ class _FakeTelegramBot:
         return None
 
     async def delete_message(self, **_kwargs):
+        self.deletes.append(_kwargs)
+        self.current_messages.pop(_kwargs.get("message_id"), None)
         return None
 
     async def send_media_group(self, **_kwargs):
@@ -1862,7 +1865,7 @@ def test_get_viventium_response_resolves_nested_blockquote_formatting(monkeypatc
     assert "\x00PH" not in rendered
 
 
-def test_get_viventium_response_supersedes_preview_then_sends_ordered_final_segments(monkeypatch):
+def test_get_viventium_response_reconciles_preview_then_sends_ordered_final_segments(monkeypatch):
     class _SegmentRobot:
         def __init__(self):
             self.acks = []
@@ -1905,11 +1908,12 @@ def test_get_viventium_response_supersedes_preview_then_sends_ordered_final_segm
         )
     )
 
-    assert len(context.bot.deletes) == 1
-    assert [item["text"] for item in context.bot.messages[-2:]] == [
+    assert context.bot.deletes == []
+    assert _final_delivered_texts(context) == [
         "Draft preview.",
         "Final continuation.",
     ]
+    assert context.bot.edits[-1]["text"] == "Draft preview."
     assert context.bot.messages[-2]["reply_to_message_id"] == 222
     assert "reply_to_message_id" not in context.bot.messages[-1]
     assert robot.acks == [
@@ -1917,7 +1921,7 @@ def test_get_viventium_response_supersedes_preview_then_sends_ordered_final_segm
     ]
 
 
-def test_get_viventium_response_delete_failure_does_not_replace_success_with_connection_error(monkeypatch):
+def test_get_viventium_response_final_reconciliation_does_not_depend_on_preview_delete(monkeypatch):
     class _DeleteFailBot(_FakeTelegramBot):
         async def delete_message(self, **kwargs):
             self.deletes.append(kwargs)
@@ -1957,8 +1961,9 @@ def test_get_viventium_response_delete_failure_does_not_replace_success_with_con
         )
     )
 
-    delivered = [str(item.get("text") or "") for item in context.bot.messages]
+    delivered = _final_delivered_texts(context)
     assert delivered[-2:] == ["First final.", "Second final."]
+    assert context.bot.deletes == []
     assert not any("Connection error" in text for text in delivered)
     assert not any("stale preview delete failure" in text for text in delivered)
 
@@ -2116,7 +2121,7 @@ def test_get_viventium_response_retracts_just_sent_final_when_commit_ack_is_stal
         ("turn-1", 1, "committed", "telegram:111:1001"),
     ]
     assert context.bot.deletes[-1] == {"chat_id": 111, "message_id": 1001}
-    assert context.bot.messages == []
+    assert context.bot.current_messages == {}
 
 
 def test_get_viventium_response_passes_stable_opaque_source_event_id(monkeypatch):
