@@ -18,7 +18,7 @@ most specific existing QA owner when a scenario already has a detailed provider 
 | `GHUCP-007` | `GH-UCP-005` | User connects, tests, selects, reconnects, disconnects, and forgets a personal provider account | Browser, MCP, native harness | Control-plane tests + real provider | 2026-08-12 PARTIAL: ready personal account selection and two exact hosted missions pass; hosted reconnect/disconnect/forget/rotation lifecycle remains open |
 | `GHUCP-008` | `GH-UCP-005` | Provider metadata and homes remain owner scoped and secrets never enter the runtime database | API, filesystem, DB | Control-plane tests + secret scan | 2026-08-05 PARTIAL: owner-scope tests plus local private-mode and credential-removal checks passed |
 | `GHUCP-009` | `GH-UCP-006` | A mission uses only its selected compatible account and releases its lease | Worker, provider home | Mission tests + live worker | 2026-08-12 PARTIAL: two selected personal-subscription missions completed on the accepted release and the post-run active-lease count was zero; live concurrency/refresh/cancel/stale-lease matrix remains open |
-| `GHUCP-010` | `GH-UCP-006` | Required/busy/unsupported account states fail closed; preferred policy preserves legacy compatibility | Browser, worker | Mission/policy tests | 2026-08-06 PARTIAL: focused source tests prove the multi-user per-worker-container gate and unchanged preferred/legacy fallbacks; installed supported/unsupported platform matrix pending |
+| `GHUCP-010` | `GH-UCP-006` | Required/busy/unsupported account states fail closed; preferred policy preserves legacy compatibility | Browser, worker | Mission/policy tests | 2026-08-12 PARTIAL: the installed deployment route completed a real browser mission with persistent output and no new `401`; a separately bound personal-required mission failed truthfully on its provider quota with no fallback; second healthy personal-account and two-owner matrices remain open |
 | `GHUCP-011` | `GH-UCP-007` | User creates and finds a private, human-named workspace | Browser, API, DB | Catalog tests + Playwright | 2026-08-12 PARTIAL: exact hosted browser mission, retained named workspace, provider result, and opaque modern navigation pass; fresh successful create, two-user, and scale paths remain open |
 | `GHUCP-012` | `GH-UCP-007` | Rename, favorite, resume, refresh, and restart preserve workspace identity and state | Browser, workspace desktop | Catalog/UI tests + restart QA | 2026-08-09 PARTIAL: hosted session/workspace catalog survived UI restart and local-auth rollback; compute/profile continuity remains open |
 | `GHUCP-013` | `GH-UCP-008` | Duplicate/template creates a fresh identity and remains review-pending until exact destination decisions are confirmed | Browser, filesystem, DB | Duplicate/template transaction tests + Playwright | 2026-08-11 PARTIAL: atomic legacy/canonical/template/crash/concurrency plus local browser restore/waiver pass; installed two-user execution remains open |
@@ -354,6 +354,9 @@ most specific existing QA owner when a scenario already has a detailed provider 
   `thread.started` after the structured metadata handoff and proved private cleanup reseal. On the
   accepted 2026-08-12 hosted release, two missions completed with the selected personal subscription,
   their artifacts persisted across refresh, and the post-run active-lease count returned to zero.
+  A later fresh personal-required mission used that exact subscription path and released its lease,
+  but the account returned its explicit usage-limit reset; this is truthful quota evidence, not a
+  successful third mission or an authentication regression.
   Concurrent-use rejection, cancellation during refresh, and stale-lease recovery remain open on the
   hosted deployment.
 
@@ -391,10 +394,13 @@ most specific existing QA owner when a scenario already has a detailed provider 
   complete provider bundles are emitted only to a generated owner-only `0600` runtime-provider
   artifact intended for root-owned installation; ordinary runtime/gateway artifacts contain no
   provider credentials; and personal-bound missions retain their separate account-home route. The
-  required post-fix installed root-ownership check, deployment-managed mission,
-  refresh/persistence, personal-route parity, and negative boundary checks are pending the staged
-  hosted run and must not be inferred from the direct provider probe.
-- Last run: PARTIAL 2026-08-05; synthetic policy tests only.
+  installed `root:root 0600` provider artifact and runtime-only service projection were then verified
+  on the hosted canary. A fresh deployment-managed browser mission completed, rendered its requested
+  HTML in Watch, produced both exact artifacts, persisted in All Workspaces after navigation/refresh,
+  and introduced no new provider `401`. A fresh personal-required mission stayed bound to the Ready
+  subscription account with zero active lease after completion, but the provider returned its real
+  usage-limit reset and GlassHive classified it as `provider_rate_limited`; a second healthy personal
+  account and full concurrent-success matrix remain open.
 
 ## `GHUCP-011` — Create and Discover a Private Workspace
 
@@ -478,10 +484,14 @@ most specific existing QA owner when a scenario already has a detailed provider 
   truthfully with upstream `401 Unauthorized`; no personal account was substituted. On the accepted
   2026-08-12 hosted release, the retained named workspace completed two personal-subscription
   missions, exposed their output directly in the modern Workspaces surface, and preserved the result
-  across refresh. The 2026-08-10 source regression also proves an authenticated browser session may
-  consume its own opaque launch ref, while a different owner gets not found and an expired session
-  returns safely to sign-in. A fresh successful create, hosted two-user isolation, and scale paths
-  remain open.
+  across refresh. A later fresh deployment-managed workspace then completed with the repaired route,
+  visibly rendered its requested HTML, preserved both exact artifacts, and remained discoverable
+  after navigation and refresh. A parallel fresh personal-required workspace remained bound to the
+  Ready subscription but surfaced its provider-reported quota reset as `provider_rate_limited`; no
+  deployment fallback was substituted. The 2026-08-10 source regression also proves an authenticated
+  browser session may consume its own opaque launch ref, while a different owner gets not found and
+  an expired session returns safely to sign-in. A fresh successful create, hosted two-user isolation,
+  and scale paths remain open.
 
 ## `GHUCP-012` — Resume, Refresh, and Restart Continuity
 

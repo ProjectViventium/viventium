@@ -25,7 +25,7 @@
 | Real external clients | PASS | Codex `0.147.0` and Claude Code `2.1.220` each used the deployment-generated configuration, completed organization OAuth in the designated existing browser profile, listed the same owner-scoped workspaces, and repeated the tool call from a second fresh client process after acceptance. |
 | Conversational control | PASS | From a fresh Claude Code conversation, the user-facing controller listed workspaces, inspected the selected workspace, continued it with a synthetic instruction, and returned an exact success marker. Workspaces then showed the new artifact and exact content after completion and refresh. |
 | OAuth unhappy paths | PASS for the exercised matrix | An expired authorization required a fresh login, an occupied loopback callback port failed before consent, and a wrong-scope attempt ended at the identity provider with `invalid_client`. None produced a usable token or GlassHive tool result. The last result proves fail-closed behavior, not that scope validation specifically caused the rejection; broader wrong-audience/client/tenant verifier boundaries remain automated rather than real-client browser runs. |
-| Parallel mixed-account state | PARTIAL | The dashboard displayed and controlled simultaneous personal and deployment-managed work. The personal mission completed; the deployment-managed mission surfaced its upstream `401` instead of claiming success. A second healthy deployment account was not available, so two successful concurrent provider missions remain open operational QA. |
+| Parallel mixed-account state | PARTIAL | After release acceptance, a freshly rotated deployment route completed a real browser mission, rendered the requested HTML in Watch, produced both requested artifacts, survived navigation/refresh, and appeared in All Workspaces as organization-managed. A fresh personal-subscription mission remained separately bound with no deployment fallback or active lease, but the account itself returned its explicit usage-limit reset and the runtime surfaced `provider_rate_limited`. A second healthy personal subscription remains open operational QA. |
 
 ## Release And Runtime Evidence
 
@@ -38,6 +38,16 @@
   authenticated redirect.
 - A post-accept idempotent release invocation repeated exact local and edge provenance checks, and
   fresh Codex and Claude processes repeated the real MCP call without reconfiguration.
+- The deployment-provider repair was separately accepted only after the real deployment-managed
+  mission completed. A final redacted host diagnostic proved the runtime-only credential boundary,
+  installed `root:root 0600` provider file, exact completed run, both exact artifacts, no auth-class
+  failure, a separately bound personal-required run classified `provider_rate_limited`, zero active
+  provider leases, a clean database integrity check, and unchanged stable HTTPS status.
+- One transient catalog read returned an internal error after provider acceptance. The runtime log
+  identified a SQLite I/O error; `PRAGMA quick_check` remained clean, and a bounded runtime restart
+  restored the catalog. A fresh browser refresh then showed both new workspaces and their truthful
+  terminal states. A clean-machine continuity run remains open rather than treating that recovery as
+  a source-level SQLite fix.
 - Browser refresh served the expected revisioned stylesheet and application module. No app-origin
   exception or visible failure occurred. Repeated message-channel errors were classified as
   browser-extension noise because they came from the installed extension and did not correspond to a
@@ -45,7 +55,7 @@
 
 ## Automated Evidence
 
-- Complete Glass Drive server/UI file: **222 passed**.
+- Complete Glass Drive server test file: **223 passed**; full UI package: **282 passed**.
 - Parent manifest/bootstrap boundary: **47 passed**.
 - MCP OAuth file: **27 passed**. The three affected compiler/schema gates: **3 passed**.
 - Direct-conversation compatibility guards: **4 passed**; installed web/channel/voice acceptance
@@ -61,8 +71,9 @@
 
 - Hosted two-owner/wrong-owner denial on the exact installed release.
 - Hosted duplicate/template reapproval with two users and a real scheduled fire.
-- Reconnect or replace the unhealthy deployment-managed provider credential, then repeat two
-  successful provider missions concurrently; the personal-subscription route itself passed.
+- Connect a second personal subscription with available quota and repeat successful personal and
+  deployment-managed missions concurrently; deployment management now passes, while the current
+  personal subscription is authenticated but quota-limited until its provider-reported reset.
 - Fresh public bootstrap/install and upgrade-continuity acceptance.
 - The corrected terminal failed/cancelled/interrupted Pause policy is automated and the earlier escaped
   failure/recovery is recorded, but a deliberately failed post-fix hosted mission was not induced in
