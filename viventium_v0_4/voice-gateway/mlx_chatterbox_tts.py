@@ -24,6 +24,7 @@
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import io
 import json
 import logging
@@ -74,6 +75,34 @@ _EMOTION_WRAPPER_RE = re.compile(
 
 _MODEL_CACHE: dict[str, object] = {}
 _MODEL_LOCK = threading.Lock()
+# MLX execution streams are thread-local. Chatterbox models retain arrays bound to the stream
+# that created them, so every model load and generation for this process must use one stable
+# worker thread. A fresh thread per sentence can terminate the process in native MLX code.
+_MLX_EXECUTOR_LOCK = threading.Lock()
+_MLX_EXECUTOR: Optional[concurrent.futures.ThreadPoolExecutor] = None
+_MLX_EXECUTOR_PID: Optional[int] = None
+
+
+def _get_mlx_executor() -> concurrent.futures.ThreadPoolExecutor:
+    global _MLX_EXECUTOR, _MLX_EXECUTOR_PID
+
+    current_pid = os.getpid()
+    with _MLX_EXECUTOR_LOCK:
+        if _MLX_EXECUTOR is None or _MLX_EXECUTOR_PID != current_pid:
+            # LiveKit may fork job processes. Never reuse an executor or MLX model inherited
+            # from another process; both carry process/thread-local native state.
+            if _MLX_EXECUTOR_PID is not None and _MLX_EXECUTOR_PID != current_pid:
+                _MODEL_CACHE.clear()
+            _MLX_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
+                max_workers=1,
+                thread_name_prefix="mlx-chatterbox",
+            )
+            _MLX_EXECUTOR_PID = current_pid
+        return _MLX_EXECUTOR
+
+
+def _submit_mlx_work(function, /, *args, **kwargs) -> concurrent.futures.Future:
+    return _get_mlx_executor().submit(function, *args, **kwargs)
 
 
 def _should_log_latency() -> bool:
@@ -205,7 +234,7 @@ class MlxChatterboxTTS(TTS):
     def prewarm(self) -> None:
         """Best-effort preload. Downloads weights on first run and loads into MLX memory."""
         try:
-            _load_mlx_model(self._config.model_id)
+            _submit_mlx_work(_load_mlx_model, self._config.model_id).result()
             logger.info("MLX Chatterbox model loaded (model=%s)", self._config.model_id)
         except Exception:
             logger.warning(
@@ -233,33 +262,37 @@ def synthesize_wav_bytes(text: str, *, config: MlxChatterboxConfig) -> bytes:
         return b""
 
     _log_tts_input(surface="wav_bytes", text=input_text, config=config)
-    model = _load_mlx_model(config.model_id)
-    effective_sample_rate = int(config.sample_rate)
-    chunks: list[bytes] = []
 
-    for result in model.generate(  # type: ignore[attr-defined]
-        text=input_text,
-        ref_audio=config.ref_audio,
-        stream=bool(config.stream),
-        streaming_interval=float(config.streaming_interval_s),
-        temperature=float(config.temperature),
-        repetition_penalty=float(config.repetition_penalty),
-    ):
-        result_sample_rate = getattr(result, "sample_rate", None)
-        if isinstance(result_sample_rate, int) and result_sample_rate > 0:
-            effective_sample_rate = int(result_sample_rate)
-        pcm = _audio_to_pcm_s16le(getattr(result, "audio", None))
-        if pcm:
-            chunks.append(pcm)
+    def _synthesize() -> bytes:
+        model = _load_mlx_model(config.model_id)
+        effective_sample_rate = int(config.sample_rate)
+        chunks: list[bytes] = []
 
-    if not chunks:
-        return b""
+        for result in model.generate(  # type: ignore[attr-defined]
+            text=input_text,
+            ref_audio=config.ref_audio,
+            stream=bool(config.stream),
+            streaming_interval=float(config.streaming_interval_s),
+            temperature=float(config.temperature),
+            repetition_penalty=float(config.repetition_penalty),
+        ):
+            result_sample_rate = getattr(result, "sample_rate", None)
+            if isinstance(result_sample_rate, int) and result_sample_rate > 0:
+                effective_sample_rate = int(result_sample_rate)
+            pcm = _audio_to_pcm_s16le(getattr(result, "audio", None))
+            if pcm:
+                chunks.append(pcm)
 
-    return _pcm_to_wav_bytes(
-        pcm=b"".join(chunks),
-        sample_rate=effective_sample_rate,
-        num_channels=int(config.num_channels),
-    )
+        if not chunks:
+            return b""
+
+        return _pcm_to_wav_bytes(
+            pcm=b"".join(chunks),
+            sample_rate=effective_sample_rate,
+            num_channels=int(config.num_channels),
+        )
+
+    return _submit_mlx_work(_synthesize).result()
 
 
 class _MlxChatterboxChunkedStream(ChunkedStream):
@@ -363,8 +396,7 @@ class _MlxChatterboxChunkedStream(ChunkedStream):
             finally:
                 loop.call_soon_threadsafe(_emit_end)
 
-        thread = threading.Thread(target=_worker, name="mlx-chatterbox-tts", daemon=True)
-        thread.start()
+        _submit_mlx_work(_worker)
 
         try:
             while True:

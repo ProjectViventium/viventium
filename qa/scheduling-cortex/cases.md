@@ -1,5 +1,7 @@
 # Scheduling Cortex QA Cases
 
+Automated prompt-contract owner: `tests/release/test_scheduler_prompt_contract.py`.
+
 ## Case ID Convention
 
 Use stable `SCHED-NNN` IDs for scheduling cortex cases.

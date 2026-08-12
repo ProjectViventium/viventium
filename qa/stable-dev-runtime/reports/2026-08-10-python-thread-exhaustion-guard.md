@@ -66,3 +66,4 @@ The candidate Telegram sidecar could not own the singleton bot/port already held
 startup reported that truthfully and continued with the browser/voice stack. Telegram coexistence is
 not counted as passed by this run. Audible call delivery and endurance stress also remain separate
 gates and must not be inferred from this smoke test.
+<!-- qa-evidence-exempt: Historical or specialized supporting artifact retained without retroactively inventing missing evidence; current release acceptance requires a fresh full-view report. -->

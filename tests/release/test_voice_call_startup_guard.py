@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import textwrap
 from pathlib import Path
@@ -28,10 +29,19 @@ CALL_BUTTON = (
     / "CallButton.tsx"
 )
 CALL_ERROR = CALL_BUTTON.with_name("voiceCallError.ts")
+_agent_starter_react_dir = Path(
+    os.environ.get(
+        "VIVENTIUM_AGENT_STARTER_REACT_DIR",
+        ROOT / "viventium_v0_4" / "agent-starter-react",
+    )
+).expanduser()
+AGENT_STARTER_REACT_ROOT = (
+    _agent_starter_react_dir
+    if _agent_starter_react_dir.is_absolute()
+    else ROOT / _agent_starter_react_dir
+).resolve()
 TYPESCRIPT = (
-    ROOT
-    / "viventium_v0_4"
-    / "agent-starter-react"
+    AGENT_STARTER_REACT_ROOT
     / "node_modules"
     / "typescript"
     / "lib"

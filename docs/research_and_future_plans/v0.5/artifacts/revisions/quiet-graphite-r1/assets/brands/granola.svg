@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title">
+  <title id="title">Granola</title>
+  <rect width="64" height="64" rx="14" fill="#B7CB45"/>
+  <path d="M47.7 15.2c-10.7-4.8-24.1-1.5-30.6 7.7-6.2 8.7-5.2 20.9 2.5 28.3 7.8 7.4 20.2 7.4 27.7.2 6.5-6.2 7-16.6 1.2-23.4-5-5.8-14-7.1-20.4-2.8-5.4 3.7-6.6 11.4-2.5 16.2 3.3 3.9 9.5 4.8 13.7 1.8 3.4-2.4 4.1-7.3 1.5-10.4" fill="none" stroke="#1E1F20" stroke-width="6.2" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

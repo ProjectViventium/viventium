@@ -947,7 +947,13 @@ def test_native_agent_bundle_omits_tools_and_handoffs_owned_by_unavailable_servi
     )
     assert all("web_search" not in agent.get("tools", []) for agent in agent_groups)
     assert compiled.get("handoffAgents") == []
-    assert compiled["mainAgent"].get("edges") == []
+    assert {
+        (edge.get("from"), edge.get("to"))
+        for edge in compiled["mainAgent"].get("edges", [])
+    } == {
+        ("agent_viventium_main_95aeb3", "agent_viventium_red_team_95aeb3"),
+        ("agent_viventium_red_team_95aeb3", "agent_viventium_main_95aeb3"),
+    }
     assert compiled["mainAgent"]["provider"] == assignments["conscious"][0]
     assert compiled["mainAgent"]["model"] == assignments["conscious"][1]
     assert "glasshive_options" not in compiled["mainAgent"]
@@ -1305,10 +1311,10 @@ def test_main_agent_voice_profile_preserves_recall_capable_primary_and_independe
     main_agent = load_source_of_truth_agents_bundle()["mainAgent"]
 
     assert main_agent["voice_llm_provider"] == "xai"
-    assert main_agent["voice_llm_model"] == "grok-4.3"
+    assert main_agent["voice_llm_model"] == "grok-4.5"
     assert main_agent["voice_llm_model_parameters"] == {
-        "model": "grok-4.3",
-        "reasoning_effort": "none",
+        "model": "grok-4.5",
+        "reasoning_effort": "low",
     }
     assert main_agent["voice_fallback_llm_provider"] == "openAI"
     assert main_agent["voice_fallback_llm_model"] == "gpt-5.6-terra"
@@ -1317,12 +1323,16 @@ def test_main_agent_voice_profile_preserves_recall_capable_primary_and_independe
         "reasoning_effort": "none",
         "useResponsesApi": True,
     }
-    assert main_agent["fallback_llm_provider"] == "anthropic"
-    assert main_agent["fallback_llm_model"] == "claude-opus-5"
+    assert main_agent["fallback_llm_provider"] == "glasshive-harness"
+    assert main_agent["fallback_llm_model"] == "claude-code:opus"
+    assert main_agent["fallback_llm_model_parameters"] == {
+        "model": "claude-code:opus",
+        "reasoning_effort": "high",
+    }
 
 
 XAI_CURRENT_DEFAULT_MODELS = [
-    "grok-4.3",
+    "grok-4.5",
     "grok-4.20-non-reasoning",
     "grok-4.20-multi-agent-0309",
     "grok-4.20-0309-reasoning",
@@ -1400,14 +1410,14 @@ def test_shipped_config_examples_default_automation_to_sol_xhigh(filename: str) 
     assert host_worker["codex_reasoning_effort"] == "xhigh"
 
 
-def test_build_custom_endpoints_xai_defaults_to_grok_43() -> None:
+def test_build_custom_endpoints_xai_defaults_to_grok_45() -> None:
     xai = custom_endpoint(config_compiler.build_custom_endpoints(), "xai")
     models = xai["models"]["default"]
 
     assert models[:4] == XAI_CURRENT_DEFAULT_MODELS
     assert not any("experimental-beta-0304" in model for model in models)
-    assert xai["titleModel"] == "grok-4.3"
-    assert xai["summaryModel"] == "grok-4.3"
+    assert xai["titleModel"] == "grok-4.5"
+    assert xai["summaryModel"] == "grok-4.5"
     assert xai["titleModel"] not in XAI_RETIRED_MODEL_IDS
     assert xai["summaryModel"] not in XAI_RETIRED_MODEL_IDS
 
@@ -1452,18 +1462,18 @@ def test_glasshive_compiles_as_exact_core_agent_provider(
     assert capability["cortex_execution"] is True
     assert capability["phase_b_followup"] is True
     assert capability["activation_classifier"] is False
-    assert capability["voice_pipeline_llm"] is True
-    assert capability["native_realtime_voice"] is False
     assert capability["realtime_voice"] is False
-    assert capability["automatic_fallback_target"] is False
+    assert capability["automatic_fallback_target"] is True
+    assert capability["serial_model_fallback"] is True
     assert capability["responses_api"] is False
-    assert capability["default_access"] == "full"
-    assert capability["allow_full_access"] is True
-    assert capability["reviewed_mcp_projection"] == "deferred"
+    assert capability["worker_native_tools"] is True
+    assert capability["host_tools_transport"] == "broker_mcp"
+    assert capability["host_tools"] == ["file_search", "web_search"]
     assert capability["excluded_mcp_servers"] == ["glasshive-workers-projects"]
     health_policy = librechat["mcpServers"]["viventium-health"]["viventiumGlassHive"]
     assert health_policy["permitsAutonomousWorker"] is True
-    assert health_policy["defaultToolAccess"] == "content_read"
+    assert health_policy["defaultToolAccess"] == "none"
+    assert health_policy["contentReadPolicy"] == "require_broker_grant"
     assert health_policy["writePolicy"] == "deny"
     assert capability["models"][0]["recommendedEffort"] == "medium"
     assert capability["models"][0]["effortChoices"] == [
@@ -1951,11 +1961,11 @@ def test_source_template_xai_endpoint_uses_current_stable_models() -> None:
     assert models[:4] == XAI_CURRENT_DEFAULT_MODELS
     assert not any("experimental-beta-0304" in model for model in models)
     assert XAI_RETIRED_MODEL_IDS.isdisjoint(models)
-    assert xai["titleModel"] == "grok-4.3"
-    assert xai["summaryModel"] == "grok-4.3"
+    assert xai["titleModel"] == "grok-4.5"
+    assert xai["summaryModel"] == "grok-4.5"
 
 
-def test_rendered_librechat_yaml_xai_endpoint_uses_grok_43_after_source_template_merge() -> None:
+def test_rendered_librechat_yaml_xai_endpoint_uses_grok_45_after_source_template_merge() -> None:
     config = {
         "version": 1,
         "install": {"mode": "native"},
@@ -1995,11 +2005,11 @@ def test_rendered_librechat_yaml_xai_endpoint_uses_grok_43_after_source_template
 
     assert models[:4] == XAI_CURRENT_DEFAULT_MODELS
     assert XAI_RETIRED_MODEL_IDS.isdisjoint({xai["titleModel"], xai["summaryModel"]})
-    assert xai["titleModel"] == "grok-4.3"
-    assert xai["summaryModel"] == "grok-4.3"
+    assert xai["titleModel"] == "grok-4.5"
+    assert xai["summaryModel"] == "grok-4.5"
 
 
-def test_rendered_librechat_yaml_exposes_grok_43_in_model_specs() -> None:
+def test_rendered_librechat_yaml_exposes_grok_45_in_model_specs() -> None:
     config = {
         "version": 1,
         "install": {"mode": "native"},
@@ -2035,13 +2045,13 @@ def test_rendered_librechat_yaml_exposes_grok_43_in_model_specs() -> None:
     env = config_compiler.render_runtime_env(config, assignments)
     librechat_yaml = yaml.safe_load(config_compiler.render_librechat_yaml(config, assignments, env))
     grok_spec = next(
-        item for item in librechat_yaml["modelSpecs"]["list"] if item.get("name") == "grok-4.3"
+        item for item in librechat_yaml["modelSpecs"]["list"] if item.get("name") == "grok-4.5"
     )
 
-    assert grok_spec["label"] == "Grok 4.3"
+    assert grok_spec["label"] == "Grok 4.5"
     assert grok_spec["group"] == "xai"
     assert grok_spec["preset"]["endpoint"] == "xai"
-    assert grok_spec["preset"]["model"] == "grok-4.3"
+    assert grok_spec["preset"]["model"] == "grok-4.5"
 
 
 def test_config_compiler_minimal(tmp_path: Path) -> None:
@@ -2219,7 +2229,7 @@ def test_config_compiler_minimal(tmp_path: Path) -> None:
     assert librechat_yaml["memory"]["personalize"] is True
     assert librechat_yaml["memory"]["agent"]["provider"] == "openai"
     assert librechat_yaml["memory"]["agent"]["model"] == "gpt-5.4"
-    assert librechat_yaml["memory"]["readProfile"]["tokenLimit"] == 2200
+    assert librechat_yaml["memory"]["readProfile"]["tokenLimit"] == 8000
     assert librechat_yaml["memory"]["readProfile"]["keyLimits"]["preferences"] == 600
     assert prompt_bundle["prompt_count"] >= 50
     assert "main.conscious_agent" in prompt_bundle["prompts"]
@@ -4240,11 +4250,11 @@ def test_source_of_truth_mcp_instructions_match_prompt_architecture_contract() -
         "version": 1,
         "permitsAutonomousWorker": True,
         "hostAllowed": True,
-        "sandboxAllowed": False,
+        "sandboxAllowed": True,
         "defaultToolAccess": "none",
         "contentReadPolicy": "require_broker_grant",
         "writePolicy": "allow",
-        "riskClass": "scheduling",
+        "riskClass": "user_scheduling",
         "reexportNativeTools": True,
         "toolPolicies": {
             "periphery_list": {"access": "content_read"},
@@ -4257,6 +4267,7 @@ def test_source_of_truth_mcp_instructions_match_prompt_architecture_contract() -
             "schedule_create": {"access": "write"},
             "schedule_update": {"access": "write"},
             "schedule_delete": {"access": "write"},
+            "sys__server__sys": {"access": "content_read"},
         },
     }
     assert servers["glasshive-workers-projects"]["viventiumTrustedServerInstructions"] is True
@@ -4734,11 +4745,7 @@ def test_explicit_anthropic_default_override_keeps_generated_consumers_consisten
         for entry in rendered["modelSpecs"]["list"]
         if entry.get("preset", {}).get("endpoint") == "anthropic"
     ]
-    assert anthropic_specs == [
-        "claude-sonnet-4-5",
-        "claude-opus-4-8",
-        "claude-opus-5",
-    ]
+    assert anthropic_specs == ["claude-opus-5"]
 
 
 def test_build_agent_assignments_requires_openai_or_anthropic_foundation() -> None:

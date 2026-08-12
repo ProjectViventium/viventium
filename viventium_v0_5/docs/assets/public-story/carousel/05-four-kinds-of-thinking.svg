@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1350" viewBox="0 0 1080 1350" role="img" aria-labelledby="title desc">
+  <title id="title">One answer, four kinds of thinking</title>
+  <desc id="desc">Carousel frame explaining the four plain-language parts of the Viventium philosophy.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f8faff"/><stop offset="1" stop-color="#edf8f3"/></linearGradient>
+    <filter id="shadow" x="-40%" y="-40%" width="180%" height="180%"><feDropShadow dx="0" dy="15" stdDeviation="18" flood-color="#243c54" flood-opacity="0.12"/></filter>
+  </defs>
+  <rect width="1080" height="1350" fill="url(#bg)"/>
+  <circle cx="105" cy="80" r="175" fill="#e2e9ff" opacity="0.62"/><circle cx="1010" cy="1260" r="220" fill="#dff4ea" opacity="0.65"/>
+  <text x="70" y="74" fill="#465369" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="18" font-weight="700" letter-spacing="5">VIVENTIUM</text>
+  <text x="1010" y="74" text-anchor="end" fill="#6d788a" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="18" font-weight="650">05 / 06</text>
+  <text x="70" y="176" fill="#192437" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="58" font-weight="780">One answer.</text>
+  <text x="70" y="242" fill="#192437" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="58" font-weight="780">Four kinds of thinking.</text>
+  <text x="70" y="294" fill="#526276" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="24">Do more of the right thinking before speaking.</text>
+  <g font-family="Inter, ui-sans-serif, system-ui, sans-serif" text-anchor="middle">
+    <text x="540" y="365" fill="#5b6780" font-size="17" font-weight="780" letter-spacing="3">ALWAYS WORKING TOGETHER</text>
+    <g filter="url(#shadow)"><circle cx="300" cy="525" r="145" fill="#687de6"/><circle cx="780" cy="525" r="145" fill="#8466c7"/></g>
+    <text x="300" y="494" fill="#ffffff" font-size="24" font-weight="780">KNOW</text><text x="300" y="528" fill="#ffffff" font-size="24" font-weight="780">YOUR WORLD</text>
+    <text x="300" y="570" fill="#edf0ff" font-size="18">memory · priorities · work</text><text x="300" y="603" fill="#edf0ff" font-size="17">the full picture around you</text>
+    <text x="780" y="494" fill="#ffffff" font-size="24" font-weight="780">THINK QUIETLY</text><text x="780" y="528" fill="#ffffff" font-size="24" font-weight="780">IN BACKGROUND</text>
+    <text x="780" y="570" fill="#f3edff" font-size="18">quiet specialists keep looking</text><text x="780" y="603" fill="#f3edff" font-size="17">for missed details and risks</text>
+    <text x="540" y="750" fill="#5b6780" font-size="17" font-weight="780" letter-spacing="3">WHEN MORE TRUTH IS NEEDED</text>
+    <g filter="url(#shadow)"><circle cx="300" cy="910" r="145" fill="#2f9b79"/><circle cx="780" cy="910" r="145" fill="#2b6f78"/></g>
+    <text x="300" y="892" fill="#ffffff" font-size="24" font-weight="780">CHECK</text><text x="300" y="926" fill="#ffffff" font-size="24" font-weight="780">REALITY</text>
+    <text x="300" y="968" fill="#eafff7" font-size="18">evidence · likelihood</text><text x="300" y="1001" fill="#eafff7" font-size="17">and real experience</text>
+    <text x="780" y="892" fill="#ffffff" font-size="24" font-weight="780">CHALLENGE</text><text x="780" y="926" fill="#ffffff" font-size="24" font-weight="780">ITSELF</text>
+    <text x="780" y="968" fill="#e9fbff" font-size="18">try to disprove</text><text x="780" y="1001" fill="#e9fbff" font-size="17">the first answer</text>
+    <rect x="145" y="1120" width="790" height="92" rx="46" fill="#20354d"/>
+    <text x="540" y="1158" fill="#9fe0c2" font-size="17" font-weight="780" letter-spacing="3">ONE VOICE SPEAKS LAST</text>
+    <text x="540" y="1191" fill="#ffffff" font-size="21">known · likely · uncertain · worth checking</text>
+  </g>
+  <text x="70" y="1306" fill="#7b8795" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="17">THE VIVENTIUM WAY</text>
+  <text x="1010" y="1306" text-anchor="end" fill="#7b8795" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="17">SWIPE →</text>
+</svg>

@@ -98,6 +98,16 @@ properties:
               executor:
                 type: string
                 enum: [glasshive_host, viventium_agent]
+          seed_health_context:
+            type: object
+            properties:
+              enabled:
+                type: boolean
+              active:
+                type: boolean
+              executor:
+                type: string
+                enum: [glasshive_host, viventium_agent]
       feelings:
         type: object
         properties:
@@ -418,6 +428,13 @@ properties:
   integrations:
     type: object
     properties:
+      health:
+        type: object
+        properties:
+          enabled:
+            type: boolean
+          life_projection_dir:
+            type: string
       sequential_thinking:
         type: object
         properties:

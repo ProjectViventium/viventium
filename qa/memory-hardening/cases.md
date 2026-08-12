@@ -1,5 +1,7 @@
 # Memory Hardening QA Cases
 
+Automated model-evaluation harness owner: `tests/release/test_memory_model_eval_harness.py`.
+
 ## Case ID Convention
 
 Use stable `MEMHARD-NNN` IDs for memory hardening cases.

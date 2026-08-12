@@ -1,0 +1,47 @@
+{
+  "schemaVersion": "0.1",
+  "missionId": "mission-example",
+  "status": "not_started",
+  "startedAt": null,
+  "completedAt": null,
+  "goalResult": {
+    "summary": "",
+    "successConditionMet": false
+  },
+  "evidence": [],
+  "deliverables": [],
+  "lifeChanges": [],
+  "proposedPromotions": [
+    {
+      "proposalId": "promotion-example",
+      "from": "life://Workspaces/example/YYYY-MM-DD-example/deliverables/example.md",
+      "to": "life://Projects/example/artifacts/example.md",
+      "reason": "template only",
+      "authorization": {
+        "status": "not_requested",
+        "checkpointRef": null,
+        "authorizedBy": null,
+        "authorizedAt": null
+      }
+    }
+  ],
+  "assumptions": [],
+  "corrections": [],
+  "failures": [],
+  "blockedSources": [],
+  "residualRisks": [],
+  "questions": [],
+  "workerSelfCheck": {
+    "deliverablesInspected": false,
+    "requirementsRechecked": false,
+    "privacyChecked": false,
+    "evidenceChecked": false
+  },
+  "evidenceResult": {
+    "source": "glasshive_evidence_harness",
+    "status": "not_run",
+    "blockingFailures": [],
+    "reportRef": null,
+    "writtenByWorker": false
+  }
+}

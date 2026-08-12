@@ -18,6 +18,7 @@ SCRIPT_SOURCE="$(resolve_script_source)"
 SCRIPT_DIR="$(cd -P "$(dirname "$SCRIPT_SOURCE")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 WORKSPACE_ROOT="$(cd "$REPO_ROOT/.." && pwd)"
+export VIVENTIUM_REPO_ROOT="$REPO_ROOT"
 
 # shellcheck source=/dev/null
 source "$REPO_ROOT/scripts/viventium/common.sh"
@@ -255,6 +256,13 @@ bootstrap_components() {
     "$@"
 }
 
+ensure_viventium_health_runtime() {
+  refresh_repo_python
+  "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/viventium_health_runtime.py" install \
+    --repo-root "$REPO_ROOT" \
+    --app-support-dir "$APP_SUPPORT_DIR"
+}
+
 config_file_sha256() {
   refresh_repo_python
   "$PYTHON_BIN" - "$1" <<'PY'
@@ -369,6 +377,53 @@ install_cli_lock_traps() {
   trap cleanup_cli_lock EXIT
   trap 'exit_cli_on_signal 130' INT
   trap 'exit_cli_on_signal 143' TERM
+}
+
+runtime_start_claim_file() {
+  printf '%s\n' "$APP_SUPPORT_DIR/state/runtime/startup-in-progress"
+}
+
+runtime_start_claim_active() {
+  local claim_file=""
+  local owner_pid=""
+  local owner_repo=""
+  local created_at=""
+  local owner_command=""
+  local now=""
+  claim_file="$(runtime_start_claim_file)"
+  [[ -f "$claim_file" && ! -L "$claim_file" ]] || return 1
+  [[ "$(stat -f '%u:%l' "$claim_file" 2>/dev/null || true)" == "$(id -u):1" ]] || return 1
+  owner_pid="$(sed -n '1p' "$claim_file")"
+  owner_repo="$(sed -n '2p' "$claim_file")"
+  created_at="$(sed -n '3p' "$claim_file")"
+  [[ "$owner_pid" =~ ^[0-9]+$ && "$owner_repo" == "$REPO_ROOT" && "$created_at" =~ ^[0-9]+$ ]] || return 1
+  kill -0 "$owner_pid" >/dev/null 2>&1 || return 1
+  now="$(date '+%s')"
+  (( now >= created_at && now - created_at <= 1800 )) || return 1
+  owner_command="$(ps -p "$owner_pid" -o command= 2>/dev/null || true)"
+  [[ "$owner_command" == *"bin/viventium"* ]]
+}
+
+write_runtime_start_claim() {
+  local claim_file=""
+  local temporary_file=""
+  claim_file="$(runtime_start_claim_file)"
+  temporary_file="${claim_file}.tmp.$$"
+  mkdir -p "$(dirname "$claim_file")"
+  (umask 077; printf '%s\n%s\n%s\n' "$$" "$REPO_ROOT" "$(date '+%s')" >"$temporary_file")
+  chmod 600 "$temporary_file"
+  mv -f "$temporary_file" "$claim_file"
+  export VIVENTIUM_RUNTIME_START_CLAIM_FILE="$claim_file"
+  export VIVENTIUM_RUNTIME_START_CLAIM_OWNER_PID="$$"
+  export VIVENTIUM_RUNTIME_START_CLAIM_REPO_ROOT="$REPO_ROOT"
+}
+
+clear_runtime_start_claim() {
+  local claim_file="${VIVENTIUM_RUNTIME_START_CLAIM_FILE:-$(runtime_start_claim_file)}"
+  [[ -f "$claim_file" && ! -L "$claim_file" ]] || return 0
+  [[ "$(sed -n '1p' "$claim_file")" == "${VIVENTIUM_RUNTIME_START_CLAIM_OWNER_PID:-$$}" ]] || return 0
+  [[ "$(sed -n '2p' "$claim_file")" == "${VIVENTIUM_RUNTIME_START_CLAIM_REPO_ROOT:-$REPO_ROOT}" ]] || return 0
+  rm -f "$claim_file"
 }
 
 stack_owner_state_file() {
@@ -750,6 +805,7 @@ Commands:
   report-bug        Alias for workflows bug-report flow.
   bug-report        Compatibility alias for report-bug.
   prompt-workbench  Start, stop, open, or inspect the local Prompt Workbench.
+  health            Configure, connect, pull, schedule, or inspect private health evidence.
   preflight         Detect and optionally install missing system prerequisites.
   reset             Factory-reset the local Viventium install state under App Support.
   start             Start the current Viventium stack using generated runtime env.
@@ -757,6 +813,7 @@ Commands:
   continuity-audit  Capture continuity metadata for the current install.
   memory-harden     Dry-run, apply, schedule, status, or roll back saved-memory hardening.
   transcripts       Configure the optional local meeting-transcripts source folder.
+  qa-test-account   Configure the isolated non-admin account used by local QA and Workbench evals.
   memory-dedupe     Dry-run or apply saved-memory/provider-key dedupe and unique indexes.
   stop              Stop the current Viventium stack.
   snapshot          Capture a local state snapshot into App Support.
@@ -840,6 +897,15 @@ Usage:
 Captures metadata-only continuity state for the current install under App Support state.
 USAGE
       ;;
+    cognitive-integrity)
+      cat <<'USAGE'
+Usage:
+  bin/viventium cognitive-integrity [--json]
+
+Reports one public-safe composed view of provider capability transport, saved-memory exposure,
+conversation recall, Prompt Workbench nightly state, memory hardening, and config/prompt drift.
+USAGE
+      ;;
     memory-harden)
       cat <<'USAGE'
 Usage:
@@ -865,6 +931,31 @@ Usage:
 Reads or updates runtime.memory_hardening.transcripts.source_dir in the canonical
 local config.yaml, writes a local backup before changes, and recompiles runtime
 files after set/clear.
+USAGE
+      ;;
+    health)
+      cat <<'USAGE'
+Usage:
+  bin/viventium health whoop configure [--client-id <id>] [--redirect-uri <uri>] [--json-stdin]
+  bin/viventium health whoop connect [--callback-url <url> | --callback-stdin] [--json]
+  bin/viventium health whoop onboard --callback-stdin [--hour 6] [--minute 0]
+  bin/viventium health whoop status
+  bin/viventium health whoop disconnect
+  bin/viventium health import whoop-export (--input <zip> | --stdin)
+  bin/viventium health import whoop-evidence --stdin --media-type (image/png | image/jpeg)
+  bin/viventium health pull whoop [--lookback-days <days>]
+  bin/viventium health pull whoop --all-history
+  bin/viventium health runs [--provider whoop] [--limit <count>]
+  bin/viventium health records [--provider whoop] [--limit <count>]
+  bin/viventium health read <record-id> [--offset <bytes>] [--max-bytes <bytes>]
+  bin/viventium health schedule install [--hour <0-23>] [--minute <0-59>]
+  bin/viventium health schedule status
+  bin/viventium health schedule uninstall
+
+Health evidence is stored privately and append-only under Viventium App Support.
+Browser onboarding completes authorization, full-history import, and scheduled
+correction acquisition as one owner action. CLI and official-export fallbacks remain available.
+--all-history cannot be combined with --lookback-days.
 USAGE
       ;;
     memory-dedupe)
@@ -998,6 +1089,31 @@ Usage:
 
 Manages only the standalone local Prompt Workbench web app. Stop does not stop
 the main Viventium runtime, LibreChat, or native support services.
+USAGE
+      ;;
+    health)
+      cat <<'USAGE'
+Usage:
+  bin/viventium health whoop configure [--client-id <id>] [--redirect-uri <uri>] [--json-stdin]
+  bin/viventium health whoop connect [--callback-url <url> | --callback-stdin] [--json]
+  bin/viventium health whoop onboard --callback-stdin [--hour 6] [--minute 0]
+  bin/viventium health whoop status
+  bin/viventium health whoop disconnect
+  bin/viventium health import whoop-export (--input <zip> | --stdin)
+  bin/viventium health import whoop-evidence --stdin --media-type (image/png | image/jpeg)
+  bin/viventium health pull whoop [--lookback-days <days>]
+  bin/viventium health pull whoop --all-history
+  bin/viventium health runs [--provider whoop] [--limit <count>]
+  bin/viventium health records [--provider whoop] [--limit <count>]
+  bin/viventium health read <record-id> [--offset <bytes>] [--max-bytes <bytes>]
+  bin/viventium health schedule install [--hour <0-23>] [--minute <0-59>]
+  bin/viventium health schedule status
+  bin/viventium health schedule uninstall
+
+Health evidence is stored privately and append-only under Viventium App Support.
+Browser onboarding completes authorization, full-history import, and scheduled
+correction acquisition as one owner action. CLI and official-export fallbacks remain available.
+--all-history cannot be combined with --lookback-days.
 USAGE
       ;;
     heal)
@@ -3775,13 +3891,84 @@ transcripts_command() {
   esac
 }
 
+qa_test_account_command() {
+  local action="${1:-status}"
+  if [[ "$action" == "--help" || "$action" == "-h" || "$action" == "help" ]]; then
+    subcommand_usage qa-test-account
+    return 0
+  fi
+  shift || true
+
+  ensure_app_support_layout "$APP_SUPPORT_DIR"
+  if [[ ! -f "$CONFIG_FILE" ]]; then
+    echo "Missing config: $CONFIG_FILE" >&2
+    echo "Run: bin/viventium install" >&2
+    return 1
+  fi
+  refresh_repo_python
+
+  local config_tool="$REPO_ROOT/scripts/viventium/config_settings.py"
+  local backup_dir="$APP_SUPPORT_DIR/state/config-backups"
+  case "$action" in
+    status)
+      "$PYTHON_BIN" "$config_tool" \
+        --config-file "$CONFIG_FILE" \
+        qa-test-account-status \
+        "$@"
+      ;;
+    set)
+      if [[ $# -lt 1 ]]; then
+        echo "Missing QA test-account email or --email-stdin." >&2
+        subcommand_usage qa-test-account >&2
+        return 1
+      fi
+      acquire_cli_lock "$COMMAND"
+      local output=""
+      if [[ "$1" == "--email-stdin" ]]; then
+        shift || true
+        output="$("$PYTHON_BIN" "$config_tool" \
+          --config-file "$CONFIG_FILE" \
+          --backup-dir "$backup_dir" \
+          qa-test-account-set --email-stdin \
+          "$@")"
+      else
+        local qa_email="$1"
+        shift || true
+        output="$("$PYTHON_BIN" "$config_tool" \
+          --config-file "$CONFIG_FILE" \
+          --backup-dir "$backup_dir" \
+          qa-test-account-set "$qa_email" \
+          "$@")"
+      fi
+      compile_config >/dev/null
+      printf '%s\n' "$output"
+      ;;
+    clear)
+      acquire_cli_lock "$COMMAND"
+      local output=""
+      output="$("$PYTHON_BIN" "$config_tool" \
+        --config-file "$CONFIG_FILE" \
+        --backup-dir "$backup_dir" \
+        qa-test-account-clear \
+        "$@")"
+      compile_config >/dev/null
+      printf '%s\n' "$output"
+      ;;
+    *)
+      echo "Unknown qa-test-account action: $action" >&2
+      subcommand_usage qa-test-account >&2
+      return 1
+      ;;
+  esac
+}
+
 maybe_reexec_active_runtime_checkout() {
   [[ "${VIVENTIUM_DISABLE_ACTIVE_CHECKOUT_REEXEC:-0}" == "1" ]] && return 0
   local command_name="${1:-}"
   shift || true
 
   case "$command_name" in
-    start|launch|stop|install-helper|uninstall-helper|status-bar|memory-harden|memory-dedupe|transcripts|workflows|heal|feature-request|report-bug|bug-report|prompt-workbench)
+    start|launch|stop|install-helper|uninstall-helper|status-bar|memory-harden|memory-dedupe|transcripts|workflows|heal|feature-request|report-bug|bug-report|prompt-workbench|health)
       ;;
     *)
       return 0
@@ -3948,6 +4135,94 @@ prepare_runtime_exports() {
   if [[ -f "$generated_telegram_codex_projects" ]]; then
     export VIVENTIUM_TELEGRAM_CODEX_PROJECTS_FILE="$generated_telegram_codex_projects"
   fi
+}
+
+load_selected_runtime_environment_for_children() {
+  [[ -f "$GENERATED_ENV" ]] || return 0
+
+  # A side-by-side wrapper selects the runtime before this process starts. Keep
+  # that identity authoritative while replacing any inherited ownership values
+  # from a canonical or previously selected runtime.
+  local wrapper_scope="${VIVENTIUM_DEV_ENV_SCOPE_ACTIVE:-}"
+  local wrapper_instance_id="${VIVENTIUM_DEV_ENV_INSTANCE_ID:-}"
+  local wrapper_name="${VIVENTIUM_DEV_ENV_NAME:-}"
+  local runtime_profile=""
+  local selected_state_dir="$APP_SUPPORT_DIR/state"
+  local selected_profile_dir=""
+  unset VIVENTIUM_APP_SUPPORT_DIR VIVENTIUM_BASE_STATE_DIR VIVENTIUM_STATE_ROOT
+  unset VIVENTIUM_PUBLIC_NETWORK_STATE_FILE VIVENTIUM_CALL_TUNNEL_LOG_DIR
+  unset VIVENTIUM_RUNTIME_PROFILE
+  unset VIVENTIUM_LOCAL_MONGO_PORT VIVENTIUM_LOCAL_MONGO_DB VIVENTIUM_LOCAL_MONGO_DATA_PATH
+  unset VIVENTIUM_LOCAL_MEILI_PORT VIVENTIUM_LOCAL_MEILI_DATA_PATH
+  unset MEILI_MASTER_KEY VIVENTIUM_LOCAL_MEILI_MASTER_KEY
+  unset MONGO_HOST MEILI_BIND_HOST
+  unset LIVEKIT_HTTP_PORT LIVEKIT_TCP_PORT LIVEKIT_UDP_PORT LIVEKIT_NODE_IP
+  unset VIVENTIUM_LIVEKIT_CFG_DIR
+  unset VIVENTIUM_DEV_ENV_ENABLED VIVENTIUM_DEV_ENV_NAME
+
+  # Child launchers and native lifecycle scripts need the selected generated
+  # values in their environment. Establish the selected structural roots before
+  # the local layer so references inside runtime.local.env cannot expand through
+  # hostile ambient canonical values. The local override layer still loads last.
+  export VIVENTIUM_APP_SUPPORT_DIR="$APP_SUPPORT_DIR"
+  export VIVENTIUM_BASE_STATE_DIR="$selected_state_dir"
+  set -a
+  # shellcheck disable=SC1090
+  source "$GENERATED_ENV"
+  runtime_profile="${VIVENTIUM_RUNTIME_PROFILE:-isolated}"
+  selected_profile_dir="$selected_state_dir/runtime/$runtime_profile"
+  export VIVENTIUM_STATE_ROOT="$selected_profile_dir"
+  if [[ -f "$GENERATED_LOCAL_ENV" ]]; then
+    # shellcheck disable=SC1090
+    source "$GENERATED_LOCAL_ENV"
+  fi
+  set +a
+
+  if [[ -n "$wrapper_scope" ]]; then
+    export VIVENTIUM_DEV_ENV_SCOPE_ACTIVE="$wrapper_scope"
+  fi
+  if [[ -n "$wrapper_instance_id" ]]; then
+    export VIVENTIUM_DEV_ENV_INSTANCE_ID="$wrapper_instance_id"
+  fi
+  if [[ "$wrapper_scope" == "true" || "$wrapper_scope" == "1" ]]; then
+    export VIVENTIUM_DEV_ENV_NAME="$wrapper_name"
+  fi
+
+  runtime_profile="${VIVENTIUM_RUNTIME_PROFILE:-$runtime_profile}"
+  selected_profile_dir="$selected_state_dir/runtime/$runtime_profile"
+  export VIVENTIUM_APP_SUPPORT_DIR="$APP_SUPPORT_DIR"
+  export VIVENTIUM_BASE_STATE_DIR="$selected_state_dir"
+  export VIVENTIUM_STATE_ROOT="$selected_profile_dir"
+  export VIVENTIUM_RUNTIME_PROFILE="$runtime_profile"
+  export VIVENTIUM_PUBLIC_NETWORK_STATE_FILE="$selected_profile_dir/public-network.json"
+  export VIVENTIUM_CALL_TUNNEL_LOG_DIR="$selected_profile_dir/logs"
+
+  if [[ -z "${VIVENTIUM_LOCAL_MONGO_DATA_PATH:-}" ]]; then
+    if [[ -d "$selected_profile_dir/mongo-data" ]]; then
+      VIVENTIUM_LOCAL_MONGO_DATA_PATH="$selected_profile_dir/mongo-data"
+    elif [[ -d "$selected_state_dir/mongo-data" ]]; then
+      VIVENTIUM_LOCAL_MONGO_DATA_PATH="$selected_state_dir/mongo-data"
+    else
+      VIVENTIUM_LOCAL_MONGO_DATA_PATH="$selected_profile_dir/mongo-data"
+    fi
+  fi
+  export VIVENTIUM_LOCAL_MONGO_DATA_PATH
+
+  if [[ -z "${VIVENTIUM_LOCAL_MEILI_DATA_PATH:-}" ]]; then
+    if [[ -d "$selected_profile_dir/meili-data" ]]; then
+      VIVENTIUM_LOCAL_MEILI_DATA_PATH="$selected_profile_dir/meili-data"
+    elif [[ -d "$selected_state_dir/meili-data" ]]; then
+      VIVENTIUM_LOCAL_MEILI_DATA_PATH="$selected_state_dir/meili-data"
+    else
+      VIVENTIUM_LOCAL_MEILI_DATA_PATH="$selected_profile_dir/meili-data"
+    fi
+  fi
+  export VIVENTIUM_LOCAL_MEILI_DATA_PATH
+
+  if [[ -z "${VIVENTIUM_LIVEKIT_CFG_DIR:-}" ]]; then
+    VIVENTIUM_LIVEKIT_CFG_DIR="$selected_profile_dir/livekit"
+  fi
+  export VIVENTIUM_LIVEKIT_CFG_DIR
 }
 
 install_progress_dir() {
@@ -4473,6 +4748,12 @@ runtime_env_true() {
   [[ "$value" == "1" || "$value" == "true" || "$value" == "yes" || "$value" == "on" ]]
 }
 
+value_is_true() {
+  local value="${1:-false}"
+  value="$(printf '%s' "$value" | tr '[:upper:]' '[:lower:]')"
+  [[ "$value" == "1" || "$value" == "true" || "$value" == "yes" || "$value" == "on" ]]
+}
+
 express_install_experience() {
   local value=""
   value="$(read_generated_env_value "VIVENTIUM_INSTALL_EXPERIENCE" "legacy")"
@@ -4491,7 +4772,34 @@ ensure_configured_prerequisites() {
 runtime_port_listening() {
   local port="${1:-}"
   [[ -n "$port" ]] || return 1
-  viventium_port_listener_active "$port"
+  if declare -F viventium_port_listener_active >/dev/null 2>&1; then
+    viventium_port_listener_active "$port"
+    return $?
+  fi
+
+  # An upgrade can execute this newer CLI while it is still sourcing an older
+  # common.sh that predates viventium_port_listener_active. Keep the successor
+  # health check self-contained until the candidate has committed successfully.
+  if command -v lsof >/dev/null 2>&1; then
+    lsof -nP -iTCP:"$port" -sTCP:LISTEN -t >/dev/null 2>&1
+    return $?
+  fi
+
+  local python_bin="${PYTHON_BIN:-$(command -v python3 2>/dev/null || true)}"
+  [[ -n "$python_bin" ]] || return 1
+  "$python_bin" - "$port" <<'PY' 2>/dev/null
+import socket
+import sys
+
+port = int(sys.argv[1])
+for host in ("127.0.0.1", "::1"):
+    try:
+        with socket.create_connection((host, port), timeout=1):
+            raise SystemExit(0)
+    except OSError:
+        pass
+raise SystemExit(1)
+PY
 }
 
 http_url_healthy() {
@@ -5174,6 +5482,10 @@ launch_stack_detached() {
     fi
   fi
   if detached_launch_process_group_running; then
+    echo "Viventium is already starting."
+    return 0
+  fi
+  if type runtime_start_claim_active >/dev/null 2>&1 && runtime_start_claim_active; then
     echo "Viventium is already starting."
     return 0
   fi
@@ -7084,6 +7396,7 @@ case "$COMMAND" in
     CURRENT_INSTALL_STAGE="bootstrap-components"
     write_install_stage "$CURRENT_INSTALL_STAGE"
     bootstrap_components
+    ensure_viventium_health_runtime >/dev/null
     CURRENT_INSTALL_STAGE="compile-config"
     write_install_stage "$CURRENT_INSTALL_STAGE"
     if [[ ${#INSTALL_ARGS[@]} -gt 0 ]]; then
@@ -7346,6 +7659,7 @@ PY
     (
       CONFIG_FILE="$UPGRADE_CANDIDATE_CONFIG"
       bootstrap_components_upgrade_checked
+      ensure_viventium_health_runtime >/dev/null
     )
     upgrade_transaction_checkpoint "components_refreshed"
     mkdir -p "$UPGRADE_CANDIDATE_RUNTIME"
@@ -7496,6 +7810,7 @@ PY
   bootstrap-components)
     acquire_cli_lock "$COMMAND"
     bootstrap_components "$@"
+    ensure_viventium_health_runtime >/dev/null
     ;;
   compile-config)
     acquire_cli_lock "$COMMAND"
@@ -7641,6 +7956,21 @@ PY
       fi
     fi
     ;;
+  cognitive-integrity)
+    if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+      subcommand_usage cognitive-integrity
+      exit 0
+    fi
+    ensure_brew_paths_on_path
+    exec uv run \
+      --with fastapi \
+      --with PyYAML \
+      --with pydantic \
+      --with croniter \
+      python "$REPO_ROOT/scripts/viventium/cognitive_integrity.py" \
+      --repo-root "$REPO_ROOT" \
+      "$@"
+    ;;
   memory-harden)
     if [[ "${1:-}" == "--help" || "${1:-}" == "-h" || $# -lt 1 ]]; then
       subcommand_usage memory-harden
@@ -7682,6 +8012,9 @@ PY
     ;;
   transcripts)
     transcripts_command "$@"
+    ;;
+  qa-test-account)
+    qa_test_account_command "$@"
     ;;
   memory-dedupe)
     if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
@@ -7761,6 +8094,15 @@ PY
       --repo-root "$REPO_ROOT" \
       --app-support-dir "$APP_SUPPORT_DIR" \
       "$@"
+    ;;
+  health)
+    if [[ "${1:-}" == "--help" || "${1:-}" == "-h" || $# -lt 1 ]]; then
+      subcommand_usage health
+      exit 0
+    fi
+    ensure_app_support_layout "$APP_SUPPORT_DIR"
+    ensure_viventium_health_runtime >/dev/null
+    exec "$APP_SUPPORT_DIR/health/runtime/bin/viventium-health" "$@"
     ;;
   heal)
     if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
@@ -7889,6 +8231,7 @@ PY
     fi
     if [[ "${VIVENTIUM_SUCCESSOR_VALIDATION_MODE:-}" != "quiesced" ]]; then
       bootstrap_components
+      ensure_viventium_health_runtime >/dev/null
     fi
     # === VIVENTIUM START ===
     # Feature: Canonical runtime regeneration on every start.
@@ -8015,6 +8358,10 @@ PY
     # handoff setup. It must not be held by the long-running stack supervisor;
     # otherwise status, Stop/Quit, and manual memory-hardening jobs are blocked
     # while Viventium is healthy and running.
+    if ! write_runtime_start_claim; then
+      echo "Unable to record the active Viventium startup claim." >&2
+      exit 1
+    fi
     cleanup_cli_lock
     VIVENTIUM_LAUNCHER_INTERNAL=1 "${START_CMD[@]}"
     exit $?
@@ -8029,6 +8376,12 @@ PY
       set_helper_runtime_intent stopped
     fi
     stop_status=0
+    if value_is_true "${VIVENTIUM_DEV_ENV_SCOPE_ACTIVE:-false}"; then
+      if ! compile_config; then
+        echo "Dev-environment stop refused because its runtime identity could not be compiled; no services were stopped." >&2
+        exit 1
+      fi
+    fi
     prepare_runtime_exports
     if [[ -f "$GENERATED_ENV" ]]; then
       set -a

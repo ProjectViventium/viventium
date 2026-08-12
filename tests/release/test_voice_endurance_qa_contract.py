@@ -122,7 +122,7 @@ def test_machine_readable_manifest_maps_every_mpv_case_to_fresh_fail_closed_runs
     }
 
     coverage = manifest["coverage"]
-    assert set(coverage) == {f"MPV-{case_id:03d}" for case_id in range(32, 55)}
+    assert set(coverage) == {f"MPV-{case_id:03d}" for case_id in range(32, 57)}
     for case_id, contract in coverage.items():
         assert contract["runs"], case_id
         assert contract["gates"], case_id

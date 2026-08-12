@@ -595,7 +595,7 @@ def test_cross_conversation_recall_eval_enables_and_restores_the_real_preference
         if row.get("id") == "cross_conversation_recall_tool_ownership"
     )
 
-    assert test_case["fixture"]["conversationRecall"] == {"enabled": True}
+    assert test_case["fixture"]["conversationRecall"]["enabled"] is True
     script_text = EVAL_SCRIPT.read_text(encoding="utf-8")
     assert "patchConversationRecallPreference" in script_text
     assert "restoreConversationRecallFixture" in script_text

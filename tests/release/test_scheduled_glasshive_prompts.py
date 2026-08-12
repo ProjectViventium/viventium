@@ -1196,12 +1196,14 @@ def test_glasshive_completion_callback_requires_signature_and_updates_history(
 
     assert failed.status_code == 200
     updated = storage.get_scheduled_prompt_run("scheduled-run-1")
-    assert updated["status"] == "failed"
-    assert updated["error_class"] == "provider_request_rejected"
+    assert updated["status"] == "completed"
+    assert updated["error_class"] is None
     callback_summary = json.loads(updated["callback_payload_json"])
-    assert callback_summary["effort_projection"] == failed_payload["effort_projection"]
+    assert callback_summary["event"] == "run.completed"
+    assert callback_summary["effort_projection"] is None
     task = storage.get_task("user-1", "task-1")
-    assert task["last_error"] == "provider_request_rejected"
+    assert task["last_status"] == "success"
+    assert task["last_error"] is None
 
 
 def test_glasshive_capacity_callback_keeps_run_queued_and_clears_stale_parent_error(

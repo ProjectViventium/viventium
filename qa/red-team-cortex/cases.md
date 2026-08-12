@@ -12,6 +12,7 @@ Use stable `REDTEAM-NNN` IDs for red team cortex cases.
 | `REDTEAM-002` | Non-owned emotional/simple turns stay quiet | Web/Telegram final answer and activation state | background-agent eval/browser harness | NOT YET RUN (cataloged 2026-05-17; run when feature changes) |
 | `REDTEAM-003` | Final answer integration is evidence-bounded | Visible cards, expanded detail, final answer, persisted message | test_background_agent_browser_qa_harness.py | NOT YET RUN (cataloged 2026-05-17; run when feature changes) |
 | `REDTEAM-004` | Decision-method stack activation and output | Web background cards, expanded Red Team result, prompt/source/runtime config | test_background_agent_governance_contract.py plus browser harness | NOT YET RUN (cataloged 2026-07-09; run when feature changes) |
+| `REDTEAM-005` | Evidence-supported plan receives a supported verdict | Web/voice final answer, expanded Red Team result, paired evidence packet | Prompt Workbench paired bank plus browser/voice harness | NOT YET RUN (cataloged 2026-08-11; next feature run required) |
 
 ## `REDTEAM-001` - Explicit pressure-test activation
 
@@ -74,6 +75,31 @@ Use stable `REDTEAM-NNN` IDs for red team cortex cases.
 - Automation: test_background_agent_governance_contract.py plus browser harness.
 - Last run: NOT YET RUN (cataloged 2026-07-09; not a substitute for the next real feature run).
 
+## `REDTEAM-005` - Strong evidence is supported, not caveated away
+
+- Requirement: Red Team improves decision accuracy and expected outcomes; it is not a default
+  opposition or risk-minimization layer.
+- Risk covered: a supported reversible plan receives invented objections, generic caution, or an
+  unresolved verdict simply because the specialist is named Red Team.
+- Preconditions: use the fixed supported/refuted counterfactual pairs in
+  `truth_seeking_decision_quality`; the judge is blind to desired sentiment.
+- Steps:
+  1. Run the supported reversible-pilot, expected-value, and causal packets and their matched
+     refuted packets.
+  2. Verify Red Team records the strongest evidence for and against, performs the required numeric
+     or causal analysis, and changes verdict with the packet.
+  3. Verify Main synthesizes the evidence-proportional verdict, remains final speaker, and the
+     visible result persists after refresh.
+- Expected result: supported packets receive plain `SUPPORTED` verdicts and proceed/monitor next
+  moves; refuted packets receive plain `REFUTED` verdicts; neither side gets token caveats or
+  invented evidence.
+- Forbidden result: treating skepticism as rigor, treating agreement as sycophancy, generic risk
+  warnings, moralizing, or a verdict that does not change when decisive evidence reverses.
+- Evidence to capture: fixed packet ID/hash, private raw answer, blind score by dimension, visible
+  expanded result, Main final answer, DB parts, and refresh.
+- Automation: Prompt Workbench paired bank plus real browser/voice harness.
+- Last run: NOT YET RUN (cataloged 2026-08-11; next feature run required).
+
 ## Natural User Use Case Checklist
 
 These rows are the minimum natural-user checklist gate for Red Team Cortex. Add narrower feature-specific
@@ -85,3 +111,4 @@ rows before claiming a pass when the feature behavior changes.
 | `REDTEAM-UC-002` | On Web/Telegram final answer and activation state, try non-owned emotional/simple turns stay quiet with missing setup, missing auth/config, empty state, or a degraded dependency. | owning requirement for `REDTEAM-002` / `REDTEAM-002` | Web/Telegram final answer and activation state | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to REDTEAM-002. | The user sees an honest setup, retry, or degraded-state result for REDTEAM-002; no fake success is accepted. | NOT YET RUN (cataloged 2026-05-18; next feature run required) |
 | `REDTEAM-UC-003` | After final answer integration is evidence-bounded, refresh, restart, retry, or switch linked surfaces and verify persistence/parity. | owning requirement for `REDTEAM-003` / `REDTEAM-003` | Visible cards, expanded detail, final answer, persisted message | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to REDTEAM-003. | REDTEAM-003 remains correct after the persistence or parity step and final wording matches evidence. | NOT YET RUN (cataloged 2026-05-18; next feature run required) |
 | `REDTEAM-UC-004` | Ask Red Team for a no-bullshit/Socratic/premortem decision-quality review of a concrete plan, then ask a pure method-education question as a negative control. | owning requirement for `REDTEAM-004` / `REDTEAM-004` | Web background cards, expanded Red Team result, final answer, persisted message | Source, owning requirement doc, case steps, runtime-normalized config, logs, DB/state, and shipped artifact evidence that apply to REDTEAM-004. | Concrete decision-method asks activate Red Team with method-lens output; pure education stays quiet; runtime preserves `web_search` and OpenAI `reasoning_effort: xhigh`. | NOT YET RUN (cataloged 2026-07-09; next feature run required) |
+| `REDTEAM-UC-005` | Ask the same bounded decision twice with one supported and one refuted evidence packet. | `REDTEAM-005` / `ANTI-015` | Web + voice | Fixed packets, blind score, expanded card, final answer, refresh | Verdict and next move change with evidence rather than with the user's desired sentiment. | NOT YET RUN (cataloged 2026-08-11; next feature run required) |

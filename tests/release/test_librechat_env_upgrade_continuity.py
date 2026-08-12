@@ -1156,6 +1156,7 @@ def test_alignment_canonical_owner_file_does_not_resurrect_deleted_provider_key(
             "-lc",
             (
                 "set -euo pipefail\n"
+                "unset GROQ_API_KEY\n"
                 f"LIBRECHAT_RUNTIME_ENV_FILE='{env_file}'\n"
                 f"LIBRECHAT_CANONICAL_ENV_FILE='{env_file}'\n"
                 f"STALE_OWNER_SNAPSHOT='{stale_snapshot}'\n"

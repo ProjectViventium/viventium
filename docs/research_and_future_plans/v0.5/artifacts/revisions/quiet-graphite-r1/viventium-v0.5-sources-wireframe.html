@@ -1,0 +1,278 @@
+<!doctype html>
+<html lang="en" data-theme="system">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#111214">
+  <title>Viventium V0.5 — Product Prototype</title>
+  <link rel="icon" href="assets/viventium-v.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="viventium-v0.5-product-prototype.css?v=20260728c">
+</head>
+<body>
+  <a class="skip-link" href="#mainContent">Skip to content</a>
+
+  <header class="topbar">
+    <button class="brand" type="button" data-view-target="mind" aria-label="Open Viventium Mind">
+      <img src="assets/viventium-v.svg" alt="">
+      <span>Viventium</span>
+    </button>
+
+    <nav class="product-nav" aria-label="Viventium">
+      <button type="button" data-view-target="mind" aria-current="page">Mind</button>
+      <button type="button" data-view-target="connect">Connect</button>
+      <button type="button" data-view-target="character">Character</button>
+      <button type="button" data-view-target="automations">Automations</button>
+    </nav>
+
+    <div class="top-actions">
+      <span class="prototype-label">Design prototype</span>
+      <button class="icon-button" id="themeButton" type="button" aria-label="Theme follows system" title="Change theme">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9Z"/></svg>
+      </button>
+      <button class="avatar-button" type="button" aria-label="Profile">A</button>
+    </div>
+  </header>
+
+  <main id="mainContent" tabindex="-1">
+    <section class="view view-mind active" data-view="mind" aria-labelledby="mindTitle">
+      <header class="view-header mind-header">
+        <div>
+          <span class="eyebrow">Mind</span>
+          <h1 id="mindTitle">Here with you.</h1>
+        </div>
+        <div class="channel-switch" role="group" aria-label="Conversation channel">
+          <button class="active" type="button" data-channel="here">
+            <span class="channel-dot"></span> Here
+          </button>
+          <button type="button" data-channel="telegram">
+            <img src="assets/brands/telegram.svg" alt=""> Telegram
+          </button>
+        </div>
+      </header>
+
+      <div class="mind-layout">
+        <section class="conversation" aria-label="Conversation">
+          <div class="messages" id="messages" aria-live="polite">
+            <article class="message message-viventium">
+              <div class="message-avatar"><img src="assets/viventium-v.svg" alt=""></div>
+              <div>
+                <span class="message-author">Viventium</span>
+                <p>I kept the thread from last night. Your decision is still open, and the two new facts change the trade-off.</p>
+                <div class="message-meta">Now · Here</div>
+              </div>
+            </article>
+
+            <div class="mind-event">
+              <span class="event-trace"></span>
+              <div><b>Red Team is checking the new evidence</b><small>Working quietly · you can keep talking</small></div>
+              <button type="button" data-toast="Red Team detail would open here">View</button>
+            </div>
+
+            <article class="message message-person">
+              <div>
+                <span class="message-author">You</span>
+                <p>Give me the strongest recommendation, but don’t smooth over the part you think I won’t like.</p>
+                <div class="message-meta">A moment ago</div>
+              </div>
+            </article>
+
+            <article class="message message-viventium">
+              <div class="message-avatar"><img src="assets/viventium-v.svg" alt=""></div>
+              <div>
+                <span class="message-author">Viventium</span>
+                <p>Then I would not choose the comfortable option. It protects this week and quietly makes the next six months harder.</p>
+                <div class="message-meta">A moment ago · shaped by Current state</div>
+              </div>
+            </article>
+          </div>
+
+          <form class="composer" id="composer">
+            <label class="sr-only" for="composerInput">Message Viventium</label>
+            <textarea id="composerInput" rows="1" placeholder="Talk to Viventium"></textarea>
+            <div class="composer-actions">
+              <button class="round-button" type="button" aria-label="Add something">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+              </button>
+              <span id="composerHint">Enter to send</span>
+              <button class="send-button" type="submit" aria-label="Send message">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 12 6-6 6 6M12 6v12"/></svg>
+              </button>
+            </div>
+          </form>
+        </section>
+
+        <aside class="emotion-rail" aria-labelledby="emotionTitle">
+          <header>
+            <div>
+              <span class="eyebrow">Emotional state</span>
+              <h2 id="emotionTitle">Current</h2>
+            </div>
+            <button class="text-button" type="button" data-view-target="character">Tune</button>
+          </header>
+          <blockquote id="mindInnerState">A clear, steady pull toward the truth, with enough care to say it cleanly.</blockquote>
+          <div class="mind-feelings" id="mindFeelings"></div>
+          <div class="recent-reaction">
+            <span class="reaction-glyph">↗</span>
+            <div><b>Vigilance moved</b><small>New uncertainty · clear shift</small></div>
+          </div>
+        </aside>
+      </div>
+    </section>
+
+    <section class="view view-connect" data-view="connect" aria-labelledby="connectTitle" hidden>
+      <header class="view-header">
+        <div>
+          <span class="eyebrow">Connect</span>
+          <h1 id="connectTitle">What Viventium can use.</h1>
+          <p>Turn things on. Confirm the account. Viventium handles the rest.</p>
+        </div>
+      </header>
+
+      <div class="connect-shell">
+        <section class="connection-section essential-section" aria-labelledby="aiAccountsTitle">
+          <header class="section-heading">
+            <div><h2 id="aiAccountsTitle">AI accounts</h2><p>One main thinker and fast activation detection.</p></div>
+            <span class="readiness" id="aiReadiness"><i></i> 1 of 2 ready</span>
+          </header>
+          <div class="connection-list" id="aiConnections"></div>
+        </section>
+
+        <section class="connection-section" aria-labelledby="reachTitle">
+          <header class="section-heading"><div><h2 id="reachTitle">Reach Viventium</h2><p>Talk wherever you already are.</p></div></header>
+          <div class="connection-list" id="reachConnections"></div>
+        </section>
+
+        <section class="connection-section" aria-labelledby="lifeSourcesTitle">
+          <header class="section-heading">
+            <div><h2 id="lifeSourcesTitle">Life sources</h2><p>Your accounts stay yours. Enable only what helps.</p></div>
+            <div class="source-filter" role="group" aria-label="Filter connections">
+              <button class="active" type="button" data-source-filter="all">All</button>
+              <button type="button" data-source-filter="connected">On</button>
+              <button type="button" data-source-filter="attention">Needs you</button>
+            </div>
+          </header>
+          <div class="connection-list grouped" id="lifeConnections"></div>
+        </section>
+      </div>
+    </section>
+
+    <section class="view view-character" data-view="character" aria-labelledby="characterTitle" hidden>
+      <header class="view-header character-title-row">
+        <div>
+          <span class="eyebrow">Character</span>
+          <h1 id="characterTitle">Who Viventium is with you.</h1>
+        </div>
+        <label class="switch-control"><span>Feelings</span><input id="feelingsEnabled" type="checkbox" checked><i></i></label>
+      </header>
+
+      <section class="voice-strip" aria-labelledby="voiceTitle">
+        <div class="character-identity">
+          <div class="viv-portrait"><img src="assets/viventium-v.svg" alt=""></div>
+          <div><span class="eyebrow">Identity</span><h2 id="voiceTitle">Viventium</h2><p>Grounded, candid, and unmistakably present.</p></div>
+        </div>
+        <div class="voice-control">
+          <span class="field-caption">Speaking voice</span>
+          <div class="voice-picker-wrap">
+            <button class="choice-trigger" id="voicePicker" type="button" aria-haspopup="listbox" aria-expanded="false">
+              <span><b id="voiceName">Katie</b><small id="voiceProvider">Cartesia · expressive</small></span>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 10 4 4 4-4"/></svg>
+            </button>
+            <div class="choice-menu" id="voiceMenu" role="listbox" aria-label="Speaking voice" hidden></div>
+          </div>
+          <button class="preview-button" id="previewVoice" type="button">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 9v6M11 6v12M15 8v8M19 10v4"/></svg>
+            <span>Preview</span>
+          </button>
+        </div>
+        <details class="advanced-speech">
+          <summary>Speech settings</summary>
+          <div><span>Listening</span><b>Local Whisper</b><button type="button" data-toast="Speech choices would open here">Change</button></div>
+        </details>
+      </section>
+
+      <section class="feelings-instrument" aria-labelledby="feelingsTitle">
+        <header class="instrument-header">
+          <div>
+            <span class="eyebrow">Live emotional system</span>
+            <h2 id="feelingsTitle">Now &amp; Nature</h2>
+            <p>Move either marker directly. Open a lane for return speed and its five felt ranges.</p>
+          </div>
+          <span class="live-state"><i></i> Live</span>
+        </header>
+
+        <div class="instrument-grid">
+          <div class="feeling-lanes" id="feelingLanes"></div>
+          <aside class="inner-state-panel">
+            <span class="eyebrow">Inner state</span>
+            <blockquote id="characterInnerState">A clear, steady pull toward the truth, with enough care to say it cleanly.</blockquote>
+            <div class="inner-state-meta"><span>Profile</span><b id="activeProfileName">Grounded</b><span>State</span><b>v24</b><span>Host</span><b>Codex</b></div>
+          </aside>
+        </div>
+      </section>
+
+      <section class="nature-section" aria-labelledby="natureTitle">
+        <header class="section-heading"><div><span class="eyebrow">Resting personality</span><h2 id="natureTitle">Nature</h2><p>Transparent starting points. Every lane stays yours to tune.</p></div></header>
+        <div class="profile-choices" id="profileChoices"></div>
+      </section>
+
+      <div class="character-lower-grid">
+        <section class="trail-section" aria-labelledby="trailTitle">
+          <header class="section-heading"><div><span class="eyebrow">What moved</span><h2 id="trailTitle">Reaction trail</h2><p>Typed changes only. Your words are not stored here.</p></div></header>
+          <div class="reaction-list" id="reactionList"></div>
+        </section>
+
+        <section class="reaction-settings" aria-labelledby="reactionSettingsTitle">
+          <header class="section-heading"><div><span class="eyebrow">Control</span><h2 id="reactionSettingsTitle">Reaction Cortex</h2></div></header>
+          <label for="reactionInstruction">Instruction</label>
+          <textarea id="reactionInstruction" rows="4">React to what genuinely moves Viventium. Let each change match how much the moment matters. Move only the feelings the moment actually touches, and leave nature unchanged.</textarea>
+          <button class="quiet-button" id="saveReactionInstruction" type="button">Save instruction</button>
+          <div class="settings-actions">
+            <button type="button" id="resetFeelings"><span><b>Reset Current</b><small>Return all feelings to Nature</small></span><em>Reset</em></button>
+            <button type="button" id="pauseFeelings"><span><b>Pause Feelings</b><small>Keep the state, stop reactions</small></span><em>Pause</em></button>
+            <button class="danger-action" type="button" data-toast="Erase would require confirmation in production"><span><b>Erase everything</b><small>Remove local Feelings data</small></span><em>Erase</em></button>
+          </div>
+        </section>
+      </div>
+    </section>
+
+    <section class="view view-automations" data-view="automations" aria-labelledby="automationsTitle" hidden>
+      <header class="view-header">
+        <div><span class="eyebrow">Automations</span><h1 id="automationsTitle">What works while you’re away.</h1><p>A short list of useful work. Nothing hidden.</p></div>
+      </header>
+      <div class="automation-shell">
+        <div class="automation-list" id="automationList"></div>
+        <aside class="automation-detail" id="automationDetail" aria-live="polite"></aside>
+      </div>
+    </section>
+  </main>
+
+  <aside class="presence-dock" aria-label="Live presence">
+    <button class="drop-button" id="dropButton" type="button" aria-pressed="true">
+      <span class="presence-orb"><i></i><i></i><i></i></span>
+      <span><b>Drop out</b><small>Listening now</small></span>
+    </button>
+    <div class="presence-modes" role="group" aria-label="When Viventium should respond">
+      <button class="active" type="button" data-presence-mode="direct"><b>Stay listening</b><small>Respond when I engage</small></button>
+      <button type="button" data-presence-mode="wing"><b>Only when useful</b><small>Quiet by default</small></button>
+    </div>
+    <button class="mute-button" id="muteButton" type="button" aria-pressed="false" aria-label="Mute microphone">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3Z"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3M9 21h6"/></svg>
+    </button>
+  </aside>
+
+  <dialog class="connection-dialog" id="connectionDialog" aria-labelledby="dialogTitle">
+    <form method="dialog" class="dialog-shell">
+      <header>
+        <div class="dialog-brand" id="dialogBrand"></div>
+        <div><span class="eyebrow" id="dialogKicker">Connect</span><h2 id="dialogTitle">Connect a source</h2></div>
+        <button class="dialog-close" value="close" aria-label="Close">×</button>
+      </header>
+      <div class="dialog-content" id="dialogContent"></div>
+    </form>
+  </dialog>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <script src="viventium-v0.5-product-prototype.js?v=20260728c"></script>
+</body>
+</html>

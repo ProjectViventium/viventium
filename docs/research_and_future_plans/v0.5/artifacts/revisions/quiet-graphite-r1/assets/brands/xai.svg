@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-labelledby="title">
+  <title id="title">xAI</title>
+  <rect width="32" height="32" rx="7" fill="#050505"/>
+  <path d="M7.2 7.5 24.8 24.5M24.8 7.5l-8.35 8.06M7.2 24.5l6.52-6.3" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round"/>
+</svg>

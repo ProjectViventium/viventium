@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "life://99_System/schemas/mission-receipt.schema.json",
+  "title": "Mission Receipt",
+  "type": "object",
+  "required": ["schemaVersion", "missionId", "status", "goalResult", "evidence", "deliverables", "proposedPromotions", "workerSelfCheck", "evidenceResult"],
+  "properties": {
+    "schemaVersion": { "const": "0.1" },
+    "missionId": { "type": "string", "minLength": 1 },
+    "status": { "enum": ["not_started", "running", "needs_input", "complete", "failed", "cancelled"] },
+    "goalResult": {
+      "type": "object",
+      "required": ["summary", "successConditionMet"],
+      "properties": {
+        "summary": { "type": "string" },
+        "successConditionMet": { "type": "boolean" }
+      }
+    },
+    "evidence": { "type": "array", "items": { "type": "object", "required": ["ref", "claim"], "properties": { "ref": { "type": "string" }, "claim": { "type": "string" } }, "additionalProperties": true } },
+    "deliverables": { "type": "array", "items": { "type": "object", "required": ["ref", "inspected"], "properties": { "ref": { "type": "string" }, "inspected": { "type": "boolean" } }, "additionalProperties": true } },
+    "proposedPromotions": { "type": "array", "items": { "$ref": "#/$defs/promotion" } },
+    "workerSelfCheck": { "type": "object" },
+    "evidenceResult": {
+      "type": "object",
+      "required": ["source", "status", "blockingFailures", "reportRef", "writtenByWorker"],
+      "properties": {
+        "source": { "const": "glasshive_evidence_harness" },
+        "status": { "enum": ["not_run", "pass", "fail", "blocked"] },
+        "blockingFailures": { "type": "array", "items": { "type": "string" } },
+        "reportRef": { "type": ["string", "null"] },
+        "writtenByWorker": { "const": false }
+      },
+      "additionalProperties": false
+    }
+  },
+  "$defs": {
+    "promotion": {
+      "type": "object",
+      "required": ["proposalId", "from", "to", "reason", "authorization"],
+      "properties": {
+        "proposalId": { "type": "string" },
+        "from": { "type": "string" },
+        "to": { "type": "string" },
+        "reason": { "type": "string" },
+        "authorization": {
+          "type": "object",
+          "required": ["status", "checkpointRef", "authorizedBy", "authorizedAt"],
+          "properties": {
+            "status": { "enum": ["not_requested", "pending", "approved", "rejected"] },
+            "checkpointRef": { "type": ["string", "null"] },
+            "authorizedBy": { "type": ["string", "null"] },
+            "authorizedAt": { "type": ["string", "null"] }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

@@ -198,7 +198,7 @@
       "profile": "real_synthetic_audio_call",
       "freshSessionSlot": "installed-prod-real-call-session",
       "command": ["node", "qa/modern-playground-voice/scripts/livekit_synthetic_audio_qa.js", "--audio", "<private>/fixtures/installed-prod-turn.wav", "--expect", "<synthetic-expected-phrase>", "--case-id", "installed-prod-real-call", "--playground-url", "http://localhost:3300", "--mode", "call", "--interactive", "--output-root", "<private>/results/installed-prod-real-call", "--result", "<private>/results/installed-prod-real-call/result.json", "--screenshot", "<private>/results/installed-prod-real-call/playground.png"],
-      "expected": { "autoConnected": true, "rtcConnected": true, "interactiveTurnCompleted": true, "deliveredAudioPresent": true, "resultPrivateAndSanitized": true }
+      "expected": { "autoConnected": true, "rtcConnected": true, "interactiveTurnCompleted": true, "completedVoiceTask": true, "deliveredAudioPresent": true, "playbackCompleted": true, "resultPrivateAndSanitized": true }
     },
     {
       "id": "clean-install-parity",
@@ -253,7 +253,9 @@
     "MPV-051": { "runs": ["dev-audible-65m", "dev-reconnects", "dev-soak-120m"], "gates": ["speaker-history-over-4096-access", "task-speaker-result-replay"] },
     "MPV-052": { "runs": ["installed-prod-real-call", "clean-install-parity"], "gates": ["telegram-one-time-launch-exchange", "telegram-launch-replay-rejected", "telegram-capability-cache-empty"] },
     "MPV-053": { "runs": ["dev-audible-65m", "installed-prod-real-call"], "gates": ["canonical-agent-authority", "agent-revocation-before-turn", "agent-decoy-rejected", "listen-only-zero-agent-execution"] },
-    "MPV-054": { "runs": ["livekit-accepted-dependency-set", "livekit-candidate-dependency-set"], "gates": ["livekit-dependency-suite-parity", "livekit-dependency-qoe-nonregression", "livekit-dependency-warning-diff", "livekit-dependency-build-install-clean-parity", "livekit-dependency-promotion-decision"] }
+    "MPV-054": { "runs": ["livekit-accepted-dependency-set", "livekit-candidate-dependency-set"], "gates": ["livekit-dependency-suite-parity", "livekit-dependency-qoe-nonregression", "livekit-dependency-warning-diff", "livekit-dependency-build-install-clean-parity", "livekit-dependency-promotion-decision"] },
+    "MPV-055": { "runs": ["dev-audible-65m", "dev-reconnects"], "gates": ["barge-in-stop-p95", "post-cancel-suppression-barrier", "task-speaker-result-replay", "behavior-interruptionStopsSpeechWorkContinues"] },
+    "MPV-056": { "runs": ["dev-audible-65m", "dev-reconnects"], "gates": ["post-cancel-suppression-barrier", "task-speaker-result-replay", "behavior-interruptionStopsSpeechWorkContinues", "behavior-cooperativeCancellation"] }
   },
   "publication": {
     "allowedSchema": "viventium.voice.acceptance.result.v1",

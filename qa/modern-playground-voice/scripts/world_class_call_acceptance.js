@@ -2171,7 +2171,7 @@ async function runRuntime(args) {
       code: /^[a-z0-9_]{1,80}$/i.test(String(error?.message || ""))
         ? String(error.message)
         : "runtime_acceptance_failed",
-      caseId: "MPV-032-051",
+      caseId: "MPV-032-056",
     });
     return result;
   } finally {

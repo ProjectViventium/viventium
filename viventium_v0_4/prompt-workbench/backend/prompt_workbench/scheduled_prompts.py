@@ -1,13 +1,15 @@
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
 import os
 import re
+import stat
 import subprocess
 import threading
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -16,6 +18,7 @@ import yaml
 
 from . import periphery_snapshots
 from .periphery_contract import (
+    HEALTH_CONTEXT_PROMPT_TEMPLATE,
     NIGHTLY_PROMPT_TEMPLATE,
     PERIPHERY_CONTENT_FIELDS,
     PERIPHERY_REQUIRED_FIELDS,
@@ -24,7 +27,7 @@ from .paths import AGENTS_SOURCE_PATH, LIBRECHAT_ROOT, LIBRECHAT_SOURCE_PATH, PR
 
 from scripts.viventium.prompt_registry import load_and_resolve_prompt_refs
 from scheduling_cortex.dispatch import dispatch_task
-from scheduling_cortex.scheduler import compute_next_run
+from scheduling_cortex.scheduler import compute_next_run, dispatch_run_ledger_updates
 from scheduling_cortex.storage import ScheduleStorage, StorageConfig
 from scheduling_cortex.utils import to_utc_iso
 
@@ -32,13 +35,26 @@ from scheduling_cortex.utils import to_utc_iso
 PLACEHOLDER_RE = re.compile(r"{{\s*([^{}]+?)\s*}}")
 BACKGROUND_AGENTS_FUNCTION = "viventium.background_agents.get_list(agent_name, system_prompt)"
 PERIPHERY_SNAPSHOT_VARIABLE = "viventium.periphery.snapshot"
+HEALTH_CONTEXT_SNAPSHOT_VARIABLE = "viventium.health_context.snapshot"
 NIGHTLY_TEMPLATE_ID = "workbench_nightly_subconscious_thought_formation_v1"
+HEALTH_CONTEXT_TEMPLATE_ID = "workbench_daily_health_context_v1"
+BUILTIN_TEMPLATE_IDS = {NIGHTLY_TEMPLATE_ID, HEALTH_CONTEXT_TEMPLATE_ID}
+BUILTIN_TEMPLATE_REVISIONS = {
+    NIGHTLY_TEMPLATE_ID: 1,
+    HEALTH_CONTEXT_TEMPLATE_ID: 3,
+}
 NIGHTLY_MISFIRE_POLICY = {"mode": "catch_up", "max_late_s": 12 * 60 * 60}
 MEMORY_WRITE_MODES = {"off", "propose", "apply_governed"}
 EXECUTORS = {"glasshive_host", "viventium_agent"}
 GLASSHIVE_WORKER_STRATEGIES = {"same_worker", "new_worker_each_run"}
 USER_SCHEDULE_PREFIX = "user_schedule:"
 PERIPHERY_ARTIFACT_LIMIT = 100
+PERIPHERY_PRIVACY_FAILURES = {
+    "outside_periphery_root",
+    "private_permissions_unavailable",
+    "unsafe_hard_link",
+    "unsafe_symlink",
+}
 _MANUAL_RUN_LOCKS: dict[str, threading.Lock] = {}
 _MANUAL_RUN_LOCKS_GUARD = threading.Lock()
 
@@ -67,17 +83,26 @@ def _utc_now() -> str:
 
 
 def _scheduling_db_path() -> str:
-    return os.getenv(
-        "SCHEDULING_DB_PATH",
-        str(Path.home() / "Library" / "Application Support" / "Viventium" / "state" / "runtime" / "isolated" / "scheduling" / "schedules.db"),
+    explicit = str(os.getenv("SCHEDULING_DB_PATH") or "").strip()
+    if explicit:
+        return explicit
+    app_support = str(os.getenv("VIVENTIUM_APP_SUPPORT_DIR") or "").strip()
+    app_support_dir = (
+        Path(app_support).expanduser()
+        if app_support
+        else Path.home() / "Library" / "Application Support" / "Viventium"
     )
+    return str(app_support_dir / "state" / "runtime" / "isolated" / "scheduling" / "schedules.db")
 
 
-def storage() -> ScheduleStorage:
+def storage(*, read_only: bool = False) -> ScheduleStorage:
     db_path = _scheduling_db_path()
-    os.environ.setdefault("SCHEDULING_DB_PATH", db_path)
+    if not read_only:
+        os.environ.setdefault("SCHEDULING_DB_PATH", db_path)
     mirror_path = os.getenv("SCHEDULING_DB_MIRROR_PATH")
-    return ScheduleStorage(StorageConfig(db_path=db_path, mirror_db_path=mirror_path))
+    return ScheduleStorage(
+        StorageConfig(db_path=db_path, mirror_db_path=mirror_path, read_only=read_only)
+    )
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:
@@ -311,14 +336,29 @@ def _database_context() -> dict[str, Any]:
     }
 
 
-def _glasshive_my_folder(user_id: str) -> str:
+def _glasshive_my_folder(user_id: str, *, require_private: bool = False) -> str:
     base = Path(
         os.getenv("VIVENTIUM_LOCAL_MACHINE_GLASSHIVE_ROOT")
         or (Path.home() / "viventium" / "local_machine_glasshive")
     ).expanduser()
     safe_user = re.sub(r"[^A-Za-z0-9_.-]+", "-", user_id or "local-user").strip("-") or "local-user"
-    path = base / safe_user / "my_folder"
-    path.mkdir(parents=True, exist_ok=True)
+    user_root = base / safe_user
+    path = user_root / "my_folder"
+    periphery_root = path / "periphery"
+    for private_directory in (user_root, path, periphery_root):
+        private_directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+        if not require_private:
+            continue
+        try:
+            descriptor = os.open(private_directory, _private_directory_open_flags())
+            try:
+                if not stat.S_ISDIR(os.fstat(descriptor).st_mode):
+                    raise OSError(errno.ENOTDIR, "private continuity path is not a directory")
+                os.fchmod(descriptor, 0o700)
+            finally:
+                os.close(descriptor)
+        except OSError as exc:
+            raise RuntimeError("private_continuity_permissions_unavailable") from exc
     return str(path)
 
 
@@ -331,6 +371,7 @@ def variable_registry() -> dict[str, Any]:
         {"name": "local.viventium.local_machine_glasshive.my_folder", "kind": "path", "wrapper": "local.viventium.local_machine_glasshive.my_folder", "description": "Private GlassHive continuity folder for this user."},
         {"name": "local.viventium.my_folder", "kind": "path", "wrapper": "local.viventium.my_folder", "description": "Alias for the GlassHive private continuity folder."},
         {"name": PERIPHERY_SNAPSHOT_VARIABLE, "kind": "json", "wrapper": PERIPHERY_SNAPSHOT_VARIABLE, "description": "Metadata-only manifest for the latest private nightly evidence snapshot."},
+        {"name": HEALTH_CONTEXT_SNAPSHOT_VARIABLE, "kind": "json", "wrapper": HEALTH_CONTEXT_SNAPSHOT_VARIABLE, "description": "Metadata-only manifest for a private context snapshot with bounded health evidence."},
     ]
     functions = [
         {
@@ -363,6 +404,17 @@ def nightly_prompt_template() -> dict[str, Any]:
     }
 
 
+def health_context_prompt_template() -> dict[str, Any]:
+    return {
+        "id": HEALTH_CONTEXT_TEMPLATE_ID,
+        "title": "Health Context",
+        "subtitle": "Private daily health and Life-context correlation",
+        "promptText": HEALTH_CONTEXT_PROMPT_TEMPLATE,
+        "schedule": {"type": "daily", "time": "06:15", "timezone": _default_timezone_name()},
+        "active": False,
+        "memoryWriteMode": "off",
+    }
+
 def _format_value(value: Any, kind: str) -> str:
     if kind == "json" or isinstance(value, (dict, list)):
         return json.dumps(value, indent=2, sort_keys=True)
@@ -386,7 +438,7 @@ def _resolve_placeholder(name: str, user_id: str, email: str | None = None) -> t
     if key == "local.viventium.database":
         return _database_context(), "json", "local.viventium.database"
     if key in {"local.viventium.local_machine_glasshive.my_folder", "local.viventium.my_folder"}:
-        return _glasshive_my_folder(user_id), "path", key
+        return _glasshive_my_folder(user_id, require_private=True), "path", key
     if key == BACKGROUND_AGENTS_FUNCTION:
         return _background_agents(), "json", "viventium.background_agents.get_list"
     raise ValueError(f"Unsupported scheduled prompt variable: {key}")
@@ -407,22 +459,28 @@ def render_variables(
     def replace(match: re.Match[str]) -> str:
         nonlocal periphery_result
         name = match.group(1).strip()
-        if name == PERIPHERY_SNAPSHOT_VARIABLE:
+        if name in {PERIPHERY_SNAPSHOT_VARIABLE, HEALTH_CONTEXT_SNAPSHOT_VARIABLE}:
             if periphery_result is None:
                 if snapshot_mode == "create":
                     periphery_result = periphery_snapshots.create_snapshot(
                         user_id=user_id,
                         email=email,
-                        my_folder=_glasshive_my_folder(user_id),
+                        my_folder=_glasshive_my_folder(user_id, require_private=True),
                         query_mongo_json=_query_mongo_json,
                         schedule_store=storage(),
                         lenses=_background_lens_inventory(),
+                        include_health=name == HEALTH_CONTEXT_SNAPSHOT_VARIABLE,
                     )
                 else:
-                    periphery_result = {"manifest": periphery_snapshots.preview_snapshot(user_id)}
+                    periphery_result = {
+                        "manifest": periphery_snapshots.preview_snapshot(
+                            user_id,
+                            include_health=name == HEALTH_CONTEXT_SNAPSHOT_VARIABLE,
+                        )
+                    }
             value = periphery_result["manifest"]
             kind = "json"
-            wrapper = PERIPHERY_SNAPSHOT_VARIABLE
+            wrapper = name
         else:
             value, kind, wrapper = _resolve_placeholder(name, user_id, email)
         rendered = _wrap(wrapper, value, kind)
@@ -500,15 +558,25 @@ def _task_metadata(definition: dict[str, Any], version: dict[str, Any], render_p
             execution.get("reasoning_effort") or _default_automation_reasoning_effort()
         ),
     }
-    if definition.get("template_id") == NIGHTLY_TEMPLATE_ID:
+    if definition.get("template_id") in BUILTIN_TEMPLATE_IDS:
         workbench_metadata["ignore_user_config"] = True
         metadata["misfire_policy"] = dict(NIGHTLY_MISFIRE_POLICY)
+    if executor == "viventium_agent":
+        source_prompt_id = str(definition.get("source_prompt_id") or "").strip() or None
+        metadata["prompt_context"] = {
+            "standing_capability_prompt_id": "main.scheduling_self_continuity",
+            "source_prompt_id": source_prompt_id,
+            "effective_prompt_id": source_prompt_id,
+            "effective_prompt_hash": render_payload["renderedHash"],
+            "run_envelope_prompt_id": "scheduler.run_envelope",
+            "canonical_output_prompt_id": "scheduler.canonical_output",
+        }
     metadata["workbench_scheduled_prompt"] = workbench_metadata
     return metadata
 
 
 def _ensure_builtin_nightly_task_policy(row: dict[str, Any]) -> dict[str, Any]:
-    if row.get("template_id") != NIGHTLY_TEMPLATE_ID or not row.get("task_id"):
+    if row.get("template_id") not in BUILTIN_TEMPLATE_IDS or not row.get("task_id"):
         return row
     store = storage()
     task = store.get_task(str(row["user_id"]), str(row["task_id"]))
@@ -562,10 +630,13 @@ def _ensure_builtin_nightly_task_policy(row: dict[str, Any]) -> dict[str, Any]:
     schedule = dict(row.get("schedule") or {})
     configured_timezone = _default_timezone_name()
     timezone_mode = str(definition_metadata.get("schedule_timezone_mode") or "").strip()
+    template_time = (
+        "06:15" if row.get("template_id") == HEALTH_CONTEXT_TEMPLATE_ID else "03:00"
+    )
     if timezone_mode not in {"local", "fixed"}:
         timezone_mode = (
             "local"
-            if schedule.get("type") == "daily" and schedule.get("time") == "03:00"
+            if schedule.get("type") == "daily" and schedule.get("time") == template_time
             else "fixed"
         )
     patched_definition_metadata = {
@@ -739,15 +810,45 @@ def _public_task_run(task: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
-def _public_task_schedule(task: dict[str, Any]) -> dict[str, Any]:
+def _public_task_schedule(
+    task: dict[str, Any],
+    *,
+    store: ScheduleStorage | None = None,
+) -> dict[str, Any]:
     schedule = task.get("schedule") if isinstance(task.get("schedule"), dict) else {}
+    metadata = task.get("metadata") if isinstance(task.get("metadata"), dict) else {}
+    prompt_context = metadata.get("prompt_context") if isinstance(metadata.get("prompt_context"), dict) else {}
+    persisted_runs = (
+        store.list_scheduled_prompt_runs(
+            task_id=str(task.get("id") or ""),
+            limit=5,
+        )
+        if store is not None
+        else []
+    )
+    public_runs = [_public_run(run, schedule=schedule) for run in persisted_runs]
     recent_run = _public_task_run(task)
+    if not public_runs and recent_run:
+        public_runs = [recent_run]
+    latest_scheduled = next(
+        (run for run in public_runs if run.get("triggerKind") == "scheduled"),
+        None,
+    )
+    latest_manual = next(
+        (run for run in public_runs if run.get("triggerKind") == "manual"),
+        None,
+    )
     return {
         "id": _user_schedule_id(str(task.get("id") or "")),
         "taskId": task.get("id"),
         "userId": task.get("user_id"),
         "title": _title_from_task(task),
-        "sourcePromptId": None,
+        "sourcePromptId": prompt_context.get("source_prompt_id"),
+        "effectivePromptId": prompt_context.get("effective_prompt_id"),
+        "effectivePromptHash": prompt_context.get("effective_prompt_hash"),
+        "runEnvelopePromptId": prompt_context.get("run_envelope_prompt_id"),
+        "canonicalOutputPromptId": prompt_context.get("canonical_output_prompt_id"),
+        "standingCapabilityPromptId": prompt_context.get("standing_capability_prompt_id"),
         "templateId": None,
         "promptText": task.get("prompt") or "",
         "schedule": schedule,
@@ -766,7 +867,9 @@ def _public_task_schedule(task: dict[str, Any]) -> dict[str, Any]:
         "nextRunAt": task.get("next_run_at"),
         "lastStatus": task.get("last_status"),
         "latestVersion": None,
-        "recentRuns": [recent_run] if recent_run else [],
+        "recentRuns": public_runs,
+        "latestScheduledRun": latest_scheduled,
+        "latestManualRun": latest_manual,
         "sourceKind": "user_schedule",
         "sourceLabel": "User-level schedule",
         "createdAt": task.get("created_at"),
@@ -774,12 +877,30 @@ def _public_task_schedule(task: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _public_definition(definition: dict[str, Any]) -> dict[str, Any]:
-    task = storage().get_task(definition["user_id"], definition["task_id"]) if definition.get("task_id") else None
-    version = storage().latest_scheduled_prompt_version(definition["id"])
-    runs = storage().list_scheduled_prompt_runs(definition_id=definition["id"], limit=5)
+def _public_definition(
+    definition: dict[str, Any],
+    *,
+    store: ScheduleStorage | None = None,
+) -> dict[str, Any]:
+    selected_store = store or storage()
+    task = selected_store.get_task(definition["user_id"], definition["task_id"]) if definition.get("task_id") else None
+    version = selected_store.latest_scheduled_prompt_version(definition["id"])
+    runs = selected_store.list_scheduled_prompt_runs(definition_id=definition["id"], limit=5)
+    latest_scheduled_rows = selected_store.list_scheduled_prompt_runs(
+        definition_id=definition["id"],
+        trigger_kind="scheduled",
+        trigger_source="scheduler_loop",
+        limit=1,
+    )
+    latest_manual_rows = selected_store.list_scheduled_prompt_runs(
+        definition_id=definition["id"],
+        trigger_kind="manual",
+        trigger_source="workbench_manual",
+        limit=1,
+    )
     task_metadata = (task or {}).get("metadata") if isinstance((task or {}).get("metadata"), dict) else {}
     workbench_metadata = task_metadata.get("workbench_scheduled_prompt") if isinstance(task_metadata.get("workbench_scheduled_prompt"), dict) else {}
+    prompt_context = task_metadata.get("prompt_context") if isinstance(task_metadata.get("prompt_context"), dict) else {}
     definition_metadata = definition.get("metadata") if isinstance(definition.get("metadata"), dict) else {}
     execution = definition_metadata.get("execution") if isinstance(definition_metadata.get("execution"), dict) else {}
     executor = (task or {}).get("executor") or execution.get("executor") or "glasshive_host"
@@ -800,6 +921,11 @@ def _public_definition(definition: dict[str, Any]) -> dict[str, Any]:
         "userId": definition.get("user_id"),
         "title": definition.get("title"),
         "sourcePromptId": definition.get("source_prompt_id"),
+        "effectivePromptId": prompt_context.get("effective_prompt_id") or definition.get("source_prompt_id"),
+        "effectivePromptHash": prompt_context.get("effective_prompt_hash") or (version or {}).get("rendered_hash"),
+        "runEnvelopePromptId": prompt_context.get("run_envelope_prompt_id"),
+        "canonicalOutputPromptId": prompt_context.get("canonical_output_prompt_id"),
+        "standingCapabilityPromptId": prompt_context.get("standing_capability_prompt_id"),
         "templateId": definition.get("template_id"),
         "promptText": definition.get("prompt_text"),
         "schedule": definition.get("schedule"),
@@ -820,7 +946,28 @@ def _public_definition(definition: dict[str, Any]) -> dict[str, Any]:
         "nextRunAt": (task or {}).get("next_run_at"),
         "lastStatus": (task or {}).get("last_status"),
         "latestVersion": _public_version(version) if version else None,
-        "recentRuns": [_public_run(run) for run in runs],
+        "recentRuns": [
+            _public_run(
+                run,
+                schedule=definition.get("schedule"),
+                timezone_name=str(definition.get("timezone") or ""),
+            )
+            for run in runs
+        ],
+        "latestScheduledRun": _public_run(
+            latest_scheduled_rows[0],
+            schedule=definition.get("schedule"),
+            timezone_name=str(definition.get("timezone") or ""),
+        )
+        if latest_scheduled_rows
+        else None,
+        "latestManualRun": _public_run(
+            latest_manual_rows[0],
+            schedule=definition.get("schedule"),
+            timezone_name=str(definition.get("timezone") or ""),
+        )
+        if latest_manual_rows
+        else None,
         "sourceKind": "workbench_definition",
         "sourceLabel": "Workbench private prompt",
         "createdAt": definition.get("created_at"),
@@ -838,7 +985,56 @@ def _public_version(version: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _public_run(run: dict[str, Any]) -> dict[str, Any]:
+def _run_trigger_kind(
+    run: dict[str, Any],
+    *,
+    schedule: dict[str, Any] | None = None,
+    timezone_name: str = "",
+) -> str:
+    explicit = str(run.get("trigger_kind") or "").strip().lower()
+    source = str(run.get("trigger_source") or "").strip().lower()
+    if explicit == "scheduled" and source == "scheduler_loop":
+        if schedule and not _run_due_matches_schedule(run, schedule, timezone_name):
+            return "unknown"
+        return "scheduled"
+    if explicit == "manual" and source == "workbench_manual":
+        return "manual"
+    return "unknown"
+
+
+def _run_due_matches_schedule(
+    run: dict[str, Any],
+    schedule: dict[str, Any],
+    timezone_name: str = "",
+) -> bool:
+    """Require a scheduler-authored run to land on a real occurrence of its declared schedule."""
+    raw_due_at = str(run.get("due_at") or "").strip()
+    if not raw_due_at:
+        return False
+    try:
+        due_at = datetime.fromisoformat(raw_due_at.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if due_at.tzinfo is None:
+        due_at = due_at.replace(tzinfo=timezone.utc)
+    due_at = due_at.astimezone(timezone.utc)
+
+    declared_schedule = dict(schedule)
+    if timezone_name and not declared_schedule.get("timezone"):
+        declared_schedule["timezone"] = timezone_name
+    try:
+        expected = compute_next_run(declared_schedule, due_at - timedelta(seconds=1), None)
+    except (TypeError, ValueError, ZoneInfoNotFoundError):
+        return False
+    return expected is not None and abs((expected - due_at).total_seconds()) <= 1
+
+
+def _public_run(
+    run: dict[str, Any],
+    *,
+    schedule: dict[str, Any] | None = None,
+    timezone_name: str = "",
+) -> dict[str, Any]:
     callback_payload: dict[str, Any] = {}
     try:
         decoded = json.loads(str(run.get("callback_payload_json") or "{}"))
@@ -851,6 +1047,68 @@ def _public_run(run: dict[str, Any]) -> dict[str, Any]:
         if isinstance(callback_payload.get("effort_projection"), dict)
         else {}
     )
+    execution_snapshot = run.get("execution_snapshot")
+    if not isinstance(execution_snapshot, dict):
+        try:
+            execution_snapshot = json.loads(str(run.get("execution_snapshot_json") or "{}"))
+        except json.JSONDecodeError:
+            execution_snapshot = {}
+    if not isinstance(execution_snapshot, dict):
+        execution_snapshot = {}
+    channel_outcomes = run.get("channel_outcomes")
+    if not isinstance(channel_outcomes, dict):
+        try:
+            channel_outcomes = json.loads(str(run.get("channel_outcomes_json") or "{}"))
+        except json.JSONDecodeError:
+            channel_outcomes = {}
+    if not isinstance(channel_outcomes, dict):
+        channel_outcomes = {}
+    safe_channel_outcomes: dict[str, dict[str, str]] = {}
+    for raw_channel, raw_outcome in list(channel_outcomes.items())[:12]:
+        channel = re.sub(r"[^a-zA-Z0-9_.-]+", "-", str(raw_channel or "").strip())[:48]
+        if not channel or not isinstance(raw_outcome, dict):
+            continue
+        detail = {
+            key: _safe_summary(str(raw_outcome.get(key) or ""), limit=120)
+            for key in ("outcome", "status", "reason")
+            if str(raw_outcome.get(key) or "").strip()
+        }
+        if detail:
+            safe_channel_outcomes[channel] = detail
+    effective_effort = (
+        str(effort_projection.get("effective") or "").strip()
+        or str(
+            execution_snapshot.get("effective_reasoning_effort")
+            or execution_snapshot.get("reasoning_effort")
+            or ""
+        ).strip()
+    )
+    usage_source = execution_snapshot.get("usage")
+    if not isinstance(usage_source, dict):
+        usage_source = {}
+    token_usage: dict[str, int | float] = {}
+    for public_key, candidates in {
+        "inputTokens": ("input_tokens", "inputTokens"),
+        "outputTokens": ("output_tokens", "outputTokens"),
+        "totalTokens": ("total_tokens", "totalTokens"),
+        "costUsd": ("cost_usd", "costUsd"),
+    }.items():
+        value = next((usage_source.get(key) for key in candidates if usage_source.get(key) is not None), None)
+        if isinstance(value, (int, float)) and value >= 0:
+            token_usage[public_key] = value
+    raw_degraded = execution_snapshot.get("degraded_dependencies")
+    degraded_dependencies = [
+        _safe_summary(str(item), limit=96)
+        for item in (raw_degraded if isinstance(raw_degraded, list) else [])[:12]
+        if str(item or "").strip()
+    ]
+    latency_ms: int | None = None
+    try:
+        started = datetime.fromisoformat(str(run.get("started_at") or "").replace("Z", "+00:00"))
+        completed = datetime.fromisoformat(str(run.get("completed_at") or "").replace("Z", "+00:00"))
+        latency_ms = max(0, int((completed - started).total_seconds() * 1000))
+    except ValueError:
+        pass
     return {
         "runId": run.get("run_id"),
         "taskId": run.get("task_id"),
@@ -860,6 +1118,12 @@ def _public_run(run: dict[str, Any]) -> dict[str, Any]:
         "startedAt": run.get("started_at"),
         "completedAt": run.get("completed_at"),
         "status": run.get("status"),
+        "triggerKind": _run_trigger_kind(
+            run,
+            schedule=schedule,
+            timezone_name=timezone_name,
+        ),
+        "triggerSource": str(run.get("trigger_source") or "") or None,
         "executor": run.get("executor"),
         "renderedHash": run.get("rendered_hash"),
         "variableSnapshotHash": run.get("variable_snapshot_hash"),
@@ -868,8 +1132,20 @@ def _public_run(run: dict[str, Any]) -> dict[str, Any]:
         "glasshiveRunId": run.get("glasshive_run_id"),
         "resultSummary": _safe_summary(str(run.get("result_summary") or "")),
         "errorClass": run.get("error_class"),
+        "disposition": str(run.get("disposition") or "").strip() or None,
+        "effectiveModel": str(
+            execution_snapshot.get("effective_model")
+            or execution_snapshot.get("model")
+            or ""
+        ).strip()
+        or None,
+        "interactionRef": str(run.get("interaction_ref") or "").strip() or None,
+        "channelOutcomes": safe_channel_outcomes,
+        "latencyMs": latency_ms,
+        "usage": token_usage or None,
+        "degradedDependencies": degraded_dependencies,
         "requestedReasoningEffort": str(effort_projection.get("requested") or "") or None,
-        "effectiveReasoningEffort": str(effort_projection.get("effective") or "") or None,
+        "effectiveReasoningEffort": effective_effort or None,
         "reasoningFallbackReason": str(effort_projection.get("fallback_reason") or "") or None,
         "privateDetailPointer": _private_detail_pointer(run.get("private_detail_path")),
         "updatedAt": run.get("updated_at"),
@@ -909,16 +1185,33 @@ def _coalesced_manual_run_response(run: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def list_scheduled_prompts(user_id: str | None = None) -> dict[str, Any]:
-    store = storage()
+def _manual_run_conversation_updates(
+    task: dict[str, Any], dispatch_result: dict[str, Any]
+) -> dict[str, Any]:
+    """Persist the same durable-conversation receipt as a natural scheduler occurrence."""
+    conversation_id = str(dispatch_result.get("conversation_id") or "").strip()
+    if not conversation_id:
+        return {}
+    updates: dict[str, Any] = {"last_conversation_id": conversation_id}
+    if str(task.get("conversation_policy") or "new").strip().lower() == "same":
+        updates["conversation_id"] = conversation_id
+    return updates
+
+
+def list_scheduled_prompts(
+    user_id: str | None = None,
+    *,
+    read_only: bool = False,
+) -> dict[str, Any]:
+    store = storage(read_only=read_only)
     rows = store.list_scheduled_prompt_definitions(user_id=user_id)
     definition_task_ids = {str(row.get("task_id")) for row in rows if row.get("task_id")}
-    public_rows = [_public_definition(row) for row in rows]
+    public_rows = [_public_definition(row, store=store) for row in rows]
     if user_id:
         for task in store.list_tasks(user_id=user_id, limit=200):
             if str(task.get("id")) in definition_task_ids:
                 continue
-            public_rows.append(_public_task_schedule(task))
+            public_rows.append(_public_task_schedule(task, store=store))
     public_rows.sort(key=lambda row: str(row.get("updatedAt") or row.get("createdAt") or ""), reverse=True)
     return {"scheduledPrompts": public_rows}
 
@@ -947,13 +1240,17 @@ def create_scheduled_prompt(payload: dict[str, Any], *, user_id: str, email: str
         "reasoning_effort": _default_automation_reasoning_effort() if executor == "glasshive_host" else None,
         "workspace_root": _workspace_root(),
     }
-    if payload.get("templateId") == NIGHTLY_TEMPLATE_ID:
+    if payload.get("templateId") in BUILTIN_TEMPLATE_IDS:
         execution_metadata["ignore_user_config"] = True
     definition_metadata = {"execution": execution_metadata}
-    if payload.get("templateId") == NIGHTLY_TEMPLATE_ID:
+    if payload.get("templateId") in BUILTIN_TEMPLATE_IDS:
         definition_metadata["schedule_timezone_mode"] = (
             "local" if timezone_name == _default_timezone_name() else "fixed"
         )
+        definition_metadata["managed_template_prompt"] = True
+        definition_metadata["template_revision"] = BUILTIN_TEMPLATE_REVISIONS[
+            str(payload.get("templateId"))
+        ]
     definition = {
         "id": definition_id,
         "user_id": user_id,
@@ -1022,7 +1319,14 @@ def create_scheduled_prompt(payload: dict[str, Any], *, user_id: str, email: str
     return _public_definition(definition)
 
 
-def update_scheduled_prompt(definition_id: str, payload: dict[str, Any], *, user_id: str, email: str | None = None) -> dict[str, Any]:
+def update_scheduled_prompt(
+    definition_id: str,
+    payload: dict[str, Any],
+    *,
+    user_id: str,
+    email: str | None = None,
+    managed_template_update: bool = False,
+) -> dict[str, Any]:
     store = storage()
     if _is_user_schedule_id(definition_id):
         task_id = _task_id_from_user_schedule_id(definition_id)
@@ -1045,10 +1349,18 @@ def update_scheduled_prompt(definition_id: str, payload: dict[str, Any], *, user
             updates["next_run_at"] = _schedule_next(payload["schedule"])
         if "active" in payload:
             updates["active"] = 1 if payload.get("active") else 0
+        if "channel" in payload:
+            updates["channel"] = _channel_for_executor("viventium_agent", payload.get("channel"))
+        if "conversationPolicy" in payload or "conversation_policy" in payload:
+            updates["conversation_policy"] = _conversation_policy(
+                payload.get("conversationPolicy") or payload.get("conversation_policy")
+            )
+            if updates["conversation_policy"] == "new":
+                updates["conversation_id"] = None
         updated_task = store.update_task(user_id, task_id, updates)
         if not updated_task:
             raise KeyError(definition_id)
-        return _public_task_schedule(updated_task)
+        return _public_task_schedule(updated_task, store=store)
 
     existing = store.get_scheduled_prompt_definition(definition_id)
     if not existing:
@@ -1064,16 +1376,33 @@ def update_scheduled_prompt(definition_id: str, payload: dict[str, Any], *, user
     if "title" in payload:
         updates["title"] = str(payload.get("title") or "").strip()
         updated_definition["title"] = updates["title"]
+    if "sourcePromptId" in payload or "source_prompt_id" in payload:
+        source_prompt_id = str(
+            payload.get("sourcePromptId") or payload.get("source_prompt_id") or ""
+        ).strip() or None
+        updates["source_prompt_id"] = source_prompt_id
+        updated_definition["source_prompt_id"] = source_prompt_id
     if "promptText" in payload:
         updates["prompt_text"] = str(payload.get("promptText") or "").strip() + "\n"
         updated_definition["prompt_text"] = updates["prompt_text"]
         changed_prompt = True
+        if existing.get("template_id") in BUILTIN_TEMPLATE_IDS:
+            metadata = {
+                **metadata,
+                "managed_template_prompt": bool(managed_template_update),
+            }
+            if managed_template_update:
+                metadata["template_revision"] = BUILTIN_TEMPLATE_REVISIONS[
+                    str(existing.get("template_id"))
+                ]
+            updates["metadata"] = metadata
+            updated_definition["metadata"] = metadata
     if "schedule" in payload and isinstance(payload.get("schedule"), dict):
         updates["schedule"] = payload["schedule"]
         updates["timezone"] = str(payload["schedule"].get("timezone") or existing.get("timezone") or "UTC")
         updated_definition["schedule"] = updates["schedule"]
         updated_definition["timezone"] = updates["timezone"]
-        if existing.get("template_id") == NIGHTLY_TEMPLATE_ID:
+        if existing.get("template_id") in BUILTIN_TEMPLATE_IDS:
             metadata = {**metadata, "schedule_timezone_mode": "fixed"}
     if "active" in payload:
         updates["active"] = 1 if payload.get("active") else 0
@@ -1235,6 +1564,7 @@ def _manual_run_locked(
                 "last_generated_text": delivery.get("generated_text") if isinstance(delivery.get("generated_text"), str) else None,
                 "last_delivery": delivery or {"outcome": "sent", "reason": "manual_run", "generated_text": None},
                 "next_run_at": to_utc_iso(next_run) if next_run else None,
+                **_manual_run_conversation_updates(task, result),
             }
             updated_task = store.update_task(user_id, task_id, updates) or task
             return {"dispatch": result, "run": _public_task_run(updated_task)}
@@ -1271,6 +1601,8 @@ def _manual_run_locked(
         return _manual_run_workbench_viventium_agent(store, definition, task)
     task = dict(task)
     task["next_run_at"] = _utc_now()
+    task["_scheduled_prompt_trigger_kind"] = "manual"
+    task["_scheduled_prompt_trigger_source"] = "workbench_manual"
     result = dispatch_task(task)
     runs = store.list_scheduled_prompt_runs(definition_id=definition_id, limit=1)
     return {"dispatch": result, "run": _public_run(runs[0]) if runs else None}
@@ -1307,6 +1639,11 @@ def _manual_run_workbench_viventium_agent(
             "error_class": None,
             "private_detail_path": None,
             "callback_payload_json": None,
+            "trigger_kind": "manual",
+            "trigger_source": "workbench_manual",
+            "disposition": "running",
+            "execution_snapshot": {"executor": "viventium_agent"},
+            "channel_outcomes": {},
             "created_at": now_iso,
             "updated_at": now_iso,
         }
@@ -1315,6 +1652,13 @@ def _manual_run_workbench_viventium_agent(
     task_for_dispatch["next_run_at"] = now_iso
     try:
         result = dispatch_task(task_for_dispatch)
+        conversation_updates = _manual_run_conversation_updates(task_for_dispatch, result)
+        if conversation_updates:
+            store.update_task(
+                str(definition["user_id"]),
+                str(definition["task_id"]),
+                {**conversation_updates, "updated_at": _utc_now()},
+            )
         delivery = result.get("delivery") if isinstance(result, dict) else {}
         delivery = delivery if isinstance(delivery, dict) else {}
         refreshed_task = store.get_task(str(definition["user_id"]), str(definition["task_id"])) or task
@@ -1322,25 +1666,28 @@ def _manual_run_workbench_viventium_agent(
         refreshed_wb = refreshed_metadata.get("workbench_scheduled_prompt") if isinstance(refreshed_metadata.get("workbench_scheduled_prompt"), dict) else {}
         refreshed_version = store.latest_scheduled_prompt_version(str(definition["id"]))
         summary_parts = [str(delivery.get("outcome") or "sent"), str(delivery.get("reason") or "manual_run")]
-        updated = store.update_scheduled_prompt_run(
-            run_id,
+        ledger_updates = dispatch_run_ledger_updates(
+            task_for_dispatch,
+            result,
+            existing_execution={"executor": "viventium_agent"},
+        )
+        ledger_updates.update(
             {
-                "status": "completed",
-                "completed_at": _utc_now(),
                 "version_id": (refreshed_version or {}).get("id") or refreshed_wb.get("version_id"),
                 "rendered_hash": refreshed_wb.get("rendered_hash") or (refreshed_version or {}).get("rendered_hash"),
                 "variable_snapshot_hash": refreshed_wb.get("variable_snapshot_hash") or (refreshed_version or {}).get("variable_snapshot_hash"),
                 "result_summary": _safe_summary(": ".join(part for part in summary_parts if part)),
                 "error_class": None,
-                "updated_at": _utc_now(),
-            },
+            }
         )
+        updated = store.update_scheduled_prompt_run(run_id, ledger_updates)
         return {"dispatch": result, "run": _public_run(updated or store.get_scheduled_prompt_run(run_id))}
     except Exception as exc:
         updated = store.update_scheduled_prompt_run(
             run_id,
             {
                 "status": "failed",
+                "disposition": "failed",
                 "completed_at": _utc_now(),
                 "result_summary": _safe_summary(str(exc)),
                 "error_class": exc.__class__.__name__,
@@ -1388,35 +1735,193 @@ def _periphery_root(my_folder: str | None) -> Path | None:
 
 def _relative_posix(path: Path, root: Path) -> str:
     try:
-        return path.resolve().relative_to(root.resolve()).as_posix()
-    except (OSError, ValueError):
+        return path.relative_to(root).as_posix()
+    except ValueError:
         return path.name
 
 
-def _periphery_files(my_folder: str | None) -> tuple[Path | None, list[Path]]:
+def _private_directory_open_flags() -> int:
+    required = ("O_DIRECTORY", "O_NOFOLLOW")
+    if any(not hasattr(os, name) for name in required):
+        raise OSError(errno.ENOTSUP, "no-follow directory operations are unavailable")
+    return os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+
+
+def _private_file_open_flags() -> int:
+    if not hasattr(os, "O_NOFOLLOW"):
+        raise OSError(errno.ENOTSUP, "no-follow file operations are unavailable")
+    return os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+
+
+def _periphery_os_error_reason(exc: OSError) -> str:
+    if exc.errno in {errno.ELOOP, errno.ENOTDIR}:
+        return "unsafe_symlink"
+    if isinstance(exc, PermissionError) or exc.errno in {
+        errno.EACCES,
+        errno.EPERM,
+        errno.EROFS,
+        errno.ENOTSUP,
+    }:
+        return "private_permissions_unavailable"
+    return "unreadable"
+
+
+def _read_private_text(descriptor: int) -> str:
+    os.lseek(descriptor, 0, os.SEEK_SET)
+    with os.fdopen(os.dup(descriptor), "r", encoding="utf-8") as handle:
+        return handle.read()
+
+
+def _open_private_regular_file(name: str, *, directory_fd: int) -> int:
+    descriptor = os.open(name, _private_file_open_flags(), dir_fd=directory_fd)
+    try:
+        file_status = os.fstat(descriptor)
+        if not stat.S_ISREG(file_status.st_mode):
+            raise OSError(errno.EINVAL, "private artifact is not a regular file")
+        if file_status.st_nlink > 1:
+            raise OSError(errno.EMLINK, "private artifact has multiple hard links")
+    except Exception:
+        os.close(descriptor)
+        raise
+    return descriptor
+
+
+def _secure_periphery_artifact(
+    path: Path,
+    root: Path,
+    *,
+    include_markdown: bool = False,
+) -> tuple[str | None, str | None, str | None]:
+    """Open, harden, and optionally read one artifact without following in-tree links."""
+    try:
+        relative = path.relative_to(root)
+    except ValueError:
+        return "outside_periphery_root", None, None
+    if len(relative.parts) != 4 or relative.parts[-1] in {"", ".", ".."}:
+        return "invalid_path_shape", None, None
+
+    directory_descriptors: list[int] = []
+    sidecar_descriptor: int | None = None
+    markdown_descriptor: int | None = None
+    try:
+        root_descriptor = os.open(root, _private_directory_open_flags())
+        directory_descriptors.append(root_descriptor)
+        os.fchmod(root_descriptor, 0o700)
+        for part in relative.parts[:-1]:
+            descriptor = os.open(
+                part,
+                _private_directory_open_flags(),
+                dir_fd=directory_descriptors[-1],
+            )
+            if not stat.S_ISDIR(os.fstat(descriptor).st_mode):
+                os.close(descriptor)
+                raise OSError(errno.ENOTDIR, "artifact parent is not a directory")
+            directory_descriptors.append(descriptor)
+            os.fchmod(descriptor, 0o700)
+
+        sidecar_descriptor = _open_private_regular_file(
+            relative.parts[-1],
+            directory_fd=directory_descriptors[-1],
+        )
+        os.fchmod(sidecar_descriptor, 0o600)
+        sidecar_text = _read_private_text(sidecar_descriptor)
+
+        markdown_name = Path(relative.parts[-1]).with_suffix(".md").name
+        try:
+            markdown_descriptor = _open_private_regular_file(
+                markdown_name,
+                directory_fd=directory_descriptors[-1],
+            )
+        except OSError as exc:
+            if exc.errno != errno.ENOENT:
+                raise
+        markdown_text: str | None = None
+        if markdown_descriptor is not None:
+            os.fchmod(markdown_descriptor, 0o600)
+            if include_markdown:
+                markdown_text = _read_private_text(markdown_descriptor)
+        return None, sidecar_text, markdown_text
+    except UnicodeError:
+        return "invalid_encoding", None, None
+    except OSError as exc:
+        if exc.errno == errno.EMLINK:
+            return "unsafe_hard_link", None, None
+        return _periphery_os_error_reason(exc), None, None
+    finally:
+        if markdown_descriptor is not None:
+            os.close(markdown_descriptor)
+        if sidecar_descriptor is not None:
+            os.close(sidecar_descriptor)
+        for descriptor in reversed(directory_descriptors):
+            os.close(descriptor)
+
+
+def _harden_periphery_artifact_permissions(path: Path, root: Path) -> str | None:
+    error, _, _ = _secure_periphery_artifact(path, root)
+    return error
+
+
+def _periphery_files(
+    my_folder: str | None,
+) -> tuple[Path | None, list[Path], list[tuple[Path, str]]]:
     root = _periphery_root(my_folder)
     if not root:
-        return None, []
-    try:
-        resolved_root = root.resolve()
-    except OSError:
-        return root, []
+        return None, [], []
     paths: list[Path] = []
-    for path in root.glob("*/*/*/*.json"):
-        try:
-            if not path.is_file():
+    discovery_errors: list[tuple[Path, str]] = []
+    root_descriptor: int | None = None
+    try:
+        root_descriptor = os.open(root, _private_directory_open_flags())
+        os.fchmod(root_descriptor, 0o700)
+        for directory_path, directory_names, file_names, directory_fd in os.fwalk(
+            ".",
+            topdown=True,
+            follow_symlinks=False,
+            dir_fd=root_descriptor,
+        ):
+            relative_directory = Path(directory_path)
+            depth = len(relative_directory.parts)
+            for directory_name in list(directory_names):
+                try:
+                    entry_status = os.stat(
+                        directory_name,
+                        dir_fd=directory_fd,
+                        follow_symlinks=False,
+                    )
+                except OSError as exc:
+                    directory_names.remove(directory_name)
+                    discovery_errors.append(
+                        (root / relative_directory / directory_name, _periphery_os_error_reason(exc))
+                    )
+                    continue
+                if stat.S_ISLNK(entry_status.st_mode):
+                    directory_names.remove(directory_name)
+                    discovery_errors.append(
+                        (root / relative_directory / directory_name, "unsafe_symlink")
+                    )
+            if depth >= 3:
+                directory_names[:] = []
+            if depth != 3:
                 continue
-            path.resolve().relative_to(resolved_root)
-        except (OSError, ValueError):
-            continue
-        paths.append(path)
+            for file_name in file_names:
+                if file_name.endswith(".json"):
+                    paths.append(root / relative_directory / file_name)
+    except OSError as exc:
+        return root, [], [(root / "_index.json", _periphery_os_error_reason(exc))]
+    finally:
+        if root_descriptor is not None:
+            os.close(root_descriptor)
     # Artifact paths carry their canonical UTC timestamp. File mtimes are not authoritative because
     # an old artifact may be touched during backup, restore, or manual inspection.
-    return root, sorted(
-        paths,
-        key=lambda item: _relative_posix(item, root),
-        reverse=True,
-    )[:PERIPHERY_ARTIFACT_LIMIT]
+    return (
+        root,
+        sorted(
+            paths,
+            key=lambda item: _relative_posix(item, root),
+            reverse=True,
+        ),
+        discovery_errors,
+    )
 
 
 def _periphery_invalid(
@@ -1472,16 +1977,21 @@ def _load_periphery_artifact(
     *,
     user_id: str | None = None,
     now: datetime | None = None,
+    sidecar_text: str | None = None,
 ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
     try:
-        relative_parts = path.resolve().relative_to(root.resolve()).parts
+        relative_parts = (
+            path.relative_to(root).parts
+            if sidecar_text is not None
+            else path.resolve().relative_to(root.resolve()).parts
+        )
     except (OSError, ValueError):
         return None, _periphery_invalid(path, root, "outside_periphery_root")
     if len(relative_parts) < 4:
         return None, _periphery_invalid(path, root, "invalid_path_shape")
     module_from_path = str(relative_parts[0])
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload = json.loads(sidecar_text if sidecar_text is not None else path.read_text(encoding="utf-8"))
     except OSError:
         return None, _periphery_invalid(path, root, "unreadable")
     except json.JSONDecodeError:
@@ -1686,9 +2196,27 @@ def _periphery_index_payload(
                 "artifactCount": 0,
             }
         modules[module_id]["artifactCount"] += 1
+    blocked_reasons = sorted(
+        {
+            str(item.get("reason"))
+            for item in invalid
+            if str(item.get("reason") or "") in PERIPHERY_PRIVACY_FAILURES
+        }
+    )
+    blocked_count = sum(
+        1
+        for item in invalid
+        if str(item.get("reason") or "") in PERIPHERY_PRIVACY_FAILURES
+    )
+    status = "available"
+    if blocked_count:
+        status = "degraded" if artifacts else "blocked"
     return {
         "schemaVersion": 1,
         "generatedAt": _utc_now(),
+        "status": status,
+        "blockedReasons": blocked_reasons,
+        "blockedArtifactCount": blocked_count,
         "artifactCount": len(artifacts),
         "invalidArtifactCount": len(invalid),
         "qualityCounts": quality_counts,
@@ -1698,18 +2226,65 @@ def _periphery_index_payload(
     }
 
 
-def _write_periphery_index(root: Path, payload: dict[str, Any]) -> None:
-    path = root / "_index.json"
-    temporary = root / "._index.json.tmp"
-    temporary.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    os.chmod(temporary, 0o600)
-    temporary.replace(path)
-    os.chmod(path, 0o600)
+def _write_periphery_index(root: Path, payload: dict[str, Any]) -> str | None:
+    root_descriptor: int | None = None
+    temporary_descriptor: int | None = None
+    temporary_name = f"._index.{uuid.uuid4().hex}.tmp"
+    try:
+        root_descriptor = os.open(root, _private_directory_open_flags())
+        os.fchmod(root_descriptor, 0o700)
+        temporary_descriptor = os.open(
+            temporary_name,
+            os.O_WRONLY
+            | os.O_CREAT
+            | os.O_EXCL
+            | os.O_NOFOLLOW
+            | getattr(os, "O_CLOEXEC", 0),
+            0o600,
+            dir_fd=root_descriptor,
+        )
+        os.fchmod(temporary_descriptor, 0o600)
+        data = (json.dumps(payload, indent=2, sort_keys=True) + "\n").encode("utf-8")
+        offset = 0
+        while offset < len(data):
+            written = os.write(temporary_descriptor, data[offset:])
+            if written <= 0:
+                raise OSError(errno.EIO, "private index write made no progress")
+            offset += written
+        os.fsync(temporary_descriptor)
+        os.close(temporary_descriptor)
+        temporary_descriptor = None
+        os.rename(
+            temporary_name,
+            "_index.json",
+            src_dir_fd=root_descriptor,
+            dst_dir_fd=root_descriptor,
+        )
+        index_descriptor = _open_private_regular_file("_index.json", directory_fd=root_descriptor)
+        try:
+            os.fchmod(index_descriptor, 0o600)
+        finally:
+            os.close(index_descriptor)
+        return None
+    except OSError as exc:
+        return _periphery_os_error_reason(exc)
+    finally:
+        if temporary_descriptor is not None:
+            os.close(temporary_descriptor)
+        if root_descriptor is not None:
+            try:
+                os.unlink(temporary_name, dir_fd=root_descriptor)
+            except FileNotFoundError:
+                pass
+            os.close(root_descriptor)
 
 
 def _public_periphery_index(payload: dict[str, Any]) -> dict[str, Any]:
     return {
         "generatedAt": payload.get("generatedAt"),
+        "status": payload.get("status", "available"),
+        "blockedReasons": payload.get("blockedReasons", []),
+        "blockedArtifactCount": payload.get("blockedArtifactCount", 0),
         "artifactCount": payload.get("artifactCount", 0),
         "invalidArtifactCount": payload.get("invalidArtifactCount", 0),
         "qualityCounts": payload.get("qualityCounts", {}),
@@ -1722,12 +2297,27 @@ def _collect_periphery(
     *,
     user_id: str,
 ) -> tuple[Path | None, list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
-    root, paths = _periphery_files(my_folder)
+    root, paths, discovery_errors = _periphery_files(my_folder)
     artifacts: list[dict[str, Any]] = []
-    invalid: list[dict[str, Any]] = []
+    invalid: list[dict[str, Any]] = [
+        _periphery_invalid(path, root, reason)
+        for path, reason in discovery_errors
+        if root is not None
+    ]
     if root:
-        for path in paths:
-            artifact, error = _load_periphery_artifact(path, root, user_id=user_id)
+        for index, path in enumerate(paths):
+            permission_error, sidecar_text, _ = _secure_periphery_artifact(path, root)
+            if index >= PERIPHERY_ARTIFACT_LIMIT:
+                continue
+            if permission_error:
+                invalid.append(_periphery_invalid(path, root, permission_error))
+                continue
+            artifact, error = _load_periphery_artifact(
+                path,
+                root,
+                user_id=user_id,
+                sidecar_text=sidecar_text,
+            )
             if artifact:
                 artifacts.append(artifact)
             if error:
@@ -1742,7 +2332,10 @@ def _collect_periphery(
     )
     index_payload = _periphery_index_payload(artifacts, invalid)
     if root:
-        _write_periphery_index(root, index_payload)
+        index_error = _write_periphery_index(root, index_payload)
+        if index_error:
+            invalid.append(_periphery_invalid(root / "_index.json", root, index_error))
+            index_payload = _periphery_index_payload(artifacts, invalid)
     return root, artifacts, invalid, index_payload
 
 
@@ -1765,9 +2358,12 @@ def list_periphery_artifacts(definition_id: str, *, user_id: str) -> dict[str, A
 
 
 def periphery_snapshot_status(definition_id: str, *, user_id: str) -> dict[str, Any]:
-    _definition_for_periphery(definition_id, user_id)
+    definition = _definition_for_periphery(definition_id, user_id)
     return {
-        "snapshot": periphery_snapshots.preview_snapshot(user_id),
+        "snapshot": periphery_snapshots.preview_snapshot(
+            user_id,
+            include_health=definition.get("template_id") == HEALTH_CONTEXT_TEMPLATE_ID,
+        ),
         "contract": (
             "Private full/model snapshots stay in App Support. Workbench returns metadata, labels, "
             "counts, hashes, and prerequisite state only."
@@ -1784,6 +2380,7 @@ def refresh_periphery_snapshot(definition_id: str, *, user_id: str) -> dict[str,
         query_mongo_json=_query_mongo_json,
         schedule_store=storage(),
         lenses=_background_lens_inventory(),
+        include_health=definition.get("template_id") == HEALTH_CONTEXT_TEMPLATE_ID,
     )
     return {
         "snapshot": result["manifest"],
@@ -1809,24 +2406,39 @@ def _read_periphery_from_folder(
     user_id: str,
     artifact_id: str,
 ) -> dict[str, Any]:
-    root, paths = _periphery_files(my_folder)
+    root, paths, discovery_errors = _periphery_files(my_folder)
     if not root:
         raise KeyError(artifact_id)
-    for path in paths:
+    if not paths and discovery_errors:
+        raise ValueError(discovery_errors[0][1])
+    for path in paths[:PERIPHERY_ARTIFACT_LIMIT]:
         if _periphery_artifact_id(path, root) != artifact_id:
             continue
-        metadata, error = _load_periphery_artifact(path, root, user_id=user_id)
+        privacy_error, sidecar_text, markdown_text = _secure_periphery_artifact(
+            path,
+            root,
+            include_markdown=True,
+        )
+        if privacy_error:
+            raise ValueError(privacy_error)
+        metadata, error = _load_periphery_artifact(
+            path,
+            root,
+            user_id=user_id,
+            sidecar_text=sidecar_text,
+        )
         if error or not metadata:
             raise ValueError(str((error or {}).get("reason") or "invalid_artifact"))
+        if markdown_text is None:
+            raise ValueError("artifact_body_unavailable")
         try:
-            sidecar = json.loads(path.read_text(encoding="utf-8"))
-            markdown = path.with_suffix(".md").read_text(encoding="utf-8")
-        except OSError as exc:
+            sidecar = json.loads(sidecar_text or "")
+        except json.JSONDecodeError as exc:
             raise ValueError("artifact_body_unavailable") from exc
         return {
             "artifact": metadata,
             "sidecar": sidecar,
-            "markdown": markdown,
+            "markdown": markdown_text,
             "usage": (
                 "Treat stale or failed-quality content as private historical evidence, not a current fact. "
                 "Summarize for the user without exposing storage paths or tool plumbing."
@@ -2003,6 +2615,40 @@ def seed_nightly_prompt(
             return _public_definition(reconciled)
     return create_scheduled_prompt(
         {**template, "templateId": NIGHTLY_TEMPLATE_ID, "active": active},
+        user_id=user_id,
+        email=email,
+    )
+
+
+def seed_health_context_prompt(
+    *,
+    user_id: str,
+    email: str | None = None,
+    active: bool = False,
+    executor: str | None = None,
+) -> dict[str, Any]:
+    rows = storage().list_scheduled_prompt_definitions(user_id=user_id)
+    template = health_context_prompt_template()
+    if executor:
+        template["executor"] = _executor(executor)
+    for row in rows:
+        if row.get("template_id") == HEALTH_CONTEXT_TEMPLATE_ID:
+            metadata = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
+            managed = metadata.get("managed_template_prompt") is True
+            revision = int(metadata.get("template_revision") or 0)
+            if managed and revision < BUILTIN_TEMPLATE_REVISIONS[HEALTH_CONTEXT_TEMPLATE_ID]:
+                update_scheduled_prompt(
+                    str(row["id"]),
+                    {"promptText": template["promptText"]},
+                    user_id=user_id,
+                    email=email,
+                    managed_template_update=True,
+                )
+                row = storage().get_scheduled_prompt_definition(str(row["id"])) or row
+            reconciled = _ensure_builtin_nightly_task_policy(row)
+            return _public_definition(reconciled)
+    return create_scheduled_prompt(
+        {**template, "templateId": HEALTH_CONTEXT_TEMPLATE_ID, "active": active},
         user_id=user_id,
         email=email,
     )

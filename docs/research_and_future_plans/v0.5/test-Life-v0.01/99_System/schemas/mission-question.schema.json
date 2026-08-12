@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "life://99_System/schemas/mission-question.schema.json",
+  "title": "Mission Question",
+  "type": "object",
+  "required": ["schemaVersion", "questionId", "missionId", "type", "status", "blocking", "createdAt", "prompt", "transport"],
+  "properties": {
+    "schemaVersion": { "const": "0.1" },
+    "questionId": { "type": "string", "minLength": 1 },
+    "missionId": { "type": "string", "minLength": 1 },
+    "type": { "enum": ["clarification", "approval", "missing_context", "permission", "blocker"] },
+    "status": { "enum": ["draft", "sent", "answered", "cancelled", "expired"] },
+    "blocking": { "type": "boolean" },
+    "createdAt": { "type": "string", "minLength": 1 },
+    "prompt": { "type": "string", "minLength": 1 },
+    "evidenceRefs": { "type": "array", "items": { "type": "string" } },
+    "transport": {
+      "type": "object",
+      "required": ["event", "callbackRef"],
+      "properties": {
+        "event": { "enum": ["checkpoint.ready", "takeover.requested"] },
+        "callbackRef": { "type": ["string", "null"] }
+      },
+      "additionalProperties": false
+    },
+    "response": { "type": ["string", "null"] },
+    "respondedAt": { "type": ["string", "null"] }
+  },
+  "additionalProperties": false
+}

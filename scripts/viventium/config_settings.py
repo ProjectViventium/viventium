@@ -15,6 +15,9 @@ from typing import Any
 import yaml
 
 
+QA_TEST_ACCOUNT_ENV_KEY = "VIVENTIUM_QA_EMAIL"
+
+
 def utc_stamp() -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
 
@@ -52,6 +55,40 @@ def ensure_transcript_config(config: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(transcripts, dict):
         raise SystemExit("runtime.memory_hardening.transcripts must be a mapping in config.yaml")
     return transcripts
+
+
+def runtime_extra_env(config: dict[str, Any]) -> dict[str, Any]:
+    runtime = config.get("runtime")
+    if not isinstance(runtime, dict):
+        return {}
+    extra_env = runtime.get("extra_env")
+    return extra_env if isinstance(extra_env, dict) else {}
+
+
+def ensure_runtime_extra_env(config: dict[str, Any]) -> dict[str, Any]:
+    runtime = config.setdefault("runtime", {})
+    if not isinstance(runtime, dict):
+        raise SystemExit("runtime must be a mapping in config.yaml")
+    extra_env = runtime.setdefault("extra_env", {})
+    if not isinstance(extra_env, dict):
+        raise SystemExit("runtime.extra_env must be a mapping in config.yaml")
+    return extra_env
+
+
+def qa_test_account_email(config: dict[str, Any]) -> str:
+    return str(runtime_extra_env(config).get(QA_TEST_ACCOUNT_ENV_KEY) or "").strip()
+
+
+def validate_qa_test_account_email(value: str) -> str:
+    email = str(value or "").strip()
+    if (
+        not email
+        or len(email) > 320
+        or email.count("@") != 1
+        or any(character.isspace() for character in email)
+    ):
+        raise SystemExit("QA test-account email must be a valid non-empty email address")
+    return email
 
 
 def backup_config(path: Path, backup_dir: Path | None) -> str | None:
@@ -93,6 +130,20 @@ def emit(payload: dict[str, Any], json_output: bool) -> None:
     print(f"Transcript source {status}: {source_dir}")
     if payload.get("backup_path"):
         print(f"Backup: {payload['backup_path']}")
+
+
+def emit_qa_account(payload: dict[str, Any], json_output: bool) -> None:
+    public_payload = {
+        key: value
+        for key, value in payload.items()
+        if key not in {"email", "previous_email"}
+    }
+    if json_output:
+        print(json.dumps(public_payload, indent=2, sort_keys=True))
+        return
+    print(f"QA test account: {public_payload['status']}")
+    if public_payload.get("backup_path"):
+        print(f"Backup: {public_payload['backup_path']}")
 
 
 def command_status(args: argparse.Namespace) -> int:
@@ -157,6 +208,63 @@ def command_clear(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_qa_test_account_status(args: argparse.Namespace) -> int:
+    config = load_config(args.config_file)
+    configured = bool(qa_test_account_email(config))
+    emit_qa_account(
+        {"status": "configured" if configured else "not_configured", "changed": False},
+        args.json,
+    )
+    return 0
+
+
+def command_qa_test_account_set(args: argparse.Namespace) -> int:
+    config = load_config(args.config_file)
+    raw_email = sys.stdin.readline() if args.email_stdin else args.email
+    next_email = validate_qa_test_account_email(raw_email)
+    previous_email = qa_test_account_email(config)
+    changed = previous_email != next_email
+    backup_path = None
+    if changed:
+        backup_path = backup_config(args.config_file, args.backup_dir)
+        ensure_runtime_extra_env(config)[QA_TEST_ACCOUNT_ENV_KEY] = next_email
+        write_config(args.config_file, config)
+    emit_qa_account(
+        {
+            "status": "configured",
+            "changed": changed,
+            "email": next_email,
+            "previous_email": previous_email,
+            "backup_path": backup_path,
+            "requires_runtime_refresh": changed,
+        },
+        args.json,
+    )
+    return 0
+
+
+def command_qa_test_account_clear(args: argparse.Namespace) -> int:
+    config = load_config(args.config_file)
+    previous_email = qa_test_account_email(config)
+    changed = bool(previous_email)
+    backup_path = None
+    if changed:
+        backup_path = backup_config(args.config_file, args.backup_dir)
+        ensure_runtime_extra_env(config).pop(QA_TEST_ACCOUNT_ENV_KEY, None)
+        write_config(args.config_file, config)
+    emit_qa_account(
+        {
+            "status": "not_configured",
+            "changed": changed,
+            "previous_email": previous_email,
+            "backup_path": backup_path,
+            "requires_runtime_refresh": changed,
+        },
+        args.json,
+    )
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Patch canonical local Viventium config settings.")
     parser.add_argument("--config-file", required=True, type=Path)
@@ -175,6 +283,20 @@ def build_parser() -> argparse.ArgumentParser:
     clear_source = subparsers.add_parser("transcripts-source-clear")
     clear_source.add_argument("--json", action="store_true")
     clear_source.set_defaults(handler=command_clear)
+
+    qa_status = subparsers.add_parser("qa-test-account-status")
+    qa_status.add_argument("--json", action="store_true")
+    qa_status.set_defaults(handler=command_qa_test_account_status)
+
+    qa_set = subparsers.add_parser("qa-test-account-set")
+    qa_set.add_argument("email", nargs="?")
+    qa_set.add_argument("--email-stdin", action="store_true")
+    qa_set.add_argument("--json", action="store_true")
+    qa_set.set_defaults(handler=command_qa_test_account_set)
+
+    qa_clear = subparsers.add_parser("qa-test-account-clear")
+    qa_clear.add_argument("--json", action="store_true")
+    qa_clear.set_defaults(handler=command_qa_test_account_clear)
     return parser
 
 

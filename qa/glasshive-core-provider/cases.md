@@ -33,6 +33,11 @@
 | GCP-027 | An alternate App Support runtime compiles and uses its own profiled GlassHive SQLite state without touching canonical user state | Compiler, clean install/upgrade, GlassHive API/state | PASS (2026-08-01 isolated clean install, direct API, web run, upgrade, and zero canonical-request evidence) |
 | GCP-028 | Custom aligns an absent provider model to the resolved worker profile; an explicit mismatched model remains unchanged and fails its exact harness-auth gate | Defaults/preflight/compiler | PASS (2026-08-01 Custom Claude-only and explicit-model mismatch regression tests) |
 | GCP-029 | An accepted host-native conversation survives API restart without truncating its instruction, double-launching the harness, or losing exact cancel/timeout/non-zero status | GlassHive API/supervisor/private state | PASS (2026-08-02 large-input Codex and Claude restart, active-child cancel, timeout, and non-zero-exit regressions) |
+| GCP-030 | Independent interactive conversations do not suffer unbounded cross-chat head-of-line delay; any host-CLI concurrency limit is explicit and proven safe | Web, GlassHive state | FAIL (2026-08-03 one web turn queued about 75 seconds behind another conversation before completing correctly) |
+| GCP-031 | A structured quota/rate admission failure before authoring uses the Agent Builder fallback exactly once; lifecycle reconciliation does not lock recovery and cancellation stops the active attempt | Agent Builder, web/Telegram chat, SSE, GlassHive state | PASS (2026-08-06 real native Telegram recovery plus automated quota/provider-unavailable coverage; see `reports/2026-08-06-telegram-reconciliation-fallback-recovery.md`) |
+| GCP-032 | GlassHive's provider-internal serial fallback is a separate opt-in Agent setting, defaults disabled, persists model/effort, clears cleanly, and never starts after native authoring evidence | Agent Builder, API, Mongo, GlassHive state | PASS (2026-08-04 installed save/reload and degraded/race coverage; see `reports/2026-08-04-installed-agent-builder-glasshive-fallback.md`) |
+| GCP-033 | A foreign reconciler preserves a host run only while its matching owner lease is valid; dead/stale/reused ownership and late CLI return cannot pin or overwrite durable interruption, while user Stop never falls back | Web/Telegram chat, GlassHive state, logs | PASS (2026-08-06 real reconciliation, Stop, dead-owner fallback, and focused regressions; see `reports/2026-08-06-telegram-reconciliation-fallback-recovery.md`) |
+| GCP-034 | Conversation-provider host capabilities are projected only when policy authorizes them; an honest empty projection proceeds, while a declared capability whose signed bundle cannot be minted fails closed | Web chat, provider bootstrap, GlassHive state | PASS-LIVE/AUTOMATED (2026-08-08 empty-projection repair and 20 provider tests; see `../memory-continuity/reports/2026-08-08-cognitive-continuity-capability-repair.md`) |
 
 ## Natural User Use Case Checklist
 
@@ -50,6 +55,8 @@
 | Cortex/Feelings | Trigger a GlassHive cortex and main follow-up with Feelings on | Web chat/cortex cards | Prompt telemetry counts, run/session state | Correct cards/session route; one main capsule; no specialist copy | PASS (2026-07-30) |
 | Cross-surface | Send synthetic Telegram text/voice/video and place a LiveKit call | Telegram and LiveKit UIs | Relay/voice logs, Mongo/provider route | Telegram uses selected Agent provider once; LiveKit stays Voice LLM | PARTIAL (2026-07-31 post-fix user run pending) |
 | Load/degraded | Run a long mission concurrently, then crash/rate-limit/restart the CLI | Web chat/GlassHive | Latency, lane/run state, error/recovery logs | Interactive lane remains usable; precise recoverable state | PASS (2026-07-30) |
+| Fallback/recovery | Configure Agent-level and provider-internal fallbacks, then trigger pre-authoring rate limit, dead ownership, and explicit Stop | Agent Builder, web/Telegram, GlassHive state | Persisted settings, attempt/run ledger, visible result, cancellation state | At most one authorized fallback starts before authoring; Stop cancels without fallback; recovery remains visible and idempotent | PASS/PARTIAL (2026-08-04 through 2026-08-06; concurrency latency remains open in GCP-030) |
+| Capability projection | Run once with no authorized host capabilities and once with a declared capability whose signed bundle cannot be minted | Web chat, broker/provider bootstrap | Visible answer/error, signed-bundle audit, provider state | Empty projection is a valid capability-free turn; an unmintable declared capability fails closed | PASS-LIVE/AUTOMATED (2026-08-08) |
 | Release path | Fresh supported install and installed runtime run | Installer/CLI/web | Generated files, processes, commits/pins/artifacts | LIFE/provider/build/pins all present and aligned | PARTIAL (2026-08-01 isolated clean install/upgrade/live web proof passed; hosted checks pending) |
 
 ## Acceptance Rules
@@ -62,8 +69,10 @@
 - A required real user path cannot be replaced by a mock, source review, unit test, DB row, or another
   model's review.
 - Forbidden results: wrapper LLM authorship, silent OpenAI fallback, duplicate harness run/reply,
-  GlassHive as Phase A/native realtime audio/automatic fallback, specialist Feelings injection, runtime files in
+  GlassHive as Phase A/native realtime audio, unconfigured or post-authoring fallback, specialist Feelings injection, runtime files in
   LIFE, hidden chain-of-thought, shared provider/MCP/runtime credentials, caller-asserted owner or
   full-access escalation, or private data in committed evidence.
 
-Latest detailed result: [`reports/2026-07-30-core-provider-acceptance.md`](reports/2026-07-30-core-provider-acceptance.md).
+Latest detailed recovery result:
+[`reports/2026-08-06-telegram-reconciliation-fallback-recovery.md`](reports/2026-08-06-telegram-reconciliation-fallback-recovery.md).
+The original cross-surface release matrix remains partial.

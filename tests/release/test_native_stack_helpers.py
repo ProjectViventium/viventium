@@ -167,9 +167,10 @@ def test_detect_livekit_node_ip_prefers_lan_interface_address() -> None:
         [
             "bash",
             "-lc",
-            (
-                "set -euo pipefail\n"
-                "route() { printf '   interface: en7\\n'; }\n"
+                (
+                    "set -euo pipefail\n"
+                    "unset LIVEKIT_NODE_IP\n"
+                    "route() { printf '   interface: en7\\n'; }\n"
                 "ipconfig() {\n"
                 "  if [[ \"$1\" == \"getifaddr\" && \"$2\" == \"en7\" ]]; then\n"
                 "    printf '192.0.2.10\\n'\n"
@@ -198,9 +199,10 @@ def test_detect_livekit_node_ip_falls_back_to_loopback() -> None:
         [
             "bash",
             "-lc",
-            (
-                "set -euo pipefail\n"
-                "route() { return 1; }\n"
+                (
+                    "set -euo pipefail\n"
+                    "unset LIVEKIT_NODE_IP\n"
+                    "route() { return 1; }\n"
                 "ipconfig() { return 1; }\n"
                 "hostname() { return 1; }\n"
                 f"{function_def}"

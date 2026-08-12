@@ -442,6 +442,14 @@ Telegram route returns a typed attachment-processing failure (`422` with
 `attachmentProcessingError`) so the Python bridge can show the actual reason instead of a generic
 server error.
 
+A new Telegram conversation starts with provisional gateway identity, but any connected-tool or
+conversation-provider grant is signed only after LibreChat creates the durable conversation and
+response message ids. Provider refresh receives that finalized run body. A provisional `new`
+conversation or missing message id must never reach the capability broker as a valid turn scope.
+A broker-scope failure is a connected-tool authorization blocker, not evidence that the upstream
+provider rejected the owner. The visible answer must not blame WHOOP, another provider, or a web
+challenge unless an actual provider call produced that evidence.
+
 `.pptx` uploads are handled by the shared built-in `document_parser`, which extracts slide text and
 speaker notes into message context for the active agent. The same parser also extracts embedded PPTX
 image media and forwards those images as capped, resized vision inputs on surfaces that already

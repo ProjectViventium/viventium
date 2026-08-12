@@ -1,5 +1,7 @@
 # GlassHive Host Workers QA Cases
 
+Automated Codex app-server probe owner: `tests/release/test_glasshive_codex_app_server_probe.py`.
+
 ## Case ID Convention
 
 Use stable `GHHOST-NNN` IDs for glasshive host workers cases.

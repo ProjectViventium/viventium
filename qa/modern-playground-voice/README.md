@@ -29,10 +29,15 @@ cancellation, reconnect/persistence, post-call memory boundaries, and extended-c
   - LiveKit / dispatch failures
   - backend model-provider credential failures
 
+The 2026-08-10 post-change audible run proved a terminal voice task, nonzero RTC audio
+bytes/packets/duration/energy, visible `Speaking -> Listening`, completed playback, and no page
+error. See `reports/2026-08-10-anti-sycophancy-audible-playback-and-worker-port.md`. The harness now
+records transport/audio acceptance separately from semantic truth-seeking evaluation.
+
 The world-class Call/Wing/Listen-Only endurance gate is in
 `qa/modern-playground-voice/endurance-runbook.md`. It owns the 100-switch, 50-reconnect, 65-minute
 audible, 120-minute soak, exact replay, structured trace, and private-evidence workflow for
-MPV-032 through MPV-054. The machine-readable execution and coverage contract is
+MPV-032 through MPV-056. The machine-readable execution and coverage contract is
 `qa/modern-playground-voice/acceptance-manifest.template.v1.json`.
 
 ## Private Raw Evidence

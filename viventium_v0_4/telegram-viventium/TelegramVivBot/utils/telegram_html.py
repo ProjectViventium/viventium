@@ -173,7 +173,10 @@ def markdown_to_html(text: str) -> str:
 
     result = _escape_html(result)
 
-    for key, value in placeholders.items():
+    # Later placeholders can wrap earlier ones (for example, a blockquote
+    # containing bold or italic text). Resolve outer placeholders first so
+    # their protected inner tokens are present when those tokens are restored.
+    for key, value in reversed(placeholders.items()):
         result = result.replace(key, value)
 
     result = re.sub(r"\n{3,}", "\n\n", result)

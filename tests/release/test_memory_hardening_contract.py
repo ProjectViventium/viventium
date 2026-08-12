@@ -366,7 +366,7 @@ process.stdout.write(JSON.stringify({ defaultCandidates, explicitCandidates }));
     assert any(candidate["provider"] == "openai" for candidate in payload["explicitCandidates"])
 
 
-def test_memory_hardening_prefers_sol_xhigh_when_both_providers_are_available() -> None:
+def test_memory_hardening_prefers_luna_medium_when_both_providers_are_available() -> None:
     script = """
 const hardener = require('./viventium_v0_4/LibreChat/scripts/viventium-memory-hardening.js');
 process.env.VIVENTIUM_PRIMARY_PROVIDER = 'openai';
@@ -388,8 +388,8 @@ process.stdout.write(JSON.stringify(selected));
     payload = json.loads(result.stdout)
 
     assert payload["provider"] == "openai"
-    assert payload["model"] == "gpt-5.6-sol"
-    assert payload["effort"] == "xhigh"
+    assert payload["model"] == "gpt-5.6-luna"
+    assert payload["effort"] == "medium"
 
 
 def test_memory_hardening_vector_presence_failures_are_not_model_failures() -> None:

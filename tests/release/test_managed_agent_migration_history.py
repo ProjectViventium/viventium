@@ -31,7 +31,7 @@ def test_librechat_checkout_verifies_all_predecessors_without_parent_history(
     )
 
     assert completed.returncode == 0, completed.stderr
-    assert "self-contained and matches all 76 predecessor objects" in completed.stdout
+    assert "self-contained and matches all 82 predecessor objects" in completed.stdout
 
 
 def test_explicit_parent_history_audit_matches_the_hermetic_artifact() -> None:

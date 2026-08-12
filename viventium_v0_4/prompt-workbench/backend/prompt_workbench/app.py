@@ -15,7 +15,7 @@ from fastapi.responses import PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import auth, drafts, evals, frames, prompt_service, scheduled_prompts, sync_engine
+from . import auth, cognitive_integrity, drafts, evals, frames, prompt_service, scheduled_prompts, sync_engine
 from .paths import WORKBENCH_ROOT, resolve_repo_path
 from .runtime_env import load_viventium_runtime_env
 
@@ -40,8 +40,22 @@ def _seed_nightly_executor() -> str:
     return value if value in {"glasshive_host", "viventium_agent"} else "glasshive_host"
 
 
+def _seed_health_context_enabled() -> bool:
+    return _env_flag("VIVENTIUM_PROMPT_WORKBENCH_SEED_HEALTH_CONTEXT_ENABLED")
+
+
+def _seed_health_context_executor() -> str:
+    value = (
+        os.getenv("VIVENTIUM_PROMPT_WORKBENCH_SEED_HEALTH_CONTEXT_EXECUTOR")
+        or "glasshive_host"
+    ).strip()
+    return value if value in {"glasshive_host", "viventium_agent"} else "glasshive_host"
+
+
 def _seed_builtin_scheduled_prompts() -> bool:
-    if not _seed_nightly_enabled():
+    seed_nightly = _seed_nightly_enabled()
+    seed_health_context = _seed_health_context_enabled()
+    if not seed_nightly and not seed_health_context:
         return True
     user_id = (os.getenv("VIVENTIUM_PROMPT_WORKBENCH_ADMIN_USER_ID") or "").strip()
     email = (os.getenv("VIVENTIUM_PROMPT_WORKBENCH_ADMIN_EMAIL") or "").strip()
@@ -53,12 +67,20 @@ def _seed_builtin_scheduled_prompts() -> bool:
     if not user_id or user_id in {"local-admin", "test-admin"}:
         return False
     try:
-        scheduled_prompts.seed_nightly_prompt(
-            user_id=user_id,
-            email=email or None,
-            active=_env_flag("VIVENTIUM_PROMPT_WORKBENCH_SEED_NIGHTLY_ACTIVE"),
-            executor=_seed_nightly_executor(),
-        )
+        if seed_nightly:
+            scheduled_prompts.seed_nightly_prompt(
+                user_id=user_id,
+                email=email or None,
+                active=_env_flag("VIVENTIUM_PROMPT_WORKBENCH_SEED_NIGHTLY_ACTIVE"),
+                executor=_seed_nightly_executor(),
+            )
+        if seed_health_context:
+            scheduled_prompts.seed_health_context_prompt(
+                user_id=user_id,
+                email=email or None,
+                active=_env_flag("VIVENTIUM_PROMPT_WORKBENCH_SEED_HEALTH_CONTEXT_ACTIVE"),
+                executor=_seed_health_context_executor(),
+            )
     except Exception as exc:
         # Built-in private prompt seeding is best-effort; admin APIs still surface failures when edited.
         logger.warning("Built-in nightly reflection seed failed: %s", exc.__class__.__name__)
@@ -89,7 +111,7 @@ def _seed_when_first_admin_exists() -> None:
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     seeded = _seed_builtin_scheduled_prompts()
-    if not seeded and _seed_nightly_enabled():
+    if not seeded and (_seed_nightly_enabled() or _seed_health_context_enabled()):
         threading.Thread(
             target=_seed_when_first_admin_exists,
             name="prompt-workbench-nightly-seed",
@@ -234,6 +256,7 @@ class ScheduledPromptRequest(BaseModel):
 class ScheduledPromptPatchRequest(BaseModel):
     title: str | None = None
     promptText: str | None = None
+    sourcePromptId: str | None = None
     schedule: dict[str, Any] | None = None
     active: bool | None = None
     memoryWriteMode: str | None = None
@@ -254,6 +277,13 @@ class ScheduledPromptMemoryProposalApplyRequest(BaseModel):
 @app.get("/api/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/api/cognitive-integrity")
+def api_cognitive_integrity(
+    context: auth.AuthContext = Depends(auth.require_admin),
+) -> dict[str, Any]:
+    return cognitive_integrity.cognitive_integrity_report(user_id=_auth_user_id(context))
 
 
 @app.get("/api/build-version")
@@ -284,6 +314,13 @@ def variables(_: auth.AuthContext = Depends(auth.require_admin)) -> dict[str, An
 @app.get("/api/scheduled-prompts/templates/nightly-subconscious")
 def nightly_scheduled_prompt_template(_: auth.AuthContext = Depends(auth.require_admin)) -> dict[str, Any]:
     return scheduled_prompts.nightly_prompt_template()
+
+
+@app.get("/api/scheduled-prompts/templates/health-context")
+def health_context_scheduled_prompt_template(
+    _: auth.AuthContext = Depends(auth.require_admin),
+) -> dict[str, Any]:
+    return scheduled_prompts.health_context_prompt_template()
 
 
 @app.post("/api/variables/render")

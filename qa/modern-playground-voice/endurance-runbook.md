@@ -1,6 +1,6 @@
 # World-Class Call Endurance Runbook
 
-This is the execution contract for MPV-032 through MPV-054. The harness drives an already-running,
+This is the execution contract for MPV-032 through MPV-056. The harness drives an already-running,
 already-built Viventium call; it never starts, restarts, upgrades, or modifies the runtime.
 
 ## Safety Boundary
@@ -48,7 +48,7 @@ exact argv, expected counters, and MPV-to-gate traceability is
 `acceptance-manifest.template.v1.json`. Copy it only into the private R&D tree for execution; never
 put signed session values into the public template.
 
-## MPV-032 Through MPV-054 Audit
+## MPV-032 Through MPV-056 Audit
 
 | Cases | Primary proof | Fail-closed evidence |
 | --- | --- | --- |
@@ -62,6 +62,7 @@ put signed session values into the public template.
 | MPV-049–051 | malformed snapshot, API restart, and 4,200-segment history probes | fail-visible recovery, durable barrier/replay, complete on-demand speaker traversal |
 | MPV-052–053 | real Telegram call link plus web/Telegram Agent permission matrix | one-time exchange/replay denial, one-click call, canonical Agent ACL, revocation, decoy rejection, Listen-Only bypass |
 | MPV-054 | accepted/candidate LiveKit dependency sets | identical suites and calls, QoE delta, warning diff, build/install/clean parity; no recency-only promotion |
+| MPV-055–056 | stable/false interruption plus presentation/durable-work probes | no stale resumed speech, playback commit truth, durable work survives ordinary barge-in, explicit cancellation remains authoritative |
 
 The harness does not claim that one long browser tab itself proves every adversarial path. The
 external evidence file aggregates the separately measured browser, network, diarization, database,

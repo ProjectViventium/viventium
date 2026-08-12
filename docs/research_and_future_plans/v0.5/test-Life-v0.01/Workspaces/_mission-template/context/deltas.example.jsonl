@@ -1,0 +1,1 @@
+{"schemaVersion":"0.1","deltaId":"delta-example","missionId":"mission-example","createdAt":"YYYY-MM-DDTHH:MM:SSZ","author":{"kind":"parent","ref":"source://task/example"},"type":"correction","body":"Synthetic example: the user corrected one bounded mission fact.","supersedes":[],"attachments":[],"callback":{"event":"checkpoint.ready","ref":"source://callback/example"}}

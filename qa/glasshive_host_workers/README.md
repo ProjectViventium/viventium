@@ -48,6 +48,11 @@ absolute home-directory paths.
   full submitted instructions and worker/run/project ids remain diagnostics-only unless explicitly
   requested.
 - Missing host OpenClaw CLI degrades only `@openclaw`; Codex and Claude host workers remain usable.
+- Future capacity retries remain persisted and dormant until due. They use the one shared scheduler,
+  never one timer or immediate resubmission loop per queued run, and recover once after restart.
+- Retry scheduling stays bounded under hundreds of future retries, excludes paused/terminated
+  workers before query limits, stops cleanly, and keeps one scheduler phase failure from disabling
+  the other phase.
 
 ## Destructive Confirmation Scope
 
@@ -85,6 +90,41 @@ When destructive confirmation is enabled, workers must checkpoint before:
 - Callback delivery QA: late Telegram-surface callbacks are enqueued, claimed, delivered once,
   retried on failure, and observable in backlog checks without relying on prompt text or in-memory
   request state.
+- Scheduler QA: future capacity retries create no per-run timers or processor spin; a sustained
+  synthetic set of at least several hundred future retries keeps a constant-size service thread
+  footprint and one scheduler thread, then each eligible run recovers exactly once when due.
+- Scheduler recovery QA: persisted retries survive restart; paused/terminated workers cannot starve
+  eligible work; shutdown blocks further dispatch; scheduled-run, retry-discovery, and wait-lookup
+  failures are observable and do not silently stop independent scheduler work.
+
+## 2026-08-10 Regression: Capacity Retry Thread Explosion
+
+Trigger: local high-contention QA produced a few future `host_worker_busy` retries. Three macOS
+kernel panic reports correlated the GlassHive service with roughly 9,400-12,300 threads even though
+memory and swap were not exhausted.
+
+Public-safe root cause:
+
+- Due-aware queue selection correctly left future retries unclaimed.
+- The processor's final path then treated any queued row as immediately runnable, submitted another
+  processor, and scheduled another process-local timer for the same future deadline.
+- That due-aware/due-unaware mismatch repeated rapidly and created unbounded threads from only a
+  small number of queued retries.
+
+Required invariant:
+
+- SQLite `retry_after` is the sole retry clock.
+- The existing single scheduler discovers due workers and wakes the bounded executor; capacity
+  retries never allocate per-run timers.
+- Immediate processor continuation is due-aware, active-processor ownership deduplicates dispatch,
+  and a transactional claim gives one execution per run.
+- Restart, paused/terminated exclusion, shutdown, and independent scheduler-phase failure handling
+  are part of the same acceptance gate, not follow-up hardening.
+
+Current status is `PARTIAL`: 12 focused capacity/scheduler tests, the complete 175-case API file, a
+synthetic 200-retry constant-thread stress, and the 791-case full runtime suite are green. The
+installed/running artifact and controlled real capacity-wait/recovery remain pending. See `GHHOST-015` and
+[`reports/2026-08-10-capacity-retry-scheduler-thread-safety.md`](reports/2026-08-10-capacity-retry-scheduler-thread-safety.md).
 
 ## 2026-05-05 Regression: Telegram GlassHive Completion Delivery
 

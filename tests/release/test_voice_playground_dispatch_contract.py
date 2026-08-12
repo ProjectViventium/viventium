@@ -426,9 +426,14 @@ def _run_connection_details_route_case(
         input=script,
         text=True,
         capture_output=True,
-        check=True,
+        check=False,
         cwd=ROOT,
     )
+    if completed.returncode != 0:
+        raise AssertionError(
+            "connection-details harness failed:\n"
+            f"{completed.stderr.strip() or '<no stderr>'}"
+        )
     stdout = completed.stdout.strip()
     if not stdout:
         raise AssertionError("connection-details harness returned no stdout")

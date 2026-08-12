@@ -27,6 +27,8 @@
 | `01_Deep_Research_APIs.md` | Research Complete | OpenAI, Google, Perplexity deep research API analysis and LibreChat integration feasibility |
 | `02_Codex_Channel_Control_Spike.md` | Research Complete | Best architecture for combining Viventium's multi-channel agent UX with Codex-based maintenance and control |
 | `03_Affective_State_Feelings_System_Spike.md` | Superseded | Earlier affective-state spike, retained only as a pointer to the active source of truth in `docs/requirements_and_learnings/54_Emotional_Cortex_And_Feeling_State.md` |
+| [`v0.5/`](v0.5/README.md) | Pending Decision | Complete V0.5 vision package: Life-centered cognitive layer, Viventium Sources, full-context GlassHive missions, conversation memory, Insights/night workers, editable architecture, interactive wireframe, and synthetic Life template |
+| `04_Viventium_Personal_Cognitive_System_Vision.md` | Redirect | Stable pointer retained for links to the earlier single-file proposal |
 
 ---
 

@@ -15,7 +15,7 @@
 | `MPV-UC-011` | Reload a linked chat after provider overload was recovered by visible assistant text. | `docs/requirements_and_learnings/06_Voice_Calls.md` / `MPV-011` | LibreChat browser conversation | DB content parts, recovered error-class metadata, renderer tests, runtime logs | Recovered answer is visible, stale provider error card is not visible, refresh keeps the clean state. | 2026-05-21 PASS in `reports/2026-05-21-recovered-provider-error-card-cleanup.md` |
 | `MPV-UC-012` | Hear a streamed voice answer whose model deltas split punctuation from the phrase. | `docs/requirements_and_learnings/06_Voice_Calls.md` / `MPV-012` | Modern Playground call with xAI/Cartesia/fallback TTS as available | Voice gateway exact TTS debug logs, transcript, provider metrics, buffer unit tests | The assistant speaks naturally, never says a standalone period as "dot", and preserves delayed question/exclamation prosody; transcript remains readable. | 2026-05-25 PASS automated regression; live audible rerun pending after runtime restart |
 | `MPV-UC-013` | Hear a streamed voice answer when model text contains links, emails, references, markdown, or provider markup. | `docs/requirements_and_learnings/06_Voice_Calls.md` / `MPV-013` | Modern Playground call with current TTS route and fallback route | Voice gateway `llm_delta`, `tts_emit`, `[VoiceRendering][voice_gateway]`, provider request logs when available, sanitizer/unit tests | TTS receives speech-safe phrase chunks; plain providers do not receive raw tags; provider-supported controls are preserved only on capable routes. | PARTIAL 2026-07-15: prior live browser/artifact path passed; metadata-only provider/fallback rendering regression passes, but a post-change audible provider-matrix run remains required |
-| `MPV-UC-014` | Verify a voice/TTS fix after adding logs or instrumentation. | `docs/requirements_and_learnings/06_Voice_Calls.md` / `MPV-014` | Modern Playground call, active voice runtime, logs, DB/state | Runtime artifact proof, audible/delivered voice evidence, sanitized transcript evidence, exact TTS/provider-input logs, DB/state, owning code | The changed runtime is proven active and the post-change call demonstrates the intended audible behavior; instrumentation alone is not accepted. | 2026-05-22 PASS for local Whisper barge-in runtime/browser/log proof |
+| `MPV-UC-014` | Verify a voice/TTS fix after adding logs or instrumentation. | `docs/requirements_and_learnings/06_Voice_Calls.md` / `MPV-014` | Modern Playground call, active voice runtime, logs, DB/state | Runtime artifact proof, audible/delivered voice evidence, sanitized transcript evidence, exact TTS/provider-input logs, DB/state, owning code | The changed runtime is proven active and the post-change call demonstrates the intended audible behavior; instrumentation alone is not accepted. | 2026-08-10 PASS in `reports/2026-08-10-anti-sycophancy-audible-playback-and-worker-port.md`: browser playback, RTC audio deltas, terminal task, `Speaking -> Listening`, bounded answer, and zero page errors |
 | `MPV-UC-015` | Interrupt a local Whisper assistant reply while it is speaking. | `docs/requirements_and_learnings/06_Voice_Calls.md` / `MPV-015` | Modern Playground call with local `pywhispercpp` STT | Visible transcript, audible behavior, voice gateway interruption policy/state logs, generated runtime config, DB call-session route | A sustained one-word or short-phrase barge-in pauses/interrupts the agent without waiting for final local Whisper text; AssemblyAI word-guard defaults remain unchanged. | 2026-05-22 PASS in `reports/2026-05-22-local-whisper-bargein-qa.md` |
 | `MPV-UC-016` | In Advanced Listening settings, select `AssemblyAI` → `Universal-3 Pro streaming (u3-rt-pro)`, then click Call and speak. | `docs/requirements_and_learnings/06_Voice_Calls.md` (AssemblyAI Streaming Engine Selection) / `MPV-017` | Advanced settings, Modern Playground browser, voice gateway worker, LiveKit | Advanced option, voice gateway route log, `/capabilities` payload, transcript, worker STT-selection tests | The saved `u3-rt-pro` route remains authoritative and the primary call surface adds no provider-selection step. | 2026-05-29 PARTIAL: Advanced option/plumbing verified; post-change audible call remains required |
 | `MPV-UC-017` | Receive a streamed answer whose server emits growing text snapshots instead of pure incremental token deltas. | `docs/requirements_and_learnings/06_Voice_Calls.md` / `MPV-018` | Modern Playground browser, voice gateway stream, LibreChat voice route, Mongo/chat reload | Gateway chunks, visible transcript, persisted assistant text/content parts, follow-up decision metadata | The assistant text appears once, `{NTA}` remains silent, and the linked LibreChat chat reload never shows malformed control tags or adjacent duplicate words. | 2026-05-30 PARTIAL PASS in `reports/2026-05-30-cumulative-delta-snapshot-rca.md`; artifact fixed and linked chat cleaned on read, but healthy primary-provider stream rerun blocked by local provider failures |
@@ -1560,6 +1560,44 @@ public-safe browser/audio, log, persistence, and installed-artifact evidence. `P
   warning diff, built/installed parity, and real calls on both sets.
 - Last Run: `PARTIAL` — 2026-08-09 — the comparison decision retains `1.5.10`, while the complete
   user-grade runtime/endurance/install evidence remains pending and therefore is not release PASS.
+
+### MPV-055 Stable And False Barge-In Logical-Turn Coherence
+
+- Requirement: live voice declares `provisional` plus `response_only`; acoustic interruption stops
+  presentation, false interruption may resume, and a stable utterance supersedes stale speech
+  without cancelling backend work.
+- Steps: in a real audible call, begin response B, trigger a false interruption and verify supported
+  resume, then speak stable C and wait for D. Reopen the linked transcript and correlate the call,
+  logical revision, GenerationJobManager, voice task, and conversation rows.
+- Expected Result: false barge-in may resume B; after stable C, no stale B audio resumes, D reflects
+  surviving A+C context, completed work receipts remain truthful, and refresh shows no stale
+  unfinished assistant prose.
+- Forbidden Result: any acoustic event cancels durable work, stable supersession resumes old speech,
+  D omits C, false interruption creates a committed user turn, or a stale callback is spoken.
+- PASS Evidence: audible capture, playback/interruption logs, logical revision state,
+  conversation/task state, MPV-014 latency hops, restart/reopen proof, and public-safe summary.
+- Last Run: `PASS-STABLE / PARTIAL-FALSE` — 2026-08-11 — stable supersession passed in a real
+  audible run; a detected non-stable interruption and resume remains outstanding. See
+  `../scheduling-cortex/reports/2026-08-11-consciousness-continuity-and-turn-coherence.md`.
+
+### MPV-056 Voice Presentation Commit And Durable-Work Boundary
+
+- Requirement: voice commits only after playback completion; partial speech is retractable and
+  explicit task cancellation remains distinct from presentation interruption.
+- Steps: interrupt during partial TTS, during a durable GlassHive/tool task, after playback commit,
+  and via explicit task cancellation. Observe current revision, task state, callback delivery, and
+  transcript persistence.
+- Expected Result: partial speech is not committed, durable work continues through ordinary
+  barge-in, completed results reattach truthfully, post-commit C is a normal follow-up, and only
+  explicit cancellation stops durable work.
+- Forbidden Result: barge-in repeats a committed effect, partial playback commits automatically,
+  explicit cancellation is ignored, or late stale prose is voiced as current.
+- PASS Evidence: audible outcomes, task/action receipts, callback and presentation acknowledgements,
+  voice/LibreChat logs, persisted task state, and focused regressions.
+- Last Run: `PASS-PRESENTATION / PARTIAL-DURABLE` — 2026-08-11 — ordinary audible commit and
+  partial stable supersession passed; interruption during a real durable GlassHive/tool effect
+  remains outstanding. See
+  `../scheduling-cortex/reports/2026-08-11-consciousness-continuity-and-turn-coherence.md`.
 
 ### Endurance Gate
 

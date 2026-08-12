@@ -28,6 +28,8 @@ Never store health bodies, measurements, profile values, OAuth values, account/d
 archive identifiers, private screenshots, or owner-specific paths here. Use the component's dated
 public-safe report for connector evidence and a parent dated report for UI/tool activation evidence.
 
-Automated parent contract: `tests/release/test_viventium_health_integration.py`.
+Automated parent contracts: `tests/release/test_viventium_health_integration.py`,
+`tests/release/test_viventium_health_runtime.py`, and
+`tests/release/test_health_context_workbench.py`.
 
 Latest evidence: [2026-07-27 live WHOOP agent QA](reports/2026-07-27-live-whoop-agent-qa.md).

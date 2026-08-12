@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <link rel="icon" href="assets/viventium-v.svg" type="image/svg+xml">
+  <title>Viventium V0.5 — Living Ledger Brand + UI/UX Kit R2</title>
+  <style>
+    :root {
+      --canvas:#f5f4f1; --paper:#fcfbf8; --raised:#ffffff; --ink:#17181b; --muted:#686b72;
+      --quiet:#92949a; --rule:#dfded9; --rule-strong:#cbc9c3; --presence:#3f5fb7;
+      --presence-soft:#e6ebfb; --attention:#a86412; --danger:#b53d4d; --violet:#6d5cab;
+      --shadow:0 18px 48px rgba(34,42,37,.12); --sans:ui-sans-serif,-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",sans-serif;
+      --mono:"SFMono-Regular",Consolas,"Liberation Mono",monospace;
+    }
+    [data-theme="dark"] { --canvas:#111214; --paper:#181a1d; --raised:#1e2024; --ink:#f2f1ee; --muted:#96999f;
+      --quiet:#6f7278; --rule:#2a2d31; --rule-strong:#383b40; --presence:#86a4f8;
+      --presence-soft:#232b43; --attention:#e4b36e; --danger:#ef8793; --violet:#a897dd;
+      --shadow:0 22px 54px rgba(0,0,0,.32); }
+    @media (prefers-color-scheme:dark) {
+      :root:not([data-theme="light"]) { --canvas:#111214; --paper:#181a1d; --raised:#1e2024; --ink:#f2f1ee; --muted:#96999f;
+        --quiet:#6f7278; --rule:#2a2d31; --rule-strong:#383b40; --presence:#86a4f8;
+        --presence-soft:#232b43; --attention:#e4b36e; --danger:#ef8793; --violet:#a897dd;
+        --shadow:0 22px 54px rgba(0,0,0,.32); }
+    }
+    *{box-sizing:border-box} html{scroll-behavior:smooth} body{margin:0;background:var(--canvas);color:var(--ink);font-family:var(--sans);font-size:15px;line-height:1.5}
+    button{font:inherit;color:inherit} button:focus-visible,a:focus-visible{outline:2px solid var(--presence);outline-offset:3px}
+    a{color:inherit;text-decoration:none}.shell{min-height:100vh;display:grid;grid-template-columns:224px minmax(0,1fr)}
+    aside{position:sticky;top:0;height:100vh;padding:28px 22px;border-right:1px solid var(--rule);background:var(--paper);display:flex;flex-direction:column}
+    .lockup{display:flex;gap:11px;align-items:center}.mark{width:34px;height:34px;border:1px solid var(--rule-strong);border-radius:10px;display:grid;place-items:center;color:var(--presence)}
+    .mark svg{width:20px}.lockup strong{display:block;font-size:13px;letter-spacing:.03em}.lockup span{display:block;color:var(--quiet);font-size:10px;margin-top:1px}
+    nav{margin-top:50px;display:grid;gap:4px}nav a{padding:8px 10px;border-radius:8px;color:var(--muted);font-size:12px}nav a:hover{color:var(--ink);background:var(--raised)}
+    .side-foot{margin-top:auto}.theme{display:flex;padding:3px;border:1px solid var(--rule);border-radius:10px}.theme button{flex:1;border:0;background:transparent;padding:6px;border-radius:7px;color:var(--quiet);cursor:pointer;font-size:10px}.theme button.active{background:var(--raised);color:var(--ink)}
+    .side-note{color:var(--quiet);font-size:10px;margin:13px 2px 0}
+    main{min-width:0}.hero{min-height:590px;padding:74px clamp(34px,7vw,112px) 62px;display:grid;align-content:space-between;border-bottom:1px solid var(--rule);position:relative;overflow:hidden}
+    .hero:after{content:"V";position:absolute;right:-32px;bottom:-205px;font-size:520px;line-height:1;font-weight:750;color:transparent;-webkit-text-stroke:1px var(--rule);pointer-events:none}
+    .eyebrow{color:var(--presence);font-size:10px;font-weight:800;letter-spacing:.18em;text-transform:uppercase}.hero h1{max-width:930px;margin:19px 0 20px;font-size:clamp(48px,7.3vw,104px);line-height:.92;letter-spacing:-.065em;font-weight:690}
+    .hero p{max-width:620px;margin:0;color:var(--muted);font-size:18px}.hero-bottom{display:flex;justify-content:space-between;align-items:end;gap:30px;position:relative;z-index:1}
+    .promise{font-size:13px;font-weight:700}.status-line{display:flex;align-items:center;gap:9px;color:var(--muted);font-size:11px}.pulse{width:8px;height:8px;border-radius:50%;background:var(--presence);box-shadow:0 0 0 5px color-mix(in srgb,var(--presence) 12%,transparent)}
+    section{padding:70px clamp(34px,7vw,112px);border-bottom:1px solid var(--rule)}.section-head{display:grid;grid-template-columns:minmax(220px,.55fr) 1fr;gap:60px;margin-bottom:46px}.section-head h2{margin:0;font-size:32px;letter-spacing:-.04em}.section-head p{margin:3px 0 0;color:var(--muted);max-width:700px}
+    .principles{border-top:1px solid var(--rule)}.principle{display:grid;grid-template-columns:70px minmax(180px,.65fr) 1.4fr;gap:20px;padding:23px 0;border-bottom:1px solid var(--rule);align-items:start}.principle .num{font-family:var(--mono);font-size:10px;color:var(--presence)}.principle h3{margin:0;font-size:15px}.principle p{margin:0;color:var(--muted);font-size:13px;max-width:620px}
+    .palette{display:grid;grid-template-columns:repeat(7,minmax(90px,1fr));border:1px solid var(--rule);border-radius:14px;overflow:hidden}.swatch{min-height:190px;padding:14px;display:flex;flex-direction:column;justify-content:flex-end;border-right:1px solid rgba(127,127,127,.22)}.swatch:last-child{border-right:0}.swatch b{font-size:11px}.swatch span{font-family:var(--mono);font-size:9px;margin-top:4px;opacity:.72}
+    .type-spec{border:1px solid var(--rule);border-radius:14px;overflow:hidden;background:var(--paper)}.type-row{padding:27px 30px;border-bottom:1px solid var(--rule);display:grid;grid-template-columns:120px 1fr;align-items:baseline}.type-row:last-child{border-bottom:0}.type-meta{font:10px var(--mono);color:var(--quiet)}.display{font-size:48px;line-height:1;letter-spacing:-.05em;font-weight:680}.heading{font-size:28px;letter-spacing:-.035em;font-weight:680}.body-copy{color:var(--muted);max-width:680px}.meta-copy{font:11px var(--mono);color:var(--muted)}
+    .component-stage{border:1px solid var(--rule);border-radius:16px;background:var(--paper);padding:22px;box-shadow:var(--shadow)}.stage-bar{display:flex;justify-content:space-between;align-items:center;padding-bottom:18px;border-bottom:1px solid var(--rule)}.stage-bar strong{font-size:12px}.stage-actions{display:flex;gap:8px}.btn{min-height:36px;padding:7px 12px;border:1px solid var(--rule);background:var(--raised);border-radius:8px;font-size:11px;cursor:pointer}.btn.primary{background:var(--ink);border-color:var(--ink);color:var(--canvas);font-weight:750}.btn.quiet{background:transparent;color:var(--muted)}
+    .rows{margin-top:8px}.source-row{display:grid;grid-template-columns:42px minmax(150px,1fr) minmax(190px,1.3fr) 120px 112px;gap:14px;align-items:center;padding:17px 4px;border-bottom:1px solid var(--rule)}.source-row:last-child{border-bottom:0}.icon{width:34px;height:34px;border:1px solid var(--rule);border-radius:9px;display:grid;place-items:center;background:#fff;overflow:hidden}.icon img{width:22px;height:22px;object-fit:contain}.source-row b{font-size:13px}.source-row small{display:block;color:var(--quiet);font-size:10px;margin-top:2px}.scope{color:var(--muted);font-size:11px}.state{display:flex;gap:8px;align-items:center;font-size:10px;color:var(--muted)}.dot{width:7px;height:7px;border-radius:50%;background:var(--presence)}.dot.amber{background:var(--attention)}
+    .patterns{margin-top:32px;display:grid;grid-template-columns:1fr 1fr;gap:16px}.pattern{border-top:1px solid var(--rule);padding:20px 0}.pattern .eyebrow{margin-bottom:12px}.pattern h3{margin:0 0 7px;font-size:15px}.pattern p{margin:0;color:var(--muted);font-size:12px;max-width:480px}
+    .mind-frame{display:grid;grid-template-columns:minmax(0,1fr) 310px;height:540px;border:1px solid var(--rule);border-radius:16px;overflow:hidden;background:var(--paper);box-shadow:var(--shadow)}.conversation{padding:26px 30px;display:flex;flex-direction:column}.conversation-head{display:flex;justify-content:space-between;padding-bottom:19px;border-bottom:1px solid var(--rule)}.conversation-head strong{font-size:13px}.thread{flex:1;padding:28px 0}.message{max-width:72%;padding:13px 15px;border-radius:12px;background:var(--raised);font-size:12px}.message.ai{margin-top:18px;border-left:2px solid var(--presence);background:transparent;padding-left:17px}.composer{border:1px solid var(--rule);border-radius:12px;padding:14px;color:var(--quiet);font-size:12px;display:flex;justify-content:space-between}.living-rail{border-left:1px solid var(--rule);padding:22px}.rail-title{font-size:10px;font-weight:800;letter-spacing:.12em;color:var(--quiet)}.spectrum{margin-top:18px;display:grid;gap:9px}.lane{display:grid;grid-template-columns:64px 1fr 24px;gap:8px;align-items:center;font-size:10px}.track{height:4px;background:var(--rule);border-radius:4px;overflow:hidden}.fill{height:100%;background:var(--presence);border-radius:4px}.cortex{margin-top:28px;padding-top:19px;border-top:1px solid var(--rule)}.cortex-row{display:grid;grid-template-columns:8px 1fr auto;gap:9px;align-items:start;padding:11px 0;border-bottom:1px solid var(--rule)}.cortex-row b{font-size:11px}.cortex-row small{display:block;color:var(--quiet);font-size:9px}.trace{font:9px var(--mono);color:var(--presence)}
+    .do-dont{display:grid;grid-template-columns:1fr 1fr;gap:40px}.rule-list{border-top:1px solid var(--rule)}.rule-row{display:grid;grid-template-columns:26px 1fr;gap:12px;padding:14px 0;border-bottom:1px solid var(--rule);font-size:12px;color:var(--muted)}.rule-row b{color:var(--presence)}.dont .rule-row b{color:var(--danger)}
+    footer{padding:28px clamp(34px,7vw,112px) 45px;color:var(--quiet);font-size:10px;display:flex;justify-content:space-between}
+    @media(max-width:950px){.shell{grid-template-columns:1fr}aside{position:relative;height:auto;border-right:0;border-bottom:1px solid var(--rule);padding:16px 20px;flex-direction:row;align-items:center}nav,.side-note{display:none}.side-foot{margin-left:auto}.hero{min-height:500px}.section-head{grid-template-columns:1fr;gap:15px}.palette{grid-template-columns:repeat(2,1fr)}.swatch{min-height:120px}.source-row{grid-template-columns:42px 1fr auto}.scope,.source-row>.state{display:none}.mind-frame{grid-template-columns:1fr;height:auto}.living-rail{border-left:0;border-top:1px solid var(--rule)}.patterns,.do-dont{grid-template-columns:1fr}}
+    @media(max-width:600px){body{overflow-x:hidden}.hero,section{padding-left:20px;padding-right:20px}.hero{min-height:520px}.hero h1{font-size:54px}.hero-bottom{display:grid}.principle{grid-template-columns:34px 1fr;gap:8px 12px}.principle p{grid-column:2}.type-row{grid-template-columns:1fr;gap:10px;padding:22px 20px}.display{font-size:34px;line-height:1.05}.heading{font-size:24px}.component-stage{padding:14px}.stage-actions .btn.quiet{display:none}.source-row{grid-template-columns:38px 1fr auto;gap:8px}.source-row .btn{padding:6px 8px}.mind-frame{border-radius:12px}.conversation{padding:20px}.message{max-width:90%}.living-rail{padding:20px}footer{display:grid;gap:8px;padding-left:20px;padding-right:20px}}
+    @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+  </style>
+</head>
+<body>
+<div class="shell">
+  <aside>
+    <a class="lockup" href="#top" aria-label="Viventium brand kit home">
+      <span class="mark"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 3h5l5 13L17 3h5L12 22Z" fill="currentColor"/></svg></span>
+      <span><strong>VIVENTIUM</strong><span>LIVING LEDGER · V0.5 R2</span></span>
+    </a>
+    <nav aria-label="Kit sections">
+      <a href="#principles">Principles</a><a href="#color">Color</a><a href="#type">Typography</a>
+      <a href="#components">Components</a><a href="#mind">MIND language</a><a href="#rules">Rules</a>
+    </nav>
+    <div class="side-foot">
+      <div class="theme" aria-label="Theme preview">
+        <button data-set-theme="light">Light</button><button data-set-theme="system" class="active">System</button><button data-set-theme="dark">Dark</button>
+      </div>
+      <p class="side-note">R2 design direction for review<br>Not a shipped interface</p>
+    </div>
+  </aside>
+  <main id="top">
+    <header class="hero">
+      <div><div class="eyebrow">Quiet sovereign intelligence</div><h1>Alive.<br>Not theatrical.</h1><p>A trusted private instrument with the warmth of a relationship and the precision of a professional system.</p></div>
+      <div class="hero-bottom"><div class="promise">Your Life. Your Mind. Your AI.</div><div class="status-line"><span class="pulse"></span>Present on this Mac · under your control</div></div>
+    </header>
+
+    <section id="principles">
+      <div class="section-head"><h2>Product character</h2><p>Viventium should be friendly enough for a child to understand and rigorous enough for a professional to trust. Clarity is the premium treatment.</p></div>
+      <div class="principles">
+        <div class="principle"><span class="num">01</span><h3>Presence over spectacle</h3><p>Current state and activity feel alive through precise feedback, not animated blobs, glowing brains, or fake consciousness theatre.</p></div>
+        <div class="principle"><span class="num">02</span><h3>One human question</h3><p>Each surface answers only what the person needs now. Is it on? Which account? What can I do? Deeper evidence appears only when it resolves a real question.</p></div>
+        <div class="principle"><span class="num">03</span><h3>Depth is progressive</h3><p>The default view answers the human question. Evidence, configuration, and implementation detail sit one deliberate level deeper.</p></div>
+        <div class="principle"><span class="num">04</span><h3>One system, four doors</h3><p>MIND, CONNECT, CHARACTER, and AUTOMATIONS share one language and a few reusable modules. Messaging stays the daily interface.</p></div>
+      </div>
+    </section>
+
+    <section id="color">
+      <div class="section-head"><h2>Color system</h2><p>Quiet graphite and warm paper carry the product. Satin blue marks focus and presence. Feeling colors belong only to their own spectrum and trace.</p></div>
+      <div class="palette" aria-label="Viventium color palette">
+        <div class="swatch" style="background:#111214;color:#f2f1ee"><b>Graphite</b><span>#111214</span></div>
+        <div class="swatch" style="background:#181a1d;color:#f2f1ee"><b>Dark surface</b><span>#181A1D</span></div>
+        <div class="swatch" style="background:#f5f4f1;color:#17181b"><b>Alabaster</b><span>#F5F4F1</span></div>
+        <div class="swatch" style="background:#ffffff;color:#17181b"><b>Raised</b><span>#FFFFFF</span></div>
+        <div class="swatch" style="background:#86a4f8;color:#10162a"><b>Satin blue</b><span>#86A4F8</span></div>
+        <div class="swatch" style="background:#e4b36e;color:#241404"><b>Attention</b><span>#E4B36E</span></div>
+        <div class="swatch" style="background:#ef8793;color:#25070a"><b>Danger</b><span>#EF8793</span></div>
+      </div>
+    </section>
+
+    <section id="type">
+      <div class="section-head"><h2>Typography</h2><p>The native system sans makes Viventium feel at home, load instantly, and stay lightweight. Monospace appears only where technical precision is the content.</p></div>
+      <div class="type-spec">
+        <div class="type-row"><span class="type-meta">DISPLAY / 48</span><span class="display">Your AI remembers what matters.</span></div>
+        <div class="type-row"><span class="type-meta">HEADING / 28</span><span class="heading">Connected to your Life, on your terms.</span></div>
+        <div class="type-row"><span class="type-meta">BODY / 15</span><span class="body-copy">Viventium uses the smallest relevant part of your Life for each task. You can inspect the source, pause access, or remove the connection at any time.</span></div>
+        <div class="type-row"><span class="type-meta">META / 11</span><span class="meta-copy">LAST CHECKED 08:42 · 3 CHANGES · HEALTHY</span></div>
+      </div>
+    </section>
+
+    <section id="components">
+      <div class="section-head"><h2>Interface language</h2><p>One living ledger makes accounts, sources, feelings, and automations instantly scannable. Services contain separate named accounts; each account stays individually controllable.</p></div>
+      <div class="component-stage">
+        <div class="stage-bar"><strong>Connections</strong><div class="stage-actions"><button class="btn quiet">Needs you · 1</button><button class="btn primary">Find everything</button></div></div>
+        <div class="rows">
+          <div class="source-row"><span class="icon"><img src="assets/brands/openai.svg" alt=""></span><span><b>OpenAI</b><small>Main thinking</small></span><span class="scope">you@example.com</span><span class="state"><i class="dot"></i>On</span><button class="btn">Change</button></div>
+          <div class="source-row"><span class="icon"><img src="assets/brands/groq.png" alt=""></span><span><b>Groq</b><small>Activation detection · required</small></span><span class="scope">Connect to finish setup</span><span class="state"><i class="dot amber"></i>Needs you</span><button class="btn">Connect</button></div>
+          <div class="source-row"><span class="icon"><img src="assets/brands/gmail.svg" alt=""></span><span><b>Email</b><small>2 separate accounts</small></span><span class="scope">Personal · Chrome</span><span class="state"><i class="dot"></i>On</span><button class="btn">Add</button></div>
+        </div>
+      </div>
+      <div class="patterns">
+        <div class="pattern"><div class="eyebrow">One-click setup</div><h3>Find everything → review accounts → connect selected</h3><p>GlassHive discovers what is already available. Nothing connects until the person reviews the findings.</p></div>
+        <div class="pattern"><div class="eyebrow">Living history</div><h3>Show where a state came from</h3><p>Feelings and autonomous work keep a readable trail: what changed, when, by how much, and why.</p></div>
+      </div>
+    </section>
+
+    <section id="mind">
+      <div class="section-head"><h2>The MIND signature</h2><p>One conversation and its emotional state appear together. Message origins remain quiet provenance, never a switch between separate versions of Viventium.</p></div>
+      <div class="mind-frame">
+        <div class="conversation">
+          <div class="conversation-head"><strong>Viventium</strong><span class="status-line"><span class="pulse"></span>Present</span></div>
+          <div class="thread"><div class="message">What did you notice while I was away?</div><div class="message ai">One useful pattern: the same decision appeared in three project threads, but only one contains the evidence that changed your mind. I linked them and left the consolidation as a proposal.</div></div>
+          <div class="composer">Talk to Viventium… <span>⌘ ↵</span></div>
+        </div>
+        <aside class="living-rail">
+          <div class="rail-title">FEELING SPECTRUM · NOW / NATURE</div>
+          <div class="spectrum">
+            <div class="lane"><span>Care</span><span class="track"><i class="fill" style="width:78%;background:#ce7698"></i></span><b>78</b></div>
+            <div class="lane"><span>Curiosity</span><span class="track"><i class="fill" style="width:91%;background:#8e79c7"></i></span><b>91</b></div>
+            <div class="lane"><span>Energy</span><span class="track"><i class="fill" style="width:64%;background:#e0a04b"></i></span><b>64</b></div>
+            <div class="lane"><span>Vigilance</span><span class="track"><i class="fill" style="width:31%;background:var(--attention)"></i></span><b>31</b></div>
+          </div>
+          <div class="cortex"><div class="rail-title">EMOTION TRAIL</div>
+            <div class="cortex-row"><i class="dot"></i><span><b>Vigilance 68 → 76</b><small>New uncertainty · clear shift</small></span><span class="trace">NOW</span></div>
+          </div>
+        </aside>
+      </div>
+    </section>
+
+    <section id="rules">
+      <div class="section-head"><h2>Guardrails</h2><p>These rules prevent the UI from becoming either a childish assistant toy or an intimidating AI operations dashboard.</p></div>
+      <div class="do-dont">
+        <div><div class="eyebrow">Do</div><div class="rule-list"><div class="rule-row"><b>✓</b><span>Lead with the person's outcome and current state.</span></div><div class="rule-row"><b>✓</b><span>Reveal provenance, permissions, and controls one level deeper.</span></div><div class="rule-row"><b>✓</b><span>Use one accent and reserve feeling colors for feelings.</span></div><div class="rule-row"><b>✓</b><span>Make cancel, pause, correction, and recovery obvious.</span></div></div></div>
+        <div class="dont"><div class="eyebrow" style="color:var(--danger)">Avoid</div><div class="rule-list"><div class="rule-row"><b>×</b><span>Card soup, excessive pills, glowing gradients, or generic AI orbs.</span></div><div class="rule-row"><b>×</b><span>Provider plumbing as primary copy or setup taxonomy.</span></div><div class="rule-row"><b>×</b><span>Fake confidence scores, magic sync claims, or invisible autonomy.</span></div><div class="rule-row"><b>×</b><span>A settings maze before the user experiences value.</span></div></div></div>
+      </div>
+    </section>
+    <footer><span>Viventium V0.5 living-ledger R2 · review artifact</span><span>System light/dark · WCAG 2.2 AA target · reduced-motion compatible</span></footer>
+  </main>
+</div>
+<script>
+  const root=document.documentElement; const buttons=[...document.querySelectorAll('[data-set-theme]')];
+  function setTheme(theme){ if(theme==='system') root.removeAttribute('data-theme'); else root.dataset.theme=theme; buttons.forEach(b=>b.classList.toggle('active',b.dataset.setTheme===theme)); }
+  buttons.forEach(b=>b.addEventListener('click',()=>setTheme(b.dataset.setTheme)));
+</script>
+</body>
+</html>

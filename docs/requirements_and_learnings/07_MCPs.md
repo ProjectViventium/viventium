@@ -147,6 +147,23 @@
   behavior remains controlled by each selected server's reviewed policy; writes retain their
   separate confirmation/checkpoint policy. Agent Builder tool and handoff selection is the authority
   boundary, not prompt wording or provider-wide defaults.
+- Conversation-provider grants must be refreshed from the finalized per-run request identity, not
+  only the gateway request captured before persistence. Telegram, voice, scheduler, and other trusted
+  gateways may begin with `conversationId: new` and no durable assistant message id; after run
+  creation assigns the real conversation/message ids, those exact ids must replace the provisional
+  values before signing. The broker continues to reject `new`, zero-parent sentinels, and truly
+  unscoped grants.
+- Mint-time and verify-time scope policy must be identical. Runtime conversation-grant creation
+  requires an exact message plus conversation or pre-persistence turn id and fails before
+  persistence/header attachment when either boundary is absent; direct and scheduled runs instead
+  use their explicit signed worker/run or schedule/run identity.
+- Provider failover changes model transport, not participant authority. A tool-less fallback route
+  inherits MCP and host-tool projection from the owning participant's structured capability source;
+  it must not silently receive an empty broker merely because the fallback Agent document omits the
+  participant's tools.
+- Background cortex execution installs the same invocation-fresh provider-capability refresher as
+  foreground Agent runs. The exact cortex request body is attached at setup and re-signed at the
+  pre-model-attempt boundary so a delayed Phase B run cannot outlive the bootstrap replay window.
 - If registry or grant preparation is unavailable, the provider receives a typed degraded bootstrap
   status. Unrelated conversation may continue, but a connected-account request must report that
   exact blocker; it must not silently substitute memory, a different account, or a native connector.

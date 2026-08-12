@@ -43,6 +43,21 @@ def copy_cli_fixture(repo_root: Path) -> None:
         repo_root / "scripts" / "viventium" / "helper_runtime_intent.py",
     )
     write_executable(
+        repo_root / "scripts" / "viventium" / "viventium_health_runtime.py",
+        "#!/usr/bin/env python3\n"
+        "import argparse\n"
+        "from pathlib import Path\n"
+        "parser = argparse.ArgumentParser()\n"
+        "parser.add_argument('command', choices=['install'])\n"
+        "parser.add_argument('--repo-root', type=Path, required=True)\n"
+        "parser.add_argument('--app-support-dir', type=Path, required=True)\n"
+        "args = parser.parse_args()\n"
+        "wrapper = args.app_support_dir / 'health' / 'runtime' / 'bin' / 'viventium-health'\n"
+        "wrapper.parent.mkdir(parents=True, exist_ok=True)\n"
+        "wrapper.write_text('#!/bin/sh\\nexit 0\\n', encoding='utf-8')\n"
+        "wrapper.chmod(0o700)\n",
+    )
+    write_executable(
         repo_root / "scripts" / "viventium" / "telegram_runtime_component.py",
         "#!/usr/bin/env python3\n"
         "import argparse, hashlib, json, sys\n"

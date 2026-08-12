@@ -1,0 +1,322 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1200" viewBox="0 0 1800 1200" role="img" aria-labelledby="title desc">
+  <title id="title">Viventium V0.5 single-glass-pane system map</title>
+  <desc id="desc">A complete high-level view of Viventium as a local personal continuity system. The person's world enters through Connection and Presence, becomes a source-linked Life and portable Brain Pack, is selectively composed into one conscious mind with Feelings and independent cortices, acts through replaceable agent bodies and GlassHive, compounds through Automations and Sleep Growth, and returns useful continuity to the person's next moment.</desc>
+  <style>
+    :root {
+      --canvas:#0b0e0d; --surface:#111513; --surface2:#151a17; --surface3:#0e1210;
+      --ink:#f2f1ec; --muted:#929b95; --quiet:#68716b; --rule:#2a312d;
+      --presence:#62e6bf; --presence-soft:#17372e; --blue:#77c7f4; --blue-soft:#142d39;
+      --violet:#b8a8ff; --violet-soft:#28233d; --attention:#f0b86e; --attention-soft:#382718;
+      --danger:#f07882; --active-ink:#082019;
+    }
+    @media (prefers-color-scheme: light) {
+      :root {
+        --canvas:#f2f1ec; --surface:#faf9f5; --surface2:#f7f6f1; --surface3:#eeeee8;
+        --ink:#111513; --muted:#66706a; --quiet:#7f8983; --rule:#d5d8d1;
+        --presence:#087d61; --presence-soft:#dceee8; --blue:#166f9e; --blue-soft:#e0edf3;
+        --violet:#6651b8; --violet-soft:#ebe7f8; --attention:#9b5a0a; --attention-soft:#f3e8d7;
+        --danger:#b42335; --active-ink:#ffffff;
+      }
+    }
+    text { font-family:ui-sans-serif,-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",sans-serif; }
+    .title { fill:var(--ink); font-size:36px; font-weight:760; letter-spacing:-1.5px; }
+    .subtitle { fill:var(--muted); font-size:14px; }
+    .eyebrow { fill:var(--presence); font-size:11px; font-weight:800; letter-spacing:2.2px; }
+    .section { fill:var(--ink); font-size:14px; font-weight:760; letter-spacing:.25px; }
+    .stage { font-size:10px; font-weight:800; letter-spacing:2px; }
+    .label { fill:var(--ink); font-size:15px; font-weight:720; }
+    .small { fill:var(--ink); font-size:12px; font-weight:680; }
+    .body { fill:var(--muted); font-size:11px; }
+    .micro { fill:var(--quiet); font-size:9px; }
+    .mono { fill:var(--muted); font-family:"SFMono-Regular",Consolas,monospace; font-size:9px; }
+    .boundary { fill:var(--surface); stroke:var(--presence); stroke-width:1.4; }
+    .panel { fill:var(--surface2); stroke:var(--rule); stroke-width:1; }
+    .panel-blue { fill:var(--surface2); stroke:var(--blue); stroke-width:1.2; }
+    .panel-violet { fill:var(--surface2); stroke:var(--violet); stroke-width:1.2; }
+    .panel-warm { fill:var(--surface2); stroke:var(--attention); stroke-width:1.2; }
+    .panel-live { fill:var(--surface2); stroke:var(--presence); stroke-width:1.25; }
+    .soft-blue { fill:var(--blue-soft); stroke:none; }
+    .soft-violet { fill:var(--violet-soft); stroke:none; }
+    .soft-green { fill:var(--presence-soft); stroke:none; }
+    .soft-warm { fill:var(--attention-soft); stroke:none; }
+    .rule { stroke:var(--rule); stroke-width:1; }
+    .chip { fill:var(--surface3); stroke:var(--rule); stroke-width:1; }
+    .chip-active { fill:var(--presence); stroke:var(--presence); stroke-width:1; }
+    .chip-text { fill:var(--muted); font-size:9px; font-weight:740; letter-spacing:.5px; }
+    .chip-text-active { fill:var(--active-ink); font-size:9px; font-weight:800; letter-spacing:.5px; }
+    .arrow { fill:none; stroke:var(--quiet); stroke-width:1.5; marker-end:url(#arrow); }
+    .arrow-live { fill:none; stroke:var(--presence); stroke-width:1.8; marker-end:url(#arrow-live); }
+    .arrow-blue { fill:none; stroke:var(--blue); stroke-width:1.6; marker-end:url(#arrow-blue); }
+    .arrow-violet { fill:none; stroke:var(--violet); stroke-width:1.6; marker-end:url(#arrow-violet); }
+    .arrow-warm { fill:none; stroke:var(--attention); stroke-width:1.6; marker-end:url(#arrow-warm); }
+    .arrow-bi { fill:none; stroke:var(--attention); stroke-width:1.7; marker-start:url(#arrow-warm-start); marker-end:url(#arrow-warm); }
+    .dash { stroke-dasharray:5 5; }
+  </style>
+  <defs>
+    <marker id="arrow" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><path d="M0 0L7 3.5L0 7Z" fill="var(--quiet)"/></marker>
+    <marker id="arrow-live" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><path d="M0 0L7 3.5L0 7Z" fill="var(--presence)"/></marker>
+    <marker id="arrow-blue" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><path d="M0 0L7 3.5L0 7Z" fill="var(--blue)"/></marker>
+    <marker id="arrow-violet" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><path d="M0 0L7 3.5L0 7Z" fill="var(--violet)"/></marker>
+    <marker id="arrow-warm" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><path d="M0 0L7 3.5L0 7Z" fill="var(--attention)"/></marker>
+    <marker id="arrow-warm-start" markerWidth="7" markerHeight="7" refX="1" refY="3.5" orient="auto"><path d="M7 0L0 3.5L7 7Z" fill="var(--attention)"/></marker>
+  </defs>
+
+  <rect width="1800" height="1200" fill="var(--canvas)"/>
+
+  <!-- Header -->
+  <g transform="translate(48 34)">
+    <path d="M0 2h12l11 23L35 2h12L24 46Z" fill="var(--presence)"/>
+    <text x="64" y="16" class="eyebrow">VIVENTIUM V0.5 · SINGLE-GLASS-PANE SYSTEM MAP</text>
+    <text x="64" y="53" class="title">One continuous mind across your life and the best AI.</text>
+    <text x="64" y="79" class="subtitle">Viventium owns the person-specific continuity. Frontier hosts keep their intelligence, tools, and integrations—and remain replaceable.</text>
+    <rect x="1487" y="1" width="217" height="34" rx="17" class="chip"/>
+    <circle cx="1506" cy="18" r="4" fill="var(--presence)"/>
+    <text x="1519" y="22" class="chip-text">LOCAL · OPEN · USER-OWNED</text>
+  </g>
+
+  <!-- Daily experience -->
+  <rect x="48" y="126" width="1704" height="112" rx="18" class="panel"/>
+  <g transform="translate(72 149)">
+    <text class="stage" fill="var(--presence)">THE PERSON · ONE RELATIONSHIP, MANY DOORWAYS</text>
+    <text y="28" class="label">Live once. Never re-teach your AI.</text>
+    <text y="50" class="body">Talk, listen, approve, correct, and continue from wherever life is already happening.</text>
+  </g>
+  <g transform="translate(565 147)">
+    <rect width="245" height="65" rx="12" class="panel-blue"/>
+    <text x="20" y="27" class="small">MESSAGING + VOICE</text>
+    <text x="20" y="47" class="body">Telegram · calls · future channels</text>
+    <rect x="262" width="418" height="65" rx="12" class="panel-live"/>
+    <text x="282" y="25" class="small">VIVENTIUM LOCAL APP</text>
+    <text x="282" y="47" class="body">MIND · CONNECT · CHARACTER · AUTOMATIONS</text>
+    <rect x="697" width="369" height="65" rx="12" class="panel-violet"/>
+    <text x="717" y="27" class="small">NATIVE AI SURFACES</text>
+    <text x="717" y="47" class="body">Codex · Claude · ChatGPT · future hosts</text>
+  </g>
+  <path d="M904 238V262" class="arrow-live"/>
+  <text x="918" y="257" class="micro">same identity · same continuity</text>
+
+  <!-- External world -->
+  <rect x="30" y="320" width="162" height="500" rx="16" class="panel-blue"/>
+  <text x="50" y="348" class="stage" fill="var(--blue)">YOUR WORLD</text>
+  <text x="50" y="374" class="small">Evidence + events</text>
+  <line x1="50" y1="390" x2="172" y2="390" class="rule"/>
+  <g transform="translate(48 410)">
+    <rect width="126" height="62" rx="9" class="soft-blue"/>
+    <text x="12" y="24" class="small">Communications</text>
+    <text x="12" y="43" class="micro">email · calls · chats</text>
+    <rect y="75" width="126" height="62" rx="9" class="soft-blue"/>
+    <text x="12" y="99" class="small">Time + work</text>
+    <text x="12" y="118" class="micro">calendar · files · notes</text>
+    <rect y="150" width="126" height="62" rx="9" class="soft-blue"/>
+    <text x="12" y="174" class="small">People + public</text>
+    <text x="12" y="193" class="micro">CRM · social · web</text>
+    <rect y="225" width="126" height="62" rx="9" class="soft-blue"/>
+    <text x="12" y="249" class="small">Health + media</text>
+    <text x="12" y="268" class="micro">wearables · photos · video</text>
+    <rect y="300" width="126" height="62" rx="9" class="soft-blue"/>
+    <text x="12" y="324" class="small">AI conversations</text>
+    <text x="12" y="343" class="micro">summaries + artifacts</text>
+  </g>
+  <text x="50" y="797" class="micro">Sources remain authoritative.</text>
+
+  <!-- External intelligence -->
+  <rect x="1608" y="350" width="162" height="455" rx="16" class="panel-warm"/>
+  <text x="1628" y="378" class="stage" fill="var(--attention)">BEST AVAILABLE AI</text>
+  <text x="1628" y="404" class="small">Replaceable bodies</text>
+  <line x1="1628" y1="420" x2="1750" y2="420" class="rule"/>
+  <g transform="translate(1626 440)">
+    <rect width="126" height="50" rx="9" class="soft-warm"/><text x="14" y="30" class="small">Codex</text>
+    <rect y="63" width="126" height="50" rx="9" class="soft-warm"/><text x="14" y="93" class="small">Claude</text>
+    <rect y="126" width="126" height="50" rx="9" class="soft-warm"/><text x="14" y="156" class="small">ChatGPT</text>
+    <rect y="189" width="126" height="50" rx="9" class="soft-warm"/><text x="14" y="219" class="small">Local + open</text>
+  </g>
+  <text x="1628" y="713" class="body"><tspan x="1628" dy="0">Their native models,</tspan><tspan x="1628" dy="17">skills, connectors,</tspan><tspan x="1628" dy="17">browser + computer.</tspan></text>
+  <text x="1628" y="785" class="micro">Viventium does not rebuild them.</text>
+
+  <!-- Viventium boundary -->
+  <rect x="210" y="274" width="1380" height="826" rx="24" class="boundary"/>
+  <text x="236" y="305" class="eyebrow">VIVENTIUM · THE LOCAL PERSONAL CONTINUITY SYSTEM</text>
+  <text x="236" y="328" class="body">The small person-specific layer that must survive every model, provider, interface, and upgrade.</text>
+
+  <!-- Four product doors -->
+  <g transform="translate(236 347)">
+    <rect width="312" height="50" rx="10" class="panel-blue"/>
+    <text x="16" y="22" class="small">CONNECT</text><text x="16" y="39" class="micro">01 · sense, permission + health</text>
+    <rect x="327" width="312" height="50" rx="10" class="panel-violet"/>
+    <text x="343" y="22" class="small">CHARACTER</text><text x="343" y="39" class="micro">03 · identity, Feelings + voice</text>
+    <rect x="654" width="312" height="50" rx="10" class="chip-active"/>
+    <text x="670" y="22" class="chip-text-active">MIND</text><text x="670" y="39" fill="var(--active-ink)" font-size="9">03–04 · think, act + inspect</text>
+    <rect x="981" width="348" height="50" rx="10" class="panel-warm"/>
+    <text x="997" y="22" class="small">AUTOMATIONS</text><text x="997" y="39" class="micro">05 · learn while I am away</text>
+  </g>
+
+  <!-- Persistent presence rail -->
+  <rect x="236" y="407" width="1328" height="28" rx="9" class="chip"/>
+  <circle cx="256" cy="421" r="4" fill="var(--presence)"/>
+  <text x="269" y="425" class="chip-text">PERSISTENT PRESENCE ACROSS EVERY DOOR</text>
+  <text x="576" y="425" class="micro">drop in/out · stay listening · only when useful · mute · anywhere access</text>
+  <text x="1529" y="425" text-anchor="end" class="micro">one state</text>
+
+  <!-- Stage 1 -->
+  <rect x="236" y="454" width="270" height="326" rx="15" class="panel-blue"/>
+  <text x="258" y="483" class="stage" fill="var(--blue)">01 · SENSE</text>
+  <text x="258" y="510" class="label">Connection &amp; Presence</text>
+  <text x="258" y="530" class="body">Know what exists, what is allowed,</text>
+  <text x="258" y="546" class="body">what changed, and what failed.</text>
+  <line x1="258" y1="566" x2="484" y2="566" class="rule"/>
+  <g transform="translate(258 590)">
+    <text class="small"><tspan x="0" y="0">Source registry + consent</tspan><tspan x="0" y="40">Collection + sync couriers</tspan><tspan x="0" y="80">Freshness + health</tspan><tspan x="0" y="120">Provenance + receipts</tspan><tspan x="0" y="160">Canonical Life destination</tspan></text>
+    <text class="micro"><tspan x="0" y="17">exact read · write · listen · presence scope</tspan><tspan x="0" y="57">native host · app/browser · API · export</tspan><tspan x="0" y="97">empty ≠ unavailable ≠ stale</tspan><tspan x="0" y="137">what arrived · what changed · when</tspan><tspan x="0" y="177">source-linked projection, never credentials</tspan></text>
+  </g>
+
+  <!-- Stage 2 -->
+  <rect x="534" y="454" width="422" height="326" rx="15" class="panel-live"/>
+  <text x="556" y="483" class="stage" fill="var(--presence)">02 · REMEMBER + BE</text>
+  <rect x="820" y="466" width="114" height="23" rx="11.5" class="soft-green"/>
+  <text x="877" y="481" text-anchor="middle" class="chip-text">OWNED + PORTABLE</text>
+  <text x="556" y="510" class="label">The portable persistent self</text>
+  <text x="556" y="530" class="body">Two sibling folders. Two different jobs.</text>
+
+  <rect x="556" y="552" width="378" height="132" rx="11" class="soft-blue"/>
+  <text x="574" y="578" class="small">LIFE/ · what Viventium knows and why</text>
+  <text x="574" y="600" class="body">Current · Self · People/CRM · Health · Legal · Finance · Home</text>
+  <text x="574" y="619" class="body">Projects · Plans · Communications/Email · Media · Learning</text>
+  <text x="574" y="638" class="body">Memory/Conversations · Transcripts · Decisions · Workspaces</text>
+  <text x="574" y="657" class="body">Insights · Skills · Tools · Services · Sources · Views · Archive</text>
+  <text x="574" y="676" class="micro">human-readable projections · evidence links · accepted truth · manifests</text>
+
+  <rect x="556" y="698" width="378" height="62" rx="11" class="soft-violet"/>
+  <text x="574" y="723" class="small">BRAIN_PACK/ · who Viventium is and how it thinks</text>
+  <text x="574" y="743" class="body">Character · Cortices · Automations · Policies · Evals</text>
+  <text x="574" y="758" class="micro">portable doctrine, not secrets, indexes, databases, or live state</text>
+
+  <!-- Stage 3 -->
+  <rect x="984" y="454" width="350" height="326" rx="15" class="panel-violet"/>
+  <text x="1006" y="483" class="stage" fill="var(--violet)">03 · UNDERSTAND + FEEL + THINK</text>
+  <text x="1006" y="510" class="label">The living Mind</text>
+  <text x="1006" y="530" class="body">One relationship. Specialized cognition.</text>
+
+  <rect x="1006" y="552" width="306" height="48" rx="9" class="panel"/>
+  <text x="1022" y="574" class="small">Selective context compiler</text>
+  <text x="1022" y="590" class="micro">smallest relevant authorized Life + Brain + surface envelope</text>
+
+  <rect x="1006" y="614" width="306" height="70" rx="10" class="soft-green"/>
+  <text x="1022" y="640" class="small">CONSCIOUS AGENT · one voice + decision-maker</text>
+  <text x="1022" y="660" class="body">fast answer · synthesis · action · final user relationship</text>
+  <text x="1022" y="676" class="micro">runs on the best selected native body</text>
+
+  <rect x="1006" y="698" width="145" height="62" rx="10" class="soft-violet"/>
+  <text x="1020" y="722" class="small">Character + Feelings</text>
+  <text x="1020" y="741" class="micro">Nature · Current · reaction</text>
+  <text x="1020" y="755" class="micro">attention · voice expression</text>
+
+  <rect x="1167" y="698" width="145" height="62" rx="10" class="soft-violet"/>
+  <text x="1181" y="722" class="small">Independent Cortices</text>
+  <text x="1181" y="741" class="micro">activate · inspect · challenge</text>
+  <text x="1181" y="755" class="micro">evidence → useful Phase B</text>
+
+  <!-- Stage 4 -->
+  <rect x="1362" y="454" width="202" height="326" rx="15" class="panel-warm"/>
+  <text x="1383" y="483" class="stage" fill="var(--attention)">04 · ACT</text>
+  <text x="1383" y="510" class="label">Work + delegation</text>
+  <text x="1383" y="530" class="body">Use their power. Keep</text>
+  <text x="1383" y="546" class="body">Viventium's continuity.</text>
+
+  <rect x="1383" y="566" width="160" height="58" rx="9" class="soft-warm"/>
+  <text x="1398" y="590" class="small">Agent-body adapter</text>
+  <text x="1398" y="608" class="micro">context + permission in</text>
+
+  <rect x="1383" y="638" width="160" height="82" rx="9" class="soft-warm"/>
+  <text x="1398" y="662" class="small">GlassHive bridge</text>
+  <text x="1398" y="680" class="micro">mission identity · workspace</text>
+  <text x="1398" y="695" class="micro">questions · deltas · approvals</text>
+  <text x="1398" y="710" class="micro">evidence · result · receipt</text>
+
+  <rect x="1383" y="734" width="160" height="30" rx="8" class="chip"/>
+  <text x="1398" y="753" class="chip-text">PARENT EVALUATES RETURN</text>
+
+  <!-- Main flow arrows -->
+  <path d="M192 585H229" class="arrow-blue"/>
+  <text x="197" y="575" class="micro">authorized evidence</text>
+  <path d="M506 590H527" class="arrow-blue"/>
+  <text x="505" y="579" class="micro">place</text>
+  <path d="M956 584H977" class="arrow-live"/>
+  <text x="948" y="572" class="micro">select</text>
+  <path d="M956 729H999" class="arrow-violet"/>
+  <text x="956" y="717" class="micro">identity + cognition</text>
+  <path d="M1334 636H1355" class="arrow-warm"/>
+  <path d="M1564 600H1601" class="arrow-bi"/>
+  <text x="1572" y="588" class="micro">task ⇄ evidence</text>
+  <path d="M1159 600V607" class="arrow-live"/>
+  <path d="M1078 698V690" class="arrow-violet"/>
+  <path d="M1239 698V690" class="arrow-violet"/>
+
+  <!-- Stage 5 -->
+  <rect x="236" y="808" width="1328" height="184" rx="15" class="panel-live"/>
+  <text x="258" y="837" class="stage" fill="var(--presence)">05 · LEARN + COMPOUND · AUTOMATIONS / SLEEP GROWTH</text>
+  <text x="258" y="862" class="body">While the person is away, Viventium processes changes—not every unchanged byte—and leaves governed value for the next waking moment.</text>
+
+  <g transform="translate(258 884)">
+    <rect width="186" height="72" rx="10" class="panel-blue"/>
+    <text x="15" y="25" class="small">1 · Observe coverage</text>
+    <text x="15" y="45" class="micro">sources · freshness · failures</text>
+    <text x="15" y="60" class="micro">changed evidence only</text>
+
+    <rect x="207" width="186" height="72" rx="10" class="panel"/>
+    <text x="222" y="25" class="small">2 · Select context</text>
+    <text x="222" y="45" class="micro">Life inventory · schedules</text>
+    <text x="222" y="60" class="micro">summaries · work results</text>
+
+    <rect x="414" width="186" height="72" rx="10" class="panel-violet"/>
+    <text x="429" y="25" class="small">3 · Think deeper</text>
+    <text x="429" y="45" class="micro">existing cortices + GlassHive</text>
+    <text x="429" y="60" class="micro">not a duplicate agent stack</text>
+
+    <rect x="621" width="186" height="72" rx="10" class="panel-violet"/>
+    <text x="636" y="25" class="small">4 · Synthesize + challenge</text>
+    <text x="636" y="45" class="micro">patterns · risks · opportunities</text>
+    <text x="636" y="60" class="micro">uncertainty · what would refute</text>
+
+    <rect x="828" width="222" height="72" rx="10" class="panel-live"/>
+    <text x="843" y="25" class="small">5 · Propose + write Insights</text>
+    <text x="843" y="45" class="micro">source-linked · private · governed</text>
+    <text x="843" y="60" class="micro">high-stakes truth waits for approval</text>
+
+    <rect x="1071" width="235" height="72" rx="10" class="panel-warm"/>
+    <text x="1086" y="25" class="small">6 · Wake with one useful thing</text>
+    <text x="1086" y="45" class="micro">Morning Brief · contextual pull</text>
+    <text x="1086" y="60" class="micro">rare approved alert · no filler</text>
+
+    <path d="M186 36H200" class="arrow"/><path d="M393 36H407" class="arrow"/>
+    <path d="M600 36H614" class="arrow"/><path d="M807 36H821" class="arrow"/>
+    <path d="M1050 36H1064" class="arrow"/>
+  </g>
+
+  <!-- Compounding connections -->
+  <path d="M700 780V801" class="arrow-blue"/>
+  <text x="710" y="798" class="micro">Life + deltas</text>
+  <path d="M1463 780V801H765" class="arrow-warm dash"/>
+  <text x="1180" y="798" class="micro">workers + cortices</text>
+  <path d="M1197 992V1004H745V787" class="arrow-live"/>
+  <text x="925" y="1003" class="micro">accepted Insights and proposals return to Life</text>
+  <path d="M1446 884V797H1159V787" class="arrow-live dash"/>
+  <text x="1215" y="798" class="micro">surface when useful</text>
+  <path d="M1500 808H1578V250H1160V238" class="arrow-live dash"/>
+  <text x="1190" y="265" class="micro">Insights · Morning Brief · better next interaction</text>
+
+  <!-- Trust + transition -->
+  <rect x="236" y="1014" width="1328" height="54" rx="12" class="chip"/>
+  <circle cx="258" cy="1034" r="4" fill="var(--presence)"/>
+  <text x="272" y="1038" class="small">TRUST PLANE</text>
+  <text x="382" y="1038" class="body">local-first · open formats · least privilege · provenance · health · receipts · pause · approval · correction · export · deletion</text>
+  <text x="258" y="1057" class="micro">TRANSITION: reuse LibreChat APIs and working V0.4 services behind stable Viventium contracts; extract only when continuity, reliability, or UX improves.</text>
+
+  <!-- Runtime state -->
+  <rect x="210" y="1122" width="1380" height="42" rx="11" class="panel"/>
+  <text x="234" y="1147" class="small">LOCAL RUNTIME STATE · OUTSIDE LIFE + BRAIN PACK</text>
+  <text x="590" y="1147" class="body">credentials · provider sessions · databases · recall indexes · queues · caches · logs · Current Feelings · active runs</text>
+  <text x="1560" y="1147" text-anchor="end" class="micro">operational, not portable doctrine</text>
+
+  <text x="48" y="1186" class="micro">Proposed V0.5 product architecture · docs and review artifacts only · no runtime implementation claimed</text>
+  <text x="1752" y="1186" text-anchor="end" class="micro">SENSE → REMEMBER → UNDERSTAND → FEEL → THINK → ACT → LEARN → RETURN</text>
+</svg>

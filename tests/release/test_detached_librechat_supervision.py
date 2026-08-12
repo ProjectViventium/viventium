@@ -203,7 +203,7 @@ def test_voice_gateway_requirements_check_accepts_satisfied_pins(tmp_path: Path)
     )
     function = extract_shell_function(launcher_text, "voice_requirements_need_install")
     requirements = tmp_path / "requirements.txt"
-    requirements.write_text(f"pip=={metadata.version('pip')}\n", encoding="utf-8")
+    requirements.write_text(f"PyYAML=={metadata.version('PyYAML')}\n", encoding="utf-8")
 
     completed = subprocess.run(
         [

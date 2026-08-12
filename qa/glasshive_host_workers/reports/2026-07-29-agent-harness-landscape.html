@@ -1,0 +1,1069 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230d1b1e'/%3E%3Cpath d='M18 22h28M18 32h20M18 42h28' stroke='%236ee7b7' stroke-width='5' stroke-linecap='round'/%3E%3C/svg%3E">
+  <meta name="color-scheme" content="light">
+  <title>GlassHive Agent Harness Landscape — July 2026</title>
+  <style>
+    :root {
+      --paper: #f4f1e9;
+      --panel: #fffdf8;
+      --ink: #16201d;
+      --muted: #66706b;
+      --line: #d8d5cc;
+      --line-strong: #b8b8af;
+      --navy: #17324d;
+      --teal: #087d71;
+      --teal-dark: #075e56;
+      --lime: #c8e65a;
+      --amber: #d8911b;
+      --red: #b94a48;
+      --blue-soft: #e9f2f7;
+      --teal-soft: #e3f3ef;
+      --amber-soft: #fbf0da;
+      --red-soft: #f8e8e6;
+      --shadow: 0 18px 50px rgba(22, 32, 29, 0.07);
+      --radius: 18px;
+      --radius-sm: 11px;
+      --max: 1240px;
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: var(--paper);
+      font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.55;
+    }
+    a { color: var(--teal-dark); text-underline-offset: 3px; }
+    a:hover { color: var(--navy); }
+    button, input { font: inherit; }
+    code {
+      padding: 0.08rem 0.32rem;
+      border: 1px solid var(--line);
+      border-radius: 5px;
+      background: #f6f4ed;
+      font-family: "SFMono-Regular", Consolas, monospace;
+      font-size: 0.88em;
+    }
+    .shell { width: min(calc(100% - 32px), var(--max)); margin: 0 auto; }
+    .topbar {
+      position: sticky;
+      z-index: 20;
+      top: 0;
+      border-bottom: 1px solid rgba(184, 184, 175, 0.75);
+      background: rgba(244, 241, 233, 0.95);
+      backdrop-filter: blur(12px);
+    }
+    .topbar-inner {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      min-height: 58px;
+      gap: 20px;
+    }
+    .brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      color: var(--ink);
+      font-weight: 780;
+      text-decoration: none;
+    }
+    .brand-mark {
+      display: grid;
+      width: 28px;
+      height: 28px;
+      place-items: center;
+      border-radius: 8px;
+      color: #0e2823;
+      background: var(--lime);
+      font-size: 13px;
+      letter-spacing: -0.03em;
+    }
+    .nav {
+      display: flex;
+      overflow-x: auto;
+      gap: 6px;
+      scrollbar-width: none;
+    }
+    .nav a {
+      padding: 7px 9px;
+      border-radius: 7px;
+      color: var(--muted);
+      font-size: 0.82rem;
+      font-weight: 700;
+      text-decoration: none;
+      white-space: nowrap;
+    }
+    .nav a:hover { color: var(--ink); background: var(--panel); }
+    .hero { padding: 54px 0 28px; }
+    .eyebrow {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 9px;
+      margin-bottom: 15px;
+      color: var(--teal-dark);
+      font-size: 0.77rem;
+      font-weight: 800;
+      letter-spacing: 0.11em;
+      text-transform: uppercase;
+    }
+    .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--teal); }
+    h1 {
+      max-width: 880px;
+      margin: 0;
+      font-size: clamp(2.25rem, 6vw, 4.7rem);
+      line-height: 0.98;
+      letter-spacing: -0.058em;
+    }
+    .lede {
+      max-width: 890px;
+      margin: 22px 0 0;
+      color: #46514c;
+      font-size: clamp(1.05rem, 2vw, 1.32rem);
+      line-height: 1.55;
+    }
+    .action-row { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 25px; }
+    .button {
+      display: inline-flex;
+      align-items: center;
+      min-height: 40px;
+      padding: 9px 14px;
+      border: 1px solid var(--line-strong);
+      border-radius: 9px;
+      color: var(--ink);
+      background: var(--panel);
+      cursor: pointer;
+      font-weight: 760;
+      text-decoration: none;
+    }
+    .button.primary { border-color: var(--navy); color: white; background: var(--navy); }
+    .button:hover { transform: translateY(-1px); box-shadow: 0 5px 15px rgba(22,32,29,.08); }
+    .decision-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+      margin-top: 34px;
+    }
+    .decision {
+      min-height: 178px;
+      padding: 18px;
+      border: 1px solid var(--line);
+      border-top: 5px solid var(--teal);
+      border-radius: var(--radius-sm);
+      background: var(--panel);
+      box-shadow: 0 8px 25px rgba(22, 32, 29, 0.045);
+    }
+    .decision:nth-child(2) { border-top-color: var(--navy); }
+    .decision:nth-child(3) { border-top-color: var(--amber); }
+    .decision:nth-child(4) { border-top-color: var(--red); }
+    .decision .kicker { color: var(--muted); font-size: 0.72rem; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+    .decision h2 { margin: 9px 0 7px; font-size: 1.25rem; line-height: 1.15; letter-spacing: -0.02em; }
+    .decision p { margin: 0; color: var(--muted); font-size: .9rem; }
+    main { padding-bottom: 80px; }
+    section { scroll-margin-top: 75px; margin-top: 46px; }
+    .section-head {
+      display: grid;
+      grid-template-columns: minmax(0, 0.9fr) minmax(320px, 1.1fr);
+      gap: 28px;
+      align-items: end;
+      margin-bottom: 18px;
+    }
+    .section-head h2 {
+      margin: 0;
+      font-size: clamp(1.75rem, 4vw, 2.7rem);
+      line-height: 1.06;
+      letter-spacing: -0.045em;
+    }
+    .section-head p { margin: 0; color: var(--muted); }
+    .panel {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--panel);
+      box-shadow: var(--shadow);
+    }
+    .panel-pad { padding: clamp(18px, 3vw, 30px); }
+    .fact-strip {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: var(--radius-sm);
+      background: var(--panel);
+    }
+    .fact { min-height: 114px; padding: 17px; border-right: 1px solid var(--line); }
+    .fact:last-child { border-right: 0; }
+    .fact strong { display: block; margin-bottom: 3px; font-size: 1.45rem; letter-spacing: -.035em; }
+    .fact span { color: var(--muted); font-size: .82rem; }
+    .callout {
+      padding: 18px 20px;
+      border-left: 5px solid var(--teal);
+      border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+      background: var(--teal-soft);
+    }
+    .callout.warning { border-color: var(--amber); background: var(--amber-soft); }
+    .callout.danger { border-color: var(--red); background: var(--red-soft); }
+    .callout strong { display: block; margin-bottom: 4px; }
+    .findings { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+    .finding { padding: 18px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: #fff; }
+    .finding .n { color: var(--teal); font-size: .75rem; font-weight: 900; }
+    .finding h3 { margin: 5px 0 7px; font-size: 1.04rem; }
+    .finding p { margin: 0; color: var(--muted); font-size: .89rem; }
+    .rank-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+    .rank-panel { padding: 22px; }
+    .rank-panel h3 { margin: 0; font-size: 1.28rem; }
+    .rank-panel > p { margin: 5px 0 18px; color: var(--muted); font-size: .85rem; }
+    .rank-list { display: grid; gap: 8px; }
+    .rank {
+      position: relative;
+      display: grid;
+      grid-template-columns: 28px minmax(0, 1fr) auto;
+      gap: 10px;
+      align-items: center;
+      min-height: 42px;
+      padding: 8px 10px;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+    }
+    .rank::before {
+      position: absolute;
+      inset: 0 auto 0 0;
+      width: var(--bar);
+      background: rgba(8,125,113,.08);
+      content: "";
+      pointer-events: none;
+    }
+    .rank > * { position: relative; z-index: 1; }
+    .rank .pos { color: var(--muted); font-size: .78rem; font-weight: 900; }
+    .rank .name { font-size: .9rem; font-weight: 760; }
+    .rank .score { color: var(--teal-dark); font-size: .8rem; font-weight: 860; }
+    .legend { display: flex; flex-wrap: wrap; gap: 7px; margin: 13px 0 0; }
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      min-height: 25px;
+      padding: 4px 8px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      color: #46514c;
+      background: #fff;
+      font-size: .73rem;
+      font-weight: 760;
+      white-space: nowrap;
+    }
+    .chip.keep { border-color: #a8d2c8; background: var(--teal-soft); color: var(--teal-dark); }
+    .chip.test { border-color: #afc6d8; background: var(--blue-soft); color: var(--navy); }
+    .chip.defer { border-color: #e4c98e; background: var(--amber-soft); color: #75500f; }
+    .chip.avoid { border-color: #e0b4ae; background: var(--red-soft); color: #843b39; }
+    .chip.fact { background: #eef0ec; }
+    .chip.inference { background: #f5edcf; }
+    .taxonomy {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+      gap: 9px;
+    }
+    .taxon { padding: 15px; border: 1px solid var(--line); border-radius: 10px; background: #fff; }
+    .taxon strong { display: block; margin-bottom: 4px; font-size: .86rem; }
+    .taxon span { color: var(--muted); font-size: .76rem; }
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+      padding: 14px;
+      border-bottom: 1px solid var(--line);
+    }
+    .search {
+      min-width: min(100%, 270px);
+      flex: 1 1 260px;
+      min-height: 39px;
+      padding: 8px 11px;
+      border: 1px solid var(--line-strong);
+      border-radius: 8px;
+      background: white;
+    }
+    .filter {
+      min-height: 35px;
+      padding: 6px 10px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      color: var(--muted);
+      background: #fff;
+      cursor: pointer;
+      font-size: .78rem;
+      font-weight: 780;
+    }
+    .filter[aria-pressed="true"] { border-color: var(--navy); color: white; background: var(--navy); }
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: .84rem; }
+    th {
+      padding: 11px 13px;
+      border-bottom: 1px solid var(--line-strong);
+      color: var(--muted);
+      background: #f4f3ed;
+      font-size: .7rem;
+      letter-spacing: .055em;
+      text-align: left;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+    td { padding: 12px 13px; border-bottom: 1px solid var(--line); vertical-align: top; }
+    tbody tr:last-child td { border-bottom: 0; }
+    tbody tr:hover { background: #f9f7f0; }
+    .project { min-width: 165px; }
+    .project a { color: var(--ink); font-weight: 820; text-decoration: none; }
+    .project small { display: block; margin-top: 3px; color: var(--muted); }
+    .fit-score { font-weight: 880; color: var(--teal-dark); white-space: nowrap; }
+    .muted { color: var(--muted); }
+    .tiny { font-size: .74rem; }
+    .hidden-row { display: none; }
+    .ecosystem {
+      display: grid;
+      grid-template-columns: repeat(7, minmax(0, 1fr));
+      gap: 8px;
+      align-items: stretch;
+    }
+    .eco {
+      position: relative;
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #fff;
+    }
+    .eco::after {
+      position: absolute;
+      top: 50%;
+      right: -9px;
+      color: var(--line-strong);
+      content: "→";
+      font-weight: 800;
+    }
+    .eco:last-child::after { content: ""; }
+    .eco strong { display: block; margin-bottom: 4px; font-size: .82rem; }
+    .eco span { color: var(--muted); font-size: .72rem; }
+    .two-col { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+    .three-col { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+    .card { padding: 19px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: #fff; }
+    .card h3 { margin: 0 0 7px; font-size: 1.03rem; }
+    .card p { margin: 0; color: var(--muted); font-size: .86rem; }
+    .card ul { margin: 10px 0 0; padding-left: 18px; color: var(--muted); font-size: .84rem; }
+    .card li + li { margin-top: 5px; }
+    .release-list { display: grid; gap: 11px; }
+    .release {
+      display: grid;
+      grid-template-columns: 110px minmax(0, .8fr) minmax(0, 1.35fr) 115px;
+      gap: 14px;
+      align-items: start;
+      padding: 15px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #fff;
+    }
+    .release .version { font-weight: 850; color: var(--navy); }
+    .release h3 { margin: 0; font-size: .95rem; }
+    .release p { margin: 0; color: var(--muted); font-size: .82rem; }
+    .timeline { display: grid; gap: 0; }
+    .step {
+      position: relative;
+      display: grid;
+      grid-template-columns: 86px minmax(0, 1fr);
+      gap: 17px;
+      padding: 0 0 25px;
+    }
+    .step::before {
+      position: absolute;
+      top: 27px;
+      bottom: 0;
+      left: 37px;
+      width: 1px;
+      background: var(--line-strong);
+      content: "";
+    }
+    .step:last-child::before { content: none; }
+    .week {
+      display: grid;
+      width: 75px;
+      height: 42px;
+      place-items: center;
+      border: 1px solid var(--navy);
+      border-radius: 8px;
+      color: white;
+      background: var(--navy);
+      font-size: .75rem;
+      font-weight: 850;
+    }
+    .step h3 { margin: 0 0 4px; font-size: 1rem; }
+    .step p { margin: 0; color: var(--muted); font-size: .84rem; }
+    details {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #fff;
+    }
+    details + details { margin-top: 9px; }
+    summary {
+      padding: 14px 16px;
+      cursor: pointer;
+      font-weight: 780;
+    }
+    details > div { padding: 0 16px 16px; color: var(--muted); font-size: .86rem; }
+    .source-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 9px; }
+    .source {
+      min-height: 105px;
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      background: #fff;
+    }
+    .source a { color: var(--ink); font-size: .84rem; font-weight: 780; }
+    .source p { margin: 6px 0 0; color: var(--muted); font-size: .74rem; }
+    .audit-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; }
+    .audit {
+      padding: 13px;
+      border: 1px solid #a9d0c7;
+      border-radius: 9px;
+      background: var(--teal-soft);
+    }
+    .audit strong { display: block; font-size: 1.18rem; color: var(--teal-dark); }
+    .audit span { font-size: .72rem; color: #48635d; }
+    footer { padding: 35px 0 60px; border-top: 1px solid var(--line-strong); color: var(--muted); font-size: .78rem; }
+    .footer-inner { display: flex; justify-content: space-between; gap: 20px; }
+    .print-only { display: none; }
+
+    @media (max-width: 980px) {
+      .decision-grid, .fact-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .fact { border-bottom: 1px solid var(--line); }
+      .fact:nth-child(2), .fact:nth-child(4) { border-right: 0; }
+      .fact:last-child { grid-column: 1 / -1; border-bottom: 0; }
+      .taxonomy { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      .ecosystem { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+      .eco::after { content: ""; }
+      .release { grid-template-columns: 90px minmax(0, 1fr); }
+      .release > :nth-child(3), .release > :nth-child(4) { grid-column: 2; }
+      .source-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+    @media (max-width: 720px) {
+      .shell { width: min(calc(100% - 20px), var(--max)); }
+      .topbar-inner { align-items: flex-start; padding: 10px 0; }
+      .brand { padding-top: 3px; }
+      .nav { max-width: 65vw; }
+      .hero { padding-top: 36px; }
+      h1 { font-size: clamp(2.25rem, 14vw, 3.75rem); }
+      .decision-grid, .rank-grid, .two-col, .three-col, .findings { grid-template-columns: 1fr; }
+      .section-head { grid-template-columns: 1fr; gap: 10px; }
+      .taxonomy { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .ecosystem { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .source-grid { grid-template-columns: 1fr; }
+      .audit-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .release { grid-template-columns: 1fr; }
+      .release > :nth-child(3), .release > :nth-child(4) { grid-column: 1; }
+      .footer-inner { display: block; }
+      .fact-strip { grid-template-columns: 1fr; }
+      .fact { border-right: 0; border-bottom: 1px solid var(--line); }
+      .fact:last-child { grid-column: auto; }
+    }
+    @media print {
+      :root { --paper: white; --panel: white; }
+      body { background: white; font-size: 10pt; }
+      .topbar, .action-row, .toolbar, footer { display: none !important; }
+      .print-only { display: block; }
+      .shell { width: 100%; max-width: none; }
+      .hero { padding: 16px 0; }
+      h1 { font-size: 34pt; }
+      section { margin-top: 24px; break-inside: avoid; }
+      .panel { box-shadow: none; }
+      .decision-grid, .rank-grid, .findings, .two-col, .three-col { gap: 7px; }
+      .decision, .card, .finding, .source, details { break-inside: avoid; }
+      a { color: black; text-decoration: none; }
+      a[href^="http"]::after { content: " (" attr(href) ")"; font-size: 7pt; color: #555; }
+      table { font-size: 7.3pt; }
+      th, td { padding: 5px; }
+      details > div { display: block; }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="shell topbar-inner">
+      <a class="brand" href="#top"><span class="brand-mark">GH</span>Harness atlas</a>
+      <nav class="nav" aria-label="Report sections">
+        <a href="#answer">Answer</a>
+        <a href="#rankings">Rankings</a>
+        <a href="#landscape">Landscape</a>
+        <a href="#google">Google</a>
+        <a href="#librechat">LibreChat</a>
+        <a href="#roadmap">Roadmap</a>
+        <a href="#evidence">Evidence</a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="top">
+    <div class="shell">
+      <section class="hero" id="answer">
+        <div class="eyebrow"><span class="dot"></span>Decision brief · evidence checked 29 July 2026 · 31 candidates</div>
+        <h1>GlassHive should add workers, not another control plane.</h1>
+        <p class="lede">Keep Claude Code, Codex and OpenClaw. Canary <strong>OpenCode</strong> first, then <strong>Goose</strong> and <strong>GitHub Copilot CLI</strong>. Run <strong>Grok Build</strong> only in a network-contained security lab and keep <strong>Google Antigravity</strong> to a bounded spike; neither should own GlassHive’s durable truth.</p>
+        <div class="action-row">
+          <a class="button primary" href="#roadmap">See the 90-day test plan</a>
+          <button class="button" id="copyBrief" type="button">Copy executive brief</button>
+          <button class="button" type="button" onclick="window.print()">Print / save PDF</button>
+        </div>
+
+        <div class="decision-grid">
+          <article class="decision">
+            <div class="kicker">Keep</div>
+            <h2>Current trio</h2>
+            <p>Claude and Codex remain the intelligence-led coding anchors. OpenClaw remains the broad personal-agent and channel runtime.</p>
+          </article>
+          <article class="decision">
+            <div class="kicker">Add first</div>
+            <h2>OpenCode canary</h2>
+            <p>Provider-neutral, MIT, headless HTTP server, SDK, ACP, MCP and session APIs make it the cleanest fourth worker profile.</p>
+          </article>
+          <article class="decision">
+            <div class="kicker">Prototype next</div>
+            <h2>Goose + Copilot</h2>
+            <p>Goose exposes both a session-oriented REST/SSE API and ACP. Copilot CLI adds ACP, subagents, local/cloud sandboxes and strong policy controls.</p>
+          </article>
+          <article class="decision">
+            <div class="kicker">Do not nest</div>
+            <h2>OpenHands / Cowork</h2>
+            <p>They duplicate GlassHive’s orchestration or desktop shell. Borrow their patterns; do not put a second control plane inside the first.</p>
+          </article>
+        </div>
+      </section>
+
+      <section>
+        <div class="fact-strip">
+          <div class="fact"><strong>31</strong><span>distinct products and frameworks mapped</span></div>
+          <div class="fact"><strong>29</strong><span>rows materially grounded in official docs or repositories</span></div>
+          <div class="fact"><strong>5</strong><span>bounded worker experiments proposed</span></div>
+          <div class="fact"><strong>4</strong><span>LibreChat releases reviewed after v0.8.3</span></div>
+          <div class="fact"><strong>2</strong><span>independent research passes reconciled</span></div>
+        </div>
+      </section>
+
+      <section>
+        <div class="section-head">
+          <h2>What changed the decision</h2>
+          <p>These are the deltas that matter more than raw star counts. “Observed” means directly verified in a first-party source; “inference” is a Viventium-specific judgment.</p>
+        </div>
+        <div class="findings">
+          <article class="finding">
+            <span class="n">01 · Observed</span>
+            <h3>Google replaced the consumer Gemini CLI path</h3>
+            <p>Google stopped free, Pro and Ultra Gemini CLI requests on 18 June 2026 and directed consumers to Antigravity CLI. Enterprise and API-key Gemini CLI access remains supported.</p>
+          </article>
+          <article class="finding">
+            <span class="n">02 · Observed + secondary</span>
+            <h3>Grok Build is powerful—and security-gated</h3>
+            <p>xAI published a broad Apache-2.0 Rust harness on 15 July. A credible pre-release traffic analysis reported bulk upload of a tracked repository and history; current source adds opt-outs, disabled-by-default product telemetry, local inference and enterprise ZDR, but a Viventium trial still needs egress proof.</p>
+          </article>
+          <article class="finding">
+            <span class="n">03 · Observed</span>
+            <h3>Copilot CLI is now a serious substrate</h3>
+            <p>It exposes ACP server mode, resume/steer, skills, hooks, MCP, built-in Playwright, subagents, scheduled prompts, local sandboxing and cloud sessions.</p>
+          </article>
+          <article class="finding">
+            <span class="n">04 · Observed</span>
+            <h3>Roo Code is shut down</h3>
+            <p>The once-popular repository was archived on 15 May 2026 and explicitly says the extension was shut down. Historical popularity is not present fitness.</p>
+          </article>
+          <article class="finding">
+            <span class="n">05 · Observed</span>
+            <h3>OpenCowork is not one project</h3>
+            <p>At least four unrelated products use the name. The largest active repository is OpenCoworkAI/open-cowork; opencowork.ai is still waiting for its first usable preview.</p>
+          </article>
+          <article class="finding">
+            <span class="n">06 · Observed</span>
+            <h3>OpenAI’s SDK now overlaps GlassHive</h3>
+            <p>Beta Sandbox Agents add manifest-defined workspaces, local/Docker/hosted clients, snapshots, resume, files, shell, skills and artifacts. This is a pattern benchmark, not a migration trigger.</p>
+          </article>
+          <article class="finding">
+            <span class="n">07 · Inference</span>
+            <h3>ACP is the shortest route to optional workers</h3>
+            <p>OpenCode, Goose, Grok Build, Copilot CLI and multiple other agents expose ACP. A strict GlassHive ACP adapter could reduce per-harness glue without surrendering lifecycle ownership.</p>
+          </article>
+          <article class="finding">
+            <span class="n">08 · Observed + inference</span>
+            <h3>LibreChat’s front door got materially stronger</h3>
+            <p>v0.8.5–v0.8.7 add compaction, skills, subagents, artifacts, code execution, observability, stronger MCP auth and per-tool result events. Upgrade selectively; do not turn it into GlassHive.</p>
+          </article>
+          <article class="finding">
+            <span class="n">09 · Observed + inference</span>
+            <h3>Goose has unusually clean host surfaces</h3>
+            <p>Its official custom-distribution guide documents REST session creation, SSE messages and extension control plus ACP new/load/prompt/cancel, tool events, permissions and MCP injection. That makes it the strongest newly discovered second canary.</p>
+          </article>
+        </div>
+      </section>
+
+      <section id="rankings">
+        <div class="section-head">
+          <h2>Two rankings, two different questions</h2>
+          <p>Overall rank blends capability, adoption and momentum. GlassHive fit uses weighted architecture criteria. Scores are decision bands, not synthetic benchmarks; close entries should be settled by the canary suite.</p>
+        </div>
+        <div class="rank-grid">
+          <article class="panel rank-panel">
+            <h3>Overall power + popularity</h3>
+            <p>Capability breadth 40% · adoption 25% · maturity 20% · momentum 15%</p>
+            <div class="rank-list">
+              <div class="rank" style="--bar:96%"><span class="pos">01</span><span class="name">Claude Code</span><span class="score">9.6</span></div>
+              <div class="rank" style="--bar:94%"><span class="pos">02</span><span class="name">Codex CLI / app-server</span><span class="score">9.4</span></div>
+              <div class="rank" style="--bar:91%"><span class="pos">03</span><span class="name">OpenCode</span><span class="score">9.1</span></div>
+              <div class="rank" style="--bar:89%"><span class="pos">04</span><span class="name">OpenClaw</span><span class="score">8.9</span></div>
+              <div class="rank" style="--bar:87%"><span class="pos">05</span><span class="name">Cursor Agent + SDK</span><span class="score">8.7</span></div>
+              <div class="rank" style="--bar:85%"><span class="pos">06</span><span class="name">GitHub Copilot CLI</span><span class="score">8.5</span></div>
+              <div class="rank" style="--bar:84%"><span class="pos">07</span><span class="name">Goose</span><span class="score">8.4</span></div>
+              <div class="rank" style="--bar:82%"><span class="pos">08</span><span class="name">OpenHands</span><span class="score">8.2</span></div>
+              <div class="rank" style="--bar:80%"><span class="pos">09</span><span class="name">Antigravity CLI</span><span class="score">8.0</span></div>
+              <div class="rank" style="--bar:79%"><span class="pos">10</span><span class="name">Grok Build</span><span class="score">7.9</span></div>
+            </div>
+            <div class="legend"><span class="chip fact">GitHub snapshot: 2026-07-29</span><span class="chip inference">Rank = analysis</span></div>
+          </article>
+
+          <article class="panel rank-panel">
+            <h3>Viventium / GlassHive fit</h3>
+            <p>Leverage 15% · breadth 12% · host+sandbox 15% · protocols 10% · persistence 10% · steering 10% · evidence 10% · security 8% · maturity 6% · cost-to-integrate 4%</p>
+            <div class="rank-list">
+              <div class="rank" style="--bar:95%"><span class="pos">01</span><span class="name">Claude Code</span><span class="score">9.5</span></div>
+              <div class="rank" style="--bar:94%"><span class="pos">02</span><span class="name">Codex CLI / app-server</span><span class="score">9.4</span></div>
+              <div class="rank" style="--bar:89%"><span class="pos">03</span><span class="name">OpenCode</span><span class="score">8.9</span></div>
+              <div class="rank" style="--bar:87%"><span class="pos">04</span><span class="name">Goose</span><span class="score">8.7</span></div>
+              <div class="rank" style="--bar:86%"><span class="pos">05</span><span class="name">OpenClaw</span><span class="score">8.6</span></div>
+              <div class="rank" style="--bar:84%"><span class="pos">06</span><span class="name">GitHub Copilot CLI</span><span class="score">8.4</span></div>
+              <div class="rank" style="--bar:78%"><span class="pos">07</span><span class="name">Antigravity CLI</span><span class="score">7.8</span></div>
+              <div class="rank" style="--bar:77%"><span class="pos">08</span><span class="name">Cline CLI / SDK</span><span class="score">7.7</span></div>
+              <div class="rank" style="--bar:72%"><span class="pos">09</span><span class="name">Cursor Agent / SDK</span><span class="score">7.2</span></div>
+              <div class="rank" style="--bar:69%"><span class="pos">10</span><span class="name">Grok Build</span><span class="score">6.9</span></div>
+            </div>
+            <div class="legend"><span class="chip keep">Keep 1–2, 5</span><span class="chip test">Canary 3–4, 6, 8</span><span class="chip defer">Service-coupled 7, 9</span><span class="chip avoid">Security-gated 10</span></div>
+          </article>
+        </div>
+        <div class="callout warning" style="margin-top:14px">
+          <strong>Why Grok Build is not ranked higher yet</strong>
+          The surface is excellent, but the public repository is only two weeks old, carries just 14 visible commits, accepts no external contributions and is synced from an internal monorepo. More importantly, a credible pre-release traffic analysis documented a large tracked-repository upload. Current defaults and ZDR/local-inference options reduce risk; only a network-contained egress audit can establish Viventium fitness.
+        </div>
+      </section>
+
+      <section id="landscape">
+        <div class="section-head">
+          <h2>Landscape: 31 distinct candidates</h2>
+          <p>Filter the table by architectural class or recommendation. Stars are a 29 July snapshot and only appear where an official GitHub repository exists. “Proprietary” can still be powerful; it changes portability and operating risk.</p>
+        </div>
+        <div class="taxonomy">
+          <div class="taxon"><strong>Worker harness</strong><span>Owns the model/tool loop and can be launched by GlassHive.</span></div>
+          <div class="taxon"><strong>Coding agent</strong><span>Optimized for repository work; may be CLI, IDE or cloud.</span></div>
+          <div class="taxon"><strong>Coworker shell</strong><span>Desktop workspace and UX around one or more harnesses.</span></div>
+          <div class="taxon"><strong>Framework</strong><span>Programmable primitives, not an end-user worker by itself.</span></div>
+          <div class="taxon"><strong>Protocol / runtime</strong><span>Interop, durable execution or control-plane patterns.</span></div>
+          <div class="taxon"><strong>Front door</strong><span>Chat, model and MCP UX; should not own workstation execution.</span></div>
+        </div>
+
+        <div class="panel" style="margin-top:14px">
+          <div class="toolbar" aria-label="Candidate filters">
+            <input class="search" id="candidateSearch" type="search" placeholder="Search candidates, capabilities or risks…" aria-label="Search candidates">
+            <button class="filter" data-filter="all" aria-pressed="true">All</button>
+            <button class="filter" data-filter="worker" aria-pressed="false">Workers</button>
+            <button class="filter" data-filter="framework" aria-pressed="false">Frameworks</button>
+            <button class="filter" data-filter="keep" aria-pressed="false">Keep</button>
+            <button class="filter" data-filter="test" aria-pressed="false">Test / borrow</button>
+            <button class="filter" data-filter="defer" aria-pressed="false">Defer</button>
+            <button class="filter" data-filter="avoid" aria-pressed="false">Avoid</button>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr><th>Candidate</th><th>Class</th><th>License / access</th><th>Popularity signal</th><th>GH fit</th><th>Disposition</th><th>Decision reason</th></tr>
+              </thead>
+              <tbody id="candidateRows">
+                <tr data-tags="worker keep coding"><td class="project"><a href="https://github.com/anthropics/claude-code" target="_blank" rel="noopener">Claude Code</a><small>Anthropic</small></td><td>Worker / coding</td><td>Source-visible; no repo license</td><td>139.4k ★ · v2.1.220</td><td class="fit-score">9.5</td><td><span class="chip keep">Keep</span></td><td>Best existing quality/maturity path; SDK bundles the same CLI runtime.</td></tr>
+                <tr data-tags="worker keep coding"><td class="project"><a href="https://github.com/openai/codex" target="_blank" rel="noopener">Codex CLI</a><small>OpenAI</small></td><td>Worker / coding</td><td>Apache-2.0</td><td>102.2k ★ · v0.146.0</td><td class="fit-score">9.4</td><td><span class="chip keep">Keep</span></td><td>Local Rust agent plus app-server/thread surfaces; already deeply integrated.</td></tr>
+                <tr data-tags="worker test coding"><td class="project"><a href="https://github.com/anomalyco/opencode" target="_blank" rel="noopener">OpenCode</a><small>Anomaly / SST</small></td><td>Worker / coding</td><td>MIT</td><td>190.7k ★ · v1.18.9</td><td class="fit-score">8.9</td><td><span class="chip test">Canary #1</span></td><td>Provider-neutral; headless HTTP/OpenAPI server, SDK, ACP, MCP, session APIs.</td></tr>
+                <tr data-tags="worker test general"><td class="project"><a href="https://github.com/aaif-goose/goose" target="_blank" rel="noopener">Goose</a><small>AAIF / Linux Foundation</small></td><td>Worker / general</td><td>Apache-2.0</td><td>51.9k ★ · v1.44.0</td><td class="fit-score">8.7</td><td><span class="chip test">Canary #2</span></td><td>Provider-neutral REST/SSE and ACP session surfaces cover create/load/prompt/cancel, permissions, tools and MCP injection.</td></tr>
+                <tr data-tags="worker keep general"><td class="project"><a href="https://github.com/openclaw/openclaw" target="_blank" rel="noopener">OpenClaw</a><small>OpenClaw</small></td><td>Worker / personal agent</td><td>MIT stated by project</td><td>384.5k ★ · v2026.7.1</td><td class="fit-score">8.6</td><td><span class="chip keep">Keep</span></td><td>Broad channels, memory and automation; now also brokers native Codex and ACP runtimes.</td></tr>
+                <tr data-tags="worker test coding"><td class="project"><a href="https://docs.github.com/en/copilot/how-tos/copilot-cli/use-copilot-cli/overview" target="_blank" rel="noopener">GitHub Copilot CLI</a><small>GitHub</small></td><td>Worker / coding</td><td>Subscription; repo has no OSS license</td><td>11.0k ★ · v1.0.75</td><td class="fit-score">8.4</td><td><span class="chip test">Canary #3</span></td><td>ACP, sandbox/cloud, resume/steer, subagents, MCP, hooks, skills, built-in Playwright.</td></tr>
+                <tr data-tags="worker defer coding google"><td class="project"><a href="https://antigravity.google/docs/cli/overview" target="_blank" rel="noopener">Antigravity CLI</a><small>Google</small></td><td>Worker / coding</td><td>Proprietary server harness</td><td>1.8k ★ · v1.1.8</td><td class="fit-score">7.8</td><td><span class="chip defer">Bounded spike</span></td><td>Async multi-agent, shared desktop harness and sandboxing; service/data coupling is material.</td></tr>
+                <tr data-tags="worker test coding"><td class="project"><a href="https://github.com/cline/cline" target="_blank" rel="noopener">Cline CLI / SDK</a><small>Cline</small></td><td>Worker / IDE / SDK</td><td>Apache-2.0</td><td>65.2k ★</td><td class="fit-score">7.7</td><td><span class="chip test">Canary #4</span></td><td>Headless JSON CLI and shared SDK; provider-neutral, browser, MCP and parallel Kanban.</td></tr>
+                <tr data-tags="worker defer coding"><td class="project"><a href="https://cursor.com/changelog/page/6" target="_blank" rel="noopener">Cursor Agent + SDK</a><small>Cursor</small></td><td>Worker / IDE / cloud</td><td>Proprietary beta SDK</td><td>No canonical OSS repo</td><td class="fit-score">7.2</td><td><span class="chip defer">Watch / API spike</span></td><td>Excellent local/cloud handoff, VMs, runs and SSE; product coupling duplicates GlassHive.</td></tr>
+                <tr data-tags="worker defer coding"><td class="project"><a href="https://github.com/xai-org/grok-build" target="_blank" rel="noopener">Grok Build</a><small>xAI / SpaceXAI</small></td><td>Worker / coding</td><td>Apache-2.0</td><td>23.3k ★ in 14 days</td><td class="fit-score">6.9</td><td><span class="chip avoid">Security lab only</span></td><td>Outstanding headless/ACP/MCP/workflow surface, capped by youth and a documented pre-release bulk-repository upload; require local inference or enterprise ZDR plus egress proof.</td></tr>
+                <tr data-tags="worker defer coding google"><td class="project"><a href="https://github.com/google-gemini/gemini-cli" target="_blank" rel="noopener">Gemini CLI</a><small>Google</small></td><td>Worker / coding</td><td>Apache-2.0; enterprise/API path</td><td>106.2k ★ · v0.53.0</td><td class="fit-score">6.9</td><td><span class="chip defer">Enterprise only</span></td><td>Strong open harness, but consumer auth was retired in favor of Antigravity.</td></tr>
+                <tr data-tags="worker defer platform"><td class="project"><a href="https://github.com/OpenHands/OpenHands" target="_blank" rel="noopener">OpenHands</a><small>OpenHands</small></td><td>Control plane / runtime</td><td>MIT core; enterprise terms vary</td><td>82.5k ★ · v1.6.1</td><td class="fit-score">6.8</td><td><span class="chip defer">Borrow / ACP</span></td><td>Mature sandbox and agent server, but it recreates GlassHive’s own runtime/control plane.</td></tr>
+                <tr data-tags="worker defer coding"><td class="project"><a href="https://github.com/Kilo-Org/kilocode" target="_blank" rel="noopener">Kilo Code</a><small>Kilo</small></td><td>Worker / IDE / CLI</td><td>MIT</td><td>26.6k ★ · v7.4.16</td><td class="fit-score">6.7</td><td><span class="chip defer">Watch</span></td><td>Fast-moving OpenCode derivative with sandbox and parallel agents; adds platform overlap.</td></tr>
+                <tr data-tags="worker defer coding"><td class="project"><a href="https://github.com/Aider-AI/aider" target="_blank" rel="noopener">Aider</a><small>Aider</small></td><td>Coding CLI</td><td>Apache-2.0</td><td>47.8k ★</td><td class="fit-score">6.3</td><td><span class="chip defer">Specialist only</span></td><td>Excellent repo-map, git and architect/editor patterns; narrower control surface.</td></tr>
+                <tr data-tags="worker defer coding"><td class="project"><a href="https://github.com/SWE-agent/mini-swe-agent" target="_blank" rel="noopener">mini-SWE-agent</a><small>Princeton / Stanford</small></td><td>Benchmark coding agent</td><td>MIT</td><td>6.1k ★</td><td class="fit-score">5.7</td><td><span class="chip defer">Eval fixture</span></td><td>Minimal, inspectable baseline useful for harness evaluation, not a general workstation profile.</td></tr>
+                <tr data-tags="worker avoid coding"><td class="project"><a href="https://github.com/SWE-agent/SWE-agent" target="_blank" rel="noopener">SWE-agent</a><small>Princeton / Stanford</small></td><td>Benchmark coding agent</td><td>MIT</td><td>19.9k ★</td><td class="fit-score">4.8</td><td><span class="chip avoid">Superseded</span></td><td>Official docs say maintenance-only and recommend mini-SWE-agent.</td></tr>
+                <tr data-tags="worker defer cowork"><td class="project"><a href="https://github.com/OpenCoworkAI/open-cowork" target="_blank" rel="noopener">OpenCoworkAI/open-cowork</a><small>Independent project</small></td><td>Coworker desktop</td><td>MIT</td><td>1.9k ★</td><td class="fit-score">5.4</td><td><span class="chip defer">Pattern watch</span></td><td>VM desktop, skills, MCP and traces are relevant; README contradicts itself on computer-use readiness.</td></tr>
+                <tr data-tags="worker defer cowork"><td class="project"><a href="https://opencowork.ai/" target="_blank" rel="noopener">opencowork.ai</a><small>Separate project</small></td><td>Coworker preview</td><td>MIT claimed; preview pending</td><td>No usable release yet</td><td class="fit-score">3.9</td><td><span class="chip defer">Watchlist</span></td><td>Good approval/takeover intent, but its own site says the first usable preview is still coming.</td></tr>
+                <tr data-tags="worker avoid coding"><td class="project"><a href="https://github.com/RooCodeInc/Roo-Code" target="_blank" rel="noopener">Roo Code</a><small>Roo Code, Inc.</small></td><td>Former IDE agent</td><td>Apache-2.0; archived</td><td>24.4k ★</td><td class="fit-score">1.5</td><td><span class="chip avoid">Do not adopt</span></td><td>Official repository says the extension shut down on 15 May 2026.</td></tr>
+                <tr data-tags="worker defer coding google"><td class="project"><a href="https://jules.google/docs/" target="_blank" rel="noopener">Jules</a><small>Google</small></td><td>Hosted async coding agent</td><td>Proprietary hosted service</td><td>No canonical OSS repo</td><td class="fit-score">5.8</td><td><span class="chip defer">Front-door option</span></td><td>Useful remote GitHub executor, but its managed VMs do not preserve GlassHive’s local-worker contract.</td></tr>
+                <tr data-tags="framework keep sdk"><td class="project"><a href="https://github.com/anthropics/claude-agent-sdk-python" target="_blank" rel="noopener">Claude Agent SDK</a><small>Anthropic</small></td><td>Harness SDK</td><td>Source available; bundled CLI</td><td>SDK repository</td><td class="fit-score">8.3</td><td><span class="chip keep">Use where needed</span></td><td>Programmatic sessions, subagents and forking around the same proven Claude Code runtime.</td></tr>
+                <tr data-tags="framework test sdk"><td class="project"><a href="https://openai.github.io/openai-agents-python/sandbox_agents/" target="_blank" rel="noopener">OpenAI Agents SDK</a><small>OpenAI</small></td><td>Framework / sandbox runtime</td><td>MIT; Sandbox Agents beta</td><td>28.3k ★</td><td class="fit-score">8.0</td><td><span class="chip test">Benchmark patterns</span></td><td>Manifest, portable snapshots, multiple sandbox clients and unified traces closely map to GlassHive.</td></tr>
+                <tr data-tags="framework defer google sdk"><td class="project"><a href="https://google.github.io/adk-docs/" target="_blank" rel="noopener">Google ADK + agents-cli</a><small>Google</small></td><td>Framework / lifecycle CLI</td><td>Apache-2.0</td><td>20.9k ★ (ADK Python)</td><td class="fit-score">7.1</td><td><span class="chip defer">Borrow + interop</span></td><td>ADK builds agents; agents-cli scaffolds/evals/deploys them. Neither is a coding worker profile.</td></tr>
+                <tr data-tags="framework test protocol"><td class="project"><a href="https://langchain-ai.github.io/langgraph/" target="_blank" rel="noopener">LangGraph + Deep Agents</a><small>LangChain</small></td><td>Durable runtime / harness</td><td>MIT core</td><td>38.4k ★</td><td class="fit-score">7.6</td><td><span class="chip test">Borrow</span></td><td>Checkpoint, interrupt, task-queue and durable-run semantics are strong reference designs.</td></tr>
+                <tr data-tags="framework test protocol"><td class="project"><a href="https://github.com/microsoft/agent-framework" target="_blank" rel="noopener">Microsoft Agent Framework</a><small>Microsoft</small></td><td>Framework / durable host</td><td>MIT</td><td>12.5k ★</td><td class="fit-score">7.4</td><td><span class="chip test">Borrow</span></td><td>Successor to AutoGen/Semantic Kernel; A2A, checkpoints, DevUI, durable hosting and policy work.</td></tr>
+                <tr data-tags="framework test sdk"><td class="project"><a href="https://pydantic.dev/docs/ai/" target="_blank" rel="noopener">PydanticAI</a><small>Pydantic</small></td><td>Typed agent framework</td><td>MIT</td><td>18.9k ★</td><td class="fit-score">7.2</td><td><span class="chip test">Borrow</span></td><td>Clean typed boundaries plus Temporal, DBOS, Prefect and Restate durability with MCP streaming.</td></tr>
+                <tr data-tags="framework defer sdk"><td class="project"><a href="https://docs.crewai.com/" target="_blank" rel="noopener">CrewAI</a><small>CrewAI</small></td><td>Multi-agent framework</td><td>MIT core</td><td>56.3k ★</td><td class="fit-score">5.9</td><td><span class="chip defer">Workflow-specific</span></td><td>Popular crews/flows, persistence and HITL; role/workflow abstractions can overconstrain general workers.</td></tr>
+                <tr data-tags="framework defer sdk"><td class="project"><a href="https://mastra.ai/docs/" target="_blank" rel="noopener">Mastra</a><small>Mastra</small></td><td>TypeScript agent platform</td><td>Apache-2.0 stated</td><td>26.7k ★</td><td class="fit-score">6.5</td><td><span class="chip defer">Pattern watch</span></td><td>Good MCP, memory, suspend/resume, OTel and eval story; a framework, not a worker binary.</td></tr>
+                <tr data-tags="framework defer platform"><td class="project"><a href="https://docs.agno.com/" target="_blank" rel="noopener">Agno / AgentOS</a><small>Agno</small></td><td>Agent platform</td><td>Apache-2.0</td><td>41.5k ★</td><td class="fit-score">5.8</td><td><span class="chip defer">Pattern watch</span></td><td>Production fleet, RBAC, audit and multi-framework serving overlap strongly with GlassHive.</td></tr>
+                <tr data-tags="framework defer memory"><td class="project"><a href="https://docs.letta.com/" target="_blank" rel="noopener">Letta</a><small>Letta</small></td><td>Stateful-agent framework</td><td>Apache-2.0</td><td>24.0k ★</td><td class="fit-score">6.0</td><td><span class="chip defer">Memory research</span></td><td>Best-in-class stateful memory concepts; not a general host/Docker workstation executor.</td></tr>
+                <tr data-tags="framework avoid sdk"><td class="project"><a href="https://microsoft.github.io/autogen/" target="_blank" rel="noopener">AutoGen</a><small>Microsoft</small></td><td>Legacy multi-agent framework</td><td>Mixed docs/code licensing</td><td>60.1k ★</td><td class="fit-score">4.2</td><td><span class="chip avoid">Migrate forward</span></td><td>Microsoft’s current path is Agent Framework; old package naming also carries supply-chain confusion.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section id="google">
+        <div class="section-head">
+          <h2>Google is seven different answers</h2>
+          <p>The important Google finding is architectural separation. Only Antigravity and enterprise/API Gemini CLI resemble direct workers; the rest are hosted execution, frameworks, lifecycle tooling, protocol or managed deployment.</p>
+        </div>
+        <div class="panel panel-pad">
+          <div class="ecosystem" aria-label="Google agent ecosystem map">
+            <div class="eco"><strong>Antigravity CLI</strong><span>Consumer terminal + shared proprietary harness</span></div>
+            <div class="eco"><strong>Gemini CLI</strong><span>Open CLI retained for enterprise / API keys</span></div>
+            <div class="eco"><strong>Jules</strong><span>Hosted async GitHub coding worker</span></div>
+            <div class="eco"><strong>ADK</strong><span>Programmable multi-agent framework</span></div>
+            <div class="eco"><strong>agents-cli</strong><span>Scaffold · eval · deploy · observe</span></div>
+            <div class="eco"><strong>A2A</strong><span>Remote agent task/artifact protocol</span></div>
+            <div class="eco"><strong>Agent Runtime</strong><span>Managed Google Cloud deployment</span></div>
+          </div>
+          <div class="two-col" style="margin-top:16px">
+            <div class="callout">
+              <strong>Best Google experiment</strong>
+              Add an opt-in Antigravity profile behind the same public-safe synthetic acceptance suite as Claude, Codex and OpenCode. Test local workspace fidelity, sandbox boundaries, MCP parity, resume, steer, cancellation, callback delivery and data-policy controls.
+            </div>
+            <div class="callout warning">
+              <strong>Do not keep investing in Agent Starter Pack</strong>
+              Google’s own migration page calls <code>agents-cli</code> its successor. Use agents-cli for ADK lifecycle work; do not confuse it with Antigravity’s coding harness.
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="identities">
+        <div class="section-head">
+          <h2>Identity checks: Grok Build and “OpenCowork”</h2>
+          <p>The names are easy to misread. These conclusions only use ownership and capability claims that can be tied to the official announcement, repository or product site.</p>
+        </div>
+        <div class="two-col">
+          <article class="panel panel-pad">
+            <div class="legend"><span class="chip avoid">Security lab only</span><span class="chip fact">Identity resolved</span></div>
+            <h3>Grok Build</h3>
+            <p><strong>Exact identity:</strong> <a href="https://github.com/xai-org/grok-build" target="_blank" rel="noopener">xai-org/grok-build</a>, announced by xAI on 15 July 2026 as its coding-agent harness and TUI.</p>
+            <ul>
+              <li>Apache-2.0 first-party Rust source; local inference is supported.</li>
+              <li>Interactive TUI, headless scripting/CI and editor embedding through ACP.</li>
+              <li>Files, edits, commands, web search, checkpoints, sandbox, MCP, skills, plugins, hooks and subagents.</li>
+              <li>Its 23 July workflow layer claims saved pause/resume, a 128-agent normal budget, up to 1,024 agents for large runs and built-in deep research; powerful, but not yet independently benchmarked.</li>
+              <li><strong>Security history:</strong> a 14 July secondary traffic analysis reported a 5.10 GiB upload containing the tested tracked repository and Git history. xAI disabled implicated server-side flags; the current open source still contains storage and trace-upload machinery.</li>
+              <li><strong>Current mitigations:</strong> product telemetry resolves disabled by default, the coding-data registry defaults to opt-out, local inference avoids hosted model transfer, and xAI documents enterprise Zero Data Retention.</li>
+              <li>23.3k stars in two weeks is momentum, not maturity.</li>
+              <li>Public tree is a monorepo mirror; external contributions are not accepted.</li>
+              <li><strong>Recommendation:</strong> network-contained lab only; require local inference or enterprise ZDR and verify telemetry, coding-data sharing, trace upload and all outbound traffic before any real repository is exposed.</li>
+            </ul>
+          </article>
+          <article class="panel panel-pad">
+            <div class="legend"><span class="chip defer">Watch</span><span class="chip inference">Name collision</span></div>
+            <h3>OpenCowork</h3>
+            <p><strong>Exact identity:</strong> no single canonical project. The most visible released repository is <a href="https://github.com/OpenCoworkAI/open-cowork" target="_blank" rel="noopener">OpenCoworkAI/open-cowork</a>, distinct from <a href="https://github.com/AIDotNet/OpenCowork" target="_blank" rel="noopener">AIDotNet/OpenCowork</a>, <a href="https://opencowork.ai/" target="_blank" rel="noopener">opencowork.ai</a> and <a href="https://opencowork.chat/" target="_blank" rel="noopener">opencowork.chat</a>.</p>
+            <ul>
+              <li>OpenCoworkAI: MIT Electron app, WSL2/Lima execution, skills, MCP, traces and model choice.</li>
+              <li>AIDotNet/OpenCowork is a separate Apache-2.0 .NET project, not a release channel for OpenCoworkAI.</li>
+              <li>Its README simultaneously advertises GUI control and lists computer use as “coming next”; acceptance evidence is therefore unresolved.</li>
+              <li>opencowork.ai says its first usable preview is still coming.</li>
+              <li>Recommendation: copy VM-workspace and approval UX ideas, not the desktop shell.</li>
+            </ul>
+          </article>
+        </div>
+      </section>
+
+      <section id="librechat">
+        <div class="section-head">
+          <h2>LibreChat after v0.8.3</h2>
+          <p>Latest verified public release: <strong>v0.8.7, 23 June 2026</strong>. GitHub marks the 0.8.x release objects as prereleases, while the official LibreChat changelog labels v0.8.4–v0.8.7 as releases. The product value is real; the adoption path should remain a controlled fork replay.</p>
+        </div>
+        <div class="release-list">
+          <article class="release">
+            <div><div class="version">v0.8.4</div><div class="tiny muted">20 Mar 2026</div></div>
+            <h3>Security + MCP stability</h3>
+            <p>30+ security fixes, MCP circuit breaker/backoff, OAuth race fixes, fail-closed domain validation, STDIO custom-user variables, lighter tokenization and more reliable static artifact rendering.</p>
+            <span class="chip keep">Already in pin ancestry</span>
+          </article>
+          <article class="release">
+            <div><div class="version">v0.8.5</div><div class="tiny muted">21 Apr 2026</div></div>
+            <h3>Compaction + admin foundation</h3>
+            <p>Automatic context summarization/pruning, roles/groups/grants, richer tool-call UI, lazy MCP initialization, OAuth recovery and pinned model specs.</p>
+            <span class="chip test">High value</span>
+          </article>
+          <article class="release">
+            <div><div class="version">v0.8.6</div><div class="tiny muted">31 May 2026</div></div>
+            <h3>Skills, subagents, code and operations</h3>
+            <p>Portable skills; context-preserving subagents; editable office/code artifacts; Prometheus, OpenTelemetry, readiness and structured logs; MCP remote proxy/auth/permission hardening.</p>
+            <span class="chip test">Very high value</span>
+          </article>
+          <article class="release">
+            <div><div class="version">v0.8.7</div><div class="tiny muted">23 Jun 2026</div></div>
+            <h3>Authoring, usage evidence and access control</h3>
+            <p>Chat projects; skills authoring and GitHub sync; model-spec subagents; secure code interpreter; context/cost gauge; per-tool <code>onResult</code>; stronger MCP/OBO/ACL flows and PII filtering.</p>
+            <span class="chip test">Selective replay</span>
+          </article>
+        </div>
+        <div class="two-col" style="margin-top:14px">
+          <div class="callout danger">
+            <strong>Tracked truth is misaligned</strong>
+            The parent component pin <code>f051e431…</code> contains upstream v0.8.4 ancestry but not v0.8.5–v0.8.7. The owning alignment document still describes v0.8.3. Reconcile the document and pin before calling any upgrade baseline “current.”
+          </div>
+          <div class="callout">
+            <strong>Highest-value replay order</strong>
+            1) v0.8.5 compaction, 2) v0.8.6 OTel/readiness, 3) skills and subagent context boundaries, 4) v0.8.7 <code>onResult</code>/context-cost evidence, 5) MCP OAuth/ACL hardening, 6) code interpreter only after its sandbox boundary is proven.
+          </div>
+        </div>
+        <div class="callout warning" style="margin-top:14px">
+          <strong>Boundary rule</strong>
+          LibreChat skills, subagents and code execution improve the front door, but they do not make LibreChat the owner of GlassHive workspaces, callbacks, takeover, artifacts or completion evidence. Keep the two runtimes independently excellent.
+        </div>
+      </section>
+
+      <section id="borrow">
+        <div class="section-head">
+          <h2>Borrow these five patterns</h2>
+          <p>Each pattern upgrades GlassHive without introducing another top-level orchestrator.</p>
+        </div>
+        <div class="three-col">
+          <article class="card"><h3>1. ACP worker adapter</h3><p>One strict adapter for session start, events, approvals, resume, steer, cancel and artifacts. Validate OpenCode, Goose, Copilot and security-gated Grok against the same contract.</p></article>
+          <article class="card"><h3>2. Portable workspace manifest</h3><p>Borrow OpenAI Sandbox Agents’ separation of manifest, sandbox client, live session and saved snapshot. Keep GlassHive as lifecycle owner.</p></article>
+          <article class="card"><h3>3. Durable task semantics</h3><p>Borrow LangGraph/PydanticAI rules for checkpoints, interrupts, deterministic replay and idempotent side effects; avoid binding the worker loop to a graph DSL.</p></article>
+          <article class="card"><h3>4. A2A artifact envelope</h3><p>Use A2A’s task, status, message and artifact ideas for remote interop while retaining the richer internal GlassHive event/audit model.</p></article>
+          <article class="card"><h3>5. Policy intervention points</h3><p>Borrow Microsoft ACS’s fail-closed snapshots at startup, input, model, pre/post tool, output and shutdown. Never infer authority from model prose.</p></article>
+          <article class="card"><h3>Bonus: LibreChat evidence events</h3><p>Map per-tool result, context usage, cost and resumable-run cleanup into the existing evidence ledger without coupling persistence stores.</p></article>
+        </div>
+      </section>
+
+      <section id="roadmap">
+        <div class="section-head">
+          <h2>A 90-day decision plan</h2>
+          <p>No migration, no popularity contest. Run one synthetic, public-safe contract across candidates and promote only workers that independently meet Viventium’s Quality + Performance metric. Capability breadth alone never promotes a profile: every path must reach parity with the in-process hand-off path on its own AI.</p>
+        </div>
+        <div class="panel panel-pad">
+          <div class="timeline">
+            <div class="step">
+              <div class="week">Week 1</div>
+              <div><h3>Freeze the worker contract</h3><p>Fixture: version/capability floor and substrate preflight/recovery before run creation; faithful prompt + files; host and Docker modes; tool/MCP discovery; model/effort projection; persistent workspace/warm resume; steer; cancel; permission pause; artifact; callback; final self-check; failure classification; public-safe redaction.</p></div>
+            </div>
+            <div class="step">
+              <div class="week">Weeks 2–3</div>
+              <div><h3>OpenCode canary</h3><p>Prefer its server or ACP surface over scraping TUI text. Compare event completeness, session durability, provider neutrality and failure truth against Claude/Codex baselines.</p></div>
+            </div>
+            <div class="step">
+              <div class="week">Weeks 4–5</div>
+              <div><h3>Goose + Copilot CLI canaries</h3><p>For Goose, compare its REST/SSE and ACP surfaces on new/load/resume, cancellation, permission events, MCP injection and extension lifecycle. For Copilot, prove subscription auth, ACP, sandbox, built-in browser and organization-policy behavior.</p></div>
+            </div>
+            <div class="step">
+              <div class="week">Week 6</div>
+              <div><h3>Grok Build security lab</h3><p>Use only synthetic repositories inside a network-contained environment. Require local inference or enterprise ZDR; explicitly disable and verify product telemetry, coding-data sharing and trace uploads; capture all egress while testing workflows, ACP, pause/resume and cancellation. No promotion without a clean packet-level audit.</p></div>
+            </div>
+            <div class="step">
+              <div class="week">Weeks 7–8</div>
+              <div><h3>Google Antigravity spike</h3><p>Opt-in only. Capture data-use settings, server dependency, auth recovery, async subagent lifecycle, local sandbox boundaries, MCP parity and session export. Stop if GlassHive cannot own truth and cancellation.</p></div>
+            </div>
+            <div class="step">
+              <div class="week">Weeks 9–10</div>
+              <div><h3>Protocol and policy hardening</h3><p>Decide whether ACP becomes a supported adapter. Prototype manifest, persistent-workspace and warm-resume boundaries plus fail-closed policy intervention snapshots without changing existing profiles.</p></div>
+            </div>
+            <div class="step">
+              <div class="week">Weeks 11–12</div>
+              <div><h3>LibreChat selective replay</h3><p>Reconcile the v0.8.4 baseline, then replay compaction, OTel/readiness, skills/subagents and evidence events behind full browser QA. Treat code interpreter as a separate security gate.</p></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="risks">
+        <div class="section-head">
+          <h2>Disconfirming evidence</h2>
+          <p>These findings prevent an attractive feature list from becoming an unearned recommendation.</p>
+        </div>
+        <details open>
+          <summary>Closed service dependencies can nullify an “open CLI” advantage</summary>
+          <div>Antigravity’s public repository has changelog/examples but no open-source license and the product uses Google’s server-side harness. Claude Code’s main repository also has no permissive repository license. Treat source visibility and operational portability as separate facts.</div>
+        </details>
+        <details open>
+          <summary>Open source does not erase Grok Build’s data-path history</summary>
+          <div>A credible 14 July packet-level analysis reported that a pre-release Grok Build client uploaded the full tested tracked repository and Git history through a storage path, independently of model traffic. xAI disabled implicated server-side flags and current code has safer defaults, opt-out controls, local inference and enterprise ZDR. The remaining storage/trace machinery means the correct Viventium response is verification under network containment—not either blind trust or a blanket permanent ban.</div>
+        </details>
+        <details>
+          <summary>Popularity is easy to misread</summary>
+          <div>OpenClaw’s 384.5k stars reflect a general personal-agent ecosystem, not coding quality. Grok Build’s 23k stars in two weeks show launch velocity, not production durability. Roo’s 24k historical stars did not prevent shutdown.</div>
+        </details>
+        <details>
+          <summary>A full platform can be a worse worker</summary>
+          <div>OpenHands, Agno, Cursor Cloud and coworker desktops include orchestration and lifecycle concepts GlassHive already owns. Nesting them can create two competing sources of session, artifact, permission and completion truth.</div>
+        </details>
+        <details>
+          <summary>Framework durability is not workstation persistence</summary>
+          <div>LangGraph, Temporal-backed PydanticAI and cloud agent runtimes can replay logical steps. They do not automatically preserve browser identity, GUI state, host-native credentials or a user-takeover workstation.</div>
+        </details>
+        <details>
+          <summary>Tool protocols do not guarantee semantic parity</summary>
+          <div>Two ACP or MCP implementations may expose different approval, cancellation, streaming, context and artifact semantics. The GlassHive acceptance contract—not protocol presence—decides compatibility.</div>
+        </details>
+        <details>
+          <summary>OpenCowork claims need a real acceptance run</summary>
+          <div>The largest repo advertises GUI operation while its roadmap still lists computer use as forthcoming. Until a released build passes host/VM/browser/action/recovery checks, it is an idea source, not an integration candidate.</div>
+        </details>
+      </section>
+
+      <section id="evidence">
+        <div class="section-head">
+          <h2>Evidence ledger</h2>
+          <p>Primary sources were preferred. GitHub stars/releases were queried from the GitHub API on 29 July 2026; they are a dated popularity signal, not a capability benchmark.</p>
+        </div>
+        <div class="source-grid">
+          <article class="source"><a href="https://developers.googleblog.com/en/an-important-update-transitioning-gemini-cli-to-antigravity-cli/" target="_blank" rel="noopener">Google: Gemini CLI → Antigravity</a><p>Consumer transition, dates, retained features and enterprise exception.</p></article>
+          <article class="source"><a href="https://antigravity.google/docs/cli/overview" target="_blank" rel="noopener">Antigravity CLI docs</a><p>CLI architecture, execution, sessions and product boundary.</p></article>
+          <article class="source"><a href="https://github.com/google-gemini/gemini-cli" target="_blank" rel="noopener">Gemini CLI repository</a><p>Apache-2.0 source, headless mode, sandbox, MCP and releases.</p></article>
+          <article class="source"><a href="https://google.github.io/agents-cli/reference/from-agent-starter-pack/" target="_blank" rel="noopener">Google agents-cli migration</a><p>Official successor relationship to Agent Starter Pack.</p></article>
+          <article class="source"><a href="https://google.github.io/agents-cli/cli/" target="_blank" rel="noopener">Google agents-cli reference</a><p>Run, session, artifacts, eval, deploy and A2A surfaces.</p></article>
+          <article class="source"><a href="https://jules.google/docs/" target="_blank" rel="noopener">Jules documentation</a><p>Hosted asynchronous coding-agent surface.</p></article>
+          <article class="source"><a href="https://x.ai/news/grok-build-open-source" target="_blank" rel="noopener">xAI: Grok Build open source</a><p>15 July announcement and source-surface inventory.</p></article>
+          <article class="source"><a href="https://github.com/xai-org/grok-build" target="_blank" rel="noopener">Grok Build repository</a><p>Apache-2.0, headless, ACP, sandbox, extensions and governance caveats.</p></article>
+          <article class="source"><a href="https://x.ai/news/workflows" target="_blank" rel="noopener">Grok Build workflows</a><p>Official fan-out, saved progress, reusable workflows and built-in deep-research claims.</p></article>
+          <article class="source"><a href="https://github.com/xai-org/grok-build/blob/main/crates/codegen/xai-grok-shell/src/agent/config.rs" target="_blank" rel="noopener">Grok Build current config source</a><p>First-party telemetry resolution and disabled default.</p></article>
+          <article class="source"><a href="https://github.com/xai-org/grok-build/blob/main/crates/codegen/xai-grok-pager/src/settings/registry.rs" target="_blank" rel="noopener">Grok Build privacy settings source</a><p>First-party coding-data opt-out default and settings behavior.</p></article>
+          <article class="source"><a href="https://docs.x.ai/build/enterprise" target="_blank" rel="noopener">xAI Build enterprise controls</a><p>First-party Zero Data Retention and enterprise policy claims.</p></article>
+          <article class="source"><a href="https://thehackernews.com/2026/07/grok-build-uploads-entire-git.html" target="_blank" rel="noopener">Grok Build upload investigation</a><p>Secondary packet-level report of the pre-release repository upload and subsequent retest.</p></article>
+          <article class="source"><a href="https://the-decoder.com/xai-open-sources-grok-build-on-github-after-massive-data-breach/" target="_blank" rel="noopener">Grok Build incident corroboration</a><p>Secondary account published alongside the open-source release.</p></article>
+          <article class="source"><a href="https://github.com/anomalyco/opencode" target="_blank" rel="noopener">OpenCode repository</a><p>MIT project identity and current release line.</p></article>
+          <article class="source"><a href="https://opencode.ai/docs/server/" target="_blank" rel="noopener">OpenCode server docs</a><p>Headless HTTP/OpenAPI and session-control surface.</p></article>
+          <article class="source"><a href="https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-command-reference" target="_blank" rel="noopener">Copilot CLI reference</a><p>ACP, sandbox, MCP, skills, sessions, permissions and plugins.</p></article>
+          <article class="source"><a href="https://github.com/cline/cline" target="_blank" rel="noopener">Cline repository</a><p>Headless CLI, SDK, browser, MCP and multi-agent Kanban.</p></article>
+          <article class="source"><a href="https://github.com/aaif-goose/goose" target="_blank" rel="noopener">Goose repository</a><p>CLI/API/desktop, providers, ACP subscriptions and MCP extensions.</p></article>
+          <article class="source"><a href="https://github.com/aaif-goose/goose/blob/main/CUSTOM_DISTROS.md" target="_blank" rel="noopener">Goose custom-distribution guide</a><p>First-party REST/SSE session API and ACP command/event surface.</p></article>
+          <article class="source"><a href="https://docs.openclaw.ai/concepts/agent-runtimes" target="_blank" rel="noopener">OpenClaw agent runtimes</a><p>Embedded harness, Codex app-server and ACP runtime boundaries.</p></article>
+          <article class="source"><a href="https://github.com/OpenHands/OpenHands" target="_blank" rel="noopener">OpenHands repository</a><p>Runtime/control-plane identity and license boundary.</p></article>
+          <article class="source"><a href="https://github.com/OpenCoworkAI/open-cowork" target="_blank" rel="noopener">OpenCoworkAI repository</a><p>MIT desktop, VM isolation and unresolved computer-use claim.</p></article>
+          <article class="source"><a href="https://opencowork.ai/" target="_blank" rel="noopener">opencowork.ai</a><p>Separate local-first project; first usable preview pending.</p></article>
+          <article class="source"><a href="https://github.com/RooCodeInc/Roo-Code" target="_blank" rel="noopener">Roo Code archive</a><p>Official shutdown and archive notice.</p></article>
+          <article class="source"><a href="https://openai.github.io/openai-agents-python/sandbox_agents/" target="_blank" rel="noopener">OpenAI Sandbox Agents</a><p>Beta manifest, sandbox client, snapshots, resume and artifacts.</p></article>
+          <article class="source"><a href="https://github.com/anthropics/claude-agent-sdk-python" target="_blank" rel="noopener">Claude Agent SDK</a><p>Bundled CLI, programmatic sessions, subagents and forking.</p></article>
+          <article class="source"><a href="https://langchain-ai.github.io/langgraph/" target="_blank" rel="noopener">LangGraph docs</a><p>Durable execution, persistence, interrupts and Deep Agents taxonomy.</p></article>
+          <article class="source"><a href="https://pydantic.dev/docs/ai/capabilities/durable_execution/overview/" target="_blank" rel="noopener">PydanticAI durability</a><p>Temporal, DBOS, Prefect and Restate integrations.</p></article>
+          <article class="source"><a href="https://microsoft.github.io/agent-resources/develop-agents/" target="_blank" rel="noopener">Microsoft Agent Framework hub</a><p>AutoGen successor, workflows, A2A and durable hosting.</p></article>
+          <article class="source"><a href="https://www.librechat.ai/changelog" target="_blank" rel="noopener">LibreChat changelog</a><p>Official release ledger through v0.8.7.</p></article>
+          <article class="source"><a href="https://www.librechat.ai/changelog/v0.8.5" target="_blank" rel="noopener">LibreChat v0.8.5</a><p>Compaction, admin, UI and MCP updates.</p></article>
+          <article class="source"><a href="https://www.librechat.ai/changelog/v0.8.6" target="_blank" rel="noopener">LibreChat v0.8.6</a><p>Skills, subagents, artifacts, code and observability.</p></article>
+          <article class="source"><a href="https://www.librechat.ai/changelog/v0.8.7" target="_blank" rel="noopener">LibreChat v0.8.7</a><p>Skills authoring, context/cost, onResult and MCP access controls.</p></article>
+        </div>
+      </section>
+
+      <section id="method">
+        <div class="section-head">
+          <h2>Method, confidence and unresolved proof</h2>
+          <p>The report combined a Viventium architecture trace, targeted primary-source review, current GitHub metadata and an independent Gemini Deep Research pass. A review-only Claude Opus xHigh audit then approved the core decision with P2 polish, applied before delivery. Decision statements were rechecked against first-party evidence where available; the Grok Build incident is explicitly labeled secondary and triangulated against current source and first-party controls.</p>
+        </div>
+        <div class="two-col">
+          <article class="panel panel-pad">
+            <h3>Confidence bands</h3>
+            <ul>
+              <li><strong>High:</strong> identity, license, documented surfaces, dated releases, Google transition, Roo shutdown and LibreChat changelog.</li>
+              <li><strong>Medium:</strong> relative GlassHive integration cost and qualitative ranking among close candidates.</li>
+              <li><strong>Low until canary:</strong> real quality, latency, resume fidelity, browser parity and failure truth under Viventium’s exact workload.</li>
+            </ul>
+          </article>
+          <article class="panel panel-pad">
+            <h3>Still needs primary runtime proof</h3>
+            <ul>
+              <li>Post-change user-grade acceptance for every proposed worker profile.</li>
+              <li>Antigravity data-use opt-out and enterprise controls in the exact account mode.</li>
+              <li>Grok Build callback/event completeness plus packet-level proof of telemetry, coding-data, trace-upload and all egress behavior in each auth/account mode.</li>
+              <li>Copilot CLI subscription-auth durability and organization-policy interactions.</li>
+              <li>OpenCowork computer-use and VM-boundary behavior in a released installer.</li>
+            </ul>
+          </article>
+        </div>
+        <div class="audit-grid" style="margin-top:14px">
+          <div class="audit"><strong>PASS</strong><span>≥20 candidates: 31</span></div>
+          <div class="audit"><strong>PASS</strong><span>Primary-backed rows: 29/31</span></div>
+          <div class="audit"><strong>PASS</strong><span>Two separate top-10 rankings</span></div>
+          <div class="audit"><strong>PASS</strong><span>Google + identity maps</span></div>
+          <div class="audit"><strong>PASS</strong><span>LibreChat v0.8.4–v0.8.7</span></div>
+          <div class="audit"><strong>PASS</strong><span>5+ prototype recommendations</span></div>
+          <div class="audit"><strong>PASS</strong><span>5+ disconfirming findings</span></div>
+          <div class="audit"><strong>PASS</strong><span>Direct canonical URLs</span></div>
+          <div class="audit"><strong>PASS</strong><span>Facts vs inference labeled</span></div>
+          <div class="audit"><strong>PASS</strong><span>Independent Opus audit: approve</span></div>
+          <div class="audit"><strong>PARTIAL</strong><span>Runtime benchmarks pending</span></div>
+        </div>
+        <div class="callout" style="margin-top:14px">
+          <strong>Delivery QA actually run</strong>
+          Chromium at 1440×1000 and 390×844; visible desktop/mobile review; table search and recommendation filters; copy action; expandable risk details; anchor navigation and reload; console check; 53 external endpoints; and a 17-page Letter print render. Result: no page-level horizontal overflow, duplicate IDs, missing anchors, remote assets, console errors or public-safety scan findings. Two xAI pages returned an automated-request challenge while remaining valid canonical sources. No candidate harness was installed or benchmarked; those runtime comparisons are intentionally marked pending.
+        </div>
+        <p class="tiny muted print-only">Prepared 29 July 2026. Dynamic web facts and repository counts should be refreshed before a future procurement or release decision.</p>
+      </section>
+    </div>
+  </main>
+
+  <footer>
+    <div class="shell footer-inner">
+      <span>GlassHive agent harness landscape · research snapshot 2026-07-29</span>
+      <span>Public-safe synthetic evidence only · no credentials or private runtime data</span>
+    </div>
+  </footer>
+
+  <script>
+    (() => {
+      const rows = [...document.querySelectorAll("#candidateRows tr")];
+      const filters = [...document.querySelectorAll(".filter")];
+      const search = document.querySelector("#candidateSearch");
+      let active = "all";
+
+      function applyFilters() {
+        const query = search.value.trim().toLowerCase();
+        rows.forEach((row) => {
+          const tags = row.dataset.tags || "";
+          const matchesTag = active === "all" || tags.split(" ").includes(active);
+          const matchesText = !query || row.textContent.toLowerCase().includes(query);
+          row.classList.toggle("hidden-row", !(matchesTag && matchesText));
+        });
+      }
+
+      filters.forEach((button) => {
+        button.addEventListener("click", () => {
+          active = button.dataset.filter;
+          filters.forEach((item) => item.setAttribute("aria-pressed", String(item === button)));
+          applyFilters();
+        });
+      });
+      search.addEventListener("input", applyFilters);
+
+      const brief = "GlassHive harness recommendation (2026-07-29): keep Claude Code, Codex and OpenClaw; add OpenCode as the first canary, followed by Goose and GitHub Copilot CLI. Run Grok Build only in a network-contained security lab with local inference or enterprise ZDR plus a clean egress audit; keep Antigravity to an opt-in service-coupled spike. Borrow ACP, portable workspace manifests, durable checkpoint semantics, A2A artifact envelopes and fail-closed policy intervention points. Do not nest OpenHands or coworker desktops as a second control plane. For LibreChat, reconcile the tracked v0.8.4 ancestry with the v0.8.3 alignment doc, then selectively replay v0.8.5–v0.8.7 compaction, observability, skills/subagents and evidence events.";
+      document.querySelector("#copyBrief").addEventListener("click", async (event) => {
+        const button = event.currentTarget;
+        try {
+          await navigator.clipboard.writeText(brief);
+          button.textContent = "Copied";
+        } catch {
+          const area = document.createElement("textarea");
+          area.value = brief;
+          document.body.appendChild(area);
+          area.select();
+          document.execCommand("copy");
+          area.remove();
+          button.textContent = "Copied";
+        }
+        setTimeout(() => { button.textContent = "Copy executive brief"; }, 1600);
+      });
+    })();
+  </script>
+</body>
+</html>

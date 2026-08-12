@@ -34,6 +34,7 @@
 
 - Case catalog: [`cases.md`](cases.md).
 - Reports: [`reports/`](reports/) for dated public-safe runs.
-- Latest result: core endpoint and web-provider acceptance passed on 2026-07-30; full original
-  cross-surface release acceptance remains partial. See
-  [`reports/2026-07-30-core-provider-acceptance.md`](reports/2026-07-30-core-provider-acceptance.md).
+- Latest recovery result: configured fallback and cross-process reconciliation passed the recorded
+  2026-08-06 Telegram/runtime run; the full original cross-surface release acceptance remains
+  partial. See
+  [`reports/2026-08-06-telegram-reconciliation-fallback-recovery.md`](reports/2026-08-06-telegram-reconciliation-fallback-recovery.md).

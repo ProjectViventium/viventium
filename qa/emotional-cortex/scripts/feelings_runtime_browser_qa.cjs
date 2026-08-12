@@ -64,6 +64,7 @@ function parseEnvFile(filePath) {
 
 function loadLocalEnv() {
   const candidates = [
+    path.join(LIBRECHAT_ROOT, ".env"),
     path.join(
       os.homedir(),
       "Library",
@@ -89,14 +90,23 @@ function loadLocalEnv() {
       "service-env",
       "librechat.env",
     ),
-    path.join(LIBRECHAT_ROOT, ".env"),
+    path.join(
+      os.homedir(),
+      "Library",
+      "Application Support",
+      "Viventium",
+      "runtime",
+      "service-env",
+      "librechat.owner.env",
+    ),
   ];
-  return candidates.reduce(
-    (all, filePath) => Object.assign(all, parseEnvFile(filePath)),
-    {
-      ...process.env,
-    },
-  );
+  return {
+    ...candidates.reduce(
+      (all, filePath) => Object.assign(all, parseEnvFile(filePath)),
+      {},
+    ),
+    ...process.env,
+  };
 }
 
 function shortHash(value) {
@@ -316,13 +326,23 @@ async function deleteFeelings(auth) {
     throw new Error(`Feelings reset failed with HTTP ${response.status}`);
 }
 
-async function waitForReaction(auth, version, timeoutMs = 45_000) {
+async function waitForReaction(
+  auth,
+  version,
+  earliestReactionStartMs,
+  timeoutMs = 45_000,
+) {
   const startedAt = Date.now();
   let latest = null;
   while (Date.now() - startedAt < timeoutMs) {
     latest = await readFeelings(auth);
     const health = latest.state.reactionHealth;
+    const healthStartedAtMs = Date.parse(health.lastStartedAt || "");
+    const healthIsFresh =
+      Number.isFinite(healthStartedAtMs) &&
+      healthStartedAtMs >= earliestReactionStartMs;
     if (
+      healthIsFresh &&
       health.status !== "running" &&
       health.status !== "never" &&
       (latest.state.version > version ||
@@ -621,7 +641,7 @@ async function main() {
     await highRangeTab.click();
     result.checks.highRangeDefaultIsCausal = await page
       .getByText(
-        "I cannot keep a straight face; sincerity itself keeps mutating into teasing, absurdity, jokes, and ridiculous riffs until someone laughs.",
+        "A ridiculous impulse keeps bursting out; I want to surprise us into real laughter.",
         { exact: true },
       )
       .isVisible();
@@ -872,6 +892,7 @@ async function main() {
     const reaction = await waitForReaction(
       auth,
       stateBeforeChat.state.version,
+      sentAt,
     );
     result.metrics.reactionObservedMs = reaction.elapsedMs;
     result.checks.reactionCompleted =
@@ -898,6 +919,22 @@ async function main() {
     );
     await titleResponse;
     progress("detached_reaction_observed");
+
+    // React Query intentionally pauses interval refreshes for a background tab. Bring the
+    // Feelings surface forward after the detached reaction so the visible status and route are
+    // refreshed before user-facing assertions and screenshots.
+    await page.bringToFront();
+    const expectedHealthText =
+      reaction.payload?.state?.reactionHealth?.status === "degraded"
+        ? /Needs attention/i
+        : reaction.payload?.state?.reactionHealth?.status === "skipped"
+          ? /Ready · last skipped/i
+          : /Ready · .*last reaction/i;
+    await page
+      .locator(".feelings-live-readout")
+      .getByText(expectedHealthText)
+      .waitFor({ timeout: 10_000 })
+      .catch(() => {});
 
     const reactionEntries = (reaction.payload?.state?.trail || [])
       .slice(stateBeforeChat.state.trail?.length || 0)
@@ -1175,6 +1212,7 @@ async function main() {
       const preparedReaction = await waitForReaction(
         auth,
         afterManualClear.state.version,
+        prepareSentAt,
       );
       result.checks.restartStatePrepared =
         preparedReaction.payload?.state?.reactionHealth?.status === "healthy" &&

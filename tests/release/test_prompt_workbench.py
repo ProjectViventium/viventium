@@ -95,10 +95,11 @@ def test_sync_status_lists_each_canonical_background_agent_prompt_unit() -> None
     rows = sync_engine._agent_rows(source=source, live=source, ledger={"records": {}})
 
     background_rows = [row for row in rows if row["sourcePromptId"] != "main.conscious_agent"]
-    assert len(background_rows) == len(source["backgroundAgents"]) == 11
+    assert len(background_rows) == len(source["backgroundAgents"]) == 12
     assert {row["sourcePromptId"] for row in background_rows} == {
         "cortex.background_analysis.execution",
         "cortex.confirmation_bias.execution",
+        "cortex.deep_memory.execution",
         "cortex.red_team.execution",
         "cortex.deep_research.execution",
         "cortex.online_tool_use.execution",
