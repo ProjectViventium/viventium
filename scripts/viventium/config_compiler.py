@@ -966,6 +966,20 @@ def resolve_glasshive_enterprise_settings(config: dict[str, Any]) -> dict[str, A
         raise SystemExit(
             "integrations.glasshive.enterprise.mcp_oauth.token_scopes contains an invalid scope"
         )
+    if mcp_issuer_host == "login.microsoftonline.com":
+        entra_scope_aliases = {
+            f"{mcp_public_url}/{token_scope}"
+            for token_scope in mcp_token_scope_values
+        }
+        if any(
+            scope not in entra_scope_aliases
+            for scope in mcp_required_scope_values
+        ):
+            raise SystemExit(
+                "GlassHive MCP Entra authorization scopes must use mcp_oauth.public_url "
+                "and map exactly to a configured token scope; register that exact canonical "
+                "HTTPS MCP URL as an identifier URI on the Entra resource application"
+            )
     mcp_token_scopes = " ".join(mcp_token_scope_values)
     raw_mcp_client_ids = mcp_oauth.get("allowed_client_ids") or []
     if isinstance(raw_mcp_client_ids, str):

@@ -244,6 +244,11 @@ compliant hosted topology.
   is separately configured as `mcp_oauth.token_tenant_id`; it never reuses or changes the independent
   GlassHive ownership namespace in `enterprise.tenant_id`. Another audience, resource, configured
   token tenant, client, or partial verifier policy is rejected.
+- Entra deployments register the exact canonical HTTPS MCP URL as an Application ID URI on the API
+  resource app and request `<canonical-mcp-url>/<delegated-scope>`. The v2 token `aud` remains the
+  API app client-id GUID and `scp` remains the short delegated permission value. Pairing the HTTPS
+  RFC 8707 resource with an `api://...` authorization scope is rejected by Entra and must fail
+  compilation before a false client setup command is published.
 - Official Codex and Claude connection commands are generated from configured public HTTPS endpoints;
   the UI never invents a localhost or unconfigured command for a hosted user.
 - Hosted Entra deployments do not assume MCP dynamic client registration. Codex and Claude Code

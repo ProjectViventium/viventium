@@ -776,7 +776,7 @@ properties:
                         items:
                           type: string
                   required_scopes:
-                    description: Full authorization-server scope values advertised/requested by MCP clients.
+                    description: Full authorization-server scope values advertised/requested by MCP clients. For Entra, each scope must use the exact canonical public MCP URL as its resource prefix and that URL must be registered as an Application ID URI on the resource app.
                     oneOf:
                       - type: string
                       - type: array

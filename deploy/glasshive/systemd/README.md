@@ -251,6 +251,10 @@ the dedicated API registration:
 ```json
 {
   "signInAudience": "AzureADMyOrg",
+  "identifierUris": [
+    "api://<glasshive-api-app-client-id-guid>",
+    "https://glasshive.example.com/mcp"
+  ],
   "groupMembershipClaims": null,
   "appRoles": [
     {
@@ -350,9 +354,11 @@ Bind all registrations to one exact tenant id and issuer
 - token audience `<glasshive-api-app-client-id-guid>`, using the combined app client id in combined
   mode or the API app client id in split mode;
 - authorization/request scope
-  `GLASSHIVE_MCP_OAUTH_REQUIRED_SCOPES=api://<glasshive-api-app-client-id-guid>/user_impersonation`,
-  with the same combined-or-split resource client id;
-- access-token claim scope `GLASSHIVE_MCP_OAUTH_TOKEN_SCOPES=user_impersonation`;
+  `GLASSHIVE_MCP_OAUTH_REQUIRED_SCOPES=https://glasshive.example.com/mcp/access_as_user`,
+  after registering that exact canonical HTTPS MCP URL as an additional Application ID URI on the
+  same combined-or-split resource app; preserve an existing `api://<app-id>` alias when another
+  consumer still uses it;
+- access-token claim scope `GLASSHIVE_MCP_OAUTH_TOKEN_SCOPES=access_as_user`;
 - allowed client ids equal to the two preauthorized public-client app ids; and
 - role claim `roles` with the same explicit map for browser and MCP values, for example
   `{"GlassHive.Member":"member","GlassHive.Viewer":"viewer","GlassHive.TenantAdmin":"tenant_admin"}`.
@@ -368,10 +374,12 @@ bounded `roles`. Keep
 raw group claims disabled unless the deployment has separately implemented and tested group-overage
 resolution; truncation or a `_claim_names` overage response must never recover to a write-capable
 role. Before cutover, obtain a token through each real client and verify v2 issuer, API `aud`, `tid`,
-stable `oid`, requested full resource scope, access-token `scp` claim must equal `user_impersonation`,
+stable `oid`, requested full resource scope, access-token `scp` claim must equal `access_as_user`,
 allowed client id, mapped role, and exact redirect. The authorization scope and token claim value are
 intentionally different Entra representations; accepting the full URI in `scp` or using the short
-claim as the authorization request is a configuration failure. Wrong tenant, audience, scope,
+claim as the authorization request is a configuration failure. The scope resource prefix must equal
+the RFC 8707 public MCP URL; an `api://...` request scope paired with an HTTPS `resource` is rejected
+by Entra as a resource/scope mismatch before token issuance. Wrong tenant, audience, scope,
 client, redirect, missing role, or raw-group overage fails closed.
 
 ## Adapter boundary

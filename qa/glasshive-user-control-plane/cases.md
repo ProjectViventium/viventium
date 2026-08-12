@@ -187,7 +187,10 @@ most specific existing QA owner when a scenario already has a detailed provider 
 - Steps: open `Use GlassHive from another AI app`; verify the ordinary view has no callback jargon;
   verify only clients with complete live contracts are named; copy the one-step Automatic instruction
   and use it in each returned client; repeat through Manual using the exact server URL/client commands;
-  when both Codex and Claude Code are returned, exercise both. Authenticate, list tools, create/list a
+  when both Codex and Claude Code are returned, exercise both. For Entra, first prove the resource app
+  registers the exact canonical HTTPS MCP URL and that the advertised authorization scope uses that
+  URL as its prefix; also try the escaped mismatched `api://...` scope and require compilation or
+  authorization to fail without changing client state. Authenticate, list tools, create/list a
   synthetic workspace, inspect account/connection/Library operations, disconnect, and reconnect.
 - Expected result: the copied instruction embeds every returned client's exact generated add/sign-in
   commands, canonical HTTPS MCP URL, and collision-safe derived server name, so the receiving AI does
@@ -201,7 +204,8 @@ most specific existing QA owner when a scenario already has a detailed provider 
 - Forbidden result: callback reference presented as a link or user step, browser claim of silent local
   installation, a client named without a complete returned contract, bare colliding `glasshive`
   config name, wrong self-hosted origin, static bearer token, cross-user list, hidden manual config,
-  duplicated OAuth `resource` parameter, or false “connected” state.
+  duplicated OAuth `resource` parameter, a scope tied to a different Entra resource identifier, or
+  false “connected” state.
 - Evidence to capture: visible command UI, redacted client config, OAuth metadata/challenge, tool list,
   scoped runtime rows.
 - Full-view evidence minimum: browser command + two real clients + runtime authorization evidence.

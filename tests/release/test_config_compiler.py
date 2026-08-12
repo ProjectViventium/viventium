@@ -3002,7 +3002,7 @@ def test_glasshive_multi_user_control_plane_compiles_signed_identity_and_mcp_oau
                 "token_tenant_id": "00000000-0000-4000-8000-000000000456",
                 "token_scopes": ["user_impersonation"],
                 "required_scopes": [
-                    "api://00000000-0000-4000-8000-000000000123/user_impersonation"
+                    "https://glasshive.example.test/mcp/user_impersonation"
                 ],
                 "allowed_client_ids": ["glasshive-codex-client", "glasshive-claude-client"],
                 "documentation_url": "https://docs.example.test/glasshive-clients",
@@ -3186,7 +3186,7 @@ def test_glasshive_multi_user_control_plane_compiles_signed_identity_and_mcp_oau
     assert env["GLASSHIVE_MCP_OAUTH_ISSUER"] == "https://identity.example.test/tenant/v2.0"
     assert env["GLASSHIVE_MCP_PUBLIC_URL"] == "https://glasshive.example.test/mcp"
     assert env["GLASSHIVE_MCP_OAUTH_REQUIRED_SCOPES"] == (
-        "api://00000000-0000-4000-8000-000000000123/user_impersonation"
+        "https://glasshive.example.test/mcp/user_impersonation"
     )
     assert env["GLASSHIVE_ENABLE_CODEX_PERSONAL_ACCOUNTS"] == "false"
     assert env["GLASSHIVE_MCP_OAUTH_SUBJECT_CLAIM"] == "oid"
@@ -3332,6 +3332,57 @@ def test_glasshive_multi_user_control_plane_compiles_signed_identity_and_mcp_oau
     ]["clients"]["codex"]["resource"] = "api://token-audience-is-not-the-resource"
     with pytest.raises(SystemExit, match="must exactly match mcp_oauth.public_url"):
         config_compiler.resolve_glasshive_enterprise_settings(mismatched_codex_resource)
+
+    entra_scope_resource_mismatch = copy.deepcopy(config)
+    entra_scope_resource_mismatch["integrations"]["glasshive"]["enterprise"][
+        "human_auth"
+    ]["oidc"]["issuer"] = (
+        "https://login.microsoftonline.com/00000000-0000-4000-8000-000000000456/v2.0"
+    )
+    entra_scope_resource_mismatch["integrations"]["glasshive"]["enterprise"][
+        "mcp_oauth"
+    ]["issuer"] = (
+        "https://login.microsoftonline.com/00000000-0000-4000-8000-000000000456/v2.0"
+    )
+    entra_scope_resource_mismatch["integrations"]["glasshive"]["enterprise"][
+        "mcp_oauth"
+    ]["required_scopes"] = [
+        "api://00000000-0000-4000-8000-000000000123/user_impersonation"
+    ]
+    with pytest.raises(
+        SystemExit,
+        match="Entra authorization scopes must use mcp_oauth.public_url",
+    ):
+        config_compiler.resolve_glasshive_enterprise_settings(
+            entra_scope_resource_mismatch
+        )
+
+    entra_nested_scope_mismatch = copy.deepcopy(entra_scope_resource_mismatch)
+    entra_nested_scope_mismatch["integrations"]["glasshive"]["enterprise"][
+        "mcp_oauth"
+    ]["required_scopes"] = [
+        "https://glasshive.example.test/mcp/team/user_impersonation"
+    ]
+    with pytest.raises(
+        SystemExit,
+        match="map exactly to a configured token scope",
+    ):
+        config_compiler.resolve_glasshive_enterprise_settings(
+            entra_nested_scope_mismatch
+        )
+
+    entra_scope_resource_mismatch["integrations"]["glasshive"]["enterprise"][
+        "mcp_oauth"
+    ]["required_scopes"] = [
+        "https://glasshive.example.test/mcp/user_impersonation"
+    ]
+    entra_env = config_compiler.render_runtime_env(
+        entra_scope_resource_mismatch,
+        config_compiler.build_agent_assignments(entra_scope_resource_mismatch),
+    )
+    assert entra_env["GLASSHIVE_MCP_OAUTH_REQUIRED_SCOPES"] == (
+        "https://glasshive.example.test/mcp/user_impersonation"
+    )
 
     config["integrations"]["glasshive"]["enterprise"]["mcp_oauth"]["issuer"] = (
         "https://different-identity.example.test/tenant/v2.0"
@@ -3857,7 +3908,7 @@ def _minimal_glasshive_multi_user_identity_config() -> dict:
                 "token_audiences": ["00000000-0000-4000-8000-000000000123"],
                 "token_scopes": ["user_impersonation"],
                 "required_scopes": [
-                    "api://00000000-0000-4000-8000-000000000123/user_impersonation"
+                    "https://glasshive.example.test/mcp/user_impersonation"
                 ],
                 "allowed_client_ids": ["glasshive-codex-client"],
             },
@@ -3906,6 +3957,8 @@ def test_glasshive_mcp_public_url_is_canonical_and_rejects_query_or_fragment() -
     mcp_oauth = glasshive["enterprise"]["mcp_oauth"]
     glasshive["mcp_url"] = "https://GLASSHIVE.EXAMPLE.TEST:443/a%2fb/%7Euser"
     mcp_oauth["public_url"] = "https://GLASSHIVE.EXAMPLE.TEST:443/a%2fb/%7Euser"
+    mcp_oauth["issuer"] = "https://identity.example.test/tenant/v2.0"
+    glasshive["enterprise"]["human_auth"]["oidc"]["issuer"] = mcp_oauth["issuer"]
 
     settings = config_compiler.resolve_glasshive_enterprise_settings(config)
     assert settings["mcp_public_url"] == "https://glasshive.example.test/a%2fb/%7Euser"

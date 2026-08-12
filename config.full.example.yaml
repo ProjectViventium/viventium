@@ -370,8 +370,9 @@ integrations:
     #     # Optional upstream Entra tid validation. This is not the GlassHive tenant namespace.
     #     token_tenant_id: <entra-directory-tenant-guid>
     #     # Entra emits the short delegated permission name in the JWT scp claim.
-    #     token_scopes: [user_impersonation]
-    #     required_scopes: [api://<glasshive-api-app-client-id-guid>/user_impersonation]
+    #     token_scopes: [access_as_user]
+    #     # For Entra, register this exact public URL as an Application ID URI on the API app.
+    #     required_scopes: [https://glasshive.example.com/mcp/access_as_user]
     #     # Register the approved Codex/Claude public clients in the configured IdP and list their
     #     # exact access-token client ids here. Same-audience tokens from other clients are rejected.
     #     allowed_client_ids: [glasshive-codex-client, glasshive-claude-client]
