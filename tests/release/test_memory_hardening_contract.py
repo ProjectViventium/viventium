@@ -8,7 +8,9 @@ import re
 import subprocess
 import sys
 import time
+from datetime import datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -527,6 +529,9 @@ def test_memory_hardening_status_reports_scheduled_trigger_health(tmp_path: Path
     state_dir = tmp_path / "state" / "memory-hardening"
     events_dir = state_dir / "schedule-events"
     events_dir.mkdir(parents=True)
+    system_timezone = memory_harden.local_timezone_name()
+    scheduled_fired_at = datetime(2020, 1, 1, 3, tzinfo=ZoneInfo(system_timezone))
+    scheduled_finished_at = scheduled_fired_at + timedelta(minutes=1)
     (events_dir / "launchd-old.json").write_text(
         json.dumps(
             {
@@ -536,9 +541,9 @@ def test_memory_hardening_status_reports_scheduled_trigger_health(tmp_path: Path
                 "trigger_proof": "launchd_parent",
                 "scheduled_invocation": True,
                 "schedule_label": memory_harden.LAUNCH_AGENT_LABEL,
-                "fired_at_utc": "2020-01-01T08:00:00.000Z",
-                "fired_at_local": "2020-01-01T03:00:00.000-05:00",
-                "finished_at_utc": "2020-01-01T08:01:00.000Z",
+                "fired_at_utc": memory_harden.iso_z(scheduled_fired_at),
+                "fired_at_local": scheduled_fired_at.isoformat(timespec="milliseconds"),
+                "finished_at_utc": memory_harden.iso_z(scheduled_finished_at),
                 "exit_code": 0,
                 "run_id": "old-run",
                 "run_status": "success",
@@ -565,7 +570,6 @@ def test_memory_hardening_status_reports_scheduled_trigger_health(tmp_path: Path
         + "\n",
         encoding="utf-8",
     )
-    system_timezone = memory_harden.local_timezone_name()
     configured_timezone = (
         "Pacific/Honolulu" if system_timezone != "Pacific/Honolulu" else "America/New_York"
     )
