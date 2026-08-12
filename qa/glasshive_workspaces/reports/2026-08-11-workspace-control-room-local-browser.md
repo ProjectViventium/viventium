@@ -26,7 +26,7 @@
 
 ## Automated Evidence
 
-- Complete Glass Drive server/UI file: **219 passed**.
+- Complete Glass Drive server/UI file: **220 passed**.
 - Complete runtime API file: **232 passed**.
 - Focused control-plane, provider-account duplication, and template files: **29 passed**.
 - Focused MCP OAuth/tool/owner-scope paths: **7 passed**.
@@ -46,7 +46,13 @@
   the client already derives from protected-resource metadata.
 - Explicit rollback restored the verified predecessor; the stable endpoint and out-of-scope
   services remained unchanged.
-- Both escaped failures now have synthetic regressions. Exact post-fix installed browser and client
+- A second sealed candidate reached authenticated Workspaces, where the browser exposed another
+  escaped state transition before acceptance: `Open workspace` on a completed retained card resumed
+  compute because the compute-release marker overrode the completed lifecycle state. The synthetic
+  QA workspace was closed, explicit rejection restored the predecessor, and stable/out-of-scope
+  surfaces again remained unchanged. Auto-resume is now limited to actual paused/idle/stopped named
+  workspaces; completed work requires explicit Continue/Send.
+- All three escaped failures now have synthetic regressions. Exact post-fix installed browser and client
   reruns remain required before this report can mark the hosted release PASS.
 
 ## Expected And Forbidden Outcomes
