@@ -2,12 +2,14 @@
 
 ## Status
 
-The source is **merged and locally validated, with hosted acceptance still pending**. The additive
-control plane, designed Glass Drive UX, local user journeys, and affected automated suites are present.
-Hosted identity, real external provider/connector consent, multi-user personal-subscription isolation,
-real external MCP clients, full standalone recurrence/template scope, installed-runtime provenance,
-clean install, and upgrade continuity remain explicit gates. This document is therefore the product
-truth and traceability source, not a claim that those hosted or external gates passed.
+The source is **merged, locally validated, and accepted on the isolated hosted canary for the modern
+Workspaces/provider-mission path**. The additive control plane, designed Glass Drive UX, local user
+journeys, affected automated suites, real view-only desktop preview, two personal-subscription
+follow-ups, signed artifact inspection, refresh persistence, and sealed installed-runtime provenance
+have passed. Multi-user wrong-owner browser denial, real external Codex/Claude MCP consent and tool
+persistence, full standalone recurrence/template scope, clean install, and upgrade continuity remain
+explicit gates. This document is therefore the product truth and traceability source, not a claim
+that those remaining external or fresh-install gates passed.
 
 ## Target Outcome
 
@@ -188,6 +190,11 @@ compliant hosted topology.
   disabled, and locked credentials return the same public failure; durable
   account/source throttles survive restart, bounded Argon2 capacity returns retry guidance without
   charging a valid credential, and credential rotation cannot lock the replacement verifier.
+- `oidc_login_visible` is a presentation-only control. It may hide the normal OIDC button when the
+  preapproved local-password method is enabled, but it never disables OIDC endpoints or creates a
+  second identity namespace. At least one browser login method must remain visible, and local login
+  still resolves the exact configured issuer + subject principal. Provider switching is shown only
+  for a session and presentation that can truthfully use it; sign-out always remains available.
 - Cancelled, stale/replayed, invalid-token, provider-outage, and unapproved-account callbacks return
   to the designed login page with bounded non-sensitive error codes, retry guidance, and no echoed
   authorization code, state, claims, or provider description. Fresh and expired sessions preserve
@@ -245,9 +252,22 @@ compliant hosted topology.
   fixed callback port plus the exact derived callback URI; Claude Code requires its fixed callback
   port and localhost callback URI. Missing token audiences/scopes, client allowlist drift, resource
   drift, or partial registration is an action-required deployment state, not a copyable false command.
-- “Use from Codex/Claude” presents copyable setup and login commands, truthful prerequisites, and a
-  link to source-available documentation. It does not claim an OSI-approved license where the
-  component's license is source-available.
+  Current Codex discovers the canonical resource from GlassHive protected-resource metadata. The
+  generated command validates that contract server-side but does not also pass `--oauth-resource`,
+  which would duplicate the RFC 8707 parameter and make the authorization request invalid.
+- “Use GlassHive from another AI app” keeps the ordinary path short. Automatic setup is one
+  copyable, self-contained instruction containing each returned client's exact deployment-generated
+  add/authenticate command, canonical URL, and collision-safe server name. The receiving AI never has
+  to reconstruct hidden configuration from a bare URL. Manual setup exposes one exact
+  server-address copy plus separate supported client commands. Both paths derive their visible
+  client names from the endpoint's complete allowlisted contracts; a Codex-only deployment never
+  advertises Claude or ChatGPT, and vice versa. Callback URIs, fixed ports, client
+  registration explanations remain under administrator details, are labelled “do not open,” and
+  never masquerade as user actions or links. Public client/callback flags may appear only as opaque
+  arguments inside the exact copyable command.
+- Generated client configuration names are stable, shell-safe hashes of the canonical deployment
+  URL, so separate self-hosted GlassHive origins do not collide in one local client. The browser does
+  not execute local commands or claim it can silently edit another application's configuration.
 - A versioned, non-secret companion skill/connector may point to the canonical live repository and
   official MCP setup docs so a user can paste one instruction into a supported AI client. The skill
   explains and invokes the official client configuration/login path; it does not embed credentials,
@@ -375,7 +395,9 @@ compliant hosted topology.
   authenticated owner-scoped watch URL after a bounded, sub-request-budget storage attempt and after
   the one project, workspace, and run are durable. A failed/cancelled/interrupted run asks for a corrected
   follow-up; it must not offer a Resume control that only restarts compute while leaving the same
-  terminal run as the visible result. An explicit close is permanent from `terminating` through
+  terminal run as the visible result. When its sandbox can still be running, the same terminal card
+  keeps an explicit Pause action so user-visible isolation or credential-repair guidance is directly
+  actionable from both Workspaces and Watch. An explicit close is permanent from `terminating` through
   `terminated`; if compute teardown fails, `termination_failed` remains visibly closed and
   retryable by Close/startup reconciliation without reopening the workspace. All three states
   disable follow-up, pause/interrupt/resume, account switching, desktop/terminal attachment, and
@@ -394,6 +416,16 @@ compliant hosted topology.
   work cannot produce rehearsal side effects and then run again after cutover.
 - The catalog is owner scoped, cursor paginated, searchable, and discoverable by human name, tags,
   favorite/recent state, provider readiness, current state, and next scheduled occurrence.
+- The GlassHive brand and every ordinary workspace action stay in the modern Glass Drive surface.
+  Direct `/ui` and `/ui/projects/*` remain authorized compatibility/diagnostic routes but are not
+  primary navigation. A workspace card has one clear `Open workspace` action; completed output opens
+  the exact scoped artifact or honest result fallback without resuming compute. Only an explicit
+  Continue/Send action may restart or dispatch work.
+- Workspaces is the bounded multi-worker control room. Overview polling uses compact payloads only
+  for visible cards, never overlaps, and fetches full detail only for the selected/expanded card or a
+  completion transition. At most three visible active workers get view-only live desktop previews;
+  remaining cards show truthful state and output availability instead of opening unbounded noVNC
+  sessions. Preview cards cannot capture keyboard or pointer input and click through once to Watch.
 - Opening a paused named workspace resumes it and restores its persisted filesystem, browser profile,
   worker context, and capability references. Expired external sessions produce an actionable
   reconnect state rather than false success.
@@ -408,6 +440,25 @@ compliant hosted topology.
 - Duplicate is durably idempotent per owner and tenant. A retry with the same key and request returns
   the original destination; key reuse for a different request conflicts, and interrupted attempts do
   not create a second hidden workspace.
+- Every duplicate entry point, including the legacy compatibility route, and every template
+  instantiation persists a deterministic review-pending report atomically with the new workspace.
+  The report contains stable action ids and the exact copied library grants/scopes, brokered
+  connection references, provider grants, and provider selection that require a fresh destination
+  decision. A crash before file-copy completion remains execution-blocked; refresh/restart restores
+  the same server-owned outstanding review rather than relying on browser storage.
+- Execution remains blocked until each exact action is satisfied by the destination Library grant or
+  concrete provider selection, or by an explicit human confirmation to continue without that
+  capability. Skipping a provider selection is not permitted. Legacy brokered connection and
+  provider-grant references are non-transferable: the UI truthfully says they were not copied and
+  offers only the confirmed continue-without path until a real destination capability contract
+  exists. Sending a worker message is never treated as reapproval. Exact Library scope subsets are
+  enforced even when an API/MCP caller omits scopes, and a valid account-less `personal_preferred`
+  fallback creates no impossible review. A disconnected, unready, or forgotten preferred account
+  degrades to that explicit fallback, while an unready required account blocks duplication with a
+  reconnect-or-choose-current-account recovery before any destination is created. Exact owner-scoped
+  lookup restores review outside the first
+  catalog page and clears prior-owner labels on account switch. Competing confirmations are
+  serialized and cannot resolve one action twice.
 - Absolute, out-of-root, looping, device, socket, and unsafe symlink inputs fail closed. File count,
   byte, and depth limits are enforced. An empty source produces an explicit zero-item report.
 - Templates contain versioned non-secret bootstrap, exact Library references, and—when present—only
@@ -526,6 +577,9 @@ compliant hosted topology.
   Timezone, DST policy, start/end, enabled state, overlap, misfire, bounded catch-up, and jitter are
   explicit data, not prompt parsing. A narrower first increment must report unsupported forms
   honestly and is not full recurrence acceptance.
+- Weekly editing preserves the selected schedule timezone's wall-clock time across browser timezone,
+  refresh, winter/summer offsets, and DST boundaries. The editor never derives a local datetime by
+  merely stripping an ISO offset, and invalid/ambiguous inputs fail with bounded guidance.
 - Definitions are mutable and owner scoped. Occurrences are immutable, uniquely keyed, claimable,
   and record scheduled time, claim/lease, attempt, run, outcome, and failure class.
 - Scheduler recovery is deterministic: stale claims are recoverable, overlapping fires obey policy,

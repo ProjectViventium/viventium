@@ -776,6 +776,7 @@ def resolve_glasshive_enterprise_settings(config: dict[str, Any]) -> dict[str, A
         )
     allowed_domains = canonical_domains if canonical_domains_configured else legacy_domains
     local_password_login = resolve_bool(human_auth.get("local_password_login"), False)
+    oidc_login_visible = resolve_bool(human_auth.get("oidc_login_visible"), True)
     local_password_allowed_domains = normalized_allowed_domains(
         human_auth.get("local_password_allowed_domains"),
         "integrations.glasshive.enterprise.human_auth.local_password_allowed_domains",
@@ -783,6 +784,10 @@ def resolve_glasshive_enterprise_settings(config: dict[str, Any]) -> dict[str, A
     if enabled and local_password_login and human_auth_mode != "oidc":
         raise SystemExit(
             "integrations.glasshive.enterprise.human_auth.local_password_login requires mode oidc"
+        )
+    if enabled and human_auth_mode == "oidc" and not oidc_login_visible and not local_password_login:
+        raise SystemExit(
+            "integrations.glasshive.enterprise.human_auth requires at least one visible browser login method"
         )
     principal_claim = str(enterprise.get("principal_claim") or "").strip()
     legacy_oidc_principal_claim = str(human_oidc.get("principal_claim") or "").strip()
@@ -1264,6 +1269,7 @@ def resolve_glasshive_enterprise_settings(config: dict[str, Any]) -> dict[str, A
         "provider_email_login": provider_email_login,
         "allow_principal_enrollment": allow_principal_enrollment,
         "local_password_login": local_password_login,
+        "oidc_login_visible": oidc_login_visible,
         "local_password_allowed_domains": local_password_allowed_domains,
         "oidc_issuer": oidc_issuer,
         "oidc_client_id": oidc_client_id,
@@ -5356,6 +5362,9 @@ def render_runtime_env(
                 env["GLASSHIVE_LOCAL_PASSWORD_LOGIN"] = (
                     "true" if glasshive_enterprise["local_password_login"] else "false"
                 )
+                env["GLASSHIVE_OIDC_LOGIN_VISIBLE"] = (
+                    "true" if glasshive_enterprise["oidc_login_visible"] else "false"
+                )
                 env["GLASSHIVE_LOCAL_AUTH_THROTTLE_KEY"] = scoped_secret(
                     call_session_secret,
                     f"glasshive-local-auth-throttle:{glasshive_enterprise['tenant_id']}",
@@ -7288,6 +7297,7 @@ def render_service_envs(output_dir: Path, env: dict[str, str]) -> None:
         "GLASSHIVE_INTERNAL_ASSERTION_PREVIOUS_KEYS_EXPIRE_AT",
         "GLASSHIVE_OIDC_CLIENT_SECRET",
         "GLASSHIVE_LOCAL_PASSWORD_LOGIN",
+        "GLASSHIVE_OIDC_LOGIN_VISIBLE",
         "GLASSHIVE_LOCAL_AUTH_ALLOWED_EMAIL_DOMAINS",
         "GLASSHIVE_LOCAL_AUTH_THROTTLE_KEY",
         "GLASSHIVE_TRUST_INBOUND_IDENTITY",

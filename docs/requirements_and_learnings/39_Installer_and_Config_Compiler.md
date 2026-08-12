@@ -156,6 +156,12 @@ Provider credentials have two distinct owners and must not drift between them:
   only credential locators, never OIDC/MCP admission. Compilation derives a stable gateway-only
   throttle HMAC key, excludes all three values from runtime/worker env, and leaves public signup,
   reset, and MCP password grants structurally unavailable.
+- `integrations.glasshive.enterprise.human_auth.oidc_login_visible` is a presentation-only boolean
+  that defaults true. Setting it false hides the normal organization-login button but retains the
+  configured OIDC issuer+subject identity namespace and direct recovery endpoint. Compilation must
+  reject `false` unless local password login is enabled, so an operator cannot ship a browser with no
+  visible login method. This value is gateway-only and does not change MCP, runtime, worker, or
+  LibreChat identity/admission policy.
 - Custom Settings Install may reference machine-level provider keys from canonical config through
   `keychain://` references. The compiler resolves OpenAI, Anthropic, Groq, and xAI through one
   provider-to-runtime mapping, writes resolved source-runtime and service env files mode `0600`,

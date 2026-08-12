@@ -347,6 +347,9 @@ integrations:
     #     # OIDC subjects. It never creates a public signup/reset path or an MCP password grant.
     #     # Email is only the credential locator; issuer + subject remain the durable owner.
     #     local_password_login: false
+    #     # Optional presentation-only switch. Set false with local_password_login true to show
+    #     # only the local login form while retaining the same issuer + subject identity namespace.
+    #     oidc_login_visible: true
     #     local_password_allowed_domains:
     #       - example.com
     #     # Enforce tenant/domain admission in the IdP with user/group assignment and app roles.

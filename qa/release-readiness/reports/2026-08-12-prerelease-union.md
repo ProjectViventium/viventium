@@ -17,6 +17,13 @@ credentialed health-provider access, and audible LiveKit calls are separate exte
 The parent candidate was assembled in an isolated workspace; original development workspaces were
 not modified.
 
+A final organization-wide remote-branch sweep found one additional active parent stream,
+`codex/glasshive-workspace-control-room`. Its parent-side compiler contract, requirements, QA cases,
+and two public-safe browser reports were reconciled through a clean three-way union. The retained
+GlassHive component pin is a later merged `main` commit that contains the nested tip reviewed by
+that stream. The complete config-compiler suite then passed (283 tests), including three focused
+workspace-control authentication cases. No original branch or worktree was changed.
+
 ### Published nested commits
 
 | Component | Pull request | Merged `main` commit | Exactness | Verification |
@@ -125,6 +132,8 @@ python3 -m pytest tests/release/test_native_public_safety.py tests/release/test_
 ```
 
 - Parent complete release suite: 2,638 passed, 10 skipped, 0 failed.
+- Post-union config-compiler suite: 283 passed, 0 failed; the three focused
+  `oidc_login_visible` cases passed.
 - Final parent manifest/bootstrap/Native slice: 145 passed, 0 failed.
 - LibreChat: 4,165 API passed / 19 skipped; 1,578 client passed; 418 data-schema passed /
   3 skipped; 15/15 hosted checks passed.
@@ -143,6 +152,9 @@ python3 -m pytest tests/release/test_native_public_safety.py tests/release/test_
   false negative; rollback restored the stopped state. This remains a scoped P2 follow-up.
 - Regressions: none observed in source consolidation, clean install, first run, running-install
   upgrade, or post-upgrade persistence.
+- Remote branch accounting: the active GlassHive workspace-control parent stream was included. The
+  expressly archival MLX branches, already-merged historical branches, superseded snapshot/dead-end
+  branches, and 99 Dependabot pull requests were preserved but excluded from this product union.
 - Flakes: none; parent test output contained only temporary-directory cleanup warnings.
 - Environment issues: owner OAuth, private LiveKit credentials, and signing/notarization services
   were outside this public-safe run.
