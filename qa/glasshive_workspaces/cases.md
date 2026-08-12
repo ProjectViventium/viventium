@@ -13,6 +13,7 @@ Use stable `GHWS-NNN` IDs for glasshive workspaces cases.
 | `GHWS-003` | The modern Workspaces surface owns normal navigation and output inspection. | Brand, workspace, and output actions stay in the glossy app; inspecting a result never resumes compute. | Glass Drive Workspaces, Watch, artifact landing | UI/API regressions + Playwright | PASS 2026-08-11 in the local synthetic browser harness; exact installed-release rerun remains PARTIAL. |
 | `GHWS-004` | Workspaces is a bounded multi-worker control room. | User can scan, open, and steer many workers without an offscreen poll/WebSocket storm or accidental input capture. | Workspaces overview, compact live API, desktop preview | UI/API/performance regressions + Playwright network trace | PARTIAL 2026-08-11: local 1/4/5/25 browser matrix and parallel steering pass; a real noVNC desktop stream on the exact installed release remains open. |
 | `GHWS-005` | Duplicate/template capability review is durable and human controlled. | Copied work cannot run with missing or silently broadened capabilities; refresh restores exact actions. | Duplicate, templates, Library, Connections, confirmation | Runtime transaction/concurrency tests + Playwright | PARTIAL 2026-08-11: local duplicate, storage-loss restore, human waiver, atomic/crash/legacy/template and concurrency coverage pass; installed two-user execution remains open. |
+| `GHWS-006` | Terminal workspace recovery stays actionable. | A failed, cancelled, or interrupted workspace keeps the Pause action named by recovery guidance, while Resume stays unavailable until a corrected follow-up exists. | Workspaces, Watch, provider-account recovery | UI policy regression + installed browser/provider mission | PARTIAL 2026-08-11: policy regression passes; exact installed failure-to-recovery rerun remains open. |
 
 ## `GHWS-001` - Core User Flow
 
@@ -120,6 +121,24 @@ Use stable `GHWS-NNN` IDs for glasshive workspaces cases.
   waivable action. Atomic/crash/legacy/template/concurrency tests pass; installed two-user execution
   remains open.
 
+## `GHWS-006` - Terminal Workspace Recovery
+
+- Requirement: recovery instructions and available actions must agree on every normal user surface.
+- Risk covered: a real provider mission reports that its sandbox isolation is stale and tells the
+  user to pause, while both Workspaces and Watch hide Pause because the latest run is failed.
+- Steps: run a provider-backed task against a deliberately stale synthetic sandbox; observe the
+  failed card in Workspaces and Watch; activate Pause by pointer and keyboard; if the account becomes
+  action-required, use Check connection; retry with a corrected follow-up; refresh after completion.
+- Expected result: failed/cancelled/interrupted cards show one enabled Pause action and no Resume;
+  Pause releases the stale substrate; Check connection restores Ready without setup when credentials
+  remain valid; the retry creates a clean substrate and completes with a durable output.
+- Forbidden result: guidance names an action that is hidden or disabled, Pause restarts the old run,
+  output inspection mutates lifecycle, or account recovery requires unnecessary OAuth.
+- Evidence: visible controls and messages, lifecycle request count, account state, container/mount
+  correlation, completed output, refresh persistence, and exact installed release provenance.
+- Last run: PARTIAL 2026-08-11. The installed candidate reproduced the hidden-Pause failure and a
+  no-OAuth Check connection recovery; the corrected exact-release browser rerun remains required.
+
 ## Natural User Use Case Checklist
 
 These rows are the minimum natural-user checklist gate for Glasshive Workspaces. Add narrower feature-specific
@@ -133,3 +152,4 @@ rows before claiming a pass when the feature behavior changes.
 | `GHWS-UC-004` | From Workspaces, open several workers, inspect a completed output, and return Home without entering the legacy runtime UI or resuming work. | `GHWS-003` | Glass Drive Workspaces/Watch/artifact | Browser URL/network/state + artifact headers | Smooth modern navigation; output is direct and non-mutating. | PASS 2026-08-11 local synthetic Chromium; installed release open. |
 | `GHWS-UC-005` | Monitor and steer 1/4/5/25 active, starting, completed, failed, and unavailable workers from one overview. | `GHWS-004` | Glass Drive Workspaces | Network/WebSocket counts, DOM, compact/full API logs | Bounded view-only previews and truthful cards with no offscreen storm. | PARTIAL 2026-08-11: local browser matrix/parallel steer pass; installed live desktop stream open. |
 | `GHWS-UC-006` | Duplicate or instantiate a workspace with copied capabilities, refresh, resolve or explicitly waive each exact action, then run. | `GHWS-005` | Workspaces, Library, Connections, confirmation | Browser/API/DB/concurrency evidence | Execution is blocked until server-owned review completes; no silent fallback or scope widening. | PARTIAL 2026-08-11: local browser restore/waiver plus automated server gates pass; installed two-user run open. |
+| `GHWS-UC-007` | From a failed/cancelled/interrupted workspace, pause the stale sandbox named by recovery guidance, repair the account if needed, and retry. | `GHWS-006` | Workspaces, Watch, Connections | Browser controls/network, lifecycle state, provider account, container/mount state, output | Pause is visible and non-resuming; repair is setup-free when credentials remain valid; retry completes and persists. | PARTIAL 2026-08-11: escaped hosted failure and policy regression recorded; corrected installed-release rerun open. |

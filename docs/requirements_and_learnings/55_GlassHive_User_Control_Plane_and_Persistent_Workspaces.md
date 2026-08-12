@@ -393,7 +393,9 @@ compliant hosted topology.
   authenticated owner-scoped watch URL after a bounded, sub-request-budget storage attempt and after
   the one project, workspace, and run are durable. A failed/cancelled/interrupted run asks for a corrected
   follow-up; it must not offer a Resume control that only restarts compute while leaving the same
-  terminal run as the visible result. An explicit close is permanent from `terminating` through
+  terminal run as the visible result. When its sandbox can still be running, the same terminal card
+  keeps an explicit Pause action so user-visible isolation or credential-repair guidance is directly
+  actionable from both Workspaces and Watch. An explicit close is permanent from `terminating` through
   `terminated`; if compute teardown fails, `termination_failed` remains visibly closed and
   retryable by Close/startup reconciliation without reopening the workspace. All three states
   disable follow-up, pause/interrupt/resume, account switching, desktop/terminal attachment, and

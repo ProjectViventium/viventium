@@ -26,7 +26,7 @@
 
 ## Automated Evidence
 
-- Complete Glass Drive server/UI file: **221 passed**.
+- Complete Glass Drive server/UI file: **222 passed**.
 - Complete runtime API file: **232 passed**.
 - Focused control-plane, provider-account duplication, and template files: **29 passed**.
 - Focused MCP OAuth/tool/owner-scope paths: **7 passed**.
@@ -57,7 +57,14 @@
   refreshed visibly to `Completed`. Its click displayed `Resuming…`; acceptance was again rejected,
   the synthetic QA workspace was closed, and the predecessor was restored. The final policy now reads
   the rendered card state itself and uses catalog state only before a card has rendered live state.
-- All four escaped failures now have synthetic regressions. Exact post-fix installed browser and client
+- A later sealed candidate completed the modern navigation, output, Connections recovery, and
+  external-AI presentation checks, then exposed a fifth recovery mismatch during a real
+  provider-backed follow-up: the failed card instructed the user to pause a stale sandbox while
+  Workspaces and Watch hid Pause for failed/cancelled/interrupted runs. The candidate was explicitly
+  rejected after a product-scoped pause and orphan-compute cleanup; predecessor health/provenance
+  and the stable endpoint remained unchanged. Terminal attention cards now retain enabled Pause,
+  keep Resume unavailable, and have a reusable policy regression.
+- All five escaped failures now have synthetic regressions. Exact post-fix installed browser and client
   reruns remain required before this report can mark the hosted release PASS.
 
 ## Expected And Forbidden Outcomes
