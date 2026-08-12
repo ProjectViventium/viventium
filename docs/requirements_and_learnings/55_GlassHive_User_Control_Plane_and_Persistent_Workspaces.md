@@ -2,12 +2,14 @@
 
 ## Status
 
-The source is **merged and locally validated, with hosted acceptance still pending**. The additive
-control plane, designed Glass Drive UX, local user journeys, and affected automated suites are present.
-Hosted identity, real external provider/connector consent, multi-user personal-subscription isolation,
-real external MCP clients, full standalone recurrence/template scope, installed-runtime provenance,
-clean install, and upgrade continuity remain explicit gates. This document is therefore the product
-truth and traceability source, not a claim that those hosted or external gates passed.
+The source is **merged, locally validated, and accepted on the isolated hosted canary for the modern
+Workspaces/provider-mission path**. The additive control plane, designed Glass Drive UX, local user
+journeys, affected automated suites, real view-only desktop preview, two personal-subscription
+follow-ups, signed artifact inspection, refresh persistence, and sealed installed-runtime provenance
+have passed. Multi-user wrong-owner browser denial, real external Codex/Claude MCP consent and tool
+persistence, full standalone recurrence/template scope, clean install, and upgrade continuity remain
+explicit gates. This document is therefore the product truth and traceability source, not a claim
+that those remaining external or fresh-install gates passed.
 
 ## Target Outcome
 
