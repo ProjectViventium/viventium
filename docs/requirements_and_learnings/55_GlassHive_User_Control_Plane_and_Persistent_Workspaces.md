@@ -400,6 +400,18 @@ compliant hosted topology.
   `personal_preferred` policy uses a ready personal account first and otherwise preserves the
   deployment-managed legacy path. A differently named optional policy must not silently replace this
   canonical behavior.
+- The deployment-managed path is a real configured provider route, not a substitute personal
+  subscription. In hosted multi-user mode, catalog readiness requires each worker profile's
+  effective route to have a non-placeholder credential and matching endpoint selected by the same
+  precedence as its command builder. A missing or incomplete route is `action_required` with
+  administrator-setup guidance; it must not be labeled Ready or deferred to an upstream `401`, and
+  a new browser launch must fail before creating a project, workspace, or run. A ready
+  `personal_preferred` account leased by another workspace is not an available personal route; its
+  dispatch, schedule, resume, and steer replacement must prove the deployment fallback before any
+  run is created or useful work is interrupted. Deployment
+  credentials live only in the root-only runtime-provider EnvironmentFile and only the selected
+  profile route is projected into an unbound worker; personal-bound missions remove all deployment
+  credentials before their account-specific home is projected.
 - Platform support is explicit. Multi-user Claude subscription isolation on a macOS host is
   unsupported unless separately proven; Linux/container and hosted consumer-subscription flows are
   gated by technical, provider-policy, and legal approval.

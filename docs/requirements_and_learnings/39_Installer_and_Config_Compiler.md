@@ -166,6 +166,13 @@ Provider credentials have two distinct owners and must not drift between them:
   `keychain://` references. The compiler resolves OpenAI, Anthropic, Groq, and xAI through one
   provider-to-runtime mapping, writes resolved source-runtime and service env files mode `0600`,
   and keeps the immutable Native behavior contract secret-free with `user_provided` sentinels.
+- Hosted GlassHive deployment-managed worker credentials have a separate least-privilege output:
+  `service-env/glasshive-runtime-provider.env`. The compiler emits only complete, non-placeholder
+  OpenAI/Portkey/Anthropic/Bedrock route bundles into that file and emits none of those credentials
+  into the ordinary runtime or gateway service environment. Install it `root:root 0600`; systemd
+  PID 1 reads it before dropping to the runtime identity, while UI/MCP identities cannot read or
+  reference it. An incomplete route remains visibly unavailable rather than failing later with an
+  upstream authentication error.
 - Restart preserves encrypted per-user keys in the selected runtime database. Source upgrade
   recompiles from canonical config inside its transaction and checkpoints database state; a
   missing Keychain reference fails before generated runtime replacement. Portable snapshot/restore

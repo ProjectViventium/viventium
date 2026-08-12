@@ -372,22 +372,38 @@ most specific existing QA owner when a scenario already has a detailed provider 
 - Requirement: `GH-UCP-006`.
 - Risk covered: unsupported consumer auth is advertised or required personal auth silently falls back.
 - Preconditions: required/preferred policy fixtures; missing, unready, incompatible, busy, and
-  unsupported-platform accounts.
+  unsupported-platform accounts; complete, missing, and placeholder-only deployment routes.
 - Steps: launch each combination on supported and unsupported host/container modes.
 - For an existing paused workspace, prepare an account switch from UI and MCP, review it in the
   browser, approve it, refresh, and repeat while a run, lease, incompatible account, disconnected
   account, cross-owner account, or changed review snapshot is present.
 - Expected result: `personal_required` fails closed; `personal_preferred` uses ready personal auth and
   otherwise preserves the approved deployment path; unsupported/legal-gated paths are omitted from
-  actionable controls or show honest status. A temporarily unsupported worker profile may force
+  actionable controls or show honest status. A deployment fallback is Ready only when the exact
+  command-builder endpoint and credential are complete; missing/incomplete fallback shows concise
+  administrator setup guidance before dispatch. If the preferred account is leased by another
+  workspace, missing deployment fallback blocks assign/schedule/resume before run mutation and
+  blocks steer before interrupting the active run. A temporarily unsupported worker profile may force
   deployment credentials only for that profile and must restore the user's personal policy when the
   user returns to a supported worker.
-- Forbidden result: silent provider substitution, optional policy drift, macOS multi-user Claude
-  isolation claim without proof, copied owner-machine credential, self-confirmation by an AI, or a
-  queued/running mission changing credentials underneath the run.
+- Forbidden result: silent provider substitution, optional policy drift, group-readable deployment
+  credential, placeholder-only route advertised as Ready, avoidable upstream `401`, macOS multi-user
+  Claude isolation claim without proof, copied owner-machine credential, self-confirmation by an AI,
+  or a queued/running mission changing credentials underneath the run.
 - Evidence to capture: policy resolution, visible failure/recovery copy, zero-run/no-side-effect proof.
 - Full-view evidence minimum: browser selection + worker result on each supported platform class.
-- Automation: mission/provider-platform tests plus `test_workspace_account_switch.py`.
+- Automation: mission/provider-platform and workspace-catalog readiness tests, compiler
+  provider-route isolation tests, plus `test_workspace_account_switch.py`.
+- Last run: PARTIAL 2026-08-12; focused source tests prove missing/incomplete hosted deployment
+  routes are action-required before a new browser launch creates any project, workspace, or run;
+  a busy preferred account without a usable deployment fallback creates no run and cannot interrupt
+  an active run during steer;
+  complete provider bundles are emitted only to a generated owner-only `0600` runtime-provider
+  artifact intended for root-owned installation; ordinary runtime/gateway artifacts contain no
+  provider credentials; and personal-bound missions retain their separate account-home route. The
+  required post-fix installed root-ownership check, deployment-managed mission,
+  refresh/persistence, personal-route parity, and negative boundary checks are pending the staged
+  hosted run and must not be inferred from the direct provider probe.
 - Last run: PARTIAL 2026-08-05; synthetic policy tests only.
 
 ## `GHUCP-011` — Create and Discover a Private Workspace
