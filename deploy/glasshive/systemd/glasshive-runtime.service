@@ -13,6 +13,10 @@ UMask=0007
 WorkingDirectory=/opt/viventium/current/viventium_v0_4/GlassHive/runtime_phase1
 EnvironmentFile=/etc/viventium/glasshive/runtime.env
 EnvironmentFile=/etc/viventium/glasshive/runtime-active.env
+# Optional deployment-managed provider credentials are a runtime-only secret
+# surface. systemd reads this root-owned file before dropping privileges; the
+# gateway services never reference it.
+EnvironmentFile=-/etc/viventium/glasshive/runtime-provider.env
 Environment=VIVENTIUM_DISABLE_DEFAULT_RUNTIME_ENV=1
 Environment=PYTHONDONTWRITEBYTECODE=1
 ExecStartPre=/opt/viventium/current/viventium_v0_4/GlassHive/runtime_phase1/.venv/bin/python /opt/viventium/current/deploy/glasshive/systemd/glasshive_rootless_docker_probe.py

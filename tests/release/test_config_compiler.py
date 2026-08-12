@@ -396,6 +396,309 @@ def test_glasshive_service_envs_keep_signer_material_out_of_runtime(tmp_path: Pa
     assert (tmp_path / "service-env" / "glasshive-runtime.env").stat().st_mode & 0o777 == 0o600
 
 
+def test_glasshive_runtime_provider_env_receives_deployment_route_only(tmp_path: Path) -> None:
+    env = {
+        "GLASSHIVE_SECURITY_MODE": "multi_user",
+        "WPR_DB_PATH": "/var/lib/glasshive/runtime_phase1.db",
+        "OPENAI_API_KEY": "synthetic-deployment-key",
+        "OPENAI_BASE_URL": "https://provider.example.test/openai/v1",
+    }
+
+    config_compiler.render_service_envs(tmp_path, env)
+    runtime = (tmp_path / "service-env" / "glasshive-runtime.env").read_text(
+        encoding="utf-8"
+    )
+    gateway = (tmp_path / "service-env" / "glasshive-gateway.env").read_text(
+        encoding="utf-8"
+    )
+    provider = (
+        tmp_path / "service-env" / "glasshive-runtime-provider.env"
+    ).read_text(encoding="utf-8")
+
+    assert "OPENAI_API_KEY" not in runtime
+    assert "OPENAI_BASE_URL" not in runtime
+    assert "OPENAI_API_KEY" not in gateway
+    assert "OPENAI_BASE_URL" not in gateway
+    assert "OPENAI_API_KEY=synthetic-deployment-key" in provider
+    assert "OPENAI_BASE_URL=https://provider.example.test/openai/v1" in provider
+    assert (
+        tmp_path / "service-env" / "glasshive-runtime-provider.env"
+    ).stat().st_mode & 0o777 == 0o600
+
+
+def test_glasshive_runtime_env_filters_placeholder_and_non_enterprise_provider_values(
+    tmp_path: Path,
+) -> None:
+    placeholder = {
+        "GLASSHIVE_SECURITY_MODE": "multi_user",
+        "OPENAI_API_KEY": "user_provided",
+        "OPENAI_BASE_URL": "https://provider.example.test/openai/v1",
+    }
+    config_compiler.render_service_envs(tmp_path / "placeholder", placeholder)
+    placeholder_runtime = (
+        tmp_path / "placeholder" / "service-env" / "glasshive-runtime.env"
+    ).read_text(encoding="utf-8")
+    placeholder_provider = (
+        tmp_path / "placeholder" / "service-env" / "glasshive-runtime-provider.env"
+    ).read_text(encoding="utf-8")
+    assert "OPENAI_API_KEY" not in placeholder_runtime
+    assert "OPENAI_BASE_URL" not in placeholder_runtime
+    assert "OPENAI_API_KEY" not in placeholder_provider
+    assert "OPENAI_BASE_URL" not in placeholder_provider
+
+    local = {
+        "GLASSHIVE_SECURITY_MODE": "legacy_compatibility",
+        "OPENAI_API_KEY": "synthetic-local-provider-key",
+        "OPENAI_BASE_URL": "https://provider.example.test/openai/v1",
+    }
+    config_compiler.render_service_envs(tmp_path / "local", local)
+    local_runtime = (
+        tmp_path / "local" / "service-env" / "glasshive-runtime.env"
+    ).read_text(encoding="utf-8")
+    local_provider = (
+        tmp_path / "local" / "service-env" / "glasshive-runtime-provider.env"
+    ).read_text(encoding="utf-8")
+    assert "OPENAI_API_KEY" not in local_runtime
+    assert "OPENAI_BASE_URL" not in local_runtime
+    assert "OPENAI_API_KEY" not in local_provider
+    assert "OPENAI_BASE_URL" not in local_provider
+
+
+def test_glasshive_runtime_provider_env_rejects_incomplete_anthropic_and_portkey_routes(
+    tmp_path: Path,
+) -> None:
+    incomplete = {
+        "GLASSHIVE_SECURITY_MODE": "multi_user",
+        "ANTHROPIC_API_KEY": "${ANTHROPIC_API_KEY}",
+        "ANTHROPIC_BASE_URL": "https://provider.example.test/anthropic",
+        "WPR_CLAUDE_CODE_USE_API_KEY": "true",
+        "PORTKEY_API_KEY": "synthetic-portkey-key",
+        "PORTKEY_PROVIDER": "synthetic-provider",
+    }
+    config_compiler.render_service_envs(tmp_path / "incomplete", incomplete)
+    provider = (
+        tmp_path / "incomplete" / "service-env" / "glasshive-runtime-provider.env"
+    ).read_text(encoding="utf-8")
+    assert "ANTHROPIC_" not in provider
+    assert "WPR_CLAUDE_CODE_USE_API_KEY" not in provider
+    assert "PORTKEY_" not in provider
+
+    complete = {
+        "GLASSHIVE_SECURITY_MODE": "multi_user",
+        "ANTHROPIC_API_KEY": "synthetic-anthropic-key",
+        "ANTHROPIC_BASE_URL": "https://provider.example.test/anthropic",
+        "WPR_CLAUDE_CODE_USE_API_KEY": "true",
+        "PORTKEY_API_KEY": "synthetic-portkey-key",
+        "PORTKEY_BASE_URL": "https://provider.example.test/portkey/v1",
+        "PORTKEY_PROVIDER": "synthetic-provider",
+    }
+    config_compiler.render_service_envs(tmp_path / "complete", complete)
+    complete_provider = (
+        tmp_path / "complete" / "service-env" / "glasshive-runtime-provider.env"
+    ).read_text(encoding="utf-8")
+    assert "ANTHROPIC_API_KEY=synthetic-anthropic-key" in complete_provider
+    assert "WPR_CLAUDE_CODE_USE_API_KEY=true" in complete_provider
+    assert "PORTKEY_API_KEY=synthetic-portkey-key" in complete_provider
+    assert "PORTKEY_BASE_URL=https://provider.example.test/portkey/v1" in complete_provider
+
+    mixed = {
+        "GLASSHIVE_SECURITY_MODE": "multi_user",
+        "ANTHROPIC_API_KEY": "${ANTHROPIC_API_KEY}",
+        "ANTHROPIC_BASE_URL": "https://provider.example.test/anthropic",
+        "CLAUDE_CODE_OAUTH_TOKEN": "synthetic-oauth-token",
+        "WPR_CLAUDE_CODE_USE_API_KEY": "true",
+    }
+    config_compiler.render_service_envs(tmp_path / "mixed", mixed)
+    mixed_runtime = (
+        tmp_path / "mixed" / "service-env" / "glasshive-runtime.env"
+    ).read_text(encoding="utf-8")
+    mixed_gateway = (
+        tmp_path / "mixed" / "service-env" / "glasshive-gateway.env"
+    ).read_text(encoding="utf-8")
+    mixed_provider = (
+        tmp_path / "mixed" / "service-env" / "glasshive-runtime-provider.env"
+    ).read_text(encoding="utf-8")
+    assert "WPR_CLAUDE_CODE_USE_API_KEY" not in mixed_runtime
+    assert "WPR_CLAUDE_CODE_USE_API_KEY" not in mixed_gateway
+    assert "WPR_CLAUDE_CODE_USE_API_KEY" not in mixed_provider
+    assert "CLAUDE_CODE_OAUTH_TOKEN=synthetic-oauth-token" in mixed_provider
+
+
+def test_glasshive_runtime_provider_env_uses_one_compatible_codex_route(tmp_path: Path) -> None:
+    env = {
+        "GLASSHIVE_SECURITY_MODE": "multi_user",
+        "OPENAI_API_KEY": "synthetic-openai-key",
+        "OPENAI_API_BASE": "https://provider.example.test/openai/v1",
+        "PORTKEY_API_KEY": "synthetic-portkey-key",
+        "PORTKEY_BASE_URL": "https://provider.example.test/portkey/v1",
+    }
+    config_compiler.render_service_envs(tmp_path, env)
+    provider = (
+        tmp_path / "service-env" / "glasshive-runtime-provider.env"
+    ).read_text(encoding="utf-8")
+    assert "OPENAI_API_KEY=synthetic-openai-key" in provider
+    assert "OPENAI_API_BASE=https://provider.example.test/openai/v1" in provider
+    assert "PORTKEY_" not in provider
+
+    selected_portkey = {
+        **env,
+        "WPR_CODEX_CLI_BASE_URL": "https://provider.example.test/selected/v1",
+        "WPR_CODEX_CLI_ENV_KEY": "PORTKEY_API_KEY",
+        "WPR_OPENCLAW_BASE_URL": "https://provider.example.test/selected/v1",
+        "WPR_OPENCLAW_ENV_KEY": "PORTKEY_API_KEY",
+    }
+    config_compiler.render_service_envs(tmp_path / "selected-portkey", selected_portkey)
+    selected_provider = (
+        tmp_path
+        / "selected-portkey"
+        / "service-env"
+        / "glasshive-runtime-provider.env"
+    ).read_text(encoding="utf-8")
+    selected_runtime = (
+        tmp_path
+        / "selected-portkey"
+        / "service-env"
+        / "glasshive-runtime.env"
+    ).read_text(encoding="utf-8")
+    assert "PORTKEY_API_KEY=synthetic-portkey-key" in selected_provider
+    assert "OPENAI_API_KEY" not in selected_provider
+    assert (
+        "WPR_CODEX_CLI_BASE_URL=https://provider.example.test/selected/v1"
+        in selected_runtime
+    )
+    assert "WPR_CODEX_CLI_ENV_KEY=PORTKEY_API_KEY" in selected_runtime
+    assert (
+        "WPR_OPENCLAW_BASE_URL=https://provider.example.test/selected/v1"
+        in selected_runtime
+    )
+    assert "WPR_OPENCLAW_ENV_KEY=PORTKEY_API_KEY" in selected_runtime
+
+    explicit_portkey = {
+        "GLASSHIVE_SECURITY_MODE": "multi_user",
+        "PORTKEY_API_KEY": "synthetic-portkey-key",
+        "WPR_CODEX_CLI_BASE_URL": "https://provider.example.test/selected/v1",
+        "WPR_CODEX_CLI_ENV_KEY": "PORTKEY_API_KEY",
+        "WPR_OPENCLAW_BASE_URL": "https://provider.example.test/selected/v1",
+        "WPR_OPENCLAW_ENV_KEY": "PORTKEY_API_KEY",
+    }
+    config_compiler.render_service_envs(tmp_path / "explicit-portkey", explicit_portkey)
+    explicit_provider = (
+        tmp_path
+        / "explicit-portkey"
+        / "service-env"
+        / "glasshive-runtime-provider.env"
+    ).read_text(encoding="utf-8")
+    explicit_runtime = (
+        tmp_path
+        / "explicit-portkey"
+        / "service-env"
+        / "glasshive-runtime.env"
+    ).read_text(encoding="utf-8")
+    assert "PORTKEY_API_KEY=synthetic-portkey-key" in explicit_provider
+    assert "PORTKEY_BASE_URL" not in explicit_provider
+    assert (
+        "WPR_CODEX_CLI_BASE_URL=https://provider.example.test/selected/v1"
+        in explicit_runtime
+    )
+    assert "WPR_CODEX_CLI_ENV_KEY=PORTKEY_API_KEY" in explicit_runtime
+    assert (
+        "WPR_OPENCLAW_BASE_URL=https://provider.example.test/selected/v1"
+        in explicit_runtime
+    )
+    assert "WPR_OPENCLAW_ENV_KEY=PORTKEY_API_KEY" in explicit_runtime
+
+    split_routes = {
+        **env,
+        "WPR_CODEX_CLI_BASE_URL": "https://provider.example.test/selected/v1",
+        "WPR_CODEX_CLI_ENV_KEY": "PORTKEY_API_KEY",
+    }
+    config_compiler.render_service_envs(tmp_path / "split-routes", split_routes)
+    split_provider = (
+        tmp_path / "split-routes" / "service-env" / "glasshive-runtime-provider.env"
+    ).read_text(encoding="utf-8")
+    assert "PORTKEY_API_KEY=synthetic-portkey-key" in split_provider
+    assert "OPENAI_API_KEY=synthetic-openai-key" in split_provider
+
+    standard_openai = {
+        "GLASSHIVE_SECURITY_MODE": "multi_user",
+        "OPENAI_API_KEY": "synthetic-standard-openai-key",
+    }
+    config_compiler.render_service_envs(tmp_path / "standard-openai", standard_openai)
+    standard_provider = (
+        tmp_path
+        / "standard-openai"
+        / "service-env"
+        / "glasshive-runtime-provider.env"
+    ).read_text(encoding="utf-8")
+    assert "OPENAI_API_KEY=synthetic-standard-openai-key" in standard_provider
+
+
+def test_glasshive_runtime_provider_env_requires_complete_bedrock_route(tmp_path: Path) -> None:
+    incomplete = {
+        "GLASSHIVE_SECURITY_MODE": "multi_user",
+        "CLAUDE_CODE_USE_BEDROCK": "true",
+        "AWS_BEARER_TOKEN_BEDROCK": "synthetic-bearer",
+    }
+    config_compiler.render_service_envs(tmp_path / "incomplete-bedrock", incomplete)
+    assert (
+        tmp_path
+        / "incomplete-bedrock"
+        / "service-env"
+        / "glasshive-runtime-provider.env"
+    ).read_text(encoding="utf-8").strip() == ""
+
+    complete = {
+        **incomplete,
+        "AWS_REGION": "us-east-1",
+        "AWS_ACCESS_KEY_ID": "must-not-coexist",
+        "AWS_SECRET_ACCESS_KEY": "must-not-coexist",
+    }
+    config_compiler.render_service_envs(tmp_path / "complete-bedrock", complete)
+    provider = (
+        tmp_path
+        / "complete-bedrock"
+        / "service-env"
+        / "glasshive-runtime-provider.env"
+    ).read_text(encoding="utf-8")
+    assert "AWS_BEARER_TOKEN_BEDROCK=synthetic-bearer" in provider
+    assert "AWS_REGION=us-east-1" in provider
+    assert "AWS_ACCESS_KEY_ID" not in provider
+    assert "AWS_SECRET_ACCESS_KEY" not in provider
+
+
+def test_glasshive_enterprise_provider_env_allowlist_matches_worker_projection_contract() -> None:
+    bootstrap_path = (
+        REPO_ROOT
+        / "viventium_v0_4"
+        / "GlassHive"
+        / "runtime_phase1"
+        / "src"
+        / "workers_projects_runtime"
+        / "bootstrap.py"
+    )
+    tree = ast.parse(bootstrap_path.read_text(encoding="utf-8"))
+    assignment = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name)
+            and target.id == "DEFAULT_ENTERPRISE_WORKER_ENV_KEYS"
+            for target in node.targets
+        )
+    )
+    assert isinstance(assignment.value, ast.Set)
+    worker_keys = {
+        element.value
+        if isinstance(element, ast.Constant) and isinstance(element.value, str)
+        else "GLASSHIVE_CAPABILITY_BROKER_TOKEN"
+        for element in assignment.value.elts
+    }
+    worker_keys.discard("GLASSHIVE_CAPABILITY_BROKER_TOKEN")
+
+    assert config_compiler.GLASSHIVE_ENTERPRISE_WORKER_PROVIDER_ENV_KEYS == worker_keys
+
+
 def test_scheduled_agent_defaults_to_sol_xhigh_and_rejects_partial_policy() -> None:
     assert config_compiler.resolve_scheduled_agent_settings({}) == {
         "provider": "openai",
@@ -2842,6 +3145,42 @@ def test_glasshive_azure_enterprise_vm_docker_compiles_cloud_safe_config(tmp_pat
     assert env["VIVENTIUM_OPENAI_AUTH_MODE"] == "api_key"
     assert env["VIVENTIUM_ANTHROPIC_AUTH_MODE"] == "api_key"
     assert env["VIVENTIUM_ALLOW_RUNTIME_MODEL_OVERRIDES"] == "true"
+
+    config_compiler.render_service_envs(tmp_path, env)
+    hosted_runtime_service_env = (
+        tmp_path / "service-env" / "glasshive-runtime.env"
+    ).read_text(encoding="utf-8")
+    hosted_gateway_service_env = (
+        tmp_path / "service-env" / "glasshive-gateway.env"
+    ).read_text(encoding="utf-8")
+    hosted_provider_service_env = (
+        tmp_path / "service-env" / "glasshive-runtime-provider.env"
+    ).read_text(encoding="utf-8")
+    hosted_runtime_service_keys = {
+        line.split("=", 1)[0]
+        for line in hosted_runtime_service_env.splitlines()
+        if "=" in line
+    }
+    assert "OPENAI_API_KEY" not in hosted_runtime_service_keys
+    assert "OPENAI_BASE_URL" not in hosted_runtime_service_keys
+    assert "PORTKEY_API_KEY" not in hosted_runtime_service_keys
+    assert "OPENAI_API_KEY=openai-test" in hosted_provider_service_env
+    assert "OPENAI_BASE_URL=https://api.openai.example/v1" in hosted_provider_service_env
+    assert "PORTKEY_API_KEY" not in {
+        line.split("=", 1)[0]
+        for line in hosted_provider_service_env.splitlines()
+        if "=" in line
+    }
+    gateway_service_keys = {
+        line.split("=", 1)[0]
+        for line in hosted_gateway_service_env.splitlines()
+        if "=" in line
+    }
+    assert "OPENAI_API_KEY" not in gateway_service_keys
+    assert "PORTKEY_API_KEY" not in gateway_service_keys
+    assert (
+        tmp_path / "service-env" / "glasshive-runtime-provider.env"
+    ).stat().st_mode & 0o777 == 0o600
     assert assignments["deep_research"] == ("openai", "gpt-5.2-chat")
     assert env["WPR_LIBRECHAT_UPLOADS_ROOT"] == "/mnt/librechat/uploads"
     assert env["WPR_BOOTSTRAP_SOURCE_ROOTS"] == "/mnt/librechat/uploads"

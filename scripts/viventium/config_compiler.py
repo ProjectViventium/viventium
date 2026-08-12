@@ -88,6 +88,52 @@ DEFAULT_GLASSHIVE_MCP_TRANSPORT_TIMEOUT_MS = (
 DEFAULT_PUBLIC_GLASSHIVE_LINK_REF_TTL_SECONDS = 86400
 DEFAULT_PUBLIC_GLASSHIVE_WATCH_SESSION_SECONDS = 1800
 SUPPORTED_GLASSHIVE_WORKER_PROFILES = {"codex-cli", "claude-code", "openclaw-general"}
+GLASSHIVE_ENTERPRISE_WORKER_PROVIDER_ENV_KEYS = {
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_API_URL",
+    "ANTHROPIC_BASE_URL",
+    "ANTHROPIC_BEDROCK_BASE_URL",
+    "ANTHROPIC_BEDROCK_SERVICE_TIER",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL",
+    "ANTHROPIC_MODEL",
+    "ANTHROPIC_SMALL_FAST_MODEL_AWS_REGION",
+    "AWS_ACCESS_KEY_ID",
+    "AWS_BEARER_TOKEN_BEDROCK",
+    "AWS_DEFAULT_REGION",
+    "AWS_EC2_METADATA_DISABLED",
+    "AWS_REGION",
+    "AWS_SECRET_ACCESS_KEY",
+    "AWS_SESSION_TOKEN",
+    "CLAUDE_CODE_OAUTH_TOKEN",
+    "CLAUDE_CODE_USE_BEDROCK",
+    "OPENAI_API_BASE",
+    "OPENAI_API_KEY",
+    "OPENAI_BASE_URL",
+    "OPENAI_REVERSE_PROXY",
+    "PORTKEY_API_KEY",
+    "PORTKEY_BASE_URL",
+    "PORTKEY_CONFIG",
+    "PORTKEY_PROVIDER",
+    "PORTKEY_VIRTUAL_KEY",
+    "WPR_CLAUDE_CODE_USE_API_KEY",
+}
+GLASSHIVE_OPENAI_PROVIDER_ENV_KEYS = {
+    "OPENAI_API_BASE",
+    "OPENAI_API_KEY",
+    "OPENAI_BASE_URL",
+    "OPENAI_REVERSE_PROXY",
+    "PORTKEY_API_KEY",
+    "PORTKEY_BASE_URL",
+    "PORTKEY_CONFIG",
+    "PORTKEY_PROVIDER",
+    "PORTKEY_VIRTUAL_KEY",
+}
+GLASSHIVE_ANTHROPIC_PROVIDER_ENV_KEYS = (
+    GLASSHIVE_ENTERPRISE_WORKER_PROVIDER_ENV_KEYS
+    - GLASSHIVE_OPENAI_PROVIDER_ENV_KEYS
+)
 DEFAULT_VIVENTIUM_GLASSHIVE_PLUGIN_DENYLIST = "viventium-feelings@project-viventium"
 DEFAULT_CORTEX_PHASE_A_NOTICE_MODE = "any_activated_on_voice"
 DEFAULT_CORTEX_LATE_DETECT_TIMEOUT_MS = "6000"
@@ -5904,7 +5950,7 @@ def render_runtime_env(
     if glasshive_enterprise["enabled"] and env.get("OPENAI_BASE_URL"):
         env.setdefault("WPR_OPENCLAW_USE_CUSTOM_PROVIDER", "1")
         env.setdefault("WPR_OPENCLAW_WIRE_API", "openai-completions")
-    if glasshive_enterprise["enabled"] and env.get("ANTHROPIC_API_KEY"):
+    if glasshive_enterprise["enabled"] and has_non_placeholder_env(env, "ANTHROPIC_API_KEY"):
         env.setdefault("WPR_CLAUDE_CODE_USE_API_KEY", "1")
     if has_model_overrides(config):
         for key, models in runtime_model_lists(config, assignments).items():
@@ -6885,7 +6931,9 @@ def render_service_envs(output_dir: Path, env: dict[str, str]) -> None:
     glasshive_gateway_env = {
         key: env.get(key, "")
         for key in glasshive_keys
-        if key not in glasshive_runtime_only and key not in glasshive_librechat_only
+        if key not in glasshive_runtime_only
+        and key not in glasshive_librechat_only
+        and key not in GLASSHIVE_ENTERPRISE_WORKER_PROVIDER_ENV_KEYS
     }
     runtime_denied = {
         "GLASSHIVE_AUTH_STATE_PATH",
@@ -6906,7 +6954,141 @@ def render_service_envs(output_dir: Path, env: dict[str, str]) -> None:
         if key not in runtime_denied
         and key not in glasshive_librechat_only
         and key not in glasshive_gateway_only
+        and key not in GLASSHIVE_ENTERPRISE_WORKER_PROVIDER_ENV_KEYS
     }
+    hosted_enterprise_provider_route = (
+        str(env.get("GLASSHIVE_SECURITY_MODE") or "").strip() == "multi_user"
+        or str(env.get("GLASSHIVE_ENTERPRISE_MODE") or "").strip().lower()
+        in {"1", "true", "yes", "on", "enabled"}
+    )
+    deployment_provider_env: dict[str, str] = {}
+    if hosted_enterprise_provider_route:
+        candidate_provider_env = {
+            key: env.get(key, "")
+            for key in GLASSHIVE_ENTERPRISE_WORKER_PROVIDER_ENV_KEYS
+            if has_non_placeholder_env(env, key)
+        }
+
+        # Keep each deployment route coherent. A base URL or mode flag without
+        # its matching credential must not make a hosted fallback appear usable.
+        def add_compatible_route(*, runtime: str) -> None:
+            if runtime == "codex":
+                selector_prefix = "WPR_CODEX_CLI"
+            else:
+                selector_prefix = "WPR_OPENCLAW"
+            if resolve_bool(env.get(f"{selector_prefix}_DISABLE_CUSTOM_PROVIDER"), False):
+                return
+            explicit_base = str(env.get(f"{selector_prefix}_BASE_URL") or "").strip()
+            selected_key = str(env.get(f"{selector_prefix}_ENV_KEY") or "").strip()
+            if not selected_key:
+                if (
+                    "PORTKEY_BASE_URL" in candidate_provider_env
+                    and not explicit_base
+                    and not any(
+                        name in candidate_provider_env
+                        for name in (
+                            "OPENAI_BASE_URL",
+                            "OPENAI_API_BASE",
+                            "OPENAI_REVERSE_PROXY",
+                        )
+                    )
+                ):
+                    selected_key = "PORTKEY_API_KEY"
+                else:
+                    selected_key = "OPENAI_API_KEY"
+            if selected_key not in {"OPENAI_API_KEY", "PORTKEY_API_KEY"}:
+                return
+            if selected_key == "OPENAI_API_KEY" and "OPENAI_API_KEY" in candidate_provider_env:
+                deployment_provider_env.update(
+                    {
+                        key: value
+                        for key, value in candidate_provider_env.items()
+                        if key
+                        in {
+                            "OPENAI_API_KEY",
+                            "OPENAI_BASE_URL",
+                            "OPENAI_API_BASE",
+                            "OPENAI_REVERSE_PROXY",
+                        }
+                    }
+                )
+            elif (
+                selected_key == "PORTKEY_API_KEY"
+                and "PORTKEY_API_KEY" in candidate_provider_env
+                and (explicit_base or "PORTKEY_BASE_URL" in candidate_provider_env)
+            ):
+                deployment_provider_env.update(
+                    {
+                        key: value
+                        for key, value in candidate_provider_env.items()
+                        if key.startswith("PORTKEY_")
+                    }
+                )
+
+        # Codex and OpenClaw can intentionally choose different compatible
+        # routes. Keep the service artifact as their coherent union; the
+        # worker bootstrap projects only the route selected by that profile.
+        add_compatible_route(runtime="codex")
+        add_compatible_route(runtime="openclaw")
+
+        use_bedrock = resolve_bool(candidate_provider_env.get("CLAUDE_CODE_USE_BEDROCK"), False)
+        use_anthropic_key = resolve_bool(
+            candidate_provider_env.get("WPR_CLAUDE_CODE_USE_API_KEY"), False
+        )
+        bedrock_ready = use_bedrock and "AWS_REGION" in candidate_provider_env and (
+            "AWS_BEARER_TOKEN_BEDROCK" in candidate_provider_env
+            or {
+                "AWS_ACCESS_KEY_ID",
+                "AWS_SECRET_ACCESS_KEY",
+            }.issubset(candidate_provider_env)
+        )
+        if bedrock_ready:
+            bedrock_bearer = "AWS_BEARER_TOKEN_BEDROCK" in candidate_provider_env
+            deployment_provider_env.update(
+                {
+                    key: value
+                    for key, value in candidate_provider_env.items()
+                    if key in GLASSHIVE_ANTHROPIC_PROVIDER_ENV_KEYS
+                    and key not in {
+                        "ANTHROPIC_API_KEY",
+                        "CLAUDE_CODE_OAUTH_TOKEN",
+                        "WPR_CLAUDE_CODE_USE_API_KEY",
+                    }
+                    and (
+                        not bedrock_bearer
+                        or key
+                        not in {
+                            "AWS_ACCESS_KEY_ID",
+                            "AWS_SECRET_ACCESS_KEY",
+                            "AWS_SESSION_TOKEN",
+                        }
+                    )
+                    and (bedrock_bearer or key != "AWS_BEARER_TOKEN_BEDROCK")
+                }
+            )
+        elif not use_bedrock and use_anthropic_key and "ANTHROPIC_API_KEY" in candidate_provider_env:
+            deployment_provider_env.update(
+                {
+                    key: value
+                    for key, value in candidate_provider_env.items()
+                    if key in GLASSHIVE_ANTHROPIC_PROVIDER_ENV_KEYS
+                    and not key.startswith("AWS_")
+                    and key != "CLAUDE_CODE_USE_BEDROCK"
+                    and key != "CLAUDE_CODE_OAUTH_TOKEN"
+                }
+            )
+        elif not use_bedrock and "CLAUDE_CODE_OAUTH_TOKEN" in candidate_provider_env:
+            deployment_provider_env.update(
+                {
+                    key: value
+                    for key, value in candidate_provider_env.items()
+                    if key in {
+                        "ANTHROPIC_BASE_URL",
+                        "ANTHROPIC_API_URL",
+                        "CLAUDE_CODE_OAUTH_TOKEN",
+                    }
+                }
+            )
     glasshive_runtime_env["VIVENTIUM_DISABLE_DEFAULT_RUNTIME_ENV"] = "1"
 
     dump_env(service_dir / "librechat.env", {key: env.get(key, "") for key in librechat_keys})
@@ -6915,6 +7097,10 @@ def render_service_envs(output_dir: Path, env: dict[str, str]) -> None:
     dump_env(service_dir / "skyvern.env", {key: env.get(key, "") for key in skyvern_keys})
     dump_env(service_dir / "glasshive-gateway.env", glasshive_gateway_env)
     dump_env(service_dir / "glasshive-runtime.env", glasshive_runtime_env)
+    dump_env(
+        service_dir / "glasshive-runtime-provider.env",
+        deployment_provider_env,
+    )
 
 
 def _telegram_codex_default_model_name() -> str:
