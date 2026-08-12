@@ -219,21 +219,21 @@ parameter bag for that spoken follow-up path.
   plumbing can treat a non-null `thinking` key as an active thinking configuration. Runtime must
   remove `thinking`, `thinkingBudget`, `thinkingLevel`, `effort`, and OpenAI/xAI-style
   `reasoning_effort` before constructing the Anthropic voice run.
-- **xAI Grok 4.3 no-reasoning voice route**: For xAI Chat Completions, low-latency voice must use
-  `reasoning_effort: "none"` in the provider request. In LibreChat's LangChain ChatOpenAI wrapper,
+- **xAI Grok 4.5 low-reasoning voice route**: For xAI Chat Completions, low-latency voice must use
+  `reasoning_effort: "low"` in the provider request. In LibreChat's LangChain ChatOpenAI wrapper,
   the xAI Chat Completions route must carry that field through `modelKwargs.reasoning_effort`; a
   plain intermediate `llmConfig.reasoning_effort` can look correct in app logs while failing to
   reach the final provider request for this custom endpoint. As of the 2026-05 xAI docs and live
-  API probes, there is no accepted `grok-4.3-non-reasoning` slug; the supported non-reasoning
-  route is `grok-4.3` (or its current aliases) with `reasoning_effort: "none"`. Older xAI
+  API probes, there is no accepted `grok-4.5-non-reasoning` slug; `grok-4.5` rejects
+  `reasoning_effort: "none"` and accepts `reasoning_effort: "low"`. Older xAI
   non-reasoning slugs such as `grok-4-1-fast-non-reasoning` and `grok-4.20-non-reasoning` do not
   accept `reasoning_effort` on Chat Completions before provider-side retirement redirects, so the
   adapter must not attach that knob to all xAI model names indiscriminately. Runtime/provider-fetch
   telemetry must verify the actual request shape, not just the voice config object. `thinking:
   false` is an Anthropic-shaped field and must not be sent to xAI. Runtime may map legacy live
-  voice params with `thinking: false` to `reasoning_effort: "none"` for compatibility, but the
+  voice params with `thinking: false` to a provider-compatible low-reasoning value, but the
   durable voice parameter bag should store the xAI-native shape.
-- **xAI Responses vs Chat Completions**: xAI Responses uses `reasoning: { effort: "none" }`.
+- **xAI Responses vs Chat Completions**: xAI Responses uses a nested `reasoning` effort shape.
   Viventium's current xAI voice route uses the OpenAI-compatible Chat Completions path, so runtime
   must preserve `reasoning_effort` for the `xai` endpoint unless `useResponsesApi` is explicitly
   true. This is provider-specific request-shape normalization, not a silent model remap.

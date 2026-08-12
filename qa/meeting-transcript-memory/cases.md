@@ -148,9 +148,10 @@ Use synthetic transcript fixtures and public-safe placeholders only.
   edits local state.
 - Evidence to capture: stale-lock fixture, dry-run exit status, run summary, and post-run lock
   absence.
-- Last run: 2026-05-13, automated regressions passed in
-  `api/test/scripts/viventium-memory-hardening.test.js`; live primary QA dry-run completed with 0
-  transcript characters fed to the model.
+- Last run: PASS-OBSERVED 2026-08-09
+  ([nightly review](../memory-hardening/reports/2026-08-09-nightly-routines-health-review.md)); the
+  scheduled hardener acquisition ran through completion, left `lock_held=false`, and kept stale-lock
+  recovery proof healthy without the read-only audit forcing ingest or repair.
 
 ## MTM-011: Model Candidate Fallback Must Be Configurable And Observable
 
@@ -162,9 +163,10 @@ Use synthetic transcript fixtures and public-safe placeholders only.
 - Forbidden result: The run silently remaps to a different model, fails on the first unavailable
   model despite a configured fallback, or logs raw transcript/prompt text.
 - Evidence to capture: redacted model-attempt telemetry and selected provider/model/effort.
-- Last run: 2026-05-22, owner-scoped apply run selected Claude Code `claude-opus-4-7`
-  `xhigh`, recorded the default fallback candidate list, and completed with 1 successful model
-  attempt and 0 model-attempt failures.
+- Last run: PASS-ROUTE-PROVEN 2026-08-09
+  ([nightly review](../memory-hardening/reports/2026-08-09-nightly-routines-health-review.md)); the
+  configured OpenAI `gpt-5.6-luna` / `medium` route was selected, no fallback occurred, and no
+  provider/runtime failures were recorded.
 
 ## MTM-012: Model Probe Must Not Be A False Hard Failure
 
@@ -176,8 +178,10 @@ Use synthetic transcript fixtures and public-safe placeholders only.
 - Forbidden result: A scheduled or manual transcript ingest fails before scanning/summarizing only
   because an advisory probe timed out.
 - Evidence to capture: probe timeout value, attempt reasons, selected candidate, and run status.
-- Last run: 2026-05-22, owner-scoped apply run recorded a 30s advisory probe, selected a healthy
-  candidate, and completed the transcript run instead of failing at probe time.
+- Last run: PASS-ADVISORY / ROUTE-PROVEN 2026-08-09
+  ([nightly review](../memory-hardening/reports/2026-08-09-nightly-routines-health-review.md)); the
+  advisory OpenAI probe succeeded and transcript scanning completed without reordering candidates or
+  hard-failing maintenance.
 
 ## MTM-013: Inconclusive Vector Presence Checks Must Not Cause Destructive Repair
 

@@ -765,3 +765,15 @@ def test_modern_playground_case_ids_are_unique_and_manifest_coverage_resolves():
     coverage_ids = set(manifest["coverage"])
     assert coverage_ids <= set(case_ids)
     assert {f"MPV-{number:03d}" for number in range(32, 52)} <= coverage_ids
+
+
+def test_synthetic_audio_harness_labels_transport_success_as_semantically_unscored() -> None:
+    content = SYNTHETIC_AUDIO_HARNESS.read_text()
+
+    assert 'transportOk: false' in content
+    assert 'semanticEvaluationStatus: "not_evaluated"' in content
+    assert 'result.transportOk =' in content
+    assert 'result.ok = result.transportOk;' in content
+    assert "Transport/audio success does not score reasoning quality" in content
+    assert "transportOk: result.transportOk" in content
+    assert "semanticEvaluationStatus: result.semanticEvaluationStatus" in content

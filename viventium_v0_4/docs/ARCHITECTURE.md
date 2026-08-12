@@ -10,6 +10,9 @@ This document maps the live system to code and data structures.
 ## Component Overview
 ```
 User → LibreChat UI → AgentClient (API) → BackgroundCortexService
+                       ├→ selected Provider/Model
+                       │   ├→ direct provider
+                       │   └→ GlassHive authenticated harness conversation session
                        │                └─ Phase A detect (≤2s)
                        │                └─ Phase B execute (async)
                        ├→ pinned Feelings snapshot → dynamic instruction tail
@@ -98,6 +101,39 @@ Agent.background_cortices: Array<{
   }
 }>
 ```
+
+Every main or cortex Agent also uses the normal `provider` and `model` fields. A GlassHive selection
+uses `provider: glasshive-harness`, an exact harness model ID, normal
+`model_parameters.reasoning_effort`, and this small provider-owned bag:
+
+```
+Agent.glasshive_options: {
+  workspace: { mode: "life" | "custom", path?: string },
+  access: "full" | "workspace",
+  fallback_model?: "claude-code:opus" | "codex-cli:gpt-5.6-sol",
+  fallback_reasoning_effort?: "low" | "medium" | "high" | "xhigh" | "max"
+}
+```
+
+The compiler-owned capability registry decides which pickers/runtimes may offer a provider. Unknown
+providers or models fail visibly; they are never rewritten to OpenAI.
+
+The ordinary Agent Builder fallback uses `fallback_llm_provider`, `fallback_llm_model`, and
+`fallback_llm_model_parameters`. GlassHive is an eligible text fallback target, so the built-in Main
+Agent can route GlassHive/Codex to GlassHive/Claude Opus 5. The retry remains one outer chat/Telegram
+turn but receives a distinct provider-attempt idempotency key; otherwise GlassHive would replay the
+failed Codex request. Lifecycle queue/start/provider-switch status stays out of reasoning and does
+not lock pre-authoring recovery. Once visible text or genuine reasoning/plan/tool/file activity
+exists, no second authoring attempt is allowed.
+
+The fallback panel consumes the same compiled capability registry as the primary model panel. That
+is what makes GlassHive readiness, friendly model labels, and the route-scoped High effort control
+visible and persistable instead of leaving a backend-only fallback tuple that the user cannot audit.
+
+`glasshive_options.fallback_*` is a separate advanced provider-internal option. It is configurable,
+disabled by default on the built-in Agent, and must never be silently treated as the Agent Builder
+fallback.
+
 Sources:
 - `LibreChat/packages/data-schemas/src/schema/agent.ts`
 - `LibreChat/packages/data-provider/src/types/assistants.ts`

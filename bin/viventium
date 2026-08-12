@@ -806,6 +806,8 @@ Commands:
   bug-report        Compatibility alias for report-bug.
   prompt-workbench  Start, stop, open, or inspect the local Prompt Workbench.
   health            Configure, connect, pull, schedule, or inspect private health evidence.
+  cognitive-integrity
+                    Check composed capability, memory, recall, nightly, and drift contracts.
   preflight         Detect and optionally install missing system prerequisites.
   reset             Factory-reset the local Viventium install state under App Support.
   start             Start the current Viventium stack using generated runtime env.
@@ -933,29 +935,17 @@ local config.yaml, writes a local backup before changes, and recompiles runtime
 files after set/clear.
 USAGE
       ;;
-    health)
+    qa-test-account)
       cat <<'USAGE'
 Usage:
-  bin/viventium health whoop configure [--client-id <id>] [--redirect-uri <uri>] [--json-stdin]
-  bin/viventium health whoop connect [--callback-url <url> | --callback-stdin] [--json]
-  bin/viventium health whoop onboard --callback-stdin [--hour 6] [--minute 0]
-  bin/viventium health whoop status
-  bin/viventium health whoop disconnect
-  bin/viventium health import whoop-export (--input <zip> | --stdin)
-  bin/viventium health import whoop-evidence --stdin --media-type (image/png | image/jpeg)
-  bin/viventium health pull whoop [--lookback-days <days>]
-  bin/viventium health pull whoop --all-history
-  bin/viventium health runs [--provider whoop] [--limit <count>]
-  bin/viventium health records [--provider whoop] [--limit <count>]
-  bin/viventium health read <record-id> [--offset <bytes>] [--max-bytes <bytes>]
-  bin/viventium health schedule install [--hour <0-23>] [--minute <0-59>]
-  bin/viventium health schedule status
-  bin/viventium health schedule uninstall
+  bin/viventium qa-test-account status [--json]
+  bin/viventium qa-test-account set <email> [--json]
+  bin/viventium qa-test-account set --email-stdin [--json]
+  bin/viventium qa-test-account clear [--json]
 
-Health evidence is stored privately and append-only under Viventium App Support.
-Browser onboarding completes authorization, full-history import, and scheduled
-correction acquisition as one owner action. CLI and official-export fallbacks remain available.
---all-history cannot be combined with --lookback-days.
+Stores the explicit non-admin local QA selector in canonical config, recompiles
+runtime files, and keeps the account value out of command output. Live QA still
+fails closed if the selected account is missing or is an admin.
 USAGE
       ;;
     memory-dedupe)
@@ -3968,7 +3958,7 @@ maybe_reexec_active_runtime_checkout() {
   shift || true
 
   case "$command_name" in
-    start|launch|stop|install-helper|uninstall-helper|status-bar|memory-harden|memory-dedupe|transcripts|workflows|heal|feature-request|report-bug|bug-report|prompt-workbench|health)
+    start|launch|stop|install-helper|uninstall-helper|status-bar|memory-harden|memory-dedupe|transcripts|qa-test-account|workflows|heal|feature-request|report-bug|bug-report|prompt-workbench|health|cognitive-integrity)
       ;;
     *)
       return 0
@@ -4540,16 +4530,7 @@ drain_native_stack_before_state_removal() {
   # state is still present for command-line matching.
   prepare_runtime_exports
   if [[ -f "$GENERATED_ENV" ]]; then
-    set -a
-    set +u
-    # shellcheck disable=SC1090
-    source "$GENERATED_ENV"
-    if [[ -f "$GENERATED_LOCAL_ENV" ]]; then
-      # shellcheck disable=SC1090
-      source "$GENERATED_LOCAL_ENV"
-    fi
-    set -u
-    set +a
+    load_selected_runtime_environment_for_children
   fi
   if ! "$REPO_ROOT/scripts/viventium/native_stack.sh" stop; then
     echo "Native services did not drain; refusing to remove Viventium state." >&2
@@ -8251,14 +8232,7 @@ PY
 
     EXTRA_ARGS=()
     if [[ -f "$GENERATED_ENV" ]]; then
-      set -a
-      # shellcheck disable=SC1090
-      source "$GENERATED_ENV"
-      if [[ -f "$GENERATED_LOCAL_ENV" ]]; then
-        # shellcheck disable=SC1090
-        source "$GENERATED_LOCAL_ENV"
-      fi
-      set +a
+      load_selected_runtime_environment_for_children
       if [[ "${VIVENTIUM_SUCCESSOR_VALIDATION_MODE:-}" == "quiesced" ]]; then
         VIVENTIUM_VOICE_ENABLED=false
         export VIVENTIUM_VOICE_ENABLED
@@ -8363,8 +8337,10 @@ PY
       exit 1
     fi
     cleanup_cli_lock
-    VIVENTIUM_LAUNCHER_INTERNAL=1 "${START_CMD[@]}"
-    exit $?
+    start_status=0
+    VIVENTIUM_LAUNCHER_INTERNAL=1 "${START_CMD[@]}" || start_status=$?
+    clear_runtime_start_claim
+    exit "$start_status"
     ;;
   stop)
     acquire_cli_lock "$COMMAND"
@@ -8384,14 +8360,12 @@ PY
     fi
     prepare_runtime_exports
     if [[ -f "$GENERATED_ENV" ]]; then
-      set -a
-      # shellcheck disable=SC1090
-      source "$GENERATED_ENV"
-      if [[ -f "$GENERATED_LOCAL_ENV" ]]; then
-        # shellcheck disable=SC1090
-        source "$GENERATED_LOCAL_ENV"
-      fi
-      set +a
+      load_selected_runtime_environment_for_children
+    fi
+    if value_is_true "${VIVENTIUM_DEV_ENV_SCOPE_ACTIVE:-false}" &&
+      ! value_is_true "${VIVENTIUM_DEV_ENV_ENABLED:-false}"; then
+      echo "Dev-environment stop refused because the compiled runtime identity is not marked as a dev environment; no services were stopped." >&2
+      exit 1
     fi
     write_stack_owner_state "$COMMAND"
     VIVENTIUM_LAUNCHER_INTERNAL=1 \

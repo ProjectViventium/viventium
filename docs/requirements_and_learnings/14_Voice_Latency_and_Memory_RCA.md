@@ -215,7 +215,7 @@ The 5s delay is **most consistent** with:
 Historical note: the values in this addendum were superseded by the May 30 two-mode contract in
 `02_Background_Agents.md`. Current generated runtime defaults are voice async ON with
 `VIVENTIUM_VOICE_PHASE_A_AWAIT_MS=690`,
-`VIVENTIUM_VOICE_PHASE_A_ASYNC_ALLOW_TOOL_HOLD=true`, and text async OFF with
+`VIVENTIUM_VOICE_PHASE_A_ASYNC_ALLOW_TOOL_HOLD=true`, and text async ON with
 `VIVENTIUM_TEXT_PHASE_A_AWAIT_MS=1300`.
 
 Older local env was updated to align with the Phase A/background values that reduce voice-call startup
@@ -229,11 +229,19 @@ VIVENTIUM_VOICE_PHASE_A_AWAIT_MS=500
 VIVENTIUM_VOICE_PHASE_A_ASYNC_ALLOW_TOOL_HOLD=false
 ```
 
-Related Phase B controls currently used in code:
-- `VIVENTIUM_PHASE_B_STREAM_WAIT_MS` (default `180000` ms in `api/server/controllers/agents/request.js`)
-- `VIVENTIUM_DEBUG_PHASE_B` (debug logging flag in agent runtime/background services)
+Current Phase B control:
+- `VIVENTIUM_CORTEX_FOLLOWUP_GRACE_S` owns the shared background follow-up window across chat,
+  voice, and Telegram.
+- The Web startup payload exposes that canonical value as
+  `viventiumBackgroundFollowupWindowS`; the client uses it only to bound post-stream message
+  refreshes. It has no client-authored `180000` fallback and does not cancel background execution
+  when browser listening ends.
+- `VIVENTIUM_DEBUG_PHASE_B` remains the diagnostic logging flag.
 
-These Phase B vars are not currently exported in the cloud snapshot as explicit env values, so local tuning should be applied intentionally (only if follow-up delivery timing or debug visibility requires it).
+The former request-local `VIVENTIUM_PHASE_B_STREAM_WAIT_MS` / hardcoded `180000` fallback was
+removed on 2026-08-10. It incorrectly kept a completed Main generation active while Phase B ran,
+which could show Stop after refresh and allow an empty abort checkpoint to overwrite the final
+answer. Main is now marked complete immediately; durable polling/adjudication owns late Phase B.
 
 Disabling “Use memory” bypasses the entire memory pipeline and is expected to reduce the delay, which matches your observation.
 

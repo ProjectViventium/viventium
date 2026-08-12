@@ -617,3 +617,89 @@ def test_manual_connected_accounts_provisioner_cannot_diverge_from_managed_seedi
     assert "createAgent" not in provisioner
     assert "updateAgent" not in provisioner
     assert "AGENT_MODEL" not in provisioner
+
+
+def test_connected_accounts_handoff_provisioner_is_supported_confirmed_write_and_surgical() -> None:
+    provisioner = CONNECTED_ACCOUNTS_HANDOFF_PROVISIONER.read_text(encoding="utf-8")
+    bundle = SOURCE_OF_TRUTH_AGENTS_BUNDLE.read_text(encoding="utf-8")
+
+    assert "VIVENTIUM_ENABLE_RETIRED_CONNECTED_ACCOUNTS_HANDOFF" not in provisioner
+    assert "viventium-seed-agents.js" in provisioner
+    assert "--bundle=" in provisioner
+    assert "createAgent" not in provisioner
+    assert "updateAgent" not in provisioner
+
+    assert "agent_viventium_connected_accounts_95aeb3" in bundle
+    assert "to: agent_viventium_connected_accounts_95aeb3" in bundle
+    assert "Ask for confirmation before any external write" in bundle
+    assert "send_gmail_message_mcp_google_workspace" in bundle
+    assert "send-mail_mcp_ms-365" in bundle
+    for forbidden_tool in (
+        "delete-onedrive-file_mcp_ms-365",
+        "delete_event_mcp_google_workspace",
+        "delete-mail-message_mcp_ms-365",
+        "delete-calendar-event_mcp_ms-365",
+    ):
+        assert forbidden_tool not in bundle
+
+
+def test_productivity_direct_action_surfaces_prevent_background_action_duplication() -> None:
+    bundle = load_and_resolve_prompt_refs(
+        yaml.safe_load(SOURCE_OF_TRUTH_AGENTS_BUNDLE.read_text(encoding="utf-8"))
+    )
+    policy = bundle["config"]["viventium"]["background_cortices"]["activation_policy"]
+    surfaces = policy["direct_action_mcp_servers"]
+    intent_scopes = {
+        cortex["activation"]["intent_scope"]
+        for cortex in bundle["mainAgent"]["background_cortices"]
+        if cortex.get("activation", {}).get("intent_scope", "").startswith("productivity_")
+    }
+
+    productivity_surfaces = [
+        surface
+        for surface in surfaces
+        if str(surface.get("scope_key", "")).startswith("productivity_")
+    ]
+    assert productivity_surfaces
+    for surface in productivity_surfaces:
+        assert surface["scope_key"] in intent_scopes
+        assert surface["same_scope_background_allowed"] is False
+        assert "when this mcp is connected to the main agent" in surface["owns"].lower()
+        assert "available to the main agent" not in surface["owns"].lower()
+
+
+def test_background_agent_execution_models_match_launch_bundle_mix() -> None:
+    agents_by_id = _load_background_agents_by_id()
+
+    expected = {
+        "agent_viventium_background_analysis_95aeb3": ("openAI", "gpt-5.6-terra"),
+        "agent_viventium_confirmation_bias_95aeb3": ("openAI", "gpt-5.6-terra"),
+        "agent_viventium_deep_memory_95aeb3": (
+            "openAI",
+            "gpt-5.6-terra",
+        ),
+        "agent_viventium_red_team_95aeb3": ("openAI", "gpt-5.6-sol"),
+        "agent_viventium_deep_research_95aeb3": ("openAI", "gpt-5.6-sol"),
+        "agent_viventium_online_tool_use_95aeb3": ("openAI", "gpt-5.6-terra"),
+        "agent_viventium_parietal_cortex_95aeb3": ("openAI", "gpt-5.6-terra"),
+        "agent_viventium_pattern_recognition_95aeb3": ("openAI", "gpt-5.6-terra"),
+        "agent_viventium_emotional_resonance_95aeb3": ("openAI", "gpt-5.6-terra"),
+        "agent_viventium_strategic_planning_95aeb3": ("openAI", "gpt-5.6-sol"),
+        "agent_viventium_support_95aeb3": ("openAI", "gpt-5.6-terra"),
+        "agent_8Y1d7JNhpubtvzYz3hvEv": ("openAI", "gpt-5.6-terra"),
+    }
+
+    for agent_id, (provider, model) in expected.items():
+        agent = agents_by_id[agent_id]
+        assert agent["provider"] == provider
+        assert agent["model"] == model
+        assert agent["model_parameters"]["model"] == model
+
+
+def test_red_team_ships_with_web_search_and_openai_reasoning_effort() -> None:
+    agents_by_id = _load_background_agents_by_id()
+    red_team = agents_by_id["agent_viventium_red_team_95aeb3"]
+
+    assert "web_search" in red_team["tools"]
+    assert red_team["model_parameters"]["reasoning_effort"] == "xhigh"
+    assert "thinkingBudget" not in red_team["model_parameters"]

@@ -44,6 +44,16 @@ TEST_SCAN_ROOTS = [
     / "viventium"
     / "__tests__",
 ]
+MEMORY_POLICY_PATH = (
+    REPO_ROOT
+    / "viventium_v0_4"
+    / "LibreChat"
+    / "packages"
+    / "api"
+    / "src"
+    / "memory"
+    / "policy.ts"
+)
 ALLOWLIST_COMMENT = "runtime-nlu-allowlist: deterministic identifier extraction"
 
 REGEX_LITERAL_RE = re.compile(r"(?<![\w$])/(?![/*])((?:\\.|[^/\n])+)/([dgimsuvy]*)")
@@ -189,3 +199,24 @@ def test_js_tests_do_not_reintroduce_semantic_intent_helper_cases() -> None:
                 f"{path} mixes semantic provider/email fixtures with deprecated intent-helper style tests. "
                 "See 01_Key_Principles.md CRITICAL RULE: No hardcoded NLU in runtime code."
             )
+
+
+def test_memory_policy_does_not_use_phrase_lists_to_guess_fact_durability() -> None:
+    source = MEMORY_POLICY_PATH.read_text(encoding="utf-8")
+
+    for token in (
+        "NOISE_PATTERNS",
+        "EXISTING_MEMORY_NOISE_PATTERNS",
+        "OPERATIONAL_WORKING_SPLIT_RE",
+        "WORLD_KEEP_PATTERNS",
+        "WORLD_DROP_PATTERNS",
+        "WORLD_TRANSIENT_STATE_PATTERNS",
+        "WORLD_CONTACT_LOGISTICS_PATTERNS",
+        "containsWorldTemporalResidue",
+        "shouldDropWorldClause",
+    ):
+        assert token not in source, (
+            f"{token} reintroduced hardcoded semantic memory classification. "
+            "The model-owned writer decides fact durability; deterministic policy enforces "
+            "budgets, structure, provenance, and explicit lifecycle metadata only."
+        )

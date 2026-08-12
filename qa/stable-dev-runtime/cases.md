@@ -31,7 +31,9 @@
 - Expected Result: existing runtime-checkout state is updated; no code is copied into an install path
 - Forbidden Result: parallel active checkout state, physical source copy, or unreviewed nested repo pin change
 - Evidence: dated report under `reports/`
-- Last Run: 2026-05-14 local implementation QA - passed by live activation, validation, and restart
+- Last Run: 2026-08-05 current-checkout activation QA - passed by validated live activation,
+  installed-helper rebinding, restart, browser refresh, and process/ownership checks
+  ([report](reports/2026-08-05-latest-checkout-activation-and-supervision.md))
 
 ## SDR-004: Upgrade Check Is Side-Effect-Free
 
@@ -83,7 +85,9 @@
 - Expected Result: status headline is "needs attention"; core surfaces are Running; each enabled but unreachable optional service is Action Required; helper status is shown separately and truthfully
 - Forbidden Result: status says "ready" while enabled recall/search/MCP/helper surfaces are broken, or shows "still starting" because of a stale start lock
 - Evidence: dated report under `reports/`
-- Last Run: 2026-05-17 live runtime sanity - passed
+- Last Run: 2026-08-05 current-checkout activation QA - passed; status kept optional-service
+  degradation visible while core surfaces remained running
+  ([report](reports/2026-08-05-latest-checkout-activation-and-supervision.md))
 
 ## SDR-008: Helper Steady-State Health Checks Stay Lightweight
 
@@ -507,6 +511,7 @@ rows before claiming a pass when the feature behavior changes.
 ## Release Test Traceability
 
 - `tests/release/test_cli_upgrade.py`
+- `tests/release/test_config_compiler.py`
 - `tests/release/test_detached_librechat_api_watchdog.py`
 - `tests/release/test_dev_runtime_activation.py`
 - `tests/release/test_detached_librechat_supervision.py`

@@ -20,6 +20,8 @@ stream back to Telegram through the existing bridge.
 - Telegram's Markdown-to-HTML renderer must gracefully degrade markdown tables into readable
   Telegram rows because Telegram does not support table rendering and workers may still return
   compact tabular summaries.
+- Nested supported Markdown inside block quotes must render as the intended Telegram HTML and must
+  never expose internal formatter placeholders such as `PH0` or `PH2`.
 - Background follow-ups must preserve the same formatting rules as the main response.
 - Telegram must mirror LibreChat UX for new features, including scheduled prompts and background
   follow-ups.
@@ -50,6 +52,64 @@ stream back to Telegram through the existing bridge.
 - Successful LibreChat stream jobs must remain available briefly after completion so Telegram retry
   or resume can recover the final event. A late reconnect after a completed response must not become
   a synthetic generic connection error just because the generation job was deleted immediately.
+- Telegram's raw SSE follow-up listener and DB-backed follow-up poller share the compiler-owned
+  `runtime.background_followup_window_s`, delivered as
+  `VIVENTIUM_TELEGRAM_FOLLOWUP_GRACE_S`. They must not invent independent implicit listener
+  lifetimes. An explicit zero disables ordinary automatic follow-up listeners without canceling
+  Main, cortex execution, Phase B, or a separately configured GlassHive callback wait.
+- `VIVENTIUM_TELEGRAM_FOLLOWUP_TIMEOUT_S` may explicitly bound a longer operator-selected total
+  listener window and is limited to one day. If it is omitted, the canonical background follow-up
+  window is also the total. The legacy `VIVENTIUM_TELEGRAM_INSIGHT_GRACE_S` and
+  `VIVENTIUM_TELEGRAM_INSIGHT_MAX_S` inputs are deprecated standalone compatibility only and never
+  override a compiler-supplied canonical window.
+
+## Smart Messaging Delivery Controls
+
+Problem being solved: `Smart voice for text` should not turn read-first artifacts such as drafted
+emails, code, tables, or exact copy into long, wasteful audio, while conversational replies should
+still feel warm and speakable. Telegram delivery should also be able to express a small number of
+natural conversational beats without forcing every answer into one robotic bubble or breaking one
+logical conversation turn into duplicate history.
+
+Telegram text and optional audio are two delivery views of one Main Agent answer. The model decides
+whether audio is useful and where a conversational answer has natural bubble boundaries; the
+runtime only consumes the following explicit structural controls:
+
+- `{SKIP_VOICE}` on a standalone line suppresses the optional audio attachment for that turn. The
+  complete text answer is still sent. It is appropriate for read-first, copy/edit/reuse artifacts
+  such as emails, code, tables, forms, and long reference material. It must not be used merely
+  because a conversational answer is detailed or long, and an explicit request to hear/read/speak
+  the answer takes precedence.
+- `{MSG_BREAK}` on a standalone line separates complete conversational beats into Telegram
+  bubbles. The agent usually emits none, may occasionally emit one, and may emit at most two so one
+  logical turn creates at most three semantic bubbles. It must not split code, quotes, emails,
+  documents, tables, tightly structured lists, or tiny fragments.
+
+Both controls are case/whitespace tolerant only as standalone lines outside fenced code and block
+quotes. Literal mentions in prose, inline code, fenced examples, and quotes remain user content.
+Incomplete reserved control suffixes are hidden while streaming so users never see a flashing
+`{MSG_` or `{SKIP_` fragment.
+
+The clean response persists as one logical assistant turn. Delivery controls and provider voice
+markup do not persist in Telegram chat history. Semantic bubbles are separate Telegram transport
+messages, but they do not create duplicate conversation records or background turns. Long-message
+transport splitting still applies independently. If audio is delivered, the clean logical answer
+is synthesized once and attached once, to the final bubble; no fake typing delays are added.
+
+`Smart voice for text` is the user-facing preference label for the existing
+`ALWAYS_VOICE_RESPONSE` setting. Voice-note input still follows the ordinary voice-reply toggle;
+`{SKIP_VOICE}` only suppresses an otherwise optional output attachment selected for the current
+answer.
+
+The canonical grammar is versioned and shared by the LibreChat/JavaScript persistence boundary and
+the Python messaging adapter. Other conversational channel adapters must consume the same grammar,
+caps, precedence, persistence, and observability contract rather than inventing channel-specific
+tokens. This provides a parity contract without pretending that a Slack or WhatsApp adapter exists
+when it is not installed. Runtime must never infer these decisions from prompt text, length,
+keywords, or artifact type.
+
+Prompt-layer ownership and the runtime-vs-prompt boundary are also recorded in
+[`49_Prompt_Architecture_and_Token_Efficiency.md`](49_Prompt_Architecture_and_Token_Efficiency.md#fix-7a-keep-messaging-delivery-intent-model-owned-and-adapter-neutral).
 
 ## Smart Messaging Delivery Controls
 
@@ -225,12 +285,10 @@ versioned `{MSG_BREAK}` control.
   - user-visible Telegram text must strip both canonical and malformed xAI controls, including an
     orphan closing tag like `[/soft]`; repair for synthesis must never make markup visible
   - on Telegram text-mode turns that request audio (`voiceMode=false` and
-    `telegramAudioRequested=true`), the bridge retains the raw model-authored assistant record
-    locally so the same text can be audited and synthesized, while outgoing Telegram text applies
-    the display sanitizer. A database read for that path can therefore contain supported xAI
-    controls that never appear in the visible Telegram bubble; this is distinct from the LiveKit
-    call-history persistence rule. Do not generalize this persistence claim to a `voiceMode=true`
-    path without tracing that path's persistence sanitizer
+    `telegramAudioRequested=true`), the raw streamed response remains available ephemerally to the
+    Telegram bot for provider-aware synthesis, while the persisted assistant record and visible
+    bubble remove delivery and provider voice controls. Structural marker counts provide local
+    audit evidence without storing hidden control markup in chat history
   - Cartesia-only tags such as `<emotion>`, `<break>`, `<speed>`, `<volume>`, `<spell>`,
     `[laughter]`, and Cartesia-only bracket aliases like `[soft laugh]` or `[gentle sigh]` are
     stripped before xAI synthesis
@@ -351,11 +409,26 @@ versioned `{MSG_BREAK}` control.
   provider is rate-limited and the configured fallback provider then fails because its connected
   account needs reconnect, Telegram must preserve both facts and name the reconnect action instead
   of showing a stale rate-limit message or generic connection failure.
+- For a GlassHive-backed main Agent, a native lifecycle `queued`, `waiting`, `started`, or provider
+  `fallback` event is not visible assistant authorship and must not suppress recovery. A structured retryable quota/rate
+  admission failure before text, reasoning, plan, tool, or file activity uses the configured
+  Agent Builder `fallback_llm_*` route exactly once. The Telegram stream and outer response stay the
+  same, while GlassHive receives a distinct fallback-attempt idempotency key so it starts Claude
+  instead of replaying the failed Codex request. After any authoring evidence, the provider must
+  return the honest terminal blocker instead of starting a second author. Cancellation during lazy
+  initialization or fallback execution must prevent or stop the fallback attempt.
 - Telegram SSE resume must tolerate the normal race where generation completes while the first
   stream connection is interrupted. The configured stream services should retain completed
   successful jobs for the store's short completion TTL and replay the cached final event to late
   subscribers. Truly expired or missing streams may still return a clear missing/expired-stream
   failure, but the normal completion path must not be reported as a generic connection problem.
+- A GlassHive-backed Telegram turn may legitimately stay quiet while its harness uses files or
+  tools. The compiled bridge defaults therefore keep the quick `/chat` request budget at 120 seconds
+  but set `VIVENTIUM_TELEGRAM_SSE_READ_TIMEOUT_S=720` for the authored stream. This covers a
+  ten-minute run plus transport margin without making a quiet interval look like provider failure.
+- A timeout, network interruption, or SSE reconnect must reuse the same stream/idempotency key. It
+  may reattach to the active native request, but it must never launch a second authoring run or send
+  a late duplicate Telegram reply.
 - Transport-level bridge fallbacks must remain text-mode diagnostics, not synthetic voice replies.
   When Telegram always-voice output is enabled, the bot may voice assistant answers, but it must not
   synthesize local transport/plumbing failures such as an exhausted expired-stream retry.
@@ -495,3 +568,33 @@ processing error; the caption must not continue alone.
 - Telegram bot logs
 - Mongo proof of the exact user and assistant turns
 - attachment delivery proof when files are involved
+
+## Logical-Turn Supersession
+
+[`09_Agent_Streaming_Usage.md`](09_Agent_Streaming_Usage.md) owns the cross-surface logical-turn,
+revision, adapter-capability, and delivery-acknowledgement contract. Telegram implements that shared
+contract; it does not own a Telegram-only coordinator.
+
+- A new Telegram conversation starts with provisional gateway identity, but any connected-tool or
+  conversation-provider grant is signed only after LibreChat creates the durable conversation and
+  response message ids. Provider refresh receives that finalized run body. A provisional `new`
+  conversation or missing message id must never reach the capability broker as a valid turn scope.
+- A broker-scope failure is a connected-tool authorization blocker, not evidence that the upstream
+  provider rejected the owner. The visible answer must not blame WHOOP, another provider, or a web
+  challenge unless an actual provider call produced that evidence.
+
+- `LONG_TEXT` remains only a bounded pre-dispatch latency optimization. Rapid source messages stay
+  distinct, ordered user segments after dispatch.
+- Telegram text, finalized voice-note transcripts, and file/clarification segments are stable on
+  receipt and may supersede unfinished assistant response/authoring for the same canonical
+  conversation.
+- Only the stale assistant preview is deleted. A user transcript or file source segment is never
+  deleted as though it were assistant output.
+- Preview deletion failure records degraded delivery and prevents subsequent stale edits; it does
+  not produce a false `Connection error. Please retry.` when the current revision succeeds.
+- Pending voice transcription preserves receipt order through the existing bounded wait. Failure
+  produces a truthful unavailable-transcription result while later text may continue.
+- Committed external effects and durable GlassHive/background work survive presentation
+  supersession. Late results are re-attributed to the current logical turn or sent as truthful
+  completion follow-ups rather than silently dropped or delivered as stale prose.
+- The successful final send/edit is Telegram's presentation commit. Streaming previews are not.

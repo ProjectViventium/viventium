@@ -51,6 +51,41 @@ from livekit.agents import StopResponse
 from livekit.agents.stt import SpeechData, SpeechEvent, SpeechEventType
 from livekit.agents.llm.chat_context import ChatContext, ChatMessage
 from speaker_segments import SpeakerSegmentTracker, SPEAKER_CONTEXT_EXTRA_KEY
+from worker import (
+    _apply_requested_voice_route,
+    _attach_room_diagnostics,
+    _build_assemblyai_stt_kwargs,
+    _build_voice_capability_catalog,
+    _ensure_turn_detector_runner_registered,
+    _semantic_turn_detector_status,
+    _silero_vad_kwargs_for_env,
+    _supports_semantic_turn_detector,
+    _turn_detector_model_is_cached,
+    _turn_detector_runner_registered,
+    _vad_kwargs_cache_key,
+    _active_voice_job_markers,
+    _wait_for_active_voice_jobs_before_prewarm,
+    _clear_active_voice_job_marker,
+    _mark_active_voice_job,
+    _voice_sync_transcription_enabled,
+    ViventiumVoiceAgent,
+    _publish_livekit_speaker_segments,
+    _publish_livekit_task_event,
+    _interrupt_livekit_speech_handles,
+    _interrupt_agent_session_speech,
+    _register_presentation_lifecycle_handlers,
+    _apply_authoritative_call_mode_to_speech_planes,
+    _suspend_all_call_speech_until_authoritative,
+    _apply_task_cancel_suppression,
+    AuthoritativeCallModeState,
+    CallTaskStreamSpeechAuthority,
+    _ingest_raw_stt_speaker_event,
+    _linked_participant_speaker_context,
+    build_stt_selection,
+    load_env,
+    load_turn_detection,
+    optional_module_available,
+)
 
 
 def _authoritative_state(*, mode="call", revision=7):
@@ -1524,6 +1559,124 @@ class TestWorkerTurnHandling(unittest.TestCase):
         self.assertIn("retain_format=True", source)
         self.assertIn("ignore_punctuation=False", source)
         self.assertIn("split_character=True", source)
+
+    def test_presentation_events_distinguish_provisional_barge_in_from_generated_reply(self) -> None:
+        class Session:
+            def __init__(self):
+                self.handlers = {}
+
+            def on(self, name):
+                def register(handler):
+                    self.handlers[name] = handler
+                    return handler
+
+                return register
+
+        class Llm:
+            def __init__(self):
+                self.handles = []
+                self.provisional = 0
+
+            def register_speech_handle(self, handle):
+                self.handles.append(handle)
+
+            def note_provisional_interruption(self):
+                self.provisional += 1
+
+        session = Session()
+        llm = Llm()
+        _register_presentation_lifecycle_handlers(session, llm)
+
+        generated = object()
+        session.handlers["speech_created"](
+            SimpleNamespace(
+                source="generate_reply",
+                user_initiated=True,
+                speech_handle=generated,
+            )
+        )
+        session.handlers["speech_created"](
+            SimpleNamespace(source="say", user_initiated=True, speech_handle=object())
+        )
+        session.handlers["overlapping_speech"](
+            SimpleNamespace(is_interruption=False)
+        )
+        session.handlers["overlapping_speech"](
+            SimpleNamespace(is_interruption=True)
+        )
+
+        self.assertEqual(llm.handles, [generated])
+        self.assertEqual(llm.provisional, 1)
+
+    def test_replacement_prewarm_never_outwaits_an_active_call(self) -> None:
+        marker = SimpleNamespace()
+        with (
+            patch.dict(
+                os.environ,
+                {"VIVENTIUM_VOICE_REPLACEMENT_PREWARM_MAX_WAIT_S": "0.01"},
+                clear=False,
+            ),
+            patch(
+                "worker._active_voice_job_markers",
+                side_effect=[[marker], [marker], []],
+            ) as active_markers,
+            patch("worker.time.monotonic", side_effect=[0.0, 1.0, 2.0]),
+            patch("worker.time.sleep"),
+        ):
+            _wait_for_active_voice_jobs_before_prewarm()
+
+        self.assertEqual(active_markers.call_count, 3)
+
+    def test_room_empty_participant_disconnect_clears_active_marker(self) -> None:
+        class FakeRoom:
+            name = "room"
+
+            def __init__(self) -> None:
+                self.handlers = {}
+                self.remote_participants = {}
+
+            def on(self, event_name):
+                def _register(handler):
+                    self.handlers[event_name] = handler
+                    return handler
+
+                return _register
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            with patch.dict(
+                os.environ,
+                {
+                    "TMPDIR": tmp_dir,
+                    "VIVENTIUM_VOICE_WORKER_RUN_ID": "test-run",
+                },
+                clear=False,
+            ):
+                marker = _mark_active_voice_job("job-1")
+                room = FakeRoom()
+                ctx = SimpleNamespace(room=room)
+                participant = SimpleNamespace(identity="owner")
+
+                _attach_room_diagnostics(
+                    ctx,
+                    call_session_id="test-call",
+                    active_job_marker=marker,
+                )
+                room.handlers["participant_disconnected"](participant)
+
+                self.assertNotIn(marker, _active_voice_job_markers())
+
+    def test_local_whisper_defaults_tts_prewarm_off_to_protect_stt_latency(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "VIVENTIUM_STT_PROVIDER": "whisper_local",
+                "VIVENTIUM_TTS_PROVIDER": "local_chatterbox_turbo_mlx_8bit",
+            },
+            clear=True,
+        ):
+            env = load_env()
+
+        self.assertFalse(env.voice_prewarm_local_tts)
 
 
 if __name__ == "__main__":

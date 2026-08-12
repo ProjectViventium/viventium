@@ -58,6 +58,11 @@ Core components:
 
 Reference: `viventium_v0_4/docs/ARCHITECTURE.md`
 
+The joined continuity integrity command is `bin/viventium cognitive-integrity --json`. It reports
+each control plane independently and fails closed when a natural scheduled run is unobserved or the
+latest receipt does not match the currently configured provider/model/effort. A healthy `/host`,
+memory row, prompt bundle, or manual kickstart cannot certify a different plane.
+
 ## v0.3 (Python Cortex Stack)
 
 Flow summary:

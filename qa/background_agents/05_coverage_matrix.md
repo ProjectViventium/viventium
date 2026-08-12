@@ -33,9 +33,10 @@
 - `ACT-35` protects Red Team's decision-method stack: explicit Socratic/no-bullshit/premortem asks
   on a concrete plan activate the Red Team with method-lens output, while pure method education stays
   quiet.
-- `ACT-36` protects the whole classifier topology: exact-runtime evaluation covers every cortex,
+- `ACT-36` protects the classifier topology: exact-runtime evaluation covers every classifier-owned cortex,
   separates semantic accuracy from provider availability/latency, and rejects sibling leakage,
-  stale-turn activation, and retired activation-model defaults.
+  stale-turn activation, and retired activation-model defaults. It does not cover a cortex whose
+  structured mode is `always`.
 - `ACT-37` protects every cortex card against mid-turn interruption and write reordering: status
   snapshots persist incrementally, queued writes coalesce, and the final snapshot is authoritative.
 - `ACT-38` protects fallback availability when a provider client ignores cancellation: the local

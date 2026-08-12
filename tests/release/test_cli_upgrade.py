@@ -17,6 +17,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+import time
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -432,7 +433,8 @@ def test_destructive_flows_drain_native_stack_before_removing_app_support() -> N
     uninstall_function = extract_shell_function(cli_source, "uninstall_local_installation")
 
     assert "prepare_runtime_exports" in drain_function
-    assert 'source "$GENERATED_ENV"' in drain_function
+    assert "load_selected_runtime_environment_for_children" in drain_function
+    assert 'source "$GENERATED_ENV"' not in drain_function
     assert 'scripts/viventium/native_stack.sh" stop' in drain_function
     assert 'stop >/dev/null 2>&1' not in drain_function
     assert "|| true" not in drain_function
@@ -521,27 +523,26 @@ def test_stop_children_receive_the_exact_generated_runtime_environment() -> None
     command_cases = cli_source.rsplit('case "$COMMAND" in', 1)[1]
     stop_section = command_cases.split("  stop)", 1)[1].split("  snapshot)", 1)[0]
     drain_function = extract_shell_function(cli_source, "drain_native_stack_before_state_removal")
+    environment_loader = extract_shell_function(
+        cli_source, "load_selected_runtime_environment_for_children"
+    )
+
+    runtime_index = environment_loader.index('source "$GENERATED_ENV"')
+    local_runtime_index = environment_loader.index(
+        'source "$GENERATED_LOCAL_ENV"', runtime_index
+    )
+    assert runtime_index < local_runtime_index
 
     for section in (stop_section, drain_function):
         prepare_index = section.index("prepare_runtime_exports")
-        export_on_index = section.index("set -a", prepare_index)
-        runtime_index = section.index('source "$GENERATED_ENV"', export_on_index)
-        local_runtime_index = section.index(
-            'source "$GENERATED_LOCAL_ENV"', runtime_index
+        loader_index = section.index(
+            "load_selected_runtime_environment_for_children", prepare_index
         )
-        export_off_index = section.index("set +a", local_runtime_index)
         native_stop_index = section.index(
-            'scripts/viventium/native_stack.sh" stop', export_off_index
+            'scripts/viventium/native_stack.sh" stop', loader_index
         )
 
-        assert (
-            prepare_index
-            < export_on_index
-            < runtime_index
-            < local_runtime_index
-            < export_off_index
-            < native_stop_index
-        )
+        assert prepare_index < loader_index < native_stop_index
 
 
 @pytest.mark.parametrize(
@@ -6052,3 +6053,144 @@ exit 1
     assert "Running Viventium stack detected. Stopping before component refresh..." in completed.stdout
     assert (tmp_path / "stop-called").exists()
     assert (tmp_path / "bootstrap-observed-stop.txt").read_text(encoding="utf-8") == "yes"
+
+
+def test_failed_upgrade_recovery_uses_verified_transactional_rollback() -> None:
+    cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
+    recovery_function = extract_shell_function(cli_source, "recover_running_stack_after_failed_upgrade")
+
+    assert '"${UPGRADE_TRANSACTION_ACTIVE:-0}" == "1"' in recovery_function
+    assert "upgrade_transaction_rollback" in recovery_function
+    assert "verify_loaded_telegram_recovery_after_rollback" in recovery_function
+    assert "previous verified Viventium runtime and running state were restored" in recovery_function
+    assert "partially applied" not in recovery_function
+
+
+def test_continuity_error_prevents_transaction_commit_and_runtime_finalization() -> None:
+    cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
+    upgrade_section = cli_source.rsplit("  upgrade|update)", 1)[1].split("  configure|wizard)", 1)[0]
+    post_capture = upgrade_section.index('POST_UPGRADE_CONTINUITY_AUDIT="$(capture_continuity_audit')
+    continuity_checkpoint = upgrade_section.index(
+        'upgrade_transaction_checkpoint "continuity_verified"',
+        post_capture,
+    )
+    transaction_commit = upgrade_section.index("upgrade_transaction_commit", continuity_checkpoint)
+    runtime_finalization = upgrade_section.index(
+        "finalize_quiesced_upgrade_session_after_commit",
+        transaction_commit,
+    )
+
+    assert 'case "$POST_UPGRADE_CONTINUITY_STATUS" in' in upgrade_section
+    assert 'ok|warning)' in upgrade_section
+    assert "rolling back" in upgrade_section[post_capture:continuity_checkpoint]
+    assert post_capture < continuity_checkpoint < transaction_commit < runtime_finalization
+
+
+def test_launch_stack_detached_defers_to_active_manual_start_claim(tmp_path: Path) -> None:
+    cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
+    function_defs = "".join(
+        extract_shell_function(cli_source, name)
+        for name in (
+            "runtime_start_claim_file",
+            "runtime_start_claim_active",
+            "launch_stack_detached",
+        )
+    )
+    fake_repo = tmp_path / "repo"
+    fake_runner = fake_repo / "bin" / "viventium"
+    write_executable(fake_runner, "#!/bin/bash\nsleep 30\n")
+    owner = subprocess.Popen([str(fake_runner)], start_new_session=True)
+    app_support = tmp_path / "app-support"
+    claim = app_support / "state" / "runtime" / "startup-in-progress"
+    claim.parent.mkdir(parents=True)
+    claim.write_text(f"{owner.pid}\n{fake_repo}\n{int(time.time())}\n", encoding="utf-8")
+    config = tmp_path / "config.yaml"
+    config.write_text("version: 1\n", encoding="utf-8")
+
+    try:
+        completed = subprocess.run(
+            [
+                "bash",
+                "-lc",
+                (
+                    "set -euo pipefail\n"
+                    f"{function_defs}"
+                    f"APP_SUPPORT_DIR='{app_support}'\n"
+                    f"CONFIG_FILE='{config}'\n"
+                    f"REPO_ROOT='{fake_repo}'\n"
+                    "ensure_app_support_layout() { :; }\n"
+                    "initialize_telegram_user_config_authority() { return 0; }\n"
+                    "user_surface_healthy() { return 1; }\n"
+                    "detached_launch_process_group_running() { return 1; }\n"
+                    "is_stack_running() { printf 'stack-check\\n' >&2; return 0; }\n"
+                    "stop_stack_for_upgrade() { printf 'unexpected-stop\\n'; }\n"
+                    "launch_stack_detached\n"
+                ),
+            ],
+            cwd=REPO_ROOT,
+            check=True,
+            text=True,
+            capture_output=True,
+        )
+    finally:
+        owner.kill()
+        owner.wait(timeout=5)
+
+    assert completed.stdout.strip() == "Viventium is already starting."
+    assert "stack-check" not in completed.stderr
+
+
+def test_launch_stack_detached_live_receipt_suppresses_partial_stack_restart(
+    tmp_path: Path,
+) -> None:
+    cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
+    function_defs = "".join(
+        extract_shell_function(cli_source, name)
+        for name in (
+            "detached_launch_process_group_file",
+            "read_detached_launch_process_group",
+            "detached_launch_process_group_running",
+            "launch_stack_detached",
+        )
+    )
+    app_support = tmp_path / "app-support"
+    config = tmp_path / "config.yaml"
+    restart_marker = tmp_path / "restart-attempted"
+    config.write_text("version: 1\n", encoding="utf-8")
+    sleeper = subprocess.Popen(["/bin/sleep", "30"], start_new_session=True)
+    process_group = os.getpgid(sleeper.pid)
+    receipt = app_support / "state" / "runtime" / "isolated" / "detached-launch.pgid"
+    receipt.parent.mkdir(parents=True)
+    receipt.write_text(f"{process_group}\n", encoding="utf-8")
+
+    try:
+        completed = subprocess.run(
+            [
+                "bash",
+                "-lc",
+                (
+                    "set -euo pipefail\n"
+                    f"{function_defs}"
+                    f"APP_SUPPORT_DIR='{app_support}'\n"
+                    f"CONFIG_FILE='{config}'\n"
+                    "VIVENTIUM_RUNTIME_PROFILE=isolated\n"
+                    "ensure_app_support_layout() { :; }\n"
+                    "initialize_telegram_user_config_authority() { return 0; }\n"
+                    "user_surface_healthy() { return 1; }\n"
+                    "runtime_optional_surfaces_healthy() { return 1; }\n"
+                    f"is_stack_running() {{ : >'{restart_marker}'; return 0; }}\n"
+                    f"stop_stack_for_upgrade() {{ : >'{restart_marker}'; }}\n"
+                    "launch_stack_detached\n"
+                ),
+            ],
+            cwd=REPO_ROOT,
+            check=True,
+            text=True,
+            capture_output=True,
+        )
+    finally:
+        sleeper.kill()
+        sleeper.wait(timeout=5)
+
+    assert completed.stdout.strip() == "Viventium is already starting."
+    assert not restart_marker.exists()

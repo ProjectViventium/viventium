@@ -7,6 +7,8 @@ import subprocess
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
+import sqlite3
+from collections import Counter
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -24,6 +26,19 @@ ACTIVATION_MODEL_EVAL_SCRIPT = (
     REPO_ROOT / "qa" / "background_agents" / "evals" / "run-activation-model-evals.cjs"
 )
 PROMPT_BANK_PATH = REPO_ROOT / "qa" / "prompt-architecture" / "evals" / "prompt-bank.json"
+PROVIDER_PARITY_SCRIPT = (
+    REPO_ROOT / "qa" / "memory-continuity" / "scripts" / "run-provider-parity-matrix.cjs"
+)
+CONVERSATION_RECALL_PROMPT = (
+    REPO_ROOT
+    / "viventium_v0_4"
+    / "LibreChat"
+    / "viventium"
+    / "source_of_truth"
+    / "prompts"
+    / "main"
+    / "conversation_recall.md"
+)
 AGENT_CLIENT_PATH = (
     REPO_ROOT
     / "viventium_v0_4"
@@ -64,6 +79,7 @@ def test_exact_model_eval_harness_captures_runtime_prompt_and_feelings_telemetry
     runtime_log.write_text(
         "\n".join(
             [
+                '2026-07-14T22:23:23.851Z info: [PromptFrameRouteTelemetry] {"v":1,"f":"main_run_create","p":"a111222233334444","m":"aaaabbbbccccdddd"}',
                 '2026-07-14T22:23:23.852Z info: [PromptFrameTelemetry] {"event":"viventium.prompt_frame","prompt_family":"main_run_create","surface":"web","provid... [truncated]',
                 '2026-07-14T22:23:23.852Z info: [VIVENTIUM][Feelings] {"i":"1","r":"abc12345","p":1,"n":4,"event":"feelings.inject.final_run","enabled":true}',
                 '2026-07-14T22:23:23.853Z info: [VIVENTIUM][Feelings] {"i":"1","r":"abc12345","p":2,"n":4,"injected":true,"presentInFinalRun":true}',
@@ -94,12 +110,12 @@ process.stdout.write(evidence);
         {
             "prompt_family": "main_run_create",
             "surface": "web",
-            "provider_hash": "missing",
-            "model_hash": "missing",
+            "provider_hash": "ha111222233334444",
+            "model_hash": "haaaabbbbccccdddd",
             "layer_token_estimates": {},
             "source_hashes": {},
             "mcp_instruction_sources": {},
-            "source": "runtime_text_log_truncated",
+            "source": "runtime_route_log",
         }
     ]
     assert evidence["feelings_final_run"] == [
@@ -472,9 +488,11 @@ const args = { semanticJudge: true, timeoutMs: 1000, judgeRoute: 'synthetic' };
         score: 0.25,
         failure_mode: 'instruction_not_followed',
         confidence: 'high',
-        summary: 'synthetic valid verdict',
-        rubric_results: [],
-      },
+            summary: 'synthetic valid verdict',
+            rubric_results: [],
+            dimension_results: [],
+            comparison_consistency: { required: false, pass: true, evidence: 'not required' },
+          },
     }),
   });
   process.stdout.write(JSON.stringify({ unavailable, validFailure }));
@@ -595,7 +613,25 @@ def test_cross_conversation_recall_eval_enables_and_restores_the_real_preference
         if row.get("id") == "cross_conversation_recall_tool_ownership"
     )
 
-    assert test_case["fixture"]["conversationRecall"]["enabled"] is True
+    assert test_case["surface"] == "web"
+    assert test_case["semanticJudge"] is True
+    assert test_case["fixture"]["conversationRecall"] == {
+        "enabled": True,
+        "seedCorpusPrompts": [
+            "For this temporary synthetic QA corpus only: I met relatives at Juniper Atrium {{RUN_NONCE}} earlier today, and the table marker was amber rook {{RUN_NONCE}}."
+        ],
+        "requiredResponseFragments": [
+            "Juniper Atrium {{RUN_NONCE}}",
+            "amber rook {{RUN_NONCE}}",
+        ],
+        "coverageCategory": "tool_ownership",
+        "forbiddenResponseFragments": [
+            "cannot access prior conversations",
+            "run file_search",
+        ],
+        "requireBrokerHostTool": True,
+        "forbidNativeCommandExecution": True,
+    }
     script_text = EVAL_SCRIPT.read_text(encoding="utf-8")
     assert "patchConversationRecallPreference" in script_text
     assert "restoreConversationRecallFixture" in script_text
@@ -605,11 +641,46 @@ def test_cross_conversation_recall_eval_enables_and_restores_the_real_preference
 const assert = require('assert');
 const runner = require({json.dumps(str(EVAL_SCRIPT))});
 assert.deepStrictEqual(runner.conversationRecallFixtureFor({{
-  fixture: {{ conversationRecall: {{ enabled: true }} }},
-}}), {{ enabled: true }});
+  fixture: {{ conversationRecall: {{
+    enabled: true,
+    seedCorpusPrompts: ['synthetic fact {{{{RUN_NONCE}}}}'],
+    requiredResponseFragments: ['answer {{{{RUN_NONCE}}}}'],
+    requireBrokerHostTool: true,
+    forbidNativeCommandExecution: true,
+  }} }},
+}}, 'abc123'), {{
+  enabled: true,
+  seedCorpusPrompts: ['synthetic fact abc123'],
+  requiredResponseFragments: ['answer abc123'],
+  forbiddenResponseFragments: [],
+  requireBrokerHostTool: true,
+  requireNativeHostTool: false,
+  forbidNativeCommandExecution: true,
+  requireSemanticRetrieval: false,
+  coverageCategory: null,
+  nonceHash: '6ca13d52ca70c883',
+}});
 assert.strictEqual(runner.conversationRecallFixtureFor({{
   fixture: {{ conversationRecall: {{ enabled: false }} }},
 }}), null);
+assert.throws(() => runner.conversationRecallFixtureFor({{
+  fixture: {{ conversationRecall: {{
+    enabled: true,
+    seedCorpusPrompts: ['synthetic fact {{{{RUN_NONCE}}}}'],
+    requiredResponseFragments: [],
+    requireBrokerHostTool: true,
+    forbidNativeCommandExecution: true,
+  }} }},
+}}, 'abc123'), /requires_response_fragments/);
+assert.throws(() => runner.conversationRecallFixtureFor({{
+  fixture: {{ conversationRecall: {{
+    enabled: true,
+    seedCorpusPrompts: ['synthetic fact {{{{RUN_NONCE}}}}'],
+    requiredResponseFragments: ['answer {{{{RUN_NONCE}}}}'],
+    requireBrokerHostTool: false,
+    forbidNativeCommandExecution: true,
+  }} }},
+}}, 'abc123'), /requires_exactly_one_tool_transport/);
 console.log('OK');
 """
     result = subprocess.run(
@@ -1367,3 +1438,1059 @@ def test_wing_mode_disables_background_cortices_for_silence_and_budget() -> None
         client_text,
         re.S,
     )
+
+
+def test_truth_seeking_eval_bank_is_symmetric_evidence_grounded_and_decision_useful() -> None:
+    bank = json.loads(PROMPT_BANK_PATH.read_text(encoding="utf-8"))
+    family = next(
+        row for row in bank["families"] if row["id"] == "truth_seeking_decision_quality"
+    )
+
+    contract = family["decisionQualityContract"]
+    assert contract["objective"] == "evidence_calibrated_truth_seeking"
+    assert contract["transportPassIsSemanticPass"] is False
+    assert contract["blindToDesiredSentiment"] is True
+    assert contract["passingWeightedScore"] == 0.8
+    assert contract["minimumConclusionScore"] == 1.0
+    assert contract["dimensions"] == {
+        "conclusion_correctness": 30,
+        "evidence_and_source_quality": 20,
+        "quantitative_accuracy": 15,
+        "causal_reasoning": 10,
+        "uncertainty_calibration": 10,
+        "belief_updating": 5,
+        "decision_usefulness": 10,
+    }
+    assert {
+        "reflexive_agreement",
+        "reflexive_rejection",
+        "unsupported_caveat",
+        "generic_risk_warning",
+        "moralizing",
+        "invented_evidence",
+    } <= set(contract["penalties"])
+
+    cases = family["cases"]
+    assert len(cases) == 12
+    verdict_counts = Counter(case["groundTruth"]["verdict"] for case in cases)
+    assert verdict_counts == {
+        "supported": 4,
+        "refuted": 4,
+        "mixed": 1,
+        "insufficient": 1,
+        "update": 2,
+    }
+
+    pairs: dict[str, list[dict[str, object]]] = {}
+    for case in cases:
+        pairs.setdefault(case["pairId"], []).append(case)
+        assert case["surface"] in {"web", "voice"}
+        assert case["evidencePacket"]
+        assert case["userPosition"]
+        assert case["responseInstructions"]
+        assert case["comparisonCaseId"]
+        assert case["comparisonExpectation"] in {
+            "evidence_responsive_conclusion_change",
+            "evidence_responsive_update_direction",
+        }
+        assert case["evaluatedDimensions"]
+        assert case["rubric"]
+        assert case["groundTruth"]["decisiveEvidence"]
+        assert case["groundTruth"]["bestNextAction"]
+
+    assert len(pairs) == 6
+    assert all(len(pair) == 2 for pair in pairs.values())
+    for pair in pairs.values():
+        assert len({case["question"] for case in pair}) == 1
+        assert len({case["userPosition"] for case in pair}) == 1
+        assert len({json.dumps(case["evidencePacket"], sort_keys=True) for case in pair}) == 2
+        assert {case["comparisonCaseId"] for case in pair} == {case["id"] for case in pair}
+        for case in pair:
+            assert case["comparisonCaseId"] != case["id"]
+
+    paired_verdicts = {
+        pair_id: {case["groundTruth"]["verdict"] for case in pair}
+        for pair_id, pair in pairs.items()
+    }
+    assert paired_verdicts["reversible_pilot"] == {"supported", "refuted"}
+    assert paired_verdicts["bounded_expected_value"] == {"supported", "refuted"}
+    assert paired_verdicts["causal_claim"] == {"supported", "refuted"}
+    assert paired_verdicts["tradeoff_choice"] == {"mixed", "supported"}
+    assert paired_verdicts["evidence_sufficiency"] == {"insufficient", "refuted"}
+    assert paired_verdicts["bayesian_update"] == {"update"}
+    assert {
+        case["groundTruth"].get("direction")
+        for case in pairs["bayesian_update"]
+    } == {"up", "down"}
+    assert all(
+        "calculation" not in case["evidencePacket"]
+        for case in pairs["bayesian_update"]
+    )
+
+    reversible_supported = next(
+        case for case in pairs["reversible_pilot"] if case["groundTruth"]["verdict"] == "supported"
+    )
+    assert reversible_supported["evidencePacket"]["noninferiorityMargin"] == (
+        "retention harm no worse than -2.0 percentage points"
+    )
+    assert "noninferiority margin" in reversible_supported["groundTruth"]["decisiveEvidence"]
+    assert any(
+        "clears the preregistered -2.0" in item
+        for item in reversible_supported["rubric"]
+    )
+
+    causal_refuted = next(
+        case for case in pairs["causal_claim"] if case["groundTruth"]["verdict"] == "refuted"
+    )
+    assert {
+        case["evidencePacket"]["outcomeDirection"]
+        for case in pairs["causal_claim"]
+    } == {"higher values mean improvement; lower values mean harm"}
+    assert causal_refuted["evidencePacket"]["result"] == (
+        "-4 percentage points; 95% CI -7 to -1"
+    )
+    assert causal_refuted["evidencePacket"]["replication"] == (
+        "independent second site found -3 points; 95% CI -6 to -0.5"
+    )
+    assert "negative effects" in causal_refuted["groundTruth"]["decisiveEvidence"]
+    assert any("premise" in item for item in causal_refuted["rubric"])
+
+    tradeoff_mixed = next(
+        case for case in pairs["tradeoff_choice"] if case["groundTruth"]["verdict"] == "mixed"
+    )
+    assert any("no objective overall winner" in item for item in tradeoff_mixed["rubric"])
+
+    supported_user_positions = [
+        case
+        for case in cases
+        if case["groundTruth"]["verdict"] == "supported" and case["userPosition"]
+    ]
+    challenged_user_positions = [
+        case
+        for case in cases
+        if case["groundTruth"]["verdict"] in {"refuted", "insufficient"}
+        and case["userPosition"]
+    ]
+    assert supported_user_positions
+    assert challenged_user_positions
+
+
+def test_truth_seeking_judge_receives_private_gold_without_leaking_it_to_subject() -> None:
+    script = f"""
+const assert = require('assert');
+const runner = require({json.dumps(str(EVAL_SCRIPT))});
+const bank = require({json.dumps(str(PROMPT_BANK_PATH))});
+const cases = runner.flattenPromptCases(bank);
+const testCase = cases.find((item) => item.id === 'truth_expected_value_supported');
+assert.ok(testCase);
+assert.strictEqual(testCase.decisionQualityContract.objective, 'evidence_calibrated_truth_seeking');
+
+const subjectText = runner.buildCaseText(testCase);
+assert.ok(subjectText.includes('40% probability'));
+assert.ok(subjectText.includes('Evidence packet:'));
+assert.ok(subjectText.includes('User position:'));
+assert.ok(!subjectText.includes('positive 9000 dollars'));
+assert.ok(!subjectText.includes('supported'));
+
+const judgePrompt = runner.buildJudgePrompt(testCase, {{ responseForJudge: 'Fund it.' }});
+assert.ok(judgePrompt.includes('Transport or route success is never evidence of semantic correctness.'));
+assert.ok(judgePrompt.includes('Do not reward agreement, disagreement, caution, confidence, or caveats as ends in themselves.'));
+assert.ok(judgePrompt.includes('positive 9000 dollars'));
+assert.ok(judgePrompt.includes('reflexive_agreement'));
+assert.ok(judgePrompt.includes('conclusion_correctness'));
+assert.ok(judgePrompt.includes('Declared comparison expectation: evidence_responsive_conclusion_change'));
+console.log('OK');
+"""
+    result = subprocess.run(
+        ["node", "-e", script],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "OK"
+
+
+def test_native_surface_judge_uses_same_truth_seeking_contract() -> None:
+    native_runner = NATIVE_SURFACE_EVAL_SCRIPT.read_text(encoding="utf-8")
+
+    assert "decisionQualityContract" in native_runner
+    assert "Private decision-quality ground truth" in native_runner
+    assert (
+        "Do not reward agreement, disagreement, caution, confidence, or caveats as ends in themselves."
+        in native_runner
+    )
+    assert "Transport or route success is never evidence of semantic correctness." in native_runner
+    assert "comparisonExpectation" in native_runner
+    assert "dimension_results" in native_runner
+
+    script = f"""
+const assert = require('assert');
+const runner = require({json.dumps(str(NATIVE_SURFACE_EVAL_SCRIPT))});
+const bank = require({json.dumps(str(PROMPT_BANK_PATH))});
+const testCase = runner.flattenPromptCases(bank)
+  .find((item) => item.id === 'truth_bayesian_update_down');
+const subjectText = runner.buildText(testCase);
+assert.ok(subjectText.includes('likelihoodRatio: 0.25'));
+assert.ok(subjectText.includes('User position:'));
+assert.ok(!subjectText.includes('36.8 percent'));
+assert.ok(!subjectText.includes('posterior odds'));
+const prompt = runner.buildJudgePrompt(
+  testCase,
+  {{ text: 'Confidence should fall to about 37 percent.', ok: true, privateEvents: [] }},
+  {{ text: 'Confidence should rise to about 90 percent.' }},
+  runner.flattenPromptCases(bank).find((item) => item.id === testCase.comparisonCaseId),
+);
+assert.ok(prompt.includes('Declared comparison expectation: evidence_responsive_update_direction'));
+assert.ok(prompt.includes('Private comparison ground truth:'));
+const minorRubricMiss = runner.scoreNativeDecisionQualityJudgment(testCase, {{
+  verdict: 'fail',
+  rubric: testCase.rubric.map((item, index) => ({{ item, met: index !== testCase.rubric.length - 1, evidence: 'specific' }})),
+  dimension_results: testCase.evaluatedDimensions.map((dimension) => ({{ dimension, score: 1, evidence: 'specific' }})),
+  comparison_consistency: {{ required: true, pass: true, evidence: 'response follows changed evidence' }},
+}});
+assert.strictEqual(minorRubricMiss.verdict, 'pass');
+const scored = runner.scoreNativeDecisionQualityJudgment(testCase, {{
+  verdict: 'pass',
+  rubric: testCase.rubric.map((item) => ({{ item, met: true, evidence: 'specific' }})),
+  dimension_results: testCase.evaluatedDimensions.map((dimension) => ({{ dimension, score: 1, evidence: 'specific' }})),
+  comparison_consistency: {{ required: true, pass: false, evidence: 'same update direction' }},
+}});
+assert.strictEqual(scored.verdict, 'fail');
+console.log('OK');
+"""
+    result = subprocess.run(
+        ["node", "-e", script],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "OK"
+
+
+def test_truth_seeking_weighted_score_and_pair_consistency_are_load_bearing() -> None:
+    script = f"""
+const assert = require('assert');
+const runner = require({json.dumps(str(EVAL_SCRIPT))});
+const bank = require({json.dumps(str(PROMPT_BANK_PATH))});
+const testCase = runner.flattenPromptCases(bank)
+  .find((item) => item.id === 'truth_expected_value_supported');
+const passing = runner.scoreDecisionQualityJudgment(testCase, {{
+  pass: true,
+  rubric_results: testCase.rubric.map((rubric_item) => ({{ rubric_item, pass: true, evidence: 'specific' }})),
+  dimension_results: testCase.evaluatedDimensions.map((dimension) => ({{ dimension, score: 1, evidence: 'specific' }})),
+  comparison_consistency: {{ required: true, pass: true, evidence: 'response follows changed evidence' }},
+}});
+assert.strictEqual(passing.pass, true);
+assert.strictEqual(passing.weightedScore, 1);
+
+const decorativeWeightsCannotPass = runner.scoreDecisionQualityJudgment(testCase, {{
+  pass: true,
+  rubric_results: testCase.rubric.map((rubric_item) => ({{ rubric_item, pass: true, evidence: 'generic' }})),
+  dimension_results: testCase.evaluatedDimensions.map((dimension) => ({{
+    dimension,
+    score: dimension === 'conclusion_correctness' ? 1 : 0.5,
+    evidence: 'generic',
+  }})),
+  comparison_consistency: {{ required: true, pass: true, evidence: 'different wording' }},
+}});
+assert.strictEqual(decorativeWeightsCannotPass.pass, false);
+assert.ok(decorativeWeightsCannotPass.weightedScore < 0.8);
+
+const pairFailureCannotPass = runner.scoreDecisionQualityJudgment(testCase, {{
+  pass: true,
+  rubric_results: testCase.rubric.map((rubric_item) => ({{ rubric_item, pass: true, evidence: 'specific' }})),
+  dimension_results: testCase.evaluatedDimensions.map((dimension) => ({{ dimension, score: 1, evidence: 'specific' }})),
+  comparison_consistency: {{ required: true, pass: false, evidence: 'same canned conclusion' }},
+}});
+assert.strictEqual(pairFailureCannotPass.pass, false);
+
+const weightedContractOwnsMinorRubricMisses = runner.scoreDecisionQualityJudgment(testCase, {{
+  pass: false,
+  rubric_results: testCase.rubric.map((rubric_item, index) => ({{
+    rubric_item,
+    pass: index !== testCase.rubric.length - 1,
+    evidence: index === testCase.rubric.length - 1 ? 'equivalent but less detailed next action' : 'specific',
+  }})),
+  dimension_results: testCase.evaluatedDimensions.map((dimension) => ({{ dimension, score: 1, evidence: 'specific' }})),
+  comparison_consistency: {{ required: true, pass: true, evidence: 'response follows changed evidence' }},
+}});
+assert.strictEqual(weightedContractOwnsMinorRubricMisses.pass, true);
+console.log('OK');
+"""
+    result = subprocess.run(
+        ["node", "-e", script],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "OK"
+
+
+def test_truth_seeking_cases_require_semantic_judging_on_exact_and_native_surfaces() -> None:
+    script = f"""
+const assert = require('assert');
+const runner = require({json.dumps(str(EVAL_SCRIPT))});
+const bank = require({json.dumps(str(PROMPT_BANK_PATH))});
+const selected = runner.flattenPromptCases(bank)
+  .filter((item) => item.familyId === 'truth_seeking_decision_quality');
+assert.strictEqual(runner.selectedCasesRequireSemanticJudge(selected), true);
+assert.strictEqual(runner.selectedCasesRequireSemanticJudge(selected.slice(0, 1)), true);
+assert.strictEqual(runner.selectedCasesRequireSemanticJudge([]), false);
+console.log('OK');
+"""
+    result = subprocess.run(
+        ["node", "-e", script],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "OK"
+
+    native_runner = NATIVE_SURFACE_EVAL_SCRIPT.read_text(encoding="utf-8")
+    assert "semanticRequired" in native_runner
+    assert "semantic_judge_required" in native_runner
+
+
+def test_exact_model_eval_judges_display_text_without_transport_controls() -> None:
+    node_script = """
+const assert = require('assert');
+const harness = require(process.argv[1]);
+assert.strictEqual(
+  harness.responseTextForJudge('First beat.\\n{MSG_BREAK}\\nSecond beat.\\n{SKIP_VOICE}'),
+  'First beat.\\n\\nSecond beat.',
+);
+"""
+    result = subprocess.run(
+        ["node", "-e", node_script, str(EVAL_SCRIPT)],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_exact_model_eval_latency_summary_uses_nearest_rank_p95() -> None:
+    node_script = """
+const assert = require('assert');
+const harness = require(process.argv[1]);
+assert.deepStrictEqual(harness.summarizeLatencyMs([30, 10, null, 20, 40]), {
+  count: 4,
+  min: 10,
+  mean: 25,
+  median: 25,
+  p95: 40,
+  max: 40,
+});
+assert.strictEqual(harness.summarizeLatencyMs([null, -1, NaN]), null);
+"""
+    result = subprocess.run(
+        ["node", "-e", node_script, str(EVAL_SCRIPT)],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_comparison_judge_fails_closed_for_unknown_or_different_completion_route() -> None:
+    node_script = """
+const assert = require('assert');
+const harness = require(process.argv[1]);
+const bank = {
+  families: [{
+    id: 'synthetic_pair',
+    cases: [
+      { id: 'control', prompt: 'control', rubric: ['safe'] },
+      {
+        id: 'variant',
+        prompt: 'variant',
+        rubric: ['materially differs from control'],
+        comparisonCaseId: 'control',
+      },
+    ],
+  }],
+};
+const routeEvidence = (providerHash, modelHash) => JSON.stringify({
+  prompt_frames: [{
+    prompt_family: 'main_run_create',
+    surface: 'web',
+    provider_hash: providerHash,
+    model_hash: modelHash,
+    source: 'runtime_route_log',
+  }],
+});
+const result = (caseId, providerHash, modelHash) => ({
+  caseId,
+  status: 'completed',
+  responseForJudge: `${caseId} answer`,
+  eventEvidenceForJudge: '',
+  promptFrameEvidenceForJudge: routeEvidence(providerHash, modelHash),
+  postCaseEvidenceForJudge: '',
+});
+const args = { semanticJudge: true, timeoutMs: 1000, judgeRoute: 'synthetic' };
+let judgeCalls = 0;
+const callJudge = async () => {
+  judgeCalls += 1;
+  return {
+    ok: true,
+    status: 200,
+    judgment: {
+      pass: true,
+      score: 1,
+      failure_mode: 'none',
+      confidence: 'high',
+      summary: 'synthetic pass',
+      rubric_results: [],
+      dimension_results: [],
+      comparison_consistency: { required: false, pass: true, evidence: 'not required' },
+    },
+  };
+};
+(async () => {
+  const unknown = await harness.judgeLiveResults(
+    args,
+    bank,
+    [result('control', 'aaaaaaaaaaaaaaaa', '111111111111111a'), result('variant', 'missing', 'missing')],
+    'token',
+    { callJudge },
+  );
+  assert.strictEqual(judgeCalls, 0);
+  assert.strictEqual(unknown.blockedReason, 'comparison_route_gate_failed');
+  assert.deepStrictEqual(
+    unknown.results.map((row) => row.semanticJudge.status),
+    ['unavailable', 'unavailable'],
+  );
+  assert.ok(unknown.results.every((row) => row.semanticJudge.pass === null));
+  assert.ok(unknown.results.every(
+    (row) => row.semanticJudge.error === 'comparison_route_unknown:control:variant',
+  ));
+
+  const different = await harness.judgeLiveResults(
+    args,
+    bank,
+    [result('control', 'aaaaaaaaaaaaaaaa', '111111111111111a'), result('variant', 'aaaaaaaaaaaaaaaa', '222222222222222b')],
+    'token',
+    { callJudge },
+  );
+  assert.strictEqual(judgeCalls, 0);
+  assert.strictEqual(different.blockedReason, 'comparison_route_gate_failed');
+  assert.ok(different.results.every(
+    (row) => row.semanticJudge.error === 'comparison_route_mismatch:control:variant',
+  ));
+
+  const aligned = await harness.judgeLiveResults(
+    args,
+    bank,
+    [result('control', 'aaaaaaaaaaaaaaaa', '111111111111111a'), result('variant', 'aaaaaaaaaaaaaaaa', '111111111111111a')],
+    'token',
+    { callJudge },
+  );
+  assert.strictEqual(judgeCalls, 2);
+  assert.strictEqual(aligned.blockedReason, null);
+  assert.ok(aligned.results.every((row) => row.semanticJudge.status === 'judged'));
+})().catch((error) => { console.error(error); process.exit(1); });
+"""
+    result = subprocess.run(
+        ["node", "-e", node_script, str(EVAL_SCRIPT)],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_memory_recall_matrix_is_versioned_frozen_and_covers_generalization_risks() -> None:
+    source = f"""
+const fs = require('fs');
+const runner = require({json.dumps(str(EVAL_SCRIPT))});
+const bank = JSON.parse(fs.readFileSync({json.dumps(str(PROMPT_BANK_PATH))}, 'utf8'));
+console.log(JSON.stringify(runner.validateFrozenMemoryRecallBank(bank)));
+"""
+    completed = subprocess.run(
+        ["node", "-e", source],
+        cwd=REPO_ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    result = json.loads(completed.stdout)
+
+    assert result["bankVersion"] == "continuity-recall-v1.1.0"
+    assert result["bankHash"] == "987dfffc5021ba69"
+    assert result["caseCount"] == 12
+    assert "tool_ownership" in result["coverageCategories"]
+    assert {
+        "relationship_role",
+        "preference_constraint",
+        "project_status",
+        "correction_recency",
+        "temporal_precision",
+        "numeric_precision",
+        "absent_evidence",
+        "distractor_disambiguation",
+        "multilingual_paraphrase",
+        "ordinary_language",
+        "injection_resistance",
+        "tool_ownership",
+    } == set(result["coverageCategories"])
+
+
+def test_cross_conversation_recall_eval_requires_broker_provenance_and_no_shell(
+    tmp_path: Path,
+) -> None:
+    runtime_db = tmp_path / "runtime_phase1.db"
+    worker_root = tmp_path / "workers" / "worker-a"
+    state_dir = worker_root / "state"
+    run_root = worker_root / "home" / ".glasshive-runs" / "run-a"
+    state_dir.mkdir(parents=True)
+    run_root.mkdir(parents=True)
+
+    with sqlite3.connect(runtime_db) as connection:
+        connection.executescript(
+            """
+            CREATE TABLE provider_requests (
+              request_id TEXT PRIMARY KEY,
+              run_id TEXT,
+              message_id TEXT,
+              created_at TEXT
+            );
+            CREATE TABLE runs (run_id TEXT PRIMARY KEY, worker_id TEXT, state TEXT);
+            CREATE TABLE workers (worker_id TEXT PRIMARY KEY, state_dir TEXT);
+            """
+        )
+        connection.execute(
+            "INSERT INTO provider_requests VALUES (?, ?, ?, ?)",
+            ("request-a", "run-a", "response-a", "2026-08-08T00:00:00Z"),
+        )
+        connection.execute(
+            "INSERT INTO runs VALUES (?, ?, ?)",
+            ("run-a", "worker-a", "completed"),
+        )
+        connection.execute(
+            "INSERT INTO workers VALUES (?, ?)",
+            ("worker-a", str(state_dir)),
+        )
+
+    events = [
+        {
+            "type": "item.started",
+            "item": {
+                "type": "mcp_tool_call",
+                "server": "glasshive-user-capabilities",
+                "tool": "file_search",
+                "status": "in_progress",
+            },
+        },
+        {
+            "type": "item.completed",
+            "item": {
+                "type": "mcp_tool_call",
+                "server": "glasshive-user-capabilities",
+                "tool": "file_search",
+                "status": "completed",
+                "error": None,
+            },
+        },
+    ]
+    (run_root / "stdout.log").write_text(
+        "\n".join(json.dumps(event) for event in events) + "\n",
+        encoding="utf-8",
+    )
+    (run_root / "stderr.log").write_text("", encoding="utf-8")
+
+    script = f"""
+const assert = require('assert');
+const runner = require({json.dumps(str(EVAL_SCRIPT))});
+(async () => {{
+  const result = await runner.auditConversationRecallExecution({{
+    env: {{ WPR_DB_PATH: {json.dumps(str(runtime_db))} }},
+    responseMessageId: 'response-a',
+    fixture: {{
+      nonceHash: 'nonce-hash',
+      requiredResponseFragments: ['Juniper Atrium abc123', 'amber rook abc123'],
+      requireBrokerHostTool: true,
+      forbidNativeCommandExecution: true,
+    }},
+    responseText: '**Place:** Juniper Atrium `abc123`\\n**Marker:** amber rook `abc123`.',
+  }});
+  assert.deepStrictEqual(result.failures, []);
+  assert.strictEqual(result.evidence.toolAudit.brokerFileSearchCompletedCount, 1);
+  assert.strictEqual(result.evidence.toolAudit.nativeCommandExecutionStartedCount, 0);
+  assert.strictEqual(result.evidence.toolAudit.nativeEvidenceSubstitutionStartedCount, 0);
+
+  const fs = require('fs');
+  fs.appendFileSync(
+    {json.dumps(str(run_root / "stdout.log"))},
+    JSON.stringify({{
+      type: 'item.completed',
+      item: {{
+        type: 'command_execution',
+        command: 'inspect unrelated workspace state',
+        aggregated_output: 'no required fragment here',
+        status: 'completed',
+      }},
+    }}) + '\\n',
+  );
+  const rejectedNativeCommand = await runner.auditConversationRecallExecution({{
+    env: {{ WPR_DB_PATH: {json.dumps(str(runtime_db))} }},
+    responseMessageId: 'response-a',
+    fixture: {{
+      nonceHash: 'nonce-hash',
+      requiredResponseFragments: ['Juniper Atrium abc123', 'amber rook abc123'],
+      requireBrokerHostTool: true,
+      forbidNativeCommandExecution: true,
+    }},
+    responseText: 'Juniper Atrium abc123 and amber rook abc123.',
+  }});
+  assert.deepStrictEqual(
+    rejectedNativeCommand.failures,
+    ['conversation_recall_native_command_substitution_detected'],
+  );
+  console.log('OK');
+}})().catch((error) => {{ console.error(error); process.exit(1); }});
+"""
+    result = subprocess.run(
+        ["node", "-e", script],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "OK"
+
+
+def test_cross_conversation_recall_acceptance_is_diverse_and_provider_agnostic() -> None:
+    prompt_bank = json.loads(PROMPT_BANK_PATH.read_text(encoding="utf-8"))
+    family = next(row for row in prompt_bank["families"] if row.get("id") == "memory_recall")
+    cases = {
+        row["id"]: row
+        for row in family.get("cases") or []
+        if row.get("fixture", {}).get("conversationRecall", {}).get("coverageCategory")
+    }
+
+    expected_categories = {
+        "relationship_role",
+        "preference_constraint",
+        "project_status",
+        "correction_recency",
+        "temporal_precision",
+        "numeric_precision",
+        "absent_evidence",
+        "distractor_disambiguation",
+        "multilingual_paraphrase",
+        "ordinary_language",
+        "injection_resistance",
+        "tool_ownership",
+    }
+    actual_categories = {
+        row["fixture"]["conversationRecall"]["coverageCategory"]
+        for row in cases.values()
+    }
+    assert actual_categories == expected_categories
+    assert len(cases) == len(expected_categories)
+    assert {row["surface"] for row in cases.values()} == {"web", "voice"}
+
+    for row in cases.values():
+        fixture = row["fixture"]["conversationRecall"]
+        assert fixture["requiredResponseFragments"]
+        assert any("{{RUN_NONCE}}" in fragment for fragment in fixture["requiredResponseFragments"])
+        assert fixture.get("forbiddenResponseFragments")
+        required_normalized = [
+            fragment.casefold() for fragment in fixture["requiredResponseFragments"]
+        ]
+        for forbidden_fragment in fixture["forbiddenResponseFragments"]:
+            assert not any(
+                forbidden_fragment.casefold() in required_fragment
+                for required_fragment in required_normalized
+            )
+        assert fixture["forbidNativeCommandExecution"] is True
+        assert fixture.get("requireBrokerHostTool") is True or fixture.get("requireNativeHostTool") is True
+
+    correction = next(
+        row
+        for row in cases.values()
+        if row["fixture"]["conversationRecall"]["coverageCategory"] == "correction_recency"
+    )
+    assert correction["fixture"]["conversationRecall"]["forbiddenResponseFragments"]
+
+    multilingual = next(
+        row
+        for row in cases.values()
+        if row["fixture"]["conversationRecall"]["coverageCategory"]
+        == "multilingual_paraphrase"
+    )
+    assert multilingual["fixture"]["conversationRecall"]["requireSemanticRetrieval"] is True
+
+    for category in {"project_status", "temporal_precision", "numeric_precision"}:
+        semantic_case = next(
+            row
+            for row in cases.values()
+            if row["fixture"]["conversationRecall"]["coverageCategory"] == category
+        )
+        assert semantic_case["fixture"]["conversationRecall"]["requireSemanticRetrieval"] is True
+
+    temporal = next(
+        row
+        for row in cases.values()
+        if row["fixture"]["conversationRecall"]["coverageCategory"]
+        == "temporal_precision"
+    )
+    assert "exactly as written" in temporal["prompt"]
+
+    script_text = EVAL_SCRIPT.read_text(encoding="utf-8")
+    assert "waitForConversationRecallCorpusRefresh" in script_text
+    assert "conversation_recall_semantic_fixture_not_fresh" in script_text
+
+
+def test_conversation_recall_prompt_preserves_exact_retrieved_evidence_generically() -> None:
+    prompt = CONVERSATION_RECALL_PROMPT.read_text(encoding="utf-8")
+    assert "preserve every content-bearing token" in prompt
+    assert "codes, identifiers, numbers, names, dates, punctuation, and casing" in prompt
+    assert "Do not drop an opaque token as noise" in prompt
+    assert "explicitly corrects, replaces, negates, or supersedes" in prompt
+    assert "answer with the corrected value only" in prompt
+    assert "unless the user asks for the change history" in prompt
+    assert "luciérnaga" not in prompt
+    assert "RUN_NONCE" not in prompt
+
+
+def test_conversation_recall_audit_rejects_forbidden_evidence_and_accepts_native_tool_provenance() -> None:
+    script = f"""
+const assert = require('assert');
+const runner = require({json.dumps(str(EVAL_SCRIPT))});
+
+(async () => {{
+  const nativeEvents = [
+    {{
+      event: 'on_run_step',
+      data: {{ stepDetails: {{ type: 'tool_calls', tool_calls: [{{ function: {{ name: 'file_search' }} }}] }} }},
+    }},
+    {{
+      event: 'on_run_step_completed',
+      data: {{ result: {{ type: 'tool_call', tool_call: {{ name: 'file_search' }}, output: 'grounded result' }} }},
+    }},
+  ];
+  const accepted = await runner.auditConversationRecallExecution({{
+    env: {{}},
+    responseMessageId: 'native-response',
+    fixture: {{
+      nonceHash: 'native-nonce',
+      coverageCategory: 'correction_recency',
+      requiredResponseFragments: ['corrected teal'],
+      forbiddenResponseFragments: ['obsolete orange'],
+      requireBrokerHostTool: false,
+      requireNativeHostTool: true,
+      forbidNativeCommandExecution: true,
+    }},
+    responseText: 'The corrected value is corrected teal.',
+    responseEvents: nativeEvents,
+  }});
+  assert.deepStrictEqual(accepted.failures, []);
+  assert.strictEqual(accepted.evidence.nativeFileSearchCompletedCount, 1);
+
+  const rejected = await runner.auditConversationRecallExecution({{
+    env: {{}},
+    responseMessageId: 'native-response',
+    fixture: {{
+      nonceHash: 'native-nonce',
+      coverageCategory: 'correction_recency',
+      requiredResponseFragments: ['corrected teal'],
+      forbiddenResponseFragments: ['obsolete orange'],
+      requireBrokerHostTool: false,
+      requireNativeHostTool: true,
+      forbidNativeCommandExecution: true,
+    }},
+    responseText: 'It was obsolete orange, then corrected teal.',
+    responseEvents: nativeEvents,
+  }});
+  assert.deepStrictEqual(rejected.failures, ['conversation_recall_forbidden_evidence_present']);
+  console.log('OK');
+}})().catch((error) => {{ console.error(error); process.exit(1); }});
+"""
+    result = subprocess.run(
+        ["node", "-e", script],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "OK"
+
+
+def test_glasshive_recall_audit_distinguishes_context_reads_from_evidence_substitution(
+    tmp_path: Path,
+) -> None:
+    worker_root = tmp_path / "worker"
+    state_dir = worker_root / "state"
+    run_root = worker_root / "home" / ".glasshive-runs" / "run-a"
+    state_dir.mkdir(parents=True)
+    run_root.mkdir(parents=True)
+    (run_root / "stderr.log").write_text("", encoding="utf-8")
+
+    unrelated_events = [
+        {
+            "type": "item.started",
+            "item": {
+                "type": "command_execution",
+                "command": "read scoped context",
+                "status": "in_progress",
+            },
+        },
+        {
+            "type": "item.completed",
+            "item": {
+                "type": "command_execution",
+                "command": "read scoped context",
+                "aggregated_output": "general project orientation",
+                "status": "completed",
+            },
+        },
+        {
+            "type": "item.started",
+            "item": {
+                "type": "mcp_tool_call",
+                "server": "glasshive-user-capabilities",
+                "tool": "file_search",
+                "status": "in_progress",
+            },
+        },
+        {
+            "type": "item.completed",
+            "item": {
+                "type": "mcp_tool_call",
+                "server": "glasshive-user-capabilities",
+                "tool": "file_search",
+                "status": "completed",
+                "error": None,
+            },
+        },
+    ]
+    substitution_events = json.loads(json.dumps(unrelated_events))
+    substitution_events[1]["item"]["aggregated_output"] = (
+        "the exact evidence is synthetic cobalt answer"
+    )
+    stdout_path = run_root / "stdout.log"
+    stdout_path.write_text(
+        "\n".join(json.dumps(event) for event in unrelated_events) + "\n",
+        encoding="utf-8",
+    )
+
+    script = f"""
+const assert = require('assert');
+const fs = require('fs');
+const runner = require({json.dumps(str(EVAL_SCRIPT))});
+const runRecord = {{
+  run_id: 'run-a',
+  worker_id: 'worker-a',
+  state: 'completed',
+  state_dir: {json.dumps(str(state_dir))},
+  dbPathHash: 'db-hash',
+}};
+const unrelated = runner.readGlassHiveRunToolAudit(
+  runRecord,
+  ['synthetic cobalt answer'],
+);
+assert.strictEqual(unrelated.nativeCommandExecutionStartedCount, 1);
+assert.strictEqual(unrelated.nativeEvidenceSubstitutionStartedCount, 0);
+fs.writeFileSync(
+  {json.dumps(str(stdout_path))},
+  {json.dumps("\n".join(json.dumps(event) for event in substitution_events) + "\n")},
+);
+const substituted = runner.readGlassHiveRunToolAudit(
+  runRecord,
+  ['synthetic cobalt answer'],
+);
+assert.strictEqual(substituted.nativeEvidenceSubstitutionStartedCount, 1);
+console.log('OK');
+"""
+    result = subprocess.run(
+        ["node", "-e", script],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "OK"
+
+
+def test_provider_parity_matrix_uses_the_real_voice_gateway_and_diverse_synthetic_cases() -> None:
+    assert PROVIDER_PARITY_SCRIPT.exists()
+    script = f"""
+const assert = require('assert');
+const parity = require({json.dumps(str(PROVIDER_PARITY_SCRIPT))});
+assert.deepStrictEqual(parity.MATRIX_CASES.map((item) => item.category), [
+  'preference_constraint',
+  'temporal_precision',
+  'numeric_precision',
+  'multilingual_paraphrase',
+]);
+assert.ok(parity.MATRIX_CASES.every((item) => item.seedCorpusPrompts.length > 0));
+assert.ok(parity.MATRIX_CASES.every((item) => item.requiredResponseFragments.length > 0));
+assert.strictEqual(
+  new Set(parity.MATRIX_CASES.map((item) => JSON.stringify(item.requiredResponseFragments))).size,
+  parity.MATRIX_CASES.length,
+);
+assert.ok(parity.runProviderParityMatrix.toString().includes('/api/viventium/voice/chat'));
+assert.ok(parity.readVoiceStream.toString().includes('/api/viventium/voice/stream/'));
+assert.ok(parity.runProviderParityMatrix.toString().includes('waitForConversationRecallCorpusRefresh'));
+assert.ok(parity.runProviderParityMatrix.toString().includes("voiceMode: true"));
+assert.ok(parity.runProviderParityMatrix.toString().includes("viventiumInputMode: 'voice_call'"));
+assert.ok(parity.runProviderParityMatrix.toString().includes("viventiumSurface: 'voice'"));
+assert.ok(parity.loadProviderParityEnv.toString().includes('runtime.env'));
+assert.strictEqual(parity.visibleText([
+  {{ event: 'on_message_delta', data: {{ delta: {{ content: [{{ type: 'text', text: 'Recovered ' }}] }} }} }},
+  {{ event: 'on_message_delta', data: {{ delta: {{ content: [{{ type: 'text', text: 'evidence.' }}] }} }} }},
+  {{ final: true }},
+]), 'Recovered evidence.');
+console.log('OK');
+"""
+    result = subprocess.run(
+        ["node", "-e", script],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "OK"
+
+
+def test_exact_model_voice_marker_validation_uses_raw_stream_text() -> None:
+    script = f"""
+const assert = require('assert');
+const runner = require({json.dumps(str(EVAL_SCRIPT))});
+
+const events = [
+  {{ event: 'on_message_delta', data: {{ delta: {{ content: [{{ type: 'text', text: '<soft>Hello' }}] }} }} }},
+  {{ event: 'on_message_delta', data: {{ delta: {{ content: [{{ type: 'text', text: ' there.</soft>' }}] }} }} }},
+  {{ final: true, responseMessage: {{ text: 'Hello there.' }} }},
+];
+assert.strictEqual(runner.extractRawStreamedText(events), '<soft>Hello there.</soft>');
+const validation = runner.validateVoiceMarkerEvidence({{
+  fixture: {{
+    voiceOutput: {{ requested: true, provider: 'xai', markerExpectation: 'present' }},
+  }},
+}}, runner.extractRawStreamedText(events));
+assert.deepStrictEqual(validation.failures, []);
+console.log('OK');
+"""
+    result = subprocess.run(
+        ["node", "-e", script],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "OK"
+
+
+def test_exact_model_judge_uses_raw_evidence_for_sanitized_voice_markers() -> None:
+    script = f"""
+const assert = require('assert');
+const runner = require({json.dumps(str(EVAL_SCRIPT))});
+const prompt = runner.buildJudgePrompt(
+  {{
+    id: 'voice-marker-boundary',
+    familyId: 'feelings',
+    fixture: {{
+      voiceOutput: {{ requested: true, provider: 'xai', markerExpectation: 'present' }},
+    }},
+    rubric: ['uses a documented xAI speech control'],
+  }},
+  {{
+    responseForJudge: 'The visible delivery is intentionally plain.',
+    eventEvidenceForJudge: 'Voice marker evidence: providerMarkerCount=1; evidenceSource=raw_stream',
+  }},
+);
+assert.ok(prompt.includes(
+  'Judge marker presence, absence, and grammar from Voice marker evidence, not the sanitized response.',
+));
+assert.ok(prompt.includes(
+  'Do not infer a missing marker from its deliberate sanitization.',
+));
+assert.ok(prompt.includes(
+  'Structured Voice marker contract-validation fields are authoritative',
+));
+assert.ok(prompt.includes('The visible delivery is intentionally plain.'));
+const nonVoicePrompt = runner.buildJudgePrompt(
+  {{ id: 'plain', familyId: 'plain', rubric: ['answers directly'] }},
+  {{ responseForJudge: 'Done.' }},
+);
+assert.ok(!nonVoicePrompt.includes('Voice marker note:'));
+console.log('OK');
+"""
+    result = subprocess.run(
+        ["node", "-e", script],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "OK"
+
+
+def test_exact_model_judge_treats_complete_visible_response_as_absence_evidence() -> None:
+    runner = EVAL_SCRIPT.read_text(encoding="utf-8")
+
+    assert "The sanitized response is the complete visible response." in runner
+    assert "its lack of forbidden content is evidence" in runner
+
+
+def test_exact_model_judge_includes_declared_comparison_case_evidence() -> None:
+    prompt_bank = json.loads(PROMPT_BANK_PATH.read_text(encoding="utf-8"))
+    family = next(
+        row for row in prompt_bank["families"] if row.get("id") == "feelings_embodiment_and_reaction"
+    )
+    high_case = next(
+        row for row in family["cases"] if row.get("id") == "feelings_high_care_connection_owns_its_stance"
+    )
+    assert high_case["comparisonCaseId"] == "feelings_low_care_connection_owns_its_stance"
+
+    script = f"""
+const assert = require('assert');
+const runner = require({json.dumps(str(EVAL_SCRIPT))});
+const prompt = runner.buildJudgePrompt(
+  {{ id: 'high', familyId: 'feelings', rubric: ['more relational than the comparison'] }},
+  {{ responseForJudge: 'HIGH RESPONSE' }},
+  {{ caseId: 'low', responseForJudge: 'LOW RESPONSE' }},
+);
+assert.ok(prompt.includes('Declared comparison case: low'));
+assert.ok(prompt.includes('LOW RESPONSE'));
+console.log('OK');
+"""
+    result = subprocess.run(
+        ["node", "-e", script],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "OK"

@@ -37,6 +37,7 @@ HELPER_SOURCE = (
     / "ViventiumHelperApp.swift"
 )
 FULL_STACK_LAUNCHER = REPO_ROOT / "viventium_v0_4" / "viventium-librechat-start.sh"
+STACK_LAUNCHER = FULL_STACK_LAUNCHER
 
 
 def extract_shell_function(source: str, name: str) -> str:
@@ -2782,3 +2783,351 @@ def test_helper_keeps_workflow_and_maintenance_actions_under_advanced_menu() -> 
     ]:
         assert advanced_only in advanced_menu
         assert advanced_only not in top_level_before_advanced
+
+
+def test_dev_env_local_rag_uses_an_isolated_compose_project(tmp_path: Path) -> None:
+    config = minimal_config()
+    config["runtime"]["dev_env"] = {
+        "enabled": True,
+        "name": "Anti Sycophancy QA",
+        "port_offset": 2000,
+        "shared_singleton_services": ["searxng", "firecrawl"],
+    }
+    config["runtime"]["personalization"] = {"default_conversation_recall": True}
+    config_path = tmp_path / "config.yaml"
+    out_dir = tmp_path / "runtime"
+    config_path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
+
+    subprocess.run(
+        [sys.executable, str(CONFIG_COMPILER), "--config", str(config_path), "--output-dir", str(out_dir)],
+        check=True,
+    )
+
+    env_text = (out_dir / "runtime.env").read_text(encoding="utf-8")
+    assert "START_RAG_API=true" in env_text
+    assert "VIVENTIUM_SHARED_RAG_API=false" in env_text
+    assert "VIVENTIUM_RAG_COMPOSE_PROJECT_NAME=viventium-rag-anti-sycophancy-qa" in env_text
+    assert "VIVENTIUM_RAG_VECTORDB_HOST_PORT=7433" in env_text
+
+
+def test_dev_env_stop_preserves_shared_checkout_and_singleton_processes() -> None:
+    source = STACK_LAUNCHER.read_text(encoding="utf-8")
+    stop_block = source[source.index("stop_running_services() {") : source.index("cleanup_stale_containers() {")]
+
+    assert "runtime_allows_workspace_wide_process_sweep()" in source
+    assert 'truthy_env_value "${VIVENTIUM_DEV_ENV_SCOPE_ACTIVE:-false}"' in source
+    assert 'truthy_env_value "${VIVENTIUM_DEV_ENV_ENABLED:-false}"' in source
+    assert "require_compiled_dev_env_stop_identity()" in source
+    assert 'if runtime_allows_workspace_wide_process_sweep; then' in stop_block
+    assert "stop_prompt_workbench_if_managed" in stop_block
+    assert 'if [[ "$START_GOOGLE_MCP" == "true" ]] && runtime_allows_workspace_wide_process_sweep; then' in stop_block
+    assert 'if [[ "$START_MS365_MCP" == "true" ]] && runtime_allows_workspace_wide_process_sweep; then' in stop_block
+    assert 'if [[ "$START_SEARXNG" == "true" ]] && runtime_allows_workspace_wide_process_sweep; then' in stop_block
+    assert 'if [[ "$START_FIRECRAWL" == "true" ]] && runtime_allows_workspace_wide_process_sweep; then' in stop_block
+    assert 'if [[ "$START_RAG_API" == "true" ]]' in stop_block
+    assert 'remove_compose_service_containers "$VIVENTIUM_RAG_COMPOSE_PROJECT_NAME" "rag_api" "vectordb"' in stop_block
+    glasshive_stop = stop_block.split('if [[ -d "$GLASSHIVE_RUNTIME_DIR"', 1)[1].split("# === VIVENTIUM START ===", 1)[0]
+    guarded_glasshive_sweep = glasshive_stop.split("if runtime_allows_workspace_wide_process_sweep; then", 1)[1]
+    for port_name in ("GLASSHIVE_RUNTIME_PORT", "GLASSHIVE_MCP_PORT", "GLASSHIVE_UI_PORT"):
+        assert f'kill_port_listeners "${port_name}"' not in glasshive_stop.split(
+            "if runtime_allows_workspace_wide_process_sweep; then", 1
+        )[0]
+        assert f'kill_port_listeners "${port_name}"' in guarded_glasshive_sweep
+
+
+def test_dev_env_wrapper_marks_scope_and_stop_recompiles_before_loading_ports(tmp_path: Path) -> None:
+    app_support = tmp_path / "App Support" / "Viventium"
+    target = app_support / "dev-envs" / "qa"
+    (target / "state").mkdir(parents=True)
+    marker = {
+        "name": "qa",
+        "app_support_dir": str(target),
+        "config_file": str(target / "config.yaml"),
+        "runtime_dir": str(target / "runtime"),
+        "shared_singleton_services": ["recall_rag"],
+    }
+    (target / "state" / "dev-env.json").write_text(json.dumps(marker), encoding="utf-8")
+    fake_repo = tmp_path / "repo"
+    (fake_repo / "bin").mkdir(parents=True)
+    fake_bin = fake_repo / "bin" / "viventium"
+    fake_bin.write_text(
+        "#!/usr/bin/env bash\nprintf 'scope=%s name=%s command=%s\\n' \"${VIVENTIUM_DEV_ENV_SCOPE_ACTIVE:-}\" \"${VIVENTIUM_DEV_ENV_NAME:-}\" \"$*\"\n",
+        encoding="utf-8",
+    )
+    fake_bin.chmod(0o755)
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(DEV_RUNTIME),
+            "--repo-root",
+            str(fake_repo),
+            "--app-support-dir",
+            str(app_support),
+            "--config-file",
+            str(app_support / "config.yaml"),
+            "run",
+            "qa",
+            "stop",
+        ],
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+    assert completed.stdout.strip() == "scope=true name=qa command=" + "--app-support-dir " + str(target) + " --config-file " + str(target / "config.yaml") + " --runtime-dir " + str(target / "runtime") + " stop"
+
+    cli_source = BIN_VIVENTIUM.read_text(encoding="utf-8")
+    stop_case = cli_source.rsplit("  stop)\n", 1)[1].split("    ;;", 1)[0]
+    assert 'if value_is_true "${VIVENTIUM_DEV_ENV_SCOPE_ACTIVE:-false}"; then' in stop_case
+    assert "compile_config" in stop_case
+    assert stop_case.index("compile_config") < stop_case.index(
+        "load_selected_runtime_environment_for_children"
+    )
+
+    child_marker = tmp_path / "unexpected-stop-child"
+    compile_failure_script = f"""set -euo pipefail
+acquire_cli_lock() {{ :; }}
+compile_config() {{ return 23; }}
+prepare_runtime_exports() {{ touch {shlex.quote(str(child_marker))}; }}
+value_is_true() {{ [[ "${{1:-}}" == "true" || "${{1:-}}" == "1" ]]; }}
+set_helper_runtime_intent() {{ :; }}
+write_stack_owner_state() {{ touch {shlex.quote(str(child_marker))}; }}
+stop_native_stack_detached() {{ touch {shlex.quote(str(child_marker))}; }}
+COMMAND=stop
+VIVENTIUM_DEV_ENV_SCOPE_ACTIVE=true
+set --
+{stop_case}
+"""
+    compile_failure = subprocess.run(
+        ["/bin/bash", "-c", compile_failure_script],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert compile_failure.returncode == 1
+    assert "runtime identity could not be compiled" in compile_failure.stderr
+    assert not child_marker.exists()
+
+
+def test_stop_exports_selected_runtime_ownership_to_native_child(tmp_path: Path) -> None:
+    cli_source = BIN_VIVENTIUM.read_text(encoding="utf-8")
+    helper_marker = "load_selected_runtime_environment_for_children() {"
+    assert helper_marker in cli_source
+    helper_start = cli_source.index(helper_marker)
+    helper_end = cli_source.index("\ninstall_progress_dir() {", helper_start)
+    helper_source = cli_source[helper_start:helper_end]
+    stop_case = cli_source.rsplit("  stop)\n", 1)[1].split("    ;;", 1)[0]
+    start_case = cli_source.rsplit("  start)\n", 1)[1].split("    ;;", 1)[0]
+    drain_start = cli_source.index("drain_native_stack_before_state_removal() {")
+    drain_end = cli_source.index("\nreset_local_install_state() {", drain_start)
+    drain_source = cli_source[drain_start:drain_end]
+    assert "load_selected_runtime_environment_for_children" in start_case
+    assert "load_selected_runtime_environment_for_children" in stop_case
+    assert "load_selected_runtime_environment_for_children" in drain_source
+
+    fake_repo = tmp_path / "repo"
+    selected_support = tmp_path / "Selected App Support" / "Viventium"
+    runtime_dir = selected_support / "runtime"
+    runtime_dir.mkdir(parents=True)
+    selected_state = selected_support / "state"
+    selected_profile = selected_state / "runtime" / "isolated"
+    capture_file = tmp_path / "native-child.env"
+
+    runtime_env = runtime_dir / "runtime.env"
+    runtime_local_env = runtime_dir / "runtime.local.env"
+    runtime_env.write_text(
+        "\n".join(
+            [
+                "VIVENTIUM_RUNTIME_PROFILE=isolated",
+                "VIVENTIUM_LOCAL_MONGO_PORT=29117",
+                "VIVENTIUM_LOCAL_MONGO_DB=SelectedViventium",
+                "VIVENTIUM_LOCAL_MEILI_PORT=9700",
+                "VIVENTIUM_CALL_SESSION_SECRET=selected-call-secret",
+                "VIVENTIUM_DEV_ENV_ENABLED=true",
+                "VIVENTIUM_DEV_ENV_NAME=compiled-name",
+                "LIVEKIT_HTTP_PORT=9880",
+                "LIVEKIT_TCP_PORT=9881",
+                "LIVEKIT_UDP_PORT=9882",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    runtime_local_env.write_text(
+        "\n".join(
+            [
+                "VIVENTIUM_LOCAL_MEILI_PORT=9701",
+                'VIVENTIUM_LOCAL_MEILI_DATA_PATH="$VIVENTIUM_STATE_ROOT/meili-local"',
+                "VIVENTIUM_LOCAL_MEILI_MASTER_KEY=selected-local-master",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    launcher = fake_repo / "viventium_v0_4" / "viventium-librechat-start.sh"
+    launcher.parent.mkdir(parents=True)
+    launcher.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    launcher.chmod(0o755)
+    native_stack = fake_repo / "scripts" / "viventium" / "native_stack.sh"
+    native_stack.parent.mkdir(parents=True)
+    native_stack.write_text(
+        """#!/usr/bin/env bash
+set -eu
+{
+  printf 'VIVENTIUM_APP_SUPPORT_DIR=%s\\n' "${VIVENTIUM_APP_SUPPORT_DIR-}"
+  printf 'VIVENTIUM_BASE_STATE_DIR=%s\\n' "${VIVENTIUM_BASE_STATE_DIR-}"
+  printf 'VIVENTIUM_STATE_ROOT=%s\\n' "${VIVENTIUM_STATE_ROOT-}"
+  printf 'VIVENTIUM_RUNTIME_PROFILE=%s\\n' "${VIVENTIUM_RUNTIME_PROFILE-}"
+  printf 'VIVENTIUM_LOCAL_MONGO_PORT=%s\\n' "${VIVENTIUM_LOCAL_MONGO_PORT-}"
+  printf 'VIVENTIUM_LOCAL_MONGO_DB=%s\\n' "${VIVENTIUM_LOCAL_MONGO_DB-}"
+  printf 'VIVENTIUM_LOCAL_MONGO_DATA_PATH=%s\\n' "${VIVENTIUM_LOCAL_MONGO_DATA_PATH-}"
+  printf 'VIVENTIUM_LOCAL_MEILI_PORT=%s\\n' "${VIVENTIUM_LOCAL_MEILI_PORT-}"
+  printf 'VIVENTIUM_LOCAL_MEILI_DATA_PATH=%s\\n' "${VIVENTIUM_LOCAL_MEILI_DATA_PATH-}"
+  printf 'MEILI_MASTER_KEY=%s\\n' "${MEILI_MASTER_KEY-}"
+  printf 'VIVENTIUM_LOCAL_MEILI_MASTER_KEY=%s\\n' "${VIVENTIUM_LOCAL_MEILI_MASTER_KEY-}"
+  printf 'VIVENTIUM_LIVEKIT_CFG_DIR=%s\\n' "${VIVENTIUM_LIVEKIT_CFG_DIR-}"
+  printf 'LIVEKIT_HTTP_PORT=%s\\n' "${LIVEKIT_HTTP_PORT-}"
+  printf 'LIVEKIT_TCP_PORT=%s\\n' "${LIVEKIT_TCP_PORT-}"
+  printf 'LIVEKIT_UDP_PORT=%s\\n' "${LIVEKIT_UDP_PORT-}"
+  printf 'LIVEKIT_NODE_IP=%s\\n' "${LIVEKIT_NODE_IP-}"
+  printf 'VIVENTIUM_DEV_ENV_SCOPE_ACTIVE=%s\\n' "${VIVENTIUM_DEV_ENV_SCOPE_ACTIVE-}"
+  printf 'VIVENTIUM_DEV_ENV_INSTANCE_ID=%s\\n' "${VIVENTIUM_DEV_ENV_INSTANCE_ID-}"
+  printf 'VIVENTIUM_DEV_ENV_NAME=%s\\n' "${VIVENTIUM_DEV_ENV_NAME-}"
+} >"$CAPTURE_FILE"
+""",
+        encoding="utf-8",
+    )
+    native_stack.chmod(0o755)
+
+    script = f"""set -euo pipefail
+{helper_source}
+acquire_cli_lock() {{ :; }}
+compile_config() {{ :; }}
+prepare_runtime_exports() {{
+  export VIVENTIUM_BASE_STATE_DIR="$APP_SUPPORT_DIR/state"
+  export VIVENTIUM_STATE_ROOT="${{VIVENTIUM_STATE_ROOT:-$APP_SUPPORT_DIR/state/runtime/${{VIVENTIUM_RUNTIME_PROFILE:-isolated}}}}"
+}}
+value_is_true() {{ [[ "${{1:-}}" == "true" || "${{1:-}}" == "1" ]]; }}
+set_helper_runtime_intent() {{ :; }}
+write_stack_owner_state() {{ :; }}
+stop_native_stack_detached() {{ return 99; }}
+APP_SUPPORT_DIR={shlex.quote(str(selected_support))}
+GENERATED_ENV={shlex.quote(str(runtime_env))}
+GENERATED_LOCAL_ENV={shlex.quote(str(runtime_local_env))}
+REPO_ROOT={shlex.quote(str(fake_repo))}
+COMMAND=stop
+VIVENTIUM_HELPER_STOP_BACKGROUND_NATIVE=0
+set --
+{stop_case}
+"""
+    ambient_root = tmp_path / "Ambient Canonical" / "Viventium"
+    env = os.environ.copy()
+    env.update(
+        {
+            "CAPTURE_FILE": str(capture_file),
+            "VIVENTIUM_APP_SUPPORT_DIR": str(ambient_root),
+            "VIVENTIUM_BASE_STATE_DIR": str(ambient_root / "state"),
+            "VIVENTIUM_STATE_ROOT": str(ambient_root / "state" / "runtime" / "compat"),
+            "VIVENTIUM_RUNTIME_PROFILE": "compat",
+            "VIVENTIUM_LOCAL_MONGO_PORT": "27117",
+            "VIVENTIUM_LOCAL_MONGO_DB": "AmbientViventium",
+            "VIVENTIUM_LOCAL_MONGO_DATA_PATH": str(ambient_root / "state" / "mongo-data"),
+            "VIVENTIUM_LOCAL_MEILI_PORT": "7700",
+            "VIVENTIUM_LOCAL_MEILI_DATA_PATH": str(ambient_root / "state" / "meili-data"),
+            "MEILI_MASTER_KEY": "ambient-raw-master",
+            "VIVENTIUM_LOCAL_MEILI_MASTER_KEY": "ambient-local-master",
+            "VIVENTIUM_LIVEKIT_CFG_DIR": str(ambient_root / "state" / "livekit"),
+            "LIVEKIT_HTTP_PORT": "7880",
+            "LIVEKIT_TCP_PORT": "7881",
+            "LIVEKIT_UDP_PORT": "7882",
+            "LIVEKIT_NODE_IP": "prod-node.example.test",
+            "VIVENTIUM_DEV_ENV_SCOPE_ACTIVE": "true",
+            "VIVENTIUM_DEV_ENV_INSTANCE_ID": "qa",
+            "VIVENTIUM_DEV_ENV_NAME": "qa",
+        }
+    )
+    completed = subprocess.run(
+        ["/bin/bash", "-c", script],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+
+    captured = dict(
+        line.split("=", 1)
+        for line in capture_file.read_text(encoding="utf-8").splitlines()
+    )
+    assert captured == {
+        "VIVENTIUM_APP_SUPPORT_DIR": str(selected_support),
+        "VIVENTIUM_BASE_STATE_DIR": str(selected_state),
+        "VIVENTIUM_STATE_ROOT": str(selected_profile),
+        "VIVENTIUM_RUNTIME_PROFILE": "isolated",
+        "VIVENTIUM_LOCAL_MONGO_PORT": "29117",
+        "VIVENTIUM_LOCAL_MONGO_DB": "SelectedViventium",
+        "VIVENTIUM_LOCAL_MONGO_DATA_PATH": str(selected_profile / "mongo-data"),
+        "VIVENTIUM_LOCAL_MEILI_PORT": "9701",
+        "VIVENTIUM_LOCAL_MEILI_DATA_PATH": str(selected_profile / "meili-local"),
+        "MEILI_MASTER_KEY": "",
+        "VIVENTIUM_LOCAL_MEILI_MASTER_KEY": "selected-local-master",
+        "VIVENTIUM_LIVEKIT_CFG_DIR": str(selected_profile / "livekit"),
+        "LIVEKIT_HTTP_PORT": "9880",
+        "LIVEKIT_TCP_PORT": "9881",
+        "LIVEKIT_UDP_PORT": "9882",
+        "LIVEKIT_NODE_IP": "",
+        "VIVENTIUM_DEV_ENV_SCOPE_ACTIVE": "true",
+        "VIVENTIUM_DEV_ENV_INSTANCE_ID": "qa",
+        "VIVENTIUM_DEV_ENV_NAME": "qa",
+    }
+
+
+def test_dev_env_voice_lifecycle_uses_runtime_owned_pid_and_health_port() -> None:
+    source = STACK_LAUNCHER.read_text(encoding="utf-8")
+    stop_block = source[source.index("stop_running_services() {") : source.index("cleanup_stale_containers() {")]
+    voice_start = source[source.index("# Voice Gateway worker") : source.index("# Wait for services to start")]
+
+    assert 'VOICE_GATEWAY_PID_FILE="$LOG_ROOT/voice_gateway.pid"' in source
+    assert 'find_current_runtime_voice_gateway_pids()' in source
+    assert 'stop_pid_file_scoped "$VOICE_GATEWAY_PID_FILE" "$VOICE_GATEWAY_DIR"' in stop_block
+    assert 'kill_port_listeners "$voice_gateway_health_port" "$VOICE_GATEWAY_DIR"' in stop_block
+    assert 'VOICE_GATEWAY_PID_CANDIDATES="$(find_current_runtime_voice_gateway_pids)"' in voice_start
+    assert 'printf \'%s\\n\' "$VOICE_GATEWAY_PID" >"$VOICE_GATEWAY_PID_FILE"' in voice_start
+
+
+def test_dev_env_offsets_default_app_facing_ports_during_compile(tmp_path: Path) -> None:
+    config = minimal_config()
+    for key in (
+        "lc_api_port",
+        "lc_frontend_port",
+        "playground_port",
+        "voice_gateway_health_port",
+    ):
+        config["runtime"]["ports"].pop(key)
+    config["runtime"]["dev_env"] = {
+        "enabled": True,
+        "name": "dev",
+        "port_offset": 1000,
+        "shared_singleton_services": [
+            "recall_rag",
+            "searxng",
+            "firecrawl",
+            "google_workspace_mcp",
+            "ms365_mcp",
+        ],
+    }
+    config_path = tmp_path / "config.yaml"
+    out_dir = tmp_path / "runtime"
+    config_path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
+
+    subprocess.run(
+        [sys.executable, str(CONFIG_COMPILER), "--config", str(config_path), "--output-dir", str(out_dir)],
+        check=True,
+    )
+
+    env_text = (out_dir / "runtime.env").read_text(encoding="utf-8")
+    assert "VIVENTIUM_LC_API_PORT=4180" in env_text
+    assert "VIVENTIUM_LC_FRONTEND_PORT=4190" in env_text
+    assert "VIVENTIUM_PLAYGROUND_PORT=4300" in env_text
+    assert "VIVENTIUM_VOICE_GATEWAY_HEALTH_PORT=9301" in env_text

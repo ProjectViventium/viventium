@@ -416,6 +416,37 @@ class TestCortexFollowupScheduler(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(scheduler._task)
         self.assertEqual(session.say_calls, [])
 
+    async def test_stable_supersession_stops_stale_followup_without_claiming_durable_result(self) -> None:
+        session = _DummySession()
+        scheduler = self._build_scheduler(session=session)
+        fetch_calls = []
+
+        async def _fake_fetch(self, _http_session, message_id):
+            fetch_calls.append(message_id)
+            return {
+                "latest": {
+                    "callbackId": "callback-1",
+                    "text": "Late durable result must not speak as the stale response.",
+                    "status": "completed",
+                }
+            }
+
+        scheduler._fetch_glasshive = MethodType(_fake_fetch, scheduler)
+
+        with mock.patch.object(worker.aiohttp, "ClientSession", _FakeClientSession):
+            scheduler.schedule(
+                "msg_123",
+                [],
+                "",
+                cortex_expected=False,
+                glasshive_expected=True,
+                presentation_is_current=lambda: False,
+            )
+            await scheduler._task
+
+        self.assertEqual(fetch_calls, [])
+        self.assertEqual(session.say_calls, [])
+
 
 if __name__ == "__main__":
     unittest.main()

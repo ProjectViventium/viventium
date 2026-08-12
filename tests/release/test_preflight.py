@@ -2021,3 +2021,109 @@ def test_local_firecrawl_memory_warning_flags_small_docker_budget(
     assert "3.0 GB" in warning
     assert "4 GB" in warning
     assert "Firecrawl API" in warning
+
+
+def test_preflight_accepts_claude_only_worker_login(monkeypatch, tmp_path: Path) -> None:
+    module = load_preflight_module()
+    for ready_helper in (
+        "pnpm_runtime_ready",
+        "uv_runtime_ready",
+        "ollama_cli_runtime_ready",
+        "mongod_runtime_ready",
+        "meilisearch_runtime_ready",
+        "livekit_runtime_ready",
+        "cloudflared_runtime_ready",
+        "tailscale_cli_runtime_ready",
+        "caddy_runtime_ready",
+        "upnpc_runtime_ready",
+    ):
+        monkeypatch.setattr(module, ready_helper, lambda: True)
+    monkeypatch.setattr(module, "node_runtime_supported", lambda: True)
+    monkeypatch.setattr(module, "xcode_cli_tools_installed", lambda: True)
+    monkeypatch.setattr(module, "command_exists", lambda command: command in {"git", "security", "claude"})
+    monkeypatch.setattr(module, "host_cli_auth_ready", lambda command: command == "claude")
+
+    items = module.build_preflight_items(
+        {
+            "install": {"mode": "native"},
+            "runtime": {"call_session_secret": {"secret_value": "local-dev-secret"}},
+            "integrations": {
+                "glasshive": {
+                    "enabled": True,
+                    "host_worker": {"enabled": True, "workspace_root": str(tmp_path / "workers")},
+                }
+            },
+        }
+    )
+    by_key = {item.key: item for item in items}
+
+    assert by_key["glasshive_host_worker_cli_auth"].status == "ok"
+    assert by_key["glasshive_host_codex_cli"].status == "optional"
+    assert by_key["glasshive_host_claude_cli"].status == "ok"
+    assert by_key["glasshive_host_worker_cli_auth"] not in module.missing_items(items)
+
+
+def test_preflight_requires_validated_node24_when_newer_node_is_present(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        """
+version: 1
+install:
+  mode: native
+runtime:
+  profile: isolated
+voice:
+  mode: disabled
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    for name, body in {
+        "node": "#!/bin/sh\nprintf 'v25.8.1\\n'\n",
+        "npm": "#!/bin/sh\nprintf '11.11.0\\n'\n",
+        "git": "#!/bin/sh\nexit 0\n",
+        "security": "#!/bin/sh\nexit 0\n",
+        "xcode-select": "#!/bin/sh\nprintf '%s\\n' '/Library/Developer/CommandLineTools'\n",
+    }.items():
+        path = bin_dir / name
+        path.write_text(body, encoding="utf-8")
+        path.chmod(0o755)
+
+    completed = subprocess.run(
+        [sys.executable, str(PREFLIGHT_PATH), "--config", str(config_path)],
+        cwd=REPO_ROOT,
+        env=preflight_subprocess_env(tmp_path, path=str(bin_dir)),
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+
+    assert completed.returncode == 1
+    assert "Node 24.16.0 (verified archive)" in completed.stdout
+    assert "exact validated Node runtime" in completed.stdout
+
+
+def test_supported_node_major_is_consistent_across_install_and_launcher_layers() -> None:
+    sources = {
+        "preflight": PREFLIGHT_PATH.read_text(encoding="utf-8"),
+        "shared path": COMMON_PATH.read_text(encoding="utf-8"),
+        "doctor": DOCTOR_PATH.read_text(encoding="utf-8"),
+        "launcher": LAUNCHER_PATH.read_text(encoding="utf-8"),
+        "Skyvern launcher": SKYVERN_LAUNCHER_PATH.read_text(encoding="utf-8"),
+        "macOS helper": HELPER_APP_PATH.read_text(encoding="utf-8"),
+    }
+
+    for layer, source in sources.items():
+        assert "node@24" in source or "24.16.0" in source, (
+            f"{layer} must select the supported Node 24 runtime"
+        )
+        assert "node@20" not in source, f"{layer} still selects the EOL Node 20 runtime"
+
+    launcher = sources["launcher"]
+    assert "ensure_validated_node24_runtime" in launcher
+    assert 'VIVENTIUM_NODE_RUNTIME_VERSION="24.16.0"' in launcher
+    assert '[[ "$version" == "v${VIVENTIUM_NODE_RUNTIME_VERSION}"' in launcher
+    assert '"$resolved_node" == "${VIVENTIUM_NODE_RUNTIME_BIN}/node"' in launcher

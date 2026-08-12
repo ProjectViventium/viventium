@@ -92,6 +92,8 @@ release_tests:
     qa_owner: qa/stable-dev-runtime/cases.md
   tests/release/test_librechat_package_rebuild_contract.py:
     qa_owner: qa/release-readiness/cases.md
+  tests/release/test_life_bootstrap.py:
+    qa_owner: qa/glasshive-core-provider/cases.md
   tests/release/test_local_web_search_compose.py:
     qa_owner: qa/release-readiness/cases.md
   tests/release/test_macos_helper_install.py:
@@ -234,6 +236,10 @@ release_tests:
     qa_owner: qa/modern-playground-voice/cases.md
   tests/release/test_voice_playground_dispatch_contract.py:
     qa_owner: qa/modern-playground-voice/cases.md
+  tests/release/test_viventium_health_integration.py:
+    qa_owner: qa/installer-resilience/cases.md
+  tests/release/test_viventium_health_runtime.py:
+    qa_owner: qa/periphery-nightly-insights/cases.md
   tests/release/test_wizard.py:
     qa_owner: qa/installer-resilience/cases.md
   tests/release/test_express_launcher_summary.py:

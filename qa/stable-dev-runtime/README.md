@@ -14,7 +14,8 @@ update-check UX, and helper utility controls that must stay separate from the ma
 ## Quality Bar
 
 Acceptance must prove that local development can run without destabilizing the installed runtime,
-and that heavy singleton services are not duplicated by default.
+that heavy singleton services are not duplicated by default, and that an explicitly local dev
+sidecar cannot claim the installed runtime's state, PID, port, or Compose ownership.
 
 Public QA reports must use placeholders such as `/path/to/viventium` and
 `~/Library/Application Support/...`; do not include raw logs or local absolute paths.
@@ -28,6 +29,7 @@ the expensive singleton services stay shared by default.
 Minimum evidence for dev/prod coexistence:
 
 - `bin/viventium dev-env status <name>` shows offset app-facing ports
+- generated config and runtime env show a distinct compiler-owned Prompt Workbench port
 - generated dev config records `runtime.dev_env.enabled`
 - generated dev config records shared singleton services
 - shared singleton services are not started a second time by default

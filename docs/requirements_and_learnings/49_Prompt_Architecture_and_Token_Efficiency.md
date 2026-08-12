@@ -38,6 +38,108 @@ ClaudeViv review conclusion:
 
 ## Implementation Log
 
+### 2026-08-11 Truth-Seeking Prompt And Evaluation Ownership
+
+- Anti-sycophancy means calibrated truth-seeking, not reflexive opposition. Main and the decision
+  cortices must plainly support a user conclusion when evidence supports it, challenge it when the
+  evidence refutes it, preserve mixed or insufficient boundaries, and update quantitatively.
+- The concise always-on Main policy is split between `main.core_behaviors` and
+  `main.reality_and_challenge`. The latter is a standing decision-policy layer, not a tool manual;
+  its added token cost must remain visible in prompt-frame telemetry and exact-model QA.
+- The paired decision-quality bank derives subject input from structured evidence packets. Pair
+  relationships, weighted dimensions, and semantic-required declarations are runner-enforced; no
+  transport-only or annotation-only result may satisfy semantic acceptance.
+- The current source/eval state remains `PARTIAL` until exact-model, real Web, and audible paired
+  runs pass. Nested prompt files also remain a separate component/pin delivery gate.
+
+### 2026-08-09 Anti-Sycophancy Consult And Deep-Memory Prompt Ownership
+
+The approved A–F design in
+[`viventium_v0_5/docs/07_Anti_Sycophancy.md`](../../viventium_v0_5/docs/07_Anti_Sycophancy.md)
+uses existing prompt owners rather than expanding Main into a tool manual:
+
+- Main's Prompt Workbench contract gets only the short decision policy for when an Outside World
+  Reality Check is warranted and when Reality's returned evidence warrants optional Red Team
+  challenge. It must not mechanically consult on every turn or route from runtime keywords.
+- Reality Check owns its own evidence/source/no-assumption instructions and tool-use rules. It is a
+  new GlassHive Agent Builder agent, separate from the existing Deep Research cortex.
+- Red Team owns one execution prompt reused by its background and foreground roles. Do not fork or
+  duplicate its epistemic contract.
+- Deep Memory Search owns an always-background execution prompt that searches the existing scoped
+  recall capability. Generic `activation.mode: always` starts it without a classifier or fake
+  always-true activation prompt.
+- Main, Reality Check, and Red Team return instructions must be short and graph-role specific:
+  consultants return evidence once; Main synthesizes and speaks last. Use ordinary bidirectional
+  handoff edges and prove the cycle before designing a new edge or fan-in mechanism.
+- Existing handoff state carries conversation, saved-memory/RAG context, and prior files. Each agent
+  retains its explicitly declared tool set. Prompt text must not claim automatic parent-tool or
+  parent-capability inheritance.
+- Approved generic seams include `activation.mode: always`, the existing signed handoff capability
+  bundle, and GlassHive's request-scoped standard OpenAI `tools` → `tool_calls` bridge. The bridge
+  keeps a structural per-agent/user-turn completed-target receipt solely to prevent repeat
+  consultation. None of these seams owns user intent.
+- Phase B's existing value-gate prompt and ownership remain unchanged. The completed-target receipt
+  is not background-versus-foreground evidence deduplication or a Phase B rewrite; do not add either
+  without measured evidence and a separate product decision.
+
+Exact-model evals need happy, no-consult, consult-chain, loop, failure-honesty, evidence-class, and
+tool-availability cases. They support—but do not replace—the real Web, Telegram, and voice cases in
+[`qa/anti-sycophancy/`](../../qa/anti-sycophancy/README.md).
+
+### 2026-08-04 Feeling Authority And Eval Fidelity
+
+- Inference-time developer instructions condition activations and token probabilities; they do not
+  change model weights. Put the current Feeling in the highest supported additive developer layer,
+  keep the user request in the user role, and leave changing facts outside durable session authority.
+- The final Feeling rule is deliberately direct: choose one concrete desire/action, fuse every
+  required row into that choice, and rewrite it if removing a required row would not change the
+  action. Tone, label recital, and one clause per row are not compliance.
+- Native Codex personality `none` is the Viventium default so Codex does not add a competing
+  communication persona. This does not disable reasoning or tools. Plugin suppression is an
+  independent generic config: keep useful plugins enabled and deny only the exact conflicting
+  Feelings plugin ID.
+- Semantic judges receive the visible/persisted answer after surface delivery controls are stripped.
+  Raw provider markers remain separately validated against the provider grammar. Mixing these two
+  views creates false semantic failures.
+- Behavioral fixtures must be executable. If the task lacks required source material, a sharply
+  targeted question may be the aligned high-Drive action; do not grade invented work as better than
+  a necessary clarification. A high-Play state must alter a real choice, but the rubric must not
+  force an unsolicited joke performance.
+- Candidate completion, semantic-judge availability, and detached Reaction provider health are
+  separate gates. A blocked judge is not a failed candidate, and a provider-auth failure is not
+  evidence to rewrite prompts or silently remap the configured route.
+- Browser QA must foreground a previously backgrounded polling surface before asserting current
+  status. A paused hidden tab can truthfully contain stale text even when the API/DB state is fresh.
+- Default-state QA is mandatory. Endpoint-only fixtures can pass while shipped mid-high defaults
+  exert no reliable force. Always require extremes; otherwise promote the strongest non-neutral
+  pulls until two rows are required. Keep the removal self-check in the universal choice rule, not
+  only the direct `how do you feel?` branch.
+- Performance evidence must separate queue delay, native model execution, first visible stream
+  delta, and full-case completion. A slow post-stream surface/harness finalizer is not native model
+  latency, and a fast queue does not make a slow visible response acceptable.
+
+### 2026-08-03 Durable Authority And Mutable Turn Context
+
+Inference-time instructions do not change model weights. They condition the current context and
+therefore change internal activations and output probabilities. Hidden text is not inherently
+stronger; effective influence comes from role authority, clarity, placement, salience, and the
+absence of competing instructions.
+
+Viventium applies that rule as follows:
+
+- Keep durable identity, policy, guardrails, memory context, and the current Feeling capsule in the
+  highest supported additive developer authority. Do not replace Codex base instructions.
+- Keep the user's request in the user role. Do not rewrite it into policy or a worker plan.
+- Send mutable facts such as current time as per-turn context, outside the native-session authority
+  hash, so they stay current without replacing an otherwise reusable worker.
+- Resolve the delivery path from structured provider capabilities after fallback/remapping, then
+  project mutable context into the final provider request—not only the incoming request object.
+- For Viventium Codex conversation workers, use native personality `none` by default so the current
+  Feeling remains the intended emotional authority. Standalone GlassHive keeps its own default.
+
+This is the shortest safe role/state split: stable authority binds the session; changing facts bind
+only the turn.
+
 ### 2026-06-24 Viventium Periphery And Nightly Insight Vision
 
 Viventium's prediction, blind-spot, risk, opportunity-cost, emotional mirroring, empathy, and
@@ -744,7 +846,8 @@ Known validation from that run:
 - Voice gateway follow-up scheduler tests: `7 passed`
 - Telegram bridge/NTA/voice preference tests: `111 passed`
 - Productivity activation eval: `24/24 passed`
-- Product-route probes passed for `openAI / gpt-5.4` and `anthropic / claude-opus-4-8`
+- Historical product-route probes passed for `openAI / gpt-5.4` and the then-current direct
+  Anthropic route; current direct Anthropic defaults use `claude-opus-5`.
 - Follow-up micro-evals passed for redundant voice, new web fact, and Telegram question-only cases
 
 Remaining validation gaps:
@@ -825,9 +928,11 @@ workload rather than a conscious-agent reasoning route.
 
 ### GPT-5.6 conscious and subconscious routes
 
-Current conscious/subconscious execution uses GPT-5.6 Sol/Terra with Responses API. The exact
+Current conscious/subconscious execution uses the GPT-5.6 family with Responses API. The exact
 workload and effort map lives in `02_Background_Agents.md` and must remain a model-config decision,
-not prompt prose.
+not prompt prose. Operational memory is evaluated separately: immediate writing and hardening use
+Luna/medium after a repeated fail-closed memory bank, while deep reflection and the independent
+observer retain Sol/xHigh. Terra is not a durable-memory fallback unless it clears the same gate.
 
 - Keep the core prompt outcome-oriented rather than process-heavy.
 - Preserve explicit completion criteria, evidence boundaries, permissions, and output contracts.
@@ -1321,6 +1426,8 @@ Prompt changes are not accepted unless QA can show:
 - NTA/silence rates by surface
 - tool-call selection rates for direct-action tasks
 - provider-control marker counts for voice
+- voice marker counts from the raw audio-bound model stream, not sanitized visible or persisted text
+- both responses supplied to the judge for every declared paired comparison
 - no raw private transcript or secret leakage in public artifacts
 
 ## Rollout Plan
@@ -1347,6 +1454,12 @@ Prompt changes are not accepted unless QA can show:
   per-case filtering, repetitions, latency metrics, and unavailable-result accounting.
 - Connected-account OpenAI support and broader old-vs-new prompt-stack coverage remain part of the
   general exact-model runner.
+- Exact-model judging resolves declared comparison cases from the same run and gives the judge both
+  responses. Voice assertions inspect raw streamed output before surface sanitization while public
+  reports retain only safe hashes and counts.
+- A behavioral fixture must contain the information needed for the action it grades. Semantic
+  rubrics may require clear affective evidence, but must not demand an uninvited action that conflicts
+  with the synthetic user's established boundary merely to make the marker easier to score.
 
 ### Phase 3: Follow-up structured decision
 
@@ -1376,6 +1489,31 @@ Prompt changes are not accepted unless QA can show:
 - Add compiled `librechat.yaml` A/B/C prompt/config diff.
 - Fix provider readiness probes to match product auth routes.
 - Add CI/local QA for false provider-action-required status.
+
+## Scheduler Prompt Sources And Workbench Visibility
+
+Scheduling uses registered sources rather than hidden runtime prose:
+
+- `main.scheduling_self_continuity` remains Main's concise standing capability and permission;
+- `scheduler.run_envelope` owns the hidden factual scheduler prefix and structured-context
+  contract;
+- `scheduler.consciousness_continuity_opportunity` owns the per-occurrence orient → appraise →
+  choose → act/inaction → observe contract;
+- `scheduler.canonical_output` owns the single channel-neutral semantic result, exact `{NTA}`
+  silence, and truthful failure/no-action contract consumed by downstream delivery adapters.
+
+The Python scheduler consumes the compiled shared cross-language contract. Release tests must prove
+registry source, compiled artifact, and runtime text agree. The continuity scheduled object remains
+editable and versioned in the existing Prompt Workbench and does not duplicate Main identity,
+Feelings content, tool policy, or per-user memory expansion.
+
+The generic scheduled-object panel shows title/active state, next opportunity, timezone, cadence,
+active window, projected daily runs, channels, durable conversation, source prompt, effective
+scheduled model, and last disposition. Effective Prompt explains source/evaluated/runtime layers
+without exposing private memory expansion. History displays silent/delivered/partial/superseded/
+failed states, latency, token/cost data when measured, effective model, channel outcomes, and
+structured degraded dependencies. Any scheduled prompt with the same structured metadata receives
+the same controls; runtime/UI must not branch on the title `Consciousness Continuity`.
 
 ## Non-Goals
 

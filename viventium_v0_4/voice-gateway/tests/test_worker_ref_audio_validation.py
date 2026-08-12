@@ -812,6 +812,35 @@ class TestRefAudioValidation(unittest.TestCase):
         self.assertEqual(metadata["tts"]["variant"], "voice_live")
         self.assertEqual(metadata["ttsFallback"]["provider"], "openai")
 
+    def test_run_registers_publisher_worker(self) -> None:
+        captured = {}
+
+        def _fake_run_app(opts):
+            captured["opts"] = opts
+
+        with (
+            patch("worker.start_health_server"),
+            patch(
+                "worker.load_env",
+                return_value=SimpleNamespace(
+                    livekit_agent_name="librechat-voice-gateway",
+                    voice_initialize_process_timeout_s=45.0,
+                    voice_idle_processes=1,
+                    voice_worker_load_threshold=0.995,
+                    voice_job_memory_warn_mb=2200.0,
+                    voice_job_memory_limit_mb=2200.0,
+                ),
+            ),
+            patch("worker.cli.run_app", side_effect=_fake_run_app),
+        ):
+            run()
+
+        self.assertIn("opts", captured)
+        self.assertEqual(captured["opts"].agent_name, "librechat-voice-gateway")
+        self.assertEqual(captured["opts"].worker_type, WorkerType.PUBLISHER)
+        self.assertEqual(captured["opts"].job_memory_warn_mb, 2200.0)
+        self.assertEqual(captured["opts"].job_memory_limit_mb, 2200.0)
+
 
 if __name__ == "__main__":
     unittest.main()

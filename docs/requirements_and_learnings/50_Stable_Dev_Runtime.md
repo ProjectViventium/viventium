@@ -17,6 +17,9 @@ confusing upstream component boundaries.
   - voice health port when needed
 - Dev envs also separate per-runtime sidecars that own mutable runtime-local state, including
   Scheduling Cortex.
+- Prompt Workbench is a first-class app-facing dev port. The compiler owns
+  `runtime.ports.prompt_workbench_port`, applies the dev offset when no explicit override exists,
+  and exports the resulting runtime-specific port.
 - The classic `agents-playground` UI is not part of local prod or dev-env defaults. It remains an
   explicit classic-playground opt-in only, so default starts do not spend resources on the old UI.
 - Heavy local services are shared singleton services by default:
@@ -117,10 +120,10 @@ bin/viventium dev-env run dev start
 
 With the default offset, test the two local runtimes at different user-facing URLs:
 
-| Runtime | Web | API | Playground |
-| --- | --- | --- | --- |
-| Local prod | `http://localhost:3190` | `http://localhost:3180/api` | `http://localhost:3300` |
-| Dev env `dev` | `http://localhost:4190` | `http://localhost:4180/api` | `http://localhost:4300` |
+| Runtime       | Web                     | API                         | Playground              | Prompt Workbench        |
+| ------------- | ----------------------- | --------------------------- | ----------------------- | ----------------------- |
+| Local prod    | `http://localhost:3190` | `http://localhost:3180/api` | `http://localhost:3300` | `http://localhost:8781` |
+| Dev env `dev` | `http://localhost:4190` | `http://localhost:4180/api` | `http://localhost:4300` | `http://localhost:9781` |
 
 Use local prod for normal installed/runtime QA and Telegram checks. Use the dev env for local code
 experiments that should not steal the installed runtime's app-facing ports or state. If the dev env
@@ -338,6 +341,8 @@ active runtime reports the sidecar as ready.
 - Do not create a second active-checkout pointer; use the existing runtime-checkout state.
 - Do not copy source into install paths to "push" a local build.
 - Do not wire helper Prompt Workbench controls to the main `start` or `stop` commands.
+- Do not let a dev stop fall back to canonical or stale generated identity; refuse before any stop
+  when the named dev config cannot compile and prove dev scope.
 - Do not silently pull, reset, or update nested repos from dev-env commands.
 - Do not treat dirty local QA state as release-ready.
 
@@ -360,6 +365,14 @@ Generated dev-env state lives under:
 ```
 
 That directory is local runtime state, not a tracked source-of-truth surface.
+
+Mutable provider state follows that same boundary. In particular, the generated GlassHive
+`WPR_DB_PATH` is derived from the active `VIVENTIUM_STATE_ROOT`; a dev environment must never fall
+back to the canonical installed runtime's GlassHive database. This keeps consultant sessions,
+provider requests, Stop fences, and QA runs isolated even when the source checkout is shared.
+The local `GLASSHIVE_MCP_URL` must likewise follow the compiled `GLASSHIVE_MCP_PORT` when no
+explicit MCP URL is configured. An offset dev port with a canonical-port URL silently reconnects
+LibreChat to the wrong GlassHive MCP and is not an isolated test environment.
 
 ```bash
 bin/viventium dev-runtime activate-current --validate --restart --allow-protected-folder

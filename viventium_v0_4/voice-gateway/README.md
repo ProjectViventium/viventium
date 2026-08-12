@@ -39,6 +39,15 @@ This service is the **voice bridge** between:
   - `VIVENTIUM_LIBRECHAT_ORIGIN` (e.g. `http://localhost:3180`)
   - `VIVENTIUM_CALL_SESSION_SECRET` (must match LibreChat)
 
+- **Worker and health listeners (optional)**
+  - `VIVENTIUM_VOICE_WORKER_HTTP_PORT`
+    - LiveKit Agents worker-internal HTTP listener. Defaults to `0` so the operating system assigns
+      a collision-free port for side-by-side local workers.
+    - Set an integer from `0` through `65535` only when a deployment requires a fixed internal port.
+      Invalid values fail startup.
+  - `VIVENTIUM_VOICE_GATEWAY_HEALTH_PORT` (legacy fallback: `VOICE_GATEWAY_PORT`)
+    - Stable Viventium health/capabilities endpoint. It is independent of the worker-internal port.
+
 - **STT provider (optional)**
   - `VIVENTIUM_VOICE_STT_PROVIDER` (overrides voice only)
   - `VIVENTIUM_STT_PROVIDER` (fallback)

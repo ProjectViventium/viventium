@@ -135,6 +135,21 @@ def configured_foundation_account_labels(config: dict[str, Any]) -> list[str]:
     return labels
 
 
+def configured_foundation_connected_account_labels(config: dict[str, Any]) -> list[str]:
+    """Return only account-scoped foundation routes for compatibility reports."""
+
+    llm = config.get("llm", {}) or {}
+    labels: list[str] = []
+    for node in (llm.get("primary", {}) or {}, llm.get("secondary", {}) or {}):
+        provider = str(node.get("provider") or "").strip().lower()
+        if str(node.get("auth_mode") or "").strip().lower() != "connected_account":
+            continue
+        label = {"openai": "OpenAI", "anthropic": "Anthropic"}.get(provider)
+        if label and label not in labels:
+            labels.append(label)
+    return labels
+
+
 def foundation_connected_account_runtime_configured(
     config: dict[str, Any], runtime_env: dict[str, str], provider: str
 ) -> bool:
@@ -442,6 +457,40 @@ def runtime_state_root_candidates(
             repo_root / ".viventium" / "runtime" / runtime_profile_name(config, runtime_env),
         )
     return roots
+
+
+def prompt_workbench_runtime_url(
+    runtime_env: dict[str, str],
+    runtime_dir: Path | None,
+    repo_root: Path | None,
+) -> str | None:
+    app_support_value = str(runtime_env.get("VIVENTIUM_APP_SUPPORT_DIR") or "").strip()
+    if app_support_value:
+        app_support_dir = Path(app_support_value).expanduser()
+    elif runtime_dir is not None:
+        app_support_dir = runtime_dir.expanduser().resolve().parent
+    else:
+        return None
+    state_file = app_support_dir / "state" / "prompt-workbench" / "state.json"
+    try:
+        payload = json.loads(state_file.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    recorded_repo_root = str(payload.get("repoRoot") or "").strip()
+    if repo_root is not None:
+        if not recorded_repo_root:
+            return None
+        if Path(recorded_repo_root).expanduser().resolve() != repo_root.expanduser().resolve():
+            return None
+    try:
+        port = int(payload.get("port"))
+    except (TypeError, ValueError):
+        return None
+    if not 1 <= port <= 65535:
+        return None
+    return f"http://localhost:{port}"
 
 
 def stack_owner_state_file(
@@ -1325,8 +1374,8 @@ def brain_setup_state(
             for provider in ("openai", "anthropic")
         ):
             return (
-                "Needs setup",
-                "Connected-account route is configured; create or sign in to the local account and verify the provider connection in Settings > Connected Accounts.",
+                "Configured",
+                "Account-scoped provider route is configured; readiness varies by signed-in user. Verify that user's provider connection in Settings > Connected Accounts.",
             )
         return "Needs setup", feature_guidance(key)
     if key == "secondary_ai":
@@ -1466,7 +1515,22 @@ def build_service_rows(
         glasshive_probe_url = f"http://127.0.0.1:{glasshive_ui_port}"
     glasshive_provider_url = runtime_env.get("GLASSHIVE_PROVIDER_BASE_URL", "")
     prompt_workbench_port = str(runtime_env.get("VIVENTIUM_PROMPT_WORKBENCH_PORT") or "8781").strip()
-    prompt_workbench_url = f"http://localhost:{prompt_workbench_port}" if prompt_workbench_port else ""
+    owned_prompt_workbench_url = prompt_workbench_runtime_url(
+        runtime_env,
+        runtime_dir,
+        repo_root,
+    )
+    configured_prompt_workbench_url = (
+        f"http://localhost:{prompt_workbench_port}" if prompt_workbench_port else ""
+    )
+    prompt_workbench_url = owned_prompt_workbench_url or configured_prompt_workbench_url
+    # With a known checkout, only a matching runtime ownership record may prove
+    # that the Workbench listener belongs to this Viventium installation. Keep
+    # showing the configured URL as useful operator context, but do not probe a
+    # listener that could have been started by another checkout.
+    prompt_workbench_probe_url = (
+        owned_prompt_workbench_url if repo_root is not None else prompt_workbench_url
+    )
 
     frontend_ok = (
         any_http_ok(
@@ -1645,9 +1709,9 @@ def build_service_rows(
         )
 
     if resolve_bool(((runtime.get("prompt_workbench") or {}).get("enabled")), False) or resolve_bool(runtime_env.get("START_PROMPT_WORKBENCH"), False):
-        workbench_running = probe_live and prompt_workbench_url and any_http_ok(
-            prompt_workbench_url,
-            url_with_path(prompt_workbench_url, "/api/health"),
+        workbench_running = probe_live and prompt_workbench_probe_url and any_http_ok(
+            prompt_workbench_probe_url,
+            url_with_path(prompt_workbench_probe_url, "/api/health"),
         )
         if workbench_running:
             workbench_status = "Running"

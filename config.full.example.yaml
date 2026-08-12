@@ -92,6 +92,11 @@ runtime:
       enabled: true
       active: true
       executor: glasshive_host
+    # Seed the private correlation definition, but keep it inactive until WHOOP is connected.
+    seed_health_context:
+      enabled: true
+      active: false
+      executor: glasshive_host
   feelings:
     # The panel is installed, but every new user's Feelings switch starts off.
     available: true
@@ -147,8 +152,8 @@ runtime:
     provider_profile: launch_ready_only
     anthropic_model: claude-opus-5
     anthropic_effort: xhigh
-    openai_model: gpt-5.6-sol
-    openai_reasoning_effort: xhigh
+    openai_model: gpt-5.6-luna
+    openai_reasoning_effort: medium
     transcripts:
       # Optional local folder for meeting transcripts. Empty disables transcript ingestion.
       source_dir: ""
@@ -172,6 +177,7 @@ runtime:
   # This is the Phase B window that still allows a late main-agent follow-up to surface
   # after background insights finish.
   background_followup_window_s: 30
+  # Optional foreground Agent Provider deadline. Omit by default; operators may set 30-1800.
   extra_env:
     # Advanced/private local carry-over for legacy provider settings that still need
     # environment-based LibreChat runtime wiring. Public installs can usually leave this empty.
@@ -184,6 +190,7 @@ runtime:
     lc_frontend_port: 3190
     sandpack_bundler_port: 3191
     playground_port: 3300
+    prompt_workbench_port: 8781
     voice_gateway_health_port: 8301
     mongo_port: 27117
     meili_port: 7700
@@ -212,6 +219,11 @@ llm:
     provider: anthropic
     auth_mode: api_key
     secret_ref: keychain://viventium/anthropic_api_key
+  # Optional saved-memory writer selection. Omit to follow foundation-provider priority.
+  # The provider must already be authenticated above; this does not configure automatic fallback.
+  # memory:
+  #   provider: anthropic
+  #   model: claude-opus-5
   extra_provider_keys:
     openrouter: keychain://viventium/openrouter_api_key
 voice:
@@ -259,6 +271,10 @@ voice:
     speed: 1.12
     instructions: Speak naturally with clear pacing. Keep the delivery conversational, grounded, and human. Avoid robotic emphasis or exaggerated pauses.
 integrations:
+  health:
+    enabled: true
+    # Optional metadata-only connector status projection. Raw health evidence stays in App Support.
+    life_projection_dir: ~/Documents/Viventium/Life/Health/Wearables/WHOOP
   glasshive:
     enabled: true
     provider:
@@ -293,6 +309,9 @@ integrations:
       # codex_plugin_cache: ""
       # codex_ignore_user_config: false
       # codex_disable_features: ""
+      # Keep native browsing by default. Set disabled only when a controlled QA/enterprise run must
+      # prove that an assigned broker web capability cannot be bypassed by the worker CLI.
+      # native_web_access: inherit
       # Quality-first default for host Codex work and unattended analytical automations.
       codex_model: gpt-5.6-sol
       codex_reasoning_effort: xhigh

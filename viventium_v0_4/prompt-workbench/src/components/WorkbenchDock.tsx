@@ -290,6 +290,7 @@ export function WorkbenchDock({
               newRequestNonce={tabState.scheduleNewRequestNonce}
               objectMode
               onSelectScheduledPrompt={onSelectScheduledPrompt}
+              onOpenPrompt={onOpenPrompt}
             />
           </Suspense>
         </PanelErrorBoundary>

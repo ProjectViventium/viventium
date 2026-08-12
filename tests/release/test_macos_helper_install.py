@@ -17,6 +17,8 @@ from pathlib import Path
 import sys
 
 import pytest
+import signal
+import tempfile
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -1800,7 +1802,9 @@ def test_helper_source_autostarts_stack_on_launch() -> None:
     assert 'self?.reconcileRuntimeSupervision(trigger: "poll")' in source
     assert "DispatchQueue.main.asyncAfter" in source
     assert "!Self.cliOperationStillRunning(appSupportDir: config.appSupportDir)" in source
-    assert "let inFlightState = Self.inFlightStackState(appSupportDir: config.appSupportDir)" in source
+    assert "let inFlightState = Self.inFlightStackState(" in source
+    assert "appSupportDir: config.appSupportDir," in source
+    assert "runtimeProfile: runtime.runtimeProfile" in source
     assert '"Runtime supervision launching stack attempt' in source
     assert supervision_section.index(
         "let snapshot = await self.stackHealthSnapshot"
@@ -2076,7 +2080,9 @@ def test_helper_source_autostarts_stack_on_launch() -> None:
     assert '.disabled(self.controller.actionDisabled)' in source
     assert "private nonisolated static func launchCLIProcess(" in source
     assert "private nonisolated static func cliOperationCommand(appSupportDir: String) -> String?" in source
-    assert "private nonisolated static func inFlightStackState(appSupportDir: String) -> StackState?" in source
+    assert "private nonisolated static func inFlightStackState(" in source
+    assert "appSupportDir: String," in source
+    assert "runtimeProfile: String" in source
     assert 'let commandPath = "\\(appSupportDir)/state/cli-operation.lock/command"' in source
     assert 'case "launch", "start":' in source
     assert 'case "stop":' in source
@@ -2377,10 +2383,13 @@ def test_helper_package_stays_compatible_with_clean_intel_command_line_tools() -
     command_dispatch = cli_source.split('case "$COMMAND" in', 1)[1]
     start_section = command_dispatch.split('  start)', 1)[1].split('  stop)', 1)[0]
     assert 'The CLI lock protects start preparation, config compilation, and runtime' in start_section
-    assert (
-        'cleanup_cli_lock\n'
-        '    VIVENTIUM_LAUNCHER_INTERNAL=1 "${START_CMD[@]}"'
-    ) in start_section
+    assert start_section.index("cleanup_cli_lock") < start_section.index(
+        'VIVENTIUM_LAUNCHER_INTERNAL=1 "${START_CMD[@]}"'
+    )
+    assert 'VIVENTIUM_LAUNCHER_INTERNAL=1 "${START_CMD[@]}" || start_status=$?' in start_section
+    assert start_section.index('VIVENTIUM_LAUNCHER_INTERNAL=1 "${START_CMD[@]}"') < (
+        start_section.index("clear_runtime_start_claim")
+    )
     assert 'VIVENTIUM_HELPER_SKIP_LOGIN_ITEM=1 run_macos_helper_installer install "$@"' in cli_source
     assert 'run_macos_helper_installer install' in cli_source
     assert 'if ! run_macos_helper_install_command 1 "${helper_args[@]}"; then' in cli_source
@@ -2489,3 +2498,156 @@ def test_helper_logs_are_opened_owner_only_without_following_symlinks() -> None:
     assert "metadata.st_uid == getuid()" in source
     assert "metadata.st_nlink == 1" in source
     assert "FileHandle(forWritingTo: logURL)" not in source
+
+
+def test_helper_detached_launch_classifier_handles_live_and_untrusted_receipts(
+    tmp_path: Path,
+) -> None:
+    source = HELPER_SOURCE.read_text(encoding="utf-8")
+
+    def extract_function(name: str) -> str:
+        start = source.index(f"private nonisolated static func {name}")
+        opening_brace = source.index("{", start)
+        depth = 0
+        for index in range(opening_brace, len(source)):
+            if source[index] == "{":
+                depth += 1
+            elif source[index] == "}":
+                depth -= 1
+                if depth == 0:
+                    return source[start : index + 1]
+        raise AssertionError(f"unterminated Swift function: {name}")
+
+    functions = "\n\n".join(
+        extract_function(name)
+        .replace("private nonisolated static func ", "func ", 1)
+        .replace("self.", "")
+        for name in (
+            "hasNoSymlinkComponents",
+            "privateOwnedRegularFile",
+            "detachedLaunchProcessGroupRunning",
+        )
+    )
+    harness = tmp_path / "DetachedLaunchProbe.swift"
+    executable = tmp_path / "detached-launch-probe"
+    harness.write_text(
+        "import Darwin\nimport Foundation\n\n"
+        f"{functions}\n\n"
+        "guard CommandLine.arguments.count == 3 else { exit(2) }\n"
+        "print(detachedLaunchProcessGroupRunning(\n"
+        "    appSupportDir: CommandLine.arguments[1],\n"
+        "    runtimeProfile: CommandLine.arguments[2]\n"
+        "))\n",
+        encoding="utf-8",
+    )
+    subprocess.run(
+        ["xcrun", "swiftc", str(harness), "-o", str(executable)],
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+    app_support = Path(
+        tempfile.mkdtemp(prefix=".helper-launch-test-", dir=REPO_ROOT.resolve())
+    )
+    try:
+        receipt = app_support / "state" / "runtime" / "isolated" / "detached-launch.pgid"
+        receipt.parent.mkdir(parents=True)
+        process = subprocess.Popen(
+            ["/bin/sleep", "30"],
+            start_new_session=True,
+        )
+        process_group = os.getpgid(process.pid)
+
+        def probe() -> str:
+            completed = subprocess.run(
+                [str(executable), str(app_support), "isolated"],
+                check=True,
+                text=True,
+                capture_output=True,
+            )
+            return completed.stdout.strip()
+
+        try:
+            receipt.write_text(f"{process_group}\n", encoding="utf-8")
+            receipt.chmod(0o600)
+            assert probe() == "true"
+
+            receipt.chmod(0o604)
+            assert probe() == "false"
+
+            receipt.unlink()
+            real_receipt = app_support / "real-receipt"
+            real_receipt.write_text(f"{process_group}\n", encoding="utf-8")
+            real_receipt.chmod(0o600)
+            receipt.symlink_to(real_receipt)
+            assert probe() == "false"
+
+            receipt.unlink()
+            receipt.write_text(f"{process_group}\n", encoding="utf-8")
+            receipt.chmod(0o600)
+            assert probe() == "true"
+        finally:
+            os.killpg(process_group, signal.SIGKILL)
+            process.wait(timeout=5)
+
+        assert probe() == "false"
+    finally:
+        shutil.rmtree(app_support)
+
+
+def test_helper_stack_launch_is_single_flight_for_the_full_health_wait() -> None:
+    source = HELPER_SOURCE.read_text(encoding="utf-8")
+    start = source.split("private func startStack(", 1)[1].split(
+        "private func stopStack", 1
+    )[0]
+
+    assert "private var stackLaunchInProgress = false" in source
+    assert "guard !self.stackLaunchInProgress" in start
+    assert "self.stackLaunchInProgress = true" in start
+    assert start.count("self.stackLaunchInProgress = false") >= 4
+    assert "private nonisolated static func detachedLaunchProcessGroupRunning(" in source
+    assert '"detached-launch.pgid"' in source
+    assert "kill(-processGroup, 0)" in source
+
+
+def test_helper_log_opener_migrates_legacy_owner_owned_mode_before_rejecting_it() -> None:
+    source = HELPER_SOURCE.read_text(encoding="utf-8")
+    opener = source.split(
+        "private nonisolated static func openPrivateAppendLog", 1
+    )[1].split("private nonisolated static func appendHelperLog", 1)[0]
+
+    # Older supported launchers created helper-start.log as 0644. The hardened
+    # helper must safely tighten an already-open, single-link, owner-owned
+    # regular file to 0600 instead of permanently disabling start/recovery.
+    assert opener.index("fchmod(descriptor, S_IRUSR | S_IWUSR)") < opener.index(
+        "metadata.st_mode & 0o077 == 0"
+    )
+
+
+def test_helper_registers_and_privately_forwards_only_the_whoop_callback_scheme() -> None:
+    source = HELPER_SOURCE.read_text(encoding="utf-8")
+    plist = plistlib.loads(HELPER_INFO_PLIST.read_bytes())
+
+    assert plist["CFBundleURLTypes"] == [
+        {
+            "CFBundleURLName": "ai.viventium.helper.whoop-oauth",
+            "CFBundleURLSchemes": ["viventium"],
+        }
+    ]
+    assert 'url.scheme?.lowercased() == "viventium"' in source
+    assert 'url.host?.lowercased() == "oauth"' in source
+    assert 'url.path == "/whoop"' in source
+    assert 'arguments: ["health", "whoop", "onboard", "--callback-stdin"]' in source
+    assert 'stdinPipe.fileHandleForWriting.write(callbackData)' in source
+    assert 'arguments: ["health", "whoop", "onboard", "--callback-stdin", callback' not in source
+    assert 'URLQueryItem(name: "setup", value: "whoop")' in source
+
+
+def test_helper_uses_express_two_surface_health_contract() -> None:
+    source = HELPER_SOURCE.read_text(encoding="utf-8")
+
+    assert "let requiresPlayground: Bool" in source
+    assert "(!self.requiresPlayground || self.playgroundReady)" in source
+    assert 'values["VIVENTIUM_INSTALL_EXPERIENCE"] != "express"' in source
+    assert "if runtime.requiresPlayground" in source

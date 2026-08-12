@@ -134,6 +134,10 @@ background-cortex behavior.
 - Agent Builder must expose a user-visible `Fallback Model` route from the Model Parameters page.
   It uses explicit `fallback_llm_provider`, `fallback_llm_model`, and
   `fallback_llm_model_parameters` fields.
+- The fallback panel receives the same compiled provider-capability metadata as the primary model
+  panel. A GlassHive fallback must therefore show authenticated readiness, the friendly
+  `Claude / Opus 5` label, and its route-scoped effort selector; saving `High` must persist under
+  `fallback_llm_model_parameters.reasoning_effort` and survive reload.
 - Agent Builder must also expose a fallback route inside the Voice Chat Model page. It uses
   explicit `voice_fallback_llm_provider`, `voice_fallback_llm_model`, and
   `voice_fallback_llm_model_parameters` fields so voice calls can recover independently of the
@@ -348,6 +352,17 @@ background-cortex behavior.
 - Reload, background suspension, and network loss do not call the explicit End Call endpoint. They
   therefore do not request native harness cancellation, but full refresh/reconnect continuity must
   still be proven on the real surface before it is reported as resumable.
+
+### Voice Worker Process Port Contract
+- `VIVENTIUM_VOICE_GATEWAY_HEALTH_PORT` (or legacy `VOICE_GATEWAY_PORT`) owns Viventium's stable
+  health/capabilities endpoint.
+- The separate LiveKit Agents worker-internal listener defaults to port `0`, allowing the operating
+  system to assign a collision-free port. Deployments that need a fixed internal port may set
+  `VIVENTIUM_VOICE_WORKER_HTTP_PORT` explicitly.
+- The explicit worker port must be an integer from `0` through `65535`; invalid values fail startup
+  instead of silently falling back or stealing the health port.
+- Do not restore LiveKit Agents' implicit fixed `8081` default for local workers. Side-by-side prod,
+  dev, and QA workers must coexist without a hidden port race.
 
 ### Live Response Streaming
 - Live voice calls should stream the response after the user finishes speaking.
@@ -737,6 +752,10 @@ background-cortex behavior.
   - replacement idle-process prewarm must wait while active voice calls are running and must not
     prewarm local Chatterbox TTS by default on the local Whisper route; this avoids local model
     warmup competing with active whisper.cpp transcription on the same machine
+  - all local Chatterbox model load, prewarm, WAV, and streaming generation in one process must use
+    one stable process-local MLX executor thread. MLX streams are thread-local; reusing a cached
+    model from a fresh per-sentence thread can terminate the native process. A forked job process
+    must discard any inherited executor and model cache before synthesis.
   - local Whisper latency logs must decompose the final transcript path at sub-10ms resolution:
     VAD end, frame merge, pywhispercpp recognition, final transcript send, and LiveKit EOU metric
     event lag. LiveKit `transcription_delay` must be interpreted as user-stopped-speaking to final

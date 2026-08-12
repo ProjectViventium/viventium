@@ -16,6 +16,11 @@ The design intentionally opens the Viventium Modern Playground (`agent-starter-r
 5. Voice Gateway streams audio → LibreChat `/api/viventium/voice/chat` and speaks the response.
 6. Background insights are surfaced after the main response (same contract as text).
 
+The immediate live-voice answer does not start unsolicited foreground research or tool work. It
+answers from already available evidence, names what remains unverified, and leaves later background
+value to Phase B. If the user explicitly asks for a lookup or tool action now, the normal voice task
+may perform it with authoritative progress, interruption/cancellation, and source/result truth.
+
 Conversation continuity follows the call-session `agentId`. Provider-backed ephemeral agent
 conversations may be stored with provider endpoints such as `xai`; the voice resolver may reuse
 them only when the stored conversation `agent_id` exactly matches the active call session. Persisted
@@ -391,6 +396,9 @@ Voice-mode instructions are injected by `buildVoiceModeInstructions(voiceProvide
 ### Chatterbox (Local MLX)
 - Allowed nonverbal markers: `[laugh]`, `[sigh]`, `[gasp]`.
 - No emotion SSML tags.
+- Model load, prewarm, WAV, and streaming generation share one process-local executor thread.
+  MLX streams are thread-local, so cached model state must never cross sentence threads or a fork;
+  a child process replaces inherited executor/cache state before use.
 
 ### ElevenLabs / OpenAI (Fallback)
 - No emotion tags, no bracket stage directions.
@@ -581,7 +589,7 @@ Added: 2026-01-11
 - `VIVENTIUM_VOICE_MODE_PROMPT` (override voice-mode instructions)
 - `VIVENTIUM_CORTEX_PHASE_A_NOTICE_MODE` (default `any_activated_on_voice`)
 - `VIVENTIUM_VOICE_BACKGROUND_AGENT_DETECTION_ASYNC` (default `true`)
-- `VIVENTIUM_TEXT_BACKGROUND_AGENT_DETECTION_ASYNC` (default `false`; text surfaces only)
+- `VIVENTIUM_TEXT_BACKGROUND_AGENT_DETECTION_ASYNC` (default `true`; text surfaces only)
 - `VIVENTIUM_VOICE_PHASE_A_AWAIT_MS` (default `690`)
 - `VIVENTIUM_TEXT_PHASE_A_AWAIT_MS` (default `1300`; text surfaces only)
 - `VIVENTIUM_VOICE_CORTEX_DETECT_TIMEOUT_MS` (0 = disable for voice)

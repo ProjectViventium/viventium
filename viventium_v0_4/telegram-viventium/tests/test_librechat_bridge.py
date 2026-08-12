@@ -39,6 +39,32 @@ from TelegramVivBot.utils.librechat_bridge import (
     _XAI_WRAPPING_TAG_NAMES,
 )
 from TelegramVivBot.utils.telegram_chunks import telegram_text_units
+from TelegramVivBot.utils.librechat_bridge import (
+    _bridge_error_event,
+    _strip_markdown,
+    _start_chat_error_message,
+    _start_chat_error_safe_to_retry,
+    _stream_error_message,
+    _is_file_attachment_payload,
+    _empty_response_message,
+    extract_completed_cortex_insights,
+    extract_attachments,
+    extract_cortex_followup,
+    extract_cortex_parts,
+    extract_final_error,
+    extract_final_response_text,
+    extract_response_message_id,
+    extract_text_deltas,
+    glasshive_callback_is_terminal,
+    has_active_cortex,
+    LibreChatBridge,
+    LibreChatSession,
+    payload_has_glasshive_tool_call,
+    render_telegram_markdown,
+    sanitize_telegram_display_text,
+    sanitize_telegram_text,
+    _XAI_WRAPPING_TAG_NAMES,
+)
 
 
 def test_loopback_http_bridge_skips_unused_tls_bundle_and_proxy_environment():
@@ -3570,3 +3596,479 @@ async def test_chunked_callback_failure_reports_visible_interruption_without_aud
     assert messages[-1][1] == TELEGRAM_CALLBACK_INTERRUPTED_NOTICE
     assert messages[-1][2] is None
     assert all(message[3] is None for message in messages)
+
+
+def test_sanitize_telegram_text_hides_delivery_controls_and_streaming_prefixes():
+    complete = sanitize_telegram_text("First beat.\n{MSG_BREAK}\nSecond beat.\n{SKIP_VOICE}")
+    partial = sanitize_telegram_text("First beat.\n{MSG_")
+    protected = sanitize_telegram_text("```text\n{MSG_BREAK}\n```")
+
+    assert complete == "First beat.\n\nSecond beat."
+    assert partial == "First beat."
+    assert "{MSG_BREAK}" in protected
+
+
+@pytest.mark.asyncio
+async def test_followup_text_resolves_nested_blockquote_formatting():
+    bridge = _make_bridge()
+    captured = {}
+
+    async def _capture(chat_id, message, parse_mode=None):
+        captured["chat_id"] = chat_id
+        captured["message"] = message
+        captured["parse_mode"] = parse_mode
+
+    bridge.set_on_message_callback(_capture)
+    await bridge._send_followup_text(
+        "123",
+        "**Context**\n\n> **Nested emphasis stays visible.**",
+    )
+
+    assert captured["parse_mode"] == "HTML"
+    assert (
+        "<blockquote><b>Nested emphasis stays visible.</b></blockquote>"
+        in captured["message"]
+    )
+    assert "\x00PH" not in captured["message"]
+
+
+def _clear_telegram_followup_window_env(monkeypatch):
+    for name in _TELEGRAM_FOLLOWUP_WINDOW_ENV:
+        monkeypatch.delenv(name, raising=False)
+
+
+def test_followup_listeners_default_disabled_without_compiled_window(monkeypatch):
+    _clear_telegram_followup_window_env(monkeypatch)
+
+    bridge = _make_bridge()
+
+    assert bridge.insight_grace_s == 0.0
+    assert bridge.insight_max_s == 0.0
+    assert bridge.followup_grace_s == 0.0
+    assert bridge.followup_timeout_s == 0.0
+
+
+def test_canonical_followup_window_owns_raw_and_persisted_listeners(monkeypatch):
+    _clear_telegram_followup_window_env(monkeypatch)
+    monkeypatch.setenv("VIVENTIUM_TELEGRAM_FOLLOWUP_GRACE_S", "45")
+
+    bridge = _make_bridge()
+
+    assert bridge.insight_grace_s == 45.0
+    assert bridge.insight_max_s == 45.0
+    assert bridge.followup_grace_s == 45.0
+    assert bridge.followup_timeout_s == 45.0
+
+
+def test_canonical_followup_window_outranks_legacy_insight_overrides(monkeypatch):
+    _clear_telegram_followup_window_env(monkeypatch)
+    monkeypatch.setenv("VIVENTIUM_TELEGRAM_FOLLOWUP_GRACE_S", "30")
+    monkeypatch.setenv("VIVENTIUM_TELEGRAM_INSIGHT_GRACE_S", "180")
+    monkeypatch.setenv("VIVENTIUM_TELEGRAM_INSIGHT_MAX_S", "210")
+
+    bridge = _make_bridge()
+
+    assert bridge.insight_grace_s == 30.0
+    assert bridge.insight_max_s == 30.0
+    assert bridge.followup_grace_s == 30.0
+    assert bridge.followup_timeout_s == 30.0
+
+
+def test_legacy_insight_window_remains_explicit_standalone_compatibility(monkeypatch):
+    _clear_telegram_followup_window_env(monkeypatch)
+    monkeypatch.setenv("VIVENTIUM_TELEGRAM_INSIGHT_GRACE_S", "12")
+    monkeypatch.setenv("VIVENTIUM_TELEGRAM_INSIGHT_MAX_S", "18")
+
+    bridge = _make_bridge()
+
+    assert bridge.insight_grace_s == 12.0
+    assert bridge.insight_max_s == 18.0
+    assert bridge.followup_grace_s == 12.0
+    assert bridge.followup_timeout_s == 18.0
+
+
+@pytest.mark.parametrize("configured", ["0", "invalid", "-1", "inf"])
+def test_zero_or_invalid_canonical_window_disables_legacy_listener(monkeypatch, configured):
+    _clear_telegram_followup_window_env(monkeypatch)
+    monkeypatch.setenv("VIVENTIUM_TELEGRAM_FOLLOWUP_GRACE_S", configured)
+    monkeypatch.setenv("VIVENTIUM_TELEGRAM_INSIGHT_GRACE_S", "180")
+    monkeypatch.setenv("VIVENTIUM_TELEGRAM_INSIGHT_MAX_S", "210")
+
+    bridge = _make_bridge()
+
+    assert bridge.insight_grace_s == 0.0
+    assert bridge.insight_max_s == 0.0
+    assert bridge.followup_grace_s == 0.0
+    assert bridge.followup_timeout_s == 0.0
+
+
+@pytest.mark.parametrize("configured_total", ["10", "0"])
+def test_explicit_followup_total_window_is_bounded_and_never_shorter_than_grace(
+    monkeypatch, configured_total
+):
+    _clear_telegram_followup_window_env(monkeypatch)
+    monkeypatch.setenv("VIVENTIUM_TELEGRAM_FOLLOWUP_GRACE_S", "45")
+    monkeypatch.setenv("VIVENTIUM_TELEGRAM_FOLLOWUP_TIMEOUT_S", configured_total)
+
+    bridge = _make_bridge()
+
+    assert bridge.followup_grace_s == 45.0
+    assert bridge.followup_timeout_s == 45.0
+    assert bridge.insight_max_s == 45.0
+
+
+@pytest.mark.asyncio
+async def test_zero_followup_window_does_not_start_raw_insight_listener(monkeypatch):
+    _clear_telegram_followup_window_env(monkeypatch)
+    monkeypatch.setenv("VIVENTIUM_TELEGRAM_FOLLOWUP_GRACE_S", "0")
+    bridge = _make_bridge()
+    seen = []
+
+    async def _capture(chat_id, message, parse_mode=None):
+        _ = chat_id, message, parse_mode
+
+    async def fake_start_chat(**kwargs):
+        _ = kwargs
+        return LibreChatSession(stream_id="stream-no-listener", conversation_id="conv-no-listener")
+
+    async def fake_listen_for_insights(*, stream_id, chat_id):
+        seen.append((stream_id, chat_id))
+
+    async def fake_stream_response(stream_id, chat_id, trace_id=None):
+        _ = stream_id, chat_id, trace_id
+        if False:
+            yield ""
+
+    bridge.set_on_message_callback(_capture)
+    bridge._start_chat = fake_start_chat  # type: ignore[assignment]
+    bridge._listen_for_insights = fake_listen_for_insights  # type: ignore[assignment]
+    bridge._stream_response = fake_stream_response  # type: ignore[assignment]
+
+    chunks = [chunk async for chunk in bridge.ask_stream_async("hi", "123")]
+    await asyncio.sleep(0)
+
+    assert chunks == []
+    assert seen == []
+
+
+@pytest.mark.asyncio
+async def test_zero_background_window_preserves_separate_glasshive_poll_window(monkeypatch):
+    _clear_telegram_followup_window_env(monkeypatch)
+    monkeypatch.setenv("VIVENTIUM_TELEGRAM_FOLLOWUP_GRACE_S", "0")
+    monkeypatch.setenv("VIVENTIUM_TELEGRAM_GLASSHIVE_TIMEOUT_S", "600")
+    bridge = _make_bridge()
+    seen = []
+
+    async def _capture(chat_id, message, parse_mode=None):
+        _ = chat_id, message, parse_mode
+
+    async def fake_poll_for_followup(*, stream_id, chat_id):
+        seen.append((stream_id, chat_id))
+
+    bridge.set_on_message_callback(_capture)
+    bridge._poll_for_followup = fake_poll_for_followup  # type: ignore[assignment]
+
+    bridge._schedule_followup_poll("ordinary", "123")
+    await asyncio.sleep(0)
+    assert seen == []
+
+    bridge._mark_glasshive_seen("glasshive")
+    bridge._schedule_followup_poll("glasshive", "123")
+    await asyncio.sleep(0)
+    assert seen == [("glasshive", "123")]
+
+
+@pytest.mark.asyncio
+async def test_stopping_raw_listener_does_not_cancel_persisted_followup_poll():
+    bridge = _make_bridge()
+    insight_task = asyncio.create_task(asyncio.Event().wait())
+    followup_task = asyncio.create_task(asyncio.Event().wait())
+    bridge._insight_task_by_stream["stream-1"] = insight_task
+    bridge._followup_task_by_stream["stream-1"] = followup_task
+
+    bridge._cancel_insight_task("stream-1")
+    await asyncio.sleep(0)
+
+    assert insight_task.cancelled()
+    assert not followup_task.done()
+
+    followup_task.cancel()
+    await asyncio.gather(followup_task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_stream_response_superseded_terminal_is_not_an_empty_or_connection_error(monkeypatch):
+    bridge = _make_bridge()
+    payloads = [
+        {
+            "final": True,
+            "superseded": True,
+            "logical_turn_id": "turn-1",
+            "revision": 1,
+        }
+    ]
+
+    async def fake_iter_sse_json_events(*, chunk_iter):
+        _ = chunk_iter
+        for payload in payloads:
+            yield payload
+
+    class _FakeResponse:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            _ = exc_type, exc, tb
+            return False
+
+        def raise_for_status(self):
+            return None
+
+        def aiter_bytes(self):
+            async def _gen():
+                if False:
+                    yield b""
+
+            return _gen()
+
+    class _FakeClient:
+        def __init__(self, *args, **kwargs):
+            _ = args, kwargs
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            _ = exc_type, exc, tb
+            return False
+
+        def stream(self, *args, **kwargs):
+            _ = args, kwargs
+            return _FakeResponse()
+
+    import TelegramVivBot.utils.librechat_bridge as bridge_module
+
+    monkeypatch.setattr(bridge_module, "iter_sse_json_events", fake_iter_sse_json_events)
+    monkeypatch.setattr(bridge_module.httpx, "AsyncClient", _FakeClient)
+
+    chunks = [chunk async for chunk in bridge._stream_response("stream-superseded", "111")]
+
+    assert chunks == [
+        {
+            "type": "logical_turn",
+            "logical_turn_id": "turn-1",
+            "revision": 1,
+        },
+        {
+            "type": "superseded",
+            "logical_turn_id": "turn-1",
+            "revision": 1,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_start_chat_passes_only_opaque_source_event_and_reads_core_turn_identity(monkeypatch):
+    bridge = _make_bridge()
+    captured = {}
+
+    class _FakeResponse:
+        status_code = 200
+        text = '{}'
+
+        @staticmethod
+        def json():
+            return {
+                "streamId": "stream-1",
+                "conversationId": "conv-1",
+                "logical_turn_id": "turn-1",
+                "revision": 7,
+            }
+
+    class _FakeClient:
+        def __init__(self, *args, **kwargs):
+            _ = args, kwargs
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            _ = exc_type, exc, tb
+            return False
+
+        async def post(self, _url, json=None, headers=None):
+            captured.update(json or {})
+            return _FakeResponse()
+
+    import TelegramVivBot.utils.librechat_bridge as bridge_module
+
+    monkeypatch.setattr(bridge_module.httpx, "AsyncClient", _FakeClient)
+    session = await bridge._start_chat(
+        text="hello",
+        conversation_id="new",
+        agent_id="agent-1",
+        telegram_chat_id="chat-1",
+        telegram_user_id="user-1",
+        telegram_username="name",
+        telegram_message_id="123",
+        telegram_update_id="456",
+        source_event_id="telegram:chat:chat-1:message:123",
+        preference_convo_id="chat-1",
+        voice_mode=False,
+        input_mode="text",
+    )
+
+    assert captured["sourceEventId"] == "telegram:chat:chat-1:message:123"
+    assert "interactionContext" not in captured
+    assert "actor_kind" not in captured
+    assert session.logical_turn_id == "turn-1"
+    assert session.revision == 7
+
+
+@pytest.mark.asyncio
+async def test_ack_delivery_is_optional_generic_and_non_throwing(monkeypatch):
+    bridge = _make_bridge()
+    monkeypatch.delenv("VIVENTIUM_DELIVERY_ACK_ENDPOINT", raising=False)
+    monkeypatch.delenv("VIVENTIUM_TELEGRAM_INTERACTION_ADAPTER_SECRET", raising=False)
+
+    assert await bridge.ack_delivery("turn-1", 7, "committed", "presentation-1") is False
+
+    monkeypatch.setenv("VIVENTIUM_INTERACTION_ADAPTER_SECRET", "deprecated-shared-secret")
+    monkeypatch.setenv(
+        "VIVENTIUM_DELIVERY_ACK_ENDPOINT",
+        "/api/viventium/interactions/delivery-ack",
+    )
+    assert await bridge.ack_delivery("turn-1", 7, "committed", "presentation-1") is False
+    monkeypatch.delenv("VIVENTIUM_INTERACTION_ADAPTER_SECRET", raising=False)
+
+    monkeypatch.setenv("VIVENTIUM_TELEGRAM_INTERACTION_ADAPTER_SECRET", "adapter-secret")
+    captured = {}
+
+    class _FakeResponse:
+        status_code = 204
+
+    class _FakeClient:
+        def __init__(self, *args, **kwargs):
+            _ = args, kwargs
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            _ = exc_type, exc, tb
+            return False
+
+        async def post(self, url, json=None, headers=None):
+            captured.update({"url": url, "json": json, "headers": headers})
+            return _FakeResponse()
+
+    import TelegramVivBot.utils.librechat_bridge as bridge_module
+
+    monkeypatch.setattr(bridge_module.httpx, "AsyncClient", _FakeClient)
+    assert await bridge.ack_delivery("turn-1", 7, "committed", "presentation-1") is True
+    assert captured["json"] == {
+        "logical_turn_id": "turn-1",
+        "revision": 7,
+        "state": "committed",
+        "presentation_ref": "presentation-1",
+    }
+    assert captured["url"].endswith("/api/viventium/interactions/delivery-ack")
+    assert captured["headers"] == {"x-viventium-adapter-secret": "adapter-secret"}
+
+
+@pytest.mark.asyncio
+async def test_ack_delivery_status_distinguishes_stale_revision_from_transport_failure(monkeypatch):
+    bridge = _make_bridge()
+    monkeypatch.setenv(
+        "VIVENTIUM_DELIVERY_ACK_ENDPOINT",
+        "/api/viventium/interactions/delivery-ack",
+    )
+    monkeypatch.setenv("VIVENTIUM_TELEGRAM_INTERACTION_ADAPTER_SECRET", "adapter-secret")
+
+    class _FakeResponse:
+        status_code = 409
+
+        def json(self):
+            return {"acknowledged": False, "error": "stale_revision"}
+
+    class _FakeClient:
+        def __init__(self, *args, **kwargs):
+            _ = args, kwargs
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            _ = exc_type, exc, tb
+            return False
+
+        async def post(self, *args, **kwargs):
+            _ = args, kwargs
+            return _FakeResponse()
+
+    import TelegramVivBot.utils.librechat_bridge as bridge_module
+
+    monkeypatch.setattr(bridge_module.httpx, "AsyncClient", _FakeClient)
+    assert (
+        await bridge.ack_delivery_status("turn-1", 7, "committed", "presentation-1")
+        == "stale_revision"
+    )
+
+    class _UnavailableClient(_FakeClient):
+        async def post(self, *args, **kwargs):
+            _ = args, kwargs
+            raise ConnectionError("synthetic transport failure")
+
+    monkeypatch.setattr(bridge_module.httpx, "AsyncClient", _UnavailableClient)
+    assert (
+        await bridge.ack_delivery_status("turn-1", 7, "committed", "presentation-1")
+        == "unavailable"
+    )
+
+
+@pytest.mark.asyncio
+async def test_ack_delivery_retries_one_transient_failure_idempotently(monkeypatch):
+    bridge = _make_bridge()
+    monkeypatch.setenv(
+        "VIVENTIUM_DELIVERY_ACK_ENDPOINT",
+        "/api/viventium/interactions/delivery-ack",
+    )
+    monkeypatch.setenv("VIVENTIUM_TELEGRAM_INTERACTION_ADAPTER_SECRET", "adapter-secret")
+    statuses = [503, 204]
+    payloads = []
+
+    class _FakeResponse:
+        def __init__(self, status_code):
+            self.status_code = status_code
+
+        def json(self):
+            return {}
+
+    class _FakeClient:
+        def __init__(self, *args, **kwargs):
+            _ = args, kwargs
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            _ = exc_type, exc, tb
+            return False
+
+        async def post(self, _url, json=None, headers=None):
+            payloads.append((json, headers))
+            return _FakeResponse(statuses.pop(0))
+
+    async def _no_delay(_seconds):
+        return None
+
+    import TelegramVivBot.utils.librechat_bridge as bridge_module
+
+    monkeypatch.setattr(bridge_module.httpx, "AsyncClient", _FakeClient)
+    monkeypatch.setattr(bridge_module.asyncio, "sleep", _no_delay)
+    assert (
+        await bridge.ack_delivery_status("turn-1", 7, "committed", "presentation-1")
+        == "recorded"
+    )
+    assert len(payloads) == 2
+    assert payloads[0] == payloads[1]

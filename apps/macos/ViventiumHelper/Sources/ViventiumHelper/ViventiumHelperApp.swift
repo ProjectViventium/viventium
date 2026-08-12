@@ -4,6 +4,38 @@ import Darwin
 import Foundation
 import SwiftUI
 
+private extension Notification.Name {
+    static let viventiumWhoopOAuthCallback = Notification.Name(
+        "ai.viventium.helper.whoop-oauth-callback"
+    )
+}
+
+private enum WhoopOAuthCallbackURL {
+    static func isAccepted(_ url: URL) -> Bool {
+        guard
+            url.scheme?.lowercased() == "viventium",
+            url.host?.lowercased() == "oauth",
+            url.path == "/whoop",
+            let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        else {
+            return false
+        }
+        let keys = Set((components.queryItems ?? []).map(\.name))
+        return keys.contains("state") && (keys.contains("code") || keys.contains("error"))
+    }
+}
+
+private final class ViventiumHelperApplicationDelegate: NSObject, NSApplicationDelegate {
+    func application(_ application: NSApplication, open urls: [URL]) {
+        for url in urls where WhoopOAuthCallbackURL.isAccepted(url) {
+            NotificationCenter.default.post(
+                name: .viventiumWhoopOAuthCallback,
+                object: url
+            )
+        }
+    }
+}
+
 enum RuntimeDesiredState: String, Codable, Equatable {
     case running
     case stopped
@@ -389,11 +421,17 @@ final class HelperController: ObservableObject {
     private let delayedQuitWatchTimeoutSeconds: Int = 420
     private var runtimeSupervision = RuntimeSupervisionState.defaultRunning
     private var runtimeSupervisionCheckInFlight = false
+    // `start --restart` temporarily replaces its detached process-group receipt.
+    // Keep the controller operation single-flight across that replacement window
+    // so no second launch can restart the first one mid-boot.
+    private var stackLaunchInProgress = false
     private var delayedQuitWatchTask: Task<Void, Never>?
     private var busyStateGraceDeadline: Date?
     private var activatedHelperLifecycle = false
     private var launchAtLoginRefreshTask: Task<Void, Never>?
     private var steadyStateHealthSnapshot: (runtime: RuntimePorts, checkedAt: Date, snapshot: StackHealthSnapshot)?
+    private var steadyStateHealthSnapshotTask: (runtime: RuntimePorts, task: Task<StackHealthSnapshot, Never>)?
+    private var whoopOAuthObserver: NSObjectProtocol?
     private let steadyStateHealthRefreshInterval: TimeInterval = 30
     private let automaticTerminationReason = "Viventium status-bar helper keeps the local runtime available after login."
 
@@ -405,6 +443,18 @@ final class HelperController: ObservableObject {
         self.launchAtLoginEnabled = Self.launchAtLoginFastPathEnabled()
         self.showInStatusBarEnabled = self.config?.showInStatusBar ?? true
         self.log("Helper launched")
+        self.whoopOAuthObserver = NotificationCenter.default.addObserver(
+            forName: .viventiumWhoopOAuthCallback,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            guard let url = notification.object as? URL else {
+                return
+            }
+            Task { @MainActor in
+                self?.handleWhoopOAuthCallback(url)
+            }
+        }
         if self.showInStatusBarEnabled {
             self.activateHelperLifecycle()
         } else {
@@ -1354,6 +1404,11 @@ final class HelperController: ObservableObject {
             self.presentProtectedCheckoutAlert(action: "start Viventium")
             return
         }
+        guard !self.stackLaunchInProgress else {
+            self.log("Start ignored because a stack launch is already in progress (\(launchReason))")
+            return
+        }
+        self.stackLaunchInProgress = true
         if recordsDesiredRunning {
             self.setRuntimeDesiredState(.running)
         }
@@ -1367,6 +1422,7 @@ final class HelperController: ObservableObject {
                 expectedRepoRoot: config.repoRoot
             ) {
                 await MainActor.run {
+                    self.stackLaunchInProgress = false
                     self.log("Start blocked; another workspace owns the running stack")
                     self.stackState = .unavailable("Split Workspace")
                     let alert = NSAlert()
@@ -1383,12 +1439,24 @@ final class HelperController: ObservableObject {
                 logFileName: "helper-start.log"
             )
             let startLogOffset = Self.fileSize(startLogURL)
+            if let inFlightState = Self.inFlightStackState(
+                appSupportDir: config.appSupportDir,
+                runtimeProfile: runtime.runtimeProfile
+            ) {
+                await MainActor.run {
+                    self.stackLaunchInProgress = false
+                    self.stackState = inFlightState
+                    self.log("Start deferred because another stack operation is already in progress (\(launchReason))")
+                }
+                return
+            }
             guard let detachedStartPID = Self.submitDetachedStart(
                 repoRoot: config.repoRoot,
                 appSupportDir: config.appSupportDir,
                 logFileName: "helper-start.log"
             ) else {
                 await MainActor.run {
+                    self.stackLaunchInProgress = false
                     if supervisedLaunch {
                         self.recordSupervisedLaunchFailure()
                     }
@@ -1423,6 +1491,7 @@ final class HelperController: ObservableObject {
                 startLogOffset: startLogOffset
             )
             await MainActor.run {
+                self.stackLaunchInProgress = false
                 if supervisedLaunch {
                     if started {
                         self.runtimeSupervision.recordHealthy(
@@ -1610,7 +1679,10 @@ final class HelperController: ObservableObject {
                 knownSnapshot: snapshot
             )
             self.openURLString = preferredOpenURLString
-            let inFlightState = Self.inFlightStackState(appSupportDir: config.appSupportDir)
+            let inFlightState = Self.inFlightStackState(
+                appSupportDir: config.appSupportDir,
+                runtimeProfile: runtime.runtimeProfile
+            )
             let busyStateGraceActive = (self.busyStateGraceDeadline ?? .distantPast) > Date()
             let shouldPreserveBusyState =
                 !allowBusyStateTransition &&
@@ -1647,7 +1719,20 @@ final class HelperController: ObservableObject {
             return cached.snapshot
         }
 
-        let snapshot = await Self.stackHealthSnapshot(runtime: runtime, appSupportDir: self.config?.appSupportDir)
+        if let inFlight = self.steadyStateHealthSnapshotTask,
+           inFlight.runtime == runtime {
+            return await inFlight.task.value
+        }
+
+        let appSupportDir = self.config?.appSupportDir
+        let task = Task {
+            await Self.stackHealthSnapshot(runtime: runtime, appSupportDir: appSupportDir)
+        }
+        self.steadyStateHealthSnapshotTask = (runtime, task)
+        let snapshot = await task.value
+        if self.steadyStateHealthSnapshotTask?.runtime == runtime {
+            self.steadyStateHealthSnapshotTask = nil
+        }
         if snapshot.healthy {
             self.steadyStateHealthSnapshot = (runtime, Date(), snapshot)
         } else {
@@ -1832,6 +1917,7 @@ final class HelperController: ObservableObject {
 
     private func reconcileRuntimeSupervision(trigger: String) {
         guard !self.runtimeSupervisionCheckInFlight,
+              !self.stackLaunchInProgress,
               self.runtimeSupervision.desiredState == .running,
               let config
         else {
@@ -1896,6 +1982,10 @@ final class HelperController: ObservableObject {
             }
             guard self.runtimeSupervision.shouldLaunch(at: observedAt),
                   !Self.cliOperationStillRunning(appSupportDir: config.appSupportDir),
+                  Self.inFlightStackState(
+                      appSupportDir: config.appSupportDir,
+                      runtimeProfile: runtime.runtimeProfile
+                  ) == nil,
                   !self.stackState.actionBusy
             else {
                 return
@@ -2234,9 +2324,14 @@ final class HelperController: ObservableObject {
         guard fstat(descriptor, &metadata) == 0,
               metadata.st_mode & S_IFMT == S_IFREG,
               metadata.st_uid == getuid(),
-              metadata.st_nlink == 1,
-              metadata.st_mode & 0o077 == 0,
-              fchmod(descriptor, S_IRUSR | S_IWUSR) == 0
+              metadata.st_nlink == 1
+        else {
+            Darwin.close(descriptor)
+            return nil
+        }
+        guard fchmod(descriptor, S_IRUSR | S_IWUSR) == 0,
+              fstat(descriptor, &metadata) == 0,
+              metadata.st_mode & 0o077 == 0
         else {
             Darwin.close(descriptor)
             return nil
@@ -2752,15 +2847,41 @@ final class HelperController: ObservableObject {
         return command
     }
 
-    private nonisolated static func inFlightStackState(appSupportDir: String) -> StackState? {
+    private nonisolated static func inFlightStackState(
+        appSupportDir: String,
+        runtimeProfile: String
+    ) -> StackState? {
         switch self.cliOperationCommand(appSupportDir: appSupportDir) {
         case "launch", "start":
             return .starting
         case "stop":
             return .stopping
         default:
-            return nil
+            return self.detachedLaunchProcessGroupRunning(
+                appSupportDir: appSupportDir,
+                runtimeProfile: runtimeProfile
+            ) ? .starting : nil
         }
+    }
+
+    private nonisolated static func detachedLaunchProcessGroupRunning(
+        appSupportDir: String,
+        runtimeProfile: String
+    ) -> Bool {
+        let processGroupURL = URL(fileURLWithPath: appSupportDir, isDirectory: true)
+            .appendingPathComponent("state/runtime/\(runtimeProfile)", isDirectory: true)
+            .appendingPathComponent("detached-launch.pgid")
+        guard self.privateOwnedRegularFile(processGroupURL.path),
+              let raw = try? String(contentsOf: processGroupURL, encoding: .utf8),
+              let processGroup = Int32(
+                  raw.trimmingCharacters(in: .whitespacesAndNewlines)
+              ),
+              processGroup > 1,
+              processGroup != getpgrp()
+        else {
+            return false
+        }
+        return kill(-processGroup, 0) == 0 || errno == EPERM
     }
 
     private nonisolated static func defaultCLIPath(
@@ -3039,6 +3160,74 @@ final class HelperController: ObservableObject {
             return process
         } catch {
             return nil
+        }
+    }
+
+    private nonisolated static func runWhoopOAuthCallback(
+        repoRoot: String,
+        appSupportDir: String,
+        callback: String
+    ) -> Int32 {
+        guard let callbackData = "\(callback)\n".data(using: .utf8) else {
+            return 1
+        }
+        let process = self.makeCLIProcess(
+            repoRoot: repoRoot,
+            appSupportDir: appSupportDir,
+            arguments: ["health", "whoop", "onboard", "--callback-stdin"]
+        )
+        let stdinPipe = Pipe()
+        process.standardInput = stdinPipe
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        do {
+            try process.run()
+            stdinPipe.fileHandleForWriting.write(callbackData)
+            try? stdinPipe.fileHandleForWriting.close()
+            process.waitUntilExit()
+            return process.terminationStatus
+        } catch {
+            try? stdinPipe.fileHandleForWriting.close()
+            return 1
+        }
+    }
+
+    private func handleWhoopOAuthCallback(_ url: URL) {
+        guard WhoopOAuthCallbackURL.isAccepted(url), let config = self.config else {
+            return
+        }
+        let callback = url.absoluteString
+        let repoRoot = config.repoRoot
+        let appSupportDir = config.appSupportDir
+        self.openWhoopSetup()
+        Task { [weak self] in
+            let status = await Task.detached(priority: .utility) {
+                Self.runWhoopOAuthCallback(
+                    repoRoot: repoRoot,
+                    appSupportDir: appSupportDir,
+                    callback: callback
+                )
+            }.value
+            guard let self else {
+                return
+            }
+            self.log(
+                status == 0
+                    ? "WHOOP authorization and initial import completed"
+                    : "WHOOP authorization flow needs attention"
+            )
+        }
+    }
+
+    private func openWhoopSetup() {
+        guard var components = URLComponents(string: self.openURLString) else {
+            return
+        }
+        var queryItems = (components.queryItems ?? []).filter { $0.name != "setup" }
+        queryItems.append(URLQueryItem(name: "setup", value: "whoop"))
+        components.queryItems = queryItems
+        if let url = components.url {
+            NSWorkspace.shared.open(url)
         }
     }
 
@@ -4369,6 +4558,8 @@ private enum LocalNetworkAddressResolver {
 
 @main
 struct ViventiumHelperApp: App {
+    @NSApplicationDelegateAdaptor(ViventiumHelperApplicationDelegate.self)
+    private var applicationDelegate
     @StateObject private var controller = HelperController()
 
     var body: some Scene {

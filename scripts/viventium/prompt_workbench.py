@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shlex
 import signal
 import socket
 import secrets
@@ -220,6 +221,33 @@ def process_command(pid: int) -> str:
     return completed.stdout.strip()
 
 
+def process_cwd(pid: int) -> Path | None:
+    proc_cwd = Path(f"/proc/{pid}/cwd")
+    try:
+        return proc_cwd.resolve(strict=True)
+    except OSError:
+        pass
+
+    try:
+        completed = subprocess.run(
+            ["lsof", "-a", "-p", str(pid), "-d", "cwd", "-Fn"],
+            text=True,
+            capture_output=True,
+            timeout=2,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    for line in completed.stdout.splitlines():
+        if not line.startswith("n") or len(line) <= 1:
+            continue
+        try:
+            return Path(line[1:]).resolve(strict=True)
+        except OSError:
+            return None
+    return None
+
+
 def pid_running(pid: int) -> bool:
     if pid <= 0:
         return False
@@ -230,14 +258,38 @@ def pid_running(pid: int) -> bool:
     return True
 
 
-def process_matches_workbench(pid: int, root: Path) -> bool:
+def process_matches_workbench(pid: int, root: Path, expected_port: int | None = None) -> bool:
     command = process_command(pid)
-    if not command:
+    if not command or "prompt_workbench.app:app" not in command:
         return False
-    root_text = str(root)
-    return "prompt_workbench.app:app" in command and (
-        root_text in command or str(root / "backend") in command
-    )
+    expected_backend = (root / "backend").resolve()
+
+    try:
+        argv = shlex.split(command)
+        app_dir_index = argv.index("--app-dir")
+        app_dir = Path(argv[app_dir_index + 1])
+    except (ValueError, IndexError):
+        return False
+    if not app_dir.is_absolute():
+        cwd = process_cwd(pid)
+        if cwd is None:
+            return False
+        app_dir = cwd / app_dir
+    try:
+        if app_dir.resolve() != expected_backend:
+            return False
+    except OSError:
+        return False
+    if expected_port is None:
+        return True
+    try:
+        if "--port" in argv:
+            port_value = argv[argv.index("--port") + 1]
+        else:
+            port_value = next(item.split("=", 1)[1] for item in argv if item.startswith("--port="))
+        return int(port_value) == int(expected_port)
+    except (IndexError, StopIteration, ValueError):
+        return False
 
 
 def status_payload(repo_root: Path, app_support_dir: Path) -> dict[str, Any]:
@@ -245,7 +297,7 @@ def status_payload(repo_root: Path, app_support_dir: Path) -> dict[str, Any]:
     pid = int(payload.get("pid") or 0)
     port = int(payload.get("port") or DEFAULT_PORT)
     root = workbench_root(repo_root)
-    running = pid_running(pid) and process_matches_workbench(pid, root) and http_healthy(port)
+    running = pid_running(pid) and process_matches_workbench(pid, root, port) and http_healthy(port)
     if not running and pid > 0 and not pid_running(pid):
         clear_state(app_support_dir)
     result = {
@@ -281,6 +333,39 @@ def newest_mtime(paths: list[Path]) -> float:
                 if child.is_file() and not ignored_parts.intersection(child.parts):
                     newest = max(newest, child.stat().st_mtime)
     return newest
+
+
+def workbench_source_mtime(root: Path) -> float:
+    return newest_mtime(
+        [
+            root / "src",
+            root / "backend",
+            root / "public",
+            root / "index.html",
+            root / "package.json",
+        ]
+    )
+
+
+def state_source_is_stale(payload: dict[str, Any], root: Path) -> bool:
+    current_source_mtime = workbench_source_mtime(root)
+    try:
+        recorded_source_mtime = float(payload.get("sourceMtime") or 0)
+    except (TypeError, ValueError):
+        recorded_source_mtime = 0
+    if recorded_source_mtime > 0:
+        return current_source_mtime > recorded_source_mtime
+
+    started_at = str(payload.get("startedAt") or "").strip()
+    if not started_at:
+        return True
+    try:
+        started = datetime.fromisoformat(started_at.replace("Z", "+00:00"))
+    except ValueError:
+        return True
+    if started.tzinfo is None:
+        started = started.replace(tzinfo=timezone.utc)
+    return current_source_mtime > started.timestamp()
 
 
 def run_logged(command: list[str], cwd: Path, env: dict[str, str], log_file: Path) -> None:
@@ -347,13 +432,38 @@ def wait_for_health(port: int, timeout_seconds: int) -> bool:
     return http_healthy(port)
 
 
+def current_workbench_requires_restart(
+    current_state: dict[str, Any],
+    current: dict[str, Any],
+    root: Path,
+    *,
+    managed_by_stack: bool,
+    preferred_port: int,
+) -> bool:
+    if current.get("status") != "running":
+        return False
+    if managed_by_stack and int(current.get("port") or 0) != preferred_port:
+        return True
+    return state_source_is_stale(current_state, root)
+
+
 def start_server(args: argparse.Namespace) -> dict[str, Any]:
     repo_root = Path(args.repo_root).resolve()
     app_support_dir = Path(args.app_support_dir).expanduser().resolve()
     root = workbench_root(repo_root)
     ensure_workbench_exists(root)
 
+    preferred_port = int(args.port or os.environ.get("VIVENTIUM_PROMPT_WORKBENCH_PORT") or DEFAULT_PORT)
+    managed_by_stack = (os.environ.get("VIVENTIUM_PROMPT_WORKBENCH_MANAGED_BY_STACK") or "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+    current_state = read_state(app_support_dir)
     current = status_payload(repo_root, app_support_dir)
+    restarted_stale = False
     if current["status"] == "running":
         clear_user_stopped_marker(app_support_dir)
         return {**current, "started": False}
@@ -366,7 +476,7 @@ def start_server(args: argparse.Namespace) -> dict[str, Any]:
         "on",
     }
     if managed_by_stack:
-        reclaim_stale_managed_workbench_port(preferred_port, root)
+        reclaim_stale_managed_workbench_port(preferred_port, root, app_support_dir)
     port = choose_port(app_support_dir, root, preferred_port)
     log_file = log_path(app_support_dir)
     ensure_assets_built(root, log_file, skip_build=args.no_build)
@@ -419,6 +529,7 @@ def start_server(args: argparse.Namespace) -> dict[str, Any]:
             "authUrl": token_url(port, launch_token),
             "repoRoot": str(repo_root),
             "startedAt": utc_now(),
+            "sourceMtime": workbench_source_mtime(root),
             "managedByStack": (os.environ.get("VIVENTIUM_PROMPT_WORKBENCH_MANAGED_BY_STACK") or "").strip().lower()
             in {"1", "true", "yes", "on"},
         },
@@ -435,6 +546,8 @@ def start_server(args: argparse.Namespace) -> dict[str, Any]:
         "port": port,
         "url": app_url(port),
         "authUrl": token_url(port, launch_token),
+        "restartedStale": restarted_stale,
+        "sourceStale": False,
     }
 
 
@@ -444,7 +557,10 @@ def stop_pid(pid: int, timeout_seconds: int = 10) -> bool:
     try:
         os.killpg(os.getpgid(pid), signal.SIGTERM)
     except OSError:
-        os.kill(pid, signal.SIGTERM)
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except OSError:
+            pass
     deadline = time.monotonic() + timeout_seconds
     while time.monotonic() < deadline:
         if not pid_running(pid):
@@ -454,20 +570,28 @@ def stop_pid(pid: int, timeout_seconds: int = 10) -> bool:
         try:
             os.killpg(os.getpgid(pid), signal.SIGKILL)
         except OSError:
-            os.kill(pid, signal.SIGKILL)
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except OSError:
+                pass
     return True
 
 
-def reclaim_stale_managed_workbench_port(port: int, root: Path) -> bool:
+def reclaim_stale_managed_workbench_port(port: int, root: Path, app_support_dir: Path) -> bool:
     if port_available(port):
+        return False
+
+    state = read_state(app_support_dir)
+    recorded_pid = int(state.get("pid") or 0)
+    recorded_port = int(state.get("port") or 0)
+    if recorded_pid <= 0 or recorded_port != port:
         return False
 
     reclaimed = False
     for pid in listener_pids(port):
-        if not process_matches_workbench(pid, root):
+        if pid != recorded_pid or not process_matches_workbench(pid, root, port):
             continue
-        # Only replace a stale listener owned by this checkout. A Workbench from another checkout
-        # is independent local development and must not be terminated to reclaim a canonical port.
+        # Current App Support state, exact PID, source checkout, and port must all agree.
         reclaimed = stop_pid(pid) or reclaimed
 
     if not reclaimed:
@@ -489,7 +613,8 @@ def stop_server(args: argparse.Namespace) -> dict[str, Any]:
     root = workbench_root(repo_root)
     stopped = False
     if pid > 0 and pid_running(pid):
-        if not process_matches_workbench(pid, root):
+        port = int(payload.get("port") or DEFAULT_PORT)
+        if not process_matches_workbench(pid, root, port):
             clear_state(app_support_dir)
             mark_user_stopped(app_support_dir)
             return {

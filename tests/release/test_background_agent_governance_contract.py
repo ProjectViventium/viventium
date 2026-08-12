@@ -36,6 +36,32 @@ BACKGROUND_CORTEX_SERVICE = (
     / "services"
     / "BackgroundCortexService.js"
 )
+FOLLOW_UP_POLL_HOOK = (
+    ROOT
+    / "viventium_v0_4"
+    / "LibreChat"
+    / "client"
+    / "src"
+    / "hooks"
+    / "Viventium"
+    / "useCortexFollowUpPoll.ts"
+)
+LIBRECHAT_CONFIG_ROUTE = (
+    ROOT / "viventium_v0_4" / "LibreChat" / "api" / "server" / "routes" / "config.js"
+)
+LIBRECHAT_STARTUP_CONFIG_TYPE = (
+    ROOT
+    / "viventium_v0_4"
+    / "LibreChat"
+    / "packages"
+    / "data-provider"
+    / "src"
+    / "config.ts"
+)
+PROMPT_SOURCE_ROOT = (
+    ROOT / "viventium_v0_4" / "LibreChat" / "viventium" / "source_of_truth" / "prompts"
+)
+ANTI_SYCOPHANCY_VISION_PATH = ROOT / "viventium_v0_5" / "docs" / "07_Anti_Sycophancy.md"
 
 APPROVED_EXECUTION_FAMILIES = {
     ("anthropic", "claude-opus-5"),
@@ -699,3 +725,170 @@ def test_librechat_source_of_truth_stays_on_current_anthropic_inventory() -> Non
         == "claude-opus-5"
     )
     assert source.get("balance", {}).get("enabled") is False
+
+
+def test_anti_sycophancy_philosophy_defines_truth_seeking_not_naysaying() -> None:
+    philosophy = " ".join(
+        ANTI_SYCOPHANCY_VISION_PATH.read_text(encoding="utf-8").replace(">", " ").split()
+    )
+
+    assert "should not mean reflexive disagreement or pessimism" in philosophy
+    assert "The correct target is calibrated truth-seeking" in philosophy
+    assert "accept strong claims when evidence supports them" in philosophy
+    assert "challenge weak assumptions when it does not" in philosophy
+    assert "objective, data-driven, analytical, and genuinely truth-finding—not a" in philosophy
+    assert "naysayer" in philosophy
+
+
+def test_conscious_main_uses_glasshive_and_subconscious_agents_keep_gpt56_workloads() -> None:
+    bundle = _load_source_of_truth()
+    expected = {
+        "Background Analysis": ("gpt-5.6-terra", "medium"),
+        "Confirmation Bias": ("gpt-5.6-terra", "medium"),
+        "Deep Memory Search": ("gpt-5.6-terra", "medium"),
+        "Red Team": ("gpt-5.6-sol", "xhigh"),
+        "Deep Research": ("gpt-5.6-sol", "xhigh"),
+        "MS365": ("gpt-5.6-terra", "low"),
+        "Parietal Cortex": ("gpt-5.6-terra", "medium"),
+        "Pattern Recognition": ("gpt-5.6-terra", "medium"),
+        "Emotional Resonance": ("gpt-5.6-terra", "low"),
+        "Strategic Planning": ("gpt-5.6-sol", "high"),
+        "Viventium User Help": ("gpt-5.6-terra", "low"),
+        "Google": ("gpt-5.6-terra", "low"),
+    }
+
+    agents = {"Viventium": bundle["mainAgent"]}
+    agents.update({agent["name"]: agent for agent in bundle.get("backgroundAgents", [])})
+    assert set(agents) == {"Viventium", *expected}
+    main_agent = bundle["mainAgent"]
+    assert main_agent.get("provider") == "glasshive-harness"
+    assert main_agent.get("model") == "codex-cli:gpt-5.6-sol"
+    assert main_agent.get("model_parameters") == {
+        "model": "codex-cli:gpt-5.6-sol",
+        "reasoning_effort": "medium",
+    }
+    assert main_agent.get("glasshive_options") == {
+        "workspace": {"mode": "life"},
+        "access": "full",
+    }
+
+    for name, (model, effort) in expected.items():
+        agent = agents[name]
+        expected_provider = "openAI"
+        assert agent.get("provider") == expected_provider
+        assert agent.get("model") == model
+        expected_model_parameters = {
+            "model": model,
+            "reasoning_effort": effort,
+        }
+        if expected_provider == "openAI":
+            expected_model_parameters["useResponsesApi"] = True
+        if name in {"Deep Memory Search", "Red Team"}:
+            expected_model_parameters["resendFiles"] = True
+        assert agent.get("model_parameters") == expected_model_parameters
+        if name == "Deep Memory Search":
+            assert agent.get("fallback_llm_provider") == "glasshive-harness"
+            assert agent.get("fallback_llm_model") == "codex-cli:gpt-5.6-sol"
+            assert agent.get("fallback_llm_model_parameters") == {
+                "model": "codex-cli:gpt-5.6-sol",
+                "reasoning_effort": "medium",
+            }
+        else:
+            assert agent.get("fallback_llm_provider") == "glasshive-harness"
+            assert agent.get("fallback_llm_model") == "claude-code:opus"
+            assert agent.get("fallback_llm_model_parameters") == {
+                "model": "claude-code:opus",
+                "reasoning_effort": "high",
+            }
+
+    assert main_agent.get("voice_llm_provider") == "xai"
+    assert main_agent.get("voice_llm_model") == "grok-4.5"
+    assert main_agent.get("voice_llm_model_parameters") == {
+        "model": "grok-4.5",
+        "reasoning_effort": "low",
+    }
+    assert main_agent.get("voice_fallback_llm_provider") == "openAI"
+    assert main_agent.get("voice_fallback_llm_model") == "gpt-5.6-terra"
+    assert main_agent.get("voice_fallback_llm_model_parameters") == {
+        "model": "gpt-5.6-terra",
+        "reasoning_effort": "none",
+        "useResponsesApi": True,
+    }
+
+
+def test_direct_background_agents_use_glasshive_opus5_high_as_the_text_fallback() -> None:
+    bundle = _load_source_of_truth()
+
+    for agent in bundle.get("backgroundAgents", []):
+        if agent.get("id") == "agent_viventium_deep_memory_95aeb3":
+            assert agent.get("provider") == "openAI"
+            assert agent.get("fallback_llm_provider") == "glasshive-harness"
+            assert agent.get("fallback_llm_model") == "codex-cli:gpt-5.6-sol"
+            assert agent.get("fallback_llm_model_parameters") == {
+                "model": "codex-cli:gpt-5.6-sol",
+                "reasoning_effort": "medium",
+            }
+            continue
+        assert agent.get("fallback_llm_provider") == "glasshive-harness"
+        assert agent.get("fallback_llm_model") == "claude-code:opus"
+        assert agent.get("fallback_llm_model_parameters") == {
+            "model": "claude-code:opus",
+            "reasoning_effort": "high",
+        }
+
+
+def test_truth_seeking_prompts_reward_evidence_supported_agreement_and_disagreement_symmetrically() -> None:
+    core = (PROMPT_SOURCE_ROOT / "main" / "core_behaviors.md").read_text(encoding="utf-8").lower()
+    reality_policy = (
+        PROMPT_SOURCE_ROOT / "main" / "reality_and_challenge.md"
+    ).read_text(encoding="utf-8").lower()
+    reality = (
+        PROMPT_SOURCE_ROOT / "cortex" / "reality_check" / "execution.md"
+    ).read_text(encoding="utf-8").lower()
+    red_team = (
+        PROMPT_SOURCE_ROOT / "cortex" / "red_team" / "execution.md"
+    ).read_text(encoding="utf-8").lower()
+    confirmation_bias = (
+        PROMPT_SOURCE_ROOT / "cortex" / "confirmation_bias" / "execution.md"
+    ).read_text(encoding="utf-8").lower()
+
+    assert "evidence-supported agreement is not sycophancy" in core
+    assert "reflexive doubt is not rigor" in core
+    assert "agree, disagree, or stay uncertain" in reality_policy
+    assert "do not qualify a supported conclusion merely to sound careful" in reality_policy
+    assert "confirming and disconfirming evidence" in reality
+    assert "if the evidence supports the claim, say so plainly" in reality
+    assert "expected value" in red_team
+    assert "benefits and opportunity costs" in red_team
+    assert "supported conclusions are valid outcomes" in red_team
+    assert "confirmation bias can favor acceptance or rejection" in confirmation_bias
+    assert "do not invent a blind spot" in confirmation_bias
+
+
+def test_local_source_of_truth_main_agent_voice_route_uses_grok_low_reasoning() -> None:
+    bundle = _load_source_of_truth()
+    main_agent = bundle.get("mainAgent", {})
+
+    assert main_agent.get("voice_llm_provider") == "xai"
+    assert main_agent.get("voice_llm_model") == "grok-4.5"
+    assert main_agent.get("voice_llm_model_parameters", {}).get("model") == "grok-4.5"
+    assert main_agent.get("voice_llm_model_parameters", {}).get("reasoning_effort") == "low"
+    assert "thinking" not in main_agent.get("voice_llm_model_parameters", {})
+
+
+def test_web_phase_b_listening_uses_the_server_projected_window_without_a_180s_fallback() -> None:
+    hook_source = FOLLOW_UP_POLL_HOOK.read_text(encoding="utf-8")
+    route_source = LIBRECHAT_CONFIG_ROUTE.read_text(encoding="utf-8")
+    type_source = LIBRECHAT_STARTUP_CONFIG_TYPE.read_text(encoding="utf-8")
+
+    for source in (hook_source, route_source, type_source):
+        assert "viventiumBackgroundFollowupWindowS" in source
+
+    assert "FOLLOW_UP_GRACE_MS" not in hook_source
+    assert "180_000" not in hook_source
+    assert "cortexFollowUpDecision" in hook_source
+    assert "suppressed" in hook_source
+    assert "empty" in hook_source
+    assert "skipped" in hook_source
+    for forbidden_cancellation_call in ("AbortController", ".abort()", "cancelQueries("):
+        assert forbidden_cancellation_call not in hook_source

@@ -81,6 +81,28 @@ mcpServers:
     startup: false
     chatMenu: true
     timeout: 120000
+    viventiumGlassHive:
+      version: 1
+      permitsAutonomousWorker: true
+      hostAllowed: true
+      sandboxAllowed: true
+      defaultToolAccess: none
+      contentReadPolicy: require_broker_grant
+      writePolicy: allow
+      riskClass: user_scheduling
+      reexportNativeTools: true
+      toolPolicies:
+        periphery_list: { access: content_read }
+        periphery_read: { access: content_read }
+        schedule_create: { access: write }
+        schedule_delete: { access: write }
+        schedule_get: { access: content_read }
+        schedule_last_delivery: { access: content_read }
+        schedule_list: { access: content_read }
+        schedule_preview_next: { access: content_read }
+        schedule_search: { access: content_read }
+        schedule_update: { access: write }
+        sys__server__sys: { access: content_read }
     serverInstructions: Scheduling Cortex MCP for reminders, recurring jobs, and schedule management.
   google_workspace:
     type: streamable-http
@@ -136,6 +158,6 @@ endpoints:
       baseURL: https://api.x.ai/v1
       models:
         default:
-          - grok-4.3
+          - grok-4.5
       titleConvo: true
-      summaryModel: grok-4.3
+      summaryModel: grok-4.5

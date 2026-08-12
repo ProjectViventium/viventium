@@ -552,9 +552,15 @@
 - Evidence: dated public-safe report under `qa/modern-playground-voice/reports/` with runtime
   artifact proof, user-path observation, sanitized transcript/audio-delivery note, supporting
   log/DB/config/code correlation, automated checks, and second-opinion summary when available.
-- Last Run: 2026-05-22 PASS for local Whisper interruption fix. The run proved the active runtime
-  policy, Modern Playground browser path, fake-mic barge-in behavior, voice gateway state logs, and
-  cleanup/DB evidence; see `reports/2026-05-22-local-whisper-bargein-qa.md`.
+- Last Run: `PASS` — 2026-08-10 — a frozen post-change isolated runtime completed a real Modern
+  Playground call. The signed call auto-connected; a durable voice task completed; one transcript
+  and an assistant response were present; browser RTC delivery advanced by 26,421 bytes, 247
+  packets, 32.74 seconds, and nonzero audio energy; playback completed; state moved from `Speaking`
+  back to `Listening`; and page-error count stayed zero. The sanitized answer rejected a risky
+  assumption instead of pretending unverified coverage was certain. Focused worker-port tests also
+  passed `5/5`. See
+  `reports/2026-08-10-anti-sycophancy-audible-playback-and-worker-port.md`. This single call does not
+  replace the separate provider-matrix, barge-in, reconnect, or endurance cases.
 
 ## MPV-015 Local Whisper Mid-Speech Barge-In
 
@@ -770,16 +776,16 @@
 - Requirement: `docs/requirements_and_learnings/06_Voice_Calls.md` (Voice Call LLM Ownership
   Contract).
 - User Outcome: An agent can use GPT-5.6 through OpenAI Responses for text chat while its dedicated
-  live-call model remains Grok 4.3 on the configured low-latency xAI voice route.
+  live-call model remains Grok 4.5 on the configured low-latency xAI voice route.
 - Surfaces: Agent Builder primary and Voice Chat Model profiles, LibreChat voice model override,
   Agents graph initialization, Modern Playground transcript/audio, xAI LLM and TTS providers.
 - Preconditions: authenticated Viventium QA account; primary route `openAI/gpt-5.6-sol` with
-  `useResponsesApi=true`; voice route `xai/grok-4.3` with `reasoning_effort=none`; synthetic
+  `useResponsesApi=true`; voice route `xai/grok-4.5` with `reasoning_effort=low`; synthetic
   non-personal prompt.
 - Steps:
   1. Confirm the primary and voice-specific source-of-truth profiles retain their configured models.
   2. Run the voice-override regression with an OpenAI GPT-5.6 primary parameter bag and an xAI Grok
-     4.3 voice parameter bag.
+     4.5 voice parameter bag.
   3. Confirm inherited `useResponsesApi` and primary `reasoning` are absent from the resolved voice
      request, while an explicit voice-level xAI Responses selection remains supported.
   4. Mount the optional voice panel while its watched provider is temporarily empty, then hydrate
@@ -790,7 +796,7 @@
   7. Confirm visible assistant text, delivered browser audio, xAI TTS metrics, token-bearing LLM
      stream completion, and persisted assistant text. Compare the result with the escaped failure's
      no-token timeout.
-- Expected Result: Grok 4.3 produces visible text and xAI audio without a provider error; the voice
+- Expected Result: Grok 4.5 produces visible text and xAI audio without a provider error; the voice
   override logs or regression evidence show Chat Completions provenance (`useResponsesApi` unset)
   unless the voice profile explicitly opted into xAI Responses.
 - Forbidden Result: the GPT-5.6 primary's Responses setting silently changes the xAI voice request;

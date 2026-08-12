@@ -55,6 +55,19 @@ This document defines what belongs in public, private personal, and private ente
 
 ## Leak Scenarios To Prevent
 
+## GlassHive provider and LIFE boundary
+
+- The empty canonical LIFE template is public-safe product scaffolding and may ship with the public
+  installer. Personalized LIFE content is private user data and must never enter source control,
+  release artifacts, QA fixtures, support bundles, or public screenshots.
+- LIFE contains user-authored working files only. GlassHive transcripts, context manifests, session
+  state, tool evidence, activity logs, broker grants, and harness configuration live under private
+  App Support state with owner-only permissions.
+- Generated provider credentials and broker grants remain secret-bearing runtime values. Public QA
+  may record only redacted provider/model/state metadata and synthetic content.
+- A custom GlassHive working folder is an explicit authenticated user choice. It changes the harness
+  current directory but does not change the rule that runtime artifacts stay outside that folder.
+
 - Unsafe local folder names:
   - A plain `private-companion-repo/` or `enterprise-deployment-repo/` directory inside the public
     checkout is not sufficient isolation.

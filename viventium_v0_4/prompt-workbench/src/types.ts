@@ -330,6 +330,8 @@ export interface ScheduledPromptRun {
   startedAt?: string;
   completedAt?: string;
   status: string;
+  triggerKind?: "manual" | "scheduled" | "unknown";
+  triggerSource?: "scheduler_loop" | "workbench_manual" | string | null;
   executor: string;
   renderedHash?: string;
   variableSnapshotHash?: string;
@@ -338,9 +340,23 @@ export interface ScheduledPromptRun {
   glasshiveRunId?: string;
   resultSummary?: string;
   errorClass?: string;
+  disposition?: string | null;
+  effectiveModel?: string | null;
   requestedReasoningEffort?: string | null;
   effectiveReasoningEffort?: string | null;
   reasoningFallbackReason?: string | null;
+  channelOutcomes?: Record<
+    string,
+    { outcome?: string; status?: string; reason?: string }
+  >;
+  latencyMs?: number | null;
+  usage?: {
+    inputTokens?: number;
+    outputTokens?: number;
+    totalTokens?: number;
+    costUsd?: number;
+  } | null;
+  degradedDependencies?: string[];
   privateDetailPointer?: string;
   updatedAt?: string;
 }
@@ -351,6 +367,11 @@ export interface ScheduledPrompt {
   userId?: string;
   title: string;
   sourcePromptId?: string;
+  effectivePromptId?: string;
+  effectivePromptHash?: string;
+  runEnvelopePromptId?: string;
+  canonicalOutputPromptId?: string;
+  standingCapabilityPromptId?: string;
   templateId?: string;
   promptText: string;
   schedule: Record<string, unknown>;
@@ -378,6 +399,8 @@ export interface ScheduledPrompt {
     createdAt: string;
   };
   recentRuns: ScheduledPromptRun[];
+  latestScheduledRun?: ScheduledPromptRun | null;
+  latestManualRun?: ScheduledPromptRun | null;
   sourceKind?: "workbench_definition" | "user_schedule";
   sourceLabel?: string;
   createdAt: string;

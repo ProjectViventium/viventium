@@ -24,6 +24,7 @@ APP_FACING_PORT_KEYS = (
     "lc_frontend_port",
     "sandpack_bundler_port",
     "playground_port",
+    "prompt_workbench_port",
     "voice_gateway_health_port",
 )
 
@@ -33,6 +34,7 @@ APP_FACING_PORT_DEFAULTS = {
         "lc_frontend_port": 3190,
         "sandpack_bundler_port": 3191,
         "playground_port": 3300,
+        "prompt_workbench_port": 8781,
         "voice_gateway_health_port": 8301,
     },
     "compat": {
@@ -40,6 +42,7 @@ APP_FACING_PORT_DEFAULTS = {
         "lc_frontend_port": 3090,
         "sandpack_bundler_port": 3091,
         "playground_port": 3000,
+        "prompt_workbench_port": 8781,
         "voice_gateway_health_port": 8300,
     },
 }
@@ -447,6 +450,11 @@ def run_in_env(args: argparse.Namespace) -> int:
     command = args.command or ["status"]
     env = os.environ.copy()
     env["VIVENTIUM_DEV_ENV_NAME"] = payload["name"]
+    # This wrapper-owned identity is available even before the dev env has ever compiled.
+    # Stop logic must fail closed to runtime-scoped ownership instead of trusting a generated
+    # runtime.env that may be absent or stale.
+    env["VIVENTIUM_DEV_ENV_SCOPE_ACTIVE"] = "true"
+    env["VIVENTIUM_DEV_ENV_INSTANCE_ID"] = payload["name"]
     env["VIVENTIUM_SHARED_SINGLETON_SERVICES"] = ",".join(payload["shared_singleton_services"])
     env["VIVENTIUM_RUNTIME_TOOLS_DIR"] = str(
         Path(args.app_support_dir).expanduser().resolve() / "runtime-tools"

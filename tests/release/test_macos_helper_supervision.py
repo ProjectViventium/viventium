@@ -312,3 +312,16 @@ def test_helper_refresh_and_checkout_rebinding_preserve_supervision_state() -> N
     assert source.count("runtimeSupervision: config.runtimeSupervision") == 3
     assert "config = dict(existing)" in write_config
     assert '"runtimeSupervision"' not in write_config
+
+
+def test_supervision_shares_in_flight_health_probe_with_status_refresh() -> None:
+    source = HELPER_SOURCE.read_text(encoding="utf-8")
+    snapshot = source.split(
+        "private func stackHealthSnapshot(runtime: RuntimePorts, force: Bool = false)",
+        1,
+    )[1].split("private func refreshLaunchAtLoginState", 1)[0]
+
+    assert "private var steadyStateHealthSnapshotTask:" in source
+    assert "if let inFlight = self.steadyStateHealthSnapshotTask" in snapshot
+    assert "return await inFlight.task.value" in snapshot
+    assert "self.steadyStateHealthSnapshotTask = (runtime, task)" in snapshot

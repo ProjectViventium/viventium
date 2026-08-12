@@ -100,8 +100,9 @@ All chat messages route through the LibreChat Agents pipeline (same brain as the
 - `VIVENTIUM_TELEGRAM_SSE_RETRY_DELAY_S` - Delay between retries (LibreChat backend)
 - `VIVENTIUM_TELEGRAM_CHAT_TIMEOUT_S` - POST timeout for /chat (LibreChat backend)
 - `VIVENTIUM_TELEGRAM_INCLUDE_CORTEX_INSIGHTS` - Send background insights as separate Telegram messages
-- `VIVENTIUM_TELEGRAM_INSIGHT_GRACE_S` - Seconds to wait for background insights after the main response
-- `VIVENTIUM_TELEGRAM_INSIGHT_MAX_S` - Maximum seconds to keep insight listener alive
+- `VIVENTIUM_TELEGRAM_FOLLOWUP_GRACE_S` - Canonical automatic background follow-up window compiled from `runtime.background_followup_window_s`; zero disables ordinary listeners
+- `VIVENTIUM_TELEGRAM_FOLLOWUP_TIMEOUT_S` - Optional bounded total-listener override; omitted means the canonical follow-up window is also the total
+- `VIVENTIUM_TELEGRAM_INSIGHT_GRACE_S` / `VIVENTIUM_TELEGRAM_INSIGHT_MAX_S` - Deprecated standalone compatibility inputs used only when canonical follow-up configuration is absent
 - `VIVENTIUM_TELEGRAM_USER_EMAIL` - Resolve LibreChat user by email if userId is not set
 - `VIVENTIUM_TELEGRAM_DEBUG_TTS` - Set to `1` for non-secret Telegram voice markup/TTS QA logs
 

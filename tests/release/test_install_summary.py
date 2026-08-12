@@ -6,6 +6,7 @@ import os
 import sqlite3
 import subprocess
 from pathlib import Path
+import json
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -2172,7 +2173,7 @@ def test_build_service_rows_reports_semantic_memory_hardening_health(
     assert "health failed" in services["Memory Hardening"][1]
 
 
-def test_build_brain_setup_rows_reports_guided_postures_without_internal_lab_features() -> None:
+def test_snapshot_brain_setup_rows_matches_guided_public_postures() -> None:
     install_summary = load_install_summary_module()
 
     config = {
@@ -2435,3 +2436,195 @@ def test_macos_helper_status_reports_configured_when_not_live(
         "Configured",
         "Launch Viventium when you want the status bar menu active",
     )
+
+
+def test_build_service_rows_uses_owned_prompt_workbench_state_port(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    install_summary = load_install_summary_module()
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    runtime_dir = tmp_path / "app-support" / "runtime"
+    runtime_dir.mkdir(parents=True)
+    state_file = runtime_dir.parent / "state" / "prompt-workbench" / "state.json"
+    state_file.parent.mkdir(parents=True)
+    state_file.write_text(
+        json.dumps({"port": 8782, "repoRoot": str(repo_root.resolve())}) + "\n",
+        encoding="utf-8",
+    )
+    probed: list[tuple[str, ...]] = []
+
+    def fake_any_http_ok(*urls: str) -> bool:
+        probed.append(urls)
+        return any(":8782" in url for url in urls)
+
+    monkeypatch.setattr(install_summary, "any_http_ok", fake_any_http_ok)
+    config = {
+        "runtime": {"prompt_workbench": {"enabled": True}},
+        "llm": {"primary": {"auth_mode": "connected_account"}},
+        "voice": {"mode": "local"},
+        "integrations": {},
+    }
+    runtime_env = {
+        "START_PROMPT_WORKBENCH": "true",
+        "VIVENTIUM_PROMPT_WORKBENCH_PORT": "8781",
+    }
+
+    rows = install_summary.build_service_rows(
+        config,
+        runtime_env,
+        runtime_dir=runtime_dir,
+        repo_root=repo_root,
+        probe_live=True,
+    )
+    services = {name: (status, detail) for name, status, detail in rows}
+
+    assert services["Prompt Workbench"] == ("Running", "http://localhost:8782")
+    assert any(any(":8782" in url for url in urls) for urls in probed)
+    assert not any(any(":8781" in url for url in urls) for urls in probed)
+
+
+def test_prompt_workbench_runtime_url_rejects_state_without_matching_owner(
+    tmp_path: Path,
+) -> None:
+    install_summary = load_install_summary_module()
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    runtime_dir = tmp_path / "app-support" / "runtime"
+    runtime_dir.mkdir(parents=True)
+    state_file = runtime_dir.parent / "state" / "prompt-workbench" / "state.json"
+    state_file.parent.mkdir(parents=True)
+
+    state_file.write_text(json.dumps({"port": 8782}) + "\n", encoding="utf-8")
+    assert (
+        install_summary.prompt_workbench_runtime_url({}, runtime_dir, repo_root)
+        is None
+    )
+
+
+def test_build_service_rows_does_not_probe_foreign_prompt_workbench_port(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    install_summary = load_install_summary_module()
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    runtime_dir = tmp_path / "app-support" / "runtime"
+    runtime_dir.mkdir(parents=True)
+    state_file = runtime_dir.parent / "state" / "prompt-workbench" / "state.json"
+    state_file.parent.mkdir(parents=True)
+    state_file.write_text(
+        json.dumps({"port": 8781, "repoRoot": str(tmp_path / "foreign")}) + "\n",
+        encoding="utf-8",
+    )
+    stack_state = runtime_dir.parent / "state" / "runtime" / "isolated" / "stack-owner.json"
+    stack_state.parent.mkdir(parents=True)
+    stack_state.write_text(
+        json.dumps({"command": "start", "repoRoot": str(repo_root)}) + "\n",
+        encoding="utf-8",
+    )
+    probed: list[tuple[str, ...]] = []
+
+    def fake_any_http_ok(*urls: str) -> bool:
+        probed.append(urls)
+        return any(":8781" in url for url in urls)
+
+    monkeypatch.setattr(install_summary, "any_http_ok", fake_any_http_ok)
+    config = {
+        "runtime": {"prompt_workbench": {"enabled": True}},
+        "llm": {"primary": {"auth_mode": "connected_account"}},
+        "voice": {"mode": "local"},
+        "integrations": {},
+    }
+    runtime_env = {
+        "START_PROMPT_WORKBENCH": "true",
+        "VIVENTIUM_PROMPT_WORKBENCH_PORT": "8781",
+    }
+
+    rows = install_summary.build_service_rows(
+        config,
+        runtime_env,
+        runtime_dir=runtime_dir,
+        repo_root=repo_root,
+        probe_live=True,
+    )
+    services = {name: (status, detail) for name, status, detail in rows}
+
+    assert services["Prompt Workbench"][0] == "Action Required"
+    assert not any(any(":8781" in url for url in urls) for urls in probed)
+
+    state_file.write_text(
+        json.dumps({"port": 8782, "repoRoot": str(tmp_path / "foreign")}) + "\n",
+        encoding="utf-8",
+    )
+    assert (
+        install_summary.prompt_workbench_runtime_url({}, runtime_dir, repo_root)
+        is None
+    )
+
+
+def test_build_brain_setup_rows_reports_guided_postures_without_internal_lab_features() -> None:
+    install_summary = load_install_summary_module()
+
+    config = {
+        "runtime": {
+            "personalization": {"default_conversation_recall": False},
+            "memory_hardening": {"transcripts": {"source_dir": ""}},
+            "network": {"remote_call_mode": "disabled"},
+        },
+        "llm": {
+            "primary": {"provider": "openai", "auth_mode": "connected_account"},
+            "secondary": {"provider": "none", "auth_mode": "disabled"},
+        },
+        "voice": {"mode": "disabled"},
+        "integrations": {
+            "web_search": {"enabled": False},
+            "telegram": {"enabled": False},
+            "telegram_codex": {"enabled": False},
+            "google_workspace": {"enabled": False},
+            "ms365": {"enabled": False},
+            "code_interpreter": {"enabled": False},
+            "skyvern": {"enabled": False},
+            "openclaw": {"enabled": False},
+        },
+    }
+
+    rows = install_summary.build_brain_setup_rows(config, {})
+    states = {name: (state, action) for name, state, action in rows}
+
+    assert states["Direct AI Accounts"][0] == "Needs setup"
+    assert states["Transcript Ingest"][0] == "Needs setup"
+    assert states["Conversation Recall/RAG"][0] == "Needs setup"
+    assert states["Scheduler"][0] == "Needs setup"
+    assert states["GlassHive"][0] == "Needs setup"
+    assert states["Prompt Workbench"][0] == "Needs setup"
+    assert states["Nightly Reflection"][0] == "Needs setup"
+    assert states["Memory Hardening"][0] == "Needs setup"
+    assert states["Slack"][0] == "Needs setup"
+    assert states["WhatsApp"][0] == "Needs setup"
+    assert states["Code Interpreter"][0] == "Disabled by choice"
+    assert states["Skyvern"][0] == "Disabled by choice"
+    assert "OpenClaw" not in states
+    assert states["Remote Access"][0] == "Disabled by choice"
+
+
+def test_build_brain_setup_rows_does_not_call_unproven_account_route_ready() -> None:
+    install_summary = load_install_summary_module()
+
+    config = {
+        "runtime": {"personalization": {"default_conversation_recall": False}},
+        "llm": {"primary": {"provider": "openai", "auth_mode": "connected_account"}},
+        "voice": {"mode": "local"},
+        "integrations": {},
+    }
+    runtime_env = {
+        "VIVENTIUM_LOCAL_SUBSCRIPTION_AUTH": "true",
+        "VIVENTIUM_OPENAI_AUTH_MODE": "connected_account",
+    }
+
+    rows = install_summary.build_brain_setup_rows(config, runtime_env)
+    states = {name: (state, action) for name, state, action in rows}
+
+    assert states["Direct AI Accounts"][0] == "Needs setup"
+    assert "Connected Accounts" in states["Direct AI Accounts"][1]

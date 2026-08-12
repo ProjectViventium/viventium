@@ -1,7 +1,7 @@
 # Conversation Recall RAG
 
-**Document Version:** 2.3
-**Date:** 2026-05-05
+**Document Version:** 2.4
+**Date:** 2026-08-08
 **Owner:** Viventium Core
 **Status:** Implemented in `viventium_v0_4`
 
@@ -37,6 +37,35 @@ evidence.
 4. Scope policy with agent toggle priority.
 5. Proactive indexing.
 6. Honest freshness semantics.
+
+### Deep Memory Search cortex boundary
+
+The approved anti-sycophancy design adds an always-background **Deep Memory Search** cortex; it does
+not add another memory store or retrieval API. On each eligible user turn, generic
+`activation.mode: always` starts the cortex, whose Prompt Workbench-owned instructions use the same
+authorized `file_search`/RAG resource scope to look for materially relevant prior evidence. This is
+an explicit always-run agent assignment, not runtime prompt-text classification.
+
+The existing Main Agent rule remains unchanged: outside that specialist, Main decides when to call
+`file_search`. The Deep Memory cortex must honor user opt-in, ACLs, corpus health/freshness, source-
+only degraded semantics, and provider-parity broker transport. It must not read application Mongo,
+logs, exports, caches, backups, or broad local files as a substitute for an unavailable scoped
+resource. Its result is nonblocking and reaches the user only through Phase B when the existing
+value gate finds new, worthwhile evidence; otherwise it is silent.
+
+Acceptance requires both an older-evidence positive case and successful-empty/degraded negative
+controls in [`qa/anti-sycophancy/`](../../qa/anti-sycophancy/README.md). An every-turn execution
+receipt alone does not prove useful recall.
+
+### Frozen continuity acceptance bank
+
+Conversation recall is accepted against the versioned `continuity-recall-v1.1.0` bank, not one
+escaped name or anecdote. Its frozen cases cover relationship roles, preferences/constraints,
+project status, correction recency, exact dates, exact numbers, absent evidence, distractor
+disambiguation, multilingual paraphrase, ordinary operational language, and prompt-injection
+resistance. The runner verifies the canonical bank hash before live execution and fails closed on
+unreviewed case drift. Selective forgetting remains a separate saved-memory writer concern, so a
+recall score cannot silently certify mutation behavior.
 
 ## Public-Safe Technical Design
 
@@ -210,6 +239,49 @@ evidence.
 - Reciprocal rank fusion or another explicit generic fusion strategy should be used; do not invent
   entity-specific or prompt-specific runtime rules.
 - Longer term, a single backend with first-class lexical + vector retrieval may simplify this.
+
+### Weak-overlap recent-turn safety net
+
+- Semantic recall can miss a valid recent turn even when the local model supports the source and
+  query languages, especially when the query is a paraphrase with little lexical overlap. Model-card
+  capability is not a per-query recall guarantee.
+- When conversation-recall resources are already authorized and attached, the strongest scoped
+  source/lexical match is weak, and semantic recall returns no candidate, `file_search` may add
+  exactly one latest eligible prior turn from the same user/agent recall scope as explicitly
+  low-confidence evidence.
+- This is a retrieval safety net, not proactive prompt injection or an intent classifier. It runs
+  only inside the selected recall tool, preserves semantic/vector execution, and contains no entity,
+  language, prompt, or provider-specific branch.
+- The candidate must reuse every normal provenance boundary: exclude the active conversation and
+  active message, expired or QA-ineligible rows, Listen-Only transcripts, and any row outside the
+  authorized user/agent scope. It must never cross conversations for adjacent expansion.
+- Never evict a retrieved result to force this candidate into the result budget, never expand it
+  into adjacent turns, and never grant it the ordinary raw-message or user-authorship ranking
+  bonuses. Its score stays below every positive-relevance lexical or semantic result; if semantic
+  evidence exists, the fallback is removed before fusion and normal global ranking is authoritative.
+- When exact or verbatim recalled evidence is requested, the answer contract preserves every
+  content-bearing token in the cited span, including opaque identifiers, numbers, dates,
+  punctuation, and casing. Translation or paraphrase may apply only outside the requested literal
+  span.
+
+### Diverse acceptance contract
+
+- A single person, pet, project, or named-entity example is not evidence of general continuity.
+- The minimum synthetic regression matrix covers relationship/role, preference/constraint, project
+  status, correction recency, exact temporal evidence, exact numeric evidence, absent evidence,
+  distractor disambiguation, and cross-language paraphrase.
+- Grade required and forbidden evidence, not merely fluent wording. A valid run must prove the
+  declared retrieval tool started and completed on the actual provider route; model-only guessing,
+  same-thread history, native workspace search, or unrelated artifacts cannot substitute.
+- Before grading a newly inserted fixture, source and uploaded corpus digests must match. A stale
+  vector index is a blocked/inconclusive setup state, not a model recall failure or a pass.
+- Run provider paths independently. GlassHive/broker success cannot stand in for direct native
+  `file_search`, and direct-provider success cannot stand in for GlassHive capability transport.
+- Isolated evidence must be cleaned up and the original recall preference restored. Public reports
+  contain only sanitized status, latency, count, and hash evidence.
+- Passing this matrix demonstrates the tested categories, routes, configuration, and moment in time.
+  It does not prove omniscience: evidence may never have been recorded, may be out of scope or
+  deleted, indexing/providers may be degraded, and generative models remain probabilistic.
 
 ### Tier switch / re-embed contract
 
@@ -743,3 +815,59 @@ A private local benchmark pass over a real local corpus refined the local-first 
   - honest Ollama prerequisite detection in preflight/doctor/launcher when recall uses Ollama
   - bounded older-user-context recovery for long-chat memory writes
   - no silent remote-provider fallback when the configured local embeddings runtime is unavailable
+
+## Provider-Parity Recall Transport
+
+Conversation recall is a host-owned `file_search` capability. LibreChat resolves the current
+user/Agent resource set once; in-process providers receive the normal tool instance, while
+GlassHive conversation providers receive the same scoped capability through the signed broker MCP.
+GlassHive never reads LibreChat Mongo directly and never receives provider credentials.
+
+Resolution must use canonical `primeFiles` semantics: inline `.files` and agent knowledge-base
+`.file_ids` are unioned only after the normal database/ACL filter. Conversation-provider sessions
+and lower-level delegated GlassHive workers receive this same resource scope. If a declared and
+resolved host capability cannot be materialized into a broker grant, execution fails closed before
+the worker is told that the tool is available.
+
+The broker grant carries only a compact signed resource reference. The full bounded resource scope
+is retained server-side and its digest is revalidated when hydrated. This avoids oversized HTTP
+authorization headers while preserving exact user, conversation, message, tool, and resource
+scope. Missing or expired referenced scope fails closed. The MCP tool catalog must expose
+`file_search` even when no external connected-account MCP server is present.
+
+Recall result states are evidence states:
+
+- healthy search with matches: return matched evidence and provenance
+- healthy search with no matches: return an honest empty result
+- source-only mode: lexical evidence may answer, but zero lexical matches are inconclusive because
+  semantic retrieval was unavailable
+- stale corpus, timeout, auth/config error, provider outage, or missing prerequisite: report the
+  specific degraded state; never collapse it into “that fact does not exist”
+
+Retrieved corrections also have a provider-independent answer contract. When evidence explicitly
+corrects, replaces, negates, or supersedes an older value and the user asks for the current or final
+fact, the answer must state the corrected value without repeating the rejected value. The older
+value is relevant only when the user asks for the change history or a comparison. This is a general
+evidence-resolution rule, not an entity-specific memory patch.
+
+A native worker's broad filesystem access is not a recall substitute. Workers may retain declared
+workspace access for legitimate user file tasks, but recall QA must prove the scoped broker call.
+The reusable test creates a nonce-qualified prior conversation and fails unless the response
+contains that nonce, the native transcript records a completed broker `file_search`, and the same
+run contains no native command, dynamic-tool, native web-search, or file-change substitution. Empty
+required fragments or disabled provenance/substitution guards invalidate the fixture before model
+execution. This prevents old eval artifacts or broad local searches from producing a false pass.
+
+When a host tool is configured and resolved but has no authorized resources for the current turn,
+the conversation provider must publish that absence as a developer-authority evidence policy.
+The worker may still use native filesystem tools for ordinary user-scoped project artifacts, but it
+must not search application state, conversation exports, caches, logs, backups, hidden runtime
+folders, or unrelated workspace copies to imitate the unavailable capability. This rule is derived
+only from structured tool/resource state, and the same shared resolver must reapply the policy from
+the run-time authorization state immediately before dispatch. Resource-less host tools are not
+misclassified as unavailable. It must not branch on a remembered entity, prompt wording, provider
+label, or user identity. This policy is not an OS/filesystem sandbox: with a full-access native
+worker it is model-level governance backed by provenance telemetry. Acceptance therefore requires a
+paired run: an honest limitation with no native substitution when the resource is absent, and a
+broker-proven exact answer when it is present. Hard path isolation, if required by a deployment's
+threat model, remains a separate sandbox policy and must not be inferred from this instruction.

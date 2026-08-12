@@ -7,7 +7,7 @@ from typing import Any
 
 import yaml
 
-from .paths import AGENTS_SOURCE_PATH, LIBRECHAT_ROOT, LIBRECHAT_SOURCE_PATH, PROMPT_WORKBENCH_QA_COVERAGE_PATH, PROMPTS_ROOT, relative_to_repo
+from .paths import AGENTS_SOURCE_PATH, LIBRECHAT_ROOT, LIBRECHAT_SOURCE_PATH, PROMPT_WORKBENCH_QA_COVERAGE_PATH, PROMPTS_ROOT, REPO_ROOT, relative_to_repo
 
 from scripts.viventium.prompt_registry import (
     DEFAULT_PROMPT_ROOT,
@@ -644,6 +644,26 @@ def _related_config_row(ref_id: str, ref: dict[str, Any]) -> dict[str, Any] | No
             f"timeout: {server_config.get('timeout')} ms",
             f"headers configured: {len(server_config.get('headers') or {})}",
         ]
+    elif source_kind in {
+        "scheduler.shared_prompt_contract",
+        "scheduler.canonical_output_contract",
+    }:
+        try:
+            source_text = source_path.read_text(encoding="utf-8")
+        except OSError:
+            return None
+        selector = str(ref.get("selector") or "").strip()
+        if not selector or selector not in source_text:
+            return None
+        items = [
+            (
+                "shared scheduler prompt contract"
+                if source_kind == "scheduler.shared_prompt_contract"
+                else "trusted scheduler canonical-output contract"
+            ),
+            f"accessor: {selector}",
+            "public source; runtime state and private prompt text are not included",
+        ]
     else:
         return None
     return {
@@ -663,7 +683,21 @@ def _config_source_path(path_name: str) -> Path | None:
         "local.viventium-agents.yaml": AGENTS_SOURCE_PATH,
         "local.librechat.yaml": LIBRECHAT_SOURCE_PATH,
     }
-    return paths.get(path_name)
+    known = paths.get(path_name)
+    if known:
+        return known
+    candidate = (REPO_ROOT / path_name).resolve()
+    shared_root = (REPO_ROOT / "viventium_v0_4" / "shared").resolve()
+    prompt_runtime_root = (LIBRECHAT_ROOT / "api" / "server" / "services" / "viventium").resolve()
+    if (
+        candidate.is_file()
+        and (
+            candidate.is_relative_to(shared_root)
+            or candidate.is_relative_to(prompt_runtime_root)
+        )
+    ):
+        return candidate
+    return None
 
 
 def _direct_action_server_config(source: dict[str, Any], server: str) -> dict[str, Any]:

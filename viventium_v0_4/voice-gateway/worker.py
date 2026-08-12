@@ -3206,6 +3206,23 @@ def _interrupt_agent_session_speech(session: Any) -> None:
         )
 
 
+def _register_presentation_lifecycle_handlers(session: Any, llm_impl: LibreChatLLM) -> None:
+    """Bind LiveKit acoustic/playout events to the response-only presentation lifecycle."""
+
+    @session.on("speech_created")
+    def _on_speech_created(event: Any) -> None:
+        if (
+            str(getattr(event, "source", "") or "") == "generate_reply"
+            and bool(getattr(event, "user_initiated", False))
+        ):
+            llm_impl.register_speech_handle(getattr(event, "speech_handle", None))
+
+    @session.on("overlapping_speech")
+    def _on_provisional_overlapping_speech(event: Any) -> None:
+        if bool(getattr(event, "is_interruption", False)):
+            llm_impl.note_provisional_interruption()
+
+
 def _apply_authoritative_call_mode_to_speech_planes(
     mode: str,
     *,
@@ -5033,6 +5050,7 @@ async def entrypoint(ctx: JobContext) -> None:
         min_consecutive_speech_delay=env.voice_min_consecutive_speech_delay_s,
         aec_warmup_duration=env.voice_aec_warmup_duration_s,
     )
+    _register_presentation_lifecycle_handlers(session, llm_impl)
     runtime_failure_report_tasks: set[asyncio.Task[Any]] = set()
     runtime_failure_reported_at: dict[tuple[str, str], float] = {}
 
@@ -5839,6 +5857,29 @@ async def entrypoint(ctx: JobContext) -> None:
     # === VIVENTIUM END ===
 
 
+# === VIVENTIUM START ===
+# Feature: side-by-side voice-worker port isolation.
+# Purpose: LiveKit Agents otherwise binds every production-mode worker to 8081. Viventium already
+# owns a stable, configured health endpoint separately, so local workers use an OS-assigned port by
+# default and deployments may opt into a fixed internal port explicitly.
+def _resolve_voice_worker_http_port() -> int:
+    raw_value = (os.getenv("VIVENTIUM_VOICE_WORKER_HTTP_PORT") or "").strip()
+    if not raw_value:
+        return 0
+    try:
+        port = int(raw_value)
+    except ValueError as exc:
+        raise ValueError(
+            "VIVENTIUM_VOICE_WORKER_HTTP_PORT must be an integer between 0 and 65535"
+        ) from exc
+    if port < 0 or port > 65535:
+        raise ValueError(
+            "VIVENTIUM_VOICE_WORKER_HTTP_PORT must be an integer between 0 and 65535"
+        )
+    return port
+# === VIVENTIUM END ===
+
+
 def run() -> None:
     start_health_server()
     os.environ["VIVENTIUM_VOICE_WORKER_RUN_ID"] = f"{os.getpid()}-{int(time.time() * 1000)}"
@@ -5877,6 +5918,10 @@ def run() -> None:
         load_threshold=load_threshold,
         job_memory_warn_mb=float(getattr(env, "voice_job_memory_warn_mb", 500.0)),
         job_memory_limit_mb=float(getattr(env, "voice_job_memory_limit_mb", 0.0)),
+        # === VIVENTIUM START ===
+        # Feature: side-by-side voice-worker port isolation.
+        port=_resolve_voice_worker_http_port(),
+        # === VIVENTIUM END ===
     )
     cli.run_app(worker_opts)
 

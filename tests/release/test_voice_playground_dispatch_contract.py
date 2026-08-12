@@ -6,6 +6,20 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+def test_shared_voice_capability_contracts_match_librechat_mirrors() -> None:
+    parent = ROOT / "viventium_v0_4" / "shared" / "voice"
+    librechat = ROOT / "viventium_v0_4" / "LibreChat" / "shared" / "voice"
+
+    for name in (
+        "tts_provider_capabilities.json",
+        "cartesia_sonic3_capabilities.json",
+        "xai_tts_capabilities.json",
+    ):
+        assert (librechat / name).read_bytes() == (parent / name).read_bytes(), name
+
+
 _agent_starter_react_dir = Path(
     os.environ.get("VIVENTIUM_AGENT_STARTER_REACT_DIR", ROOT / "viventium_v0_4" / "agent-starter-react")
 ).expanduser()
@@ -1506,3 +1520,19 @@ def test_connection_details_route_uses_public_livekit_only_for_configured_public
     assert "return NEXT_PUBLIC_LIVEKIT_URL ?? LIVEKIT_URL;" in content
     assert "const browserLiveKitUrl = resolveBrowserLiveKitUrl(req);" in content
     assert "serverUrl: browserLiveKitUrl," in content
+
+
+def test_synthetic_audio_qa_requires_received_audio_not_only_an_attached_element() -> None:
+    content = SYNTHETIC_AUDIO_QA_SCRIPT.read_text()
+
+    assert '"inbound-rtp"' in content
+    assert 'stat.kind !== "audio"' in content
+    assert "inboundAudioBytesReceived" in content
+    assert "receivedAudioEnergy" in content
+    assert "deliveredAudioBytesDelta" in content
+    assert "finalInteractiveMessages" in content
+    assert "waitForDeliveredAudio" in content
+    assert "waitForCompletedPlayback" in content
+    assert "playbackCompleted" in content
+    assert "waitForCompletedInteractiveTask" in content
+    assert "audioState.delivered" not in content
