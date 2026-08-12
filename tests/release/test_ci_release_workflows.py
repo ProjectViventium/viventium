@@ -297,6 +297,16 @@ def test_pr_gate_push_triggers_only_default_branch() -> None:
         )
 
 
+def test_productivity_contract_fetches_pinned_component_before_source_checks() -> None:
+    source = _workflow_sources()["productivity-activation-contract.yml"]
+
+    assert "Fetch and validate the exact pinned contract components" in source
+    assert "scripts/viventium/bootstrap_components.py" in source
+    assert "--validate-only" in source
+    assert "--strict-pinned" in source
+    assert source.index("bootstrap_components.py") < source.index("python3 -m pytest")
+
+
 def test_changed_release_workflows_do_not_persist_checkout_credentials() -> None:
     workflows = _workflow_sources()
 
