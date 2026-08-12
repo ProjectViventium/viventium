@@ -1138,6 +1138,8 @@ def test_dev_env_run_forwards_operator_signals_and_waits_for_child_cleanup(
 
 def test_dev_env_shared_singletons_compile_without_duplicate_start_flags(tmp_path: Path) -> None:
     config = minimal_config()
+    # Keep unrelated compiler assertions cross-architecture.
+    config["voice"] = {"mode": "disabled"}
     config["runtime"]["dev_env"] = {
         "enabled": True,
         "name": "dev",
@@ -2787,6 +2789,8 @@ def test_helper_keeps_workflow_and_maintenance_actions_under_advanced_menu() -> 
 
 def test_dev_env_local_rag_uses_an_isolated_compose_project(tmp_path: Path) -> None:
     config = minimal_config()
+    # Keep unrelated compiler assertions cross-architecture.
+    config["voice"] = {"mode": "disabled"}
     config["runtime"]["dev_env"] = {
         "enabled": True,
         "name": "Anti Sycophancy QA",
@@ -3098,6 +3102,8 @@ def test_dev_env_voice_lifecycle_uses_runtime_owned_pid_and_health_port() -> Non
 
 def test_dev_env_offsets_default_app_facing_ports_during_compile(tmp_path: Path) -> None:
     config = minimal_config()
+    # Keep unrelated compiler assertions cross-architecture.
+    config["voice"] = {"mode": "disabled"}
     for key in (
         "lc_api_port",
         "lc_frontend_port",

@@ -7179,10 +7179,9 @@ def test_config_compiler_rejects_invalid_enabled_telegram_token(tmp_path: Path) 
             },
             "extra_provider_keys": {},
         },
+        # Keep this Telegram-only validation independent of host voice support.
         "voice": {
-            "mode": "local",
-            "stt_provider": "whisper_local",
-            "tts_provider": "local_chatterbox_turbo_mlx_8bit",
+            "mode": "disabled",
         },
         "integrations": {
             "telegram": {"enabled": True, "secret_value": "not-a-telegram-token"},
