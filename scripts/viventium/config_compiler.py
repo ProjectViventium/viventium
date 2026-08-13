@@ -3787,6 +3787,8 @@ def build_agent_provider_capabilities(config: dict[str, Any]) -> dict[str, Any]:
             "host_tools": ["file_search", "web_search"],
             "activity_stream": True,
             "responses_api": False,
+            "messaging_delivery_disposition": True,
+            "messaging_delivery_disposition_version": 1,
             "excluded_mcp_servers": ["glasshive-workers-projects"],
             "models": copy.deepcopy(GLASSHIVE_PROVIDER_MODELS),
         }

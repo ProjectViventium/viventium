@@ -1269,6 +1269,15 @@ matching words or prompt text. JavaScript and Python parsers share a versioned g
 test. A compatible future messaging adapter consumes the same parsed intent while applying its own
 transport limits.
 
+The Main-response boundary also materializes the completed optional-audio decision as versioned
+`metadata.viventium.deliveryDisposition` for channel adapters. This does not move semantic judgment
+into runtime: prompt/model logic still chooses `skip` or `eligible`, while the response boundary
+validates and transports that choice separately from visible text. During rollout the legacy exact
+`{SKIP_VOICE}` line still wins. A producer may declare the structured contract required only when
+final events and replays are guaranteed to include it; required missing/malformed metadata fails
+closed to text-only, while an optional missing contract preserves legacy behavior. No adapter may
+infer or repair the decision from user wording, answer content, provider labels, or agent names.
+
 Acceptance:
 
 - copy-ready text may suppress optional audio without losing text;
@@ -1279,6 +1288,8 @@ Acceptance:
 - copy-ready artifacts do not receive semantic bubble breaks;
 - no complete or partial control appears in visible or persisted chat text;
 - one logical turn remains one persisted turn with at most one audio attachment;
+- stream completion, reconnect, and replay preserve the same valid structured disposition beside
+  the final text, and a required invalid/missing disposition cannot reach optional TTS;
 - exact-model evaluation covers positive and negative judgment, not only parser correctness.
 
 ### Fix 8: Tier memory context instead of dumping everything blindly

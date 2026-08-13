@@ -60,7 +60,13 @@ from utils.singleton import (
 )
 # === VIVENTIUM START ===
 # Feature: Centralized voice reply gating helper.
-from utils.voice import normalize_voice_preference, should_request_audio_reply, should_send_voice_reply
+from utils.voice import (
+    normalize_delivery_disposition,
+    normalize_voice_preference,
+    resolve_delivery_audio_gate,
+    should_request_audio_reply,
+    should_send_voice_reply,
+)
 # === VIVENTIUM END ===
 # === VIVENTIUM START ===
 # Feature: Telegram account linking flow + citation-safe formatting helpers.
@@ -1092,6 +1098,9 @@ async def getViventiumResponse(
     result = ""
     tmpresult = ""
     delivery_plan = parse_delivery_controls("")
+    delivery_disposition = None
+    delivery_disposition_required = False
+    delivery_disposition_present = False
     final_segments = []
     logical_turn_id = ""
     logical_turn_revision = None
@@ -1670,6 +1679,20 @@ async def getViventiumResponse(
                     if not data:
                         continue
                 else:
+                    if data.get("type") == "delivery_disposition":
+                        raw_disposition = data.get("delivery_disposition")
+                        delivery_disposition = normalize_delivery_disposition(
+                            raw_disposition
+                        )
+                        delivery_disposition_required = bool(
+                            data.get("required") is True
+                            or (
+                                isinstance(raw_disposition, dict)
+                                and raw_disposition.get("required") is True
+                            )
+                        )
+                        delivery_disposition_present = data.get("present") is True
+                        continue
                     if data.get("type") == "logical_turn":
                         logical_turn_id = str(data.get("logical_turn_id") or "").strip()
                         logical_turn_revision = data.get("revision")
@@ -2017,24 +2040,46 @@ async def getViventiumResponse(
         text=tmpresult,
     )
     model_skip_requested = bool(delivery_plan.skip_voice)
+    delivery_audio_allowed, disposition_decision = resolve_delivery_audio_gate(
+        legacy_skip_requested=model_skip_requested,
+        delivery_disposition=delivery_disposition,
+        disposition_required=delivery_disposition_required,
+    )
     model_skip_effective = bool(
         model_skip_requested and should_send_voice and bridge_error_audio_allowed
     )
+    disposition_skip_effective = bool(
+        not delivery_audio_allowed
+        and should_send_voice
+        and bridge_error_audio_allowed
+    )
     voice_decision = "sent" if should_send_voice else "disabled_user"
-    if model_skip_requested:
+    if not delivery_audio_allowed:
         should_send_voice = False
-        if model_skip_effective:
-            voice_decision = "skipped_model"
+        if disposition_skip_effective:
+            voice_decision = {
+                "legacy_skip": "skipped_model",
+                "structured_skip": "skipped_structured",
+                "required_invalid": "skipped_required_contract",
+            }.get(disposition_decision, "skipped_delivery_contract")
     if not bridge_error_audio_allowed:
         should_send_voice = False
         voice_decision = "transport_error"
     if not text_delivery_succeeded:
         should_send_voice = False
         voice_decision = "text_delivery_failed"
+    disposition_valid = delivery_disposition is not None
+    disposition_audio = (
+        delivery_disposition["audio"] if disposition_valid else "missing"
+    )
+    tts_avoided_chars = len(tmpresult) if disposition_skip_effective else 0
     logger.info(
         "[TG_VOICE] trace=%s gate voice_note=%s always_voice=%s voice_enabled=%s "
         "send=%s voice_decision=%s model_skip_requested=%s model_skip_effective=%s "
-        "tts_avoided_chars=%s msg_breaks=%s segments=%s segment_merge=%s",
+        "delivery_disposition_present=%s delivery_disposition_required=%s "
+        "delivery_disposition_valid=%s delivery_disposition_audio=%s "
+        "delivery_disposition_decision=%s tts_avoided_chars=%s "
+        "msg_breaks=%s segments=%s segment_merge=%s",
         trace_id,
         int(bool(voice_note_detected)),
         int(always_voice_active),
@@ -2043,7 +2088,12 @@ async def getViventiumResponse(
         voice_decision,
         int(model_skip_requested),
         int(model_skip_effective),
-        len(tmpresult) if model_skip_effective else 0,
+        int(delivery_disposition_present),
+        int(delivery_disposition_required),
+        int(disposition_valid),
+        disposition_audio,
+        disposition_decision,
+        tts_avoided_chars,
         delivery_plan.message_break_count,
         len(delivery_plan.segments),
         delivery_plan.merged_break_count,
@@ -2059,7 +2109,12 @@ async def getViventiumResponse(
             f"send={int(bool(should_send_voice))} voice_decision={voice_decision} "
             f"model_skip_requested={int(model_skip_requested)} "
             f"model_skip_effective={int(model_skip_effective)} "
-            f"tts_avoided_chars={len(tmpresult) if model_skip_effective else 0} "
+            f"delivery_disposition_present={int(delivery_disposition_present)} "
+            f"delivery_disposition_required={int(delivery_disposition_required)} "
+            f"delivery_disposition_valid={int(disposition_valid)} "
+            f"delivery_disposition_audio={disposition_audio} "
+            f"delivery_disposition_decision={disposition_decision} "
+            f"tts_avoided_chars={tts_avoided_chars} "
             f"msg_breaks={delivery_plan.message_break_count} "
             f"segments={len(delivery_plan.segments)} "
             f"segment_merge={delivery_plan.merged_break_count}"
@@ -2077,7 +2132,12 @@ async def getViventiumResponse(
             f"send={int(bool(should_send_voice))} voice_decision={voice_decision} "
             f"model_skip_requested={int(model_skip_requested)} "
             f"model_skip_effective={int(model_skip_effective)} "
-            f"tts_avoided_chars={len(tmpresult) if model_skip_effective else 0} "
+            f"delivery_disposition_present={int(delivery_disposition_present)} "
+            f"delivery_disposition_required={int(delivery_disposition_required)} "
+            f"delivery_disposition_valid={int(disposition_valid)} "
+            f"delivery_disposition_audio={disposition_audio} "
+            f"delivery_disposition_decision={disposition_decision} "
+            f"tts_avoided_chars={tts_avoided_chars} "
             f"msg_breaks={delivery_plan.message_break_count} "
             f"segments={len(delivery_plan.segments)} "
             f"segment_merge={delivery_plan.merged_break_count}"

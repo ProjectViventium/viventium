@@ -8,6 +8,7 @@ import sys
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SHARED_ROOT = REPO_ROOT / "viventium_v0_4" / "shared"
+TELEGRAM_ROOT = REPO_ROOT / "viventium_v0_4" / "telegram-viventium"
 JS_MODULE = (
     REPO_ROOT
     / "viventium_v0_4"
@@ -27,6 +28,15 @@ from delivery_controls import (  # noqa: E402
     SKIP_VOICE_TOKEN,
     parse_delivery_controls,
     strip_delivery_controls_for_preview,
+)
+if str(TELEGRAM_ROOT) not in sys.path:
+    sys.path.insert(0, str(TELEGRAM_ROOT))
+
+from TelegramVivBot.utils.voice import (  # noqa: E402
+    DELIVERY_DISPOSITION_AUDIO_VALUES,
+    DELIVERY_DISPOSITION_VERSION,
+    normalize_delivery_disposition,
+    resolve_delivery_audio_gate,
 )
 
 
@@ -111,3 +121,38 @@ def test_python_parser_matches_javascript_invalid_limit_fallback() -> None:
         "Two.",
         "Three.",
     )
+
+
+def test_telegram_structured_delivery_disposition_contract_is_versioned_and_fail_closed() -> None:
+    eligible = {
+        "version": 1,
+        "audio": "eligible",
+        "required": True,
+        "valid": True,
+        "source": "model",
+    }
+
+    assert DELIVERY_DISPOSITION_VERSION == 1
+    assert DELIVERY_DISPOSITION_AUDIO_VALUES == {"skip", "eligible"}
+    assert normalize_delivery_disposition(eligible) == eligible
+    assert normalize_delivery_disposition({**eligible, "version": True}) is None
+    assert normalize_delivery_disposition({**eligible, "audio": "auto"}) is None
+    assert normalize_delivery_disposition({**eligible, "audio": []}) is None
+    assert normalize_delivery_disposition({**eligible, "audio": {}}) is None
+    assert normalize_delivery_disposition({**eligible, "source": "main_response"}) is None
+    assert normalize_delivery_disposition({**eligible, "extra": "not allowed"}) is None
+    assert resolve_delivery_audio_gate(
+        legacy_skip_requested=False,
+        delivery_disposition=eligible,
+        disposition_required=True,
+    ) == (True, "structured_eligible")
+    assert resolve_delivery_audio_gate(
+        legacy_skip_requested=False,
+        delivery_disposition=None,
+        disposition_required=True,
+    ) == (False, "required_invalid")
+    assert resolve_delivery_audio_gate(
+        legacy_skip_requested=False,
+        delivery_disposition=None,
+        disposition_required=False,
+    ) == (True, "legacy")

@@ -156,6 +156,50 @@ messaging adapters. Compatible future adapters consume this contract instead of 
 channel-specific tokens. Telegram exposes the existing `ALWAYS_VOICE_RESPONSE` preference as
 `Smart voice for text`.
 
+### Structured final audio disposition
+
+The text marker remains a backward-compatible control, but it is not the rollout-safe authority for
+whether a completed Main response may receive optional Telegram audio. LibreChat final events may
+carry this versioned adapter contract beside the final text:
+
+```json
+{
+  "metadata": {
+    "viventium": {
+      "deliveryDisposition": {
+        "version": 1,
+        "audio": "skip",
+        "required": true,
+        "valid": true,
+        "source": "model"
+      }
+    }
+  }
+}
+```
+
+`audio` is exactly `skip` or `eligible`, `source` is exactly `model` or the migration-only
+`legacy_marker`, and the object has exactly those five fields with the declared types. Unknown
+versions, sources, extra fields, and malformed shapes are invalid. The chat-start response
+declares `deliveryDispositionRequired=true` only after the producing runtime guarantees that every
+applicable final and replay carries the contract. The Telegram bridge retains that requirement in
+its stream session and emits the validated disposition with the final text after reconnect or replay.
+
+The Telegram audio gate applies this order:
+
+1. An exact legacy `{SKIP_VOICE}` control still suppresses audio during migration.
+2. A valid structured `skip` suppresses audio.
+3. A valid structured `eligible` permits the existing voice-note or Smart voice preference gate; it
+   does not force audio when the user disabled it.
+4. If the producer declared the contract required, missing or malformed final metadata fails closed
+   to text-only delivery.
+5. If the producer did not declare it required, absent metadata preserves legacy behavior.
+
+This contract adds no audio pipeline and does not classify user wording, prompt text, agent names,
+providers, answer length, or artifact type. The model/prompt layer still owns semantic appraisal;
+the response boundary only makes the completed decision explicit and transport-stable. Telemetry may
+record presence, validity, required state, and the audio enum, but never private response text.
+
 The legacy `LONG_TEXT_SPLIT` preference is retired and is no longer forwarded to the bot. Physical
 Telegram limit enforcement is mandatory and semantic bubble boundaries belong only to the
 versioned `{MSG_BREAK}` control.

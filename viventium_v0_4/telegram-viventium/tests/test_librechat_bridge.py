@@ -20,6 +20,7 @@ from TelegramVivBot.utils.librechat_bridge import (
     _is_file_attachment_payload,
     _empty_response_message,
     extract_completed_cortex_insights,
+    extract_delivery_disposition,
     extract_attachments,
     extract_cortex_followup,
     extract_cortex_parts,
@@ -48,6 +49,7 @@ from TelegramVivBot.utils.librechat_bridge import (
     _is_file_attachment_payload,
     _empty_response_message,
     extract_completed_cortex_insights,
+    extract_delivery_disposition,
     extract_attachments,
     extract_cortex_followup,
     extract_cortex_parts,
@@ -172,6 +174,86 @@ def test_structured_followup_delivery_rebuilds_transport_controls_only():
     )
 
     assert rebuilt == "First beat.\n{MSG_BREAK}\nSecond beat.\n{SKIP_VOICE}"
+
+
+def test_extract_delivery_disposition_validates_the_versioned_final_metadata_contract():
+    disposition = {
+        "version": 1,
+        "audio": "skip",
+        "required": True,
+        "valid": True,
+        "source": "model",
+    }
+
+    extracted = extract_delivery_disposition(
+        {
+            "final": True,
+            "metadata": {
+                "viventium": {
+                    "deliveryDisposition": disposition,
+                },
+            },
+        },
+        required=True,
+    )
+
+    assert extracted == {
+        "type": "delivery_disposition",
+        "delivery_disposition": disposition,
+        "required": True,
+        "present": True,
+    }
+
+
+@pytest.mark.parametrize(
+    ("candidate", "required", "expected_required"),
+    [
+        (None, True, True),
+        ({"required": True}, False, True),
+        (
+            {
+                "version": 1,
+                "audio": "eligible",
+                "required": False,
+                "valid": True,
+                "source": "model",
+            },
+            True,
+            True,
+        ),
+        (
+            {
+                "version": 2,
+                "audio": "eligible",
+                "required": False,
+                "valid": True,
+                "source": "model",
+            },
+            False,
+            False,
+        ),
+    ],
+)
+def test_extract_delivery_disposition_rejects_missing_or_malformed_metadata(
+    candidate,
+    required,
+    expected_required,
+):
+    metadata = {}
+    if candidate is not None:
+        metadata = {"viventium": {"deliveryDisposition": candidate}}
+
+    extracted = extract_delivery_disposition(
+        {"final": True, "metadata": metadata},
+        required=required,
+    )
+
+    assert extracted == {
+        "type": "delivery_disposition",
+        "delivery_disposition": None,
+        "required": expected_required,
+        "present": candidate is not None,
+    }
 
 
 def test_payload_has_glasshive_tool_call_uses_mcp_server_identity():
@@ -2102,6 +2184,95 @@ async def test_stream_response_retries_after_transient_stream_error(monkeypatch)
     assert chunks == ["Recovered after retry"]
 
 
+@pytest.mark.asyncio
+async def test_stream_response_replay_preserves_final_delivery_disposition_beside_text(
+    monkeypatch,
+):
+    bridge = _make_bridge()
+    bridge._delivery_disposition_required_by_stream["stream-replay"] = True
+    attempts = {"n": 0}
+    disposition = {
+        "version": 1,
+        "audio": "eligible",
+        "required": True,
+        "valid": True,
+        "source": "model",
+    }
+
+    async def fake_iter_sse_json_events(*, chunk_iter):
+        _ = chunk_iter
+        yield {
+            "final": True,
+            "responseMessage": {"text": "Recovered final answer"},
+            "metadata": {
+                "viventium": {
+                    "deliveryDisposition": disposition,
+                },
+            },
+        }
+
+    class _FailingResponse:
+        async def __aenter__(self):
+            raise RuntimeError("synthetic reconnect")
+
+        async def __aexit__(self, *_args):
+            return False
+
+    class _SuccessResponse:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+        def raise_for_status(self):
+            return None
+
+        def aiter_bytes(self):
+            async def _gen():
+                if False:
+                    yield b""
+
+            return _gen()
+
+    class _FakeClient:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+        def stream(self, *_args, **_kwargs):
+            attempts["n"] += 1
+            return _FailingResponse() if attempts["n"] == 1 else _SuccessResponse()
+
+    import TelegramVivBot.utils.librechat_bridge as bridge_module
+
+    monkeypatch.setattr(bridge_module, "iter_sse_json_events", fake_iter_sse_json_events)
+    monkeypatch.setattr(bridge_module.httpx, "AsyncClient", _FakeClient)
+    bridge.max_retries = 1
+    bridge.retry_delay_s = 0
+
+    chunks = [
+        chunk
+        async for chunk in bridge._stream_response("stream-replay", "555")
+    ]
+
+    assert attempts["n"] == 2
+    assert chunks == [
+        "Recovered final answer",
+        {
+            "type": "delivery_disposition",
+            "delivery_disposition": disposition,
+            "required": True,
+            "present": True,
+        },
+    ]
+
+
 def test_should_emit_insight_dedupes_identical():
     bridge = _make_bridge()
     bridge._retain_insight_seen("stream-1")
@@ -2375,6 +2546,7 @@ async def test_start_chat_parses_voice_route_from_response(monkeypatch):
                 "voiceRoute": {
                     "tts": {"provider": "cartesia", "variant": "sonic-3"},
                 },
+                "deliveryDispositionRequired": True,
             }
 
     class _FakeClient:
@@ -2417,6 +2589,7 @@ async def test_start_chat_parses_voice_route_from_response(monkeypatch):
     assert session.voice_route == {
       "tts": {"provider": "cartesia", "variant": "sonic-3"},
     }
+    assert session.delivery_disposition_required is True
 
 
 @pytest.mark.asyncio

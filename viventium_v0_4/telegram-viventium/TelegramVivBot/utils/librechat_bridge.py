@@ -44,6 +44,10 @@ try:
     from utils.telegram_chunks import split_telegram_html
 except ModuleNotFoundError:
     from TelegramVivBot.utils.telegram_chunks import split_telegram_html
+try:
+    from utils.voice import normalize_delivery_disposition
+except ModuleNotFoundError:
+    from TelegramVivBot.utils.voice import normalize_delivery_disposition
 # Legacy MarkdownV2 import kept only for backward compat if needed.
 try:
     from md2tgmd.src.md2tgmd import escape as md2tgmd_escape
@@ -67,6 +71,7 @@ class LibreChatSession:
     voice_route: Optional[dict[str, Any]] = None
     logical_turn_id: str = ""
     revision: Optional[int] = None
+    delivery_disposition_required: bool = False
 
 
 # === VIVENTIUM START ===
@@ -683,6 +688,47 @@ def extract_attachments(payload: dict[str, Any]) -> list[dict[str, Any]]:
         out.extend([item for item in attachments if _is_file_attachment_payload(item)])
 
     return out
+
+
+def extract_delivery_disposition(
+    payload: dict[str, Any],
+    *,
+    required: bool = False,
+) -> dict[str, Any]:
+    """Validate final-response delivery metadata for the Telegram adapter.
+
+    Final metadata is an external boundary. Only the versioned contract is
+    forwarded; malformed values are reduced to an invalid state without copying
+    arbitrary provider/model output into adapter events or logs.
+    """
+
+    candidate: Any = None
+    present = False
+    containers: list[Any] = [payload]
+    response_message = payload.get("responseMessage")
+    if isinstance(response_message, dict):
+        containers.append(response_message)
+    for container in containers:
+        metadata = container.get("metadata") if isinstance(container, dict) else None
+        viventium = metadata.get("viventium") if isinstance(metadata, dict) else None
+        if isinstance(viventium, dict) and "deliveryDisposition" in viventium:
+            candidate = viventium.get("deliveryDisposition")
+            present = True
+            break
+
+    candidate_required = bool(
+        isinstance(candidate, dict) and candidate.get("required") is True
+    )
+    effective_required = bool(required or candidate_required)
+    normalized = normalize_delivery_disposition(candidate)
+    if required and normalized is not None and normalized["required"] is not True:
+        normalized = None
+    return {
+        "type": "delivery_disposition",
+        "delivery_disposition": normalized,
+        "required": effective_required,
+        "present": present,
+    }
 
 
 def _normalize_voice_route(payload: Any) -> Optional[dict[str, Any]]:
@@ -1423,6 +1469,7 @@ class LibreChatBridge:
         self._brief_main_reply_by_stream: dict[str, bool] = {}
         self._voice_route_by_chat: dict[str, dict[str, Any]] = {}
         self._voice_route_by_stream: dict[str, dict[str, Any]] = {}
+        self._delivery_disposition_required_by_stream: dict[str, bool] = {}
         self._glasshive_delivery_dispatcher_task: Optional[asyncio.Task] = None
         self._glasshive_delivery_dispatcher_id = f"tg-{uuid.uuid4().hex[:12]}"
         # === VIVENTIUM END ===
@@ -2273,6 +2320,9 @@ class LibreChatBridge:
                     telegram_chat_id,
                     session.conversation_id,
                 )
+            self._delivery_disposition_required_by_stream[session.stream_id] = bool(
+                session.delivery_disposition_required
+            )
             insight_task: Optional[asyncio.Task] = None
             if (
                 self.on_message_callback
@@ -2307,6 +2357,11 @@ class LibreChatBridge:
                     self._cortex_seen_by_stream.pop(session.stream_id, None)
                     self._glasshive_seen_by_stream.discard(session.stream_id)
                     self._voice_route_by_stream.pop(session.stream_id, None)
+                if session:
+                    self._delivery_disposition_required_by_stream.pop(
+                        session.stream_id,
+                        None,
+                    )
                 # === VIVENTIUM END ===
 
     async def _start_chat_with_connect_retry(self, **kwargs: Any) -> Optional[LibreChatSession]:
@@ -2460,6 +2515,21 @@ class LibreChatBridge:
             revision = int(raw_revision) if raw_revision is not None else None
         except (TypeError, ValueError):
             revision = None
+        required_key = None
+        for candidate_key in (
+            "deliveryDispositionRequired",
+            "delivery_disposition_required",
+        ):
+            if candidate_key in data:
+                required_key = candidate_key
+                break
+        if required_key is None:
+            delivery_disposition_required = False
+        else:
+            raw_required = data.get(required_key)
+            delivery_disposition_required = (
+                raw_required if type(raw_required) is bool else True
+            )
         if not isinstance(stream_id, str) or not stream_id:
             raise RuntimeError("LibreChat response missing streamId")
         if not isinstance(conversation_id, str) or not conversation_id:
@@ -2471,6 +2541,7 @@ class LibreChatBridge:
             voice_route=voice_route,
             logical_turn_id=logical_turn_id,
             revision=revision,
+            delivery_disposition_required=delivery_disposition_required,
         )
 
     async def ack_delivery(
@@ -2780,6 +2851,18 @@ class LibreChatBridge:
                                         )
                                         yield _empty_response_message(diagnosis)
                                         # === VIVENTIUM END ===
+                                disposition_event = extract_delivery_disposition(
+                                    payload,
+                                    required=self._delivery_disposition_required_by_stream.get(
+                                        stream_id,
+                                        False,
+                                    ),
+                                )
+                                if (
+                                    disposition_event["required"]
+                                    or disposition_event["present"]
+                                ):
+                                    yield disposition_event
                                 # === VIVENTIUM START ===
                                 # Feature: Emit any final attachments after the main text.
                                 for attachment in final_attachments:

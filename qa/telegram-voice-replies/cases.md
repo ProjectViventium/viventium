@@ -16,6 +16,7 @@ Use stable `TGVOICE-NNN` IDs for telegram voice replies cases.
 | `TGVOICE-006` | Optional Telegram text audio is model-selected per answer through `{SKIP_VOICE}`. | Read/copy/edit-first artifacts stay complete in text without wasteful synthesis; ordinary or explicitly requested spoken replies retain audio. | Main turn, proactive callback, persistence, TTS, Preferences, Prompt Workbench | shared JS/Python grammar, persistence, bot/callback/TTS suites, exact-model prompt bank | PASS-HISTORICAL 2026-07-30 for the installed direct GlassHive route; current post-render chunking candidate PASS automation/PARTIAL pending a fresh Telegram Desktop run ([report](reports/2026-07-30-smart-delivery-regression-restoration.md)) |
 | `TGVOICE-007` | The Main Agent may create bounded natural Telegram bubbles with `{MSG_BREAK}` while preserving one logical answer. | Conversation can arrive as two or three complete beats without fragment bombardment, duplicate history, or duplicate audio. | Streaming preview, main turn, proactive callback, persistence, Telegram transport | shared grammar, split-token streaming, callback/persistence suites, exact-model prompt bank | PASS-HISTORICAL 2026-07-30 for the installed direct GlassHive route; current post-render chunking candidate PASS automation/PARTIAL pending a fresh Telegram Desktop run ([report](reports/2026-07-30-smart-delivery-regression-restoration.md)) |
 | `TGVOICE-008` | Delivery controls and formatting remain authoritative when a rendered answer exceeds Telegram's physical message limit. | Early `{SKIP_VOICE}`/`{MSG_BREAK}` controls still apply; code, tables, and emoji remain valid; every post-entity UTF-16 chunk fits; a transient first edit neither duplicates nor drops text; an unrecoverable partial send is visibly marked interrupted and never receives audio. | Streaming preview, rendered-HTML chunking, optional TTS | `tests/test_bot_stream_preview.py`, `tests/test_telegram_chunks.py`, `tests/test_librechat_bridge.py` | PASS-AUTOMATED/PARTIAL 2026-07-31; synthetic long/control/render/error cases pass, fresh Telegram Desktop delivery pending |
+| `TGVOICE-009` | Final Main responses carry a versioned structured audio disposition through stream completion, reconnect, and replay before Telegram evaluates optional audio. | Explicit text-only output stays text-only even if the text sentinel is absent; valid eligibility still permits the saved Smart voice preference; a required missing/malformed contract fails closed. | LibreChat final metadata, Telegram bridge/session, bot voice gate, TTS | `tests/release/test_delivery_controls_contract.py`, `tests/test_librechat_bridge.py`, `tests/test_voice_preferences.py`, `tests/test_bot_stream_preview.py` | PASS-AUTOMATED/PARTIAL 2026-08-13; structured skip/eligible/required-invalid/legacy precedence and replay fixtures pass, exact merged runtime activation and fresh Telegram Desktop delivery/listen NOT RUN |
 
 ## `TGVOICE-001` - Core User Flow
 
@@ -211,6 +212,37 @@ Use stable `TGVOICE-NNN` IDs for telegram voice replies cases.
   transient-error, and persistent-error regressions pass. The post-activation Telegram Desktop run
   remains pending and must not be inferred from automation.
 
+## `TGVOICE-009` - Structured Final Audio Disposition
+
+- Requirement: `docs/requirements_and_learnings/03_Telegram_Bridge.md`
+- Risk covered: a worker or provider follows the explicit text-only instruction in its answer but
+  omits an optional text sentinel, so Telegram's Smart voice preference synthesizes audio anyway.
+- Preconditions: the exact reviewed LibreChat producer and Telegram adapter are combined; the
+  producer declares `deliveryDispositionRequired=true` only when final/replay metadata is guaranteed.
+- Steps:
+  1. Exercise version-1 `audio=skip` and `audio=eligible` final metadata with Smart voice enabled.
+  2. Repeat `eligible` with an exact legacy `{SKIP_VOICE}` line and verify the legacy control wins.
+  3. Exercise required missing metadata, required malformed metadata, and an unsupported version.
+  4. Exercise an optional missing disposition against a rolling-upgrade/legacy producer.
+  5. Drop the first synthetic stream connection, resume/replay the final, and verify the validated
+     disposition remains beside the recovered text.
+  6. After the exact merged source, component pin, built artifact, and installed runtime match,
+     repeat the explicit text-only, ordinary conversation, and explicit-audio turns in Telegram
+     Desktop; compare visible text/audio with structural voice-gate logs and the persisted clean turn.
+- Expected result: legacy skip, structured skip, structured eligibility, required fail-closed, and
+  optional legacy behavior follow the documented precedence. Text remains complete and clean, and
+  no new TTS path is introduced.
+- Forbidden result: audio after a valid or fail-closed skip; required missing/malformed metadata
+  silently falling back to Smart voice; valid eligibility forcing audio when disabled; prompt/user
+  keyword matching; response text or private identifiers in telemetry; or automation being reported
+  as live Telegram acceptance.
+- Evidence to capture: exact source/pin/artifact/runtime identities; focused test results; sanitized
+  disposition presence/validity/audio logs; visible Telegram text and audio count; one clean
+  persisted assistant turn.
+- Last run: PASS-AUTOMATED/PARTIAL 2026-08-13. Focused version/schema, precedence, bridge replay,
+  and bot delivery fixtures pass. Exact merged runtime activation, Telegram Desktop send/receive,
+  audio listen, persistence/log correlation, restart/replay, and upgrade-path QA remain NOT RUN.
+
 ## Natural User Use Case Checklist
 
 These rows are the minimum natural-user checklist gate for Telegram Voice Replies. Add narrower feature-specific
@@ -227,3 +259,4 @@ rows before claiming a pass when the feature behavior changes.
 | `TGVOICE-UC-007` | With Smart voice for text enabled, request a copy-ready synthetic email, an explicit text-only reply, ordinary conversation, and an explicitly spoken reminder. | `TGVOICE-006` | Telegram Desktop and Prompt Workbench | Visible text/audio, clean DB row, voice-decision log, prompt lineage | Email and explicit text-only reply stay complete/text-only; conversation and spoken reminder get at most one audio; controls remain hidden | FAIL 2026-08-12 current aligned runtime: explicit text-only request returned correct text but also one audio attachment because the model omitted the hidden skip control ([report](reports/2026-08-12-post-alignment-explicit-text-only-failure.md)) |
 | `TGVOICE-UC-008` | Ask for a friendly two-beat reply, then a copy-ready artifact, and reopen the chat. | `TGVOICE-007` | Telegram Desktop, logs, DB/history | Bubble count, final audio, one clean assistant turn, reopen | At most three complete bubbles; artifact stays intact; one persisted turn and at most one audio | PASS-HISTORICAL 2026-07-30; current candidate PARTIAL pending fresh Telegram Desktop QA ([report](reports/2026-07-30-smart-delivery-regression-restoration.md)) |
 | `TGVOICE-UC-009` | Request a read/copy-first answer long enough to require multiple Telegram messages. | `TGVOICE-008` | Telegram Desktop, delivery logs, DB/history | Complete ordered text, chunk lengths, audio count, one clean assistant turn | Every clean chunk fits Telegram, the full answer arrives once, and an early model-selected skip suppresses optional audio | PASS-AUTOMATED/PARTIAL 2026-07-31; synthetic long-stream regression passes, post-activation Telegram Desktop run pending |
+| `TGVOICE-UC-010` | With Smart voice enabled, request an explicit text-only synthetic answer, ordinary conversation, and explicit audio after the exact producer/adapter candidate is activated; then retry once after a stream interruption. | `TGVOICE-009` | Telegram Desktop, delivery logs, DB/history | Visible text/audio count, structured disposition presence/validity/audio telemetry, reconnect/replay evidence, one clean assistant turn | Text-only receives no audio; valid eligibility permits but does not force existing preference behavior; required invalid/missing stays text-only; replay preserves the same final decision | PASS-AUTOMATED/PARTIAL 2026-08-13; contract/replay/bot fixtures pass, exact installed Telegram Desktop path NOT RUN |
