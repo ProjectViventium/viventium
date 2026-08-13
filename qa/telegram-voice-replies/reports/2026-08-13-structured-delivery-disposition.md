@@ -2,10 +2,10 @@
 
 ## Summary
 
-- Result: PARTIAL
-- Build/source under test: isolated parent candidate pinned to the merged LibreChat and GlassHive changes
-- Runtime/artifact under test: source-level candidates and isolated automated suites
-- Environment: isolated clean component checkouts; installed local-prod activation deliberately deferred
+- Result: PASS for the installed structured-disposition acceptance scope
+- Build/source under test: merged parent `7710356a6043893f91d9f4b301d3a9d99d8c9a8f`
+- Runtime/artifact under test: installed local prod with merged LibreChat `24289a2834aad5e620b6a4878bd20404a26b5106`, GlassHive `c16230fed7351a6b08606b6f3d99ae57246c7aa6`, and the compiler-produced immutable Telegram component
+- Environment: clean dedicated runtime checkout activated through the supported transactional local-prod path
 - Related change: versioned, model-owned final delivery disposition for Telegram optional audio
 
 The reviewed candidate replaces the optional text-sentinel-only boundary with a versioned final
@@ -15,8 +15,11 @@ it before the existing voice-preference gate. Required missing or malformed meta
 to text-only. The legacy standalone `{SKIP_VOICE}` control remains the highest-precedence
 rolling-upgrade compatibility path.
 
-Automated, review, merge, and exact-pin gates pass. The post-merge installed Telegram Desktop path
-has not yet run, so this report remains `PARTIAL` until activation and user-grade acceptance.
+Automated, review, merge, exact-pin, installed-artifact, and real Telegram Desktop gates pass. With
+Smart voice enabled, an explicit text-only turn produced text with no audio, an ordinary turn
+produced text plus one audio attachment, and a second text-only turn still suppressed audio after a
+supported full-stack restart. Each response finalized without error and carried a committed external
+delivery acknowledgement.
 
 ## Scope Run
 
@@ -27,8 +30,9 @@ has not yet run, so this report remains `PARTIAL` until activation and user-grad
 | Metadata survives persistence, streaming, resume, and replay | PASS | LibreChat persistence and callback suites | Versioned metadata remains transport-only. |
 | Actual request body carries Telegram audio eligibility | PASS | Builder-to-header integration test | The field reaches the same provider run that creates the final answer. |
 | Exact nested merged commits are selected | PASS | Strict pinned-component validation | LibreChat and GlassHive resolve to their reviewed merge commits. |
-| Installed Telegram Desktop explicit text-only flow | BLOCKED | Post-merge runtime not activated yet | Required before changing this report to a user-path pass. |
-| Installed ordinary-audio and restart/replay flows | BLOCKED | Post-merge runtime not activated yet | Required to prove preference preservation and persistence. |
+| Installed Telegram Desktop explicit text-only flow | PASS | Synthetic post-activation turn, visible Telegram result, voice-gate telemetry, and persisted message metadata | Smart voice remained enabled; structured `audio=skip` suppressed TTS and audio. |
+| Installed ordinary-audio preference flow | PASS | Synthetic control turn, visible text plus one audio attachment, TTS/audio telemetry, and persisted message metadata | Structured `audio=eligible` preserved the saved Smart voice preference. |
+| Installed restart/persistence flow | PASS | Supported stop/launch, new process identities, repeated synthetic Telegram turn, and persisted acknowledgement | After restart, structured `audio=skip` again produced exact text and no audio. |
 
 ## Traceability
 
@@ -42,10 +46,11 @@ has not yet run, so this report remains `PARTIAL` until activation and user-grad
   `qa/telegram-voice-replies/cases.md`.
 - Expected result: text-only produces one clean text delivery and no audio; ordinary eligible output
   may produce one audio attachment; both remain correct after restart and replay.
-- Actual evidence: the escaped pre-fix Telegram Desktop run failed; all source, contract, fallback,
-  replay, validation, and pin tests for the structural fix pass.
-- Remaining gap: activate the exact merged parent and components through the supported local-prod
-  path, then run and correlate the two real Telegram Desktop journeys.
+- Actual evidence: the escaped pre-fix Telegram Desktop run failed; the exact merged parent and
+  components were then activated and the text-only, ordinary-audio, and post-restart journeys passed
+  with visible, log, artifact, and database correlation.
+- Remaining gap: none for the structured-disposition acceptance scope. The broader explicit-audio
+  and injected stream-interruption variants in `TGVOICE-UC-010` remain separate regression coverage.
 
 ## Full-View Evidence Checklist
 
@@ -54,26 +59,25 @@ has not yet run, so this report remains `PARTIAL` until activation and user-grad
 | Code owning path | GlassHive response envelope, LibreChat request/provider/persistence boundaries, parent compiler, and Telegram bridge/voice gate reviewed. |
 | Docs and nested docs/repos | Telegram, prompt, installer, release-readiness, and component-inventory truth updated. |
 | Tests and harnesses | Complete Telegram suite plus affected GlassHive, LibreChat, compiler, and cross-language contract suites passed. |
-| Generated or shipped artifact | Compiler output and exact component locks validated; installed immutable artifact verification remains blocked on activation. |
-| Logs, DB/state/persistence | Pre-fix failure was correlated end to end; post-fix live correlation remains blocked on activation. |
-| Real user path | The escaped bug was reproduced in Telegram Desktop before the fix; the fixed candidate has not yet been installed or exercised there. |
+| Generated or shipped artifact | Compiler output and exact component locks validated; the active Telegram process ran from the compiler-produced immutable component, and API/UI/GlassHive processes ran from the clean merged checkout. |
+| Logs, DB/state/persistence | All three post-fix turns had valid version-1 dispositions, `unfinished=false`, no message error, and committed delivery acknowledgements. |
+| Real user path | Telegram Desktop visibly showed text-only without audio, ordinary text plus one audio attachment, and post-restart text-only without audio. The local browser login surface also rendered after restart with zero console errors. |
 | Review and hosted checks | Independent Codex and bounded Claude reviews approved after fixes; all hosted LibreChat checks passed. |
-| Remaining gap | Installed text-only, ordinary-audio, warm-session, restart/replay, message-finalization, and delivery-ack evidence. |
+| Remaining gap | None for this installed acceptance. Broader explicit-audio and forced stream-interruption variants remain tracked under `TGVOICE-UC-010`. |
 
-Supporting evidence cannot replace required user-path evidence. Automated suites, logs, source
-inspection, and merged commit identity therefore do not convert this report from `PARTIAL` to
-`PASS`.
+Supporting evidence did not replace the user path: acceptance used Telegram Desktop itself, then
+correlated the visible result with the installed artifact, runtime logs, and persisted message state.
 
 ## User-Grade Evidence
 
-- Surface exercised: Telegram Desktop was exercised for the aligned pre-fix reproduction; the fixed installed Telegram path is blocked until supported activation.
-- Real user path: a synthetic explicit text-only request reproduced the escaped bug; the same request plus an ordinary conversational turn must be repeated after activation.
-- Visible outcome: pre-fix text arrived with a forbidden audio attachment; no post-fix visible result is claimed yet.
-- Expanded/detail state: the pre-fix open Telegram chat showed separate text and audio deliveries; post-fix message and audio detail inspection remains blocked.
-- Persistence/reload result: pre-fix state finalized successfully; post-fix warm-session and restart/replay persistence remain blocked.
-- Backend/log/DB confirmation: the pre-fix provider output omitted the optional sentinel and the voice gate sent audio; post-fix structured metadata and delivery acknowledgement remain to be correlated live.
-- Final model/runtime wording check: the structural contract keeps semantic choice model-owned and adds no runtime prompt or keyword intent classifier; live fixed-runtime wording remains to be inspected.
-- Substitution check: tests, reviews, logs, source inspection, and exact pin evidence support the candidate but cannot replace the required post-activation Telegram Desktop run.
+- Surface exercised: installed Telegram Desktop, local-prod API, compiler-produced Telegram artifact, Mongo persistence, runtime logs, and the local browser login surface.
+- Real user path: with Smart voice enabled, a synthetic explicit text-only request, an ordinary short conversational request, and a second text-only request after restart were sent through Telegram Desktop.
+- Visible outcome: text-only turns produced one clean text result and no audio; the ordinary control produced one concise text result and one three-second audio attachment.
+- Expanded/detail state: the open Telegram chat showed the expected text/audio attachment counts and no visible transport markup.
+- Persistence/reload result: all assistant rows finalized with `unfinished=false`, no error, a valid model-owned disposition, and a committed acknowledgement; the post-restart turn proved the behavior survives process replacement.
+- Backend/log/DB confirmation: the two text-only turns logged `skipped_structured`; the ordinary turn logged `sent`, completed TTS, and completed audio delivery. Persisted dispositions were `skip`, `eligible`, then `skip`.
+- Final model/runtime wording check: concise visible replies matched the request. Live prompt-frame telemetry stayed in the normal tens-of-thousands range rather than the earlier 200,000-plus-token failure class.
+- Substitution check: the pass is based on the real post-activation Telegram Desktop path; automated tests and source review are supporting evidence only.
 
 ## Automated Evidence
 
@@ -127,19 +131,18 @@ text markup.
 6. Telegram precedence is: legacy explicit skip; valid structured skip or eligible; required invalid
    or missing metadata as text-only; optional absent metadata as rolling-upgrade legacy behavior.
 
-### Post-activation acceptance
+### Post-activation acceptance result
 
-Using synthetic non-personal text, verify the running parent, LibreChat, GlassHive, compiled config,
-and immutable Telegram artifact match the reviewed merge commits. With Smart voice enabled:
+Using synthetic non-personal text, the running parent, LibreChat, GlassHive, compiled config, and
+immutable Telegram artifact matched the reviewed merge commits. With Smart voice enabled:
 
-1. Send an explicit text-only request; expect one complete text result and no audio.
-2. Send ordinary conversation; expect the saved preference to remain effective when the model
-   returns `audio=eligible`.
-3. Repeat after API and Telegram restart and once on a warm conversation.
-4. Correlate each visible result with the final structured disposition, clean persisted assistant
-   row, `unfinished=false`, no error, and committed delivery acknowledgement.
-5. Fail acceptance for missing required metadata that permits audio, visible control markup,
-   duplicate delivery, or source/runtime/pin drift.
+1. Explicit text-only request: PASS; one complete text result, `audio=skip`, no TTS, no audio.
+2. Ordinary conversation: PASS; `audio=eligible`, one concise text result, one audio attachment.
+3. Supported restart and repeat: PASS; new API and Telegram processes loaded the same reviewed
+   checkout/artifact, and text-only again suppressed audio.
+4. Persistence correlation: PASS; every assistant row was complete, error-free, and acknowledged.
+5. Forbidden outcomes: PASS; no required-metadata escape, visible control markup, duplicate
+   assistant delivery, or source/runtime/pin drift was observed.
 
 ## Public-Safety Review
 
