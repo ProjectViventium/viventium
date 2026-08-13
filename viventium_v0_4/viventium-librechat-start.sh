@@ -9530,6 +9530,40 @@ glasshive_stack_ready() {
     [[ -n "$ui_health" ]]
 }
 
+wait_for_glasshive_stack_ready() {
+  local timeout_seconds="${VIVENTIUM_GLASSHIVE_STARTUP_TIMEOUT_SECONDS:-30}"
+  local started_at="$SECONDS"
+  if ! [[ "$timeout_seconds" =~ ^[0-9]+$ ]] || [[ "$timeout_seconds" -lt 1 ]]; then
+    timeout_seconds=30
+  elif [[ "$timeout_seconds" -gt 120 ]]; then
+    timeout_seconds=120
+  fi
+
+  while [[ "$((SECONDS - started_at))" -lt "$timeout_seconds" ]]; do
+    if glasshive_stack_ready; then
+      return 0
+    fi
+    if ! ps -p "$GLASSHIVE_RUNTIME_PID" >/dev/null 2>&1; then
+      log_error "GlassHive runtime exited before startup readiness"
+      return 1
+    fi
+    if ! ps -p "$GLASSHIVE_MCP_PID" >/dev/null 2>&1; then
+      log_error "GlassHive MCP exited before startup readiness"
+      return 1
+    fi
+    if [[ -n "${GLASSHIVE_UI_PID:-}" ]] && ! ps -p "$GLASSHIVE_UI_PID" >/dev/null 2>&1; then
+      log_error "GlassHive UI exited before startup readiness"
+      return 1
+    fi
+    if [[ "$((SECONDS - started_at))" -lt "$timeout_seconds" ]]; then
+      sleep 1
+    fi
+  done
+
+  log_error "GlassHive did not reach runtime/MCP/UI readiness within the ${timeout_seconds}s startup window"
+  return 1
+}
+
 stop_candidate_glasshive_stack() {
   stop_pid_file_scoped "$GLASSHIVE_UI_PID_FILE" "$GLASSHIVE_UI_DIR"
   stop_pid_file_scoped "$GLASSHIVE_MCP_PID_FILE" "$GLASSHIVE_RUNTIME_DIR"
@@ -9646,25 +9680,7 @@ start_glasshive() {
     popd >/dev/null
   fi
 
-  sleep 3
-
-  if ! ps -p "$GLASSHIVE_RUNTIME_PID" >/dev/null 2>&1; then
-    log_error "GlassHive runtime failed to start"
-    tail -20 "$LOG_DIR/glasshive_runtime.log" 2>/dev/null || true
-    return 1
-  fi
-  if ! ps -p "$GLASSHIVE_MCP_PID" >/dev/null 2>&1; then
-    log_error "GlassHive MCP failed to start"
-    tail -20 "$LOG_DIR/glasshive_mcp.log" 2>/dev/null || true
-    return 1
-  fi
-  if [[ -n "${GLASSHIVE_UI_PID:-}" ]] && ! ps -p "$GLASSHIVE_UI_PID" >/dev/null 2>&1; then
-    log_error "GlassHive UI failed to start"
-    tail -20 "$LOG_DIR/glasshive_ui.log" 2>/dev/null || true
-    return 1
-  fi
-
-  if ! glasshive_stack_ready; then
+  if ! wait_for_glasshive_stack_ready; then
     log_error "GlassHive candidate failed runtime/MCP/UI readiness; stopping the complete candidate stack"
     tail -20 "$LOG_DIR/glasshive_runtime.log" 2>/dev/null || true
     tail -20 "$LOG_DIR/glasshive_mcp.log" 2>/dev/null || true

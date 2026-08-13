@@ -3781,6 +3781,8 @@ def build_agent_provider_capabilities(config: dict[str, Any]) -> dict[str, Any]:
             "workspace_binding": True,
             "conversation_session": True,
             "worker_native_tools": True,
+            "default_access": provider["default_access"],
+            "allow_full_access": provider["allow_full_access"],
             "host_tools_transport": "broker_mcp",
             "host_tools": ["file_search", "web_search"],
             "activity_stream": True,

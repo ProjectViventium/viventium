@@ -323,7 +323,17 @@ active runtime reports the sidecar as ready.
   ledger-identity checks when its real `ok` response is accepted. When the compiler omits an
   explicit Scheduler DB path, readiness must derive the same per-runtime default as the launcher.
   GlassHive startup health belongs to its local runtime API/MCP/UI ports; the configured operator
-  base URL is a user-facing link origin and may intentionally be a public HTTPS address.
+  base URL is a user-facing link origin and may intentionally be a public HTTPS address. GlassHive
+  cold-start readiness must use a bounded retry window rather than one fixed sleep: probe all three
+  local surfaces until ready, fail immediately if a candidate process exits, cap an operator-tuned
+  window at 120 seconds, and stop only the transaction-owned candidate after the deadline. The
+  default window is 30 seconds because valid persisted state may take longer than three seconds to
+  initialize before the runtime begins serving health.
+- Generated and tracked LibreChat provider-capability metadata must carry the canonical GlassHive
+  `default_access` and `allow_full_access` values. Exporting those values only to the process
+  environment creates split-brain validation: an already-authorized full-access Agent can run but
+  cannot pass a safe prompts-only sync. Reconciliation must fix the owning capability metadata,
+  not bypass validation or silently reduce the Agent's reviewed workspace access.
 - Do make `SIGINT` and `SIGTERM` terminate the active CLI operation with a non-zero signal status
   after releasing its owned CLI lock. If an upgrade rollback transaction is armed, signal handling
   must run that recovery path with the signal status rather than returning to the interrupted wait
@@ -498,6 +508,10 @@ actual user preference change.
 - ANSI-colored progress text cannot turn the documented nonterminal
   `Remote access setup failed; local startup will continue` condition into a terminal startup
   failure.
+- The detached-start watcher must likewise preserve the launcher's explicit
+  `Local conversation search sync failed; continuing without blocking frontend startup` contract.
+  Search-index parity remains visible and repairable, but it cannot roll back a candidate whose
+  required user surfaces are still starting normally.
 - A router/public-edge conflict remains visible in status but does not block or roll back a healthy
   localhost runtime. This implements the remote-access requirement that local startup survives
   unavailable public mappings.

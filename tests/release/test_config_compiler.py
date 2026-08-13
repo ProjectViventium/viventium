@@ -1312,6 +1312,79 @@ def test_launcher_keeps_runtime_verifier_only_and_fails_closed_on_three_service_
     assert "processes started but health checks are not fully ready yet" not in function_body
 
 
+def test_launcher_waits_boundedly_for_glasshive_cold_start_and_fails_early_on_process_exit() -> None:
+    script = START_SCRIPT.read_text(encoding="utf-8")
+    ready_index = script.index("wait_for_glasshive_stack_ready() {")
+    wait_body = script[ready_index : script.index("stop_candidate_glasshive_stack() {", ready_index)]
+    start_index = script.index("start_glasshive() {")
+    start_body = script[start_index : script.index("start_ms365_mcp() {", start_index)]
+
+    assert 'local timeout_seconds="${VIVENTIUM_GLASSHIVE_STARTUP_TIMEOUT_SECONDS:-30}"' in wait_body
+    assert '[[ "$timeout_seconds" -gt 120 ]]' in wait_body
+    assert 'SECONDS - started_at' in wait_body
+    assert 'ps -p "$GLASSHIVE_RUNTIME_PID"' in wait_body
+    assert 'ps -p "$GLASSHIVE_MCP_PID"' in wait_body
+    assert 'ps -p "$GLASSHIVE_UI_PID"' in wait_body
+    assert "glasshive_stack_ready" in wait_body
+    assert "sleep 1" in wait_body
+    assert "if ! wait_for_glasshive_stack_ready; then" in start_body
+    assert "sleep 3" not in start_body
+
+
+def test_glasshive_cold_start_wait_retries_and_process_exit_are_behavioral() -> None:
+    script = START_SCRIPT.read_text(encoding="utf-8")
+    ready_index = script.index("wait_for_glasshive_stack_ready() {")
+    wait_body = script[ready_index : script.index("stop_candidate_glasshive_stack() {", ready_index)]
+    common = f"""
+set -u
+{wait_body}
+GLASSHIVE_RUNTIME_PID=111
+GLASSHIVE_MCP_PID=222
+GLASSHIVE_UI_PID=333
+log_error() {{ printf 'error=%s\\n' "$1"; }}
+sleep() {{ SECONDS=$((SECONDS + 1)); }}
+"""
+
+    delayed_success = subprocess.run(
+        ["bash"],
+        input=common
+        + """
+ready_calls=0
+glasshive_stack_ready() {
+  ready_calls=$((ready_calls + 1))
+  [[ "$ready_calls" -ge 5 ]]
+}
+ps() { return 0; }
+SECONDS=0
+VIVENTIUM_GLASSHIVE_STARTUP_TIMEOUT_SECONDS=10
+wait_for_glasshive_stack_ready
+printf 'calls=%s\\n' "$ready_calls"
+""",
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert delayed_success.returncode == 0, delayed_success.stderr
+    assert "calls=5" in delayed_success.stdout
+
+    early_exit = subprocess.run(
+        ["bash"],
+        input=common
+        + """
+glasshive_stack_ready() { return 1; }
+ps() { [[ "$2" != "222" ]]; }
+SECONDS=0
+VIVENTIUM_GLASSHIVE_STARTUP_TIMEOUT_SECONDS=30
+wait_for_glasshive_stack_ready
+""",
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert early_exit.returncode == 1
+    assert "GlassHive MCP exited before startup readiness" in early_exit.stdout
+
+
 def test_launcher_publishes_only_signed_glasshive_surfaces() -> None:
     script = START_SCRIPT.read_text(encoding="utf-8")
     prepare_index = script.index("prepare_remote_call_access() {")
@@ -1497,6 +1570,8 @@ def test_glasshive_compiles_as_exact_core_agent_provider(
     assert capability["serial_model_fallback"] is True
     assert capability["responses_api"] is False
     assert capability["worker_native_tools"] is True
+    assert capability["default_access"] == "full"
+    assert capability["allow_full_access"] is True
     assert capability["host_tools_transport"] == "broker_mcp"
     assert capability["host_tools"] == ["file_search", "web_search"]
     assert capability["excluded_mcp_servers"] == ["glasshive-workers-projects"]

@@ -5638,6 +5638,11 @@ launch_log_indicates_startup_failure() {
       grep -vF 'Remote access setup failed; local startup will continue without it:' ||
       true
   })"
+  tail_output="$({
+    printf '%s\n' "$tail_output" |
+      grep -vF 'Local conversation search sync failed; continuing without blocking frontend startup' ||
+      true
+  })"
   [[ -n "$tail_output" ]] || return 1
 
   if printf '%s\n' "$tail_output" | grep -Eq \
