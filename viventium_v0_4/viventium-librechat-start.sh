@@ -2448,19 +2448,19 @@ require_cmd() {
 }
 
 log_info() {
-  echo -e "${CYAN}[viventium]${NC} $1"
+  printf '%b[viventium]%b %s\n' "$CYAN" "$NC" "$1"
 }
 
 log_warn() {
-  echo -e "${YELLOW}[viventium]${NC} $1"
+  printf '%b[viventium]%b %s\n' "$YELLOW" "$NC" "$1"
 }
 
 log_error() {
-  echo -e "${RED}[viventium]${NC} $1"
+  printf '%b[viventium]%b %s\n' "$RED" "$NC" "$1"
 }
 
 log_success() {
-  echo -e "${GREEN}[viventium]${NC} $1"
+  printf '%b[viventium]%b %s\n' "$GREEN" "$NC" "$1"
 }
 
 ## === VIVENTIUM START ===
@@ -6685,11 +6685,15 @@ prewarm_remote_call_access() {
   remote_error="$(json_state_value "$state_json" "last_error")"
 
   if [[ "$command_status" -ne 0 ]]; then
+    local verification_message=""
     if [[ -n "$remote_error" ]]; then
-      log_warn "Remote access is still inactive for this run: $remote_error"
+      verification_message="Remote access is still inactive for this run: $remote_error"
     else
-      log_warn "Remote access verification failed - browser links may need a retry: $state_json"
+      verification_message="Remote access verification failed - browser links may need a retry: $state_json"
     fi
+    verification_message="${verification_message//$'\r'/ }"
+    verification_message="${verification_message//$'\n'/ }"
+    log_warn "$verification_message"
     return 0
   fi
 

@@ -106,8 +106,12 @@ Use stable `REMOTE-NNN` IDs for remote access cases.
   remote access with the exact `public-network.json` error, and no config is silently changed.
 - Forbidden result: false remote success, hidden error, local rollback/restart loop, or automatic
   takeover of a foreign router mapping.
-- Last run: PASS-AUTOMATED/PARTIAL-LIVE 2026-07-25. Health-gate regression passes and a real router
-  conflict remained visible; off-LAN public-media acceptance is still NOT RUN.
+- Last run: PASS-AUTOMATED/PARTIAL-LIVE 2026-08-13. Launcher warnings are classified through their
+  non-terminal severity channel, including all three remote-degradation forms, while a later real
+  fatal still wins. A real existing-user activation reproduced the verification-warning rollback
+  and the supported transaction restored the prior healthy runtime; post-fix activation is the
+  remaining live gate. See
+  `reports/2026-08-13-local-activation-warning-classification.md`.
 
 ## Natural User Use Case Checklist
 
