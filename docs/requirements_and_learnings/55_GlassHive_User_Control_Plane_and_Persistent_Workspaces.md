@@ -261,9 +261,13 @@ compliant hosted topology.
   generated command validates that contract server-side but does not also pass `--oauth-resource`,
   which would duplicate the RFC 8707 parameter and make the authorization request invalid.
 - “Use GlassHive from another AI app” keeps the ordinary path short. Automatic setup is one
-  copyable, self-contained instruction containing each returned client's exact deployment-generated
-  add/authenticate command, canonical URL, and collision-safe server name. The receiving AI never has
-  to reconstruct hidden configuration from a bare URL. Manual setup exposes one exact
+  copyable, self-selecting instruction: Codex follows only the Codex section and Claude Code follows
+  only the Claude Code section. Each section contains that client's exact deployment-generated
+  add/authenticate command, canonical URL, and collision-safe server name; reuses an existing exact
+  registration; relies only on native client OAuth; and verifies with one `workspace_list` call
+  rather than enumerating the tool catalog. Codex starts a new task after setup so the newly
+  configured MCP tools load. The receiving AI never configures the other client, reconstructs hidden
+  configuration from a bare URL, manufactures an OAuth/callback flow, or inspects tokens. Manual setup exposes one exact
   server-address copy plus separate supported client commands. Both paths derive their visible
   client names from the endpoint's complete allowlisted contracts; a Codex-only deployment never
   advertises Claude or ChatGPT, and vice versa. Callback URIs, fixed ports, client
@@ -275,8 +279,9 @@ compliant hosted topology.
   not execute local commands or claim it can silently edit another application's configuration.
 - A versioned, non-secret companion skill/connector may point to the canonical live repository and
   official MCP setup docs so a user can paste one instruction into a supported AI client. The skill
-  explains and invokes the official client configuration/login path; it does not embed credentials,
-  bypass client consent, or fork a second GlassHive protocol.
+  is a concise workflow guide over the same MCP tools; it does not embed credentials, bypass client
+  consent, enumerate capabilities unnecessarily, or fork a second GlassHive protocol. A plugin is
+  optional packaging for later distribution, not a requirement for the core integration.
 - MCP exposes the same owner-scoped workspace, worker, schedule, account, connection, Library, and
   confirmation model as the UI. Client convenience must not weaken human confirmation or scope.
 

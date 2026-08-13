@@ -187,28 +187,36 @@ most specific existing QA owner when a scenario already has a detailed provider 
   plus the exact displayed callback URIs registered at the identity provider.
 - Steps: open `Use GlassHive from another AI app`; verify the ordinary view has no callback jargon;
   verify only clients with complete live contracts are named; copy the one-step Automatic instruction
-  and use it in each returned client; repeat through Manual using the exact server URL/client commands;
-  when both Codex and Claude Code are returned, exercise both. For Entra, first prove the resource app
+  into Codex and prove it follows only the Codex section, then repeat in Claude Code and prove it
+  follows only the Claude Code section; repeat through Manual using the exact server URL/client commands.
+  Re-run with the exact server already registered and prove no duplicate is created. For Entra, first prove the resource app
   registers the exact canonical HTTPS MCP URL and that the advertised authorization scope uses that
   URL as its prefix; also try the escaped mismatched `api://...` scope and require compilation or
-  authorization to fail without changing client state. Authenticate, list tools, create/list a
-  synthetic workspace, inspect account/connection/Library operations, disconnect, and reconnect.
-- Expected result: the copied instruction embeds every returned client's exact generated add/sign-in
-  commands, canonical HTTPS MCP URL, and collision-safe derived server name, so the receiving AI does
-  not have to infer hidden configuration; only fully configured/allowlisted client
+  authorization to fail without changing client state. Authenticate through each client's native
+  flow without constructing an OAuth URL or callback listener. Codex starts a new task after setup;
+  Claude Code uses `/mcp`. Verify with exactly one `workspace_list` call, then create, inspect, and
+  rename one synthetic workspace through named GlassHive MCP tools. Inspect account/connection/Library
+  operations only when that specific parity is under test; disconnect, and reconnect.
+- Expected result: the copied instruction self-selects exactly one returned client's generated
+  add/sign-in commands, canonical HTTPS MCP URL, and collision-safe derived server name, so the
+  receiving AI does not infer hidden configuration or configure another client; an exact existing
+  registration is reused; only fully configured/allowlisted client
   commands are shown; Codex includes its OAuth client and fixed callback login override, relies on
   the exact protected-resource metadata instead of adding a second `resource` parameter, and uses
   the exact derived redirect URI;
   Claude includes its client/fixed-callback flags and localhost redirect URI; OAuth completes; both
-  clients see the same user-scoped capabilities and actionable reconnect flow. Callback/client/port
+  clients see the same user-scoped capabilities and actionable reconnect flow. Initial verification
+  is one `workspace_list` call and never a full tool inventory. Callback/client/port
   details appear only under administrator registration details and say not to open the callback.
 - Forbidden result: callback reference presented as a link or user step, browser claim of silent local
   installation, a client named without a complete returned contract, bare colliding `glasshive`
   config name, wrong self-hosted origin, static bearer token, cross-user list, hidden manual config,
+  configuring both clients from one pasted instruction, duplicate registration, homemade PKCE or
+  callback server, token inspection, full tool-catalog enumeration, unrelated browser/client hopping,
   duplicated OAuth `resource` parameter, a scope tied to a different Entra resource identifier, or
   false “connected” state.
-- Evidence to capture: visible command UI, redacted client config, OAuth metadata/challenge, tool list,
-  scoped runtime rows.
+- Evidence to capture: visible command UI, redacted client config, native OAuth result, exact MCP call
+  ledger, scoped runtime rows, and visible workspace result.
 - Full-view evidence minimum: browser command + two real clients + runtime authorization evidence.
 - Automation: `test_mcp_oauth.py`, Connect AI UI tests, and real client runs.
 - Last run: PARTIAL 2026-08-12; the accepted hosted release presented the deployment-specific
