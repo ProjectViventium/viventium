@@ -2469,8 +2469,26 @@ def test_launch_log_does_not_treat_express_docker_cleanup_skip_as_failure(tmp_pa
     assert completed.stdout.strip() == "RESULT=clean"
 
 
+@pytest.mark.parametrize(
+    "warning",
+    [
+        (
+            "Remote access setup failed; local startup will continue "
+            "without it: synthetic router conflict"
+        ),
+        (
+            "Remote access verification failed - browser links may need a retry: "
+            '{"client": {"public_url": "https://app.example.com"}}'
+        ),
+        (
+            "Remote access is still inactive for this run: "
+            "Failed to create synthetic router mapping"
+        ),
+    ],
+)
 def test_launch_log_does_not_treat_remote_access_degradation_as_terminal(
     tmp_path: Path,
+    warning: str,
 ) -> None:
     cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
     function_def = extract_shell_function(
@@ -2479,9 +2497,7 @@ def test_launch_log_does_not_treat_remote_access_degradation_as_terminal(
     )
     launch_log = tmp_path / "helper-start.log"
     launch_log.write_text(
-        "\033[1;33m[viventium]\033[0m Remote access setup failed; "
-        "local startup will continue "
-        "without it: synthetic router conflict\n",
+        f"\033[1;33m[viventium]\033[0m {warning}\n",
         encoding="utf-8",
     )
 
@@ -2506,6 +2522,53 @@ def test_launch_log_does_not_treat_remote_access_degradation_as_terminal(
     )
 
     assert completed.stdout.strip() == "RESULT=clean"
+
+
+def test_launch_log_warning_severity_does_not_hide_later_terminal_error(
+    tmp_path: Path,
+) -> None:
+    cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
+    function_def = extract_shell_function(
+        cli_source,
+        "launch_log_indicates_startup_failure",
+    )
+    launch_log = tmp_path / "helper-start.log"
+    launch_log.write_text(
+        "\033[1;33m[viventium]\033[0m Failed to prefetch optional synthetic model; "
+        "startup will continue\n",
+        encoding="utf-8",
+    )
+
+    completed = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                "set -euo pipefail\n"
+                f"{function_def}"
+                f"if launch_log_indicates_startup_failure '{launch_log}'; then\n"
+                "  printf 'warning=failed\\n'\n"
+                "else\n"
+                "  printf 'warning=clean\\n'\n"
+                "fi\n"
+                f"printf '\\033[0;31m[viventium]\\033[0m ERROR: Failed required synthetic dependency\\n' >> '{launch_log}'\n"
+                f"if launch_log_indicates_startup_failure '{launch_log}'; then\n"
+                "  printf 'terminal=failed\\n'\n"
+                "else\n"
+                "  printf 'terminal=clean\\n'\n"
+                "fi\n"
+            ),
+        ],
+        cwd=REPO_ROOT,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+    assert completed.stdout.splitlines() == [
+        "warning=clean",
+        "terminal=failed",
+    ]
 
 
 def test_launch_log_does_not_treat_nonblocking_conversation_search_sync_as_terminal(
@@ -2551,7 +2614,8 @@ def test_launch_log_allows_dependency_install_retry_before_terminal_failure(tmp_
     function_def = extract_shell_function(cli_source, "launch_log_indicates_startup_failure")
     launch_log = tmp_path / "helper-start.log"
     launch_log.write_text(
-        "[viventium] LibreChat dependency install failed; cleaning dependency trees and retrying once...\n",
+        "\033[1;33m[viventium]\033[0m LibreChat dependency install failed; "
+        "cleaning dependency trees and retrying once...\n",
         encoding="utf-8",
     )
 

@@ -5622,27 +5622,21 @@ launch_log_indicates_startup_failure() {
   [[ "$start_offset" =~ ^[0-9]+$ ]] || start_offset=0
 
   local tail_output=""
+  local launcher_warning_prefix=$'\033[1;33m[viventium]\033[0m'
   tail_output="$(tail -c "+$((start_offset + 1))" "$launch_log" 2>/dev/null | tail -n 200 || true)"
   [[ -n "$tail_output" ]] || return 1
 
-  # The launcher owns one clean-tree retry after a dependency install error.
-  # Do not let the detached-start watcher abort that recovery path; the final
-  # dependency check/install error remains in the stream and is terminal.
-  tail_output="$({
-    printf '%s\n' "$tail_output" |
-      grep -vF '[viventium] LibreChat dependency install failed; cleaning dependency trees and retrying once...' ||
-      true
-  })"
-  tail_output="$({
-    printf '%s\n' "$tail_output" |
-      grep -vF 'Remote access setup failed; local startup will continue without it:' ||
-      true
-  })"
-  tail_output="$({
-    printf '%s\n' "$tail_output" |
-      grep -vF 'Local conversation search sync failed; continuing without blocking frontend startup' ||
-      true
-  })"
+  # Launcher warnings are explicitly non-terminal. Optional-system warnings
+  # often describe a failed attempt while startup continues through fallback or
+  # degraded operation, so classify by the launcher's severity channel instead
+  # of maintaining message-specific exceptions. Later red/plain fatal evidence
+  # remains in the stream and still wins.
+  tail_output="$(
+    while IFS= read -r line; do
+      [[ "$line" == "$launcher_warning_prefix"* ]] && continue
+      printf '%s\n' "$line"
+    done <<<"$tail_output"
+  )"
   [[ -n "$tail_output" ]] || return 1
 
   if printf '%s\n' "$tail_output" | grep -Eq \
