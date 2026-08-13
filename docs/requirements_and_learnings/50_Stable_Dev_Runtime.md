@@ -503,6 +503,10 @@ actual user preference change.
 - ANSI-colored progress text cannot turn the documented nonterminal
   `Remote access setup failed; local startup will continue` condition into a terminal startup
   failure.
+- The detached-start watcher must likewise preserve the launcher's explicit
+  `Local conversation search sync failed; continuing without blocking frontend startup` contract.
+  Search-index parity remains visible and repairable, but it cannot roll back a candidate whose
+  required user surfaces are still starting normally.
 - A router/public-edge conflict remains visible in status but does not block or roll back a healthy
   localhost runtime. This implements the remote-access requirement that local startup survives
   unavailable public mappings.

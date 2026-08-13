@@ -2508,6 +2508,44 @@ def test_launch_log_does_not_treat_remote_access_degradation_as_terminal(
     assert completed.stdout.strip() == "RESULT=clean"
 
 
+def test_launch_log_does_not_treat_nonblocking_conversation_search_sync_as_terminal(
+    tmp_path: Path,
+) -> None:
+    cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
+    function_def = extract_shell_function(
+        cli_source,
+        "launch_log_indicates_startup_failure",
+    )
+    launch_log = tmp_path / "helper-start.log"
+    launch_log.write_text(
+        "\033[1;33m[viventium]\033[0m Local conversation search sync failed; "
+        "continuing without blocking frontend startup\n",
+        encoding="utf-8",
+    )
+
+    completed = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                "set -euo pipefail\n"
+                f"{function_def}"
+                f"if launch_log_indicates_startup_failure '{launch_log}'; then\n"
+                "  printf 'RESULT=failed\\n'\n"
+                "else\n"
+                "  printf 'RESULT=clean\\n'\n"
+                "fi\n"
+            ),
+        ],
+        cwd=REPO_ROOT,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+    assert completed.stdout.strip() == "RESULT=clean"
+
+
 def test_launch_log_allows_dependency_install_retry_before_terminal_failure(tmp_path: Path) -> None:
     cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
     function_def = extract_shell_function(cli_source, "launch_log_indicates_startup_failure")
