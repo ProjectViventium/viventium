@@ -80,6 +80,8 @@ sys.modules["aient.aient.models.whisper"] = _fake_aient_whisper
 sys.modules["aient.aient.models.assemblyai"] = _fake_aient_assemblyai
 
 from TelegramVivBot.utils.voice import (
+    normalize_delivery_disposition,
+    resolve_delivery_audio_gate,
     should_request_audio_reply,
     should_request_voice_mode,
     should_send_voice_reply,
@@ -166,6 +168,92 @@ def test_should_send_voice_reply_always_voice():
         )
         is True
     )
+
+
+def test_delivery_audio_gate_legacy_marker_outranks_structured_eligibility():
+    assert resolve_delivery_audio_gate(
+        legacy_skip_requested=True,
+        delivery_disposition={
+            "version": 1,
+            "audio": "eligible",
+            "required": True,
+            "valid": True,
+            "source": "model",
+        },
+        disposition_required=True,
+    ) == (False, "legacy_skip")
+
+
+def test_delivery_audio_gate_honors_valid_structured_skip_and_eligibility():
+    common = {
+        "version": 1,
+        "required": True,
+        "valid": True,
+        "source": "model",
+    }
+
+    assert resolve_delivery_audio_gate(
+        legacy_skip_requested=False,
+        delivery_disposition={**common, "audio": "skip"},
+        disposition_required=True,
+    ) == (False, "structured_skip")
+    assert resolve_delivery_audio_gate(
+        legacy_skip_requested=False,
+        delivery_disposition={**common, "audio": "eligible"},
+        disposition_required=True,
+    ) == (True, "structured_eligible")
+
+
+@pytest.mark.parametrize("malformed_audio", [[], {}])
+def test_delivery_disposition_rejects_unhashable_external_audio_without_throwing(
+    malformed_audio,
+):
+    assert normalize_delivery_disposition(
+        {
+            "version": 1,
+            "audio": malformed_audio,
+            "required": True,
+            "valid": True,
+            "source": "model",
+        }
+    ) is None
+
+
+def test_delivery_audio_gate_fails_closed_only_when_structured_contract_is_required():
+    malformed = {
+        "version": 1,
+        "audio": "eligible",
+        "required": True,
+        "valid": False,
+        "source": "model",
+    }
+
+    assert resolve_delivery_audio_gate(
+        legacy_skip_requested=False,
+        delivery_disposition=None,
+        disposition_required=True,
+    ) == (False, "required_invalid")
+    assert resolve_delivery_audio_gate(
+        legacy_skip_requested=False,
+        delivery_disposition=malformed,
+        disposition_required=True,
+    ) == (False, "required_invalid")
+    assert resolve_delivery_audio_gate(
+        legacy_skip_requested=False,
+        delivery_disposition={
+            "version": 1,
+            "audio": "eligible",
+            "required": False,
+            "valid": True,
+            "source": "model",
+        },
+        disposition_required=True,
+    ) == (False, "required_invalid")
+    assert resolve_delivery_audio_gate(
+        legacy_skip_requested=False,
+        delivery_disposition=None,
+        disposition_required=False,
+    ) == (True, "legacy")
 
 
 def test_should_request_audio_reply_for_voice_note():

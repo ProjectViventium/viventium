@@ -5,12 +5,19 @@
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, Optional
 
 try:
     from utils.env import coerce_bool
 except ModuleNotFoundError:
     from TelegramVivBot.utils.env import coerce_bool
+
+DELIVERY_DISPOSITION_VERSION = 1
+DELIVERY_DISPOSITION_AUDIO_VALUES = frozenset({"skip", "eligible"})
+DELIVERY_DISPOSITION_KEYS = frozenset(
+    {"version", "audio", "required", "valid", "source"}
+)
+DELIVERY_DISPOSITION_VALID_SOURCES = frozenset({"model", "legacy_marker"})
 
 # === VIVENTIUM START ===
 # Feature: Robust boolean coercion for preference values.
@@ -45,6 +52,68 @@ def should_send_voice_reply(
     if not text or not str(text).strip():
         return False
     return True
+
+
+def normalize_delivery_disposition(value: Any) -> Optional[dict[str, Any]]:
+    """Return the validated LibreChat-to-adapter delivery contract."""
+
+    if not isinstance(value, dict):
+        return None
+    audio = value.get("audio")
+    source = value.get("source")
+    valid = bool(
+        set(value) == DELIVERY_DISPOSITION_KEYS
+        and type(value.get("version")) is int
+        and value.get("version") == DELIVERY_DISPOSITION_VERSION
+        and isinstance(audio, str)
+        and audio in DELIVERY_DISPOSITION_AUDIO_VALUES
+        and type(value.get("required")) is bool
+        and value.get("valid") is True
+        and isinstance(source, str)
+        and source in DELIVERY_DISPOSITION_VALID_SOURCES
+    )
+    if not valid:
+        return None
+    return {
+        "version": value["version"],
+        "audio": audio,
+        "required": value["required"],
+        "valid": True,
+        "source": source,
+    }
+
+
+def resolve_delivery_audio_gate(
+    *,
+    legacy_skip_requested: bool,
+    delivery_disposition: Any,
+    disposition_required: bool,
+) -> tuple[bool, str]:
+    """Resolve structural audio eligibility before user preference gating.
+
+    The standalone legacy control remains authoritative during rollout. A required
+    structured contract fails closed when its final metadata is absent or invalid;
+    an optional absent contract keeps the pre-existing behavior.
+    """
+
+    if legacy_skip_requested:
+        return False, "legacy_skip"
+
+    candidate_required = bool(
+        isinstance(delivery_disposition, dict)
+        and delivery_disposition.get("required") is True
+    )
+    required = bool(disposition_required or candidate_required)
+    normalized = normalize_delivery_disposition(delivery_disposition)
+    if required and normalized is not None and normalized["required"] is not True:
+        normalized = None
+    if normalized is not None:
+        if normalized["audio"] == "skip":
+            return False, "structured_skip"
+        return True, "structured_eligible"
+    if required:
+        return False, "required_invalid"
+    return True, "legacy"
 
 
 # === VIVENTIUM START ===

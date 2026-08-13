@@ -1568,6 +1568,8 @@ def test_glasshive_compiles_as_exact_core_agent_provider(
     assert capability["realtime_voice"] is False
     assert capability["automatic_fallback_target"] is True
     assert capability["serial_model_fallback"] is True
+    assert capability["messaging_delivery_disposition"] is True
+    assert capability["messaging_delivery_disposition_version"] == 1
     assert capability["responses_api"] is False
     assert capability["worker_native_tools"] is True
     assert capability["default_access"] == "full"

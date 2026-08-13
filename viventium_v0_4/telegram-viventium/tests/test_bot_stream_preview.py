@@ -604,6 +604,143 @@ def test_get_viventium_response_skip_voice_sends_full_text_without_tts(monkeypat
     assert context.bot.audios == []
 
 
+@pytest.mark.parametrize(
+    ("text", "delivery_event", "expected_audio_count"),
+    [
+        (
+            "Structured skip keeps this text visible.",
+            {
+                "type": "delivery_disposition",
+                "delivery_disposition": {
+                    "version": 1,
+                    "audio": "skip",
+                    "required": True,
+                    "valid": True,
+                    "source": "model",
+                },
+                "required": True,
+                "present": True,
+            },
+            0,
+        ),
+        (
+            "Structured eligibility permits the saved voice preference.",
+            {
+                "type": "delivery_disposition",
+                "delivery_disposition": {
+                    "version": 1,
+                    "audio": "eligible",
+                    "required": True,
+                    "valid": True,
+                    "source": "model",
+                },
+                "required": True,
+                "present": True,
+            },
+            1,
+        ),
+        (
+            "Required metadata is missing, so this stays text-only.",
+            {
+                "type": "delivery_disposition",
+                "delivery_disposition": None,
+                "required": True,
+                "present": False,
+            },
+            0,
+        ),
+        (
+            "Legacy control still wins.\n{SKIP_VOICE}",
+            {
+                "type": "delivery_disposition",
+                "delivery_disposition": {
+                    "version": 1,
+                    "audio": "eligible",
+                    "required": True,
+                    "valid": True,
+                    "source": "model",
+                },
+                "required": True,
+                "present": True,
+            },
+            0,
+        ),
+    ],
+)
+def test_get_viventium_response_applies_structured_delivery_disposition_precedence(
+    monkeypatch,
+    text,
+    delivery_event,
+    expected_audio_count,
+):
+    class _DispositionRobot:
+        async def ask_stream_async(self, *args, **kwargs):
+            _ = args, kwargs
+            yield text
+            yield delivery_event
+
+        def get_cached_voice_route(self, _key):
+            return None
+
+        def reset(self, *args, **kwargs):
+            _ = args, kwargs
+
+    synthesized = []
+
+    async def _fake_synthesize(tts_text, _convo_id, *, voice_route=None):
+        synthesized.append((tts_text, voice_route))
+        return b"voice-bytes"
+
+    async def _noop_send_librechat_attachments(**_kwargs):
+        return None
+
+    monkeypatch.setattr(
+        tg_bot,
+        "Users",
+        types.SimpleNamespace(get_config=lambda *_a, **_k: True),
+    )
+    monkeypatch.setattr(tg_bot, "send_librechat_attachments", _noop_send_librechat_attachments)
+    monkeypatch.setattr(tg_bot, "synthesize_speech", _fake_synthesize)
+    monkeypatch.setattr(
+        tg_bot,
+        "resolve_tts_selection",
+        lambda *, voice_route=None: {
+            "provider": "xai",
+            "source": "test",
+            "variant": "Eve",
+        },
+    )
+
+    context = _FakeContext()
+    asyncio.run(
+        tg_bot.getViventiumResponse(
+            update_message=_FakeUpdateMessage(),
+            context=context,
+            title="",
+            robot=_DispositionRobot(),
+            message="synthetic delivery contract check",
+            chatid=111,
+            messageid=222,
+            convo_id="chat-1",
+            message_thread_id=None,
+            voice_note_detected=False,
+            files=None,
+            trace_id="test-structured-delivery-disposition",
+            telegram_message_id=222,
+            telegram_update_id=333,
+        )
+    )
+
+    rendered = " ".join(
+        str(item.get("text", ""))
+        for item in context.bot.messages + context.bot.edits
+    )
+    assert "delivery_disposition" not in rendered
+    assert "SKIP_VOICE" not in rendered
+    assert len(synthesized) == expected_audio_count
+    assert len(context.bot.audios) == expected_audio_count
+
+
 def test_long_response_keeps_early_skip_voice_control(monkeypatch):
     long_prefix = ("A complete useful paragraph. " * 180).strip()
 
