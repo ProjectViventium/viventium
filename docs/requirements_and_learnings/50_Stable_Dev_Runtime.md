@@ -323,7 +323,12 @@ active runtime reports the sidecar as ready.
   ledger-identity checks when its real `ok` response is accepted. When the compiler omits an
   explicit Scheduler DB path, readiness must derive the same per-runtime default as the launcher.
   GlassHive startup health belongs to its local runtime API/MCP/UI ports; the configured operator
-  base URL is a user-facing link origin and may intentionally be a public HTTPS address.
+  base URL is a user-facing link origin and may intentionally be a public HTTPS address. GlassHive
+  cold-start readiness must use a bounded retry window rather than one fixed sleep: probe all three
+  local surfaces until ready, fail immediately if a candidate process exits, cap an operator-tuned
+  window at 120 seconds, and stop only the transaction-owned candidate after the deadline. The
+  default window is 30 seconds because valid persisted state may take longer than three seconds to
+  initialize before the runtime begins serving health.
 - Do make `SIGINT` and `SIGTERM` terminate the active CLI operation with a non-zero signal status
   after releasing its owned CLI lock. If an upgrade rollback transaction is armed, signal handling
   must run that recovery path with the signal status rather than returning to the interrupted wait
