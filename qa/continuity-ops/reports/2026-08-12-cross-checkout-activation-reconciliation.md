@@ -2,7 +2,7 @@
 
 ## Outcome
 
-PARTIAL pending the post-fix supported activation. The reviewed candidate reached its API and
+PASS. The reviewed candidate reached its API and
 loaded both configured Google Workspace account slots, but the detached-start watcher restored the
 predecessor after matching an explicitly nonblocking local-search parity warning as a generic
 failure.
@@ -20,8 +20,9 @@ terminal.
 - RED: the focused classifier test returned terminal for the exact nonblocking warning.
 - GREEN: the same warning is nonterminal while existing required-surface and build-error cases
   remain terminal.
-- The supported activation is the final gate. Its result must include exact checkout/component
-  provenance, healthy required surfaces, and preservation of the visible search-parity warning.
+- The supported activation completed. Active/helper/live checkout ownership matched the clean
+  candidate; selected component revisions were exact; required user surfaces, configured
+  sidecars, Telegram, and the status-bar helper reported healthy after commit.
 
 Raw runtime logs, search counts, account state, user paths, and credentials remain outside this
 public report.

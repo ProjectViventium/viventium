@@ -329,6 +329,11 @@ active runtime reports the sidecar as ready.
   window at 120 seconds, and stop only the transaction-owned candidate after the deadline. The
   default window is 30 seconds because valid persisted state may take longer than three seconds to
   initialize before the runtime begins serving health.
+- Generated and tracked LibreChat provider-capability metadata must carry the canonical GlassHive
+  `default_access` and `allow_full_access` values. Exporting those values only to the process
+  environment creates split-brain validation: an already-authorized full-access Agent can run but
+  cannot pass a safe prompts-only sync. Reconciliation must fix the owning capability metadata,
+  not bypass validation or silently reduce the Agent's reviewed workspace access.
 - Do make `SIGINT` and `SIGTERM` terminate the active CLI operation with a non-zero signal status
   after releasing its owned CLI lock. If an upgrade rollback transaction is armed, signal handling
   must run that recovery path with the signal status rather than returning to the interrupted wait

@@ -1570,6 +1570,8 @@ def test_glasshive_compiles_as_exact_core_agent_provider(
     assert capability["serial_model_fallback"] is True
     assert capability["responses_api"] is False
     assert capability["worker_native_tools"] is True
+    assert capability["default_access"] == "full"
+    assert capability["allow_full_access"] is True
     assert capability["host_tools_transport"] == "broker_mcp"
     assert capability["host_tools"] == ["file_search", "web_search"]
     assert capability["excluded_mcp_servers"] == ["glasshive-workers-projects"]

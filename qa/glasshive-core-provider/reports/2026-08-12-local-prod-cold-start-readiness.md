@@ -2,7 +2,7 @@
 
 ## Outcome
 
-PARTIAL pending the post-fix transactional activation. A legitimate GlassHive candidate with existing persisted
+PASS. A legitimate GlassHive candidate with existing persisted
 state may take longer than three seconds to expose runtime health. The launcher now polls the
 runtime, MCP, and UI surfaces for a bounded interval, fails immediately when a candidate process
 exits, and tears down only the candidate when readiness cannot be reached.
@@ -17,8 +17,9 @@ exits, and tears down only the candidate when readiness cannot be reached.
   no stale process, dependency sync, or resource-exhaustion explanation matched the evidence.
 - The focused launcher regression verifies a 30-second default, a 120-second maximum, all three PID
   fail-fast checks, repeated readiness probes, and removal of the fixed three-second gate.
-- The post-fix supported transactional `dev-runtime activate-current --validate --restart` remains
-  the final acceptance gate; this report must be updated with its receipt and provenance result.
+- The post-fix supported transactional `dev-runtime activate-current --validate --restart`
+  completed. Active checkout, helper checkout, live owner, GlassHive runtime/MCP/UI process roots,
+  and all selected component revisions matched the reviewed clean candidate.
 
 No private state contents, credentials, local user paths, hostnames, or personal runtime data are
 included in this report.
