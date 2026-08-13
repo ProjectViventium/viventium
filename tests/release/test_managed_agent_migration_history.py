@@ -8,6 +8,10 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 LIBRECHAT_ROOT = REPO_ROOT / "viventium_v0_4" / "LibreChat"
 GENERATOR = LIBRECHAT_ROOT / "scripts" / "viventium-generate-managed-agent-migrations.js"
+# Intel hosted runners can take more than two minutes to traverse the complete
+# parent/component history even when the audit succeeds. Keep a bounded timeout,
+# but leave enough headroom for the slow supported architecture.
+HISTORY_AUDIT_TIMEOUT_SECONDS = 300
 
 
 def test_librechat_checkout_verifies_all_predecessors_without_parent_history(
@@ -27,7 +31,7 @@ def test_librechat_checkout_verifies_all_predecessors_without_parent_history(
         check=False,
         capture_output=True,
         text=True,
-        timeout=120,
+        timeout=HISTORY_AUDIT_TIMEOUT_SECONDS,
     )
 
     assert completed.returncode == 0, completed.stderr
@@ -41,7 +45,7 @@ def test_explicit_parent_history_audit_matches_the_hermetic_artifact() -> None:
         check=False,
         capture_output=True,
         text=True,
-        timeout=120,
+        timeout=HISTORY_AUDIT_TIMEOUT_SECONDS,
     )
 
     assert completed.returncode == 0, completed.stderr
@@ -98,7 +102,7 @@ def test_parent_history_audit_ignores_a_later_release_pin_after_the_recorded_bou
         check=False,
         capture_output=True,
         text=True,
-        timeout=120,
+        timeout=HISTORY_AUDIT_TIMEOUT_SECONDS,
     )
 
     assert completed.returncode == 0, completed.stderr
