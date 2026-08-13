@@ -2329,12 +2329,28 @@ def test_runtime_checkout_reexecs_helper_command_through_active_checkout(tmp_pat
     assert args[-2:] == ["status-bar", "status"]
 
 
-def test_launch_log_indicates_startup_failure_treats_required_surface_skip_as_terminal(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "message",
+    [
+        "LibreChat port 3190 still in use (outside scope); skipping startup",
+        "LibreChat API/artifact ports remain occupied outside this checkout; skipping startup",
+        "Port 3080 in use - skipping LibreChat startup",
+        (
+            "Isolated browser runtime port remains occupied outside this checkout; "
+            "skipping LibreChat startup"
+        ),
+        "Playground port 3199 remains occupied (outside scope); skipping playground startup",
+    ],
+)
+def test_launch_log_indicates_startup_failure_treats_required_surface_skip_as_terminal(
+    tmp_path: Path,
+    message: str,
+) -> None:
     cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
     function_def = extract_shell_function(cli_source, "launch_log_indicates_startup_failure")
     launch_log = tmp_path / "helper-start.log"
     launch_log.write_text(
-        "[viventium] LibreChat port 3190 still in use (outside scope); skipping startup\n",
+        f"\033[1;33m[viventium]\033[0m {message}\n",
         encoding="utf-8",
     )
 
@@ -2359,6 +2375,125 @@ def test_launch_log_indicates_startup_failure_treats_required_surface_skip_as_te
     )
 
     assert "RESULT=true" in completed.stdout
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "LibreChat config missing; using default config",
+        "LibreChat config generation failed; using default config",
+    ],
+)
+def test_launch_log_treats_reviewed_config_fallback_as_terminal(
+    tmp_path: Path,
+    message: str,
+) -> None:
+    cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
+    function_def = extract_shell_function(cli_source, "launch_log_indicates_startup_failure")
+    launch_log = tmp_path / "helper-start.log"
+    launch_log.write_text(
+        f"\033[1;33m[viventium]\033[0m {message}\n",
+        encoding="utf-8",
+    )
+
+    completed = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                "set -euo pipefail\n"
+                f"{function_def}"
+                f"if launch_log_indicates_startup_failure '{launch_log}'; then\n"
+                "  printf 'RESULT=true\\n'\n"
+                "else\n"
+                "  printf 'RESULT=false\\n'\n"
+                "fi\n"
+            ),
+        ],
+        cwd=REPO_ROOT,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+    assert completed.stdout.strip() == "RESULT=true"
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "Code Interpreter port 8000 in use; skipping startup",
+        "Firecrawl port 3002 in use - skipping startup",
+        "SearxNG port 8080 in use - skipping startup",
+    ],
+)
+def test_launch_log_keeps_optional_yellow_sidecar_skips_nonterminal(
+    tmp_path: Path,
+    message: str,
+) -> None:
+    cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
+    function_def = extract_shell_function(cli_source, "launch_log_indicates_startup_failure")
+    launch_log = tmp_path / "helper-start.log"
+    launch_log.write_text(
+        f"\033[1;33m[viventium]\033[0m {message}\n",
+        encoding="utf-8",
+    )
+
+    completed = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                "set -euo pipefail\n"
+                f"{function_def}"
+                f"if launch_log_indicates_startup_failure '{launch_log}'; then\n"
+                "  printf 'RESULT=failed\\n'\n"
+                "else\n"
+                "  printf 'RESULT=clean\\n'\n"
+                "fi\n"
+            ),
+        ],
+        cwd=REPO_ROOT,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+    assert completed.stdout.strip() == "RESULT=clean"
+
+
+def test_launch_log_treats_red_launcher_severity_as_terminal_without_error_word(
+    tmp_path: Path,
+) -> None:
+    cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
+    function_def = extract_shell_function(cli_source, "launch_log_indicates_startup_failure")
+    launch_log = tmp_path / "helper-start.log"
+    launch_log.write_text(
+        "\033[0;31m[viventium]\033[0m Required synthetic surface is unavailable\n",
+        encoding="utf-8",
+    )
+
+    completed = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                "set -euo pipefail\n"
+                f"{function_def}"
+                f"if launch_log_indicates_startup_failure '{launch_log}'; then\n"
+                "  printf 'RESULT=failed\\n'\n"
+                "else\n"
+                "  printf 'RESULT=clean\\n'\n"
+                "fi\n"
+            ),
+        ],
+        cwd=REPO_ROOT,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+    assert completed.stdout.strip() == "RESULT=failed"
 
 
 def test_launch_log_indicates_startup_failure_treats_playground_pnpm_bootstrap_error_as_terminal(

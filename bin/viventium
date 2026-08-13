@@ -5623,8 +5623,26 @@ launch_log_indicates_startup_failure() {
 
   local tail_output=""
   local launcher_warning_prefix=$'\033[1;33m[viventium]\033[0m'
+  local launcher_error_prefix=$'\033[0;31m[viventium]\033[0m'
   tail_output="$(tail -c "+$((start_offset + 1))" "$launch_log" 2>/dev/null | tail -n 200 || true)"
   [[ -n "$tail_output" ]] || return 1
+
+  # Red launcher records are terminal regardless of prose. This keeps fatality
+  # structural for present and future required services instead of depending on
+  # words such as "failed" or "error" appearing in the human message.
+  while IFS= read -r line; do
+    [[ "$line" == "$launcher_error_prefix"* ]] && return 0
+  done <<<"$tail_output"
+
+  # A few launcher warnings are terminal specifically for activation: required
+  # user surfaces were skipped, or LibreChat fell back from the reviewed
+  # generated config. Check these structural safety gates against the raw log
+  # before removing ordinary non-terminal warnings.
+  if printf '%s\n' "$tail_output" | grep -Eq \
+    '(\[viventium\].*(LibreChat .*skipping startup|.*skipping LibreChat startup|Playground .*skipping playground startup)|\[viventium\].*LibreChat config (missing|generation failed); using default config)'
+  then
+    return 0
+  fi
 
   # Launcher warnings are explicitly non-terminal. Optional-system warnings
   # often describe a failed attempt while startup continues through fallback or
@@ -5644,9 +5662,7 @@ launch_log_indicates_startup_failure() {
   then
     return 0
   fi
-
-  printf '%s\n' "$tail_output" | grep -Eq \
-    '(\[viventium\].*(LibreChat ports? .*skipping startup|LibreChat port [0-9]+.*skipping startup|Port [0-9]+ in use - skipping LibreChat startup|Playground port [0-9]+.*skipping playground startup))'
+  return 1
 }
 
 launch_log_indicates_detached_submission() {

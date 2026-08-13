@@ -6,7 +6,7 @@
   covered by a red/green regression. The supported transaction restored the established runtime
   after the false failure and every required local surface recovered.
 - Build/source under test: an exact clean public-main checkout plus this focused ownership slice:
-  CLI warning-severity classification and its synthetic regressions.
+  CLI warning-severity classification, terminal activation gates, and synthetic regressions.
 - Runtime/artifact under test: installed local-prod runtime using the supported activation command.
 - Environment: established macOS local-prod installation with optional public remote access enabled.
 - Remaining gate: repeat supported activation after the reviewed fix merges, then verify exact
@@ -75,7 +75,8 @@ continue. `launch_log_indicates_startup_failure()` owns the CLI watcher's fatal 
 - Red first: the verification warning, persisted remote error, and unrelated optional-prefetch
   warning were falsely terminal before the fix.
 - Green after fix: all three remote warning forms are clean, and a later red fatal is terminal.
-- `tests/release/test_cli_upgrade.py`: `129 passed`.
+- Yellow required-surface skips and reviewed-config fallback remain terminal before warning filtering.
+- `tests/release/test_cli_upgrade.py`: `139 passed`.
 - Stable-runtime plus remote-access release slice: `101 passed`.
 - Shell syntax check passed.
 - Public-safety/QA contract checks are run before publication.
@@ -87,8 +88,10 @@ continue. `launch_log_indicates_startup_failure()` owns the CLI watcher's fatal 
 - Fix: remove launcher warning-severity lines before generic fatal matching. This also closes the
   neighboring persisted-error branch and other optional fallback warnings without a growing
   message allowlist.
-- Functional risk: low and bounded. Later red/plain fatal launcher evidence and explicit
-  required-surface skips remain in the stream and still terminate the wait.
+- Functional risk: low and bounded. Required-surface skips and fallback from the reviewed LibreChat
+  config are evaluated against the raw log first; red launcher severity is terminal regardless of
+  wording; later plain fatal evidence also remains and still terminates the wait. Explicit optional
+  yellow sidecar skips remain non-terminal.
 - Recovery: supported rollback restored the previous healthy clean runtime without modifying the
   original development workspace.
 - Remaining gap: merge, activate the exact new main, and repeat provenance, health, and remote-status
