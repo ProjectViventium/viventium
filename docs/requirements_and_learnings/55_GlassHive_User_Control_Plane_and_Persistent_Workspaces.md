@@ -266,7 +266,9 @@ compliant hosted topology.
   add/authenticate command, canonical URL, and collision-safe server name; reuses an existing exact
   registration; relies only on native client OAuth; and verifies with one `workspace_list` call
   rather than enumerating the tool catalog. Codex starts a new task after setup so the newly
-  configured MCP tools load. The receiving AI never configures the other client, reconstructs hidden
+  configured MCP tools load. On a fresh Codex registration, the instruction stops Codex's automatic
+  unscoped `mcp add` login after the configuration is saved, then opens only the exact scoped native
+  `mcp login` URL; the user is never sent through the known failing detour. The receiving AI never configures the other client, reconstructs hidden
   configuration from a bare URL, manufactures an OAuth/callback flow, or inspects tokens. Manual setup exposes one exact
   server-address copy plus separate supported client commands. Both paths derive their visible
   client names from the endpoint's complete allowlisted contracts; a Codex-only deployment never
