@@ -5623,23 +5623,16 @@ launch_log_indicates_startup_failure() {
 
   local tail_output=""
   local launcher_warning_prefix=$'\033[1;33m[viventium]\033[0m'
-  local launcher_error_prefix=$'\033[0;31m[viventium]\033[0m'
   tail_output="$(tail -c "+$((start_offset + 1))" "$launch_log" 2>/dev/null | tail -n 200 || true)"
   [[ -n "$tail_output" ]] || return 1
 
-  # Red launcher records are terminal regardless of prose. This keeps fatality
-  # structural for present and future required services instead of depending on
-  # words such as "failed" or "error" appearing in the human message.
-  while IFS= read -r line; do
-    [[ "$line" == "$launcher_error_prefix"* ]] && return 0
-  done <<<"$tail_output"
-
-  # A few launcher warnings are terminal specifically for activation: required
-  # user surfaces were skipped, or LibreChat fell back from the reviewed
-  # generated config. Check these structural safety gates against the raw log
-  # before removing ordinary non-terminal warnings.
+  # Some launcher warnings and errors come from optional services that may
+  # recover after the required user surfaces are healthy. Check only structural
+  # required-surface gates against the raw log; color alone is not fatality.
   if printf '%s\n' "$tail_output" | grep -Eq \
-    '(\[viventium\].*(LibreChat .*skipping startup|.*skipping LibreChat startup|Playground .*skipping playground startup)|\[viventium\].*LibreChat config (missing|generation failed); using default config)'
+    '(\[viventium\].*(LibreChat .*skipping startup|.*skipping LibreChat startup|Playground .*skipping playground startup)|\[viventium\].*LibreChat config (missing|generation failed); using default config|\[viventium\].*(LibreChat directory not found:|LibreChat startup requires the validated Node|MongoDB is required (for LibreChat startup|before LibreChat user-default reconciliation and agent seeding)|Meilisearch is required (for local conversation search startup|before LibreChat user-default reconciliation and agent seeding)|Missing required command:|Playground directory not found, skipping|Configured playground port [0-9]+ is in use by an unrelated process; refusing to report it as healthy|Canonical uploads root is outside Viventium App Support|Canonical uploads migration helper is unavailable|LibreChat remains active; refusing to migrate uploads while files may be changing|LibreChat must be restarted once to migrate uploads into App Support safely))' || \
+    printf '%s\n' "$tail_output" | grep -Eq \
+      '\[viventium\].*(No external LiveKit endpoint was configured|LiveKit is not reachable at|Configured LiveKit endpoint did not respond at|Could not replace the stale managed LiveKit container safely|LiveKit container is running but not responding at|Port [0-9]+ is already in use; refusing to treat it as LiveKit without explicit configuration|LiveKit did not respond after startup|Voice gateway directory not found, skipping|Local voice gateway requires Python 3[.]10[+])'
   then
     return 0
   fi
@@ -5652,6 +5645,14 @@ launch_log_indicates_startup_failure() {
   tail_output="$(
     while IFS= read -r line; do
       [[ "$line" == "$launcher_warning_prefix"* ]] && continue
+      if [[ "$line" == *'[viventium] LibreChat dependency install failed; cleaning dependency trees and retrying once...'* ||
+        "$line" == *'[viventium] Remote access setup failed; local startup will continue without it:'* ||
+        "$line" == *'[viventium] Remote access verification failed - browser links may need a retry:'* ||
+        "$line" == *'[viventium] Remote access is still inactive for this run:'* ||
+        "$line" == *'[viventium] Local conversation search sync failed; continuing without blocking frontend startup'*
+      ]]; then
+        continue
+      fi
       printf '%s\n' "$line"
     done <<<"$tail_output"
   )"

@@ -76,22 +76,24 @@ continue. `launch_log_indicates_startup_failure()` owns the CLI watcher's fatal 
   warning were falsely terminal before the fix.
 - Green after fix: all three remote warning forms are clean, and a later red fatal is terminal.
 - Yellow required-surface skips and reviewed-config fallback remain terminal before warning filtering.
-- `tests/release/test_cli_upgrade.py`: `139 passed`.
+- `tests/release/test_cli_upgrade.py`: `163 passed`.
 - Stable-runtime plus remote-access release slice: `101 passed`.
 - Shell syntax check passed.
-- Public-safety/QA contract checks are run before publication.
+- Public-safety/QA contract checks: `47 passed, 1 skipped`.
 
 ## Findings
 
 - Root cause: the watcher inferred severity from words such as `failed`, even though the launcher
   already marks warnings and deliberately continues through optional degradation.
 - Fix: remove launcher warning-severity lines before generic fatal matching. This also closes the
-  neighboring persisted-error branch and other optional fallback warnings without a growing
-  message allowlist.
-- Functional risk: low and bounded. Required-surface skips and fallback from the reviewed LibreChat
-  config are evaluated against the raw log first; red launcher severity is terminal regardless of
-  wording; later plain fatal evidence also remains and still terminates the wait. Explicit optional
-  yellow sidecar skips remain non-terminal.
+  neighboring persisted-error branch and other optional fallback warnings. Preserve the prior
+  plain-text backstop for known continue/retry records, and flatten remote verification payloads
+  so each launcher warning remains one log record.
+- Functional risk: low and bounded. Required-surface skips, missing required runtime prerequisites,
+  and fallback from the reviewed LibreChat config are evaluated against the raw log first. Optional
+  yellow warnings and red sidecar diagnostics without explicit fatal wording remain non-terminal
+  because those services can recover after user surfaces are healthy; later explicit fatal evidence
+  still terminates the wait.
 - Recovery: supported rollback restored the previous healthy clean runtime without modifying the
   original development workspace.
 - Remaining gap: merge, activate the exact new main, and repeat provenance, health, and remote-status

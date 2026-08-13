@@ -2462,14 +2462,92 @@ def test_launch_log_keeps_optional_yellow_sidecar_skips_nonterminal(
     assert completed.stdout.strip() == "RESULT=clean"
 
 
-def test_launch_log_treats_red_launcher_severity_as_terminal_without_error_word(
+@pytest.mark.parametrize(
+    "message",
+    [
+        "Port 6274 is still in use; skipping Google Workspace MCP startup",
+        "Port 8111 is still in use; skipping MS365 MCP startup",
+        "RAG API port 8000 is still in use; skipping startup",
+        "Docker not found (required for local RAG API)",
+    ],
+)
+def test_launch_log_keeps_optional_red_sidecar_diagnostics_without_fatal_wording_nonterminal(
     tmp_path: Path,
+    message: str,
 ) -> None:
     cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
     function_def = extract_shell_function(cli_source, "launch_log_indicates_startup_failure")
     launch_log = tmp_path / "helper-start.log"
     launch_log.write_text(
-        "\033[0;31m[viventium]\033[0m Required synthetic surface is unavailable\n",
+        f"\033[0;31m[viventium]\033[0m {message}\n",
+        encoding="utf-8",
+    )
+
+    completed = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                "set -euo pipefail\n"
+                f"{function_def}"
+                f"if launch_log_indicates_startup_failure '{launch_log}'; then\n"
+                "  printf 'RESULT=failed\\n'\n"
+                "else\n"
+                "  printf 'RESULT=clean\\n'\n"
+                "fi\n"
+            ),
+        ],
+        cwd=REPO_ROOT,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+    assert completed.stdout.strip() == "RESULT=clean"
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "MongoDB is required for LibreChat startup",
+        "Playground directory not found, skipping",
+        (
+            "Configured playground port 3300 is in use by an unrelated process; "
+            "refusing to report it as healthy"
+        ),
+        "Canonical uploads root is outside Viventium App Support",
+        "Canonical uploads migration helper is unavailable",
+        "LibreChat remains active; refusing to migrate uploads while files may be changing",
+        "LibreChat must be restarted once to migrate uploads into App Support safely",
+        "No external LiveKit endpoint was configured and --skip-docker is enabled.",
+        "LiveKit is not reachable at http://localhost:7880 and --skip-docker is enabled",
+        (
+            "Configured LiveKit endpoint did not respond at http://localhost:7880; "
+            "refusing an implicit runtime fallback."
+        ),
+        "Could not replace the stale managed LiveKit container safely",
+        "LiveKit container is running but not responding at http://localhost:7880",
+        (
+            "Port 7880 is already in use; refusing to treat it as LiveKit without "
+            "explicit configuration"
+        ),
+        "LiveKit did not respond after startup; check Docker logs",
+        "Voice gateway directory not found, skipping",
+        (
+            "Local voice gateway requires Python 3.10+; install Homebrew python@3.12 "
+            "or rerun the installer/upgrade preflight"
+        ),
+    ],
+)
+def test_launch_log_treats_required_runtime_prerequisite_as_terminal_without_error_word(
+    tmp_path: Path,
+    message: str,
+) -> None:
+    cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
+    function_def = extract_shell_function(cli_source, "launch_log_indicates_startup_failure")
+    launch_log = tmp_path / "helper-start.log"
+    launch_log.write_text(
+        f"\033[0;31m[viventium]\033[0m {message}\n",
         encoding="utf-8",
     )
 
@@ -2494,6 +2572,48 @@ def test_launch_log_treats_red_launcher_severity_as_terminal_without_error_word(
     )
 
     assert completed.stdout.strip() == "RESULT=failed"
+
+
+def test_required_runtime_classifier_fixtures_track_launcher_messages() -> None:
+    launcher_source = (
+        REPO_ROOT / "viventium_v0_4" / "viventium-librechat-start.sh"
+    ).read_text(encoding="utf-8")
+    required_message_snippets = [
+        "Missing required command: $cmd",
+        "Canonical uploads root is outside Viventium App Support",
+        "Canonical uploads migration helper is unavailable",
+        "LibreChat remains active; refusing to migrate uploads while files may be changing",
+        "LibreChat must be restarted once to migrate uploads into App Support safely",
+        "Playground port $PLAYGROUND_PORT in use (outside scope); skipping playground startup",
+        "No external LiveKit endpoint was configured and --skip-docker is enabled.",
+        "LiveKit is not reachable at ${LIVEKIT_API_HOST} and --skip-docker is enabled",
+        "Configured LiveKit endpoint did not respond at ${LIVEKIT_API_HOST}; refusing an implicit runtime fallback.",
+        "Could not replace the stale managed LiveKit container safely",
+        "LiveKit container is running but not responding at ${LIVEKIT_API_HOST}",
+        "Port $LIVEKIT_HTTP_PORT is already in use; refusing to treat it as LiveKit without explicit configuration",
+        "LiveKit did not respond after startup; check Docker logs",
+        "LibreChat config missing; using default config",
+        "LibreChat config generation failed; using default config",
+        "LibreChat directory not found: $LIBRECHAT_DIR",
+        "LibreChat startup requires the validated Node ${VIVENTIUM_NODE_RUNTIME_VERSION} runtime",
+        "MongoDB is required for LibreChat startup",
+        "Meilisearch is required for local conversation search startup",
+        "LibreChat API/artifact ports remain occupied outside this checkout; skipping startup",
+        "LibreChat ports still in use (outside scope); skipping startup",
+        "Port $LC_API_PORT in use - skipping LibreChat startup",
+        "Isolated browser runtime port remains occupied outside this checkout; skipping LibreChat startup",
+        "LibreChat port $LC_FRONTEND_PORT still in use (outside scope); skipping startup",
+        "Port $LC_FRONTEND_PORT in use - skipping LibreChat startup",
+        "MongoDB is required before LibreChat user-default reconciliation and agent seeding",
+        "Meilisearch is required before LibreChat user-default reconciliation and agent seeding",
+        "Playground directory not found, skipping",
+        "Configured playground port $PLAYGROUND_PORT is in use by an unrelated process; refusing to report it as healthy",
+        "Voice gateway directory not found, skipping",
+        "Local voice gateway requires Python 3.10+; install Homebrew python@3.12 or rerun the installer/upgrade preflight",
+    ]
+
+    for message in required_message_snippets:
+        assert message in launcher_source, f"Required-runtime launcher wording drifted: {message}"
 
 
 def test_launch_log_indicates_startup_failure_treats_playground_pnpm_bootstrap_error_as_terminal(
@@ -2621,9 +2741,17 @@ def test_launch_log_does_not_treat_express_docker_cleanup_skip_as_failure(tmp_pa
         ),
     ],
 )
+@pytest.mark.parametrize(
+    "prefix",
+    [
+        "\033[1;33m[viventium]\033[0m ",
+        "[viventium] ",
+    ],
+)
 def test_launch_log_does_not_treat_remote_access_degradation_as_terminal(
     tmp_path: Path,
     warning: str,
+    prefix: str,
 ) -> None:
     cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
     function_def = extract_shell_function(
@@ -2632,7 +2760,7 @@ def test_launch_log_does_not_treat_remote_access_degradation_as_terminal(
     )
     launch_log = tmp_path / "helper-start.log"
     launch_log.write_text(
-        f"\033[1;33m[viventium]\033[0m {warning}\n",
+        f"{prefix}{warning}\n",
         encoding="utf-8",
     )
 
@@ -2657,6 +2785,67 @@ def test_launch_log_does_not_treat_remote_access_degradation_as_terminal(
     )
 
     assert completed.stdout.strip() == "RESULT=clean"
+
+
+def test_remote_verification_warning_is_flattened_to_one_launcher_record(
+    tmp_path: Path,
+) -> None:
+    launcher_source = (
+        REPO_ROOT / "viventium_v0_4" / "viventium-librechat-start.sh"
+    ).read_text(encoding="utf-8")
+    cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
+    function_def = extract_shell_function(launcher_source, "prewarm_remote_call_access")
+    log_warn_def = extract_shell_function(launcher_source, "log_warn")
+    classifier_def = extract_shell_function(cli_source, "launch_log_indicates_startup_failure")
+    status_script = tmp_path / "remote-status.sh"
+    launch_log = tmp_path / "helper-start.log"
+    status_script.write_text(
+        "#!/usr/bin/env bash\n"
+        "printf '%s\\n' '{\"provider\": \"synthetic\", \"detail\": "
+        "\"BEGIN\\nBuild failed in optional edge probe\\nEND\"}'\n"
+        "exit 1\n",
+        encoding="utf-8",
+    )
+    status_script.chmod(0o755)
+
+    completed = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                "set -euo pipefail\n"
+                "validation_runtime_is_quiesced() { return 1; }\n"
+                "remote_call_mode_enabled() { return 0; }\n"
+                "json_state_value() { printf ''; }\n"
+                "YELLOW=''\n"
+                "NC=''\n"
+                f"VIVENTIUM_REMOTE_CALL_TUNNEL_SCRIPT='{status_script}'\n"
+                "VIVENTIUM_REMOTE_CALL_PREWARM=true\n"
+                "VIVENTIUM_PUBLIC_NETWORK_STATE_FILE=/synthetic/state.json\n"
+                "PYTHON_BIN=/bin/bash\n"
+                f"{log_warn_def}"
+                f"{function_def}"
+                f"{classifier_def}"
+                f"prewarm_remote_call_access > '{launch_log}'\n"
+                f"if launch_log_indicates_startup_failure '{launch_log}'; then\n"
+                "  printf 'RESULT=failed\\n'\n"
+                "else\n"
+                "  printf 'RESULT=clean\\n'\n"
+                "fi\n"
+            ),
+        ],
+        cwd=REPO_ROOT,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+    assert completed.stdout.strip() == "RESULT=clean"
+    assert launch_log.read_text(encoding="utf-8").splitlines() == [
+        "[viventium] Remote access verification failed - browser links may need a retry: "
+        '{\"provider\": \"synthetic\", \"detail\": '
+        '\"BEGIN\\nBuild failed in optional edge probe\\nEND\"}'
+    ]
 
 
 def test_launch_log_warning_severity_does_not_hide_later_terminal_error(
