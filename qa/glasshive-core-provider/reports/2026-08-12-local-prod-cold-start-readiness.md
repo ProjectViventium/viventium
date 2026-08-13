@@ -15,8 +15,9 @@ exits, and tears down only the candidate when readiness cannot be reached.
 - A production-shaped 203 MB SQLite state copy kept all three candidate processes alive at 3.015
   seconds and reached complete runtime/MCP/UI readiness at 4.634 seconds. Candidate ports were free;
   no stale process, dependency sync, or resource-exhaustion explanation matched the evidence.
-- The focused launcher regression verifies a 30-second default, a 120-second maximum, all three PID
-  fail-fast checks, repeated readiness probes, and removal of the fixed three-second gate.
+- The focused launcher regression behaviorally verifies repeated readiness probes and MCP
+  process-exit fail-fast behavior; structural assertions cover the 30-second default, 120-second
+  maximum, runtime/MCP/UI PID checks, and removal of the fixed three-second gate.
 - The post-fix supported transactional `dev-runtime activate-current --validate --restart`
   completed. Active checkout, helper checkout, live owner, GlassHive runtime/MCP/UI process roots,
   and all selected component revisions matched the reviewed clean candidate.

@@ -20,6 +20,8 @@ terminal.
 - RED: the focused classifier test returned terminal for the exact nonblocking warning.
 - GREEN: the same warning is nonterminal while existing required-surface and build-error cases
   remain terminal.
+- The post-activation helper log still contains the exact visible nonblocking warning, confirming
+  the watcher classification fix did not suppress the operator-facing degraded-state evidence.
 - The supported activation completed. Active/helper/live checkout ownership matched the clean
   candidate; selected component revisions were exact; required user surfaces, configured
   sidecars, Telegram, and the status-bar helper reported healthy after commit.
