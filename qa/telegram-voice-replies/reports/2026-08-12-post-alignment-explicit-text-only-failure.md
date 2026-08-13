@@ -35,7 +35,7 @@
 | Docs and nested docs/repos | Telegram bridge requirement and voice-reply case reviewed. |
 | Scripts or harnesses | Desktop send/capture and sanitized Mongo turn query ran. |
 | Local/external prerequisite state | API, Telegram bot, GlassHive, and xAI TTS were available. |
-| Logs, DB/state/persistence | Message finalized cleanly; voice gate logged send with no model skip. |
+| Logs, DB/state/persistence | Message finalized with committed delivery acknowledgement; voice gate logged send with no model skip. |
 | Generated/shipped artifact | Runtime prompt bundle and immutable Telegram component matched the candidate. |
 | Real user path | Real Telegram Desktop send/receive and visible audio attachment. |
 | Not run / blocked | Connected-account content and audible semantic scoring were not needed for this binary suppression case. |
@@ -48,9 +48,9 @@ Supporting evidence cannot replace required user-path evidence; the real Telegra
 - Real user path: sent a synthetic one-sentence request with an explicit text-only/no-audio choice
 - Visible outcome: correct short text arrived, followed by a forbidden two-second audio attachment
 - Expanded/detail state: the open chat showed the text and audio as separate delivered items
-- Persistence/reload result: Mongo stored one finished non-error assistant answer; a Telegram restart was not run for this case
+- Persistence/reload result: Mongo stored one finished non-error assistant answer with committed delivery acknowledgement; a Telegram restart was not run for this case
 - Local/external prerequisite state: aligned API and bot were healthy; TTS was available
-- Backend/log/DB confirmation: always-voice was enabled, audio send occurred, and no skip control was requested
+- Backend/log/DB confirmation: delivery acknowledgement committed; always-voice was enabled, audio send occurred, and no skip control was requested
 - Final model/runtime wording check: answer text was concise; delivery format contradicted the user's request
 - Substitution check: logs, DB, prompt telemetry, and source support the visible failure; they do not replace it
 
