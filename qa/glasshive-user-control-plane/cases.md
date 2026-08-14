@@ -13,8 +13,8 @@ most specific existing QA owner when a scenario already has a detailed provider 
 | `GHUCP-002` | `GH-UCP-002` | Allowed user signs in and returns to a secure session | Browser, IdP | Gateway tests + Playwright | 2026-08-12 PARTIAL: hosted local-factor lifecycle and organization sign-in/session recovery pass; full IdP logout/denial/profile matrix remains open |
 | `GHUCP-003` | `GH-UCP-002` | Denied, replayed, expired, or malformed login fails safely with recovery guidance | Browser, IdP | Gateway tests + Playwright | 2026-08-09 PARTIAL: hosted local failure/CSRF/closed-signup/flag-off rollback passed; broader IdP matrix remains open |
 | `GHUCP-004` | `GH-UCP-003` | Runtime sees the correct user/tenant/role/scope and rejects cross-user or unsigned writes | Gateway, API | Assertion/API tests | 2026-08-05 PARTIAL: focused tests only |
-| `GHUCP-005` | `GH-UCP-004` | User copies one deployment-specific instruction or uses the concise manual path to connect Codex and Claude | Browser, Codex, Claude | MCP OAuth/UI tests + real clients | 2026-08-13 PARTIAL: exact native Codex scope login, one-call list, rename, refresh, and restore pass; current Claude Code account login expired before the candidate rerun |
-| `GHUCP-006` | `GH-UCP-004` | Wrong audience, tenant, scope, expired token, or missing OAuth config fails loud | MCP clients, API | MCP OAuth tests | 2026-08-12 PARTIAL: expired authorization and occupied callback failed safely; a wrong-scope attempt ended at the IdP with `invalid_client` and no usable token, without proving scope was the cause; broader real token-boundary matrix remains automated |
+| `GHUCP-005` | `GH-UCP-004` | User copies one deployment-specific instruction or uses the concise manual path to connect Codex and Claude | Browser, Codex, Claude | MCP OAuth/UI tests + real clients | 2026-08-14 PARTIAL: exact scoped native Codex login and one direct list call pass; candidate removes the first-login detour and catalog narration, while post-deploy app Reconnect and current Claude Code remain open |
+| `GHUCP-006` | `GH-UCP-004` | Wrong audience, tenant, scope, expired token, or missing OAuth config fails loud | MCP clients, API | MCP OAuth tests | 2026-08-14 PARTIAL: native app Reconnect reproduced `AADSTS9010010` after choosing generic OpenID/no scopes for the canonical resource; candidate source proves one authoritative challenge scope, while post-deploy native Reconnect remains open |
 | `GHUCP-007` | `GH-UCP-005` | User connects, tests, selects, reconnects, disconnects, and forgets a personal provider account | Browser, MCP, native harness | Control-plane tests + real provider | 2026-08-12 PARTIAL: ready personal account selection and two exact hosted missions pass; hosted reconnect/disconnect/forget/rotation lifecycle remains open |
 | `GHUCP-008` | `GH-UCP-005` | Provider metadata and homes remain owner scoped and secrets never enter the runtime database | API, filesystem, DB | Control-plane tests + secret scan | 2026-08-05 PARTIAL: owner-scope tests plus local private-mode and credential-removal checks passed |
 | `GHUCP-009` | `GH-UCP-006` | A mission uses only its selected compatible account and releases its lease | Worker, provider home | Mission tests + live worker | 2026-08-12 PARTIAL: two selected personal-subscription missions completed on the accepted release and the post-run active-lease count was zero; live concurrency/refresh/cancel/stale-lease matrix remains open |
@@ -243,21 +243,25 @@ most specific existing QA owner when a scenario already has a detailed provider 
   upstream token-tenant policy, and valid token/wrong audience, tenant, client, scope, expiry, key,
   and revoked-user fixtures.
 - Steps: initialize MCP with each token; test missing/all-or-nothing OAuth config and non-HTTPS hosted
-  origin; rotate keys; reconnect after expiration.
+  origin; rotate keys; expire the real client authorization; invoke its ordinary Reconnect action
+  without a scope override; verify the authorization request carries the exact challenged scope and
+  canonical resource once; finish sign-in in the intended browser profile; make one MCP call; restart
+  the client and make one more call.
 - Expected result: valid scoped token succeeds; invalid tokens receive a standards-based challenge and
   no tools/data; retry after valid reauthentication succeeds.
 - Forbidden result: public URL implicitly reused as the Entra token audience, token passthrough from
   another application, weak resource comparison, owner from email, public HTTP hosted OAuth, or
-  partial config silently disabling auth.
+  partial config silently disabling auth. Native reconnect must not substitute generic OpenID scopes,
+  omit the resource scope, loop on `AADSTS9010010`, or require a hand-built authorization URL.
 - Evidence to capture: protected-resource metadata, challenge header, sanitized verifier decision/log.
 - Full-view evidence minimum: real MCP client failure/recovery plus verifier evidence.
 - Automation: `runtime_phase1/tests/test_mcp_oauth.py`.
-- Last run: PARTIAL 2026-08-12; protected-resource metadata and the canonical delegated scope worked
-  in both real clients. Expired authorization required login, an occupied callback port failed before
-  consent, and a wrong-scope attempt ended with identity-provider `invalid_client` and no usable token.
-  That last observation proves fail-closed behavior, not the precise rejection cause. Wrong
-  audience/client/tenant and key/revocation boundaries remain automated rather than a complete
-  real-client matrix.
+- Last run: PARTIAL 2026-08-14. The installed app Reconnect request paired the canonical resource with
+  generic OpenID scopes (and another attempt omitted scope), producing visible Entra `AADSTS9010010`.
+  The same current native Codex client succeeded immediately when given the advertised GlassHive scope,
+  and one direct `workspace_list` call succeeded. Candidate source now places that exact scope in the
+  401 challenge and its focused regression passes. Post-deploy no-override Reconnect, restart
+  persistence, Claude Code, and the broader audience/client/tenant/key/revocation matrix remain open.
 
 ## `GHUCP-007` — Personal Provider Account Lifecycle
 

@@ -237,7 +237,8 @@ compliant hosted topology.
 ### `GH-UCP-004` — Standards-based MCP connection
 
 - The GlassHive MCP endpoint publishes OAuth 2.1 protected-resource metadata and challenges clients
-  with the correct resource metadata URL.
+  with the correct resource metadata URL and exact current-operation scope. Native clients treat
+  that challenged scope as authoritative for first sign-in and reconnect.
 - The canonical public MCP URL is the RFC 8707 resource and is kept separate from explicit accepted
   JWT `aud` values. Access tokens are bound to one configured token audience, stable subject,
   authorized client, request scope, and emitted token scope. Optional upstream token-tenant policy
@@ -265,10 +266,10 @@ compliant hosted topology.
   only the Claude Code section. Each section contains that client's exact deployment-generated
   add/authenticate command, canonical URL, and collision-safe server name; reuses an existing exact
   registration; relies only on native client OAuth; and verifies with one `workspace_list` call
-  rather than enumerating the tool catalog. Codex starts a new task after setup so the newly
-  configured MCP tools load. On a fresh Codex registration, the instruction stops Codex's automatic
-  unscoped `mcp add` login after the configuration is saved, then opens only the exact scoped native
-  `mcp login` URL; the user is never sent through the known failing detour. The receiving AI never configures the other client, reconstructs hidden
+  rather than enumerating the tool catalog. If the exact server is already callable, setup and
+  verification are skipped and the AI makes only the goal-relevant call. First sign-in and reconnect
+  get the exact required scope from the server challenge, so the client never substitutes generic
+  OpenID scopes for the GlassHive resource. The receiving AI never configures the other client, reconstructs hidden
   configuration from a bare URL, manufactures an OAuth/callback flow, or inspects tokens. Manual setup exposes one exact
   server-address copy plus separate supported client commands. Both paths derive their visible
   client names from the endpoint's complete allowlisted contracts; a Codex-only deployment never
