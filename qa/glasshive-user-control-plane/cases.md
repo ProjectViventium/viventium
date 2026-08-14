@@ -193,10 +193,10 @@ most specific existing QA owner when a scenario already has a detailed provider 
   registers the exact canonical HTTPS MCP URL and that the advertised authorization scope uses that
   URL as its prefix; also try the escaped mismatched `api://...` scope and require compilation or
   authorization to fail without changing client state. Authenticate through each client's native
-  flow without constructing an OAuth URL or callback listener. On a fresh Codex install, require the
-  receiving AI to stop only the automatic unscoped login that `mcp add` starts after saving the
-  registration, then open only the URL from the exact scoped `mcp login` command. Codex starts a new task after setup;
-  Claude Code uses `/mcp`. Verify with exactly one `workspace_list` call, then create, inspect, and
+  flow without constructing an OAuth URL or callback listener. Require the first 401 challenge to
+  carry the exact scope and canonical resource metadata URL. Verify shared server instructions are
+  short, choose one matching action, and never narrate the catalog. Verify with exactly one
+  `workspace_list` call, then create, inspect, and
   rename one synthetic workspace through named GlassHive MCP tools. Inspect account/connection/Library
   operations only when that specific parity is under test; disconnect, and reconnect.
 - Expected result: the copied instruction self-selects exactly one returned client's generated
@@ -205,8 +205,7 @@ most specific existing QA owner when a scenario already has a detailed provider 
   registration is reused; only fully configured/allowlisted client
   commands are shown; Codex includes its OAuth client and fixed callback login override, relies on
   the exact protected-resource metadata instead of adding a second `resource` parameter, and uses
-  the exact derived redirect URI; its known first-add unscoped OAuth detour is interrupted without
-  removing the saved registration, and only the scoped native login is presented for completion;
+  the exact derived redirect URI and server-challenged scope without a manual scope override;
   Claude includes its client/fixed-callback flags and localhost redirect URI; OAuth completes; both
   clients see the same user-scoped capabilities and actionable reconnect flow. Initial verification
   is one `workspace_list` call and never a full tool inventory. Callback/client/port
@@ -216,7 +215,7 @@ most specific existing QA owner when a scenario already has a detailed provider 
   config name, wrong self-hosted origin, static bearer token, cross-user list, hidden manual config,
   configuring both clients from one pasted instruction, duplicate registration, homemade PKCE or
   callback server, token inspection, full tool-catalog enumeration, unrelated browser/client hopping,
-  waiting through or debugging Codex's automatic unscoped first-add login,
+  a repeated server operating manual attached to every tool,
   duplicated OAuth `resource` parameter, a scope tied to a different Entra resource identifier, or
   false “connected” state.
 - Evidence to capture: visible command UI, redacted client config, native OAuth result, exact MCP call

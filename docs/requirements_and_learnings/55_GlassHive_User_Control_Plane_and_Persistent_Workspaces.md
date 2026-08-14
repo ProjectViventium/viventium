@@ -277,6 +277,9 @@ compliant hosted topology.
   registration explanations remain under administrator details, are labelled “do not open,” and
   never masquerade as user actions or links. Public client/callback flags may appear only as opaque
   arguments inside the exact copyable command.
+- Shared MCP server instructions are short and state the one-call/no-catalog rule once. They do not
+  repeat a multi-page operating manual across every tool; action-specific contracts stay with the
+  action that owns them.
 - Generated client configuration names are stable, shell-safe hashes of the canonical deployment
   URL, so separate self-hosted GlassHive origins do not collide in one local client. The browser does
   not execute local commands or claim it can silently edit another application's configuration.
