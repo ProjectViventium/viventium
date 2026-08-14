@@ -237,8 +237,9 @@ compliant hosted topology.
 ### `GH-UCP-004` — Standards-based MCP connection
 
 - The GlassHive MCP endpoint publishes OAuth 2.1 protected-resource metadata and challenges clients
-  with the correct resource metadata URL and exact current-operation scope. Native clients treat
-  that challenged scope as authoritative for first sign-in and reconnect.
+  with the correct resource metadata URL and exact current-operation scope. Client setup also
+  persists that exact scope when the native client supports it, because current Codex releases may
+  otherwise fall back to generic OpenID scopes during Reconnect despite the server challenge.
 - The canonical public MCP URL is the RFC 8707 resource and is kept separate from explicit accepted
   JWT `aud` values. Access tokens are bound to one configured token audience, stable subject,
   authorized client, request scope, and emitted token scope. Optional upstream token-tenant policy
@@ -267,9 +268,9 @@ compliant hosted topology.
   add/authenticate command, canonical URL, and collision-safe server name; reuses an existing exact
   registration; relies only on native client OAuth; and verifies with one `workspace_list` call
   rather than enumerating the tool catalog. If the exact server is already callable, setup and
-  verification are skipped and the AI makes only the goal-relevant call. First sign-in and reconnect
-  get the exact required scope from the server challenge, so the client never substitutes generic
-  OpenID scopes for the GlassHive resource. The receiving AI never configures the other client, reconstructs hidden
+  verification are skipped and the AI makes only the goal-relevant call. Codex setup persists the
+  deployment's exact native MCP `scopes` entry once so first sign-in and later Reconnect use the
+  canonical GlassHive resource without a per-login override. The receiving AI never configures the other client, reconstructs hidden
   configuration from a bare URL, manufactures an OAuth/callback flow, or inspects tokens. Manual setup exposes one exact
   server-address copy plus separate supported client commands. Both paths derive their visible
   client names from the endpoint's complete allowlisted contracts; a Codex-only deployment never

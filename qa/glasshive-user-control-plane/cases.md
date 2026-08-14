@@ -13,8 +13,8 @@ most specific existing QA owner when a scenario already has a detailed provider 
 | `GHUCP-002` | `GH-UCP-002` | Allowed user signs in and returns to a secure session | Browser, IdP | Gateway tests + Playwright | 2026-08-12 PARTIAL: hosted local-factor lifecycle and organization sign-in/session recovery pass; full IdP logout/denial/profile matrix remains open |
 | `GHUCP-003` | `GH-UCP-002` | Denied, replayed, expired, or malformed login fails safely with recovery guidance | Browser, IdP | Gateway tests + Playwright | 2026-08-09 PARTIAL: hosted local failure/CSRF/closed-signup/flag-off rollback passed; broader IdP matrix remains open |
 | `GHUCP-004` | `GH-UCP-003` | Runtime sees the correct user/tenant/role/scope and rejects cross-user or unsigned writes | Gateway, API | Assertion/API tests | 2026-08-05 PARTIAL: focused tests only |
-| `GHUCP-005` | `GH-UCP-004` | User copies one deployment-specific instruction or uses the concise manual path to connect Codex and Claude | Browser, Codex, Claude | MCP OAuth/UI tests + real clients | 2026-08-14 PARTIAL: exact scoped native Codex login and one direct list call pass; candidate removes the first-login detour and catalog narration, while post-deploy app Reconnect and current Claude Code remain open |
-| `GHUCP-006` | `GH-UCP-004` | Wrong audience, tenant, scope, expired token, or missing OAuth config fails loud | MCP clients, API | MCP OAuth tests | 2026-08-14 PARTIAL: native app Reconnect reproduced `AADSTS9010010` after choosing generic OpenID/no scopes for the canonical resource; candidate source proves one authoritative challenge scope, while post-deploy native Reconnect remains open |
+| `GHUCP-005` | `GH-UCP-004` | User copies one deployment-specific instruction or uses the concise manual path to connect Codex and Claude | Browser, Codex, Claude | MCP OAuth/UI tests + real clients | 2026-08-14 PARTIAL: current Codex completed native login without a per-login scope override after its server config persisted the deployment scope, and one direct list call passed; candidate now generates that durable config and removes catalog narration, while post-deploy copied setup and current Claude Code remain open |
+| `GHUCP-006` | `GH-UCP-004` | Wrong audience, tenant, scope, expired token, or missing OAuth config fails loud | MCP clients, API | MCP OAuth tests | 2026-08-14 PARTIAL: native app Reconnect reproduced `AADSTS9010010` with generic OpenID/no scopes; exact persistent server scope plus the standards-based challenge completed native login in the intended existing Edge profile, while post-deploy copied-setup Reconnect remains open |
 | `GHUCP-007` | `GH-UCP-005` | User connects, tests, selects, reconnects, disconnects, and forgets a personal provider account | Browser, MCP, native harness | Control-plane tests + real provider | 2026-08-12 PARTIAL: ready personal account selection and two exact hosted missions pass; hosted reconnect/disconnect/forget/rotation lifecycle remains open |
 | `GHUCP-008` | `GH-UCP-005` | Provider metadata and homes remain owner scoped and secrets never enter the runtime database | API, filesystem, DB | Control-plane tests + secret scan | 2026-08-05 PARTIAL: owner-scope tests plus local private-mode and credential-removal checks passed |
 | `GHUCP-009` | `GH-UCP-006` | A mission uses only its selected compatible account and releases its lease | Worker, provider home | Mission tests + live worker | 2026-08-12 PARTIAL: two selected personal-subscription missions completed on the accepted release and the post-run active-lease count was zero; live concurrency/refresh/cancel/stale-lease matrix remains open |
@@ -257,10 +257,12 @@ most specific existing QA owner when a scenario already has a detailed provider 
 - Automation: `runtime_phase1/tests/test_mcp_oauth.py`.
 - Last run: PARTIAL 2026-08-14. The installed app Reconnect request paired the canonical resource with
   generic OpenID scopes (and another attempt omitted scope), producing visible Entra `AADSTS9010010`.
-  The same current native Codex client succeeded immediately when given the advertised GlassHive scope,
-  and one direct `workspace_list` call succeeded. Candidate source now places that exact scope in the
-  401 challenge and its focused regression passes. Post-deploy no-override Reconnect, restart
-  persistence, Claude Code, and the broader audience/client/tenant/key/revocation matrix remain open.
+  Current Codex still ignored server-discovered scopes on that path, so the durable native fix is the
+  exact deployment scope in the server's persistent Codex config. With that entry, ordinary native
+  login used the exact resource/scope without `--scopes`, completed in the intended existing Edge
+  profile, and one direct `workspace_list` call succeeded. Candidate source generates that config and
+  keeps the exact scope in the 401 challenge. Post-deploy copied-setup Reconnect, restart persistence,
+  Claude Code, and the broader audience/client/tenant/key/revocation matrix remain open.
 
 ## `GHUCP-007` — Personal Provider Account Lifecycle
 
