@@ -2,10 +2,10 @@
 
 ## Result
 
-**PARTIAL pending candidate deployment.** The user-visible reconnect failure is reproduced and the
-client/server mismatch is understood. Current Codex completed ordinary native login in the intended
-existing Edge profile, without a per-login scope override, after its GlassHive server config persisted
-the deployment's exact scope. One `workspace_list` call then succeeded.
+**PASS for the reported Codex reconnect incident.** The accepted hosted build now publishes and copies
+the durable native Codex configuration. Ordinary login completed in the already-open AITP Edge profile
+without a per-login scope override, survived the release restart, and a fresh Codex process completed
+the basic request with one MCP call.
 
 ## Root cause and smallest fix
 
@@ -25,17 +25,16 @@ the deployment's exact scope. One `workspace_list` call then succeeded.
 | --- | --- |
 | Reproduction | Generic OpenID/no-scope requests with the canonical resource failed visibly with `invalid_target` |
 | Native client | Codex `0.148.0-alpha.9` used the exact configured resource and scope, then reported authentication complete |
-| Browser | The native callback completed in the already-open intended Edge profile |
-| MCP | One direct `workspace_list` call succeeded; no catalog narration was used |
+| Browser | Native callback completed in the already-open AITP Edge profile; Workspaces retained the renamed result and expanded delivery after hard refresh |
+| MCP | A fresh process made exactly one successful `workspace_list` call, with no shell/setup/catalog call |
+| CRUD | One synthetic workspace launched, completed, exposed its requested artifact, renamed, refreshed, and terminated with compute released |
 | Source tests | Full Glass Drive UI suite plus focused MCP OAuth/server/skill suites passed |
-| Candidate install | Pending; copied setup, restart persistence, and final CRUD still require the deployed build |
+| Installed build | Exact parent/component provenance, canary health, stable-edge invariant, explicit browser acceptance, and commit passed |
 
-## Acceptance still required
+## Remaining coverage
 
-Deploy the exact nested component and parent pin, hard-refresh Connections, copy the new Automatic
-instruction, reauthenticate through the intended Edge profile, restart the client, and perform a
-minimal create/read/update/cleanup flow with browser refresh and backend corroboration. Claude Code
-and the wider wrong-audience/client/tenant/revocation matrix remain separate follow-up coverage.
+Current Claude Code and the wider wrong-audience/client/tenant/key/revocation matrix remain separate
+follow-up coverage; they are not needed to close this Codex-specific reconnect incident.
 
 ## Public safety
 
