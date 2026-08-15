@@ -203,8 +203,11 @@ most specific existing QA owner when a scenario already has a detailed provider 
   `workspace_list` call. For one real delegated task, capture every model-visible MCP call and
   classify it as action, discovery, invalid-input retry, status, wait/poll, or result retrieval;
   compare before/after behavior rather than assuming the registered tool count is causal. Verify
-  asynchronous completion does not require another user prompt or an unbounded sequence of visible
-  `workspace_wait` calls. For Entra Codex, prove the persistent config also contains `offline_access`,
+  asynchronous completion does not require another user prompt, a workspace-list rediscovery call,
+  or an unbounded sequence of visible `workspace_wait` calls. A native client without a stable
+  conversation header must receive the minimal exact follow-up ids from `workspace_launch` and pass
+  them directly to one bounded `workspace_wait`; a host with stable conversation context must keep
+  those ids hidden and resolve the same launch implicitly. For Entra Codex, prove the persistent config also contains `offline_access`,
   restart Codex/ChatGPT once after changing the config, then create, inspect, and
   rename one synthetic workspace through named GlassHive MCP tools. Inspect account/connection/Library
   operations only when that specific parity is under test; disconnect, and reconnect.
@@ -226,7 +229,7 @@ most specific existing QA owner when a scenario already has a detailed provider 
   a repeated server operating manual attached to every tool,
   a client-name branch that changes the MCP schema, a new visibility profile that removes an existing
   public tool, a plugin that forks the shared MCP contract, or a model-visible polling loop that turns
-  one ordinary task into repeated wait calls,
+  one ordinary task into repeated wait calls or catalog discovery merely to recover its launch ids,
   duplicated OAuth `resource` parameter, a scope tied to a different Entra resource identifier, or
   false “connected” state.
 - Evidence to capture: visible command UI, redacted client config, native OAuth result, exact MCP call

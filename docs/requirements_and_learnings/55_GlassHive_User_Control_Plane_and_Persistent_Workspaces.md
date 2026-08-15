@@ -295,7 +295,10 @@ compliant hosted topology.
   retries, status, wait/poll, and result retrieval; regression-test Viventium direct conversation,
   Telegram allowlists, and every other known MCP consumer. Asynchronous completion uses callback
   delivery or a host-owned bounded wait contract and must not require the user to drive repeated
-  `workspace_wait` calls.
+  `workspace_wait` calls. When a native external client supplies no stable conversation context,
+  `workspace_launch` returns only the exact follow-up ids needed for one bounded wait/status call;
+  the client must not enumerate the workspace catalog to rediscover the run. Hosts with stable
+  conversation context keep those ids hidden and resolve the same launch implicitly.
 - MCP exposes the same owner-scoped workspace, worker, schedule, account, connection, Library, and
   confirmation model as the UI. Client convenience must not weaken human confirmation or scope.
 
