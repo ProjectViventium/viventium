@@ -10,18 +10,18 @@ most specific existing QA owner when a scenario already has a detailed provider 
 | Case ID | Requirement | User Outcome | Surfaces | Automation | Last Run |
 | --- | --- | --- | --- | --- | --- |
 | `GHUCP-001` | `GH-UCP-001` | Existing public routes, MCP tools, bootstrap, callbacks, and direct conversations still work | API, MCP, Viventium | Compatibility tests + user regression | 2026-08-05 PARTIAL: focused source tests exist; installed user regression pending |
-| `GHUCP-002` | `GH-UCP-002` | Allowed user signs in and returns to a secure session | Browser, IdP | Gateway tests + Playwright | 2026-08-09 PARTIAL: hosted local-factor login/refresh/restart/logout passed; real organization/IdP path remains open |
+| `GHUCP-002` | `GH-UCP-002` | Allowed user signs in and returns to a secure session | Browser, IdP | Gateway tests + Playwright | 2026-08-15 PARTIAL: installed organization login plus prior local-factor refresh/restart/logout pass; full IdP denial/logout/profile matrix remains open |
 | `GHUCP-003` | `GH-UCP-002` | Denied, replayed, expired, or malformed login fails safely with recovery guidance | Browser, IdP | Gateway tests + Playwright | 2026-08-09 PARTIAL: hosted local failure/CSRF/closed-signup/flag-off rollback passed; broader IdP matrix remains open |
 | `GHUCP-004` | `GH-UCP-003` | Runtime sees the correct user/tenant/role/scope and rejects cross-user or unsigned writes | Gateway, API | Assertion/API tests | 2026-08-05 PARTIAL: focused tests only |
-| `GHUCP-005` | `GH-UCP-004` | User copies one deployment-specific instruction or uses the concise manual path to connect Codex and Claude | Browser, Codex, Claude | MCP OAuth/UI tests + real clients | 2026-08-11 PARTIAL: URL/name/UI regressions pass; real installed clients remain open |
+| `GHUCP-005` | `GH-UCP-004` | User copies one deployment-specific instruction or uses the concise manual path to connect Codex and Claude | Browser, Codex, Claude | MCP OAuth/UI tests + real clients | 2026-08-15 PASS for installed Codex/Claude one-call setup and persisted OAuth; clean-install/two-owner matrix remains PARTIAL |
 | `GHUCP-006` | `GH-UCP-004` | Wrong audience, tenant, scope, expired token, or missing OAuth config fails loud | MCP clients, API | MCP OAuth tests | 2026-08-05 PARTIAL: focused tests only |
-| `GHUCP-007` | `GH-UCP-005` | User connects, tests, selects, reconnects, disconnects, and forgets a personal provider account | Browser, MCP, native harness | Control-plane tests + real provider | 2026-08-10 PARTIAL: capability-driven setup, automatic first-account default, sole-Ready selection, policy-transition, post-verification reseal, verification-lease renewal, and Codex runtime-metadata regressions pass; exact installed real-provider mission pending |
+| `GHUCP-007` | `GH-UCP-005` | User connects, tests, selects, reconnects, disconnects, and forgets a personal provider account | Browser, MCP, native harness | Control-plane tests + real provider | 2026-08-15 PARTIAL: exact installed personal Codex mission/output and released lease pass; reconnect/forget/rotation/second-account matrix remains open |
 | `GHUCP-008` | `GH-UCP-005` | Provider metadata and homes remain owner scoped and secrets never enter the runtime database | API, filesystem, DB | Control-plane tests + secret scan | 2026-08-05 PARTIAL: owner-scope tests plus local private-mode and credential-removal checks passed |
-| `GHUCP-009` | `GH-UCP-006` | A mission uses only its selected compatible account and releases its lease | Worker, provider home | Mission tests + live worker | 2026-08-10 PARTIAL: real Codex runs exposed cleanup, continuity, and CLI runtime-metadata ownership failures; structural recovery, phase-local persistence, renewable verification, and rootless metadata smoke pass, but the exact installed second mission remains pending |
-| `GHUCP-010` | `GH-UCP-006` | Required/busy/unsupported account states fail closed; preferred policy preserves legacy compatibility | Browser, worker | Mission/policy tests | 2026-08-06 PARTIAL: focused source tests prove the multi-user per-worker-container gate and unchanged preferred/legacy fallbacks; installed supported/unsupported platform matrix pending |
-| `GHUCP-011` | `GH-UCP-007` | User creates and finds a private, human-named workspace | Browser, API, DB | Catalog tests + Playwright | 2026-08-10 PARTIAL: authenticated-session opaque launch handoff and owner-isolation regressions pass; exact installed browser mission, provider result, and two-user path remain open |
-| `GHUCP-012` | `GH-UCP-007` | Rename, favorite, resume, refresh, and restart preserve workspace identity and state | Browser, workspace desktop | Catalog/UI tests + restart QA | 2026-08-09 PARTIAL: hosted session/workspace catalog survived UI restart and local-auth rollback; compute/profile continuity remains open |
-| `GHUCP-013` | `GH-UCP-008` | Duplicate/template creates a fresh identity and remains review-pending until exact destination decisions are confirmed | Browser, filesystem, DB | Duplicate/template transaction tests + Playwright | 2026-08-11 PARTIAL: atomic legacy/canonical/template/crash/concurrency plus local browser restore/waiver pass; installed two-user execution remains open |
+| `GHUCP-009` | `GH-UCP-006` | A mission uses only its selected compatible account and releases its lease | Worker, provider home | Mission tests + live worker | 2026-08-15 PARTIAL: exact installed personal Codex mission completed and released its lease while Work AI used none; contention/cancel/failure recovery matrix remains open |
+| `GHUCP-010` | `GH-UCP-006` | Required/busy/unsupported account states fail closed; preferred policy preserves legacy compatibility | Browser, worker | Mission/policy tests | 2026-08-15 PARTIAL: installed deployment-managed and personal Codex routes both completed with exact lease isolation; wider provider/platform matrix remains open |
+| `GHUCP-011` | `GH-UCP-007` | User creates and finds a private, human-named workspace | Browser, API, DB | Catalog tests + Playwright | 2026-08-15 PARTIAL: exact installed browser missions, outputs, rename, catalog, and refresh pass; two-user/scale path remains open |
+| `GHUCP-012` | `GH-UCP-007` | Rename, favorite, resume, refresh, and restart preserve workspace identity and state | Browser, workspace desktop | Catalog/UI tests + restart QA | 2026-08-15 PARTIAL: installed rename/output/refresh and retained idle compute pass; full runtime restart/profile/grant continuity remains open |
+| `GHUCP-013` | `GH-UCP-008` | Duplicate/template creates a fresh identity and remains review-pending until exact destination decisions are confirmed | Browser, filesystem, DB | Duplicate/template transaction tests + Playwright | 2026-08-15 PARTIAL: installed deployment-workspace duplicate created one fresh copy without compute; template/two-user installed execution remains open |
 | `GHUCP-014` | `GH-UCP-008` | Unsafe links, oversized trees, secrets, cookies, leases, grants, and schedules are not copied | API, filesystem, DB | Duplicate security tests | 2026-08-05 PARTIAL: synthetic tests only |
 | `GHUCP-015` | `GH-UCP-009` | User connects a service once and the selected worker uses it through the broker | Browser, broker MCP, worker | Broker cases + live worker | PENDING for this candidate |
 | `GHUCP-016` | `GH-UCP-009` | Revoked, expired, missing, unavailable, rate-limited, empty, and unconfirmed-write states stay distinct | Browser, broker, worker | Broker failure tests + live probes | PENDING for this candidate |
@@ -29,9 +29,9 @@ most specific existing QA owner when a scenario already has a detailed provider 
 | `GHUCP-018` | `GH-UCP-010` | Worker cannot self-authorize; hash/profile/dependency/expiry/rollback failures are actionable | Browser, Library, API | Control-plane tests + failure injection | 2026-08-05 PARTIAL: synthetic tests only |
 | `GHUCP-019` | `GH-UCP-011` | Designed UI remains clear, accessible, responsive, and limited to the intended primary actions | Browser | Static tests + Playwright/accessibility | 2026-08-11 PARTIAL: modern navigation, concise external-AI setup, 1/4/5/25 control room, and 320/768/1024 local Chromium pass; installed build and screen-reader matrix remain open |
 | `GHUCP-020` | `GH-UCP-012` | UI and MCP observe the same scoped resources, pagination, conflicts, and idempotent outcomes | Browser, API, MCP | API/MCP tests + parity run | PENDING |
-| `GHUCP-021` | `GH-UCP-013` | User creates, edits, lists, inspects, and disables recurring work with one explicit owner and stable timezone wall time | Browser, MCP, scheduler | Recurrence/UI tests + real fire | 2026-08-11 PARTIAL: weekly timezone/DST editor regressions pass; real fire pending |
+| `GHUCP-021` | `GH-UCP-013` | User creates, edits, lists, inspects, and disables recurring work with one explicit owner and stable timezone wall time | Browser, MCP, scheduler | Recurrence/UI tests + real fire | 2026-08-15 PARTIAL: installed Run now progressed Queued→Completed with visible history; automatic clock/DST/restart fire remains open |
 | `GHUCP-022` | `GH-UCP-013` | Invalid timezone/DST/owner/overlap/misfire/catch-up input never produces duplicate or runaway work | Scheduler, DB | Recurrence tests + clock/restart QA | 2026-08-05 PARTIAL: synthetic tests only |
-| `GHUCP-023` | `GH-UCP-014` | Fire time renews identity/grants, rechecks state, acquires account lease, and runs exactly once | Scheduler, broker, worker | Integration + real scheduled delivery | PENDING |
+| `GHUCP-023` | `GH-UCP-014` | Fire time renews identity/grants, rechecks state, acquires account lease, and runs exactly once | Scheduler, broker, worker | Integration + real scheduled delivery | 2026-08-15 PARTIAL: installed Run now completed once with idle backend; automatic renewal/revoke/restart matrix remains open |
 | `GHUCP-024` | `GH-UCP-015` | Viventium direct GlassHive conversations keep session, tools, activity, cancellation, and channels | Web, channel, voice, scheduler | Core-provider QA | PENDING for this candidate |
 | `GHUCP-025` | `GH-UCP-016` | Cross-user access and public-data leakage fail closed across every surface | Browser, API, MCP, repo | Security tests + public scan | 2026-08-05 PARTIAL: synthetic scope tests only |
 | `GHUCP-026` | `GH-UCP-017` | Nested source, parent pin, bootstrap, compiler, launcher, and installed process all identify one build | Installer, helper, runtime | Release/installer cases | 2026-08-09 PARTIAL: exact merged parent/nested provenance reached the installed canary and browser; clean public bootstrap remains open |
@@ -236,9 +236,14 @@ most specific existing QA owner when a scenario already has a detailed provider 
   ledger, scoped runtime rows, and visible workspace result.
 - Full-view evidence minimum: browser command + two real clients + runtime authorization evidence.
 - Automation: `test_mcp_oauth.py`, Connect AI UI tests, and real client runs.
-- Last run: PARTIAL 2026-08-11; source tests prove the deployment-specific URL-derived server name,
-  Automatic/Manual presentation, exact pre-registered flags/callback contracts, allowlist alignment,
-  and no actionable setup when configuration is incomplete. Real Codex and Claude clients remain open.
+- Last run: PASS for the installed one-call path / PARTIAL overall, 2026-08-15. The signed-in browser
+  displayed the concise client-specific Automatic instruction and Manual fallback; keyboard switching
+  worked. Fresh Codex and Claude Code processes each completed exactly one `workspace_list` call;
+  transcripts showed no attempted or denied extra GlassHive/config/catalog/polling call. The Claude
+  headless success explicitly allowed only that one tool, matching its normal first-use permission
+  boundary rather than proving behavior with unrelated tools preapproved. OAuth persisted in another
+  fresh process. Clean-install/update/remove and two-owner denial remain open. See
+  [the dated acceptance report](reports/2026-08-15-native-clients-provider-and-workspace-acceptance.md).
 
 ## `GHUCP-006` — MCP OAuth Failure and Scope Paths
 
@@ -397,17 +402,17 @@ most specific existing QA owner when a scenario already has a detailed provider 
 - Full-view evidence minimum: browser selection + worker result on each supported platform class.
 - Automation: mission/provider-platform and workspace-catalog readiness tests, compiler
   provider-route isolation tests, plus `test_workspace_account_switch.py`.
-- Last run: PARTIAL 2026-08-12; focused source tests prove missing/incomplete hosted deployment
+- Last run: PARTIAL 2026-08-15; focused source tests prove missing/incomplete hosted deployment
   routes are action-required before a new browser launch creates any project, workspace, or run;
   a busy preferred account without a usable deployment fallback creates no run and cannot interrupt
   an active run during steer;
   complete provider bundles are emitted only to a generated owner-only `0600` runtime-provider
   artifact intended for root-owned installation; ordinary runtime/gateway artifacts contain no
   provider credentials; and personal-bound missions retain their separate account-home route. The
-  required post-fix installed root-ownership check, deployment-managed mission,
-  refresh/persistence, personal-route parity, and negative boundary checks are pending the staged
-  hosted run and must not be inferred from the direct provider probe.
-- Last run: PARTIAL 2026-08-05; synthetic policy tests only.
+  installed provider bridge is `root:root 0600`; a deployment-managed Codex mission and a
+  personal-required Codex mission both completed with exact browser output and refresh persistence.
+  DB correlation proved no personal lease on Work AI and a released personal lease on the personal
+  run. Other providers, reconnect/forget/contention, and two-owner denial remain open.
 
 ## `GHUCP-011` — Create and Discover a Private Workspace
 
@@ -492,7 +497,10 @@ most specific existing QA owner when a scenario already has a detailed provider 
   successful worker completion, hosted two-user, and scale paths remain open. The 2026-08-10 source
   regression now proves an authenticated browser session may consume its own opaque launch ref,
   while a different owner gets not found and an expired session returns safely to sign-in; exact
-  installed Chrome evidence remains open.
+  installed Chrome evidence remains open. On 2026-08-15 the exact installed release completed both
+  deployment-managed and personal Codex browser missions, opened their exact files, preserved them
+  after refresh, renamed the deployment workspace, and rediscovered both cards with truthful route
+  labels. Two-user and scale paths remain open.
 
 ## `GHUCP-012` — Resume, Refresh, and Restart Continuity
 
@@ -510,10 +518,12 @@ most specific existing QA owner when a scenario already has a detailed provider 
   ids, DB/grant state, lifecycle logs.
 - Full-view evidence minimum: browser + refresh + process restart + backend/state correlation.
 - Automation: specialized workspace/runtime cases plus Playwright.
-- Last run: PARTIAL 2026-08-09; the real hosted local session survived a UI-service restart, and its
+- Last run: PARTIAL 2026-08-15; the real hosted local session survived a UI-service restart, and its
   retained workspace catalog record survived both that restart and the local-auth flag-off/on drill.
   Compute reaping, full runtime restart, browser-profile continuity, favorite, and external-auth
-  recovery remain open.
+  recovery remain open. The exact installed release additionally preserved both delivered files and
+  the renamed workspace across browser refresh; full runtime restart/profile/grant continuity remains
+  open.
 
 ## `GHUCP-013` — Safe Duplicate Happy Path
 
@@ -540,11 +550,13 @@ most specific existing QA owner when a scenario already has a detailed provider 
 - Evidence to capture: browser result, source/destination hashes, copy report, DB rows, grant decisions.
 - Full-view evidence minimum: browser action plus filesystem/DB comparison.
 - Automation: workspace duplicate/idempotency tests and UI duplicate path.
-- Last run: PARTIAL 2026-08-11; automated canonical/legacy duplicate, in-flight copy, crash recovery,
+- Last run: PARTIAL 2026-08-15; automated canonical/legacy duplicate, in-flight copy, crash recovery,
   template persistence, exact-scope, human-confirmation, competing-confirmation, and execution-block
   regressions pass. Local Chromium proved duplicate -> Library, storage-loss/server restore, and exact
   human waiver. Installed run, two-user isolation, and profile checks remain open; see
-  `qa/glasshive_workspaces/reports/2026-08-11-workspace-control-room-local-browser.md`.
+  `qa/glasshive_workspaces/reports/2026-08-11-workspace-control-room-local-browser.md`. The installed
+  browser also duplicated the completed deployment workspace into exactly one visibly fresh copy
+  without starting a run. Installed template and two-user reapproval remain open.
 
 ## `GHUCP-014` — Duplicate Security and Bounds
 
@@ -706,12 +718,14 @@ most specific existing QA owner when a scenario already has a detailed provider 
   standalone enterprise deployments without a Viventium callback select `glasshive_native`, while
   callback-bearing Viventium deployments and explicit Scheduling Cortex integrations select
   `viventium_cortex`.
-- Last run: PASS-AUTOMATED/PARTIAL 2026-08-11; recurrence/API/UI suites, deterministic weekly
+- Last run: PASS-AUTOMATED/PARTIAL 2026-08-15; recurrence/API/UI suites, deterministic weekly
   browser-timezone/DST conversion tests, and the cross-layer
   native/delegated owner regression pass, and disabling a
   synthetic principal atomically deactivates its native definition and pre-fire work while
   transactional create/enable/manual-run/run-link guards close concurrent-disable races and leave
   other schedule classes untouched. Hosted admin-browser disable and a real clock fire are still
+  required. The installed browser requested one run from an existing paused daily definition,
+  showed Queued, then Completed in its persisted history; automatic clock/DST/restart fire remains
   required.
 
 ## `GHUCP-022` — Recurrence Time, Overlap, and Recovery Safety
@@ -750,13 +764,15 @@ most specific existing QA owner when a scenario already has a detailed provider 
   callback/activity, visible result.
 - Full-view evidence minimum: real clock-triggered worker/provider/broker execution and retry controls.
 - Automation: scheduler-runtime-broker integration plus live schedule QA.
-- Last run: PASS-AUTOMATED/PARTIAL 2026-08-06; a disabled principal is rejected before any delegated
+- Last run: PASS-AUTOMATED/PARTIAL 2026-08-15; a disabled principal is rejected before any delegated
   run/schedule mutation, delegated definitions are owner/tenant-targeted, structured non-retryable
   action-required failures dispatch once, and retryable failures—including private-detail failure
   before network dispatch—stop at the bounded deterministic-attempt budget while lost-response retry
   still maps to exactly one GlassHive run. Native action-required fire validation likewise pauses its
   definition after one immutable occurrence. Real hosted identity/provider/grant renewal and visible
-  installed delivery remain pending.
+  installed delivery remain pending. One installed manual occurrence completed with zero remaining
+  active run/request/lease/callback rows; the automatic fire-time renewal/revocation matrix is still
+  open.
 
 ## `GHUCP-024` — Preserve Viventium Direct GlassHive Conversation
 
@@ -984,27 +1000,32 @@ most specific existing QA owner when a scenario already has a detailed provider 
   target, failure cleanup, authenticated browser/MCP smoke, and rollback result.
 - Full-view evidence minimum: real installed failure injection and successful atomic cutover.
 - Automation: launcher hard-readiness tests plus `tests/release/test_glasshive_systemd_rollout.py`.
-- Last run: PARTIAL; a real hosted side-by-side start on 2026-08-08 caught absolute editable package
+- Last run: PASS for exact hosted cutover / PARTIAL overall, 2026-08-15. The sealed three-service
+  release reported the exact parent/component triplet, held at browser acceptance, passed real
+  browser, native Codex/Claude, provider-route, schedule, DB/lease, container, post-readiness-log,
+  MCP, canary-edge, and unchanged-stable-ingress gates, and then recorded explicit committed
+  acceptance. Failure-injection, fresh-install, and full restore/rollback remain open. An earlier
+  hosted side-by-side start on 2026-08-08 caught absolute editable package
   paths surviving the staging rename before ingress. The helper now relativizes the generated source
   path and proves both packages import after physically relocating the staging tree; the focused
-  41-case rollout suite passes. Post-fix hosted start, browser identity, authenticated MCP,
-  process-loss recovery, and rollback remain unrun.
+  41-case rollout suite passes. Process-loss failure injection and a full state-restore rollback
+  remain unrun on this exact release.
 
 ## Natural User Use Case Checklist
 
 | Use Case ID | Natural user action | Requirement / case link | Real surface to use | Supporting evidence to compare | Expected visible result | Last run |
 | --- | --- | --- | --- | --- | --- | --- |
-| `GHUCP-UC-001` | Sign in with organization SSO, provider-hosted email/password, or the optional admin-provisioned local factor; refresh and log out; confirm public signup/reset is absent | `GH-UCP-002` / `GHUCP-002`–`003` | Real browser + IdP/local candidate | Gateway logs, principal/session state | Secure entry, one immutable owner, and clear closed-enrollment policy/recovery | PARTIAL: hosted local-factor login/refresh/restart/logout/rollback passed; organization/IdP path remains open |
-| `GHUCP-UC-002` | Connect personal Codex/Claude and choose it for one mission | `GH-UCP-005`–`006` / `GHUCP-007`–`010` | Browser + native worker | Provider home, lease, worker audit, DB | Only that user's selected account is used | PARTIAL: local browser synthetic-native lifecycle passed; real worker mission pending |
-| `GHUCP-UC-003` | Create, find, rename, favorite, open output, and duplicate/template a workspace; refresh and resolve every copied capability before running | `GH-UCP-007`–`008` / `GHUCP-011`–`014` | Glass Drive + desktop | API/DB/files/browser state | Modern control-room navigation, non-mutating output, human-named persistence, and atomic safe copy | PARTIAL 2026-08-11: local browser navigation/output/review restore/waiver and server transaction tests pass; installed run remains open |
+| `GHUCP-UC-001` | Sign in with organization SSO, provider-hosted email/password, or the optional admin-provisioned local factor; refresh and log out; confirm public signup/reset is absent | `GH-UCP-002` / `GHUCP-002`–`003` | Real browser + IdP/local candidate | Gateway logs, principal/session state | Secure entry, one immutable owner, and clear closed-enrollment policy/recovery | PARTIAL 2026-08-15: installed organization login plus prior local-factor refresh/restart/logout pass; full IdP denial/logout/profile matrix remains open |
+| `GHUCP-UC-002` | Connect personal Codex/Claude and choose it for one mission | `GH-UCP-005`–`006` / `GHUCP-007`–`010` | Browser + native worker | Provider home, lease, worker audit, DB | Only that user's selected account is used | PARTIAL 2026-08-15: a real personal Codex mission and isolated lease passed; personal Claude worker and full lifecycle remain open |
+| `GHUCP-UC-003` | Create, find, rename, favorite, open output, and duplicate/template a workspace; refresh and resolve every copied capability before running | `GH-UCP-007`–`008` / `GHUCP-011`–`014` | Glass Drive + desktop | API/DB/files/browser state | Modern control-room navigation, non-mutating output, human-named persistence, and atomic safe copy | PARTIAL 2026-08-15: installed create/output/refresh/rename/duplicate passed; favorite/template/two-user full matrix remains open |
 | `GHUCP-UC-004` | Connect a service and let a worker use it | `GH-UCP-009` / `GHUCP-015`–`016` | Browser + broker + worker | Grant, tool calls, output, logs | Worker chooses a real scoped tool path | PENDING |
 | `GHUCP-UC-005` | Ask to add, update, disable, and remove a Library item | `GH-UCP-010` / `GHUCP-017`–`018` | Browser + worker | Manifest/hash, pending change, adapter, grant | Human-confirmed reusable capability | PARTIAL: local browser add/remove passed; update/worker use pending |
-| `GHUCP-UC-006` | Copy the one-step deployment-specific instruction or use Manual setup in Codex/Claude, then manage the same workspace | `GH-UCP-004`, `012` / `GHUCP-005`–`006`, `020` | Browser + both clients | OAuth metadata, tools, API/DB | One scoped model across clients; callback plumbing stays admin-only | PARTIAL 2026-08-11: source/UI tests only; real clients open |
-| `GHUCP-UC-007` | Create/edit weekly recurring work in a different browser timezone, wait for fire, inspect result, then disable | `GH-UCP-013`–`014` / `GHUCP-021`–`023` | Browser + MCP + scheduler | Definition/occurrence/run/grant/lease/callback | Same selected wall time across DST and exactly one authorized visible result | PARTIAL 2026-08-11: timezone/DST tests pass; real fire pending |
+| `GHUCP-UC-006` | Copy the one-step deployment-specific instruction or use Manual setup in Codex/Claude, then manage the same workspace | `GH-UCP-004`, `012` / `GHUCP-005`–`006`, `020` | Browser + both clients | OAuth metadata, tools, API/DB | One scoped model across clients; callback plumbing stays admin-only | PASS for installed one-call setup 2026-08-15; clean-install and two-owner parity remain PARTIAL |
+| `GHUCP-UC-007` | Create/edit weekly recurring work in a different browser timezone, wait for fire, inspect result, then disable | `GH-UCP-013`–`014` / `GHUCP-021`–`023` | Browser + MCP + scheduler | Definition/occurrence/run/grant/lease/callback | Same selected wall time across DST and exactly one authorized visible result | PARTIAL 2026-08-15: installed Run now completed visibly; automatic clock/DST/restart fire remains open |
 | `GHUCP-UC-008` | Continue an ordinary Viventium direct GlassHive conversation | `GH-UCP-015` / `GHUCP-024` | Installed web/channel/voice | Provider session, activity, callback, logs/DB | Existing conversation behavior is intact | PENDING |
 | `GHUCP-UC-009` | Try missing auth, denied domain, cross-user ids, busy account, revoked connection, dependency outage, retry, cancel, and capacity | All / matching unhappy-path cases | Every real surface | Structured failures, no-side-effect state, audit | Honest actionable failure with no leak/fake success | PENDING as a complete matrix |
 | `GHUCP-UC-010` | Install fresh, upgrade, restart, reopen, and roll back | `GH-UCP-017` / `GHUCP-026`–`027` | Public installer + installed browser | Pin/build/process/state provenance | Same feature and user state on installed artifact | PENDING |
-| `GHUCP-UC-011` | Stage, migrate, cut over all three services, verify every route, and roll back without state loss | `GH-UCP-017` / `GHUCP-030`–`033` | Hosted edge + installed services | Route/key/DB/readiness/provenance evidence | One secure complete release or the preceding healthy release | PENDING |
+| `GHUCP-UC-011` | Stage, migrate, cut over all three services, verify every route, and roll back without state loss | `GH-UCP-017` / `GHUCP-030`–`033` | Hosted edge + installed services | Route/key/DB/readiness/provenance evidence | One secure complete release or the preceding healthy release | PARTIAL 2026-08-15: exact three-service canary and explicit acceptance passed; failure-injection/full restore remains open |
 
 ## Incident Promotion Checklist
 

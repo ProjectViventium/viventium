@@ -23,14 +23,18 @@ Snapshot date: **2026-08-15**
 
 Snapshot source:
 
-- parent baseline: `077e278a` on `codex/glasshive-user-flow-completion`; the candidate pin is not
-  committed yet
-- GlassHive candidate: `4b19770` on `codex/glasshive-user-flow-completion`
+- parent candidate: `c4f01c9592b6b960297a2058ae7339c6e70742d4` on
+  `codex/glasshive-user-flow-completion`
+- GlassHive candidate: `4d4a3545fca9921148d2c3113bc313e527a78f3b` on
+  `codex/glasshive-user-flow-completion`
 - source was reconciled from current public `origin/main` plus the reviewed renewable-auth and
   user-flow fixes; the original working tree was not used as an authoring surface
 
-Overall status: **PARTIAL**. The narrow hosted Workspaces/external-client path is accepted; the full
-original goal is not complete.
+Overall status: **PARTIAL**. The exact installed release now passes the core organization login,
+native Codex/Claude MCP, deployment-managed Codex, personal Codex, workspace output/refresh/rename/
+duplicate, and manual schedule occurrence paths. SharePoint/connected-service worker use, personal
+Claude workers, two-user denial, automatic schedule fire, Library worker use, and clean
+install/restore remain open.
 
 ## Exact final goal
 
@@ -123,9 +127,13 @@ read a tool inventory, construct OAuth URLs, manage callbacks, or understand int
 ### What has real user evidence
 
 - Hosted organization-session recovery and an accepted sealed three-service canary.
-- Real Codex MCP OAuth, one-call workspace listing, one-call rename, browser refresh, and restoration.
-- A prior accepted Claude MCP OAuth/tool/persistence path; a current-client rerun remains open.
+- Real current Codex and Claude Code MCP OAuth/persistence with exactly one `workspace_list` call in
+  a fresh process for each client.
 - Two real personal-Codex missions, visible output, Watch, and browser refresh persistence.
+- A real deployment-managed Codex mission with exact visible output, no personal lease, clean
+  post-readiness logs, and no upstream `401`.
+- Installed rename and duplicate with one fresh copy and no duplicate run.
+- Installed browser Run now with Queued-to-Completed history and idle backend correlation.
 - Human-readable workspace cards, modern navigation, view-only live state, and exact artifact actions.
 - Local browser Library add/remove using the existing confirmation boundary.
 - Local run-now schedule producing exactly one completed occurrence.
@@ -146,40 +154,40 @@ read a tool inventory, construct OAuth URLs, manage callbacks, or understand int
 - Candidate-specific Viventium direct-conversation web/channel/voice/scheduler regression.
 - Large-catalog performance and full accessibility.
 
-### Known current undeployed evidence
+### Current delivered evidence and remaining product gaps
 
-- Renewable Codex login source is committed and pushed, but the corrected generated setup is not
-  yet deployed to the hosted generator. The live client was repaired directly; that does not prove a
-  future fresh install.
+- Renewable MCP setup, the concise shared skill, and thin Codex/Claude packages are committed,
+  pushed, installed in the exact canary, and proven by current native clients. A clean-machine public
+  install/update/remove is still separate evidence.
 - The escaped client task trace is now preserved. It shows that the ordinary workspace-list request
   lacked a native GlassHive tool in that task, fell back through a nested `codex exec`, guessed
   aliases/config, and repeated status checks while authentication was expired. The raw 60-tool
-  inventory was not the cause, and removing compatible tools would be an overfit. The remaining
-  installed acceptance target is one direct call after native package discovery and renewable login,
-  plus bounded asynchronous completion that is invisible to the user's prompt loop.
-- Thin native Codex and Claude plugin packages now wrap the one canonical skill without embedding a
-  second MCP server. Both official manifests validate, and isolated local marketplace add/install
-  enabled each package. They are not yet published or installed against the hosted candidate.
+  inventory was not the cause, and removing compatible tools would be an overfit. The one-direct-call
+  target now passes in both clients; one real asynchronous launch/result trace without a user-driven
+  polling loop remains open.
+- Thin native Codex and Claude plugin packages wrap the one canonical skill without embedding a
+  second MCP server. Both official manifests validate; Codex marketplace/plugin and Claude package
+  installs expose the same concise MCP-first guide.
 - The repaired Library/template baseline now passes **10/10** on the reconciled candidate. The wider
   affected runtime/auth/MCP/provider/schedule/profile slices are also green; full cross-stack tests
   still run after the parent pin is updated.
-- Current Claude client/account authentication has not been rerun successfully against the latest
-  candidate even though an earlier accepted hosted Claude path exists.
+- Current Claude Code authentication and a fresh single-call MCP run now pass. This is external
+  control-plane proof, not a claim that personal Claude worker subscription isolation is complete.
 
 ### Current support truth
 
 | User outcome | Current status | Plain truth |
 | --- | --- | --- |
 | Convenient individual GlassHive login | PARTIAL | Real organization and local-session paths passed; complete provider denial/logout/profile matrix is open |
-| Personal Codex subscription | PARTIAL | Real missions passed; full lifecycle, contention, and second account remain open |
+| Personal Codex subscription | PARTIAL | Exact installed mission/output/lease isolation passed; reconnect/forget, contention, and second account remain open |
 | Personal Claude subscription | BLOCKED | No general hosted consumer-subscription claim; enable only a supported, isolated native route |
 | User-scoped API key | PARTIAL | Broker/reference boundaries exist; real rotate/disconnect/mission proof is open |
 | Private persistent workspace | PARTIAL | Strong real mission/file/Watch/output/refresh evidence exists; installed restart/profile/grant continuity remains |
 | Duplicate/template | PARTIAL | Automated/local evidence exists; installed and two-user reapproval proof remains |
-| Codex/Claude MCP control | PARTIAL | Real Codex and earlier Claude passed; native packages and the escaped-task RCA exist locally, but publication, hosted install, current-client Claude rerun, and final one-call traces remain |
+| Codex/Claude MCP control | PARTIAL | Exact installed fresh-process one-call traces passed for both; clean public install/update/remove and two-owner parity remain |
 | SharePoint/connected service use | PENDING | Broker components exist; no complete real login → worker use → visible result path |
 | Library skill/plugin lifecycle | PARTIAL | Local add/remove passed, but three focused fixture tests currently fail and real package/worker use is open |
-| Recurring schedules | PARTIAL | Run-now and source rules passed; installed automatic fire/renewal/restart remains |
+| Recurring schedules | PARTIAL | Exact installed Run now completed visibly with backend correlation; automatic fire/renewal/restart remains |
 | Human naming/discovery | PARTIAL | Basic naming/search/persistence exists; scale and performance remain |
 | Fresh install/upgrade/restore | PENDING | Accepted canary is not a clean public install/upgrade/restore proof |
 | Installed two-user isolation | PARTIAL | Automated denial evidence exists; no complete two-user browser/MCP/provider/connection run |
@@ -193,12 +201,14 @@ read a tool inventory, construct OAuth URLs, manage callbacks, or understand int
 installs/configures GlassHive through its native package and OAuth flow, then performs the requested
 operation without catalog exploration.
 
-**Current:** The copied setup and concise skill can connect Codex, and a real one-call list/rename
-passed on predecessor GlassHive revision `aa64d2b6`; that result is useful but is not current-candidate
-proof. The exact escaped-task trace now attributes the convoluted path to missing native tool
-availability plus expired auth and subprocess fallback, not to the raw tool count. Codex and Claude
-native package manifests validate and isolated local installs succeed. Publication, clean remote
-install/update/remove, hosted renewable auth, and current one-call/async traces remain open.
+**Current:** The exact escaped-task trace attributed the convoluted path to missing native tool
+availability plus expired auth and subprocess fallback, not to the raw tool count. The installed
+Connections UI now presents one concise Automatic instruction plus Manual fallback. The canonical
+skill tells a client to act immediately when GlassHive tools are present. Fresh Codex and Claude Code
+processes each completed one `workspace_list` call with no extra attempted/denied calls in the
+transcripts. Claude's successful headless run preapproved only that tool, so broader-preapproval
+behavior is not inferred. OAuth persisted. Clean public install/update/remove, two-owner parity, and
+one real asynchronous launch/result trace remain open.
 
 **Smallest plan:**
 
@@ -239,9 +249,10 @@ must pass in the same phase. Browser state must match. Unsupported clients are n
 recovery behave predictably; the sticky expired-auth banner does not recur after a valid renewable
 setup.
 
-**Current:** Root cause and source fix are recorded in
-[the reconnect RCA](reports/2026-08-14-codex-reconnect-scope-rca.md). The current live Codex client
-works, but the corrected generator is undeployed.
+**Current:** The resource/scope/root-cause fix is deployed in the exact installed release and both
+fresh Codex and Claude Code processes completed their owner-scoped MCP call. The installed evidence
+is recorded in [the 2026-08-15 acceptance report](reports/2026-08-15-native-clients-provider-and-workspace-acceptance.md).
+Full expiry/revocation/reconnect and clean-install recovery remain open.
 
 **Smallest plan:**
 
