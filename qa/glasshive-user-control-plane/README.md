@@ -62,17 +62,23 @@ provider, MCP client, scheduler, or installed-runtime path.
 
 ## Current Status
 
-**PARTIAL — locally validated, not release accepted.** The complete GlassHive runtime suite, complete
-Glass Drive auth/UI suite, affected Viventium/LibreChat/Scheduling Cortex suites, compiler tests, and
-a real local browser journey pass. The browser journey covered fresh create, Keep, rename, duplicate,
-Library approval/removal, recurring definition create/disable, Activity, responsive navigation, and a
-synthetic provider-native Codex connect/disconnect lifecycle. Hosted IdP, real provider/connector,
-external MCP clients, scheduled fire, installed-artifact, clean-install, and upgrade gates remain open.
-Hosted edge path splitting, signer/runtime key isolation, existing-database migration/restore
-rehearsal, and atomic three-service cutover/readiness are also explicit open release gates.
+**PARTIAL overall — the scoped hosted Workspaces/external-client release is accepted.** The complete
+accepted-release GlassHive runtime and Glass Drive suites, compiler tests, local browser matrix,
+sealed hosted cutover, authenticated Edge Workspaces journey, personal-subscription missions, and
+real Codex and Claude MCP
+OAuth/tool/persistence paths pass. The hosted run also proved modern navigation, safe direct output,
+view-only live control, controller-driven continuation, exact artifact persistence, and targeted OAuth
+failure handling. The current source baseline and the focused Library/template slice are green, and
+native Codex and Claude plugin packages pass official validation and isolated installation. The
+broader control plane still has explicit open gates for two-owner denial, brokered third-party
+connections, scheduled fire, a second healthy provider account, clean install, upgrade/restore,
+signer isolation, and the full organization-IdP denial matrix.
 
 ## Files
 
+- [completion-ledger.md](completion-ledger.md): exact final outcome, current snapshot, ordered
+  workstreams, blockers, and completion gates; this is the execution/status layer and does not
+  replace Requirement 55 or the durable case catalog
 - [cases.md](cases.md): canonical happy and unhappy path checklist
 - [coverage.md](coverage.md): requirement and acceptance-item traceability
 - [reports/2026-08-05-source-and-unit-baseline.md](reports/2026-08-05-source-and-unit-baseline.md):

@@ -237,7 +237,18 @@ compliant hosted topology.
 ### `GH-UCP-004` — Standards-based MCP connection
 
 - The GlassHive MCP endpoint publishes OAuth 2.1 protected-resource metadata and challenges clients
-  with the correct resource metadata URL.
+  with the correct resource metadata URL and exact current-operation scope. Client setup also
+  persists the exact API scope when the native client supports it, because current Codex releases may
+  otherwise fall back to generic OpenID scopes during Reconnect despite the server challenge. Entra
+  Codex setup also persists `offline_access`, which is distinct from the API permission and is required
+  for Entra to return a refresh token; without it, the roughly hour-lived access token expires into a
+  real reconnect loop even though the original sign-in succeeded. Other OIDC providers derive or
+  explicitly configure their own renewable authorization scopes from provider capability; GlassHive
+  does not universalize Entra's scope name.
+- Renewable authorization is part of installation acceptance, not a post-release concern. Initial
+  sign-in alone is insufficient: access-token expiry, silent refresh, client process restart,
+  ordinary reconnect, authorization revocation, and recovery are release gates for every supported
+  client.
 - The canonical public MCP URL is the RFC 8707 resource and is kept separate from explicit accepted
   JWT `aud` values. Access tokens are bound to one configured token audience, stable subject,
   authorized client, request scope, and emitted token scope. Optional upstream token-tenant policy
@@ -268,10 +279,23 @@ compliant hosted topology.
 - Generated client configuration names are stable, shell-safe hashes of the canonical deployment
   URL, so separate self-hosted GlassHive origins do not collide in one local client. The browser does
   not execute local commands or claim it can silently edit another application's configuration.
-- A versioned, non-secret companion skill/connector may point to the canonical live repository and
-  official MCP setup docs so a user can paste one instruction into a supported AI client. The skill
-  explains and invokes the official client configuration/login path; it does not embed credentials,
-  bypass client consent, or fork a second GlassHive protocol.
+- One shared, versioned, non-secret MCP/skill source points to the canonical live repository and
+  official setup docs. Thin native OpenAI/Codex and Claude packages wrap that source for installation
+  and distribution; exact manual commands remain a fallback when package distribution is unavailable.
+  The skill is a concise progressively loaded guide over the same MCP tools. It does not embed
+  credentials, bypass client consent, enumerate capabilities or workflow steps unnecessarily, or
+  fork a second GlassHive protocol.
+- Ordinary clients use one goal-relevant GlassHive action and never enumerate the catalog as setup or
+  routine use. Preserve the complete existing public MCP tool/field contract. Viventium's main agent
+  continues to keep only `workspace_launch`, `workspace_status`, and `workspace_wait` eager while
+  deferring the rest; external clients may receive equivalent native discovery/defer hints only when
+  their supported client contract provides that mechanism. Do not invent a second MCP profile,
+  branch tool schemas on client names, or preselect an arbitrary reduced tool list. Before changing
+  visibility or discovery, capture a real call trace that separates action selection, invalid-input
+  retries, status, wait/poll, and result retrieval; regression-test Viventium direct conversation,
+  Telegram allowlists, and every other known MCP consumer. Asynchronous completion uses callback
+  delivery or a host-owned bounded wait contract and must not require the user to drive repeated
+  `workspace_wait` calls.
 - MCP exposes the same owner-scoped workspace, worker, schedule, account, connection, Library, and
   confirmation model as the UI. Client convenience must not weaken human confirmation or scope.
 
@@ -721,3 +745,7 @@ The cross-feature case catalog and status matrix are in
 [`qa/glasshive-user-control-plane/`](../../qa/glasshive-user-control-plane/). Specialized evidence
 continues to live in its existing QA owners; the control-plane coverage matrix links those owners
 instead of copying their reports.
+
+The ordered completion plan and current snapshot are maintained in
+[`qa/glasshive-user-control-plane/completion-ledger.md`](../../qa/glasshive-user-control-plane/completion-ledger.md).
+That ledger is the execution/status layer; this document remains the product-truth owner.

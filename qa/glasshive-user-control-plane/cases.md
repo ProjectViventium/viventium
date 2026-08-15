@@ -52,7 +52,10 @@ most specific existing QA owner when a scenario already has a detailed provider 
   1. Run the public compatibility suite and existing API/MCP/provider suites.
   2. Compare route schemas, MCP tool schemas, bootstrap materialization, callbacks, and lifecycle
      responses with the preceding supported release.
-  3. Run a direct Viventium GlassHive conversation and a delegated workspace turn.
+  3. Enumerate every MCP consumer and its expected tool names, including the Viventium main agent,
+     direct conversation, external Codex/Claude packages, and Telegram allowlists; compare the
+     eager/deferred and complete public contracts before and after any discovery change.
+  4. Run a direct Viventium GlassHive conversation and a delegated workspace turn.
 - Expected result: additive resources are available and every pre-existing contract still behaves as
   before. A valid worker-view signed link may still send only its narrow message/steer request when
   OIDC session CSRF protection is enabled. An authenticated watch session sends its current CSRF
@@ -186,12 +189,29 @@ most specific existing QA owner when a scenario already has a detailed provider 
   plus the exact displayed callback URIs registered at the identity provider.
 - Steps: open `Use GlassHive from another AI app`; verify the ordinary view has no callback jargon;
   verify only clients with complete live contracts are named; copy the one-step Automatic instruction
-  and use it in each returned client; repeat through Manual using the exact server URL/client commands;
-  when both Codex and Claude Code are returned, exercise both. Authenticate, list tools, create/list a
-  synthetic workspace, inspect account/connection/Library operations, disconnect, and reconnect.
-- Expected result: the copied instruction embeds every returned client's exact generated add/sign-in
-  commands, canonical HTTPS MCP URL, and collision-safe derived server name, so the receiving AI does
-  not have to infer hidden configuration; only fully configured/allowlisted client
+  into Codex and prove it follows only the Codex section, then repeat in Claude Code and prove it
+  follows only the Claude Code section; install the thin native package for each client from clean
+  state and repeat through Manual using the exact server URL/client commands.
+  Re-run with the exact server already registered and prove no duplicate is created. For Entra, first prove the resource app
+  registers the exact canonical HTTPS MCP URL and that the advertised authorization scope uses that
+  URL as its prefix; also try the escaped mismatched `api://...` scope and require compilation or
+  authorization to fail without changing client state. Authenticate through each client's native
+  flow in the intended already-open signed-in AITP Edge profile—never a different browser profile—
+  without constructing an OAuth URL or callback listener. Require the first 401 challenge to
+  carry the exact scope and canonical resource metadata URL. Verify shared server instructions are
+  short, choose one matching action, and never narrate the catalog. Verify with exactly one
+  `workspace_list` call. For one real delegated task, capture every model-visible MCP call and
+  classify it as action, discovery, invalid-input retry, status, wait/poll, or result retrieval;
+  compare before/after behavior rather than assuming the registered tool count is causal. Verify
+  asynchronous completion does not require another user prompt or an unbounded sequence of visible
+  `workspace_wait` calls. For Entra Codex, prove the persistent config also contains `offline_access`,
+  restart Codex/ChatGPT once after changing the config, then create, inspect, and
+  rename one synthetic workspace through named GlassHive MCP tools. Inspect account/connection/Library
+  operations only when that specific parity is under test; disconnect, and reconnect.
+- Expected result: the copied instruction self-selects exactly one returned client's generated
+  add/sign-in commands, canonical HTTPS MCP URL, and collision-safe derived server name, so the
+  receiving AI does not infer hidden configuration or configure another client; an exact existing
+  registration is reused; only fully configured/allowlisted client
   commands are shown; Codex includes its OAuth client and fixed callback login override, relies on
   the exact protected-resource metadata instead of adding a second `resource` parameter, and uses
   the exact derived redirect URI;
@@ -201,9 +221,16 @@ most specific existing QA owner when a scenario already has a detailed provider 
 - Forbidden result: callback reference presented as a link or user step, browser claim of silent local
   installation, a client named without a complete returned contract, bare colliding `glasshive`
   config name, wrong self-hosted origin, static bearer token, cross-user list, hidden manual config,
-  duplicated OAuth `resource` parameter, or false “connected” state.
-- Evidence to capture: visible command UI, redacted client config, OAuth metadata/challenge, tool list,
-  scoped runtime rows.
+  configuring both clients from one pasted instruction, duplicate registration, homemade PKCE or
+  callback server, token inspection, full tool-catalog enumeration, unrelated browser/client hopping,
+  a repeated server operating manual attached to every tool,
+  a client-name branch that changes the MCP schema, a new visibility profile that removes an existing
+  public tool, a plugin that forks the shared MCP contract, or a model-visible polling loop that turns
+  one ordinary task into repeated wait calls,
+  duplicated OAuth `resource` parameter, a scope tied to a different Entra resource identifier, or
+  false “connected” state.
+- Evidence to capture: visible command UI, redacted client config, native OAuth result, exact MCP call
+  ledger, scoped runtime rows, and visible workspace result.
 - Full-view evidence minimum: browser command + two real clients + runtime authorization evidence.
 - Automation: `test_mcp_oauth.py`, Connect AI UI tests, and real client runs.
 - Last run: PARTIAL 2026-08-11; source tests prove the deployment-specific URL-derived server name,
@@ -808,8 +835,9 @@ most specific existing QA owner when a scenario already has a detailed provider 
   produces a lower-quality result.
 - Preconditions: current pinned and candidate supported CLI/bootstrap versions and official docs.
 - Steps: compare versions/capabilities; upgrade through existing requirement mechanism; run native
-  skills/plugins, project instructions, effort, browser/computer, MCP broker, file/artifact, pause/resume,
-  and wildcard work; compare outcome quality/performance; roll back.
+  skills/plugins, including install/update/remove of the thin OpenAI and Claude GlassHive packages,
+  project instructions, effort, browser/computer, MCP broker, file/artifact, pause/resume, and
+  wildcard work; compare outcome quality/performance; roll back.
 - Expected result: candidate is source-backed, capability-equal or better, compatible, reversible, and
   meets the universal self-check/final-report contract.
 - Forbidden result: ad hoc global upgrade, unsupported flag, native capability hidden by generic MCP
