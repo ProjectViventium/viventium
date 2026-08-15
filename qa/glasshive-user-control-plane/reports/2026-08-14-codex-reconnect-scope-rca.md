@@ -2,39 +2,46 @@
 
 ## Result
 
-**PASS for the reported Codex reconnect incident.** The accepted hosted build now publishes and copies
-the durable native Codex configuration. Ordinary login completed in the already-open AITP Edge profile
-without a per-login scope override, survived the release restart, and a fresh Codex process completed
-the basic request with one MCP call.
+**PASS for the live Codex client repair; PARTIAL for product rollout.** The local native config now
+persists renewable Entra authorization, ordinary login completed in the already-open AITP Edge
+profile, the GlassHive MCP was restarted in place, the reconnect banner cleared, and the current
+Codex process completed a real `workspace_list` call. The product source and regression are fixed;
+the generated setup still needs deployment to the hosted environment.
 
 ## Root cause and smallest fix
 
-- Entra rejected the request because Codex paired the canonical GlassHive resource with generic
-  OpenID scopes, producing `AADSTS9010010 invalid_target`.
+- The original successful login requested the canonical GlassHive API scope but omitted
+  `offline_access`. Entra therefore issued no refresh token; when the roughly hour-lived access token
+  expired, Codex correctly became unauthenticated and the reconnect banner was real.
+- The already-running desktop process still held the older MCP setup. Its Reconnect attempt paired
+  the canonical GlassHive resource with stale generic scopes, producing `AADSTS9010010 invalid_target`.
 - GlassHive now publishes the exact operation scope in protected-resource metadata and its initial
   Bearer challenge, matching the MCP authorization contract.
-- Current Codex can still ignore those discovered scopes during Reconnect. Its supported persistent
-  MCP `scopes` setting has precedence and produces the correct authorization request.
+- Current Codex can still ignore those discovered scopes during Reconnect. Its persistent MCP
+  `scopes` setting now contains the canonical API scope plus `offline_access`; the first produces the
+  correct resource authorization and the second asks Entra for renewable authorization.
 - The candidate's one copied Codex instruction therefore adds or updates the native MCP config once,
-  including the exact persistent scope, then invokes native login. It does not construct OAuth URLs,
-  inspect tokens, run a callback helper, or enumerate the MCP tool catalog.
+  restarts Codex/ChatGPT once so the process reloads it, then invokes native login. It does not
+  construct OAuth URLs, inspect tokens, run a callback helper, or enumerate the MCP tool catalog.
 
 ## Evidence
 
 | Surface | Result |
 | --- | --- |
 | Reproduction | Generic OpenID/no-scope requests with the canonical resource failed visibly with `invalid_target` |
-| Native client | Codex `0.148.0-alpha.9` used the exact configured resource and scope, then reported authentication complete |
-| Browser | Native callback completed in the already-open AITP Edge profile; Workspaces retained the renamed result and expanded delivery after hard refresh |
-| MCP | A fresh process made exactly one successful `workspace_list` call, with no shell/setup/catalog call |
-| CRUD | One synthetic workspace launched, completed, exposed its requested artifact, renamed, refreshed, and terminated with compute released |
-| Source tests | Full Glass Drive UI suite plus focused MCP OAuth/server/skill suites passed |
-| Installed build | Exact parent/component provenance, canary health, stable-edge invariant, explicit browser acceptance, and commit passed |
+| Reproduction | Generic scopes with the canonical resource failed visibly with `invalid_target`; the client later reported `Not logged in` after its non-renewable token expired |
+| Native client | Codex persisted the canonical API scope plus `offline_access`, then reported authentication complete |
+| Browser | Native callback completed in the already-open AITP Edge profile; no other profile was used |
+| Desktop reload | Only the GlassHive MCP was toggled off/on; it returned enabled with OAuth and the orange reconnect banner stayed absent |
+| MCP | The current Codex process made one actual successful `workspace_list` call and received one item; no shell fallback or guessed count was accepted |
+| Source tests | Focused generated-config/client-contract tests and the complete 223-test Glass Drive server suite passed after the regression first failed on missing `offline_access` |
+| Installed build | Pending deployment of the generated renewable config/instruction |
 
 ## Remaining coverage
 
-Current Claude Code and the wider wrong-audience/client/tenant/key/revocation matrix remain separate
-follow-up coverage; they are not needed to close this Codex-specific reconnect incident.
+Hosted generated-setup deployment, current Claude Code, and the wider wrong-audience/client/tenant/
+key/revocation matrix remain separate follow-up coverage. The previous plain `0` answer in the old
+task is not evidence because no MCP call occurred; only the verified post-reload tool call counts.
 
 ## Public safety
 

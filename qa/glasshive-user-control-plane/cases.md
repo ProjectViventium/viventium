@@ -13,8 +13,8 @@ most specific existing QA owner when a scenario already has a detailed provider 
 | `GHUCP-002` | `GH-UCP-002` | Allowed user signs in and returns to a secure session | Browser, IdP | Gateway tests + Playwright | 2026-08-12 PARTIAL: hosted local-factor lifecycle and organization sign-in/session recovery pass; full IdP logout/denial/profile matrix remains open |
 | `GHUCP-003` | `GH-UCP-002` | Denied, replayed, expired, or malformed login fails safely with recovery guidance | Browser, IdP | Gateway tests + Playwright | 2026-08-09 PARTIAL: hosted local failure/CSRF/closed-signup/flag-off rollback passed; broader IdP matrix remains open |
 | `GHUCP-004` | `GH-UCP-003` | Runtime sees the correct user/tenant/role/scope and rejects cross-user or unsigned writes | Gateway, API | Assertion/API tests | 2026-08-05 PARTIAL: focused tests only |
-| `GHUCP-005` | `GH-UCP-004` | User copies one deployment-specific instruction or uses the concise manual path to connect Codex and Claude | Browser, Codex, Claude | MCP OAuth/UI tests + real clients | 2026-08-14 PARTIAL: accepted hosted Codex copied setup, ordinary native login in the existing AITP Edge profile, fresh-process one-call list, minimal workspace CRUD, output, termination, and browser-refresh persistence pass; current Claude Code rerun remains open |
-| `GHUCP-006` | `GH-UCP-004` | Wrong audience, tenant, scope, expired token, or missing OAuth config fails loud | MCP clients, API | MCP OAuth tests | 2026-08-14 PARTIAL: native Reconnect reproduced `AADSTS9010010` with generic OpenID/no scopes; the accepted persistent server scope plus standards challenge completed ordinary login and survived a release restart, while the broader audience/client/tenant/key/revocation matrix remains open |
+| `GHUCP-005` | `GH-UCP-004` | User copies one deployment-specific instruction or uses the concise manual path to connect Codex and Claude | Browser, Codex, Claude | MCP OAuth/UI tests + real clients | 2026-08-14 PARTIAL: Codex config repaired to persist the canonical API scope plus `offline_access`; ordinary native login completed in the existing AITP Edge profile, the desktop MCP was restarted in place, and one real `workspace_list` call passed. Hosted generated-setup redeploy and current Claude Code rerun remain open |
+| `GHUCP-006` | `GH-UCP-004` | Wrong audience, tenant, scope, expired token, or missing OAuth config fails loud | MCP clients, API | MCP OAuth tests | 2026-08-14 PARTIAL: native Reconnect reproduced `AADSTS9010010` with stale generic scopes; the prior login also lacked `offline_access`, so it had no refresh token and expired normally. Renewable AITP reauthentication plus an in-app MCP restart passed one real call; hosted redeploy and the broader audience/client/tenant/key/revocation matrix remain open |
 | `GHUCP-007` | `GH-UCP-005` | User connects, tests, selects, reconnects, disconnects, and forgets a personal provider account | Browser, MCP, native harness | Control-plane tests + real provider | 2026-08-12 PARTIAL: ready personal account selection and two exact hosted missions pass; hosted reconnect/disconnect/forget/rotation lifecycle remains open |
 | `GHUCP-008` | `GH-UCP-005` | Provider metadata and homes remain owner scoped and secrets never enter the runtime database | API, filesystem, DB | Control-plane tests + secret scan | 2026-08-05 PARTIAL: owner-scope tests plus local private-mode and credential-removal checks passed |
 | `GHUCP-009` | `GH-UCP-006` | A mission uses only its selected compatible account and releases its lease | Worker, provider home | Mission tests + live worker | 2026-08-12 PARTIAL: two selected personal-subscription missions completed on the accepted release and the post-run active-lease count was zero; live concurrency/refresh/cancel/stale-lease matrix remains open |
@@ -196,7 +196,8 @@ most specific existing QA owner when a scenario already has a detailed provider 
   flow without constructing an OAuth URL or callback listener. Require the first 401 challenge to
   carry the exact scope and canonical resource metadata URL. Verify shared server instructions are
   short, choose one matching action, and never narrate the catalog. Verify with exactly one
-  `workspace_list` call, then create, inspect, and
+  `workspace_list` call. For Entra Codex, prove the persistent config also contains `offline_access`,
+  restart Codex/ChatGPT once after changing the config, then create, inspect, and
   rename one synthetic workspace through named GlassHive MCP tools. Inspect account/connection/Library
   operations only when that specific parity is under test; disconnect, and reconnect.
 - Expected result: the copied instruction self-selects exactly one returned client's generated
@@ -205,7 +206,9 @@ most specific existing QA owner when a scenario already has a detailed provider 
   registration is reused; only fully configured/allowlisted client
   commands are shown; Codex includes its OAuth client and fixed callback login override, relies on
   the exact protected-resource metadata instead of adding a second `resource` parameter, and uses
-  the exact derived redirect URI and server-challenged scope without a manual scope override;
+  the exact derived redirect URI and server-challenged API scope without a manual scope override;
+  Entra Codex also requests `offline_access`, receives renewable authorization, and reloads the
+  persisted config after one desktop restart;
   Claude includes its client/fixed-callback flags and localhost redirect URI; OAuth completes; both
   clients see the same user-scoped capabilities and actionable reconnect flow. Initial verification
   is one `workspace_list` call and never a full tool inventory. Callback/client/port
@@ -225,14 +228,13 @@ most specific existing QA owner when a scenario already has a detailed provider 
 - Full-view evidence minimum: browser command + two real clients + runtime authorization evidence.
 - Automation: `test_mcp_oauth.py`, Connect AI UI tests, and real client runs.
 - Last run: PARTIAL 2026-08-14. The accepted hosted build displayed and copied the exact persistent
-  Codex scope configuration. Ordinary native login completed in the already-open AITP Edge profile
-  without a per-login scope override. After the release restart, a fresh Codex process answered a
-  natural saved-workspace question with exactly one successful `workspace_list` call, no shell/setup
-  call, and no catalog narration. A minimal owner-scoped flow launched one synthetic workspace,
-  produced and displayed the requested file/result, listed the artifact, renamed the workspace,
-  refreshed the signed-in browser, and terminated compute. The tolerant-limit escaped-bug regression
-  also passes. Current Claude Code rerun, account/connection/Library parity, and two-owner client
-  isolation remain open.
+  Codex API scope but omitted `offline_access`; the login therefore had no refresh token and the
+  access token later expired. The local native config was repaired to persist the canonical API scope
+  plus `offline_access`; ordinary login completed in the already-open AITP Edge profile, the one
+  GlassHive MCP was toggled off/on in Codex settings to reload it, and an actual authenticated
+  `workspace_list` call returned an item. The focused generated-config regression passes. Hosted
+  generated-setup redeploy, current Claude Code rerun, account/connection/Library parity, and two-owner
+  client isolation remain open.
 
 ## `GHUCP-006` — MCP OAuth Failure and Scope Paths
 
@@ -255,14 +257,14 @@ most specific existing QA owner when a scenario already has a detailed provider 
 - Evidence to capture: protected-resource metadata, challenge header, sanitized verifier decision/log.
 - Full-view evidence minimum: real MCP client failure/recovery plus verifier evidence.
 - Automation: `runtime_phase1/tests/test_mcp_oauth.py`.
-- Last run: PARTIAL 2026-08-14. The installed app Reconnect request paired the canonical resource with
-  generic OpenID scopes (and another attempt omitted scope), producing visible Entra `AADSTS9010010`.
-  Current Codex still ignored server-discovered scopes on that path, so the durable native fix is the
-  exact deployment scope in the server's persistent Codex config. With that entry, ordinary native
-  login used the exact resource/scope without `--scopes`, completed in the existing AITP Edge profile,
-  and a fresh process made one direct `workspace_list` call after release restart. The accepted build
-  generates that config and keeps the exact scope in the 401 challenge. Claude Code and the broader
-  audience/client/tenant/key/revocation matrix remain open.
+- Last run: PARTIAL 2026-08-14. The installed app Reconnect request used stale generic scopes with the
+  canonical resource, producing visible Entra `AADSTS9010010`. The earlier successful login had also
+  requested only the API scope, so Entra returned no refresh token and its access token later expired.
+  The native config was repaired with the canonical API scope plus `offline_access`; native login
+  completed in the existing AITP Edge profile, the GlassHive MCP was restarted in place, its status
+  became OAuth, the orange reconnect banner disappeared, and one direct `workspace_list` call passed.
+  The source regression now generates that renewable config and a one-restart instruction; hosted
+  redeploy, Claude Code, and the broader audience/client/tenant/key/revocation matrix remain open.
 
 ## `GHUCP-007` — Personal Provider Account Lifecycle
 
