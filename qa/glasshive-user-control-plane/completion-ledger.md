@@ -25,7 +25,7 @@ Snapshot source:
 
 - parent baseline: `077e278a` on `codex/glasshive-user-flow-completion`; the candidate pin is not
   committed yet
-- GlassHive candidate: `ef674cd` on `codex/glasshive-user-flow-completion`
+- GlassHive candidate: `4b19770` on `codex/glasshive-user-flow-completion`
 - source was reconciled from current public `origin/main` plus the reviewed renewable-auth and
   user-flow fixes; the original working tree was not used as an authoring surface
 
