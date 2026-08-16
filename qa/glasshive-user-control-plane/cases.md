@@ -423,6 +423,10 @@ most specific existing QA owner when a scenario already has a detailed provider 
   promptly through its opaque `/r/{ref}` handoff to a starting watch surface and exactly one
   project/workspace/run exists; repeat with the same authenticated browser session, another owner,
   and an expired session to prove same-owner open, not-found isolation, and safe login recovery; force
+  runtime startup to prepare the reviewed image before the UI is ready, then prove account-check and
+  launch requests never own the cold build; bind a personal Codex account, remove and recreate the
+  container, and prove its auth-link setup preserves the host-owned persisted `.codex` directory so
+  a later bootstrap can seed `.codex/.tmp` without widening permissions; force
   a second cold-image preparation after the reviewed build input has become read-only and verify
   atomic replacement succeeds without partial input or temporary residue; build the digest-pinned
   base against the reviewed immutable Ubuntu snapshot, verify the package set is compatible, and

@@ -320,6 +320,9 @@ compliant hosted topology.
 - Setup uses an isolated PTY/device/browser flow for native subscriptions or a no-echo secure secret
   input for API keys, shows pending/ready/action-required/unsupported status, and supports connect,
   test, reconnect, rotate, disconnect, usage/readiness inspection, and default selection.
+- The reviewed worker substrate is prepared before the runtime becomes ready. Account test/reconnect
+  requests may inspect and repair private provider state, but must not synchronously build the shared
+  workstation image or exceed the browser edge deadline.
 - Native setup output is translated at the runtime boundary into provider-specific, allowlisted
   guidance: the reviewed sign-in destination, a bounded one-time code where supported, and an
   optional reviewed recovery destination. The main Connections surface exposes those values as one

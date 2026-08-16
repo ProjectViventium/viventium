@@ -150,6 +150,11 @@ start, `glasshive_rootless_docker_probe.py` calls Docker through that socket and
 JSON `SecurityOptions` to advertise `rootless`. Socket reachability alone is insufficient. Rootful,
 unavailable, malformed, or ambiguous socket results fail startup.
 
+After that probe and before accepting user traffic, the runtime prepares or verifies the reviewed
+workstation image through the same rootless daemon. A clean host may spend several minutes on this
+one-time startup step; provider checks and workspace launches must not trigger that build inside a
+browser request. Later starts reuse the provenance-checked image and complete the check quickly.
+
 ## Static and active environments
 
 The config compiler writes the secret-capable static files:

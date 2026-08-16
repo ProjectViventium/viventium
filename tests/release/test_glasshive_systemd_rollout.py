@@ -765,6 +765,11 @@ def test_systemd_units_use_slot_env_and_explicit_release_group_restart_contract(
     assert "glasshive_ui_readiness_probe.py" in ui
     assert "--auth-state ${GLASSHIVE_AUTH_STATE_PATH}" in ui
     assert "glasshive_rootless_docker_probe.py" in runtime
+    assert "-m workers_projects_runtime.prepare_worker_image" in runtime
+    assert runtime.index("glasshive_rootless_docker_probe.py") < runtime.index(
+        "-m workers_projects_runtime.prepare_worker_image"
+    ) < runtime.index("ExecStart=")
+    assert "TimeoutStartSec=20min" in runtime
     assert "SupplementaryGroups=glasshive-state" in runtime
     assert " docker" not in next(
         line for line in runtime.splitlines() if line.startswith("SupplementaryGroups=")
