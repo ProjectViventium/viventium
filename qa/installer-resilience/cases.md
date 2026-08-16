@@ -12,6 +12,7 @@ Use stable `INST-NNN` IDs for installer resilience cases.
 | `INST-002` | Public QA evidence is sanitized and reproducible | A PR reviewer can verify the behavior without private/local data | QA report, git diff, logs summary, generated artifacts | Public-safety scan plus relevant release tests | NOT YET RUN (cataloged 2026-05-17; next feature run required) |
 | `INST-003` | Supported installs and upgrades include the default nightly workflow without owner-specific setup. | A new local user gets GlassHive, Prompt Workbench, active nightly reflection, and memory hardening after signing into Codex or Claude. | installer/CLI, preflight, config compiler, generated env, install summary, Workbench seed | `test_default_nightly_routines.py`, `test_wizard.py`, `test_preflight.py`, `test_config_compiler.py`, `test_cli_upgrade.py`, `test_install_summary.py`, `test_prompt_workbench.py` | PASS 2026-05-31 ([report](reports/2026-05-31-default-nightly-workflow-install-upgrade-qa.md)); release suites and temp config simulations proved defaults, worker auth/profile selection, generated env, Workbench seed, summary rows, and no owner identity hardcode; clean separate-Mac install remains a release gate |
 | `INST-004` | Express Rich Brain Readiness aligns the installer with the cognitive-system runtime inventory without pretending user-owned integrations are ready. | A new or upgrading user gets the core brain spine automatically, guided setup for user-owned pieces, honest status/readiness rows, and no developer-private defaults. | wizard, preflight, config compiler, install/status summary, generated env, QA map, public examples | `test_brain_readiness.py`, `test_wizard.py`, `test_install_summary.py`, `test_config_compiler.py`, `test_preflight.py`, feature-owner suites as applicable | PARTIAL 2026-05-31 ([report](reports/2026-05-31-express-rich-brain-readiness-implementation.md)); automated registry/wizard/status coverage added, clean-machine browser/onboarding proof remains a release gate |
+| `INST-005` | A clean local install must materialize every executable and secret-bearing runtime dependency referenced by compiled configuration. | A new user does not receive unresolved GlassHive provider/auth or Viventium-Health placeholders, and all state remains inside the selected App Support root. | public installer, component bootstrap, private health runtime, generated env, doctor | `test_viventium_health_runtime.py`, `test_bootstrap_components.py`, `test_config_compiler.py`, `test_cli_upgrade.py` plus a fresh public-clone install | PARTIAL 2026-08-16; automated regression is green, fresh-clone rerun is required before PASS |
 
 ## `INST-001` - Core User Flow
 
@@ -160,6 +161,38 @@ Use stable `INST-NNN` IDs for installer resilience cases.
   coverage passed. Clean-machine public entrypoint install plus browser first-admin Brain Setup
   remains required before release-ready signoff.
 
+## `INST-005` - Clean-Install Runtime Dependency Closure
+
+- Requirement: every command, endpoint, credential, and state path referenced by generated local
+  configuration must be materialized by the supported public install, upgrade, bootstrap, and start
+  paths.
+- Escaped bug: a fresh install rendered GlassHive provider/auth and Viventium-Health placeholders
+  that were absent from runtime env, did not bootstrap the pinned health component, and wrote the
+  GlassHive DB path outside an explicitly selected App Support root.
+- Steps:
+  1. Clone the public candidate into a new directory with an empty, isolated App Support root.
+  2. Run the supported headless installer with a public example config and no start.
+  3. Confirm the pinned health component is bootstrapped and a private, pin-verified health runtime
+     is installed with `0700` directories/executable and a `0600` manifest.
+  4. Confirm every `${NAME}` placeholder in generated LibreChat YAML resolves from generated env,
+     local GlassHive MCP auth uses the generated local bearer, account assertions use a distinct
+     scoped secret, and the GlassHive DB path stays under the selected App Support root.
+  5. Run doctor and inspect only public-safe path/key presence, component refs, permissions, and
+     status; never publish generated credential values.
+- Expected result: install and doctor pass without owner-machine leftovers, unresolved placeholders,
+  or state escaping the selected root.
+- Forbidden result: generated config references missing values or executables; local MCP is left
+  unauthenticated; secrets are reused across authority planes; or the install writes state to the
+  canonical owner runtime instead of the isolated target.
+- Evidence to capture: fresh-clone commit, exact component refs, installer/doctor result, sanitized
+  placeholder-key set, health manifest metadata without paths/secrets, permissions, and state-root
+  containment.
+- Automation: `tests/release/test_viventium_health_runtime.py`,
+  `tests/release/test_bootstrap_components.py`, `tests/release/test_config_compiler.py`, and
+  `tests/release/test_cli_upgrade.py`.
+- Last run: PARTIAL 2026-08-16; exact automated regression passed, fresh public-clone install rerun
+  remains required.
+
 ## Natural User Use Case Checklist
 
 These rows are the minimum natural-user checklist gate for Installer Resilience. Add narrower feature-specific
@@ -186,3 +219,4 @@ rows before claiming a pass when the feature behavior changes.
 - `tests/release/test_prompt_workbench.py`
 - `tests/release/test_shell_init.py`
 - `tests/release/test_wizard.py`
+- `tests/release/test_viventium_health_runtime.py`

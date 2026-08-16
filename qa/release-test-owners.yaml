@@ -42,6 +42,8 @@ release_tests:
     qa_owner: qa/installer-resilience/cases.md
   tests/release/test_git_helper.py:
     qa_owner: qa/release-readiness/cases.md
+  tests/release/test_viventium_health_runtime.py:
+    qa_owner: qa/installer-resilience/cases.md
   tests/release/test_install_summary.py:
     qa_owner: qa/installer-resilience/cases.md
   tests/release/test_installer_ui.py:

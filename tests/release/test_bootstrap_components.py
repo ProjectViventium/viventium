@@ -28,6 +28,7 @@ def make_component(path: str, name: str = "LibreChat") -> dict[str, str]:
 def default_voice_components() -> list[dict[str, str]]:
     return [
         make_component("viventium_v0_4/LibreChat", "LibreChat"),
+        make_component("viventium_v0_4/Viventium-Health", "Viventium-Health"),
         make_component("viventium_v0_4/agents-playground", "agents-playground"),
         make_component("viventium_v0_4/agent-starter-react", "agent-starter-react"),
         make_component("viventium_v0_4/GlassHive", "GlassHive"),
@@ -45,13 +46,13 @@ def selected_component_names(config: dict) -> set[str]:
 def test_select_components_without_config_uses_public_modern_playground_default() -> None:
     names = selected_component_names({})
 
-    assert names == {"LibreChat", "agent-starter-react"}
+    assert names == {"LibreChat", "Viventium-Health", "agent-starter-react"}
 
 
 def test_select_components_defaults_to_modern_playground_for_voice_enabled_runtime() -> None:
     names = selected_component_names({"voice": {"mode": "local"}, "runtime": {}})
 
-    assert names == {"LibreChat", "agent-starter-react"}
+    assert names == {"LibreChat", "Viventium-Health", "agent-starter-react"}
 
 
 def test_select_components_keeps_classic_playground_opt_in_only() -> None:
@@ -59,7 +60,7 @@ def test_select_components_keeps_classic_playground_opt_in_only() -> None:
         {"voice": {"mode": "local"}, "runtime": {"playground_variant": "classic"}}
     )
 
-    assert names == {"LibreChat", "agents-playground"}
+    assert names == {"LibreChat", "Viventium-Health", "agents-playground"}
 
 
 def test_select_components_skips_playgrounds_when_voice_is_disabled() -> None:
@@ -67,7 +68,7 @@ def test_select_components_skips_playgrounds_when_voice_is_disabled() -> None:
         {"voice": {"mode": "disabled"}, "runtime": {"playground_variant": "classic"}}
     )
 
-    assert names == {"LibreChat"}
+    assert names == {"LibreChat", "Viventium-Health"}
 
 
 def test_select_components_fetches_glasshive_when_enabled() -> None:
@@ -79,7 +80,12 @@ def test_select_components_fetches_glasshive_when_enabled() -> None:
         }
     )
 
-    assert names == {"LibreChat", "agent-starter-react", "GlassHive"}
+    assert names == {
+        "LibreChat",
+        "Viventium-Health",
+        "agent-starter-react",
+        "GlassHive",
+    }
 
 
 def test_select_components_skips_glasshive_when_disabled() -> None:
@@ -91,7 +97,7 @@ def test_select_components_skips_glasshive_when_disabled() -> None:
         }
     )
 
-    assert names == {"LibreChat", "agent-starter-react"}
+    assert names == {"LibreChat", "Viventium-Health", "agent-starter-react"}
 
 
 def test_clone_or_update_component_accepts_bootable_vendored_checkout(tmp_path: Path) -> None:

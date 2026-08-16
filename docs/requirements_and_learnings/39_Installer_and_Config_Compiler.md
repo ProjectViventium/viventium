@@ -1036,3 +1036,17 @@ config and recompile/restart; they do not patch generated App Support env files.
     and dedicated TTS key as LiveKit calls
   - the hosted wizard must not silently default new installs to xAI before the user has explicitly
     configured and QA'd that provider
+- On August 16, 2026, Parallel Work clean-install QA exposed a generated-dependency closure rule:
+  - every executable and environment placeholder referenced by compiled `librechat.yaml` must be
+    materialized by the supported public install, upgrade, component-bootstrap, and start paths
+  - because the shipped local source declares the `viventium-health` MCP, component selection must
+    always fetch its pinned public component and install a private pin-verified runtime before
+    compiler and doctor validation
+  - local GlassHive provider and MCP requests must share a generated local bearer, while first-party
+    account assertions use a distinct scoped secret; neither authority may depend on an ambient
+    owner-machine shell export
+  - an explicit `--app-support-dir` or `VIVENTIUM_STATE_ROOT` owns all generated local state paths,
+    including `WPR_DB_PATH`; compiler constants for the canonical installed runtime must not leak
+    state into a different runtime during fresh-clone or side-by-side QA
+  - doctor must fail closed on an unresolved command, URL, token, or secret placeholder, and the
+    reusable acceptance case is `qa/installer-resilience/cases.md` `INST-005`

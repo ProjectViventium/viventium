@@ -27,6 +27,10 @@ def copy_cli_fixture(repo_root: Path) -> None:
         repo_root / "scripts" / "viventium" / "default_nightly_routines.py",
         "#!/usr/bin/env python3\nraise SystemExit(0)\n",
     )
+    write_executable(
+        repo_root / "scripts" / "viventium" / "viventium_health_runtime.py",
+        "#!/usr/bin/env python3\nprint('{}')\n",
+    )
     shutil.copy2(
         REPO_ROOT / "scripts" / "viventium" / "host_cli_auth.py",
         repo_root / "scripts" / "viventium" / "host_cli_auth.py",

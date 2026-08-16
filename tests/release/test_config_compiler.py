@@ -5568,3 +5568,54 @@ def test_public_schema_declares_parallel_work_dark_defaults() -> None:
     assert orchestration["properties"]["min_available_disk_mb"]["default"] == 4096
     assert orchestration["properties"]["authorization_horizon_seconds"]["default"] == 86400
     assert orchestration["properties"]["authorization_horizon_seconds"]["maximum"] == 86400
+
+
+def test_local_glasshive_compilation_closes_every_runtime_auth_placeholder(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import re
+
+    runtime_dir = tmp_path / "runtime_phase1"
+    runtime_dir.mkdir()
+    monkeypatch.setattr(config_compiler, "GLASSHIVE_RUNTIME_DIR", runtime_dir)
+    monkeypatch.setenv("VIVENTIUM_APP_SUPPORT_DIR", str(tmp_path / "app-support"))
+
+    config = minimal_compile_config()
+    config["integrations"]["glasshive"] = {
+        "enabled": True,
+        "orchestration": {"available": False},
+    }
+    assignments = config_compiler.build_agent_assignments(config)
+    env = config_compiler.render_runtime_env(config, assignments)
+    rendered = config_compiler.render_librechat_yaml(config, assignments, env)
+    placeholders = set(re.findall(r"\$\{([A-Z0-9_]+)\}", rendered))
+
+    assert env["GLASSHIVE_PROVIDER_BASE_URL"] == "http://127.0.0.1:8766/v1"
+    assert env["GLASSHIVE_PROVIDER_API_KEY"] == env["WPR_API_TOKEN"]
+    assert env["VIVENTIUM_GLASSHIVE_SERVICE_ASSERTION_SECRET"] not in {
+        env["VIVENTIUM_CALL_SESSION_SECRET"],
+        env["WPR_API_TOKEN"],
+    }
+    assert env["VIVENTIUM_HEALTH_COMMAND"] == str(
+        tmp_path / "app-support" / "health" / "runtime" / "bin" / "viventium-health"
+    )
+    assert env["WPR_DB_PATH"] == str(
+        tmp_path
+        / "app-support"
+        / "state"
+        / "runtime"
+        / "isolated"
+        / "glasshive"
+        / "runtime_phase1.db"
+    )
+    assert placeholders <= set(env)
+
+    servers = config_compiler.build_mcp_servers(
+        config,
+        {"lc_api_port": 3180},
+        "agent-main",
+    )
+    assert servers["glasshive-workers-projects"]["headers"]["X-WPR-Token"] == (
+        "${GLASSHIVE_PROVIDER_API_KEY}"
+    )

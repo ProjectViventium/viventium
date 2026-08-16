@@ -2697,6 +2697,9 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
         stt_config = {}
     integrations = config.get("integrations", {})
     runtime = config.get("runtime", {})
+    app_support_dir = Path(
+        os.environ.get("VIVENTIUM_APP_SUPPORT_DIR") or APP_SUPPORT_VIVENTIUM_DIR
+    ).expanduser()
     network = runtime.get("network", {}) or {}
     prompt_workbench = runtime.get("prompt_workbench", config.get("prompt_workbench", {}) or {}) or {}
     agents = config.get("agents", {}) or {}
@@ -2773,6 +2776,9 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
         "VIVENTIUM_CONFIG_VERSION": str(CONFIG_VERSION),
         "VIVENTIUM_INSTALL_MODE": config["install"]["mode"],
         "VIVENTIUM_RUNTIME_PROFILE": runtime_profile,
+        "VIVENTIUM_HEALTH_COMMAND": str(
+            app_support_dir / "health" / "runtime" / "bin" / "viventium-health"
+        ),
         "VIVENTIUM_PLAYGROUND_VARIANT": playground_variant,
         "PLAYGROUND_VARIANT": playground_variant,
         "VIVENTIUM_LOG_LEVEL": runtime.get("log_level", "info"),
@@ -3175,13 +3181,14 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
         if glasshive_host_worker["claude_effort"]:
             env["WPR_CLAUDE_CODE_EFFORT"] = str(glasshive_host_worker["claude_effort"])
         if not glasshive_enterprise["enabled"]:
+            configured_state_root = os.environ.get("VIVENTIUM_STATE_ROOT", "").strip()
+            state_root = (
+                Path(configured_state_root).expanduser()
+                if configured_state_root
+                else app_support_dir / "state" / "runtime" / runtime_profile
+            )
             env["WPR_DB_PATH"] = str(
-                APP_SUPPORT_VIVENTIUM_DIR
-                / "state"
-                / "runtime"
-                / runtime_profile
-                / "glasshive"
-                / "runtime_phase1.db"
+                state_root / "glasshive" / "runtime_phase1.db"
             )
         env["WPR_LIBRECHAT_UPLOADS_ROOT"] = str(LIBRECHAT_UPLOADS_DIR)
         env["WPR_BOOTSTRAP_SOURCE_ROOTS"] = str(LIBRECHAT_UPLOADS_DIR)
@@ -3190,6 +3197,10 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
         env["VIVENTIUM_GLASSHIVE_CAPABILITY_BROKER_SECRET"] = scoped_secret(
             call_session_secret,
             "glasshive-capability-broker",
+        )
+        env["VIVENTIUM_GLASSHIVE_SERVICE_ASSERTION_SECRET"] = scoped_secret(
+            call_session_secret,
+            "glasshive-account-api",
         )
         if glasshive_enterprise["enabled"]:
             enterprise_public_api_origin = str(network.get("public_api_origin", "") or "").strip()
@@ -3238,6 +3249,18 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
             if glasshive_enterprise["service_token"]:
                 env[str(glasshive_enterprise["service_token_env"])] = str(glasshive_enterprise["service_token"])
                 env["WPR_API_TOKEN"] = str(glasshive_enterprise["service_token"])
+
+        provider_token = str(env.get("WPR_API_TOKEN") or "").strip() or scoped_secret(
+            call_session_secret,
+            "glasshive-provider",
+        )
+        env["WPR_API_TOKEN"] = provider_token
+        env["GLASSHIVE_PROVIDER_API_KEY"] = provider_token
+        env["GLASSHIVE_PROVIDER_BASE_URL"] = (
+            f"{str(glasshive_enterprise['artifact_base_url']).rstrip('/')}/v1"
+            if glasshive_enterprise["enabled"]
+            else "http://127.0.0.1:8766/v1"
+        )
 
     public_client_origin = str(network.get("public_client_origin", "") or "").strip()
     public_api_origin = str(network.get("public_api_origin", "") or "").strip()
@@ -3969,6 +3992,8 @@ def build_mcp_servers(
             glasshive_headers["X-Viventium-User-Role"] = "{{LIBRECHAT_USER_ROLE}}"
             if glasshive_enterprise["service_token_delivery"] == "client_header":
                 glasshive_headers["X-WPR-Token"] = "${" + str(glasshive_enterprise["service_token_env"]) + "}"
+        else:
+            glasshive_headers["X-WPR-Token"] = "${GLASSHIVE_PROVIDER_API_KEY}"
         glasshive_server = {
             "type": "streamable-http",
             "url": "${GLASSHIVE_MCP_URL}",
@@ -4241,6 +4266,8 @@ def render_service_envs(output_dir: Path, env: dict[str, str]) -> None:
         "ANTHROPIC_API_KEY",
         "XAI_API_KEY",
         "GROQ_API_KEY",
+        "GLASSHIVE_PROVIDER_API_KEY",
+        "GLASSHIVE_PROVIDER_BASE_URL",
         "MONGO_URI",
         "ALLOW_EMAIL_LOGIN",
         "ALLOW_REGISTRATION",

@@ -692,7 +692,7 @@ def select_components(components: list[dict[str, Any]], config: dict[str, Any]) 
     if not config:
         config = {"voice": {"mode": "local"}, "runtime": {"playground_variant": "modern"}}
 
-    selected_names = {"LibreChat"}
+    selected_names = {"LibreChat", "Viventium-Health"}
     voice_mode = str(config.get("voice", {}).get("mode", "disabled")).strip().lower()
     playground_variant = str(
         config.get("runtime", {}).get("playground_variant", "modern")

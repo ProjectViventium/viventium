@@ -226,6 +226,13 @@ bootstrap_components() {
     "$@"
 }
 
+ensure_viventium_health_runtime() {
+  refresh_repo_python
+  "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/viventium_health_runtime.py" install \
+    --repo-root "$REPO_ROOT" \
+    --app-support-dir "$APP_SUPPORT_DIR"
+}
+
 bootstrap_components_upgrade_checked() {
   local bootstrap_output=""
   if ! bootstrap_output="$(bootstrap_components "$@")"; then
@@ -3470,6 +3477,7 @@ case "$COMMAND" in
     CURRENT_INSTALL_STAGE="bootstrap-components"
     write_install_stage "$CURRENT_INSTALL_STAGE"
     bootstrap_components
+    ensure_viventium_health_runtime >/dev/null
     CURRENT_INSTALL_STAGE="compile-config"
     write_install_stage "$CURRENT_INSTALL_STAGE"
     if [[ ${#INSTALL_ARGS[@]} -gt 0 ]]; then
@@ -3581,6 +3589,7 @@ case "$COMMAND" in
     run_preflight apply
     apply_default_nightly_routines
     bootstrap_components_upgrade_checked
+    ensure_viventium_health_runtime >/dev/null
     compile_config
     "$REPO_ROOT/scripts/viventium/doctor.sh" \
       --config "$CONFIG_FILE" \
@@ -3655,6 +3664,7 @@ case "$COMMAND" in
   bootstrap-components)
     acquire_cli_lock "$COMMAND"
     bootstrap_components "$@"
+    ensure_viventium_health_runtime >/dev/null
     ;;
   compile-config)
     acquire_cli_lock "$COMMAND"
@@ -3945,6 +3955,7 @@ case "$COMMAND" in
       exit 1
     fi
     bootstrap_components --prefer-existing-checkout-head
+    ensure_viventium_health_runtime >/dev/null
     # === VIVENTIUM START ===
     # Feature: Canonical runtime regeneration on every start.
     # Purpose: prevent stale generated runtime files from surviving across installer/compiler
