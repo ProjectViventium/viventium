@@ -14,6 +14,29 @@ def load_json(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def load_json_rejecting_duplicate_keys(path: Path) -> dict:
+    def reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict:
+        payload: dict[str, object] = {}
+        for key, value in pairs:
+            if key in payload:
+                raise ValueError(f"duplicate JSON key: {key}")
+            payload[key] = value
+        return payload
+
+    return json.loads(
+        path.read_text(encoding="utf-8"),
+        object_pairs_hook=reject_duplicate_keys,
+    )
+
+
+def test_librechat_root_package_manifest_has_no_duplicate_keys() -> None:
+    package = load_json_rejecting_duplicate_keys(
+        REPO_ROOT / "viventium_v0_4" / "LibreChat" / "package.json"
+    )
+
+    assert package["name"] == "LibreChat"
+
+
 def test_public_component_manifest_uses_projectviventium_origins() -> None:
     payload = load_json(REPO_ROOT / "devops" / "git" / "repos.json")
     invalid = {

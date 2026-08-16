@@ -462,6 +462,17 @@ def explicit_url_port(value: str) -> str:
     return str(port)
 
 
+def explicit_local_url_port(value: str) -> str:
+    """Return the explicit port only when the URL targets this machine."""
+    try:
+        parsed = urlparse(str(value or "").strip())
+    except ValueError:
+        return ""
+    if (parsed.hostname or "").lower() not in {"localhost", "127.0.0.1", "::1"}:
+        return ""
+    return explicit_url_port(value)
+
+
 def _executable_path(path: Path) -> bool:
     return path.is_file() and os.access(path, os.X_OK)
 
@@ -3095,7 +3106,7 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
         "VIVENTIUM_SCHEDULER_SECRET": call_session_secret,
         "VIVENTIUM_LIBRECHAT_ORIGIN": f"http://127.0.0.1:{profile['lc_api_port']}",
         "SCHEDULING_MCP_URL": f"http://localhost:{profile['scheduling_mcp_port']}/mcp",
-        "GLASSHIVE_MCP_URL": "http://127.0.0.1:8767/mcp",
+        "GLASSHIVE_MCP_URL": str(glasshive_enterprise["mcp_url"]),
         "GOOGLE_WORKSPACE_MCP_URL": f"http://localhost:{profile['google_mcp_port']}/mcp",
         "GOOGLE_WORKSPACE_MCP_AUTH_URL": f"http://localhost:{profile['google_mcp_port']}/authorize",
         "GOOGLE_WORKSPACE_MCP_TOKEN_URL": f"http://localhost:{profile['google_mcp_port']}/token",
@@ -3169,14 +3180,20 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
             if glasshive_enterprise["enabled"]
             else integrations.get("glasshive", {}).get("operator_base_url") or "http://127.0.0.1:8780"
         ).rstrip("/")
-        if glasshive_enterprise["enabled"]:
-            env["GLASSHIVE_MCP_URL"] = str(glasshive_enterprise["mcp_url"])
-            mcp_port = explicit_url_port(str(glasshive_enterprise["mcp_url"]))
-            if mcp_port:
-                env["GLASSHIVE_MCP_PORT"] = mcp_port
-            ui_port = explicit_url_port(glasshive_operator_base_url)
-            if ui_port:
-                env["GLASSHIVE_UI_PORT"] = ui_port
+        mcp_port = (
+            explicit_url_port(str(glasshive_enterprise["mcp_url"]))
+            if glasshive_enterprise["enabled"]
+            else explicit_local_url_port(str(glasshive_enterprise["mcp_url"]))
+        )
+        if mcp_port:
+            env["GLASSHIVE_MCP_PORT"] = mcp_port
+        ui_port = (
+            explicit_url_port(glasshive_operator_base_url)
+            if glasshive_enterprise["enabled"]
+            else explicit_local_url_port(glasshive_operator_base_url)
+        )
+        if ui_port:
+            env["GLASSHIVE_UI_PORT"] = ui_port
         env["GLASSHIVE_OPERATOR_BASE_URL"] = glasshive_operator_base_url
         env["GLASSHIVE_DEFAULT_LAUNCH_SURFACE"] = "desktop"
         env["GLASSHIVE_SHOW_LIVE_TERMINAL_IN_DESKTOP"] = "true"

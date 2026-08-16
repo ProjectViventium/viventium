@@ -9997,34 +9997,28 @@ if [[ -n "${VIVENTIUM_WEB_SEARCH_PROVIDER:-}" ]]; then
   echo -e "  Web Search:        ${GREEN}${VIVENTIUM_WEB_SEARCH_PROVIDER}${NC}"
 fi
 if [[ -n "${VIVENTIUM_CALL_SESSION_SECRET:-}" ]]; then
-  _secret_len=${#VIVENTIUM_CALL_SESSION_SECRET}
-  if [[ $_secret_len -ge 8 ]]; then
-    _secret_mask="${VIVENTIUM_CALL_SESSION_SECRET:0:4}...${VIVENTIUM_CALL_SESSION_SECRET: -4}"
-  else
-    _secret_mask="(len=$_secret_len)"
-  fi
-  echo -e "  Call Secret:       ${GREEN}${_secret_mask}${NC}"
+  echo -e "  Call Secret:       ${GREEN}Configured${NC}"
 fi
 if [[ -n "${OPENAI_API_KEY:-}" ]]; then
-  echo -e "  OpenAI API Key:    ${GREEN}${OPENAI_API_KEY:0:8}...${NC}"
+  echo -e "  OpenAI API Key:    ${GREEN}Configured${NC}"
 else
   echo -e "  OpenAI API Key:    ${YELLOW}Not set (STT will fail)${NC}"
 fi
 # Check for ElevenLabs API key (support both ELEVEN_API_KEY and ELEVENLABS_API_KEY)
 ELEVEN_API_KEY_FINAL="${ELEVEN_API_KEY:-${ELEVENLABS_API_KEY:-}}"
 if [[ -n "${ELEVEN_API_KEY_FINAL:-}" ]]; then
-  echo -e "  ElevenLabs API Key: ${GREEN}${ELEVEN_API_KEY_FINAL:0:8}...${NC}"
+  echo -e "  ElevenLabs API Key: ${GREEN}Configured${NC}"
 else
   echo -e "  ElevenLabs API Key: ${YELLOW}Not set (TTS will fallback to OpenAI)${NC}"
 fi
 # Check for xAI API key
 if [[ -n "${XAI_API_KEY:-}" ]]; then
-  echo -e "  xAI API Key:        ${GREEN}${XAI_API_KEY:0:8}...${NC}"
+  echo -e "  xAI API Key:        ${GREEN}Configured${NC}"
 else
   echo -e "  xAI API Key:        ${YELLOW}Not set${NC}"
 fi
 if [[ -n "${CARTESIA_API_KEY:-}" ]]; then
-  echo -e "  Cartesia API Key:   ${GREEN}${CARTESIA_API_KEY:0:8}...${NC}"
+  echo -e "  Cartesia API Key:   ${GREEN}Configured${NC}"
 else
   echo -e "  Cartesia API Key:   ${YELLOW}Not set${NC}"
 fi
@@ -11009,7 +11003,7 @@ PY
         export VIVENTIUM_CARTESIA_EMOTION="${VIVENTIUM_CARTESIA_EMOTION:-neutral}"
         # Debug: Show what we're exporting
         if [[ -n "${ELEVEN_API_KEY:-}" ]]; then
-          echo -e "${CYAN}[viventium]${NC} ELEVEN_API_KEY is set (${ELEVEN_API_KEY:0:8}...)"
+          echo -e "${CYAN}[viventium]${NC} ELEVEN_API_KEY is configured"
         else
           echo -e "${YELLOW}[viventium]${NC} WARNING: ELEVEN_API_KEY not set - ElevenLabs TTS will fallback to OpenAI"
         fi
@@ -11017,7 +11011,7 @@ PY
           echo -e "${CYAN}[viventium]${NC} xAI voice available"
         fi
         if [[ -n "${CARTESIA_API_KEY:-}" ]]; then
-          echo -e "${CYAN}[viventium]${NC} CARTESIA_API_KEY is set (${CARTESIA_API_KEY:0:8}...) - Cartesia TTS available"
+          echo -e "${CYAN}[viventium]${NC} CARTESIA_API_KEY is configured - Cartesia TTS available"
         fi
         voice_stt_provider_normalized="$(printf '%s' "${VIVENTIUM_STT_PROVIDER:-}" | tr '[:upper:]' '[:lower:]')"
         if [[ "$voice_stt_provider_normalized" == "whisper_local" || "$voice_stt_provider_normalized" == "pywhispercpp" ]]; then

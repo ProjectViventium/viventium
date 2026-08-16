@@ -1410,6 +1410,42 @@ def test_glasshive_azure_enterprise_local_simulation_compiles_matching_ports(
     assert env["GLASSHIVE_SIGNED_LINK_SECRET"] != env["WPR_API_TOKEN"]
 
 
+def test_local_glasshive_compiles_configured_mcp_and_operator_ports() -> None:
+    config = minimal_compile_config()
+    config["integrations"]["glasshive"] = {
+        "enabled": True,
+        "mcp_url": "http://127.0.0.1:25767/mcp",
+        "operator_base_url": "http://127.0.0.1:25780",
+    }
+
+    env = config_compiler.render_runtime_env(
+        config,
+        config_compiler.build_agent_assignments(config),
+    )
+
+    assert env["GLASSHIVE_MCP_URL"] == "http://127.0.0.1:25767/mcp"
+    assert env["GLASSHIVE_MCP_PORT"] == "25767"
+    assert env["GLASSHIVE_OPERATOR_BASE_URL"] == "http://127.0.0.1:25780"
+    assert env["GLASSHIVE_UI_PORT"] == "25780"
+
+
+def test_startup_status_never_prints_partial_credential_material() -> None:
+    launcher = START_SCRIPT.read_text(encoding="utf-8")
+
+    forbidden_expansions = (
+        "${VIVENTIUM_CALL_SESSION_SECRET:0:",
+        "${VIVENTIUM_CALL_SESSION_SECRET: -",
+        "${OPENAI_API_KEY:0:",
+        "${ELEVEN_API_KEY_FINAL:0:",
+        "${ELEVEN_API_KEY:0:",
+        "${XAI_API_KEY:0:",
+        "${CARTESIA_API_KEY:0:",
+    )
+    assert all(expansion not in launcher for expansion in forbidden_expansions)
+    assert 'Call Secret:       ${GREEN}Configured${NC}' in launcher
+    assert 'OpenAI API Key:    ${GREEN}Configured${NC}' in launcher
+
+
 @pytest.mark.parametrize(
     ("enterprise", "expected_error"),
     [
