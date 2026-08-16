@@ -1457,6 +1457,21 @@ def test_local_glasshive_provider_assignment_avoids_python312_only_fstring_gramm
     assert 'else f"{local_glasshive_provider_base_url(\n' not in compiler_source
 
 
+def test_compiler_derives_a_livekit_secret_that_the_server_accepts() -> None:
+    config = minimal_compile_config()
+    env = config_compiler.render_runtime_env(
+        config,
+        config_compiler.build_agent_assignments(config),
+    )
+
+    assert env["LIVEKIT_API_SECRET"] == config_compiler.scoped_secret(
+        "call-session-test",
+        "livekit-api",
+    )
+    assert len(env["LIVEKIT_API_SECRET"]) >= 32
+    assert env["LIVEKIT_API_SECRET"] != "call-session-test"
+
+
 def test_startup_status_never_prints_partial_credential_material() -> None:
     launcher = START_SCRIPT.read_text(encoding="utf-8")
     legacy_launcher = LEGACY_START_SCRIPT.read_text(encoding="utf-8")
