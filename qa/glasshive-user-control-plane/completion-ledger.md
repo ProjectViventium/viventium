@@ -19,22 +19,22 @@ When implementation changes product truth, update Requirement 55 and the relevan
 with the code. When evidence changes status, update `coverage.md`, the applicable case, and a dated
 report. This ledger then summarizes that evidence; it never upgrades a status on its own.
 
-Snapshot date: **2026-08-15**
+Snapshot date: **2026-08-16**
 
 Snapshot source:
 
-- parent candidate: `c4f01c9592b6b960297a2058ae7339c6e70742d4` on
+- parent candidate: `71f4057971dc219ece6fd4235cf7ba538d404262` on
   `codex/glasshive-user-flow-completion`
-- GlassHive candidate: `4d4a3545fca9921148d2c3113bc313e527a78f3b` on
+- GlassHive candidate: `b0dc8321554a188be170c5b38b3e77e1a34a3b79` on
   `codex/glasshive-user-flow-completion`
 - source was reconciled from current public `origin/main` plus the reviewed renewable-auth and
   user-flow fixes; the original working tree was not used as an authoring surface
 
 Overall status: **PARTIAL**. The exact installed release now passes the core organization login,
 native Codex/Claude MCP, deployment-managed Codex, personal Codex, workspace output/refresh/rename/
-duplicate, and manual schedule occurrence paths. SharePoint/connected-service worker use, personal
-Claude workers, two-user denial, automatic schedule fire, Library worker use, and clean
-install/restore remain open.
+duplicate, manual schedule occurrence, and official native Outlook/SharePoint read/reuse paths.
+Personal Claude workers, confirmed connected-service write/revoke/renewal/two-user coverage,
+automatic schedule fire, Library worker use, and clean install/restore remain open.
 
 ## Exact final goal
 
@@ -144,8 +144,8 @@ read a tool inventory, construct OAuth URLs, manage callbacks, or understand int
 - Full provider-hosted login/logout/denial/replay/profile matrix.
 - Provider account reconnect, rotate, disconnect, forget, concurrency, and second-account isolation.
 - Installed duplicate/template inspection and crash recovery.
-- Real SharePoint/connected-service login through a worker with visible result and bounded write
-  confirmation.
+- Confirmed harmless connected-service write plus revoke, renewal, reconnect/forget, outage, and
+  two-user isolation paths; real native read/reuse is proven for personal Codex.
 - Real Library package provenance, worker use, upgrade, rollback, and dependency-failure recovery.
 - Automatic scheduled fire across expiry/renewal, restart, DST, overlap, misfire, and exactly-once
   delivery.
@@ -185,7 +185,7 @@ read a tool inventory, construct OAuth URLs, manage callbacks, or understand int
 | Private persistent workspace | PARTIAL | Strong real mission/file/Watch/output/refresh evidence exists; installed restart/profile/grant continuity remains |
 | Duplicate/template | PARTIAL | Automated/local evidence exists; installed and two-user reapproval proof remains |
 | Codex/Claude MCP control | PARTIAL | Exact installed fresh-process one-call traces passed for both; clean public install/update/remove and two-owner parity remain |
-| SharePoint/connected service use | PENDING | Broker components exist; no complete real login → worker use → visible result path |
+| SharePoint/connected service use | PARTIAL | Official native Outlook/SharePoint authorization, personal Codex worker reads, browser refresh/retention, same-worker restart/reuse, external-client continuation, and DB/lease correlation passed; confirmed write, revoke/renewal, personal Claude, and two-user coverage remain open |
 | Library skill/plugin lifecycle | PARTIAL | Local add/remove passed, but three focused fixture tests currently fail and real package/worker use is open |
 | Recurring schedules | PARTIAL | Exact installed Run now completed visibly with backend correlation; automatic fire/renewal/restart remains |
 | Human naming/discovery | PARTIAL | Basic naming/search/persistence exists; scale and performance remain |
@@ -383,8 +383,11 @@ required review; a second owner receives no source capability.
 **Final user outcome:** A user connects SharePoint or another supported service once, grants a
 bounded capability to a workspace, and the general worker chooses and uses it successfully.
 
-**Current:** The optional broker/reference/grant/renewal boundaries have automated evidence. No real
-SharePoint login → worker tool call → visible result path has passed.
+**Current:** The optional broker/reference/grant/renewal boundaries have automated evidence. A real
+official SharePoint/Outlook authorization → personal Codex worker read → visible result → compute
+release → same-worker reuse path has passed. Confirmed write, brokered-provider parity,
+revocation/renewal, personal Claude, and the second-user matrix remain open. See the
+[dated native-reuse report](reports/2026-08-16-native-microsoft-workspace-reuse.md).
 
 **Smallest plan:**
 
@@ -575,7 +578,7 @@ The order is deliberate. Do not start a later phase merely because its code is e
 2. Reconcile `coverage.md` with the red snapshot; record exact source, pin, client versions, tool
    count, current hosted artifact, and open gates.
 3. Deploy the already committed renewable Codex generated-setup fix independently of packaging;
-   prove a fresh native login, restart, and tool call in the intended AITP Edge profile.
+   prove a fresh native login, restart, and tool call in the intended signed-in browser profile.
 4. Preserve the captured escaped-task trace and compare it with the post-install direct-call trace;
    classify action, discovery, invalid-input retry, status, wait/poll, and result-retrieval calls.
 5. Record the approved package direction and call-trace/defer/polling acceptance in Requirement 55,
@@ -629,7 +632,7 @@ approved platform/legal item remains `BLOCKED` and is not advertised as supporte
 ## Full user-level acceptance matrix
 
 Every surface must cover the applicable columns below. A row is not complete because one column
-passed. Hosted browser work must use the intended already-open signed-in AITP Edge profile; evidence
+passed. Hosted browser work must use the intended already-open signed-in browser profile; evidence
 from a different profile is inadmissible for that run.
 
 | Surface | QA case(s) | Happy path | First-run/empty | Auth/config missing | Denial/isolation | Retry/interruption | Refresh/restart | Installed evidence |

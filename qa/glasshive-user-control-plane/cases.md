@@ -20,7 +20,7 @@ most specific existing QA owner when a scenario already has a detailed provider 
 | `GHUCP-009` | `GH-UCP-006` | A mission uses only its selected compatible account and releases its lease | Worker, provider home | Mission tests + live worker | 2026-08-15 PARTIAL: exact installed personal Codex mission completed and released its lease while Work AI used none; contention/cancel/failure recovery matrix remains open |
 | `GHUCP-010` | `GH-UCP-006` | Required/busy/unsupported account states fail closed; preferred policy preserves legacy compatibility | Browser, worker | Mission/policy tests | 2026-08-15 PARTIAL: installed deployment-managed and personal Codex routes both completed with exact lease isolation; wider provider/platform matrix remains open |
 | `GHUCP-011` | `GH-UCP-007` | User creates and finds a private, human-named workspace | Browser, API, DB | Catalog tests + Playwright | 2026-08-15 PARTIAL: exact installed browser missions, outputs, rename, catalog, and refresh pass; two-user/scale path remains open |
-| `GHUCP-012` | `GH-UCP-007` | Rename, favorite, resume, refresh, and restart preserve workspace identity and state | Browser, workspace desktop | Catalog/UI tests + restart QA | 2026-08-15 PARTIAL: installed rename/output/refresh and retained idle compute pass; full runtime restart/profile/grant continuity remains open |
+| `GHUCP-012` | `GH-UCP-007` | Rename, favorite, resume, refresh, and restart preserve workspace identity and state | Browser, workspace desktop | Catalog/UI tests + restart QA | 2026-08-16 PARTIAL: the installed Favorite workspace became Retained after compute release, reopened the same worker, and reused native Outlook/SharePoint access; full runtime-service restart and cross-profile/grant continuity remain open |
 | `GHUCP-013` | `GH-UCP-008` | Duplicate/template creates a fresh identity and remains review-pending until exact destination decisions are confirmed | Browser, filesystem, DB | Duplicate/template transaction tests + Playwright | 2026-08-15 PARTIAL: installed deployment-workspace duplicate created one fresh copy without compute; template/two-user installed execution remains open |
 | `GHUCP-014` | `GH-UCP-008` | Unsafe links, oversized trees, secrets, cookies, leases, grants, and schedules are not copied | API, filesystem, DB | Duplicate security tests | 2026-08-05 PARTIAL: synthetic tests only |
 | `GHUCP-015` | `GH-UCP-009` | User connects a service once and the selected worker uses it through the broker | Browser, broker MCP, worker | Broker cases + live worker | PENDING for this candidate |
@@ -42,7 +42,7 @@ most specific existing QA owner when a scenario already has a detailed provider 
 | `GHUCP-031` | `GH-UCP-003`, `017` | Runtime and workers can verify identity but cannot read the private signer key or mint assertions | Services, worker, filesystem | Security probes + key rotation | PENDING |
 | `GHUCP-032` | `GH-UCP-007`, `017` | Existing state migrates from a rehearsed clone and a failed upgrade restores the verified database | Installer, DB, browser, MCP | Migration/restore harness + user QA | PARTIAL |
 | `GHUCP-033` | `GH-UCP-017`–`018` | Runtime, MCP, and BFF cut over as one healthy release or not at all | Installer, edge, browser, MCP | Failure injection + full readiness | PARTIAL |
-| `GHUCP-034` | `GH-UCP-004`, `005`, `007`, `011`, `018` | One short prompt from a fresh external AI creates or reuses a private favorite workspace, connects a native user service inside it, uses it, and reuses it after restart | Codex/Claude, MCP, worker, browser | MCP contract + real client/worker/browser | 2026-08-16 PARTIAL: source one-call/favorite/worker-local contract passes; installed native consent/use/restart proof pending |
+| `GHUCP-034` | `GH-UCP-004`, `005`, `007`, `011`, `018` | One short prompt from a fresh external AI creates or reuses a private favorite workspace, connects a native user service inside it, uses it, and reuses it after restart | Codex/Claude, MCP, worker, browser | MCP contract + real client/worker/browser | 2026-08-16 PASS for installed personal Codex / PARTIAL across clients: official native consent, real Outlook/SharePoint reads, Favorite retention, compute release, same-worker reuse, and a fresh one-launch/one-wait external continuation passed; personal Claude remains open |
 
 ## `GHUCP-001` — Additive Compatibility Baseline
 
@@ -197,7 +197,7 @@ most specific existing QA owner when a scenario already has a detailed provider 
   registers the exact canonical HTTPS MCP URL and that the advertised authorization scope uses that
   URL as its prefix; also try the escaped mismatched `api://...` scope and require compilation or
   authorization to fail without changing client state. Authenticate through each client's native
-  flow in the intended already-open signed-in AITP Edge profile—never a different browser profile—
+  flow in the intended already-open signed-in browser profile—never a different browser profile—
   without constructing an OAuth URL or callback listener. Require the first 401 challenge to
   carry the exact scope and canonical resource metadata URL. Verify shared server instructions are
   short, choose one matching action, and never narrate the catalog. Verify with exactly one
@@ -1046,11 +1046,19 @@ most specific existing QA owner when a scenario already has a detailed provider 
   native tool result + refresh/restart/reuse + backend correlation.
 - Automation: companion-skill contract and MCP one-call Favorite regression; real provider consent
   remains browser QA.
-- Last run: PARTIAL 2026-08-16. The fresh external-client run created one personal Codex workspace
-  and reached official service consent, but the pre-fix controller then explored unrelated surfaces
-  and attempted a controlling-client install. Source regressions now enforce worker-local setup,
-  wait-only follow-up, short human naming, and Favorite-before-run. Installed candidate, completed
-  organization consent, real service read, and restart/reuse proof remain pending.
+- Last run: PASS for the personal-Codex path / PARTIAL across all clients, 2026-08-16. A fresh
+  isolated Codex task created one private favorite personal workspace with one `workspace_launch`.
+  Official Outlook and SharePoint authorization was completed on the matching personal OpenAI
+  account; the worker then returned both services' read-only metadata. Browser refresh showed the
+  same card as Favorite and Retained, and the same worker restarted and read a different SharePoint
+  item without reconnecting. After exact-name resolver regressions were deployed, a final fresh
+  external-client prompt used exactly one `workspace_launch` plus one `workspace_wait`, reused the
+  original worker without a client-side discovery call or duplicate, and returned both metadata
+  results. Runtime/API correlation showed a Completed run with output, no failure class, no active
+  run or sandbox, a paused Favorite card, and idle aggregate metrics. An installed unknown-alias
+  check failed before mutation with project/worker/run counts unchanged. Personal Claude worker parity and the wider
+  revoke/write/two-user matrix remain open. See
+  [dated native-reuse report](reports/2026-08-16-native-microsoft-workspace-reuse.md).
 
 ## Natural User Use Case Checklist
 
@@ -1058,8 +1066,8 @@ most specific existing QA owner when a scenario already has a detailed provider 
 | --- | --- | --- | --- | --- | --- | --- |
 | `GHUCP-UC-001` | Sign in with organization SSO, provider-hosted email/password, or the optional admin-provisioned local factor; refresh and log out; confirm public signup/reset is absent | `GH-UCP-002` / `GHUCP-002`–`003` | Real browser + IdP/local candidate | Gateway logs, principal/session state | Secure entry, one immutable owner, and clear closed-enrollment policy/recovery | PARTIAL 2026-08-15: installed organization login plus prior local-factor refresh/restart/logout pass; full IdP denial/logout/profile matrix remains open |
 | `GHUCP-UC-002` | Connect personal Codex/Claude and choose it for one mission | `GH-UCP-005`–`006` / `GHUCP-007`–`010` | Browser + native worker | Provider home, lease, worker audit, DB | Only that user's selected account is used | PARTIAL 2026-08-15: a real personal Codex mission and isolated lease passed; personal Claude worker and full lifecycle remain open |
-| `GHUCP-UC-003` | Create, find, rename, favorite, open output, and duplicate/template a workspace; refresh and resolve every copied capability before running | `GH-UCP-007`–`008` / `GHUCP-011`–`014` | Glass Drive + desktop | API/DB/files/browser state | Modern control-room navigation, non-mutating output, human-named persistence, and atomic safe copy | PARTIAL 2026-08-15: installed create/output/refresh/rename/duplicate passed; favorite/template/two-user full matrix remains open |
-| `GHUCP-UC-004` | Connect a service and let a worker use it | `GH-UCP-009` / `GHUCP-015`–`016` | Browser + broker + worker | Grant, tool calls, output, logs | Worker chooses a real scoped tool path | PENDING |
+| `GHUCP-UC-003` | Create, find, rename, favorite, open output, and duplicate/template a workspace; refresh and resolve every copied capability before running | `GH-UCP-007`–`008` / `GHUCP-011`–`014` | Glass Drive + desktop | API/DB/files/browser state | Modern control-room navigation, non-mutating output, human-named persistence, and atomic safe copy | PARTIAL 2026-08-16: installed create/output/refresh/rename/Favorite/reuse/duplicate passed; template/two-user full matrix remains open |
+| `GHUCP-UC-004` | Connect a service and let a worker use it | `GH-UCP-009` / `GHUCP-015`–`016`, `034` | Browser + broker/native worker | Grant or native authorization, tool calls, output, logs | Worker chooses a real scoped tool path | PASS for installed personal Codex native read/reuse 2026-08-16; brokered-provider parity, confirmed write/revoke/renewal, personal Claude, and two-user coverage remain PARTIAL |
 | `GHUCP-UC-005` | Ask to add, update, disable, and remove a Library item | `GH-UCP-010` / `GHUCP-017`–`018` | Browser + worker | Manifest/hash, pending change, adapter, grant | Human-confirmed reusable capability | PARTIAL: local browser add/remove passed; update/worker use pending |
 | `GHUCP-UC-006` | Copy the one-step deployment-specific instruction or use Manual setup in Codex/Claude, then manage the same workspace | `GH-UCP-004`, `012` / `GHUCP-005`–`006`, `020` | Browser + both clients | OAuth metadata, tools, API/DB | One scoped model across clients; callback plumbing stays admin-only | PASS for installed one-call setup 2026-08-15; clean-install and two-owner parity remain PARTIAL |
 | `GHUCP-UC-007` | Create/edit weekly recurring work in a different browser timezone, wait for fire, inspect result, then disable | `GH-UCP-013`–`014` / `GHUCP-021`–`023` | Browser + MCP + scheduler | Definition/occurrence/run/grant/lease/callback | Same selected wall time across DST and exactly one authorized visible result | PARTIAL 2026-08-15: installed Run now completed visibly; automatic clock/DST/restart fire remains open |
@@ -1067,7 +1075,7 @@ most specific existing QA owner when a scenario already has a detailed provider 
 | `GHUCP-UC-009` | Try missing auth, denied domain, cross-user ids, busy account, revoked connection, dependency outage, retry, cancel, and capacity | All / matching unhappy-path cases | Every real surface | Structured failures, no-side-effect state, audit | Honest actionable failure with no leak/fake success | PENDING as a complete matrix |
 | `GHUCP-UC-010` | Install fresh, upgrade, restart, reopen, and roll back | `GH-UCP-017` / `GHUCP-026`–`027` | Public installer + installed browser | Pin/build/process/state provenance | Same feature and user state on installed artifact | PENDING |
 | `GHUCP-UC-011` | Stage, migrate, cut over all three services, verify every route, and roll back without state loss | `GH-UCP-017` / `GHUCP-030`–`033` | Hosted edge + installed services | Route/key/DB/readiness/provenance evidence | One secure complete release or the preceding healthy release | PARTIAL 2026-08-15: exact three-service canary and explicit acceptance passed; failure-injection/full restore remains open |
-| `GHUCP-UC-012` | From a fresh Codex/Claude task, use one short prompt to create or reuse a private favorite workspace, connect an official native service inside it, use it read-only, restart, and reuse it | `GH-UCP-004`, `005`, `007`, `011`, `018` / `GHUCP-034` | External client + MCP + worker browser | Tool count, consent, redacted result, Favorite/catalog, logs/DB | One-call setup with worker-local native authorization and durable reuse | PARTIAL 2026-08-16: source contract passes; installed consent/use/restart proof pending |
+| `GHUCP-UC-012` | From a fresh Codex/Claude task, use one short prompt to create or reuse a private favorite workspace, connect an official native service inside it, use it read-only, restart, and reuse it | `GH-UCP-004`, `005`, `007`, `011`, `018` / `GHUCP-034` | External client + MCP + worker browser | Tool count, consent, redacted result, Favorite/catalog, logs/DB | One-call setup with worker-local native authorization and durable reuse | PASS for installed personal Codex 2026-08-16: official Outlook/SharePoint authorization, worker reads, refresh/retention, same-worker restart/reuse, one-launch/one-wait external continuation, and runtime/API/lease correlation passed; personal Claude remains open |
 
 ## Incident Promotion Checklist
 

@@ -1,5 +1,7 @@
 # GlassHive Native Clients, Provider Routes, and Workspace Acceptance
 
+<!-- qa-evidence-exempt: This legacy hosted-rollout report retains its original structured evidence; current user-path acceptance and public-safety status continue in the v2 report dated 2026-08-16. -->
+
 Date: **2026-08-15**
 Result: **PASS for the tested hosted release; broader completion remains PARTIAL**
 
