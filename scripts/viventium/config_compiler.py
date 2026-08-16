@@ -3360,6 +3360,10 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
             )
         )
         env["GLASSHIVE_PROVIDER_BASE_URL"] = f"{provider_base_url}/v1"
+        if not glasshive_enterprise["enabled"]:
+            runtime_port = explicit_local_url_port(provider_base_url)
+            if runtime_port:
+                env["GLASSHIVE_RUNTIME_PORT"] = runtime_port
 
     public_client_origin = str(network.get("public_client_origin", "") or "").strip()
     public_api_origin = str(network.get("public_api_origin", "") or "").strip()
