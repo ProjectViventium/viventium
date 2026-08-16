@@ -48,6 +48,7 @@ assert CONFIG_COMPILER_SPEC and CONFIG_COMPILER_SPEC.loader
 config_compiler = importlib.util.module_from_spec(CONFIG_COMPILER_SPEC)
 CONFIG_COMPILER_SPEC.loader.exec_module(config_compiler)
 START_SCRIPT = REPO_ROOT / "viventium_v0_4" / "viventium-librechat-start.sh"
+LEGACY_START_SCRIPT = REPO_ROOT / "viventium_v0_4" / "viventium-start-all.sh"
 
 
 def write_config(path: Path, payload: dict) -> None:
@@ -1448,10 +1449,12 @@ def test_local_glasshive_keeps_explicit_api_origin_authoritative() -> None:
 
 def test_startup_status_never_prints_partial_credential_material() -> None:
     launcher = START_SCRIPT.read_text(encoding="utf-8")
+    legacy_launcher = LEGACY_START_SCRIPT.read_text(encoding="utf-8")
 
     forbidden_expansions = (
         "${VIVENTIUM_CALL_SESSION_SECRET:0:",
         "${VIVENTIUM_CALL_SESSION_SECRET: -",
+        "${LIVEKIT_API_KEY:0:",
         "${OPENAI_API_KEY:0:",
         "${ELEVEN_API_KEY_FINAL:0:",
         "${ELEVEN_API_KEY:0:",
@@ -1459,6 +1462,10 @@ def test_startup_status_never_prints_partial_credential_material() -> None:
         "${CARTESIA_API_KEY:0:",
     )
     assert all(expansion not in launcher for expansion in forbidden_expansions)
+    assert all(expansion not in legacy_launcher for expansion in forbidden_expansions)
+    assert 'LiveKit API Key:   ${GREEN}${LIVEKIT_API_KEY}${NC}' not in launcher
+    assert 'LiveKit API Key:   ${GREEN}Configured${NC}' in launcher
+    assert 'LiveKit API Key:  ${GREEN}Configured${NC}' in legacy_launcher
     assert 'Call Secret:       ${GREEN}Configured${NC}' in launcher
     assert 'OpenAI API Key:    ${GREEN}Configured${NC}' in launcher
 

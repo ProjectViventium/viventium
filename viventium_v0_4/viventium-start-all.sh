@@ -318,7 +318,7 @@ start_playground() {
 # Main execution
 echo -e "${BOLD}Configuration:${NC}"
 echo -e "  LiveKit URL:      ${GREEN}${LIVEKIT_URL}${NC}"
-echo -e "  LiveKit API Key:  ${GREEN}${LIVEKIT_API_KEY:0:8}...${NC}"
+echo -e "  LiveKit API Key:  ${GREEN}Configured${NC}"
 echo -e "  Playground URL:   ${GREEN}http://localhost:3300${NC}"
 echo ""
 
