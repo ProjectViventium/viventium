@@ -357,6 +357,29 @@ resolve_repo_python() {
   return 1
 }
 
+resolve_executable_source() {
+  local source_path="$1"
+  local source_dir=""
+  local link_target=""
+
+  if [[ "$source_path" != */* ]]; then
+    source_path="$(command -v "$source_path" 2>/dev/null || true)"
+  fi
+  [[ -n "$source_path" ]] || return 1
+
+  while [[ -L "$source_path" ]]; do
+    source_dir="$(cd -P "$(dirname "$source_path")" && pwd)"
+    link_target="$(readlink "$source_path")"
+    if [[ "$link_target" == /* ]]; then
+      source_path="$link_target"
+    else
+      source_path="$source_dir/$link_target"
+    fi
+  done
+
+  printf '%s\n' "$source_path"
+}
+
 bootstrap_python_root() {
   local app_support_dir="${VIVENTIUM_APP_SUPPORT_DIR:-$HOME/Library/Application Support/Viventium}"
   printf '%s\n' "${VIVENTIUM_BOOTSTRAP_PYTHON_ROOT:-$app_support_dir/state/bootstrap-python}"
@@ -364,6 +387,7 @@ bootstrap_python_root() {
 
 create_bootstrap_python() {
   local base_python="$1"
+  local venv_base_python="$base_python"
   local root
   root="$(bootstrap_python_root)"
   local python_bin="$root/bin/python3"
@@ -377,7 +401,8 @@ create_bootstrap_python() {
   fi
 
   mkdir -p "$(dirname "$root")"
-  if ! "$base_python" -m venv "$root" >/dev/null 2>&1; then
+  venv_base_python="$(resolve_executable_source "$base_python" 2>/dev/null || printf '%s' "$base_python")"
+  if ! "$venv_base_python" -m venv "$root" >/dev/null 2>&1; then
     echo "Failed to create the Viventium bootstrap Python environment." >&2
     return 1
   fi

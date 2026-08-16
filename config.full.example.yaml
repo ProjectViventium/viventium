@@ -230,12 +230,30 @@ voice:
 integrations:
   glasshive:
     enabled: true
+    orchestration:
+      # Parallel work ships dark until the browser, Telegram, Voice, isolation,
+      # restart, provider, and rollback gates have passed on this installation.
+      available: false
+      default_mode: focused
+      conversation_slots_per_cli: 2
+      mission_slots_per_cli: 3
+      account_active_limit: 4
+      tenant_active_limit: 12
+      max_child_processes: 64
+      max_threads: 2048
+      min_available_memory_mb: 2048
+      min_available_disk_mb: 4096
+      snapshot_cache_ms: 2000
+      snapshot_cold_timeout_ms: 100
+      authorization_horizon_seconds: 86400
     host_worker:
       enabled: true
       workspace_root: ~/viventium
       # Worker runtime profile: codex-cli, claude-code, or openclaw-general.
       # Separate from the integrations.openclaw lab toggle below.
       default_worker_profile: codex-cli
+      # Explicit/operator default only. Automatic Parallel missions always use
+      # the separately enforced clean-room Docker policy.
       default_execution_mode: host
       # Optional native-capability controls. Leave unset for the default full-capability path.
       # runtime_requirements:

@@ -13,6 +13,7 @@ Key directories:
 - `viventium_v0_4/voice-gateway/` (Python voice worker)
 - `viventium_v0_4/telegram-viventium/` (Telegram bridge)
 - `viventium_v0_4/GlassHive/` (standalone workspace/worker runtime)
+- `viventium_v0_4/docker/parallel-work-proxy/` (reviewed provider and capability egress)
 - `viventium_v0_4/agents-playground/` (legacy playground)
 - `viventium_v0_4/agent-starter-react/` (modern playground)
 - `viventium_v0_4/livekit/` (LiveKit server repo)
@@ -29,6 +30,19 @@ Feelings ownership inside LibreChat:
   included by registered voice-call and Telegram-audio provider prompts
 - Telegram audio delivery/telemetry: `viventium_v0_4/telegram-viventium/TelegramVivBot/`, consuming
   the same shared voice capability JSON as LibreChat prompt composition
+
+Parallel Work ownership:
+
+- account preference, ordered rapid-input ledger, trusted mission context, opaque launch/delivery
+  bindings, Main capsule, Phase-B authorship, and Web/Voice tools: nested LibreChat
+- durable mission identity, owner-scoped roster/detail/actions, leases, isolation readiness,
+  process/session identity, recovery, and callback effects: nested GlassHive
+- Telegram settings, Active Work cards, opaque callback capabilities, and nonblocking handlers:
+  `viventium_v0_4/telegram-viventium/`
+- dark-by-default compiler/runtime contract: root schema/examples plus
+  `scripts/viventium/config_compiler.py`
+- requirements and acceptance truth: `docs/requirements_and_learnings/55_Parallel_Work_Orchestration.md`
+  and `qa/parallel-orchestrator/`
 
 Nested git repos inside v0.4:
 - `viventium_v0_4/GlassHive/`

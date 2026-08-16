@@ -306,3 +306,13 @@ The following must stay out of default list/search payloads:
 Detailed inspection belongs to explicit detail tools such as `schedule_get` or
 `schedule_last_delivery`, not routine browsing surfaces that may be pulled into ordinary answering
 context.
+
+## Required external Parallel Work
+
+A scheduled occurrence that launches durable Parallel Work separates acknowledgement from objective
+completion. Core binds required and informational mission references to the occurrence, releases the
+scheduler lease, and exposes `waiting_external` until every required mission is terminal. Replay uses
+the same private preclaim/occurrence identity, so refresh or callback retry cannot create a second
+scheduled run. Terminal callback acceptance and multi-destination delivery are insert-once and remain
+independently retryable. See [`55_Parallel_Work_Orchestration.md`](55_Parallel_Work_Orchestration.md)
+and [`qa/parallel-orchestrator/`](../../qa/parallel-orchestrator/).

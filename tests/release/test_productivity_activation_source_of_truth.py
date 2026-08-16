@@ -171,7 +171,7 @@ def test_broker_first_local_baseline_disables_retired_main_background_cortices()
 
     for agent_id in retired_main_background_cortices:
         assert activation_by_agent_id[agent_id]["enabled"] is False
-    assert "web_search" not in set(
+    assert "web_search" in set(
         agents_by_id["agent_viventium_deep_research_95aeb3"]["tools"]
     )
     assert agents_by_id["agent_viventium_online_tool_use_95aeb3"]["tools"] == []
@@ -276,8 +276,9 @@ def test_connected_accounts_handoff_provisioner_is_supported_confirmed_write_and
     assert "existingEdges.filter" in source
     assert "existingEdge?.promptKey !== edge.promptKey" in source
     assert "updateAgent({ id: MAIN_ID }, { edges: mergedEdges })" in source
-    assert "const FALLBACK_LLM_PROVIDER = 'openAI'" in source
-    assert "const FALLBACK_LLM_MODEL = 'gpt-5.4'" in source
+    assert "const FALLBACK_LLM_PROVIDER = 'glasshive-harness'" in source
+    assert "const FALLBACK_LLM_MODEL = 'claude-code:opus'" in source
+    assert "reasoning_effort: 'high'" in source
     assert "fallback_llm_provider: FALLBACK_LLM_PROVIDER" in source
     assert "fallback_llm_model: FALLBACK_LLM_MODEL" in source
     assert "fallback_llm_model_parameters: FALLBACK_LLM_MODEL_PARAMETERS" in source
@@ -354,16 +355,15 @@ def test_connected_accounts_handoff_is_source_owned_with_confirmed_email_calenda
         (
             candidate
             for candidate in edges
-            if candidate.get("promptKey") == "Main_To_ConnectedAccounts"
+            if candidate.get("from") == bundle["mainAgent"]["id"]
+            and candidate.get("to") == connected_agent_id
+            and candidate.get("edgeType") == "handoff"
         ),
         None,
     )
     assert edge is not None
-    assert edge["edgeType"] == "handoff"
-    assert edge["to"] == connected_agent_id
-    assert "Default to read-only inspection" in edge["prompt"]
-    assert "explicit user confirmation" in edge["prompt"]
-    assert "Do not claim this path is read-only" in edge["prompt"]
+    assert "prompt" not in edge
+    assert "promptKey" not in edge
 
     handoff_agents = {entry["id"]: entry for entry in bundle.get("handoffAgents", [])}
     assert connected_agent_id in handoff_agents
@@ -371,9 +371,13 @@ def test_connected_accounts_handoff_is_source_owned_with_confirmed_email_calenda
 
     assert connected["name"] == "Connected Accounts"
     assert connected["provider"] == "anthropic"
-    assert connected["model"] == "claude-opus-4-8"
-    assert connected["fallback_llm_provider"] == "openAI"
-    assert connected["fallback_llm_model"] == "gpt-5.4"
+    assert connected["model"] == "claude-opus-5"
+    assert connected["fallback_llm_provider"] == "glasshive-harness"
+    assert connected["fallback_llm_model"] == "claude-code:opus"
+    assert connected["fallback_llm_model_parameters"] == {
+        "model": "claude-code:opus",
+        "reasoning_effort": "high",
+    }
     assert "Default to read-only inspection" in connected["instructions"]
     assert "act only when the user explicitly asked for that external action" in connected[
         "instructions"
@@ -434,22 +438,16 @@ def test_main_agent_does_not_defer_productivity_checks_to_background_cortices() 
     )
     instructions = bundle["mainAgent"]["instructions"].lower()
 
-    assert "do not promise that a background cortex will check gmail" in instructions
-    assert "do not promise that a background cortex will check outlook" in instructions
-    assert "do not defer the check to background cortices" in instructions
-    assert "use the connected accounts handoff for immediate checks" in instructions
-    assert "first get explicit user confirmation" in instructions
-    assert "including the connected accounts handoff when it has the required write tool" in instructions
-    assert "write-capable connected-account path" in instructions
-    assert "glasshive host-signed broker path" in instructions
-    assert "if no write-capable path is available" in instructions
-    assert "creating/updating calendar events" in instructions
-    assert "deleting/moving/archive/mark-read mail" in instructions
-    assert "sharing/permission changes" in instructions
-    assert "use a brokered worker when the request needs delegated/long-running glasshive work" in instructions
-    assert "memory is background" in instructions
-    assert "verified current-run google connector/tool evidence" in instructions
-    assert "verified current-run microsoft connector/tool evidence" in instructions
+    assert "do not defer immediate current-state checks to background cortices" in instructions
+    assert "use the available connector or connected accounts handoff in the current turn" in instructions
+    assert "choose tools from declared capabilities and structured metadata" in instructions
+    assert "before an external write, confirm the user requested it" in instructions
+    assert "require explicit confirmation and a declared write-capable path" in instructions
+    assert "automatic durable mission delegation is allowed only" in instructions
+    assert "when delegation is allowed, use it for independently completable long-running" in instructions
+    assert "never say work was delegated, accepted, queued, or is running unless" in instructions
+    assert "accepted, queued, or deferred is not complete" in instructions
+    assert "on tool failure, state the exact failure and recovery path" in instructions
 
 
 def test_runtime_card_guard_fallback_matches_productivity_live_data_rule() -> None:
@@ -485,7 +483,7 @@ def test_runtime_card_guard_source_prompt_matches_inline_fallback() -> None:
     assert normalize(prompt_body) == normalize("\n".join(fallback_lines))
 
 
-def test_productivity_direct_action_surfaces_are_same_scope_forward_contracts() -> None:
+def test_productivity_direct_action_surfaces_prevent_background_action_duplication() -> None:
     bundle = load_and_resolve_prompt_refs(
         yaml.safe_load(SOURCE_OF_TRUTH_AGENTS_BUNDLE.read_text(encoding="utf-8"))
     )
@@ -505,7 +503,7 @@ def test_productivity_direct_action_surfaces_are_same_scope_forward_contracts() 
     assert productivity_surfaces
     for surface in productivity_surfaces:
         assert surface["scope_key"] in intent_scopes
-        assert surface["same_scope_background_allowed"] is True
+        assert surface["same_scope_background_allowed"] is False
         assert "when this mcp is connected to the main agent" in surface["owns"].lower()
         assert "available to the main agent" not in surface["owns"].lower()
 
@@ -545,6 +543,7 @@ def test_background_agent_execution_models_match_launch_bundle_mix() -> None:
     expected = {
         "agent_viventium_background_analysis_95aeb3": ("openAI", "gpt-5.6-terra"),
         "agent_viventium_confirmation_bias_95aeb3": ("openAI", "gpt-5.6-terra"),
+        "agent_viventium_deep_memory_95aeb3": ("openAI", "gpt-5.6-terra"),
         "agent_viventium_red_team_95aeb3": ("openAI", "gpt-5.6-sol"),
         "agent_viventium_deep_research_95aeb3": ("openAI", "gpt-5.6-sol"),
         "agent_viventium_online_tool_use_95aeb3": ("openAI", "gpt-5.6-terra"),
@@ -563,11 +562,11 @@ def test_background_agent_execution_models_match_launch_bundle_mix() -> None:
         assert agent["model_parameters"]["model"] == model
 
 
-def test_retired_deep_research_keeps_reasoning_config_without_live_web_tool() -> None:
+def test_retired_deep_research_keeps_reasoning_config_and_live_web_tool() -> None:
     agents_by_id = _load_background_agents_by_id()
     deep_research = agents_by_id["agent_viventium_deep_research_95aeb3"]
 
-    assert "web_search" not in deep_research["tools"]
+    assert "web_search" in deep_research["tools"]
     assert deep_research["model_parameters"]["reasoning_effort"] == "xhigh"
     assert "thinkingBudget" not in deep_research["model_parameters"]
 
@@ -585,6 +584,7 @@ def test_background_agent_execution_models_stay_within_launch_ready_families() -
     agents_by_id = _load_background_agents_by_id()
 
     allowed = {
+        ("glasshive-harness", "codex-cli:gpt-5.6-sol"),
         ("openAI", "gpt-5.6-terra"),
         ("openAI", "gpt-5.6-sol"),
     }

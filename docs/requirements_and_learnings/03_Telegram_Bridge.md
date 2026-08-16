@@ -345,3 +345,16 @@ processing error; the caption must not continue alone.
 - Telegram bot logs
 - Mongo proof of the exact user and assistant turns
 - attachment delivery proof when files are involved
+
+## Parallel Work control surface
+
+[`55_Parallel_Work_Orchestration.md`](55_Parallel_Work_Orchestration.md) owns the account-wide
+contract. Telegram is a nonblocking control surface, not a Telegram-only scheduler:
+
+- the setting writes the linked account preference and Web/Voice read the same value;
+- Active Work renders only server-provided opaque references and action masks;
+- mutating buttons use short-lived, owner/chat-bound, one-use capabilities and exact confirmation;
+- commands, settings, callbacks, ordinary text, and captioned/uncaptioned attachments use
+  `block=False`; Core preserves ordering and idempotency;
+- disabling new launches never hides or cancels retained work;
+- lost or indeterminate action responses keep a recoverable receipt and never fabricate success.

@@ -451,7 +451,7 @@
   6. Verify the transcript display remains free of provider markup and the selected model/provider
      was not silently changed to make the test pass.
 - Expected Result: TTS-bound chunks contain natural speech or deterministic placeholders such as
-  `link available` / `email available`; no punctuation-only chunk, raw URL/domain/email, source
+  `link available` / `email address available`; no punctuation-only chunk, raw URL/domain/email, source
   label, markdown syntax, code fence, detached internal citation id, unknown angle tag, or
   unsupported provider tag reaches TTS.
 - Forbidden Result: TTS says raw `dot`, URL/domain fragments, email addresses, `Sources:`, markdown

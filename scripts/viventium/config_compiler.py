@@ -488,6 +488,55 @@ def resolve_host_cli_path(command: str, explicit_path: Any = None) -> str:
     return ""
 
 
+def resolve_glasshive_orchestration_settings(config: dict[str, Any]) -> dict[str, Any]:
+    """Resolve the dark-by-default Parallel work admission and latency contract."""
+    integrations = config.get("integrations", {}) or {}
+    glasshive = integrations.get("glasshive") or {}
+    raw = glasshive.get("orchestration") or {}
+    if not isinstance(raw, dict):
+        raise SystemExit("integrations.glasshive.orchestration must be a mapping")
+
+    default_mode = str(raw.get("default_mode") or "focused").strip().lower()
+    if default_mode not in {"focused", "parallel"}:
+        raise SystemExit(
+            "integrations.glasshive.orchestration.default_mode must be focused or parallel"
+        )
+
+    def limit(name: str, default: int) -> int:
+        return positive_int_or_default(
+            raw.get(name),
+            default,
+            f"integrations.glasshive.orchestration.{name}",
+        )
+
+    authorization_horizon_seconds = limit("authorization_horizon_seconds", 86400)
+    if authorization_horizon_seconds > 86400:
+        raise SystemExit(
+            "integrations.glasshive.orchestration.authorization_horizon_seconds "
+            "must be at most 86400"
+        )
+
+    available = resolve_bool(raw.get("available"), False) and glasshive_enabled(config)
+
+    return {
+        "available": available,
+        "isolated_parallel_policy": available,
+        "automatic_execution_mode": "docker",
+        "default_mode": default_mode,
+        "conversation_slots_per_cli": limit("conversation_slots_per_cli", 2),
+        "mission_slots_per_cli": limit("mission_slots_per_cli", 3),
+        "account_active_limit": limit("account_active_limit", 4),
+        "tenant_active_limit": limit("tenant_active_limit", 12),
+        "max_child_processes": limit("max_child_processes", 64),
+        "max_threads": limit("max_threads", 2048),
+        "min_available_memory_mb": limit("min_available_memory_mb", 2048),
+        "min_available_disk_mb": limit("min_available_disk_mb", 4096),
+        "snapshot_cache_ms": limit("snapshot_cache_ms", 2000),
+        "snapshot_cold_timeout_ms": limit("snapshot_cold_timeout_ms", 100),
+        "authorization_horizon_seconds": authorization_horizon_seconds,
+    }
+
+
 def resolve_glasshive_host_worker_settings(config: dict[str, Any]) -> dict[str, Any]:
     integrations = config.get("integrations", {}) or {}
     glasshive = integrations.get("glasshive") or {}
@@ -679,18 +728,18 @@ MODEL_MAP = {
         "memory": "claude-sonnet-4-5",
     },
     "x_ai": {
-        "conscious": "grok-4.3",
-        "background_analysis": "grok-4.3",
-        "confirmation_bias": "grok-4.3",
-        "red_team": "grok-4.3",
-        "deep_research": "grok-4.3",
-        "productivity": "grok-4.3",
-        "parietal": "grok-4.3",
-        "pattern_recognition": "grok-4.3",
-        "emotional_resonance": "grok-4.3",
-        "strategic_planning": "grok-4.3",
-        "support": "grok-4.3",
-        "memory": "grok-4.3",
+        "conscious": "grok-4.5",
+        "background_analysis": "grok-4.5",
+        "confirmation_bias": "grok-4.5",
+        "red_team": "grok-4.5",
+        "deep_research": "grok-4.5",
+        "productivity": "grok-4.5",
+        "parietal": "grok-4.5",
+        "pattern_recognition": "grok-4.5",
+        "emotional_resonance": "grok-4.5",
+        "strategic_planning": "grok-4.5",
+        "support": "grok-4.5",
+        "memory": "grok-4.5",
     },
 }
 AGENT_ASSIGNMENT_ROLES = {
@@ -794,16 +843,16 @@ BACKGROUND_ACTIVATION_MODELS_BY_PROVIDER = {
     "groq": CURRENT_BACKGROUND_ACTIVATION_MODEL,
     "xai": "grok-4.20-non-reasoning",
 }
-XAI_GROK_43_MODEL_SPEC = {
-    "name": "grok-4.3",
-    "label": "Grok 4.3",
+XAI_GROK_45_MODEL_SPEC = {
+    "name": "grok-4.5",
+    "label": "Grok 4.5",
     "description": "xAI Grok",
     "group": "xai",
     "groupIcon": "xai",
     "iconURL": "xai",
     "preset": {
         "endpoint": "xai",
-        "model": "grok-4.3",
+        "model": "grok-4.5",
     },
 }
 
@@ -857,7 +906,7 @@ CURATED_CUSTOM_ENDPOINTS = [
         "apiKeyEnv": "XAI_API_KEY",
         "baseURL": "https://api.x.ai/v1",
         "models": [
-            "grok-4.3",
+            "grok-4.5",
             "grok-4.20-non-reasoning",
             "grok-4.20-multi-agent-0309",
             "grok-4.20-0309-reasoning",
@@ -865,8 +914,8 @@ CURATED_CUSTOM_ENDPOINTS = [
             "grok-2-vision-1212",
             "grok-2-image-1212",
         ],
-        "titleModel": "grok-4.3",
-        "summaryModel": "grok-4.3",
+        "titleModel": "grok-4.5",
+        "summaryModel": "grok-4.5",
         "modelDisplayLabel": "Grok",
         "fetch": True,
         "titleMethod": "completion",
@@ -1896,7 +1945,7 @@ def build_model_specs(_default_main_agent_id: str) -> dict[str, Any]:
         "addedEndpoints": CURATED_ADDED_ENDPOINTS,
         "list": [
             *build_built_in_agent_model_specs(_default_main_agent_id),
-            copy.deepcopy(XAI_GROK_43_MODEL_SPEC),
+            copy.deepcopy(XAI_GROK_45_MODEL_SPEC),
         ],
     }
 
@@ -2704,6 +2753,7 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
     glasshive_is_enabled = glasshive_enabled(config)
     glasshive_host_worker = resolve_glasshive_host_worker_settings(config)
     glasshive_enterprise = resolve_glasshive_enterprise_settings(config)
+    glasshive_orchestration = resolve_glasshive_orchestration_settings(config)
     feature_request_pr = config.get("feature_requests", {}).get("pr", {}) or {}
     feature_request_pr_after_approval = resolve_bool(
         feature_request_pr.get("create_after_user_approval"),
@@ -2909,6 +2959,49 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
         "VIVENTIUM_SHARED_SEARXNG": "true" if shared_searxng else "false",
         "VIVENTIUM_SHARED_FIRECRAWL": "true" if shared_firecrawl else "false",
         "START_GLASSHIVE": "true" if glasshive_is_enabled else "false",
+        "VIVENTIUM_PARALLEL_WORK_AVAILABLE": (
+            "true" if glasshive_orchestration["available"] else "false"
+        ),
+        "VIVENTIUM_GLASSHIVE_ISOLATED_PARALLEL_POLICY": (
+            "true" if glasshive_orchestration["isolated_parallel_policy"] else "false"
+        ),
+        "VIVENTIUM_PARALLEL_WORK_EXECUTION_MODE": str(
+            glasshive_orchestration["automatic_execution_mode"]
+        ),
+        "VIVENTIUM_PARALLEL_WORK_DEFAULT_MODE": str(
+            glasshive_orchestration["default_mode"]
+        ),
+        "WPR_HOST_CONVERSATION_SLOTS_PER_CLI": str(
+            glasshive_orchestration["conversation_slots_per_cli"]
+        ),
+        "WPR_HOST_MISSION_SLOTS_PER_CLI": str(
+            glasshive_orchestration["mission_slots_per_cli"]
+        ),
+        "WPR_HOST_ACCOUNT_ACTIVE_LIMIT": str(
+            glasshive_orchestration["account_active_limit"]
+        ),
+        "WPR_HOST_TENANT_ACTIVE_LIMIT": str(
+            glasshive_orchestration["tenant_active_limit"]
+        ),
+        "WPR_HOST_MAX_CHILD_PROCESSES": str(
+            glasshive_orchestration["max_child_processes"]
+        ),
+        "WPR_HOST_MAX_THREADS": str(glasshive_orchestration["max_threads"]),
+        "WPR_HOST_MIN_AVAILABLE_MEMORY_MB": str(
+            glasshive_orchestration["min_available_memory_mb"]
+        ),
+        "WPR_HOST_MIN_AVAILABLE_DISK_MB": str(
+            glasshive_orchestration["min_available_disk_mb"]
+        ),
+        "VIVENTIUM_ACTIVE_WORK_CACHE_MS": str(
+            glasshive_orchestration["snapshot_cache_ms"]
+        ),
+        "VIVENTIUM_ACTIVE_WORK_COLD_TIMEOUT_MS": str(
+            glasshive_orchestration["snapshot_cold_timeout_ms"]
+        ),
+        "VIVENTIUM_GLASSHIVE_AUTHORIZATION_HORIZON_SECONDS": str(
+            glasshive_orchestration["authorization_horizon_seconds"]
+        ),
         "START_SCHEDULING_MCP": "true",
         "START_RAG_API": start_rag_api,
         "START_SKYVERN": "true" if integrations.get("skyvern", {}).get("enabled") else "false",

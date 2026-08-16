@@ -392,7 +392,7 @@ API_KEY = (
 ASSEMBLYAI_API_KEY = os.environ.get('ASSEMBLYAI_API_KEY')
 ASSEMBLYAI_BASE_URL = os.environ.get('ASSEMBLYAI_BASE_URL', 'https://api.assemblyai.com/v2')
 # === VIVENTIUM END ===
-MODEL = os.environ.get('MODEL', 'grok-4.3')
+MODEL = os.environ.get('MODEL', 'grok-4.5')
 TTS_VOICE = os.environ.get('TTS_VOICE', 'alloy')
 TTS_RESPONSE_FORMAT = os.environ.get('TTS_RESPONSE_FORMAT', 'mp3')
 TTS_PROVIDER = resolve_tts_provider(os.environ)
@@ -543,7 +543,7 @@ import json
 import tomllib
 import requests
 from contextlib import contextmanager
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 CONFIG_DIR = os.environ.get('CONFIG_DIR', 'user_configs')
 
@@ -629,6 +629,12 @@ def _should_cache_call_url(call_url):
     if not parsed.scheme or not parsed.netloc:
         return False
 
+    # One-time launch and renewable browser capabilities are bearer authority. Telegram menus can
+    # be cached, forwarded, and revisited, so neither URL may enter the bot's in-memory URL cache.
+    fragment = parse_qs(parsed.fragment, keep_blank_values=True)
+    if "viventiumCallLaunch" in fragment or "viventiumCallCapability" in fragment:
+        return False
+
     if parsed.scheme == "https":
         return True
 
@@ -712,13 +718,16 @@ def get_telegram_call_link_result(conversation_key):
     now = time.time()
     cached = _CALL_URL_CACHE.get(normalized_user_id)
     if cached and cached.get("expires_at", 0) > now:
-        return {
-            "url": cached.get("url", ""),
-            "status_code": 200,
-            "link_required": False,
-            "public_url_required": False,
-            "error": "",
-        }
+        cached_url = cached.get("url", "")
+        if _should_cache_call_url(cached_url):
+            return {
+                "url": cached_url,
+                "status_code": 200,
+                "link_required": False,
+                "public_url_required": False,
+                "error": "",
+            }
+        _CALL_URL_CACHE.pop(normalized_user_id, None)
 
     base_url = (
         os.environ.get("VIVENTIUM_LIBRECHAT_ORIGIN")
@@ -818,7 +827,10 @@ def get_cached_telegram_call_url(conversation_key):
         return ""
     cached = _CALL_URL_CACHE.get(normalized_user_id)
     if cached and cached.get("expires_at", 0) > time.time():
-        return cached.get("url", "")
+        cached_url = cached.get("url", "")
+        if _should_cache_call_url(cached_url):
+            return cached_url
+        _CALL_URL_CACHE.pop(normalized_user_id, None)
     return ""
 
 class NestedDict:
@@ -1428,7 +1440,7 @@ PREFERENCE_DISPLAY_NAMES = {
     # Feature: Explicit voice reply toggle in Preferences.
     "VOICE_RESPONSES_ENABLED": "Voice replies",
     # === VIVENTIUM END ===
-    "ALWAYS_VOICE_RESPONSE": "Always Voice",  # User-friendly label for voice response toggle
+    "ALWAYS_VOICE_RESPONSE": "Smart voice for text",
 }
 
 def create_buttons(strings, plugins_status=False, lang="en", button_text=None, Suffix="", chatid=None, status_map=None):

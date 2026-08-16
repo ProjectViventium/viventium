@@ -23,9 +23,9 @@ def write_executable(path: Path, content: str) -> None:
 def copy_cli_fixture(repo_root: Path) -> None:
     shutil.copy2(REPO_ROOT / "bin" / "viventium", repo_root / "bin" / "viventium")
     (repo_root / "scripts" / "viventium").mkdir(parents=True, exist_ok=True)
-    shutil.copy2(
-        REPO_ROOT / "scripts" / "viventium" / "default_nightly_routines.py",
+    write_executable(
         repo_root / "scripts" / "viventium" / "default_nightly_routines.py",
+        "#!/usr/bin/env python3\nraise SystemExit(0)\n",
     )
     shutil.copy2(
         REPO_ROOT / "scripts" / "viventium" / "host_cli_auth.py",

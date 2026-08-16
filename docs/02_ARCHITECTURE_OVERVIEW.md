@@ -7,6 +7,9 @@ This is the high-level map of both stacks. Deep dives live in the version-specif
 Flow summary:
 ```
 User -> LibreChat UI -> AgentClient -> BackgroundCortexService
+                     -> Parallel Work control plane -> durable GlassHive missions
+                        -> isolated per-mission Docker network -> attested provider/broker proxies
+                        -> owner-scoped callbacks -> Main-authored visible result
                      -> Feelings snapshot -> dynamic prompt tail
                      -> voice-capable surface -> feeling-expression + provider prompt
                         -> raw provider controls -> clean display + provider TTS
@@ -25,6 +28,13 @@ Core components:
 - Feelings control surface: `viventium_v0_4/LibreChat/client/src/components/Feelings/`
 - Spoken-surface prompt composition: `viventium_v0_4/LibreChat/api/server/services/viventium/surfacePrompts.js`
 - Voice worker: `viventium_v0_4/voice-gateway/`
+- Parallel Work control plane: Viventium Main remains the sole user-facing manager and author.
+  Core owns the account preference, trusted origin/delivery binding, active-work capsule, and
+  surface presentation; GlassHive owns durable mission identity, bounded admission, restart
+  recovery, exact controls, and native root/child lifecycle. Automatic missions fail closed onto
+  the isolated Docker lane, and an active legacy host mission makes effective availability false
+  without hiding or cancelling retained work. See
+  [`55_Parallel_Work_Orchestration.md`](requirements_and_learnings/55_Parallel_Work_Orchestration.md).
 
 Reference: `viventium_v0_4/docs/ARCHITECTURE.md`
 

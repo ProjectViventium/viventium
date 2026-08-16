@@ -36,6 +36,8 @@ release_tests:
     qa_owner: qa/installer-resilience/cases.md
   tests/release/test_default_nightly_routines.py:
     qa_owner: qa/installer-resilience/cases.md
+  tests/release/test_delivery_controls_contract.py:
+    qa_owner: qa/parallel-orchestrator/cases.md
   tests/release/test_doctor_sh.py:
     qa_owner: qa/installer-resilience/cases.md
   tests/release/test_git_helper.py:
@@ -66,6 +68,10 @@ release_tests:
     qa_owner: qa/release-readiness/cases.md
   tests/release/test_ollama_embeddings_prereqs.py:
     qa_owner: qa/conversation-recall-rag/cases.md
+  tests/release/test_parallel_work_contract.py:
+    qa_owner: qa/parallel-orchestrator/cases.md
+  tests/release/test_parallel_work_proxy.py:
+    qa_owner: qa/parallel-orchestrator/cases.md
   tests/release/test_openai_model_inventory.py:
     qa_owner: qa/config-alignment/cases.md
   tests/release/test_periphery_eval_harness.py:
@@ -100,6 +106,8 @@ release_tests:
     qa_owner: qa/remote-access/cases.md
   tests/release/test_scheduled_glasshive_prompts.py:
     qa_owner: qa/prompt-workbench/cases.md
+  tests/release/test_scheduler_prompt_contract.py:
+    qa_owner: qa/parallel-orchestrator/cases.md
   tests/release/test_scheduling_mcp_supervision.py:
     qa_owner: qa/background_agents/cases.md
   tests/release/test_shell_init.py:

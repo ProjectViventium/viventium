@@ -53,9 +53,17 @@ def minimal_config() -> dict:
             "auth": {"allow_registration": True, "allow_password_reset": False},
         },
         "llm": {
-            "activation": {"provider": "groq", "auth_mode": "api_key", "secret_ref": "keychain://viventium/groq_api_key"},
+            "activation": {
+                "provider": "groq",
+                "auth_mode": "api_key",
+                "secret_value": "synthetic-release-test-key",
+            },
             "primary": {"provider": "openai", "auth_mode": "connected_account"},
-            "secondary": {"provider": "anthropic", "auth_mode": "api_key", "secret_ref": "keychain://viventium/anthropic_api_key"},
+            "secondary": {
+                "provider": "anthropic",
+                "auth_mode": "api_key",
+                "secret_value": "synthetic-release-test-key",
+            },
         },
         "voice": {"mode": "local", "stt_provider": "whisper_local", "tts_provider": "browser"},
         "integrations": {

@@ -34,3 +34,11 @@ Perplexity) stream usage fields in multiple chunks, which triggers LangChain mer
 ## Learnings
 - LangChain’s `_mergeDicts` warns on duplicate `completion_tokens` fields when types differ.
 - Disabling per-chunk usage for Perplexity removes log noise without losing final usage totals.
+
+## Parallel Work source accounting
+
+Parallel Work does not replace logical-turn supersession. Each trusted rapid source event is
+recorded once, and the mission handoff carries the selected segment plus bounded visible context.
+Presentation retries reuse the stable source identity; durable mission effects survive presentation
+supersession. A callback cannot revive a stale response revision or overwrite a newer turn. See
+[`55_Parallel_Work_Orchestration.md`](55_Parallel_Work_Orchestration.md).

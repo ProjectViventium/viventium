@@ -55,6 +55,19 @@ def test_markdown_to_html_converts_links():
     assert "<a href=\"https://chat.viventium.ai\">Open site</a>" in rendered
 
 
+def test_markdown_to_html_resolves_nested_formatting_inside_blockquotes():
+    rendered = markdown_to_html(
+        "> **Durable agency** is the core.\n"
+        "> Keep *feelings* as the interface."
+    )
+
+    assert rendered == (
+        "<blockquote><b>Durable agency</b> is the core.\n"
+        "Keep <i>feelings</i> as the interface.</blockquote>"
+    )
+    assert "\x00PH" not in rendered
+
+
 def test_markdown_to_html_converts_pipe_tables_to_bullet_rows():
     text = (
         "Read-only audit completed.\n\n"

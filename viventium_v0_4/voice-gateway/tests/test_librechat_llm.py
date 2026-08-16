@@ -995,7 +995,7 @@ class TestVoiceTtsDeltaBuffer(unittest.TestCase):
         for delta in [" See", " [brief](https://example.com)", " and email qa@example.com."]:
             emitted.extend(buffer.feed(delta))
 
-        self.assertEqual(emitted, [" See brief and email email available."])
+        self.assertEqual(emitted, [" See brief and email address available."])
         self.assertEqual(buffer.finalize(), [])
 
     def test_waits_for_url_tail_before_sanitizing(self) -> None:

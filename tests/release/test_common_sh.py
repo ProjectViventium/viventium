@@ -172,6 +172,60 @@ exit 0
     assert completed.stdout.strip() == str(bootstrap_root / "bin" / "python3")
 
 
+def test_create_bootstrap_python_resolves_symlinked_base_interpreter(tmp_path: Path) -> None:
+    bootstrap_root = tmp_path / "bootstrap-python"
+    marker = tmp_path / "canonical-interpreter-used"
+    real_python = tmp_path / "runtime" / "bin" / "python3.12"
+    real_python.parent.mkdir(parents=True)
+    real_python.write_text(
+        f"""#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "$0" != "{real_python}" ]]; then
+  exit 91
+fi
+if [[ "${{1:-}}" == "-m" && "${{2:-}}" == "venv" ]]; then
+  root="${{3:-}}"
+  mkdir -p "$root/bin"
+  touch "{marker}"
+  cat >"$root/bin/python3" <<'PYEOF'
+#!/usr/bin/env bash
+exit 0
+PYEOF
+  chmod +x "$root/bin/python3"
+  exit 0
+fi
+exit 0
+""",
+        encoding="utf-8",
+    )
+    real_python.chmod(0o755)
+    python_alias = tmp_path / "python3.12"
+    python_alias.symlink_to(real_python)
+
+    completed = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                f"source '{REPO_ROOT / 'scripts/viventium/common.sh'}' && "
+                f"create_bootstrap_python '{python_alias}'"
+            ),
+        ],
+        cwd=REPO_ROOT,
+        check=True,
+        text=True,
+        capture_output=True,
+        env={
+            **dict(os.environ),
+            "VIVENTIUM_BOOTSTRAP_PYTHON_ROOT": str(bootstrap_root),
+        },
+    )
+
+    assert completed.stdout.strip() == str(bootstrap_root / "bin" / "python3")
+    assert marker.exists()
+
+
 def test_viventium_port_listener_active_detects_open_socket() -> None:
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)

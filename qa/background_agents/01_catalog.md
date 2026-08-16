@@ -6,6 +6,7 @@
 | --- | --- | --- | --- | --- |
 | Background Analysis | `agent_viventium_background_analysis_95aeb3` | `openAI / gpt-5.6-terra / medium` | `groq / qwen/qwen3.6-27b` | blind spots, critical analysis |
 | Confirmation Bias | `agent_viventium_confirmation_bias_95aeb3` | `openAI / gpt-5.6-terra / medium` | `groq / qwen/qwen3.6-27b` | overconfidence, unchecked assumptions |
+| Deep Memory Search | `agent_viventium_deep_memory_95aeb3` | `openAI / gpt-5.6-terra / medium` | `always` (no classifier) | authorized long-term recall; late Phase B value |
 | Red Team | `agent_viventium_red_team_95aeb3` | `openAI / gpt-5.6-sol / xhigh` | `groq / qwen/qwen3.6-27b` | challenge claims, evidence pressure |
 | Deep Research | `agent_viventium_deep_research_95aeb3` | `openAI / gpt-5.6-sol / xhigh` | `groq / qwen/qwen3.6-27b` | explicit research and comparison requests |
 | MS365 | `agent_viventium_online_tool_use_95aeb3` | `openAI / gpt-5.6-terra / low` | `groq / qwen/qwen3.6-27b` | `productivity_ms365` live Outlook/MS365 actions |
@@ -19,8 +20,12 @@
 ## Notes
 
 - The execution-family column is the launch-ready shipped baseline from source-of-truth.
-- Every row uses Responses API and declares `anthropic / claude-opus-4-8` as its text fallback.
+- Every row uses Responses API and declares `glasshive-harness / claude-code:opus / high` as its
+  generic Agent text fallback when GlassHive is enabled.
 - The activation-family column is the shipped primary activation baseline.
+- `Deep Memory Search` is the intentional exception: structured `activation.mode: always` starts it
+  on every eligible turn without a semantic classifier. Its useful and silent controls are owned by
+  `qa/anti-sycophancy/cases.md` `ANTI-010`, not the classifier-only `ACT-36` bank.
 - `Deep Research`, `MS365`, and `Google` remain shipped specialist agents, but the main Viventium
   agent disables their background activation in the GlassHive broker-first local baseline. Live
   web/productivity execution should use the main/direct GlassHive capability path unless this policy

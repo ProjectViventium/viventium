@@ -1972,3 +1972,17 @@ users are not told that a resumed workspace failed while Watch/Steer is visibly 
   `AGENTS.md`, `CLAUDE.md`, `CODEX.md`, `work-log.md`, `project-definition.md`, and
   `glasshive-host-tools/*`; watch/workspace UI should promote the user's actual artifact, not
   framework support files that changed later by mtime.
+
+## Parallel Work mission substrate
+
+[`55_Parallel_Work_Orchestration.md`](55_Parallel_Work_Orchestration.md) owns the product contract;
+this document owns the runtime boundary. Automatic missions are atomically reserved under a trusted
+account operation and are forced onto `parallel-clean-room-v1`. They cannot select host mode, copy
+host credentials, supply arbitrary home files/env, or mint peer missions.
+
+Before any run authority is projected, GlassHive must prove the exact container generation and image,
+non-root user, command, namespaces, caps/security options, read-only root, exact binds/tmpfs/loopback
+ports/env, the per-mission internal network, and the two immutable reviewed proxy identities. Any
+probe ambiguity fails closed. Runtime controls bind the durable action receipt to the exact lifecycle
+operation and process/container start identity; restart reconciliation never guesses from a PID or
+container name. Existing host missions are preserved but make automatic Parallel availability false.

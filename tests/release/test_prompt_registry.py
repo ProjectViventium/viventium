@@ -106,48 +106,50 @@ def test_source_yaml_prompt_refs_resolve_to_runtime_strings() -> None:
 
     assert isinstance(agents["mainAgent"]["instructions"], str)
     assert "# Identity" in agents["mainAgent"]["instructions"]
+    assert "A cognitive system, the second brain, companion, and force multiplier" in agents["mainAgent"]["instructions"]
     assert "{{current_user}}" in agents["mainAgent"]["instructions"]
-    assert "For important actions, If unsure which service the user means, ask." in agents["mainAgent"]["instructions"]
-    assert "configured/available connected email providers" in agents["mainAgent"]["instructions"]
-    assert "Connected Accounts handoff for immediate checks and quick updates" in agents["mainAgent"]["instructions"]
-    assert "immediate checks and quick updates" in agents["mainAgent"]["instructions"]
-    assert "Do not use GlassHive when the Connected Accounts handoff is the direct, sufficient path" in (
-        agents["mainAgent"]["instructions"]
-    )
-    assert "For immediate connected-account checks or quick updates" in (
-        agents["mainAgent"]["instructions"]
-    )
-    assert "first get explicit user confirmation" in agents["mainAgent"]["instructions"]
-    assert "write-capable connected-account path" in agents["mainAgent"]["instructions"]
-    assert "GlassHive host-signed broker path" in agents["mainAgent"]["instructions"]
-    assert "If no write-capable path is available" in agents["mainAgent"]["instructions"]
-    assert "creating/updating calendar events" in agents["mainAgent"]["instructions"]
-    assert "deleting calendar events" in agents["mainAgent"]["instructions"]
-    assert "Use GlassHive for document generation, reports, deep research" in (
-        agents["mainAgent"]["instructions"]
-    )
-    assert "pass broker/MCP/tool availability as context" in agents["mainAgent"]["instructions"]
-    assert "Do not make tool choice, provider lists" in agents["mainAgent"]["instructions"]
-    assert "memory-derived priorities" in agents["mainAgent"]["instructions"]
-    assert "For vague user adjectives like urgent or important, pass the adjective through" in agents["mainAgent"]["instructions"]
+    assert "configured email accounts" in agents["mainAgent"]["instructions"]
+    assert "direct Connected Accounts handoff for immediate checks" in agents["mainAgent"]["instructions"]
+    assert "brokered worker only when the work is delegated" in agents["mainAgent"]["instructions"]
+    assert "pass the user's wording and available capabilities" in agents["mainAgent"]["instructions"]
+    assert "Do not invent provider lists, tool choices" in agents["mainAgent"]["instructions"]
+    assert 'Preserve vague terms such as "urgent"' in agents["mainAgent"]["instructions"]
+    assert "Before an external write" in agents["mainAgent"]["instructions"]
+    assert "Destructive mutations—deleting, moving, archiving" in agents["mainAgent"]["instructions"]
+    assert "Current Date & Time:" in agents["mainAgent"]["instructions"]
+    assert "Automatic durable mission delegation is allowed only" in agents["mainAgent"]["instructions"]
+    assert "When delegation is allowed, use it for independently completable" in agents["mainAgent"]["instructions"]
+    assert "Never say work was delegated, accepted, queued, or is running unless" in agents["mainAgent"]["instructions"]
     assert isinstance(librechat["memory"]["agent"]["instructions"], str)
     assert isinstance(librechat["mcpServers"]["ms-365"]["serverInstructions"], str)
     assert "Microsoft 365 owns" in librechat["mcpServers"]["ms-365"]["serverInstructions"]
 
 
-def test_main_agent_defers_glasshive_operation_schemas_but_keeps_recall_eager() -> None:
+def test_main_agent_keeps_glasshive_gateway_eager_and_defers_no_bulk_operations() -> None:
     agents = yaml.safe_load(AGENTS_SOURCE.read_text(encoding="utf-8"))
     main_agent = agents["mainAgent"]
     options = main_agent.get("tool_options") or {}
     glasshive_operations = {
         tool
         for tool in main_agent.get("tools", [])
-        if tool.endswith("_mcp_glasshive-workers-projects")
+        if (
+            tool.endswith("_mcp_glasshive-workers-projects")
+            or tool in {"active_work_list", "active_work_action"}
+        )
         and not tool.startswith("sys__server__")
     }
 
-    assert glasshive_operations
-    assert all(options.get(tool, {}).get("defer_loading") is True for tool in glasshive_operations)
+    eager_gateway = {
+        "worker_delegate_once_mcp_glasshive-workers-projects",
+        "active_work_list",
+        "active_work_action",
+    }
+    deferred_operations = glasshive_operations - eager_gateway
+
+    assert eager_gateway <= glasshive_operations
+    assert not deferred_operations
+    assert all(options.get(tool, {}).get("defer_loading") is not True for tool in eager_gateway)
+    assert all(options.get(tool, {}).get("defer_loading") is not True for tool in glasshive_operations)
     assert options.get("file_search", {}).get("defer_loading") is not True
     assert options.get("sys__server__sys_mcp_glasshive-workers-projects", {}).get(
         "defer_loading"
@@ -485,22 +487,16 @@ def test_glasshive_prompt_reflects_disabled_host_workers(monkeypatch: pytest.Mon
     assert "Default to host-native execution" not in rendered
 
 
-def test_live_data_prompt_uses_non_important_best_judgment_for_connected_inbox() -> None:
+def test_live_data_prompt_keeps_connected_inbox_routing_concise_and_faithful() -> None:
     registry = load_prompt_registry(PROMPT_ROOT)
     rendered = render_prompt("main.truth_live_data", registry)
 
-    assert (
-        "- For important actions, If unsure which service the user means, ask. "
-        "Otherwise, use your best judgement or get what you can."
-    ) in rendered
-    assert "configured/available connected email providers" in rendered
-    assert "do not defer the check to background cortices" in rendered
-    assert "read-only Connected Accounts handoff for immediate checks and quick updates" in rendered
-    assert "pass broker/MCP/tool availability as context" in rendered
-    assert "memory-derived priorities" in rendered
-    assert "For vague user adjectives like urgent or important, pass the adjective through" in rendered
-    assert "trust the GlassHive worker to choose the best path" in rendered
-    assert "Do not use GlassHive when a simple read-only Connected Accounts handoff" in rendered
+    assert "configured email accounts" in rendered
+    assert "direct Connected Accounts handoff for immediate checks" in rendered
+    assert "brokered worker only when the work is delegated" in rendered
+    assert "pass the user's wording and available capabilities" in rendered
+    assert "Do not invent provider lists, tool choices" in rendered
+    assert 'Preserve vague terms such as "urgent"' in rendered
 
 
 def test_glasshive_worker_prompt_prefers_broker_tools_over_browser_for_connected_accounts(
@@ -532,9 +528,9 @@ def test_glasshive_worker_prompt_prefers_broker_tools_over_browser_for_connected
     assert "connected_account_content_intent is only a compatibility hint" in rendered
     assert "not a required authorization switch" in rendered
     assert "success_criteria as broker/tool evidence gates" not in rendered
-    assert "Browser or computer use remains available" in rendered
-    assert "preferred scoped option" in rendered
-    assert "non-broker host connectors are fallback after" in rendered
+    assert "never authorizes browser, computer, filesystem, shell" in rendered
+    assert "Surface the blocker so required work enters needs_input" in rendered
+    assert "Separately authorized native tools remain available only for unrelated work" in rendered
     assert "set connected_account_content_intent=true" not in rendered
 
 

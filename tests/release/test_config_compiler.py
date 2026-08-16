@@ -334,7 +334,7 @@ def source_of_truth_built_in_agent_map() -> dict[str, str]:
 
 
 XAI_CURRENT_DEFAULT_MODELS = [
-    "grok-4.3",
+    "grok-4.5",
     "grok-4.20-non-reasoning",
     "grok-4.20-multi-agent-0309",
     "grok-4.20-0309-reasoning",
@@ -412,14 +412,14 @@ def test_shipped_config_examples_default_automation_to_sol_xhigh(filename: str) 
     assert host_worker["codex_reasoning_effort"] == "xhigh"
 
 
-def test_build_custom_endpoints_xai_defaults_to_grok_43() -> None:
+def test_build_custom_endpoints_xai_defaults_to_grok_45() -> None:
     xai = custom_endpoint(config_compiler.build_custom_endpoints(), "xai")
     models = xai["models"]["default"]
 
     assert models[:4] == XAI_CURRENT_DEFAULT_MODELS
     assert not any("experimental-beta-0304" in model for model in models)
-    assert xai["titleModel"] == "grok-4.3"
-    assert xai["summaryModel"] == "grok-4.3"
+    assert xai["titleModel"] == "grok-4.5"
+    assert xai["summaryModel"] == "grok-4.5"
     assert xai["titleModel"] not in XAI_RETIRED_MODEL_IDS
     assert xai["summaryModel"] not in XAI_RETIRED_MODEL_IDS
 
@@ -626,11 +626,11 @@ def test_source_template_xai_endpoint_uses_current_stable_models() -> None:
     assert models[:4] == XAI_CURRENT_DEFAULT_MODELS
     assert not any("experimental-beta-0304" in model for model in models)
     assert XAI_RETIRED_MODEL_IDS.isdisjoint(models)
-    assert xai["titleModel"] == "grok-4.3"
-    assert xai["summaryModel"] == "grok-4.3"
+    assert xai["titleModel"] == "grok-4.5"
+    assert xai["summaryModel"] == "grok-4.5"
 
 
-def test_rendered_librechat_yaml_xai_endpoint_uses_grok_43_after_source_template_merge() -> None:
+def test_rendered_librechat_yaml_xai_endpoint_uses_grok_45_after_source_template_merge() -> None:
     config = {
         "version": 1,
         "install": {"mode": "native"},
@@ -670,11 +670,11 @@ def test_rendered_librechat_yaml_xai_endpoint_uses_grok_43_after_source_template
 
     assert models[:4] == XAI_CURRENT_DEFAULT_MODELS
     assert XAI_RETIRED_MODEL_IDS.isdisjoint({xai["titleModel"], xai["summaryModel"]})
-    assert xai["titleModel"] == "grok-4.3"
-    assert xai["summaryModel"] == "grok-4.3"
+    assert xai["titleModel"] == "grok-4.5"
+    assert xai["summaryModel"] == "grok-4.5"
 
 
-def test_rendered_librechat_yaml_exposes_grok_43_in_model_specs() -> None:
+def test_rendered_librechat_yaml_exposes_grok_45_in_model_specs() -> None:
     config = {
         "version": 1,
         "install": {"mode": "native"},
@@ -710,13 +710,13 @@ def test_rendered_librechat_yaml_exposes_grok_43_in_model_specs() -> None:
     env = config_compiler.render_runtime_env(config, assignments)
     librechat_yaml = yaml.safe_load(config_compiler.render_librechat_yaml(config, assignments, env))
     grok_spec = next(
-        item for item in librechat_yaml["modelSpecs"]["list"] if item.get("name") == "grok-4.3"
+        item for item in librechat_yaml["modelSpecs"]["list"] if item.get("name") == "grok-4.5"
     )
 
-    assert grok_spec["label"] == "Grok 4.3"
+    assert grok_spec["label"] == "Grok 4.5"
     assert grok_spec["group"] == "xai"
     assert grok_spec["preset"]["endpoint"] == "xai"
-    assert grok_spec["preset"]["model"] == "grok-4.3"
+    assert grok_spec["preset"]["model"] == "grok-4.5"
 
 
 def test_config_compiler_minimal(tmp_path: Path) -> None:
@@ -908,7 +908,7 @@ def test_config_compiler_minimal(tmp_path: Path) -> None:
     assert built_in_agents == source_of_truth_built_in_agent_map()
     assert "azureOpenAI" not in librechat_yaml["endpoints"]
     assert librechat_yaml["endpoints"]["anthropic"]["titleEndpoint"] == "anthropic"
-    assert librechat_yaml["endpoints"]["anthropic"]["titleModel"] == "claude-sonnet-4-5"
+    assert librechat_yaml["endpoints"]["anthropic"]["titleModel"] == "claude-opus-5"
     assert all(
         item.get("preset", {}).get("endpoint") != "azureOpenAI"
         for item in librechat_yaml["modelSpecs"]["list"]
@@ -926,7 +926,7 @@ def test_config_compiler_minimal(tmp_path: Path) -> None:
         "custom",
     }
     custom_names = [endpoint["name"] for endpoint in librechat_yaml["endpoints"]["custom"]]
-    assert custom_names == ["perplexity", "xai", "openrouter", "groq"]
+    assert custom_names == ["glasshive-harness", "perplexity", "xai", "openrouter", "groq"]
     assert librechat_yaml["version"] == "1.3.6"
     assert "webSearch" not in librechat_yaml
     assert librechat_yaml["mcpServers"]["scheduling-cortex"]["url"] == "${SCHEDULING_MCP_URL}"
@@ -1612,26 +1612,23 @@ def test_source_of_truth_mcp_instructions_match_prompt_architecture_contract() -
         assert "do not branch on prompt text" in instructions
 
 
-def test_source_of_truth_exposes_glasshive_native_scheduler_and_followup_tools() -> None:
+def test_source_of_truth_exposes_only_the_canonical_parallel_work_control_plane() -> None:
     expected_tools = {
-        "workspace_launch_mcp_glasshive-workers-projects",
-        "workspace_status_mcp_glasshive-workers-projects",
-        "workspace_wait_mcp_glasshive-workers-projects",
-        "workspace_continue_mcp_glasshive-workers-projects",
-        "workspace_artifacts_mcp_glasshive-workers-projects",
-        "workspace_artifact_download_mcp_glasshive-workers-projects",
-        "workspace_preferences_get_mcp_glasshive-workers-projects",
-        "workspace_preferences_set_mcp_glasshive-workers-projects",
-        "workspace_schedule_mcp_glasshive-workers-projects",
-        "worker_schedule_mcp_glasshive-workers-projects",
-        "worker_schedules_mcp_glasshive-workers-projects",
+        "worker_delegate_once_mcp_glasshive-workers-projects",
+        "active_work_list",
+        "active_work_action",
     }
 
     agents_bundle = load_source_of_truth_agents_bundle()
     main_agent = agents_bundle["mainAgent"]
-    assert expected_tools.issubset(set(main_agent["tools"]))
-    assert "Use GlassHive MCP scheduling tools" in main_agent["instructions"]
-    assert "Never claim a GlassHive schedule exists unless" in main_agent["instructions"]
+    glasshive_tools = {
+        tool
+        for tool in main_agent["tools"]
+        if "glasshive-workers-projects" in tool or tool.startswith("active_work_")
+    }
+    assert glasshive_tools == expected_tools
+    assert "The scheduling tool contract owns exact operations" in main_agent["instructions"]
+    assert "Verify current schedule state with the scheduling tool" in main_agent["instructions"]
 
     glasshive_policy = next(
         server
@@ -1640,17 +1637,11 @@ def test_source_of_truth_exposes_glasshive_native_scheduler_and_followup_tools()
         ]
         if server["server"] == "glasshive-workers-projects"
     )
-    assert expected_tools.issubset(set(glasshive_policy["tool_names"]))
+    assert set(glasshive_policy["tool_names"]) == expected_tools
 
-    librechat_source = load_source_of_truth_librechat_yaml()
-    glasshive_lc_policy = next(
-        server
-        for server in librechat_source["viventium"]["background_cortices"]["activation_policy"][
-            "direct_action_mcp_servers"
-        ]
-        if server["server"] == "glasshive-workers-projects"
-    )
-    assert expected_tools.issubset(set(glasshive_lc_policy["tool_names"]))
+    # The agent bundle is the authored control-plane source of truth. The
+    # LibreChat scaffold retains the full MCP inventory for operator/admin and
+    # specialist compatibility; it does not grant those tools to Main.
 
 
 def test_periphery_read_tools_are_declared_on_every_conscious_agent_surface() -> None:
@@ -1862,7 +1853,7 @@ def test_render_librechat_yaml_preserves_defaults_and_overlays_compiled_memory_a
     assert librechat_yaml["memory"]["agent"]["provider"] == "openai"
     assert librechat_yaml["memory"]["agent"]["model"] == "gpt-5.4"
     assert librechat_yaml["endpoints"]["anthropic"]["titleEndpoint"] == "anthropic"
-    assert librechat_yaml["endpoints"]["anthropic"]["titleModel"] == "claude-sonnet-4-5"
+    assert librechat_yaml["endpoints"]["anthropic"]["titleModel"] == "claude-opus-5"
     assert librechat_yaml["viventium"]["background_cortices"]["activation_format"]["brew_begin_tag"]
     assert librechat_yaml["balance"]["enabled"] is False
     assert librechat_yaml["balance"]["startBalance"] == 200000
@@ -4539,7 +4530,7 @@ def test_config_compiler_enables_connected_accounts_gate_for_openai_and_anthropi
     assert librechat_yaml["memory"]["agent"]["provider"] == "anthropic"
     assert librechat_yaml["memory"]["agent"]["model"] == "claude-sonnet-4-5"
     assert librechat_yaml["endpoints"]["anthropic"]["titleEndpoint"] == "anthropic"
-    assert librechat_yaml["endpoints"]["anthropic"]["titleModel"] == "claude-sonnet-4-5"
+    assert librechat_yaml["endpoints"]["anthropic"]["titleModel"] == "claude-opus-5"
 
 
 def test_render_librechat_yaml_uses_connected_anthropic_for_memory_when_no_other_foundation_exists() -> None:
@@ -4580,7 +4571,7 @@ def test_render_librechat_yaml_uses_connected_anthropic_for_memory_when_no_other
     assert librechat_yaml["memory"]["agent"]["provider"] == "anthropic"
     assert librechat_yaml["memory"]["agent"]["model"] == "claude-sonnet-4-5"
     assert librechat_yaml["endpoints"]["anthropic"]["titleEndpoint"] == "anthropic"
-    assert librechat_yaml["endpoints"]["anthropic"]["titleModel"] == "claude-sonnet-4-5"
+    assert librechat_yaml["endpoints"]["anthropic"]["titleModel"] == "claude-opus-5"
 
 
 def test_render_librechat_yaml_uses_connected_openai_for_memory_when_no_other_foundation_exists() -> None:
@@ -5469,3 +5460,111 @@ def test_config_compiler_resolves_string_telegram_enablement_consistently(tmp_pa
     runtime_env_true = (output_true / "runtime.env").read_text(encoding="utf-8")
     assert "START_TELEGRAM=true" in runtime_env_true
     assert f"BOT_TOKEN={VALID_TELEGRAM_TOKEN}" in runtime_env_true
+
+
+def test_parallel_work_compiler_defaults_dark_and_emits_bounded_runtime_contract() -> None:
+    config = minimal_compile_config()
+    config["integrations"]["glasshive"] = {
+        "enabled": True,
+        "orchestration": {},
+        "host_worker": {"enabled": True},
+    }
+
+    settings = config_compiler.resolve_glasshive_orchestration_settings(config)
+    env = config_compiler.render_runtime_env(
+        config,
+        config_compiler.build_agent_assignments(config),
+    )
+
+    assert settings == {
+        "available": False,
+        "isolated_parallel_policy": False,
+        "automatic_execution_mode": "docker",
+        "default_mode": "focused",
+        "conversation_slots_per_cli": 2,
+        "mission_slots_per_cli": 3,
+        "account_active_limit": 4,
+        "tenant_active_limit": 12,
+        "max_child_processes": 64,
+        "max_threads": 2048,
+        "min_available_memory_mb": 2048,
+        "min_available_disk_mb": 4096,
+        "snapshot_cache_ms": 2000,
+        "snapshot_cold_timeout_ms": 100,
+        "authorization_horizon_seconds": 86400,
+    }
+    assert env["VIVENTIUM_PARALLEL_WORK_AVAILABLE"] == "false"
+    assert env["VIVENTIUM_GLASSHIVE_ISOLATED_PARALLEL_POLICY"] == "false"
+    assert env["VIVENTIUM_PARALLEL_WORK_EXECUTION_MODE"] == "docker"
+    assert env["VIVENTIUM_PARALLEL_WORK_DEFAULT_MODE"] == "focused"
+    assert env["WPR_HOST_CONVERSATION_SLOTS_PER_CLI"] == "2"
+    assert env["WPR_HOST_MISSION_SLOTS_PER_CLI"] == "3"
+    assert env["WPR_HOST_ACCOUNT_ACTIVE_LIMIT"] == "4"
+    assert env["WPR_HOST_TENANT_ACTIVE_LIMIT"] == "12"
+    assert env["WPR_HOST_MAX_CHILD_PROCESSES"] == "64"
+    assert env["WPR_HOST_MAX_THREADS"] == "2048"
+    assert env["WPR_HOST_MIN_AVAILABLE_MEMORY_MB"] == "2048"
+    assert env["WPR_HOST_MIN_AVAILABLE_DISK_MB"] == "4096"
+    assert env["VIVENTIUM_ACTIVE_WORK_CACHE_MS"] == "2000"
+    assert env["VIVENTIUM_ACTIVE_WORK_COLD_TIMEOUT_MS"] == "100"
+    assert env["VIVENTIUM_GLASSHIVE_AUTHORIZATION_HORIZON_SECONDS"] == "86400"
+
+
+def test_parallel_work_compiler_validates_limits_and_requires_glasshive() -> None:
+    config = minimal_compile_config()
+    config["integrations"]["glasshive"] = {
+        "enabled": False,
+        "orchestration": {"available": True, "default_mode": "parallel"},
+    }
+    assert config_compiler.resolve_glasshive_orchestration_settings(config)["available"] is False
+
+    config["integrations"]["glasshive"] = {
+        "enabled": True,
+        "orchestration": {
+            "available": True,
+            "default_mode": "parallel",
+            "mission_slots_per_cli": 0,
+        },
+    }
+    with pytest.raises(SystemExit, match="mission_slots_per_cli"):
+        config_compiler.resolve_glasshive_orchestration_settings(config)
+
+
+def test_parallel_work_availability_enables_fail_closed_isolated_mission_policy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(config_compiler, "GLASSHIVE_RUNTIME_DIR", REPO_ROOT)
+    config = minimal_compile_config()
+    config["integrations"]["glasshive"] = {
+        "enabled": True,
+        "orchestration": {"available": True, "default_mode": "parallel"},
+        "host_worker": {"enabled": True, "default_execution_mode": "host"},
+    }
+
+    settings = config_compiler.resolve_glasshive_orchestration_settings(config)
+    env = config_compiler.render_runtime_env(
+        config,
+        config_compiler.build_agent_assignments(config),
+    )
+    assert settings["available"] is True
+    assert settings["isolated_parallel_policy"] is True
+    assert settings["automatic_execution_mode"] == "docker"
+    assert env["VIVENTIUM_PARALLEL_WORK_AVAILABLE"] == "true"
+    assert env["VIVENTIUM_GLASSHIVE_ISOLATED_PARALLEL_POLICY"] == "true"
+    assert env["VIVENTIUM_PARALLEL_WORK_EXECUTION_MODE"] == "docker"
+    assert env["GLASSHIVE_DEFAULT_EXECUTION_MODE"] == "host"
+
+
+def test_public_schema_declares_parallel_work_dark_defaults() -> None:
+    schema = yaml.safe_load((REPO_ROOT / "config.schema.yaml").read_text(encoding="utf-8"))
+    orchestration = (
+        schema["properties"]["integrations"]["properties"]["glasshive"]["properties"]
+        ["orchestration"]
+    )
+    assert orchestration["properties"]["available"]["default"] is False
+    assert orchestration["properties"]["default_mode"]["default"] == "focused"
+    assert orchestration["properties"]["mission_slots_per_cli"]["default"] == 3
+    assert orchestration["properties"]["account_active_limit"]["default"] == 4
+    assert orchestration["properties"]["min_available_disk_mb"]["default"] == 4096
+    assert orchestration["properties"]["authorization_horizon_seconds"]["default"] == 86400
+    assert orchestration["properties"]["authorization_horizon_seconds"]["maximum"] == 86400

@@ -531,10 +531,30 @@ docker() {
     local compose_up_timeout="${VIVENTIUM_DOCKER_COMPOSE_UP_TIMEOUT_SECONDS:-600}"
     timeout_seconds="$compose_timeout"
     local compose_index=1
-    if [[ "${docker_args[$compose_index]:-}" == "-f" ]]; then
-      compose_index=$((compose_index + 2))
-    fi
-    if [[ "${docker_args[$compose_index]:-}" == "up" ]]; then
+    local compose_command=""
+    local compose_arg=""
+    while (( compose_index < ${#docker_args[@]} )); do
+      compose_arg="${docker_args[$compose_index]}"
+      case "$compose_arg" in
+        "--project-name"|"-p"|"--file"|"-f"|"--env-file"|"--profile"|"--ansi"|"--progress"|"--parallel")
+          compose_index=$((compose_index + 2))
+          continue
+          ;;
+        --project-name=*|--file=*|--env-file=*|--profile=*|--ansi=*|--progress=*|--parallel=*|--compatibility|--dry-run)
+          compose_index=$((compose_index + 1))
+          continue
+          ;;
+        --*)
+          compose_index=$((compose_index + 1))
+          continue
+          ;;
+        *)
+          compose_command="$compose_arg"
+          break
+          ;;
+      esac
+    done
+    if [[ "$compose_command" == "up" ]]; then
       timeout_seconds="$compose_up_timeout"
     fi
   elif [[ "${docker_args[0]:-}" == "run" ]]; then
@@ -7977,6 +7997,49 @@ glasshive_stack_ready() {
     curl -fsS "http://127.0.0.1:${GLASSHIVE_UI_PORT}/" >/dev/null 2>&1
 }
 
+# Provision the only two egress principals available to automatic Parallel
+# workers. Each worker later receives its own internal mission network; the
+# proxies are attached to that network by GlassHive after their immutable
+# substrate has been attested.
+start_parallel_work_proxy_substrate() {
+  if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
+    log_warn "Parallel clean-room proxies are unavailable because Docker is not ready"
+    return 1
+  fi
+
+  local proxy_dir="$ROOT_DIR/docker/parallel-work-proxy"
+  local compose_file="$proxy_dir/compose.yml"
+  if [[ ! -f "$compose_file" ]]; then
+    log_warn "Parallel clean-room proxy compose file not found: $compose_file"
+    return 1
+  fi
+
+  local instance="${VIVENTIUM_DEV_ENV_INSTANCE_ID:-${VIVENTIUM_RUNTIME_PROFILE:-isolated}}"
+  instance="$(printf '%s' "$instance" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9_.-' '-')"
+  instance="${instance#-}"
+  instance="${instance%-}"
+  [[ -n "$instance" ]] || instance="isolated"
+
+  export WPR_PARALLEL_CLEAN_ROOM_NETWORK="${WPR_PARALLEL_CLEAN_ROOM_NETWORK:-viventium-parallel-${instance}}"
+  export WPR_PARALLEL_CLEAN_ROOM_PROVIDER_EGRESS_NETWORK="${WPR_PARALLEL_CLEAN_ROOM_PROVIDER_EGRESS_NETWORK:-viventium-parallel-egress-${instance}}"
+  export WPR_PARALLEL_CLEAN_ROOM_PROVIDER_PROXY_CONTAINER="${WPR_PARALLEL_CLEAN_ROOM_PROVIDER_PROXY_CONTAINER:-viventium-parallel-provider-${instance}}"
+  export WPR_PARALLEL_CLEAN_ROOM_BROKER_PROXY_CONTAINER="${WPR_PARALLEL_CLEAN_ROOM_BROKER_PROXY_CONTAINER:-viventium-parallel-broker-${instance}}"
+  export WPR_PARALLEL_CLEAN_ROOM_PROVIDER_PROXY_URL="${WPR_PARALLEL_CLEAN_ROOM_PROVIDER_PROXY_URL:-http://provider-egress:8080}"
+  export VIVENTIUM_PARALLEL_PROXY_IMAGE="${VIVENTIUM_PARALLEL_PROXY_IMAGE:-viventium-parallel-work-proxy:local}"
+
+  local project_name="viventium-parallel-proxy-${instance}"
+  if ! (
+    cd "$proxy_dir" &&
+      docker compose --project-name "$project_name" -f "$compose_file" up -d --build --remove-orphans
+  ) >"$LOG_DIR/parallel_work_proxy.log" 2>&1; then
+    log_warn "Parallel clean-room proxy startup failed; automatic Parallel work remains unavailable"
+    tail -20 "$LOG_DIR/parallel_work_proxy.log" 2>/dev/null || true
+    return 1
+  fi
+  log_success "Parallel clean-room proxy substrate is ready"
+  return 0
+}
+
 start_glasshive() {
   if [[ "$START_GLASSHIVE" != "true" ]]; then
     log_info "Skipping GlassHive startup"
@@ -8014,6 +8077,10 @@ start_glasshive() {
   if ! command -v uv >/dev/null 2>&1; then
     log_error "uv not found (required for GlassHive)"
     return 1
+  fi
+
+  if ! start_parallel_work_proxy_substrate; then
+    log_warn "GlassHive will start with isolated Parallel admission disabled"
   fi
 
   log_info "Starting GlassHive runtime stack..."

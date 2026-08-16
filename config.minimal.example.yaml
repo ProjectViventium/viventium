@@ -138,12 +138,18 @@ voice:
 integrations:
   glasshive:
     enabled: true
+    orchestration:
+      # Dark by default; the runtime also fails closed unless the isolated
+      # mission substrate is ready and no legacy host mission is active.
+      available: false
+      default_mode: focused
     host_worker:
       enabled: true
       workspace_root: ~/viventium
       # Worker runtime profile: codex-cli, claude-code, or openclaw-general.
       # Separate from the integrations.openclaw lab toggle below.
       default_worker_profile: codex-cli
+      # Explicit/operator default only; automatic Parallel work cannot inherit it.
       default_execution_mode: host
       codex_model: gpt-5.6-sol
       codex_reasoning_effort: xhigh

@@ -278,7 +278,7 @@ class TestSSEParser(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("www.example.org", cleaned)
         self.assertNotIn("qa@example.com", cleaned)
         self.assertIn("link available", cleaned)
-        self.assertIn("email available", cleaned)
+        self.assertIn("email address available", cleaned)
 
     def test_sanitize_voice_tts_text_preserves_dot_heavy_technical_tokens(self) -> None:
         text = "Use .NET, asp.net, v1.2A, U.S.A., and node.js. Done.Next."
