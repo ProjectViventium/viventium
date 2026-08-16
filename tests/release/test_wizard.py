@@ -4,6 +4,8 @@ import importlib.util
 import subprocess
 from pathlib import Path
 
+import yaml
+
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WIZARD_PATH = REPO_ROOT / "scripts" / "viventium" / "wizard.py"
@@ -408,6 +410,13 @@ def test_validate_non_interactive_integrations_allows_explicit_dormant_telegram_
             }
         }
     }
+
+    wizard.validate_non_interactive_integrations(config)
+
+
+def test_shipped_full_example_passes_non_interactive_integration_validation() -> None:
+    wizard = load_wizard_module()
+    config = yaml.safe_load((REPO_ROOT / "config.full.example.yaml").read_text(encoding="utf-8"))
 
     wizard.validate_non_interactive_integrations(config)
 

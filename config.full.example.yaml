@@ -314,8 +314,7 @@ integrations:
       api_hash: keychain://viventium/telegram_api_hash
   telegram_codex:
     enabled: false
-    secret_ref: keychain://viventium/telegram_codex_bot_token
-    bot_username: your_codex_bot_username
+    # Add secret_ref and bot_username only when enabling this separate bot.
     private_chat_only: true
   google_workspace:
     enabled: true
