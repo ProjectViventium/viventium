@@ -1447,6 +1447,16 @@ def test_local_glasshive_keeps_explicit_api_origin_authoritative() -> None:
     assert env["GLASSHIVE_PROVIDER_BASE_URL"] == "http://127.0.0.1:26001/v1"
 
 
+def test_local_glasshive_provider_assignment_avoids_python312_only_fstring_grammar() -> None:
+    compiler_source = (REPO_ROOT / "scripts" / "viventium" / "config_compiler.py").read_text(
+        encoding="utf-8"
+    )
+
+    # Python 3.10/3.11 are supported installer runtimes. Before PEP 701, a replacement
+    # expression cannot span physical lines inside an f-string.
+    assert 'else f"{local_glasshive_provider_base_url(\n' not in compiler_source
+
+
 def test_startup_status_never_prints_partial_credential_material() -> None:
     launcher = START_SCRIPT.read_text(encoding="utf-8")
     legacy_launcher = LEGACY_START_SCRIPT.read_text(encoding="utf-8")

@@ -3351,14 +3351,15 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
         )
         env["WPR_API_TOKEN"] = provider_token
         env["GLASSHIVE_PROVIDER_API_KEY"] = provider_token
-        env["GLASSHIVE_PROVIDER_BASE_URL"] = (
-            f"{str(glasshive_enterprise['provider_base_url']).rstrip('/')}/v1"
+        provider_base_url = (
+            str(glasshive_enterprise["provider_base_url"]).rstrip("/")
             if glasshive_enterprise["enabled"]
-            else f"{local_glasshive_provider_base_url(
+            else local_glasshive_provider_base_url(
                 str(glasshive_enterprise['mcp_url']),
                 str(glasshive_enterprise['provider_base_url']),
-            )}/v1"
+            )
         )
+        env["GLASSHIVE_PROVIDER_BASE_URL"] = f"{provider_base_url}/v1"
 
     public_client_origin = str(network.get("public_client_origin", "") or "").strip()
     public_api_origin = str(network.get("public_api_origin", "") or "").strip()
