@@ -25,6 +25,16 @@ def test_direct_librechat_dev_start_remains_valid_bash() -> None:
     subprocess.run(["bash", "-n", str(LIBRECHAT_START_PATH)], check=True)
 
 
+def test_direct_librechat_dev_start_does_not_mix_app_support_roots() -> None:
+    launcher_text = LIBRECHAT_START_PATH.read_text(encoding="utf-8")
+
+    assert 'if [[ -n "${VIVENTIUM_APP_SUPPORT_DIR:-}" ]]' in launcher_text
+    assert '"${VIVENTIUM_APP_SUPPORT_DIR}/runtime/service-env/librechat.env"' in launcher_text
+    assert '"${VIVENTIUM_APP_SUPPORT_DIR}/runtime/runtime.env"' in launcher_text
+    assert 'elif [[ -n "${VIVENTIUM_ENV_FILE:-}" ]]' in launcher_text
+    assert "Only fall back to the default App Support root" in launcher_text
+
+
 def test_direct_librechat_dev_start_compiles_prompt_registry_bundle() -> None:
     launcher_text = LIBRECHAT_START_PATH.read_text(encoding="utf-8")
 
