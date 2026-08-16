@@ -12,7 +12,7 @@ Use stable `INST-NNN` IDs for installer resilience cases.
 | `INST-002` | Public QA evidence is sanitized and reproducible | A PR reviewer can verify the behavior without private/local data | QA report, git diff, logs summary, generated artifacts | Public-safety scan plus relevant release tests | NOT YET RUN (cataloged 2026-05-17; next feature run required) |
 | `INST-003` | Supported installs and upgrades include the default nightly workflow without owner-specific setup. | A new local user gets GlassHive, Prompt Workbench, active nightly reflection, and memory hardening after signing into Codex or Claude. | installer/CLI, preflight, config compiler, generated env, install summary, Workbench seed | `test_default_nightly_routines.py`, `test_wizard.py`, `test_preflight.py`, `test_config_compiler.py`, `test_cli_upgrade.py`, `test_install_summary.py`, `test_prompt_workbench.py` | PASS 2026-05-31 ([report](reports/2026-05-31-default-nightly-workflow-install-upgrade-qa.md)); release suites and temp config simulations proved defaults, worker auth/profile selection, generated env, Workbench seed, summary rows, and no owner identity hardcode; clean separate-Mac install remains a release gate |
 | `INST-004` | Express Rich Brain Readiness aligns the installer with the cognitive-system runtime inventory without pretending user-owned integrations are ready. | A new or upgrading user gets the core brain spine automatically, guided setup for user-owned pieces, honest status/readiness rows, and no developer-private defaults. | wizard, preflight, config compiler, install/status summary, generated env, QA map, public examples | `test_brain_readiness.py`, `test_wizard.py`, `test_install_summary.py`, `test_config_compiler.py`, `test_preflight.py`, feature-owner suites as applicable | PARTIAL 2026-05-31 ([report](reports/2026-05-31-express-rich-brain-readiness-implementation.md)); automated registry/wizard/status coverage added, clean-machine browser/onboarding proof remains a release gate |
-| `INST-005` | A clean local install must materialize every executable and secret-bearing runtime dependency referenced by compiled configuration. | A new user does not receive unresolved GlassHive provider/auth or Viventium-Health placeholders, and all state remains inside the selected App Support root. | public installer, component bootstrap, private health runtime, generated env, doctor | `test_viventium_health_runtime.py`, `test_bootstrap_components.py`, `test_config_compiler.py`, `test_cli_upgrade.py` plus a fresh public-clone install | PARTIAL 2026-08-16; automated regression is green, fresh-clone rerun is required before PASS |
+| `INST-005` | A clean local install must materialize every executable and secret-bearing runtime dependency referenced by compiled configuration. | A new user does not receive unresolved GlassHive provider/auth or Viventium-Health placeholders, and all state remains inside the selected App Support root. | public installer, component bootstrap, private health runtime, generated env, doctor | `test_viventium_health_runtime.py`, `test_bootstrap_components.py`, `test_config_compiler.py`, `test_cli_upgrade.py` plus a fresh public-clone install | PASS 2026-08-16 ([report](reports/2026-08-16-clean-install-runtime-dependency-closure.md)); public clone install and doctor passed with exact pins, zero unresolved placeholders, private health-runtime modes, and contained state |
 
 ## `INST-001` - Core User Flow
 
@@ -190,8 +190,9 @@ Use stable `INST-NNN` IDs for installer resilience cases.
 - Automation: `tests/release/test_viventium_health_runtime.py`,
   `tests/release/test_bootstrap_components.py`, `tests/release/test_config_compiler.py`, and
   `tests/release/test_cli_upgrade.py`.
-- Last run: PARTIAL 2026-08-16; exact automated regression passed, fresh public-clone install rerun
-  remains required.
+- Last run: PASS 2026-08-16
+  ([report](reports/2026-08-16-clean-install-runtime-dependency-closure.md)); the exact pushed
+  candidate passed the public-clone installer and doctor with an empty isolated App Support root.
 
 ## Natural User Use Case Checklist
 
