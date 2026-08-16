@@ -1829,7 +1829,8 @@ START_RAG_API="${START_RAG_API:-true}"
 # === VIVENTIUM START ===
 # Feature: Meeting transcript memory ingestion requires the RAG API when a transcript folder is configured.
 # === VIVENTIUM END ===
-if [[ -n "${VIVENTIUM_MEMORY_TRANSCRIPTS_DIR:-}" ]]; then
+if [[ -n "${VIVENTIUM_MEMORY_TRANSCRIPTS_DIR:-}" ]] \
+  && ! truthy_env_value "${VIVENTIUM_SHARED_RAG_API:-false}"; then
   START_RAG_API=true
 fi
 # === VIVENTIUM START ===

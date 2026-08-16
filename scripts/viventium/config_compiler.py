@@ -776,7 +776,7 @@ AGENT_ASSIGNMENT_ROLES = {
 
 MEMORY_HARDENING_LAUNCH_READY_MODELS = {
     "anthropic": {"claude-opus-4-8", "claude-opus-5"},
-    "openai": {"gpt-5.5", "gpt-5.6-sol"},
+    "openai": {"gpt-5.5", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"},
 }
 DEFAULT_MEMORY_HARDENING = {
     "enabled": False,
@@ -1013,6 +1013,12 @@ PROFILE_DEFAULTS = {
     },
 }
 DEV_ENV_SCHEDULING_MCP_PORT_OFFSET_BIAS = 100
+DEV_ENV_APP_FACING_PORT_KEYS = (
+    "lc_api_port",
+    "lc_frontend_port",
+    "playground_port",
+    "voice_gateway_health_port",
+)
 
 RUNTIME_PORT_KEYS = {
     "lc_api_port",
@@ -1583,23 +1589,33 @@ def resolve_runtime_profile(config: dict[str, Any]) -> tuple[str, dict[str, Any]
     dev_env = runtime.get("dev_env", {}) or {}
     if isinstance(dev_env, dict) and resolve_bool(dev_env.get("enabled"), False):
         offset_raw = dev_env.get("port_offset")
-        if "scheduling_mcp_port" not in port_overrides and offset_raw not in (None, ""):
+        if offset_raw not in (None, ""):
             try:
                 offset = int(offset_raw)
             except (TypeError, ValueError) as exc:
                 raise SystemExit(
                     f"runtime.dev_env.port_offset must be an integer, got {offset_raw!r}"
                 ) from exc
-            scheduling_port = (
-                profile["scheduling_mcp_port"]
-                + offset
-                + DEV_ENV_SCHEDULING_MCP_PORT_OFFSET_BIAS
-            )
-            if scheduling_port <= 0:
-                raise SystemExit(
-                    "runtime.dev_env.port_offset produced an invalid scheduling_mcp_port"
+            for key in DEV_ENV_APP_FACING_PORT_KEYS:
+                if key in port_overrides:
+                    continue
+                app_port = profile[key] + offset
+                if app_port <= 0:
+                    raise SystemExit(
+                        f"runtime.dev_env.port_offset produced an invalid {key}"
+                    )
+                profile[key] = app_port
+            if "scheduling_mcp_port" not in port_overrides:
+                scheduling_port = (
+                    profile["scheduling_mcp_port"]
+                    + offset
+                    + DEV_ENV_SCHEDULING_MCP_PORT_OFFSET_BIAS
                 )
-            profile["scheduling_mcp_port"] = scheduling_port
+                if scheduling_port <= 0:
+                    raise SystemExit(
+                        "runtime.dev_env.port_offset produced an invalid scheduling_mcp_port"
+                    )
+                profile["scheduling_mcp_port"] = scheduling_port
     return runtime_profile, profile
 
 
@@ -2554,6 +2570,8 @@ def resolve_memory_hardening_settings(config: dict[str, Any]) -> dict[str, Any]:
         settings.get("openai_reasoning_effort")
         or DEFAULT_MEMORY_HARDENING["openai_reasoning_effort"]
     )
+    if settings["openai_reasoning_effort"] in {"none", "minimal", "low", "medium", "high"}:
+        settings["openai_reasoning_effort"] = "xhigh"
     transcripts["source_dir"] = str(transcripts.get("source_dir") or "").strip()
     transcripts["ignore_globs"] = string_list(
         transcripts.get("ignore_globs"),

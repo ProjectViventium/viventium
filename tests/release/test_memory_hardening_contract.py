@@ -10,6 +10,8 @@ import sys
 import time
 from pathlib import Path
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[2]
 CONFIG_COMPILER_SPEC = importlib.util.spec_from_file_location(
@@ -114,6 +116,35 @@ def test_memory_hardening_accepts_current_explicit_anthropic_model() -> None:
     )
 
     assert settings["anthropic_model"] == "claude-opus-5"
+
+
+@pytest.mark.parametrize("model", ["gpt-5.6-terra", "gpt-5.6-luna"])
+def test_memory_hardening_accepts_current_explicit_openai_models(model: str) -> None:
+    settings = config_compiler.resolve_memory_hardening_settings(
+        {
+            "runtime": {
+                "memory_hardening": {
+                    "openai_model": model,
+                }
+            }
+        }
+    )
+
+    assert settings["openai_model"] == model
+
+
+def test_memory_hardening_upgrades_legacy_openai_effort_without_downgrading_quality() -> None:
+    settings = config_compiler.resolve_memory_hardening_settings(
+        {
+            "runtime": {
+                "memory_hardening": {
+                    "openai_reasoning_effort": "medium",
+                }
+            }
+        }
+    )
+
+    assert settings["openai_reasoning_effort"] == "xhigh"
 
 
 def test_memory_hardening_model_timeout_matches_large_overnight_workload() -> None:

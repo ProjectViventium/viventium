@@ -142,6 +142,52 @@ def test_dev_env_offsets_app_facing_and_runtime_sidecar_ports(tmp_path: Path) ->
     ]
 
 
+def test_dev_env_compiler_offsets_profile_defaults_when_app_ports_are_omitted(
+    tmp_path: Path,
+) -> None:
+    config = minimal_config()
+    for key in (
+        "lc_api_port",
+        "lc_frontend_port",
+        "playground_port",
+        "voice_gateway_health_port",
+    ):
+        config["runtime"]["ports"].pop(key)
+    config["runtime"]["dev_env"] = {
+        "enabled": True,
+        "name": "parallel-work-qa",
+        "port_offset": 5000,
+        "shared_singleton_services": [
+            "recall_rag",
+            "searxng",
+            "firecrawl",
+            "google_workspace_mcp",
+            "ms365_mcp",
+        ],
+    }
+    config_path = tmp_path / "config.yaml"
+    out_dir = tmp_path / "runtime"
+    config_path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
+
+    subprocess.run(
+        [
+            sys.executable,
+            str(CONFIG_COMPILER),
+            "--config",
+            str(config_path),
+            "--output-dir",
+            str(out_dir),
+        ],
+        check=True,
+    )
+
+    env_text = (out_dir / "runtime.env").read_text(encoding="utf-8")
+    assert "VIVENTIUM_LC_API_PORT=8180" in env_text
+    assert "VIVENTIUM_LC_FRONTEND_PORT=8190" in env_text
+    assert "VIVENTIUM_PLAYGROUND_PORT=8300" in env_text
+    assert "VIVENTIUM_VOICE_GATEWAY_HEALTH_PORT=13301" in env_text
+
+
 def test_dev_env_shared_singletons_compile_without_duplicate_start_flags(tmp_path: Path) -> None:
     config = minimal_config()
     config["runtime"]["dev_env"] = {

@@ -105,6 +105,35 @@ def _launcher_slice(start_marker: str, end_marker: str) -> str:
     return source[start:end]
 
 
+def test_transcript_memory_does_not_start_a_duplicate_shared_rag_sidecar() -> None:
+    source = LAUNCHER_PATH.read_text(encoding="utf-8")
+    start = source.index('START_RAG_API="${START_RAG_API:-true}"')
+    end = source.index("START_SKYVERN=", start)
+    startup_policy = source[start:end]
+    truthy_start = source.index("truthy_env_value() {")
+    truthy_end = source.index("\n}\n", truthy_start) + 3
+    truthy_function = source[truthy_start:truthy_end]
+    script = f"""
+set -e
+START_RAG_API=false
+VIVENTIUM_SHARED_RAG_API=true
+VIVENTIUM_MEMORY_TRANSCRIPTS_DIR=/synthetic/transcripts
+{truthy_function}
+{startup_policy}
+printf '%s\n' "$START_RAG_API"
+"""
+
+    completed = subprocess.run(
+        ["/bin/bash", "-c", script],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr or completed.stdout
+    assert completed.stdout.strip() == "false"
+
+
 def test_launcher_rag_ping_requires_semantic_up_status() -> None:
     assert _rag_ping_result('{"status":"UP"}').returncode == 0
     assert _rag_ping_result('{"status":"DOWN"}').returncode != 0
