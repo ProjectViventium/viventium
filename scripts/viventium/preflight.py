@@ -50,6 +50,7 @@ DEFAULT_DOCKER_AUTOSTART_GRACE_SECONDS = 12.0
 DOCKER_LOCAL_FIRECRAWL_RECOMMENDED_MEMORY_BYTES = 4 * 1024 * 1024 * 1024
 UPNPC_EXTERNAL_IP_RE = re.compile(r"ExternalIPAddress\s*=\s*([0-9.]+)")
 DEFAULT_CLI_RUNTIME_PROBE_TIMEOUT_SECONDS = 3.0
+PNPM_FORMULA = "pnpm@9"
 MIN_GLASSHIVE_FOLLOWUP_TIMEOUT_S = 30
 MAX_GLASSHIVE_FOLLOWUP_TIMEOUT_S = 86400
 CODEX_APP_CLI = Path("/Applications/Codex.app/Contents/Resources/codex")
@@ -757,12 +758,12 @@ def build_preflight_items(config: dict[str, Any]) -> list[PreflightItem]:
     items.append(
         PreflightItem(
             key="pnpm",
-            label="pnpm",
+            label=PNPM_FORMULA,
             category="runtime",
             reason="install and manage JS workspaces",
             status="ok" if pnpm_ready else "missing",
             install_kind="brew_formula" if not pnpm_ready else "none",
-            formula="pnpm" if not pnpm_ready else "",
+            formula=PNPM_FORMULA if not pnpm_ready else "",
             command="pnpm",
         )
     )
@@ -1401,6 +1402,8 @@ def refresh_brew_paths() -> None:
     candidates = [
         "/opt/homebrew/opt/node@20/bin",
         "/usr/local/opt/node@20/bin",
+        "/opt/homebrew/opt/pnpm@9/bin",
+        "/usr/local/opt/pnpm@9/bin",
         "/opt/homebrew/bin",
         "/opt/homebrew/sbin",
         "/usr/local/bin",
@@ -1462,7 +1465,7 @@ def formula_usable(formula: str) -> bool:
     refresh_brew_paths()
     checks: dict[str, Any] = {
         "node@20": node_runtime_supported,
-        "pnpm": pnpm_runtime_ready,
+        PNPM_FORMULA: pnpm_runtime_ready,
         "uv": uv_runtime_ready,
         "ollama": ollama_cli_runtime_ready,
         "ffmpeg": ffmpeg_runtime_ready,

@@ -134,7 +134,7 @@ def test_command_runtime_ready_times_out_cleanly(monkeypatch) -> None:
 @pytest.mark.parametrize(
     ("helper_name", "item_key", "formula", "config"),
     [
-        ("pnpm_runtime_ready", "pnpm", "pnpm", {}),
+        ("pnpm_runtime_ready", "pnpm", "pnpm@9", {}),
         ("uv_runtime_ready", "uv", "uv", {}),
         (
             "ollama_cli_runtime_ready",
@@ -1188,7 +1188,7 @@ def test_install_brew_formulas_reports_homebrew_drift_when_reinstall_cannot_fix_
 @pytest.mark.parametrize(
     ("formula", "helper_name"),
     [
-        ("pnpm", "pnpm_runtime_ready"),
+        ("pnpm@9", "pnpm_runtime_ready"),
         ("uv", "uv_runtime_ready"),
         ("ollama", "ollama_cli_runtime_ready"),
         ("ffmpeg", "ffmpeg_runtime_ready"),
@@ -1214,6 +1214,30 @@ def test_formula_usable_delegates_to_runtime_probe(monkeypatch, formula: str, he
 
     assert preflight.formula_usable(formula) is True
     assert calls == [helper_name]
+
+
+def test_refresh_brew_paths_prefers_pinned_pnpm9_over_global_homebrew(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    preflight = load_preflight_module()
+    available = {
+        "/opt/homebrew/opt/node@20/bin",
+        "/opt/homebrew/opt/pnpm@9/bin",
+        "/opt/homebrew/bin",
+    }
+
+    monkeypatch.delenv("VIVENTIUM_PREFLIGHT_DISABLE_HOST_PATH_DISCOVERY", raising=False)
+    monkeypatch.setenv("PATH", "/usr/bin")
+    monkeypatch.setattr(preflight.os.path, "isdir", lambda path: path in available)
+
+    preflight.refresh_brew_paths()
+
+    parts = preflight.os.environ["PATH"].split(preflight.os.pathsep)
+    assert parts[:3] == [
+        "/opt/homebrew/opt/node@20/bin",
+        "/opt/homebrew/opt/pnpm@9/bin",
+        "/opt/homebrew/bin",
+    ]
 
 
 def test_docker_daemon_ready_uses_bounded_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
