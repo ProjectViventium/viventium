@@ -1050,3 +1050,20 @@ config and recompile/restart; they do not patch generated App Support env files.
     state into a different runtime during fresh-clone or side-by-side QA
   - doctor must fail closed on an unresolved command, URL, token, or secret placeholder, and the
     reusable acceptance case is `qa/installer-resilience/cases.md` `INST-005`
+- The same clean-install review established the upgrade and deployment-mode boundaries:
+  - disabled GlassHive compilation must remove both its MCP server and provider-compatible custom
+    endpoint, so no GlassHive URL or bearer placeholder survives when the integration is off
+  - Viventium-Health source is trusted through the component bootstrap result: a clean exact git
+    pin is recorded as `pinned_git`, while an intentionally selected branch/dirty checkout or a
+    bootable vendored public tree is recorded explicitly as bootstrap-validated source; the package
+    content hash remains authoritative for runtime reuse
+  - runtime reuse and status must execute `viventium-health --version`, not trust only a manifest or
+    executable bit; a broken interpreter, tampered package asset, or interrupted atomic swap must
+    rebuild or recover without touching the private archive
+  - `VIVENTIUM_HEALTH_HOME` and the executable path are both derived from the selected App Support
+    root, and doctor verifies that the compiled command is executable
+  - enterprise GlassHive requires an explicit runtime `api_base_url` distinct from the operator UI
+    and an explicit service token; the compiler never invents external service authority or sends
+    provider traffic through the UI proxy
+  - configuration upgrades must continue accepting currently supported launch-ready model IDs such
+    as `claude-opus-5`; an older allowlist may not brick an otherwise valid existing runtime

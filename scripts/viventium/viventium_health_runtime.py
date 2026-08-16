@@ -19,7 +19,7 @@ from typing import Any
 
 
 COMPONENT_NAME = "Viventium-Health"
-RUNTIME_SCHEMA_VERSION = 1
+RUNTIME_SCHEMA_VERSION = 2
 
 
 class HealthRuntimeError(RuntimeError):
@@ -58,12 +58,15 @@ def _package_source(repo_root: Path, entry: dict[str, Any]) -> Path:
     return resolved_source
 
 
-def _verify_component_checkout(repo_root: Path, entry: dict[str, Any]) -> None:
+def _verify_component_checkout(repo_root: Path, entry: dict[str, Any]) -> dict[str, Any]:
     component_path = repo_root / str(entry.get("path") or "")
+    expected = str(entry.get("ref") or "").strip()
     if not (component_path / ".git").exists():
-        raise HealthRuntimeError(
-            "the Viventium-Health checkout has no git metadata to verify its parent lock pin"
-        )
+        return {
+            "sourceVerification": "bootstrap_validated_vendored",
+            "sourceRevision": None,
+            "lockRef": expected,
+        }
     head = subprocess.run(
         ["git", "rev-parse", "HEAD"],
         cwd=component_path,
@@ -71,9 +74,6 @@ def _verify_component_checkout(repo_root: Path, entry: dict[str, Any]) -> None:
         capture_output=True,
         text=True,
     ).stdout.strip()
-    expected = str(entry.get("ref") or "").strip()
-    if not expected or head != expected:
-        raise HealthRuntimeError("the Viventium-Health checkout does not match its parent lock pin")
     dirty = subprocess.run(
         ["git", "status", "--porcelain", "--", "pyproject.toml", "src/viventium_health"],
         cwd=component_path,
@@ -81,17 +81,33 @@ def _verify_component_checkout(repo_root: Path, entry: dict[str, Any]) -> None:
         capture_output=True,
         text=True,
     ).stdout.strip()
-    if dirty:
-        raise HealthRuntimeError("the Viventium-Health package source has uncommitted changes")
+    if expected and head == expected and not dirty:
+        verification = "pinned_git"
+    elif dirty:
+        verification = "bootstrap_validated_dirty_git"
+    else:
+        verification = "bootstrap_validated_git"
+    return {
+        "sourceVerification": verification,
+        "sourceRevision": head,
+        "lockRef": expected,
+    }
 
 
 def _package_hash(source: Path) -> str:
     digest = hashlib.sha256()
     if any(path.is_symlink() for path in source.rglob("*")):
         raise HealthRuntimeError("the Viventium-Health package contains an unsupported symlink")
-    files = sorted(path for path in source.rglob("*.py") if path.is_file() and not path.is_symlink())
+    files = sorted(
+        path
+        for path in source.rglob("*")
+        if path.is_file()
+        and not path.is_symlink()
+        and "__pycache__" not in path.parts
+        and not path.name.endswith((".pyc", ".pyo"))
+    )
     if not files:
-        raise HealthRuntimeError("the Viventium-Health package has no Python sources")
+        raise HealthRuntimeError("the Viventium-Health package has no installable files")
     for path in files:
         relative = path.relative_to(source).as_posix().encode("utf-8")
         body = path.read_bytes()
@@ -160,6 +176,8 @@ def _matching_runtime_manifest(
     runtime_dir: Path,
     *,
     component_ref: str,
+    lock_ref: str,
+    source_verification: str,
     package_sha256: str,
 ) -> dict[str, Any] | None:
     executable = runtime_dir / "bin" / "viventium-health"
@@ -187,6 +205,10 @@ def _matching_runtime_manifest(
         return None
     if manifest.get("componentRef") != component_ref:
         return None
+    if manifest.get("lockRef") != lock_ref:
+        return None
+    if manifest.get("sourceVerification") != source_verification:
+        return None
     if manifest.get("packageSha256") != package_sha256:
         return None
     installed_packages = list(
@@ -199,23 +221,59 @@ def _matching_runtime_manifest(
             return None
     except (HealthRuntimeError, OSError):
         return None
+    try:
+        version = subprocess.run(
+            [str(executable), "--version"],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        ).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if version.removeprefix("viventium-health ") != manifest.get("packageVersion"):
+        return None
     return manifest
+
+
+def _remove_swap_path(path: Path) -> None:
+    if path.is_symlink() or path.is_file():
+        path.unlink(missing_ok=True)
+    elif path.is_dir():
+        shutil.rmtree(path)
+
+
+def _recover_interrupted_swap(health_root: Path, target: Path) -> None:
+    staging_paths = list(health_root.glob(".runtime.install-*"))
+    backup_paths = sorted(
+        health_root.glob(".runtime.previous-*"),
+        key=lambda path: path.lstat().st_mtime_ns,
+        reverse=True,
+    )
+    if not target.exists() and backup_paths:
+        os.replace(backup_paths.pop(0), target)
+    for stale in [*staging_paths, *backup_paths]:
+        _remove_swap_path(stale)
 
 
 def install_runtime(*, repo_root: Path, app_support_dir: Path) -> dict[str, Any]:
     repo_root = repo_root.expanduser().resolve()
     app_support_dir = app_support_dir.expanduser().resolve()
     entry = _component_entry(repo_root)
-    _verify_component_checkout(repo_root, entry)
+    verification = _verify_component_checkout(repo_root, entry)
     source = _package_source(repo_root, entry)
-    component_ref = str(entry.get("ref") or "")
+    lock_ref = str(verification["lockRef"] or "")
+    component_ref = str(verification["sourceRevision"] or lock_ref)
     package_sha256 = _package_hash(source)
     health_root = app_support_dir / "health"
     _private_dir(health_root)
     target = health_root / "runtime"
+    _recover_interrupted_swap(health_root, target)
     current_manifest = _matching_runtime_manifest(
         target,
         component_ref=component_ref,
+        lock_ref=lock_ref,
+        source_verification=str(verification["sourceVerification"]),
         package_sha256=package_sha256,
     )
     if current_manifest is not None:
@@ -239,6 +297,9 @@ def install_runtime(*, repo_root: Path, app_support_dir: Path) -> dict[str, Any]
             "schemaVersion": RUNTIME_SCHEMA_VERSION,
             "component": COMPONENT_NAME,
             "componentRef": component_ref,
+            "lockRef": lock_ref,
+            "sourceRevision": verification["sourceRevision"],
+            "sourceVerification": verification["sourceVerification"],
             "packageSha256": package_sha256,
             "packageVersion": version.removeprefix("viventium-health "),
             "pythonVersion": ".".join(str(part) for part in sys.version_info[:3]),
@@ -282,6 +343,35 @@ def runtime_status(*, app_support_dir: Path) -> dict[str, Any]:
             "manifest": False,
             "componentRef": None,
         }
+    if not isinstance(manifest, dict) or manifest.get("schemaVersion") != RUNTIME_SCHEMA_VERSION:
+        return {
+            "status": "invalid",
+            "executable": True,
+            "manifest": False,
+            "componentRef": None,
+        }
+    try:
+        version = subprocess.run(
+            [str(executable), "--version"],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        ).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return {
+            "status": "invalid",
+            "executable": False,
+            "manifest": True,
+            "componentRef": manifest.get("componentRef"),
+        }
+    if version.removeprefix("viventium-health ") != manifest.get("packageVersion"):
+        return {
+            "status": "invalid",
+            "executable": True,
+            "manifest": True,
+            "componentRef": manifest.get("componentRef"),
+        }
     return {
         "status": "ready",
         "executable": True,
@@ -305,7 +395,7 @@ def main() -> int:
             payload = runtime_status(app_support_dir=args.app_support_dir)
         print(json.dumps(payload, sort_keys=True))
         return 0 if payload["status"] in {"installed", "ready"} else 1
-    except (HealthRuntimeError, OSError, subprocess.SubprocessError) as exc:
+    except (HealthRuntimeError, OSError, RuntimeError, subprocess.SubprocessError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
 

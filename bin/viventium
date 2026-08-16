@@ -3477,6 +3477,8 @@ case "$COMMAND" in
     CURRENT_INSTALL_STAGE="bootstrap-components"
     write_install_stage "$CURRENT_INSTALL_STAGE"
     bootstrap_components
+    CURRENT_INSTALL_STAGE="health-runtime"
+    write_install_stage "$CURRENT_INSTALL_STAGE"
     ensure_viventium_health_runtime >/dev/null
     CURRENT_INSTALL_STAGE="compile-config"
     write_install_stage "$CURRENT_INSTALL_STAGE"
@@ -3664,7 +3666,16 @@ case "$COMMAND" in
   bootstrap-components)
     acquire_cli_lock "$COMMAND"
     bootstrap_components "$@"
-    ensure_viventium_health_runtime >/dev/null
+    BOOTSTRAP_VALIDATE_ONLY=0
+    for bootstrap_option in "$@"; do
+      if [[ "$bootstrap_option" == "--validate-only" ]]; then
+        BOOTSTRAP_VALIDATE_ONLY=1
+        break
+      fi
+    done
+    if [[ "$BOOTSTRAP_VALIDATE_ONLY" != "1" ]]; then
+      ensure_viventium_health_runtime >/dev/null
+    fi
     ;;
   compile-config)
     acquire_cli_lock "$COMMAND"

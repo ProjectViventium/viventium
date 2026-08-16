@@ -102,6 +102,20 @@ def test_memory_hardening_defaults_are_launch_ready_and_opt_in() -> None:
     assert settings["transcripts"]["reference_messages_max_chars"] == 36000
 
 
+def test_memory_hardening_accepts_current_explicit_anthropic_model() -> None:
+    settings = config_compiler.resolve_memory_hardening_settings(
+        {
+            "runtime": {
+                "memory_hardening": {
+                    "anthropic_model": "claude-opus-5",
+                }
+            }
+        }
+    )
+
+    assert settings["anthropic_model"] == "claude-opus-5"
+
+
 def test_memory_hardening_model_timeout_matches_large_overnight_workload() -> None:
     script = """
 const hardener = require('./viventium_v0_4/LibreChat/scripts/viventium-memory-hardening.js');

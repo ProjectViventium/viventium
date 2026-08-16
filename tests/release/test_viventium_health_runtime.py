@@ -95,25 +95,52 @@ def test_health_component_lock_is_public_and_immutable() -> None:
     assert len(entry["ref"]) == 40
 
 
-def test_health_runtime_installer_rejects_component_pin_drift(
+def test_health_runtime_installer_accepts_bootstrap_validated_branch_source(
     pinned_health_repo: tuple[Path, str],
 ) -> None:
     installer = load_installer()
     repo_root, _ = pinned_health_repo
     entry = {**installer._component_entry(repo_root), "ref": "0" * 40}
 
-    with pytest.raises(installer.HealthRuntimeError, match="lock pin"):
-        installer._verify_component_checkout(repo_root, entry)
+    verification = installer._verify_component_checkout(repo_root, entry)
+
+    assert verification["sourceVerification"] == "bootstrap_validated_git"
+    assert verification["lockRef"] == "0" * 40
+    assert len(verification["sourceRevision"]) == 40
 
 
-def test_health_runtime_installer_rejects_unverifiable_component_source(tmp_path: Path) -> None:
+def test_health_runtime_installer_accepts_bootable_vendored_component_source(tmp_path: Path) -> None:
     installer = load_installer()
     entry = {**health_lock_entry(), "path": "component-without-git"}
     component = tmp_path / entry["path"]
-    (component / "src" / "viventium_health").mkdir(parents=True)
+    package = component / "src" / "viventium_health"
+    package.mkdir(parents=True)
+    (component / "pyproject.toml").write_text("[project]\nname='viventium-health'\n", encoding="utf-8")
+    (package / "__main__.py").write_text("raise SystemExit(0)\n", encoding="utf-8")
 
-    with pytest.raises(installer.HealthRuntimeError, match="no git metadata"):
-        installer._verify_component_checkout(tmp_path, entry)
+    verification = installer._verify_component_checkout(tmp_path, entry)
+
+    assert verification == {
+        "sourceVerification": "bootstrap_validated_vendored",
+        "sourceRevision": None,
+        "lockRef": entry["ref"],
+    }
+
+
+def test_health_runtime_installer_records_dirty_bootstrap_validated_source(
+    pinned_health_repo: tuple[Path, str],
+) -> None:
+    installer = load_installer()
+    repo_root, _ = pinned_health_repo
+    package_init = repo_root / "component" / "src" / "viventium_health" / "__init__.py"
+    package_init.write_text("__version__ = '0.1.0-local'\n", encoding="utf-8")
+
+    verification = installer._verify_component_checkout(
+        repo_root,
+        installer._component_entry(repo_root),
+    )
+
+    assert verification["sourceVerification"] == "bootstrap_validated_dirty_git"
 
 
 def test_health_runtime_package_hash_rejects_symlinks(tmp_path: Path) -> None:
@@ -154,6 +181,9 @@ def test_health_runtime_install_is_private_self_contained_and_reads_empty_archiv
         (app_support / "health" / "runtime" / "manifest.json").read_text(encoding="utf-8")
     )
     assert manifest["componentRef"] == component_ref
+    assert manifest["lockRef"] == component_ref
+    assert manifest["sourceRevision"] == component_ref
+    assert manifest["sourceVerification"] == "pinned_git"
     assert manifest["packageSha256"]
     assert "repoRoot" not in manifest
     assert "sourcePath" not in manifest
@@ -228,6 +258,74 @@ def test_health_runtime_install_rebuilds_a_tampered_installed_package(
     assert package_files[0].read_text(encoding="utf-8") != "__version__ = 'tampered'\n"
 
 
+def test_health_runtime_install_hashes_non_python_package_assets(
+    tmp_path: Path,
+    pinned_health_repo: tuple[Path, str],
+) -> None:
+    installer = load_installer()
+    repo_root, _ = pinned_health_repo
+    source_asset = repo_root / "component" / "src" / "viventium_health" / "schema.json"
+    source_asset.write_text('{"schema":1}\n', encoding="utf-8")
+    app_support = tmp_path / "Viventium"
+    installer.install_runtime(repo_root=repo_root, app_support_dir=app_support)
+    installed_assets = list(
+        (app_support / "health" / "runtime" / "lib").glob(
+            "python*/site-packages/viventium_health/schema.json"
+        )
+    )
+    assert len(installed_assets) == 1
+    installed_assets[0].write_text('{"schema":"tampered"}\n', encoding="utf-8")
+
+    result = installer.install_runtime(repo_root=repo_root, app_support_dir=app_support)
+
+    assert result["status"] == "installed"
+    assert installed_assets[0].read_text(encoding="utf-8") == '{"schema":1}\n'
+
+
+def test_health_runtime_install_rebuilds_when_wrapper_python_is_dead(
+    tmp_path: Path,
+    pinned_health_repo: tuple[Path, str],
+) -> None:
+    installer = load_installer()
+    repo_root, _ = pinned_health_repo
+    app_support = tmp_path / "Viventium"
+    installer.install_runtime(repo_root=repo_root, app_support_dir=app_support)
+    runtime = app_support / "health" / "runtime"
+    python = runtime / "bin" / "python"
+    python.unlink()
+    python.symlink_to(runtime / "missing-python")
+
+    assert installer.runtime_status(app_support_dir=app_support)["status"] == "invalid"
+
+    rebuilt = installer.install_runtime(repo_root=repo_root, app_support_dir=app_support)
+
+    assert rebuilt["status"] == "installed"
+    assert installer.runtime_status(app_support_dir=app_support)["status"] == "ready"
+
+
+def test_health_runtime_install_recovers_interrupted_swap(
+    tmp_path: Path,
+    pinned_health_repo: tuple[Path, str],
+) -> None:
+    installer = load_installer()
+    repo_root, _ = pinned_health_repo
+    app_support = tmp_path / "Viventium"
+    installer.install_runtime(repo_root=repo_root, app_support_dir=app_support)
+    health_root = app_support / "health"
+    runtime = health_root / "runtime"
+    backup = health_root / ".runtime.previous-interrupted"
+    os.replace(runtime, backup)
+    stale = health_root / ".runtime.install-interrupted"
+    stale.mkdir(mode=0o700)
+
+    recovered = installer.install_runtime(repo_root=repo_root, app_support_dir=app_support)
+
+    assert recovered["status"] == "ready"
+    assert runtime.is_dir()
+    assert not backup.exists()
+    assert not stale.exists()
+
+
 def test_health_runtime_status_fails_closed_when_artifact_is_missing(tmp_path: Path) -> None:
     installer = load_installer()
 
@@ -245,6 +343,13 @@ def test_install_upgrade_and_start_paths_reconcile_health_runtime_after_bootstra
     source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
 
     assert source.count("ensure_viventium_health_runtime") >= 5
-    assert "bootstrap_components\n    ensure_viventium_health_runtime" in source
+    assert (
+        "bootstrap_components\n"
+        '    CURRENT_INSTALL_STAGE="health-runtime"\n'
+        '    write_install_stage "$CURRENT_INSTALL_STAGE"\n'
+        "    ensure_viventium_health_runtime"
+    ) in source
     assert "bootstrap_components_upgrade_checked\n    ensure_viventium_health_runtime" in source
     assert "bootstrap_components --prefer-existing-checkout-head\n    ensure_viventium_health_runtime" in source
+    assert 'CURRENT_INSTALL_STAGE="health-runtime"' in source
+    assert 'if [[ "$BOOTSTRAP_VALIDATE_ONLY" != "1" ]]' in source

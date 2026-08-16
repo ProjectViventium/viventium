@@ -155,3 +155,11 @@ def test_doctor_report_component_validation_warns_for_dirty_checkout() -> None:
 
     assert "not currently on a clean pinned checkout" in completed.stdout
     assert "validated local dirty checkout for LibreChat -> deadbeef" in completed.stdout
+
+
+def test_doctor_requires_the_compiled_health_command_to_be_executable() -> None:
+    doctor_text = DOCTOR_PATH.read_text(encoding="utf-8")
+
+    assert 'env_values.get("VIVENTIUM_HEALTH_COMMAND", "")' in doctor_text
+    assert "VIVENTIUM_HEALTH_COMMAND is missing or not executable" in doctor_text
+    assert "Viventium-Health runtime command is executable" in doctor_text

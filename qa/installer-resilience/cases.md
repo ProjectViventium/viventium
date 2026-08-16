@@ -172,13 +172,16 @@ Use stable `INST-NNN` IDs for installer resilience cases.
 - Steps:
   1. Clone the public candidate into a new directory with an empty, isolated App Support root.
   2. Run the supported headless installer with a public example config and no start.
-  3. Confirm the pinned health component is bootstrapped and a private, pin-verified health runtime
-     is installed with `0700` directories/executable and a `0600` manifest.
+  3. Confirm the health component is bootstrap-validated and a private runtime is installed with
+     `0700` directories/executable and a `0600` manifest. Exact git checkouts must report
+     `pinned_git`; selected branch/dirty or vendored public trees must report their truthful
+     bootstrap-validation mode and package hash.
   4. Confirm every `${NAME}` placeholder in generated LibreChat YAML resolves from generated env,
      local GlassHive MCP auth uses the generated local bearer, account assertions use a distinct
      scoped secret, and the GlassHive DB path stays under the selected App Support root.
   5. Run doctor and inspect only public-safe path/key presence, component refs, permissions, and
-     status; never publish generated credential values.
+     status. Confirm the health wrapper actually executes, its home stays under the selected root,
+     and no generated credential values are published.
 - Expected result: install and doctor pass without owner-machine leftovers, unresolved placeholders,
   or state escaping the selected root.
 - Forbidden result: generated config references missing values or executables; local MCP is left

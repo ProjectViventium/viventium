@@ -321,10 +321,21 @@ def resolve_glasshive_enterprise_settings(config: dict[str, Any]) -> dict[str, A
         or enterprise.get("runtime_public_base_url")
         or operator_base_url
     ).strip().rstrip("/")
+    provider_base_url = str(
+        glasshive.get("api_base_url")
+        or enterprise.get("api_base_url")
+        or ""
+    ).strip().rstrip("/")
     if enabled:
+        if not provider_base_url:
+            raise SystemExit(
+                "integrations.glasshive.enterprise.api_base_url is required for "
+                "azure_enterprise_vm_docker"
+            )
         _reject_localhost_cloud_url("integrations.glasshive.mcp_url", mcp_url)
         _reject_localhost_cloud_url("integrations.glasshive.operator_base_url", operator_base_url)
         _reject_localhost_cloud_url("integrations.glasshive.enterprise.artifact_base_url", artifact_base_url)
+        _reject_localhost_cloud_url("integrations.glasshive.enterprise.api_base_url", provider_base_url)
     tenant_id = str(enterprise.get("tenant_id") or auth.get("tenant_id") or "default").strip() or "default"
     auth_mode = str(auth.get("mode") or enterprise.get("auth_mode") or "first_party_assertion").strip().lower()
     service_token_env = str(auth.get("service_token_env") or "GLASSHIVE_MCP_SERVICE_TOKEN").strip() or "GLASSHIVE_MCP_SERVICE_TOKEN"
@@ -338,6 +349,11 @@ def resolve_glasshive_enterprise_settings(config: dict[str, Any]) -> dict[str, A
             "integrations.glasshive.enterprise.auth.service_token_delivery must be reverse_proxy or client_header"
         )
     service_token = optional_nested_secret(auth, "service_token") or optional_nested_secret(enterprise, "service_token")
+    if enabled and not service_token:
+        raise SystemExit(
+            "integrations.glasshive.enterprise.auth.service_token is required for "
+            "azure_enterprise_vm_docker"
+        )
     signed_link_secret = optional_nested_secret(enterprise, "signed_link_secret")
     upload_root = str(enterprise.get("uploads_root") or glasshive.get("uploads_root") or LIBRECHAT_UPLOADS_DIR).strip()
     source_roots = enterprise.get("bootstrap_source_roots")
@@ -388,6 +404,7 @@ def resolve_glasshive_enterprise_settings(config: dict[str, Any]) -> dict[str, A
         "mcp_url": mcp_url,
         "operator_base_url": operator_base_url,
         "artifact_base_url": artifact_base_url,
+        "provider_base_url": provider_base_url,
         "tenant_id": tenant_id,
         "auth_mode": auth_mode,
         "service_token": service_token,
@@ -758,7 +775,7 @@ AGENT_ASSIGNMENT_ROLES = {
 }
 
 MEMORY_HARDENING_LAUNCH_READY_MODELS = {
-    "anthropic": {"claude-opus-4-8"},
+    "anthropic": {"claude-opus-4-8", "claude-opus-5"},
     "openai": {"gpt-5.5", "gpt-5.6-sol"},
 }
 DEFAULT_MEMORY_HARDENING = {
@@ -1461,6 +1478,24 @@ def prune_unavailable_source_defaults(payload: dict[str, Any], env: dict[str, st
                 }.items():
                     if not has_non_placeholder_env(env, env_key):
                         oauth[field] = ""
+
+    if not resolve_bool(env.get("START_GLASSHIVE"), False):
+        custom_endpoints = endpoints.get("custom") if isinstance(endpoints, dict) else None
+        if isinstance(custom_endpoints, list):
+            endpoints["custom"] = [
+                endpoint
+                for endpoint in custom_endpoints
+                if not (
+                    isinstance(endpoint, dict)
+                    and (
+                        str(endpoint.get("name") or "").strip() == "glasshive-harness"
+                        or str(endpoint.get("apiKey") or "").strip()
+                        == "${GLASSHIVE_PROVIDER_API_KEY}"
+                        or str(endpoint.get("baseURL") or "").strip()
+                        == "${GLASSHIVE_PROVIDER_BASE_URL}"
+                    )
+                )
+            ]
 
     web_search = cleaned.get("webSearch")
     if isinstance(web_search, dict):
@@ -2779,6 +2814,7 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
         "VIVENTIUM_HEALTH_COMMAND": str(
             app_support_dir / "health" / "runtime" / "bin" / "viventium-health"
         ),
+        "VIVENTIUM_HEALTH_HOME": str(app_support_dir / "health"),
         "VIVENTIUM_PLAYGROUND_VARIANT": playground_variant,
         "PLAYGROUND_VARIANT": playground_variant,
         "VIVENTIUM_LOG_LEVEL": runtime.get("log_level", "info"),
@@ -3257,7 +3293,7 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
         env["WPR_API_TOKEN"] = provider_token
         env["GLASSHIVE_PROVIDER_API_KEY"] = provider_token
         env["GLASSHIVE_PROVIDER_BASE_URL"] = (
-            f"{str(glasshive_enterprise['artifact_base_url']).rstrip('/')}/v1"
+            f"{str(glasshive_enterprise['provider_base_url']).rstrip('/')}/v1"
             if glasshive_enterprise["enabled"]
             else "http://127.0.0.1:8766/v1"
         )
@@ -4130,6 +4166,7 @@ def build_mcp_allowed_domains(config: dict[str, Any]) -> list[str]:
         add_url_host(glasshive_enterprise["mcp_url"])
         add_url_host(glasshive_enterprise["operator_base_url"])
         add_url_host(glasshive_enterprise["artifact_base_url"])
+        add_url_host(glasshive_enterprise["provider_base_url"])
     return allowed
 
 

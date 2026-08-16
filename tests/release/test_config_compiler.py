@@ -926,7 +926,7 @@ def test_config_compiler_minimal(tmp_path: Path) -> None:
         "custom",
     }
     custom_names = [endpoint["name"] for endpoint in librechat_yaml["endpoints"]["custom"]]
-    assert custom_names == ["glasshive-harness", "perplexity", "xai", "openrouter", "groq"]
+    assert custom_names == ["perplexity", "xai", "openrouter", "groq"]
     assert librechat_yaml["version"] == "1.3.6"
     assert "webSearch" not in librechat_yaml
     assert librechat_yaml["mcpServers"]["scheduling-cortex"]["url"] == "${SCHEDULING_MCP_URL}"
@@ -948,6 +948,33 @@ def test_glasshive_enabled_requires_config_and_runtime_dir(tmp_path: Path, monke
 
     assert config_compiler.glasshive_enabled({"integrations": {"glasshive": {"enabled": False}}}) is False
     assert config_compiler.glasshive_enabled({"integrations": {"glasshive": {"enabled": True}}}) is True
+
+
+def test_disabled_glasshive_prunes_runtime_endpoint_and_auth_placeholders(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_dir = tmp_path / "runtime_phase1"
+    runtime_dir.mkdir(parents=True)
+    monkeypatch.setattr(config_compiler, "GLASSHIVE_RUNTIME_DIR", runtime_dir)
+
+    config = minimal_compile_config()
+    config["integrations"]["glasshive"] = {"enabled": False}
+    assignments = config_compiler.build_agent_assignments(config)
+    env = config_compiler.render_runtime_env(config, assignments)
+    librechat = yaml.safe_load(config_compiler.render_librechat_yaml(config, assignments, env))
+
+    assert env["START_GLASSHIVE"] == "false"
+    assert "GLASSHIVE_PROVIDER_API_KEY" not in env
+    assert "GLASSHIVE_PROVIDER_BASE_URL" not in env
+    assert "glasshive-workers-projects" not in librechat["mcpServers"]
+    assert all(
+        endpoint.get("name") != "glasshive-harness"
+        for endpoint in librechat["endpoints"]["custom"]
+    )
+    rendered = yaml.safe_dump(librechat, sort_keys=False)
+    assert "${GLASSHIVE_PROVIDER_API_KEY}" not in rendered
+    assert "${GLASSHIVE_PROVIDER_BASE_URL}" not in rendered
 
 
 def test_render_runtime_env_emits_glasshive_launch_env_only_when_enabled(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1228,6 +1255,7 @@ def test_glasshive_azure_enterprise_vm_docker_compiles_cloud_safe_config(tmp_pat
                 "mcp_url": "https://glasshive.enterprise.example.com/mcp",
                 "operator_base_url": "https://glasshive-ui.enterprise.example.com",
                 "enterprise": {
+                    "api_base_url": "https://glasshive-runtime.enterprise.example.com",
                     "artifact_base_url": "https://glasshive-api.enterprise.example.com",
                     "tenant_id": "tenant-alpha",
                     "uploads_root": "/mnt/librechat/uploads",
@@ -1271,6 +1299,7 @@ def test_glasshive_azure_enterprise_vm_docker_compiles_cloud_safe_config(tmp_pat
     assert env["GLASSHIVE_MCP_URL"] == "https://glasshive.enterprise.example.com/mcp"
     assert env["GLASSHIVE_OPERATOR_BASE_URL"] == "https://glasshive-ui.enterprise.example.com"
     assert env["GLASSHIVE_ARTIFACT_BASE_URL"] == "https://glasshive-api.enterprise.example.com"
+    assert env["GLASSHIVE_PROVIDER_BASE_URL"] == "https://glasshive-runtime.enterprise.example.com/v1"
     assert env["GLASSHIVE_ENTERPRISE_MODE"] == "true"
     assert env["GLASSHIVE_AUTH_MODE"] == "first_party_assertion"
     assert env["GLASSHIVE_ENTERPRISE_TENANT_ID"] == "tenant-alpha"
@@ -1358,6 +1387,7 @@ def test_glasshive_azure_enterprise_local_simulation_compiles_matching_ports(
         "mcp_url": "http://glasshive.localtest.me:8877/mcp",
         "operator_base_url": "http://glasshive.localtest.me:8875",
         "enterprise": {
+            "api_base_url": "http://glasshive.localtest.me:8876",
             "tenant_id": "tenant-local-sim",
             "auth": {
                 "mode": "first_party_assertion",
@@ -1370,6 +1400,7 @@ def test_glasshive_azure_enterprise_local_simulation_compiles_matching_ports(
 
     assert env["GLASSHIVE_MCP_URL"] == "http://glasshive.localtest.me:8877/mcp"
     assert env["GLASSHIVE_OPERATOR_BASE_URL"] == "http://glasshive.localtest.me:8875"
+    assert env["GLASSHIVE_PROVIDER_BASE_URL"] == "http://glasshive.localtest.me:8876/v1"
     assert env["GLASSHIVE_MCP_PORT"] == "8877"
     assert env["GLASSHIVE_UI_PORT"] == "8875"
     assert env["GLASSHIVE_SIGNED_LINK_SECRET"] == config_compiler.scoped_secret(
@@ -1377,6 +1408,49 @@ def test_glasshive_azure_enterprise_local_simulation_compiles_matching_ports(
         "glasshive-signed-link:tenant-local-sim",
     )
     assert env["GLASSHIVE_SIGNED_LINK_SECRET"] != env["WPR_API_TOKEN"]
+
+
+@pytest.mark.parametrize(
+    ("enterprise", "expected_error"),
+    [
+        (
+            {
+                "api_base_url": "https://glasshive-runtime.enterprise.example.com",
+                "auth": {},
+            },
+            "service_token",
+        ),
+        (
+            {
+                "auth": {"service_token": {"secret_value": "service-token-test"}},
+            },
+            "api_base_url",
+        ),
+    ],
+)
+def test_glasshive_azure_enterprise_requires_runtime_api_and_service_auth(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    enterprise: dict,
+    expected_error: str,
+) -> None:
+    runtime_dir = tmp_path / "runtime_phase1"
+    runtime_dir.mkdir(parents=True)
+    monkeypatch.setattr(config_compiler, "GLASSHIVE_RUNTIME_DIR", runtime_dir)
+    config = minimal_compile_config()
+    config["integrations"]["glasshive"] = {
+        "enabled": True,
+        "deployment_mode": "azure_enterprise_vm_docker",
+        "mcp_url": "https://glasshive.enterprise.example.com/mcp",
+        "operator_base_url": "https://glasshive-ui.enterprise.example.com",
+        "enterprise": enterprise,
+    }
+
+    with pytest.raises(SystemExit, match=expected_error):
+        config_compiler.render_runtime_env(
+            config,
+            config_compiler.build_agent_assignments(config),
+        )
 
 
 def test_glasshive_azure_enterprise_rejects_signed_link_secret_equal_to_service_token(
@@ -1394,6 +1468,7 @@ def test_glasshive_azure_enterprise_rejects_signed_link_secret_equal_to_service_
         "mcp_url": "https://glasshive.enterprise.example.com/mcp",
         "operator_base_url": "https://glasshive.enterprise.example.com",
         "enterprise": {
+            "api_base_url": "https://glasshive-runtime.enterprise.example.com",
             "tenant_id": "tenant-alpha",
             "signed_link_secret": {"secret_value": "same-secret"},
             "auth": {
@@ -1422,6 +1497,7 @@ def test_glasshive_azure_enterprise_client_header_token_delivery_is_explicit(
         "mcp_url": "https://glasshive.enterprise.example.com/mcp",
         "operator_base_url": "https://glasshive.enterprise.example.com",
         "enterprise": {
+            "api_base_url": "https://glasshive-runtime.enterprise.example.com",
             "tenant_id": "tenant-alpha",
             "auth": {
                 "mode": "first_party_assertion",
@@ -1463,6 +1539,10 @@ def test_glasshive_azure_enterprise_rejects_localhost_cloud_urls(tmp_path: Path,
                 "deployment_mode": "azure_enterprise_vm_docker",
                 "mcp_url": "http://127.0.0.1:8767/mcp",
                 "operator_base_url": "https://glasshive.enterprise.example.com",
+                "enterprise": {
+                    "api_base_url": "https://glasshive-runtime.enterprise.example.com",
+                    "auth": {"service_token": {"secret_value": "service-token-test"}},
+                },
             },
         },
         "agents": {},
@@ -1506,6 +1586,7 @@ def test_glasshive_azure_enterprise_rejects_localhost_oauth_redirect(
                 "mcp_url": "https://glasshive.enterprise.example.com/mcp",
                 "operator_base_url": "https://glasshive.enterprise.example.com",
                 "enterprise": {
+                    "api_base_url": "https://glasshive-runtime.enterprise.example.com",
                     "tenant_id": "tenant-alpha",
                     "auth": {"service_token": {"secret_value": "service-token-test"}},
                     "oauth": {
@@ -5557,10 +5638,8 @@ def test_parallel_work_availability_enables_fail_closed_isolated_mission_policy(
 
 def test_public_schema_declares_parallel_work_dark_defaults() -> None:
     schema = yaml.safe_load((REPO_ROOT / "config.schema.yaml").read_text(encoding="utf-8"))
-    orchestration = (
-        schema["properties"]["integrations"]["properties"]["glasshive"]["properties"]
-        ["orchestration"]
-    )
+    glasshive = schema["properties"]["integrations"]["properties"]["glasshive"]["properties"]
+    orchestration = glasshive["orchestration"]
     assert orchestration["properties"]["available"]["default"] is False
     assert orchestration["properties"]["default_mode"]["default"] == "focused"
     assert orchestration["properties"]["mission_slots_per_cli"]["default"] == 3
@@ -5568,6 +5647,8 @@ def test_public_schema_declares_parallel_work_dark_defaults() -> None:
     assert orchestration["properties"]["min_available_disk_mb"]["default"] == 4096
     assert orchestration["properties"]["authorization_horizon_seconds"]["default"] == 86400
     assert orchestration["properties"]["authorization_horizon_seconds"]["maximum"] == 86400
+    assert "api_base_url" in glasshive
+    assert "api_base_url" in glasshive["enterprise"]["properties"]
 
 
 def test_local_glasshive_compilation_closes_every_runtime_auth_placeholder(
@@ -5600,6 +5681,7 @@ def test_local_glasshive_compilation_closes_every_runtime_auth_placeholder(
     assert env["VIVENTIUM_HEALTH_COMMAND"] == str(
         tmp_path / "app-support" / "health" / "runtime" / "bin" / "viventium-health"
     )
+    assert env["VIVENTIUM_HEALTH_HOME"] == str(tmp_path / "app-support" / "health")
     assert env["WPR_DB_PATH"] == str(
         tmp_path
         / "app-support"

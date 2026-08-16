@@ -443,6 +443,9 @@ properties:
         properties:
           enabled:
             type: boolean
+          api_base_url:
+            type: string
+            description: Explicit GlassHive runtime API origin used by the provider-compatible execution endpoint; never inferred from the operator UI.
           orchestration:
             type: object
             description: Dark-by-default Parallel work availability, isolated Docker admission, resource, and snapshot limits. Requested availability still fails closed until GlassHive reports isolation-ready with no active host mission.
@@ -590,6 +593,9 @@ properties:
           enterprise:
             type: object
             properties:
+              api_base_url:
+                type: string
+                description: Explicit GlassHive runtime API origin used by enterprise worker execution.
               workspace_links:
                 type: object
                 properties:

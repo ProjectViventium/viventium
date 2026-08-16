@@ -335,21 +335,28 @@ VIVENTIUM_LIBRECHAT_SOURCE_OF_TRUTH= \
 "$PYTHON_BIN" - <<'PY' "$DOCTOR_TMP_COMPILE_DIR/runtime.env" "$DOCTOR_TMP_COMPILE_DIR/librechat.yaml"
 from pathlib import Path
 import re
+import shlex
 import sys
 
 runtime_env_path = Path(sys.argv[1])
 librechat_yaml_path = Path(sys.argv[2])
 
-env_keys = set()
+env_values = {}
 for raw_line in runtime_env_path.read_text(encoding="utf-8").splitlines():
     line = raw_line.strip()
     if not line or line.startswith("#") or "=" not in line:
         continue
-    key, _ = line.split("=", 1)
-    env_keys.add(key)
+    try:
+        parsed = shlex.split(line, posix=True)
+    except ValueError:
+        parsed = []
+    if len(parsed) != 1 or "=" not in parsed[0]:
+        continue
+    key, value = parsed[0].split("=", 1)
+    env_values[key] = value
 
 placeholders = set(re.findall(r"\$\{([A-Z0-9_]+)\}", librechat_yaml_path.read_text(encoding="utf-8")))
-missing = sorted(key for key in placeholders if key not in env_keys)
+missing = sorted(key for key in placeholders if key not in env_values)
 if missing:
     print(
         "[doctor] ERROR: generated librechat.yaml references unresolved env vars: "
@@ -357,9 +364,18 @@ if missing:
         file=sys.stderr,
     )
     sys.exit(1)
+
+health_command = Path(env_values.get("VIVENTIUM_HEALTH_COMMAND", ""))
+if not health_command.is_file() or not health_command.stat().st_mode & 0o111:
+    print(
+        "[doctor] ERROR: VIVENTIUM_HEALTH_COMMAND is missing or not executable",
+        file=sys.stderr,
+    )
+    sys.exit(1)
 PY
 
 echo "[doctor] Generated config placeholders resolve against runtime.env."
+echo "[doctor] Viventium-Health runtime command is executable."
 
 doctor_report_component_validation() {
   local validation_output="${1:-}"
