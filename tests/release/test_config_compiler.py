@@ -1425,8 +1425,25 @@ def test_local_glasshive_compiles_configured_mcp_and_operator_ports() -> None:
 
     assert env["GLASSHIVE_MCP_URL"] == "http://127.0.0.1:25767/mcp"
     assert env["GLASSHIVE_MCP_PORT"] == "25767"
+    assert env["GLASSHIVE_PROVIDER_BASE_URL"] == "http://127.0.0.1:25766/v1"
     assert env["GLASSHIVE_OPERATOR_BASE_URL"] == "http://127.0.0.1:25780"
     assert env["GLASSHIVE_UI_PORT"] == "25780"
+
+
+def test_local_glasshive_keeps_explicit_api_origin_authoritative() -> None:
+    config = minimal_compile_config()
+    config["integrations"]["glasshive"] = {
+        "enabled": True,
+        "api_base_url": "http://127.0.0.1:26001",
+        "mcp_url": "http://127.0.0.1:25767/mcp",
+    }
+
+    env = config_compiler.render_runtime_env(
+        config,
+        config_compiler.build_agent_assignments(config),
+    )
+
+    assert env["GLASSHIVE_PROVIDER_BASE_URL"] == "http://127.0.0.1:26001/v1"
 
 
 def test_startup_status_never_prints_partial_credential_material() -> None:

@@ -473,6 +473,30 @@ def explicit_local_url_port(value: str) -> str:
     return explicit_url_port(value)
 
 
+def local_glasshive_provider_base_url(mcp_url: str, explicit_api_base_url: str) -> str:
+    """Resolve the local account API that the bundled GlassHive stack actually starts.
+
+    Local GlassHive reserves the port immediately below its MCP port for the account/runtime API.
+    Keep an explicit API origin authoritative, while preserving that bundled port relationship for
+    existing configs that only declared the MCP URL.
+    """
+    explicit = str(explicit_api_base_url or "").strip().rstrip("/")
+    if explicit:
+        return explicit
+    try:
+        parsed = urlparse(str(mcp_url or "").strip())
+        mcp_port = parsed.port
+    except ValueError:
+        return "http://127.0.0.1:8766"
+    hostname = (parsed.hostname or "").lower()
+    if parsed.scheme not in {"http", "https"} or hostname not in {"localhost", "127.0.0.1", "::1"}:
+        return "http://127.0.0.1:8766"
+    if mcp_port is None or mcp_port <= 1:
+        return "http://127.0.0.1:8766"
+    rendered_host = f"[{hostname}]" if ":" in hostname else hostname
+    return f"{parsed.scheme}://{rendered_host}:{mcp_port - 1}"
+
+
 def _executable_path(path: Path) -> bool:
     return path.is_file() and os.access(path, os.X_OK)
 
@@ -3330,7 +3354,10 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
         env["GLASSHIVE_PROVIDER_BASE_URL"] = (
             f"{str(glasshive_enterprise['provider_base_url']).rstrip('/')}/v1"
             if glasshive_enterprise["enabled"]
-            else "http://127.0.0.1:8766/v1"
+            else f"{local_glasshive_provider_base_url(
+                str(glasshive_enterprise['mcp_url']),
+                str(glasshive_enterprise['provider_base_url']),
+            )}/v1"
         )
 
     public_client_origin = str(network.get("public_client_origin", "") or "").strip()
