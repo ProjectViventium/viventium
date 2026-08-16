@@ -42,6 +42,7 @@ most specific existing QA owner when a scenario already has a detailed provider 
 | `GHUCP-031` | `GH-UCP-003`, `017` | Runtime and workers can verify identity but cannot read the private signer key or mint assertions | Services, worker, filesystem | Security probes + key rotation | PENDING |
 | `GHUCP-032` | `GH-UCP-007`, `017` | Existing state migrates from a rehearsed clone and a failed upgrade restores the verified database | Installer, DB, browser, MCP | Migration/restore harness + user QA | PARTIAL |
 | `GHUCP-033` | `GH-UCP-017`–`018` | Runtime, MCP, and BFF cut over as one healthy release or not at all | Installer, edge, browser, MCP | Failure injection + full readiness | PARTIAL |
+| `GHUCP-034` | `GH-UCP-004`, `005`, `007`, `011`, `018` | One short prompt from a fresh external AI creates or reuses a private favorite workspace, connects a native user service inside it, uses it, and reuses it after restart | Codex/Claude, MCP, worker, browser | MCP contract + real client/worker/browser | 2026-08-16 PARTIAL: source one-call/favorite/worker-local contract passes; installed native consent/use/restart proof pending |
 
 ## `GHUCP-001` — Additive Compatibility Baseline
 
@@ -1018,6 +1019,39 @@ most specific existing QA owner when a scenario already has a detailed provider 
   41-case rollout suite passes. Process-loss failure injection and a full state-restore rollback
   remain unrun on this exact release.
 
+## `GHUCP-034` — One-Prompt Reusable Workspace with Native Connected Service
+
+- Requirement: `GH-UCP-004`, `GH-UCP-005`, `GH-UCP-007`, `GH-UCP-011`, `GH-UCP-018`.
+- Risk covered: a simple user request expands into catalog discovery, installs a capability in the
+  controlling AI instead of the worker, creates an unreadable workspace name, ignores Favorite, or
+  loses the native connection on the next session.
+- Preconditions: fresh supported Codex or Claude client task with GlassHive MCP connected; one
+  ready personal worker subscription; official user-authenticated native service available.
+- Steps: send one short human prompt asking GlassHive to create or reuse a private favorite workspace
+  and connect the service inside it; complete only the provider's official browser consent; run one
+  read-only service query; refresh and restart the worker/client; reuse the same named workspace and
+  run a second read-only query.
+- Expected result: the controller uses one `workspace_launch` or `workspace_continue` call, sets
+  Favorite in that call when requested, waits only with `workspace_wait`, and never installs the
+  service into itself or enumerates unrelated catalogs. The worker uses the official native
+  connector, preserves the owner-scoped connection and files, and succeeds again after reuse.
+- Forbidden result: project/worker/run tool chain, unrelated Library/accounts/connections discovery,
+  controlling-client plugin install, connector-specific GlassHive code, secret copy, global install,
+  fabricated success, lost authorization, new duplicate workspace, or write/destructive action in
+  this read-only test.
+- Evidence to capture: fresh-client transcript/tool count, human workspace name/Favorite state,
+  official consent UI, redacted first and second tool results, refresh/restart state, runtime audit,
+  run/worker/catalog rows, and absence of secret output.
+- Full-view evidence minimum: fresh external client + MCP + real workspace + official consent + real
+  native tool result + refresh/restart/reuse + backend correlation.
+- Automation: companion-skill contract and MCP one-call Favorite regression; real provider consent
+  remains browser QA.
+- Last run: PARTIAL 2026-08-16. The fresh external-client run created one personal Codex workspace
+  and reached official service consent, but the pre-fix controller then explored unrelated surfaces
+  and attempted a controlling-client install. Source regressions now enforce worker-local setup,
+  wait-only follow-up, short human naming, and Favorite-before-run. Installed candidate, completed
+  organization consent, real service read, and restart/reuse proof remain pending.
+
 ## Natural User Use Case Checklist
 
 | Use Case ID | Natural user action | Requirement / case link | Real surface to use | Supporting evidence to compare | Expected visible result | Last run |
@@ -1033,6 +1067,7 @@ most specific existing QA owner when a scenario already has a detailed provider 
 | `GHUCP-UC-009` | Try missing auth, denied domain, cross-user ids, busy account, revoked connection, dependency outage, retry, cancel, and capacity | All / matching unhappy-path cases | Every real surface | Structured failures, no-side-effect state, audit | Honest actionable failure with no leak/fake success | PENDING as a complete matrix |
 | `GHUCP-UC-010` | Install fresh, upgrade, restart, reopen, and roll back | `GH-UCP-017` / `GHUCP-026`–`027` | Public installer + installed browser | Pin/build/process/state provenance | Same feature and user state on installed artifact | PENDING |
 | `GHUCP-UC-011` | Stage, migrate, cut over all three services, verify every route, and roll back without state loss | `GH-UCP-017` / `GHUCP-030`–`033` | Hosted edge + installed services | Route/key/DB/readiness/provenance evidence | One secure complete release or the preceding healthy release | PARTIAL 2026-08-15: exact three-service canary and explicit acceptance passed; failure-injection/full restore remains open |
+| `GHUCP-UC-012` | From a fresh Codex/Claude task, use one short prompt to create or reuse a private favorite workspace, connect an official native service inside it, use it read-only, restart, and reuse it | `GH-UCP-004`, `005`, `007`, `011`, `018` / `GHUCP-034` | External client + MCP + worker browser | Tool count, consent, redacted result, Favorite/catalog, logs/DB | One-call setup with worker-local native authorization and durable reuse | PARTIAL 2026-08-16: source contract passes; installed consent/use/restart proof pending |
 
 ## Incident Promotion Checklist
 

@@ -430,6 +430,12 @@ compliant hosted topology.
   without changing their behavior.
 - New work starts fresh by default. Reuse is an explicit `Open`/`Resume` action or a parent decision
   backed by a known stable alias.
+- One ordinary MCP launch is enough to create a private reusable favorite workspace. Its first
+  description line is the short human name, the remaining description/context preserves the full
+  request, and an explicit favorite request is applied before the first run is queued. When the
+  user asks to configure a native skill/plugin/connector inside that workspace, the controlling AI
+  delegates that exact outcome to the worker and waits; it does not install the capability into
+  itself or enumerate unrelated account, Library, connection, or tool catalogs.
 - Browser launch durably prepares the workspace and queues its first run before returning the watch
   surface. Cold image/container preparation continues through the worker queue, so an edge request
   deadline cannot invite a duplicate retry; the watch surface truthfully shows starting, running,
