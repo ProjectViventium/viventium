@@ -3262,6 +3262,7 @@ function writeReports({
   );
 
   const publicLines = [
+    "<!-- qa-evidence-exempt: Machine-generated sanitized eval status is a harness artifact, not a user-grade QA run or release acceptance report. -->",
     "# Prompt Registry Slice: Exact-Model Completion Baseline",
     "",
     `Generated: ${summary.generatedAt}`,
@@ -3359,7 +3360,6 @@ function writeReports({
     "- Treat prompt-bundle and runtime-config drift checks, not source-vs-compiled YAML hash equality, as the live prompt-registry drift gate.",
     "- `partial_baseline` and `partial_semantic_passed` mean the run completed only the selected subset, not the full prompt bank.",
     "- This completion-baseline runner uses the main chat endpoint with surface metadata; true voice, Telegram, scheduler, Wing, and Listen-Only surface runners remain separate gates.",
-    "",
   ];
 
   fs.writeFileSync(args.publicReport, `${publicLines.join("\n")}\n`);

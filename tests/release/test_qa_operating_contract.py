@@ -164,6 +164,18 @@ def _migration_rows() -> list[tuple[str, str]]:
     return rows
 
 
+def _migration_unrun_reviews() -> dict[str, date]:
+    text = _read(QA_ROOT / "_migration.md")
+    reviews: dict[str, date] = {}
+    pattern = re.compile(
+        r"^\|\s+`(qa/[^`]+/cases\.md)`\s+\|\s+(\d{4})-(\d{2})-(\d{2})\s+\|",
+        flags=re.MULTILINE,
+    )
+    for match in pattern.finditer(text):
+        reviews[match.group(1)] = date(int(match.group(2)), int(match.group(3)), int(match.group(4)))
+    return reviews
+
+
 def _relative(path: Path) -> str:
     return path.relative_to(ROOT).as_posix()
 
@@ -467,6 +479,7 @@ def test_cataloged_not_yet_run_cases_do_not_stagnate_silently() -> None:
     today = date.today()
     max_age_days = 90
     violations: list[str] = []
+    reviewed_backlog = _migration_unrun_reviews()
     pattern = re.compile(r"NOT YET RUN \(cataloged (\d{4})-(\d{2})-(\d{2})")
     for cases_path in sorted(QA_ROOT.glob("*/cases.md")):
         for line_number, line in enumerate(_read(cases_path).splitlines(), start=1):
@@ -475,6 +488,9 @@ def test_cataloged_not_yet_run_cases_do_not_stagnate_silently() -> None:
                 continue
             cataloged = date(int(match.group(1)), int(match.group(2)), int(match.group(3)))
             if (today - cataloged).days > max_age_days:
+                review_date = reviewed_backlog.get(_relative(cases_path))
+                if review_date is not None and (today - review_date).days <= max_age_days:
+                    continue
                 violations.append(f"{_relative(cases_path)}:{line_number}: {line.strip()}")
 
     assert not violations, (

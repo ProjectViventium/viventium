@@ -1,3 +1,4 @@
+<!-- qa-evidence-exempt: Historical prototype report retained without inventing current V2 user-grade evidence; it is not release acceptance. -->
 # Emotional Cortex Nature Variable Prototype QA - 2026-06-30
 
 Owning requirement: `docs/requirements_and_learnings/54_Emotional_Cortex_And_Feeling_State.md`

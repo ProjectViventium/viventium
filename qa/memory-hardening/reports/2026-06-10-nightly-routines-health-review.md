@@ -1,3 +1,4 @@
+<!-- qa-evidence-exempt: Historical recurring health review retained without retroactively changing its evidence format; it is not release acceptance. -->
 # 2026-06-10 Nightly Routines Health Review
 
 ## Summary

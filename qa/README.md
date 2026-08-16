@@ -88,6 +88,11 @@ Legacy folders may still have a flat `report.md`. When touching them, keep exist
 add missing `cases.md` or `reports/` structure instead of scattering another standalone note. Track
 remaining legacy gaps in [`_migration.md`](_migration.md).
 
+Cases that remain truthfully unrun for more than 90 days must not disappear or receive a false pass.
+Run them, update their case row with an evidence-backed result, or re-triage the owning catalog in the
+dated user-grade run backlog in [`_migration.md`](_migration.md). A backlog review keeps the case
+visible and unaccepted; it expires after 90 days and must be reviewed again or executed.
+
 Use the templates in [`_templates/`](_templates/) when creating or refreshing a QA area.
 
 ## Required Case Metadata

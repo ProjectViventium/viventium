@@ -1,3 +1,4 @@
+<!-- qa-evidence-exempt: Historical Telegram QA note retained without inventing current V2 user-grade evidence; it is not release acceptance. -->
 # 2026-07-09 Telegram File Ingress Parity QA
 
 ## Status

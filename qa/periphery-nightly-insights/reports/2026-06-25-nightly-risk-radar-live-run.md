@@ -1,3 +1,4 @@
+<!-- qa-evidence-exempt: Historical nightly run report retained without inventing current V2 user-grade evidence; it is not release acceptance. -->
 # 2026-06-25 Nightly Risk Radar Live Run QA
 
 ## Summary

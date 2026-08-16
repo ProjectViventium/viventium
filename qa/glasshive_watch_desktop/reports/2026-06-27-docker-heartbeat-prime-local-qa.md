@@ -1,3 +1,4 @@
+<!-- qa-evidence-exempt: Historical local runtime report retained without inventing current V2 user-grade evidence; it is not release acceptance. -->
 # 2026-06-27 Docker Active-Run Heartbeat And Desktop Prime Local QA
 
 ## Scope

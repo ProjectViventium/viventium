@@ -1,3 +1,4 @@
+<!-- qa-evidence-exempt: Historical desktop QA note retained without inventing current V2 user-grade evidence; it is not release acceptance. -->
 # Completed Desktop Resume UX QA - 2026-06-25
 
 ## Scope

@@ -1,3 +1,4 @@
+<!-- qa-evidence-exempt: Historical live-sync note retained without inventing current V2 user-grade evidence; it is not release acceptance. -->
 # 2026-06-25 Heart Prompt Live Sync
 
 ## Scope

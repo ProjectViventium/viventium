@@ -1,3 +1,4 @@
+<!-- qa-evidence-exempt: Historical architecture audit retained without inventing current V2 user-grade evidence; it is not release acceptance. -->
 # GlassHive Host Workers First-Principles Path Coverage Audit
 
 Date: 2026-06-25

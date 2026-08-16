@@ -1,3 +1,4 @@
+<!-- qa-evidence-exempt: Historical GlassHive QA note retained without inventing current V2 user-grade evidence; it is not release acceptance. -->
 # GlassHive Callback Placeholder And Evidence Status QA
 
 Date: 2026-06-25

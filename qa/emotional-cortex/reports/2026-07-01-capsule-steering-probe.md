@@ -1,3 +1,4 @@
+<!-- qa-evidence-exempt: Historical probe report retained without inventing current V2 user-grade evidence; it is not release acceptance. -->
 # Emotional Cortex — capsule steering + truth/safety probe, anchor verification
 
 Date: 2026-07-01

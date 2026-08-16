@@ -84,6 +84,8 @@ def test_exact_model_eval_harness_fails_closed_when_runtime_is_unreachable(tmp_p
     assert payload["summary"]["blockedReason"].startswith("api_health_http_")
 
     public_text = public_report.read_text(encoding="utf-8")
+    assert "qa-evidence-exempt: Machine-generated sanitized eval status" in public_text
+    assert not public_text.endswith("\n\n")
     assert "Status: blocked" in public_text
     assert str(tmp_path) not in public_text
     assert "127.0.0.1:65535" not in public_text

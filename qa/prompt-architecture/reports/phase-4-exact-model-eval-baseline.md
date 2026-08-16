@@ -1,6 +1,7 @@
+<!-- qa-evidence-exempt: Machine-generated sanitized eval status is a harness artifact, not a user-grade QA run or release acceptance report. -->
 # Prompt Registry Slice: Exact-Model Completion Baseline
 
-Generated: 2026-07-11T19:51:31.339Z
+Generated: 2026-08-16T06:06:42.514Z
 
 ## Status
 
@@ -10,7 +11,7 @@ Generated: 2026-07-11T19:51:31.339Z
 - Prompt families: 16
 - Prompt cases: 113
 - Agent hash: ed61775c0d925dba
-- Runner hash: ee810dcc7e8c3643
+- Runner hash: b2f1d718deecd5c1
 - Runnable cases for this runner: 1
 - Selected case limit: all (1)
 - Post-case observation window ms: 20000
@@ -44,9 +45,9 @@ Generated: 2026-07-11T19:51:31.339Z
 
 ## Source Hashes
 
-- Agent source hash: 319f9ac1dd7d6fd5
-- LibreChat source hash: c5505f701c6002ed
-- Compiled LibreChat hash: e7b2fb5eaf3888c4
+- Agent source hash: e91907d8f95bb5e9
+- LibreChat source hash: 407305fe5254ad61
+- Compiled LibreChat hash: missing
 
 ## Results
 

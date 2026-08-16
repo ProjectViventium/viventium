@@ -1,3 +1,4 @@
+<!-- qa-evidence-exempt: Historical Telegram QA note retained without inventing current V2 user-grade evidence; it is not release acceptance. -->
 # Telegram Fallback, Audio Prompt, And Table QA Rerun - 2026-06-28
 
 ## Scope

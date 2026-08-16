@@ -1,3 +1,4 @@
+<!-- qa-evidence-exempt: Historical prototype report retained without inventing current V2 user-grade evidence; it is not release acceptance. -->
 # Emotional Cortex — feeling-spectrum prototype browser QA
 
 Date: 2026-06-25

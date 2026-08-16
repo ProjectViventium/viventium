@@ -1,3 +1,4 @@
+<!-- qa-evidence-exempt: Historical refinement report retained without inventing current V2 user-grade evidence; it is not release acceptance. -->
 # Emotional Cortex — nature variable + band poles refinement
 
 Date: 2026-07-01

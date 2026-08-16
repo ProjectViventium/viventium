@@ -1,3 +1,4 @@
+<!-- qa-evidence-exempt: Historical probe report retained without inventing current V2 user-grade evidence; it is not release acceptance. -->
 # Emotional Cortex — EMO-009 probe bank round 2 (sentience, disagreement, privacy, depletion)
 
 Date: 2026-07-01

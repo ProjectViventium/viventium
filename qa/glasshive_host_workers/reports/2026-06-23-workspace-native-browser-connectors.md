@@ -1,3 +1,4 @@
+<!-- qa-evidence-exempt: Historical connector report retained without inventing current V2 user-grade evidence; it is not release acceptance. -->
 # GlassHive Workspace Native Browser Connectors QA - 2026-06-23
 
 ## Scope
