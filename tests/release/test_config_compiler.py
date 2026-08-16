@@ -4,6 +4,7 @@ import copy
 import json
 import os
 import platform
+import shutil
 import subprocess
 import sys
 import importlib.util
@@ -1449,14 +1450,42 @@ def test_local_glasshive_keeps_explicit_api_origin_authoritative() -> None:
     assert env["GLASSHIVE_RUNTIME_PORT"] == "26001"
 
 
-def test_local_glasshive_provider_assignment_avoids_python312_only_fstring_grammar() -> None:
-    compiler_source = (REPO_ROOT / "scripts" / "viventium" / "config_compiler.py").read_text(
-        encoding="utf-8"
-    )
+def test_config_compiler_parses_on_installed_supported_pre_312_pythons() -> None:
+    compiler_path = REPO_ROOT / "scripts" / "viventium" / "config_compiler.py"
+    interpreters: dict[str, str] = {}
+    uv = shutil.which("uv")
+    for version in ("3.10", "3.11"):
+        direct = shutil.which(f"python{version}")
+        if direct:
+            interpreters[version] = direct
+            continue
+        if uv:
+            found = subprocess.run(
+                [uv, "python", "find", version],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            candidate = Path(found.stdout.strip())
+            if found.returncode == 0 and candidate.is_file():
+                interpreters[version] = str(candidate)
 
-    # Python 3.10/3.11 are supported installer runtimes. Before PEP 701, a replacement
-    # expression cannot span physical lines inside an f-string.
-    assert 'else f"{local_glasshive_provider_base_url(\n' not in compiler_source
+    if not interpreters:
+        pytest.skip("No supported pre-3.12 Python interpreter is installed")
+
+    compile_script = (
+        "import pathlib, sys; "
+        "source = pathlib.Path(sys.argv[1]).read_text(encoding='utf-8'); "
+        "compile(source, sys.argv[1], 'exec')"
+    )
+    for version, interpreter in interpreters.items():
+        result = subprocess.run(
+            [interpreter, "-c", compile_script, str(compiler_path)],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, f"config compiler does not parse on Python {version}"
 
 
 def test_compiler_derives_a_livekit_secret_that_the_server_accepts() -> None:
@@ -4869,6 +4898,19 @@ def test_config_compiler_falls_back_to_existing_runtime_env_when_keychain_secret
     assert "OPENAI_API_KEY=openai-existing" in runtime_env
     assert f"BOT_TOKEN={VALID_TELEGRAM_EXISTING_TOKEN}" in runtime_env
     assert "VIVENTIUM_CALL_SESSION_SECRET=call-secret-existing" in runtime_env
+
+
+def test_call_session_secret_recovery_does_not_invert_derived_livekit_secret(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LIVEKIT_API_SECRET", "derived-livekit-secret")
+    monkeypatch.delenv("VIVENTIUM_CALL_SESSION_SECRET", raising=False)
+    monkeypatch.delenv("VIVENTIUM_SCHEDULER_SECRET", raising=False)
+    monkeypatch.delenv("CALL_SESSION_SECRET", raising=False)
+    monkeypatch.setattr(config_compiler, "resolve_runtime_env_candidates", lambda: [])
+    monkeypatch.setattr(config_compiler, "resolve_canonical_env_candidates", lambda: [])
+
+    assert config_compiler.resolve_keychain_secret_fallback("viventium/call_session_secret") == ""
 
 
 def test_config_compiler_prefers_real_optional_provider_keys_over_placeholders(tmp_path: Path) -> None:

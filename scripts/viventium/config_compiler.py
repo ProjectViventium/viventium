@@ -186,7 +186,6 @@ KEYCHAIN_SERVICE_ENV_FALLBACKS = {
     "viventium/call_session_secret": (
         "VIVENTIUM_CALL_SESSION_SECRET",
         "VIVENTIUM_SCHEDULER_SECRET",
-        "LIVEKIT_API_SECRET",
     ),
     "viventium/cartesia_api_key": ("CARTESIA_API_KEY",),
     "viventium/elevenlabs_api_key": ("ELEVENLABS_API_KEY", "ELEVEN_API_KEY"),
