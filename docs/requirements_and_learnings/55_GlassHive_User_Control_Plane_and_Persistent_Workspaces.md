@@ -471,6 +471,10 @@ compliant hosted topology.
 - Opening a paused named workspace resumes it and restores its persisted filesystem, browser profile,
   worker context, and capability references. Expired external sessions produce an actionable
   reconnect state rather than false success.
+- A persisted Codex conversation id is continuity metadata, not workspace identity. If the installed
+  Codex harness reports that the exact prior conversation no longer exists after an upgrade or
+  rollback, the same user action starts one fresh Codex conversation with the same instruction and
+  workspace, then persists its replacement id. Other resume failures are not retried or hidden.
 
 ### `GH-UCP-008` — Safe duplicate and templates
 

@@ -513,11 +513,14 @@ most specific existing QA owner when a scenario already has a detailed provider 
 - Preconditions: named workspace with synthetic file, browser preference/session, context, approved
   grant, and paused compute.
 - Steps: open (auto-resume), inspect state, edit file, pause, refresh UI, restart worker/runtime, reopen,
-  expire an external session, and retry after reconnect.
+  expire an external session, and retry after reconnect. Replace the saved Codex conversation id
+  with a synthetically missing id, then send one instruction through the same workspace.
 - Expected result: same alias and approved state return; compute lifecycle does not delete persistence;
-  expired external auth is explicit and recoverable.
+  expired external auth is explicit and recoverable. A missing prior Codex conversation falls back
+  once to a fresh conversation using the same instruction and stores the replacement conversation id.
 - Forbidden result: new workspace silently created, files/browser/context lost, old tab keeps compute
-  forever, or expired auth reported as successful empty data.
+  forever, expired auth reported as successful empty data, the user asked to repair an internal
+  conversation id, duplicate mission creation, or an unrelated resume failure retried as fresh work.
 - Evidence to capture: visible desktop/files before/after, hashes, worker/home paths sanitized to logical
   ids, DB/grant state, lifecycle logs.
 - Full-view evidence minimum: browser + refresh + process restart + backend/state correlation.
