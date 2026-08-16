@@ -21,12 +21,30 @@ input, no worker impersonation, no phantom acknowledgement, no cross-owner or cr
 no hidden stale/queued work, and no latency regression on focused turns. The deployment flag remains
 off and the default remains `focused` while any release-blocking case is not fully passed.
 
-## Current acceptance status — 2026-08-15
+## Current acceptance status — 2026-08-16
 
-The feature remains dark and is not release-ready. The 36-case catalog currently has three PASS,
-18 PARTIAL, one FAIL, and 14 NOT RUN cases. `PWK-026` passes clean seed/reseed and live restart;
-`PWK-031` passes the independent Direct/Codex/Claude quality bank; and `PWK-035` passes canonical
-new-chat route, cache, retry identity, and headed reload continuity.
+The feature remains dark and is not release-ready. The 36-case catalog currently has four PASS,
+19 PARTIAL, zero FAIL, and 13 NOT RUN cases. `PWK-018` now passes exact source/pin/build/install/runtime
+parity; `PWK-026` passes clean seed/reseed and live restart; `PWK-031` passes the independent
+Direct/Codex/Claude quality bank; and `PWK-035` passes canonical new-chat route, cache, retry identity,
+and headed reload continuity.
+
+A brand-new public installer run now proves the exact pushed parent and nested component commits,
+generated local GlassHive API/MCP/UI origins, compiled client/package artifacts, healthy running
+processes rooted in the clean checkout, and the dark/focused default. The input omitted the runtime
+port override; the compiler derived the non-default bind and an authenticated account-API read
+returned 200. That run caught three
+public-safety defects before acceptance: LibreChat logged the interpolated custom config, both
+launchers printed the LiveKit key or its prefix, and an invalid short LiveKit secret caused the native
+server to log the key identifier. All three are regression-guarded and fixed. The final scan covered
+13 persisted service logs plus the launcher stream and found no full config, private instructions,
+configured credential value, or duplicate package key; every isolated listener closed after teardown.
+
+Current headed Web evidence also proves account preference toggle and reload persistence. A disabled
+deployment hid new-admission UI without hiding the retained failed work card; Dismiss stayed available
+and remained effective after reload. This makes installed rollback `PARTIAL`, not complete: no
+provider-backed mission was running, so running-work controls, callbacks, delivery, capacity reduction,
+Telegram, and Voice rollback parity remain.
 
 Current real-surface evidence now includes Telegram Desktop toggle/restart persistence, roster,
 Message, Queue, Resume, truthful unavailable Pause, Stop confirmation, and Dismiss. A real Docker
@@ -70,7 +88,7 @@ The post-fix headed Web A/B/quick-C run now retains one substantial ask and one 
 of Alpha and Beta, answers quick C with exact `BLUE`, and survives canonical-URL reload. Both missions
 truthfully require input because the synthetic account still needs a provider reconnect. Successful
 running Pause/Steer, remaining audible controls, scheduler fanout, three-way and maximum-load
-concurrency, real owner isolation, component commits and pins, installed artifacts, clean install,
-and rollback remain. See the
-[current-candidate report](reports/2026-08-15-current-candidate-progress.md) and the historical
+concurrency, real owner isolation, and running-mission rollback remain. See the
+[latest install/rollback report](reports/2026-08-16-release-candidate-install-and-rollback.md), the
+[current-candidate report](reports/2026-08-15-current-candidate-progress.md), and the historical
 [Web report](reports/2026-08-13-live-web-account-and-delegation.md).

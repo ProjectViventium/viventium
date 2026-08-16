@@ -4,7 +4,7 @@ Status: implementation in progress behind a dark availability flag. Do not expos
 until every release gate in this document and `qa/parallel-orchestrator/cases.md` passes on the installed
 runtime.
 
-Last revised: 2026-08-15.
+Last revised: 2026-08-16.
 
 This document is the product and implementation source of truth for Viventium Parallel Work. It
 preserves the existing logical-turn, continuity, callback, scheduler, and GlassHive contracts while
@@ -35,7 +35,7 @@ Do not introduce a second supervisor, `run_units` planner, provider-specific pub
 Temporal migration, or top-level Claude/Codex registry. Reuse the installed harness primitives under
 the GlassHive root.
 
-## Current verified boundary — 2026-08-15
+## Current verified boundary — 2026-08-16
 
 Parallel Work remains dark and is not release-ready. The current evidence proves two narrow Web
 branches without widening that claim:
@@ -134,13 +134,36 @@ an independent two-store startup/replay audit passes, and the affected API (240)
 (107), account, delegation, and lifecycle suites are green. This supporting automation does not
 replace user-level control or cross-surface acceptance.
 
+The exact public delivery stack now passes a clean-clone installer and runtime audit. Parent commit
+`4a10643b911f147a917f2623b5e0d2e09308f82e` pins LibreChat
+`2842e7b9534fb6ade7050d14f3a191c8caccfe00` and GlassHive
+`6167132ad0aa1d8d6d30746fe9c9631f56310d9f`. The public installer reproduced those commits in a new
+checkout, compiled the client and package artifacts, generated the configured local GlassHive API,
+MCP, and operator origins, started healthy processes from that checkout, and exposed the deployment
+as dark with a focused default. With no runtime-port override in the QA input, the compiler derived
+the non-default API bind from the provider origin and an authenticated account-API read returned 200.
+The run found and closed three startup credential/configuration
+leaks before acceptance: interpolated custom configuration is no longer dumped, launcher status
+reports credentials only as configured, and the compiler derives a LiveKit-only 64-character secret
+instead of passing a potentially invalid call-session secret to the server. Recovery also remains
+one-way: a derived LiveKit secret cannot be mistaken for the base call-session secret. The final scan
+covered 13 persisted service logs plus the launcher stream and contained no configured credential
+value, private instruction dump, or duplicate package-key warning. Teardown closed every isolated
+listener.
+
+A headed isolated Web drill also proves account preference enablement and reload persistence. When
+deployment availability was disabled again, the toggle disappeared but an existing failed work card
+remained visible and dismissible; Dismiss persisted after reload. This is truthful rollback evidence,
+but not a full `PWK-032` pass because no provider-backed mission was already running and callback,
+delivery, capacity-reduction, Telegram, and Voice parity were not exercised.
+
 Current-candidate Telegram Desktop and audible Voice runs cover roster visibility, preference
 persistence, Queue, Message, Resume, Stop, Dismiss, truthful unavailable Pause, call teardown, and
 restart/reload persistence. Release remains blocked on provider-connected mission completion;
 active-running Steer/Pause and lost-control recovery; scheduler delivery/adjudication; three-way
-capacity, overflow, load, fairness, and latency; two-owner isolation; the final hostile-sandbox and
-forged-mode matrix; rollback; and clean install, nested pins, and shipped-artifact parity. The
-deployment availability flag therefore remains false and the default remains `focused`.
+capacity, overflow, load, fairness, and latency; two-owner isolation; the remaining provider-backed
+sandbox/concurrent-cap matrix; and rollback with running work. The deployment availability flag
+therefore remains false and the default remains `focused`.
 
 ## Account and surface contract
 
