@@ -171,8 +171,9 @@ read a tool inventory, construct OAuth URLs, manage callbacks, or understand int
 - The repaired Library/template baseline now passes **10/10** on the reconciled candidate. The wider
   affected runtime/auth/MCP/provider/schedule/profile slices are also green; full cross-stack tests
   still run after the parent pin is updated.
-- Current Claude Code authentication and a fresh single-call MCP run now pass. This is external
-  control-plane proof, not a claim that personal Claude worker subscription isolation is complete.
+- Current Claude Code authentication and a fresh single-call MCP run pass for the external control
+  plane. Separately, the installed personal-Claude worker path now passes provider code handoff,
+  Ready persistence, a real mission, same-workspace continuation, and Favorite retention.
 
 ### Current support truth
 
@@ -180,15 +181,15 @@ read a tool inventory, construct OAuth URLs, manage callbacks, or understand int
 | --- | --- | --- |
 | Convenient individual GlassHive login | PARTIAL | Real organization and local-session paths passed; complete provider denial/logout/profile matrix is open |
 | Personal Codex subscription | PARTIAL | Exact installed mission/output/lease isolation passed; reconnect/forget, contention, and second account remain open |
-| Personal Claude subscription | PARTIAL | The accepted hosted Linux release now offers Claude Code only when its native setup CLI is runnable, with an editable `Personal Claude` default; real login/mission, reconnect/forget, contention, and two-user proof remain open |
+| Personal Claude subscription | PARTIAL | The accepted hosted Linux release completed real personal login, hard-refresh persistence, two successful runs in the same Claude workspace, output verification, and Favorite retention; reconnect/forget, contention, and two-user proof remain open |
 | User-scoped API key | PARTIAL | Broker/reference boundaries exist; real rotate/disconnect/mission proof is open |
-| Private persistent workspace | PARTIAL | Strong real mission/file/Watch/output/refresh evidence exists; installed restart/profile/grant continuity remains |
+| Private persistent workspace | PARTIAL | Real Codex and Claude mission/file/Watch/output/refresh/reuse evidence exists; full installed service-restart/profile/grant continuity remains |
 | Duplicate/template | PARTIAL | Automated/local evidence exists; installed and two-user reapproval proof remains |
 | Codex/Claude MCP control | PARTIAL | Exact installed fresh-process one-call traces passed for both; clean public install/update/remove and two-owner parity remain |
 | SharePoint/connected service use | PARTIAL | Official native Outlook/SharePoint authorization, personal Codex worker reads, browser refresh/retention, same-worker restart/reuse, external-client continuation, and DB/lease correlation passed; confirmed write, revoke/renewal, personal Claude, and two-user coverage remain open |
 | Library skill/plugin lifecycle | PARTIAL | Local add/remove passed, but three focused fixture tests currently fail and real package/worker use is open |
 | Recurring schedules | PARTIAL | Exact installed Run now completed visibly with backend correlation; automatic fire/renewal/restart remains |
-| Human naming/discovery | PARTIAL | Basic naming/search/persistence exists; scale and performance remain |
+| Human naming/discovery | PARTIAL | Provider names are prefilled/editable and the real Claude workspace was rediscovered and favorited after refresh; scale and performance remain |
 | Fresh install/upgrade/restore | PENDING | Accepted canary is not a clean public install/upgrade/restore proof |
 | Installed two-user isolation | PARTIAL | Automated denial evidence exists; no complete two-user browser/MCP/provider/connection run |
 | Viventium direct GlassHive conversation | PENDING | Architecture/tests are additive; installed candidate cross-surface regression remains |
