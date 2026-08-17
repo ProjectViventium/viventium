@@ -277,7 +277,10 @@ most specific existing QA owner when a scenario already has a detailed provider 
   create the account through UI and MCP, complete either supported native subscription
   login or secure per-user API-key entry; when the native CLI emits an OSC terminal hyperlink, prove
   the exact reviewed provider URL becomes one normal clickable sign-in action while terminal controls
-  and raw output remain collapsed; test readiness, make default, inspect verified/last-used and
+  and raw output remain collapsed; when the provider returns an authentication code to the browser,
+  paste it into the masked GlassHive field and prove it is sent once to the waiting owner-scoped CLI,
+  never echoed in API/setup output, and replaced by durable Ready state; test readiness, make default,
+  inspect verified/last-used and
   truthfully observed usage metadata, reconnect or rotate after expiry, disconnect, confirm affected
   workspaces show action required, forget the disconnected metadata, and create a replacement at the
   active-account quota boundary. Disable account setup, then prove personal-only mode can be reversed
@@ -290,8 +293,9 @@ most specific existing QA owner when a scenario already has a detailed provider 
   disconnected metadata permanently exhausts quota, an active/in-use account can be forgotten, or
   policy-only recovery creates an unreachable personal-required state, a provider advertised without
   its native setup executable, a reviewed provider sign-in URL shown only as a raw unclickable
-  terminal dump, an arbitrary CLI URL promoted into a link, or an actionable runtime prerequisite
-  rewritten as HTTP 500.
+  terminal dump, browser-issued authentication code shown without a place to submit it, a submitted
+  code returned/logged/stored, an arbitrary CLI URL promoted into a link, or an actionable runtime
+  prerequisite rewritten as HTTP 500.
 - Evidence to capture: browser setup/status, PTY/device transition, secret-free API/DB metadata,
   provider-home permissions, audit events.
 - Full-view evidence minimum: real provider setup through visible UI and a subsequent worker mission.

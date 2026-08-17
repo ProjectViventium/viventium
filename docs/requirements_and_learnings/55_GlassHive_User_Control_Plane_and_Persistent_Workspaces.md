@@ -332,12 +332,15 @@ compliant hosted topology.
   workstation image or exceed the browser edge deadline.
 - Native setup output is translated at the runtime boundary into provider-specific, allowlisted
   guidance: the reviewed sign-in destination, a bounded one-time code where supported, and an
-  optional reviewed recovery destination. The main Connections surface exposes those values as one
-  primary sign-in action and one copy action. Raw PTY output remains available only in collapsed
-  technical details and is never promoted into a clickable arbitrary URL.
+  optional reviewed recovery destination. The main Connections surface exposes one primary sign-in
+  action plus the provider's actual next step: copy a CLI-issued code into the browser, or paste a
+  browser-issued code into a masked field that submits once to the already waiting native CLI. That
+  submitted code is bounded, owner-scoped, never echoed into setup output, and never stored; the
+  provider's authenticated native home is what persists for later missions. Raw PTY output remains
+  available only in collapsed technical details and is never promoted into a clickable arbitrary URL.
 - While a provider sign-in attempt is active, Connections hides stale recovery text, account-creation
-  controls, and external-client setup so the current sign-in link, one-time code, copy action, and
-  cancel action remain the only primary task. Those controls return when the attempt ends.
+  controls, and external-client setup so the current sign-in link, required code copy/paste action,
+  and cancel action remain the only primary task. Those controls return when the attempt ends.
 - Account creation controls are generated from the server's supported provider methods. An
   unavailable worker-account route is omitted instead of rendered as a dead button or an internal
   policy warning. External Codex/Claude MCP client setup remains a separate collapsed surface and is
