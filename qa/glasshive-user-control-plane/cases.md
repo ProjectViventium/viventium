@@ -270,7 +270,8 @@ most specific existing QA owner when a scenario already has a detailed provider 
 - Requirement: `GH-UCP-005`.
 - Risk covered: user-specific subscription setup is global, opaque, or irreversible.
 - Preconditions: supported provider/platform, signed-in user, no existing personal account.
-- Steps: create a labeled account through UI and MCP, complete either supported native subscription
+- Steps: open account creation and confirm the provider-derived label is already filled but editable;
+  create the account through UI and MCP, complete either supported native subscription
   login or secure per-user API-key entry, test readiness, make default, inspect verified/last-used and
   truthfully observed usage metadata, reconnect or rotate after expiry, disconnect, confirm affected
   workspaces show action required, forget the disconnected metadata, and create a replacement at the
@@ -402,7 +403,8 @@ most specific existing QA owner when a scenario already has a detailed provider 
 - Evidence to capture: policy resolution, visible failure/recovery copy, zero-run/no-side-effect proof.
 - Full-view evidence minimum: browser selection + worker result on each supported platform class.
 - Automation: mission/provider-platform and workspace-catalog readiness tests, compiler
-  provider-route isolation tests, plus `test_workspace_account_switch.py`.
+  provider-route isolation tests, Linux enabled/disabled and macOS-omission provider-picker tests,
+  plus `test_workspace_account_switch.py`.
 - Last run: PARTIAL 2026-08-15; focused source tests prove missing/incomplete hosted deployment
   routes are action-required before a new browser launch creates any project, workspace, or run;
   a busy preferred account without a usable deployment fallback creates no run and cannot interrupt

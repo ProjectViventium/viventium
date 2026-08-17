@@ -313,13 +313,17 @@ compliant hosted topology.
 - The current fixed user-key inference adapter is OpenAI Responses-only. Although LibreChat can own
   a user-scoped Anthropic key, GlassHive must report Claude API-key execution unavailable until a
   fixed Anthropic Messages-compatible broker adapter proves the same user/run binding, revocation,
-  redirect/origin restrictions, and no-secret-copy boundary. The experimental Claude consumer OAuth
-  path is not an accepted hosted subscription path and is not advertised as supported.
+  redirect/origin restrictions, and no-secret-copy boundary. An isolated Linux deployment may
+  explicitly enable Claude Code's native subscription sign-in; when disabled, unavailable, or on an
+  unsupported host, the Claude option is omitted rather than replaced with an invented OAuth or
+  API-key path.
 - Codex uses an account-specific `CODEX_HOME`; Claude uses its supported native authentication home
   or provider-supported headless token flow. GlassHive does not invent or extract Claude OAuth.
 - Setup uses an isolated PTY/device/browser flow for native subscriptions or a no-echo secure secret
   input for API keys, shows pending/ready/action-required/unsupported status, and supports connect,
   test, reconnect, rotate, disconnect, usage/readiness inspection, and default selection.
+- Account labels are prefilled from the selected provider and remain editable; naming is optional
+  effort, not a prerequisite the user must discover before connecting.
 - The reviewed worker substrate is prepared before the runtime becomes ready. Account test/reconnect
   requests may inspect and repair private provider state, but must not synchronously build the shared
   workstation image or exceed the browser edge deadline.

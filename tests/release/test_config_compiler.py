@@ -4245,13 +4245,16 @@ def test_glasshive_multi_user_requires_canonical_principal_and_isolated_subscrip
         config_compiler.resolve_glasshive_enterprise_settings(config)
 
     enterprise["provider_accounts"]["isolation_mode"] = "per_worker_container"
+    enterprise["provider_accounts"]["hosted_claude_consumer_auth_enabled"] = True
     settings = config_compiler.resolve_glasshive_enterprise_settings(config)
     assert settings["provider_account_isolation"] == "per_worker_container"
+    assert settings["hosted_claude_consumer_auth_enabled"] is True
     env = config_compiler.render_runtime_env(
         config,
         config_compiler.build_agent_assignments(config),
     )
     assert env["GLASSHIVE_PROVIDER_ACCOUNT_ISOLATION"] == "per_worker_container"
+    assert env["GLASSHIVE_ENABLE_HOSTED_CLAUDE_CONSUMER_AUTH"] == "true"
 
 
 def test_glasshive_multi_user_rejects_cleartext_public_urls_and_domain_policy_drift(

@@ -180,7 +180,7 @@ read a tool inventory, construct OAuth URLs, manage callbacks, or understand int
 | --- | --- | --- |
 | Convenient individual GlassHive login | PARTIAL | Real organization and local-session paths passed; complete provider denial/logout/profile matrix is open |
 | Personal Codex subscription | PARTIAL | Exact installed mission/output/lease isolation passed; reconnect/forget, contention, and second account remain open |
-| Personal Claude subscription | BLOCKED | No general hosted consumer-subscription claim; enable only a supported, isolated native route |
+| Personal Claude subscription | PARTIAL | An explicitly enabled isolated Linux deployment can offer native Claude Code subscription sign-in; installed mission, contention, and two-user proof remain open |
 | User-scoped API key | PARTIAL | Broker/reference boundaries exist; real rotate/disconnect/mission proof is open |
 | Private persistent workspace | PARTIAL | Strong real mission/file/Watch/output/refresh evidence exists; installed restart/profile/grant continuity remains |
 | Duplicate/template | PARTIAL | Automated/local evidence exists; installed and two-user reapproval proof remains |
@@ -652,7 +652,7 @@ from a different profile is inadmissible for that run.
 
 | Decision/blocker | Current rule | Closure evidence |
 | --- | --- | --- |
-| Personal Claude subscription | Do not advertise a general hosted consumer route | Provider-supported method, policy/legal approval, isolated home/writeback, real two-user mission |
+| Personal Claude subscription | Advertise only the explicitly enabled isolated Linux native route; keep unsupported platforms and fixed API-key brokerage omitted | Installed native login/mission/reuse, contention, and real two-user isolation |
 | Native package distribution | Shared source with thin OpenAI and Claude packages is implemented; both official manifests validate and isolated local installs work | Publish, clean remote install/update/remove, and installed hosted one-call proof |
 | External call complexity | Do not infer cause from the 60-tool count; extend native defer/discovery only where supported and own async completion | Preserved before/after trace separating discovery, retry, polling, and result calls; compatibility regression |
 | Generic OIDC refresh | Never universalize an Entra-only scope | Discovery/config contract and supported/unsupported provider tests |
