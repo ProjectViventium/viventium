@@ -409,7 +409,7 @@ most specific existing QA owner when a scenario already has a detailed provider 
 - Automation: mission/provider-platform and workspace-catalog readiness tests, compiler
   provider-route isolation tests, Linux enabled/disabled and macOS-omission provider-picker tests,
   plus `test_workspace_account_switch.py`.
-- Last run: PARTIAL 2026-08-15; focused source tests prove missing/incomplete hosted deployment
+- Last run: PARTIAL 2026-08-17; focused source tests prove missing/incomplete hosted deployment
   routes are action-required before a new browser launch creates any project, workspace, or run;
   a busy preferred account without a usable deployment fallback creates no run and cannot interrupt
   an active run during steer;
@@ -418,6 +418,10 @@ most specific existing QA owner when a scenario already has a detailed provider 
   provider credentials; and personal-bound missions retain their separate account-home route. The
   installed provider bridge is `root:root 0600`; a deployment-managed Codex mission and a
   personal-required Codex mission both completed with exact browser output and refresh persistence.
+  The accepted hosted Edge canary also showed Codex and Claude Code only after native setup support
+  passed, prefilled `Personal Codex` / `Personal Claude`, preserved an edited custom name across
+  provider switching, and retained the behavior after hard refresh without creating a new OAuth
+  grant.
   DB correlation proved no personal lease on Work AI and a released personal lease on the personal
   run. Other providers, reconnect/forget/contention, and two-owner denial remain open.
 

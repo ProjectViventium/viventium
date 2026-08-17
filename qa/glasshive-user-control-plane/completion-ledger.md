@@ -180,7 +180,7 @@ read a tool inventory, construct OAuth URLs, manage callbacks, or understand int
 | --- | --- | --- |
 | Convenient individual GlassHive login | PARTIAL | Real organization and local-session paths passed; complete provider denial/logout/profile matrix is open |
 | Personal Codex subscription | PARTIAL | Exact installed mission/output/lease isolation passed; reconnect/forget, contention, and second account remain open |
-| Personal Claude subscription | PARTIAL | An explicitly enabled isolated Linux deployment can offer native Claude Code subscription sign-in; installed mission, contention, and two-user proof remain open |
+| Personal Claude subscription | PARTIAL | The accepted hosted Linux release now offers Claude Code only when its native setup CLI is runnable, with an editable `Personal Claude` default; real login/mission, reconnect/forget, contention, and two-user proof remain open |
 | User-scoped API key | PARTIAL | Broker/reference boundaries exist; real rotate/disconnect/mission proof is open |
 | Private persistent workspace | PARTIAL | Strong real mission/file/Watch/output/refresh evidence exists; installed restart/profile/grant continuity remains |
 | Duplicate/template | PARTIAL | Automated/local evidence exists; installed and two-user reapproval proof remains |
