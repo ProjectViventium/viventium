@@ -296,7 +296,7 @@ most specific existing QA owner when a scenario already has a detailed provider 
   provider-home permissions, audit events.
 - Full-view evidence minimum: real provider setup through visible UI and a subsequent worker mission.
 - Automation: control-plane/provider setup tests plus real provider QA.
-- Last run: PARTIAL 2026-08-09; focused UI/API/MCP tests prove connect/setup/test/reconnect/disconnect/
+- Last run: PARTIAL 2026-08-17; focused UI/API/MCP tests prove connect/setup/test/reconnect/disconnect/
   forget parity, active-quota recovery, verification timestamps, and secret-free observed-use API/UI
   fields. Native and brokered dispatch tests prove run/outcome/duration accounting occurs after real
   worker dispatch rather than lease acquisition, token totals remain absent unless reported, and a
@@ -305,10 +305,15 @@ most specific existing QA owner when a scenario already has a detailed provider 
   setup regression proves reviewed provider URLs/codes are structured without promoting arbitrary
   CLI URLs; the full UI server suite and synthetic desktop/mobile Playwright pass prove the default
   view hides empty tools, account creation, raw output, and external-client commands, while one-click
-  code copy reports success. The exact hosted build, real approved provider, and subsequent mission
-  remain open. The 2026-08-10 follow-up adds transactional first-account defaulting and an executable
+  code copy reports success. A completed real provider grant and subsequent mission remain open. The
+  2026-08-10 follow-up adds transactional first-account defaulting and an executable
   browser-policy regression proving a pre-existing sole Ready account is selected under
-  `personal_required` without deployment fallback.
+  `personal_required` without deployment fallback. The accepted hosted Edge canary additionally
+  proved that native Claude reconnect renders one clickable reviewed sign-in action, opens the
+  official Claude login page, keeps raw terminal output collapsed, and returns to an honest
+  cancelled/reconnectable state after refresh. A completed Claude grant and worker mission remain
+  open; see
+  [the 2026-08-17 hosted report](reports/2026-08-17-claude-clickable-signin.md).
 
 ## `GHUCP-008` — Provider Isolation and Secret Boundary
 
