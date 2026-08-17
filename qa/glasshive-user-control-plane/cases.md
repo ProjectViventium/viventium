@@ -271,6 +271,9 @@ most specific existing QA owner when a scenario already has a detailed provider 
 - Risk covered: user-specific subscription setup is global, opaque, or irreversible.
 - Preconditions: supported provider/platform, signed-in user, no existing personal account.
 - Steps: open account creation and confirm the provider-derived label is already filled but editable;
+  remove or misconfigure the native setup CLI and prove the provider is omitted before account
+  creation; call the setup route directly and prove its bounded actionable failure is not rewritten
+  as an Internal Server Error; restore the reviewed CLI, refresh, and
   create the account through UI and MCP, complete either supported native subscription
   login or secure per-user API-key entry, test readiness, make default, inspect verified/last-used and
   truthfully observed usage metadata, reconnect or rotate after expiry, disconnect, confirm affected
@@ -283,7 +286,8 @@ most specific existing QA owner when a scenario already has a detailed provider 
 - Forbidden result: deployment-global credential changed, provider token/API key returned, logged, or
   stored in SQLite, setup attached to another account, disconnect leaves active authorization,
   disconnected metadata permanently exhausts quota, an active/in-use account can be forgotten, or
-  policy-only recovery creates an unreachable personal-required state.
+  policy-only recovery creates an unreachable personal-required state, a provider advertised without
+  its native setup executable, or an actionable runtime prerequisite rewritten as HTTP 500.
 - Evidence to capture: browser setup/status, PTY/device transition, secret-free API/DB metadata,
   provider-home permissions, audit events.
 - Full-view evidence minimum: real provider setup through visible UI and a subsequent worker mission.

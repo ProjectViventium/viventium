@@ -314,14 +314,17 @@ compliant hosted topology.
   a user-scoped Anthropic key, GlassHive must report Claude API-key execution unavailable until a
   fixed Anthropic Messages-compatible broker adapter proves the same user/run binding, revocation,
   redirect/origin restrictions, and no-secret-copy boundary. An isolated Linux deployment may
-  explicitly enable Claude Code's native subscription sign-in; when disabled, unavailable, or on an
-  unsupported host, the Claude option is omitted rather than replaced with an invented OAuth or
-  API-key path.
+  explicitly enable Claude Code's native subscription sign-in. The runtime must also resolve an
+  executable native setup CLI from the same canonical worker binary setting before advertising the
+  option. When disabled, unavailable, missing its setup CLI, or on an unsupported host, the Claude
+  option is omitted rather than replaced with an invented OAuth or API-key path.
 - Codex uses an account-specific `CODEX_HOME`; Claude uses its supported native authentication home
   or provider-supported headless token flow. GlassHive does not invent or extract Claude OAuth.
 - Setup uses an isolated PTY/device/browser flow for native subscriptions or a no-echo secure secret
   input for API keys, shows pending/ready/action-required/unsupported status, and supports connect,
   test, reconnect, rotate, disconnect, usage/readiness inspection, and default selection.
+- Runtime account/setup failures retain their bounded actionable 4xx status and message through the
+  browser gateway; a native setup prerequisite must never surface as a generic 500.
 - Account labels are prefilled from the selected provider and remain editable; naming is optional
   effort, not a prerequisite the user must discover before connecting.
 - The reviewed worker substrate is prepared before the runtime becomes ready. Account test/reconnect
