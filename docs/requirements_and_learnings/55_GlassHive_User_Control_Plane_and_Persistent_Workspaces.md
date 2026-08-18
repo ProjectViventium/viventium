@@ -422,7 +422,10 @@ compliant hosted topology.
 - The workspace-native `Set up tools` action for Codex or Claude borrows the exact selected personal
   account under a separate exclusive interactive lease. It projects only the same bounded auth surface
   used by missions, monitors the visible native window, and removes the credential-bearing container
-  before release on window exit or bounded timeout. Mission dispatch fails before run creation while
+  before release on window exit or bounded timeout. At timeout, the authoritative container removal
+  stops the credential-bearing native process. The idempotent remove-and-seal operation may receive one
+  bounded retry for a transient teardown race; only a repeated failure quarantines the account, and the
+  detached host-side Docker client is reaped afterward. Mission dispatch fails before run creation while
   setup is open even if that workspace switches account or deployment route; queued/running workspace
   work blocks setup in the reverse ordering. Startup reconciles every unreleased supported interactive
   lease, including expired leases, by removing the exact container before releasing it. Browser, files,

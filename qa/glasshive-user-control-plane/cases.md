@@ -1085,7 +1085,12 @@ most specific existing QA owner when a scenario already has a detailed provider 
   container root or the worker user; either safe owner must receive the native onboarding marker without
   weakening the regular-file, mode, link-count, or size gates. An existing worker-owned native state file
   whose mode reflects GlassHive's private ACL mask is tightened to `0600` before read and must preserve its
-  native state. A concurrent mission is rejected before run creation even if it changes
+  native state. When the bounded setup lifetime expires, authoritative container removal must stop the
+  credential-bearing native process before the account is resealed, and the detached host-side Docker
+  client must be reaped afterward. One synthetic transient cleanup failure in either container release
+  or account-home tightening must recover through the same idempotent cleanup path without changing a
+  healthy account to Action required; a repeated failure must still quarantine it and release the lease.
+  A concurrent mission is rejected before run creation even if it changes
   provider route, and queued/running work blocks setup in the reverse ordering. After simulated service
   loss, startup must remove the exact orphaned container before releasing the unreleased lease, including
   an expired one. Browser/files/shell actions remain unbound.
