@@ -1081,7 +1081,10 @@ most specific existing QA owner when a scenario already has a detailed provider 
   launch failure does the same. Unsafe native state in one legacy workspace must fail only that workspace:
   even if stale completed-run metadata makes graceful process cleanup fail, whole-container removal remains
   authoritative, no credential mount survives without a lease, and the healthy shared account is not
-  quarantined. A concurrent mission is rejected before run creation even if it changes
+  quarantined. A fresh Claude workspace home presented through the rootless bind mount may be owned by
+  container root or the worker user; either safe owner must receive the native onboarding marker without
+  weakening the regular-file, mode, link-count, or size gates. A concurrent mission is rejected before
+  run creation even if it changes
   provider route, and queued/running work blocks setup in the reverse ordering. After simulated service
   loss, startup must remove the exact orphaned container before releasing the unreleased lease, including
   an expired one. Browser/files/shell actions remain unbound.

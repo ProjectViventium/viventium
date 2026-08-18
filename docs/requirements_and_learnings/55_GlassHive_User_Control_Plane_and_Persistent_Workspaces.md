@@ -414,7 +414,9 @@ compliant hosted topology.
   only `CLAUDE_SECURESTORAGE_CONFIG_DIR` under the same exclusive lease. The installed pinned Claude
   CLI must advertise that selector or startup fails closed. Two workspaces using the same account
   therefore share authentication only; their tools, trust decisions, and session state remain in
-  their distinct persistent homes.
+  their distinct persistent homes. A rootless bind may present that managed workspace home as
+  container root or the non-root worker; both owners are valid, while the native state file itself
+  still requires the exact regular-file, single-link, private-mode, bounded-size contract.
 - The workspace-native `Set up tools` action for Codex or Claude borrows the exact selected personal
   account under a separate exclusive interactive lease. It projects only the same bounded auth surface
   used by missions, monitors the visible native window, and removes the credential-bearing container
