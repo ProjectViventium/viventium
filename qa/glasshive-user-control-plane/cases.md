@@ -701,11 +701,13 @@ most specific existing QA owner when a scenario already has a detailed provider 
 - Forbidden result: basic `/ui/projects` runtime UI as a primary destination, duplicate Watch actions,
   result inspection that resumes compute, unbounded/offscreen polling or interactive preview sockets,
   unlabeled controls, overlapping panels, trapped focus, clipped navigation/account actions, disabled
-  provider button, callback plumbing in ordinary setup, hidden blockers, or made-up readiness.
+  provider button, callback plumbing in ordinary setup, hidden blockers, made-up readiness, or a main
+  frame that remains transparent until DevTools, resize, or another repaint trigger.
 - Evidence to capture: full-page and narrow screenshots, accessibility tree, keyboard trace, network
   calls, persisted state.
 - Full-view evidence minimum: real browser visual/interaction QA plus API/log/DB confirmation.
-- Automation: UI static tests, accessibility checks, Playwright.
+- Automation: UI static tests, accessibility checks, Playwright, and repeated first-paint/hard-refresh
+  visibility with normal and reduced motion.
 - Last run: PARTIAL 2026-08-11; automated modern navigation, direct-output/no-resume, bounded preview,
   concise external-AI, unsupported-route, and responsive contracts pass. Local Chromium exercised
   1/4/5/25 workspaces, parallel steering, and 320/768/1024 without overflow. Exact installed
@@ -1069,8 +1071,24 @@ most specific existing QA owner when a scenario already has a detailed provider 
   run/worker/catalog rows, and absence of secret output.
 - Full-view evidence minimum: fresh external client + MCP + real workspace + official consent + real
   native tool result + refresh/restart/reuse + backend correlation.
-- Automation: companion-skill contract and MCP one-call Favorite regression; real provider consent
-  remains browser QA.
+- Escaped regression: a Claude connector added at native user scope while the workspace is idle must
+  remain visible to a later personal-account mission. The mission may project only the selected
+  account's secure-storage directory; it must not replace the workspace's native `HOME` or share
+  user-scope MCP/plugin/trust state with another workspace.
+- Escaped regression: `Set up tools` for a workspace with a ready selected personal Codex or Claude
+  account must open the matching native harness already authenticated under an exact interactive lease.
+  Closing or timing out the window removes its credential-bearing container and releases the lease;
+  launch failure does the same. A concurrent mission is rejected before run creation even if it changes
+  provider route, and queued/running work blocks setup in the reverse ordering. After simulated service
+  loss, startup must remove the exact orphaned container before releasing the unreleased lease, including
+  an expired one. Browser/files/shell actions remain unbound.
+- Escaped regression: an incidental external connector, documentation, or API URL in worker prose is
+  not a deliverable and must not navigate the authenticated worker browser. Workspace files/HTML and
+  explicit localhost previews keep their existing delivery behavior.
+- Automation: companion-skill contract, MCP one-call Favorite regression, exact provider-environment
+  shape, native-state composition, interactive lease launch/exit/failure/cross-route concurrency/restart
+  recovery, and URL-only no-delivery/no-browser-action regressions. Real
+  provider consent and the pinned native CLI reuse path remain browser/runtime QA.
 - Last run: PASS for the personal-Codex path / PARTIAL across all clients, 2026-08-16. A fresh
   isolated Codex task created one private favorite personal workspace with one `workspace_launch`.
   Official Outlook and SharePoint authorization was completed on the matching personal OpenAI
