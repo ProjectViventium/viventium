@@ -416,7 +416,9 @@ compliant hosted topology.
   therefore share authentication only; their tools, trust decisions, and session state remain in
   their distinct persistent homes. A rootless bind may present that managed workspace home as
   container root or the non-root worker; both owners are valid, while the native state file itself
-  still requires the exact regular-file, single-link, private-mode, bounded-size contract.
+  still requires the exact regular-file, single-link, private-mode, bounded-size contract. If
+  GlassHive's private ACL preparation exposes ACL mask bits through the file mode, the exact
+  worker-owned file is tightened to `0600` before its native state is read or updated.
 - The workspace-native `Set up tools` action for Codex or Claude borrows the exact selected personal
   account under a separate exclusive interactive lease. It projects only the same bounded auth surface
   used by missions, monitors the visible native window, and removes the credential-bearing container

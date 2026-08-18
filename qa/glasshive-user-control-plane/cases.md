@@ -1083,8 +1083,9 @@ most specific existing QA owner when a scenario already has a detailed provider 
   authoritative, no credential mount survives without a lease, and the healthy shared account is not
   quarantined. A fresh Claude workspace home presented through the rootless bind mount may be owned by
   container root or the worker user; either safe owner must receive the native onboarding marker without
-  weakening the regular-file, mode, link-count, or size gates. A concurrent mission is rejected before
-  run creation even if it changes
+  weakening the regular-file, mode, link-count, or size gates. An existing worker-owned native state file
+  whose mode reflects GlassHive's private ACL mask is tightened to `0600` before read and must preserve its
+  native state. A concurrent mission is rejected before run creation even if it changes
   provider route, and queued/running work blocks setup in the reverse ordering. After simulated service
   loss, startup must remove the exact orphaned container before releasing the unreleased lease, including
   an expired one. Browser/files/shell actions remain unbound.
