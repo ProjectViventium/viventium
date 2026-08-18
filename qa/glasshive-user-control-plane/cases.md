@@ -539,11 +539,12 @@ most specific existing QA owner when a scenario already has a detailed provider 
 - Preconditions: named workspace with synthetic file, browser preference/session, context, approved
   grant, and paused compute.
 - Steps: open (auto-resume), inspect state, edit file, pause, refresh UI, restart worker/runtime, reopen,
-  expire an external session, and retry after reconnect. Replace the saved Codex conversation id
-  with a synthetically missing id, then send one instruction through the same workspace.
+  expire an external session, and retry after reconnect. Replace the saved Codex conversation id and
+  the saved Claude session id with synthetically missing ids, then send one instruction through each
+  same workspace.
 - Expected result: same alias and approved state return; compute lifecycle does not delete persistence;
-  expired external auth is explicit and recoverable. A missing prior Codex conversation falls back
-  once to a fresh conversation using the same instruction and stores the replacement conversation id.
+  expired external auth is explicit and recoverable. A missing prior Codex or Claude conversation
+  falls back once to a fresh conversation using the same instruction and stores the replacement id.
 - Forbidden result: new workspace silently created, files/browser/context lost, old tab keeps compute
   forever, expired auth reported as successful empty data, the user asked to repair an internal
   conversation id, duplicate mission creation, or an unrelated resume failure retried as fresh work.
@@ -1074,7 +1075,10 @@ most specific existing QA owner when a scenario already has a detailed provider 
 - Escaped regression: a Claude connector added at native user scope while the workspace is idle must
   remain visible to a later personal-account mission. The mission may project only the selected
   account's secure-storage directory; it must not replace the workspace's native `HOME` or share
-  user-scope MCP/plugin/trust state with another workspace.
+  user-scope MCP/plugin/trust state with another workspace. If that native-state correction makes an
+  older saved Claude session unavailable, reuse retries exactly once as a fresh session with the same
+  instruction; unrelated failures and quoted MCP output never trigger the fallback, and interrupted
+  reuse preserves its partial transcript.
 - Escaped regression: `Set up tools` for a workspace with a ready selected personal Codex or Claude
   account must open the matching native harness already authenticated under an exact interactive lease.
   Closing or timing out the window removes its credential-bearing container and releases the lease;
