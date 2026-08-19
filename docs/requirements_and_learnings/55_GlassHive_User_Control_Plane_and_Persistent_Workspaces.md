@@ -326,6 +326,11 @@ compliant hosted topology.
 - Setup uses an isolated PTY/device/browser flow for native subscriptions or a no-echo secure secret
   input for API keys, shows pending/ready/action-required/unsupported status, and supports connect,
   test, reconnect, rotate, disconnect, usage/readiness inspection, and default selection.
+- A terminal native provider-auth failure is carried through the runtime as private structured
+  evidence. The exact selected personal account becomes action required with a Connections
+  reconnect action; GlassHive must not leave it visibly Ready or expose the provider transcript.
+  Account testing may use the provider's native refresh behavior to repair its persisted private
+  home, but reports Ready only after that native check succeeds.
 - Runtime account/setup failures retain their bounded actionable 4xx status and message through the
   browser gateway; a native setup prerequisite must never surface as a generic 500.
 - Account labels are prefilled from the selected provider and remain editable; naming is optional

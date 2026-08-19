@@ -283,11 +283,15 @@ most specific existing QA owner when a scenario already has a detailed provider 
   inspect verified/last-used and
   truthfully observed usage metadata, reconnect or rotate after expiry, disconnect, confirm affected
   workspaces show action required, forget the disconnected metadata, and create a replacement at the
-  active-account quota boundary. Disable account setup, then prove personal-only mode can be reversed
+  active-account quota boundary. Force the native worker CLI to return a structured expired-session
+  failure and prove the exact selected account becomes action required with Connections reconnect
+  guidance while its lease and credential-mounted container are still released. Disable account
+  setup, then prove personal-only mode can be reversed
   when already active but cannot be newly enabled without a saved personal credential.
 - Expected result: lifecycle is owner scoped, native, understandable, resumable, and never exposes a
   token; the first account becomes that provider's default, a sole Ready account is selected for
-  launch, and default selection affects only that user.
+  launch, default selection affects only that user, and a terminal native authentication failure is
+  shown as reconnect required rather than an unknown run failure on a still-Ready account.
 - Forbidden result: deployment-global credential changed, provider token/API key returned, logged, or
   stored in SQLite, setup attached to another account, disconnect leaves active authorization,
   disconnected metadata permanently exhausts quota, an active/in-use account can be forgotten, or
@@ -295,7 +299,8 @@ most specific existing QA owner when a scenario already has a detailed provider 
   its native setup executable, a reviewed provider sign-in URL shown only as a raw unclickable
   terminal dump, browser-issued authentication code shown without a place to submit it, a submitted
   code returned/logged/stored, an arbitrary CLI URL promoted into a link, or an actionable runtime
-  prerequisite rewritten as HTTP 500.
+  prerequisite rewritten as HTTP 500, or expired native authentication reported only as code 1 while
+  the selected account remains Ready.
 - Evidence to capture: browser setup/status, PTY/device transition, secret-free API/DB metadata,
   provider-home permissions, audit events.
 - Full-view evidence minimum: real provider setup through visible UI and a subsequent worker mission.
@@ -318,8 +323,16 @@ most specific existing QA owner when a scenario already has a detailed provider 
   cancelled/reconnectable state after refresh. The accepted follow-up canary then completed the
   provider-issued code handoff through a masked field, reached durable Ready state, survived hard
   refresh, completed two missions in the same personal-Claude workspace, and retained the verified
-  output as a Favorite. Reconnect/forget/rotation, contention, and two-owner coverage remain open;
-  see [the completed hosted report](reports/2026-08-17-personal-claude-code-and-reuse.md).
+  output as a Favorite. On 2026-08-18 an escaped real expired-Claude-session failure was reproduced:
+  the native CLI returned structured `authentication_failed` evidence while the account remained
+  Ready. Focused regression coverage now preserves that private classification, changes only the
+  selected owner-scoped account to action required, gives Connections reconnect guidance, and still
+  releases the lease and credential-mounted container. In the hosted Edge Connections surface,
+  **Test connection** then exercised Claude's native refresh path and restored a successful logged-in
+  status without exposing credential values. This case remains PARTIAL until the source fix is
+  deployed and the same saved workspace completes a post-refresh mission. Forget/rotation,
+  contention, and two-owner coverage also remain open; see
+  [the completed hosted report](reports/2026-08-17-personal-claude-code-and-reuse.md).
 
 ## `GHUCP-008` — Provider Isolation and Secret Boundary
 
