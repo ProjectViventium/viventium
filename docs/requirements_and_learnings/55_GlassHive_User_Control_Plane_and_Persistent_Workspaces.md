@@ -358,9 +358,17 @@ compliant hosted topology.
   work defaults to `personal_required`. Temporarily choosing a worker profile without personal
   account support must not silently change that saved personal policy to deployment credentials.
 - The UI and MCP expose the same generic account lifecycle: connect metadata, start native setup,
-  test current readiness, disconnect credentials, and forget already-disconnected metadata. A
-  disconnected row does not consume the active-account quota, and forgetting it is rejected until
-  active leases are gone and disconnect has completed.
+  test current readiness, disconnect credentials, and remove already-disconnected metadata. The UI
+  presents one clear **Remove** action that composes the existing disconnect and metadata-removal
+  operations. Under the exact account lease, disconnect first reconciles any isolated
+  credential-mounted worker, attempts native provider sign-out, removes GlassHive's private account
+  home, and marks the account disconnected. Provider sign-out is best effort and any uncertainty is
+  stated honestly; it does not preserve a credential GlassHive can no longer safely use. Metadata
+  removal then clears owner-scoped legacy grant rows and deletes the disconnected account. A local
+  credential-cleanup failure leaves a retryable row, releases the lease, and never deletes metadata.
+  A disconnected row does not consume the active-account quota, and removal is rejected until active
+  leases are gone and credential cleanup has completed. The separate MCP/API primitives remain
+  available for compatible clients.
 - `last_verified_at`, `last_used_at`, and GlassHive-observed usage counters are non-secret operational
   metadata. Lease acquisition alone is not usage. After an account-bound native or brokered worker
   dispatch returns or raises, GlassHive atomically records the run, failure outcome, and measured

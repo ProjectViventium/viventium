@@ -281,8 +281,8 @@ most specific existing QA owner when a scenario already has a detailed provider 
   paste it into the masked GlassHive field and prove it is sent once to the waiting owner-scoped CLI,
   never echoed in API/setup output, and replaced by durable Ready state; test readiness, make default,
   inspect verified/last-used and
-  truthfully observed usage metadata, reconnect or rotate after expiry, disconnect, confirm affected
-  workspaces show action required, forget the disconnected metadata, and create a replacement at the
+  truthfully observed usage metadata, reconnect or rotate after expiry, use the single Remove action,
+  confirm affected workspaces show action required, and create a replacement at the
   active-account quota boundary. Force the native worker CLI to return a structured expired-session
   failure and prove the exact selected account becomes action required with Connections reconnect
   guidance while its lease and credential-mounted container are still released. Disable account
@@ -290,11 +290,16 @@ most specific existing QA owner when a scenario already has a detailed provider 
   when already active but cannot be newly enabled without a saved personal credential.
 - Expected result: lifecycle is owner scoped, native, understandable, resumable, and never exposes a
   token; the first account becomes that provider's default, a sole Ready account is selected for
-  launch, default selection affects only that user, and a terminal native authentication failure is
-  shown as reconnect required rather than an unknown run failure on a still-Ready account.
+  launch, default selection affects only that user, a terminal native authentication failure is
+  shown as reconnect required rather than an unknown run failure on a still-Ready account, and one
+  Remove action safely reconciles credential-bearing compute, removes private local credentials and
+  metadata, then makes the row disappear. If provider-native sign-out cannot be confirmed, removal
+  still succeeds locally and says so; if private cleanup fails, the row remains with Retry Remove.
 - Forbidden result: deployment-global credential changed, provider token/API key returned, logged, or
   stored in SQLite, setup attached to another account, disconnect leaves active authorization,
-  disconnected metadata permanently exhausts quota, an active/in-use account can be forgotten, or
+  disconnected metadata permanently exhausts quota, an active/in-use account can be removed, a
+  credential-bearing container or owner-scoped grant prevents removal forever, provider logout
+  uncertainty is presented as confirmed, or a local cleanup failure deletes metadata or leaks a lease, or
   policy-only recovery creates an unreachable personal-required state, a provider advertised without
   its native setup executable, a reviewed provider sign-in URL shown only as a raw unclickable
   terminal dump, browser-issued authentication code shown without a place to submit it, a submitted
@@ -330,8 +335,11 @@ most specific existing QA owner when a scenario already has a detailed provider 
   releases the lease and credential-mounted container. In the hosted Edge Connections surface,
   **Test connection** then exercised Claude's native refresh path and restored a successful logged-in
   status without exposing credential values. This case remains PARTIAL until the source fix is
-  deployed and the same saved workspace completes a post-refresh mission. Forget/rotation,
-  contention, and two-owner coverage also remain open; see
+  deployed and the same saved workspace completes a post-refresh mission. The 2026-08-18 removal
+  regressions also prove the one-step UI ordering, idempotent retry, credential-container
+  reconciliation, active/revoked grant cleanup, honest provider-logout uncertainty, and a
+  cleanup-failure row that remains retryable without a leaked lease. Installed Edge removal proof,
+  rotation, contention, and two-owner coverage remain open; see
   [the completed hosted report](reports/2026-08-17-personal-claude-code-and-reuse.md).
 
 ## `GHUCP-008` — Provider Isolation and Secret Boundary
