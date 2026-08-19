@@ -19,22 +19,25 @@ When implementation changes product truth, update Requirement 55 and the relevan
 with the code. When evidence changes status, update `coverage.md`, the applicable case, and a dated
 report. This ledger then summarizes that evidence; it never upgrades a status on its own.
 
-Snapshot date: **2026-08-16**
+Snapshot date: **2026-08-18**
 
-Snapshot source:
+Installed snapshot source:
 
-- parent candidate: `71f4057971dc219ece6fd4235cf7ba538d404262` on
+- parent candidate: `35c2c834ffb81c0db65d92d9d8df6332b185c3e4` on
   `codex/glasshive-user-flow-completion`
-- GlassHive candidate: `b0dc8321554a188be170c5b38b3e77e1a34a3b79` on
+- GlassHive candidate: `8153b6a3859877c54ce5895be4bd3e367e1797b8` on
   `codex/glasshive-user-flow-completion`
 - source was reconciled from current public `origin/main` plus the reviewed renewable-auth and
   user-flow fixes; the original working tree was not used as an authoring surface
 
-Overall status: **PARTIAL**. The exact installed release now passes the core organization login,
-native Codex/Claude MCP, deployment-managed Codex, personal Codex, workspace output/refresh/rename/
-duplicate, manual schedule occurrence, and official native Outlook/SharePoint read/reuse paths.
-Personal Claude workers, confirmed connected-service write/revoke/renewal/two-user coverage,
-automatic schedule fire, Library worker use, and clean install/restore remain open.
+Overall status: **PARTIAL**. The installed release now passes the core organization login,
+native Codex/Claude MCP, deployment-managed Codex, personal Codex, personal Claude, workspace
+output/refresh/rename/duplicate, manual schedule occurrence, official native Outlook/SharePoint
+read/reuse, native Gmail use inside a persistent Claude workspace, stale-account removal, and
+same-workspace control from fresh Codex and Claude MCP clients. The current personal-Codex rerun is
+blocked by the provider account's usage quota rather than GlassHive. Confirmed connected-service
+write/revoke/renewal/two-user coverage, automatic schedule fire, Library worker use, and clean
+install/restore remain open outside the Ultimate Phase 1 slice.
 
 ## Exact final goal
 
@@ -180,8 +183,8 @@ read a tool inventory, construct OAuth URLs, manage callbacks, or understand int
 | User outcome | Current status | Plain truth |
 | --- | --- | --- |
 | Convenient individual GlassHive login | PARTIAL | Real organization and local-session paths passed; complete provider denial/logout/profile matrix is open |
-| Personal Codex subscription | PARTIAL | Exact installed mission/output/lease isolation passed; reconnect/forget, contention, and second account remain open |
-| Personal Claude subscription | PARTIAL | The accepted hosted Linux release completed real personal login, hard-refresh persistence, two successful runs in the same Claude workspace, output verification, and Favorite retention; reconnect/forget, contention, and two-user proof remain open |
+| Personal Codex subscription | PARTIAL | Exact installed mission/output/lease isolation passed; current rerun is provider-quota blocked, while broader contention and second-account coverage remain open |
+| Personal Claude subscription | PARTIAL | The installed Linux release completed real personal login and reconnect, hard-refresh persistence, native Gmail use, a normal same-workspace mission, output verification, Favorite retention, an honest setup-session contention fence, and reuse from fresh Codex and Claude MCP clients. A stale duplicate was removed with truthful provider-sign-out uncertainty; two-user proof remains open. |
 | User-scoped API key | PARTIAL | Broker/reference boundaries exist; real rotate/disconnect/mission proof is open |
 | Private persistent workspace | PARTIAL | Real Codex and Claude mission/file/Watch/output/refresh/reuse evidence exists; full installed service-restart/profile/grant continuity remains |
 | Duplicate/template | PARTIAL | Automated/local evidence exists; installed and two-user reapproval proof remains |
