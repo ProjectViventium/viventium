@@ -2,10 +2,11 @@
 
 ## Summary
 
-- Result: PASS for the affected local browser surface; installed acceptance remains PARTIAL.
-- Build/source under test: reviewed GlassHive feature revision `0442614d...`.
-- Runtime/artifact under test: local synthetic UI runtime from the reviewed source tree.
-- Environment: local headed Chromium, desktop and 390-pixel viewport.
+- Result: PASS for the affected installed desktop browser path; the wider accessibility case remains PARTIAL.
+- Build/source under test: GlassHive `425a4dc...`, pinned by parent `9d3cf55...`.
+- Runtime/artifact under test: exact sealed hosted canary, explicitly accepted after browser QA.
+- Environment: signed-in hosted Microsoft Edge desktop plus prior local headed Chromium at desktop
+  and 390-pixel viewport.
 - Tester: automated agent plus visible browser inspection.
 - Related change: six surgical workspace, launch, account-route, and active-status UX corrections.
 
@@ -13,16 +14,16 @@
 
 | Case ID | Result | Evidence | Notes |
 | --- | --- | --- | --- |
-| `GHUCP-019` | PARTIAL | 237 UI tests plus headed browser | Affected local paths pass; installed and accessibility matrix remains open. |
-| `GHUCP-034` | PARTIAL | account-route UI and refresh proof | No connector or provider behavior changed in this run. |
+| `GHUCP-019` | PARTIAL | 237 UI tests, local responsive browser, and installed Edge run | The six affected paths pass; keyboard-only and screen-reader acceptance remain open. |
+| `GHUCP-034` | PARTIAL | installed Codex/Claude route switching and refresh proof | No connector or provider behavior changed in this run. |
 
 ## Natural User Use Case Checklist Run
 
 | Use Case ID | Natural user action | Real surface used | Result | Visible evidence | Logs/DB/state/docs/artifact evidence | Remaining gap |
 | --- | --- | --- | --- | --- | --- | --- |
-| `UC-004` | Open Workspaces and find saved and one-off work | Headed local Chromium | PASS | All workspaces showed both kinds before and after reload; Saved filtered correctly. | One bounded `kind=named,ephemeral,legacy` request; no console error. | Hosted artifact proof. |
-| `UC-005` | Choose a worker and account before starting work | Headed local Chromium | PASS | Worker and effective account appeared before Advanced; account copy updated with selections. | POST contract and route-helper regressions passed. | Hosted account-data proof. |
-| `UC-011` | Watch active work without console noise | Headed local Chromium | PASS | Human lifecycle copy was visible; raw text appeared only after Technical details opened. | Lifecycle-only rendering regressions passed. | Real hosted running worker. |
+| `UC-004` | Open Workspaces and find saved and one-off work | Installed Edge | PASS | All workspaces showed saved, one-off, and legacy entries; Saved filtering and reload worked. | Exact accepted UI health revision matched the tested source. | Keyboard/screen-reader matrix. |
+| `UC-005` | Choose a worker and account before starting work | Installed Edge | PASS | Worker appeared before Advanced; Codex and Claude each showed the correct personal account route. | POST contract and route-helper regressions passed. | Wider account-policy matrix. |
+| `UC-011` | Watch active work without console noise | Installed Edge + real worker | PASS | Human lifecycle copy was visible; raw status stayed in collapsed Technical details; completed result remained unchanged. | Run completed, file opened, refresh persisted, lease count returned to zero, and error-level service logs were empty. | Keyboard/screen-reader matrix. |
 
 ## Traceability
 
@@ -33,8 +34,9 @@
 - Use case: find work, understand the selected execution route, and monitor active work.
 - QA case: `GHUCP-019`, with account-route coverage from `GHUCP-034`.
 - Expected result: one clear Worker selector, honest account route, All workspaces default, and collapsed diagnostics.
-- Actual evidence: complete UI test file plus desktop/mobile headed Chromium checks.
-- Remaining gap or fix: validate the installed hosted artifact and wider keyboard/screen-reader matrix.
+- Actual evidence: complete UI test file, local responsive browser, installed Edge, real worker/file
+  delivery, refresh persistence, backend run/lease state, and exact service health.
+- Remaining gap or fix: wider keyboard-only and screen-reader matrix.
 
 ## Full-View Evidence Checklist
 
@@ -43,26 +45,28 @@
 | Requirement and use case | Which contract is proven? | `GH-UCP-006`, `007`, `011`; `GHUCP-019`. |
 | Code owning path | Which code owns it? | Glass Drive static launch, workspace, route-summary, and Watch presenters. |
 | Docs and nested docs/repos | Which docs define it? | Requirement 55, cases, coverage, and nested UI tests. |
-| Scripts or harnesses | What exercised it? | Complete UI pytest file plus headed Chromium browser harness. |
-| Local/external prerequisite state | What was healthy? | Local synthetic UI API and browser were healthy; no external provider was required. |
-| Logs | What confirms it? | Browser console contained no errors. |
-| DB/state/persistence | What persisted? | Page reload restored All workspaces and the saved default worker preference regression passed. |
-| Generated/shipped artifact | Was the installed artifact inspected? | Not in this local run; remains PARTIAL. |
-| Real user path | What was used like a user? | Clicked Run Project, Workspaces, filters, worker/account/policy controls, Watch, and Technical details. |
+| Scripts or harnesses | What exercised it? | Complete UI pytest file, local headed Chromium, and installed Edge. |
+| Local/external prerequisite state | What was healthy? | Hosted runtime, UI, MCP, personal Codex, and personal Claude routes were healthy. |
+| Logs | What confirms it? | No error-level runtime/UI/MCP journal entries during the accepted run. |
+| DB/state/persistence | What persisted? | Run completed without a failure class; refresh preserved result and links; provider lease returned to zero. |
+| Generated/shipped artifact | Was the installed artifact inspected? | Yes; all three health endpoints reported the exact accepted parent/component revisions. |
+| Real user path | What was used like a user? | Fresh Edge tab, Run Project, worker-route switch, Workspaces/filter, real Watch, file open, and refresh. |
 | Visual/UX comparison | Did it match? | Desktop and 390-pixel layouts matched the reviewed hierarchy with no horizontal overflow. |
-| Not run / blocked | What remains? | Installed hosted artifact, noVNC stream, keyboard-only, and screen-reader acceptance. |
+| Not run / blocked | What remains? | Keyboard-only and screen-reader acceptance; installed 390-pixel rerun. |
 
 ## User-Grade Evidence
 
-- Surface exercised: real local headed Chromium on Glass Drive and Watch.
-- Real user path: open Run Project, change worker/account/policy, open Workspaces, filter, reload, and expand Watch details.
+- Surface exercised: installed hosted Edge on Glass Drive and Watch, plus prior local responsive Chromium.
+- Real user path: fresh tab, open Run Project, switch Codex/Claude, open Workspaces, filter, launch,
+  watch, open the delivered file, and refresh.
 - Visible outcome: All workspaces by default; Worker before Advanced; honest account route; concise active status.
 - Expanded/detail state: Technical details stayed collapsed until clicked, then showed redacted raw text.
 - Persistence/reload result: reload returned to All workspaces and retained the saved default worker preference.
-- Local/external prerequisite state: local synthetic runtime healthy; no external provider was required.
+- Local/external prerequisite state: installed three-service canary and personal AI routes healthy.
 - Evidence retrieval classification, if applicable: not applicable.
 - Fallback path, if applicable: none.
-- Backend/log/DB confirmation: bounded workspace request and zero browser console errors.
+- Backend/log/DB confirmation: completed run, empty failure class, recorded output, zero active provider
+  leases, exact three-service health, unchanged stable ingress, and no error-level service logs.
 - Final model/runtime wording check: active copy used structured lifecycle state only and did not parse prompt prefixes.
 - Substitution check: automated and network evidence supported the real browser result; it did not replace it.
 
@@ -79,11 +83,12 @@ git diff --check
 
 ## Findings
 
-- Defects: none remaining in the six affected local paths.
+- Defects: none remaining in the six affected installed desktop paths.
 - Regressions: none observed.
 - Flakes: none observed.
-- Environment issues: none.
-- Residual risks: installed hosted artifact and broader accessibility acceptance remain open.
+- Environment issues: the first post-cache-cleanup attempt rebuilt the worker image and timed out;
+  retry was actionable, and the final run completed after the image was available.
+- Residual risks: keyboard-only, screen-reader, and installed narrow-viewport acceptance remain open.
 
 ## Public-Safety Review
 

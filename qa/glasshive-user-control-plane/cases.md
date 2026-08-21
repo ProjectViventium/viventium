@@ -751,11 +751,12 @@ most specific existing QA owner when a scenario already has a detailed provider 
   details** while completed user results and deliverables remain unchanged. Verify desktop, 390px,
   filter/reload, account/profile/policy changes, console/network, and no horizontal overflow.
 - Last run: PARTIAL 2026-08-21; the complete affected UI suite passed 237 tests. Local headed
-  Chromium proved the six behaviors in `GHUCP-019A` on desktop and 390px, including All-workspaces
-  reload, Saved filtering, Codex/Claude account-route updates, fallback wording, collapsed active
-  diagnostics, zero console errors, and the exact bounded catalog request. The broader case remains
-  PARTIAL because an installed build, real noVNC stream, keyboard-only, and screen-reader runs were
-  not part of this surgical local pass. See
+  Chromium proved the six behaviors in `GHUCP-019A` on desktop and 390px. The exact installed
+  canary then passed a fresh Edge first paint, All-workspaces filtering/reload, Codex/Claude route
+  switching, a real running Watch with collapsed Technical details, completed file delivery/open,
+  refresh persistence, exact service health, idle provider leases, and unchanged stable ingress.
+  The broader case remains PARTIAL because keyboard-only, screen-reader, and installed narrow-
+  viewport runs were not part of this surgical pass. See
   `qa/glasshive-user-control-plane/reports/2026-08-21-run-project-and-watch-ux.md`.
 
 ## `GHUCP-020` — UI, API, and MCP Parity
