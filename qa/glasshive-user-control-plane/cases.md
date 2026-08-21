@@ -758,8 +758,9 @@ most specific existing QA owner when a scenario already has a detailed provider 
   canary initially passed the visible UX checks, but its acceptance was withdrawn after a later
   workspace read exposed database I/O failures that the old process-only health endpoint missed.
   The database was restored from its verified rollout snapshot, Edge again loaded the retained
-  workspaces, and the `GHUCP-019B` source regression now passes. Installed proof of the corrected
-  health gate remains pending.
+  workspaces, and the `GHUCP-019B` source regression passes. The corrected sealed release then
+  reported its exact triplet through database-backed health, loaded 15 workspaces after a hard Edge
+  refresh, showed no database/runtime errors, and was explicitly accepted.
   The broader case remains PARTIAL because keyboard-only, screen-reader, and installed narrow-
   viewport runs were not part of this surgical pass. See
   `qa/glasshive-user-control-plane/reports/2026-08-21-run-project-and-watch-ux.md`.

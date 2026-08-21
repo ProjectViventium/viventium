@@ -2,11 +2,10 @@
 
 ## Summary
 
-- Result: PARTIAL. The visible UX passed, but installed acceptance was withdrawn after a later
-  workspace read exposed database I/O failures that process-only health had missed.
-- Corrective source candidate: GlassHive `3cb0bf8...`; installed pin pending.
-- Runtime/artifact under test: the affected canary was recovered from its verified rollout snapshot;
-  the corrected health gate still needs installed acceptance.
+- Result: PASS for the corrected installed desktop path; the wider accessibility case remains PARTIAL.
+- Corrective build/source: GlassHive `3cb0bf8...`, pinned by parent `8f6483e...`.
+- Runtime/artifact under test: exact sealed corrected canary, explicitly accepted after database
+  recovery, database-backed health, and signed-in Edge Workspaces QA.
 - Environment: signed-in hosted Microsoft Edge desktop plus prior local headed Chromium at desktop
   and 390-pixel viewport.
 - Tester: automated agent plus visible browser inspection.
@@ -16,14 +15,14 @@
 
 | Case ID | Result | Evidence | Notes |
 | --- | --- | --- | --- |
-| `GHUCP-019` | PARTIAL | 237 UI tests, local responsive browser, recovered Edge run, and database-health regressions | The six UX paths pass; corrected installed health and wider accessibility remain open. |
+| `GHUCP-019` | PARTIAL | 237 UI tests, local responsive browser, recovered Edge run, database-health regressions, and corrected installed health | The affected paths pass; wider accessibility remains open. |
 | `GHUCP-034` | PARTIAL | installed Codex/Claude route switching and refresh proof | No connector or provider behavior changed in this run. |
 
 ## Natural User Use Case Checklist Run
 
 | Use Case ID | Natural user action | Real surface used | Result | Visible evidence | Logs/DB/state/docs/artifact evidence | Remaining gap |
 | --- | --- | --- | --- | --- | --- | --- |
-| `UC-004` | Open Workspaces and find saved and one-off work | Installed Edge | PASS after recovery | All workspaces again showed saved, one-off, and legacy entries. | Verified snapshot restored workspace state; the new health check reads the schema. | Deploy and accept the corrected health gate. |
+| `UC-004` | Open Workspaces and find saved and one-off work | Installed Edge | PASS after recovery | All workspaces again showed saved, one-off, and legacy entries. | Verified snapshot restored workspace state; corrected health reads the schema and the exact release was accepted. | Keyboard/screen-reader matrix. |
 | `UC-005` | Choose a worker and account before starting work | Installed Edge | PASS | Worker appeared before Advanced; Codex and Claude each showed the correct personal account route. | POST contract and route-helper regressions passed. | Wider account-policy matrix. |
 | `UC-011` | Watch active work without console noise | Installed Edge + real worker | PASS | Human lifecycle copy was visible; raw status stayed in collapsed Technical details; completed result remained unchanged. | Run completed, file opened, refresh persisted, lease count returned to zero, and error-level service logs were empty. | Keyboard/screen-reader matrix. |
 
@@ -37,8 +36,8 @@
 - QA case: `GHUCP-019`, with account-route coverage from `GHUCP-034`.
 - Expected result: one clear Worker selector, honest account route, All workspaces default, and collapsed diagnostics.
 - Actual evidence: complete UI test file, local responsive browser, recovered installed Edge,
-  snapshot integrity, and focused database-health regressions.
-- Remaining gap or fix: corrected installed health plus the wider keyboard-only and screen-reader matrix.
+  snapshot integrity, focused database-health regressions, exact installed triplet, and acceptance.
+- Remaining gap or fix: wider keyboard-only and screen-reader matrix.
 
 ## Full-View Evidence Checklist
 
@@ -51,7 +50,7 @@
 | Local/external prerequisite state | What was healthy? | Hosted runtime, UI, MCP, personal Codex, and personal Claude routes were healthy. |
 | Logs | What confirms it? | No error-level runtime/UI/MCP journal entries during the accepted run. |
 | DB/state/persistence | What persisted? | Run completed without a failure class; refresh preserved result and links; provider lease returned to zero. |
-| Generated/shipped artifact | Was the installed artifact inspected? | The prior triplet was exact but falsely healthy; corrected artifact proof is pending. |
+| Generated/shipped artifact | Was the installed artifact inspected? | Yes; the corrected exact triplet passed database-backed health and signed-in Workspaces before acceptance. |
 | Real user path | What was used like a user? | Fresh Edge tab, Run Project, worker-route switch, Workspaces/filter, real Watch, file open, and refresh. |
 | Visual/UX comparison | Did it match? | Desktop and 390-pixel layouts matched the reviewed hierarchy with no horizontal overflow. |
 | Not run / blocked | What remains? | Keyboard-only and screen-reader acceptance; installed 390-pixel rerun. |
@@ -86,7 +85,8 @@ git diff --check
 ## Findings
 
 - Defects: the old runtime health route did not read SQLite, so rollout acceptance could miss an
-  unreadable workspace store. The source fix now fails closed with a redacted `503`.
+  unreadable workspace store. The accepted fix performs a real schema read and fails closed with a
+  redacted `503`.
 - Regressions: retained workspaces load again after verified snapshot recovery.
 - Flakes: none observed.
 - Environment issues: the first post-cache-cleanup attempt rebuilt the worker image and timed out;

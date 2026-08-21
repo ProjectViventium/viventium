@@ -93,8 +93,8 @@ recorded. It must not be read as a release checklist with implied passes.
 | Hosted edge split and trusted-header boundary | PENDING | No installed path-aware browser/MCP/JWKS/private-runtime route proof exists |
 | Signer/runtime key isolation | PARTIAL | Source guards and bounded public-only rotation exist; separate installed OS/container identities and the installed rotation drill remain unproven |
 | Existing-DB migration/restore rehearsal | PARTIAL | Schema ledger is source-tested; no WAL-consistent backup, clone migration, or injected restore run exists |
-| Atomic three-service cutover/readiness | PARTIAL | The visible canary flow passed, but old health did not read the application database and allowed false acceptance. Snapshot recovery passed; the corrected database-backed health gate is source-tested and awaits installed proof |
-| Exact nested pin and installed artifact | PARTIAL | The recovered installed artifact is available, but acceptance is withdrawn until the corrected nested pin is deployed and its exact health triplet plus Workspaces read pass |
+| Atomic three-service cutover/readiness | PASS for corrected canary | The visible canary flow passed; an escaped false-health incident was restored from the verified snapshot, and the corrected database-backed health gate plus Workspaces read passed before explicit acceptance |
+| Exact nested pin and installed artifact | PASS for corrected canary | Exact parent/nested commits matched the sealed installed health triplet; the signed-in Edge Workspaces read returned 15 retained/inactive workspaces before acceptance |
 | Fresh clone/install/upgrade/rollback | PENDING | No clean-room candidate run is recorded |
 | Final public/private/license scan | PASS for current public candidate | Branch delta, final documentation/QA, test fixtures, commit metadata, links, and staged content are public-safe; repeat only if the candidate changes |
 
