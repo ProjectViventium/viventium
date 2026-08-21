@@ -19,14 +19,18 @@ When implementation changes product truth, update Requirement 55 and the relevan
 with the code. When evidence changes status, update `coverage.md`, the applicable case, and a dated
 report. This ledger then summarizes that evidence; it never upgrades a status on its own.
 
-Snapshot date: **2026-08-18**
+Snapshot date: **2026-08-21**
 
-Installed snapshot source:
+Provenance is recorded as separate facts so later documentation commits cannot be mistaken for the
+exact artifact that was user-tested:
 
-- parent candidate: `35c2c834ffb81c0db65d92d9d8df6332b185c3e4` on
+- installed Ultimate Phase 1 test baseline: parent `35c2c834ffb81c0db65d92d9d8df6332b185c3e4`
+  and GlassHive `8153b6a3859877c54ce5895be4bd3e367e1797b8` on
   `codex/glasshive-user-flow-completion`
-- GlassHive candidate: `8153b6a3859877c54ce5895be4bd3e367e1797b8` on
-  `codex/glasshive-user-flow-completion`
+- accepted source follow-up baseline: parent `54d1fb9ffd431b6335b87cc0f553bb102ed8519b`
+  and GlassHive `103c8bea4a9e1befe1d9063337123c866af7ae7d`
+- current public GlassHive documentation/release-note tip pinned by the parent:
+  `e3905534dd4716f315f24bffaa76270b08f254bb`
 - source was reconciled from current public `origin/main` plus the reviewed renewable-auth and
   user-flow fixes; the original working tree was not used as an authoring surface
 
@@ -145,7 +149,8 @@ read a tool inventory, construct OAuth URLs, manage callbacks, or understand int
 ### What is implemented but still lacks required user-grade proof
 
 - Full provider-hosted login/logout/denial/replay/profile matrix.
-- Provider account reconnect, rotate, disconnect, forget, concurrency, and second-account isolation.
+- Provider account rotation, full contention, and second-account/two-owner isolation. Real Claude
+  reconnect and stale-account removal are already proven.
 - Installed duplicate/template inspection and crash recovery.
 - Confirmed harmless connected-service write plus revoke, renewal, reconnect/forget, outage, and
   two-user isolation paths; real native read/reuse is proven for personal Codex.
@@ -188,9 +193,9 @@ read a tool inventory, construct OAuth URLs, manage callbacks, or understand int
 | User-scoped API key | PARTIAL | Broker/reference boundaries exist; real rotate/disconnect/mission proof is open |
 | Private persistent workspace | PARTIAL | Real Codex and Claude mission/file/Watch/output/refresh/reuse evidence exists; full installed service-restart/profile/grant continuity remains |
 | Duplicate/template | PARTIAL | Automated/local evidence exists; installed and two-user reapproval proof remains |
-| Codex/Claude MCP control | PARTIAL | Exact installed fresh-process one-call traces passed for both; clean public install/update/remove and two-owner parity remain |
-| SharePoint/connected service use | PARTIAL | Official native Outlook/SharePoint authorization, personal Codex worker reads, browser refresh/retention, same-worker restart/reuse, external-client continuation, and DB/lease correlation passed; confirmed write, revoke/renewal, personal Claude, and two-user coverage remain open |
-| Library skill/plugin lifecycle | PARTIAL | Local add/remove passed, but three focused fixture tests currently fail and real package/worker use is open |
+| Codex/Claude MCP control | PARTIAL | Exact installed fresh-process traces passed for both with one workspace launch plus one bounded wait; clean public install/update/remove and two-owner parity remain |
+| Connected-service use | PARTIAL | Official native Outlook/SharePoint authorization and reuse passed in personal Codex; native Gmail use/reuse passed in the persistent Claude workspace and from fresh Codex/Claude MCP controllers. Confirmed write, revoke/renewal, broker parity, and two-user coverage remain open |
+| Library skill/plugin lifecycle | PARTIAL | Local add/remove and the repaired 10/10 Library/template baseline pass; real package/worker use, upgrade, and rollback remain open |
 | Recurring schedules | PARTIAL | Exact installed Run now completed visibly with backend correlation; automatic fire/renewal/restart remains |
 | Human naming/discovery | PARTIAL | Provider names are prefilled/editable and the real Claude workspace was rediscovered and favorited after refresh; scale and performance remain |
 | Fresh install/upgrade/restore | PENDING | Accepted canary is not a clean public install/upgrade/restore proof |
@@ -390,8 +395,10 @@ bounded capability to a workspace, and the general worker chooses and uses it su
 **Current:** The optional broker/reference/grant/renewal boundaries have automated evidence. A real
 official SharePoint/Outlook authorization → personal Codex worker read → visible result → compute
 release → same-worker reuse path has passed. Confirmed write, brokered-provider parity,
-revocation/renewal, personal Claude, and the second-user matrix remain open. See the
-[dated native-reuse report](reports/2026-08-16-native-microsoft-workspace-reuse.md).
+revocation/renewal, brokered-provider parity, and the second-user matrix remain open. Native Gmail
+use/reuse in personal Claude also passed without connector-specific GlassHive wiring. See the
+[dated native-reuse report](reports/2026-08-16-native-microsoft-workspace-reuse.md) and
+[Ultimate Phase 1 QA](reports/2026-08-18-ultimate-phase1-qa.md).
 
 **Smallest plan:**
 
@@ -418,12 +425,13 @@ user fail or recover truthfully.
 source and permissions, confirm once in the browser, use it, upgrade it, disable it, or remove it.
 
 **Current:** Manifest/storage/pending-change/confirmation/bootstrap activation exist; local add/remove
-passed. Three focused tests are red and no real sourced package has been used by a worker.
+and the repaired 10/10 Library/template baseline pass. No real sourced package has been used by a
+worker.
 
 **Smallest plan:**
 
-1. Fix the v3→v4 and missing-column test fixtures; rerun the complete Library/template slices before
-   changing behavior.
+1. Keep the repaired migration fixtures and complete Library/template slices green before changing
+   behavior.
 2. Select one neutral, public-safe sourced skill/plugin package and record provenance/hash/profile,
    dependencies, requested scopes, health probe, upgrade, and remove contract.
 3. Propose from UI and MCP, confirm only in the human browser, install through the existing profile
@@ -692,6 +700,9 @@ from a different profile is inadmissible for that run.
     evidence.
 12. Keep this ledger concise enough to operate: completed detail belongs in dated reports; enduring
     behavior belongs in Requirement 55/cases; this file retains only current status and next work.
+13. Do not let rollout, backup, recovery, pruning, or release-helper work become the product task.
+    Reuse the supported delivery path and change it only when a blocker prevents the exact user
+    acceptance journey from running safely.
 
 ## Definition of complete
 

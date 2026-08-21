@@ -2,14 +2,14 @@
 
 ## Status
 
-The source is **merged, locally validated, and accepted on the isolated hosted canary for the modern
-Workspaces/provider-mission path**. The additive control plane, designed Glass Drive UX, local user
-journeys, affected automated suites, real view-only desktop preview, two personal-subscription
-follow-ups, signed artifact inspection, refresh persistence, and sealed installed-runtime provenance
-have passed. Multi-user wrong-owner browser denial, real external Codex/Claude MCP consent and tool
-persistence, full standalone recurrence/template scope, clean install, and upgrade continuity remain
-explicit gates. This document is therefore the product truth and traceability source, not a claim
-that those remaining external or fresh-install gates passed.
+The source is **validated and product-owner accepted for the installed Ultimate Phase 1 path**. The
+designed Glass Drive UX, personal Codex and Claude accounts, native connected-service use, persistent
+Favorite workspace reuse, fresh external Codex and Claude MCP control, refresh persistence, scoped
+unhappy paths, and exact installed-runtime provenance have passed. Multi-user wrong-owner browser
+denial, confirmed connected-service write/revoke/renewal, automatic schedule fire, a real Library
+package used by a worker, clean install, and full upgrade/restore continuity remain explicit gates.
+This document is therefore the product truth and traceability source, not a claim that those wider
+gates passed.
 
 ## Target Outcome
 
@@ -29,6 +29,34 @@ An authenticated enterprise user can use the designed GlassHive UI or a standard
 
 The Core Outcome Metric from [01_Key_Principles.md](01_Key_Principles.md) applies to every path:
 Quality (Intelligence, Relevance, Usefulness, Alignment) + Performance (Fast, Smooth, Reliable).
+
+## Accepted User-Experience Contract
+
+These are enduring requirements distilled from the accepted user journey:
+
+- Start from one short human request. Use one goal-relevant MCP call when the operation is immediate,
+  or one launch plus one bounded wait when work is asynchronous. Do not narrate catalogs, internal
+  IDs, callback plumbing, or tool inventories to an ordinary user.
+- Keep names prefilled, human-readable, and editable. Creating a useful workspace must not require a
+  naming decision, while rename, Favorite, search, and reuse remain obvious.
+- Let Codex and Claude use their native skills, plugins, MCPs, browser, and connected-service setup
+  inside the isolated persistent workspace. GlassHive must not add connector-specific code or copy a
+  user's tokens to imitate a capability already owned by the harness.
+- Make the same owner-scoped workspace usable from Glass Drive and fresh Codex or Claude MCP clients.
+  Reuse the saved workspace and native tool state instead of creating a duplicate or asking the user
+  to authorize the same account again without a provider-required reason.
+- Keep the host a faithful courier. Pass the user's goal, explicit constraints, files, and verified
+  capabilities to the intelligent worker; do not hardcode a plan, provider list, connector workflow,
+  success rubric, or prompt-specific behavior.
+- Surface one clear action and honest status for connect, reconnect, test, remove, setup contention,
+  provider quota, and expired authorization. Never show raw terminal output as the primary path or
+  claim success from a mock, a log line, or a provider rejection.
+- Prefer the smallest supported native mechanism and surgical fixes. Release, backup, and recovery
+  work must remain supporting delivery machinery; it must not replace the visible user journey or
+  expand the feature scope.
+- Prove the real intended browser/client path, refresh/reuse, and relevant unhappy paths. Preserve
+  public evidence with neutral synthetic wording and keep identities, account data, private paths,
+  screenshots, and credentials outside the public repository.
 
 ## Owning Boundaries
 
@@ -807,13 +835,13 @@ lives in [`qa/glasshive-user-control-plane/`](../../qa/glasshive-user-control-pl
 | --- | --- | --- |
 | Login and assertions | OIDC gateway, stable issuer+immutable-claim principal derivation, PKCE/nonce callback, local enrollment policy, IdP-owned tenant/app-role admission contract, bounded callback recovery/redaction, current-user/local/provider logout UI, browser-authoritative durable role sync, signed internal assertions, role/scope checks, public JWKS, raw-header/issuer parity guards, canonical compiler projection, and automated failure coverage | Real IdP login/logout/account-switch/denial/revocation in a hosted HTTPS proxy topology; live key rotation and session-revocation browser evidence |
 | MCP OAuth/connect | OAuth JWT verifier, resource metadata, separate public-resource/token-audience/request-scope/token-scope/upstream-token-tenant policy, independent GlassHive ownership namespace, pre-registered fixed client callbacks, enforced UI/MCP issuer parity for hashed ownership, UI-generated client commands, additive owner-scoped workspace/account/connection/Library/activity tools, explicit Library-only confirmation preparation, versioned `connect-glasshive` companion skill, and installed fresh Codex/Claude HTTPS OAuth client proof | Clean-install/update/remove, reconnect/revocation, and two-owner parity remain open. Connected services remain broker-owned and account selection remains execution-policy-owned |
-| Personal accounts | Owner-scoped metadata, isolated native homes/setup, status/default/disconnect, credential-tree permission normalization, short heartbeated exclusive mission leases, allowlisted provider-setup environments with no service-secret inheritance, user-scoped API-key/enterprise inference references, fail-closed multi-user `per_worker_container` projection, Codex auth overlay plus Claude workspace-state/secure-storage composition, strict rootless-worker ACL/access verification, mount removal before lease release, synthetic lifecycle coverage, and installed personal Codex and Claude mission/reuse proof | Claude native connected-service reuse, reconnect/rotate/usage, rootless-container credential refresh/writeback inspection, and provider/legal approval remain open; deployments without the reviewed per-worker container mode still return `isolated_substrate_required` |
+| Personal accounts | Owner-scoped metadata, isolated native homes/setup, status/default/disconnect/remove, credential-tree permission normalization, short heartbeated exclusive mission and interactive leases, allowlisted provider-setup environments with no service-secret inheritance, user-scoped API-key/enterprise inference references, fail-closed multi-user `per_worker_container` projection, Codex auth overlay plus Claude workspace-state/secure-storage composition, strict rootless-worker ACL/access verification, mount removal before lease release, synthetic lifecycle coverage, and installed personal Codex and Claude mission/native-tool/reuse proof | Rotate/usage, two-owner contention, rootless-container credential refresh/writeback inspection, and provider/legal approval remain open; deployments without the reviewed per-worker container mode still return `isolated_substrate_required` |
 | Workspaces | Kind migration, fresh launches as ephemeral, explicit Keep transition, owner-scoped catalog/search/tags/favorites, crash-safe idempotent duplicate-without-compute, immutable versioned templates with dependency/account revalidation, UI controls, local browser create/keep/rename/duplicate/template evidence, and an installed favorite personal workspace retained/restarted/reused with the same native connections | Full runtime service restart with browser/profile/context/grant continuity, large catalogs, and installed source/destination/template inspection |
-| Connections/Library | Owner-scoped connection and Library models, pending change, single-use human confirmation, real bootstrap activation, drift-aware LIFO removal, grant audits, local browser add/remove evidence, and official native Outlook/SharePoint authorization with two real read-only worker uses across compute release | Brokered connected-service parity, confirmed write/revoke/renewal/two-user paths, Library upgrade/rollback failures, and a real Library package used by a worker |
+| Connections/Library | Owner-scoped connection and Library models, pending change, single-use human confirmation, real bootstrap activation, drift-aware LIFO removal, grant audits, local browser add/remove evidence, official native Outlook/SharePoint authorization and reuse in Codex, and native Gmail use/reuse in Claude without connector-specific GlassHive wiring | Brokered connected-service parity, confirmed write/revoke/renewal/two-user paths, Library upgrade/rollback failures, and a real Library package used by a worker |
 | Recurrence | Native daily/interval/cron/RFC 5545 definitions, explicit start/end/overlap/misfire/jitter policy, immutable occurrences, one owner, timezone/DST/coalescing logic, API/MCP/UI surfaces, plus local browser create/run-now/exactly-one-completed-occurrence/pause evidence. In Viventium mode, authenticated CRUD and polling are authoritative in Scheduling Cortex, GlassHive stores no shadow definition, owner outage fails before local mutation, every dispatch carries a fresh 90-second assertion bound to its occurrence/user/workspace/task/instruction, raw scheduler secrets are not transmitted, lost-response retry reserves exactly one GlassHive run, and the signed terminal callback reconciles the authoritative occurrence without a fast-completion overwrite | Integrated user/delegation/grant renewal/provider lease and real installed scheduled delivery/restart/catch-up across DST/overlap/misfire paths |
 | Viventium preservation | Direct-conversation ownership remains intact; connected-account policy, capability grants, scheduler delegation, compatibility suites, and affected LibreChat/Scheduling Cortex tests pass | Full installed web/channel/voice/scheduler regression and real connected-service use |
 | Worker toolchain | Existing host-native compatibility floors remain Codex `0.144.1` and Claude Code `2.1.178` so current Viventium conversations stay intact; fresh isolated workstation images are separately pinned to Codex `0.147.0` and Claude Code `2.1.233`, with capability preflight on both paths | Clean-bootstrap/install capability proof on approved platforms and future version refresh through the same mechanism |
-| Delivery/public safety | Isolated source checkout, public-safe synthetic test data, read-only protected downstream boundary, source/install separation, per-component SQLite schema ledger with newer-database refusal, runtime startup refusal for a readable signer key, verifier-only integrated runtime launch, and hard runtime/MCP/BFF local readiness | Hosted path split/header scrubbing, separate signer/runtime OS identities, consistent existing-DB backup/clone rehearsal/restore, atomic installed cutover, final public diff/history/build scan, nested commit and parent pin, clean clone/install, and protected downstream owner-run compatibility |
+| Delivery/public safety | Isolated source checkout, public-safe synthetic test data, read-only protected downstream boundary, source/install separation, per-component SQLite schema ledger with newer-database refusal, runtime startup refusal for a readable signer key, verifier-only integrated runtime launch, hard runtime/MCP/BFF readiness, accepted atomic three-service canary cutover, exact installed source provenance, current nested parent pin, and public-safe branch/documentation/metadata scans | Separate signer/runtime OS identities, complete identity-header/path-negative matrix, consistent existing-DB backup/clone rehearsal/restore, clean clone/install, full failure-injection rollback, and protected downstream owner-run compatibility |
 
 ## Acceptance Owner
 

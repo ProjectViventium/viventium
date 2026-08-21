@@ -62,13 +62,15 @@ provider, MCP client, scheduler, or installed-runtime path.
 
 ## Current Status
 
-**PARTIAL overall — the scoped hosted Workspaces/external-client release is accepted.** The complete
+**PARTIAL overall — the installed Ultimate Phase 1 user journey is accepted.** The complete
 accepted-release GlassHive runtime and Glass Drive suites, compiler tests, local browser matrix,
 sealed hosted cutover, authenticated Edge Workspaces journey, personal-subscription missions, and
 real Codex and Claude MCP
 OAuth/tool/persistence paths pass. The hosted run also proved modern navigation, safe direct output,
 view-only live control, controller-driven continuation, exact artifact persistence, and targeted OAuth
-failure handling. The current source baseline and the focused Library/template slice are green, and
+failure handling. Native connected-service use/reuse passed in both Codex and Claude without
+connector-specific GlassHive wiring. The product owner retested and accepted this scoped journey on
+2026-08-21. The current source baseline and the focused Library/template slice are green, and
 native Codex and Claude plugin packages pass official validation and isolated installation. The
 broader control plane still has explicit open gates for two-owner denial, brokered third-party
 connections, scheduled fire, a second healthy provider account, clean install, upgrade/restore,
@@ -87,6 +89,9 @@ signer isolation, and the full organization-IdP denial matrix.
   current implementation, automated, browser, state, and open-gate evidence
 - [reports/2026-08-05-deployment-readiness-gap-closure.md](reports/2026-08-05-deployment-readiness-gap-closure.md):
   independent deployment-topology findings, source guards added, and remaining hosted gates
+- [reports/2026-08-18-ultimate-phase1-qa.md](reports/2026-08-18-ultimate-phase1-qa.md):
+  accepted browser, personal-account, native-connector, workspace-reuse, removal, and fresh
+  Codex/Claude MCP evidence, with the wider gates kept explicit
 
 ## Related Specialized QA Owners
 
