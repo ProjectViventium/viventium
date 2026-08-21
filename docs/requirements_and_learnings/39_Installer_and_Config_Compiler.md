@@ -500,7 +500,7 @@ falling back to historical defaults:
 - lab-only OpenClaw is absent from public Easy Install setup and status output.
 
 The current isolated prerelease candidate pins merged LibreChat commit
-`541a4c4fdac97f54333d25a79de9c34e4319db04` in both the parent component lock and Native payload
+`71501b3cabf0e309f23c27231a49cd6d0ad31b78` in both the parent component lock and Native payload
 component manifest, merged modern-playground commit `95b324c7498c50a7421751e5dd71971e268a3a84`,
 merged GlassHive commit `987c98b399c672cc45344b69c5dcb5e9612bdf9c`, and merged Viventium-Health commit
 `91a9bbf5ff8bd0963dd3dc33bfd388c66fa7ed69` in the parent component lock. GlassHive is
