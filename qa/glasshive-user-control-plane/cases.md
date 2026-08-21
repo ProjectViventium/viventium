@@ -894,7 +894,7 @@ most specific existing QA owner when a scenario already has a detailed provider 
 - Automation: release/bootstrap/compiler/installer suites plus provenance checks.
 - Last run: PARTIAL 2026-08-21. The installed Ultimate Phase 1 evidence is bound to parent
   `35c2c83` / GlassHive `8153b6a`. Accepted source follow-up is parent `54d1fb9` / GlassHive
-  `103c8be`; the final parent candidate pins documentation tip `e390553`, which contains that
+  `103c8be`; the final parent candidate pins public GlassHive `main` tip `f1de874`, which contains that
   implementation unchanged. The exact sealed canary, installed browser/native clients, and parent
   pin therefore have separate truthful provenance. A fresh public bootstrap/install in a new
   directory remains open.

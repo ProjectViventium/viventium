@@ -29,8 +29,8 @@ exact artifact that was user-tested:
   `codex/glasshive-user-flow-completion`
 - accepted source follow-up baseline: parent `54d1fb9ffd431b6335b87cc0f553bb102ed8519b`
   and GlassHive `103c8bea4a9e1befe1d9063337123c866af7ae7d`
-- current public GlassHive documentation/release-note tip pinned by the parent:
-  `e3905534dd4716f315f24bffaa76270b08f254bb`
+- current public GlassHive `main` tip pinned by the parent, containing the reviewed documentation
+  commit unchanged: `f1de874257605d2d7336a180d169b3a616b1de68`
 - source was reconciled from current public `origin/main` plus the reviewed renewable-auth and
   user-flow fixes; the original working tree was not used as an authoring surface
 
