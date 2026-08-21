@@ -750,11 +750,16 @@ most specific existing QA owner when a scenario already has a detailed provider 
   state, never instruction text. Active raw output and console text stay in collapsed **Technical
   details** while completed user results and deliverables remain unchanged. Verify desktop, 390px,
   filter/reload, account/profile/policy changes, console/network, and no horizontal overflow.
+- `GHUCP-019B` escaped regression — database-backed readiness: runtime health must perform a real
+  application-schema read. An alive process with unreadable workspace state must return a redacted
+  `503`, fail rollout acceptance, and never be reported as a healthy installed release.
 - Last run: PARTIAL 2026-08-21; the complete affected UI suite passed 237 tests. Local headed
   Chromium proved the six behaviors in `GHUCP-019A` on desktop and 390px. The exact installed
-  canary then passed a fresh Edge first paint, All-workspaces filtering/reload, Codex/Claude route
-  switching, a real running Watch with collapsed Technical details, completed file delivery/open,
-  refresh persistence, exact service health, idle provider leases, and unchanged stable ingress.
+  canary initially passed the visible UX checks, but its acceptance was withdrawn after a later
+  workspace read exposed database I/O failures that the old process-only health endpoint missed.
+  The database was restored from its verified rollout snapshot, Edge again loaded the retained
+  workspaces, and the `GHUCP-019B` source regression now passes. Installed proof of the corrected
+  health gate remains pending.
   The broader case remains PARTIAL because keyboard-only, screen-reader, and installed narrow-
   viewport runs were not part of this surgical pass. See
   `qa/glasshive-user-control-plane/reports/2026-08-21-run-project-and-watch-ux.md`.
