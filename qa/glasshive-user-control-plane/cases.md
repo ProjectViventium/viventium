@@ -106,6 +106,8 @@ most specific existing QA owner when a scenario already has a detailed provider 
   expired/replayed callback fixtures; and an optional local-password candidate initially staged
   disabled with a synthetic preapproved subject.
 - Steps: try compile with an empty/invalid role map; verify combined and split app configurations;
+  for the hosted deployment, verify the public edge, enterprise-app assignment, mapped token role,
+  enrollment/preapproval policy, and one real browser session as a single access checklist;
   present missing, unmapped, and mapped roles through both browser OIDC and MCP OAuth; verify a
   shared combined app with assignment disabled still denies an unassigned principal through the
   mapped-role gate; then try IdP tenant/app-role denial, disabled enrollment, unknown subject,
@@ -132,7 +134,8 @@ most specific existing QA owner when a scenario already has a detailed provider 
   login cannot reset a different account's source-throttle history; busy KDF capacity does not create
   a false lockout; and flag-off/rollback revokes only local sessions.
 - Forbidden result: generic success, an unassigned tenant user admitted because registration is open,
-  leaked claims, redirect loop, raw exception, user creation before validation, public signup/reset,
+  leaked claims, silent redirect loop, raw exception, access declared ready after checking only one
+  admission gate, user creation before validation, public signup/reset,
   plaintext/SHA password storage, email-based identity linking, password/session projection outside
   the gateway tier, an MCP password grant, or local-auth projection to runtime, workers, or
   LibreChat; generic/source-checkout Python touching the hosted auth database; or a
@@ -739,11 +742,21 @@ most specific existing QA owner when a scenario already has a detailed provider 
 - Full-view evidence minimum: real browser visual/interaction QA plus API/log/DB confirmation.
 - Automation: UI static tests, accessibility checks, Playwright, and repeated first-paint/hard-refresh
   visibility with normal and reduced motion.
-- Last run: PARTIAL 2026-08-11; automated modern navigation, direct-output/no-resume, bounded preview,
-  concise external-AI, unsupported-route, and responsive contracts pass. Local Chromium exercised
-  1/4/5/25 workspaces, parallel steering, and 320/768/1024 without overflow. Exact installed
-  Chrome/Computer, a real noVNC stream, keyboard, and screen-reader runs remain open; see
-  `qa/glasshive_workspaces/reports/2026-08-11-workspace-control-room-local-browser.md`.
+- `GHUCP-019A` escaped regression — launch hierarchy and readable progress: Workspaces must request
+  named, one-off, and legacy workspaces by default while each filter still works. Run Project must
+  order the three project fields, one **Worker** selector with its effective account route, Advanced,
+  then Run/Schedule; it must not render a second Default Worker field or clear the saved backend
+  default when effort settings are saved. Queued/running copy comes only from structured lifecycle
+  state, never instruction text. Active raw output and console text stay in collapsed **Technical
+  details** while completed user results and deliverables remain unchanged. Verify desktop, 390px,
+  filter/reload, account/profile/policy changes, console/network, and no horizontal overflow.
+- Last run: PARTIAL 2026-08-21; the complete affected UI suite passed 237 tests. Local headed
+  Chromium proved the six behaviors in `GHUCP-019A` on desktop and 390px, including All-workspaces
+  reload, Saved filtering, Codex/Claude account-route updates, fallback wording, collapsed active
+  diagnostics, zero console errors, and the exact bounded catalog request. The broader case remains
+  PARTIAL because an installed build, real noVNC stream, keyboard-only, and screen-reader runs were
+  not part of this surgical local pass. See
+  `qa/glasshive-user-control-plane/reports/2026-08-21-run-project-and-watch-ux.md`.
 
 ## `GHUCP-020` — UI, API, and MCP Parity
 

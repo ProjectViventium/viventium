@@ -208,6 +208,13 @@ compliant hosted topology.
   issuer; email is display metadata and is never used to find, merge, or authorize the principal.
   Both GlassHive-specific controls default false when neither their canonical key nor an explicitly
   configured one-release legacy fallback is present.
+- Hosted access acceptance is one end-to-end chain: the public edge is reachable; the intended IdP
+  principal is assigned to the enterprise application; the issued token contains a mapped role; and
+  GlassHive can enroll or has preapproved the exact immutable subject. Operators must verify all four
+  gates plus a real signed-in browser session before telling a user that access is ready. A failure at
+  any gate returns the designed login page with a stable bounded error and clear retry or administrator
+  guidance; it must not look like a silent login loop. Deployment-specific app, group, network, and
+  principal values remain in the private deployment runbook.
 - `local_password_login` is a separate GlassHive-specific, default-false capability and never falls
   back from LibreChat auth settings. `local_password_allowed_domains` constrains credential locators
   only. The compiler emits a stable gateway-only HMAC key for source throttling and never projects
@@ -669,6 +676,15 @@ compliant hosted topology.
 - The create-workspace entry preserves the approved three primary inputs: project description,
   success criteria, and optional context. Account/profile/type controls are secondary and
   use progressive disclosure.
+- The primary launch hierarchy is project fields, one **Worker** selector, the effective account
+  route for that worker, then Advanced options. The route wording distinguishes a selected personal
+  account, allowed organization fallback, an organization account, and unavailable account status.
+  There is no second Default Worker control in the form, and saving effort defaults must not clear
+  an already saved backend default worker preference.
+- Workspaces initially shows named, one-off, and legacy workspaces together; Saved, One-off, and
+  Legacy remain explicit filters. Watch derives its concise progress copy only from structured
+  worker/run lifecycle state. While work is active, raw worker output and console text stay behind a
+  collapsed **Technical details** disclosure; completed user results and deliverables remain primary.
 - Human names, rename, favorites, recent items, search, tags, readiness, next run, empty states,
   blockers, retry, and recovery are visible and keyboard accessible. Layout remains usable on narrow
   screens, with reduced-motion support.
