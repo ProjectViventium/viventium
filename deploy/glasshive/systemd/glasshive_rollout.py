@@ -1151,6 +1151,25 @@ def _validate_service_environment_file(
         os.close(descriptor)
 
 
+def validate_runtime_provider_environment(
+    path: Path,
+    *,
+    expected_uid: int = 0,
+    expected_gid: int = 0,
+) -> None:
+    """Validate the optional PID-1-only worker-provider credential surface."""
+
+    if not path.exists() and not path.is_symlink():
+        return
+    _validate_service_environment_file(
+        path,
+        expected_uid=expected_uid,
+        expected_gid=expected_gid,
+    )
+    if stat.S_IMODE(path.lstat().st_mode) != 0o600:
+        raise RolloutError("runtime provider environment must be root-only mode 0600")
+
+
 def predecessor_runtime_environment(
     config: RolloutConfig,
     active_environment: Mapping[str, str],
@@ -1808,6 +1827,9 @@ def _validate_config(config: RolloutConfig, *, validate_adapters: bool) -> None:
                 environment_file,
                 expected_gid=expected_gid,
             )
+        validate_runtime_provider_environment(
+            Path("/etc/viventium/glasshive/runtime-provider.env")
+        )
         validate_adapter_path(config.ingress_adapter)
         validate_adapter_path(config.state_adapter)
         validate_adapter_path(config.acceptance_adapter)

@@ -748,6 +748,9 @@ def test_systemd_units_use_slot_env_and_explicit_release_group_restart_contract(
     assert "PartOf=glasshive.target" in mcp
     assert "PartOf=glasshive.target" in ui
     assert "runtime-active.env" in runtime
+    assert "EnvironmentFile=-/etc/viventium/glasshive/runtime-provider.env" in runtime
+    assert "runtime-provider.env" not in mcp
+    assert "runtime-provider.env" not in ui
     assert "gateway-active.env" in mcp
     assert "gateway-active.env" in ui
     assert "--port ${GLASSHIVE_RUNTIME_PORT}" in runtime
@@ -762,6 +765,11 @@ def test_systemd_units_use_slot_env_and_explicit_release_group_restart_contract(
     assert "glasshive_ui_readiness_probe.py" in ui
     assert "--auth-state ${GLASSHIVE_AUTH_STATE_PATH}" in ui
     assert "glasshive_rootless_docker_probe.py" in runtime
+    assert "-m workers_projects_runtime.prepare_worker_image" in runtime
+    assert runtime.index("glasshive_rootless_docker_probe.py") < runtime.index(
+        "-m workers_projects_runtime.prepare_worker_image"
+    ) < runtime.index("ExecStart=")
+    assert "TimeoutStartSec=20min" in runtime
     assert "SupplementaryGroups=glasshive-state" in runtime
     assert " docker" not in next(
         line for line in runtime.splitlines() if line.startswith("SupplementaryGroups=")
@@ -908,6 +916,52 @@ def test_service_environment_descriptor_validation_rejects_writable_file(
     with pytest.raises(rollout.RolloutError, match="unsafe ownership or permissions"):
         rollout._validate_service_environment_file(
             config.runtime_env_file,
+            expected_uid=os.geteuid(),
+            expected_gid=os.getegid(),
+        )
+
+
+def test_optional_runtime_provider_environment_is_absent_or_exact_root_only_file(
+    tmp_path: Path,
+) -> None:
+    provider_env = tmp_path / "runtime-provider.env"
+    rollout.validate_runtime_provider_environment(
+        provider_env,
+        expected_uid=os.geteuid(),
+        expected_gid=os.getegid(),
+    )
+
+    provider_env.write_text("OPENAI_API_KEY=synthetic-only\n", encoding="utf-8")
+    provider_env.chmod(0o600)
+    rollout.validate_runtime_provider_environment(
+        provider_env,
+        expected_uid=os.geteuid(),
+        expected_gid=os.getegid(),
+    )
+
+    with pytest.raises(rollout.RolloutError, match="unsafe ownership"):
+        rollout.validate_runtime_provider_environment(
+            provider_env,
+            expected_uid=os.geteuid() + 1,
+            expected_gid=os.getegid(),
+        )
+
+    provider_env.chmod(0o640)
+    with pytest.raises(rollout.RolloutError, match="root-only mode 0600"):
+        rollout.validate_runtime_provider_environment(
+            provider_env,
+            expected_uid=os.geteuid(),
+            expected_gid=os.getegid(),
+        )
+
+    provider_env.unlink()
+    target = tmp_path / "provider-target.env"
+    target.write_text("OPENAI_API_KEY=synthetic-only\n", encoding="utf-8")
+    target.chmod(0o600)
+    provider_env.symlink_to(target)
+    with pytest.raises(rollout.RolloutError, match="missing or unsafe"):
+        rollout.validate_runtime_provider_environment(
+            provider_env,
             expected_uid=os.geteuid(),
             expected_gid=os.getegid(),
         )

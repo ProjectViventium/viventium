@@ -166,6 +166,13 @@ Provider credentials have two distinct owners and must not drift between them:
   `keychain://` references. The compiler resolves OpenAI, Anthropic, Groq, and xAI through one
   provider-to-runtime mapping, writes resolved source-runtime and service env files mode `0600`,
   and keeps the immutable Native behavior contract secret-free with `user_provided` sentinels.
+- Hosted GlassHive deployment-managed worker credentials have a separate least-privilege output:
+  `service-env/glasshive-runtime-provider.env`. The compiler emits only complete, non-placeholder
+  OpenAI/Portkey/Anthropic/Bedrock route bundles into that file and emits none of those credentials
+  into the ordinary runtime or gateway service environment. Install it `root:root 0600`; systemd
+  PID 1 reads it before dropping to the runtime identity, while UI/MCP identities cannot read or
+  reference it. An incomplete route remains visibly unavailable rather than failing later with an
+  upstream authentication error.
 - Restart preserves encrypted per-user keys in the selected runtime database. Source upgrade
   recompiles from canonical config inside its transaction and checkpoints database state; a
   missing Keychain reference fails before generated runtime replacement. Portable snapshot/restore
@@ -493,9 +500,9 @@ falling back to historical defaults:
 - lab-only OpenClaw is absent from public Easy Install setup and status output.
 
 The current isolated prerelease candidate pins merged LibreChat commit
-`541a4c4fdac97f54333d25a79de9c34e4319db04` in both the parent component lock and Native payload
+`71501b3cabf0e309f23c27231a49cd6d0ad31b78` in both the parent component lock and Native payload
 component manifest, merged modern-playground commit `95b324c7498c50a7421751e5dd71971e268a3a84`,
-merged GlassHive commit `987c98b399c672cc45344b69c5dcb5e9612bdf9c`, and merged Viventium-Health commit
+merged GlassHive commit `f1de874257605d2d7336a180d169b3a616b1de68`, and merged Viventium-Health commit
 `91a9bbf5ff8bd0963dd3dc33bfd388c66fa7ed69` in the parent component lock. GlassHive is
 intentionally absent from the Native payload
 component manifest. The Google Workspace MCP source is pinned to merged public-main commit

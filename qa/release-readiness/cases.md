@@ -207,10 +207,10 @@ Use `REL-NNN` for release-readiness and public-push packaging checks.
 - Forbidden result: stale ref or unreviewed local nested changes.
 - Evidence to capture: parent diff and nested SHA.
 - Automation: git inspection.
-- Last run: PASS 2026-08-13. The isolated prerelease candidate declares `merged`. It pins
-  LibreChat merge commit `541a4c4fdac97f54333d25a79de9c34e4319db04`, agent-starter-react merge commit
+- Last run: PASS 2026-08-21 (pin-only rerun). The isolated prerelease candidate declares `merged`. It pins
+  LibreChat merge commit `71501b3cabf0e309f23c27231a49cd6d0ad31b78`, agent-starter-react merge commit
   `95b324c7498c50a7421751e5dd71971e268a3a84`, GlassHive merge commit
-  `987c98b399c672cc45344b69c5dcb5e9612bdf9c`, and Viventium-Health merge commit
+  `f1de874257605d2d7336a180d169b3a616b1de68`, and Viventium-Health merge commit
   `91a9bbf5ff8bd0963dd3dc33bfd388c66fa7ed69`. Each merge tree equals its audited review head.
   Google Workspace MCP PR 9 remains pinned at merge commit
   `0824701abcf490de2a5091c68a7b0738f2294b3f`. The Native policy pins the same merged LibreChat

@@ -589,11 +589,13 @@ def test_glasshive_fastmcp_default_instructions_match_registry_prompt(monkeypatc
     ).strip()
 
     assert registry_instructions == server_instructions
-    assert "tool_search" in server_instructions
-    assert "query=<needed capability>" in server_instructions
-    assert "mcp_server=glasshive-workers-projects" in server_instructions
-    assert "same invocation" in server_instructions
-    assert "needed GlassHive capability is not currently available" in server_instructions
+    assert "Use the one GlassHive tool whose action matches the user's request" in server_instructions
+    assert "Make one call when one call can complete it" in server_instructions
+    assert "never enumerate or summarize the tool catalog unless the user asks" in server_instructions
+    assert "For a fresh delegated task, use workspace_launch" in server_instructions
+    assert "Check or wait only when the user asks" in server_instructions
+    assert "without inventing plans, success criteria, tool results, or extra workflow" in server_instructions
+    assert "tool_search" not in server_instructions
 
 
 def test_glasshive_prompt_reflects_disabled_host_workers(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -668,7 +670,7 @@ def test_main_boundaries_do_not_repeat_live_data_and_tool_policy() -> None:
     assert "Before an external write" in tools
 
 
-def test_glasshive_worker_prompt_prefers_broker_tools_over_browser_for_connected_accounts(
+def test_glasshive_worker_prompt_stays_concise_and_faithful(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("GLASSHIVE_HOST_WORKERS_ENABLED", "true")
@@ -685,22 +687,12 @@ def test_glasshive_worker_prompt_prefers_broker_tools_over_browser_for_connected
         },
     )
 
-    assert "MCP/tools are preferred when they can satisfy the task" in rendered
-    assert "Do not make tool choice a workspace success criterion" in rendered
-    assert "Do not invent project goals, success criteria" in rendered
-    assert "memory-derived priorities" in rendered
-    assert "For vague user adjectives like urgent or important, pass the adjective through" in rendered
-    assert "trust the GlassHive worker to find the best path" in rendered
-    assert "Satisfy the user's request as stated, preserving explicit constraints" in rendered
-    assert "Connected-account read authorization comes from the host-signed broker grant" in rendered
-    assert "when reviewed host policy projects content-read scope" in rendered
-    assert "connected_account_content_intent is only a compatibility hint" in rendered
-    assert "not a required authorization switch" in rendered
-    assert "success_criteria as broker/tool evidence gates" not in rendered
-    assert "Browser or computer use remains available" in rendered
-    assert "preferred scoped option" in rendered
-    assert "non-broker host connectors are fallback after" in rendered
-    assert "set connected_account_content_intent=true" not in rendered
+    assert "Use the one GlassHive tool whose action matches the user's request" in rendered
+    assert "When the user gives an exact saved workspace name, launch it directly" in rendered
+    assert "Preserve the user's goal, constraints, files, and context" in rendered
+    assert "without inventing plans, success criteria, tool results, or extra workflow" in rendered
+    assert "never enumerate or summarize the tool catalog unless the user asks" in rendered
+    assert "tool_search" not in rendered
 
 
 def test_three_way_prompt_ref_resolution_matches_python_js_sync_and_runtime(

@@ -150,16 +150,24 @@ start, `glasshive_rootless_docker_probe.py` calls Docker through that socket and
 JSON `SecurityOptions` to advertise `rootless`. Socket reachability alone is insufficient. Rootful,
 unavailable, malformed, or ambiguous socket results fail startup.
 
+After that probe and before accepting user traffic, the runtime prepares or verifies the reviewed
+workstation image through the same rootless daemon. A clean host may spend several minutes on this
+one-time startup step; provider checks and workspace launches must not trigger that build inside a
+browser request. Later starts reuse the provenance-checked image and complete the check quickly.
+
 ## Static and active environments
 
 The config compiler writes the secret-capable static files:
 
 - `/etc/viventium/glasshive/runtime.env`
+- `/etc/viventium/glasshive/runtime-provider.env` (optional hosted worker-provider credentials)
 - `/etc/viventium/glasshive/gateway.env`
 
 Install the runtime file as `root:glasshive-state 0640` and the gateway file as
-`root:glasshive-gateway-secrets 0640`. The runtime file contains no auth database, signing-key, or
-OIDC secret. The private assertion key remains readable only by the gateway identity.
+`root:glasshive-gateway-secrets 0640`. Install the provider file as `root:root 0600`; PID 1 reads
+that optional file before dropping to the runtime identity, and neither gateway service references
+it. The ordinary runtime file contains no provider credential, auth database, signing-key, or OIDC
+secret. The private assertion key remains readable only by the gateway identity.
 
 ### Bounded internal-assertion key rotation
 
@@ -184,10 +192,20 @@ Use the real unit paths and preserve those ownership boundaries when installing 
 
 ```bash
 sudo install -o root -g glasshive-state -m 0640 \
-  /path/to/generated/runtime.env /etc/viventium/glasshive/runtime.env
+  /path/to/generated/service-env/glasshive-runtime.env /etc/viventium/glasshive/runtime.env
+sudo install -o root -g root -m 0600 \
+  /path/to/generated/service-env/glasshive-runtime-provider.env \
+  /etc/viventium/glasshive/runtime-provider.env
 sudo install -o root -g glasshive-gateway-secrets -m 0640 \
-  /path/to/generated/gateway.env /etc/viventium/glasshive/gateway.env
+  /path/to/generated/service-env/glasshive-gateway.env /etc/viventium/glasshive/gateway.env
 ```
+
+A staged deployment whose installed runtime unit predates this EnvironmentFile may use an exact
+runtime-only systemd drop-in as a reversible bridge. Keep its rollback receipt until a real worker
+mission passes. When the managed unit is upgraded to include the provider EnvironmentFile directly,
+remove that bridge under the shared rollout lock while the service group is quiescent, reload
+systemd, and prove the effective unit, root-only file, worker mission, and rollback path before
+discarding the receipt. UI/MCP units must never gain the provider file.
 
 The rollout helper owns two non-secret slot files, both `0640`:
 
