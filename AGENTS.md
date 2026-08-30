@@ -1,7 +1,36 @@
 # Viventium Core
 
-Lean repository-specific instructions for Codex. Keep this file short, concrete, and focused on
-Viventium-specific rules; deep feature truth belongs in the existing docs.
+Repository-specific instructions shared by Codex and Claude. Product truth belongs in the owning
+docs and tests; repeatable workflows belong in skills; deterministic enforcement belongs in code,
+tests, permissions, or hooks.
+
+## Instruction Architecture And Model Contract
+
+- This file is the canonical shared project instruction layer. Root `CLAUDE.md` imports it. State
+  shared project rules once; do not copy them into model-specific files.
+- Codex discovery stops at the active git root. A session started inside a nested component repo
+  does not auto-load this parent file, so Viventium-managed nested `AGENTS.md` files explicitly
+  require this parent contract where it applies.
+- Claude Code loads parent `CLAUDE.md` files and discovers nested files on demand. Root `CLAUDE.md`
+  imports this file; a nested `CLAUDE.md` imports only its colocated `AGENTS.md`.
+- Give agents the complete outcome, relevant context, constraints, required evidence, success
+  criteria, and output shape once. Do not prescribe reasoning they can infer or add generic
+  “think harder,” repeated re-check, or mandatory verifier prompts.
+- Use plans, skills, and subagents only when they materially help. Delegate only genuinely
+  independent, sizeable work; keep small tasks local.
+- Deliver what the user asked for at the intended scope. Make routine in-scope judgments yourself.
+  Ask only when different interpretations would cause materially different work.
+
+## Action Boundaries
+
+- For answer, explain, review, diagnose, or plan requests: inspect relevant materials and report the
+  result. Do not implement changes unless requested.
+- For change, build, or fix requests: make the requested in-scope local changes and run relevant
+  non-destructive validation without asking first.
+- Require confirmation for external writes, destructive actions, purchases, public release, or a
+  material expansion of scope.
+- Preserve unrelated user or agent changes. Do not stash, switch branches, blanket-stage, commit,
+  push, or open a PR unless the user asks for that action.
 
 ## Core Outcome Metric
 
@@ -13,304 +42,136 @@ vs a GlassHive worker), aim for **parity**: each path must meet this metric on i
 routing rubric ("which path for which request"); let the Main Agent and worker decide intelligently, and make
 every path truthful, complete, useful, and fast.
 
-## Read Before Coding
+## Read By Relevance
 
-For any non-trivial task, read:
+For non-trivial product work, read only the sources needed for the owning path:
 
 1. `docs/requirements_and_learnings/01_Key_Principles.md`
-2. the relevant feature doc in `docs/requirements_and_learnings/`
-3. `docs/02_ARCHITECTURE_OVERVIEW.md` and `docs/03_SYSTEMS_MAP.md`
-4. the relevant runtime doc in `viventium_v0_4/docs/`
+2. the owning feature doc in `docs/requirements_and_learnings/`
+3. `docs/02_ARCHITECTURE_OVERVIEW.md` and `docs/03_SYSTEMS_MAP.md` when cross-system context matters
+4. the relevant runtime doc under `viventium_v0_4/docs/`
+5. the owning `qa/<feature>/` contract
 
-For installer, runtime, release, or publish-boundary work, also read:
+For installer, runtime, release, publish-boundary, continuity, or voice-component work, follow the
+specific document map in `docs/requirements_and_learnings/45_Runtime_Feature_QA_Map.md`. Do not load
+the whole documentation tree for a narrow change.
 
-- `docs/requirements_and_learnings/39_Installer_and_Config_Compiler.md`
-- `docs/requirements_and_learnings/40_Public_Private_Boundaries_and_License_Matrix.md`
-- `docs/requirements_and_learnings/45_Runtime_Feature_QA_Map.md`
-- `docs/requirements_and_learnings/47_Remote_Access_and_Tunneling.md`
-- `docs/requirements_and_learnings/50_Stable_Dev_Runtime.md`
-- `docs/requirements_and_learnings/51_GlassHive_Workflows_Self_Healing_and_Feature_Requests.md`
-- `docs/requirements_and_learnings/52_Voice_Component_Fork_Modification_Inventory.md` when the
-  work touches voice component pins, fork replay, LiveKit/playground routing, or voice release QA
-- `qa/continuity-ops/README.md` when the work touches snapshots, restore, upgrade continuity, or helper backup UX
-- the relevant files under `qa/`, if they already exist for the feature or release surface
-
-## Repo Topology
+## Repository And Delivery Boundaries
 
 - `viventium_v0_4/` is the active product stack.
-- `viventium_v0_4/LibreChat/` is a separate git repo and upstream fork boundary.
-- `scripts/viventium/` owns install, configure, upgrade, preflight, doctor, compile, bootstrap,
-  and restore.
-- `docs/requirements_and_learnings/` is the feature source of truth; extend existing docs instead
-  of creating duplicates for the same feature.
-- `qa/` is the acceptance and evidence source of truth.
-- Managed component repos live under `viventium_v0_4/...` and are pinned by `components.lock.json`;
+- `scripts/viventium/` owns install, configure, upgrade, preflight, doctor, compile, bootstrap, and
+  restore.
+- `docs/requirements_and_learnings/` is the feature source of truth. Extend the owning document
+  instead of creating a duplicate.
+- `qa/` is the acceptance and evidence source of truth; follow `qa/README.md`.
+- Managed components under `viventium_v0_4/` may be separate git repos. Confirm the active root with
+  `git rev-parse --show-toplevel` before editing or reporting status.
+- `viventium_v0_4/LibreChat/` is the upstream-fork boundary. Its local instructions own fork markers
+  and agent-sync safeguards.
+- `viventium_v0_4/GlassHive/` is a separate component. Its local instructions own worker/runtime
+  rules; the cross-boundary brokerage invariant is shared below.
+- A nested source change is not shipped until the component commit, parent pin in
+  `components.lock.json`, compiled/prebuilt artifact, and installed/running artifact agree where
+  applicable.
+- If the user authorizes a nested-repo push, push each component to its configured `origin`, never
+  `upstream`.
 
-## Public / Private Boundary
+## Public And Private Safety
 
-- This repo is only for public-safe product code, tests, docs, examples, and release tooling.
-- Keep secrets, personal data, customer data, private prompts, private docs, exports, screenshots,
-  attachments, snapshots, logs, App Support state, generated runtime env files, and machine-local
-  artifacts out of this repo.
-- Public docs, QA reports, fixtures, examples, and commit history must not expose local usernames,
-  hostnames, personal emails, home-directory paths, laptop names, or secret-bearing command lines.
-  Use public-safe placeholders such as `/path/to/viventium`, `~/Library/Application Support/...`,
-  `<temp>`, `example.com`, and synthetic non-personal values.
-- Do not reuse QA accounts, brand names, business domains, customer names, or private operating
-  context from another project. Viventium repo, runtime QA, and public evidence must stay
-  Viventium-scoped unless a source-of-truth doc explicitly requires an integration boundary.
-- Treat credentials, passwords, tokens, and secrets that appear in chat as transient secrets. They
-  must not be echoed into docs, tests, commits, QA artifacts, Claude prompts, or sub-agent handoffs.
-- If something is useful but not public-safe, move it to the designated
-  `<viventium-private-user>` or `<enterprise-deployment-repo>` outside this tree. If those repos
-  are nested locally for workspace convenience, they must remain separate git repos, ignored by the
-  main repo, and excluded from public exports.
-- A plain folder named like a private companion or enterprise repo is not a valid boundary. It only
-  counts when it is the root of a separate git repo or worktree.
-- Canonical local config and runtime state live outside git:
-  - `~/Library/Application Support/Viventium/config.yaml`
-  - `~/Library/Application Support/Viventium/runtime/*`
-  - `~/Library/Application Support/Viventium/state/*`
-  - macOS Keychain
-- Generated runtime files are outputs, not authoring surfaces.
-- Secret-bearing QA presets or transfer files may exist only as temporary local files or in the
-  designated private repo, never as tracked public artifacts.
+- This repo contains only public-safe product code, tests, docs, examples, and release tooling.
+- Never track secrets, credentials, personal/customer data, private prompts/docs, exports,
+  screenshots, attachments, snapshots, logs, generated runtime env files, or machine-local state.
+- Public artifacts and history must not expose usernames, hostnames, personal emails, device names,
+  private URLs, absolute home paths, or secret-bearing commands. Use synthetic values and public-safe
+  placeholders.
+- Do not reuse real QA accounts, brands, business domains, customer names, or private operating
+  context from another project.
+- Treat secrets in chat as transient. Do not echo them into files, QA evidence, commits, reviewer
+  prompts, or subagent handoffs.
+- Private companion and enterprise folders count as boundaries only when they are separate git repos
+  or worktrees and are excluded from public exports.
+- Canonical local config and runtime state live under `~/Library/Application Support/Viventium/`
+  and macOS Keychain. Generated runtime files are outputs, not authoring surfaces.
+- If private identity or paths enter history intended for public review, rebuild the review branch
+  from a clean base with sanitized metadata and abandon the contaminated branch.
 
-## Working Rules
+## Implementation Invariants
 
-- Take full ownership end to end. For any non-trivial feature, bug, or release task: study the
-  foundation, trace the real owning layers, compare alternatives, design the fix, implement it,
-  test it, QA it, and document the resulting product truth.
-- Trace the real owning path before editing: trigger -> config/compiler -> runtime -> user-visible
-  output.
-- For local stable-runtime work, keep the modes distinct:
-  - local prod is the installed user-facing runtime started by the helper; its default
-    app-facing ports are API `3180`, LibreChat web `3190`, and modern playground `3300`
-  - dev envs are optional side-by-side runtimes with separate app-facing ports/state; the
-    default `dev` offset keeps them on API `4180`, LibreChat web `4190`, and modern playground
-    `4300`
-  - heavy singleton services stay shared by default: recall/RAG, SearXNG, Firecrawl, Google Workspace MCP, and Microsoft 365 MCP
-  - promoting a local checkout uses `bin/viventium dev-runtime activate-current --validate --restart`; do not copy source into install paths
-- For install/runtime/release fixes, classify the delivery surfaces separately:
-  - tracked source
-  - parent component pin / manifest
-  - compiled or prebuilt shipped artifact
-  - live installed or running artifact
-- For memory, recall, restore, or upgrade incidents, decompose the problem across:
-  - chat history
-  - saved memory
-  - recall / RAG corpus
-  - schedules / background tasks
-  - auth / provider state
-  - restore / backup state
-- Prefer shared structural fixes over one-off patches, hacks, or owner-machine workarounds.
-- Do not hardcode on agent names, prompt text, tool substrings, provider labels, user identity, or one machine's state unless a source-of-truth doc explicitly requires it.
-- CRITICAL RULE: do not add regex or keyword matching in runtime code to detect user intent, provider selection, email phrasing, or productivity scope. Activation prompts in `viventium_v0_4/LibreChat/viventium/source_of_truth/<env>.viventium-agents.yaml` own that behavior; classifier outages are solved with `activation.fallbacks`, not heuristics.
-- For GlassHive, remember that workers are general intelligent workers: less is more. The host
-  should broker real goals, constraints, files, MCP/tool capabilities, and tool results without
-  inventing plans, success criteria, provider lists, fake MCP usage, forced artifacts, or
-  prompt-specific workflows; harness/runtime owns reliable data in/out, prerequisite recovery, and
-  universal completion self-checks.
-- For GlassHive brokered MCP/tool work, the host is a faithful courier, not the planner. Pass the
-  user's ask through with factual available context and brokered capabilities, then go hands off so
-  the worker can decide the path. Do not predict which provider, account, tool, artifact, rubric, or
-  workflow the worker should use unless the user explicitly specified it or verified tool evidence
-  proves it. Add observability and QA around the handoff so drift is caught by logs/tests, not only
-  by trusting prompt wording.
-- If a proposed fix looks like the user's exact complaint turned into an `if` statement, widen the
-  investigation first.
-- In the LibreChat fork, wrap upstream modifications with `VIVENTIUM START` / `VIVENTIUM END` plus
-  a short rationale.
-- Do not edit generated App Support files, Mongo data, or local runtime leftovers and call that a
-  product fix.
+- Trace the owning flow before editing: trigger -> config/compiler -> runtime -> user-visible output.
+- Prefer shared structural fixes over complaint-specific branches or owner-machine workarounds.
+- Viventium is AI-first: rely on model intelligence for semantic judgment. Give the model the goal,
+  relevant context, structured capabilities, and evidence; do not hardcode or overfit runtime
+  behavior to one prompt, phrase, agent, provider, tool, user, complaint, conversation, machine, or
+  use case. If a proposed fix looks like the user's exact complaint turned into an `if` statement,
+  widen the investigation first.
+- Do not branch on human-facing agent names, prompt text, tool substrings, uploaded URLs, provider
+  labels, user identity, or one machine's state when structured metadata can own the decision.
+- CRITICAL: do not add regex or keyword matching in runtime code to detect user intent, provider
+  selection, email phrasing, or productivity scope. Source-of-truth prompts and
+  `activation.fallbacks` own model judgment; runtime owns typed structure.
+- Prefer config schema fields, IDs, metadata, ACLs, declared capabilities, and feature flags.
+- Across the LibreChat host and GlassHive worker boundary, the host is a faithful courier: pass the
+  user's goal, constraints, files, available capabilities, and tool results without inventing a
+  plan, provider/tool list, rubric, success criteria, or forced artifact. Harness/runtime owns
+  reliable data in/out, authorization, recovery, and observability; models own judgment.
+- Do not silently remap configured models/providers, weaken expected outputs to pass checks, or rely
+  on stale installed artifacts.
+- Do not edit App Support files, database leftovers, or generated outputs and call that a product
+  fix.
+- Prompt or model-behavior changes must use Prompt Workbench and follow
+  `docs/requirements_and_learnings/49_Prompt_Architecture_and_Token_Efficiency.md`. Inspect the
+  owning source and source -> rendered/compiled -> live lineage; run the same sanitized positive,
+  negative, and adjacent cases old versus proposed on the exact configured models before real-user
+  QA. Do not add hidden inline prompt fallbacks that Workbench cannot show, version, and evaluate.
 - Update the owning requirements doc when product truth changes.
+- For local prod/dev runtime boundaries, restore/continuity decomposition, and shipped-artifact
+  classification, follow the owning docs rather than duplicating those procedures here.
+- Before agent-sync work, read `viventium_v0_4/LibreChat/AGENTS.md` and follow its A/B/C drift and
+  dry-run contract.
 
-## Legal / Illegal Fix Patterns
+## Verification Contract
 
-- Usually illegal unless a source-of-truth doc explicitly requires it:
-  - branching on human-facing agent names
-  - branching on prompt text, tool substrings, or uploaded asset URLs
-  - branching on provider labels or user-visible titles when structured metadata exists
-  - shipping machine-specific paths, private URLs, tokens, or owner-private artifacts
-  - silently remapping configured models/providers to something else
-  - making the installer appear healthy by relying on one laptop's leftovers
-  - using real personal or confidential data in tests, fixtures, or screenshots
-- Preferred alternatives:
-  - config schema fields
-  - source-of-truth YAML/templates
-  - IDs, metadata, ACLs, declared capabilities, and feature flags
-  - synthetic non-personal test data
-
-## Second Opinion Workflow
-
-- For non-trivial architecture, debugging, forensic, or release work, finalize your own proposal
-  first. Do not use another model to think in your place.
-- After you have a grounded proposal, get a review-only second opinion from a local Claude CLI
-  helper when available.
-- Default Claude to review-only. Explicitly tell it not to make changes and to present findings and
-  recommendations for review and approval.
-- Give Claude the full picture: the relevant docs, exact files, runtime evidence, your provisional
-  root cause, at least one alternative explanation already considered, and the exact decision you
-  want validated or challenged.
-- Sanitize secrets, credentials, and private values before handing context to Claude or any sub-agent
-  unless the exact value is strictly required for a local machine-only step.
-- When useful, run the original user task or project prompt through the same review-only Claude
-  pass to compare its reasoning against your own.
-- Treat Claude as a second opinion, not the source of truth.
-
-## Git And Repo Safety
-
-- Nested repos have separate histories. Parent repo commits do not deploy nested repo changes.
-- Before claiming a fix is shipped or release-ready, verify that the nested component commit, the
-  parent pin or manifest entry (for example `components.lock.json`), and any compiled/prebuilt
-  delivery artifact all reflect the intended change.
-- Commit and push nested repos independently to their configured `origin`, never `upstream`.
-- Treat `git-helper.sh push ... --include-public-components` as a workspace helper, not a backup.
-- Keep scratch output, caches, local artifacts, temporary workspaces, and generated service state
-  out of commits and public exports.
-- Do not blanket-stage when a surgical commit is required.
-- Before any public commit, push, or PR from this repo, verify author and committer identity are set
-  to an approved public-safe name/email. Never rely on shell or hostname-derived git defaults.
-- Before any public push or PR, scan staged diffs and QA/report files for local absolute paths,
-  personal identifiers, machine names, and private command examples.
-- If a leaked identity or private path has already entered branch history intended for public review,
-  create a fresh review branch from a clean base, recommit with sanitized metadata, push that clean
-  branch, and delete the leaked review branch instead of asking reviewers to use the dirty history.
-
-## Agent Sync Safety
-
-- Before any user-level agent push, run `viventium-sync-agents.js compare --env=<env>` (or an
-  equivalent live-vs-source review) and inspect:
-  - A: current live user-level agent config
-  - B: tracked source-of-truth bundle
-  - C: current repo/source-of-truth edits still not in live
-- Present the A/B/C drift to the user before applying a sync when live user-managed fields differ.
-- If the reported symptom is capability availability, also inspect adjacent scaffold/runtime config
-  such as `viventium_v0_4/LibreChat/viventium/source_of_truth/<env>.librechat.yaml`; global
-  toggles like `interface.webSearch` can disable behavior even when the agent bundle still carries
-  the expected tool.
-- Non-dry-run pushes should fail closed when reviewed live-vs-source drift still exists; only use a
-  follow-up acknowledgement such as `--compare-reviewed` after you have already presented the drift
-  and intentionally accepted it.
-- Always dry-run first.
-- For prompt/instruction changes, use `--prompts-only`.
-- Treat live user edits to instructions, conversation starters, tools, model/provider, and
-  background cortex config as protected state until they are intentionally reconciled.
-- Do not use default push unless the synced fields were intentionally reviewed.
-- After sync changes, verify the target runtime actually reloaded the intended data.
-
-## Verification
-
-- Full-view evidence is the default completion gate for non-trivial work. Before claiming a feature,
-  bug fix, runtime change, installer change, or release task is done, connect:
+- Automated tests prove deterministic code and contracts; Prompt Workbench exact-model evals
+  provide evidence for model behavior; real-user QA proves the delivered experience. These are
+  separate gates; none substitutes for another.
+- Match verification to the actual blast radius. Run the smallest relevant automated checks, but
+  run them. Do not add browser, voice, release, or clean-machine ceremony to a docs-only change.
+- For user-visible behavior, exercise the real affected surface. Browser-facing work requires a real
+  browser; voice/audio work requires the delivered or audible path; installer/runtime work requires
+  the generated and active artifact.
+- Use the owning QA feature inventory and natural user use cases when a product feature changes. Cover the
+  applicable happy path, failure/degraded state, recovery, persistence/reload, cross-surface parity,
+  generated/shipped artifact verification, and public/private safety.
+- For a completion or release claim, connect
   `feature -> requirement -> use case -> QA case -> expected result -> actual evidence -> remaining gap`.
-- Full-view evidence means inspecting the real owning code, docs and nested docs, scripts/harnesses,
-  generated or shipped artifacts, logs, DB/state/persistence when applicable, and the real user path
-  through browser/computer, Telegram, voice, installer, CLI, MCP, scheduler, or GlassHive surfaces.
-- Start QA from the complete feature inventory and natural user use cases. Use
-  `docs/requirements_and_learnings/45_Runtime_Feature_QA_Map.md`,
-  `qa/feature-user-use-case-checklist.md`, and the owning `qa/<feature>/cases.md` to enumerate the
-  obvious user actions first: happy path, first-run/empty state, missing auth/config, degraded
-  dependency, retry/recovery, interruption/cancel/update, persistence/reload/restart, cross-surface
-  parity, generated/shipped artifact verification, and public/private safety.
-- Treat the enumerated use cases as a checklist. Every applicable item must be run like a user on the
-  real surface and marked `PASS`, `FAIL`, `BLOCKED`, or `PARTIAL` with supporting evidence before a
-  completion or release-readiness claim.
-- If a real user path is required and cannot be run in the current environment, mark the result
-  `BLOCKED` or `PARTIAL`, explain the exact missing surface, and do not substitute mocks, unit tests,
-  source inspection, logs, DB rows, or another model's review for that missing user evidence.
-- Supporting evidence cannot replace required user-path evidence.
-- Every user-visible QA report must state what was actually run, what was not run, what evidence
-  proves the visible UX/result, and what fix remains for any mismatch.
-- Run the smallest relevant automated checks, but run them.
-- Do not stop at the tiniest local test when the change can affect broader flows. Professionally
-  test all realistically affected paths around what you changed.
-- For installer, compiler, or runtime changes, inspect generated outputs and verify at least one
-  real affected surface.
-- For helpers, bundled apps, compiled `dist/` outputs, or other prebuilt artifacts, verify the live
-  installed/shipped artifact independently. Source correctness is not enough.
-- Clean-machine acceptance beats "works on the owner laptop."
-- Use `qa/` as the home for end-to-end QA plans and reports. If the needed feature area does not
-  exist yet, create it instead of scattering QA notes elsewhere.
-- Follow `qa/README.md` as the QA operating contract. Keep one living QA source of truth per feature
-  or flow, update its cases before or alongside the code change, and save dated public-safe results
-  under the owning feature folder.
-- Every escaped bug or production miss must become a reusable synthetic regression case in the
-  relevant `qa/<feature>/cases.md`, with expected outcome, forbidden result, evidence to capture,
-  and last-run status.
-- For evidence-retrieval failures, do not hand-wave. Distinguish successful empty results from
-  provider unavailable, timeout, rate limit, auth/config missing, request rejected, unsupported
-  configuration, and missing local prerequisites such as Docker-backed search services. For
-  named-entity/contact/date/current-fact lookups, a failed web search triggers provider-health
-  inspection plus browser/computer/local-delegation fallback when available.
-- For GlassHive/local-delegation dispatch, do not quote canned acknowledgement text. Preserve the
-  user's target and success condition in the delegated instruction, inspect the returned audit when
-  present, then write a short acknowledgement in your own voice and let callbacks carry the result.
-- For non-trivial feature or bug work, run an independent QA pass after implementation. Prefer a
-  separate agent or clearly separated QA pass, and save public-safe evidence and findings under
-  `qa/<feature>/`.
-- Use real-browser QA for browser-facing flows, such as Playwright CLI or equivalent. The minimum
-  acceptance loop is: real browser prompt/action -> visible UI outcome -> expanded/detail state ->
-  refresh or persistence check when relevant -> backend/log/DB confirmation -> final wording does
-  not contradict the visible state.
-- For voice, LiveKit, Telegram voice, browser-audio, or TTS/STT changes, the completion gate is a
-  real user-grade surface run after the changed code/config is proven present in the active runtime
-  artifact being tested: source checkout, generated config, built artifact, and installed/running
-  process as applicable. Run the actual playground/call/bot path with synthetic public-safe content,
-  capture timestamped evidence of what was heard or delivered, and correlate it with logs, DB/state,
-  generated config, and owning code.
-  Do not claim the fix is done with wording like "the next call should show..." or "instrumentation
-  is ready"; that is `PARTIAL` until a post-change user-path run proves the behavior.
-  Use `qa/modern-playground-voice/cases.md` `MPV-014` as the reusable acceptance case for affected
-  voice fixes.
-- Browser-facing work must be tested through Playwright CLI or an equivalent real browser. Voice and
-  audio-facing browser work must also verify the audible or delivered voice outcome, synthetic or
-  sanitized transcript evidence, interruption/cancel behavior when relevant, latency/log visibility,
-  DB/state persistence, and runtime config alignment. If the audible or delivered voice path cannot
-  be run, mark the result `BLOCKED` or `PARTIAL` and name the exact missing prerequisite.
-- For non-trivial forensic or architecture work, obtain the Claude review-only second opinion when
-  available after your own evidence-backed RCA/proposal and before final acceptance. Claude review is
-  supporting evidence; it does not replace the real browser/voice/user path, logs, DB/state, code
-  trace, or tests.
-- Logs, DB rows, API responses, source inspection, model completions, and unit tests are supporting
-  evidence, not substitutes for any required visible-UI, detail-state, persistence, or wording step.
-- Do not rely on mocked-only tests to justify end-to-end claims. Use synthetic non-personal test
-  data, and never expose secrets, private chats, attachments, or customer data in QA artifacts.
-- When release or public-readiness is in scope, use `qa/` as the acceptance contract.
-- For installer/public-release QA, prove the product through supported public entrypoints and keep
-  public-safe QA writeups phrased in those terms. If an internal harness is needed for debugging,
-  keep it sanitized and clearly separate it from the public install story.
-- Before stopping on public-facing work, ask:
-  1. Is this safe to go public now?
-  2. Has fresh clone/install been proven in a new directory?
-  3. Did I verify that no private identity, secret, or local-path leakage is being published with this work?
-  4. If a nested component or shipped artifact changed, did I verify the parent pin, built artifact, and installed artifact all match?
-- Do not say "done" if verification is still theoretical.
+  Inspect owning code, docs and nested docs, scripts/harnesses, logs, DB/state/persistence,
+  generated/shipped artifacts, and the real user path where applicable.
+- If a required real user path cannot run, report `BLOCKED` or `PARTIAL` and name the missing
+  prerequisite. Mocks, source inspection, tests, logs, DB rows, API responses, or model review are
+  supporting evidence, not substitutes for any required visible-UI, detail-state, persistence, or
+  wording step. Supporting evidence cannot replace required user-path evidence.
+- Distinguish an empty result from provider unavailable, timeout, rate limit, auth/config missing,
+  request rejected, unsupported configuration, and missing local prerequisites such as Docker.
+- For architecture, security, forensic, or release decisions, form an evidence-backed proposal
+  first, then use a review-only independent opinion when available. Give the reviewer the relevant
+  evidence and a precise decision to challenge; sanitize private values. Reviewer output supports
+  but does not replace tests or user-path evidence.
+- Before public release, verify public-safe git identity and scan the staged diff and QA artifacts
+  for secrets, private identity, and machine paths.
 
-## Useful Commands
+## Core Commands
 
 - Installer: `./install.sh`
 - Public CLI: `bin/viventium`
-- Full stack launcher: `viventium_v0_4/viventium-librechat-start.sh`
-- Inspect installed local prod checkout: `bin/viventium dev-runtime status`
-- Create side-by-side dev runtime: `bin/viventium dev-env create dev`
-- Run/check side-by-side dev runtime: `bin/viventium dev-env run dev start` and `bin/viventium dev-env run dev status`
-- Promote current checkout to installed local prod: `bin/viventium dev-runtime activate-current --validate --restart --allow-protected-folder`
-- Public refresh flow: `bin/viventium upgrade --restart`
-- Release tests: first materialize the managed component paths at their locked refs with
-  `python3 scripts/viventium/bootstrap_components.py --repo-root "$PWD" --jobs 4` (the complete
-  suite reads nested LibreChat, GlassHive, and modern-playground source); then run
-  `python3 -m pytest tests/release/ -q`. Until those paths exist, use the suites named by the relevant
-  hosted workflow rather than treating missing-path `FileNotFoundError` results as product failures.
+- Stack launcher: `viventium_v0_4/viventium-librechat-start.sh`
+- Local prod status: `bin/viventium dev-runtime status`
+- Side-by-side dev: `bin/viventium dev-env create dev` and `bin/viventium dev-env run dev start`
+- Promote checkout: `bin/viventium dev-runtime activate-current --validate --restart --allow-protected-folder`
+- Release tests: `python3 -m pytest tests/release/ -q`
 - Compiler tests: `python3 -m pytest tests/release/test_config_compiler.py -q`
-- LibreChat backend dev: `cd viventium_v0_4/LibreChat && npm run backend:dev`
-- LibreChat frontend dev: `cd viventium_v0_4/LibreChat && npm run frontend:dev`
-- LibreChat tests: `cd viventium_v0_4/LibreChat && npm run test:api && npm run test:client`
-- Telegram tests: `cd viventium_v0_4/telegram-viventium && pytest`
-- Voice gateway tests: `cd viventium_v0_4/voice-gateway && python3 -m pytest tests -q`
+- LibreChat: run `npm run backend:dev`, `npm run frontend:dev`, `npm run test:api`, or
+  `npm run test:client` from `viventium_v0_4/LibreChat/`.
+- Telegram: run `pytest` from `viventium_v0_4/telegram-viventium/`.
+- Voice gateway: run `python3 -m pytest tests -q` from `viventium_v0_4/voice-gateway/`.
 
-## Keep This File Lean
-
-- Put deep feature detail in `docs/requirements_and_learnings/`.
-- Put path-specific or tool-specific depth in the owning subtree docs.
-- Keep `AGENTS.md` focused on repo topology, boundaries, commands, and non-obvious project rules.
+Keep this file lean. Put new detail in the owning docs, nested instructions, skills, tests, or hooks.

@@ -16,6 +16,13 @@ AGENTS_SOURCE_PATH = SOURCE_OF_TRUTH_ROOT / "local.viventium-agents.yaml"
 LIBRECHAT_SOURCE_PATH = SOURCE_OF_TRUTH_ROOT / "local.librechat.yaml"
 AGENT_SYNC_SCRIPT = LIBRECHAT_ROOT / "scripts" / "viventium-sync-agents.js"
 EXACT_MODEL_EVAL_SCRIPT = REPO_ROOT / "qa" / "prompt-architecture" / "evals" / "run-exact-model-evals.cjs"
+NATIVE_SURFACE_EVAL_SCRIPT = (
+    REPO_ROOT
+    / "qa"
+    / "prompt-architecture"
+    / "evals"
+    / "run-native-surface-playwright-qa.cjs"
+)
 ACTIVATION_MODEL_EVAL_SCRIPT = (
     REPO_ROOT / "qa" / "background_agents" / "evals" / "run-activation-model-evals.cjs"
 )

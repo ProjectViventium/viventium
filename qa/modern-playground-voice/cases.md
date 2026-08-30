@@ -21,11 +21,12 @@
 | `MPV-UC-017` | Receive a streamed answer whose server emits growing text snapshots instead of pure incremental token deltas. | `docs/requirements_and_learnings/06_Voice_Calls.md` / `MPV-018` | Modern Playground browser, voice gateway stream, LibreChat voice route, Mongo/chat reload | Gateway chunks, visible transcript, persisted assistant text/content parts, follow-up decision metadata | The assistant text appears once, `{NTA}` remains silent, and the linked LibreChat chat reload never shows malformed control tags or adjacent duplicate words. | 2026-05-30 PARTIAL PASS in `reports/2026-05-30-cumulative-delta-snapshot-rca.md`; artifact fixed and linked chat cleaned on read, but healthy primary-provider stream rerun blocked by local provider failures |
 | `MPV-UC-021` | In a real call, ask the agent to launch a synthetic GlassHive browser task, then speak a terse status/wait request and a deferred artifact request. | `docs/requirements_and_learnings/06_Voice_Calls.md`, `docs/requirements_and_learnings/07_MCPs.md` / `MPV-021`, `AGCFG-005`, `MPV-014` | Authenticated Modern Playground call and linked LibreChat conversation | audible audio, transcript, provider-bound tools, scoped `tool_search`, Mongo tool-call parts, GlassHive run/events, runtime logs, linked-chat reload | Voice uses the same eager launch/status/wait gateway as web and Telegram, discovers deferred artifacts in the same invocation, and speaks a truthful result without a false unavailable claim. | PASS 2026-07-13: real launch/wait/file creation plus a real deferred-discovery call that invoked scoped `tool_search` and `workspace_artifacts` in the same turn; transcript, persistence, and nonzero audio passed |
 | `MPV-UC-022` | Ask the configured voice model to recall a prior browser event while conversation recall and transcript fixtures are both available. | `docs/requirements_and_learnings/32_Conversation_Recall_RAG.md`, `docs/requirements_and_learnings/34_Voice_Chat_LLM_Override.md` / `MPV-022`, `MPV-014` | isolated browser, Modern Playground, linked LibreChat conversation | audible audio, expanded file-search sources, provider/controller logs, fixture DB/search state, runtime config | Voice answers from the strongest prior-chat evidence, does not cite the active prompt or blend an unrelated transcript, persists after reload, and does not crash in final-run telemetry. | PASS-AUTOMATED/PARTIAL 2026-07-14; focused ranking/controller fixtures pass, but isolated-account audible/persistence acceptance is NOT RUN |
-| `MPV-UC-023` | Open a public call from outside a synthetic lab LAN and speak. | `docs/requirements_and_learnings/47_Remote_Access_and_Tunneling.md` / `MPV-023`, `MPV-014`, `REMOTE-004` | Public Playground browser, LiveKit lab media, voice worker | selected ICE pair, generated/runtime node address, LiveKit/worker logs, fixture transcript row, cleanup | The browser selects a public media path, the worker receives audio, and the expected transcript is delivered; a loaded page alone is not accepted. | NOT RUN for this public candidate; requires an isolated lab edge/router and synthetic account |
+| `MPV-UC-023` | Open a public call from outside a synthetic lab LAN and speak. | `docs/requirements_and_learnings/47_Remote_Access_and_Tunneling.md` / `MPV-023`, `MPV-014`, `REMOTE-004` | Public Playground browser, LiveKit lab media, voice worker | selected ICE pair, generated/runtime node address, LiveKit/worker logs, fixture transcript row, cleanup | The browser selects a public media path, the worker receives audio, and the expected transcript is delivered; a loaded page alone is not accepted. | NOT RUN (cataloged 2026-07-15; requires an isolated lab edge/router and synthetic account) |
 | `MPV-UC-024` | Upgrade or start with the unsupported legacy xAI `voice_agent` TTS compatibility value configured. | `docs/requirements_and_learnings/06_Voice_Calls.md` / `MPV-024` | Config compiler and voice-gateway startup | Compiler/runtime error, capability contract, source inventory, standalone xAI provider tests | Startup fails closed with an actionable migration to `tts`; it explains that Voice Agent is a separate conversational API and never silently remaps the setting. | PASS automated 2026-07-15; wording corrected against current xAI documentation 2026-07-20; post-change installed-runtime restart intentionally not run in this source-only slice |
 | `MPV-UC-025` | Enable Docker-backed Voice after install, then upgrade from an older Viventium-managed LiveKit container. | `docs/requirements_and_learnings/39_Installer_and_Config_Compiler.md` / `MPV-025` | Full-stack launcher and Docker LiveKit runtime | Optional runtime lock, container image/source labels, health, TURN config, Docker disk usage | Exact multi-arch digest starts; an exact managed container is reused; a stale managed container is replaced; unrelated/external LiveKit is not deleted. | PARTIAL 2026-07-21: real arm64 Docker pull/start/health/restart, stale replacement, external preservation, and cleanup pass; Intel, TURN selected-pair, and microphone/TCC remain |
 | `MPV-UC-026` | Open the Modern Playground URL directly without first opening Voice from a conversation. | `docs/requirements_and_learnings/06_Voice_Calls.md` / `MPV-027` | Modern Playground browser with no call-session parameters or standalone agent | Visible CTA/help text, console, network requests, exact `/api/health` identity | The start action stays disabled and immediately explains that Voice must be opened from a Viventium conversation; the page does not contact personal/provider state. | PASS 2026-07-21: isolated headed Chromium showed the recovery guidance, exact modern identity, zero console warnings/errors, and no non-loopback/backend requests. |
 | `MPV-UC-028` | Open the Modern Playground directly using keyboard navigation, a narrow viewport, forced colors, and Reduce Motion. | `docs/requirements_and_learnings/06_Voice_Calls.md` / `MPV-028` | Modern Playground direct-entry browser page | `qa/modern-playground-voice/scripts/direct-entry-accessibility-browser-qa.cjs`; named focus order, viewport bounds/overflow, computed motion durations, console/network, exact source identity | Recovery guidance and controls remain perceivable and keyboard-operable; tall content scrolls downward without clipping; Reduce Motion removes retained animation/transition durations; requests stay loopback-only. | PASS 2026-07-22 against exact reviewed head: headed Chromium passed ten named keyboard stops, `320 x 760` reflow, forced colors, zero horizontal overflow, zero retained motion durations, and first-graphic `y=40`. VoiceOver, real call/audio, and exact signed installed artifact remain separate blocked rows. |
+| `MPV-UC-025` | During one normal call, explicitly launch two independent Worker Bees, continue a quick conversation, provide exact synthetic files through the linked chat, Steer only one Bee by speech, hang up/reconnect, and open both returned artifacts. Repeat the launch attempt from passive Wing speech and Listen-Only. | `docs/requirements_and_learnings/06_Voice_Calls.md`, `docs/requirements_and_learnings/55_Parallel_Work_Orchestration.md` / `MPV-061`, `PWK-017`, `PWK-UC-019`, `TGDOC-010` | Audible Modern Playground Call, linked LibreChat conversation and Active Work, supported account attachment surface | audio/transcript, logical revision, exact upload IDs/bytes/order, provider-bound tools, memory/recall and broker receipts, mission/action rows, callback/delivery receipts, artifact hashes, hangup/reconnect state | Main remains the one voice and stays responsive; both Bees retain the needed authorized abilities; spoken A-only Steer leaves B unchanged; exact inputs and both outputs arrive once; hangup loses nothing; passive Wing and Listen-Only launch nothing; no unsolicited result call occurs. | FAIL 2026-08-25 — passive Wing created an unauthorized durable reminder. The two-Bee, files, A-only Steer, reconnect, Listen-Only, and returned-artifact matrix remains unrun and cannot dilute that observed failure. |
 
 ## MPV-001 Authenticated Call Launch
 
@@ -944,7 +945,7 @@
   the application result; retaining synthetic users, sessions, messages, or ingress rows.
 - Evidence: isolated lab Playwright evidence, sanitized selected-pair summary, synthetic transcript,
   fixture cleanup ledger, and generated-config alignment.
-- Last Run: NOT RUN for this public candidate. A dedicated isolated lab edge/router and synthetic
+- Last Run: NOT RUN (cataloged 2026-07-15). A dedicated isolated lab edge/router and synthetic
   account are required; non-lab network observations are excluded from public evidence.
 
 ## MPV-024 Unsupported Voice-Agent-As-TTS Compatibility Route Fails Closed
@@ -1219,7 +1220,7 @@
   proxy route suites
 - Telegram call-link creation/exchange and canonical Agent authorization suites
 
-## World-Class Call Acceptance Additions (MPV-032 through MPV-054)
+## World-Class Call Acceptance Additions (MPV-032 through MPV-061)
 
 These cases are the release gate for the automatic, zero-setup Call/Wing/Listen-Only experience.
 Each runtime result must record `PASS`, `FAIL`, `PARTIAL`, or `BLOCKED` and link timestamped,
@@ -1604,6 +1605,147 @@ public-safe browser/audio, log, persistence, and installed-artifact evidence. `P
   partial stable supersession passed; interruption during a real durable GlassHive/tool effect
   remains outstanding. See
   `../scheduling-cortex/reports/2026-08-11-consciousness-continuity-and-turn-coherence.md`.
+
+### Endurance Gate
+
+- Run 100 atomic mode switches, 50 reconnect cycles, a 65-minute audible call, and a 120-minute synthetic soak
+  from the private configurable output root described in `endurance-runbook.md`.
+- Run each profile with its own fresh signed synthetic session. The audible profile's clean hangup
+  makes that session terminal; it must never be reused to make the subsequent soak appear healthy.
+- The audible call must include lookup/sources, multiple speakers, barge-in, cancellation, network
+  loss, provider degradation, join/leave, refresh, mode changes, and clean hangup.
+- Require no crash, lost result, duplicate event, leaked task, or more than 10% post-warm memory
+  growth.
+- Before and after every reconnect, require exact task and speaker replay: no loss, duplicate result,
+  sequence/revision regression, terminal-state regression, or unversioned payload mutation.
+- Extract one structured latency trace per measured turn from utterance end through gateway dispatch,
+  agent/tool work, first model token, TTS first byte, and audio output. Missing hops fail the gate.
+- Save raw events, logs, call identifiers, process samples, audio, and screenshots only under the
+  private configurable output root. Publish only the content-free
+  `viventium.voice.acceptance.result.v1` schema after its privacy check passes.
+
+### MPV-057 Call, Wing, And Listen-Only In One Room
+
+- Start one real browser call, send a substantive synthetic turn in Call, switch to Wing and address
+  Viventium, then send an ambient turn, switch to Listen-Only, and return to Call.
+- Expected Result: the room and RTC connection stay unchanged. Call presents one useful answer and
+  audio. Addressed Wing may answer; passive Wing stays silent through `{NTA}`. Listen-Only creates no
+  assistant answer, live task, tool call, or TTS. Every visible mode label matches durable state.
+- Forbidden Result: a reconnect per mode, an unsolicited Wing response, Listen-Only tools/TTS, a
+  stale mode label, or duplicate assistant output.
+- PASS Evidence: real Chrome/in-app Browser DOM and audio, mode/state API, call/task persistence,
+  voice-gateway logs, linked-chat result, and refresh/ended-state proof.
+- Last Run: `PASS` — 2026-08-21 — Call produced one visible and audible answer with one terminal
+  task; addressed Wing answered; passive Wing and Listen-Only stayed silent; all mode changes reused
+  the same room and the ended state survived refresh.
+
+### MPV-058 Simultaneous Calls Do Not Wait For An Older Call
+
+- Start one call in Chrome and a second in the in-app Browser while the first remains connected.
+- Expected Result: both admitted calls join independently. Replacement-worker prewarm may defer only
+  while idle; once a call is admitted, initialization starts immediately. Each call can change mode
+  and end without changing the other.
+- Forbidden Result: the second admitted call waits for the first to end, reports a false gateway
+  timeout, reuses the wrong session, or cross-controls the other room.
+- PASS Evidence: two visible browser surfaces, distinct call/room identities, worker admission and
+  prewarm logs, second-call ready latency, independent modes, sustained overlap, and clean end state.
+- Last Run: `PASS` — 2026-08-21 — after the escaped serialization fix, Chrome and the in-app
+  Browser connected concurrently; the second call was ready in about 5.5 seconds, both stayed live
+  beyond the old 90-second failure window, changed modes independently, and ended cleanly.
+
+### MPV-059 Durable Call State Survives Transport Loss
+
+- Disconnect or end the room while the playground still has local LiveKit state, then poll the
+  owner-scoped call-session state and refresh.
+- Expected Result: authoritative degraded, failed, or ended state replaces stale local state. A
+  terminal call cannot present a working microphone or active End action after refresh. The exact
+  bound worker may read the terminal state long enough to stop cleanly, without renewing its lease,
+  reclaiming the call, or admitting a different worker.
+- Forbidden Result: an endless connecting/listening state, active controls for an ended session, or
+  a generic microphone failure when the durable session states another cause. The worker must not
+  reinterpret `ended` as unavailable or as a mode transition to an empty value.
+- PASS Evidence: status API, browser state before/after refresh, session DB row, and focused hook/UI
+  tests for terminal and recoverable state.
+- Last Run: `PASS` — 2026-08-21 — real ended Call, Wing, and Listen-Only tabs rendered the exact
+  durable mode plus `ended`, disabled the call action, and retained that state after refresh. A
+  post-restart call also proved the exact worker received terminal state, stopped normally, and
+  emitted no false unavailable or empty-mode transition.
+
+### MPV-060 Browser LiveKit Client Compatibility Gate
+
+- Upgrade the modern playground's LiveKit browser packages only as one lockfile-coherent set, build
+  the production app, and run real Call/mode/concurrency QA.
+- Expected Result: no native buffer or `memoryview` crash, no lost room state, and no regression in
+  transcript, task, audio, mode, reconnect, or end behavior.
+- Forbidden Result: version-only promotion, mixed dependency graph, build-only acceptance, or a
+  crash hidden by automatic reconnect.
+- PASS Evidence: package/lockfile versions, focused tests, production build, active artifact, real
+  browser calls, logs, and DB state.
+- Last Run: `PASS` — 2026-08-21 — `@livekit/components-react` `2.9.21` and `livekit-client`
+  `2.18.2` built and ran in the installed local playground; the real mode and simultaneous-call
+  matrix completed without the prior native-buffer crash. Clean-install parity remains unrun.
+
+### MPV-061 Full Queen Bee And Worker Bee Voice Parity
+
+- Requirement: `06_Voice_Calls.md` Queen/Worker voice parity,
+  `55_Parallel_Work_Orchestration.md` full capability parity, `PWK-017`, `PWK-UC-019`, and
+  `TGDOC-010`.
+- Steps: in one normal audible call, explicitly launch two independent synthetic missions that use
+  representative saved-memory/recall and connected-tool capabilities. Continue a quick unrelated
+  conversation with Main. Supply an ordered synthetic file group from the linked chat or Telegram,
+  Steer only mission A by speech, end and reconnect the call, then open both returned artifacts.
+  Switch to Wing and have the verified owner directly address Main to launch and control one exact
+  Worker. Repeat ambient/passive Wing, unverified-speaker Wing, and Listen-Only launch attempts.
+- Expected Result: Main is the only speaking personality and sends one current quick reply. Both
+  missions keep exact scoped context, inputs, tools, and output abilities; A-only Steer leaves B
+  unchanged; ending the call cancels neither mission. Spoken status/completion is truthful and
+  emitted once, while each non-speech artifact appears once with a working linked-chat/Active Work
+  open or download action. Passive Wing and Listen-Only launch nothing, and no result causes an
+  unsolicited voice call. Direct Wing authority requires a current signed semantic-model verdict
+  bound to the exact verified owner, final speaker segments, call session, turn, and expiry; passive
+  or unverified Wing has no execution authority.
+- Forbidden Result: voice has a smaller silent capability set than Web/Telegram; a file is dropped,
+  reordered, aliased, or exposed across owners; fallback changes the mission or removes a required
+  tool without a typed state; interruption cancels or redirects work; B changes with A; hangup loses
+  work; a file is only described but not delivered; duplicate speech/message/artifact delivery; or
+  a passive/unverified speaker authorizes work; the browser self-asserts semantic authority; an
+  expired, unsigned, replayed, cross-owner, or cross-turn engagement verdict is accepted; or intent
+  is inferred with runtime keywords instead of the configured semantic model.
+- PASS Evidence: real audible audio and visible transcript; logical turn/revision; exact upload
+  IDs, hashes, and order; memory/recall and broker/tool receipts; two mission/attempt lifecycles;
+  exact A action receipt; callback/delivery ledger; linked-chat and Active Work state before/after
+  reconnect; both artifacts opened; mode/authority logs; installed runtime identity; public-safe
+  report. Each private evidence file must bind to its exact opaque semantic entity references;
+  copied audio or transcript bytes cannot stand in for both call sessions.
+- Semantic Runner: copy `mpv-061-full-journey-evidence.template.v1.json` into the private evidence
+  root, populate it from the exact installed journey, then run
+  `node qa/modern-playground-voice/scripts/mpv_061_full_journey_semantic_qa.js --manifest <private>/full-journey-evidence.v1.json --evidence-root <private> --artifact-identity <installed-runtime>/parallel-work-artifact-identity.json --result <private>/full-journey-result.v1.json`.
+  The focused semantic contract is
+  `tests/release/test_mpv_061_full_journey_semantic_runner.py`; installed scenario preparation and
+  observer ownership are covered by
+  `tests/release/test_mpv_061_installed_scenario_preparation.py`; parent-control ownership is
+  covered by `tests/release/test_mpv_061_qa_parent_control.py`.
+  The only passing scope is `full_journey`. The endurance harness's four-window authority slice is
+  supporting evidence only and cannot close MPV-061.
+- Strict classifier fallback control: the parent runner must arm one exact synthetic call through a
+  private FD before speech. Core must issue a five-second challenge for the exact current owner,
+  call, turn, final segment revisions, canonical utterance hash, candidate/runtime/component, and
+  configured primary/fallback. The parent must approve within 750 ms with the private case token;
+  Core must consume once atomically. The trace must contain exactly one consumed receipt, one
+  primary `attempt.history.complete` pre-model failure, zero primary forwarded/completed events,
+  one fallback forwarded event, one fallback completed attempt, one
+  `provider.fallback.completed`, and zero provider-health mutations. Strict mode blocks if any item
+  is absent or mismatched. Diagnostic mode reports the same facts but stays non-receipt eligible.
+- Adversarial control checks: browser or environment mint, personal/wrong owner, wrong call, turn,
+  segment, revision, utterance, provider, model, candidate, component, runtime, or session; stale or
+  restart-old challenge; forged parent proof; replay or concurrent consume; unavailable DB, parent,
+  or private FD; health mutation; and cleanup residue. Every case must fail closed with bounded,
+  redacted errors and leave adjacent traffic unchanged.
+- Last Run: `FAIL` — 2026-08-25. Installed synthetic-account Voice confirmed Call audio
+  and Listen-Only denial, but passive Wing created an unauthorized synthetic reminder; the reminder
+  was removed. Signed direct-engagement and full Queen/Worker/restart/artifact parity remain unproved.
+  Earlier `MPV-021`, `MPV-057`, memory/recall, and Parallel Work control runs prove narrower
+  components only. Focused semantic contracts do not replace the real installed journey.
 
 ### Endurance Gate
 

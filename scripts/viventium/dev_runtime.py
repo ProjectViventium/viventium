@@ -12,6 +12,7 @@ from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 try:
     import yaml
@@ -78,6 +79,12 @@ SHARED_SINGLETON_SERVICES = (
     "ms365_mcp",
 )
 
+LOCAL_GLASSHIVE_DEFAULTS = {
+    "provider_base_url": "http://127.0.0.1:8766/v1",
+    "mcp_url": "http://127.0.0.1:8767/mcp",
+    "operator_base_url": "http://127.0.0.1:8780",
+}
+
 DEV_RESOURCE_ENV = {
     "OPENBLAS_NUM_THREADS": "1",
     "OMP_NUM_THREADS": "4",
@@ -141,6 +148,49 @@ def state_file(path: Path) -> Path:
     return path / "state" / "dev-env.json"
 
 
+def offset_loopback_url(value: str, offset: int) -> str:
+    parsed = urlsplit(str(value or "").strip())
+    if parsed.scheme not in {"http", "https"} or parsed.hostname not in {
+        "127.0.0.1",
+        "localhost",
+        "::1",
+    }:
+        return value
+    base_port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    port = base_port + offset
+    if port <= 0 or port > 65535:
+        raise SystemExit(f"Dev env port offset produces an invalid GlassHive port: {port}")
+    host = f"[{parsed.hostname}]" if ":" in parsed.hostname else parsed.hostname
+    return urlunsplit(parsed._replace(netloc=f"{host}:{port}"))
+
+
+def offset_local_glasshive(config: dict[str, Any], offset: int) -> None:
+    integrations = config.get("integrations")
+    if not isinstance(integrations, dict):
+        return
+    glasshive = integrations.get("glasshive")
+    if not isinstance(glasshive, dict) or glasshive.get("enabled") is not True:
+        return
+    enterprise = glasshive.get("enterprise")
+    enterprise_enabled = isinstance(enterprise, dict) and enterprise.get("enabled") is True
+    if enterprise_enabled:
+        return
+    provider = glasshive.setdefault("provider", {})
+    if not isinstance(provider, dict):
+        raise SystemExit("integrations.glasshive.provider must be a mapping when present")
+
+    # Local GlassHive is app-facing and must be unique per dev environment. Remote/enterprise
+    # endpoints are deployment resources, so their host/port are preserved exactly.
+    provider.setdefault("base_url", LOCAL_GLASSHIVE_DEFAULTS["provider_base_url"])
+    glasshive.setdefault("mcp_url", LOCAL_GLASSHIVE_DEFAULTS["mcp_url"])
+    glasshive.setdefault("operator_base_url", LOCAL_GLASSHIVE_DEFAULTS["operator_base_url"])
+    if provider.get("base_url"):
+        provider["base_url"] = offset_loopback_url(provider["base_url"], offset)
+    for key in ("mcp_url", "operator_base_url"):
+        if glasshive.get(key):
+            glasshive[key] = offset_loopback_url(glasshive[key], offset)
+
+
 def create_env(args: argparse.Namespace) -> int:
     base_config_path = Path(args.config_file).expanduser().resolve()
     app_support_dir = Path(args.app_support_dir).expanduser().resolve()
@@ -176,6 +226,7 @@ def create_env(args: argparse.Namespace) -> int:
     if scheduling_base in (None, ""):
         scheduling_base = SCHEDULING_MCP_PORT_DEFAULTS.get(runtime_profile, 7110)
     ports["scheduling_mcp_port"] = int(scheduling_base) + offset + SCHEDULING_MCP_PORT_OFFSET_BIAS
+    offset_local_glasshive(config, offset)
 
     dev_env = runtime.setdefault("dev_env", {})
     if not isinstance(dev_env, dict):

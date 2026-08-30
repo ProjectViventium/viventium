@@ -1,3 +1,4 @@
+<!-- qa-evidence-exempt: Historical evidence snapshot retained verbatim; retroactive v2 fields would invent evidence that was not captured during the run. -->
 # Installed Agent Builder GlassHive Fallback QA — 2026-08-04
 
 ## Outcome
@@ -225,4 +226,3 @@ its distinct attempt key.
 - Broad unrelated Feelings/Phase-B assertions: **FAIL outside this fallback repair** — captured above;
   they are not presented as green or used as fallback evidence.
 - No destructive user data or live Agent fields outside `fallback_llm_*` were changed.
-<!-- qa-evidence-exempt: Historical or specialized supporting artifact retained without retroactively inventing missing evidence; current release acceptance requires a fresh full-view report. -->

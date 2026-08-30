@@ -1,3 +1,4 @@
+<!-- qa-evidence-exempt: Historical evidence snapshot retained verbatim; retroactive v2 fields would invent evidence that was not captured during the run. -->
 # Nested Telegram Markdown Placeholder Rendering QA
 
 **Date:** 2026-07-27
@@ -91,4 +92,3 @@ After restart, verify the running source hash and send a normal synthetic prompt
 answer contains emphasis inside a block quote. Confirm the delivered bubble, bridge logs, and active
 artifact agree. Until that gate passes, this report does not claim that the currently running bridge
 contains the fix.
-<!-- qa-evidence-exempt: Historical or specialized supporting artifact retained without retroactively inventing missing evidence; current release acceptance requires a fresh full-view report. -->

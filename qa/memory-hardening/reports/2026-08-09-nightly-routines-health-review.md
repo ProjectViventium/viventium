@@ -1,3 +1,4 @@
+<!-- qa-evidence-exempt: Historical evidence snapshot retained verbatim; retroactive v2 fields would invent evidence that was not captured during the run. -->
 # 2026-08-09 Nightly Routines Health Review
 
 Public-safe, observer-only review of Viventium after the built-in 03:00 local routines. Private
@@ -206,4 +207,3 @@ unconfirmed.
 
 No product runtime, schedule, prompt, memory, conversation, transcript, vector, account, or
 background-agent state was changed by this audit.
-<!-- qa-evidence-exempt: Historical or specialized supporting artifact retained without retroactively inventing missing evidence; current release acceptance requires a fresh full-view report. -->

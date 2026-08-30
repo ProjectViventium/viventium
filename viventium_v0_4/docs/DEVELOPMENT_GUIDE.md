@@ -9,16 +9,17 @@ This guide documents development practices, environment setup, and repository ru
 
 ## Docs Map
 Start with:
-1. `docs/VIVENTIUM_STATUS.md`
-2. `docs/EXPECTED_BEHAVIOR.md`
-3. `docs/ARCHITECTURE.md`
-4. `docs/VOICE_CALLS.md`
-5. `docs/IMPLEMENTATION_INDEX.md`
+1. [Shared project rules](../../AGENTS.md)
+2. [Feature owner and QA map](../../docs/requirements_and_learnings/45_Runtime_Feature_QA_Map.md)
+3. [Expected behavior](EXPECTED_BEHAVIOR.md)
+4. [Architecture](ARCHITECTURE.md)
+5. [Voice calls](VOICE_CALLS.md)
+6. [Implementation index](IMPLEMENTATION_INDEX.md)
 
 ## Quick Start
 
 ### Prerequisites
-- Node.js 20+ (use `nvm use 20`)
+- Node.js 24 LTS (use the exact supported patch from the current release manifest; do not use Node 20)
 - MongoDB (local on 27017 or Atlas)
 - Docker (for LiveKit server in dev)
 - Python 3.10+ (voice gateway)

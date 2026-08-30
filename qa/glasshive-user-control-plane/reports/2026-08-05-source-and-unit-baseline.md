@@ -26,7 +26,7 @@ installed artifact, fresh install, upgrade, or rollback.
 | `GHUCP-001`–`014` | PARTIAL | 46 selected runtime tests plus relevant gateway/UI tests | Source support only; real user paths pending |
 | `GHUCP-017`–`022` | PARTIAL | 18 recurrence and selected Library/BFF/UI tests | Source support only; browser and schedule fire pending |
 | `GHUCP-025` | PARTIAL | Synthetic owner-scope and secret-boundary assertions | Two-user browser and final artifact scan pending |
-| `GHUCP-015`–`016`, `023`–`024`, `026`–`029` | PENDING | No candidate-specific real-surface evidence | Execute the owning cases before acceptance |
+| `GHUCP-015`–`016`, `023`–`024`, `026`–`029` | NOT RUN | No candidate-specific real-surface evidence | Execute the owning cases before acceptance |
 
 ## Natural User Use Case Checklist Run
 
@@ -35,13 +35,13 @@ installed artifact, fresh install, upgrade, or rollback.
 | `GHUCP-UC-001` | Sign in, refresh, and log out | No real browser/IdP; TestClient only | PARTIAL | None; no visible browser path run | Gateway assertions and source docs | Real hosted IdP/browser/session/log path |
 | `GHUCP-UC-002` | Connect a personal account and run one mission | No real provider/worker; synthetic runtime only | PARTIAL | None | Account/home/lease unit assertions | Native login and live worker mission |
 | `GHUCP-UC-003` | Create/find/rename/resume/duplicate a workspace | No real browser; synthetic API/filesystem only | PARTIAL | None | Catalog/duplicate test state | Glass Drive/desktop/restart path |
-| `GHUCP-UC-004` | Connect a service and use it through a worker | No real broker/provider surface | PENDING | None | Requirements and existing specialized owner links | Live connection/grant/tool/result audit |
+| `GHUCP-UC-004` | Connect a service and use it through a worker | No real broker/provider surface | NOT RUN | None | Requirements and existing specialized owner links | Live connection/grant/tool/result audit |
 | `GHUCP-UC-005` | Add/update/disable/remove a Library item | No real browser/adapter | PARTIAL | None | Pending-change/grant unit assertions | Browser confirmation, adapter/probe/rollback |
 | `GHUCP-UC-006` | Connect real Codex and Claude MCP clients | No real MCP client; TestClient only | PARTIAL | None | OAuth metadata/verifier assertions | Copy/paste, consent, tools, reconnect in both clients |
 | `GHUCP-UC-007` | Create recurring work and observe one fire | No real scheduler/user surface | PARTIAL | None | Recurrence store/API/MCP assertions | Clock-triggered worker/grant/lease/callback/result |
-| `GHUCP-UC-008` | Continue a direct Viventium GlassHive conversation | Not exercised | PENDING | None | Requirement/architecture inspection | Installed web/channel/voice/scheduler path |
+| `GHUCP-UC-008` | Continue a direct Viventium GlassHive conversation | Not exercised | NOT RUN | None | Requirement/architecture inspection | Installed web/channel/voice/scheduler path |
 | `GHUCP-UC-009` | Exercise unhappy/retry/cancel/cross-user paths | Synthetic tests only | PARTIAL | None | Selected negative assertions | Complete real-surface failure matrix |
-| `GHUCP-UC-010` | Fresh install, upgrade, restart, and rollback | Not exercised | PENDING | None | No artifact evidence | Public clean-room/installed continuity path |
+| `GHUCP-UC-010` | Fresh install, upgrade, restart, and rollback | Not exercised | NOT RUN | None | No artifact evidence | Public clean-room/installed continuity path |
 
 ## Traceability
 
@@ -79,7 +79,7 @@ installed artifact, fresh install, upgrade, or rollback.
 - Surface exercised: no real browser, computer, MCP client, scheduler, provider, Viventium channel,
   installer, or installed GlassHive surface was exercised; source-level TestClient/pytest only.
 - Real user path: not run; all browser/IdP, provider, MCP client, workspace, schedule-fire, direct
-  conversation, and installer paths remain `PARTIAL` or `PENDING`.
+  conversation, and installer paths remain `PARTIAL` or `NOT RUN`.
 - Visible outcome: none; no screenshot, DOM, accessibility tree, or delivered user result was used.
 - Expanded/detail state: not inspected because no real UI surface was run.
 - Persistence/reload result: not run against a real workspace or installed runtime; synthetic state

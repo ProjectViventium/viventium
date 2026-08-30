@@ -313,6 +313,8 @@ class AsyncVoiceProgressController:
                 "cancelling",
                 "cancelled_confirmed",
                 "cancelled_unenforceable",
+                "completed",
+                "failed",
             }
             and self._stop_active_speech is not None
         ):

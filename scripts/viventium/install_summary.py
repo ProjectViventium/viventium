@@ -34,6 +34,7 @@ from brain_readiness import (  # noqa: E402
 )
 from retrieval_config import resolve_retrieval_embeddings_settings  # noqa: E402
 from telegram_tokens import telegram_bot_token_looks_valid  # noqa: E402
+from parallel_work_release_gate import validate_serialized_release_snapshot  # noqa: E402
 
 
 DOCKER_LOCAL_FIRECRAWL_RECOMMENDED_MEMORY_BYTES = 4 * 1024 * 1024 * 1024
@@ -89,6 +90,105 @@ def load_runtime_env(runtime_dir: Path | None) -> dict[str, str]:
             key, value = line.split("=", 1)
             merged[key.strip()] = strip_wrapping_quotes(value.strip())
     return merged
+
+
+def load_parallel_work_release_snapshot(runtime_dir: Path | None) -> dict[str, Any] | None:
+    if runtime_dir is None:
+        return None
+    path = runtime_dir / "parallel-work-release-gate.json"
+    if not path.is_file():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not validate_serialized_release_snapshot(payload, runtime_dir):
+        return None
+    return payload
+
+
+def parallel_work_local_qa_requested(runtime_dir: Path | None) -> bool:
+    if runtime_dir is None:
+        return False
+    try:
+        payload = json.loads(
+            (runtime_dir / "parallel-work-local-qa-request.json").read_text(
+                encoding="utf-8"
+            )
+        )
+    except (OSError, json.JSONDecodeError):
+        return False
+    return (
+        isinstance(payload, dict)
+        and set(payload) == {"contractVersion", "mode", "requested"}
+        and payload.get("contractVersion") == 1
+        and payload.get("mode") == "local-qa"
+        and payload.get("requested") is True
+    )
+
+
+def parallel_work_release_row(
+    config: dict[str, Any],
+    runtime_dir: Path | None,
+) -> tuple[str, str, str]:
+    snapshot = load_parallel_work_release_snapshot(runtime_dir)
+    orchestration = (
+        (((config.get("integrations") or {}).get("glasshive") or {}).get("orchestration") or {})
+    )
+    if snapshot is None:
+        local_qa_requested = parallel_work_local_qa_requested(runtime_dir)
+        return (
+            "Parallel Work Release",
+            "PRE-GATE / NOT READY" if local_qa_requested else "NOT READY",
+            "snapshot_unavailable: typed release snapshot is missing or invalid; Parallel Work stays dark and focused.",
+        )
+
+    open_gates = [
+        str(gate.get("case_id") or "").strip()
+        for gate in snapshot["open_gates"]
+        if isinstance(gate, dict) and str(gate.get("case_id") or "").strip()
+    ]
+    blocking_checks = [
+        str(check.get("check_id") or "").strip()
+        for check in snapshot["readiness_checks"]
+        if isinstance(check, dict)
+        and str(check.get("status") or "").strip().upper() != "PASS"
+        and str(check.get("check_id") or "").strip()
+    ]
+    blocking_artifact_checks = [
+        str(check.get("check_id") or "").strip()
+        for check in snapshot["artifact_checks"]
+        if isinstance(check, dict)
+        and str(check.get("status") or "").strip().upper() != "PASS"
+        and str(check.get("check_id") or "").strip()
+    ]
+    local_override = snapshot.get("local_qa_override") is True
+    release_ready = (
+        snapshot["release_ready"] is True
+        and snapshot["source_defaults_dark"] is True
+        and not open_gates
+        and not blocking_checks
+        and not blocking_artifact_checks
+        and not local_override
+    )
+    if release_ready:
+        return (
+            "Parallel Work Release",
+            "READY",
+            "All typed release checks pass; source exposure defaults remain dark and focused.",
+        )
+
+    blockers = open_gates + blocking_checks + blocking_artifact_checks
+    visible_blockers = blockers[:8]
+    detail = "Blockers: " + ", ".join(visible_blockers) if visible_blockers else "Typed release checks are incomplete."
+    if len(blockers) > len(visible_blockers):
+        detail += f" (+{len(blockers) - len(visible_blockers)} more)"
+    detail += "; Parallel Work stays dark and focused."
+    return (
+        "Parallel Work Release",
+        "PRE-GATE / NOT READY" if local_override else "NOT READY",
+        detail,
+    )
 
 
 def foundation_api_key_present(config: dict[str, Any]) -> bool:
@@ -1916,6 +2016,8 @@ def build_service_rows(
             )
         )
 
+    rows.append(parallel_work_release_row(config, runtime_dir))
+
     helper_row = macos_helper_status(
         runtime_dir=runtime_dir,
         probe_live=probe_live,
@@ -2071,7 +2173,7 @@ def build_next_steps(
     install_mode = str(((config.get("install") or {}).get("mode") or "native")).strip().lower()
     if install_mode == "native":
         next_steps.append(
-            "Native installs run the core Viventium services as local background processes. Docker containers are only expected for Docker-backed features such as local SearXNG and Firecrawl."
+            "Native installs run the core Viventium services as local background processes. Docker containers are expected only for isolated features such as Parallel Work missions, local SearXNG, and Firecrawl."
         )
     next_steps.append(
         "Optional: run [cyan]bin/viventium shell-init[/cyan] for the one-line setup that adds "

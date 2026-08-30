@@ -1,0 +1,928 @@
+{
+  "schema": "viventium.voice.mpv-061.full-journey-evidence.v1",
+  "caseId": "MPV-061",
+  "scope": "full_journey",
+  "runAt": "2026-08-25T12:00:00.000Z",
+  "candidate": {
+    "candidateDigest": "f8e36072df6fc77d040181a73771b8645f73b0c82e68a398583c0edec81f329f",
+    "artifactDigest": "b45efb81bdbbb6736ce010fa27fc5e63c595ff6e4fc766a4c5aa8ad64ae962a2"
+  },
+  "run": {
+    "runRef": "sha256:acba25512100f80b56fc3ccd14c65be55d94800cda77585c5f41a887e398f9be",
+    "initialSessionRef": "sha256:c75e625f43f992947a1571346aa2e0f00160df4eafe9acd629d256fbc83e0741",
+    "reconnectSessionRef": "sha256:64b5d1345bf2a3c970c5136aeeb6bccca9e3dd634a368235f71a074c4b54d9d1",
+    "conversationRef": "sha256:8b34dbc2c05eb4d7e25d48efeace82456b16cee760bcae80c157f52a3c2e787b",
+    "reconnectConversationRef": "sha256:8b34dbc2c05eb4d7e25d48efeace82456b16cee760bcae80c157f52a3c2e787b",
+    "initialSessionEnded": true,
+    "reconnectExplicitlyStarted": true,
+    "acceptedWorkCancelledByHangupCount": 0,
+    "unsolicitedResultCallCount": 0,
+    "modeAuthoritySource": "persisted_call_session",
+    "evidence": [
+      "session-ledger",
+      "mode-ledger"
+    ]
+  },
+  "evidence": [
+    {
+      "id": "initial-audio",
+      "kind": "voice_recording",
+      "path": "evidence/initial-audio.bin",
+      "sha256": "832171defe472285980182f5b7b972b2fcf061f3a7f935e5c02b09c2fd933785",
+      "runRef": "sha256:acba25512100f80b56fc3ccd14c65be55d94800cda77585c5f41a887e398f9be",
+      "sessionRefs": [
+        "sha256:c75e625f43f992947a1571346aa2e0f00160df4eafe9acd629d256fbc83e0741"
+      ],
+      "entityRefs": [
+        "sha256:974cad2dd603827b06e9e6affa3de03db5af2c12c045db679a7b1bef42b41a1c",
+        "sha256:ff33c94032d9f01447a779689c1dff6a7a160ad92095943f0c08adbab194eecd",
+        "sha256:431ad49b3e0129a11ea5a0320c1880246c7a3b3a79c8664e3ff92b664eb767c6",
+        "sha256:58b311685bfb056191a4001ea23f50e5122e1c05546917c22938a1a80b81fd33",
+        "sha256:608784f3d22616746512949787bdfb2938a9233c5636d7b8d38fc95a3789eb06"
+      ]
+    },
+    {
+      "id": "reconnect-audio",
+      "kind": "voice_recording",
+      "path": "evidence/reconnect-audio.bin",
+      "sha256": "35d80410e8651c4a4e7b4cf2c6598a1395615668e0166cb557b012e6b700cf46",
+      "runRef": "sha256:acba25512100f80b56fc3ccd14c65be55d94800cda77585c5f41a887e398f9be",
+      "sessionRefs": [
+        "sha256:64b5d1345bf2a3c970c5136aeeb6bccca9e3dd634a368235f71a074c4b54d9d1"
+      ],
+      "entityRefs": [
+        "sha256:544b8d42b60ca8ac85c732608638a3fb726fa5eee26fec09e3006d3df340bd64",
+        "sha256:c8196fb128b89f486c374c42dba8df8effb71184dcf028fc97d84d1eb5c40383"
+      ]
+    },
+    {
+      "id": "initial-transcript",
+      "kind": "voice_transcript",
+      "path": "evidence/initial-transcript.bin",
+      "sha256": "f6be06334d5e6764f8806e2abf3b53ceb894b642d308010f6ddd26633409227f",
+      "runRef": "sha256:acba25512100f80b56fc3ccd14c65be55d94800cda77585c5f41a887e398f9be",
+      "sessionRefs": [
+        "sha256:c75e625f43f992947a1571346aa2e0f00160df4eafe9acd629d256fbc83e0741"
+      ],
+      "entityRefs": [
+        "sha256:974cad2dd603827b06e9e6affa3de03db5af2c12c045db679a7b1bef42b41a1c",
+        "sha256:ff33c94032d9f01447a779689c1dff6a7a160ad92095943f0c08adbab194eecd",
+        "sha256:431ad49b3e0129a11ea5a0320c1880246c7a3b3a79c8664e3ff92b664eb767c6",
+        "sha256:58b311685bfb056191a4001ea23f50e5122e1c05546917c22938a1a80b81fd33",
+        "sha256:608784f3d22616746512949787bdfb2938a9233c5636d7b8d38fc95a3789eb06"
+      ]
+    },
+    {
+      "id": "reconnect-transcript",
+      "kind": "voice_transcript",
+      "path": "evidence/reconnect-transcript.bin",
+      "sha256": "a5630858add0d3e22ec7cbee1440d1a91724f6b812531b9ba906747d1eeccc1a",
+      "runRef": "sha256:acba25512100f80b56fc3ccd14c65be55d94800cda77585c5f41a887e398f9be",
+      "sessionRefs": [
+        "sha256:64b5d1345bf2a3c970c5136aeeb6bccca9e3dd634a368235f71a074c4b54d9d1"
+      ],
+      "entityRefs": [
+        "sha256:544b8d42b60ca8ac85c732608638a3fb726fa5eee26fec09e3006d3df340bd64",
+        "sha256:c8196fb128b89f486c374c42dba8df8effb71184dcf028fc97d84d1eb5c40383"
+      ]
+    },
+    {
+      "id": "session-ledger",
+      "kind": "session_ledger",
+      "path": "evidence/session-ledger.bin",
+      "sha256": "99b5caad8856abf29439264924319307f90c1c8846ee6ffd52e2e8a2de9dc0de",
+      "runRef": "sha256:acba25512100f80b56fc3ccd14c65be55d94800cda77585c5f41a887e398f9be",
+      "sessionRefs": [
+        "sha256:c75e625f43f992947a1571346aa2e0f00160df4eafe9acd629d256fbc83e0741",
+        "sha256:64b5d1345bf2a3c970c5136aeeb6bccca9e3dd634a368235f71a074c4b54d9d1"
+      ],
+      "entityRefs": [
+        "sha256:acba25512100f80b56fc3ccd14c65be55d94800cda77585c5f41a887e398f9be",
+        "sha256:c75e625f43f992947a1571346aa2e0f00160df4eafe9acd629d256fbc83e0741",
+        "sha256:64b5d1345bf2a3c970c5136aeeb6bccca9e3dd634a368235f71a074c4b54d9d1",
+        "sha256:8b34dbc2c05eb4d7e25d48efeace82456b16cee760bcae80c157f52a3c2e787b"
+      ]
+    },
+    {
+      "id": "worker-ledger",
+      "kind": "worker_ledger",
+      "path": "evidence/worker-ledger.bin",
+      "sha256": "1a564dd1ddce18376ecd131c199e4d28eebd109963584d7e78a20f8110bd7623",
+      "runRef": "sha256:acba25512100f80b56fc3ccd14c65be55d94800cda77585c5f41a887e398f9be",
+      "sessionRefs": [
+        "sha256:c75e625f43f992947a1571346aa2e0f00160df4eafe9acd629d256fbc83e0741",
+        "sha256:64b5d1345bf2a3c970c5136aeeb6bccca9e3dd634a368235f71a074c4b54d9d1"
+      ],
+      "entityRefs": [
+        "sha256:acba25512100f80b56fc3ccd14c65be55d94800cda77585c5f41a887e398f9be",
+        "sha256:c75e625f43f992947a1571346aa2e0f00160df4eafe9acd629d256fbc83e0741",
+        "sha256:64b5d1345bf2a3c970c5136aeeb6bccca9e3dd634a368235f71a074c4b54d9d1",
+        "sha256:8b34dbc2c05eb4d7e25d48efeace82456b16cee760bcae80c157f52a3c2e787b",
+        "sha256:6a65e237ae44c42895b5049031466616173469f513b00240e9db90df66906a49",
+        "sha256:0482c4aea1af397e54200017866d778ce32e1daac473f2cd09a9159d2e69b6ef",
+        "sha256:3757d6445c7f6cbc3545cc93b294cea0eb8dd5cb7d870ee610766e1853139a1c",
+        "sha256:eab8781e9c02f9afbc630eaf3d9e8ab55401435a83d3d6b40c6ece976411a029",
+        "sha256:b9ff8530fff00bc8a8c0de4283f03e80a990dbcd136d161553764147dad722ab",
+        "sha256:bd430d3b7a572baa85d538bf6f93ae0409a888ffd98a0757f2a109b3af63275a",
+        "sha256:1c117424063a58ade52a685270930a390fb666bc0057ff8d10142476000bd8ff",
+        "sha256:14ad0f4db158e76b49d24af909f32e5110590a3632a3e8c8fc9761e8a000250e",
+        "sha256:13051e349c6f87a0f83427b2d742806fc8e01699c7429ce5b94acd0cece66dbc",
+        "sha256:6462d191923d0d849234de241cf341d949f88488593f29e3601b94bd645b7dee",
+        "sha256:974cad2dd603827b06e9e6affa3de03db5af2c12c045db679a7b1bef42b41a1c",
+        "sha256:ff33c94032d9f01447a779689c1dff6a7a160ad92095943f0c08adbab194eecd",
+        "sha256:431ad49b3e0129a11ea5a0320c1880246c7a3b3a79c8664e3ff92b664eb767c6",
+        "sha256:58b311685bfb056191a4001ea23f50e5122e1c05546917c22938a1a80b81fd33",
+        "sha256:608784f3d22616746512949787bdfb2938a9233c5636d7b8d38fc95a3789eb06",
+        "sha256:544b8d42b60ca8ac85c732608638a3fb726fa5eee26fec09e3006d3df340bd64",
+        "sha256:c8196fb128b89f486c374c42dba8df8effb71184dcf028fc97d84d1eb5c40383"
+      ]
+    },
+    {
+      "id": "action-ledger",
+      "kind": "action_ledger",
+      "path": "evidence/action-ledger.bin",
+      "sha256": "77651a2a77dd111f23387df424749a443ad40189a0ac49e4db8a2b4535bb651c",
+      "runRef": "sha256:acba25512100f80b56fc3ccd14c65be55d94800cda77585c5f41a887e398f9be",
+      "sessionRefs": [
+        "sha256:c75e625f43f992947a1571346aa2e0f00160df4eafe9acd629d256fbc83e0741"
+      ],
+      "entityRefs": [
+        "sha256:acba25512100f80b56fc3ccd14c65be55d94800cda77585c5f41a887e398f9be",
+        "sha256:c75e625f43f992947a1571346aa2e0f00160df4eafe9acd629d256fbc83e0741",
+        "sha256:64b5d1345bf2a3c970c5136aeeb6bccca9e3dd634a368235f71a074c4b54d9d1",
+        "sha256:8b34dbc2c05eb4d7e25d48efeace82456b16cee760bcae80c157f52a3c2e787b",
+        "sha256:05ccee14325efb09d282e106666384b2234dedc462e112beba5438973effb07b",
+        "sha256:9446d526658b69c61a9b46a9660871614b12d0cea1988ce0ad1e73a304925273",
+        "sha256:6a65e237ae44c42895b5049031466616173469f513b00240e9db90df66906a49",
+        "sha256:3757d6445c7f6cbc3545cc93b294cea0eb8dd5cb7d870ee610766e1853139a1c",
+        "sha256:b9ff8530fff00bc8a8c0de4283f03e80a990dbcd136d161553764147dad722ab",
+        "sha256:0482c4aea1af397e54200017866d778ce32e1daac473f2cd09a9159d2e69b6ef",
+        "sha256:1c117424063a58ade52a685270930a390fb666bc0057ff8d10142476000bd8ff",
+        "sha256:14ad0f4db158e76b49d24af909f32e5110590a3632a3e8c8fc9761e8a000250e",
+        "sha256:974cad2dd603827b06e9e6affa3de03db5af2c12c045db679a7b1bef42b41a1c",
+        "sha256:ff33c94032d9f01447a779689c1dff6a7a160ad92095943f0c08adbab194eecd",
+        "sha256:431ad49b3e0129a11ea5a0320c1880246c7a3b3a79c8664e3ff92b664eb767c6",
+        "sha256:58b311685bfb056191a4001ea23f50e5122e1c05546917c22938a1a80b81fd33",
+        "sha256:608784f3d22616746512949787bdfb2938a9233c5636d7b8d38fc95a3789eb06"
+      ]
+    },
+    {
+      "id": "upload-ledger",
+      "kind": "upload_ledger",
+      "path": "evidence/upload-ledger.bin",
+      "sha256": "a8939e8ddea95d6e9a24b45b80dd662f43337dee80851bb17c7ee57f868adf2f",
+      "runRef": "sha256:acba25512100f80b56fc3ccd14c65be55d94800cda77585c5f41a887e398f9be",
+      "sessionRefs": [
+        "sha256:c75e625f43f992947a1571346aa2e0f00160df4eafe9acd629d256fbc83e0741"
+      ],
+      "entityRefs": [
+        "sha256:34aef6010d1b3562cf9bbd3005f29d689bb4d891e57ac272ffd2386b6535d72d",
+        "sha256:d33151773ed20de2e5252812bab28c666d7896ca5cbd890868088534b1400c69",
+        "sha256:6a65e237ae44c42895b5049031466616173469f513b00240e9db90df66906a49",
+        "sha256:0482c4aea1af397e54200017866d778ce32e1daac473f2cd09a9159d2e69b6ef"
+      ]
+    },
+    {
+      "id": "capability-ledger",
+      "kind": "capability_ledger",
+      "path": "evidence/capability-ledger.bin",
+      "sha256": "99471209357f3f6e7bf09a114144ac33c47d6abf816360fe34b74eac7878c127",
+      "runRef": "sha256:acba25512100f80b56fc3ccd14c65be55d94800cda77585c5f41a887e398f9be",
+      "sessionRefs": [
+        "sha256:c75e625f43f992947a1571346aa2e0f00160df4eafe9acd629d256fbc83e0741"
+      ],
+      "entityRefs": [
+        "sha256:6a65e237ae44c42895b5049031466616173469f513b00240e9db90df66906a49",
+        "sha256:0482c4aea1af397e54200017866d778ce32e1daac473f2cd09a9159d2e69b6ef",
+        "sha256:3757d6445c7f6cbc3545cc93b294cea0eb8dd5cb7d870ee610766e1853139a1c",
+        "sha256:eab8781e9c02f9afbc630eaf3d9e8ab55401435a83d3d6b40c6ece976411a029"
+      ]
+    },
+    {
+      "id": "callback-ledger",
+      "kind": "callback_ledger",
+      "path": "evidence/callback-ledger.bin",
+      "sha256": "d261c293409cc1d59d9191fcfe8997ed26e84d26fda5ffc5913820e37db92ae6",
+      "runRef": "sha256:acba25512100f80b56fc3ccd14c65be55d94800cda77585c5f41a887e398f9be",
+      "sessionRefs": [
+        "sha256:c75e625f43f992947a1571346aa2e0f00160df4eafe9acd629d256fbc83e0741",
+        "sha256:64b5d1345bf2a3c970c5136aeeb6bccca9e3dd634a368235f71a074c4b54d9d1"
+      ],
+      "entityRefs": [
+        "sha256:6a65e237ae44c42895b5049031466616173469f513b00240e9db90df66906a49",
+        "sha256:0482c4aea1af397e54200017866d778ce32e1daac473f2cd09a9159d2e69b6ef",
+        "sha256:3757d6445c7f6cbc3545cc93b294cea0eb8dd5cb7d870ee610766e1853139a1c",
+        "sha256:eab8781e9c02f9afbc630eaf3d9e8ab55401435a83d3d6b40c6ece976411a029",
+        "sha256:b9ff8530fff00bc8a8c0de4283f03e80a990dbcd136d161553764147dad722ab",
+        "sha256:bd430d3b7a572baa85d538bf6f93ae0409a888ffd98a0757f2a109b3af63275a",
+        "sha256:13051e349c6f87a0f83427b2d742806fc8e01699c7429ce5b94acd0cece66dbc",
+        "sha256:6462d191923d0d849234de241cf341d949f88488593f29e3601b94bd645b7dee"
+      ]
+    },
+    {
+      "id": "delivery-ledger",
+      "kind": "delivery_ledger",
+      "path": "evidence/delivery-ledger.bin",
+      "sha256": "d3df560d9e33fdc5c864be1f183b7badd3f2b916465196055aedd1abea4d8557",
+      "runRef": "sha256:acba25512100f80b56fc3ccd14c65be55d94800cda77585c5f41a887e398f9be",
+      "sessionRefs": [
+        "sha256:64b5d1345bf2a3c970c5136aeeb6bccca9e3dd634a368235f71a074c4b54d9d1"
+      ],
+      "entityRefs": [
+        "sha256:6a65e237ae44c42895b5049031466616173469f513b00240e9db90df66906a49",
+        "sha256:0482c4aea1af397e54200017866d778ce32e1daac473f2cd09a9159d2e69b6ef",
+        "sha256:3757d6445c7f6cbc3545cc93b294cea0eb8dd5cb7d870ee610766e1853139a1c",
+        "sha256:eab8781e9c02f9afbc630eaf3d9e8ab55401435a83d3d6b40c6ece976411a029",
+        "sha256:b9ff8530fff00bc8a8c0de4283f03e80a990dbcd136d161553764147dad722ab",
+        "sha256:bd430d3b7a572baa85d538bf6f93ae0409a888ffd98a0757f2a109b3af63275a",
+        "sha256:13051e349c6f87a0f83427b2d742806fc8e01699c7429ce5b94acd0cece66dbc",
+        "sha256:6462d191923d0d849234de241cf341d949f88488593f29e3601b94bd645b7dee",
+        "sha256:544b8d42b60ca8ac85c732608638a3fb726fa5eee26fec09e3006d3df340bd64",
+        "sha256:c8196fb128b89f486c374c42dba8df8effb71184dcf028fc97d84d1eb5c40383"
+      ]
+    },
+    {
+      "id": "logical-turn-ledger",
+      "kind": "logical_turn_ledger",
+      "path": "evidence/logical-turn-ledger.bin",
+      "sha256": "873353c552c4c22ac70b8a7913fd32035e7de88eb349b6a92f4a2f897017a183",
+      "runRef": "sha256:acba25512100f80b56fc3ccd14c65be55d94800cda77585c5f41a887e398f9be",
+      "sessionRefs": [
+        "sha256:c75e625f43f992947a1571346aa2e0f00160df4eafe9acd629d256fbc83e0741",
+        "sha256:64b5d1345bf2a3c970c5136aeeb6bccca9e3dd634a368235f71a074c4b54d9d1"
+      ],
+      "entityRefs": [
+        "sha256:974cad2dd603827b06e9e6affa3de03db5af2c12c045db679a7b1bef42b41a1c",
+        "sha256:ff33c94032d9f01447a779689c1dff6a7a160ad92095943f0c08adbab194eecd",
+        "sha256:431ad49b3e0129a11ea5a0320c1880246c7a3b3a79c8664e3ff92b664eb767c6",
+        "sha256:58b311685bfb056191a4001ea23f50e5122e1c05546917c22938a1a80b81fd33",
+        "sha256:608784f3d22616746512949787bdfb2938a9233c5636d7b8d38fc95a3789eb06",
+        "sha256:544b8d42b60ca8ac85c732608638a3fb726fa5eee26fec09e3006d3df340bd64",
+        "sha256:c8196fb128b89f486c374c42dba8df8effb71184dcf028fc97d84d1eb5c40383"
+      ]
+    },
+    {
+      "id": "linked-before",
+      "kind": "linked_chat_capture",
+      "path": "evidence/linked-before.bin",
+      "sha256": "4c98bc6337548049d5082f76c8a369fc3105bf07094a1d975623d136a22cdb24",
+      "runRef": "sha256:acba25512100f80b56fc3ccd14c65be55d94800cda77585c5f41a887e398f9be",
+      "sessionRefs": [
+        "sha256:c75e625f43f992947a1571346aa2e0f00160df4eafe9acd629d256fbc83e0741"
+      ],
+      "entityRefs": [
+        "sha256:6a65e237ae44c42895b5049031466616173469f513b00240e9db90df66906a49",
+        "sha256:0482c4aea1af397e54200017866d778ce32e1daac473f2cd09a9159d2e69b6ef"
+      ]
+    },
+    {
+      "id": "linked-after",
+      "kind": "linked_chat_capture",
+      "path": "evidence/linked-after.bin",
+      "sha256": "d766fc890b60fbc2555da7cad2b447c3b202af4546c80bd7910013a706f11798",
+      "runRef": "sha256:acba25512100f80b56fc3ccd14c65be55d94800cda77585c5f41a887e398f9be",
+      "sessionRefs": [
+        "sha256:64b5d1345bf2a3c970c5136aeeb6bccca9e3dd634a368235f71a074c4b54d9d1"
+      ],
+      "entityRefs": [
+        "sha256:6a65e237ae44c42895b5049031466616173469f513b00240e9db90df66906a49",
+        "sha256:0482c4aea1af397e54200017866d778ce32e1daac473f2cd09a9159d2e69b6ef",
+        "sha256:13051e349c6f87a0f83427b2d742806fc8e01699c7429ce5b94acd0cece66dbc",
+        "sha256:6462d191923d0d849234de241cf341d949f88488593f29e3601b94bd645b7dee"
+      ]
+    },
+    {
+      "id": "active-before",
+      "kind": "active_work_capture",
+      "path": "evidence/active-before.bin",
+      "sha256": "5136ff667c8f2f8923e046f379b5c4f1fadfdc10f021242bd13d10cf6e49b538",
+      "runRef": "sha256:acba25512100f80b56fc3ccd14c65be55d94800cda77585c5f41a887e398f9be",
+      "sessionRefs": [
+        "sha256:c75e625f43f992947a1571346aa2e0f00160df4eafe9acd629d256fbc83e0741"
+      ],
+      "entityRefs": [
+        "sha256:6a65e237ae44c42895b5049031466616173469f513b00240e9db90df66906a49",
+        "sha256:0482c4aea1af397e54200017866d778ce32e1daac473f2cd09a9159d2e69b6ef"
+      ]
+    },
+    {
+      "id": "active-after",
+      "kind": "active_work_capture",
+      "path": "evidence/active-after.bin",
+      "sha256": "5a9408c7dc5d91949d3a4e3de7b29dde6fdf0b9d8a62c8ba89a6d83b76c85458",
+      "runRef": "sha256:acba25512100f80b56fc3ccd14c65be55d94800cda77585c5f41a887e398f9be",
+      "sessionRefs": [
+        "sha256:64b5d1345bf2a3c970c5136aeeb6bccca9e3dd634a368235f71a074c4b54d9d1"
+      ],
+      "entityRefs": [
+        "sha256:6a65e237ae44c42895b5049031466616173469f513b00240e9db90df66906a49",
+        "sha256:0482c4aea1af397e54200017866d778ce32e1daac473f2cd09a9159d2e69b6ef",
+        "sha256:13051e349c6f87a0f83427b2d742806fc8e01699c7429ce5b94acd0cece66dbc",
+        "sha256:6462d191923d0d849234de241cf341d949f88488593f29e3601b94bd645b7dee"
+      ]
+    },
+    {
+      "id": "artifact-a-open",
+      "kind": "artifact_open_capture",
+      "path": "evidence/artifact-a-open.bin",
+      "sha256": "89919628b4ace71ef481d8f4ddeb58f7a7230c0d4f65030c8f012c63724f0765",
+      "runRef": "sha256:acba25512100f80b56fc3ccd14c65be55d94800cda77585c5f41a887e398f9be",
+      "sessionRefs": [
+        "sha256:64b5d1345bf2a3c970c5136aeeb6bccca9e3dd634a368235f71a074c4b54d9d1"
+      ],
+      "entityRefs": [
+        "sha256:6a65e237ae44c42895b5049031466616173469f513b00240e9db90df66906a49",
+        "sha256:3757d6445c7f6cbc3545cc93b294cea0eb8dd5cb7d870ee610766e1853139a1c",
+        "sha256:b9ff8530fff00bc8a8c0de4283f03e80a990dbcd136d161553764147dad722ab",
+        "sha256:13051e349c6f87a0f83427b2d742806fc8e01699c7429ce5b94acd0cece66dbc"
+      ]
+    },
+    {
+      "id": "artifact-b-open",
+      "kind": "artifact_open_capture",
+      "path": "evidence/artifact-b-open.bin",
+      "sha256": "55a76cebe6160bd9317f1f0dd626e76c852ef54cac44069f1cb1343d8dc0d96f",
+      "runRef": "sha256:acba25512100f80b56fc3ccd14c65be55d94800cda77585c5f41a887e398f9be",
+      "sessionRefs": [
+        "sha256:64b5d1345bf2a3c970c5136aeeb6bccca9e3dd634a368235f71a074c4b54d9d1"
+      ],
+      "entityRefs": [
+        "sha256:0482c4aea1af397e54200017866d778ce32e1daac473f2cd09a9159d2e69b6ef",
+        "sha256:eab8781e9c02f9afbc630eaf3d9e8ab55401435a83d3d6b40c6ece976411a029",
+        "sha256:bd430d3b7a572baa85d538bf6f93ae0409a888ffd98a0757f2a109b3af63275a",
+        "sha256:6462d191923d0d849234de241cf341d949f88488593f29e3601b94bd645b7dee"
+      ]
+    },
+    {
+      "id": "mode-ledger",
+      "kind": "mode_authority_ledger",
+      "path": "evidence/mode-ledger.bin",
+      "sha256": "79db534cea0fc793f9f3abc2436d1413cb2f97d92548ddf921cbea297dd9bd25",
+      "runRef": "sha256:acba25512100f80b56fc3ccd14c65be55d94800cda77585c5f41a887e398f9be",
+      "sessionRefs": [
+        "sha256:c75e625f43f992947a1571346aa2e0f00160df4eafe9acd629d256fbc83e0741"
+      ],
+      "entityRefs": [
+        "sha256:acba25512100f80b56fc3ccd14c65be55d94800cda77585c5f41a887e398f9be",
+        "sha256:c75e625f43f992947a1571346aa2e0f00160df4eafe9acd629d256fbc83e0741",
+        "sha256:64b5d1345bf2a3c970c5136aeeb6bccca9e3dd634a368235f71a074c4b54d9d1",
+        "sha256:8b34dbc2c05eb4d7e25d48efeace82456b16cee760bcae80c157f52a3c2e787b",
+        "sha256:974cad2dd603827b06e9e6affa3de03db5af2c12c045db679a7b1bef42b41a1c",
+        "sha256:ff33c94032d9f01447a779689c1dff6a7a160ad92095943f0c08adbab194eecd",
+        "sha256:431ad49b3e0129a11ea5a0320c1880246c7a3b3a79c8664e3ff92b664eb767c6",
+        "sha256:58b311685bfb056191a4001ea23f50e5122e1c05546917c22938a1a80b81fd33",
+        "sha256:608784f3d22616746512949787bdfb2938a9233c5636d7b8d38fc95a3789eb06"
+      ]
+    },
+    {
+      "id": "public-safety",
+      "kind": "public_safety_report",
+      "path": "evidence/public-safety.bin",
+      "sha256": "1ac0069bfaa960b706438225bfe967eaf0e9de346041963fd4c139250f1082c6",
+      "runRef": "sha256:acba25512100f80b56fc3ccd14c65be55d94800cda77585c5f41a887e398f9be",
+      "sessionRefs": [
+        "sha256:c75e625f43f992947a1571346aa2e0f00160df4eafe9acd629d256fbc83e0741",
+        "sha256:64b5d1345bf2a3c970c5136aeeb6bccca9e3dd634a368235f71a074c4b54d9d1"
+      ],
+      "entityRefs": [
+        "sha256:acba25512100f80b56fc3ccd14c65be55d94800cda77585c5f41a887e398f9be",
+        "sha256:c75e625f43f992947a1571346aa2e0f00160df4eafe9acd629d256fbc83e0741",
+        "sha256:64b5d1345bf2a3c970c5136aeeb6bccca9e3dd634a368235f71a074c4b54d9d1",
+        "sha256:8b34dbc2c05eb4d7e25d48efeace82456b16cee760bcae80c157f52a3c2e787b"
+      ]
+    }
+  ],
+  "voice": {
+    "queenSpeakerRef": "sha256:6fc09ecdcfda37945f3c0cbb01556377028d856f55ebf062765ef0e76c483c39",
+    "observedAssistantSpeakerRefs": [
+      "sha256:6fc09ecdcfda37945f3c0cbb01556377028d856f55ebf062765ef0e76c483c39"
+    ],
+    "turnOrder": [
+      "trustedWingLaunch",
+      "quickConversation",
+      "trustedWingControl",
+      "passiveWingDenial",
+      "listenOnlyDenial"
+    ],
+    "turns": {
+      "trustedWingLaunch": {
+        "ordinal": 1,
+        "kind": "trustedWingLaunch",
+        "runRef": "sha256:acba25512100f80b56fc3ccd14c65be55d94800cda77585c5f41a887e398f9be",
+        "sessionRef": "sha256:c75e625f43f992947a1571346aa2e0f00160df4eafe9acd629d256fbc83e0741",
+        "conversationRef": "sha256:8b34dbc2c05eb4d7e25d48efeace82456b16cee760bcae80c157f52a3c2e787b",
+        "mode": "wing",
+        "modeAuthoritySource": "persisted_call_session",
+        "actorTrust": "owner_participant",
+        "directlyAddressed": true,
+        "sideEffectAuthorityGranted": true,
+        "logicalTurnRef": "sha256:974cad2dd603827b06e9e6affa3de03db5af2c12c045db679a7b1bef42b41a1c",
+        "logicalRevision": 1,
+        "transcriptVisible": true,
+        "inputAudioCaptured": true,
+        "transcriptMatchedAudio": true,
+        "transcriptEvidence": "initial-transcript",
+        "inputAudioEvidence": "initial-audio",
+        "outputAudioEvidence": "initial-audio",
+        "assistantSpeakerRef": "sha256:6fc09ecdcfda37945f3c0cbb01556377028d856f55ebf062765ef0e76c483c39",
+        "effects": {
+          "missionCount": 2,
+          "actionCount": 0,
+          "launchInvocationCount": 1,
+          "controlInvocationCount": 0,
+          "toolInvocationCount": 1,
+          "controllerInvocationCount": 1,
+          "cortexInvocationCount": 0,
+          "liveMemoryInvocationCount": 0,
+          "recallInvocationCount": 0,
+          "titleModelInvocationCount": 0,
+          "mainResponseCount": 1,
+          "ttsInputCount": 1,
+          "assistantAudioOutputCount": 1
+        },
+        "evidence": [
+          "initial-transcript",
+          "initial-audio",
+          "logical-turn-ledger",
+          "worker-ledger",
+          "action-ledger",
+          "mode-ledger"
+        ],
+        "requestedWorkerRefs": [
+          "sha256:6a65e237ae44c42895b5049031466616173469f513b00240e9db90df66906a49",
+          "sha256:0482c4aea1af397e54200017866d778ce32e1daac473f2cd09a9159d2e69b6ef"
+        ],
+        "acceptedWorkerRefs": [
+          "sha256:6a65e237ae44c42895b5049031466616173469f513b00240e9db90df66906a49",
+          "sha256:0482c4aea1af397e54200017866d778ce32e1daac473f2cd09a9159d2e69b6ef"
+        ],
+        "acceptedLaunchReceiptRefs": [
+          "sha256:1c117424063a58ade52a685270930a390fb666bc0057ff8d10142476000bd8ff",
+          "sha256:14ad0f4db158e76b49d24af909f32e5110590a3632a3e8c8fc9761e8a000250e"
+        ],
+        "rejectedLaunchReceiptCount": 0
+      },
+      "quickConversation": {
+        "ordinal": 2,
+        "kind": "quickConversation",
+        "runRef": "sha256:acba25512100f80b56fc3ccd14c65be55d94800cda77585c5f41a887e398f9be",
+        "sessionRef": "sha256:c75e625f43f992947a1571346aa2e0f00160df4eafe9acd629d256fbc83e0741",
+        "conversationRef": "sha256:8b34dbc2c05eb4d7e25d48efeace82456b16cee760bcae80c157f52a3c2e787b",
+        "mode": "wing",
+        "modeAuthoritySource": "persisted_call_session",
+        "actorTrust": "owner_participant",
+        "directlyAddressed": true,
+        "sideEffectAuthorityGranted": true,
+        "logicalTurnRef": "sha256:ff33c94032d9f01447a779689c1dff6a7a160ad92095943f0c08adbab194eecd",
+        "logicalRevision": 2,
+        "transcriptVisible": true,
+        "inputAudioCaptured": true,
+        "transcriptMatchedAudio": true,
+        "transcriptEvidence": "initial-transcript",
+        "inputAudioEvidence": "initial-audio",
+        "outputAudioEvidence": "initial-audio",
+        "assistantSpeakerRef": "sha256:6fc09ecdcfda37945f3c0cbb01556377028d856f55ebf062765ef0e76c483c39",
+        "effects": {
+          "missionCount": 0,
+          "actionCount": 0,
+          "launchInvocationCount": 0,
+          "controlInvocationCount": 0,
+          "toolInvocationCount": 0,
+          "controllerInvocationCount": 0,
+          "cortexInvocationCount": 0,
+          "liveMemoryInvocationCount": 0,
+          "recallInvocationCount": 0,
+          "titleModelInvocationCount": 0,
+          "mainResponseCount": 1,
+          "ttsInputCount": 1,
+          "assistantAudioOutputCount": 1
+        },
+        "evidence": [
+          "initial-transcript",
+          "initial-audio",
+          "logical-turn-ledger"
+        ],
+        "currentReply": true,
+        "unrelatedToWorkerMissions": true,
+        "activeWorkerRefs": [
+          "sha256:6a65e237ae44c42895b5049031466616173469f513b00240e9db90df66906a49",
+          "sha256:0482c4aea1af397e54200017866d778ce32e1daac473f2cd09a9159d2e69b6ef"
+        ],
+        "workerMutationCount": 0
+      },
+      "trustedWingControl": {
+        "ordinal": 3,
+        "kind": "trustedWingControl",
+        "runRef": "sha256:acba25512100f80b56fc3ccd14c65be55d94800cda77585c5f41a887e398f9be",
+        "sessionRef": "sha256:c75e625f43f992947a1571346aa2e0f00160df4eafe9acd629d256fbc83e0741",
+        "conversationRef": "sha256:8b34dbc2c05eb4d7e25d48efeace82456b16cee760bcae80c157f52a3c2e787b",
+        "mode": "wing",
+        "modeAuthoritySource": "persisted_call_session",
+        "actorTrust": "owner_participant",
+        "directlyAddressed": true,
+        "sideEffectAuthorityGranted": true,
+        "logicalTurnRef": "sha256:431ad49b3e0129a11ea5a0320c1880246c7a3b3a79c8664e3ff92b664eb767c6",
+        "logicalRevision": 3,
+        "transcriptVisible": true,
+        "inputAudioCaptured": true,
+        "transcriptMatchedAudio": true,
+        "transcriptEvidence": "initial-transcript",
+        "inputAudioEvidence": "initial-audio",
+        "outputAudioEvidence": "initial-audio",
+        "assistantSpeakerRef": "sha256:6fc09ecdcfda37945f3c0cbb01556377028d856f55ebf062765ef0e76c483c39",
+        "effects": {
+          "missionCount": 0,
+          "actionCount": 1,
+          "launchInvocationCount": 0,
+          "controlInvocationCount": 1,
+          "toolInvocationCount": 1,
+          "controllerInvocationCount": 1,
+          "cortexInvocationCount": 0,
+          "liveMemoryInvocationCount": 0,
+          "recallInvocationCount": 0,
+          "titleModelInvocationCount": 0,
+          "mainResponseCount": 1,
+          "ttsInputCount": 1,
+          "assistantAudioOutputCount": 1
+        },
+        "evidence": [
+          "initial-transcript",
+          "initial-audio",
+          "logical-turn-ledger",
+          "action-ledger",
+          "worker-ledger",
+          "mode-ledger"
+        ],
+        "action": "steer",
+        "actionRef": "sha256:05ccee14325efb09d282e106666384b2234dedc462e112beba5438973effb07b",
+        "acceptedActionReceiptRef": "sha256:9446d526658b69c61a9b46a9660871614b12d0cea1988ce0ad1e73a304925273",
+        "targetWorkerRef": "sha256:6a65e237ae44c42895b5049031466616173469f513b00240e9db90df66906a49",
+        "targetMissionRef": "sha256:3757d6445c7f6cbc3545cc93b294cea0eb8dd5cb7d870ee610766e1853139a1c",
+        "targetAttemptRef": "sha256:b9ff8530fff00bc8a8c0de4283f03e80a990dbcd136d161553764147dad722ab",
+        "nonTargetWorkerRef": "sha256:0482c4aea1af397e54200017866d778ce32e1daac473f2cd09a9159d2e69b6ef",
+        "targetActionReceiptCount": 1,
+        "nonTargetActionReceiptCount": 0,
+        "targetMutationCount": 1,
+        "nonTargetMutationCount": 0
+      },
+      "passiveWingDenial": {
+        "ordinal": 4,
+        "kind": "passiveWingDenial",
+        "runRef": "sha256:acba25512100f80b56fc3ccd14c65be55d94800cda77585c5f41a887e398f9be",
+        "sessionRef": "sha256:c75e625f43f992947a1571346aa2e0f00160df4eafe9acd629d256fbc83e0741",
+        "conversationRef": "sha256:8b34dbc2c05eb4d7e25d48efeace82456b16cee760bcae80c157f52a3c2e787b",
+        "mode": "wing",
+        "modeAuthoritySource": "persisted_call_session",
+        "actorTrust": "owner_participant",
+        "directlyAddressed": false,
+        "sideEffectAuthorityGranted": false,
+        "logicalTurnRef": "sha256:58b311685bfb056191a4001ea23f50e5122e1c05546917c22938a1a80b81fd33",
+        "logicalRevision": 4,
+        "transcriptVisible": true,
+        "inputAudioCaptured": true,
+        "transcriptMatchedAudio": true,
+        "transcriptEvidence": "initial-transcript",
+        "inputAudioEvidence": "initial-audio",
+        "outputAudioEvidence": null,
+        "assistantSpeakerRef": null,
+        "effects": {
+          "missionCount": 0,
+          "actionCount": 0,
+          "launchInvocationCount": 0,
+          "controlInvocationCount": 0,
+          "toolInvocationCount": 0,
+          "controllerInvocationCount": 0,
+          "cortexInvocationCount": 0,
+          "liveMemoryInvocationCount": 0,
+          "recallInvocationCount": 0,
+          "titleModelInvocationCount": 0,
+          "mainResponseCount": 0,
+          "ttsInputCount": 0,
+          "assistantAudioOutputCount": 0
+        },
+        "evidence": [
+          "initial-transcript",
+          "initial-audio",
+          "logical-turn-ledger",
+          "mode-ledger",
+          "action-ledger"
+        ],
+        "transcriptObservationCount": 1
+      },
+      "listenOnlyDenial": {
+        "ordinal": 5,
+        "kind": "listenOnlyDenial",
+        "runRef": "sha256:acba25512100f80b56fc3ccd14c65be55d94800cda77585c5f41a887e398f9be",
+        "sessionRef": "sha256:c75e625f43f992947a1571346aa2e0f00160df4eafe9acd629d256fbc83e0741",
+        "conversationRef": "sha256:8b34dbc2c05eb4d7e25d48efeace82456b16cee760bcae80c157f52a3c2e787b",
+        "mode": "listen_only",
+        "modeAuthoritySource": "persisted_call_session",
+        "actorTrust": "owner_participant",
+        "directlyAddressed": true,
+        "sideEffectAuthorityGranted": false,
+        "logicalTurnRef": "sha256:608784f3d22616746512949787bdfb2938a9233c5636d7b8d38fc95a3789eb06",
+        "logicalRevision": 5,
+        "transcriptVisible": true,
+        "inputAudioCaptured": true,
+        "transcriptMatchedAudio": true,
+        "transcriptEvidence": "initial-transcript",
+        "inputAudioEvidence": "initial-audio",
+        "outputAudioEvidence": null,
+        "assistantSpeakerRef": null,
+        "effects": {
+          "missionCount": 0,
+          "actionCount": 0,
+          "launchInvocationCount": 0,
+          "controlInvocationCount": 0,
+          "toolInvocationCount": 0,
+          "controllerInvocationCount": 0,
+          "cortexInvocationCount": 0,
+          "liveMemoryInvocationCount": 0,
+          "recallInvocationCount": 0,
+          "titleModelInvocationCount": 0,
+          "mainResponseCount": 0,
+          "ttsInputCount": 0,
+          "assistantAudioOutputCount": 0
+        },
+        "evidence": [
+          "initial-transcript",
+          "initial-audio",
+          "logical-turn-ledger",
+          "mode-ledger",
+          "action-ledger"
+        ],
+        "ambientTranscriptCount": 1
+      }
+    },
+    "completionTurns": [
+      {
+        "ordinal": 6,
+        "kind": "workerCompletion",
+        "runRef": "sha256:acba25512100f80b56fc3ccd14c65be55d94800cda77585c5f41a887e398f9be",
+        "sessionRef": "sha256:64b5d1345bf2a3c970c5136aeeb6bccca9e3dd634a368235f71a074c4b54d9d1",
+        "conversationRef": "sha256:8b34dbc2c05eb4d7e25d48efeace82456b16cee760bcae80c157f52a3c2e787b",
+        "mode": "call",
+        "logicalTurnRef": "sha256:544b8d42b60ca8ac85c732608638a3fb726fa5eee26fec09e3006d3df340bd64",
+        "logicalRevision": 6,
+        "workerRef": "sha256:6a65e237ae44c42895b5049031466616173469f513b00240e9db90df66906a49",
+        "missionRef": "sha256:3757d6445c7f6cbc3545cc93b294cea0eb8dd5cb7d870ee610766e1853139a1c",
+        "attemptRef": "sha256:b9ff8530fff00bc8a8c0de4283f03e80a990dbcd136d161553764147dad722ab",
+        "artifactRef": "sha256:13051e349c6f87a0f83427b2d742806fc8e01699c7429ce5b94acd0cece66dbc",
+        "truthful": true,
+        "spokenStatusOrCompletionCount": 1,
+        "duplicateSpeechCount": 0,
+        "transcriptVisible": true,
+        "transcriptMatchedAudio": true,
+        "transcriptEvidence": "reconnect-transcript",
+        "outputAudioEvidence": "reconnect-audio",
+        "assistantSpeakerRef": "sha256:6fc09ecdcfda37945f3c0cbb01556377028d856f55ebf062765ef0e76c483c39",
+        "effects": {
+          "missionCount": 0,
+          "actionCount": 0,
+          "launchInvocationCount": 0,
+          "controlInvocationCount": 0,
+          "toolInvocationCount": 0,
+          "controllerInvocationCount": 0,
+          "cortexInvocationCount": 0,
+          "liveMemoryInvocationCount": 0,
+          "recallInvocationCount": 0,
+          "titleModelInvocationCount": 0,
+          "mainResponseCount": 1,
+          "ttsInputCount": 1,
+          "assistantAudioOutputCount": 1
+        },
+        "evidence": [
+          "reconnect-transcript",
+          "reconnect-audio",
+          "logical-turn-ledger",
+          "delivery-ledger"
+        ]
+      },
+      {
+        "ordinal": 7,
+        "kind": "workerCompletion",
+        "runRef": "sha256:acba25512100f80b56fc3ccd14c65be55d94800cda77585c5f41a887e398f9be",
+        "sessionRef": "sha256:64b5d1345bf2a3c970c5136aeeb6bccca9e3dd634a368235f71a074c4b54d9d1",
+        "conversationRef": "sha256:8b34dbc2c05eb4d7e25d48efeace82456b16cee760bcae80c157f52a3c2e787b",
+        "mode": "call",
+        "logicalTurnRef": "sha256:c8196fb128b89f486c374c42dba8df8effb71184dcf028fc97d84d1eb5c40383",
+        "logicalRevision": 7,
+        "workerRef": "sha256:0482c4aea1af397e54200017866d778ce32e1daac473f2cd09a9159d2e69b6ef",
+        "missionRef": "sha256:eab8781e9c02f9afbc630eaf3d9e8ab55401435a83d3d6b40c6ece976411a029",
+        "attemptRef": "sha256:bd430d3b7a572baa85d538bf6f93ae0409a888ffd98a0757f2a109b3af63275a",
+        "artifactRef": "sha256:6462d191923d0d849234de241cf341d949f88488593f29e3601b94bd645b7dee",
+        "truthful": true,
+        "spokenStatusOrCompletionCount": 1,
+        "duplicateSpeechCount": 0,
+        "transcriptVisible": true,
+        "transcriptMatchedAudio": true,
+        "transcriptEvidence": "reconnect-transcript",
+        "outputAudioEvidence": "reconnect-audio",
+        "assistantSpeakerRef": "sha256:6fc09ecdcfda37945f3c0cbb01556377028d856f55ebf062765ef0e76c483c39",
+        "effects": {
+          "missionCount": 0,
+          "actionCount": 0,
+          "launchInvocationCount": 0,
+          "controlInvocationCount": 0,
+          "toolInvocationCount": 0,
+          "controllerInvocationCount": 0,
+          "cortexInvocationCount": 0,
+          "liveMemoryInvocationCount": 0,
+          "recallInvocationCount": 0,
+          "titleModelInvocationCount": 0,
+          "mainResponseCount": 1,
+          "ttsInputCount": 1,
+          "assistantAudioOutputCount": 1
+        },
+        "evidence": [
+          "reconnect-transcript",
+          "reconnect-audio",
+          "logical-turn-ledger",
+          "delivery-ledger"
+        ]
+      }
+    ]
+  },
+  "workers": [
+    {
+      "label": "A",
+      "runRef": "sha256:acba25512100f80b56fc3ccd14c65be55d94800cda77585c5f41a887e398f9be",
+      "launchSessionRef": "sha256:c75e625f43f992947a1571346aa2e0f00160df4eafe9acd629d256fbc83e0741",
+      "workerRef": "sha256:6a65e237ae44c42895b5049031466616173469f513b00240e9db90df66906a49",
+      "missionRef": "sha256:3757d6445c7f6cbc3545cc93b294cea0eb8dd5cb7d870ee610766e1853139a1c",
+      "attemptRef": "sha256:b9ff8530fff00bc8a8c0de4283f03e80a990dbcd136d161553764147dad722ab",
+      "acceptedLaunchReceiptRef": "sha256:1c117424063a58ade52a685270930a390fb666bc0057ff8d10142476000bd8ff",
+      "accepted": true,
+      "independent": true,
+      "contextBindingMatched": true,
+      "requiredCapabilitiesPreserved": true,
+      "fallbackCapabilityLossCount": 0,
+      "memoryRecallReceiptCount": 1,
+      "connectedToolReceiptCount": 0,
+      "inputRefs": [
+        "sha256:34aef6010d1b3562cf9bbd3005f29d689bb4d891e57ac272ffd2386b6535d72d"
+      ],
+      "observedInputRefs": [
+        "sha256:34aef6010d1b3562cf9bbd3005f29d689bb4d891e57ac272ffd2386b6535d72d"
+      ],
+      "activeAtHangup": true,
+      "cancelledByHangup": false,
+      "reconnectMissionRef": "sha256:3757d6445c7f6cbc3545cc93b294cea0eb8dd5cb7d870ee610766e1853139a1c",
+      "terminalState": "completed",
+      "attemptCount": 1,
+      "callbackCount": 1,
+      "deliveryCount": 1,
+      "artifactRef": "sha256:13051e349c6f87a0f83427b2d742806fc8e01699c7429ce5b94acd0cece66dbc",
+      "spokenCompletionCount": 1,
+      "evidence": [
+        "worker-ledger",
+        "capability-ledger",
+        "callback-ledger",
+        "delivery-ledger",
+        "artifact-a-open"
+      ]
+    },
+    {
+      "label": "B",
+      "runRef": "sha256:acba25512100f80b56fc3ccd14c65be55d94800cda77585c5f41a887e398f9be",
+      "launchSessionRef": "sha256:c75e625f43f992947a1571346aa2e0f00160df4eafe9acd629d256fbc83e0741",
+      "workerRef": "sha256:0482c4aea1af397e54200017866d778ce32e1daac473f2cd09a9159d2e69b6ef",
+      "missionRef": "sha256:eab8781e9c02f9afbc630eaf3d9e8ab55401435a83d3d6b40c6ece976411a029",
+      "attemptRef": "sha256:bd430d3b7a572baa85d538bf6f93ae0409a888ffd98a0757f2a109b3af63275a",
+      "acceptedLaunchReceiptRef": "sha256:14ad0f4db158e76b49d24af909f32e5110590a3632a3e8c8fc9761e8a000250e",
+      "accepted": true,
+      "independent": true,
+      "contextBindingMatched": true,
+      "requiredCapabilitiesPreserved": true,
+      "fallbackCapabilityLossCount": 0,
+      "memoryRecallReceiptCount": 0,
+      "connectedToolReceiptCount": 1,
+      "inputRefs": [
+        "sha256:d33151773ed20de2e5252812bab28c666d7896ca5cbd890868088534b1400c69"
+      ],
+      "observedInputRefs": [
+        "sha256:d33151773ed20de2e5252812bab28c666d7896ca5cbd890868088534b1400c69"
+      ],
+      "activeAtHangup": true,
+      "cancelledByHangup": false,
+      "reconnectMissionRef": "sha256:eab8781e9c02f9afbc630eaf3d9e8ab55401435a83d3d6b40c6ece976411a029",
+      "terminalState": "completed",
+      "attemptCount": 1,
+      "callbackCount": 1,
+      "deliveryCount": 1,
+      "artifactRef": "sha256:6462d191923d0d849234de241cf341d949f88488593f29e3601b94bd645b7dee",
+      "spokenCompletionCount": 1,
+      "evidence": [
+        "worker-ledger",
+        "capability-ledger",
+        "callback-ledger",
+        "delivery-ledger",
+        "artifact-b-open"
+      ]
+    }
+  ],
+  "inputGroup": {
+    "ingressSurface": "linked_chat",
+    "ordered": [
+      {
+        "ordinal": 1,
+        "uploadRef": "sha256:34aef6010d1b3562cf9bbd3005f29d689bb4d891e57ac272ffd2386b6535d72d",
+        "sha256": "088d1b118e306f23e765acbb0e3a0ed44c9e68e5f7889151c520b2ad83c3b5c1",
+        "bytes": 17,
+        "targetWorkerRef": "sha256:6a65e237ae44c42895b5049031466616173469f513b00240e9db90df66906a49"
+      },
+      {
+        "ordinal": 2,
+        "uploadRef": "sha256:d33151773ed20de2e5252812bab28c666d7896ca5cbd890868088534b1400c69",
+        "sha256": "1dfc354d09363ecf94942c7741687189e2583ea115112ff0d2ae4170bf85ad72",
+        "bytes": 19,
+        "targetWorkerRef": "sha256:0482c4aea1af397e54200017866d778ce32e1daac473f2cd09a9159d2e69b6ef"
+      }
+    ],
+    "crossWorkerLeakCount": 0,
+    "evidence": [
+      "upload-ledger"
+    ]
+  },
+  "deliveries": [
+    {
+      "runRef": "sha256:acba25512100f80b56fc3ccd14c65be55d94800cda77585c5f41a887e398f9be",
+      "workerRef": "sha256:6a65e237ae44c42895b5049031466616173469f513b00240e9db90df66906a49",
+      "missionRef": "sha256:3757d6445c7f6cbc3545cc93b294cea0eb8dd5cb7d870ee610766e1853139a1c",
+      "attemptRef": "sha256:b9ff8530fff00bc8a8c0de4283f03e80a990dbcd136d161553764147dad722ab",
+      "artifactRef": "sha256:13051e349c6f87a0f83427b2d742806fc8e01699c7429ce5b94acd0cece66dbc",
+      "artifactSha256": "2b9c0bf757ad48244258efaee788381eb77e154b786eb7e3552ec7b37714968b",
+      "callbackCount": 1,
+      "linkedChatDeliveryCount": 1,
+      "activeWorkDeliveryCount": 1,
+      "duplicateDeliveryCount": 0,
+      "deliveredAfterHangup": true,
+      "reconnectSessionRef": "sha256:64b5d1345bf2a3c970c5136aeeb6bccca9e3dd634a368235f71a074c4b54d9d1",
+      "opened": true,
+      "openOrDownloadActionWorked": true,
+      "evidence": [
+        "callback-ledger",
+        "delivery-ledger",
+        "linked-after",
+        "active-after",
+        "artifact-a-open"
+      ]
+    },
+    {
+      "runRef": "sha256:acba25512100f80b56fc3ccd14c65be55d94800cda77585c5f41a887e398f9be",
+      "workerRef": "sha256:0482c4aea1af397e54200017866d778ce32e1daac473f2cd09a9159d2e69b6ef",
+      "missionRef": "sha256:eab8781e9c02f9afbc630eaf3d9e8ab55401435a83d3d6b40c6ece976411a029",
+      "attemptRef": "sha256:bd430d3b7a572baa85d538bf6f93ae0409a888ffd98a0757f2a109b3af63275a",
+      "artifactRef": "sha256:6462d191923d0d849234de241cf341d949f88488593f29e3601b94bd645b7dee",
+      "artifactSha256": "bdea8aedddda04e0bace9961bbff75af90da620d33e3bd8e1ac48074aa058f72",
+      "callbackCount": 1,
+      "linkedChatDeliveryCount": 1,
+      "activeWorkDeliveryCount": 1,
+      "duplicateDeliveryCount": 0,
+      "deliveredAfterHangup": true,
+      "reconnectSessionRef": "sha256:64b5d1345bf2a3c970c5136aeeb6bccca9e3dd634a368235f71a074c4b54d9d1",
+      "opened": true,
+      "openOrDownloadActionWorked": true,
+      "evidence": [
+        "callback-ledger",
+        "delivery-ledger",
+        "linked-after",
+        "active-after",
+        "artifact-b-open"
+      ]
+    }
+  ],
+  "surfaceContinuity": {
+    "linkedChatBeforeHangupWorkerRefs": [
+      "sha256:6a65e237ae44c42895b5049031466616173469f513b00240e9db90df66906a49",
+      "sha256:0482c4aea1af397e54200017866d778ce32e1daac473f2cd09a9159d2e69b6ef"
+    ],
+    "linkedChatAfterReconnectWorkerRefs": [
+      "sha256:6a65e237ae44c42895b5049031466616173469f513b00240e9db90df66906a49",
+      "sha256:0482c4aea1af397e54200017866d778ce32e1daac473f2cd09a9159d2e69b6ef"
+    ],
+    "activeWorkBeforeHangupWorkerRefs": [
+      "sha256:6a65e237ae44c42895b5049031466616173469f513b00240e9db90df66906a49",
+      "sha256:0482c4aea1af397e54200017866d778ce32e1daac473f2cd09a9159d2e69b6ef"
+    ],
+    "activeWorkAfterReconnectWorkerRefs": [
+      "sha256:6a65e237ae44c42895b5049031466616173469f513b00240e9db90df66906a49",
+      "sha256:0482c4aea1af397e54200017866d778ce32e1daac473f2cd09a9159d2e69b6ef"
+    ],
+    "evidence": [
+      "linked-before",
+      "linked-after",
+      "active-before",
+      "active-after"
+    ]
+  },
+  "publicSafety": {
+    "rawEvidencePrivate": true,
+    "publicReportContentFree": true,
+    "reviewed": true,
+    "evidence": [
+      "public-safety"
+    ]
+  },
+  "templateNotice": "Replace every synthetic reference, digest, timestamp, and evidence file with one fresh private installed-runtime MPV-061 journey."
+}

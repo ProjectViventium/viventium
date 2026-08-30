@@ -51,6 +51,33 @@ def test_canonical_projects_template_is_tracked_for_clean_installs() -> None:
         assert tracked.returncode == 0, f"clean installs would omit {relative_path}"
 
 
+def test_public_research_life_projects_fixture_is_not_hidden_by_projects_ignore() -> None:
+    fixture_root = REPO_ROOT / "docs" / "research_and_future_plans" / "v0.5" / "test-Life-v0.01"
+    template_root = life_bootstrap.DEFAULT_TEMPLATE_DIR
+    project_files = (
+        "Projects/README.md",
+        "Projects/_template/README.md",
+        "Projects/_template/evidence/README.md",
+        "Projects/_template/research/README.md",
+        "Projects/_template/analysis/README.md",
+        "Projects/_template/decisions/README.md",
+        "Projects/_template/plans/README.md",
+        "Projects/_template/artifacts/README.md",
+        "Projects/_template/history/README.md",
+    )
+
+    for relative_path in project_files:
+        fixture_path = fixture_root / relative_path
+        template_path = template_root / relative_path
+        assert fixture_path.read_bytes() == template_path.read_bytes()
+        ignored = subprocess.run(
+            ["git", "check-ignore", "--quiet", str(fixture_path.relative_to(REPO_ROOT))],
+            cwd=REPO_ROOT,
+            check=False,
+        )
+        assert ignored.returncode == 1, f"public fixture is still ignored: {relative_path}"
+
+
 def test_life_bootstrap_is_additive_idempotent_and_excludes_harness_scaffolding(
     tmp_path: Path,
 ) -> None:
@@ -342,17 +369,50 @@ def test_life_bootstrap_preserves_conflicts_continues_and_writes_receipt(
     ]
 
 
-def test_public_cli_treats_life_bootstrap_as_non_fatal() -> None:
+def test_public_cli_treats_life_bootstrap_as_non_fatal(tmp_path: Path) -> None:
     cli = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
     function_body = cli.split("bootstrap_life() {", 1)[1].split("\n}", 1)[0]
+    function_definition = f"bootstrap_life() {{{function_body}\n}}\n"
+
+    failing_python = tmp_path / "python"
+    failing_python.write_text("#!/bin/sh\nexit 23\n", encoding="utf-8")
+    failing_python.chmod(0o700)
+    generated_env = tmp_path / "runtime.env"
+    generated_env.write_text("START_GLASSHIVE=true\n", encoding="utf-8")
+    app_support = tmp_path / "App Support"
+
+    completed = subprocess.run(
+        [
+            "bash",
+            "-c",
+            "".join(
+                (
+                    function_definition,
+                    f"GENERATED_ENV={shlex.quote(str(generated_env))}\n",
+                    f"PYTHON_BIN={shlex.quote(str(failing_python))}\n",
+                    f"REPO_ROOT={shlex.quote(str(REPO_ROOT))}\n",
+                    f"APP_SUPPORT_DIR={shlex.quote(str(app_support))}\n",
+                    "bootstrap_life\n",
+                )
+            ),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
 
     assert "|| life_bootstrap_status=$?" in function_body
-    assert "--if-configured" not in function_body
+    assert "--if-configured" in function_body
     assert "Warning: canonical LIFE bootstrap could not complete" in function_body
-    assert "canonical LIFE bootstrap is required by the enabled GlassHive runtime" in function_body
-    assert "rerun bin/viventium configure or start" in function_body
-    assert 'return "$life_bootstrap_status"' in function_body
+    assert "chat startup will continue" in function_body
+    assert "rerun bin/viventium doctor or start" in function_body
+    assert "canonical LIFE bootstrap is required" not in function_body
+    assert 'return "$life_bootstrap_status"' not in function_body
     assert function_body.rstrip().endswith("return 0")
+    assert completed.returncode == 0
+    assert "Warning: canonical LIFE bootstrap could not complete" in completed.stderr
+    assert "rerun bin/viventium doctor or start" in completed.stderr
+    assert "LIFE ready" not in completed.stdout + completed.stderr
 
 
 def test_normal_start_bootstraps_life_after_compile_and_before_runtime_start() -> None:

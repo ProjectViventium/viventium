@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const PERSISTENCE_SLOT = "viventium-v05-quiet-graphite-candidate-v2";
+  const STORE_KEY = "viventium-v05-quiet-graphite-candidate-v2";
   const BRAND = "assets/brands/";
   const $ = (selector, root = document) => root.querySelector(selector);
   const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -89,7 +89,7 @@
 
   function loadState() {
     try {
-      const stored = JSON.parse(localStorage.getItem(PERSISTENCE_SLOT) || "{}");
+      const stored = JSON.parse(localStorage.getItem(STORE_KEY) || "{}");
       return {
         ...structuredClone(defaults), ...stored,
         presence: { ...defaults.presence, ...(stored.presence || {}) },
@@ -103,7 +103,7 @@
   let state = loadState();
   let toastTimer;
   let activeDialogSource = null;
-  const persist = () => { try { localStorage.setItem(PERSISTENCE_SLOT, JSON.stringify(state)); } catch { /* local artifact */ } };
+  const persist = () => { try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch { /* local artifact */ } };
 
   function showToast(message) {
     const toast = $("#toast");

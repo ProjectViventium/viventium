@@ -4,10 +4,10 @@
 
 | Case ID | Requirement | User Outcome | Surfaces | Automation | Last Run |
 | --- | --- | --- | --- | --- | --- |
-| `LDS-001` | `39_Installer_and_Config_Compiler.md` Meilisearch auth readiness; `50_Stable_Dev_Runtime.md` singleton runtime | Conversation search only reports ready when Meilisearch can accept indexing/settings tasks for the active runtime | CLI/API/logs | Service API probes plus release tests | 2026-05-19 `PASS` ([report](reports/2026-05-19-meilisearch-firecrawl-resource-audit.md)) |
-| `LDS-002` | `50_Stable_Dev_Runtime.md` shared singleton services; public/private boundary | Local Docker services are Viventium-owned or clearly identified as foreign before resource or port remediation | Docker/CLI | `docker ps`, `docker inspect`, port probes | 2026-05-19 `PARTIAL` ([report](reports/2026-05-19-meilisearch-firecrawl-resource-audit.md)) |
-| `LDS-003` | `10_Open_Source_Web_Search.md` bounded local Firecrawl profile | Local Firecrawl starts with laptop-appropriate limits and honest health checks | Docker/API/logs | Compose inspection, `docker stats`, HTTP probes | 2026-05-19 `PASS` ([report](reports/2026-05-19-meilisearch-firecrawl-resource-audit.md)) |
-| `LDS-004` | `10_Open_Source_Web_Search.md` SearXNG readiness; `45_Runtime_Feature_QA_Map.md` web search prerequisites | SearXNG is visibly reachable and bounded enough for local runtime use | Browser/Docker/logs | Playwright snapshot, compose inspection, logs | 2026-05-19 `PASS` ([report](reports/2026-05-19-meilisearch-firecrawl-resource-audit.md)) |
+| `LDS-001` | `39_Installer_and_Config_Compiler.md` Meilisearch auth readiness; `50_Stable_Dev_Runtime.md` singleton runtime | Conversation search only reports ready when Meilisearch can accept indexing/settings tasks for the active runtime | CLI/API/logs | Service API probes plus release tests | PASS 2026-05-19 ([report](reports/2026-05-19-meilisearch-firecrawl-resource-audit.md)) |
+| `LDS-002` | `50_Stable_Dev_Runtime.md` shared singleton services; public/private boundary | Local Docker services are Viventium-owned or clearly identified as foreign before resource or port remediation | Docker/CLI | `docker ps`, `docker inspect`, port probes | PARTIAL 2026-05-19 ([report](reports/2026-05-19-meilisearch-firecrawl-resource-audit.md)) |
+| `LDS-003` | `10_Open_Source_Web_Search.md` bounded local Firecrawl profile | Local Firecrawl starts with laptop-appropriate limits and honest health checks | Docker/API/logs | Compose inspection, `docker stats`, HTTP probes | PASS 2026-05-19 ([report](reports/2026-05-19-meilisearch-firecrawl-resource-audit.md)) |
+| `LDS-004` | `10_Open_Source_Web_Search.md` SearXNG readiness; `45_Runtime_Feature_QA_Map.md` web search prerequisites | SearXNG is visibly reachable and bounded enough for local runtime use | Browser/Docker/logs | Playwright snapshot, compose inspection, logs | PASS 2026-05-19 ([report](reports/2026-05-19-meilisearch-firecrawl-resource-audit.md)) |
 
 ## `LDS-005` - Incompatible Derived Meilisearch Recovery Is Owned And Recoverable
 
@@ -26,10 +26,10 @@
 
 | Use Case ID | Natural user action | Requirement / case link | Real surface to use | Supporting evidence to compare | Expected visible result | Last run |
 | --- | --- | --- | --- | --- | --- | --- |
-| `LDS-UC-001` | Start or inspect local runtime and rely on conversation search | `39_Installer_and_Config_Compiler.md` / `LDS-001` | CLI/API/logs | Meilisearch `/version`, `/stats`, `/tasks`, native logs, launcher source | Search reports ready only when indexes and tasks are healthy | 2026-05-19 `PASS` |
-| `LDS-UC-002` | Check why local Docker services feel heavy | `50_Stable_Dev_Runtime.md` / `LDS-002`, `LDS-003`, `LDS-004` | Docker/CLI | `docker ps`, `docker stats`, `docker inspect`, compose files | Heavy services are named, bounded, and ownership is unambiguous | 2026-05-19 `PARTIAL` |
-| `LDS-UC-003` | Use local SearXNG as the browser-visible search prerequisite | `10_Open_Source_Web_Search.md` / `LDS-004` | Browser with Playwright CLI | Browser snapshot, SearXNG logs, compose config | SearXNG root UI is visible and supporting logs/config do not hide blocking failures | 2026-05-19 `PASS` |
-| `LDS-UC-004` | Use local Firecrawl as the scraper prerequisite | `10_Open_Source_Web_Search.md` / `LDS-003` | API/CLI/logs | HTTP banner/health probes, Firecrawl logs, Docker stats, compose config | Health/status uses the same contract as runtime and resource use is bounded or honestly degraded | 2026-05-19 `PASS` |
+| `LDS-UC-001` | Start or inspect local runtime and rely on conversation search | `39_Installer_and_Config_Compiler.md` / `LDS-001` | CLI/API/logs | Meilisearch `/version`, `/stats`, `/tasks`, native logs, launcher source | Search reports ready only when indexes and tasks are healthy | PASS 2026-05-19 |
+| `LDS-UC-002` | Check why local Docker services feel heavy | `50_Stable_Dev_Runtime.md` / `LDS-002`, `LDS-003`, `LDS-004` | Docker/CLI | `docker ps`, `docker stats`, `docker inspect`, compose files | Heavy services are named, bounded, and ownership is unambiguous | PARTIAL 2026-05-19 |
+| `LDS-UC-003` | Use local SearXNG as the browser-visible search prerequisite | `10_Open_Source_Web_Search.md` / `LDS-004` | Browser with Playwright CLI | Browser snapshot, SearXNG logs, compose config | SearXNG root UI is visible and supporting logs/config do not hide blocking failures | PASS 2026-05-19 |
+| `LDS-UC-004` | Use local Firecrawl as the scraper prerequisite | `10_Open_Source_Web_Search.md` / `LDS-003` | API/CLI/logs | HTTP banner/health probes, Firecrawl logs, Docker stats, compose config | Health/status uses the same contract as runtime and resource use is bounded or honestly degraded | PASS 2026-05-19 |
 
 ## `LDS-001` - Meilisearch functional readiness
 
@@ -49,7 +49,7 @@
 - Full-view evidence minimum: API probe, logs, source readiness path, generated runtime mode, and
   automated release checks.
 - Automation: `tests/release/test_meilisearch_resource_guardrails.py` plus service probes.
-- Last run: 2026-05-19 `PASS`.
+- Last run: PASS 2026-05-19.
 
 ## `LDS-002` - Docker ownership and port conflict
 
@@ -65,7 +65,7 @@
   blockers with a clear user decision required.
 - Forbidden result: a foreign `restart=always` service silently occupies a Viventium profile port.
 - Evidence to capture: sanitized inspect summary, port table, and resource sample.
-- Last run: 2026-05-19 `PARTIAL`.
+- Last run: PARTIAL 2026-05-19.
 
 ## `LDS-003` - Firecrawl local resource and readiness contract
 
@@ -82,7 +82,7 @@
   reports any missing endpoint honestly.
 - Forbidden result: only a stricter health endpoint is used when the runtime accepts the API banner
   or container readiness contract.
-- Last run: 2026-05-19 `PASS`.
+- Last run: PASS 2026-05-19.
 
 ## `LDS-004` - SearXNG local visibility and bounds
 
@@ -98,4 +98,4 @@
   4. Probe root HTTP status.
 - Expected result: visible UI loads; logs do not contain untriaged blocking errors; resource bounds
   are intentional.
-- Last run: 2026-05-19 `PASS`.
+- Last run: PASS 2026-05-19.

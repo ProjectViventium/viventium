@@ -88,6 +88,22 @@ const ESCAPED_REGRESSION_GATES = Object.freeze({
   apiRestartPreservesBarrierAndReplay: "api-restart-barrier-replay",
   speakerHistoryBeyond4096Accessible: "speaker-history-over-4096-access",
 });
+const WORKER_BEE_AUTHORITY_EVIDENCE_SCHEMA =
+  "viventium.voice.worker-bee-authority-evidence.v1";
+const WORKER_BEE_AUTHORITY_SOURCE =
+  "owner_scoped_worker_mission_action_delivery_ledger";
+const WORKER_BEE_AUTHORITY_ORDER = Object.freeze([
+  "trustedWingLaunch",
+  "trustedWingControl",
+  "passiveWingDenial",
+  "listenOnlyDenial",
+]);
+const WORKER_BEE_AUTHORITY_GATES = Object.freeze({
+  trustedWingLaunch: "mpv-061-trusted-wing-launch",
+  trustedWingControl: "mpv-061-trusted-wing-control",
+  passiveWingDenial: "mpv-061-passive-wing-denial",
+  listenOnlyDenial: "mpv-061-listen-only-denial",
+});
 
 function parseArgs(argv) {
   const args = {
@@ -238,6 +254,417 @@ function normalizeTaskOwnerCapabilityInventory(value) {
     owners.push({ kind: owner.kind, acceptsInput: owner.acceptsInput });
   }
   return owners;
+}
+
+function isRecord(value) {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function isNonNegativeInteger(value) {
+  return Number.isSafeInteger(value) && value >= 0;
+}
+
+function safeInteger(value) {
+  return isNonNegativeInteger(value) ? value : null;
+}
+
+function safeBoolean(value) {
+  return typeof value === "boolean" ? value : null;
+}
+
+function emptyWorkerBeeAuthorityAudit(evidenceStatus = "NOT_EVALUATED") {
+  return {
+    scope: "authority_slice_only",
+    fullJourneyStatus: "NOT_RUN",
+    livePassClaimed: false,
+    evidenceStatus,
+    sourceVerified: false,
+    modeAuthoritySourceVerified: false,
+    acceptanceRunBindingMatched: false,
+    installedRuntimeIdentityMatched: false,
+    observationOrderVerified: false,
+    observationWindowCount: 0,
+    checks: {
+      trustedWingLaunch: {
+        status: "UNKNOWN",
+        mode: null,
+        ownerParticipant: null,
+        directlyAddressed: null,
+        sideEffectAuthorityGranted: null,
+        requestedMissionCount: null,
+        missionDelta: null,
+        acceptedLaunchReceiptDelta: null,
+        rejectedLaunchReceiptDelta: null,
+        workerLaunchInvocationDelta: null,
+        mainResponseDelta: null,
+        ttsInputDelta: null,
+      },
+      trustedWingControl: {
+        status: "UNKNOWN",
+        mode: null,
+        ownerParticipant: null,
+        directlyAddressed: null,
+        sideEffectAuthorityGranted: null,
+        controlAction: null,
+        missionDelta: null,
+        acceptedActionReceiptDelta: null,
+        workerControlInvocationDelta: null,
+        targetWorkRefMatched: null,
+        targetActionReceiptDelta: null,
+        nonTargetActionReceiptDelta: null,
+        mainResponseDelta: null,
+        ttsInputDelta: null,
+      },
+      passiveWingDenial: {
+        status: "UNKNOWN",
+        mode: null,
+        ownerParticipant: null,
+        directlyAddressed: null,
+        transcriptObservationDelta: null,
+        missionDelta: null,
+        actionReceiptDelta: null,
+        workerLaunchInvocationDelta: null,
+        workerControlInvocationDelta: null,
+        toolInvocationDelta: null,
+        cortexInvocationDelta: null,
+        liveMemoryInvocationDelta: null,
+        mainResponseDelta: null,
+        ttsInputDelta: null,
+      },
+      listenOnlyDenial: {
+        status: "UNKNOWN",
+        mode: null,
+        ownerParticipant: null,
+        directlyAddressed: null,
+        sideEffectAuthorityGranted: null,
+        ambientTranscriptDelta: null,
+        missionDelta: null,
+        actionReceiptDelta: null,
+        workerLaunchInvocationDelta: null,
+        workerControlInvocationDelta: null,
+        toolInvocationDelta: null,
+        agentControllerInvocationDelta: null,
+        cortexInvocationDelta: null,
+        liveMemoryInvocationDelta: null,
+        titleModelInvocationDelta: null,
+        mainResponseDelta: null,
+        ttsInputDelta: null,
+      },
+    },
+  };
+}
+
+function exactObservationOrder(value) {
+  return (
+    Array.isArray(value) &&
+    value.length === WORKER_BEE_AUTHORITY_ORDER.length &&
+    value.every((item, index) => item === WORKER_BEE_AUTHORITY_ORDER[index])
+  );
+}
+
+function hasTypedFields(value, integerFields, booleanFields = []) {
+  return (
+    isRecord(value) &&
+    integerFields.every((field) => isNonNegativeInteger(value[field])) &&
+    booleanFields.every((field) => typeof value[field] === "boolean")
+  );
+}
+
+function auditWorkerBeeAuthorityEvidence(value) {
+  const audit = emptyWorkerBeeAuthorityAudit(
+    value === undefined || value === null ? "MISSING" : "INVALID",
+  );
+  if (!isRecord(value)) {
+    return audit;
+  }
+
+  const cases = isRecord(value.cases) ? value.cases : {};
+  const launch = cases.trustedWingLaunch;
+  const control = cases.trustedWingControl;
+  const passive = cases.passiveWingDenial;
+  const listenOnly = cases.listenOnlyDenial;
+  audit.sourceVerified =
+    value.authoritative === true &&
+    value.source === WORKER_BEE_AUTHORITY_SOURCE;
+  audit.modeAuthoritySourceVerified =
+    value.modeAuthoritySource === "persisted_call_session";
+  audit.acceptanceRunBindingMatched =
+    value.acceptanceRunBindingMatched === true;
+  audit.installedRuntimeIdentityMatched =
+    value.installedRuntimeIdentityMatched === true;
+  audit.observationOrderVerified = exactObservationOrder(
+    value.observationOrder,
+  );
+
+  const commonWindowValid = (window, ordinal) =>
+    isRecord(window) &&
+    window.ordinal === ordinal &&
+    isNonNegativeInteger(window.ledgerSequenceBefore) &&
+    isNonNegativeInteger(window.ledgerSequenceAfter) &&
+    window.ledgerSequenceAfter >= window.ledgerSequenceBefore &&
+    MODES.includes(window.mode) &&
+    typeof window.actorTrust === "string" &&
+    /^[a-z0-9_:-]{1,80}$/i.test(window.actorTrust) &&
+    typeof window.directlyAddressed === "boolean";
+  const windows = [launch, control, passive, listenOnly];
+  const windowsTyped = windows.every((window, index) =>
+    commonWindowValid(window, index + 1),
+  );
+  const windowsOrdered =
+    windowsTyped &&
+    windows.every(
+      (window, index) =>
+        index === 0 ||
+        window.ledgerSequenceBefore >= windows[index - 1].ledgerSequenceAfter,
+    );
+  const launchTyped = hasTypedFields(
+    launch,
+    [
+      "requestedMissionCount",
+      "missionDelta",
+      "acceptedLaunchReceiptDelta",
+      "rejectedLaunchReceiptDelta",
+      "workerLaunchInvocationDelta",
+      "mainResponseDelta",
+      "ttsInputDelta",
+    ],
+    ["sideEffectAuthorityGranted"],
+  );
+  const controlTyped =
+    hasTypedFields(
+      control,
+      [
+        "missionDelta",
+        "acceptedActionReceiptDelta",
+        "workerControlInvocationDelta",
+        "targetActionReceiptDelta",
+        "nonTargetActionReceiptDelta",
+        "mainResponseDelta",
+        "ttsInputDelta",
+      ],
+      ["sideEffectAuthorityGranted", "targetWorkRefMatched"],
+    ) && typeof control?.controlAction === "string";
+  const passiveTyped = hasTypedFields(passive, [
+    "transcriptObservationDelta",
+    "missionDelta",
+    "actionReceiptDelta",
+    "workerLaunchInvocationDelta",
+    "workerControlInvocationDelta",
+    "toolInvocationDelta",
+    "cortexInvocationDelta",
+    "liveMemoryInvocationDelta",
+    "mainResponseDelta",
+    "ttsInputDelta",
+  ]);
+  const listenOnlyTyped = hasTypedFields(
+    listenOnly,
+    [
+      "ambientTranscriptDelta",
+      "missionDelta",
+      "actionReceiptDelta",
+      "workerLaunchInvocationDelta",
+      "workerControlInvocationDelta",
+      "toolInvocationDelta",
+      "agentControllerInvocationDelta",
+      "cortexInvocationDelta",
+      "liveMemoryInvocationDelta",
+      "titleModelInvocationDelta",
+      "mainResponseDelta",
+      "ttsInputDelta",
+    ],
+    ["sideEffectAuthorityGranted"],
+  );
+  const structurallyValid =
+    value.schema === WORKER_BEE_AUTHORITY_EVIDENCE_SCHEMA &&
+    audit.sourceVerified &&
+    audit.modeAuthoritySourceVerified &&
+    audit.acceptanceRunBindingMatched &&
+    audit.installedRuntimeIdentityMatched &&
+    audit.observationOrderVerified &&
+    windowsOrdered &&
+    launchTyped &&
+    controlTyped &&
+    passiveTyped &&
+    listenOnlyTyped;
+
+  audit.checks.trustedWingLaunch = {
+    status: "FAIL",
+    mode: typeof launch?.mode === "string" ? launch.mode : null,
+    ownerParticipant:
+      typeof launch?.actorTrust === "string"
+        ? launch.actorTrust === "owner_participant"
+        : null,
+    directlyAddressed: safeBoolean(launch?.directlyAddressed),
+    sideEffectAuthorityGranted: safeBoolean(launch?.sideEffectAuthorityGranted),
+    requestedMissionCount: safeInteger(launch?.requestedMissionCount),
+    missionDelta: safeInteger(launch?.missionDelta),
+    acceptedLaunchReceiptDelta: safeInteger(launch?.acceptedLaunchReceiptDelta),
+    rejectedLaunchReceiptDelta: safeInteger(launch?.rejectedLaunchReceiptDelta),
+    workerLaunchInvocationDelta: safeInteger(
+      launch?.workerLaunchInvocationDelta,
+    ),
+    mainResponseDelta: safeInteger(launch?.mainResponseDelta),
+    ttsInputDelta: safeInteger(launch?.ttsInputDelta),
+  };
+  audit.checks.trustedWingControl = {
+    status: "FAIL",
+    mode: typeof control?.mode === "string" ? control.mode : null,
+    ownerParticipant:
+      typeof control?.actorTrust === "string"
+        ? control.actorTrust === "owner_participant"
+        : null,
+    directlyAddressed: safeBoolean(control?.directlyAddressed),
+    sideEffectAuthorityGranted: safeBoolean(
+      control?.sideEffectAuthorityGranted,
+    ),
+    controlAction:
+      typeof control?.controlAction === "string" ? control.controlAction : null,
+    missionDelta: safeInteger(control?.missionDelta),
+    acceptedActionReceiptDelta: safeInteger(
+      control?.acceptedActionReceiptDelta,
+    ),
+    workerControlInvocationDelta: safeInteger(
+      control?.workerControlInvocationDelta,
+    ),
+    targetWorkRefMatched: safeBoolean(control?.targetWorkRefMatched),
+    targetActionReceiptDelta: safeInteger(control?.targetActionReceiptDelta),
+    nonTargetActionReceiptDelta: safeInteger(
+      control?.nonTargetActionReceiptDelta,
+    ),
+    mainResponseDelta: safeInteger(control?.mainResponseDelta),
+    ttsInputDelta: safeInteger(control?.ttsInputDelta),
+  };
+  audit.checks.passiveWingDenial = {
+    status: "FAIL",
+    mode: typeof passive?.mode === "string" ? passive.mode : null,
+    ownerParticipant:
+      typeof passive?.actorTrust === "string"
+        ? passive.actorTrust === "owner_participant"
+        : null,
+    directlyAddressed: safeBoolean(passive?.directlyAddressed),
+    transcriptObservationDelta: safeInteger(
+      passive?.transcriptObservationDelta,
+    ),
+    missionDelta: safeInteger(passive?.missionDelta),
+    actionReceiptDelta: safeInteger(passive?.actionReceiptDelta),
+    workerLaunchInvocationDelta: safeInteger(
+      passive?.workerLaunchInvocationDelta,
+    ),
+    workerControlInvocationDelta: safeInteger(
+      passive?.workerControlInvocationDelta,
+    ),
+    toolInvocationDelta: safeInteger(passive?.toolInvocationDelta),
+    cortexInvocationDelta: safeInteger(passive?.cortexInvocationDelta),
+    liveMemoryInvocationDelta: safeInteger(passive?.liveMemoryInvocationDelta),
+    mainResponseDelta: safeInteger(passive?.mainResponseDelta),
+    ttsInputDelta: safeInteger(passive?.ttsInputDelta),
+  };
+  audit.checks.listenOnlyDenial = {
+    status: "FAIL",
+    mode: typeof listenOnly?.mode === "string" ? listenOnly.mode : null,
+    ownerParticipant:
+      typeof listenOnly?.actorTrust === "string"
+        ? listenOnly.actorTrust === "owner_participant"
+        : null,
+    directlyAddressed: safeBoolean(listenOnly?.directlyAddressed),
+    sideEffectAuthorityGranted: safeBoolean(
+      listenOnly?.sideEffectAuthorityGranted,
+    ),
+    ambientTranscriptDelta: safeInteger(listenOnly?.ambientTranscriptDelta),
+    missionDelta: safeInteger(listenOnly?.missionDelta),
+    actionReceiptDelta: safeInteger(listenOnly?.actionReceiptDelta),
+    workerLaunchInvocationDelta: safeInteger(
+      listenOnly?.workerLaunchInvocationDelta,
+    ),
+    workerControlInvocationDelta: safeInteger(
+      listenOnly?.workerControlInvocationDelta,
+    ),
+    toolInvocationDelta: safeInteger(listenOnly?.toolInvocationDelta),
+    agentControllerInvocationDelta: safeInteger(
+      listenOnly?.agentControllerInvocationDelta,
+    ),
+    cortexInvocationDelta: safeInteger(listenOnly?.cortexInvocationDelta),
+    liveMemoryInvocationDelta: safeInteger(
+      listenOnly?.liveMemoryInvocationDelta,
+    ),
+    titleModelInvocationDelta: safeInteger(
+      listenOnly?.titleModelInvocationDelta,
+    ),
+    mainResponseDelta: safeInteger(listenOnly?.mainResponseDelta),
+    ttsInputDelta: safeInteger(listenOnly?.ttsInputDelta),
+  };
+
+  if (!structurallyValid) {
+    return audit;
+  }
+  audit.evidenceStatus = "VALID";
+  audit.observationWindowCount = WORKER_BEE_AUTHORITY_ORDER.length;
+  audit.checks.trustedWingLaunch.status =
+    launch.mode === "wing" &&
+    launch.actorTrust === "owner_participant" &&
+    launch.directlyAddressed === true &&
+    launch.sideEffectAuthorityGranted === true &&
+    launch.requestedMissionCount === 2 &&
+    launch.missionDelta === 2 &&
+    launch.acceptedLaunchReceiptDelta === 2 &&
+    launch.rejectedLaunchReceiptDelta === 0 &&
+    launch.workerLaunchInvocationDelta >= 1 &&
+    launch.mainResponseDelta === 1 &&
+    launch.ttsInputDelta === 1
+      ? "PASS"
+      : "FAIL";
+  audit.checks.trustedWingControl.status =
+    control.mode === "wing" &&
+    control.actorTrust === "owner_participant" &&
+    control.directlyAddressed === true &&
+    control.sideEffectAuthorityGranted === true &&
+    control.controlAction === "steer" &&
+    control.missionDelta === 0 &&
+    control.acceptedActionReceiptDelta === 1 &&
+    control.workerControlInvocationDelta === 1 &&
+    control.targetWorkRefMatched === true &&
+    control.targetActionReceiptDelta === 1 &&
+    control.nonTargetActionReceiptDelta === 0 &&
+    control.mainResponseDelta === 1 &&
+    control.ttsInputDelta === 1
+      ? "PASS"
+      : "FAIL";
+  audit.checks.passiveWingDenial.status =
+    passive.mode === "wing" &&
+    passive.actorTrust === "owner_participant" &&
+    passive.directlyAddressed === false &&
+    passive.transcriptObservationDelta >= 1 &&
+    passive.missionDelta === 0 &&
+    passive.actionReceiptDelta === 0 &&
+    passive.workerLaunchInvocationDelta === 0 &&
+    passive.workerControlInvocationDelta === 0 &&
+    passive.toolInvocationDelta === 0 &&
+    passive.cortexInvocationDelta === 0 &&
+    passive.liveMemoryInvocationDelta === 0 &&
+    passive.mainResponseDelta === 0 &&
+    passive.ttsInputDelta === 0
+      ? "PASS"
+      : "FAIL";
+  audit.checks.listenOnlyDenial.status =
+    listenOnly.mode === "listen_only" &&
+    listenOnly.actorTrust === "owner_participant" &&
+    listenOnly.directlyAddressed === true &&
+    listenOnly.sideEffectAuthorityGranted === false &&
+    listenOnly.ambientTranscriptDelta >= 1 &&
+    listenOnly.missionDelta === 0 &&
+    listenOnly.actionReceiptDelta === 0 &&
+    listenOnly.workerLaunchInvocationDelta === 0 &&
+    listenOnly.workerControlInvocationDelta === 0 &&
+    listenOnly.toolInvocationDelta === 0 &&
+    listenOnly.agentControllerInvocationDelta === 0 &&
+    listenOnly.cortexInvocationDelta === 0 &&
+    listenOnly.liveMemoryInvocationDelta === 0 &&
+    listenOnly.titleModelInvocationDelta === 0 &&
+    listenOnly.mainResponseDelta === 0 &&
+    listenOnly.ttsInputDelta === 0
+      ? "PASS"
+      : "FAIL";
+  return audit;
 }
 
 function normalizeTaskSnapshot(payload) {
@@ -535,6 +962,11 @@ function applyMeasuredEvidence(result, runtime, profile) {
   const ownerCapabilityInventory = normalizeTaskOwnerCapabilityInventory(
     runtime.externalEvidence?.taskOwnerCapabilityInventory,
   );
+  result.workerBeeAuthority = auditWorkerBeeAuthorityEvidence(
+    runtime.externalEvidence?.workerBeeAuthority,
+  );
+  result.evidence.workerBeeAuthorityWindows =
+    result.workerBeeAuthority.observationWindowCount;
   const combined = {
     clickToListeningMs: asArray(latencyEvidence.clickToListeningMs),
     taskEventVisibleMs: [
@@ -624,6 +1056,15 @@ function applyMeasuredEvidence(result, runtime, profile) {
   );
   if (profile !== "audible") {
     return;
+  }
+  for (const [key, gateId] of Object.entries(WORKER_BEE_AUTHORITY_GATES)) {
+    gate(
+      result,
+      gateId,
+      result.workerBeeAuthority.checks[key].status === "PASS",
+      result.workerBeeAuthority.checks[key].status,
+      "PASS",
+    );
   }
   const latencyGates = [
     ["task-event-visible-p95", "taskEventVisibleMs", 250],
@@ -872,6 +1313,7 @@ function baseResult(profile, environment = "self_test") {
     escapedRegressions: Object.fromEntries(
       Object.keys(ESCAPED_REGRESSION_GATES).map((key) => [key, null]),
     ),
+    workerBeeAuthority: emptyWorkerBeeAuthorityAudit(),
     resources: {
       processesObserved: 0,
       processCrashes: 0,
@@ -885,6 +1327,7 @@ function baseResult(profile, environment = "self_test") {
       screenshots: 0,
       structuredSnapshots: 0,
       latencyLogs: 0,
+      workerBeeAuthorityWindows: 0,
       rawArtifactsPrivate: true,
     },
     privacy: {
@@ -2171,7 +2614,7 @@ async function runRuntime(args) {
       code: /^[a-z0-9_]{1,80}$/i.test(String(error?.message || ""))
         ? String(error.message)
         : "runtime_acceptance_failed",
-      caseId: "MPV-032-056",
+      caseId: "MPV-032-061",
     });
     return result;
   } finally {
@@ -2208,6 +2651,7 @@ module.exports = {
   PLAN,
   applyMeasuredEvidence,
   assertCallBootstrapStripped,
+  auditWorkerBeeAuthorityEvidence,
   auditReplay,
   baseResult,
   extractVoiceHopTraces,

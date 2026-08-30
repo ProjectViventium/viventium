@@ -1,3 +1,4 @@
+<!-- qa-evidence-exempt: Historical evidence snapshot retained verbatim; retroactive v2 fields would invent evidence that was not captured during the run. -->
 # WHOOP Smart Wristband Integration Validation
 
 Date: 2026-07-26
@@ -272,4 +273,3 @@ WHOOP wearable company.
   enough for direct Viventium adoption unchanged.
 - **Private/reverse-engineered WHOOP APIs:** reject for production.
 - **Real connector completion:** not claimed until W2 runs with an explicitly authorized owner account.
-<!-- qa-evidence-exempt: Historical or specialized supporting artifact retained without retroactively inventing missing evidence; current release acceptance requires a fresh full-view report. -->

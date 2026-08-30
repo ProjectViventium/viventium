@@ -9,7 +9,7 @@
 - Expected Result: LibreChat API, frontend, playground, and voice health ports are offset
 - Forbidden Result: heavy singleton service ports are unnecessarily offset or duplicated
 - Evidence: dated report under `reports/`
-- Last Run: 2026-05-14 local implementation QA - passed
+- Last Run: PASS 2026-05-14: local implementation QA - passed
 
 ## SDR-002: Singleton Services Are Not Duplicated By Default
 
@@ -20,7 +20,7 @@
 - Expected Result: shared singleton markers are present and start flags for shared services are false
 - Forbidden Result: dev start launches duplicate recall/RAG, SearXNG, Firecrawl, Google MCP, or MS365 MCP by default
 - Evidence: dated report under `reports/`
-- Last Run: 2026-05-14 local implementation QA - passed
+- Last Run: PASS 2026-05-14: local implementation QA - passed
 
 ## SDR-003: Activate Current Uses Runtime Checkout
 
@@ -31,7 +31,7 @@
 - Expected Result: existing runtime-checkout state is updated; no code is copied into an install path
 - Forbidden Result: parallel active checkout state, physical source copy, or unreviewed nested repo pin change
 - Evidence: dated report under `reports/`
-- Last Run: 2026-08-05 current-checkout activation QA - passed by validated live activation,
+- Last Run: PASS 2026-08-05: current-checkout activation QA - passed by validated live activation,
   installed-helper rebinding, restart, browser refresh, and process/ownership checks
   ([report](reports/2026-08-05-latest-checkout-activation-and-supervision.md))
 
@@ -47,7 +47,7 @@
 - Forbidden Result: `FETCH_HEAD`, working tree, App Support, generated runtime files, helper bundle,
   or running stack changes
 - Evidence: dated report under `reports/`
-- Last Run: 2026-07-19 automated local-remote and no-App-Support regressions - passed; post-change
+- Last Run: PARTIAL 2026-07-19: automated local-remote and no-App-Support regressions - passed; post-change
   headed helper modal rerun remains open
 
 ## SDR-005: Helper Update Modal Shows Blocked State Clearly
@@ -59,7 +59,7 @@
 - Expected Result: modal reports update is blocked with a clear dirty-checkout reason and does not install or restart
 - Forbidden Result: silent pull/install, ambiguous error, or helper quits while checking
 - Evidence: dated report under `reports/`
-- Last Run: 2026-07-19 source/prebuilt and parser regressions - passed; the last headed native modal
+- Last Run: PARTIAL 2026-07-19: source/prebuilt and parser regressions - passed; the last headed native modal
   evidence is 2026-05-14 and must be rerun for release acceptance
 
 ## SDR-006: Helper Prompt Workbench Stop Is Runtime-Safe
@@ -74,7 +74,7 @@
 - Forbidden Result: `bin/viventium stop`, native stack stop, LibreChat stop, or arbitrary port-kill
   behavior from the Prompt Workbench submenu
 - Evidence: dated report under `reports/`
-- Last Run: 2026-05-15 local CLI/helper integration QA - passed
+- Last Run: PASS 2026-05-15: local CLI/helper integration QA - passed
 
 ## SDR-007: Status Summary Is Truthful When Optional Runtime Surfaces Are Down
 
@@ -85,7 +85,7 @@
 - Expected Result: status headline is "needs attention"; core surfaces are Running; each enabled but unreachable optional service is Action Required; helper status is shown separately and truthfully
 - Forbidden Result: status says "ready" while enabled recall/search/MCP/helper surfaces are broken, or shows "still starting" because of a stale start lock
 - Evidence: dated report under `reports/`
-- Last Run: 2026-08-05 current-checkout activation QA - passed; status kept optional-service
+- Last Run: PASS 2026-08-05: current-checkout activation QA - passed; status kept optional-service
   degradation visible while core surfaces remained running
   ([report](reports/2026-08-05-latest-checkout-activation-and-supervision.md))
 
@@ -103,7 +103,7 @@
   cycle, unbounded helper-start log growth, or any recommendation to stop local prod/Docker as the
   durable product fix
 - Evidence: dated report under `reports/`
-- Last Run: 2026-05-27 implementation QA - passed with live helper refresh
+- Last Run: PASS 2026-05-27: implementation QA - passed with live helper refresh
 
 ## SDR-009: Failed Activation Validation Does Not Restart The Stack
 
@@ -116,7 +116,7 @@
   was not restarted, and leaves both PIDs/health unchanged
 - Forbidden Result: failed validation continues into a delayed stop/restart or masks compiler failure
 - Evidence: release regression plus dated feature QA report
-- Last Run: 2026-07-11 local unhappy-path QA - passed; compiler failure returned 1 and both PIDs stayed unchanged
+- Last Run: PASS 2026-07-11: local unhappy-path QA - passed; compiler failure returned 1 and both PIDs stayed unchanged
 
 ## SDR-010: Upgrade Safety Is Structured And Honest
 
@@ -131,391 +131,109 @@
 - Forbidden Result: exit `0` with blockers, fetch during check, dirty component mutation, swallowed stop
   failure, auto-restart after continuity error, or wording that claims partial state was rolled back
 - Evidence: `test_stable_dev_runtime_workflows.py`, `test_cli_upgrade.py`, rebuilt universal helper
-- Last Run: 2026-07-19 - passed 84/84 across the two complete affected modules; live no-share guest
+- Last Run: PARTIAL 2026-07-19: - passed 84/84 across the two complete affected modules; live no-share guest
   running/no-restart and dirty-selected-component refusal also passed without stopping core services;
   successful/late-failure and headed helper-dialog lanes remain open
 
-## SDR-011: Helper Reconciles Late Runtime Death Without Restart Storms
+## SDR-011: Helper Recovery Is Compatible With Legacy Logs And Single-Flight
 
-- Requirement: `50_Stable_Dev_Runtime.md`, `39_Installer_and_Config_Compiler.md`
-- Surfaces: macOS helper, helper config, detached public CLI launch, local runtime health
-- Preconditions: installed helper is running; local prod is first healthy, then stopped
-  unexpectedly after the initial login launch window
-- Steps: observe core and configured-sidecar recovery, stop Scheduling Cortex after core readiness,
-  repeat short-lived failures, select helper Stop, wait through at least one former retry interval,
-  then select helper Start
-- Expected Result: unexpected core or configured-sidecar death is recovered through the detached
-  CLI path; Scheduling Cortex becoming unavailable changes status to `Needs Attention` and triggers
-  bounded repair; retry delay grows
-  from 15 seconds to a 15-minute cap; five stable minutes clear crash-loop history; Stop/Start
-  intent survives helper relaunch and helper reinstall
-- Forbidden Result: a permanent one-shot latch, launch every four-second poll, retry backoff that
-  resets after a short-lived start, or polling that undoes explicit Stop/Quit
-- Evidence: deterministic policy harness, helper build, source/prebuilt hash checks, timestamped
-  helper/start logs, process/port evidence, and headed menu-bar Stop/Start/relaunch QA
-- Last Run: PARTIAL 2026-07-24; deterministic policy, configured-sidecar repair source contract,
-  helper build, and hard-kill installer forward-recovery regressions passed; headed installed-helper
-  Scheduling late-death/Stop/relaunch QA remains open
+- Requirement: `50_Stable_Dev_Runtime.md`, `03_Telegram_Bridge.md`
+- Surfaces: installed macOS helper, detached launcher, LibreChat web/API, Telegram Desktop
+- Preconditions: local prod is stopped; `helper-start.log` is an owner-owned single-link regular file
+  created by an older launcher at mode `0644`; runtime supervision still desires `running`
+- Steps: launch the installed helper, observe the full search-index/client warm-up, repeat with a
+  manual `start --restart` while helper supervision remains enabled, then send a synthetic
+  exact-response Telegram turn after every required surface is healthy
+- Expected Result: the helper tightens the compatible legacy log to `0600`, submits one detached
+  recovery, waits through warm-up without another restart, and Telegram works after recovery
+- Forbidden Result: secure log migration disables recovery, helper/manual `start --restart`
+  submissions overlap during the receipt replacement window, the API remains down, or Telegram
+  exposes a generic connection bubble after the helper reports healthy
+- Evidence: helper/source regressions, installed helper artifact hashes/signature, timestamped helper
+  logs, port/health checks, Telegram Desktop bubble/audio, Mongo message, GlassHive run audit
+- Last Run: PASS 2026-08-04; one supervisor launch at `14:25:46Z` reached healthy at `14:28:41Z`.
+  A later manual restart published and cleared its startup claim, produced zero competing helper
+  launches and one runtime process group, restored every core port, and the clean Telegram marker
+  persisted without error.
 
-## SDR-012: Checkout Promotion Is Transactional And Crash-Recoverable
-
-- Requirement: `50_Stable_Dev_Runtime.md`
-- Surfaces: `dev-runtime activate-current`, generated runtime, active checkout, helper intent,
-  running/stopped state
-- Preconditions: synthetic prior/candidate runtime outputs and an owner-private activation journal
-- Steps: validate a candidate, inject failures after prepared-manifest allocation, live-runtime
-  backup, and candidate swap, reject a candidate before publication, exercise restart rollback,
-  start from a checkout missing a config-selected optional component and prove it is bootstrapped
-  through private sibling staging, exact-pin validated, published without residue, and
-  strict-pin/alignment-rechecked before App Support activation state; repeat an unavailable-pin
-  failure twice and prove neither attempt creates a reusable default-branch checkout; inject a
-  concurrent target at the publication syscall and prove its inode and contents survive; switch
-  canonical component selection between gates and prove the bound config digest aborts,
-  preserve no-follow component virtual-environment and candidate links through publish,
-  rollback, and commit, reject a symlinked App Support ancestor before an absent first runtime can
-  allocate anything, exercise begin/status/recovery with a transaction receipt larger than the
-  macOS argument limit, mutate the still-live original runtime and checkout during prepared-state
-  interruption, launch a synthetic native process whose declared data path contains spaces and
-  inspect its exact operating-system argument vector, force restart rollback through the nested
-  candidate stop, verify every stop-only helper is defined before its early-exit gate, hand off a
-  same-database helper-installed Scheduler across checkout scopes, align the full launcher and
-  native stack on one Mongo PID receipt, repeat activation when the candidate already holds the
-  exact protected owner environment, atomically rewrite that target to its exact checkpoint inode
-  before prepared and published rollback, atomically rewrite it again after healthy candidate
-  startup with both identical bytes and a declared runtime-managed port change, keep an
-  authoritative predecessor source unchanged
-  through final commit-boundary verification, keep helper supervision quiesced throughout the
-  pre-commit candidate restart, launch an exact synthetic legacy helper that retains stale
-  in-memory supervision, prove activation terminates it transactionally, resurrect it before
-  publication and prove publication fails closed, restore its prior running state on rollback,
-  diverge owner state concurrently, then inject helper refresh failure/interruption after healthy
-  core commit
-- Expected Result: helper supervision is quiesced and exactly restorable while candidate
-  compiler/doctor/helper-artifact validation runs; no binding/runtime/running-state mutation occurs
-  before validation; all config-selected components exist at an accepted pinned/local revision
-  before the activation journal or helper mutation; failed bootstrap leaves App Support untouched
-  and leaves no final component target or staging residue; atomic no-replace publication preserves
-  a concurrent writer, and every preactivation component gate observes one bound canonical-config
-  digest; exact legacy helper-process absence precedes the durable transaction token, which is
-  followed by an exact managed-field receipt and revalidated before publication; an exact
-  tokenless legacy shutdown flush is recoverable only while its managed view and process-absence
-  receipt still match, while a plan-only crash or
-  concurrent owner intent is preserved; an older helper process is identified by its exact
-  owner-controlled bundle executable plus revalidated process-start identity, its exact prior
-  running bundle paths are journaled before termination, resurrection blocks publication/commit,
-  rollback keeps a retryable pending receipt until those exact bundle processes return, and
-  the detached candidate/recovery `start` child inherits an explicit preserve-intent flag while
-  ordinary user starts still record `running`; successful activation does not refresh the helper
-  until after core commit; transaction allocation cannot leave a manifest-less
-  directory; the runtime
-  target is revalidated inside canonical App Support before recovery; planned staging/backup paths
-  are journaled before the
-  first live rename; pre-commit restart failure restores exact prior state; a `core_committed`
-  receipt makes the wider helper refresh forward-only and retryable without rolling back the
-  accepted runtime/binding; candidate restart does not restore owner helper intent until the
-  transaction commits; legitimate nested runtime symlinks are recorded without following
-  them, survive exact rollback or committed publication, and leave external targets byte-identical;
-  an absent first runtime beneath a symlinked App Support ancestor fails before any external
-  manifest, snapshot, transaction, or runtime write; large exact-continuity manifests are streamed
-  into parsers and remain recoverable without an `E2BIG` process-launch failure; prepared recovery
-  preserves natural same-inode runtime activity and concurrent checkout/owner-environment edits
-  that activation did not create while restoring only token-owned helper fields; a byte-exact
-  pre-existing owner environment receives a reversible identity receipt; after candidate startup,
-  the original artifact is validated independently while the current target passes the semantic
-  acceptance gate, so same-content atomic replacement and declared managed-only drift commit while
-  protected or unknown drift fails closed; a detached receipt is
-  atomically quarantined into a private same-filesystem claim directory only when its identity/digest and
-  the restored target checkpoint both match exactly; successful predecessor-source verification
-  proceeds to commit while failed verification rolls back; terminal cleanup validates the open
-  descriptor, zeroes only a detached single-link inode, and moves the source into bounded
-  per-checkout retirement slots without unlinking a possible owner-environment pathname, while a
-  racing replacement and crash after either claim remain recoverable without any rename from the
-  candidate filesystem into App Support;
-  cross-version recovery starts the predecessor
-  directly with its own component lock and a one-time inherited global CLI lock; spaced native
-  Mongo data paths remain one exact argument, and nested candidate stop inherits internal recovery
-  context without recursively recovering the same journal; a same-database installed Scheduler is
-  drained for candidate handoff while a foreign runtime identity is untouched, and native Mongo
-  restart revalidates the recorded PID, start time, executable/hash/signature, exact arguments, and
-  data path plus every PID-file boundary/inode before signalling the process that the native start
-  layer actually wrote; a dead stale PID record is pruned as a stopped-runtime no-op
-- Forbidden Result: writing `active-checkout.json` or live generated output before validation,
-  deferring missing configured-component discovery until candidate doctor after helper quiescence,
-  accepting a failed clone's clean default branch on retry, treating refresh-required component
-  status as strict activation alignment, replacing a concurrent target directory, accepting a new
-  component selection after strict validation,
-  ignoring candidate stop failure, deleting a prepared journal without exact helper-intent restore,
-  writing the quiescence token before a stale helper has fully exited, leaving a stale helper
-  process alive to rewrite quiesced supervision, killing a same-named
-  non-Viventium or PID-reused process, accepting a different helper bundle as restoration proof,
-  deleting a rolled-back journal before exact helper relaunch is verified, failing to restore a
-  previously running helper after rollback, allowing an internal detached candidate start to
-  overwrite transaction-owned stopped intent,
-  using the candidate component lock to restart the predecessor, attempting core rollback after
-  helper ecosystem mutation, following or mutating an external symlink target, accepting a
-  symlinked App Support/runtime root or ancestor even when `runtime/` is absent, materializing a
-  candidate link target as a regular file/directory, passing a complete activation manifest in
-  `argv`, restoring a frozen prepared-state runtime/checkout snapshot over newer owner activity, or
-  restoring helper/owner-environment state from a plan without exact ownership evidence, routing
-  predecessor recovery through its nested detached launcher, or leaving an unjournaled mixed
-  runtime after process loss, splitting a spaced native data path by reparsing `ps` display text,
-  deleting an interior empty Linux argument and shifting its following value, reacquiring the outer
-  CLI lock during nested rollback stop, or calling a helper that is defined only after the
-  stop-only early exit, leaving a secret-bearing materialization receipt after exact rollback,
-  deleting one when the restored target differs, failing repeat activation merely because its
-  candidate owner environment is already exact, refusing a helper-installed Scheduler after proving it owns the same
-  schedules database, killing a foreign Scheduler, or splitting native-Mongo ownership across
-  stale launcher and native-stack PID files; a stale/reused PID is never signalled, and an unsafe
-  PID-file target cannot stop Mongo before its boundary failure is reported
-- Evidence: `tests/release/test_dev_runtime_activation.py`,
-  `test_stable_dev_runtime_workflows.py`, source/syntax checks, and a dated public-safe report
-- Last Run: PARTIAL 2026-07-24; isolated failure, prepared-helper-intent rollback, atomic
-  begin-new allocation, hostile runtime-target rejection, pre-commit rollback, core commit,
-  successful helper-supervision merge restoration, detached-child recovery isolation,
-  post-commit backup-identity race, forward
-  helper-finalization receipt, nested virtual-environment/candidate-link preservation, symlinked
-  App Support rejection before first-runtime allocation, and two publish crash points pass. An
-  initial live installed-helper promotion failed closed before mutation when a legitimate
-  Scheduling Cortex virtual-environment link exposed the missing no-follow manifest lane; the
-  synthetic escaped-bug regressions now cover publish, rollback, commit, and all existing
-  transaction entry points. The next live attempt reached prepared state and failed closed before
-  helper/runtime mutation because its 2.2 MB exact manifest was passed through `argv`; the
-  streaming-parser and prepared-preservation regressions now cover that escaped limit and the
-  natural live-runtime activity observed before recovery. Transaction-token helper receipts,
-  plan-only owner-edit preservation, exact materialization proof, and predecessor direct-start
-  handoff are now covered by the isolated activation/workflow gate. A later installed attempt
-  exposed a missing config-selected Microsoft 365 component only at candidate doctor; activation
-  still failed closed with exact protected-state hashes, and the escaped regression now requires
-  atomic no-replace selected-component staging plus config-digest-bound exact clean-pin and
-  structured revalidation before App Support activation state. A subsequent installed restart
-  reached the native Mongo engine proof and failed closed because display-oriented process text
-  split a standard spaced data path. Recovery initially retained the journal rather than guessing
-  after its nested stop recursively entered the outer recovery path; exact-argument inspection,
-  inherited internal-recovery context, and stop-only helper-order regressions now cover all three
-  escaped defects. The real recovery then cleared the journal and restored the protected config,
-  helper intent, active binding, and candidate owner-environment absence to their exact pre-run
-  state. The next installed restart reached candidate launch, then failed closed because the
-  checkout-scoped stop would not drain the same-database helper-installed Scheduler and the full
-  launcher read a stale legacy Mongo PID instead of the canonical PID written by native startup.
-  Scheduler identity-bound installed-component handoff and receipt-bound native Mongo stop now
-  cover both escaped ownership defects, including real-process stop/seal, stale PID no-signal,
-  matching legacy PID recovery, Docker no-op, and stopped-runtime no-op cases; rollback again
-  restored the same protected hashes. The next retry reached successful native Mongo/Meili and
-  sidecar startup, but the health watcher misclassified a recoverable native-fallback warning as
-  terminal while its supervised launcher was still alive. Native fallback progress no longer uses
-  terminal-failure wording; genuine required-child fatal evidence still wins over wrapper liveness.
-  That rollback restored the protected owner `.env` but exposed a separate, exact duplicate
-  materialization receipt after a same-content launcher rewrite. No-op env mutators now preserve
-  the existing inode, and the commit boundary independently validates and claims the original
-  artifact before semantically accepting the current target, including declared managed-only
-  updates. Repeat activation also exposed the
-  missing receipt path for an already-exact candidate `.env`; prepared/published exact-cleanup,
-  repeat-activation receipt, and concurrent-drift refusal regressions now cover both escaped cases.
-  The following live candidate reached healthy core surfaces and submitted its detached sidecars,
-  but activation recovery treated the intentionally completed wrapper as a stopped runtime.
-  Attempt-scoped submission-marker coverage now keeps health polling active after normal wrapper
-  exit while preserving explicit-fatal precedence. That same attempt exposed a Telegram cold-start
-  race: its 30-second rollback guard was shorter than the launcher's own attach plus readiness
-  allowance. The guard is now derived from the full budget plus margin, readiness permits the
-  Telegram API's bounded cold/network path, and an attached candidate exit fails immediately.
-  Successful installed promotion/restart remains pending.
-
-## SDR-012A: Predecessor Telegram Recovery Tolerates Successor-Only Contracts
+## SDR-012: Installed Helper Maintains Durable Runtime Intent
 
 - Requirement: `50_Stable_Dev_Runtime.md`
-- Surfaces: `dev-runtime activate-current`, `upgrade`, Telegram runtime-component staging
-- Preconditions: a clean current candidate and a supported predecessor checkout created before a
-  newly required current Telegram/voice contract existed
-- Steps: stage the predecessor with the current recovery controller, then stage the candidate;
-  repeat through the activation and upgrade shell paths, including an older component assembler
-  that ignores the predecessor compatibility environment field
-- Expected Result: the predecessor component contains its complete tracked public runtime and the
-  stable recovery baseline, the candidate still fails loud if any current required contract is
-  missing, first activation and dirty local upgrades stay strict, and staging finishes before any
-  binding, generated-runtime, helper, or process mutation
-- Forbidden Result: requiring a successor-only file from the predecessor, relaxing the candidate
-  contract, passing a new mandatory CLI flag to an older assembler, or mutating live state before
-  either component is safely staged
-- Evidence: `tests/release/test_telegram_runtime_component.py`,
-  `tests/release/test_cli_upgrade.py`, and an installed activation retry
-- Last Run: PARTIAL 2026-07-31; the installed activation reproduced the pre-mutation refusal,
-  all 197 CLI-upgrade/helper/first-bridge tests and 26 of 27 component tests passed with the final
-  production implementation; the only failure was the test's source-slice endpoint. After correcting
-  that assertion, all 27 component tests and all 26 QA operating-contract tests passed. The
-  component suite executes the env-only older-assembler seam and strict reset. Installed activation
-  retry is pending.
+- Surfaces: installed macOS helper, helper config, local-prod API/web/playground/Recall surfaces
+- Preconditions: installed helper is bound to the active checkout; runtime supervision desires
+  `running`; protected-folder access is approved when the active checkout requires it
+- Steps: verify the installed binary matches the current shipped helper artifact, stop local prod
+  outside the helper's intentional **Stop** action, wait for bounded helper recovery, then refresh the
+  browser surface; separately exercise the supervisor state model for **Stop**, **Quit**, and **Start**
+- Expected Result: the helper relaunches the stopped stack without a login/reboot or manual CLI
+  start, all required surfaces recover, refresh succeeds, intentional stopped state remains stopped,
+  and later Start resumes supervision
+- Forbidden Result: one-shot login-only startup, unbounded rapid launch loops, duplicate concurrent
+  launches, helper reinstall erasing desired state or unknown config, or a green status row backed by
+  another checkout's Prompt Workbench
+- Evidence: installed binary/source hashes, helper state and sanitized logs, process ownership, health
+  probes, browser refresh, and release regressions
+- Last Run: PARTIAL 2026-08-05; installed artifact and automated state/backoff/config-preservation
+  lanes passed, while the real protected-folder recovery lane awaits the macOS approval prompt
 
-## SDR-013: Local Checkout Promotion Does Not Require A Cloud Upstream
+## SDR-013: Dev Stop Preserves Local Prod Ownership
 
 - Requirement: `50_Stable_Dev_Runtime.md`
-- Surfaces: `dev-runtime activate-current`, Git checkout, component lock, helper artifact
-- Preconditions: synthetic clean named branch with no upstream plus dirty-parent and dirty-component
-  variants
-- Steps: run the promotion safety gate from the clean no-upstream branch; add untracked parent work
-  and retry; then use only the explicit `--allow-dirty-local-testing` parent-dirty bypass
-- Expected Result: the clean local branch reaches the next activation gate without a remote; dirty
-  parent or selected-component state fails before App Support creation or `begin-new`; the explicit
-  flag bypasses only parent dirtiness and leaves component/helper checks active
-- Forbidden Result: requiring a cloud upstream for local promotion, suggesting unsupported
-  `--skip-pull` syntax, accepting ambient dirty state, or creating activation state before refusal
-- Evidence: executable temp-repo and structural CLI regressions in `test_cli_upgrade.py`, plus
-  `test_dev_runtime_activation.py`
-- Last Run: PASS 2026-07-24; clean no-upstream, dirty-parent refusal, explicit parent-only bypass,
-  and transactional activation regressions passed in isolated fixtures; installed live promotion
-  remains the user-path completion gate
-
-## SDR-014: Cross-Checkout Promotion Preserves The Owner Environment
-
-- Requirement: `39_Installer_and_Config_Compiler.md`, `50_Stable_Dev_Runtime.md`
-- Surfaces: `dev-runtime activate-current`, ignored `LibreChat/.env`, generated runtime,
-  helper-launched future starts, activation rollback
-- Preconditions: clean candidate checkouts both without an ignored `.env` and with a byte-exact
-  pre-existing `.env`, plus a distinct previous active checkout with synthetic protected,
-  owner-secret, unmanaged, and runtime-managed fields
-- Steps: promote the candidate; inspect selection order and the staged runtime copy/manifest; permit
-  only a runtime-managed field change; inject protected, owner-secret, and unmanaged changes; retry
-  with linked/unsafe inputs; delete the declared original-runtime backup at every publication
-  phase; inject an owner edit after rollback quarantine and commit acceptance; change the nested
-  LibreChat revision after materialization; crash during the transaction-owned materialization
-  write; present an independent candidate owner environment; then exercise first and later helper
-  starts with a divergent private fallback
-- Expected Result: the previous active checkout is authoritative for an established runtime;
-  fresh-only sources have explicit/private/candidate precedence; candidate conflicts and
-  established missing state fail closed; exact candidate bytes/mode/absence are checkpointed before
-  mutation; one revision-bound source snapshot is materialized through a fully written
-  transaction-owned hard link and acknowledged by exact inode/digest receipt when the target is
-  absent; a byte-exact existing target gains only that transaction-named receipt, while an
-  independent target is refused before compile/doctor/publication; a plan-only crash preserves a
-  concurrent owner target and retires only an unbound transaction-unique staging file; a detached
-  receipt after same-content target replacement is descriptor-validated and zeroed only when its
-  single-link count proves it is no longer live, then moved into a bounded per-checkout retirement
-  slot. Transaction cleanup never unlinks a pathname that may hold owner-environment value, a
-  terminal-window racing replacement is preserved and rejected, repeated promotions do not grow
-  residue, and post-commit cleanup failure cannot wedge finalization. Canonical retirement slots
-  have fixed checkout-path-independent names and must be zero-byte single-link files; moved
-  checkouts accept that state. Recognized digest-suffixed predecessor slots stay byte/inode exact
-  through failed activation and rollback, migrate only after core commit, and remain recoverable
-  when an older in-progress journal names them;
-  the manifest contains only digests; protected auth, owner credentials, empty assignments, and
-  unknown fields survive; rollback prevalidates the original runtime backup; forbidden drift
-  restores the predecessor without overwriting concurrent owner edits; commit has a durable
-  accepted-env boundary and revision proof; a post-acceptance edit forces a real alignment restart
-  bound to exact pre/post-health bytes, with the current candidate file as canonical and
-  same-content launcher inode replacement permitted
-- Forbidden Result: generating new encryption/session secrets merely because the candidate checkout
-  is clean, losing connected-account credentials, copying through a link, exposing values in the
-  manifest, publishing before staging, committing after protected drift, leaving a secret-bearing
-  detached transaction link containing secret-bearing bytes after exact rollback, deleting any possible owner-state
-  pathname, deleting that link when target state differs, resurrecting
-  a deleted key from the staged predecessor snapshot, or blessing an atomic save that the running
-  process did not load
-- Evidence: executable owner-environment/source-priority tests in
-  `tests/release/test_librechat_owner_env.py`, exact candidate checkpoint/rollback/crash tests in
-  `test_dev_runtime_activation.py`, including terminal-window source-swap, detached-secret zeroing,
-  bounded-retirement, post-commit forward-progress, semantic allow/deny, and unsafe retirement-state
-  regressions; launcher owner-secret continuity, generated runtime inspection,
-  pre/post semantic manifests, installed browser session/account persistence, and helper restart
-  evidence
-- Last Run: PASS-ISOLATED/PARTIAL-INSTALLED 2026-07-24; the full release suite passes
-  `1963 passed, 33 skipped`, the frozen affected matrix passes `233`, and an independent
-  frozen fresh-clone/focused gate passes `228`. These gates cover legacy rollback,
-  stored old-journal recovery, commit-acceptance races, cleanup containment, failed-activation
-  legacy non-mutation, shell journal retention, and staged-secret refusal. Installed
-  promotion, browser persistence, and helper restart remain completion gates.
-
-## SDR-015: Interrupted Promotion Recovery Uses Canonical State And Degraded-Remote Semantics
-
-- Requirement: `39_Installer_and_Config_Compiler.md`, `47_Remote_Access_and_Tunneling.md`,
-  `50_Stable_Dev_Runtime.md`
-- Surfaces: `dev-runtime activate-current/status`, detached launcher, App Support runtime state,
-  optional-service health
-- Steps: interrupt activation after staging, resume from a new CLI process, inject a
-  checkout-relative default state root, ANSI-colored nonterminal remote failure, router conflict,
-  and a GlassHive MCP without a separate `/health` route
-- Expected Result: the exact journaled recovery selection and canonical App Support state are used;
-  local API/web/playground/Scheduler/Telegram/voice health can complete while the public edge remains
-  visibly degraded; the real GlassHive MCP transport is accepted
-- Forbidden Result: guessed staging files, checkout-local Mongo/index state, repeated ten-minute
-  rollback loops caused only by router ownership, or an ANSI progress warning treated as fatal
-- Evidence: focused release tests, activation journal/status, generated state root, port/health/log
-  correlation, and installed retry
-- Last Run: PASS-AUTOMATED/PARTIAL-INSTALLED 2026-07-25; 304 affected release tests and the complete
-  2,063-passed/11-skipped release suite pass. Final candidate promotion, browser persistence, and
-  real channel reply remain required.
-
-## SDR-016: Scheduler Loopback Health Ignores Ambient Proxies
-
-- Requirement: `11_Scheduling_Cortex.md`, `50_Stable_Dev_Runtime.md`
-- Surfaces: launcher, activation/upgrade shutdown, hosted release runners
-- Preconditions: a real local Scheduler process and poisoned uppercase/lowercase HTTP and all-proxy
-  variables with no `NO_PROXY` exemption
-- Steps: start the Scheduler, run its readiness and ownership checks, then stop it across the
-  activation-scope scenarios
-- Expected Result: hardcoded loopback probes bypass ambient proxies, identify the exact Scheduler
-  ledger, and complete the intended ownership-safe stop
-- Forbidden Result: a proxy connection error is reported as Scheduler failure or prevents a safe
-  activation/upgrade stop
-- Evidence: `tests/release/test_scheduling_mcp_supervision.py` poisoned-proxy cases and hosted
-  `Easy Install core` checks
-- Last Run: PASS-AUTOMATED 2026-08-01; the launcher stop probe passed across all three
-  activation-scope scenarios with poisoned uppercase/lowercase HTTP and all-proxy variables. The
-  readiness and identity probes are covered by the launcher-wide source contract. The focused
-  Scheduler suite passed all 17 cases with its declared runtime dependencies. Current-head hosted
-  rerun remains pending.
-
-## SDR-017: Dev Env Stops Python Thread Exhaustion Before Host Failure
-
-- Requirement: `50_Stable_Dev_Runtime.md`
-- Surfaces: `bin/viventium dev-env run`, candidate process tree, installed-runtime process state
-- Preconditions: a dev env exists; the installed runtime may remain running; synthetic subprocesses
-  can inherit deliberately unsafe native thread settings
-- Steps: run a capture command with native thread settings set to 128 and detached start enabled;
-  run synthetic single-process and process-tree thread overruns; verify a re-parented Python member
-  with a spaced executable path is still counted; then interrupt a cleanup-aware child with SIGINT
-  and SIGTERM
-- Expected Result: bounded native worker-pool values replace the unsafe inherited settings; the
-  synthetic child and tree are stopped with safety exit 86 and a content-safe thread-budget
-  explanation; inherited detached start is disabled; ordinary operator signals complete child
-  cleanup without forced termination; no candidate child survives; installed local prod keeps its
-  original PIDs and health
-- Forbidden Result: thousands of Python threads, silent guard bypass, a generic success status,
-  killing or restarting installed local prod, or claiming that a guarded unit test proves unbounded
-  voice/audio stress is safe on the same workstation
-- Evidence: `tests/release/test_stable_dev_runtime_workflows.py`, process/port snapshot, browser
-  health check, and the public-safe dated report
-- Last Run: PASS 2026-08-10; RED reproduced both unsafe inherited values and a non-terminating
-  synthetic child, then GREEN proved bounded values and classified termination. A guarded
-  side-by-side candidate reached healthy API, web, playground, LiveKit, voice, Mongo, and search
-  surfaces. Its voice worker held 9 threads, the installed runtime stayed healthy on its existing
-  listeners, and headed Playwright reached the candidate registration form with zero console
-  errors. Audible voice and endurance remain separate acceptance gates.
+- Surfaces: config compiler, `dev-env` wrapper, stack/native stop, Prompt Workbench, local RAG,
+  browser, processes, ports, Docker
+- Preconditions: local prod and a named QA dev environment are running together; Workbench is enabled
+  for both; the QA lane owns local RAG rather than sharing prod RAG
+- Steps: inspect compiled ports and wrapper identity; open both Workbench pages; record sanitized
+  state/PID/port and prod-container baselines; run the supported QA dev stop; compare every dev and
+  prod surface afterward
+- Expected Result: Workbench has an offset compiler-owned port and runtime-owned state/PID; both
+  visible pages are distinct and watchdog-stable before stop; QA stop closes all QA listeners and
+  QA Compose containers while every prod API/web/playground/GlassHive/Workbench PID and prod RAG
+  container identity remains unchanged; stale native PIDs cannot authorize a kill; a restart-facing
+  start adopts exactly one identity-matched selected-runtime native listener and atomically restores
+  its PID receipt so the next supported stop owns it; the stop child inherits the selected
+  `runtime.env` plus `runtime.local.env` and selected App Support/profile/port/data ownership rather
+  than ambient canonical values, including when a selected local path references its selected state
+  root; ambient native credential inputs cannot outrank the selected local layer
+- Forbidden Result: shared-checkout process sweep, canonical-state fallback, prod port/container
+  removal, QA Workbench left running, local RAG using the prod Compose project or vector host port,
+  a stale PID killing an unrelated native process, or truncated process output skipping an exact
+  selected-runtime MongoDB or Meilisearch PID because its data path occurs late in argv; lookalike
+  service executables, prefixed data/config paths, and similarly named LiveKit options must not pass
+  ownership checks; zero, multiple, or foreign listener PIDs must not be adopted, and an existing
+  Meilisearch port must not be trusted without process and data-path validation; a shell-local
+  selected port or data path must not disappear at the native child boundary and fall back to prod
+- Evidence: [2026-08-10 prod/dev isolation report](reports/2026-08-10-prod-dev-runtime-isolation.md)
+- Last Run: PARTIAL 2026-08-10. The supported isolated-runtime stop/start restored the selected
+  API/Web/Playground/GlassHive/Workbench/native services while measured local prod remained healthy,
+  and the complete-argv, exact-`ucomm`, canonical `lsof`, foreign-runtime, unique-listener, stale-PID,
+  and selected-environment regressions pass. The retained runtime logs do not preserve the earlier
+  exact-listener adoption event, so a fresh supported start -> adopt -> stop -> start run with a
+  sanitized durable ledger is still required before this case can be called PASS.
 
 ## Natural User Use Case Checklist
 
 These rows are the minimum natural-user checklist gate for Stable Dev Runtime. Add narrower feature-specific
 rows before claiming a pass when the feature behavior changes.
 
-| Use Case ID | Natural user action | Requirement / case link | Real surface to use | Supporting evidence to compare | Expected visible result | Last run |
-| --- | --- | --- | --- | --- | --- | --- |
-| `STABLEDEV-UC-001` | Run the stable dev runtime status/start path and inspect generated runtime config, helper state, and web surface reachability. | `50_Stable_Dev_Runtime.md` / `SDR-001`-`SDR-007` | `bin/viventium status`, dev-runtime/dev-env CLI, helper status, and browser/health endpoints | Generated config summary, status output, helper state, logs, release tests, and dated QA report | Core services and optional services are classified truthfully, with helper status separate from runtime readiness. | 2026-05-17 live runtime sanity - passed for status classification |
-| `STABLEDEV-UC-002` | Run the same status path when optional services or helper surfaces are disabled/unreachable. | `50_Stable_Dev_Runtime.md` / `SDR-007` | CLI status, generated runtime config, helper state, and logs | Optional service health, stale lock checks, generated env/config, logs, and QA report | Status says needs attention/action required for unreachable enabled optional surfaces and never masks broken dependencies as ready. | 2026-05-17 live runtime sanity - passed |
-| `STABLEDEV-UC-003` | Start and stop Prompt Workbench from the CLI/helper path and verify it does not start or stop the main Viventium runtime. | `50_Stable_Dev_Runtime.md` / `SDR-006` | CLI prompt-workbench lifecycle, helper submenu, health endpoint, process state | PID/port metadata summary, `/api/health`, process state, helper install inspection, and QA report | Only the managed workbench process is affected; LibreChat/main Viventium stack state is preserved. | 2026-05-15 local CLI/helper integration QA - passed |
-| `STABLEDEV-UC-004` | Leave local prod running while developing and verify the helper does not continuously render user-facing root pages to decide health. | `50_Stable_Dev_Runtime.md` / `SDR-008` | macOS helper, modern playground `/api/health`, helper-launched logs, real browser route check | Helper source/test contract, Playwright health/root checks, sanitized log counts, live port/process snapshot | Local prod stays up, dev/server logs stop accumulating helper root-page probes, and no singleton service is stopped or duplicated. | 2026-05-27 implementation QA - passed with live helper refresh |
-| `STABLEDEV-UC-005` | Promote a checkout with validation enabled while the candidate config or prerequisites are invalid. | `50_Stable_Dev_Runtime.md` / `SDR-009` | `dev-runtime activate-current --validate --restart`, API/Workbench health and PIDs | Compiler/doctor exit, CLI wording, pre/post process identity | Validation fails loudly before stop/restart and the current healthy stack remains untouched. | PASS 2026-07-11; synthetic invalid config returned 1 and pre/post API and Workbench PIDs matched. |
-| `STABLEDEV-UC-006` | Check for and attempt an upgrade from clean, refreshable, dirty, running, and continuity-error states. | `50_Stable_Dev_Runtime.md` / `SDR-004`, `SDR-005`, `SDR-010` | CLI JSON/text, helper modal, disposable running runtime | Exit/status JSON, Git metadata, component state, audit status, process health, helper dialog | Inspection is side-effect-free; safe refresh remains available; blockers stop before mutation with specific guidance; no partial state is called rolled back. | PARTIAL 2026-07-19; 84 affected-module regressions, universal helper rebuild/install, and live no-share running/dirty refusal pass; successful/late-failure update and headed helper dialog remain open. |
-| `STABLEDEV-UC-007` | Leave the helper open past its login window, simulate a late runtime death, then use Stop, relaunch the helper, and Start. | `50_Stable_Dev_Runtime.md` / `SDR-011` | Installed macOS helper, detached CLI runtime, helper config, ports/processes/logs | Persisted desired state, bounded attempt timestamps, helper/start logs, helper menu status, runtime health | Late death self-recovers without a restart storm; explicit Stop remains stopped across helper relaunch; Start resumes supervised recovery. | PARTIAL 2026-07-24; deterministic policy/source/build QA passed, installed headed lifecycle QA remains open. |
-| `STABLEDEV-UC-008` | Promote a clean local candidate branch that intentionally has no cloud upstream while preserving unrelated local work. | `50_Stable_Dev_Runtime.md` / `SDR-013` | `dev-runtime activate-current --validate --restart`, Git/component/helper inspection, active checkout | Pre-mutation structured report, active checkout, transaction state, runtime health | Clean no-upstream promotion is accepted; dirty parent/component state is refused before mutation unless the explicit parent-only local-testing flag applies. | PARTIAL 2026-07-24; executable isolated clean/dirty/bypass gates pass; installed live promotion pending. |
-| `STABLEDEV-UC-009` | Promote a clean checkout that has no ignored LibreChat environment, then refresh and restart as the existing user. | `39_Installer_and_Config_Compiler.md`, `50_Stable_Dev_Runtime.md` / `SDR-014` | `dev-runtime activate-current --validate --restart`, browser session/accounts, helper restart, generated runtime | Digest-only owner-env manifests, exact candidate checkpoint, transaction receipt, browser persistence, helper/start logs | Existing login/encryption keys, connected-account credentials, and unknown owner fields survive while declared runtime fields may advance; unsafe, conflicting, missing-established, missing-runtime-backup, revision, or concurrent drift fails closed without overwriting owner state. | PASS-ISOLATED/PARTIAL-INSTALLED 2026-07-24; 402 combined affected regressions and the 181-case final blocker gate pass; installed browser/helper evidence pending. |
-| `STABLEDEV-UC-010` | Start a guarded side-by-side candidate after a Python thread-exhaustion incident, open its real browser surfaces, and confirm installed local prod remains unchanged. | `50_Stable_Dev_Runtime.md` / `SDR-017` | `bin/viventium dev-env run`, candidate and installed health endpoints, process/thread snapshots, real browser | Guard profile and limits, candidate/installed PIDs and ports, logs, browser snapshot, focused regression | Candidate web/API/playground become usable under the guard; no Python process approaches the limit; installed local prod stays healthy and is not restarted. | PASS 2026-08-10; guarded candidate core surfaces and voice worker were healthy, voice stayed at 9 threads, installed local prod remained healthy, and headed Playwright reached login and registration with zero console errors. Audible voice and endurance were not run. |
+| Use Case ID        | Natural user action                                                                                                                                                                          | Requirement / case link                                      | Real surface to use                                                                           | Supporting evidence to compare                                                                                                                                                        | Expected visible result                                                                                                                                               | Last run                                                                                                                                                                                                                             |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ | --------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `STABLEDEV-UC-001` | Run the stable dev runtime status/start path and inspect generated runtime config, helper state, and web surface reachability.                                                               | `50_Stable_Dev_Runtime.md` / `SDR-001`-`SDR-007`             | `bin/viventium status`, dev-runtime/dev-env CLI, helper status, and browser/health endpoints  | Generated config summary, status output, helper state, logs, release tests, and dated QA report                                                                                       | Core services and optional services are classified truthfully, with helper status separate from runtime readiness.                                                    | PASS 2026-08-05; current checkout, helper, stack owner, processes, browser refresh, and health converged ([report](reports/2026-08-05-latest-checkout-activation-and-supervision.md))                                                |
+| `STABLEDEV-UC-002` | Run the same status path when optional services or helper surfaces are disabled/unreachable.                                                                                                 | `50_Stable_Dev_Runtime.md` / `SDR-007`                       | CLI status, generated runtime config, helper state, and logs                                  | Optional service health, stale lock checks, generated env/config, logs, and QA report                                                                                                 | Status says needs attention/action required for unreachable enabled optional surfaces and never masks broken dependencies as ready.                                   | PASS 2026-08-05; Recall degradation was visible until semantic recovery and the unrelated maintenance failure remained `Action Required` ([report](reports/2026-08-05-latest-checkout-activation-and-supervision.md))                |
+| `STABLEDEV-UC-003` | Start and stop Prompt Workbench from the CLI/helper path and verify it does not start or stop the main Viventium runtime.                                                                    | `50_Stable_Dev_Runtime.md` / `SDR-006`                       | CLI prompt-workbench lifecycle, helper submenu, health endpoint, process state                | PID/port metadata summary, `/api/health`, process state, helper install inspection, and QA report                                                                                     | Only the managed workbench process is affected; LibreChat/main Viventium stack state is preserved.                                                                    | PASS 2026-05-15: local CLI/helper integration QA - passed                                                                                                                                                                                  |
+| `STABLEDEV-UC-004` | Leave local prod running while developing and verify the helper does not continuously render user-facing root pages to decide health.                                                        | `50_Stable_Dev_Runtime.md` / `SDR-008`                       | macOS helper, modern playground `/api/health`, helper-launched logs, real browser route check | Helper source/test contract, Playwright health/root checks, sanitized log counts, live port/process snapshot                                                                          | Local prod stays up, dev/server logs stop accumulating helper root-page probes, and no singleton service is stopped or duplicated.                                    | PASS 2026-05-27: implementation QA - passed with live helper refresh                                                                                                                                                                       |
+| `STABLEDEV-UC-005` | Promote a checkout with validation enabled while the candidate config or prerequisites are invalid.                                                                                          | `50_Stable_Dev_Runtime.md` / `SDR-009`                       | `dev-runtime activate-current --validate --restart`, API/Workbench health and PIDs            | Compiler/doctor exit, CLI wording, pre/post process identity                                                                                                                          | Validation fails loudly before stop/restart and the current healthy stack remains untouched.                                                                          | PASS 2026-07-11; synthetic invalid config returned 1 and pre/post API and Workbench PIDs matched.                                                                                                                                    |
+| `STABLEDEV-UC-006` | Check for and attempt an upgrade from clean, refreshable, dirty, running, and continuity-error states.                                                                                       | `50_Stable_Dev_Runtime.md` / `SDR-004`, `SDR-005`, `SDR-010` | CLI JSON/text, helper modal, disposable running runtime                                       | Exit/status JSON, Git metadata, component state, audit status, process health, helper dialog                                                                                          | Inspection is side-effect-free; safe refresh remains available; blockers stop before mutation with specific guidance; no partial state is called rolled back.         | PARTIAL 2026-07-19; 84 affected-module regressions, universal helper rebuild/install, and live no-share running/dirty refusal pass; successful/late-failure update and headed helper dialog remain open.                             |
+| `STABLEDEV-UC-007` | Let the installed helper recover a stopped local-prod stack created by an older helper, repeat with a manual restart under helper supervision, then use Telegram immediately after recovery. | `50_Stable_Dev_Runtime.md` / `SDR-011`                       | macOS helper, runtime ports, Telegram Desktop                                                 | legacy log mode migration, startup claim, helper launch count, process-group count, health endpoints, visible bubble/audio, Mongo and GlassHive state                                 | Each recovery survives the complete warm-up with one owner, all user surfaces become healthy, and the next Telegram turn succeeds without a generic connection error. | PASS 2026-08-04; installed helper migrated the log and recovered once; the manual restart then used a live startup claim, zero competing helper launches, and one runtime process group before delivering the exact Telegram marker. |
+| `STABLEDEV-UC-008` | Leave the installed local-prod stack in desired `running` state, stop it outside the helper menu, and wait without logging in or manually starting it.                                       | `50_Stable_Dev_Runtime.md` / `SDR-012`                       | installed macOS helper, runtime ports, browser refresh                                        | installed binary hashes, helper state/backoff log, process roots, semantic health, visible UI and refresh                                                                             | The helper detects the stopped stack, submits one bounded recovery launch from the active checkout, restores every required surface, and continues supervising it.    | PARTIAL 2026-08-05; shipped/installed artifact and automated lanes pass; protected-folder approval is pending for the live recovery launch.                                                                                      |
+| `STABLEDEV-UC-009` | Keep local prod and a named dev env running, open both Workbench pages, then stop only the dev env through the supported wrapper.                                                            | `50_Stable_Dev_Runtime.md` / `SDR-013`                       | browser, `dev-env run <name> stop`, process/port state, Docker                                | Compiled port/state identity, exported native-child ownership, visible page distinction, watchdog stability, complete native argv, pre/post prod PIDs, dev/prod Compose container IDs | The dev Workbench and every dev-owned listener/container stop; local prod and its shared/owned services keep the same identities.                                     | PARTIAL 2026-08-10; supported stop/start isolation and current selected-runtime health are proven, but the earlier exact-listener adoption event was not preserved in a durable sanitized ledger. Repeat the complete supported lifecycle before a pass. |
 
 ## Release Test Traceability
 
 - `tests/release/test_cli_upgrade.py`
 - `tests/release/test_config_compiler.py`
 - `tests/release/test_detached_librechat_api_watchdog.py`
-- `tests/release/test_dev_runtime_activation.py`
 - `tests/release/test_detached_librechat_supervision.py`
-- `tests/release/test_helper_runtime_intent.py`
 - `tests/release/test_librechat_client_defaults.py`
 - `tests/release/test_librechat_dev_start_config_sync.py`
 - `tests/release/test_macos_helper_install.py`

@@ -34,7 +34,7 @@
 
 | Evidence surface | Result / sanitized pointer |
 | --- | --- |
-| Requirement and use case | Requirement 55, completion ledger, coverage matrix, and `GHUCP-034` |
+| Requirement and use case | Requirement 57, completion ledger, coverage matrix, and `GHUCP-034` |
 | Code owning path | Provider lifecycle/leases, workspace catalog/MCP launch-wait, UI, and deliverable handling |
 | Docs and nested docs/repos | Parent requirement/QA plus nested Ultimate Phase 1 release notes |
 | Scripts or harnesses | Provider, runtime, MCP, and Glass Drive suites recorded below |

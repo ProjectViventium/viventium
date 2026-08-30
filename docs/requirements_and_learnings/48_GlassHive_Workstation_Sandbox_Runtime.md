@@ -50,11 +50,13 @@ syntax for host-worker selection.
 Host-native workers are intentionally powerful. They act on the user's main computer and inherit the
 local OS, filesystem, browser, and CLI auth posture. The selected mode is a structured runtime
 decision, not a free-text runtime heuristic: `execution_mode=host` means the real computer/session,
-and `execution_mode=docker` means isolated workstation. Deployments may configure either mode as the
-MCP default; when the user request depends on the real browser profile, desktop apps, local files,
-installed CLIs, or OS/window control, GlassHive-facing prompts and schemas should steer the main
-agent to host mode unless the user explicitly asks for an isolated sandbox or the host-worker gate is
-disabled.
+and `execution_mode=docker` means isolated workstation. Deployments may configure either mode
+internally. In Viventium's normal-user product, `host` is Advanced-only and requires the declared
+host-worker gate plus an explicit capability grant for the requested host resources. A request that
+depends on the real browser profile, desktop apps, local files, installed CLIs, or OS/window control
+must expose that requirement and obtain the grant; it must not silently steer a normal user into
+unrestricted host execution. When the gate or grant is absent, use an isolated workspace when
+possible or return a clear unavailable/permission result.
 
 Host-mode Claude Code `--chrome` therefore means the user's real Chrome/session by design. That is
 the point of host mode, not an isolated browser. Safety comes from structured host-mode selection,
@@ -155,10 +157,11 @@ the host MCP client so it reloads the updated tool contract.
   user-facing completion block, headed `FINAL REPORT:`, so callback delivery can surface results
   instead of progress chatter or stale resumed-session summaries.
 - CLI worker prompts, `AGENTS.md`, `CODEX.md`, `CLAUDE.md`, and other bootstrap instructions must
-  include a universal completion self-check before that final report. The worker should inspect the
-  concrete output it produced, compare it with the user's request and success criteria, fix or
-  continue when the output is incomplete, and report only remaining blockers. This is a general
-  harness rule, not a prompt-specific list of file types, providers, UI surfaces, or QA phrases.
+  contain one proportional-verification rule before that final report. The worker chooses depth from
+  the user's explicit success criteria, requested rigor, risk, and concrete defects; uses the
+  smallest evidence that proves the result; and repeats an equivalent check only after a relevant
+  output change or detected defect. This is a general harness rule, not a prompt-specific list of
+  file types, providers, UI surfaces, QA phrases, model efforts, resource classes, or token limits.
 - When `glasshive-run/constraint-ledger.json` exists, workers must treat it as a canonical run
   reminder before planning, delegation, source collection, and final delivery. Plans, specs, subagent
   prompts, and delegation notes must carry source/date/auth/scope constraints forward literally; if
@@ -283,10 +286,11 @@ concrete blocker instead of spending indefinitely.
 
 ### Why Selenium's Docker Image (Not Selenium Grid)
 
-GlassHive uses the digest-pinned
-**`selenium/standalone-chromium:4.46.0-20260707@sha256:3400b92f1cddb2dfaaf358654e8f7d83d7be45192fb73c5f28c25faa28d36504`**
-as the **Docker base image** for worker containers. This is not Selenium Grid (the multi-node
-browser-test orchestrator). The image is used because it bundles:
+GlassHive source currently uses **`selenium/standalone-chromium:latest`** as the Docker base image
+for worker containers. This is not Selenium Grid (the multi-node browser-test orchestrator). The
+floating tag is current implementation truth, not acceptable release provenance: a release
+candidate must replace it with the reviewed digest pin required by document 57. The image is used
+because it bundles:
 
 - Chromium browser
 - Xvfb virtual display server
@@ -324,11 +328,11 @@ Selenium base:
 - **System**: bash, curl, file, git, jq, LibreOffice Writer/Impress/Calc, Pandoc, poppler-utils,
   ripgrep, screen, tmux, vim, wmctrl, xdotool, xterm, pcmanfm
 - **Node.js 22.x** via nodesource
-- **npm runtimes**: pinned Codex and Claude Code specs (`@openai/codex@0.146.1`,
-  `@anthropic-ai/claude-code@2.1.223`) plus an app-owned OpenClaw 2026.7.1-2 runtime installed
-  from the reviewed lock with `fast-uri` 3.1.3. Operators may override the Codex and Claude specs
-  with `WPR_SANDBOX_CODEX_NPM_SPEC` and `WPR_SANDBOX_CLAUDE_CODE_NPM_SPEC` after updating QA
-  evidence. OpenClaw is not overrideable by a mutable npm spec. The build must use a
+- **npm globals**: pinned Codex and Claude Code specs (`@openai/codex@0.147.0`,
+  `@anthropic-ai/claude-code@2.1.229`) plus the currently floating `openclaw@latest` input. The
+  OpenClaw float is also a release-provenance gap, not a pin. Operators may override
+  the package specs with `WPR_SANDBOX_CODEX_NPM_SPEC`, `WPR_SANDBOX_CLAUDE_CODE_NPM_SPEC`, and
+  `WPR_SANDBOX_OPENCLAW_NPM_SPEC` after updating QA evidence. Global npm install must use a
   disposable build cache and remove `/tmp`, root, and `seluser` npm caches before image export so
   the worker image stays reproducible and does not fail on Docker Desktop overlay storage.
 - **Python**: selenium plus research/document/artifact libraries such as `requests`,
@@ -346,10 +350,13 @@ Selenium base:
   manifest only when the matching Linux `extension-host` bundle is present in a worker-local or
   operator-provided Chrome plugin root; the runtime must not point Codex at a host macOS binary or a
   non-native-protocol proxy.
-- **Image tag**: `workers-projects-runtime-workstation:phase1-node22-docs8-openclaw2026.7.1-5`
-- **Ubuntu package snapshot**: `20260801T000000Z`. This reviewed immutable snapshot contains package
-  builds compatible with the digest-pinned base. The image label must attest that exact snapshot,
-  and provenance verification rejects stale or manually retagged images that do not match it.
+- **Image tag**: `workers-projects-runtime-workstation:phase1-node22-docs9`
+
+The versioned tag changes whenever either native harness pin changes. A retained older image must
+not be treated as ready merely because it exists: its Codex/Claude versions must pass the configured
+model and native-event probes. The 2026-08-13 Parallel Work QA escaped a `provider_request_rejected`
+failure where Codex 0.142.0 could start but truthfully rejected the configured GPT-5.6 model; the
+docs9 image and its regression pin Codex 0.147.0 and Claude Code 2.1.229.
 
 The workstation image must be capable of ordinary professional first-delivery work products. A
 worker should not need to hand-roll a minimal ZIP/DOCX or return Markdown/HTML only because the
@@ -432,17 +439,12 @@ reason, exit code, evidence path when finalized, and `last_heartbeat_at`. It mus
 quiet process with zero stdout/stderr is still `running` while the process or Docker screen session
 is alive, not a fabricated completion.
 
-For Docker/workstation runs, the runtime identity precreates the private per-run `stdout.log`,
-`stderr.log`, and `exit_code` files before the container starts. The existing worker-specific ACL
-lets the non-root container user write those files without transferring host ownership or granting
-the gateway group access to the workspace, home, browser profile, or provider state. An empty
-`exit_code` marker means the run is still unfinished; a populated integer records the actual terminal
-exit, while malformed nonempty content fails closed as a terminal runtime failure. The same contract
-applies after runtime restart and recovery.
-
-Enterprise/multi-user workers require both recursive and default POSIX ACL application to succeed;
-missing or failing ACL support aborts path preparation and worker start. The historical permissive
-bind-mount fallback is limited to an explicitly non-multi-user local security mode.
+Heartbeat and active-session JSON are cross-process coordination records, not ordinary diagnostic
+files. Writers must publish complete replacements atomically with private permissions. A reconciler
+must never be able to observe a truncated JSON document during a heartbeat update and orphan a live
+run; the late successful worker result cannot repair the user-visible response after that false
+terminal transition. Regression coverage must preserve both sides of the contract: a truly dead
+owner is interrupted, while a live owner with a fresh heartbeat retains its finalization lease.
 
 The verifier is an evidence harness, not a new planner. It recursively inventories root,
 `output/`, `artifacts/`, and `reports/` deliverables while excluding scaffold, browser profile,
@@ -800,12 +802,14 @@ Host-worker UX and callback requirements:
   Claude Code workers should also preserve `--chrome` by default when the CLI supports it; disable it
   only through an explicit locked-down configuration.
 
-- `worker_create` and `worker_find_or_resume` accept `execution_mode=host`.
-- `codex-cli` uses local Codex CLI full-access/no-approval execution. Host-native Codex defaults to
+- `worker_create` and `worker_find_or_resume` accept `execution_mode=host` only after the deployment
+  gate and request-scoped host capability grant described above. Viventium normal-user surfaces must
+  not present this as the default or silently select it.
+- After that Advanced gate, `codex-cli` uses local Codex CLI full-access/no-approval execution. Host-native Codex defaults to
   the logged-in local Codex CLI configuration when no host-specific model override is set; it must
   not silently inherit the server-side Docker/OpenAI-compatible provider model just because that
   model is configured for sandbox workers.
-- `claude-code` uses local Claude Code bypass-permission execution.
+- After that Advanced gate, `claude-code` uses local Claude Code bypass-permission execution.
 - Host-native CLI binary overrides are allowed for local app-bundled or managed CLIs, but they must
   be applied only by host-native runtimes. They are not workspace-worker defaults and must not be
   written into Docker launch scripts.
@@ -1124,7 +1128,7 @@ via `ANTHROPIC_API_KEY`/`ANTHROPIC_BASE_URL`), not macOS Keychain (`host_worker.
   reserve `xhigh` for genuinely hard asynchronous work after direct route and worker-run proof. A
   user/operator option, never a hardcoded constant.
 - **Worker model.** Config-driven via `WPR_MODEL_CODEX_CLI` (default `gpt-5.4`) and
-  `WPR_MODEL_OPENCLAW_CLAUDE` (default `claude-opus-5`). Choose from a launch-ready quality family
+  `WPR_MODEL_OPENCLAW_CLAUDE` (default `claude-sonnet-4-6`). Choose from a launch-ready quality family
   (model governance in `01_Key_Principles.md`); never use a low-tier model (GPT-mini / Haiku class)
   as a speed lever. A faster quality model is a supported option, not a silent default override.
 - **Keep-awake vs cost (default OFF for always-on prewarm).** Keeping workers warm has ongoing
@@ -1169,13 +1173,61 @@ without pretending the worker path is the only supported product route.
   scoped broker MCP block. Minimal Codex auth may be copied from the host Codex home into the
   worker-local Codex home with owner-only permissions. A broker-only Codex config is a capability
   regression unless an explicit lockdown config requested it and preflight/QA verify that intent.
-- Codex runtime metadata has a narrower lifecycle than credential files. While the exact selected
-  account lease and isolated container are active, `CODEX_HOME/installation_id` may be temporarily
-  worker-owned at Codex's required mode `0644`, and `CODEX_HOME/tmp/arg0` may be worker-owned at
-  `0700`. GlassHive must validate those exact paths without following symlinks, preserve existing
-  argument helpers across repeated readiness checks, and never apply this exception to Claude or a
-  noncanonical Codex home. Container cleanup then reseals the entire account tree to service
-  ownership and private `0700`/`0600` modes before releasing the lease.
+- A configured host-worker plugin denylist is an exact-ID capability control, not prompt content.
+  Codex receives `enabled = false` only for matching plugin IDs in worker-local `CODEX_HOME`; Claude
+  receives the equivalent `enabledPlugins` overrides through native `--settings`. Unlisted plugins
+  remain unchanged, and neither user's global plugin state nor the worker instruction is modified.
+  Codex launch must fail closed if the materialized worker config no longer proves every configured
+  denial. Because native sessions retain earlier plugin instruction state, a change to the generic
+  native worker policy fingerprint supersedes the old session before the next authoring turn and
+  seeds one replacement session from complete visible history. The old worker is terminated first;
+  this is a configuration-boundary migration, never a retry or a second concurrent authoring run.
+- The host-native web-access policy follows the same native-policy boundary. `inherit` is the
+  standalone and Viventium default. `disabled` is materialized in the actual Codex/Claude launch
+  command, included in the conversation policy fingerprint, and fail-closed on invalid values. The
+  worker's broker configuration remains present, so the policy cannot turn a declared broker outage
+  into an apparently successful native search.
+- Worker-local Codex personality is an optional native config value. Standalone GlassHive defaults
+  to `inherit`; Viventium's compiler defaults its host workers to `none` because the official
+  [Codex personality documentation](https://learn.chatgpt.com/docs/developer-commands?surface=cli#set-a-communication-style-with-personality)
+  defines that value as disabling Codex personality instructions, leaving Viventium's final Feeling capsule as
+  the sole intended personality/emotional authority. Explicit `inherit`, `friendly`, or `pragmatic`
+  remain supported operator choices. This changes communication instructions, not model capability,
+  and adds no persona text to the Viventium instruction. A personality-policy change uses the same
+  native-policy fingerprint boundary so a resumed session cannot silently keep the old personality.
+- Codex conversation project instructions are a separate config policy. Viventium defaults to
+  `inherit`: conversation workers run in the exact chosen workspace and honor its canonical
+  `AGENTS.md` because the fully connected LIFE context is part of the provider contract. A deployment
+  may explicitly select `exclude`; that uses a neutral non-project `conversation-workspace` as `-C`
+  and grants the real workspace through `--add-dir`, preserving file access while excluding project
+  instruction discovery. Mission workers are unchanged, and a policy change replaces the native
+  session through the same policy fingerprint boundary.
+- Production Codex conversation workers use `codex exec`, with one native session active per
+  conversation binding. The role boundary is strict: stable project identity and guardrails remain
+  project/developer instructions; the current combined `system`/`developer` snapshot is projected
+  exactly once into the worker-local Codex `developer_instructions`; visible user/assistant history
+  remains conversation history; and tool results remain tool evidence. Dynamic authority must never
+  be flattened into the user instruction.
+- The provider fingerprints stable native policy separately from the current developer snapshot.
+  A present, changed snapshot serially terminates and replaces the native worker at the new-turn
+  boundary, then seeds complete visible non-authority history. A present unchanged snapshot resumes
+  the same worker. An absent snapshot on a Phase-B continuation means carry forward the already
+  pinned state; it does not mean clear authority or replace the worker. Policy changes use the same
+  serial replacement boundary. This gives current-only authority without two concurrent authors and
+  avoids paying cold-start cost on ordinary continuation turns.
+- App Server remains QA-only, opt-in, and disabled by default. On 2026-08-02 the installed Codex
+  experimental `thread/settings/update` schema accepted three changing developer-instruction
+  settings on one thread, including after process restart/resume, but the model returned the first
+  instruction's marker on all three turns. The documented per-turn
+  `turn/start.collaborationMode.settings.developer_instructions` field was then tested separately on
+  one thread: the first quiet state was observed, but the second joyful state was ignored. Both are
+  stale authority and fail the production gate.
+  [`thread/inject_items`](https://learn.chatgpt.com/docs/app-server.md#inject-items-into-a-thread)
+  did make a later developer-role item model-visible, but it appends and persists items rather than
+  replacing the prior capsule. Accumulating contradictory developer items is also ineligible.
+  App Server must not replace the production transport until an official, tested current-only
+  developer-authority mechanism passes long-thread, compaction, restart/resume, cancellation, and
+  reconnect QA without stale accumulation.
 - Run-scoped env and MCP/client config must be refreshed before each worker run, including reused
   workers. Broker grants can rotate between runs; stale Claude `.mcp.json` headers, stale Codex MCP
   blocks, or duplicate MCP server sections are security and reliability bugs.
@@ -1186,8 +1238,10 @@ without pretending the worker path is the only supported product route.
 ### Critical Boundary
 
 GlassHive must **NOT** directly depend on or read LibreChat/parent internals (Mongo schemas, token
-storage, config formats). The `bootstrap_bundle` is the only crossing point between parent and
-sandbox.
+storage, config formats). The `bootstrap_bundle` is the only crossing point for parent-owned
+execution context, configuration, grants, and allowlisted file projection into a sandbox. Declared,
+authenticated typed provider, capability-broker, MCP, status, artifact, and callback APIs are also
+legal protocol boundaries; they never authorize direct parent-store or config imports.
 
 Host file materialization is allowlisted. `bootstrap_bundle.files[*].source_path` is copied only
 when it is an absolute path under `WPR_BOOTSTRAP_SOURCE_ROOTS`, does not traverse through symlinks,
@@ -1324,51 +1378,86 @@ LibreChat internals.
 - `POST /v1/chat/completions` accepts structured authenticated owner/conversation/agent/message/
   stream/surface/input metadata plus workspace/access binding. It emits OpenAI-compatible streaming
   chunks; harness-native and brokered tools stay inside GlassHive.
-- `POST /v1/responses` is an additive OpenAI Responses adapter over the same GlassHive request,
-  session, workspace, activity, cancellation, and harness execution core. It accepts the portable
-  text/message subset (`model`, `input`, optional `instructions`, `stream`, reasoning effort,
-  `conversation`, and `previous_response_id`) and emits typed Responses objects/events. A
-  `previous_response_id` may resume only a request owned by the same authenticated principal.
-  Harness-native tools remain inside GlassHive; unsupported client-owned tools or multimodal item
-  types fail visibly instead of being ignored or delegated to a wrapper model.
-- The compatibility floor is a normal bearer-authenticated Chat Completions request containing only
-  `model`, `messages`, and optional `stream`; server defaults supply principal, tenant, conversation,
-  agent, workspace, and access. Viventium headers/metadata are optional extensions. Unsupported
-  parameters return the standard `error.message/type/param/code` envelope and never silently alter
-  harness behavior. Chat Completions remains the broad compatibility floor used by LibreChat;
-  Responses is the preferred additive surface for new direct clients and does not create a second
-  execution engine.
-- LibreChat must honor the compiled provider capability at its final model-construction seam. When
-  that registration declares `responses_api: false`, neither stale per-conversation options nor an
-  SDK heuristic based on the provider's model ID may switch web, Telegram, or cortex turns away from
-  the registered Chat Completions transport. The exact provider model and declared effort must
-  remain on the wire. This does not remove GlassHive's independent Responses endpoint or alter
-  direct OpenAI Agents whose capability permits Responses.
-- Portability is deliberately protocol-layered. OpenAI's official guidance recommends Responses for
-  new projects while keeping Chat Completions supported, so GlassHive implements both over one core.
-  ACP remains a possible future external-agent/editor adapter, and MCP remains the tool/context
-  broker; neither is substituted for the HTTP conversation API. The Claude Agent SDK may later
-  replace Claude CLI process management inside the existing profile if it proves a lifecycle or
-  streaming advantage, without changing the public provider contract. Authoritative references:
-  [OpenAI Responses migration](https://developers.openai.com/api/docs/guides/migrate-to-responses),
-  [OpenAI Chat API](https://developers.openai.com/api/reference/resources/chat),
-  [Claude Agent SDK](https://github.com/anthropics/claude-agent-sdk-python),
-  [ACP](https://zed.dev/acp), and
-  [MCP architecture](https://modelcontextprotocol.io/docs/learn/architecture).
-- `GLASSHIVE_PROVIDER_API_KEY`, `GLASSHIVE_MCP_API_KEY`, and `WPR_API_TOKEN` are separate credentials.
-  The provider key is accepted only on provider routes and resolves to a configured principal and
-  tenant. Owner delegation and full access require explicit server grants; a caller cannot escalate
-  either by adding headers or rich metadata. The MCP credential cannot administer the runtime, and
-  the runtime administrator token cannot authenticate the provider route.
+- Brokered ordinary-tool execution remains observable without pretending LibreChat executed the
+  tool directly. Native tool completion events become a persisted `harness_activity` row carrying
+  only a bounded product-language operation and terminal status. Raw provider/server/tool plumbing,
+  arguments, results, invocation IDs, and credentials are excluded. Alternate native event views
+  for one private call ID collapse to one terminal receipt.
+- Signed provider bootstrap authority is invocation-fresh. GlassHive keeps the 300-second bootstrap
+  signature replay window and the normal 600-second broker grant lifetime; Viventium rebuilds the
+  complete grant, resource projection, timestamp, and HMAC immediately before every workspace-bound
+  graph provider call, including primary, fallback, consultant, and Main re-entry. This reuses the
+  participant's initialized tool/MCP definitions without reloading them while re-resolving current
+  authorized host resources before mint. It does not widen either TTL, serialize the signing
+  closure/secrets, or leave initialization-time capability claims in static system instructions.
+  Missing or failed current projection removes stale headers and authority and fails honestly; Stop
+  is rechecked after preparation and before provider ingress.
+- Foreground provider grants remain exact even on the first browser message, before LibreChat has a
+  persisted conversation or assistant response ID. In that pre-persistence state, Viventium signs
+  the client-minted request `message_id` as both `message_id` and `turn_id`; the `new` conversation
+  marker and zero-parent sentinel are not treated as real IDs. Once a real conversation exists, the
+  grant retains the real conversation plus request-message boundary. A request with neither an
+  exact message nor a real conversation/pre-persistence turn remains unauthorized and fails closed
+  at the unchanged broker verifier.
+- A user-blocking `/v1/chat/completions` turn has a persisted foreground response deadline only
+  when an operator or an explicit request configures one. There is no product-default foreground
+  deadline. `runtime.glasshive_foreground_response_timeout_s` is optional; when present, the
+  compiler validates 30-1800 whole seconds and emits
+  `GLASSHIVE_PROVIDER_RESPONSE_TIMEOUT_S` to generated `runtime.env`. Request metadata
+  `response_timeout_s` may set the turn budget when no operator ceiling exists, or shorten the
+  operator ceiling; it cannot lengthen it. The budget is anchored when provider ingress begins,
+  before synchronous native-session setup. Expiry
+  is decided transactionally against the persisted absolute deadline and native run `ended_at`, so
+  an on-time terminal result remains valid but a completion just after the deadline cannot win a
+  polling race. Active legacy rows with blank deadline fields are backfilled from their original
+  `created_at` plus the configured budget on reconnect. Expiry durably fails the provider request
+  and exact run as a
+  retryable `provider_response_deadline_exceeded`, interrupts only that native run outside the
+  provider start/cancel lock, emits no late answer or handoff tool call, and remains terminal across
+  an idempotent reattach. This is a foreground response policy only: mission, MCP, and other
+  autonomous/delegated workers remain uncapped by default and keep their existing explicit worker
+  timeout controls. Normal polling uses read checks and enters the SQLite deadline write arbiter
+  only for a missing/reached deadline or observed native terminal state.
+  The ingress timestamp is authoritative, but synchronous cold `_session()`/worker startup is not
+  hard-preempted while it is blocked and no durable provider-request row exists yet. If setup
+  eventually returns after the deadline, the provider fails immediately and never assigns the
+  user's native run. Therefore this is a response budget, not a guaranteed wall-clock maximum for
+  a hung cold bootstrap.
 - One session exists per tenant/owner/conversation/agent. A model, workspace, or access change
   supersedes the old worker and seeds the new native session from complete visible history.
 - Idempotency is owner-scoped and authoring-role-scoped: `main:<assistant-response-id>`,
   `phase_b:<main-agent-id>:<parent-response-id>`, and
-  `cortex:<cortex-agent-id>:<main-response-id>`. Transport retries reuse the same exact key while
-  parallel authoring roles cannot collide. Explicit Stop cancels that exact request; refresh or
-  transport disconnect only reattaches and does not terminate native execution.
-- Standard endpoint calls that omit a stable idempotency/message identifier create a fresh request;
-  the provider never content-hashes identical prompts into an accidental replay.
+  `cortex:<cortex-agent-id>:<main-response-id>`. Ordinary requests and transport retries reuse the
+  same exact key while parallel authoring roles cannot collide. Standard Agent Builder handoff
+  calls derive a deterministic child from visible message history, model, effective effort,
+  normalized tool choice, and transfer targets. An exact graph-node retry is stable; a normal
+  specialist return changes shared visible history, so Main re-entry executes once under a new
+  child. This contract is intentionally scoped to ordinary shared-state Agent Builder handoffs,
+  not arbitrary same-history direct-edge cycles. Serial fallback election and terminal sync use
+  state-guarded durable claims; slow fallback worker/session setup occurs after releasing the
+  provider start/cancel lock, so a concurrent Stop remains authoritative.
+- Stop of a graph base family is owner-scoped. An explicit user Stop first installs a durable
+  non-consuming base tombstone under the same start lock, then cancels active children. The exact
+  queued run and an attached queued schedule become cancelled in the same transaction as the
+  provider request, before a busy worker can claim them. Only an exact running run receives a native
+  interrupt, and that possibly slow cleanup occurs after releasing the provider start/cancel lock.
+  It fences
+  that participant for the whole stopped user turn even when the participant's previous child was
+  already terminal, because another active consultant may otherwise return into it after Stop.
+  Multiple late handoff children fail before native execution; a new user turn has a new base key
+  and proceeds normally. Request-scoped cancel remains non-poisoning. Refresh or transport
+  disconnect only reattaches and does not terminate native execution.
+  The family tombstone is persisted in SQLite with tenant/owner/base identity and an expiry index.
+  Its lifecycle is the same configured retention window as the provider request family (30 days
+  by default), rather than an unrelated short timer. It is renewed idempotently, survives provider
+  restart, and is checked atomically
+  with late request insertion so Stop cannot lose a cross-process start race. LibreChat delivers
+  each participant-family cancellation asynchronously with a 1.5-second attempt timeout and at
+  most three attempts inside a 4.9-second background budget. It retries only transient transport,
+  timeout, 408/425/429, and 5xx failures; the first 2xx is the receipt, permanent failures do not
+  retry, and final exhaustion emits one sanitized diagnostic. Delivery is intentionally
+  nonblocking and has no durable LibreChat outbox, so a LibreChat process crash during the brief
+  delivery window is not claimed as durable.
 - The authenticated request activity stream has monotonic IDs, `Last-Event-ID` recovery, 15-second
   heartbeats, and normalized queued/started/reasoning-summary/plan/tool/file/waiting/completed/
   failed/cancelled events. Only summaries and observable actions may cross the boundary—never hidden
@@ -1379,11 +1468,44 @@ LibreChat internals.
   authoritative system/Feeling snapshot; it supersedes older session snapshots instead of
   accumulating stale prompt state. Completed request/activity rows are retained for 30 days and
   idle provider sessions for 90 days by default; active or referenced turns are never pruned.
+- A host may declare one exact already-present dynamic developer tail through
+  `X-GlassHive-Developer-Instruction-Tail-B64`. GlassHive decodes it with a bounded strict parser,
+  rejects it when it is absent from the request's system/developer authority, removes duplicates,
+  and materializes it after structural capability-broker instructions. The field is generic and
+  must never trigger Feeling-tag, prompt-text, agent-name, or provider-label logic. Base64 is
+  transport encoding, not secrecy. The effective pinned snapshot, not the pre-broker message order,
+  owns native-session authority hashing.
 - Output and activity payloads are recursively redacted before leaving GlassHive. Local paths,
   credentials, tokens, and secrets split across transport chunks must not escape.
 - Host capacity reserves an interactive conversation lane per harness family in addition to the
   mission lane. Authentication remains isolated and concurrency is not broadened beyond proven-safe
   limits.
+- This safety limit has a measured user cost. On 2026-08-03, one independent Codex conversation held
+  the v1 conversation lane for about 75 seconds; a second authenticated web turn remained retryably
+  queued with `host_worker_busy`, then completed correctly in 8.34 seconds as soon as the first ended.
+  Any Viventium concurrency setting must be explicit and must prove worker-local auth/session/config
+  isolation, cancellation, rate-limit behavior, and concurrent load before becoming a default.
+- Capacity retry has one persisted clock and one shared coordinator. A queued run's `retry_after` is
+  the source of truth; the service must not create a `threading.Timer`, polling thread, or immediate
+  processor-resubmission loop for each future retry. The existing scheduler owns both scheduled-run
+  discovery and capacity-retry discovery, sleeps only until the normal scheduler interval or the
+  nearest eligible retry deadline, and may be woken when a new retry is persisted.
+- A worker processor may immediately continue only when a due-now run exists. Future queued work
+  remains dormant until the shared scheduler sees it. Due discovery excludes paused and terminated
+  workers in the database query before applying its limit, while processor ownership and the
+  transactional run claim keep one local processor per worker and one claim/execution per run.
+- Future retries survive service restart because their deadlines live in SQLite, not process-local
+  timers. Shutdown prevents new retry dispatch, wakes the scheduler so it can exit promptly, and
+  joins the one scheduler thread. Scheduled-run and worker-retry phases contain and log their own
+  errors so one failed phase cannot silently kill the other or the scheduler loop.
+- This invariant was added after three local macOS kernel panics correlated with GlassHive service
+  instances reaching roughly 9,400-12,300 threads. Only a small number of persisted future
+  `host_worker_busy` retries existed and memory/swap were not exhausted. The escaped loop combined
+  due-aware queue selection with a due-unaware final resubmission, repeatedly creating another
+  processor and future timer. Treat any return of per-retry timers, due-unaware final resubmission,
+  or unbounded thread growth as a release blocker. See
+  [`GHHOST-015`](../../qa/glasshive_host_workers/cases.md#ghhost-015---bounded-capacity-retry-scheduler)
+  and the [2026-08-10 incident QA report](../../qa/glasshive_host_workers/reports/2026-08-10-capacity-retry-scheduler-thread-safety.md).
 - The `workspace` access value is a write boundary, not a claim that all reads are chrooted. Codex
   uses native workspace-write/no-approval policy and Claude uses `acceptEdits` plus a fail-closed
   native sandbox. Both may read required runtime/system dependencies outside the selected folder;
@@ -1391,19 +1513,32 @@ LibreChat internals.
 - Completion usage is taken from native harness events when supplied. If the native CLI omits usage,
   GlassHive returns a clearly marked estimate; streaming and non-streaming responses must agree on
   the final visible text and usage provenance.
-- Native transport truth is preserved: the currently shipped Claude and Codex CLI conversation
-  profiles stream normalized activity while working, then publish assistant text only when the
-  harness emits its native terminal event (`result` for Claude or `turn.completed` for Codex).
-  `/v1/models` declares `incremental_text: false` for both. GlassHive must never publish an
-  intermediate working preamble as the answer or fabricate token deltas. A later native adapter may
-  improve text latency if measured Quality + Performance warrants the extra lifecycle surface.
-- Host-native execution survives an API-process restart after request acceptance. A private
-  supervisor owns the complete `instruction.stdin`, launches the harness only after an atomic
-  start-permit/PID binding is durable, owns the child process group, timeout, and cancellation, and
-  writes the terminal marker atomically. The API process may observe or reattach to that state but
-  must not own or truncate the instruction stream. Cancellation terminates the exact active child
-  group, timeout and non-zero exits retain their exact terminal classifications, and recovery never
-  writes supervisor state or scaffolding into LIFE.
+- Native Codex and Claude conversation output currently becomes user-visible at completed assistant
+  event granularity, not token granularity. Agent Builder control therefore buffers a private
+  bounded envelope and does not expose answer-content deltas while graph control is active.
+  Normalized activity summaries remain live while the native turn runs. Do not describe this path
+  as answer-token streaming; measure first visible content and full completion separately.
+
+### Agent Builder graph-control bridge
+
+The conversation-provider request may carry ordinary OpenAI `tools` and `tool_choice`. GlassHive
+bridges only canonical LibreChat transfer functions named `lc_transfer_to_*` whose JSON schema is an
+exact zero-input object. Unknown names, duplicates, non-empty schemas, oversized declarations, and
+malformed native decisions fail closed. All other tools remain outside this path and can execute
+only through the existing signed host-capability broker.
+
+For an eligible request, Codex or Claude receives a private bounded output schema. GlassHive turns a
+validated transfer decision back into the standard OpenAI assistant `tool_calls` shape for both
+streaming and non-streaming responses; no private envelope is exposed. LibreChat—not GlassHive—then
+executes the existing graph `Command`, preserves shared conversation/memory/file state, and invokes
+the destination agent with its own declared capabilities. A specialist can carry its complete
+evidence in the returning assistant message, so Main receives it through graph state without a
+manual recap and remains the final speaker. A direct answer remains ordinary assistant content.
+
+An existing provider session refreshes its worker bootstrap and private output schema before the
+next controlled run. Codex places `--output-schema` before a resumed session identifier; Claude
+accepts `--json-schema` before `--resume`, and its `structured_output` result is preferred over any
+private intermediate assistant event.
 
 ### Conversation versus mission mode
 
@@ -1739,12 +1874,10 @@ runtime intent classifier.
   configured managed/profile/sandbox recovery options have been exhausted or would require an unsafe
   global host mutation.
 - Host-native worker substrates must have built-in version and capability preflight, even when the
-  operator did not supply a custom requirements JSON. Compatibility floors are Codex CLI
-  `>=0.144.1`, Claude Code `>=2.1.178` with `--effort` support, and the reviewed OpenClaw runtime.
-  These preserve existing host-native Viventium conversations. Fresh isolated workstation images
-  are separately pinned to Codex CLI `0.146.1` and Claude Code `2.1.223`; Chrome capability is also
-  checked when Chrome integration is enabled. Floors and image pins may be raised independently
-  with a dated QA note after checking current upstream metadata and running the worker smoke suite.
+  operator did not supply a custom requirements JSON. Current source floors are Codex CLI `>=0.144.1`,
+  Claude Code `>=2.1.178` with `--effort` support and `--chrome` support when Chrome integration is
+  enabled, and OpenClaw `>=2026.6.6`. These floors may be raised with a dated QA note after checking
+  current official docs/npm metadata and running the worker smoke suite.
 - GlassHive MCP caller instructions must expose brokered MCP/tool capability as context, not as
   invented workspace goals. Unless the user explicitly specified them, callers must not manufacture
   success criteria, provider lists, output formats, artifacts, ranking rules, or workflow steps for
@@ -1828,29 +1961,6 @@ runtime intent classifier.
   misconfigured.
   Raw `/v1/signed-links/{token}` compatibility URLs remain signed-token URLs and are not the
   durable user-facing contract.
-- In the hosted split-service topology, every process that creates a short reference must receive
-  the same phase-local shared-ref path. Runtime-created `/r/{ref}` workspace links are resolved by
-  the public UI, while UI/MCP-created refs may be resolved by runtime; separate local databases
-  therefore break the user-visible contract. The rollout places only this opaque ref store at
-  `GLASSHIVE_LINK_REF_STATE_PATH` for runtime and gateway, enables explicit shared mode through
-  `GLASSHIVE_LINK_REF_SHARED_GROUP=glasshive-state`, and keeps auth, watch, provider, workspace, and
-  worker state private to their existing owners. On Linux the shared-ref child is
-  `root:glasshive-state 02770`; SQLite/WAL/SHM remain `glasshive-state 0660` and may be owned only
-  by root, the runtime identity, or the gateway identity while services run. After all writers stop,
-  rollout preparation normalizes those files to root ownership. Neither non-owner service is
-  allowed to repair unsafe metadata.
-  The rollout must create or validate that child without changing the state root's
-  `root:glasshive-state 0770` boundary and must include it in snapshot/clone/restore. The live
-  snapshot receipt must be durably journaled before any child creation or metadata normalization so
-  preparation failure or process loss restores the exact predecessor state.
-  Upgrade migration merges predecessor gateway and runtime ref stores into the phase-local shared
-  store while preserving opaque ref ids. Identical duplicates are idempotent; conflicting ids fail
-  closed; predecessor files remain untouched for rollback. A transactional per-source migration
-  receipt prevents a later rollout from re-importing refs that the shared runtime has expired or
-  revoked. Rollback restores the predecessor snapshot without that receipt, so a later roll-forward
-  can import any refs legitimately created by the predecessor after rollback.
-  Runtime live/status reads must never fall back to the service account's home under the read-only
-  systemd filesystem, and rehearsal refs must never mutate live state.
 - Enterprise owner matching is configurable but strict by default. `GLASSHIVE_OWNER_IDENTITY_CLAIMS`
   defaults to `user_id`, so SSO deployments continue to compare the stored GlassHive owner against
   the trusted user assertion. Deployments whose browser auth and MCP/chat owner use different trusted
@@ -1894,9 +2004,10 @@ runtime intent classifier.
   workspace page if resume cannot be applied. Auto-resume must be paired with watch/session and
   idle-reaper caps so forgotten tabs do not run compute forever.
 - Runtime-created View / Steer refs that point at the separate GlassHive UI service require shared
-  link-ref state. Co-located and hosted split-service processes use the same phase-local
-  `GLASSHIVE_LINK_REF_STATE_PATH` SQLite file under the explicit shared-group contract above. SQLite
-  WAL must remain on the supported local filesystem; network SQLite is not supported.
+  link-ref state. Co-located runtime/UI processes should use the same
+  `GLASSHIVE_LINK_REF_STATE_PATH` SQLite file; split deployments must provide supported shared local
+  storage or route `/r/{ref}` to the process that created the ref. SQLite WAL must not be placed on
+  unsafe network filesystems.
 - `workspace_launch`, `workspace_wait`, and `workspace_status` default outputs are compact by
   design: they return user-actionable state, result tools, View / Steer/file short links, and
   output/error text, while raw project/worker/run ids and live diagnostic snapshots require an
@@ -1915,32 +2026,18 @@ operator use. Ports on loopback.
 
 ### Azure Enterprise VM Mode
 
-`azure_enterprise_vm_docker` keeps the Docker worker substrate and moves the control plane to an
-Azure VM inside one enterprise resource group. The security model is **one GlassHive deployment per
-enterprise tenant**. Multiple enterprise customers use separate deployments or a later stronger
-isolation substrate such as ACI, per-user VMs, gVisor, or Kata.
+`azure_enterprise_vm_docker` is the v1 enterprise deployment mode. It keeps the current Docker
+worker substrate and moves the control plane to an Azure VM inside one enterprise resource group.
+The security model is **one GlassHive deployment per enterprise tenant**. Multiple enterprise
+customers must use separate deployments or a later stronger isolation substrate such as ACI,
+per-user VMs, gVisor, or Kata.
 
-The deployment mode has two explicit security contracts:
+Default enterprise auth is `first_party_assertion`:
 
-- `legacy_compatibility` preserves the existing static service-token and client-asserted-owner
-  integration while it is migrated. It is not a multi-user login boundary.
-- `multi_user` requires the Glass Drive BFF to own browser OIDC Authorization Code + PKCE and MCP to
-  own OAuth resource validation. Gateway/MCP signer processes and the private runtime run as
-  separate OS identities. Only the signer side receives the assertion private key; the runtime
-  receives verifier/JWKS configuration. The three services share durable runtime state through a
-  dedicated group using compiler-enforced `0770` directories and `0660` SQLite/WAL files, while the
-  gateway auth database remains in a gateway-only `0700` child directory.
-
-For both contracts:
-
-- LibreChat may connect to GlassHive in two independent supported roles: as the normal
-  `glasshive-harness` AI Provider/Model for authored conversations, and through MCP configuration
-  for explicit worker delegation/tool use. Enterprise identity and tenant assertions apply to both
-  boundaries according to their separate credentials; neither role wraps the other.
-- Legacy LibreChat MCP config may send `X-Viventium-Tenant-Id`, `X-Viventium-User-Id`, and
-  request-context/upload headers inside its explicitly trusted compatibility boundary. Multi-user
-  browser and direct MCP identity comes only from verified OIDC/OAuth state and short-lived signed
-  runtime assertions; caller identity headers are rejected.
+- LibreChat remains unmodified and connects to GlassHive through MCP config only.
+- The default LibreChat MCP config sends `X-Viventium-Tenant-Id`, `X-Viventium-User-Id`, and
+  request-context/upload headers; the service token is injected by the trusted reverse proxy unless
+  `service_token_delivery=client_header` is explicitly selected.
 - GlassHive fails closed when `GLASSHIVE_ENTERPRISE_MODE=true` and `WPR_API_TOKEN` is missing.
 - GlassHive derives owner scope from the authenticated request context and ignores caller-supplied
   `owner_id` for project and worker creation in enterprise mode.
@@ -1980,16 +2077,15 @@ For both contracts:
 - Signed-link QA must inspect visible chat, link `href`s, and hidden accessibility/copy text. A
   visually clean Markdown link can still leave raw signed URLs in offscreen serialized Markdown
   nodes; renderer and bridge fixes must treat that as a user-facing leakage surface.
-- `/health`, the public assertion JWKS, OAuth protected-resource metadata/challenge, and the minimal
-  OIDC login/callback endpoints are the only intentionally unauthenticated cloud routes. UI,
-  takeover, artifacts, terminal websocket, metrics, admin, and control-plane data require an
-  authenticated user/session or correctly scoped service assertion.
+- `/health` is the only intentionally unauthenticated cloud route. UI, docs, OpenAPI, takeover,
+  artifacts, terminal websocket, metrics, admin, and MCP/control-plane routes require service auth
+  plus a user assertion.
 
-Spec-compliant MCP OAuth is mandatory in `multi_user` mode and optional only in
-`legacy_compatibility`. It validates issuer, audience/resource, subject, authorized client, scopes,
-expiry, and JWKS rotation at the MCP edge. LibreChat's own login token is never passed through as a
-GlassHive token. MCP converts a verified principal into a new short-lived internal assertion; the
-private runtime does not accept the external token directly.
+Spec-compliant MCP OAuth/OIDC remains an optional mode for clients that accept a separate MCP
+consent flow. It must validate audience/resource correctly; do not pass LibreChat's own login token
+to GlassHive as if it were a GlassHive-audience token. Until an external token validator is wired,
+the GlassHive runtime accepts only `first_party_assertion` for request authorization by default;
+the optional MCP OAuth block is a client connection flow, not server-side token validation.
 
 The Azure setup guide, sample config, reverse-proxy expectations, provider env examples, scripts,
 and acceptance checklist live in the private enterprise deployment repo. Public product docs keep
@@ -2005,7 +2101,7 @@ approved key or virtual key in the enterprise deployment overlay.
 ### Prerequisites
 
 - Docker daemon running and accessible
-- Port availability: 7900, 4444, 18789 (per container); 8766 runtime, 8767 MCP, 8780 Glass Drive BFF
+- Port availability: 7900, 4444, 18789 (per container); 8766, 8767 (service)
 - Disk space for sandbox state directories
 - 2 GB shared memory per sandbox
 
@@ -2036,122 +2132,104 @@ persistent home and workspace mounts.
 
 ## Installer Integration
 
-- The source-checkout Easy Install selects GlassHive by default because that distribution
-  bootstraps the pinned component before compilation. It enables the provider and host runtime,
-  bootstraps LIFE, and compiles the canonical Main to `glasshive-harness` /
-  `codex-cli:gpt-5.6-sol`. It pins the provider model and worker profile to Codex and therefore
-  requires authenticated Codex specifically; Claude-only authentication remains a visible
-  readiness failure with no direct-provider substitution or model remapping.
-- Custom source/Docker installs that select GlassHive use the same provider-and-host contract. The
-  provider model follows the resolved Codex/Claude worker profile only when no model was explicitly
-  selected. Preflight then authenticates the harness required by that resolved model. An explicit
-  model is never overwritten or satisfied by authentication for the other harness. The immutable
-  Easy Install Native payload does not package or supervise GlassHive today and must not advertise
-  or emit this provider; it remains a separate capability boundary. An `express` label alone is
-  therefore not evidence that the runtime exists.
-- Provider selection is explicit and portable: both the GlassHive integration and its provider flag
-  must be enabled. Provider-only mismatch fails compilation, while enabling only the broader
-  GlassHive integration does not silently move any Agent to the harness endpoint.
-- Local GlassHive state is compiled under the selected Viventium App Support root and runtime
-  profile. Side-by-side install, upgrade, activation, and QA runtimes must never read or write the
-  canonical user's GlassHive SQLite database merely because the host username is the same.
-- Custom configurations may explicitly disable GlassHive through compiled configuration or the
-  diagnostic `--skip-glasshive` launcher option.
-- If configuration enables GlassHive but a damaged or partial checkout is missing its runtime
-  directory, compilation fails with the component-repair action. It must not silently disable the
-  saved provider and execute that agent on another model.
-- Canonical LIFE creation is a source/Docker Viventium lifecycle capability and is not gated on
-  GlassHive enablement. The current immutable Native payload has no LIFE consumer and therefore
-  neither advertises GlassHive nor creates an inert Documents scaffold. iCloud Documents ancestors
-  are supported only when their resolved target remains inside the user's home; personalized
-  conflicts are preserved and recorded. A LIFE failure blocks a GlassHive-enabled start instead of
-  allowing every provider request to fail later.
-- When GlassHive is disabled or unavailable, generated provider/model additions and seeded built-in
-  tool IDs must compile out together. A fresh user must receive a precise readiness/dependency error,
-  never a generic missing-key error or a silent substitute provider.
+- The wider GlassHive worker/project/takeover plane is not part of the minimum public first-answer
+  contract. The narrower GlassHive conversation-provider/body role is required only when the selected
+  Easy Install chat route uses it; see docs 38 and 39.
+- Optional wider worker component: `START_GLASSHIVE=true|false`, `--skip-glasshive` flag.
+- The developer/source start script auto-disables the optional worker plane when its runtime directory
+  is absent. It must not label a selected required conversation body Ready when that body is absent.
+- Seeded built-in agents must not keep dead GlassHive tool IDs when `START_GLASSHIVE=false`
+- A missing local GlassHive MCP can surface as a generic error to fresh users if not compiled out
 
 ---
 
 ## Key Environment Variables
 
-| Variable | Default | Purpose |
-|---|---|---|
-| `WPR_DB_PATH` | `{base}/runtime_phase1.db` | SQLite database |
-| `WPR_RUNTIME_BACKEND` | `openclaw` | Legacy bootstrap selector for the profiled runtime implementation; not the worker backend selector |
-| `WPR_API_TOKEN` | (none) | Optional bearer auth |
-| `GLASSHIVE_DEFAULT_WORKER_PROFILE` | `codex-cli` | Deployment default profile when caller/user preference omits a worker profile |
-| `GLASSHIVE_DEFAULT_EXECUTION_MODE` / `WPR_DEFAULT_EXECUTION_MODE` | `docker` standalone, Viventium host-worker config may set `host` | Deployment default execution substrate when caller omits `execution_mode`; `GLASSHIVE_DEFAULT_EXECUTION_MODE` is the native alias and `WPR_DEFAULT_EXECUTION_MODE` remains compatibility |
-| `GLASSHIVE_ENTERPRISE_MODE` | unset | Enables fail-closed enterprise request scoping |
-| `GLASSHIVE_AUTH_MODE` | `local` | `first_party_assertion` for v1 enterprise VM mode; OAuth modes are optional |
-| `GLASSHIVE_ENTERPRISE_TENANT_ID` | `local` | Single-tenant deployment identifier used when the request does not carry a tenant header |
-| `WPR_SANDBOX_IMAGE` | `workers-projects-runtime-workstation:phase1-node22-docs8-openclaw2026.7.1-5` | Docker image with native CLI, browser/computer substrate, optional managed AI-worker browser extensions, worker-local native-host bootstrap, stale disabled-extension cleanup, professional document toolchain, and exact reviewed base/snapshot provenance |
-| `GLASSHIVE_AI_WORKER_BROWSER_EXTENSIONS` / `WPR_AI_WORKER_BROWSER_EXTENSIONS` | `none` | Comma-separated optional Docker browser extensions to force-install (`claude`, `codex`, or `all`). The default is `none` because extension policy/profile install is not proof of a connected bridge; opt in only when the selected worker image has a proven compatible browser, native host, auth/session, and user-grade QA evidence. |
-| `WPR_SANDBOX_CODEX_NPM_SPEC` | `@openai/codex@0.146.1` | Pinned Codex CLI package installed into rebuilt workstation images; update only with dated version/QA evidence |
-| `WPR_SANDBOX_CLAUDE_CODE_NPM_SPEC` | `@anthropic-ai/claude-code@2.1.223` | Pinned Claude Code package installed into rebuilt workstation images; update only with dated version/QA evidence |
-| `WPR_SANDBOX_OPENCLAW_LOCK_DIR` | bundled reviewed lock | App-owned OpenClaw 2026.7.1-2 lock used for rebuilt workstation images; mutable npm specs are rejected |
-| `WPR_CODEX_CHROME_PLUGIN_ROOT` / `CODEX_CHROME_PLUGIN_ROOT` | unset | Optional worker-local first-party Codex Chrome plugin root containing `extension-host/linux/<arch>/extension-host`; when present with a reachable node-repl executable, bootstrap writes the Codex native messaging manifest and config |
-| `WPR_CODEX_NODE_REPL_PATH` / `CODEX_NODE_REPL_PATH` | unset | Optional worker-local node-repl executable used by the Codex Chrome native host config. If unset, bootstrap tries `node_repl` on the container `PATH`; the base workstation image does not claim Codex Chrome readiness unless this path or a PATH-provided node-repl is actually present. |
-| `WPR_SANDBOX_MEMORY` | `3g` | Docker memory cap per worker container |
-| `WPR_SANDBOX_MEMORY_SWAP` | `3g` | Docker memory+swap cap per worker container |
-| `WPR_SANDBOX_CPUS` | `2` | Docker CPU cap per worker container |
-| `WPR_SANDBOX_PIDS_LIMIT` | `4096` | Docker process cap per worker container |
-| `WPR_SANDBOX_SHM_SIZE` | `1g` | Shared memory per container |
-| `WPR_DOCKER_IMAGE_BUILD_TIMEOUT_SEC` | `900` | Cold sandbox image build timeout; separate from short Docker inspect/exec timeouts |
-| `WPR_CODEX_BIN` | `codex` | Host-native Codex executable path. Viventium local runtime config must compile an absolute app-bundled path when the helper/LaunchAgent service `PATH` cannot discover `codex`; app-bundle discovery checks `/Applications`, `~/Applications`, and `VIVENTIUM_CODEX_APP_DIRS`. |
-| `WPR_CLAUDE_CODE_BIN` | `claude` | Host-native Claude executable path when configured/discovered. |
-| `WPR_OPENCLAW_BIN` | `openclaw` | Host-native OpenClaw executable path when configured/discovered. |
-| `GLASSHIVE_HOST_RUNTIME_REQUIREMENTS_JSON` / `GLASSHIVE_HOST_RUNTIME_REQUIREMENTS_FILE` | unset | Optional fail-closed host-runtime preflight requirements. Supports binary/version checks plus native capability probes such as `required_help_flags: ["--chrome"]` for Claude Code and `required_mcp_servers: ["computer-use", "node_repl"]` for Codex. Claude Code `max` effort still requires native `--effort` support even when a custom requirements JSON omits that flag. |
-| `WPR_MODEL_HOST_CODEX_CLI` | unset | Optional host-native Codex model override when the logged-in local Codex account should use a deployment-specified model instead of its local Codex config |
-| `CODEX_MODEL` | unset | Optional generic host-native Codex CLI model override; honored when `WPR_MODEL_HOST_CODEX_CLI` is unset |
-| `GLASSHIVE_HOST_CODEX_INHERIT_PROVIDER_MODEL` | unset | Opt-in compatibility switch for host-native Codex to inherit `WPR_MODEL_CODEX_CLI`; leave unset so host workers use local Codex config by default |
-| `GLASSHIVE_HOST_CODEX_NATIVE_MCP_ALLOWLIST` / `WPR_HOST_CODEX_NATIVE_MCP_ALLOWLIST` | `computer-use,node_repl` | Host-native Codex MCP sections/plugin manifests preserved into worker-local `CODEX_HOME` before appending the GlassHive broker; set to `off` only for an explicitly locked-down worker |
-| `GLASSHIVE_HOST_CODEX_PLUGIN_CACHE` / `WPR_HOST_CODEX_PLUGIN_CACHE` | host Codex plugin cache | Optional override for locating bundled native Codex MCP manifests such as computer-use |
-| `GLASSHIVE_AUTO_DISCOVER_CODEX_WORKSPACE_DEPS` / `WPR_AUTO_DISCOVER_CODEX_WORKSPACE_DEPS` | `true` | Host-native workers may auto-discover the local Codex desktop bundled dependency runtime and project verified document/tooling paths into the worker environment. Set to `false` for an explicitly locked-down worker. |
-| `GLASSHIVE_CODEX_WORKSPACE_DEPS_ROOT` / `WPR_CODEX_WORKSPACE_DEPS_ROOT` | auto-discovered Codex desktop dependency root when present | Optional override for the bundled dependency root containing `node/`, `python/`, and `bin/` subdirectories. |
-| `GLASSHIVE_WORKSPACE_NODE_MODULES` / `WPR_WORKSPACE_NODE_MODULES` | unset | Optional path-list of verified Node module directories appended to worker `NODE_PATH`; use this for local document/artifact tooling that must be discoverable by host Codex/Claude workers. |
-| `GLASSHIVE_WORKSPACE_NODE_BIN` / `WPR_WORKSPACE_NODE_BIN` | unset | Optional path-list of Node binary directories appended to worker `PATH` and surfaced as `GLASSHIVE_WORKSPACE_NODE_BIN`. |
-| `GLASSHIVE_WORKSPACE_PYTHON_BIN` / `WPR_WORKSPACE_PYTHON_BIN` | unset | Optional path-list of Python binary directories appended to worker `PATH` and surfaced as `GLASSHIVE_WORKSPACE_PYTHON_BIN`; Python package paths are not blindly injected, so host workers must verify optional imports before relying on them. |
-| `GLASSHIVE_WORKSPACE_BIN_DIRS` / `WPR_WORKSPACE_BIN_DIRS` | unset | Optional path-list of native binary directories appended to worker `PATH` and surfaced as `GLASSHIVE_WORKSPACE_BIN_DIRS`. |
-| `GLASSHIVE_UI_SHOW_LEGACY_OPENCLAW_PROFILE` | unset / false | Opt-in visibility for the legacy OpenClaw profile choice in the old built-in UI. The option remains visible when `openclaw-general` is the selected/default profile, but Codex/Claude-first deployments should not advertise OpenClaw as a routine create option. This is UI visibility only; runtime selection still uses `profile + execution_mode`. |
-| `WPR_OPENCLAW_START_GATEWAY` | `false` | Opt-in OpenClaw loopback gateway process; task runs use `openclaw agent --local` directly for lower overhead and to avoid session contention |
-| `WPR_CODEX_CLI_ALLOWED_REASONING_EFFORTS` | `none,low,medium,high` plus `minimal`/`xhigh` only by explicit route proof or allowlist | Comma-separated Codex effort values supported by the configured Codex provider route; set this to the directly probed active-route subset when a deployment route supports or rejects values such as `minimal`; if unset, minimal and xhigh are not sent to the provider |
-| `WPR_CODEX_CLI_XHIGH_ROUTE_PROVEN` / `GLASSHIVE_CODEX_XHIGH_ROUTE_PROVEN` | standalone GlassHive: `false`; Viventium compiled host profile: `true` | Enables built-in xhigh acceptance only after the active Codex route has been proven by a real worker run; Viventium owns that proof for its shipped Sol route, while changed/custom routes must be re-proven or explicitly constrained |
-| `WPR_CODEX_CLI_REASONING_EFFORT_FALLBACK` | `medium` | Codex effort used when the requested per-run/user default effort is not allowed by `WPR_CODEX_CLI_ALLOWED_REASONING_EFFORTS`; keep `medium` as the quality floor unless active-route QA proves a different supported value is the right product tradeoff |
-| `WPR_CODEX_CLI_IGNORE_USER_CONFIG` | `false` | Workspace-mode Codex should load the worker-local config by default so projected broker/native MCPs work; set `true` only for an explicit locked-down provider route |
-| `WPR_CODEX_CLI_DISABLE_FEATURES` | unset | Optional comma-separated Codex feature disables for explicitly locked-down provider routes. The default must preserve native Codex app, multi-agent, plugin, browser/computer, workspace-dependency, and related capability surfaces; set this only with dated preflight/QA evidence that the lockdown is intentional. |
-| `WPR_CLAUDE_CODE_ENABLE_CHROME` | `true` | Claude Code workers launch with `--chrome` when available so Claude can use its native Chrome integration; set `0` only for an explicit locked-down mode |
-| `WPR_CLAUDE_CODE_EFFORT` | unset | Optional Claude Code effort. MCP/UI/direct API per-run effort must project `max` into the bootstrap bundle, and workspace plus host-native commands must translate it to `--effort max` |
-| `CLAUDE_CODE_OAUTH_TOKEN` | unset | Optional Claude Code headless OAuth token from `claude setup-token`; supported for Docker/workspace and host workers through the bootstrap/env allowlist. In enterprise/run-only mode it is written only to secret runtime env, not the interactive shell env. |
-| Built-in host CLI floors | Codex CLI `>=0.144.1`, Claude Code `>=2.1.178`, reviewed OpenClaw runtime; fresh workstation image pins remain Codex `0.146.1` and Claude `2.1.223` | Host-native workers fail closed before run creation when the configured CLI is too old or missing required capability flags; fresh workspaces use the separately reviewed current pins |
-| `WPR_SANDBOX_VNC_PASSWORD` | `secret` | VNC access password |
-| `WPR_SANDBOX_VNC_NO_PASSWORD` | `1` | Disable VNC password |
-| `WPR_SANDBOX_SERVICE_TMPDIR` | `/tmp` | Temp path for container supervisor services such as noVNC/websockify; keep separate from mounted worker-home `TMPDIR` to avoid live desktop socket reset failures |
-| `WPR_SANDBOX_NOVNC_SELF_HEAL` | `true` | Runtime may repair an unhealthy noVNC proxy before reporting the live desktop available |
-| `WPR_SANDBOX_NOVNC_HEALTH_TIMEOUT_SEC` | `1.5` | Timeout for noVNC asset-path health checks |
-| `WPR_SANDBOX_NOVNC_HEALTH_CACHE_TTL_SEC` | `10` | Short cache for noVNC health checks to keep watch polling responsive |
-| `WPR_MCP_BLOCKING_WAIT_DEFAULT_SEC` | `1800` | Default MCP `workspace_wait` completion wait when the model/user asks to wait for results and omits an explicit timeout; enterprise deployments that expect 25+ minute research/file jobs may raise this, for example to `2700` |
-| `WPR_MCP_BLOCKING_WAIT_MAX_SEC` | `1800` | Hard cap on MCP blocking wait duration; prevents a chat request from blocking longer than policy while the worker continues in the background; enterprise deployments may raise this with a matching LibreChat MCP `timeout` cushion, for example to `3600` |
-| `WPR_MCP_BLOCKING_WAIT_POLL_INTERVAL_SEC` | `5` | Initial efficient polling cadence and floor for `workspace_wait`; models should omit per-call poll intervals for normal long work, and the runtime keeps early checks responsive before backing off toward the 30s cap |
-| `WPR_MCP_RECENT_DISPATCH_TTL_SEC` | `14400` | In-process recent-dispatch fallback TTL for same authenticated user/conversation wait/status recovery |
-| `WPR_MCP_RECENT_DISPATCH_MAX_ENTRIES` | `1024` | Safety cap on in-process recent-dispatch fallback entries |
-| GlassHive LibreChat MCP `timeout` | `1860000` ms | Config-level timeout for the GlassHive MCP server, intentionally longer than the 30-minute wait cap plus overhead; deployments should keep a generous cushion above `WPR_MCP_BLOCKING_WAIT_MAX_SEC` plus proxy/runtime latency |
-| `WPR_MCP_HOST` | `127.0.0.1` | MCP server bind |
-| `WPR_MCP_PORT` | `8767` | MCP server port |
-| `WPR_MCP_BASE_URL` | `http://127.0.0.1:8766` | Control plane URL |
-| `GLASSHIVE_OPERATOR_BASE_URL` | `http://127.0.0.1:8780` | User-facing GlassHive operator UI origin used for `/watch/{worker}` links |
-| `GLASSHIVE_ALLOWED_REDIRECT_HOSTS` / `WPR_ALLOWED_REDIRECT_HOSTS` | unset | Optional comma-separated host/origin allowlist for `/r/{ref}` redirects when the tokenless Watch/Steer target is not same-origin or one of the configured GlassHive operator/runtime/artifact origins |
-| `GLASSHIVE_DEFAULT_LAUNCH_SURFACE` | `desktop` | Project-first UI default initial watch surface (`desktop`, `terminal`, `auto`) |
-| `WPR_IDLE_DESKTOP_PRIME_BROWSER` | `true` | Prime fresh worker desktops with the GlassHive placeholder browser page instead of the inherited base-image splash |
-| `GLASSHIVE_CALLBACK_RETRY_ATTEMPTS` | `3` | Callback delivery attempts before GlassHive records `callback.failed` |
-| `GLASSHIVE_CALLBACK_RETRY_BASE_DELAY_S` | `0.5` | Linear callback retry base delay in seconds |
-| `GLASSHIVE_CALLBACK_RETRY_INTERVAL_S` | `30` | Periodic pending-callback replay interval in seconds |
-| `GLASSHIVE_CALLBACK_MAX_TOTAL_ATTEMPTS` | `25` | Hard upper bound for total callback outbox attempts across immediate and periodic replay; exhausted rows are retained as `dead_lettered` audit records instead of retrying forever |
-| `GLASSHIVE_MAX_CAPACITY_RETRY_ATTEMPTS` | `6` | Hard upper bound for automatic capacity requeues such as host-worker-busy waits; exhausted runs fail with explicit recovery guidance instead of minting unlimited wait callbacks |
-| `GLASSHIVE_RUN_TIMEOUT_SEC` / `WPR_RUN_TIMEOUT_SEC` | unset | Optional explicit timeout for long-running CLI worker runs; unset means no default hard cap |
-| `GLASSHIVE_HOST_RUN_TIMEOUT_SEC` / `WPR_HOST_RUN_TIMEOUT_SEC` | unset | Optional host-specific override for host-native CLI runs |
-| `GLASSHIVE_IDLE_TERMINATE_AFTER_S` | `0` | When positive, stop idle worker compute while preserving workspace/home state |
-| `GLASSHIVE_PAUSED_TERMINATE_AFTER_S` | `0` | When positive, stop manually paused worker compute after the configured age; already-released paused compute must be skipped until the worker is resumed |
-| `GLASSHIVE_IDLE_REAPER_INTERVAL_S` | `60` | Idle reaper interval |
+| Variable                                                                                  | Default                                                                                 | Purpose                                                                                                                                                                                                                                                                                                                                                                             |
+| ----------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `WPR_DB_PATH`                                                                             | `{base}/runtime_phase1.db`                                                              | SQLite database                                                                                                                                                                                                                                                                                                                                                                     |
+| `WPR_RUNTIME_BACKEND`                                                                     | `openclaw`                                                                              | Legacy bootstrap selector for the profiled runtime implementation; not the worker backend selector                                                                                                                                                                                                                                                                                  |
+| `WPR_API_TOKEN`                                                                           | (none)                                                                                  | Optional bearer auth                                                                                                                                                                                                                                                                                                                                                                |
+| `GLASSHIVE_DEFAULT_WORKER_PROFILE`                                                        | `codex-cli`                                                                             | Deployment default profile when caller/user preference omits a worker profile                                                                                                                                                                                                                                                                                                       |
+| `GLASSHIVE_DEFAULT_EXECUTION_MODE` / `WPR_DEFAULT_EXECUTION_MODE`                         | `docker` standalone, Viventium host-worker config may set `host`                        | Deployment default execution substrate when caller omits `execution_mode`; `GLASSHIVE_DEFAULT_EXECUTION_MODE` is the native alias and `WPR_DEFAULT_EXECUTION_MODE` remains compatibility                                                                                                                                                                                            |
+| `VIVENTIUM_PARALLEL_WORK_AVAILABLE`                                                       | `false`                                                                                 | Deployment request to expose Parallel Work. Core still reports effective availability false until its asynchronous service-authenticated readiness watcher has a fresh `isolatedParallelReady=true` result from GlassHive. Ordinary focused/off turns never synchronously probe GlassHive.                                                                                          |
+| `VIVENTIUM_GLASSHIVE_ISOLATED_PARALLEL_POLICY`                                           | `false`                                                                                 | Fail-closed GlassHive policy emitted whenever Parallel availability is requested. Rejects all new host-native mission admission, treats only durable provider-session-linked workers as the conversation lane, and reports not ready while an existing/reconciled host mission remains. It never kills retained work.                                                                |
+| `VIVENTIUM_PARALLEL_WORK_EXECUTION_MODE`                                                  | `docker`                                                                                | Core-owned automatic mission substrate. Conversation-orchestrator launches overwrite model/tool execution-mode input with this isolated mode; explicit/operator `GLASSHIVE_DEFAULT_EXECUTION_MODE` remains a separate surface.                                                                                                                                                     |
+| `GLASSHIVE_ENTERPRISE_MODE`                                                               | unset                                                                                   | Enables fail-closed enterprise request scoping                                                                                                                                                                                                                                                                                                                                      |
+| `GLASSHIVE_AUTH_MODE`                                                                     | `local`                                                                                 | `first_party_assertion` for v1 enterprise VM mode; OAuth modes are optional                                                                                                                                                                                                                                                                                                         |
+| `GLASSHIVE_ENTERPRISE_TENANT_ID`                                                          | `local`                                                                                 | Single-tenant deployment identifier used when the request does not carry a tenant header                                                                                                                                                                                                                                                                                            |
+| `WPR_SANDBOX_IMAGE`                                                                       | `workers-projects-runtime-workstation:phase1-node22-docs9`                              | Docker image with native CLI, browser/computer substrate, optional managed AI-worker browser extensions, worker-local native-host bootstrap, stale disabled-extension cleanup, and professional document toolchain                                                                                                                                                                  |
+| `GLASSHIVE_AI_WORKER_BROWSER_EXTENSIONS` / `WPR_AI_WORKER_BROWSER_EXTENSIONS`             | `none`                                                                                  | Comma-separated optional Docker browser extensions to force-install (`claude`, `codex`, or `all`). The default is `none` because extension policy/profile install is not proof of a connected bridge; opt in only when the selected worker image has a proven compatible browser, native host, auth/session, and user-grade QA evidence.                                            |
+| `WPR_SANDBOX_CODEX_NPM_SPEC`                                                              | `@openai/codex@0.147.0`                                                                 | Pinned Codex CLI package installed into rebuilt workstation images; update only with dated version/QA evidence                                                                                                                                                                                                                                                                      |
+| `WPR_SANDBOX_CLAUDE_CODE_NPM_SPEC`                                                        | `@anthropic-ai/claude-code@2.1.229`                                                     | Pinned Claude Code package installed into rebuilt workstation images; update only with dated version/QA evidence                                                                                                                                                                                                                                                                    |
+| `WPR_SANDBOX_OPENCLAW_NPM_SPEC`                                                           | `openclaw@latest` (current source; release gap)                                         | OpenClaw package spec for rebuilt workstation images; replace with a reviewed immutable version before release provenance can pass                                                                                                                                                                                                                                                   |
+| `WPR_CODEX_CHROME_PLUGIN_ROOT` / `CODEX_CHROME_PLUGIN_ROOT`                               | unset                                                                                   | Optional worker-local first-party Codex Chrome plugin root containing `extension-host/linux/<arch>/extension-host`; when present with a reachable node-repl executable, bootstrap writes the Codex native messaging manifest and config                                                                                                                                             |
+| `WPR_CODEX_NODE_REPL_PATH` / `CODEX_NODE_REPL_PATH`                                       | unset                                                                                   | Optional worker-local node-repl executable used by the Codex Chrome native host config. If unset, bootstrap tries `node_repl` on the container `PATH`; the base workstation image does not claim Codex Chrome readiness unless this path or a PATH-provided node-repl is actually present.                                                                                          |
+| `WPR_SANDBOX_MEMORY`                                                                      | `3g`                                                                                    | Docker memory cap per worker container                                                                                                                                                                                                                                                                                                                                              |
+| `WPR_SANDBOX_MEMORY_SWAP`                                                                 | `3g`                                                                                    | Docker memory+swap cap per worker container                                                                                                                                                                                                                                                                                                                                         |
+| `WPR_SANDBOX_CPUS`                                                                        | `2`                                                                                     | Docker CPU cap per worker container                                                                                                                                                                                                                                                                                                                                                 |
+| `WPR_SANDBOX_PIDS_LIMIT`                                                                  | `512`                                                                                   | Docker process/thread cap per worker container, aligned with the conservative per-mission lease reservation                                                                                                                                                                                                                                                                        |
+| `WPR_SANDBOX_SHM_SIZE`                                                                    | `1g`                                                                                    | Shared memory per container                                                                                                                                                                                                                                                                                                                                                         |
+| `WPR_DOCKER_IMAGE_BUILD_TIMEOUT_SEC`                                                      | `900`                                                                                   | Cold sandbox image build timeout; separate from short Docker inspect/exec timeouts                                                                                                                                                                                                                                                                                                  |
+| `WPR_CODEX_BIN`                                                                           | `codex`                                                                                 | Host-native Codex executable path. Viventium local runtime config must compile an absolute app-bundled path when the helper/LaunchAgent service `PATH` cannot discover `codex`; app-bundle discovery checks `/Applications`, `~/Applications`, and `VIVENTIUM_CODEX_APP_DIRS`.                                                                                                      |
+| `WPR_CLAUDE_CODE_BIN`                                                                     | `claude`                                                                                | Host-native Claude executable path when configured/discovered.                                                                                                                                                                                                                                                                                                                      |
+| `WPR_OPENCLAW_BIN`                                                                        | `openclaw`                                                                              | Host-native OpenClaw executable path when configured/discovered.                                                                                                                                                                                                                                                                                                                    |
+| `GLASSHIVE_HOST_RUNTIME_REQUIREMENTS_JSON` / `GLASSHIVE_HOST_RUNTIME_REQUIREMENTS_FILE`   | unset                                                                                   | Optional fail-closed host-runtime preflight requirements. Supports binary/version checks plus native capability probes such as `required_help_flags: ["--chrome"]` for Claude Code and `required_mcp_servers: ["computer-use", "node_repl"]` for Codex. Claude Code `max` effort still requires native `--effort` support even when a custom requirements JSON omits that flag.     |
+| `WPR_MODEL_HOST_CODEX_CLI`                                                                | unset                                                                                   | Optional host-native Codex model override when the logged-in local Codex account should use a deployment-specified model instead of its local Codex config                                                                                                                                                                                                                          |
+| `CODEX_MODEL`                                                                             | unset                                                                                   | Optional generic host-native Codex CLI model override; honored when `WPR_MODEL_HOST_CODEX_CLI` is unset                                                                                                                                                                                                                                                                             |
+| `GLASSHIVE_HOST_CODEX_INHERIT_PROVIDER_MODEL`                                             | unset                                                                                   | Opt-in compatibility switch for host-native Codex to inherit `WPR_MODEL_CODEX_CLI`; leave unset so host workers use local Codex config by default                                                                                                                                                                                                                                   |
+| `GLASSHIVE_HOST_CODEX_NATIVE_MCP_ALLOWLIST` / `WPR_HOST_CODEX_NATIVE_MCP_ALLOWLIST`       | `computer-use,node_repl`                                                                | Host-native Codex MCP sections/plugin manifests preserved into worker-local `CODEX_HOME` before appending the GlassHive broker; set to `off` only for an explicitly locked-down worker                                                                                                                                                                                              |
+| `GLASSHIVE_HOST_CODEX_PLUGIN_CACHE` / `WPR_HOST_CODEX_PLUGIN_CACHE`                       | host Codex plugin cache                                                                 | Optional override for locating bundled native Codex MCP manifests such as computer-use                                                                                                                                                                                                                                                                                              |
+| `GLASSHIVE_HOST_PLUGIN_DENYLIST` / `WPR_HOST_PLUGIN_DENYLIST`                             | unset                                                                                   | Comma-separated canonical `name@marketplace` plugin IDs disabled only for host Codex/Claude workers through native worker-local config; no prompt policy is added and unlisted plugins remain enabled.                                                                                                                                                                              |
+| `WPR_HOST_NATIVE_WEB_ACCESS` / `GLASSHIVE_HOST_NATIVE_WEB_ACCESS`                         | `inherit`                                                                               | Host-worker provider-native web-search/fetch policy: `inherit` preserves the CLI's native surface; `disabled` is an explicit QA/enterprise evidence-isolation boundary that keeps declared broker MCP tools available and replaces stale conversation sessions through the native-policy fingerprint. Compiled `WPR_*` is authoritative when present; `GLASSHIVE_*` is the standalone fallback only when it is absent.                           |
+| `GLASSHIVE_AUTO_DISCOVER_CODEX_WORKSPACE_DEPS` / `WPR_AUTO_DISCOVER_CODEX_WORKSPACE_DEPS` | `true`                                                                                  | Host-native workers may auto-discover the local Codex desktop bundled dependency runtime and project verified document/tooling paths into the worker environment. Set to `false` for an explicitly locked-down worker.                                                                                                                                                              |
+| `GLASSHIVE_CODEX_WORKSPACE_DEPS_ROOT` / `WPR_CODEX_WORKSPACE_DEPS_ROOT`                   | auto-discovered Codex desktop dependency root when present                              | Optional override for the bundled dependency root containing `node/`, `python/`, and `bin/` subdirectories.                                                                                                                                                                                                                                                                         |
+| `GLASSHIVE_WORKSPACE_NODE_MODULES` / `WPR_WORKSPACE_NODE_MODULES`                         | unset                                                                                   | Optional path-list of verified Node module directories appended to worker `NODE_PATH`; use this for local document/artifact tooling that must be discoverable by host Codex/Claude workers.                                                                                                                                                                                         |
+| `GLASSHIVE_WORKSPACE_NODE_BIN` / `WPR_WORKSPACE_NODE_BIN`                                 | unset                                                                                   | Optional path-list of Node binary directories appended to worker `PATH` and surfaced as `GLASSHIVE_WORKSPACE_NODE_BIN`.                                                                                                                                                                                                                                                             |
+| `GLASSHIVE_WORKSPACE_PYTHON_BIN` / `WPR_WORKSPACE_PYTHON_BIN`                             | unset                                                                                   | Optional path-list of Python binary directories appended to worker `PATH` and surfaced as `GLASSHIVE_WORKSPACE_PYTHON_BIN`; Python package paths are not blindly injected, so host workers must verify optional imports before relying on them.                                                                                                                                     |
+| `GLASSHIVE_WORKSPACE_BIN_DIRS` / `WPR_WORKSPACE_BIN_DIRS`                                 | unset                                                                                   | Optional path-list of native binary directories appended to worker `PATH` and surfaced as `GLASSHIVE_WORKSPACE_BIN_DIRS`.                                                                                                                                                                                                                                                           |
+| `GLASSHIVE_UI_SHOW_LEGACY_OPENCLAW_PROFILE`                                               | unset / false                                                                           | Opt-in visibility for the legacy OpenClaw profile choice in the old built-in UI. The option remains visible when `openclaw-general` is the selected/default profile, but Codex/Claude-first deployments should not advertise OpenClaw as a routine create option. This is UI visibility only; runtime selection still uses `profile + execution_mode`.                              |
+| `WPR_OPENCLAW_START_GATEWAY`                                                              | `false`                                                                                 | Opt-in OpenClaw loopback gateway process; task runs use `openclaw agent --local` directly for lower overhead and to avoid session contention                                                                                                                                                                                                                                        |
+| `WPR_CODEX_CLI_ALLOWED_REASONING_EFFORTS`                                                 | `none,low,medium,high` plus `minimal`/`xhigh` only by explicit route proof or allowlist | Comma-separated Codex effort values supported by the configured Codex provider route; set this to the directly probed active-route subset when a deployment route supports or rejects values such as `minimal`; if unset, minimal and xhigh are not sent to the provider                                                                                                            |
+| `WPR_CODEX_CLI_XHIGH_ROUTE_PROVEN` / `GLASSHIVE_CODEX_XHIGH_ROUTE_PROVEN`                 | standalone GlassHive: `false`; Viventium compiled host profile: `true`                  | Enables built-in xhigh acceptance only after the active Codex route has been proven by a real worker run; Viventium owns that proof for its shipped Sol route, while changed/custom routes must be re-proven or explicitly constrained                                                                                                                                              |
+| `WPR_CODEX_CLI_REASONING_EFFORT_FALLBACK`                                                 | `medium`                                                                                | Codex effort used when the requested per-run/user default effort is not allowed by `WPR_CODEX_CLI_ALLOWED_REASONING_EFFORTS`; keep `medium` as the quality floor unless active-route QA proves a different supported value is the right product tradeoff                                                                                                                            |
+| `WPR_CODEX_CLI_IGNORE_USER_CONFIG`                                                        | `false`                                                                                 | Workspace-mode Codex should load the worker-local config by default so projected broker/native MCPs work; set `true` only for an explicit locked-down provider route                                                                                                                                                                                                                |
+| `WPR_CODEX_CLI_DISABLE_FEATURES`                                                          | unset                                                                                   | Optional comma-separated Codex feature disables for explicitly locked-down provider routes. The default must preserve native Codex app, multi-agent, plugin, browser/computer, workspace-dependency, and related capability surfaces; set this only with dated preflight/QA evidence that the lockdown is intentional.                                                              |
+| `WPR_CLAUDE_CODE_ENABLE_CHROME`                                                           | `true`                                                                                  | Claude Code workers launch with `--chrome` when available so Claude can use its native Chrome integration; set `0` only for an explicit locked-down mode                                                                                                                                                                                                                            |
+| `WPR_CLAUDE_CODE_EFFORT`                                                                  | unset                                                                                   | Optional Claude Code effort. MCP/UI/direct API per-run effort may select `low`, `medium`, `high`, `xhigh`, or `max`; workspace plus host-native commands must pass the selected value through to the native `--effort` flag without silently substituting another level.                                                                                                            |
+| `CLAUDE_CODE_OAUTH_TOKEN`                                                                 | unset                                                                                   | Optional Claude Code headless access token from `claude setup-token`; supported for Docker/workspace and host workers through the bootstrap/env allowlist. In enterprise/run-only mode it is written only to secret runtime env, not the interactive shell env. Host projection is access-only: `CLAUDE_CODE_OAUTH_REFRESH_TOKEN` is never projected or exported.                                                                                |
+| Built-in host CLI floors                                                                  | Codex CLI `>=0.144.1`, Claude Code `>=2.1.178`, OpenClaw `>=2026.6.6`                   | Host-native workers fail closed before run creation when the configured CLI is too old or missing required capability flags                                                                                                                                                                                                                                                         |
+| `WPR_SANDBOX_VNC_PASSWORD`                                                                | `secret`                                                                                | VNC access password                                                                                                                                                                                                                                                                                                                                                                 |
+| `WPR_SANDBOX_VNC_NO_PASSWORD`                                                             | `1`                                                                                     | Disable VNC password                                                                                                                                                                                                                                                                                                                                                                |
+| `WPR_SANDBOX_SERVICE_TMPDIR`                                                              | `/tmp`                                                                                  | Temp path for container supervisor services such as noVNC/websockify; keep separate from mounted worker-home `TMPDIR` to avoid live desktop socket reset failures                                                                                                                                                                                                                   |
+| `WPR_SANDBOX_NOVNC_SELF_HEAL`                                                             | `true`                                                                                  | Runtime may repair an unhealthy noVNC proxy before reporting the live desktop available                                                                                                                                                                                                                                                                                             |
+| `WPR_SANDBOX_NOVNC_HEALTH_TIMEOUT_SEC`                                                    | `1.5`                                                                                   | Timeout for noVNC asset-path health checks                                                                                                                                                                                                                                                                                                                                          |
+| `WPR_SANDBOX_NOVNC_HEALTH_CACHE_TTL_SEC`                                                  | `10`                                                                                    | Short cache for noVNC health checks to keep watch polling responsive                                                                                                                                                                                                                                                                                                                |
+| `WPR_MCP_BLOCKING_WAIT_DEFAULT_SEC`                                                       | `1800`                                                                                  | Default MCP `workspace_wait` completion wait when the model/user asks to wait for results and omits an explicit timeout; enterprise deployments that expect 25+ minute research/file jobs may raise this, for example to `2700`                                                                                                                                                     |
+| `WPR_MCP_BLOCKING_WAIT_MAX_SEC`                                                           | `1800`                                                                                  | Hard cap on MCP blocking wait duration; prevents a chat request from blocking longer than policy while the worker continues in the background; enterprise deployments may raise this with a matching LibreChat MCP `timeout` cushion, for example to `3600`                                                                                                                         |
+| `WPR_MCP_BLOCKING_WAIT_POLL_INTERVAL_SEC`                                                 | `5`                                                                                     | Initial efficient polling cadence and floor for `workspace_wait`; models should omit per-call poll intervals for normal long work, and the runtime keeps early checks responsive before backing off toward the 30s cap                                                                                                                                                              |
+| `WPR_MCP_RECENT_DISPATCH_TTL_SEC`                                                         | `14400`                                                                                 | In-process recent-dispatch fallback TTL for same authenticated user/conversation wait/status recovery                                                                                                                                                                                                                                                                               |
+| `WPR_MCP_RECENT_DISPATCH_MAX_ENTRIES`                                                     | `1024`                                                                                  | Safety cap on in-process recent-dispatch fallback entries                                                                                                                                                                                                                                                                                                                           |
+| GlassHive LibreChat MCP `timeout`                                                         | `1860000` ms                                                                            | Config-level timeout for the GlassHive MCP server, intentionally longer than the 30-minute wait cap plus overhead; deployments should keep a generous cushion above `WPR_MCP_BLOCKING_WAIT_MAX_SEC` plus proxy/runtime latency                                                                                                                                                      |
+| `WPR_MCP_HOST`                                                                            | `127.0.0.1`                                                                             | MCP server bind                                                                                                                                                                                                                                                                                                                                                                     |
+| `WPR_MCP_PORT`                                                                            | `8767`                                                                                  | MCP server port                                                                                                                                                                                                                                                                                                                                                                     |
+| `WPR_MCP_BASE_URL`                                                                        | `http://127.0.0.1:8766`                                                                 | Control plane URL                                                                                                                                                                                                                                                                                                                                                                   |
+| `GLASSHIVE_OPERATOR_BASE_URL`                                                             | `http://127.0.0.1:8780`                                                                 | User-facing GlassHive operator UI origin used for `/watch/{worker}` links                                                                                                                                                                                                                                                                                                           |
+| `GLASSHIVE_ALLOWED_REDIRECT_HOSTS` / `WPR_ALLOWED_REDIRECT_HOSTS`                         | unset                                                                                   | Optional comma-separated host/origin allowlist for `/r/{ref}` redirects when the tokenless Watch/Steer target is not same-origin or one of the configured GlassHive operator/runtime/artifact origins                                                                                                                                                                               |
+| `GLASSHIVE_DEFAULT_LAUNCH_SURFACE`                                                        | `desktop`                                                                               | Project-first UI default initial watch surface (`desktop`, `terminal`, `auto`)                                                                                                                                                                                                                                                                                                      |
+| `GLASSHIVE_SHOW_LIVE_TERMINAL_IN_DESKTOP`                                                 | `true`                                                                                  | When desktop-first watch is used, auto-open the active live run terminal inside the desktop                                                                                                                                                                                                                                                                                         |
+| `WPR_IDLE_DESKTOP_PRIME_BROWSER`                                                          | `true`                                                                                  | Prime fresh worker desktops with the GlassHive placeholder browser page instead of the inherited base-image splash                                                                                                                                                                                                                                                                  |
+| `GLASSHIVE_CALLBACK_RETRY_ATTEMPTS`                                                       | `3`                                                                                     | Callback delivery attempts before GlassHive records `callback.failed`                                                                                                                                                                                                                                                                                                               |
+| `GLASSHIVE_CALLBACK_RETRY_BASE_DELAY_S`                                                   | `0.5`                                                                                   | Linear callback retry base delay in seconds                                                                                                                                                                                                                                                                                                                                         |
+| `GLASSHIVE_CALLBACK_RETRY_INTERVAL_S`                                                     | `30`                                                                                    | Periodic pending-callback replay interval in seconds                                                                                                                                                                                                                                                                                                                                |
+| `GLASSHIVE_CALLBACK_MAX_TOTAL_ATTEMPTS`                                                   | `25`                                                                                    | Hard upper bound for total callback outbox attempts across immediate and periodic replay; exhausted rows are retained as `dead_lettered` audit records instead of retrying forever                                                                                                                                                                                                  |
+| `GLASSHIVE_MAX_CAPACITY_RETRY_ATTEMPTS`                                                   | `6`                                                                                     | Bound for retryable non-capacity failures. Structured capacity, host-worker-busy, provider rate-limit, and provider-quota waits ignore this finite ceiling and remain durably queued until capacity, cancellation, a declared deadline, or a real non-capacity failure.                                                                                                               |
+| `GLASSHIVE_PROVIDER_RESPONSE_TIMEOUT_S`                                                   | unset                                                                                   | Optional operator ceiling compiled from `runtime.glasshive_foreground_response_timeout_s` (30-1800 whole seconds). Unset means no automatic foreground deadline. Explicit request metadata may set a turn budget, or shorten a configured ceiling. Cold synchronous session setup has the caveat documented above. This does not cap mission, MCP, or other autonomous worker runs. |
+| `GLASSHIVE_RUN_TIMEOUT_SEC` / `WPR_RUN_TIMEOUT_SEC`                                       | unset                                                                                   | Optional explicit timeout for long-running CLI worker runs; unset means no default hard cap                                                                                                                                                                                                                                                                                         |
+| `GLASSHIVE_HOST_RUN_TIMEOUT_SEC` / `WPR_HOST_RUN_TIMEOUT_SEC`                             | unset                                                                                   | Optional host-specific override for host-native CLI runs                                                                                                                                                                                                                                                                                                                            |
+| `GLASSHIVE_IDLE_TERMINATE_AFTER_S`                                                        | `0`                                                                                     | When positive, stop idle worker compute while preserving workspace/home state                                                                                                                                                                                                                                                                                                       |
+| `GLASSHIVE_PAUSED_TERMINATE_AFTER_S`                                                      | `0`                                                                                     | When positive, stop manually paused worker compute after the configured age; already-released paused compute must be skipped until the worker is resumed                                                                                                                                                                                                                            |
+| `GLASSHIVE_IDLE_REAPER_INTERVAL_S`                                                        | `60`                                                                                    | Idle reaper interval                                                                                                                                                                                                                                                                                                                                                                |
 
 For long enterprise research/file jobs, the wait defaults should be treated as a chat transport
 policy, not a worker-kill policy. Raising `WPR_MCP_BLOCKING_WAIT_DEFAULT_SEC` to 2700 and
@@ -2163,6 +2241,9 @@ by the host is an older `interrupted` run but the same worker has already advanc
 run, GlassHive follows the newer run instead of reporting the older interruption as final. Real
 failed/cancelled runs are still surfaced unless a newer same-worker run has actually completed, so
 users are not told that a resumed workspace failed while Watch/Steer is visibly still working.
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
 | `GLASSHIVE_MAX_ACTIVE_WORKERS_PER_USER` | `0` | When positive, cap active workers per authenticated user |
 | `GLASSHIVE_MAX_ACTIVE_WORKERS_PER_TENANT` | `0` | When positive, cap active workers across the tenant deployment |
 | `GLASSHIVE_MAX_WORKSPACES_PER_USER` | `0` | When positive, cap retained non-terminated workspaces per authenticated user |
@@ -2193,61 +2274,23 @@ users are not told that a resumed workspace failed while Watch/Steer is visibly 
 - `docs/03_Bootstrap_Auth_and_Identity_Projection.md`
 - `docs/04_MCP_Publication_and_Client_Compatibility.md`
 - `docs/05_QA_Quick_Power_Playbook.md`
+- `docs/06_References.md`
+- `docs/07_Minimal_Unified_Operator_UI.md`
+- `docs/08_Repository_Structure_and_Publication_Boundaries.md`
 - `docs/09_Dynamic_MCP_Projection_and_Bidirectional_Availability.md`
 - `docs/10_Browser_Session_Persistence_and_Login_Model.md`
+- `docs/11_Enterprise_Cost_Security_and_Provider_Guardrails.md`
+- `docs/12_Local_QA_Fault_Controls.md`
 
 ---
 
 ## Learnings
 
-### 2026-08-02: direct harness conversations defer connected-account discovery
-
-The direct GlassHive conversation provider may reuse LibreChat-owned authenticated connected-account
-MCP sessions without projecting provider credentials or eagerly initializing those providers.
-Provider capability metadata selects reviewed-policy deferred projection. The signed broker grant
-separates MCP servers declared directly on the Agent from reviewed MCP servers owned by that Agent's
-explicit handoff targets. It never grants unrelated reviewed servers merely because GlassHive was
-selected, and no provider name is hardcoded.
-
-Initial broker tool listing and ordinary native broker calls discover only the eager set. A harness
-must explicitly describe or invoke one signed deferred server before LibreChat resolves its schemas;
-the broker then reuses the existing user-scoped MCP connection. Current reviewed MCP policy is checked
-again at discovery time, and content-read/write rules remain unchanged. This makes current and future
-Agent-selected connections available to the harness without adding OAuth or schema-discovery latency
-to unrelated chat. Registry/grant preparation failures become a typed degraded bootstrap status
-instead of silently launching a capability-blind worker.
-
-For OAuth-backed deferred servers, discovery first verifies that an unexpired stored credential is
-decryptable by the current runtime. Missing or unreadable credentials produce an immediate typed
-reconnect blocker; a background worker never launches an interactive OAuth redirect or leaves flow
-polling behind. Readable credentials continue through the normal user-scoped MCP reuse/refresh path.
-
-Backwards-compatible grants without separate eager/deferred fields treat their complete allowlist as
-eager. Unknown or unsigned deferred server requests fail closed without provider discovery.
-
-Host conversation mode also preserves native harness inventory in the private worker home. Codex
-receives owner-local skill and plugin-cache roots beside its isolated auth/config; Claude receives
-its installed plugin registry/cache/marketplace roots beside its isolated config. Existing
-worker-local catalog entries and selections win; upgrades add only missing host entries. These are
-read-mostly local projections, never copies into LIFE, and plugin data/state is not projected.
-
-Codex conversation workers run in the exact selected workspace and inherit its canonical
-`AGENTS.md` by default. A deployment may explicitly select `exclude` when workspace project
-instructions are prohibited; that opt-out runs Codex from private worker state with the selected
-workspace added only as an accessible directory. It is not the Viventium default because canonical
-LIFE context is part of the provider contract.
-
-Conversation-provider restart recovery is durable but never PID-only. Active-session metadata keeps
-only a SHA-256 fingerprint of the native process start identity and command, not the private command
-itself. Recovery requires the same PID, process-group leadership, and exact fingerprint before a
-process may be monitored or cancelled. A single bounded reconciler resumes nonterminal provider
-records and finalizes surviving native transcripts exactly once. A record interrupted before a
-native run was attached fails with a typed pre-start interruption; it is never silently replayed.
-
 - The Selenium standalone-chromium image is infrastructure packaging, not a test framework
   dependency. Do not confuse it with Selenium Grid.
-- GlassHive's independence from LibreChat is a hard architectural boundary. The bootstrap bundle
-  is the only legal crossing point; do not add direct Mongo reads or LibreChat config imports.
+- GlassHive's independence from LibreChat is a hard architectural boundary. The bootstrap bundle is
+  the only legal parent-to-sandbox execution-context/config/file projection. Other crossings must be
+  declared authenticated typed APIs; do not add direct Mongo reads or LibreChat config imports.
 - Browser session persistence depends on stable worker naming. Ephemeral worker IDs break login
   continuity for authenticated browser tasks.
 - For non-technical users, the right product label is `Workspace`; internal worker/sandbox terms
@@ -2326,3 +2369,66 @@ remove native worker tools merely to make a recall test pass: that would regress
 workspace tasks. Instead, continuity acceptance verifies provenance from the native run transcript.
 A recall case fails if it substitutes command execution for the broker call, even when the words in
 the final answer happen to match an old QA artifact.
+
+## Parallel Work mission substrate
+
+[`55_Parallel_Work_Orchestration.md`](55_Parallel_Work_Orchestration.md) owns the product contract;
+this document owns the host-runtime boundary. Parallel Work adds no second worker engine:
+
+- `/v1/delegations` atomically reserves a mission root and first run under a trusted account
+  assertion and idempotency key;
+- persisted per-family/lane host leases bound concurrency and carry verified PID/process-start
+  identity for restart-safe exact-run control;
+- capacity and host pressure remain structured queued state rather than exhausting a fixed retry
+  count;
+- each root receives isolated homes, cache/temp state, logs, native session state, workspace, and
+  process group; untrusted/unknown mutation targets serialize conservatively until a trusted target
+  scope exists;
+- per-run homes are not a containment boundary for same-UID host-native workers: an unsandboxed host
+  process can inspect sibling process environments and protected application state. Automatic
+  Parallel Work therefore uses a Core-owned Docker/workstation execution mode, ignores or rejects a
+  model-authored host override, and keeps host-native roots outside the Parallel availability gate
+  until a separate OS identity or independently proven OS sandbox exists;
+- the isolated Parallel policy is mutually exclusive with host-native mission roots, including
+  legacy, retry, and restart admission. A durable provider-session association—not bootstrap
+  `run_mode`—is the only trusted conversation-lane identity. Existing host missions are preserved
+  but make the service-authenticated orchestration capability snapshot not ready until terminal;
+- the qualifying Docker/workstation boundary mounts only the exact worker home/workspace, never the
+  Docker socket, host PID namespace, service state/App Support, or sibling roots. A synthetic
+  cross-process environment marker and protected-state probe are mandatory release evidence;
+- broker authority is minted at admission and a required-but-unavailable protected capability moves
+  the exact work to `needs_input` before provider invocation; native browser, computer, shell, or
+  filesystem access cannot bypass that boundary;
+- provider session and child events are normalized into the run/event ledger. List responses expose
+  only aggregate native-team counts; safe detail exposes bounded grouped topology and never native
+  session or child identifiers.
+
+The Docker substrate already keeps container startup outside atomic delegation acceptance, exposes
+the host broker through `host.docker.internal`, and applies memory/CPU/PID bounds. Docker missions
+must also acquire the same persisted family/lane/account/tenant execution leases; container
+isolation is not permission to bypass bounded admission. It does not yet
+qualify for release until native session/child observation is wired through the Docker execution
+path and the real isolation, broker, settlement, and control probes pass. Deprecated macOS
+`sandbox-exec` behavior may be investigated as a compatibility spike, but it is not a supported
+release boundary.
+
+## Conversation-Provider Anti-Overbuild Boundary
+
+`GHM-005` requires the smallest composition of the existing conversation-provider session, signed
+capability broker, owner workspace/LIFE projection, and native harness primitives. Do not create a
+second agent framework, wrapper author, duplicate worker engine, or speculative full-v0.5 runtime
+to make GlassHive act as Main. Add a new typed primitive only after current-path evidence proves a
+reusable gap that the existing provider boundary cannot fill. `GCP-024` / `GCP-UC-005` owns
+acceptance.
+
+<!-- VIVENTIUM-STABLE-REQUIREMENT-DECLARATIONS:START -->
+## Stable requirement declarations
+
+Each line is the canonical public owner declaration for one stable requirement ID. Detailed sections supply implementation context; they must not narrow or contradict these declared outcomes.
+
+GHM-001: GlassHive is a real configurable Main/cortex provider, not a wrapper LLM or MCP pretending to be the Main.
+GHM-002: One authoring intelligence receives the selected provider/model/effort, folder/workspace, identity, memory/recall, tools, Feelings, and full authorized capability context.
+GHM-003: Canonical per-user LIFE is the durable user context; provider choice must not create duplicate LIFE or duplicate runs.
+GHM-004: Conversation-provider and mission-worker paths each meet the outcome metric and truthful fallback behavior.
+GHM-005: Do not overbuild a full speculative v0.5 thesis to solve the concrete provider path.
+<!-- VIVENTIUM-STABLE-REQUIREMENT-DECLARATIONS:END -->

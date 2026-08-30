@@ -15,10 +15,68 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 SCHEDULING_ROOT = REPO_ROOT / "viventium_v0_4" / "LibreChat" / "viventium" / "MCPs" / "scheduling-cortex"
 if str(SCHEDULING_ROOT) not in sys.path:
     sys.path.insert(0, str(SCHEDULING_ROOT))
+PROMPT_WORKBENCH_ROOT = REPO_ROOT / "viventium_v0_4" / "prompt-workbench" / "backend"
+if str(PROMPT_WORKBENCH_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROMPT_WORKBENCH_ROOT))
 
 
 def synthetic_home_path(*parts: str) -> str:
     return "/" + "/".join(("Users", "example-user", *parts))
+
+
+def terminal_callback_payload(
+    *,
+    event: str,
+    worker_id: str,
+    glasshive_run_id: str,
+    scheduled_run_id: str,
+    user_id: str,
+    revision: int,
+    message: str,
+    **extra: object,
+) -> dict[str, object]:
+    state = "cancelled" if event in {"run.cancelled", "run.interrupted"} else event[4:]
+    ended_at = f"2026-05-22T10:00:0{revision}+00:00"
+    result_digest = "sha256:" + hashlib.sha256(
+        f"{glasshive_run_id}\0{state}\0{revision}\0{message}".encode()
+    ).hexdigest()
+    material = ":".join(
+        (glasshive_run_id, state, ended_at, "0", str(revision), result_digest)
+    )
+    return {
+        "callback_id": "cb_terminal_" + hashlib.sha256(material.encode()).hexdigest(),
+        "event": event,
+        "message": message,
+        "message_id": scheduled_run_id,
+        "result_digest": result_digest,
+        "result_ended_at": ended_at,
+        "result_revision": revision,
+        "result_state": state,
+        "run_id": glasshive_run_id,
+        "user_id": user_id,
+        "worker_id": worker_id,
+        **extra,
+    }
+
+
+def test_isolated_artifact_bridge_tracks_workbench_contract_and_builtin_templates() -> None:
+    cached = sys.modules.get("prompt_workbench")
+    if cached is not None and not hasattr(cached, "__path__"):
+        del sys.modules["prompt_workbench"]
+    from prompt_workbench import periphery_contract, scheduled_prompts
+    from scheduling_cortex import workbench_artifacts
+
+    assert (
+        workbench_artifacts.PERIPHERY_REQUIRED_FIELDS
+        == periphery_contract.PERIPHERY_REQUIRED_FIELDS
+    )
+    assert (
+        workbench_artifacts.PERIPHERY_CONTENT_FIELDS
+        == periphery_contract.PERIPHERY_CONTENT_FIELDS
+    )
+    assert set(workbench_artifacts.PERIPHERY_TEMPLATE_MODULES) == set(
+        scheduled_prompts.BUILTIN_TEMPLATE_IDS
+    )
 
 
 def test_glasshive_callback_url_uses_scheduling_mcp_url(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -47,6 +105,19 @@ def test_glasshive_callback_url_uses_configured_scheduling_port(monkeypatch: pyt
         dispatch._glasshive_callback_url()
         == "http://127.0.0.1:7110/internal/scheduled-prompts/glasshive-callback"
     )
+
+
+def test_glasshive_dispatch_uses_compiled_local_control_plane_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scheduling_cortex import dispatch
+
+    monkeypatch.delenv("GLASSHIVE_RUNTIME_URL", raising=False)
+    monkeypatch.delenv("WPR_API_URL", raising=False)
+    monkeypatch.delenv("GLASSHIVE_RUNTIME_BASE_URL", raising=False)
+    monkeypatch.setenv("WPR_MCP_BASE_URL", "http://127.0.0.1:14766")
+
+    assert dispatch._glasshive_base_url() == "http://127.0.0.1:14766"
 
 
 def test_builtin_workbench_nightly_misfire_policy_catches_up_late_run(
@@ -208,7 +279,12 @@ def test_glasshive_executor_branches_before_librechat_generation(tmp_path: Path,
             assert "rendered-prompt.md" in json.dumps(bundle)
             assert "utf8_static_server.py" in json.dumps(bundle)
             assert "memory-proposals-yyyymmddHHmm.json" in json.dumps(bundle)
-            return {"worker_id": "wrk_1"}
+            return {
+                "worker_id": "wrk_1",
+                "profile": "codex-cli",
+                "model": "gpt-5.6-sol",
+                "execution_mode": "host",
+            }
         if url.endswith("/assign"):
             assert "FINAL REPORT" in str(payload["instruction"])
             assert "snapshot-only" not in str(payload["instruction"])
@@ -493,7 +569,12 @@ def test_glasshive_runtime_dependency_missing_recovers_to_docker_when_safe(
                     failure_retryable=False,
                 )
             assert mode == "docker"
-            return {"worker_id": "wrk_recovered"}
+            return {
+                "worker_id": "wrk_recovered",
+                "profile": "codex-cli",
+                "model": "gpt-5.6-sol",
+                "execution_mode": "docker",
+            }
         if url.endswith("/assign"):
             return {"run_id": "run_recovered"}
         raise AssertionError(url)
@@ -617,7 +698,12 @@ def test_glasshive_dispatch_replaces_stale_cached_project_id(
         if url.endswith("/v1/projects"):
             return {"project_id": replacement_project_id}
         if url.endswith(f"/v1/projects/{replacement_project_id}/workers/find-or-resume"):
-            return {"worker_id": "wrk_1"}
+            return {
+                "worker_id": "wrk_1",
+                "profile": "codex-cli",
+                "model": "gpt-5.6-sol",
+                "execution_mode": "host",
+            }
         if url.endswith("/assign"):
             return {"run_id": "run_1"}
         raise AssertionError(url)
@@ -740,7 +826,12 @@ def test_glasshive_dispatch_repairs_task_cache_from_valid_definition_project(
     def fake_post_json(url: str, payload: dict[str, object], headers: dict[str, str], timeout_s: int) -> dict[str, object]:
         post_calls.append(url)
         if url.endswith(f"/v1/projects/{valid_project_id}/workers/find-or-resume"):
-            return {"worker_id": "wrk_1"}
+            return {
+                "worker_id": "wrk_1",
+                "profile": "codex-cli",
+                "model": "gpt-5.6-sol",
+                "execution_mode": "host",
+            }
         if url.endswith("/assign"):
             return {"run_id": "run_1"}
         raise AssertionError(f"unexpected POST {url}")
@@ -1127,15 +1218,18 @@ def test_glasshive_completion_callback_requires_signature_and_updates_history(
     if not hasattr(mcp, "http_app"):
         pytest.skip("Cannot extract ASGI app from FastMCP server")
     client = TestClient(mcp.http_app(transport="streamable-http"))
-    payload = {
-        "event": "run.completed",
-        "worker_id": worker_id,
-        "run_id": glasshive_run_id,
-        "message": (
+    payload = terminal_callback_payload(
+        event="run.completed",
+        worker_id=worker_id,
+        glasshive_run_id=glasshive_run_id,
+        scheduled_run_id="scheduled-run-1",
+        user_id="user-1",
+        revision=2,
+        message=(
             f"FINAL REPORT: complete at {synthetic_home_path('private', 'path')} "
             "with mongodb://127.0.0.1:27017/db"
         ),
-    }
+    )
     raw = json.dumps(payload, separators=(",", ":")).encode("utf-8")
 
     bad = client.post(
@@ -1155,7 +1249,10 @@ def test_glasshive_completion_callback_requires_signature_and_updates_history(
         headers={"content-type": "application/json", "x-glasshive-signature": signature},
     )
     assert ok.status_code == 200
-    assert ok.json()["status"] == "ok"
+    # A 2xx callback proves only that Scheduling Cortex durably accepted the
+    # transport. Surface delivery and downstream objective completion have
+    # their own ledgers and must not be collapsed into a generic "ok".
+    assert ok.json()["status"] == "http_accepted"
 
     updated = storage.get_scheduled_prompt_run("scheduled-run-1")
     assert updated["status"] == "completed"
@@ -1172,18 +1269,21 @@ def test_glasshive_completion_callback_requires_signature_and_updates_history(
     assert task["last_delivery_outcome"] == "sent"
     assert task["last_delivery"]["scheduled_prompt_run_id"] == "scheduled-run-1"
 
-    failed_payload = {
-        "event": "run.failed",
-        "worker_id": worker_id,
-        "run_id": glasshive_run_id,
-        "failure_class": "provider_request_rejected",
-        "message": "Synthetic private provider detail",
-        "effort_projection": {
+    failed_payload = terminal_callback_payload(
+        event="run.failed",
+        worker_id=worker_id,
+        glasshive_run_id=glasshive_run_id,
+        scheduled_run_id="scheduled-run-1",
+        user_id="user-1",
+        revision=1,
+        message="Synthetic private provider detail",
+        failure_class="provider_request_rejected",
+        effort_projection={
             "requested": "xhigh",
             "effective": "medium",
             "fallback_reason": "xhigh_route_not_proven",
         },
-    }
+    )
     failed_raw = json.dumps(failed_payload, separators=(",", ":")).encode("utf-8")
     failed_signature = "sha256=" + hmac.new(
         derived_secret, failed_raw, hashlib.sha256
@@ -1194,8 +1294,12 @@ def test_glasshive_completion_callback_requires_signature_and_updates_history(
         headers={"content-type": "application/json", "x-glasshive-signature": failed_signature},
     )
 
-    assert failed.status_code == 200
+    assert failed.status_code == 409
+    assert failed.json()["callback_status"] == "superseded"
     updated = storage.get_scheduled_prompt_run("scheduled-run-1")
+    # The first verified terminal callback is authoritative. A reordered provider failure for
+    # the same exact run must be accepted idempotently at the transport boundary without
+    # regressing the durable occurrence or its delivery truth.
     assert updated["status"] == "completed"
     assert updated["error_class"] is None
     callback_summary = json.loads(updated["callback_payload_json"])
@@ -1494,7 +1598,15 @@ def test_apply_governed_callback_routes_memory_proposals_through_helper(
     if not hasattr(mcp, "http_app"):
         pytest.skip("Cannot extract ASGI app from FastMCP server")
     client = TestClient(mcp.http_app(transport="streamable-http"))
-    payload = {"event": "run.completed", "worker_id": worker_id, "run_id": glasshive_run_id, "message": "FINAL REPORT: done"}
+    payload = terminal_callback_payload(
+        event="run.completed",
+        worker_id=worker_id,
+        glasshive_run_id=glasshive_run_id,
+        scheduled_run_id="scheduled-run-apply",
+        user_id=user_id,
+        revision=1,
+        message="FINAL REPORT: done",
+    )
     raw = json.dumps(payload, separators=(",", ":")).encode("utf-8")
     binding = f"{worker_id}:{glasshive_run_id}".encode("utf-8")
     derived_secret = hmac.new(secret.encode("utf-8"), binding, hashlib.sha256).hexdigest().encode("utf-8")
@@ -1686,4 +1798,4 @@ def test_glasshive_worker_lifecycle_callback_is_signed_noop(
     )
 
     assert response.status_code == 200
-    assert response.json() == {"status": "ok", "ignored": "worker.ready"}
+    assert response.json() == {"status": "http_accepted", "ignored": "worker.ready"}

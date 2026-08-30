@@ -37,6 +37,7 @@ DEFAULT_TIMEZONE = "local"
 LAUNCH_AGENT_LABEL = "ai.viventium.memory-harden"
 LAUNCHCTL_PATH = "/bin/launchctl"
 PARTIAL_BACKFILL_EXIT = 2
+UNAUTHORIZED_MODEL_FALLBACK_EXIT = 3
 TRIGGER_EVENT_SCHEMA_VERSION = 3
 SCHEDULE_V3_OBSERVATION_SCHEMA_VERSION = 1
 SCHEDULE_LIFECYCLE_SCHEMA_VERSION = 1
@@ -86,6 +87,36 @@ def load_runtime_env(runtime_dir: Path, librechat_dir: Path) -> dict[str, str]:
                 continue
             env[key] = value
     return env
+
+
+def memory_hardening_child_env(env: dict[str, str]) -> dict[str, str]:
+    """Keep standalone children finite and confined to their authorized model routes."""
+    child_env = {**env, "USE_REDIS": "false", "USE_REDIS_STREAMS": "false"}
+    provider = normalize_memory_provider(
+        child_env.get("VIVENTIUM_MEMORY_HARDENING_PROVIDER")
+    )
+    model = str(child_env.get("VIVENTIUM_MEMORY_HARDENING_MODEL") or "").strip()
+    configured_fallbacks = str(
+        child_env.get("VIVENTIUM_MEMORY_HARDENING_MODEL_FALLBACKS") or ""
+    ).strip()
+    if configured_fallbacks and not authorized_memory_fallbacks(configured_fallbacks):
+        child_env.pop("VIVENTIUM_MEMORY_HARDENING_MODEL_FALLBACKS", None)
+        configured_fallbacks = ""
+    if provider and model and not configured_fallbacks:
+        effort = str(
+            child_env.get("VIVENTIUM_MEMORY_HARDENING_EFFORT")
+            or (
+                DEFAULT_OPENAI_MEMORY_EFFORT_BY_MODEL.get(model, DEFAULT_OPENAI_MEMORY_EFFORT)
+                if provider == "openai"
+                else "xhigh"
+            )
+        ).strip()
+        # The Node hardener interprets an empty fallback list as its permissive built-in list.
+        # Repeat the selected tuple instead; deduplication then leaves exactly the approved route.
+        child_env["VIVENTIUM_MEMORY_HARDENING_MODEL_FALLBACKS"] = (
+            f"{provider}:{model}:{effort}"
+        )
+    return child_env
 
 
 def cron_to_launchd_time(schedule: str) -> tuple[int, int]:
@@ -177,6 +208,28 @@ def public_hash(value: object, length: int = 16) -> str:
 
 def trigger_events_dir(app_support_dir: Path) -> Path:
     return app_support_dir / "state" / "memory-hardening" / "schedule-events"
+
+
+def authorized_memory_fallbacks(value: str | None) -> list[dict[str, str]]:
+    """Return only explicit, structurally complete runtime fallback tuples."""
+    authorized: list[dict[str, str]] = []
+    for candidate in str(value or "").replace(";", ",").split(","):
+        parts = [part.strip() for part in candidate.replace("/", ":").split(":")]
+        if len(parts) not in {2, 3}:
+            continue
+        provider = normalize_memory_provider(parts[0])
+        model = parts[1]
+        if not provider or not model:
+            continue
+        effort = parts[2] if len(parts) == 3 else ""
+        if not effort:
+            effort = (
+                DEFAULT_OPENAI_MEMORY_EFFORT_BY_MODEL.get(model, DEFAULT_OPENAI_MEMORY_EFFORT)
+                if provider == "openai"
+                else "xhigh"
+            )
+        authorized.append({"provider": provider, "model": model, "effort": effort.lower()})
+    return authorized
 
 
 def schedule_v3_observation_path(app_support_dir: Path) -> Path:
@@ -336,6 +389,9 @@ def start_trigger_event(args: argparse.Namespace, env: dict[str, str]) -> tuple[
         "requested_provider": str(env.get("VIVENTIUM_MEMORY_HARDENING_PROVIDER") or "").strip(),
         "requested_model": str(env.get("VIVENTIUM_MEMORY_HARDENING_MODEL") or "").strip(),
         "requested_effort": str(env.get("VIVENTIUM_MEMORY_HARDENING_EFFORT") or "").strip(),
+        "authorized_fallbacks": authorized_memory_fallbacks(
+            getattr(args, "_memory_hardening_configured_fallbacks", "")
+        ),
     }
     path = trigger_events_dir(args.app_support_dir) / f"{event_id}.json"
     write_json_private(path, payload)
@@ -388,6 +444,40 @@ def finish_trigger_event(
         payload["effective_provider"] = latest_summary.get("provider")
         payload["effective_model"] = latest_summary.get("model")
         payload["effective_effort"] = latest_summary.get("effort")
+        requested = (
+            normalize_memory_provider(payload.get("requested_provider")),
+            str(payload.get("requested_model") or "").strip(),
+            str(payload.get("requested_effort") or "").strip().lower(),
+        )
+        effective = (
+            normalize_memory_provider(payload.get("effective_provider")),
+            str(payload.get("effective_model") or "").strip(),
+            str(payload.get("effective_effort") or "").strip().lower(),
+        )
+        fallback_used = bool(all(requested) and all(effective) and requested != effective)
+        authorized = {
+            (
+                normalize_memory_provider(candidate.get("provider")),
+                str(candidate.get("model") or "").strip(),
+                str(candidate.get("effort") or "").strip().lower(),
+            )
+            for candidate in payload.get("authorized_fallbacks", [])
+            if isinstance(candidate, dict)
+        }
+        fallback_authorized = fallback_used and effective in authorized
+        payload["fallback_used"] = fallback_used
+        payload["fallback_authorized"] = fallback_authorized
+        if fallback_used:
+            payload["fallback_reason"] = (
+                "configured_model_fallback"
+                if fallback_authorized
+                else "unauthorized_model_fallback"
+            )
+        if fallback_used and not fallback_authorized and exit_code == 0:
+            exit_code = UNAUTHORIZED_MODEL_FALLBACK_EXIT
+            payload["status"] = "failed"
+            payload["exit_code"] = exit_code
+            payload["reason"] = "unauthorized_model_fallback"
     write_json_private(path, payload)
     return exit_code
 
@@ -590,8 +680,8 @@ def desired_launch_agent_payload(
     logs_dir.mkdir(parents=True, exist_ok=True)
     launch_path = ":".join(
         [
-            str(Path.home() / ".local" / "bin"),
-            str(Path.home() / ".codex" / "bin"),
+            str(user_home / ".local" / "bin"),
+            str(user_home / ".codex" / "bin"),
             "/Applications/ChatGPT.app/Contents/Resources",
             "/Applications/Codex.app/Contents/Resources",
             "/opt/homebrew/bin",
@@ -1251,7 +1341,7 @@ def run_status(
     result = subprocess.run(
         node_command(args, runtime_env),
         cwd=args.repo_root / "viventium_v0_4" / "LibreChat",
-        env=env,
+        env=memory_hardening_child_env(env),
         **model_subprocess_kwargs(capture_output=True, lower_priority=False),
     )
     if result.returncode != 0:
@@ -1275,6 +1365,43 @@ def run_status(
     schedule_health["launch_agent"] = launch_agent
     latest = schedule_health.get("latest_scheduled_trigger")
     latest = latest if isinstance(latest, dict) else {}
+    requested_provider = normalize_memory_provider(latest.get("requested_provider"))
+    effective_provider = normalize_memory_provider(latest.get("effective_provider"))
+    requested_model = str(latest.get("requested_model") or "").strip()
+    effective_model = str(latest.get("effective_model") or "").strip()
+    requested_effort = str(latest.get("requested_effort") or "").strip().lower()
+    effective_effort = str(latest.get("effective_effort") or "").strip().lower()
+    provider_mismatch = bool(
+        requested_provider and effective_provider and requested_provider != effective_provider
+    )
+    model_mismatch = bool(requested_model and effective_model and requested_model != effective_model)
+    effort_mismatch = bool(
+        requested_effort and effective_effort and requested_effort != effective_effort
+    )
+    fallback_used = provider_mismatch or model_mismatch or effort_mismatch
+    schedule_health["provider_mismatch"] = provider_mismatch
+    schedule_health["model_mismatch"] = model_mismatch
+    schedule_health["effort_mismatch"] = effort_mismatch
+    schedule_health["execution_mismatch"] = bool(
+        schedule_health.get("execution_mismatch") or fallback_used
+    )
+    schedule_health["fallback_used"] = fallback_used
+    schedule_health["fallback_authorized"] = bool(
+        fallback_used and latest.get("fallback_authorized") is True
+    )
+    if fallback_used:
+        schedule_health["fallback_reason"] = str(latest.get("fallback_reason") or "").strip() or (
+            "configured_model_fallback"
+            if schedule_health["fallback_authorized"]
+            else "unauthorized_model_fallback"
+        )
+    latest_exit_code = latest.get("exit_code")
+    if (
+        str(latest.get("run_status") or "").strip() == "success"
+        and isinstance(latest_exit_code, int)
+        and latest_exit_code < 0
+    ):
+        schedule_health["process_exit_class"] = "terminated_after_successful_run"
     if not launch_agent["installed"] or not launch_agent["loaded"]:
         health_state = "not_loaded"
     elif schedule_health.get("missed_expected_window"):
@@ -1383,15 +1510,49 @@ def run_transcript_backfill_until_caught_up(
 def run_node(args: argparse.Namespace, runtime_env: dict[str, str]) -> int:
     env = os.environ.copy()
     env.update(runtime_env)
+    configured_fallbacks = authorized_memory_fallbacks(
+        runtime_env.get("VIVENTIUM_MEMORY_HARDENING_MODEL_FALLBACKS") or ""
+    )
+    configured_fallbacks_text = ",".join(
+        f"{fallback['provider']}:{fallback['model']}:{fallback['effort']}"
+        for fallback in configured_fallbacks
+    )
+    if configured_fallbacks:
+        env["VIVENTIUM_MEMORY_HARDENING_MODEL_FALLBACKS"] = configured_fallbacks_text
+    else:
+        env.pop("VIVENTIUM_MEMORY_HARDENING_MODEL_FALLBACKS", None)
+    setattr(args, "_memory_hardening_configured_fallbacks", configured_fallbacks_text)
     env["VIVENTIUM_APP_SUPPORT_DIR"] = str(args.app_support_dir)
     env.setdefault("VIVENTIUM_MEMORY_HARDENING_SCHEDULE", DEFAULT_SCHEDULE)
     env.setdefault("VIVENTIUM_MEMORY_HARDENING_TIMEZONE", DEFAULT_TIMEZONE)
-    env.setdefault("VIVENTIUM_MEMORY_HARDENING_PROVIDER", env.get("VIVENTIUM_MEMORY_HARDENING_PROVIDER", ""))
-    env.setdefault("VIVENTIUM_MEMORY_HARDENING_MODEL", env.get("VIVENTIUM_MEMORY_HARDENING_MODEL", ""))
-    env.setdefault(
-        "VIVENTIUM_MEMORY_HARDENING_EFFORT",
-        default_memory_hardening_effort(args, env),
+    explicit_provider = str(getattr(args, "provider", None) or "").strip()
+    selected_provider = normalize_memory_provider(
+        explicit_provider or env.get("VIVENTIUM_MEMORY_HARDENING_PROVIDER")
     )
+    selected_model = str(
+        getattr(args, "model", None)
+        or (model_for_provider(explicit_provider, env) if explicit_provider else "")
+        or env.get("VIVENTIUM_MEMORY_HARDENING_MODEL")
+        or model_for_provider(selected_provider, env)
+        or ""
+    ).strip()
+    env["VIVENTIUM_MEMORY_HARDENING_PROVIDER"] = selected_provider
+    env["VIVENTIUM_MEMORY_HARDENING_MODEL"] = selected_model
+    if explicit_provider or getattr(args, "model", None):
+        provider_effort = (
+            env.get("VIVENTIUM_MEMORY_HARDENING_OPENAI_REASONING_EFFORT")
+            if selected_provider == "openai"
+            else env.get("VIVENTIUM_MEMORY_HARDENING_ANTHROPIC_EFFORT")
+        )
+        env["VIVENTIUM_MEMORY_HARDENING_EFFORT"] = str(
+            provider_effort or default_memory_hardening_effort(args, env)
+        ).strip()
+    else:
+        env.setdefault(
+            "VIVENTIUM_MEMORY_HARDENING_EFFORT",
+            default_memory_hardening_effort(args, env),
+        )
+    env = memory_hardening_child_env(env)
     if args.command == "status":
         return run_status(args, runtime_env, env)
     trigger_event = start_trigger_event(args, env)

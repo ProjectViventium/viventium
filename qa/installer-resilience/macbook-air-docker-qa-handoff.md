@@ -1,6 +1,6 @@
 # MacBook Air Easy Install + Docker QA Handoff
 
-Status: BLOCKED. This is a planned physical-machine acceptance lane, not evidence that the Docker path has
+Status: planned physical-machine acceptance lane. This is not evidence that the Docker path has
 passed.
 
 ## Why a physical Mac is required

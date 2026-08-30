@@ -29,7 +29,7 @@
 
 | Evidence surface | Result / sanitized pointer |
 | --- | --- |
-| Requirement, docs, and nested docs | Requirement 55 and `GHUCP-007` define the path |
+| Requirement, docs, and nested docs | Requirement 57 and `GHUCP-007` define the path |
 | Code, scripts, and automated harness | UI/BFF picker, runtime support resolver, and compiler tests |
 | Local/external prerequisite state | Installed runtime advertised both reviewed provider setup routes |
 | Logs, DB/state/persistence | Three services were healthy; refresh restored the default form state |

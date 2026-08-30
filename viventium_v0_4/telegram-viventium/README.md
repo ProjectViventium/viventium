@@ -141,10 +141,10 @@ This bot uses **LibreChat Agents**, meaning:
 - No LiveKit dependency for text chat
 - Voice output preferences are routed before generation, but Telegram remains a LibreChat text-mode
   surface (`voiceMode=false`). A voice note or Smart voice for text turn can add one audio
-  attachment after generation; disabled voice replies remain text-only.
-- Registered surface prompts let the selected Main Agent emit standalone `{SKIP_VOICE}` when
-  optional audio would reduce usefulness and `{MSG_BREAK}` between complete conversational beats.
-  Runtime consumes these controls, persists one clean turn, and never guesses intent from keywords.
+  attachment after the answer is generated; disabled voice replies remain text-only.
+- Registered shared surface prompts let the Main Agent emit standalone `{SKIP_VOICE}` when optional
+  audio would be wasteful and `{MSG_BREAK}` between complete conversational beats. Runtime consumes
+  those controls, persists one clean logical answer, and never guesses intent from keywords.
 - Cartesia Speaking routes always use Sonic-3 with the selected voice persona. Model-authored
   Cartesia SSML/emotion markers are preserved for TTS and sanitized from Telegram-visible text.
 
@@ -176,6 +176,94 @@ Run unit tests:
 cd interfaces/telegram-viventium
 uv run pytest tests/ -v
 ```
+
+### TR-014 installed local-QA control
+
+The control is disabled unless the bot process has `VIVENTIUM_TELEGRAM_LOCAL_QA_MODE=tr-014`
+and the complete parent contract: `VIVENTIUM_LOCAL_QA_CASE_ID=TR-014`, the private canonical
+token in `VIVENTIUM_LOCAL_QA_CASE_TOKEN`, and its matching redacted
+`VIVENTIUM_LOCAL_QA_SESSION_REF`. The token is a runtime admission factor; there is no second
+Telegram token. The parent direct API is the preferred arm interface. The standalone component CLI
+accepts no target arguments. It reads one owner-only JSON envelope from standard input:
+
+```bash
+chmod 600 "$TR014_PRIVATE_ARM_ENVELOPE_FILE"
+python3 TelegramVivBot/utils/tr014_local_qa.py arm < "$TR014_PRIVATE_ARM_ENVELOPE_FILE"
+```
+
+The UTF-8 envelope is limited to 4096 bytes. Its exact top-level fields are `schema_version` (value
+`1`), `case_id`, `case_token`, `session_ref`, `target`, and `ttl_seconds`. The exact `target` fields
+are `owner_user_id`, `chat_id`, `thread_id`, `stale_source_sequence`, `source_sequence`, and
+`update_id`. Missing, extra, duplicate, malformed, or oversized input fails closed.
+
+The arm response contains only the redacted artifact and session references. It never generates,
+prints, or stores the token. The exact target scope is stored only in the private, expiring `0600`
+one-shot plan and is removed by token-authorized cleanup. Keep the envelope and token out of command
+arguments, logs, reports, shell history, and Git. The plan binds the case ID, session reference,
+Telegram owner user ID, chat, thread, exact N→N+1 source sequence, and update ID. It expires within
+two minutes by default, applies once, and requests exactly 280 ms immediately before Core admission
+after source-order recording. Audit and cleanup also read the token from standard input:
+
+```bash
+python3 TelegramVivBot/utils/tr014_local_qa.py audit \
+  --case-id TR-014 --session-ref "$VIVENTIUM_LOCAL_QA_SESSION_REF" < "$CASE_TOKEN_FILE"
+python3 TelegramVivBot/utils/tr014_local_qa.py cleanup \
+  --case-id TR-014 --session-ref "$VIVENTIUM_LOCAL_QA_SESSION_REF" < "$CASE_TOKEN_FILE"
+```
+
+The redacted audit is application-append-only and token-verified with a hash chain. It uses
+owner-only `0600` files under `0700` directories, but it is an owner-mutable local ledger, not an
+immutable filesystem record. The chain detects changed or missing interior records that remain
+within the retained chain. The local owner can still delete or truncate the ledger; copy or anchor
+evidence outside this state directory when stronger retention is required.
+
+The parent local-QA controller owns token creation, runtime environment injection, private token
+reference handling, and environment cleanup. Telegram consumes that canonical contract and returns
+only redacted references and redacted audit evidence.
+
+### TR-026 installed local-QA control
+
+The control is disabled unless the bot process has `VIVENTIUM_TELEGRAM_LOCAL_QA_MODE=tr-026`
+and the complete parent contract: `VIVENTIUM_LOCAL_QA_CASE_ID=TR-026`, the private canonical
+token in `VIVENTIUM_LOCAL_QA_CASE_TOKEN`, and its matching redacted
+`VIVENTIUM_LOCAL_QA_SESSION_REF`. The token is a runtime admission factor; there is no second
+Telegram token. The parent direct API is the preferred arm interface. The standalone component CLI
+accepts no target arguments. It reads one owner-only JSON envelope from standard input:
+
+```bash
+chmod 600 "$TR026_PRIVATE_ARM_ENVELOPE_FILE"
+python3 TelegramVivBot/utils/tr026_local_qa.py arm < "$TR026_PRIVATE_ARM_ENVELOPE_FILE"
+```
+
+The UTF-8 envelope is limited to 4096 bytes. Its exact top-level fields are `schema_version` (value
+`1`), `case_id`, `case_token`, `session_ref`, `target`, and `ttl_seconds`. The exact `target` fields
+are `owner_user_id`, `chat_id`, `thread_id`, `stale_source_sequence`, `source_sequence`, and
+`update_id`. Missing, extra, duplicate, malformed, or oversized input fails closed.
+
+The arm response contains only the redacted artifact and session references. It never generates,
+prints, or stores the token. The exact target scope is stored only in the private, expiring `0600`
+one-shot plan and is removed by token-authorized cleanup. Keep the envelope and token out of command
+arguments, logs, reports, shell history, and Git. The plan binds the case ID, session reference,
+Telegram owner user ID, chat, thread, exact N→N+1 source sequence, and update ID. It expires within
+two minutes by default, applies once, and requests exactly 280 ms immediately before Core admission
+after source-order recording. Audit and cleanup also read the token from standard input:
+
+```bash
+python3 TelegramVivBot/utils/tr026_local_qa.py audit \
+  --case-id TR-026 --session-ref "$VIVENTIUM_LOCAL_QA_SESSION_REF" < "$CASE_TOKEN_FILE"
+python3 TelegramVivBot/utils/tr026_local_qa.py cleanup \
+  --case-id TR-026 --session-ref "$VIVENTIUM_LOCAL_QA_SESSION_REF" < "$CASE_TOKEN_FILE"
+```
+
+The redacted audit is application-append-only and token-verified with a hash chain. It uses
+owner-only `0600` files under `0700` directories, but it is an owner-mutable local ledger, not an
+immutable filesystem record. The chain detects changed or missing interior records that remain
+within the retained chain. The local owner can still delete or truncate the ledger; copy or anchor
+evidence outside this state directory when stronger retention is required.
+
+The parent local-QA controller owns token creation, runtime environment injection, private token
+reference handling, and environment cleanup. Telegram consumes that canonical contract and returns
+only redacted references and redacted audit evidence.
 
 ## Documentation
 

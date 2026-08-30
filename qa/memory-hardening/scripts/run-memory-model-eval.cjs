@@ -1196,7 +1196,6 @@ function writePrivateJson(destination, payload) {
 }
 
 function run(options) {
-  const hardener = require(HARDENER_PATH);
   const frozenBank = validateBank(CASES);
   const cases = evaluationCases(options.caseIds);
   const validatedBank = cases === CASES ? frozenBank : validateBank(cases);
@@ -1220,6 +1219,7 @@ function run(options) {
   if (!options.runLive) {
     return { bank, options, summaries: [], results: [] };
   }
+  const hardener = require(HARDENER_PATH);
   fs.mkdirSync(options.outputDir, { recursive: true, mode: 0o700 });
   const results = [];
   for (const model of options.models) {

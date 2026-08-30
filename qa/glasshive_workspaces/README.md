@@ -1,10 +1,15 @@
-# GlassHive Workspaces QA Plan
+# GlassHive Local Worker-Workspace Lifecycle QA Plan
 
 Date: 2026-04-16
 
 ## Purpose
 
 Define the acceptance contract for the user-facing GlassHive workspace model before implementation.
+
+This owner covers local/operator worker-alias workspace lifecycle only. Hosted identity, personal
+Codex/Claude accounts, connection CRUD, rename/catalog policy, and two-user isolation belong to
+[`qa/glasshive-user-control-plane/`](../glasshive-user-control-plane/) and
+[`57_GlassHive_User_Control_Plane_and_Persistent_Workspaces.md`](../../docs/requirements_and_learnings/57_GlassHive_User_Control_Plane_and_Persistent_Workspaces.md).
 
 This QA plan covers the least-resistance v1 product direction:
 
@@ -33,6 +38,7 @@ Out of scope for v1:
 - workspace rename UX
 - deep archive / restore UX beyond existing pause-resume lifecycle
 - enterprise multi-tenant policy controls
+- hosted personal-account login, connection, and owner-isolation policy
 
 ## Acceptance Criteria
 
@@ -55,6 +61,20 @@ Out of scope for v1:
 10. `Duplicate workspace` is exposed in the v1 UI with the documented safe semantics.
 11. Failed launches still leave an explicit failure trail instead of a healthy-looking orphan
     workspace.
+
+Durable case mapping:
+
+| Flow below | QA case | Natural use case |
+| --- | --- | --- |
+| First-Time User | `GHWS-003` | `GHWS-UC-004` |
+| Reopen Existing Workspace | `GHWS-004` | `GHWS-UC-005` |
+| New Workspace Isolation | `GHWS-005` | `GHWS-UC-006` |
+| Duplicate Workspace | `GHWS-006` | `GHWS-UC-007` |
+| Parent Auto-Reuse | `GHWS-007` | `GHWS-UC-008` |
+| Non-Technical Comprehension | `GHWS-008` | `GHWS-UC-009` |
+| Launch Failure Audit Trail | `GHWS-009` | `GHWS-UC-010` |
+
+The stable case details and latest evidence status live in [`cases.md`](cases.md).
 
 ## Test Cases
 

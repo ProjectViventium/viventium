@@ -4,6 +4,7 @@ import type {
   EvalBank,
   EvalRun,
   FlowGraph,
+  FrameHealth,
   FrameLog,
   PromptDetail,
   PromptRevision,
@@ -22,27 +23,30 @@ import type {
   VariableRegistry,
   VariableRenderResult,
 } from "./types";
-import { readLocalStorage, writeLocalStorage } from "./storage";
+import { removeLocalStorage } from "./storage";
 
-function workbenchToken() {
+function clearRetiredWorkbenchCredentials() {
+  if (typeof window === "undefined") return;
+  removeLocalStorage("viventium.promptWorkbench.launchToken");
+  try {
+    window.sessionStorage.removeItem("viventium.promptWorkbench.launchToken");
+  } catch {
+    // Private browsing can disable storage; no credentials are written in either mode.
+  }
   const params = new URLSearchParams(window.location.search);
-  const token = params.get("workbench_token");
-  if (token) {
-    writeLocalStorage("viventium.promptWorkbench.launchToken", token);
+  if (params.has("workbench_token")) {
     params.delete("workbench_token");
     const next = `${window.location.pathname}${params.toString() ? `?${params.toString()}` : ""}${window.location.hash}`;
-    window.history.replaceState({}, "", next);
-    return token;
+    window.history.replaceState(window.history.state, "", next);
   }
-  return readLocalStorage("viventium.promptWorkbench.launchToken") || "";
 }
 
+clearRetiredWorkbenchCredentials();
+
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
-  const token = workbenchToken();
   const response = await fetch(path, {
     headers: {
       "content-type": "application/json",
-      ...(token ? { "x-viventium-workbench-token": token } : {}),
       ...(init?.headers || {}),
     },
     ...init,
@@ -368,5 +372,5 @@ export function getEvalRuns() {
 }
 
 export function getFrames() {
-  return api<{ frames: FrameLog[] }>("/api/frames");
+  return api<{ frames: FrameLog[]; health: FrameHealth }>("/api/frames");
 }

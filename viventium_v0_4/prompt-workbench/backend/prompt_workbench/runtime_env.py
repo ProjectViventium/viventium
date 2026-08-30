@@ -42,3 +42,30 @@ def load_viventium_runtime_env(path: Path | None = None, *, override: bool = Fal
         key, value = parsed
         if override or key not in os.environ:
             os.environ[key] = value
+    _normalize_workbench_source_of_truth(env_path)
+
+
+def _normalize_workbench_source_of_truth(env_path: Path) -> None:
+    source_key = "VIVENTIUM_LIBRECHAT_SOURCE_OF_TRUTH"
+    private_key = "VIVENTIUM_LIBRECHAT_PRIVATE_SOURCE_OF_TRUTH"
+    explicit = str(os.environ.get(source_key) or "").strip()
+    if not explicit:
+        return
+    support_root = env_path.expanduser().resolve().parent.parent
+
+    def generated(value: str) -> bool:
+        try:
+            Path(value).expanduser().resolve().relative_to(support_root)
+        except (OSError, ValueError):
+            return False
+        return True
+
+    if not generated(explicit):
+        return
+    approved_private = str(os.environ.get(private_key) or "").strip()
+    if approved_private and not generated(approved_private) and Path(approved_private).is_file():
+        os.environ[source_key] = approved_private
+    else:
+        os.environ.pop(source_key, None)
+        if approved_private and generated(approved_private):
+            os.environ.pop(private_key, None)

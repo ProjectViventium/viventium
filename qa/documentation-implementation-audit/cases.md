@@ -8,13 +8,13 @@ Use stable `DOCIMPL-NNN` case IDs for repository-wide documentation/implementati
 
 | Case ID | Requirement | User Outcome | Surfaces | Automation | Last Run |
 | --- | --- | --- | --- | --- | --- |
-| `DOCIMPL-001` | Repo topology and systems map reflect real product parts | Users and maintainers can find the owning code/doc/test for every major feature | Docs, scripts, nested repos | Inventory plus manual trace | 2026-05-17 partial |
-| `DOCIMPL-002` | Markdown docs do not point to missing local targets | Public docs are navigable | Docs | Local markdown link scanner | 2026-05-17 fail |
-| `DOCIMPL-003` | Config schema/examples/wizard/compiler/runtime docs agree | Installers and users configure the product using documented fields | Config compiler, examples, docs | Release compiler tests plus manual schema trace | 2026-05-17 fail |
-| `DOCIMPL-004` | Background-agent source of truth matches governance contracts | Agent behavior, tools, model routing, and prompt governance match docs/tests | LibreChat source-of-truth YAML, tests | Background-agent governance tests | 2026-05-17 fail |
-| `DOCIMPL-005` | Runtime code does not use undocumented keyword gates for intent/tool behavior | Natural-language requests are not silently suppressed by brittle word lists | Telegram/runtime tool loading | Source inspection plus guardrail test review | 2026-05-17 fail/gap |
-| `DOCIMPL-006` | Audit reports remain public-safe | QA artifacts can be shared without leaking private runtime state | QA docs | Manual public-safety review | 2026-05-17 pass |
-| `DOCIMPL-007` | Shipped/vendored components have provenance, pins, docs, and QA owners | Release reviewers can prove what code is shipped and why | Component repos, vendored services, MCPs | Component inventory plus provenance test | 2026-05-17 fail/gap |
+| `DOCIMPL-001` | Repo topology and systems map reflect real product parts | Users and maintainers can find the owning code/doc/test for every major feature | Docs, scripts, nested repos | Inventory plus manual trace | PARTIAL 2026-08-30; current source/owner/QA joins resolve locally, but dirty and untracked owners are not durable |
+| `DOCIMPL-002` | Markdown docs do not point to missing local targets | Public docs are navigable | Docs | Local markdown link scanner | PASS 2026-08-30; contained current requirement/QA targets and Markdown fragments resolve |
+| `DOCIMPL-003` | Config schema/examples/wizard/compiler/runtime docs agree | Installers and users configure the product using documented fields | Config compiler, examples, docs | Release compiler tests plus manual schema trace | FAIL 2026-05-17 |
+| `DOCIMPL-004` | Background-agent source of truth matches governance contracts | Agent behavior, tools, model routing, and prompt governance match docs/tests | LibreChat source-of-truth YAML, tests | Background-agent governance tests | FAIL 2026-05-17 |
+| `DOCIMPL-005` | Runtime code does not use undocumented keyword gates for intent/tool behavior | Natural-language requests are not silently suppressed by brittle word lists | Telegram/runtime tool loading | Source inspection plus guardrail test review | FAIL 2026-05-17; gap found |
+| `DOCIMPL-006` | Audit reports remain public-safe | QA artifacts can be shared without leaking private runtime state | QA docs | Manual public-safety review | PASS 2026-05-17 |
+| `DOCIMPL-007` | Shipped/vendored components have provenance, pins, docs, and QA owners | Release reviewers can prove what code is shipped and why | Component repos, vendored services, MCPs | Component inventory plus provenance test | FAIL 2026-05-17; gap found |
 
 ## `DOCIMPL-001` - Repo Topology and Systems Map Coverage
 
@@ -30,7 +30,8 @@ Use stable `DOCIMPL-NNN` case IDs for repository-wide documentation/implementati
 - Forbidden result: high-level docs still send users to missing or retired paths without status labels.
 - Evidence to capture: public-safe component list, missing docs list, stale section references.
 - Automation: shell inventory plus manual doc/code trace.
-- Last run: 2026-05-17, partial; report captures current gaps.
+- Last run: PARTIAL 2026-08-30; current requirement/source/QA owners and the runtime map resolve in
+  this working tree, but several current owners do not survive a clean checkout.
 
 ## `DOCIMPL-002` - Markdown Link Integrity
 
@@ -47,8 +48,9 @@ Use stable `DOCIMPL-NNN` case IDs for repository-wide documentation/implementati
   unstated private-only documents.
 - Evidence to capture: missing target list with repo-relative source files.
 - Automation: local markdown link scanner.
-- Last run: 2026-05-17 fail; 32 missing local markdown targets were found, with several likely
-  high-impact docs links.
+- Last run: PASS 2026-08-30; the current requirement and QA link scan found no missing,
+  repository-escaping, or fragment-invalid target. Clean-checkout durability is a separate
+  `QASYS-007`/`DOCIMPL-001` gate and remains open.
 
 ## `DOCIMPL-003` - Config Compiler Source of Truth Alignment
 
@@ -66,7 +68,7 @@ Use stable `DOCIMPL-NNN` case IDs for repository-wide documentation/implementati
   or examples encode conflicting defaults.
 - Evidence to capture: field names, source/doc references, test command result.
 - Automation: compiler tests plus manual trace.
-- Last run: 2026-05-17 fail/gaps found.
+- Last run: FAIL 2026-05-17; gaps found.
 
 ## `DOCIMPL-004` - Background-Agent Governance Contract
 
@@ -83,7 +85,7 @@ Use stable `DOCIMPL-NNN` case IDs for repository-wide documentation/implementati
 - Forbidden result: release docs promise unavailable fallback/tool/card/model behavior.
 - Evidence to capture: failing test names and sanitized mismatch summaries.
 - Automation: background-agent governance pytest suites.
-- Last run: 2026-05-17 fail; 13 failures.
+- Last run: FAIL 2026-05-17; 13 failures.
 
 ## `DOCIMPL-004B` - Prompt Registry Sync Resolver Coverage
 
@@ -100,7 +102,7 @@ Use stable `DOCIMPL-NNN` case IDs for repository-wide documentation/implementati
 - Forbidden result: live sync silently drops included guardrails while source markdown appears correct.
 - Evidence to capture: failing test name, missing resolved text summary, source include path.
 - Automation: prompt-registry pytest suite.
-- Last run: 2026-05-17 fail; one prompt-registry failure reproduced.
+- Last run: FAIL 2026-05-17; one prompt-registry failure reproduced.
 
 ## `DOCIMPL-005` - Runtime Keyword-Gate Drift
 
@@ -119,7 +121,7 @@ Use stable `DOCIMPL-NNN` case IDs for repository-wide documentation/implementati
   include a valid phrasing.
 - Evidence to capture: source path, behavior affected, missing guardrail test.
 - Automation: source inspection plus release guardrail tests.
-- Last run: 2026-05-17 fail/gap; a Telegram tool-intent keyword guard exists and the guardrail test
+- Last run: FAIL 2026-05-17; a Telegram tool-intent keyword guard exists and the guardrail test
   does not currently catch that class of drift.
 
 ## `DOCIMPL-006` - Public-Safe Audit Artifact
@@ -138,7 +140,7 @@ Use stable `DOCIMPL-NNN` case IDs for repository-wide documentation/implementati
   account content in QA docs.
 - Evidence to capture: checklist status.
 - Automation: manual public-safety review.
-- Last run: 2026-05-17 pass for newly added audit docs.
+- Last run: PASS 2026-05-17 for newly added audit docs.
 
 ## `DOCIMPL-007` - Vendored/Shipped Component Provenance
 
@@ -157,7 +159,7 @@ Use stable `DOCIMPL-NNN` case IDs for repository-wide documentation/implementati
   private-only, stale, or intentionally vendored.
 - Evidence to capture: component path, project markers, lock-file status, owning doc/QA status.
 - Automation: component-provenance release test to add.
-- Last run: 2026-05-17 fail/gap; multiple unpinned/underdocumented vendored component surfaces found.
+- Last run: FAIL 2026-05-17; multiple unpinned/underdocumented vendored component surfaces found.
 
 ## Natural User Use Case Checklist
 
@@ -166,6 +168,6 @@ rows before claiming a pass when the feature behavior changes.
 
 | Use Case ID | Natural user action | Requirement / case link | Real surface to use | Supporting evidence to compare | Expected visible result | Last run |
 | --- | --- | --- | --- | --- | --- | --- |
-| `DOCIMPL-UC-001` | On Docs, scripts, nested repos, verify that repo topology and systems map reflect real product parts. | owning requirement for `DOCIMPL-001` / `DOCIMPL-001` | Docs, scripts, nested repos | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to DOCIMPL-001. | Users and maintainers can find the owning code/doc/test for every major feature | NOT YET RUN (cataloged 2026-05-18; next feature run required) |
-| `DOCIMPL-UC-002` | On Docs, try markdown docs do not point to missing local targets with missing setup, missing auth/config, empty state, or a degraded dependency. | owning requirement for `DOCIMPL-002` / `DOCIMPL-002` | Docs | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to DOCIMPL-002. | The user sees an honest setup, retry, or degraded-state result for DOCIMPL-002; no fake success is accepted. | NOT YET RUN (cataloged 2026-05-18; next feature run required) |
-| `DOCIMPL-UC-003` | After config schema/examples/wizard/compiler/runtime docs agree, refresh, restart, retry, or switch linked surfaces and verify persistence/parity. | owning requirement for `DOCIMPL-003` / `DOCIMPL-003` | Config compiler, examples, docs | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to DOCIMPL-003. | DOCIMPL-003 remains correct after the persistence or parity step and final wording matches evidence. | NOT YET RUN (cataloged 2026-05-18; next feature run required) |
+| `DOCIMPL-UC-001` | On Docs, scripts, nested repos, verify that repo topology and systems map reflect real product parts. | owning requirement for `DOCIMPL-001` / `DOCIMPL-001` | Docs, scripts, nested repos | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to DOCIMPL-001. | Users and maintainers can find the owning code/doc/test for every major feature | NOT RUN (cataloged 2026-05-18; next feature run required) |
+| `DOCIMPL-UC-002` | On Docs, try markdown docs do not point to missing local targets with missing setup, missing auth/config, empty state, or a degraded dependency. | owning requirement for `DOCIMPL-002` / `DOCIMPL-002` | Docs | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to DOCIMPL-002. | The user sees an honest setup, retry, or degraded-state result for DOCIMPL-002; no fake success is accepted. | NOT RUN (cataloged 2026-05-18; next feature run required) |
+| `DOCIMPL-UC-003` | After config schema/examples/wizard/compiler/runtime docs agree, refresh, restart, retry, or switch linked surfaces and verify persistence/parity. | owning requirement for `DOCIMPL-003` / `DOCIMPL-003` | Config compiler, examples, docs | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to DOCIMPL-003. | DOCIMPL-003 remains correct after the persistence or parity step and final wording matches evidence. | NOT RUN (cataloged 2026-05-18; next feature run required) |

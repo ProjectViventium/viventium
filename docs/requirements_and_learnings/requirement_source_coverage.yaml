@@ -1,0 +1,532 @@
+schema_version: 2
+last_reconciled: 2026-08-30
+
+privacy_contract:
+  raw_prompts: private_only
+  public_source_identifiers: opaque_aliases_only
+  pointer_digest_definition: >-
+    sha256 of sorted private task pointers plus exact retained message pointer, content hash,
+    provenance, and eligibility lines
+  pointer_digest_canonicalization: sorted_unique_typed_pointer_utf8_lines_with_trailing_newline
+  historical_retention: partial_source_retention
+  limitation: >-
+    Some historical task follow-ups were not retained. The private corpus contains every recoverable
+    source found by the 2026-08-29 audit, but this public family ledger must never be read as proof
+    that purged wording was reviewed or as permission to publish private task text.
+
+private_companion_receipt:
+  receipt_id: VSA-2026-08-30
+  storage_boundary: separate_authorized_private_repository
+  durability: working_tree_only_until_authorized_commit
+  access_procedure: >-
+    Authorized maintainers locate receipt VSA-2026-08-30 in the project's private companion
+    repository under curated private docs; request access from the repository owner.
+  canonicalization: >-
+    sha256 of receipt id, message-group digest, semantic-atomic digest, derived-id digest, and
+    crosswalk-join digest as one tab-separated UTF-8 line with one trailing LF
+  integrity_sha256: 0db3eab85841ba587b4baf3b930ef1203336b6d9e0a689c041f651d978661e9f
+  limitation: >-
+    The opaque receipt makes the private source bundle discoverable without publishing its path,
+    task IDs, prompts, or attachments. The bundle and this public receipt are not clean-checkout
+    durable until an authorized commit lands in each owning repository.
+
+atomic_traceability:
+  registry_status: manual_partial_audit_receipt
+  mapping_unit: semantic_requirement_or_disposition_alias_on_exact_retained_human_requirement_payload_span
+  finite_reference_graph_messages: 617
+  direct_human_messages: 597
+  legacy_human_likely_messages: 20
+  distinct_normalized_texts: 248
+  source_context_qualified_groups: 254
+  message_group_trace_sha256: c865faffc72c752538d7d023f933a2988207725a6eaad7ddd3e5c76dfa90845e
+  message_group_trace_canonicalization: >-
+    sha256 of sorted unique tab-separated context, normalized text hash, representative pointer,
+    semantic provenance, disposition, exact requirement ids, public-safe clause summary, and
+    uncertainty lines with one trailing newline
+  semantic_atomic_trace_rows: 1409
+  semantic_atomic_requirement_rows: 1337
+  semantic_atomic_no_requirement_rows: 72
+  semantic_atomic_trace_sha256: 80cf8c33895137aeb9f610cf3154c72e70f6f1f022c934957283f1a278e5640d
+  semantic_atomic_trace_canonicalization: >-
+    SHA-256 of UTF-8 bytes for lexicographically sorted unique tab-separated rows; field order is
+    clause_alias, clause_context, normalized_text_sha256, representative_message_pointer,
+    span_start_utf8_byte, span_end_utf8_byte, span_sha256, semantic_provenance,
+    semantic_disposition, requirement_id, clause_summary, uncertainty; rows are LF-joined with one
+    trailing LF after generator whitespace normalization; all crosswalk and mutable QA/evidence join
+    fields are excluded
+  stable_requirement_ids: 358
+  stable_requirement_ids_with_atomic_aliases: 304
+  derived_audit_requirement_ids_without_direct_alias: 54
+  derived_audit_requirement_ids_sha256: 99adf1c73272638cf3cfe7a482863994679ac734e890ba4b5018a9878bbeca12
+  derived_audit_requirement_ids_canonicalization: >-
+    sha256 of lexicographically sorted unique stable requirement ids, LF-joined with one trailing LF
+  derived_definition: >-
+    A derived ID is one of the exact 54 stable audit IDs that has no direct semantic atomic alias.
+    Only audit-gap, open/conflict, supersession, and external-evaluation-reference syntheses may be
+    derived; every other stable ID must have at least one direct retained human-message alias.
+  inverse_attribution_limit: >-
+    A derived ID records an audit conclusion or state. It cannot be used to infer exact user wording,
+    a direct source message, or a product-acceptance result.
+  derived_deterministic_scope: exact_direct_vs_derived_set_closure_and_digest_only
+  derived_semantic_review: manual_word_level_review_against_private_provenance_and_crosswalk
+  derived_semantic_limitation: >-
+    Deterministic checks prove classification-set closure, disjointness, and bytes. They cannot prove
+    that a synthesis is semantically correct; the private provenance and crosswalk require human or
+    model-assisted source review, and any disputed synthesis remains an audit finding rather than
+    user wording.
+  crosswalk_join_rows: 358
+  crosswalk_join_sha256: 850dc91d543d091fa3ece20af76ccd522b4ff02bc725f65de35edaa013c814ac
+  crosswalk_join_canonicalization: >-
+    SHA-256 of UTF-8 bytes for lexicographically sorted unique tab-separated rows; field order is
+    requirement_id, owner_repository_paths, owner_join_status, natural_use_case_ids, qa_case_ids,
+    qa_join_status, missing_join_record; rows are LF-joined with one trailing LF after generator
+    whitespace normalization
+  span_granularity: exact_retained_human_requirement_payload_utf8_bytes_after_documented_envelope_exclusions
+  public_rule: >-
+    Exact task pointers, message hashes, raw wording, and per-message dispositions stay in the
+    private verified annex. This public family file is not the 358-row stable-ID inventory; exact
+    ID-by-ID coverage stays private. It records only reusable source-family outcomes and their
+    owning requirement and QA contracts. Repeated messages reuse context-qualified semantic
+    requirement/disposition aliases. Each alias is bound to the exact retained UTF-8 human-
+    requirement payload after documented app-envelope, attachment, and image exclusions; the raw
+    user-role payload has a separate verified hash. “Atomic” means one semantic requirement or
+    explicit no-requirement disposition per alias, not an inferred subclause offset. This file is
+    not the generated product/service
+    source-to-pin-to-artifact-to-installed-to-QA registry required by ONB-011; that structural gap
+    remains open.
+  limitation: >-
+    This proves the finite recoverable 2026-08-29 source graph, not purged follow-ups or every task
+    ever created under the project.
+
+private_inventory_summary:
+  exact_root_sessions: 1845
+  descendant_directory_sessions: 237
+  retained_human_eligible_messages: 972
+  excluded_control_or_injected_records: 510
+  tasks_with_full_followup_history: 83
+  tasks_with_first_message_only: 317
+  tasks_with_no_retained_prompt: 1
+  exact_private_inventory: task/message/attachment/image ledgers outside the public repository
+
+screenshot_crosscheck:
+  visible_rows: 48
+  distinct_visible_label_families: 41
+  direct_or_likely_human_rows: 33
+  agent_derived_rows: 10
+  automation_replay_rows: 5
+  total_check: 48
+  rule: >-
+    A navigation label is evidence for locating a task, not an instruction. Only retained direct or
+    likely-human messages can create requirements. Agent-derived lanes and automation replays can
+    provide implementation or QA evidence but are never promoted to fresh user requirements.
+
+disposition_vocabulary:
+  required_as_of_field: disposition_as_of
+  allowed:
+    captured_acceptance_open: Source requirements are captured, but no family-level current acceptance is claimed because required acceptance is incomplete or unrun.
+    captured_live_acceptance_failed: Current live evidence directly failed at least one required acceptance gate.
+    captured_acceptance_partial: Current evidence proves only a stated subset; completion is not claimed.
+    captured_current_source_contract_failed: The current source candidate fails deterministic contract checks before full installed acceptance.
+    reconciled_documentation_contract_partial_source_retention: The documentation contract is reconciled for retained sources, but historical retention and/or durability is partial.
+    reconciled_current_instruction_contract: Current shared development instructions are reconciled; each future change must still prove compliance.
+    captured_live_acceptance_passed: The named scoped live path passed; the stated wider gates remain separate.
+    captured_live_analysis_failed: Acquisition or supporting work ran, but the required current analysis result failed or lacks verified completion.
+    captured_release_acceptance_open: Release requirements are captured, but release acceptance is not complete.
+    not_current_runtime_truth: Proposal context is retained but does not define the current runtime.
+    not_automatically_adopted: Research is input only until a user or owning requirement explicitly adopts it.
+    supports_existing_requirements: Operational evidence supports existing requirements but creates no independent product requirement.
+    excluded_from_viventium_product_truth: The source is outside Viventium product truth unless later explicitly adopted.
+    qa_evidence_only: Automation replay is evidence only and cannot create a human requirement.
+    trace_to_human_parent: Agent-derived work inherits its human parent and is not an independent requirement source.
+    retained_private_not_promoted_without_specific_adoption: Recoverable human context remains private and is not promoted without specific adoption.
+
+crosswalk_join_inventory:
+  as_of: 2026-08-30
+  total_stable_ids: 358
+  requirements_with_any_missing_join: 347
+  missing_exact_owner_path: 92
+  missing_natural_use_case_excluding_superseded_history: 311
+  missing_qa_case_excluding_superseded_history: 291
+  qa_join_status_counts:
+    EXACT_QA_CASE_AND_NATURAL_USE_CASE_DECLARATIONS: 16
+    EXACT_QA_CASE_ONLY_MISSING_NATURAL_USE_CASE: 30
+    EXACT_NATURAL_USE_CASE_ONLY_MISSING_QA_CASE: 10
+    MISSING_EXACT_QA_CASE_AND_NATURAL_USE_CASE: 281
+    NOT_APPLICABLE_SUPERSEDED_HISTORY: 21
+  requirements_with_any_missing_join_by_prefix:
+    AS: 12
+    CC: 64
+    CORE: 16
+    DATA: 10
+    GAP: 21
+    GHM: 5
+    GHU: 13
+    GOV: 23
+    HARD: 23
+    ONB: 9
+    OPEN: 17
+    PW: 113
+    SUP: 21
+  rule: >-
+    These are explicit traceability debts, not implicit PASS claims. Every missing item has a stable
+    MISSING-JOIN record in the private crosswalk; superseded history is excluded from QA/use-case
+    missing counts but remains in the stable-ID inventory.
+
+stale_case_catalog_audit:
+  as_of: 2026-08-30
+  initial_audit_recent_marker_total: 86
+  markers_in_current_files_absent_from_head: 75
+  markers_in_untracked_current_files: 11
+  existing_case_catalog_date_resets: 0
+  current_recent_marker_total: 86
+  post_initial_audit_recent_marker_delta: 0
+  current_stale_triage_marker_total: 170
+  current_total_stale_marker_delta_after_initial_audit: 6
+  method: read_only_current_marker_comparison_against_head
+  durability: working_tree_only_until_authorized_commit
+  limitation: >-
+    These markers preserve NOT RUN debt; they are not execution results. The separate stale-case
+    triage manifest keeps its own 2026-08-29 review boundary and remains non-durable while untracked.
+
+# Each source family below is backed by the private canonical alias-to-task manifest. Requirement
+# anchors or ids belong to requirement owners. QA case and natural-use-case ids are separate and
+# belong only to the listed QA owners.
+sources:
+  - source_alias: SRC-PARALLEL-WORK-001
+    pointer_set_sha256: bdbfb7ae0cd76ed6f619d8d5b9ef43abd0cabf6ad959ee27f4929b9df84e883f
+    retention: partial_source_retention
+    goal: Keep one responsive Main while substantial objectives become durable, controllable work.
+    requirements:
+      - owner: 55_Parallel_Work_Orchestration.md
+        anchors: [Product outcome, Locked Queen Bee and Worker Bee user experience]
+      - owner: 56_Main_Continuity_Kernel.md
+        anchors: [Governed rapid and parallel turns, Failure truth]
+    qa_refs:
+      - owner: qa/parallel-orchestrator/cases.md
+        case_ids: [PWK-001, PWK-002, PWK-003, PWK-004, PWK-005]
+      - owner: qa/main-continuity/contract.v1.json
+        case_ids: [MC-001, MC-002, MC-003, MC-005]
+    disposition: captured_acceptance_open
+    disposition_as_of: 2026-08-30
+    remaining_gap: Installed multi-surface, isolation, load, restart, and clean-release gates remain open.
+
+  - source_alias: SRC-CONSCIOUSNESS-CONTINUITY-001
+    pointer_set_sha256: 3a50dd3eaaded3754687a849b9051a1af34eaf89ef1641fead77b7943fb65dc1
+    retention: partial_source_retention
+    goal: Let the existing Main use all Feelings as context for model-owned initiative, action, or silence.
+    requirements:
+      - owner: 11_Scheduling_Cortex.md
+        anchors: [Consciousness Continuity Opportunity, Prompt ownership and execution parity]
+      - owner: 54_Emotional_Cortex_And_Feeling_State.md
+        anchors: [Requirements & Decisions Timeline, Completed cortex insight delivery contract]
+      - owner: 56_Main_Continuity_Kernel.md
+        anchors: [Scheduling is Main later]
+    qa_refs:
+      - owner: qa/scheduling-cortex/cases.md
+        case_ids: [SCHED-023]
+      - owner: qa/emotional-cortex/cases.md
+        case_ids: [EMO-054, EMO-055]
+      - owner: qa/main-continuity/contract.v1.json
+        case_ids: [MC-001]
+    disposition: captured_live_acceptance_failed
+    disposition_as_of: 2026-08-30
+    remaining_gap: Current natural scheduled delivery and adjacent cross-surface gates remain open.
+
+  - source_alias: SRC-HOSTED-GLASSHIVE-001
+    pointer_set_sha256: 3761c3ed55accbcd69fcec8d9e74b4296589f0c468ff8e8a32fc02d54f60ee7e
+    retention: partial_source_retention
+    goal: >-
+      Give each hosted user simple login, private persistent Codex or Claude workspaces, personal
+      connections, sparse controls, safe reuse, and strict owner isolation.
+    requirements:
+      - owner: 57_GlassHive_User_Control_Plane_and_Persistent_Workspaces.md
+        ids: [GH-UCP-001, GH-UCP-002, GH-UCP-004, GH-UCP-005, GH-UCP-007, GH-UCP-011, GH-UCP-012, GH-UCP-017, GH-UCP-018]
+    atomic_outcomes:
+      - outcome: Modern brand and Home navigation uses the canonical dashboard; opening an output is non-mutating and Watch or Continue stays explicit.
+        owner_refs: [GH-UCP-007, GH-UCP-011]
+        qa_refs: [GHUCP-011, GHUCP-019, GHUCP-UC-003]
+      - outcome: Workspaces is one bounded multi-worker control room with no more than three view-only live previews and truthful non-preview cards.
+        owner_refs: [GH-UCP-007, GH-UCP-011]
+        qa_refs: [GHUCP-019]
+      - outcome: External-AI setup separates one deployment-specific copyable Automatic instruction from a complete Manual fallback and proves native authentication and reconnect.
+        owner_refs: [GH-UCP-004, GH-UCP-011, GH-UCP-012]
+        qa_refs: [GHUCP-005, GHUCP-006, GHUCP-019, GHUCP-020, GHUCP-UC-006]
+    qa_refs:
+      - owner: qa/glasshive-user-control-plane/cases.md
+        case_ids: [GHUCP-001, GHUCP-002, GHUCP-007, GHUCP-011, GHUCP-019, GHUCP-025, GHUCP-027, GHUCP-034]
+    disposition: captured_acceptance_partial
+    disposition_as_of: 2026-08-30
+    remaining_gap: Two-owner denial, clean install, wider provider, scheduling, and restore gates remain open.
+
+  - source_alias: SRC-GLASSHIVE-MAIN-LIFE-001
+    pointer_set_sha256: 6fb6576c294ba948fbc120fb0f81ca42ec4ee0539155575f2ec1fa1f0eb48e8e
+    retention: partial_source_retention
+    goal: Make GlassHive a real Main or cortex provider over canonical per-user LIFE without a wrapper LLM.
+    requirements:
+      - owner: 01_Key_Principles.md
+        anchors: [GlassHive Core Provider Rule, canonical per-user]
+      - owner: 48_GlassHive_Workstation_Sandbox_Runtime.md
+        anchors: [Core Viventium provider surface, Conversation versus mission mode]
+    qa_refs:
+      - owner: qa/glasshive-core-provider/cases.md
+        case_ids: [GCP-001, GCP-003, GCP-004, GCP-017]
+      - owner: qa/glasshive_host_workers/cases.md
+        case_ids: [GHHOST-001, GHHOST-002]
+    disposition: captured_acceptance_open
+    disposition_as_of: 2026-08-30
+    remaining_gap: Full installed provider, channel, voice, concurrency, and clean-install proof remains open.
+
+  - source_alias: SRC-ANTI-SYC-001
+    pointer_set_sha256: d6f85a03f7a71c19b419570c62583a0302192e6dbec8ae55a58b6239cdf5aa54
+    retention: partial_source_retention
+    goal: >-
+      Use parallel My World context, always-running Deep Memory, selective Reality and Red Team
+      consultation, and calibrated evidence-based truth-seeking under one Main voice.
+    requirements:
+      - owner: 58_Anti_Sycophancy_and_Truth_Seeking.md
+        ids: [AS-SRC-01, AS-SRC-02, AS-SRC-03, AS-SRC-04, AS-SRC-05, AS-SRC-06]
+    qa_refs:
+      - owner: qa/anti-sycophancy/cases.md
+        case_ids: [ANTI-001, ANTI-005, ANTI-008, ANTI-015]
+      - owner: qa/red-team-cortex/cases.md
+        case_ids: [REDTEAM-001, REDTEAM-005]
+      - owner: qa/background_agents/cases.md
+        use_case_ids: [BACKGROUND-UC-011]
+    disposition: captured_current_source_contract_failed
+    disposition_as_of: 2026-08-30
+    remaining_gap: >-
+      Four current architecture gates fail before Telegram, remaining voice, failure,
+      memory-writer, cleanup, and balanced semantic acceptance can complete.
+
+  - source_alias: SRC-PROMPT-ARCHITECTURE-001
+    pointer_set_sha256: bb5392de90eb37b14453c3a455951d3fc2cbbc2ec104a5a3c49ae05c6be529b3
+    retention: partial_source_retention
+    goal: Show and govern exact prompt source, order, compilation, live state, duplication, drift, and eval evidence.
+    stable_requirement_ids: [GOV-001, GOV-002, GOV-003, GOV-023, GOV-024, GOV-025, GOV-026, GOV-027, OPEN-016, OPEN-017, OPEN-018]
+    requirements:
+      - owner: 49_Prompt_Architecture_and_Token_Efficiency.md
+        anchors: [2026-08-29 Source-Audit Reconciliation, Current Prompt Ownership Map, Exact-model side-by-side harness, live/source drift]
+    atomic_outcomes:
+      - outcome: Calibrate a semantic judge against a predeclared hand-graded subset before it can gate behavior.
+        requirement_ids: [GOV-023]
+        owner_refs: [GOV-023]
+        qa_refs: [PROMPT-003, PROMPT-UC-004]
+      - outcome: Python compile, JavaScript sync, and JavaScript runtime resolution share one byte-and-failure semantic contract.
+        requirement_ids: [GOV-024, OPEN-018]
+        owner_refs: [GOV-024, OPEN-018]
+        qa_refs: [PROMPT-004, PROMPT-UC-005]
+      - outcome: Reject generated or installed prompt inputs and undeclared placeholders while preserving declared runtime placeholders through the full lineage.
+        requirement_ids: [GOV-025, GOV-026]
+        owner_refs: [GOV-025, GOV-026]
+        qa_refs: [PROMPT-005, PROMPT-UC-005]
+      - outcome: Scheduling and GlassHive cognition remains portable through MCP server and tool contracts instead of copied client manuals.
+        requirement_ids: [GOV-027]
+        owner_refs: [GOV-027]
+        qa_refs: [PROMPT-006, PROMPT-UC-006]
+      - outcome: Prompt changes expose complete lineage and compare frozen positive, negative, and adjacent cases on the exact configured models, old versus proposed, with no hidden fallback.
+        requirement_ids: [GOV-001, GOV-002, GOV-003]
+        owner_refs: [GOV-001, GOV-002, GOV-003]
+        qa_refs: [PROMPT-001, PROMPT-007, PROMPT-UC-001, PROMPT-UC-007]
+    open_decisions:
+      - requirement_id: OPEN-016
+        decision: Normalize phase names only if measured tooling, report, or developer-interpretation cost makes it material.
+      - requirement_id: OPEN-017
+        decision: Optimize repeated registry scans only after a reproducible material benchmark.
+      - requirement_id: OPEN-018
+        decision: Close shallow reference assertions inside GOV-024 and PROMPT-004, without a second test contract.
+    qa_refs:
+      - owner: qa/prompt-architecture/cases.md
+        case_ids: [PROMPT-001, PROMPT-002, PROMPT-003, PROMPT-004, PROMPT-005, PROMPT-006, PROMPT-007]
+        use_case_ids: [PROMPT-UC-001, PROMPT-UC-004, PROMPT-UC-005, PROMPT-UC-006, PROMPT-UC-007]
+      - owner: qa/prompt-workbench/cases.md
+        case_ids: [PW-001, PW-005, PW-009]
+    disposition: captured_acceptance_partial
+    disposition_as_of: 2026-08-30
+    remaining_gap: >-
+      Judge calibration, resolver parity, canonical input and placeholder boundaries, the complete
+      supported-client MCP matrix, exact-model old-versus-proposed comparison, and installed/live
+      Workbench gates remain NOT RUN or PARTIAL as recorded in the case catalog.
+
+  - source_alias: SRC-SOURCE-AUDIT-001
+    pointer_set_sha256: e9b2e6b570baec3898021c2709d9cda50e535b977113dbdb72588363bac61660
+    retention: partial_source_retention
+    goal: >-
+      Preserve every recoverable user requirement, correction, and development preference in a
+      private exact-source ledger and public-safe owning documentation and QA joins.
+    stable_requirement_ids: [GOV-004, GOV-005, GOV-006, GOV-007, GOV-008, GOV-009, GOV-010, GOV-011, GOV-012, GOV-021, GOV-022]
+    requirements:
+      - owner: ../../qa/README.md
+        ids: [GOV-004, GOV-005, GOV-006, GOV-007, GOV-008, GOV-009, GOV-010, GOV-011, GOV-012, GOV-021, GOV-022]
+    qa_refs:
+      - owner: qa/qa-system-audit/cases.md
+        case_ids: [QASYS-002, QASYS-004, QASYS-010]
+        use_case_ids: [QASYS-UC-004]
+      - owner: qa/documentation-implementation-audit/cases.md
+        case_ids: [DOCIMPL-001, DOCIMPL-007]
+    qa_join_strength: source_audit_specific
+    disposition: reconciled_documentation_contract_partial_source_retention
+    disposition_as_of: 2026-08-30
+    remaining_gap: >-
+      Historical retention is partial, current edited bytes are not durable until an authorized
+      commit, DOCIMPL-007 remains FAIL, and the historical QASYS-004 contract PASS is not current
+      feature acceptance. This manual receipt does not replace the generated registry required by
+      ONB-011.
+
+  - source_alias: SRC-DEVELOPMENT-STYLE-001
+    pointer_set_sha256: f8e20e39b24826585234d666cf6b4946c97665ffffaa597eb2442a6b33c83530
+    retention: partial_source_retention
+    goal: >-
+      Prefer the simplest reusable structural path; avoid overfit and ceremony; prove the real user
+      surface and artifact lineage; protect private identity; report briefly and truthfully.
+    requirements:
+      - owner: ../../AGENTS.md
+        anchors: [Implementation Invariants, Verification Contract, Public And Private Safety]
+      - owner: 01_Key_Principles.md
+        anchors: [Beautifully Simple and Efficient, Production QA Operating Discipline]
+    qa_refs:
+      - owner: qa/qa-system-audit/cases.md
+        case_ids: [QASYS-002, QASYS-004]
+      - owner: qa/documentation-implementation-audit/cases.md
+        case_ids: [DOCIMPL-001, DOCIMPL-007]
+    qa_join_strength: shared_process_contract_not_feature_specific
+    disposition: reconciled_current_instruction_contract
+    disposition_as_of: 2026-08-30
+    remaining_gap: Process compliance must still be demonstrated by each change and its evidence.
+
+  - source_alias: SRC-SCHEDULED-MAIN-INHERITANCE-001
+    pointer_set_sha256: f3688bfde48893c6280f66bc01dd14222e171edf0492dd18cffd614108554697
+    retention: partial_source_retention
+    goal: Scheduled Viventium work must inherit the current Agent Builder Main route and typed fallback.
+    requirements:
+      - owner: 11_Scheduling_Cortex.md
+        anchors: [Main-Agent And GlassHive Parity, Agent Builder is the single execution source of truth]
+    qa_refs:
+      - owner: qa/scheduling-cortex/cases.md
+        case_ids: [SCHED-016]
+        use_case_ids: [SCHED-UC-016]
+      - owner: qa/prompt-workbench/cases.md
+        case_ids: [PW-027]
+    disposition: captured_live_acceptance_passed
+    disposition_as_of: 2026-08-30
+    remaining_gap: The proven route remains subject to the wider scheduler clean-install and degraded-state release gates.
+
+  - source_alias: SRC-WHOOP-LIFE-001
+    pointer_set_sha256: 744738408767c16e3ab18ad96781be12224e8e411192a08a79a99d3dde8ccdbc
+    retention: partial_source_retention
+    goal: Make WHOOP-to-LIFE acquisition and correlation ongoing, low-friction, complete, private, and recoverable.
+    requirements:
+      - owner: 53_Viventium_Periphery_Nightly_Insights.md
+        anchors: [Wearable evidence ingress, WHOOP contract boundary, degraded-access recovery and isolation hardening]
+    qa_refs:
+      - owner: qa/periphery-nightly-insights/cases.md
+        case_ids: [PERI-013, PERI-014]
+    disposition: captured_live_analysis_failed
+    disposition_as_of: 2026-08-30
+    remaining_gap: Acquisition recovered, but the current scheduled analysis sequence still lacks verified successful callbacks.
+
+  - source_alias: SRC-TRANSCRIPT-INGESTION-001
+    pointer_set_sha256: a1a62331f7ccaed6b2008fd7581581b4b0e2e4d109abeab9b67350af65b0a971
+    retention: partial_source_retention
+    goal: Automatically ingest the configured transcript folder, recover safely, and support bounded manual triggering.
+    requirements:
+      - owner: 20_Memory_System.md
+        anchors: [Meeting transcript recall, "On-demand `ingest-transcripts`"]
+      - owner: 39_Installer_and_Config_Compiler.md
+        anchors: [transcript ingestion, transcripts.source_dir]
+    qa_refs:
+      - owner: qa/meeting-transcript-memory/cases.md
+        case_ids: [MTM-010, MTM-011, MTM-017, MTM-018, MTM-019, MTM-020]
+    disposition: captured_acceptance_partial
+    disposition_as_of: 2026-08-30
+    remaining_gap: Current folder selection and clean-install readiness remain partial where dated user-path evidence is absent.
+
+  - source_alias: SRC-ACTIVATION-RELEASE-001
+    pointer_set_sha256: 33e2f5059334637c21da017f0f5a4d2a9775ba71493e63f51cf9c397c978f830
+    retention: partial_source_retention
+    goal: Deliver one low-effort signed Mac activation path without rebuilding proven chat or agent infrastructure.
+    open_requirement_ids: [ONB-007, ONB-008, ONB-011, ONB-012, GAP-020, GAP-021]
+    requirements:
+      - owner: 38_Public_Productization_and_Release.md
+        ids: [AR-005, AR-012, AR-014, AR-016, AR-030, AR-034, AR-035]
+      - owner: 39_Installer_and_Config_Compiler.md
+        anchors: [Easy Install Product Contract, Packaging, Install, And Upgrade Boundary, LIFE Activation And Intent-Only Setup Contract]
+      - owner: 40_Public_Private_Boundaries_and_License_Matrix.md
+        anchors: [Boundary Rules, License Rules]
+    qa_refs:
+      - owner: qa/installer-resilience/cases.md
+        case_ids: [INST-001, INST-004, INST-020, INST-027]
+        use_case_ids: [INST-UC-019]
+      - owner: qa/release-readiness/cases.md
+        case_ids: [REL-001, REL-004, REL-006]
+    disposition: captured_release_acceptance_open
+    disposition_as_of: 2026-08-30
+    remaining_gap: >-
+      Signed, notarized, clean-machine, upgrade, rollback, LIFE setup, canonical Feelings prototype
+      handling, and final installed-candidate proof remain open. This manual audit receipt also does
+      not satisfy the required generated product/service source-to-pin-to-artifact-to-installed-to-QA
+      registry.
+
+# These screenshot source classes were reviewed and deliberately not promoted to independent product
+# requirements. Any adopted clause is traced through a source family above.
+source_classifications:
+  - source_alias: SRC-PRODUCT-VISION-RESEARCH-001
+    pointer_set_sha256: 50315d5f4cbc73e88f56d30fa17d7e6eec0f7dce251fc4076e0fb70b5d7c2a0a
+    classification: proposal_context
+    disposition: not_current_runtime_truth
+    disposition_as_of: 2026-08-30
+    rationale: Proposed V0.5 vision informs activation and minimalism, but does not override current v0.4 owners until adopted.
+
+  - source_alias: SRC-COMPETITOR-RESEARCH-001
+    pointer_set_sha256: 89f3147dcdb1ba40ce05e4aab24253919a1a0dac8e61d31e6406e96c272c156b
+    classification: research_input
+    disposition: not_automatically_adopted
+    disposition_as_of: 2026-08-30
+    rationale: Competitor comparisons guide reuse decisions; a research finding becomes product truth only when explicitly adopted.
+
+  - source_alias: SRC-OPERATING-REVIEW-001
+    pointer_set_sha256: 1dac6f1aa576116aa7672dd99ac0e72576d6e7e5a133ea9057e948239c3463fb
+    classification: governance_and_qa_evidence
+    disposition: supports_existing_requirements
+    disposition_as_of: 2026-08-30
+    rationale: >-
+      Worker drift, progress, and scope reviews test execution quality but do not create a separate
+      feature. Mixed-topic tasks are classified at message level so unrelated follow-ups remain in
+      the general recoverable remainder.
+
+  - source_alias: SRC-CODEX-CAPABILITY-QUESTION-001
+    pointer_set_sha256: 868d6b9a55e5d64321447eef5c72be9857005b5f0d2c91b09718e8d892024c4f
+    classification: external_tool_capability_question
+    disposition: excluded_from_viventium_product_truth
+    disposition_as_of: 2026-08-30
+    rationale: A question about Codex task support is not a Viventium requirement without later adoption.
+
+  - source_alias: SRC-MACHINE-NOTIFICATION-SUPPORT-001
+    pointer_set_sha256: d353c63899eebeb445dfaac4952849a28dfc1e835781faef2f0e8c5ff73280df
+    classification: machine_local_app_support
+    disposition: excluded_from_viventium_product_truth
+    disposition_as_of: 2026-08-30
+    rationale: A local Codex notification repair does not define public Viventium behavior.
+
+  - source_alias: SRC-AUTOMATION-REPLAY-001
+    pointer_set_sha256: ee367dede2b3091a6253d776474d5d73def832e4fef8ca2afabb0c66380ea5b6
+    classification: recurring_automation_replay
+    disposition: qa_evidence_only
+    disposition_as_of: 2026-08-30
+    rationale: Nightly and watchdog replay envelopes are operational evidence, not fresh human feedback.
+
+  - source_alias: SRC-AGENT-DERIVED-LANES-001
+    pointer_set_sha256: c528bb2c9ea5e6a93e567a1f405456ed0dc0d8379876f4bc695bb5600434dc14
+    classification: agent_derived_implementation_lane
+    disposition: trace_to_human_parent
+    disposition_as_of: 2026-08-30
+    rationale: Repair, critic, and review lanes inherit parent goals and must not be counted as independent user prompts.
+
+  - source_alias: SRC-REMAINING-RECOVERABLE-001
+    pointer_set_sha256: 02a034be7c71ed386b9440b7bcc43c6a550b9dc7ac108b35b8d3421350eb6c74
+    classification: recoverable_human_context_remainder
+    disposition: retained_private_not_promoted_without_specific_adoption
+    disposition_as_of: 2026-08-30
+    rationale: >-
+      Every eligible retained human message not already assigned to a public source family or
+      explicit classification remains hash-bound in the private ledger. This closes disposition
+      coverage without publishing private wording or inventing a new product requirement.

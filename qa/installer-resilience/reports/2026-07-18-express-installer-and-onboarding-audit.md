@@ -47,7 +47,7 @@ and the physical-Mac Docker delta remain open.
 
 ### What actually ran
 
-| Surface | Outcome history | Evidence |
+| Surface | Result | Evidence |
 | --- | --- | --- |
 | First Express preflight | FAIL -> fixed | Homebrew's Mongo tap path required an additional transitive tap trust step. Express now downloads exact MongoDB `8.0.23`, verifies SHA-256, bounded/safe extraction, Developer ID team and version, and installs only the allowed runtime files under App Support. Express preflight/start now fail closed if that exact app-owned binary or listener identity is absent; arbitrary `PATH` and Homebrew Mongo remain available only to legacy/custom paths. |
 | Compiler/doctor | FAIL -> fixed | Missing Groq configuration left `${GROQ_API_KEY}` in generated LibreChat YAML. Express now removes an entirely unavailable env-backed custom endpoint and its `addedEndpoints` entry without affecting user-provided Groq configuration. |
@@ -159,23 +159,23 @@ defensible result remains **not done**:
 | Original requirement | Status | Current evidence | Exact remaining proof |
 | --- | --- | --- | --- |
 | Full locally available project-history inventory | PASS | 216 public-parent commits, 115 installer/delivery ledger entries, eight lifecycle phases, and managed-component pin inventory | State explicitly that unavailable pre-public/remote-only history is outside the evidence boundary. |
-| New-machine/new-user versus established reliable owner setup | PARTIAL | Fresh-versus-established state/risk map plus disposable VM comparison | Analysis passed; add literal step-by-step procedures for both personas and complete existing-user cloned-state acceptance. |
-| Protect and back up personal state before risky QA | PARTIAL | Owner App Support/database/Keychain were not install targets; private safety material remained outside git | Audit safety passed; independently restore every promised continuity domain into a disposable target (`INST-018`). |
+| New-machine/new-user versus established reliable owner setup | PASS for analysis; PARTIAL for acceptance | Fresh-versus-established state/risk map plus disposable VM comparison | Add literal step-by-step procedures for both personas and complete existing-user cloned-state acceptance. |
+| Protect and back up personal state before risky QA | PASS for audit safety; PARTIAL for product recovery | Owner App Support/database/Keychain were not install targets; private safety material remained outside git | Independently restore every promised continuity domain into a disposable target (`INST-018`). |
 | Secure sandbox and real user-experience QA | PARTIAL | No-host-mount Tart macOS VM plus real Chromium registration, setup handoff, OAuth start/cancel/retry, Feelings, refresh, rerun, and restart | Exact payload, vanilla image, provider answer, helper/security, full faults, Docker, and inclusive UX remain. |
 | No cloud changes or publication | PASS | No push, PR, release, provider grant, external message, or channel mutation | Preserve this boundary until separately authorized. |
 | 100% project/nested-feature executed coverage | FAIL | Complete acceptance inventory exists, but the broad suite had failures/skips and `INST-015`–`INST-024` include BLOCKED/PARTIAL/FAIL | Run or explicitly rescope every remaining feature-owner and release gate; do not claim 100% meanwhile. |
 | Happy and unhappy paths for new and existing users | PARTIAL | Selected install/retry/rate-limit/OAuth-cancel/restart paths pass; comprehensive cases are documented | Run provider denial/expiry/quota/network, low-resource/offline/corrupt/interruption, existing-user restore/upgrade/rollback, and uninstall preserve/delete. |
-| One-command Express Native without Docker/developer tools | FAIL | Native API/web source candidate works without Docker, but this does not satisfy the release promise | Wire the signed/notarized prebuilt payload and prove a truly vanilla Mac (`INST-015`, `INST-016`). |
+| One-command Express Native without Docker/developer tools | FAIL as release promise; PARTIAL as source candidate | Native API/web source candidate works without Docker | Wire the signed/notarized prebuilt payload and prove a truly vanilla Mac (`INST-015`, `INST-016`). |
 | Connect preferred account and receive a useful persistent answer | PARTIAL | Browser provider authorization starts and cancellation/retry works | Complete synthetic grant, live self-test, first and second answers, refresh/restart persistence, disconnect, and revoke (`INST-017`). |
 | Deep current open-source research and hands-on clone inspection | PARTIAL | Grounded research and recorded revisions for disposable shallow inspections | Attach durable primary-source citations for popularity/strength claims and either retain a dedicated inspection workspace or explicitly document that disposable clones are the accepted deliverable. |
-| Whole research/evaluation/test/foundation/conclusion package | PASS | Inventory, research, action plan, cases, reports, and independent reviews are linked as an audit package | Keep the conclusion synchronized with new proof; the package does not make the product complete. |
-| Telegram, Slack, WhatsApp, Groq, Grok, other channels | PARTIAL | Staged design passed: Telegram-first, Slack-Advanced, WhatsApp-unsupported, and Groq-versus-xAI/Grok boundaries are documented | Run Telegram and Groq/xAI lifecycles; do not advertise Slack/WhatsApp before real adapters and acceptance exist. |
-| Community skills and trust model | PARTIAL | Skills/MCP discovery, trust, consent, and staging patterns are documented, but the product lifecycle is not shipped | Implement and QA an explicit install/enable/disable/update/revoke lifecycle before presenting community skills as available. |
+| Whole research/evaluation/test/foundation/conclusion package | PASS as an audit package | Inventory, research, action plan, cases, reports, and independent reviews are linked | Keep the conclusion synchronized with new proof; the package does not make the product complete. |
+| Telegram, Slack, WhatsApp, Groq, Grok, other channels | PASS for staged design; PARTIAL/absent as product | Telegram-first, Slack-Advanced, WhatsApp-unsupported, and Groq-versus-xAI/Grok boundaries are documented | Run Telegram and Groq/xAI lifecycles; do not advertise Slack/WhatsApp before real adapters and acceptance exist. |
+| Community skills and trust model | PASS for research/policy; not shipped | Skills/MCP discovery, trust, consent, and staging patterns are documented | Implement and QA an explicit install/enable/disable/update/revoke lifecycle before presenting community skills as available. |
 | Feelings flagship control-panel discovery | PARTIAL | Source-candidate right-control entry, signed-out redirect, visible spectrum, and refresh pass | Commit/repin/rebuild/install the tested delta; run missing/degraded provider, keyboard, narrow/mobile, and accessibility cases. |
 | Clueless-user account guidance and minimal choices | PARTIAL | Express terminal avoids provider secrets; registration hands off to Connected Accounts; cancel/retry is visible | Finish one shared truthful connection/readiness state machine and prove the entire first-answer journey on the exact artifact. |
 | Existing-user configure, upgrade, recovery, and uninstall | PARTIAL | Headless transactional configure plus selected rerun/restart contracts pass | Run interactive/helper transaction, full restore, upgrade/rollback/downgrade, crash/reboot, and preserve/delete uninstall. |
 | Quality plus performance/resource reliability | PARTIAL | Warm restart and bounded-build evidence exist; default build OOM was captured honestly | Measure complete install/first-answer time, RAM/CPU/swap/disk/thermal/battery and failure behavior on supported physical hardware. |
-| Claude/Fable adversarial review | PASS | Structured Claude review and visible Fable 5 Extra review challenge the same evidence and verbatim prompt as supporting review | Review cannot substitute for the blocked real user paths. |
+| Claude/Fable adversarial review | PASS as supporting review | Structured Claude review and visible Fable 5 Extra review challenge the same evidence and verbatim prompt | Review cannot substitute for the blocked real user paths. |
 | Physical MacBook Air Native/Docker QA | BLOCKED | Expected known-host fingerprint matched locally, but the required relay port refused connection; no remote command executed | Restore the relay, then perform read-only preflight before creating the dedicated synthetic QA root. System-wide/helper/Docker/destructive cases require explicit physical-machine safety approval. |
 
 The OpenAI/OAuth retry/security improvements and Feelings sidebar entry are present only in the
@@ -200,7 +200,7 @@ is made.
 
 ## Historical Audit Baseline — Before The Remediation Above
 
-- Result: **FAIL** — the Express/public-release claim failed; the local evidence audit itself passed.
+- Result: **FAIL for an Express/public-release claim; PASS for the local evidence audit itself**.
 - Build/source under test: parent checkout at `8ebb89c` plus the nested-repository states and
   delivery pins described in the lifecycle inventory.
 - Runtime/artifact under test: the installed local runtime was inspected read-only; a temporary
@@ -220,7 +220,7 @@ is made.
 
 ## Historical Baseline Scope Run
 
-| Case or audit ID | Recorded outcome | Evidence | Notes |
+| Case or audit ID | Result | Evidence | Notes |
 | --- | --- | --- | --- |
 | `INST-001` | PARTIAL | `doctor`, shell syntax, isolated wizard/compiler, source trace | Real host install/recovery was intentionally not run. |
 | `INST-002` | PASS (audit package); FAIL (current working tree) | Public-safety scan plus full release suite | This audit package is sanitized; separate pre-existing untracked dated reports violate the evidence contract. |
@@ -243,7 +243,7 @@ is made.
 | `INST-UC-001` | Exercise installer/CLI/helper failure and recovery truth. | Doctor, shell syntax, isolated wizard/compiler, signed-out browser | PARTIAL | Diagnostics and auth errors were honest | No host install/recovery mutation ran | Disposable full flow required. |
 | `INST-UC-002` | Create a public-safe evidence record. | This audit package | PASS | Sanitized report and package | Targeted scans passed | Separate untracked reports still fail the working-tree suite. |
 | `INST-UC-003` | Rerun evidence checks after report corrections. | This audit package | PASS | Corrected package remains public-safe | Targeted contract and privacy checks | Recurring report generator remains unidentified. |
-| `INST-UC-004` | Verify default nightly workflow install/upgrade. | Not rerun | PARTIAL | Historical 2026-05-31 PASS only | Prior focused report | Current clean separate-Mac rerun remains outstanding. |
+| `INST-UC-004` | Verify default nightly workflow install/upgrade. | Not rerun | NOT RERUN | Historical 2026-05-31 PASS only | Prior focused report | Clean separate-Mac gate remains. |
 | `INST-UC-005` | Run Express/Advanced brain readiness. | Wizard, readiness, summary, docs | FAIL | Easy copy understates prompts; status can overstate readiness | Three QA-owner paths also dangle | Reconcile current contract and live-test readiness. |
 | `INST-UC-006` | Protect and independently restore an existing setup. | Snapshot/restore trace; private logical rehearsal | FAIL | Helper can say backup created for metadata-only output | Fallback may also rewrite the latest real manifest | Immutable attempts plus full browser-visible restore. |
 | `INST-UC-007` | Reconfigure one setting without drift. | CLI/source trace | FAIL | Not run destructively | Canonical config can be overwritten directly | Transactional candidate/merge/rollback workflow. |
@@ -252,7 +252,7 @@ is made.
 | `INST-UC-010` | Distinguish configured from live-ready. | Summary/readiness source trace | FAIL | Several rows can show `Ready` from configuration presence | No live provider request proves them | Unified state model and live self-tests. |
 | `INST-UC-011` | Connect and manage supported providers/channels. | Provider/channel inventory | PARTIAL | Telegram is mature; Slack absent; WhatsApp unavailable | Fresh integration lifecycle unproved | Synthetic account/channel matrix. |
 | `INST-UC-012` | Run isolated platform/failure matrix. | Isolation capability review | BLOCKED | Linux VM cannot prove macOS surfaces | No disposable macOS target | Apple Silicon VM plus physical Mac where needed. |
-| `INST-UC-013` | Discover Feelings from ordinary chat. | Direct signed-out route and source trace | FAIL | Auth redirect and account-menu route exist | Current requirement does not yet specify the requested control-panel entry | Update requirement, implement, build, and browser-test. |
+| `INST-UC-013` | Discover Feelings from ordinary chat. | Direct signed-out route and source trace | FAIL (requested feature) | Auth redirect and account-menu route exist | Current requirement does not yet specify the requested control-panel entry | Update requirement, implement, build, and browser-test. |
 | `INST-UC-014` | Verify local services are not exposed to the LAN by default. | Launcher, live socket, and loopback/non-loopback probes | FAIL | Loopback returned the playground; non-loopback probe timed out | Process still listened on wildcard and Next documents `0.0.0.0` as its default | Pass an explicit loopback hostname and run clean-Mac firewall/network matrix. |
 
 ## Traceability
@@ -439,7 +439,7 @@ directory and fail if it resolves inside a public source tree.
 
 ## Full-View Evidence Checklist
 
-| Evidence surface | Required question | Sanitized evidence pointer |
+| Evidence surface | Required question | Result / sanitized pointer |
 | --- | --- | --- |
 | Requirement and use case | Which requirement and user journey are evaluated? | Installer docs, QA contract, decisive Express chain, and new `INST-005`–`INST-013`. |
 | Code owning path | Which code owns it? | `install.sh`, `bin/viventium`, wizard, compiler, preflight, readiness, install summary, snapshot/restore, helper, playground launcher, LibreChat account menu and side-panel hooks. |

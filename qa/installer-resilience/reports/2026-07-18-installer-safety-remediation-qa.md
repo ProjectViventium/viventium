@@ -72,7 +72,7 @@
 
 ## Full-View Evidence Checklist
 
-| Evidence surface | Required question | Evidence / sanitized pointer |
+| Evidence surface | Required question | Result / sanitized pointer |
 | --- | --- | --- |
 | Requirement and use case | Which requirement, user case, and QA case is being proven? | Requirements 39, 47, and 54; installer cases and checklist rows above. |
 | Code owning path | Which code path owns the behavior? | installer/CLI, snapshot/helper, wizard, launcher, config transaction helper, and nested side-nav hook. |
@@ -170,13 +170,13 @@ uv run --no-project --with pytest --with pyyaml --with jsonschema \
 | Requested outcome | Status | Evidence / remaining gate |
 | --- | --- | --- |
 | Full parent and nested history/lifecycle inventory | PASS | Commit ledger, component boundaries, delivery pins, and feature chronology are in the lifecycle inventory. |
-| New-machine path versus the established reliable machine | PASS | State-by-state analysis is documented; the clean-machine side is not yet user-grade accepted. |
-| Protect personal config/database before risky QA | PASS | This audit boundary verified a private local protective copy outside the public repo; it is not claimed as a product-restorable snapshot. No destructive personal-state QA ran. |
+| New-machine path versus the established reliable machine | PASS for analysis | State-by-state contrast is documented; the clean-machine side is not yet user-grade accepted. |
+| Protect personal config/database before risky QA | PASS for this audit boundary | A private local protective audit copy was verified outside the public repo; it is not claimed as a product-restorable snapshot. No destructive personal-state QA ran. |
 | Secure sandbox and real Mac QA | PARTIAL | Temporary directories, isolated config harnesses, a clean pin-based client worktree, Playwright, and Computer Use were used; no disposable full macOS machine existed. |
 | Evidence-backed open-source installer/UI research | PASS | Current popularity, license, security, onboarding, and channel patterns are recorded in the research inventory; no third-party code was copied into the product. |
-| Complete happy/unhappy QA design | PARTIAL | The acceptance inventory is complete, but execution is blocked: the release matrix covers first run, auth, degraded dependencies, interruption, retry, restart, restore, accessibility, network, and public/private safety; clean-Mac and synthetic-account execution remain. |
-| One-command Express through connected account and first answer | FAIL | This path was not started. Copy is truthful, but account-first onboarding and live readiness are not yet one decisive journey. |
-| Telegram, WhatsApp, Slack, Groq, xAI/Grok, LibreChat account boundaries | BLOCKED | Design and research exist for the lifecycle and adapter requirements; no personal or cloud account was connected, changed, or revoked. |
+| Complete happy/unhappy QA design | PASS for inventory; BLOCKED for execution | The release matrix covers first run, auth, degraded dependencies, interruption, retry, restart, restore, accessibility, network, and public/private safety; clean-Mac and synthetic-account execution remain. |
+| One-command Express through connected account and first answer | FAIL / NOT STARTED | Copy is truthful, but account-first onboarding and live readiness are not yet one decisive journey. |
+| Telegram, WhatsApp, Slack, Groq, xAI/Grok, LibreChat account boundaries | DESIGN/RESEARCH ONLY except existing surfaces | Lifecycle and adapter requirements are documented; no personal or cloud account was connected, changed, or revoked. |
 | Feelings flagship navigation | PARTIAL | Source, clean build, focused tests, and anonymous redirect pass; nested pin/build/installed alignment and authenticated use remain. |
 | Fable 5 Extra independent challenge | PASS | Final review confirmed the release verdict, found the restore-pointer gap, and the bounded fix was independently rechecked. |
 | No cloud changes | PASS | No commit, push, PR, publish, account mutation, or cloud configuration change occurred. |

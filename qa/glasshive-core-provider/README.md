@@ -25,7 +25,6 @@
 | GlassHive provider/runtime | `pytest runtime_phase1/tests/test_conversation_provider.py runtime_phase1/tests/test_profile_runtime.py` | Every provider/runtime change |
 | LibreChat Agent/provider | Focused backend, package, schema, and client tests | Every Agent/UI/routing change |
 | Compiler/LIFE | `pytest tests/release/test_config_compiler.py tests/release/test_life_bootstrap.py` | Every install/config change |
-| Portable endpoint | Standard OpenAI SDK plus negative auth/parameter/idempotency probes | Every provider contract/security change |
 | Real web | Playwright CLI through installed Agent Builder and chat | Every user-visible change |
 | Real desktop/cross-surface | Computer Use through web, Telegram, and LiveKit | Before acceptance |
 | Clean install | Supported public install entrypoint in a fresh directory | Before release-ready claim |
@@ -34,7 +33,4 @@
 
 - Case catalog: [`cases.md`](cases.md).
 - Reports: [`reports/`](reports/) for dated public-safe runs.
-- Latest recovery result: configured fallback and cross-process reconciliation passed the recorded
-  2026-08-06 Telegram/runtime run; the full original cross-surface release acceptance remains
-  partial. See
-  [`reports/2026-08-06-telegram-reconciliation-fallback-recovery.md`](reports/2026-08-06-telegram-reconciliation-fallback-recovery.md).
+- Latest result: implementation verification in progress; no acceptance claim yet.

@@ -226,11 +226,15 @@ def generate_case(
     output_dir: Path,
     provider: str,
     sample_rate: int,
+    lead_silence_s: float,
     tail_silence_s: float,
 ) -> dict[str, object]:
     with tempfile.TemporaryDirectory(prefix=f"viventium-{case.case_id}-") as temp:
         temp_dir = Path(temp)
-        pcm_parts = [silence(sample_rate=sample_rate, seconds=0.35)]
+        # The signed call connects with an intentionally muted microphone while dispatch joins.
+        # Chromium starts consuming its fake-audio file when that muted track is created, so the
+        # fixture must not speak until the runtime has unmuted and published the track.
+        pcm_parts = [silence(sample_rate=sample_rate, seconds=lead_silence_s)]
         providers: list[str] = []
         for index, segment in enumerate(case.segments):
             segment_path, used_provider = synthesize_segment(
@@ -254,6 +258,7 @@ def generate_case(
         "file": str(wav_path),
         "sampleRate": sample_rate,
         "durationSeconds": round(duration_s, 3),
+        "leadSilenceSeconds": lead_silence_s,
         "tailSilenceSeconds": tail_silence_s,
         "providers": sorted(set(providers)),
         "expectedText": case.expected_text,
@@ -271,6 +276,12 @@ def main() -> int:
     parser.add_argument("--provider", choices=["auto", "mlx_chatterbox", "macos_say"], default="auto")
     parser.add_argument("--case", dest="case_id", default="all")
     parser.add_argument("--sample-rate", type=int, default=48000)
+    parser.add_argument(
+        "--lead-silence-s",
+        type=float,
+        default=15.0,
+        help="Silence while the signed call connects and publishes its deferred microphone.",
+    )
     parser.add_argument(
         "--tail-silence-s",
         type=float,
@@ -292,6 +303,7 @@ def main() -> int:
                 output_dir=args.output_dir,
                 provider=args.provider,
                 sample_rate=args.sample_rate,
+                lead_silence_s=args.lead_silence_s,
                 tail_silence_s=args.tail_silence_s,
             )
             for case in selected

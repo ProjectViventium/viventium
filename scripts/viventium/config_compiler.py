@@ -38,6 +38,11 @@ from prompt_registry import (
     render_prompt,
     resolve_prompt_refs,
 )
+from parallel_work_release_gate import (
+    build_prompt_registry_facts,
+    build_release_artifact_identity,
+    canonical_runtime_claim_paths,
+)
 from repo_path_safety import (
     RepoPathSafetyError,
     validate_regular_file_under_repo,
@@ -87,6 +92,8 @@ DEFAULT_GLASSHIVE_MCP_TRANSPORT_TIMEOUT_BUFFER_SEC = 60
 DEFAULT_GLASSHIVE_MCP_TRANSPORT_TIMEOUT_MS = (
     DEFAULT_GLASSHIVE_MCP_BLOCKING_WAIT_MAX_SEC + DEFAULT_GLASSHIVE_MCP_TRANSPORT_TIMEOUT_BUFFER_SEC
 ) * 1000
+DEFAULT_GLASSHIVE_IDLE_TERMINATE_AFTER_S = 1800
+DEFAULT_GLASSHIVE_IDLE_REAPER_INTERVAL_S = 60
 DEFAULT_PUBLIC_GLASSHIVE_LINK_REF_TTL_SECONDS = 86400
 DEFAULT_PUBLIC_GLASSHIVE_WATCH_SESSION_SECONDS = 1800
 SUPPORTED_GLASSHIVE_WORKER_PROFILES = {"codex-cli", "claude-code", "openclaw-general"}
@@ -1275,8 +1282,16 @@ def resolve_glasshive_enterprise_settings(config: dict[str, Any]) -> dict[str, A
         "upload_root": upload_root,
         "state_dir": state_dir,
         "source_roots": source_root_value,
-        "idle_terminate_after_s": positive_int_or_default(idle.get("terminate_after_seconds"), 1800, "integrations.glasshive.enterprise.idle.terminate_after_seconds"),
-        "idle_reaper_interval_s": positive_int_or_default(idle.get("reaper_interval_seconds"), 60, "integrations.glasshive.enterprise.idle.reaper_interval_seconds"),
+        "idle_terminate_after_s": positive_int_or_default(
+            idle.get("terminate_after_seconds"),
+            DEFAULT_GLASSHIVE_IDLE_TERMINATE_AFTER_S,
+            "integrations.glasshive.enterprise.idle.terminate_after_seconds",
+        ),
+        "idle_reaper_interval_s": positive_int_or_default(
+            idle.get("reaper_interval_seconds"),
+            DEFAULT_GLASSHIVE_IDLE_REAPER_INTERVAL_S,
+            "integrations.glasshive.enterprise.idle.reaper_interval_seconds",
+        ),
         "max_active_workers_per_user": positive_int_or_default(
             quotas.get("max_active_workers_per_user"),
             3,
@@ -1395,6 +1410,20 @@ def explicit_url_port(value: str) -> str:
     return str(port)
 
 
+def explicit_local_url_port(value: str) -> str:
+    """Return an explicit port only when the URL addresses this workstation."""
+    try:
+        parsed = urlparse(str(value or "").strip())
+        hostname = str(parsed.hostname or "").strip().lower()
+    except ValueError:
+        return ""
+    if parsed.scheme not in {"http", "https"}:
+        return ""
+    if hostname not in {"localhost", "127.0.0.1", "0.0.0.0", "::1", "::"}:
+        return ""
+    return explicit_url_port(value)
+
+
 def _executable_path(path: Path) -> bool:
     return path.is_file() and os.access(path, os.X_OK)
 
@@ -1450,6 +1479,74 @@ def resolve_host_cli_path(command: str, explicit_path: Any = None) -> str:
                     return str(resolved)
             return str(candidate)
     return ""
+
+
+def resolve_glasshive_orchestration_settings(config: dict[str, Any]) -> dict[str, Any]:
+    """Resolve the dark-by-default Parallel work admission and latency contract."""
+    integrations = config.get("integrations", {}) or {}
+    glasshive = integrations.get("glasshive") or {}
+    raw = glasshive.get("orchestration") or {}
+    if not isinstance(raw, dict):
+        raise SystemExit("integrations.glasshive.orchestration must be a mapping")
+
+    default_mode = str(raw.get("default_mode") or "focused").strip().lower()
+    if default_mode not in {"focused", "parallel"}:
+        raise SystemExit(
+            "integrations.glasshive.orchestration.default_mode must be focused or parallel"
+        )
+
+    def limit(name: str, default: int) -> int:
+        return positive_int_or_default(
+            raw.get(name),
+            default,
+            f"integrations.glasshive.orchestration.{name}",
+        )
+
+    authorization_horizon_seconds = limit("authorization_horizon_seconds", 86400)
+    if authorization_horizon_seconds > 86400:
+        raise SystemExit(
+            "integrations.glasshive.orchestration.authorization_horizon_seconds "
+            "must be at most 86400"
+        )
+
+    available = resolve_bool(raw.get("available"), False) and glasshive_enabled(config)
+    storage_pressure_critical_percent = bounded_number_or_default(
+        raw.get("storage_pressure_critical_percent"),
+        90.0,
+        "integrations.glasshive.orchestration.storage_pressure_critical_percent",
+        minimum=50.0,
+        maximum=99.9,
+    )
+    storage_pressure_warning_margin_percent = bounded_number_or_default(
+        raw.get("storage_pressure_warning_margin_percent"),
+        10.0,
+        "integrations.glasshive.orchestration.storage_pressure_warning_margin_percent",
+        minimum=1.0,
+        maximum=25.0,
+    )
+    return {
+        "available": available,
+        # Automatic Parallel missions always cross an actual isolation boundary. When
+        # the product surface is advertised, GlassHive also enables a fail-closed
+        # mutual-exclusion policy so an unrestricted legacy host mission cannot coexist
+        # with (and steal authority from) the trusted conversation orchestrator lane.
+        "isolated_parallel_policy": available,
+        "automatic_execution_mode": "docker",
+        "default_mode": default_mode,
+        "conversation_slots_per_cli": limit("conversation_slots_per_cli", 4),
+        "mission_slots_per_cli": limit("mission_slots_per_cli", 3),
+        "account_active_limit": limit("account_active_limit", 4),
+        "tenant_active_limit": limit("tenant_active_limit", 12),
+        "max_child_processes": limit("max_child_processes", 64),
+        "max_threads": limit("max_threads", 2048),
+        "min_available_memory_mb": limit("min_available_memory_mb", 2048),
+        "min_available_disk_mb": limit("min_available_disk_mb", 4096),
+        "storage_pressure_critical_percent": storage_pressure_critical_percent,
+        "storage_pressure_warning_margin_percent": storage_pressure_warning_margin_percent,
+        "snapshot_cache_ms": limit("snapshot_cache_ms", 2000),
+        "snapshot_cold_timeout_ms": limit("snapshot_cold_timeout_ms", 100),
+        "authorization_horizon_seconds": authorization_horizon_seconds,
+    }
 
 
 def resolve_glasshive_host_worker_settings(config: dict[str, Any]) -> dict[str, Any]:
@@ -1653,9 +1750,13 @@ def resolve_glasshive_host_worker_settings(config: dict[str, Any]) -> dict[str, 
         if resolve_bool(host_worker.get("codex_xhigh_route_proven"), True)
         else "false"
     )
-    claude_effort = str(host_worker.get("claude_effort") or "").strip().lower()
-    if claude_effort and claude_effort not in {"low", "medium", "high", "xhigh", "max"}:
-        raise SystemExit("integrations.glasshive.host_worker.claude_effort must be low, medium, high, xhigh, or max")
+    claude_effort = str(
+        host_worker.get("claude_effort") or "default"
+    ).strip().lower()
+    if claude_effort not in {"default", "max"}:
+        raise SystemExit(
+            "integrations.glasshive.host_worker.claude_effort must be default or max"
+        )
     codex_ignore_user_config = ""
     if "codex_ignore_user_config" in host_worker:
         codex_ignore_user_config = "true" if resolve_bool(host_worker.get("codex_ignore_user_config"), False) else "false"
@@ -2206,6 +2307,7 @@ PROFILE_DEFAULTS = {
         "playground_port": 3300,
         "prompt_workbench_port": 8781,
         "voice_gateway_health_port": 8301,
+        "parallel_redis_port": 46379,
         "mongo_port": 27117,
         "mongo_db": "LibreChatViventium",
         "meili_port": 7700,
@@ -2227,6 +2329,7 @@ PROFILE_DEFAULTS = {
         "playground_port": 3000,
         "prompt_workbench_port": 8781,
         "voice_gateway_health_port": 8300,
+        "parallel_redis_port": 46380,
         "mongo_port": 27017,
         "mongo_db": "LibreChat",
         "meili_port": 7701,
@@ -2249,6 +2352,16 @@ DEV_ENV_APP_FACING_PORT_KEYS = (
     "playground_port",
     "prompt_workbench_port",
     "voice_gateway_health_port",
+)
+DEV_ENV_LOCAL_NON_SHARED_PORT_KEYS = (
+    "mongo_port",
+    "meili_port",
+    "code_interpreter_port",
+    "skyvern_api_port",
+    "skyvern_ui_port",
+    "livekit_http_port",
+    "livekit_tcp_port",
+    "livekit_udp_port",
 )
 
 RUNTIME_PORT_KEYS = {
@@ -2695,6 +2808,41 @@ def load_source_of_truth_agents_bundle() -> dict[str, Any]:
     return bundle
 
 
+def resolve_source_glasshive_fallback_worker_profile() -> str:
+    """Project Main's explicit worker fallback from the canonical Agent bundle."""
+
+    bundle = load_source_of_truth_agents_bundle()
+    main_agent = bundle.get("mainAgent") if isinstance(bundle, dict) else None
+    glasshive_options = (
+        main_agent.get("glasshive_options") if isinstance(main_agent, dict) else None
+    )
+    orchestration = (
+        glasshive_options.get("orchestration")
+        if isinstance(glasshive_options, dict)
+        else None
+    )
+    if not isinstance(orchestration, dict):
+        return ""
+    primary_profile = str(orchestration.get("worker_profile") or "").strip()
+    fallback_profile = str(
+        orchestration.get("fallback_worker_profile") or ""
+    ).strip()
+    if not fallback_profile:
+        return ""
+    if fallback_profile not in SUPPORTED_GLASSHIVE_WORKER_PROFILES:
+        allowed_profiles = ", ".join(sorted(SUPPORTED_GLASSHIVE_WORKER_PROFILES))
+        raise SystemExit(
+            "mainAgent.glasshive_options.orchestration.fallback_worker_profile "
+            f"must be one of {allowed_profiles}"
+        )
+    if primary_profile and fallback_profile == primary_profile:
+        raise SystemExit(
+            "mainAgent.glasshive_options.orchestration.fallback_worker_profile "
+            "must differ from worker_profile"
+        )
+    return fallback_profile
+
+
 def resolve_source_prompt_refs(value: Any, registry: dict[str, Any] | None = None) -> Any:
     registry = registry if registry is not None else _source_prompt_registry()
     if not registry:
@@ -3006,9 +3154,23 @@ def prune_unavailable_source_defaults(payload: dict[str, Any], env: dict[str, st
             env.get("VIVENTIUM_SHARED_GOOGLE_MCP"),
             False,
         ):
-            mcp_servers.pop("google_workspace", None)
+            for server_name, server_config in list(mcp_servers.items()):
+                connection = (
+                    server_config.get("viventiumOAuthConnection")
+                    if isinstance(server_config, dict)
+                    else None
+                )
+                provider_id = (
+                    str(connection.get("providerId") or "").strip()
+                    if isinstance(connection, dict)
+                    else ""
+                )
+                if server_name == "google_workspace" or provider_id == "google_workspace":
+                    mcp_servers.pop(server_name, None)
         if not resolve_bool(env.get("START_GLASSHIVE"), False):
             mcp_servers.pop("glasshive-workers-projects", None)
+        if not resolve_bool(env.get("VIVENTIUM_HEALTH_ENABLED"), False):
+            mcp_servers.pop("viventium-health", None)
         ms365_server = mcp_servers.get("ms-365")
         if isinstance(ms365_server, dict):
             oauth = ms365_server.get("oauth")
@@ -3154,6 +3316,15 @@ def resolve_runtime_profile(config: dict[str, Any]) -> tuple[str, dict[str, Any]
                         f"runtime.dev_env.port_offset produced an invalid {key}"
                     )
                 profile[key] = app_facing_port
+            for key in DEV_ENV_LOCAL_NON_SHARED_PORT_KEYS:
+                if key in port_overrides:
+                    continue
+                local_port = profile[key] + offset
+                if local_port <= 0 or local_port > 65535:
+                    raise SystemExit(
+                        f"runtime.dev_env.port_offset produced an invalid {key}"
+                    )
+                profile[key] = local_port
             if "scheduling_mcp_port" not in port_overrides:
                 scheduling_port = (
                     profile["scheduling_mcp_port"]
@@ -3168,12 +3339,19 @@ def resolve_runtime_profile(config: dict[str, Any]) -> tuple[str, dict[str, Any]
             # A local dev environment owns an isolated RAG Compose project and PGVector data
             # directory when recall_rag is not shared. Its host database port must follow the
             # same environment offset or it collides with the stable runtime's localhost:5433.
-            rag_vectordb_port = profile["rag_vectordb_host_port"] + offset
-            if rag_vectordb_port <= 0 or rag_vectordb_port > 65535:
+            if not dev_env_shares_service(config, "recall_rag"):
+                rag_vectordb_port = profile["rag_vectordb_host_port"] + offset
+                if rag_vectordb_port <= 0 or rag_vectordb_port > 65535:
+                    raise SystemExit(
+                        "runtime.dev_env.port_offset produced an invalid rag_vectordb_host_port"
+                    )
+                profile["rag_vectordb_host_port"] = rag_vectordb_port
+            parallel_redis_port = profile["parallel_redis_port"] + offset
+            if parallel_redis_port <= 0 or parallel_redis_port > 65535:
                 raise SystemExit(
-                    "runtime.dev_env.port_offset produced an invalid rag_vectordb_host_port"
+                    "runtime.dev_env.port_offset produced an invalid parallel_redis_port"
                 )
-            profile["rag_vectordb_host_port"] = rag_vectordb_port
+            profile["parallel_redis_port"] = parallel_redis_port
     return runtime_profile, profile
 
 
@@ -3831,6 +4009,19 @@ def build_agent_provider_capabilities(config: dict[str, Any]) -> dict[str, Any]:
             "allow_full_access": provider["allow_full_access"],
             "host_tools_transport": "broker_mcp",
             "host_tools": ["file_search", "web_search"],
+            # Conversation-only Core facades. Keep these separate from host_tools
+            # so mission roots cannot inherit authority to launch or control
+            # sibling work.
+            "conversation_orchestration_tools": [
+                "worker_delegate_once_mcp_glasshive-workers-projects",
+                "active_work_list",
+                "active_work_action",
+            ],
+            "context_protocol": "main_context_v1",
+            "native_session_authority": "stable_authority_v1",
+            "replay_protocol": "legacy_message_count",
+            "time_context_delivery": "per_turn_header",
+            "usage_accounting_scope": "visible_message_local",
             "activity_stream": True,
             "responses_api": False,
             "messaging_delivery_disposition": True,
@@ -3869,6 +4060,23 @@ def resolve_memory_agent_override(
         )
     if not model:
         raise SystemExit("llm.memory.model must be a non-empty string")
+
+    fallback = raw.get("fallback")
+    if fallback is not None:
+        if not isinstance(fallback, dict):
+            raise SystemExit("llm.memory.fallback must be a mapping with provider and model")
+        fallback_provider = normalize_provider_name(fallback.get("provider"))
+        fallback_model = str(fallback.get("model") or "").strip()
+        if fallback_provider not in {"openai", "anthropic"}:
+            raise SystemExit("llm.memory.fallback.provider must be openai or anthropic")
+        if fallback_provider not in foundation_available:
+            raise SystemExit(
+                "llm.memory.fallback.provider must have configured foundation authentication"
+            )
+        if not fallback_model:
+            raise SystemExit("llm.memory.fallback.model must be a non-empty string")
+        if (fallback_provider, fallback_model) == (provider, model):
+            raise SystemExit("llm.memory.fallback must differ from the selected memory route")
     return provider, model
 
 
@@ -4093,6 +4301,7 @@ def build_agent_assignments(config: dict[str, Any]) -> dict[str, tuple[str, str]
 def apply_memory_assignment(
     payload: dict[str, Any],
     assignments: dict[str, tuple[str, str]],
+    config: dict[str, Any],
 ) -> None:
     memory = payload.get("memory")
     if not isinstance(memory, dict):
@@ -4103,6 +4312,14 @@ def apply_memory_assignment(
     provider, model = assignments["memory"]
     agent["provider"] = provider
     agent["model"] = model
+    fallback = ((config.get("llm", {}) or {}).get("memory") or {}).get("fallback")
+    if isinstance(fallback, dict):
+        agent["fallback"] = {
+            "provider": normalize_provider_name(fallback.get("provider")),
+            "model": str(fallback.get("model") or "").strip(),
+        }
+    else:
+        agent.pop("fallback", None)
     model_parameters = copy.deepcopy(agent.get("model_parameters") or {})
     if provider == "openai":
         model_parameters["reasoning_effort"] = "medium"
@@ -4798,6 +5015,10 @@ def render_runtime_env(
     telegram_is_enabled = telegram_enabled(config)
     glasshive_is_enabled = glasshive_enabled(config)
     glasshive_host_worker = resolve_glasshive_host_worker_settings(config)
+    glasshive_fallback_worker_profile = (
+        resolve_source_glasshive_fallback_worker_profile()
+    )
+    glasshive_orchestration = resolve_glasshive_orchestration_settings(config)
     glasshive_enterprise = resolve_glasshive_enterprise_settings(config)
     if (
         glasshive_enterprise["capability_broker_enabled"]
@@ -5079,6 +5300,58 @@ def render_runtime_env(
         "VIVENTIUM_SHARED_SEARXNG": "true" if shared_searxng else "false",
         "VIVENTIUM_SHARED_FIRECRAWL": "true" if shared_firecrawl else "false",
         "START_GLASSHIVE": "true" if glasshive_is_enabled else "false",
+        "VIVENTIUM_PARALLEL_WORK_AVAILABLE": (
+            "true" if glasshive_orchestration["available"] else "false"
+        ),
+        "VIVENTIUM_GLASSHIVE_ISOLATED_PARALLEL_POLICY": (
+            "true" if glasshive_orchestration["isolated_parallel_policy"] else "false"
+        ),
+        "VIVENTIUM_PARALLEL_WORK_EXECUTION_MODE": str(
+            glasshive_orchestration["automatic_execution_mode"]
+        ),
+        "VIVENTIUM_PARALLEL_WORK_DEFAULT_MODE": str(
+            glasshive_orchestration["default_mode"]
+        ),
+        "WPR_HOST_CONVERSATION_SLOTS_PER_CLI": str(
+            glasshive_orchestration["conversation_slots_per_cli"]
+        ),
+        "GLASSHIVE_CONVERSATION_EXECUTOR_WORKERS": str(
+            glasshive_orchestration["conversation_slots_per_cli"]
+        ),
+        "WPR_HOST_MISSION_SLOTS_PER_CLI": str(
+            glasshive_orchestration["mission_slots_per_cli"]
+        ),
+        "WPR_HOST_ACCOUNT_ACTIVE_LIMIT": str(
+            glasshive_orchestration["account_active_limit"]
+        ),
+        "WPR_HOST_TENANT_ACTIVE_LIMIT": str(
+            glasshive_orchestration["tenant_active_limit"]
+        ),
+        "WPR_HOST_MAX_CHILD_PROCESSES": str(
+            glasshive_orchestration["max_child_processes"]
+        ),
+        "WPR_HOST_MAX_THREADS": str(glasshive_orchestration["max_threads"]),
+        "WPR_HOST_MIN_AVAILABLE_MEMORY_MB": str(
+            glasshive_orchestration["min_available_memory_mb"]
+        ),
+        "WPR_HOST_MIN_AVAILABLE_DISK_MB": str(
+            glasshive_orchestration["min_available_disk_mb"]
+        ),
+        "GLASSHIVE_STORAGE_PRESSURE_CRITICAL_PERCENT": format_env_number(
+            glasshive_orchestration["storage_pressure_critical_percent"]
+        ),
+        "GLASSHIVE_STORAGE_PRESSURE_WARNING_MARGIN_PERCENT": format_env_number(
+            glasshive_orchestration["storage_pressure_warning_margin_percent"]
+        ),
+        "VIVENTIUM_ACTIVE_WORK_CACHE_MS": str(
+            glasshive_orchestration["snapshot_cache_ms"]
+        ),
+        "VIVENTIUM_ACTIVE_WORK_COLD_TIMEOUT_MS": str(
+            glasshive_orchestration["snapshot_cold_timeout_ms"]
+        ),
+        "VIVENTIUM_GLASSHIVE_AUTHORIZATION_HORIZON_SECONDS": str(
+            glasshive_orchestration["authorization_horizon_seconds"]
+        ),
         "START_SCHEDULING_MCP": "true" if integrations.get("scheduling_cortex", {}).get("enabled", False) else "false",
         "START_RAG_API": start_rag_api,
         "START_SKYVERN": "true" if integrations.get("skyvern", {}).get("enabled") else "false",
@@ -5150,6 +5423,26 @@ def render_runtime_env(
     if runtime_mongo_data_path_override is not None:
         env["VIVENTIUM_LOCAL_MONGO_DATA_PATH"] = runtime_mongo_data_path_override
 
+    if glasshive_orchestration["available"]:
+        redis_resource_suffix = runtime_profile
+        if dev_env["enabled"]:
+            safe_dev_name = re.sub(
+                r"[^a-z0-9_-]+",
+                "-",
+                str(dev_env["name"] or "").lower(),
+            ).strip("-_")[:48] or "dev"
+            redis_resource_suffix = f"{runtime_profile}-{safe_dev_name}"
+        redis_container = f"viventium-parallel-redis-{redis_resource_suffix}"
+        env.update(
+            {
+                "USE_REDIS": "true",
+                "USE_REDIS_STREAMS": "true",
+                "REDIS_URI": f"redis://127.0.0.1:{profile['parallel_redis_port']}",
+                "VIVENTIUM_PARALLEL_REDIS_CONTAINER": redis_container,
+                "VIVENTIUM_PARALLEL_REDIS_VOLUME": f"{redis_container}-data",
+            }
+        )
+
     if openid_settings["enabled"]:
         required_openid = {
             "runtime.auth.openid.client_id": openid_settings["client_id"],
@@ -5214,14 +5507,50 @@ def render_runtime_env(
             or integrations.get("glasshive", {}).get("operator_base_url")
             or "http://127.0.0.1:8780"
         ).rstrip("/")
+        configured_local_ui_port = explicit_local_url_port(
+            str(integrations.get("glasshive", {}).get("operator_base_url") or "")
+        )
         if glasshive_enterprise["enabled"]:
             env["GLASSHIVE_MCP_URL"] = str(glasshive_enterprise["mcp_url"])
-            mcp_port = explicit_url_port(str(glasshive_enterprise["mcp_url"]))
-            if mcp_port:
+        env["GLASSHIVE_OPERATOR_BASE_URL"] = glasshive_operator_base_url
+        # The launcher owns the local GlassHive processes and reads explicit port
+        # variables, while Core consumes the corresponding URLs. Keep both views
+        # canonical in every deployment mode so a side-by-side dev environment
+        # cannot silently fall back to the stable runtime's 8767/8780 ports.
+        mcp_port = explicit_url_port(str(env.get("GLASSHIVE_MCP_URL") or ""))
+        if mcp_port:
+            if glasshive_enterprise["enabled"]:
                 env["GLASSHIVE_MCP_PORT"] = mcp_port
-            ui_port = explicit_url_port(glasshive_operator_base_url)
-            if ui_port:
+            elif str(integrations.get("glasshive", {}).get("mcp_url") or "").strip():
+                local_mcp_port = explicit_local_url_port(
+                    str(integrations.get("glasshive", {}).get("mcp_url") or "")
+                )
+                if local_mcp_port:
+                    env.setdefault("GLASSHIVE_MCP_PORT", local_mcp_port)
+        if (
+            glasshive_orchestration["available"]
+            and not glasshive_enterprise["enabled"]
+            and explicit_local_url_port(str(env.get("GLASSHIVE_MCP_URL") or ""))
+        ):
+            # Automatic local missions create retained workspaces by default. Release
+            # their idle Docker compute after a bounded grace period while preserving
+            # workspace/home state for View and an explicit follow-up restart.
+            env["GLASSHIVE_IDLE_TERMINATE_AFTER_S"] = str(
+                DEFAULT_GLASSHIVE_IDLE_TERMINATE_AFTER_S
+            )
+            env["GLASSHIVE_IDLE_REAPER_INTERVAL_S"] = str(
+                DEFAULT_GLASSHIVE_IDLE_REAPER_INTERVAL_S
+            )
+        ui_port = explicit_url_port(glasshive_operator_base_url)
+        if ui_port:
+            if glasshive_enterprise["enabled"]:
                 env["GLASSHIVE_UI_PORT"] = ui_port
+            elif public_glasshive_origin or str(
+                integrations.get("glasshive", {}).get("operator_base_url") or ""
+            ).strip():
+                local_ui_port = explicit_local_url_port(glasshive_operator_base_url)
+                if local_ui_port:
+                    env.setdefault("GLASSHIVE_UI_PORT", local_ui_port)
         env["GLASSHIVE_OPERATOR_BASE_URL"] = glasshive_operator_base_url
         scheduling_cortex = integrations.get("scheduling_cortex", {})
         scheduling_cortex_enabled = bool(
@@ -5232,6 +5561,10 @@ def render_runtime_env(
         env["WPR_IDLE_DESKTOP_PRIME_BROWSER"] = "true"
         env["GLASSHIVE_HOST_WORKERS_ENABLED"] = "true" if glasshive_host_worker["enabled"] else "false"
         env["GLASSHIVE_DEFAULT_WORKER_PROFILE"] = str(glasshive_host_worker["default_worker_profile"])
+        if glasshive_fallback_worker_profile:
+            env["GLASSHIVE_DEFAULT_FALLBACK_WORKER_PROFILE"] = (
+                glasshive_fallback_worker_profile
+            )
         env["WPR_HOST_WORKSPACE_ROOT"] = str(glasshive_host_worker["workspace_root"])
         env["GLASSHIVE_DEFAULT_EXECUTION_MODE"] = str(glasshive_host_worker["default_execution_mode"])
         env["WPR_DEFAULT_EXECUTION_MODE"] = str(glasshive_host_worker["default_execution_mode"])
@@ -5297,8 +5630,25 @@ def render_runtime_env(
             env["WPR_CODEX_CLI_XHIGH_ROUTE_PROVEN"] = str(glasshive_host_worker["codex_xhigh_route_proven"])
         if glasshive_host_worker["claude_enable_chrome"]:
             env["WPR_CLAUDE_CODE_ENABLE_CHROME"] = str(glasshive_host_worker["claude_enable_chrome"])
-        if glasshive_host_worker["claude_effort"]:
-            env["WPR_CLAUDE_CODE_EFFORT"] = str(glasshive_host_worker["claude_effort"])
+        claude_cli_route_selected = (
+            glasshive_fallback_worker_profile == "claude-code"
+            or glasshive_host_worker["default_worker_profile"] == "claude-code"
+        )
+        if claude_cli_route_selected:
+            # Claude Code owns CLI model aliases. Keep this distinct from Anthropic API
+            # model identifiers used by LibreChat and other provider integrations.
+            env.setdefault(
+                "WPR_MODEL_CLAUDE_CODE",
+                model_override_for(config, "anthropic", "glasshive_claude")
+                or "opus",
+            )
+            env["WPR_CLAUDE_CODE_EFFORT"] = str(
+                glasshive_host_worker["claude_effort"]
+            )
+        elif glasshive_host_worker["claude_effort"] != "default":
+            env["WPR_CLAUDE_CODE_EFFORT"] = str(
+                glasshive_host_worker["claude_effort"]
+            )
         if not glasshive_enterprise["enabled"]:
             env["WPR_DB_PATH"] = str(
                 runtime_app_support_dir
@@ -5326,14 +5676,37 @@ def render_runtime_env(
                     DEFAULT_PUBLIC_GLASSHIVE_WATCH_SESSION_SECONDS
                 )
                 env["GLASSHIVE_COOKIE_SECURE"] = "true"
-                env["GLASSHIVE_UI_PORT"] = "8780"
+                env["GLASSHIVE_UI_PORT"] = (
+                    configured_local_ui_port
+                    if dev_env["enabled"] and configured_local_ui_port
+                    else "8780"
+                )
         env["WPR_LIBRECHAT_UPLOADS_ROOT"] = str(canonical_uploads_root)
         env["WPR_BOOTSTRAP_SOURCE_ROOTS"] = str(canonical_uploads_root)
         env["VIVENTIUM_GLASSHIVE_CALLBACK_URL"] = f"http://localhost:{profile['lc_api_port']}/api/viventium/glasshive/callback"
         env["VIVENTIUM_GLASSHIVE_CALLBACK_SECRET"] = scoped_secret(call_session_secret, "glasshive-callback")
+        env["GLASSHIVE_BOOTSTRAP_SOURCE_SECRET"] = scoped_secret(
+            call_session_secret,
+            "glasshive-bootstrap-source",
+        )
         env["VIVENTIUM_GLASSHIVE_CAPABILITY_BROKER_SECRET"] = scoped_secret(
             call_session_secret,
             "glasshive-capability-broker",
+        )
+        env["VIVENTIUM_GLASSHIVE_ADMISSION_SECRET"] = scoped_secret(
+            call_session_secret,
+            "glasshive-capability-admission",
+        )
+        env["VIVENTIUM_GLASSHIVE_ADMISSION_URL"] = (
+            f"http://127.0.0.1:{profile['lc_api_port']}"
+            "/api/viventium/glasshive/capabilities/admit"
+        )
+        # Account-scoped orchestration calls use a separate first-party assertion
+        # secret.  Keep it distinct from bearer, callback, broker, and public-link
+        # credentials so compromise of one plane cannot mint authority on another.
+        env["VIVENTIUM_GLASSHIVE_SERVICE_ASSERTION_SECRET"] = scoped_secret(
+            call_session_secret,
+            "glasshive-account-api",
         )
         if glasshive_enterprise["enabled"]:
             enterprise_public_api_origin = str(network.get("public_api_origin", "") or "").strip()
@@ -5656,6 +6029,28 @@ def render_runtime_env(
                 "glasshive-mcp",
             )
             env["GLASSHIVE_PROVIDER_BASE_URL"] = str(glasshive_provider["base_url"])
+            runtime_port = explicit_url_port(env["GLASSHIVE_PROVIDER_BASE_URL"])
+            if runtime_port:
+                if glasshive_enterprise["enabled"]:
+                    env["GLASSHIVE_RUNTIME_PORT"] = runtime_port
+                elif str(
+                    (integrations.get("glasshive", {}).get("provider") or {}).get(
+                        "base_url"
+                    )
+                    or ""
+                ).strip():
+                    local_runtime_port = explicit_local_url_port(
+                        env["GLASSHIVE_PROVIDER_BASE_URL"]
+                    )
+                    if local_runtime_port:
+                        env.setdefault("GLASSHIVE_RUNTIME_PORT", local_runtime_port)
+                        # The local MCP adapter is an API client of the sibling
+                        # GlassHive runtime. Bind it to the same selected loopback
+                        # endpoint instead of its stable-port fallback.
+                        env.setdefault(
+                            "WPR_MCP_BASE_URL",
+                            f"http://127.0.0.1:{local_runtime_port}",
+                        )
             env["GLASSHIVE_PROVIDER_PRINCIPAL_ID"] = str(glasshive_provider["principal_id"])
             env["GLASSHIVE_PROVIDER_TENANT_ID"] = str(glasshive_provider["tenant_id"])
             env["GLASSHIVE_PROVIDER_TRUST_IDENTITY_HEADERS"] = (
@@ -7028,9 +7423,6 @@ def build_mcp_servers(
     if not resolve_bool(health.get("enabled"), False):
         servers.pop("viventium-health", None)
 
-    if not resolve_bool((integrations.get("health", {}) or {}).get("enabled"), False):
-        servers.pop("viventium-health", None)
-
     return servers
 
 
@@ -7185,7 +7577,7 @@ def render_librechat_yaml(
     else:
         endpoints["custom"] = copy.deepcopy(generated_custom)
     payload["endpoints"] = endpoints
-    apply_memory_assignment(payload, assignments)
+    apply_memory_assignment(payload, assignments, config)
     normalize_anthropic_title_endpoint(payload, config)
     payload = prune_unavailable_source_defaults(payload, env)
     return yaml.safe_dump(payload, sort_keys=False)
@@ -7498,7 +7890,11 @@ def render_service_envs(output_dir: Path, env: dict[str, str]) -> None:
             )
     glasshive_runtime_env["VIVENTIUM_DISABLE_DEFAULT_RUNTIME_ENV"] = "1"
 
-    dump_env(service_dir / "librechat.env", {key: env.get(key, "") for key in librechat_keys})
+    librechat_env = {key: env.get(key, "") for key in librechat_keys}
+    for key in ("USE_REDIS", "USE_REDIS_STREAMS", "REDIS_URI"):
+        if key in env:
+            librechat_env[key] = env[key]
+    dump_env(service_dir / "librechat.env", librechat_env)
     dump_env(service_dir / "telegram.config.env", {key: env.get(key, "") for key in telegram_keys})
     dump_env(service_dir / "telegram-codex.env", {key: env.get(key, "") for key in telegram_codex_keys})
     dump_env(service_dir / "skyvern.env", {key: env.get(key, "") for key in skyvern_keys})
@@ -7636,9 +8032,6 @@ def default_live_prompt_bundle_candidates() -> list[Path]:
     if state_root:
         add(Path(state_root) / "prompt-bundle.json")
 
-    if APP_SUPPORT_VIVENTIUM_DIR.exists():
-        for path in sorted(APP_SUPPORT_VIVENTIUM_DIR.rglob("prompt-bundle.json")):
-            add(path)
     return candidates
 
 
@@ -7981,6 +8374,58 @@ def check_runtime_config_drift(
     return report
 
 
+def build_parallel_work_readiness_facts(
+    prompt_bundle: dict[str, Any],
+    storage_path: Path,
+    *,
+    threshold_percent: float,
+    warning_margin_percent: float,
+) -> dict[str, Any]:
+    """Compile public-safe registry and disk facts using the runtime's exact policy."""
+
+    prompt_fact = build_prompt_registry_facts(prompt_bundle)
+
+    probe_path = Path(storage_path)
+    while not probe_path.exists() and probe_path != probe_path.parent:
+        probe_path = probe_path.parent
+    try:
+        usage = shutil.disk_usage(probe_path)
+        total = int(usage.total)
+        used = int(usage.used)
+        available = int(usage.free)
+        if total <= 0 or used < 0 or available < 0 or used > total:
+            raise ValueError("invalid storage probe")
+        used_percent = round((used * 100.0) / total, 3)
+        warning_threshold = max(0.0, threshold_percent - warning_margin_percent)
+        storage_status = (
+            "critical"
+            if used_percent >= threshold_percent
+            else "warning"
+            if used_percent >= warning_threshold
+            else "healthy"
+        )
+        storage_reason: dict[str, str] = {}
+    except (OSError, ValueError, ZeroDivisionError):
+        used_percent = 100.0
+        available = 0
+        storage_status = "critical"
+        storage_reason = {"reason": "storage_probe_unavailable"}
+    storage_fact = {
+        "version": 1,
+        "status": storage_status,
+        "usedPercent": float(used_percent),
+        "availableBytes": available,
+        "thresholdPercent": float(threshold_percent),
+        "warningMarginPercent": float(warning_margin_percent),
+        **storage_reason,
+    }
+    return {
+        "contractVersion": 1,
+        "promptLayers": prompt_fact,
+        "storagePressure": storage_fact,
+    }
+
+
 def drift_report_allows_success(report: dict[str, Any], compare_reviewed: bool) -> bool:
     return report["status"] == "ok" or (
         report["status"] == "reviewed_drift" and compare_reviewed
@@ -7988,9 +8433,20 @@ def drift_report_allows_success(report: dict[str, Any], compare_reviewed: bool) 
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Compile Viventium config.yaml into runtime files.")
+    parser = argparse.ArgumentParser(
+        description="Compile Viventium config.yaml into runtime files.",
+        allow_abbrev=False,
+    )
     parser.add_argument("--config", help="Path to config.yaml")
     parser.add_argument("--output-dir", help="Directory for generated files")
+    parser.add_argument(
+        "--installed-root",
+        help="Explicit installed or live checkout used for release artifact identity.",
+    )
+    parser.add_argument(
+        "--runtime-owner-state",
+        help="Canonical runtime owner state proving the installed checkout is active.",
+    )
     parser.add_argument("--dry-run", action="store_true", help="Validate and print summary without writing files")
     parser.add_argument(
         "--check-prompt-drift",
@@ -8072,6 +8528,32 @@ def main() -> None:
 
     config_path = Path(args.config).expanduser().resolve()
     output_dir = Path(args.output_dir).expanduser().resolve()
+    installed_root = (
+        Path(args.installed_root).expanduser().resolve()
+        if args.installed_root
+        else None
+    )
+    runtime_owner_state = (
+        Path(args.runtime_owner_state).expanduser().resolve()
+        if args.runtime_owner_state
+        else None
+    )
+    if (installed_root is None) != (runtime_owner_state is None):
+        parser.error(
+            "--installed-root and --runtime-owner-state must identify one active runtime"
+        )
+    if installed_root is not None:
+        canonical_claims = canonical_runtime_claim_paths(
+            installed_root, runtime_owner_state
+        )
+        if canonical_claims is None:
+            parser.error("installed identity is not the exact active runtime owner")
+        if (
+            installed_root != canonical_claims["installed_root"]
+            or runtime_owner_state != canonical_claims["runtime_owner_state"]
+            or output_dir != canonical_claims["readiness_facts"].parent
+        ):
+            parser.error("installed identity is outside the active runtime directory")
     config = load_yaml(config_path)
     validate_config(config, config_path)
     config, scheduling_migrated = migrate_legacy_scheduling_enablement(
@@ -8092,6 +8574,9 @@ def main() -> None:
     prompt_bundle_path = output_dir / "prompt-bundle.json"
     env["VIVENTIUM_PROMPT_BUNDLE_PATH"] = str(prompt_bundle_path)
     prompt_bundle = prune_unavailable_prompt_bundle(build_prompt_bundle(), env)
+    orchestration_settings = resolve_glasshive_orchestration_settings(config)
+    readiness_facts_path = output_dir / "parallel-work-readiness-facts.json"
+    artifact_identity_path = output_dir / "parallel-work-artifact-identity.json"
     librechat_yaml = render_librechat_yaml(config, assignments, env)
     native_agents_bundle = None
     if config["install"]["mode"] == "native":
@@ -8112,7 +8597,9 @@ def main() -> None:
         "prompt_registry": {
             "prompt_count": prompt_bundle["prompt_count"],
             "prompt_bundle": str(prompt_bundle_path),
+            "readiness_facts": str(readiness_facts_path),
         },
+        "release_artifact_identity": str(artifact_identity_path),
         "assignments": assignments,
     }
 
@@ -8137,6 +8624,29 @@ def main() -> None:
         encoding="utf-8",
     )
     prompt_bundle_path.chmod(0o600)
+    readiness_facts = build_parallel_work_readiness_facts(
+        prompt_bundle,
+        output_dir,
+        threshold_percent=orchestration_settings[
+            "storage_pressure_critical_percent"
+        ],
+        warning_margin_percent=orchestration_settings[
+            "storage_pressure_warning_margin_percent"
+        ],
+    )
+    readiness_facts_path.write_text(
+        json.dumps(readiness_facts, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    readiness_facts_path.chmod(0o600)
+    artifact_identity = build_release_artifact_identity(
+        REPO_ROOT, prompt_bundle_path, installed_root, runtime_owner_state
+    )
+    artifact_identity_path.write_text(
+        json.dumps(artifact_identity, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    artifact_identity_path.chmod(0o600)
     render_service_envs(output_dir, env)
     telegram_codex_dir = output_dir / "telegram-codex"
     telegram_codex_dir.mkdir(parents=True, exist_ok=True)

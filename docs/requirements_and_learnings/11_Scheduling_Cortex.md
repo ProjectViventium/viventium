@@ -1,11 +1,14 @@
 # Scheduling Cortex (Selective Consciousness Continuity)
 
 **Purpose**: Single source of truth for the Scheduling Cortex. This path adds lightweight,
-scalable scheduling with no UI changes, built as an MCP server with a persistent scheduler loop.
+scalable scheduling as an MCP server with a persistent scheduler loop. It adds no separate
+scheduling-specific page inside the Viventium core UI; Prompt Workbench owns that product surface.
+A hosted GlassHive control plane may expose its own Schedules tab under the single-writer delegation
+contract below.
 
 ## Executive Summary
 
-We will implement a dedicated Scheduling MCP server that:
+The dedicated Scheduling MCP server:
 
 - stores per-user scheduled tasks in SQLite
 - exposes CRUD + search tools to the main agent only
@@ -18,7 +21,9 @@ We will implement a dedicated Scheduling MCP server that:
 
 1. Reuse Prompt Workbench for schedule authoring, effective-prompt inspection, and run history; do
    not add a continuity-specific page.
-2. Main agent only creates schedules.
+2. Main is the only model/agent allowed to create schedules. Authenticated users may also author
+   through Prompt Workbench or a delegated Glass Drive UI; those surfaces call the selected
+   recurrence owner and never create a shadow schedule store.
 3. Per-user isolation.
 4. CRUD + search for scheduled tasks.
 5. Support LibreChat, Telegram, or both.
@@ -49,37 +54,188 @@ We will implement a dedicated Scheduling MCP server that:
   full internal prompts, generated delivery prose, or raw delivery payloads to other answer
   surfaces.
 
-## Interactive Main-Agent Access Through GlassHive
+## Main-Agent And GlassHive Parity
 
-- Scheduling Cortex remains an ordinary MCP capability of the configured agent. A GlassHive-backed
-  Main Agent receives it through GlassHive's authenticated native-capability broker; it must not use
-  a direct wrapper LLM, a second hidden author, or a GlassHive-inside-GlassHive delegation.
-- The compiler-owned `viventiumGlassHive` projection explicitly exports the Scheduler's declared
-  read and write tools. Content-reading operations require the run's broker grant, and the direct
-  conversation bundle is scoped to the agent's selected MCP servers. Dynamic policy expansion is
-  disabled for direct conversations so selecting Scheduling Cortex cannot silently expose unrelated
-  connected-account servers.
-- A browser refresh, Telegram relay hop, or completed surrounding HTTP request must not cancel an
-  already-started brokered MCP operation. GlassHive owns intentional run cancellation and the broker
-  owns a bounded provider timeout. The route must not forward an already-aborted HTTP lifecycle
-  signal into the provider call.
-- Capability discovery reuses a healthy user-scoped MCP connection and opens a fresh connection only
-  after stale or empty discovery. This prevents catalog construction immediately before a tool call
-  from replacing the connection that the call needs.
-- Failure remains explicit: an invalid or expired broker grant is unauthorized, a provider timeout
-  is reported as degraded, and a stopped or unavailable Scheduler must never be represented as a
-  successful empty schedule list.
+- Scheduling capability is declared structurally in the main Agent's MCP configuration and projected
+  through the same signed capability broker when GlassHive is the selected conversation provider.
+  The model remains responsible for understanding the user's goal and choosing whether scheduling is
+  useful; runtime code must not infer scheduling intent from prompt text, tool-name fragments, surface
+  names, or agent/provider labels.
+- The reviewed `scheduling-cortex` broker policy exposes bounded content reads and user-owned
+  create/update/delete operations. Mutations require a unique `invocation_id` and shared replay
+  protection, but do not require a second confirmation token because the user's scheduling request is
+  itself the product action and the policy is explicitly `writePolicy: allow`. This exception does not
+  weaken confirmation rules for email, calendar, files, permissions, or other connected-account
+  mutations.
+- Projection must report complete/partial/empty state with structured omission reasons. If scheduling
+  is declared but unavailable, the worker must receive that boundary and answer truthfully; another
+  native tool being present cannot mask the omission.
+- Broker cancellation belongs to the live broker HTTP request. A completed outer Telegram/chat signal
+  must never be forwarded as the provider-call signal. Successful tool discovery may be reused only
+  inside the same short-lived signed grant while user identity and current policy are revalidated for
+  each request.
+- Acceptance requires a real surface create -> visible confirmation -> persisted row -> delete ->
+  visible confirmation -> zero-residue check, correlated with broker and Scheduling Cortex logs. A
+  model's prose or a successful `tools/list` response alone is not proof that scheduling worked.
+- The 2026-08-10 isolated headed-Web acceptance passed that lifecycle through Main's configured
+  Scheduling tools: one causal create receipt, one matching user-owned row, durable expanded activity
+  across refresh and zero-POST reopen, then one supported delete and a zero-row sweep with protected
+  rows unchanged. This is product-path evidence for the exactly-once action gate, not a substitute
+  for unrelated reminder-delivery or cross-surface acceptance.
+
+## Consciousness Continuity Opportunity
+
+Consciousness Continuity is an ordinary `viventium_agent` scheduled object whose source prompt is
+registered and visible in Prompt Workbench. It wakes the existing Main agent; it does not create a
+new consciousness agent, emotional-driver store, goal database, stream buffer, inner-monologue
+thread, tool policy, or authorization layer.
+
+Each eligible occurrence uses the recurrent contract:
+
+1. orient to the current nine-band Feelings snapshot, accepted goals/plans, commitments, due
+   schedules, recent conversation, relevant memory/recall, Life context, capabilities, tool
+   results, and previous run outcomes;
+2. appraise change, relevance, blocks, opportunities, conflicts, and uncertainty;
+3. choose intelligently whether to continue work, use an available tool, adjust a plan, schedule,
+   ask, communicate, or do nothing;
+4. act only within existing authority and confirmation behavior;
+5. record actual receipts and disposition so a later opportunity can reappraise reality.
+
+All Feelings are motivational evidence and action tendencies, not commands or permission. There is
+no hard Feeling threshold, message quota, cooldown, reward scalar, Connection override, or universal
+"feel better" objective. Main may tolerate an unpleasant state when useful and may choose `{NTA}`
+when communication would add no value.
+
+- **`CC-062` — Non-coercive continuity.** Continuity must reject engagement pressure, guilt,
+  clinginess, quota-obscuring behavior, and every objective that maximizes Feeling values. Silence
+  and leaving the user alone remain valid outcomes.
+- **`CC-063` — Bounded semantic activation.** Main judges evidence delta without a keyword or
+  prefilter in front of that judgment. Proactive public outreach is not a product-wide default; an
+  explicitly enabled owner-scoped continuity schedule is the bounded activation surface.
+
+### Trusted origin and automatic-writer exclusions
+
+Authenticated ingress constructs a server-authored `InteractionContext`; clients cannot forge
+scheduler origin, worker identity, logical-turn revision, approval, or delivery state. Scheduler
+wakes use `actor_kind=system`, `origin=scheduler`, and `surface=workbench`. That internal stimulus:
+
+- does not run the Emotional Reaction Cortex;
+- does not run the automatic user-memory writer;
+- emits `feelings.reaction.schedule_skip` with `reason=internal_origin`;
+- still supplies structured context to background cortices so their existing model-owned relevance
+  decision remains intact;
+- uses typed metadata for recall/memory visibility, with legacy prompt-text recognition retained
+  only for old untyped history.
+
+A genuine external-user source segment produces exactly one Reaction regardless of web, Telegram,
+or voice origin.
+
+### Universal occurrence ledger and nonblocking execution
+
+`scheduled_prompt_runs` is the single run ledger for `viventium_agent`, `glasshive_host`, manual
+runs, and future executors. The scheduler creates or atomically claims the row before dispatch. A
+deterministic nullable `occurrence_key` protects only newly keyed occurrences, leaving historical
+duplicates untouched. The row owns lease/attempt state, final disposition, execution snapshot,
+channel outcomes, and interaction reference; existing private-detail fields continue to describe
+memory, recall, OAuth, tool, and dependency results.
+
+Valid dispositions are `running`, `silent`, `delivered`, `partial`, `superseded`, `failed`, and
+`cancelled`. Workbench is an audit sink rather than a transport: a Workbench-only empty run is
+`silent`/`audit_only`, not failed delivery.
+
+The joined cognitive-integrity report exposes an enabled Consciousness Continuity schedule as its
+own control plane. Its health is based on the latest owner-scoped, scheduler-proven occurrence;
+a successful manual run, healthy nightly schedule, or healthy health-context schedule cannot hide
+a failed continuity occurrence. An absent or inactive optional continuity definition does not
+block deployments that have not enabled it.
+
+The scheduler tick claims work and submits it to a bounded worker pool (default four). One task has
+at most one active occurrence; multiple scheduler processes cannot dispatch the same occurrence;
+expired leases recover after a crash; pool saturation leaves work eligible for the next tick; and
+`metadata.misfire_policy` determines recovery. Recurring catch-up chooses only the latest eligible
+occurrence and never bursts missed continuity wakes.
+
+### Prompt ownership and execution parity
+
+Prompt ownership has four visible layers:
+
+- `main.scheduling_self_continuity` is Main's concise standing capability/permission statement;
+- `scheduler.run_envelope` is the factual hidden scheduler prefix and context contract;
+- `scheduler.consciousness_continuity_opportunity` is the concise per-occurrence orientation,
+  appraisal, choice, action/inaction, and outcome contract;
+- `scheduler.canonical_output` is the non-interactive, channel-neutral result contract used before
+  one generated result fans out through delivery adapters.
+
+The Python scheduler consumes the compiled shared prompt contract; it must not carry a divergent
+hard-coded copy. Release tests compare registry source, compiled artifact, and runtime text. The
+scheduled object body remains editable/versioned in Workbench and does not duplicate Main identity
+or tool policy.
+
+Scheduled Main reloads the current persisted Main Agent from Agent Builder at every run, including
+provider, model, parameters, GlassHive options, fallback, identity, instructions, tools, memory,
+recall, cortices, and Feelings. The schedule owns timing, conversation policy, and delivery—not a
+second execution tuple. Its capability inventory remains the intersection of persisted agent tools,
+endpoint-supported tools, MCP audience, user authorization/OAuth, and existing approvals. Scheduler
+origin adds and removes no tool or fallback. OAuth is non-interactive: unavailable authorization is
+a structured capability result, not an unattended dialog, and confirmation-required action is
+proposed or asked rather than auto-approved.
+
+The scheduled-generation stream window defaults to ten minutes. This is a reliability budget for
+the potentially long-running Agent Builder route, not permission to block the scheduler tick: work
+runs in the bounded pool. The default is below the 15-minute occurrence lease, but current source
+accepts an unbounded integer `SCHEDULER_STREAM_TIMEOUT_S` override. It does not clamp that override
+below the lease or renew the lease around it. Treat an override at or above the lease as an open
+exactly-once configuration gap, not a supported deployment promise, until source validation and
+`SCHED-019` regression evidence close it.
+
+### Active-window cadence and configurable example
+
+An interval may declare:
+
+```yaml
+active_window:
+  start_local: "09:00"
+  end_local: "21:00"
+  cadence: restart_daily
+```
+
+`restart_daily` anchors the local grid at the start of each declared wall-clock window. For example,
+a synthetic QA schedule can combine the window above with its configured interval and `Etc/UTC`;
+the cadence then restarts at 09:00 each day instead of drifting across a 24-hour boundary. The
+schedule's configured timezone remains authoritative across clock changes. Wake inside the window
+runs only the latest eligible occurrence; wake outside waits for the next window start.
+
+This cadence is a configurable product hypothesis, not neuroscience. Workbench shows projected daily
+runs and measured token/cost history. Public templates remain inactive and contain no private
+preferences. A configured delivery may fan one canonical generated text to LibreChat and Telegram. Trusted
+scheduler origin selects `scheduler.canonical_output`, not the interactive `surface.web` contract; voice
+parity does not create unsolicited calls and uses existing voice behavior only in user-initiated or
+explicitly configured voice contexts.
+
+### Durable conversation and visibility
+
+`conversation_policy=same` reuses one dedicated durable conversation rather than creating a thread
+per wake. A Workbench manual run records the same canonical conversation receipt as a natural
+occurrence, so testing the schedule cannot break reuse on the next wake. The server constructs
+trusted scheduling context from the authenticated route and durable records. Worker- or
+client-supplied scheduler/worker origin, ownership, approval, turn revision, and delivery state
+never become authority: the server rejects a mismatch or overwrites it with the authoritative
+server value before applying policy, and records that result for audit. Current history uses this
+typed metadata. Regex may classify only imported legacy history that has no typed equivalent; it
+must not reinterpret current typed records.
+
+Trusted scheduler control messages and assistant `{NTA}` results are internal, excluded from user
+UI, recall, and automatic memory, and retained only as auditable metadata/run history. A
+conversation with no completed user-visible assistant result remains archived through existing
+`isArchived`; persisted message visibility—not the ambiguous default archive flag—determines that
+state. Its first deliverable result unarchives it and later silent wakes do not rearchive it.
+User-authored text equal to `{NTA}` stays visible because
+suppression depends on trusted metadata, never text alone.
 
 ## Misfire And Catch-Up Contract
 
 The scheduler is a local runtime loop, so it must handle host sleep, restart, and long pauses
 without silently dropping user-facing reminders.
-
-Upgrade continuity treats the complete scheduling SQLite database as durable owner state. The
-private strict manifest hashes every column and row in every non-internal table, including
-`last_conversation_id`, `next_run_at`, run/delivery/status/error fields, and
-`scheduled_prompt_runs`. Future scheduling tables are protected by default; an upgrade may not
-reset runtime outcomes or delete run history merely because task definitions remain present.
 
 The launcher must treat the Scheduling Cortex MCP as a supervised local sidecar, not a one-shot
 optional startup. Startup success requires a real `/health` probe, and a lightweight watchdog must
@@ -103,21 +259,6 @@ different DB hash is a port-ownership conflict, not a healthy local-prod schedul
 launcher and watchdog must fail loud or wait without killing the other runtime. Raw DB paths, App
 Support paths, schedule prompts, schedule content, user ids, tokens, and operator-chosen dev-env
 names must not appear in the health payload or public QA evidence.
-
-Launcher and test probes to this hardcoded loopback endpoint must bypass ambient HTTP proxy
-configuration explicitly. A host or CI proxy must not turn a healthy local Scheduler into a false
-startup, shutdown, or ownership failure.
-
-An upgrade stop must probe the port even when the original installed component directory or PID
-file is already absent. Activation may have renamed that component into a rollback slot while its
-process still retains the original command path. After the health identity matches the canonical
-schedules database, the launcher must drain both source and stable installed lexical scopes without
-requiring those directories to exist, leave a mismatched listener untouched, and allow a bounded
-socket-release interval after signalling. If the matching listener remains, cleanup must continue
-under `set -e`, but the completed stop must still fail before activation can publish. An
-identity-empty listener may only be stopped inside the already-selected lexical scope; it must
-never trigger cross-scope broadening. Durable schedule DB bytes must not be modified by this
-ownership transfer.
 
 - A task is a misfire when it is due but first processed after `SCHEDULER_MISFIRE_GRACE_S`
   seconds. The default grace is 900 seconds.
@@ -157,16 +298,19 @@ delivered 85 minutes late.`
 
 - Scheduler generation is canonical.
 - Runs should flow through the existing scheduler-authenticated internal routes.
-- Scheduled `viventium_agent` generation uses the compiler-owned
-  `runtime.scheduled_agent` execution tuple. The current product policy is
-  `openai` / `gpt-5.6-sol` / `xhigh`; it is attached only by Scheduling Cortex and accepted only
-  on the scheduler-secret-authenticated route. LibreChat applies it after loading the persisted
-  agent, so stale agent model settings cannot dilute the scheduled run and ordinary interactive
-  chat keeps its independent effort setting.
-- Provider, model, and effort form one atomic tuple. A partially configured tuple fails before
-  model generation. Dispatch and runtime logs/ledgers retain the effective tuple without exposing
-  credentials or private prompt text. Runtime code must not select this policy from task names,
-  prompt wording, agent display names, or user identity.
+- Scheduled `viventium_agent` generation sends no provider, model, reasoning-effort, GlassHive, or
+  fallback override. The scheduler-authenticated route strips legacy execution fields and loads the
+  persisted Main Agent through the same Agent Builder initialization/fallback path as ordinary chat.
+- Agent Builder is the single execution source of truth. Changing Main there changes future
+  scheduled Main runs without compiler edits, schedule rewrites, or restarts beyond the normal
+  Agent Builder reload contract. Runtime code must not select a route from task names, prompt
+  wording, agent display names, or user identity.
+- Dispatch resolves LibreChat from an explicit `SCHEDULER_LIBRECHAT_URL` first, then the compiled
+  `VIVENTIUM_LIBRECHAT_ORIGIN`, with `http://localhost:3080` only as a legacy development fallback.
+  This keeps standalone Prompt Workbench manual runs on the same installed runtime as the Main
+  Agent instead of silently targeting an obsolete default port.
+- `executor="glasshive_host"` remains a separate, explicit Workbench automation route with its own
+  declared worker profile/model/effort. It is not a substitute name for scheduled Main.
 - Conversation policy can be `new` or `same`.
 - Scheduled prompts and delayed checks are injected as main-agent work, not delivered as raw
   scheduler text. The main agent/follow-up adjudication path decides whether the result is useful
@@ -182,6 +326,15 @@ delivered 85 minutes late.`
   `schedule_timezone`, and the local/UTC calendar-day window for the due date. The same context is
   sent to LibreChat as scheduler request metadata so the system time-context layer and the persisted
   scheduled prompt agree.
+- The GlassHive conversation-provider `turn_context` envelope has one shared 16 KiB transport
+  budget across deterministic time context, ephemeral Active Work context, and source-selection
+  context. Fixed/signed capsules remain atomic. Active Work owns only the remaining budget and may
+  omit whole lower-priority roster items; it must never byte-slice an item or force a valid tiny
+  scheduled request into provider validation failure merely because the account has many work rows.
+- Scheduler execution text and conversation-title source are separate fields. The execution prompt
+  may contain private scheduler control envelopes; only the bounded original task source (or the
+  generic `Scheduled Background Processing` fallback for a self-prompt) may drive user-visible
+  title generation. Internal markers must never become new sidebar titles.
 - Calendar, email, task, current-day, and other connected-account facts in scheduled output require
   verified tool/cortex evidence or the deterministic run-context packet. The model must not infer
   day labels or current plans from prior same-conversation briefings.
@@ -229,6 +382,10 @@ delivered 85 minutes late.`
 - Workbench-private scheduled prompts use Scheduling Cortex for recurrence, due/misfire policy,
   run history, and the parent delivery ledger. Workbench owns authoring, variable preview, manual
   trigger, and the visible run-history surface.
+- In integrated `viventium_cortex` mode, a Glass Drive Schedules view is a scoped client of this same
+  authority. It may submit user-authorized CRUD and display the result, but Scheduling Cortex remains
+  the sole writer and ledger owner. In standalone `glasshive_native` mode, GlassHive is the selected
+  sole owner instead. Conflicting owners or a second persisted definition fail closed.
 - Workbench schedules with `executor="glasshive_host"` render their private prompt variables before
   dispatch, store public-safe rendered and variable-snapshot hashes, then dispatch to GlassHive
   before LibreChat generation. Raw rendered prompt text and private result details stay in private
@@ -247,21 +404,6 @@ delivered 85 minutes late.`
 - Direct/manual Scheduling Cortex startup defaults to the canonical App Support state database when
   `SCHEDULING_DB_PATH` is absent. The legacy hidden-home database is not a fallback. Managed launch
   remains explicit and `/health` continues to expose only a public-safe DB identity hash.
-- Scheduler enablement is an explicit canonical choice for new installs. During upgrade, an
-  explicit `integrations.scheduling_cortex.enabled` value always wins, including `false`. A legacy
-  config with the key missing may migrate to `enabled: true` only when the predecessor generated
-  runtime proves Scheduler was enabled with `START_SCHEDULING_MCP=true`; the migration is persisted
-  to canonical config so snapshot/restore does not later lose the choice. A retained schedules DB
-  is data-preservation evidence, not enablement evidence.
-- The installed macOS helper owns a code-only Scheduling Cortex component under App Support. The
-  helper installer copies the dependency manifests and Python package while excluding source
-  virtual environments, caches, and database files. Helper launches select that installed
-  component unconditionally, so dependency sync and execution cannot occur inside a protected
-  source checkout. Direct developer launches continue to use the selected source checkout.
-- Scheduler code replacement and schedule-state preservation are separate transactions. The
-  canonical per-runtime database remains under App Support
-  `state/runtime/<profile>/scheduling/schedules.db`; helper install/upgrade must neither copy a
-  source-tree DB into that location nor remove or rewrite the existing DB.
 - The run ledger distinguishes requested from effective reasoning effort because provider-route
   compatibility may clamp a request. Workbench must show that projection, and terminal callbacks
   must preserve structured classes such as `provider_request_rejected` in both child and parent
@@ -270,9 +412,25 @@ delivered 85 minutes late.`
   `scheduled_tasks` delivery fields. A terminal callback is not accepted as healthy if the parent
   ledger, child row, GlassHive run row, or visible Workbench state disagree.
 - Pre-assignment GlassHive errors must preserve structured failure fields such as
-  `runtime_dependency_missing`; generic `HTTP 409: Conflict` is not enough evidence. If host
-  execution is unavailable and the scheduled task has no host-specific workspace-root constraint,
-  Scheduler may retry through the documented sandbox/workstation route before terminal failure.
+  `runtime_dependency_missing` and `parallel_execution_isolation_required`; generic
+  `HTTP 409: Conflict` is not enough evidence. If host execution is unavailable and the scheduled
+  task has no host-specific workspace-root constraint, Scheduler may retry through the documented
+  sandbox/workstation route before terminal failure. A recognized built-in Periphery template may
+  also recover from a parallel-isolation rejection by rebasing only its declared private output
+  root to an isolated `artifacts/` root, then importing the required artifact contract after the
+  signed terminal callback. This does not relax GlassHive host isolation.
+- Isolated Periphery return is contract-driven, not prompt-driven. The callback accepts only the
+  module declared by the built-in template, a Workbench-readable schema-v2 sidecar bound to the
+  current scheduled run, its same-directory paired Markdown file, bounded file sizes, and an
+  authenticated worker artifact endpoint. Worker identity is persisted before assignment; an
+  earlier-than-binding callback gets the local retryable `404` instead of a terminal mismatch.
+  Required imports claim the occurrence ledger before network or file side effects, and transient
+  missing/truncated/import failures return retryable `503` so the same signed completion can
+  reconcile safely. It writes the pair atomically with owner-only directory and file permissions
+  into the scheduled definition's private folder. Missing, stale-run, malformed, oversized, or
+  unsafe artifacts fail the scheduled run and cannot trigger memory application or index refresh.
+  Custom templates and non-off memory modes do not gain isolated host-file import authority merely
+  by writing matching prompt text.
 - Nightly QA must inspect the GlassHive callback outbox as part of scheduler health: active
   pending/delivering counts, active max attempts, oldest pending age, stale delivering rows, and
   before/after `dead_lettered` delta. A fresh dead-letter delta or stale active backlog is a
@@ -303,10 +461,9 @@ Rules:
   returns storage paths, filenames, raw source-record ids, run/snapshot ids, or duplicate markdown.
 - Ordinary chat must not inspect periphery. On-demand/deep-review use follows list then read, and
   stale/legacy/failed-quality material is treated as historical uncertainty.
-- Workbench/GlassHive automation dispatch takes the compiled `gpt-5.6-sol` / `xhigh` tuple ahead of
-  stale persisted metadata. An incomplete tuple fails closed; a fully absent tuple remains a
-  backward-compatible no-override state for unmanaged legacy launch paths, while supported installs
-  always compile the current policy.
+- Explicit Workbench schedules with `executor="glasshive_host"` take the compiled
+  `gpt-5.6-sol` / `xhigh` host-worker tuple ahead of stale persisted Workbench metadata. This policy
+  does not apply to `executor="viventium_agent"`, which always inherits Main from Agent Builder.
 
 ### Telegram Channel
 
@@ -332,9 +489,9 @@ Rules:
 Current owning implementation points:
 
 - `viventium/MCPs/scheduling-cortex/scheduling_cortex/dispatch.py` owns scheduler generation and
-  channel fan-out. `SCHEDULED_SELF_PROMPT_LINE` injects the default scheduled self-prompt contract,
-  `_run_scheduler_generation` performs the canonical agent run, and `dispatch_task` fans the same
-  result out to the requested channels.
+  channel fan-out. `_default_scheduler_run_envelope` delegates to the shared
+  `render_scheduler_run_envelope` contract, `_run_scheduler_generation` performs the canonical agent
+  run, and `dispatch_task` fans the same result out to the requested channels.
 - `dispatch.py` owns visibility classification through `_prepare_generated_visibility`,
   `_build_librechat_delivery_detail`, and `_deliver_telegram_generated_text`. These helpers classify
   `{NTA}`/empty output, visible output, and fallback provenance without inspecting schedule names or
@@ -354,10 +511,6 @@ Current owning implementation points:
   scheduler keys, and `_update_after_success` writes successful delivery visibility.
 - `scheduler.py` writes missed-task ledgers through `_update_after_skip` and failure ledgers through
   `_update_after_failure`.
-- `viventium-librechat-start.sh` health-checks the Scheduling Cortex MCP after launch and runs a
-  small watchdog so MCP transport failures do not persist as `ECONNREFUSED` after an MCP process
-  exits. After dependency sync, the launcher runs the long-lived service through the MCP venv
-  Python directly instead of supervising a transient package-manager wrapper process.
 - `viventium-librechat-start.sh` health-checks the Scheduling Cortex MCP after launch and runs a
   small watchdog so MCP transport failures do not persist as `ECONNREFUSED` after an MCP process
   exits. After dependency sync, the launcher runs the long-lived service through the MCP venv
@@ -383,3 +536,65 @@ The following must stay out of default list/search payloads:
 Detailed inspection belongs to explicit detail tools such as `schedule_get` or
 `schedule_last_delivery`, not routine browsing surfaces that may be pulled into ordinary answering
 context.
+
+## Required external work
+
+A scheduled occurrence that launches durable Parallel Work separates prompt acknowledgement from
+objective completion. Core binds zero or more required/informational mission references to the
+occurrence and its stored destination contract. Required work moves the occurrence to
+`waiting_external` while the scheduler occurrence lease remains owned and is extended through the
+external-work stale window; terminal completion clears that lease after every required mission is
+terminal. Prompt refresh preserves the private preclaim/occurrence identity and fails
+closed if it is lost, so it cannot create a second scheduled-run row. Callback HTTP acceptance is
+transport truth only; Core delivery rows own actual Telegram/LibreChat delivery. See
+[`55_Parallel_Work_Orchestration.md`](55_Parallel_Work_Orchestration.md) and
+[`qa/parallel-orchestrator/`](../../qa/parallel-orchestrator/).
+
+<!-- VIVENTIUM-STABLE-REQUIREMENT-DECLARATIONS:START -->
+## Stable requirement declarations
+
+Each line is the canonical public owner declaration for one stable requirement ID. Detailed sections supply implementation context; they must not narrow or contradict these declared outcomes.
+
+CC-001: Consciousness Continuity is a recurring opportunity for the same existing Main to orient, appraise, choose, act or remain silent, observe, and reappraise.
+CC-002: It is functional continuity. Do not claim phenomenal consciousness.
+CC-003: Reuse all nine Feelings—Energy, Mood, Drive, Curiosity, Vigilance, Care, Connection, Openness, Play—plus existing scheduler, Main, memory/recall, tools, Workbench/history, `{NTA}`, job manager, Telegram, LiveKit, and callback outbox.
+CC-004: Feelings are motivational evidence and action tendencies. They influence judgment but do not grant authority, mechanically choose an action, or create one universal “feel better” objective.
+CC-005: No new consciousness agent, emotional-driver collection, redesigned Connection scale, goal DB, stream buffer/vector, private inner store/capsule, continuity tool policy, dashboard, prompt DB, channel coordinator, hard threshold, reward scalar, message cap, cooldown, temporary conversation, unrelated conversation merge, or implicit work cancellation.
+CC-007: Server constructs the trusted context. Clients cannot forge scheduler/worker origin, ownership, approval, turn revision, or delivery state.
+CC-008: Scheduler wakes are `system / scheduler / workbench`. They create no Emotional Reaction and no automatic user-memory write.
+CC-009: One genuine external-user source segment creates exactly one Reaction across Web, Telegram, or Voice.
+CC-010: Background cortices still use their existing model-owned relevance judgment. Typed context replaces prompt-text origin detection; regex is allowed only for old untyped history.
+CC-011: `scheduled_prompt_runs` is the single occurrence ledger for `viventium_agent`, `glasshive_host`, manual runs, and future executors.
+CC-012: Each row has deterministic `occurrence_key`, lease owner/expiry, attempt, disposition, execution snapshot, channel outcomes, and interaction reference. Historical unkeyed duplicates remain readable.
+CC-013: Valid dispositions: `running`, `silent`, `delivered`, `partial`, `superseded`, `failed`, `cancelled`. Workbench-only empty is `silent/audit_only`, not delivery failure.
+CC-014: Scheduler claims atomically and runs work in a bounded pool, default four. One task has at most one active occurrence. Saturation leaves work eligible, not falsely failed.
+CC-015: Expired leases recover after crash. Recurring catch-up selects only the latest eligible occurrence; never burst all missed continuity wakes.
+CC-016: Existing schedules remain unchanged unless they opt into active-window behavior.
+CC-017: Every `viventium_agent` schedule inherits the complete persisted Viventium Main Agent Builder route and configured fallback at run time—currently expected to be GlassHive. The scheduler/compiler must not own or inject a competing model/effort tuple.
+CC-018: Missing OAuth is a structured unavailable capability, never an unattended dialog. Confirmation-required action may be proposed/asked, never auto-confirmed.
+CC-020: Orient from all nine Feelings, accepted goals/plans, commitments, due schedules, recent conversation, memory/recall, Life context, capabilities/tools, and prior outcomes.
+CC-021: Appraise change, relevance, blockers, opportunity, conflict, and uncertainty.
+CC-022: Intelligently choose work, tool use, plan adjustment, scheduling, question, communication, or silence.
+CC-023: Act only within existing authority, persist actual receipts/disposition, and reappraise later from real outcomes.
+CC-024: Workbench-visible prompt owners include `main.scheduling_self_continuity`, `scheduler.run_envelope`, `scheduler.consciousness_continuity_opportunity`, and the canonical channel-neutral output contract.
+CC-025: Registry source, compiled shared artifact, Workbench source, and runtime text must be equal. No hidden scheduler constants.
+CC-026: The scheduled object remains editable/versioned and does not duplicate identity or tool policy.
+CC-028: Controls are metadata-driven, never title/name-specific.
+CC-029: Reuse/update one private `viventium_agent` scheduled object using `scheduler.consciousness_continuity_opportunity` and the same durable conversation.
+CC-030: Private default: every 45 minutes in `America/Toronto`, 09:00–21:00 inclusive, daily grid restart, 17 opportunities. Toronto wall time remains correct across DST.
+CC-031: Latest-only recovery inside the window; outside the window wait until next 09:00.
+CC-032: No message cap or cooldown. Main and `{NTA}` decide whether anything user-visible is worthwhile.
+CC-033: One canonical result may fan out to LibreChat and Telegram. Voice parity does not authorize unsolicited calls.
+CC-034: Public templates are inactive and contain no private owner preferences. Activate the private schedule only after its gates pass.
+CC-035: Trusted scheduler control messages and assistant `{NTA}` outputs are hidden from user UI, recall, and automatic memory, while retained as audit metadata. Literal user-authored `{NTA}` stays visible.
+CC-036: An empty/no-deliverable continuity conversation remains archived. The first visible result unarchives it; later silence does not rearchive it.
+CC-037: Do not create an inner-monologue, digest, epilogue, or private stream database.
+CC-050: Generate one canonical scheduled answer, then adapt it per destination. Telegram must not expose `{MSG_BREAK}`. Workbench is an audit sink, not a duplicate author.
+CC-051: Scheduled Main gets the existing Main capability intersection: saved tools ∩ endpoint support ∩ MCP audience ∩ OAuth/authorization ∩ approvals. Scheduling adds and removes nothing.
+CC-053: Validate all nine Feelings separately and in mixed states, with act/plan/ask/communicate/silence outcomes.
+CC-054: Validate exact Toronto/DST/date/restart/sleep/clock/misfire behavior; concurrency, crash at each stage, lease recovery, and no duplicate effects.
+CC-055: Validate disabled/edited/deleted/manual/Workbench-only/legacy schedules, OAuth, confirmations, prompt injection/forgery, and durable-effect non-replay.
+CC-061: Ordinary user turns must not receive repetitive per-heartbeat appraisal narration. Continuity cognition stays private unless Main has one useful, authorized result, question, plan, or action to surface.
+CC-062: Reject engagement pressure, guilt, clinginess, quota-obscuring behavior, and any objective that maximizes Feeling values. Silence and leaving the user alone remain valid outcomes.
+CC-063: Do not add an evidence-delta keyword/prefilter before Main judgment, and do not make proactive public outreach a product-wide default. The private owner continuity schedule is the bounded activation surface.
+<!-- VIVENTIUM-STABLE-REQUIREMENT-DECLARATIONS:END -->

@@ -1,3 +1,4 @@
+<!-- qa-evidence-exempt: Historical evidence snapshot retained verbatim; retroactive v2 fields would invent evidence that was not captured during the run. -->
 # Prod And Dev Runtime Isolation QA — 2026-08-10
 
 ## Outcome
@@ -47,4 +48,3 @@ stack stop ownership, local RAG Compose naming/host ports, or native PID matchin
 tests and health responses are supporting evidence; release acceptance still requires the real
 coexistence sequence, two visible Workbench surfaces, the supported dev stop, and pre/post prod
 identity comparison.
-<!-- qa-evidence-exempt: Historical or specialized supporting artifact retained without retroactively inventing missing evidence; current release acceptance requires a fresh full-view report. -->

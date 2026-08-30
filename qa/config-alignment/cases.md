@@ -8,9 +8,9 @@ Use stable `CFGALIGN-NNN` IDs for config alignment cases.
 
 | Case ID | Requirement | User Outcome | Surfaces | Automation | Last Run |
 | --- | --- | --- | --- | --- | --- |
-| `CFGALIGN-001` | Source YAML, generated runtime YAML, live sync review, and model picker inventory agree before release claims. | User-visible behavior matches source, docs, persisted state, and logs | source YAML, generated YAML, sync compare, model picker | `tests/release/test_config_compiler.py` plus user-grade QA when visible | NOT YET RUN (cataloged 2026-05-17; next feature run required) |
-| `CFGALIGN-002` | Public QA evidence is sanitized and reproducible | A PR reviewer can verify the behavior without private/local data | QA report, git diff, logs summary, generated artifacts | Public-safety scan plus relevant release tests | NOT YET RUN (cataloged 2026-05-17; next feature run required) |
-| `CFGALIGN-003` | Generated web-search config matches configured provider health and user-visible capability | Source YAML, generated YAML, local env, status output, Agent Builder | config compiler tests plus live config/status inspection | FAIL (escaped 2026-05-18; rerun pending) |
+| `CFGALIGN-001` | Source YAML, generated runtime YAML, live sync review, and model picker inventory agree before release claims. | User-visible behavior matches source, docs, persisted state, and logs | source YAML, generated YAML, sync compare, model picker | `tests/release/test_config_compiler.py` plus user-grade QA when visible | NOT RUN (cataloged 2026-05-17; next feature run required) |
+| `CFGALIGN-002` | Public QA evidence is sanitized and reproducible | A PR reviewer can verify the behavior without private/local data | QA report, git diff, logs summary, generated artifacts | Public-safety scan plus relevant release tests | NOT RUN (cataloged 2026-05-17; next feature run required) |
+| `CFGALIGN-003` | Generated web-search config matches configured provider health and user-visible capability | The capability shown to the user agrees with source, compiled config, and live provider health. | Source YAML, generated YAML, local env, status output, Agent Builder | config compiler tests plus live config/status inspection | FAIL (escaped 2026-05-18; rerun pending) |
 | `CFGALIGN-004` | GPT-5.6 model inventory and Agent Builder defaults match provider/API requirements. | The user can select, save, reload, and run a GPT-5.6 agent without hidden endpoint incompatibility. | Launcher env, model API, Agent Builder, chat, persisted agent state, backend logs | `tests/release/test_openai_model_inventory.py`, focused LibreChat package/client tests, and real-browser QA | PASS (2026-07-09; [report](reports/2026-07-09-gpt-5-6-agent-builder.md)) |
 
 ## `CFGALIGN-001` - Core User Flow
@@ -26,7 +26,7 @@ Use stable `CFGALIGN-NNN` IDs for config alignment cases.
 - Forbidden result: backend logs, mocks, source inspection, or model completions are treated as full acceptance when a user-visible surface exists.
 - Evidence to capture: sanitized visible result, supporting command/test result, generated/runtime state summary, and docs/case links.
 - Automation: `tests/release/test_config_compiler.py` plus any narrower feature tests discovered during implementation.
-- Last run: NOT YET RUN (cataloged 2026-05-17; not a substitute for the next real feature run).
+- Last run: NOT RUN (cataloged 2026-05-17; not a substitute for the next real feature run).
 
 ## `CFGALIGN-002` - Public-Safe Evidence Record
 
@@ -41,7 +41,7 @@ Use stable `CFGALIGN-NNN` IDs for config alignment cases.
 - Forbidden result: a report includes private transcripts, account identifiers, raw runtime dumps, local home paths, tokens, or secret-bearing command lines.
 - Evidence to capture: public-safety scan result and link to the sanitized report.
 - Automation: public-safety pattern scan plus relevant release tests.
-- Last run: NOT YET RUN (cataloged 2026-05-17; run on each new public report).
+- Last run: NOT RUN (cataloged 2026-05-17; run on each new public report).
 
 ## Natural User Use Case Checklist
 
@@ -50,8 +50,8 @@ rows before claiming a pass when the feature behavior changes.
 
 | Use Case ID | Natural user action | Requirement / case link | Real surface to use | Supporting evidence to compare | Expected visible result | Last run |
 | --- | --- | --- | --- | --- | --- | --- |
-| `CFGALIGN-UC-001` | On source YAML, generated YAML, sync compare, model picker, verify that source YAML, generated runtime YAML, live sync review, and model picker inventory agree before release claims. | owning requirement for `CFGALIGN-001` / `CFGALIGN-001` | source YAML, generated YAML, sync compare, model picker | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to CFGALIGN-001. | User-visible behavior matches source, docs, persisted state, and logs | NOT YET RUN (cataloged 2026-05-18; next feature run required) |
-| `CFGALIGN-UC-002` | On QA report, git diff, logs summary, generated artifacts, create or review the public QA evidence record with setup/auth/config, empty-state, degraded-dependency, and privacy checks. | owning requirement for `CFGALIGN-002` / `CFGALIGN-002` | QA report, git diff, logs summary, generated artifacts | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to CFGALIGN-002. | The user sees an honest setup, retry, or degraded-state result for CFGALIGN-002; no fake success is accepted. | NOT YET RUN (cataloged 2026-05-18; next feature run required) |
+| `CFGALIGN-UC-001` | On source YAML, generated YAML, sync compare, model picker, verify that source YAML, generated runtime YAML, live sync review, and model picker inventory agree before release claims. | owning requirement for `CFGALIGN-001` / `CFGALIGN-001` | source YAML, generated YAML, sync compare, model picker | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to CFGALIGN-001. | User-visible behavior matches source, docs, persisted state, and logs | NOT RUN (cataloged 2026-05-18; next feature run required) |
+| `CFGALIGN-UC-002` | On QA report, git diff, logs summary, generated artifacts, create or review the public QA evidence record with setup/auth/config, empty-state, degraded-dependency, and privacy checks. | owning requirement for `CFGALIGN-002` / `CFGALIGN-002` | QA report, git diff, logs summary, generated artifacts | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to CFGALIGN-002. | The user sees an honest setup, retry, or degraded-state result for CFGALIGN-002; no fake success is accepted. | NOT RUN (cataloged 2026-05-18; next feature run required) |
 | `CFGALIGN-UC-003` | Inspect generated web-search config after the UI shows Web Search enabled and providers are unavailable. | `docs/requirements_and_learnings/37_LibreChat_v083_Config_Alignment.md` / `CFGALIGN-003` | Source YAML, generated runtime YAML/env, status output, Agent Builder browser UI | Config compiler output, generated `webSearch` block, local provider URLs, status health, logs, persisted search tool-call state | Generated config explains why search is enabled, degraded, or disabled; visible capability and runtime readiness do not drift silently. | FAIL (escaped 2026-05-18; rerun pending) |
 | `CFGALIGN-UC-004` | Build a synthetic agent with an auth-surface-compatible OpenAI GPT-5.6 model, save it, refresh Agent Builder, and send a deterministic prompt. | `docs/requirements_and_learnings/37_LibreChat_v083_Config_Alignment.md` / `CFGALIGN-004` | Local Viventium QA account in Agent Builder and web chat | Generated `OPENAI_MODELS`, `/api/models`, saved agent model/parameter state, response model/log class, visible answer | Direct API inventory exposes all four official IDs; the connected-account inventory exposes the verified Sol/Terra subset; the saved QA agent keeps `gpt-5.6-sol` and Responses enabled after refresh; the response completes without model/endpoint/tool compatibility errors. | PASS (2026-07-09; [report](reports/2026-07-09-gpt-5-6-agent-builder.md)) |
 

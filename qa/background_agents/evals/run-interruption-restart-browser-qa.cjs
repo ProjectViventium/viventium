@@ -85,6 +85,7 @@ function parseArgs(argv) {
     clientBase: process.env.VIVENTIUM_QA_CLIENT_BASE || "http://localhost:3190",
     apiBase: process.env.VIVENTIUM_QA_API_BASE || "http://localhost:3180",
     qaEmail: process.env.VIVENTIUM_QA_EMAIL || "qa@example.com",
+    mainAgentId: String(process.env.VIVENTIUM_QA_MAIN_AGENT_ID || "").trim(),
     expectedCortexName:
       process.env.VIVENTIUM_QA_INTERRUPTION_CORTEX_NAME || EXPECTED_CORTEX_NAME,
     prompt:
@@ -120,6 +121,9 @@ function parseArgs(argv) {
       i += 1;
     } else if (arg === "--qa-email") {
       args.qaEmail = next;
+      i += 1;
+    } else if (arg === "--main-agent-id") {
+      args.mainAgentId = String(next || "").trim();
       i += 1;
     } else if (arg === "--expected-cortex-name") {
       args.expectedCortexName = next;
@@ -712,6 +716,9 @@ function renderReport(result) {
 
 async function run() {
   const args = parseArgs(process.argv.slice(2));
+  if (!args.mainAgentId) {
+    throw new Error("VIVENTIUM_QA_MAIN_AGENT_ID is required");
+  }
   const env = localEnv();
   const result = {
     startedAt: args.startedAt,
@@ -762,10 +769,13 @@ async function run() {
     const initial = await createAuthenticatedPage({ browser, args, qaAuth });
     initialContext = initial.context;
     const page = initial.page;
-    await page.goto(`${args.clientBase}/c/new`, {
+    await page.goto(
+      `${args.clientBase}/c/new?agent_id=${encodeURIComponent(args.mainAgentId)}`,
+      {
       waitUntil: "domcontentloaded",
       timeout: 60000,
-    });
+      },
+    );
     await installAccessToken(page, qaAuth.accessToken);
     await submitPrompt(page, args.prompt, args.activationTimeoutMs);
 

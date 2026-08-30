@@ -1,3 +1,4 @@
+<!-- qa-evidence-exempt: Historical evidence snapshot retained verbatim; retroactive v2 fields would invent evidence that was not captured during the run. -->
 # Telegram Canonical Follow-Up Window — 2026-08-10
 
 ## Scope
@@ -38,4 +39,3 @@ ordinary Telegram listener well beyond the configured product window.
 
 `PARTIAL`: source and automated acceptance pass. A real bot delivery was outside this run's explicit
 non-live boundary, so this report does not claim live Telegram acceptance.
-<!-- qa-evidence-exempt: Historical or specialized supporting artifact retained without retroactively inventing missing evidence; current release acceptance requires a fresh full-view report. -->

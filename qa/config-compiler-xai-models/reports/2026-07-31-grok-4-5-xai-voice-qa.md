@@ -1,3 +1,4 @@
+<!-- qa-evidence-exempt: Historical evidence snapshot retained verbatim; retroactive v2 fields would invent evidence that was not captured during the run. -->
 # Grok 4.5 and xAI Voice QA — 2026-07-31
 
 ## Outcome
@@ -44,4 +45,3 @@ non-cancelled xAI TTS, and zero forbidden visible or persisted artifacts.
 
 This report contains no credential, team/account identifier, raw call or conversation identifier,
 private transcript, local absolute path, hostname, or personal email address.
-<!-- qa-evidence-exempt: Historical or specialized supporting artifact retained without retroactively inventing missing evidence; current release acceptance requires a fresh full-view report. -->

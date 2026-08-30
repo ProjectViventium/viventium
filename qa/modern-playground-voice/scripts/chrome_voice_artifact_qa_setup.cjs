@@ -23,10 +23,19 @@ const {
 } = require('./voice_artifact_contract.cjs');
 
 const REPO_ROOT = path.resolve(__dirname, '../../..');
-const OUTPUT_DIR = path.join(REPO_ROOT, 'output', 'chrome', 'modern-playground-voice');
+
+function assertPrivateOutputRoot(outputRoot) {
+  const resolved = path.resolve(String(outputRoot || ''));
+  if (!outputRoot || resolved === REPO_ROOT || resolved.startsWith(`${REPO_ROOT}${path.sep}`)) {
+    throw new Error('VIVENTIUM_QA_OUTPUT_ROOT must be outside the public repository');
+  }
+  return resolved;
+}
+
+const OUTPUT_DIR = assertPrivateOutputRoot(process.env.VIVENTIUM_QA_OUTPUT_ROOT);
 
 function outputPath(name) {
-  fs.mkdirSync(OUTPUT_DIR, { recursive: true });
+  fs.mkdirSync(OUTPUT_DIR, { recursive: true, mode: 0o700 });
   return path.join(OUTPUT_DIR, `${name}-${Date.now()}.json`);
 }
 
@@ -84,7 +93,7 @@ async function create() {
       qaUserHash: shortHash(auth.user.email),
     };
     const filePath = outputPath('chrome-voice-artifact-setup');
-    fs.writeFileSync(filePath, JSON.stringify(setup, null, 2) + '\n');
+    fs.writeFileSync(filePath, JSON.stringify(setup, null, 2) + '\n', { mode: 0o600 });
     return {
       ok: true,
       mode: 'create',
@@ -174,7 +183,7 @@ async function inspect(setupPath, { cleanup = false } = {}) {
       cleanup: cleanupResult,
     };
     const filePath = outputPath('chrome-voice-artifact-inspect');
-    fs.writeFileSync(filePath, JSON.stringify(result, null, 2) + '\n');
+    fs.writeFileSync(filePath, JSON.stringify(result, null, 2) + '\n', { mode: 0o600 });
     result.outputPath = redactPath(filePath);
     return result;
   } finally {

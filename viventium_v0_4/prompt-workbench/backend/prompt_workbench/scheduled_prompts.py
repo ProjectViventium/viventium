@@ -8,6 +8,7 @@ import re
 import stat
 import subprocess
 import threading
+import urllib.parse
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -24,11 +25,27 @@ from .periphery_contract import (
     PERIPHERY_REQUIRED_FIELDS,
 )
 from .paths import AGENTS_SOURCE_PATH, LIBRECHAT_ROOT, LIBRECHAT_SOURCE_PATH, PROMPTS_ROOT, REPO_ROOT
+from .redaction import redact_credential_assignments
+from .runtime_env import load_viventium_runtime_env
 
 from scripts.viventium.prompt_registry import load_and_resolve_prompt_refs
-from scheduling_cortex.dispatch import dispatch_task
-from scheduling_cortex.scheduler import compute_next_run, dispatch_run_ledger_updates
-from scheduling_cortex.storage import ScheduleStorage, StorageConfig
+from scheduling_cortex.dispatch import (
+    _get_json,
+    _glasshive_base_url,
+    _glasshive_headers,
+    dispatch_task,
+)
+from scheduling_cortex.scheduler import (
+    DEFAULT_OCCURRENCE_LEASE_SECONDS,
+    compute_next_run,
+    dispatch_run_ledger_updates,
+)
+from scheduling_cortex.storage import (
+    ScheduleStorage,
+    StorageConfig,
+    default_scheduling_db_path,
+    scheduled_prompt_stale_seconds,
+)
 from scheduling_cortex.utils import to_utc_iso
 
 
@@ -41,12 +58,15 @@ HEALTH_CONTEXT_TEMPLATE_ID = "workbench_daily_health_context_v1"
 BUILTIN_TEMPLATE_IDS = {NIGHTLY_TEMPLATE_ID, HEALTH_CONTEXT_TEMPLATE_ID}
 BUILTIN_TEMPLATE_REVISIONS = {
     NIGHTLY_TEMPLATE_ID: 1,
-    HEALTH_CONTEXT_TEMPLATE_ID: 3,
+    HEALTH_CONTEXT_TEMPLATE_ID: 4,
 }
 NIGHTLY_MISFIRE_POLICY = {"mode": "catch_up", "max_late_s": 12 * 60 * 60}
 MEMORY_WRITE_MODES = {"off", "propose", "apply_governed"}
 EXECUTORS = {"glasshive_host", "viventium_agent"}
+MAIN_AGENT_EXECUTION_PROFILE = "Viventium Main (Agent Builder)"
+MAIN_AGENT_EXECUTION_MODE = "inherits Agent Builder route and fallback at run time"
 GLASSHIVE_WORKER_STRATEGIES = {"same_worker", "new_worker_each_run"}
+GLASSHIVE_WORKER_PROFILES = {"codex-cli", "claude-code", "openclaw-general"}
 USER_SCHEDULE_PREFIX = "user_schedule:"
 PERIPHERY_ARTIFACT_LIMIT = 100
 PERIPHERY_PRIVACY_FAILURES = {
@@ -86,13 +106,7 @@ def _scheduling_db_path() -> str:
     explicit = str(os.getenv("SCHEDULING_DB_PATH") or "").strip()
     if explicit:
         return explicit
-    app_support = str(os.getenv("VIVENTIUM_APP_SUPPORT_DIR") or "").strip()
-    app_support_dir = (
-        Path(app_support).expanduser()
-        if app_support
-        else Path.home() / "Library" / "Application Support" / "Viventium"
-    )
-    return str(app_support_dir / "state" / "runtime" / "isolated" / "scheduling" / "schedules.db")
+    return default_scheduling_db_path()
 
 
 def storage(*, read_only: bool = False) -> ScheduleStorage:
@@ -250,6 +264,18 @@ def _default_glasshive_worker_profile() -> str:
     return (os.getenv("GLASSHIVE_DEFAULT_WORKER_PROFILE") or "codex-cli").strip() or "codex-cli"
 
 
+def _default_glasshive_fallback_worker_profile(primary_profile: str) -> str:
+    fallback_profile = str(
+        os.getenv("GLASSHIVE_DEFAULT_FALLBACK_WORKER_PROFILE") or ""
+    ).strip()
+    if (
+        fallback_profile not in GLASSHIVE_WORKER_PROFILES
+        or fallback_profile == str(primary_profile or "").strip()
+    ):
+        return ""
+    return fallback_profile
+
+
 def _default_automation_model(profile: str | None = None) -> str:
     resolved_profile = str(profile or _default_glasshive_worker_profile()).strip()
     if resolved_profile == "codex-cli":
@@ -263,9 +289,39 @@ def _default_automation_model(profile: str | None = None) -> str:
     return ""
 
 
-def _default_automation_reasoning_effort() -> str:
+def _default_automation_reasoning_effort(profile: str = "codex-cli") -> str:
+    if str(profile or "").strip() == "claude-code":
+        effort = (os.getenv("WPR_CLAUDE_CODE_EFFORT") or "").strip().lower()
+        return effort if effort in {"default", "max"} else ""
     effort = (os.getenv("WPR_CODEX_CLI_REASONING_EFFORT") or "").strip().lower()
     return effort if effort in {"none", "minimal", "low", "medium", "high", "xhigh"} else ""
+
+
+def _default_glasshive_fallback_worker_route(primary_profile: str) -> dict[str, str]:
+    fallback_profile = _default_glasshive_fallback_worker_profile(primary_profile)
+    if not fallback_profile:
+        return {}
+    fallback_model = _default_automation_model(fallback_profile)
+    fallback_effort = _default_automation_reasoning_effort(fallback_profile)
+    if not fallback_model or not fallback_effort:
+        raise RuntimeError(
+            "Prompt Workbench fallback automation requires a configured fallback model and effort"
+        )
+    return {
+        "fallback_worker_profile": fallback_profile,
+        "fallback_worker_model": fallback_model,
+        "fallback_reasoning_effort": fallback_effort,
+    }
+
+
+def _default_scheduled_glasshive_execution_mode(memory_write_mode: str) -> str:
+    """Choose the configured safe mission lane, without weakening governed host writes."""
+    isolated_parallel = (os.getenv("VIVENTIUM_GLASSHIVE_ISOLATED_PARALLEL_POLICY") or "").strip().lower()
+    if isolated_parallel in {"1", "true", "yes", "on"} and memory_write_mode == "off":
+        mode = (os.getenv("VIVENTIUM_PARALLEL_WORK_EXECUTION_MODE") or "docker").strip().lower()
+    else:
+        mode = (os.getenv("WPR_DEFAULT_EXECUTION_MODE") or "host").strip().lower()
+    return mode if mode in {"host", "docker"} else "docker"
 
 
 def _valid_timezone_name(value: str) -> bool:
@@ -415,6 +471,7 @@ def health_context_prompt_template() -> dict[str, Any]:
         "memoryWriteMode": "off",
     }
 
+
 def _format_value(value: Any, kind: str) -> str:
     if kind == "json" or isinstance(value, (dict, list)):
         return json.dumps(value, indent=2, sort_keys=True)
@@ -535,7 +592,42 @@ def _task_metadata(definition: dict[str, Any], version: dict[str, Any], render_p
     execution = metadata.get("execution") if isinstance(metadata.get("execution"), dict) else {}
     executor = str(execution.get("executor") or "glasshive_host")
     worker_strategy = str(execution.get("glasshive_worker_strategy") or "same_worker")
-    execution_profile = str(execution.get("execution_profile") or _default_glasshive_worker_profile())
+    execution_profile = str(
+        execution.get("execution_profile")
+        or (
+            _default_glasshive_worker_profile()
+            if executor == "glasshive_host"
+            else MAIN_AGENT_EXECUTION_PROFILE
+        )
+    )
+    execution_mode = str(
+        execution.get("execution_mode")
+        or (
+            _default_scheduled_glasshive_execution_mode(
+                str(definition.get("memory_write_mode") or "off")
+            )
+            if executor == "glasshive_host"
+            else MAIN_AGENT_EXECUTION_MODE
+        )
+    )
+    execution_model = (
+        str(execution.get("execution_model") or _default_automation_model(execution_profile))
+        if executor == "glasshive_host"
+        else None
+    )
+    reasoning_effort = (
+        str(
+            execution.get("reasoning_effort")
+            or _default_automation_reasoning_effort(execution_profile)
+        )
+        if executor == "glasshive_host"
+        else None
+    )
+    fallback_worker_route = (
+        _default_glasshive_fallback_worker_route(execution_profile)
+        if executor == "glasshive_host"
+        else {}
+    )
     workbench_metadata = {
         "definition_id": definition["id"],
         "version_id": version["id"],
@@ -547,17 +639,20 @@ def _task_metadata(definition: dict[str, Any], version: dict[str, Any], render_p
         "variable_snapshot_pointer": f"private://scheduled-prompt-variable-snapshot/{render_payload['variableSnapshotHash']}",
         "memory_write_mode": definition.get("memory_write_mode") or "off",
         "workspace_alias": definition.get("workspace_alias") or _workspace_alias(definition["id"]),
-        "workspace_root": _workspace_root(),
-        "my_folder": definition.get("my_folder") or _glasshive_my_folder(definition["user_id"]),
+        "workspace_root": _workspace_root() if execution_mode == "host" else "",
+        "my_folder": (
+            definition.get("my_folder") or _glasshive_my_folder(definition["user_id"])
+            if execution_mode == "host" or definition.get("template_id") in BUILTIN_TEMPLATE_IDS
+            else ""
+        ),
         "executor": executor,
         "glasshive_worker_strategy": worker_strategy,
         "execution_profile": execution_profile,
-        "execution_mode": str(execution.get("execution_mode") or "host"),
-        "execution_model": str(execution.get("execution_model") or _default_automation_model(execution_profile)),
-        "reasoning_effort": str(
-            execution.get("reasoning_effort") or _default_automation_reasoning_effort()
-        ),
+        "execution_mode": execution_mode,
+        "execution_model": execution_model,
+        "reasoning_effort": reasoning_effort,
     }
+    workbench_metadata.update(fallback_worker_route)
     if definition.get("template_id") in BUILTIN_TEMPLATE_IDS:
         workbench_metadata["ignore_user_config"] = True
         metadata["misfire_policy"] = dict(NIGHTLY_MISFIRE_POLICY)
@@ -596,9 +691,30 @@ def _ensure_builtin_nightly_task_policy(row: dict[str, Any]) -> dict[str, Any]:
             execution.get("execution_profile") or _default_glasshive_worker_profile()
         )
         execution["execution_profile"] = execution_profile
-        execution["execution_mode"] = str(execution.get("execution_mode") or "host")
+        fallback_worker_route = _default_glasshive_fallback_worker_route(
+            execution_profile
+        )
+        for field in (
+            "fallback_worker_profile",
+            "fallback_worker_model",
+            "fallback_reasoning_effort",
+        ):
+            if field in fallback_worker_route:
+                execution[field] = fallback_worker_route[field]
+            else:
+                execution.pop(field, None)
+        # === VIVENTIUM START ===
+        # Managed built-ins follow the current isolation policy. Recompute this value so an
+        # existing memory-off definition cannot retain an obsolete host lane after an upgrade.
+        execution["execution_mode"] = _default_scheduled_glasshive_execution_mode(
+            str(row.get("memory_write_mode") or "off")
+        )
+        execution["workspace_root"] = (
+            _workspace_root() if execution["execution_mode"] == "host" else ""
+        )
+        # === VIVENTIUM END ===
         configured_model = _default_automation_model(execution_profile)
-        configured_effort = _default_automation_reasoning_effort()
+        configured_effort = _default_automation_reasoning_effort(execution_profile)
         execution_model = str(configured_model or execution.get("execution_model") or "").strip()
         reasoning_effort = (
             str(configured_effort or execution.get("reasoning_effort") or "").strip().lower()
@@ -675,8 +791,19 @@ def _ensure_builtin_nightly_task_policy(row: dict[str, Any]) -> dict[str, Any]:
                 "execution_model": execution["execution_model"],
                 "reasoning_effort": execution["reasoning_effort"],
                 "ignore_user_config": execution["ignore_user_config"],
+                "workspace_root": execution["workspace_root"],
+                "my_folder": str(row.get("my_folder") or ""),
             }
         )
+        for field in (
+            "fallback_worker_profile",
+            "fallback_worker_model",
+            "fallback_reasoning_effort",
+        ):
+            if field in fallback_worker_route:
+                workbench_metadata[field] = fallback_worker_route[field]
+            else:
+                workbench_metadata.pop(field, None)
     patched_task_metadata["workbench_scheduled_prompt"] = workbench_metadata
     patched_task_metadata["misfire_policy"] = dict(NIGHTLY_MISFIRE_POLICY)
     task_updates: dict[str, Any] = {}
@@ -749,6 +876,7 @@ def _task_run_summary(task: dict[str, Any]) -> str:
 
 def _safe_summary(value: str, *, limit: int = 220) -> str:
     text = re.sub(r"\s+", " ", value or "").strip()
+    text = redact_credential_assignments(text)
     text = re.sub(r"mongodb(?:\+srv)?:\/\/[^\s`'\"<>]+", "<mongo-uri>", text, flags=re.I)
     text = re.sub(r"\bBearer\s+[A-Za-z0-9._~+/=-]{12,}", "Bearer <redacted>", text, flags=re.I)
     text = re.sub(r"https?:\/\/[^\s`'\"<>)]*", "<url>", text, flags=re.I)
@@ -861,8 +989,8 @@ def _public_task_schedule(
         "myFolder": None,
         "workspaceRoot": None,
         "workspaceAlias": None,
-        "executionProfile": None,
-        "executionMode": None,
+        "executionProfile": MAIN_AGENT_EXECUTION_PROFILE,
+        "executionMode": MAIN_AGENT_EXECUTION_MODE,
         "glasshiveWorkerStrategy": None,
         "nextRunAt": task.get("next_run_at"),
         "lastStatus": task.get("last_status"),
@@ -877,10 +1005,175 @@ def _public_task_schedule(
     }
 
 
+def _glasshive_run_snapshot(run: dict[str, Any]) -> dict[str, Any] | None:
+    """Read the exact authenticated worker run without exposing its private payload."""
+    run_id = str(run.get("glasshive_run_id") or "").strip()
+    if not run_id:
+        return None
+    headers = _glasshive_headers()
+    if "Authorization" not in headers:
+        load_viventium_runtime_env()
+        headers = _glasshive_headers()
+    try:
+        snapshot = _get_json(
+            f"{_glasshive_base_url()}/v1/runs/{urllib.parse.quote(run_id, safe='')}",
+            headers,
+            2,
+        )
+    except Exception:
+        return None
+    return snapshot if isinstance(snapshot, dict) else None
+
+
+def _stalled_glasshive_run(run: dict[str, Any]) -> bool:
+    if not _is_inflight_run(run):
+        return False
+    if str(run.get("executor") or "").strip() != "glasshive_host":
+        return False
+    if not all(
+        str(run.get(field) or "").strip()
+        for field in ("glasshive_run_id", "glasshive_worker_id", "glasshive_project_id")
+    ):
+        return False
+    last_progress = str(
+        run.get("updated_at") or run.get("started_at") or run.get("created_at") or ""
+    ).strip()
+    try:
+        observed_at = datetime.fromisoformat(last_progress.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if observed_at.tzinfo is None:
+        observed_at = observed_at.replace(tzinfo=timezone.utc)
+    bounded_recovery_seconds = max(
+        1,
+        min(int(DEFAULT_OCCURRENCE_LEASE_SECONDS), scheduled_prompt_stale_seconds()),
+    )
+    return (
+        datetime.now(timezone.utc) - observed_at.astimezone(timezone.utc)
+    ).total_seconds() >= bounded_recovery_seconds
+
+
+def _reconcile_stalled_glasshive_run(
+    store: ScheduleStorage,
+    run: dict[str, Any],
+    task: dict[str, Any],
+    *,
+    read_only: bool,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Join a stale ledger with its owner-bound runtime without inventing callbacks."""
+    if not _stalled_glasshive_run(run):
+        return run, task
+    if (
+        str(run.get("user_id") or "") != str(task.get("user_id") or "")
+        or str(run.get("task_id") or "") != str(task.get("id") or "")
+    ):
+        return run, task
+    snapshot = _glasshive_run_snapshot(run)
+    if not snapshot:
+        return run, task
+    if any(
+        str(snapshot.get(snapshot_field) or "") != str(run.get(run_field) or "")
+        for snapshot_field, run_field in (
+            ("run_id", "glasshive_run_id"),
+            ("worker_id", "glasshive_worker_id"),
+            ("project_id", "glasshive_project_id"),
+        )
+    ):
+        return run, task
+    terminal_state = str(snapshot.get("state") or "").strip().lower()
+    if terminal_state not in {"completed", "failed", "cancelled", "interrupted"}:
+        return run, task
+    completed_at = str(snapshot.get("ended_at") or "").strip()
+    if not completed_at:
+        return run, task
+
+    if terminal_state == "completed":
+        error_class = "stale_run_reconciled"
+        result_summary = (
+            "GlassHive completed, but its verified terminal callback was not received."
+        )
+    else:
+        error_class = _safe_summary(
+            str(snapshot.get("failure_class") or f"glasshive_run_{terminal_state}"),
+            limit=96,
+        )
+        result_summary = "GlassHive worker failed before its terminal callback was received."
+    now_iso = _utc_now()
+    execution_snapshot = (
+        dict(run.get("execution_snapshot"))
+        if isinstance(run.get("execution_snapshot"), dict)
+        else {}
+    )
+    execution_snapshot["terminal_reconciliation"] = {
+        "source": "authenticated_glasshive_run",
+        "state": terminal_state,
+        "failure_class": error_class,
+        "observed_at": now_iso,
+    }
+    run_updates = {
+        "status": "failed",
+        "disposition": "failed",
+        "completed_at": completed_at,
+        "result_summary": result_summary,
+        "error_class": error_class,
+        "execution_snapshot": execution_snapshot,
+        "updated_at": now_iso,
+    }
+    task_updates = {
+        "last_status": "error",
+        "last_error": result_summary,
+        "last_delivery_outcome": "failed",
+        "last_delivery_reason": error_class,
+        "last_delivery_at": completed_at,
+        "last_generated_text": None,
+        "last_delivery": {
+            "outcome": "failed",
+            "reason": error_class,
+            "generated_text": None,
+            "scheduled_prompt_run_id": run.get("run_id"),
+            "glasshive_run_id": run.get("glasshive_run_id"),
+        },
+        "updated_at": now_iso,
+    }
+    if read_only:
+        owns_parent_occurrence = (
+            str(task.get("last_status") or "").strip() == "running"
+            and str(task.get("last_run_at") or "") == str(run.get("started_at") or "")
+        )
+        return (
+            {**run, **run_updates, "lease_owner": None, "lease_until": None},
+            {**task, **task_updates} if owns_parent_occurrence else task,
+        )
+
+    claimed = store.update_scheduled_prompt_run_if_current(
+        str(run.get("run_id") or ""),
+        run_updates,
+        expected_status=str(run.get("status") or ""),
+        expected_error_class=run.get("error_class"),
+    )
+    persisted = claimed.get("run") if isinstance(claimed.get("run"), dict) else run
+    if not claimed.get("updated"):
+        current_task = store.get_task(str(task.get("user_id") or ""), str(task.get("id") or ""))
+        return persisted, current_task or task
+
+    current_task = store.get_task(str(task.get("user_id") or ""), str(task.get("id") or "")) or task
+    same_occurrence = (
+        str(current_task.get("last_run_at") or "") == str(run.get("started_at") or "")
+    )
+    if str(current_task.get("last_status") or "").strip() == "running" and same_occurrence:
+        current_task = store.update_task(
+            str(task.get("user_id") or ""),
+            str(task.get("id") or ""),
+            task_updates,
+        ) or current_task
+    return persisted, current_task
+
+
 def _public_definition(
     definition: dict[str, Any],
     *,
     store: ScheduleStorage | None = None,
+    read_only: bool = False,
 ) -> dict[str, Any]:
     selected_store = store or storage()
     task = selected_store.get_task(definition["user_id"], definition["task_id"]) if definition.get("task_id") else None
@@ -898,6 +1191,26 @@ def _public_definition(
         trigger_source="workbench_manual",
         limit=1,
     )
+    if task:
+        for selected_runs in (latest_scheduled_rows, latest_manual_rows):
+            if not selected_runs:
+                continue
+            previous = selected_runs[0]
+            reconciled, task = _reconcile_stalled_glasshive_run(
+                selected_store,
+                previous,
+                task,
+                read_only=read_only,
+            )
+            if reconciled is previous:
+                continue
+            selected_runs[0] = reconciled
+            runs = [
+                reconciled
+                if str(item.get("run_id") or "") == str(reconciled.get("run_id") or "")
+                else item
+                for item in runs
+            ]
     task_metadata = (task or {}).get("metadata") if isinstance((task or {}).get("metadata"), dict) else {}
     workbench_metadata = task_metadata.get("workbench_scheduled_prompt") if isinstance(task_metadata.get("workbench_scheduled_prompt"), dict) else {}
     prompt_context = task_metadata.get("prompt_context") if isinstance(task_metadata.get("prompt_context"), dict) else {}
@@ -907,14 +1220,73 @@ def _public_definition(
     execution_profile = (
         workbench_metadata.get("execution_profile")
         or execution.get("execution_profile")
-        or (_default_glasshive_worker_profile() if executor == "glasshive_host" else "main Viventium")
+        or (_default_glasshive_worker_profile() if executor == "glasshive_host" else MAIN_AGENT_EXECUTION_PROFILE)
     )
+    fallback_worker_profile = (
+        str(
+            workbench_metadata.get("fallback_worker_profile")
+            or execution.get("fallback_worker_profile")
+            or _default_glasshive_fallback_worker_profile(str(execution_profile))
+        ).strip()
+        if executor == "glasshive_host"
+        else ""
+    )
+    if (
+        fallback_worker_profile not in GLASSHIVE_WORKER_PROFILES
+        or fallback_worker_profile == str(execution_profile).strip()
+    ):
+        fallback_worker_profile = ""
+    fallback_worker_model = (
+        str(
+            workbench_metadata.get("fallback_worker_model")
+            or execution.get("fallback_worker_model")
+            or _default_automation_model(fallback_worker_profile)
+        ).strip()
+        if fallback_worker_profile
+        else ""
+    )
+    fallback_reasoning_effort = (
+        str(
+            workbench_metadata.get("fallback_reasoning_effort")
+            or execution.get("fallback_reasoning_effort")
+            or _default_automation_reasoning_effort(fallback_worker_profile)
+        ).strip()
+        if fallback_worker_profile
+        else ""
+    )
+    if fallback_worker_profile and (
+        not fallback_worker_model or not fallback_reasoning_effort
+    ):
+        fallback_worker_profile = ""
+        fallback_worker_model = ""
+        fallback_reasoning_effort = ""
     execution_model = workbench_metadata.get("execution_model") or execution.get("execution_model")
     reasoning_effort = workbench_metadata.get("reasoning_effort") or execution.get("reasoning_effort")
+    execution_mode = (
+        workbench_metadata.get("execution_mode")
+        or execution.get("execution_mode")
+        or ("host" if executor == "glasshive_host" else MAIN_AGENT_EXECUTION_MODE)
+    )
+    effective_workspace_root = (
+        workbench_metadata.get("workspace_root")
+        if "workspace_root" in workbench_metadata
+        else execution.get("workspace_root", _workspace_root())
+    )
+    effective_my_folder = (
+        workbench_metadata.get("my_folder")
+        if "my_folder" in workbench_metadata
+        else definition.get("my_folder")
+    )
     if executor == "glasshive_host":
         execution_model = execution_model or _default_automation_model(str(execution_profile))
         if str(execution_profile) == "codex-cli":
             reasoning_effort = reasoning_effort or _default_automation_reasoning_effort()
+    else:
+        # Main's current route lives only in Agent Builder. Old per-schedule provenance remains in
+        # run history, but stale definition metadata must never look like current configuration.
+        execution_profile = MAIN_AGENT_EXECUTION_PROFILE
+        execution_model = None
+        reasoning_effort = None
     return {
         "id": definition["id"],
         "taskId": definition.get("task_id"),
@@ -935,13 +1307,16 @@ def _public_definition(
         "executor": executor,
         "conversationPolicy": (task or {}).get("conversation_policy") or execution.get("conversation_policy") or "new",
         "memoryWriteMode": definition.get("memory_write_mode"),
-        "myFolder": definition.get("my_folder"),
-        "workspaceRoot": workbench_metadata.get("workspace_root") or execution.get("workspace_root") or _workspace_root(),
+        "myFolder": effective_my_folder,
+        "workspaceRoot": effective_workspace_root,
         "workspaceAlias": definition.get("workspace_alias") or workbench_metadata.get("workspace_alias"),
         "executionProfile": execution_profile,
-        "executionMode": workbench_metadata.get("execution_mode") or execution.get("execution_mode") or ("host" if executor == "glasshive_host" else "scheduler delivery"),
+        "executionMode": execution_mode,
         "executionModel": execution_model,
         "reasoningEffort": reasoning_effort,
+        "fallbackWorkerProfile": fallback_worker_profile or None,
+        "fallbackWorkerModel": fallback_worker_model or None,
+        "fallbackReasoningEffort": fallback_reasoning_effort or None,
         "glasshiveWorkerStrategy": workbench_metadata.get("glasshive_worker_strategy") or execution.get("glasshive_worker_strategy") or "same_worker",
         "nextRunAt": (task or {}).get("next_run_at"),
         "lastStatus": (task or {}).get("last_status"),
@@ -1155,7 +1530,13 @@ def _public_run(
 def _is_inflight_run(run: dict[str, Any] | None) -> bool:
     if not run:
         return False
-    return str(run.get("status") or "").strip() in {"dispatching", "queued", "running"}
+    return str(run.get("status") or "").strip() in {
+        "claimed",
+        "dispatching",
+        "queued",
+        "running",
+        "waiting_external",
+    }
 
 
 def _is_recent_scheduled_prompt_run(run: dict[str, Any] | None, *, seconds: int = 30) -> bool:
@@ -1172,12 +1553,17 @@ def _is_recent_scheduled_prompt_run(run: dict[str, Any] | None, *, seconds: int 
 
 
 def _coalesced_manual_run_response(run: dict[str, Any]) -> dict[str, Any]:
+    reason = (
+        "scheduled_occurrence_already_inflight"
+        if str(run.get("trigger_kind") or "").strip() == "scheduled"
+        else "manual_run_already_inflight"
+    )
     return {
         "coalesced": True,
         "dispatch": {
             "delivery": {
                 "outcome": "queued",
-                "reason": "manual_run_already_inflight",
+                "reason": reason,
                 "generated_text": None,
             }
         },
@@ -1206,7 +1592,10 @@ def list_scheduled_prompts(
     store = storage(read_only=read_only)
     rows = store.list_scheduled_prompt_definitions(user_id=user_id)
     definition_task_ids = {str(row.get("task_id")) for row in rows if row.get("task_id")}
-    public_rows = [_public_definition(row, store=store) for row in rows]
+    public_rows = [
+        _public_definition(row, store=store, read_only=read_only)
+        for row in rows
+    ]
     if user_id:
         for task in store.list_tasks(user_id=user_id, limit=200):
             if str(task.get("id")) in definition_task_ids:
@@ -1228,18 +1617,34 @@ def create_scheduled_prompt(payload: dict[str, Any], *, user_id: str, email: str
     channel = _channel_for_executor(executor, payload.get("channel"))
     conversation_policy = _conversation_policy(payload.get("conversationPolicy") or payload.get("conversation_policy"))
     worker_strategy = _worker_strategy(payload.get("glasshiveWorkerStrategy") or payload.get("glasshive_worker_strategy"))
-    execution_profile = _default_glasshive_worker_profile() if executor == "glasshive_host" else "main Viventium"
+    execution_profile = _default_glasshive_worker_profile() if executor == "glasshive_host" else MAIN_AGENT_EXECUTION_PROFILE
+    memory_write_mode = _memory_write_mode(payload.get("memoryWriteMode"))
+    execution_mode = (
+        _default_scheduled_glasshive_execution_mode(memory_write_mode)
+        if executor == "glasshive_host"
+        else MAIN_AGENT_EXECUTION_MODE
+    )
     execution_metadata = {
         "executor": executor,
         "channel": channel,
         "conversation_policy": conversation_policy,
         "glasshive_worker_strategy": worker_strategy,
         "execution_profile": execution_profile,
-        "execution_mode": "host" if executor == "glasshive_host" else "scheduler delivery",
+        "execution_mode": execution_mode,
         "execution_model": _default_automation_model(execution_profile) if executor == "glasshive_host" else None,
-        "reasoning_effort": _default_automation_reasoning_effort() if executor == "glasshive_host" else None,
-        "workspace_root": _workspace_root(),
+        "reasoning_effort": (
+            _default_automation_reasoning_effort(execution_profile)
+            if executor == "glasshive_host"
+            else None
+        ),
+        "workspace_root": _workspace_root() if execution_mode == "host" else "",
     }
+    fallback_worker_route = (
+        _default_glasshive_fallback_worker_route(execution_profile)
+        if executor == "glasshive_host"
+        else {}
+    )
+    execution_metadata.update(fallback_worker_route)
     if payload.get("templateId") in BUILTIN_TEMPLATE_IDS:
         execution_metadata["ignore_user_config"] = True
     definition_metadata = {"execution": execution_metadata}
@@ -1262,7 +1667,7 @@ def create_scheduled_prompt(payload: dict[str, Any], *, user_id: str, email: str
         "schedule": schedule,
         "timezone": timezone_name,
         "active": 1 if payload.get("active") else 0,
-        "memory_write_mode": _memory_write_mode(payload.get("memoryWriteMode")),
+        "memory_write_mode": memory_write_mode,
         "workspace_alias": _workspace_alias(definition_id),
         "my_folder": my_folder,
         "metadata": definition_metadata,
@@ -1428,19 +1833,50 @@ def update_scheduled_prompt(
                 execution.get("execution_profile") or _default_glasshive_worker_profile()
             )
             execution["execution_profile"] = execution_profile
-            execution["execution_mode"] = str(execution.get("execution_mode") or "host")
+            fallback_worker_route = _default_glasshive_fallback_worker_route(
+                execution_profile
+            )
+            for field in (
+                "fallback_worker_profile",
+                "fallback_worker_model",
+                "fallback_reasoning_effort",
+            ):
+                if field in fallback_worker_route:
+                    execution[field] = fallback_worker_route[field]
+                else:
+                    execution.pop(field, None)
+            if "memoryWriteMode" in payload or "executor" in payload:
+                execution["execution_mode"] = _default_scheduled_glasshive_execution_mode(
+                    str(updated_definition.get("memory_write_mode") or "off")
+                )
+            else:
+                execution["execution_mode"] = str(
+                    execution.get("execution_mode")
+                    or _default_scheduled_glasshive_execution_mode(
+                        str(updated_definition.get("memory_write_mode") or "off")
+                    )
+                )
             execution["execution_model"] = str(
                 _default_automation_model(execution_profile) or execution.get("execution_model") or ""
             )
             execution["reasoning_effort"] = str(
-                _default_automation_reasoning_effort() or execution.get("reasoning_effort") or ""
+                _default_automation_reasoning_effort(execution_profile)
+                or execution.get("reasoning_effort")
+                or ""
             )
         else:
-            execution["execution_profile"] = "main Viventium"
-            execution["execution_mode"] = "scheduler delivery"
+            execution["execution_profile"] = MAIN_AGENT_EXECUTION_PROFILE
+            execution["execution_mode"] = MAIN_AGENT_EXECUTION_MODE
             execution["execution_model"] = None
             execution["reasoning_effort"] = None
-        execution["workspace_root"] = _workspace_root()
+            execution.pop("fallback_worker_profile", None)
+            execution.pop("fallback_worker_model", None)
+            execution.pop("fallback_reasoning_effort", None)
+        execution["workspace_root"] = (
+            _workspace_root()
+            if executor == "glasshive_host" and execution.get("execution_mode") == "host"
+            else ""
+        )
         metadata = {**metadata, "execution": execution}
         updates["metadata"] = metadata
         updated_definition["metadata"] = metadata
@@ -1519,6 +1955,104 @@ def manual_run(
         lock.release()
 
 
+def _manual_dispatch_task(
+    task: dict[str, Any],
+    *,
+    run_id: str,
+    next_run_at: str,
+) -> dict[str, Any]:
+    """Bind one Workbench Run Now action to its durable scheduler receipt."""
+    # === VIVENTIUM START ===
+    # Manual Main and worker runs use the same run identity for provider idempotency, Telegram
+    # chunk receipts, provenance acknowledgement, and the Workbench audit row.
+    return {
+        **task,
+        "next_run_at": next_run_at,
+        "_scheduled_prompt_run_id": run_id,
+        "_scheduled_prompt_occurrence_key": run_id,
+        "_scheduled_prompt_trigger_kind": "manual",
+        "_scheduled_prompt_trigger_source": "workbench_manual",
+    }
+    # === VIVENTIUM END ===
+
+
+def _claim_manual_run_receipt(
+    store: ScheduleStorage,
+    run: dict[str, Any],
+) -> dict[str, Any]:
+    """Atomically exclude scheduled and manual execution for one task."""
+    run_id = str(run.get("run_id") or "").strip()
+    started_at = str(run.get("started_at") or _utc_now()).strip()
+    return store.claim_manual_scheduled_prompt_run(
+        run,
+        lease_owner=f"workbench:{run_id}",
+        now=started_at,
+        lease_seconds=DEFAULT_OCCURRENCE_LEASE_SECONDS,
+    )
+
+
+def _extend_async_manual_run_lease(
+    store: ScheduleStorage,
+    run_id: str,
+) -> None:
+    run = store.get_scheduled_prompt_run(run_id) or {}
+    if str(run.get("status") or "").strip() not in {
+        "claimed",
+        "dispatching",
+        "queued",
+        "running",
+        "waiting_external",
+    }:
+        return
+    lease_owner = f"workbench:{run_id}"
+    if str(run.get("lease_owner") or "").strip() == lease_owner:
+        store.renew_scheduled_prompt_run_lease(
+            run_id,
+            lease_owner=lease_owner,
+            now=_utc_now(),
+            lease_seconds=max(
+                1,
+                min(int(DEFAULT_OCCURRENCE_LEASE_SECONDS), scheduled_prompt_stale_seconds()),
+            ),
+        )
+
+
+def _dispatch_manual_task_with_lease_heartbeat(
+    store: ScheduleStorage,
+    task: dict[str, Any],
+    *,
+    run_id: str,
+) -> dict[str, Any]:
+    """Keep one manual task lease live until synchronous dispatch returns."""
+    stopped = threading.Event()
+    lease_owner = f"workbench:{run_id}"
+    lease_seconds = max(1, int(DEFAULT_OCCURRENCE_LEASE_SECONDS))
+    interval_s = max(1, min(60, lease_seconds // 3))
+
+    def renew() -> None:
+        while not stopped.wait(interval_s):
+            renewed = store.renew_scheduled_prompt_run_lease(
+                run_id,
+                lease_owner=lease_owner,
+                now=_utc_now(),
+                lease_seconds=lease_seconds,
+            )
+            if not renewed:
+                return
+
+    thread = threading.Thread(
+        target=renew,
+        name=f"workbench-run-lease-{run_id[-8:]}",
+        daemon=True,
+    )
+    thread.start()
+    try:
+        return dispatch_task(task)
+    finally:
+        stopped.set()
+        thread.join(timeout=max(1, min(5, interval_s)))
+
+
 def _manual_run_locked(
     definition_id: str,
     *,
@@ -1533,29 +2067,85 @@ def _manual_run_locked(
         task = store.get_task(user_id, task_id)
         if not task:
             raise KeyError(definition_id)
-        if str(task.get("last_status") or "").strip() == "running" or _is_recent_manual_task_run(task):
-            run = _public_task_run(task)
-            return {
-                "coalesced": True,
-                "dispatch": {"delivery": {"outcome": "queued", "reason": "manual_run_already_inflight"}},
-                "run": run,
-            }
+        recent = store.list_scheduled_prompt_runs(task_id=task_id, limit=5)
+        inflight = next(
+            (
+                run
+                for run in recent
+                if _is_inflight_run(run) or _is_recent_scheduled_prompt_run(run)
+            ),
+            None,
+        )
+        if inflight:
+            return _coalesced_manual_run_response(inflight)
         now = datetime.now(timezone.utc)
         now_iso = to_utc_iso(now)
+        executor = _executor(task.get("executor"))
+        # === VIVENTIUM START ===
+        # A user-level Run Now is still a real scheduled execution. Record it before dispatch so
+        # Workbench never keeps showing an older failure after a successful Main delivery.
+        run_id = f"sp_run_{uuid.uuid4().hex}"
+        claim = _claim_manual_run_receipt(
+            store,
+            {
+                "run_id": run_id,
+                "task_id": task_id,
+                "definition_id": None,
+                "user_id": user_id,
+                "version_id": None,
+                "due_at": now_iso,
+                "started_at": now_iso,
+                "completed_at": None,
+                "status": "running",
+                "executor": executor,
+                "rendered_hash": None,
+                "variable_snapshot_hash": None,
+                "glasshive_project_id": None,
+                "glasshive_worker_id": None,
+                "glasshive_run_id": None,
+                "result_summary": "Manual run started.",
+                "error_class": None,
+                "private_detail_path": None,
+                "callback_payload_json": None,
+                "trigger_kind": "manual",
+                "trigger_source": "workbench_manual",
+                "occurrence_key": run_id,
+                "disposition": "running",
+                "execution_snapshot": {"executor": executor},
+                "channel_outcomes": {},
+                "created_at": now_iso,
+                "updated_at": now_iso,
+            },
+        )
+        if not claim.get("claimed"):
+            return _coalesced_manual_run_response(claim.get("run") or {})
+        # === VIVENTIUM END ===
         store.update_task(
             user_id,
             task_id,
             {"last_run_at": now_iso, "last_status": "running", "last_error": None, "updated_at": now_iso},
         )
-        task_for_dispatch = {**task, "next_run_at": now_iso}
+        task_for_dispatch = _manual_dispatch_task(
+            task,
+            run_id=run_id,
+            next_run_at=now_iso,
+        )
         try:
-            result = dispatch_task(task_for_dispatch)
+            result = _dispatch_manual_task_with_lease_heartbeat(
+                store,
+                task_for_dispatch,
+                run_id=run_id,
+            )
             delivery = result.get("delivery") if isinstance(result, dict) else {}
             delivery = delivery if isinstance(delivery, dict) else {}
+            queued_external = (
+                executor == "glasshive_host"
+                and str(delivery.get("outcome") or "").strip().lower() == "queued"
+            )
             next_run = compute_next_run(task.get("schedule") or {}, now, now)
             updates = {
                 "last_run_at": now_iso,
-                "last_status": "success",
+                "last_status": "running" if queued_external else "success",
                 "last_error": None,
                 "updated_at": now_iso,
                 "last_delivery_at": now_iso,
@@ -1567,7 +2157,37 @@ def _manual_run_locked(
                 **_manual_run_conversation_updates(task, result),
             }
             updated_task = store.update_task(user_id, task_id, updates) or task
-            return {"dispatch": result, "run": _public_task_run(updated_task)}
+            # === VIVENTIUM START ===
+            ledger_updates = dispatch_run_ledger_updates(
+                task_for_dispatch,
+                result,
+                existing_execution={"executor": executor},
+            )
+            ledger_updates.update(
+                {
+                    "result_summary": _safe_summary(
+                        ": ".join(
+                            part
+                            for part in (
+                                str(delivery.get("outcome") or "sent"),
+                                str(delivery.get("reason") or "manual_run"),
+                            )
+                            if part
+                        )
+                    ),
+                    "error_class": None,
+                }
+            )
+            persisted_run = store.update_scheduled_prompt_run(run_id, ledger_updates)
+            _extend_async_manual_run_lease(store, run_id)
+            return {
+                "dispatch": result,
+                "run": _public_run(
+                    persisted_run or store.get_scheduled_prompt_run(run_id),
+                    schedule=updated_task.get("schedule"),
+                ),
+            }
+            # === VIVENTIUM END ===
         except Exception as exc:
             store.update_task(
                 user_id,
@@ -1583,6 +2203,19 @@ def _manual_run_locked(
                     "last_delivery": {"outcome": "failed", "reason": str(exc), "generated_text": None},
                 },
             )
+            # === VIVENTIUM START ===
+            store.update_scheduled_prompt_run(
+                run_id,
+                {
+                    "status": "failed",
+                    "disposition": "failed",
+                    "completed_at": _utc_now(),
+                    "result_summary": _safe_summary(str(exc)),
+                    "error_class": exc.__class__.__name__,
+                    "updated_at": _utc_now(),
+                },
+            )
+            # === VIVENTIUM END ===
             raise
 
     definition = store.get_scheduled_prompt_definition(definition_id)
@@ -1599,13 +2232,68 @@ def _manual_run_locked(
         return _coalesced_manual_run_response(inflight)
     if str(task.get("executor") or "glasshive_host").strip() != "glasshive_host":
         return _manual_run_workbench_viventium_agent(store, definition, task)
-    task = dict(task)
-    task["next_run_at"] = _utc_now()
-    task["_scheduled_prompt_trigger_kind"] = "manual"
-    task["_scheduled_prompt_trigger_source"] = "workbench_manual"
-    result = dispatch_task(task)
-    runs = store.list_scheduled_prompt_runs(definition_id=definition_id, limit=1)
-    return {"dispatch": result, "run": _public_run(runs[0]) if runs else None}
+    now_iso = _utc_now()
+    metadata = task.get("metadata") if isinstance(task.get("metadata"), dict) else {}
+    wb = metadata.get("workbench_scheduled_prompt") if isinstance(metadata.get("workbench_scheduled_prompt"), dict) else {}
+    latest_version = store.latest_scheduled_prompt_version(str(definition["id"]))
+    run_id = f"sp_run_{uuid.uuid4().hex}"
+    claim = _claim_manual_run_receipt(
+        store,
+        {
+            "run_id": run_id,
+            "task_id": str(task.get("id") or ""),
+            "definition_id": definition.get("id"),
+            "user_id": str(definition.get("user_id") or task.get("user_id") or ""),
+            "version_id": (latest_version or {}).get("id") or wb.get("version_id"),
+            "due_at": now_iso,
+            "started_at": now_iso,
+            "completed_at": None,
+            "status": "running",
+            "executor": "glasshive_host",
+            "rendered_hash": wb.get("rendered_hash") or (latest_version or {}).get("rendered_hash"),
+            "variable_snapshot_hash": wb.get("variable_snapshot_hash") or (latest_version or {}).get("variable_snapshot_hash"),
+            "glasshive_project_id": None,
+            "glasshive_worker_id": None,
+            "glasshive_run_id": None,
+            "result_summary": "GlassHive manual run started.",
+            "error_class": None,
+            "private_detail_path": None,
+            "callback_payload_json": None,
+            "trigger_kind": "manual",
+            "trigger_source": "workbench_manual",
+            "occurrence_key": run_id,
+            "disposition": "running",
+            "execution_snapshot": {"executor": "glasshive_host"},
+            "channel_outcomes": {},
+            "created_at": now_iso,
+            "updated_at": now_iso,
+        },
+    )
+    if not claim.get("claimed"):
+        return _coalesced_manual_run_response(claim.get("run") or {})
+    task_for_dispatch = _manual_dispatch_task(task, run_id=run_id, next_run_at=now_iso)
+    try:
+        result = _dispatch_manual_task_with_lease_heartbeat(
+            store,
+            task_for_dispatch,
+            run_id=run_id,
+        )
+        _extend_async_manual_run_lease(store, run_id)
+    except Exception as exc:
+        store.update_scheduled_prompt_run(
+            run_id,
+            {
+                "status": "failed",
+                "disposition": "failed",
+                "completed_at": _utc_now(),
+                "result_summary": _safe_summary(str(exc)),
+                "error_class": exc.__class__.__name__,
+                "updated_at": _utc_now(),
+            },
+        )
+        raise
+    persisted = store.get_scheduled_prompt_run(run_id)
+    return {"dispatch": result, "run": _public_run(persisted) if persisted else None}
 
 
 def _manual_run_workbench_viventium_agent(
@@ -1618,14 +2306,15 @@ def _manual_run_workbench_viventium_agent(
     metadata = task.get("metadata") if isinstance(task.get("metadata"), dict) else {}
     wb = metadata.get("workbench_scheduled_prompt") if isinstance(metadata.get("workbench_scheduled_prompt"), dict) else {}
     run_id = f"sp_run_{uuid.uuid4().hex}"
-    store.create_scheduled_prompt_run(
+    claim = _claim_manual_run_receipt(
+        store,
         {
             "run_id": run_id,
             "task_id": str(task.get("id") or ""),
             "definition_id": definition.get("id"),
             "user_id": str(definition.get("user_id") or task.get("user_id") or ""),
             "version_id": (latest_version or {}).get("id") or wb.get("version_id"),
-            "due_at": str(task.get("next_run_at") or now_iso),
+            "due_at": now_iso,
             "started_at": now_iso,
             "completed_at": None,
             "status": "running",
@@ -1635,23 +2324,33 @@ def _manual_run_workbench_viventium_agent(
             "glasshive_project_id": None,
             "glasshive_worker_id": None,
             "glasshive_run_id": None,
-            "result_summary": "Viventium agent manual run started.",
+            "result_summary": "Viventium Main manual run started.",
             "error_class": None,
             "private_detail_path": None,
             "callback_payload_json": None,
             "trigger_kind": "manual",
             "trigger_source": "workbench_manual",
+            "occurrence_key": run_id,
             "disposition": "running",
             "execution_snapshot": {"executor": "viventium_agent"},
             "channel_outcomes": {},
             "created_at": now_iso,
             "updated_at": now_iso,
-        }
+        },
     )
-    task_for_dispatch = dict(task)
-    task_for_dispatch["next_run_at"] = now_iso
+    if not claim.get("claimed"):
+        return _coalesced_manual_run_response(claim.get("run") or {})
+    task_for_dispatch = _manual_dispatch_task(
+        task,
+        run_id=run_id,
+        next_run_at=now_iso,
+    )
     try:
-        result = dispatch_task(task_for_dispatch)
+        result = _dispatch_manual_task_with_lease_heartbeat(
+            store,
+            task_for_dispatch,
+            run_id=run_id,
+        )
         conversation_updates = _manual_run_conversation_updates(task_for_dispatch, result)
         if conversation_updates:
             store.update_task(
@@ -1681,6 +2380,7 @@ def _manual_run_workbench_viventium_agent(
             }
         )
         updated = store.update_scheduled_prompt_run(run_id, ledger_updates)
+        _extend_async_manual_run_lease(store, run_id)
         return {"dispatch": result, "run": _public_run(updated or store.get_scheduled_prompt_run(run_id))}
     except Exception as exc:
         updated = store.update_scheduled_prompt_run(
@@ -1699,19 +2399,29 @@ def _manual_run_workbench_viventium_agent(
         raise
 
 
-def list_runs(definition_id: str, *, user_id: str) -> dict[str, Any]:
+def list_runs(definition_id: str, *, user_id: str, read_only: bool = False) -> dict[str, Any]:
+    selected_store = storage(read_only=True) if read_only else storage()
     if _is_user_schedule_id(definition_id):
-        task = storage().get_task(user_id, _task_id_from_user_schedule_id(definition_id))
+        task_id = _task_id_from_user_schedule_id(definition_id)
+        task = selected_store.get_task(user_id, task_id)
         if not task:
             raise KeyError(definition_id)
+        # === VIVENTIUM START ===
+        # Persisted executions outrank the lossy task-level last-run projection. The fallback keeps
+        # pre-ledger schedules visible until their next real execution creates a durable receipt.
+        persisted_runs = selected_store.list_scheduled_prompt_runs(task_id=task_id)
+        if persisted_runs:
+            schedule = task.get("schedule") if isinstance(task.get("schedule"), dict) else {}
+            return {"runs": [_public_run(run, schedule=schedule) for run in persisted_runs]}
+        # === VIVENTIUM END ===
         run = _public_task_run(task)
         return {"runs": [run] if run else []}
-    definition = storage().get_scheduled_prompt_definition(definition_id)
+    definition = selected_store.get_scheduled_prompt_definition(definition_id)
     if not definition:
         raise KeyError(definition_id)
     if definition.get("user_id") != user_id:
         raise PermissionError("scheduled prompt belongs to another user")
-    runs = storage().list_scheduled_prompt_runs(definition_id=definition_id)
+    runs = selected_store.list_scheduled_prompt_runs(definition_id=definition_id)
     return {"runs": [_public_run(run) for run in runs]}
 
 
@@ -2096,6 +2806,7 @@ def _load_periphery_artifact(
         "opportunityCosts",
         "opportunities",
         "whatWouldMakeThisWrong",
+        "whenToSurface",
         "proposedActions",
     )
     claims_grounded = 0
@@ -2107,6 +2818,8 @@ def _load_periphery_artifact(
     if schema_version >= 2:
         for field in claim_fields:
             for claim in payload.get(field) or []:
+                if field == "whenToSurface" and isinstance(claim, str):
+                    continue
                 if not isinstance(claim, dict):
                     claims_ungrounded += 1
                     continue

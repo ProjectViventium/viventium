@@ -120,19 +120,19 @@ recent-transcripts inventory question, broad inventory recall, and focused detai
 the visible LibreChat UI, and writes public-safe results under
 `qa/meeting-transcript-memory/reports/`.
 
-## 2026-05-22 Operational QA Evidence
+## 2026-05-22 Historical Operational Notes
 
-- Public-safe operational report:
-  `qa/meeting-transcript-memory/reports/2026-05-22-transcript-memory-operational-qa.md`.
-- QA clone live browser report:
-  `qa/meeting-transcript-memory/reports/2026-05-22-live-browser-qa-2026-05-22T05-55-27-419Z.md`.
+- The formerly cited public-safe operational and QA-clone browser report files are not present in
+  this repository. The embedded claims below are historical context, not reproducible acceptance
+  evidence; rerun the affected cases before using them as a current PASS.
 - The copied non-owner QA clone was selected only after the harness verified connected-account/key
   rows; the owner transcript count was unchanged during QA-clone seeding.
 - Owner backup existed before owner mutation. The owner-scoped apply run cleared the remaining
   pending transcript, uploaded summary/inventory vectors, and left 0 missing vectors, 0 stale
   artifacts, and 0 vector-presence errors.
-- Owner browser parity passed with visible file_search-backed transcript recall, inventory and
-  summary sources attached, visible dates, and a transcript caveat.
+- Historical notes say owner browser parity showed file-search-backed transcript recall, inventory
+  and summary sources, visible dates, and a transcript caveat. The missing report prevents a current
+  evidence-backed PASS claim.
 
 ## 2026-05-13 Chronological Transcript Recall Evidence
 

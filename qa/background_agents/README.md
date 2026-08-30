@@ -11,6 +11,9 @@ background-cortex runtime remain truthful for fresh installs and local restarts.
 
 Additional current QA artifacts:
 
+- `qa/background_agents/reports/2026-08-09-background-cortex-fallback-disclosure.md` — real
+  non-admin browser acceptance for visible, persisted background-cortex provider fallback,
+  expanded public failure class, reload, and exact disposable-fixture cleanup
 - `qa/background_agents/reports/2026-08-01-glasshive-phase-b-web-telegram.md` — real web and
   Telegram Phase B acceptance for GlassHive cortices, including useful continuation, `{NTA}`,
   moved-on suppression, Agent Builder, Mongo/log/GlassHive correlation, and provider effort mapping
@@ -51,19 +54,22 @@ sarcasm, denial, and recent-context carryover.
   explicitly in the source-of-truth bundle.
 - Deep Research must ship with `web_search` in its built-in tool surface whenever runtime web
   search is enabled.
-- Deep Research on GlassHive Codex/Sol must ship `model_parameters.reasoning_effort: xhigh`
-  without direct-provider-only `useResponsesApi` or Anthropic-only `thinkingBudget`.
+- Deep Research on direct `openAI / gpt-5.6-sol` must ship
+  `model_parameters.reasoning_effort: xhigh`, `useResponsesApi: true`, and must not drift onto
+  Anthropic/Google-only `thinkingBudget`.
 - Red Team must ship with `web_search` in its built-in tool surface whenever runtime web search is
   enabled.
-- Red Team on GlassHive Codex/Sol must ship and runtime-normalize to
-  `model_parameters.reasoning_effort: high` without direct-provider-only `useResponsesApi` or
-  Anthropic-only `thinkingBudget`.
-- The conscious agent uses GlassHive Sol/medium; Strategic Planning uses GlassHive Sol/high;
-  Background Analysis, Confirmation Bias, Parietal Cortex, and Pattern Recognition use GlassHive
-  Sol/medium; MS365, Google, Emotional Resonance, and Viventium User Help use GlassHive Sol/low.
-- Every conscious/subconscious text route uses `anthropic / claude-opus-5` as the managed fallback
-  for new installs. Explicit existing user-selected Anthropic fallback models remain protected. Voice
-  remains `xai / grok-4.3 / none` with a latency-preserving Terra/none voice fallback.
+- Red Team on direct `openAI / gpt-5.6-sol` must ship and runtime-normalize to
+  `model_parameters.reasoning_effort: xhigh`, `useResponsesApi: true`, and must not drift onto
+  Anthropic/Google-only `thinkingBudget`.
+- The conscious Main agent uses `glasshive-harness / codex-cli:gpt-5.6-sol / medium`. Strategic
+  Planning uses direct Sol/high; Background Analysis, Confirmation Bias, Parietal Cortex, and
+  Pattern Recognition use direct Terra/medium; MS365, Google, Emotional Resonance, and Viventium
+  User Help use direct Terra/low.
+- Classifier-owned cortex routes use `glasshive-harness / claude-code:opus / high` as their generic
+  Agent fallback. Deep Memory is the explicit exception and uses
+  `glasshive-harness / codex-cli:gpt-5.6-sol / medium`. Voice remains
+  `xai / grok-4.5 / low` with a latency-preserving direct Terra/none voice fallback.
 - High-effort Opus fallbacks preserve the source-owned Anthropic thinking budgets, and cross-provider
   fallback initialization strips OpenAI-only `reasoning_effort` and `useResponsesApi` fields.
 - Built-in background-agent provider rewrites must replace provider-specific `model_parameters`
@@ -101,7 +107,8 @@ sarcasm, denial, and recent-context carryover.
    - the documented OpenAI-only, Anthropic-only, and mixed execution matrix matches compiler
      assignments
    - GPT-5.6 Sol/Terra and effort assignments match the documented workload map
-   - Anthropic Opus 5 is the managed fallback for every conscious/subconscious text route
+   - classifier-owned cortices use GlassHive Claude / Opus 5 at high effort, while Deep Memory keeps
+     its source-owned GlassHive Codex / Sol / medium exception
    - runtime normalization and seed/upsert repair stale cross-provider model-parameter drift
 7. Start-script inspection verifies local startup still re-seeds built-ins from the source-of-truth
    agents bundle through `viventium-seed-agents.js`.
@@ -115,8 +122,9 @@ sarcasm, denial, and recent-context carryover.
   - `web_search` when runtime web search is enabled
   - `reasoning_effort: xhigh` on the shipped OpenAI execution bag
 - The provider-matrix audit proves OpenAI-capable installs use the GPT-5.6 workload map and
-  Anthropic-only fresh installs use the Opus 5 fallback profile for built-in agents without
-  replacing an existing user's explicit Anthropic model selection.
+  Anthropic-only installs use the direct `claude-opus-5` profile for built-in execution; a
+  GlassHive-disabled install rewrites an unavailable harness fallback to a distinct direct route
+  without replacing an existing user's explicit model selection.
 - Start-path inspection confirms fresh installs and restarts consume the corrected bundle instead of
   relying on live Mongo edits.
 - Live QA separates activation success from downstream user-scoped auth:

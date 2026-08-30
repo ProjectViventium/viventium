@@ -136,3 +136,11 @@ VIVENTIUM END -->
   - `client/src/components/Endpoints/ConvoIconURL.tsx`
   - `client/src/components/Endpoints/URLIcon.tsx`
   - `client/src/components/Endpoints/__tests__/URLIcon.spec.tsx`
+
+<!-- VIVENTIUM-STABLE-REQUIREMENT-DECLARATIONS:START -->
+## Stable requirement declarations
+
+Each line is the canonical public owner declaration for one stable requirement ID. Detailed sections supply implementation context; they must not narrow or contradict these declared outcomes.
+
+CORE-017: Every user-facing Viventium surface uses the Viventium name and canonical V mark. Upstream LibreChat names, wordmarks, and generic feather fallbacks must not appear as product identity.
+<!-- VIVENTIUM-STABLE-REQUIREMENT-DECLARATIONS:END -->

@@ -2,16 +2,19 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 import hashlib
+import json
 import logging
 import os
 import re
 import threading
 import time
+from pathlib import Path
 from typing import Any
+from urllib.parse import urlencode
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -22,6 +25,158 @@ from .runtime_env import load_viventium_runtime_env
 
 load_viventium_runtime_env()
 logger = logging.getLogger("prompt_workbench.nightly_seed")
+BUILD_RECEIPT_NAME = ".viventium-build-receipt.json"
+_IGNORED_INPUT_DIRECTORIES = frozenset(
+    {"node_modules", "dist", "__pycache__", ".pytest_cache", ".vite", "tests", "__tests__"}
+)
+_FRONTEND_ROOT_FILES = (
+    "index.html",
+    "package.json",
+    "package-lock.json",
+    "tsconfig.json",
+    "vite.config.ts",
+)
+
+
+def _backend_source_hash() -> str | None:
+    digest = hashlib.sha256()
+    try:
+        for source in sorted((WORKBENCH_ROOT / "backend" / "prompt_workbench").glob("*.py")):
+            digest.update(source.name.encode("utf-8"))
+            digest.update(b"\0")
+            digest.update(source.read_bytes())
+    except OSError:
+        return None
+    return digest.hexdigest()[:16]
+
+
+_BACKEND_BOOT_SOURCE_HASH = _backend_source_hash()
+
+
+def _is_test_source(path: Path) -> bool:
+    return any(marker in path.name for marker in (".test.", ".spec."))
+
+
+def _bounded_frontend_files() -> list[Path]:
+    candidates = [WORKBENCH_ROOT / relative for relative in _FRONTEND_ROOT_FILES]
+    for search_root in (WORKBENCH_ROOT / "src", WORKBENCH_ROOT / "public"):
+        if not search_root.is_dir():
+            continue
+        candidates.extend(
+            child
+            for child in search_root.rglob("*")
+            if child.is_file()
+            and not child.is_symlink()
+            and not _IGNORED_INPUT_DIRECTORIES.intersection(
+                child.relative_to(WORKBENCH_ROOT).parts
+            )
+            and not _is_test_source(child)
+        )
+    return sorted(
+        {
+            candidate
+            for candidate in candidates
+            if candidate.is_file() and not candidate.is_symlink()
+        },
+        key=lambda candidate: candidate.relative_to(WORKBENCH_ROOT).as_posix(),
+    )
+
+
+def _content_identity(files: list[Path]) -> str:
+    digest = hashlib.sha256()
+    for candidate in files:
+        relative = candidate.relative_to(WORKBENCH_ROOT).as_posix().encode("utf-8")
+        body = candidate.read_bytes()
+        digest.update(relative)
+        digest.update(b"\0")
+        digest.update(str(len(body)).encode("ascii"))
+        digest.update(b"\0")
+        digest.update(body)
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def _frontend_input_identity() -> str:
+    return _content_identity(_bounded_frontend_files())
+
+
+def _built_asset_identity() -> tuple[str, int]:
+    dist = WORKBENCH_ROOT / "dist"
+    files = sorted(
+        (
+            child
+            for child in dist.rglob("*")
+            if child.is_file()
+            and not child.is_symlink()
+            and child != dist / BUILD_RECEIPT_NAME
+        ),
+        key=lambda candidate: candidate.relative_to(WORKBENCH_ROOT).as_posix(),
+    )
+    return _content_identity(files), len(files)
+
+
+def _frontend_build_status() -> dict[str, Any]:
+    receipt_path = WORKBENCH_ROOT / "dist" / BUILD_RECEIPT_NAME
+    receipt: dict[str, Any] = {}
+    if receipt_path.is_file() and not receipt_path.is_symlink():
+        try:
+            parsed = json.loads(receipt_path.read_text(encoding="utf-8"))
+            if isinstance(parsed, dict):
+                receipt = parsed
+        except (json.JSONDecodeError, OSError, UnicodeError):
+            pass
+    try:
+        current_input_hash = _frontend_input_identity()
+        current_asset_hash, current_file_count = _built_asset_identity()
+    except OSError:
+        current_input_hash = ""
+        current_asset_hash = ""
+        current_file_count = 0
+    receipt_input_hash = receipt.get("frontendInputHash")
+    receipt_asset_hash = receipt.get("builtAssetHash")
+    receipt_file_count = receipt.get("builtFileCount")
+    schema_version = receipt.get("schemaVersion")
+    hashes_valid = all(
+        isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value)
+        for value in (
+            receipt_input_hash,
+            receipt_asset_hash,
+            current_input_hash,
+            current_asset_hash,
+        )
+    )
+    counts_valid = (
+        isinstance(receipt_file_count, int)
+        and not isinstance(receipt_file_count, bool)
+        and receipt_file_count > 0
+        and current_file_count > 0
+    )
+    source_current = hashes_valid and receipt_input_hash == current_input_hash
+    assets_current = (
+        hashes_valid
+        and counts_valid
+        and receipt_asset_hash == current_asset_hash
+        and receipt_file_count == current_file_count
+    )
+    receipt_available = receipt_path.is_file() and not receipt_path.is_symlink()
+    return {
+        "receiptAvailable": receipt_available,
+        "schemaVersion": schema_version if isinstance(schema_version, int) else None,
+        "receiptFrontendInputHash": receipt_input_hash,
+        "currentFrontendInputHash": current_input_hash or None,
+        "receiptBuiltAssetHash": receipt_asset_hash,
+        "currentBuiltAssetHash": current_asset_hash or None,
+        "receiptBuiltFileCount": receipt_file_count,
+        "currentBuiltFileCount": current_file_count,
+        "sourceCurrent": source_current,
+        "assetsCurrent": assets_current,
+        "receiptValid": bool(
+            receipt_available
+            and schema_version == 1
+            and source_current
+            and assets_current
+        ),
+    }
 
 
 def _env_flag(name: str) -> bool:
@@ -156,6 +311,18 @@ async def enforce_loopback_host_header(request, call_next):
     host = _host_name(request.headers.get("host", ""))
     if host and host not in _allowed_host_values():
         return PlainTextResponse("Prompt Workbench only accepts loopback hostnames.", status_code=400)
+    if "workbench_token" in request.query_params:
+        if request.url.path.startswith("/api/"):
+            return PlainTextResponse("URL credentials are not supported.", status_code=400)
+        safe_query = urlencode(
+            [
+                (key, value)
+                for key, value in request.query_params.multi_items()
+                if key != "workbench_token"
+            ]
+        )
+        safe_location = request.url.path + (f"?{safe_query}" if safe_query else "")
+        return RedirectResponse(safe_location, status_code=303)
     return await call_next(request)
 
 
@@ -177,10 +344,13 @@ async def set_local_static_cache_policy(request, call_next):
             if key.lower() not in {b"if-none-match", b"if-modified-since"}
         )
     response = await call_next(request)
+    response.headers["Referrer-Policy"] = "no-referrer"
     if _is_index_request(path):
         response.headers["Cache-Control"] = "no-store, max-age=0"
         response.headers["Pragma"] = "no-cache"
         response.headers["Expires"] = "0"
+    elif path.startswith("/api/"):
+        response.headers["Cache-Control"] = "no-store, max-age=0"
     elif path.startswith("/assets/"):
         response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
     return response
@@ -288,16 +458,31 @@ def api_cognitive_integrity(
 
 @app.get("/api/build-version")
 def build_version() -> dict[str, Any]:
+    current_backend_hash = _backend_source_hash()
+    backend = {
+        "loadedSourceHash": _BACKEND_BOOT_SOURCE_HASH,
+        "currentSourceHash": current_backend_hash,
+        "sourceCurrent": bool(_BACKEND_BOOT_SOURCE_HASH and _BACKEND_BOOT_SOURCE_HASH == current_backend_hash),
+    }
     index_path = WORKBENCH_ROOT / "dist" / "index.html"
+    frontend = _frontend_build_status()
     try:
         index_html = index_path.read_text(encoding="utf-8")
     except OSError:
-        return {"available": False, "indexHash": None, "entryAssets": []}
+        return {
+            "available": False,
+            "indexHash": None,
+            "entryAssets": [],
+            "backend": backend,
+            "frontend": frontend,
+        }
     entry_assets = sorted(set(re.findall(r"/assets/[^\"']+", index_html)))
     return {
         "available": True,
         "indexHash": hashlib.sha256(index_html.encode("utf-8")).hexdigest()[:16],
         "entryAssets": entry_assets,
+        "backend": backend,
+        "frontend": frontend,
     }
 
 
@@ -336,8 +521,14 @@ def render_variables(
 
 
 @app.get("/api/scheduled-prompts")
-def api_scheduled_prompts(context: auth.AuthContext = Depends(auth.require_admin)) -> dict[str, Any]:
-    return scheduled_prompts.list_scheduled_prompts(user_id=_auth_user_id(context))
+def api_scheduled_prompts(
+    context: auth.AuthContext = Depends(auth.require_admin),
+    readOnly: bool = False,
+) -> dict[str, Any]:
+    return scheduled_prompts.list_scheduled_prompts(
+        user_id=_auth_user_id(context),
+        read_only=readOnly,
+    )
 
 
 @app.post("/api/scheduled-prompts")
@@ -408,9 +599,14 @@ def manual_run_scheduled_prompt(
 def scheduled_prompt_runs(
     scheduled_prompt_id: str,
     context: auth.AuthContext = Depends(auth.require_admin),
+    readOnly: bool = False,
 ) -> dict[str, Any]:
     try:
-        return scheduled_prompts.list_runs(scheduled_prompt_id, user_id=_auth_user_id(context))
+        return scheduled_prompts.list_runs(
+            scheduled_prompt_id,
+            user_id=_auth_user_id(context),
+            read_only=readOnly,
+        )
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=f"Unknown scheduled prompt: {scheduled_prompt_id}") from exc
     except PermissionError as exc:
@@ -524,7 +720,7 @@ def scheduled_prompt_memory_proposal_apply(
 
 
 @app.get("/api/prompts")
-def prompts() -> dict[str, Any]:
+def prompts(_: auth.AuthContext = Depends(auth.require_admin)) -> dict[str, Any]:
     return {
         "prompts": prompt_service.list_prompts(),
         "flow": prompt_service.flow_graph(),
@@ -533,7 +729,10 @@ def prompts() -> dict[str, Any]:
 
 
 @app.get("/api/prompts/{prompt_id}")
-def prompt_detail(prompt_id: str) -> dict[str, Any]:
+def prompt_detail(
+    prompt_id: str,
+    _: auth.AuthContext = Depends(auth.require_admin),
+) -> dict[str, Any]:
     try:
         return prompt_service.get_prompt(prompt_id)
     except KeyError as exc:
@@ -541,7 +740,10 @@ def prompt_detail(prompt_id: str) -> dict[str, Any]:
 
 
 @app.get("/api/prompts/{prompt_id}/workbench-context")
-def prompt_workbench_context(prompt_id: str) -> dict[str, Any]:
+def prompt_workbench_context(
+    prompt_id: str,
+    _: auth.AuthContext = Depends(auth.require_admin),
+) -> dict[str, Any]:
     try:
         return prompt_service.workbench_context(prompt_id)
     except KeyError as exc:
@@ -549,7 +751,11 @@ def prompt_workbench_context(prompt_id: str) -> dict[str, Any]:
 
 
 @app.get("/api/prompts/{prompt_id}/revisions/{revision}")
-def prompt_revision(prompt_id: str, revision: str) -> dict[str, Any]:
+def prompt_revision(
+    prompt_id: str,
+    revision: str,
+    _: auth.AuthContext = Depends(auth.require_admin),
+) -> dict[str, Any]:
     try:
         return prompt_service.get_prompt_revision(prompt_id, revision)
     except ValueError as exc:
@@ -570,7 +776,7 @@ def render_prompt(
 
 
 @app.get("/api/sync/status")
-def sync_status() -> dict[str, Any]:
+def sync_status(_: auth.AuthContext = Depends(auth.require_admin)) -> dict[str, Any]:
     return sync_engine.get_status()
 
 
@@ -642,12 +848,15 @@ def create_draft(
 
 
 @app.get("/api/drafts")
-def list_drafts() -> dict[str, Any]:
+def list_drafts(_: auth.AuthContext = Depends(auth.require_admin)) -> dict[str, Any]:
     return {"drafts": drafts.list_drafts()}
 
 
 @app.get("/api/drafts/{draft_id}")
-def get_draft(draft_id: str) -> dict[str, Any]:
+def get_draft(
+    draft_id: str,
+    _: auth.AuthContext = Depends(auth.require_admin),
+) -> dict[str, Any]:
     try:
         return drafts.get_draft(draft_id)
     except Exception as exc:
@@ -678,8 +887,23 @@ def discard_draft(
 
 
 @app.get("/api/evals")
-def eval_bank() -> dict[str, Any]:
+def eval_bank(_: auth.AuthContext = Depends(auth.require_admin)) -> dict[str, Any]:
     return evals.eval_bank_summary()
+
+
+@app.get("/api/evals/execution-route")
+def configured_eval_execution_route(
+    _: auth.AuthContext = Depends(auth.require_admin),
+    family: str | None = None,
+) -> dict[str, Any]:
+    route = (
+        evals._configured_family_execution_route(family)
+        if family is not None
+        else evals._configured_execution_route(None)
+    )
+    if route is None:
+        raise HTTPException(status_code=503, detail="configured_execution_route_unavailable")
+    return route
 
 
 @app.post("/api/evals/run")
@@ -723,12 +947,15 @@ def eval_case_draft(
 
 
 @app.get("/api/evals/runs")
-def eval_runs() -> dict[str, Any]:
+def eval_runs(_: auth.AuthContext = Depends(auth.require_admin)) -> dict[str, Any]:
     return {"runs": evals.list_eval_runs()}
 
 
 @app.get("/api/evals/runs/{run_id}")
-def eval_run_detail(run_id: str) -> dict[str, Any]:
+def eval_run_detail(
+    run_id: str,
+    _: auth.AuthContext = Depends(auth.require_admin),
+) -> dict[str, Any]:
     try:
         return evals.get_eval_run(run_id)
     except Exception as exc:
@@ -736,13 +963,16 @@ def eval_run_detail(run_id: str) -> dict[str, Any]:
 
 
 @app.get("/api/evals/promptfoo/{prompt_id}")
-def eval_promptfoo(prompt_id: str) -> dict[str, Any]:
+def eval_promptfoo(
+    prompt_id: str,
+    _: auth.AuthContext = Depends(auth.require_admin),
+) -> dict[str, Any]:
     return evals.promptfoo_config(prompt_id)
 
 
 @app.get("/api/frames")
-def recent_frames() -> dict[str, Any]:
-    return {"frames": frames.recent_frames()}
+def recent_frames(_: auth.AuthContext = Depends(auth.require_admin)) -> dict[str, Any]:
+    return frames.recent_frame_snapshot()
 
 
 dist = WORKBENCH_ROOT / "dist"

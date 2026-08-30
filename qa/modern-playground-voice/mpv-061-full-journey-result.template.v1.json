@@ -1,0 +1,33 @@
+{
+  "schema": "viventium.voice.mpv-061.full-journey-result.v1",
+  "caseId": "MPV-061",
+  "status": "BLOCKED",
+  "scope": "full_journey",
+  "fullJourneyStatus": "NOT_RUN",
+  "authoritySliceOnlyPassAccepted": false,
+  "candidateBinding": {
+    "matched": false,
+    "candidateDigest": null,
+    "artifactDigest": null
+  },
+  "counts": {
+    "sessions": 0,
+    "workers": 0,
+    "actions": 0,
+    "inputs": 0,
+    "deliveries": 0,
+    "artifactsOpened": 0,
+    "audiblePositiveTurns": 0,
+    "denialTurns": 0,
+    "verifiedEvidenceFiles": 0
+  },
+  "gates": [],
+  "evidenceDigest": null,
+  "privacy": {
+    "publicSafe": true,
+    "rawIdentifiersIncluded": false,
+    "rawTranscriptIncluded": false,
+    "localPathsIncluded": false
+  },
+  "failures": []
+}

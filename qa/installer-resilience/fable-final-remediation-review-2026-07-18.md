@@ -7,8 +7,8 @@ reviewer received the original user request and the full audit/remediation packe
 tool paths and private values redacted. It was instructed not to edit, commit, push, publish,
 restart, access personal databases, connect accounts, or mutate local/cloud state.
 
-Verdict: **FAIL.** The audit is trustworthy, but the current product is not ready for the promised
-nontechnical Easy Install. The lifecycle map, new-versus-established distinction, delivery
+Verdict: **the audit is trustworthy and the current product is not ready for the promised
+nontechnical Easy Install**. The lifecycle map, new-versus-established distinction, delivery
 drift, and calibrated `PASS`/`PARTIAL`/`FAIL`/`BLOCKED` evidence were independently supported.
 
 ## Independently Confirmed

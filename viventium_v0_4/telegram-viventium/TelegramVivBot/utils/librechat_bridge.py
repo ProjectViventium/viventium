@@ -12,16 +12,20 @@
 from __future__ import annotations
 
 import asyncio
-from contextlib import asynccontextmanager
+import hashlib
+import inspect
 import json
 import logging
 import math
 import os
 import re
+import sqlite3
 import time
 import urllib.parse
 import uuid
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Optional
 
@@ -48,6 +52,10 @@ try:
     from utils.voice import normalize_delivery_disposition
 except ModuleNotFoundError:
     from TelegramVivBot.utils.voice import normalize_delivery_disposition
+try:
+    from utils.orchestration import default_callback_store_path
+except ModuleNotFoundError:
+    from TelegramVivBot.utils.orchestration import default_callback_store_path
 # Legacy MarkdownV2 import kept only for backward compat if needed.
 try:
     from md2tgmd.src.md2tgmd import escape as md2tgmd_escape
@@ -71,6 +79,7 @@ class LibreChatSession:
     voice_route: Optional[dict[str, Any]] = None
     logical_turn_id: str = ""
     revision: Optional[int] = None
+    superseded: bool = False
     delivery_disposition_required: bool = False
 
 
@@ -82,6 +91,139 @@ class TelegramLinkRequired(Exception):
         self.message = message or "Link your Viventium account to use Telegram."
         super().__init__(self.message)
 # === VIVENTIUM END ===
+
+
+class _GlassHiveDeliveryAuthorizationLost(RuntimeError):
+    def __init__(self, message: str, *, transport_started: bool) -> None:
+        super().__init__(message)
+        self.transport_started = transport_started
+
+
+class _CortexDeliveryAuthorizationLost(RuntimeError):
+    pass
+
+
+class _TelegramPollDeliveryStale(RuntimeError):
+    pass
+
+
+class _CortexTelegramAckStore:
+    """Private durable outbox for Telegram receipts that Core has not accepted yet."""
+
+    def __init__(self, path: Optional[Path] = None, *, retry_delay_s: float = 5.0) -> None:
+        configured = str(os.getenv("VIVENTIUM_TELEGRAM_CORTEX_ACK_STORE_PATH") or "").strip()
+        self.path = (
+            Path(path)
+            if path is not None
+            else Path(configured).expanduser()
+            if configured
+            else default_callback_store_path().with_name("cortex-delivery-acks.sqlite3")
+        )
+        self.retry_delay_s = max(0.0, float(retry_delay_s))
+        self.ttl_s = 604800.0
+
+    def _connect(self) -> sqlite3.Connection:
+        self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        os.chmod(self.path.parent, 0o700)
+        try:
+            descriptor = os.open(
+                self.path,
+                os.O_CREAT | os.O_EXCL | os.O_RDWR | getattr(os, "O_CLOEXEC", 0),
+                0o600,
+            )
+        except FileExistsError:
+            pass
+        else:
+            os.close(descriptor)
+        os.chmod(self.path, 0o600)
+        connection = sqlite3.connect(str(self.path), timeout=5.0)
+        connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA journal_mode=WAL")
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS cortex_telegram_ack_outbox (
+              ack_key TEXT PRIMARY KEY,
+              payload_json TEXT NOT NULL,
+              attempts INTEGER NOT NULL DEFAULT 0,
+              next_attempt_at REAL NOT NULL,
+              expires_at REAL NOT NULL
+            )
+            """
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS cortex_telegram_ack_due_idx "
+            "ON cortex_telegram_ack_outbox(next_attempt_at, expires_at)"
+        )
+        connection.commit()
+        for suffix in ("-wal", "-shm"):
+            sidecar = Path(f"{self.path}{suffix}")
+            if sidecar.exists():
+                os.chmod(sidecar, 0o600)
+        return connection
+
+    def enqueue(self, payload: dict[str, Any]) -> str:
+        payload_json = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+        ack_key = hashlib.sha256(payload_json.encode("utf-8")).hexdigest()
+        now = time.time()
+        with self._connect() as connection:
+            connection.execute(
+                "DELETE FROM cortex_telegram_ack_outbox WHERE expires_at <= ?",
+                (now,),
+            )
+            connection.execute(
+                """
+                INSERT INTO cortex_telegram_ack_outbox
+                  (ack_key, payload_json, attempts, next_attempt_at, expires_at)
+                VALUES (?, ?, 0, ?, ?)
+                ON CONFLICT(ack_key) DO UPDATE SET
+                  payload_json = excluded.payload_json,
+                  expires_at = MAX(expires_at, excluded.expires_at)
+                """,
+                (ack_key, payload_json, now + self.retry_delay_s, now + self.ttl_s),
+            )
+        return ack_key
+
+    def due(self, limit: int = 25) -> list[tuple[str, dict[str, Any]]]:
+        now = time.time()
+        bounded_limit = max(1, min(int(limit), 100))
+        with self._connect() as connection:
+            connection.execute(
+                "DELETE FROM cortex_telegram_ack_outbox WHERE expires_at <= ?",
+                (now,),
+            )
+            rows = connection.execute(
+                """
+                SELECT ack_key, payload_json
+                FROM cortex_telegram_ack_outbox
+                WHERE next_attempt_at <= ?
+                ORDER BY next_attempt_at, ack_key
+                LIMIT ?
+                """,
+                (now, bounded_limit),
+            ).fetchall()
+            if rows:
+                connection.executemany(
+                    """
+                    UPDATE cortex_telegram_ack_outbox
+                    SET attempts = attempts + 1, next_attempt_at = ?
+                    WHERE ack_key = ?
+                    """,
+                    [(now + self.retry_delay_s, row["ack_key"]) for row in rows],
+                )
+        return [(row["ack_key"], json.loads(row["payload_json"])) for row in rows]
+
+    def mark_done(self, ack_key: str) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                "DELETE FROM cortex_telegram_ack_outbox WHERE ack_key = ?",
+                (str(ack_key),),
+            )
+
+    def pending_count(self) -> int:
+        with self._connect() as connection:
+            return int(
+                connection.execute("SELECT COUNT(*) FROM cortex_telegram_ack_outbox").fetchone()[0]
+            )
 
 
 # === VIVENTIUM START ===
@@ -695,12 +837,7 @@ def extract_delivery_disposition(
     *,
     required: bool = False,
 ) -> dict[str, Any]:
-    """Validate final-response delivery metadata for the Telegram adapter.
-
-    Final metadata is an external boundary. Only the versioned contract is
-    forwarded; malformed values are reduced to an invalid state without copying
-    arbitrary provider/model output into adapter events or logs.
-    """
+    """Validate final-response delivery metadata for the Telegram adapter."""
 
     candidate: Any = None
     present = False
@@ -780,6 +917,87 @@ def extract_cortex_followup(payload: dict[str, Any]) -> Optional[str]:
     if isinstance(text, str) and text.strip():
         return sanitize_telegram_text(text)
     return None
+
+
+def extract_cortex_followup_delivery(payload: dict[str, Any]) -> Optional[dict[str, Any]]:
+    text = extract_cortex_followup(payload)
+    data = payload.get("data")
+    if not text or not isinstance(data, dict):
+        return None
+    logical_turn_id = data.get("logicalTurnId")
+    logical_turn_revision = data.get("logicalTurnRevision")
+    presentation = data.get("cortexPresentation")
+    if (
+        not isinstance(logical_turn_id, str)
+        or not logical_turn_id.strip()
+        or not isinstance(logical_turn_revision, int)
+        or isinstance(logical_turn_revision, bool)
+        or logical_turn_revision < 1
+        or not isinstance(presentation, dict)
+    ):
+        return None
+    required_strings = (
+        "ownerId",
+        "messageId",
+        "parentMessageId",
+        "claimToken",
+        "presentationLeaseToken",
+    )
+    if any(
+        not isinstance(presentation.get(key), str) or not presentation[key].strip()
+        for key in required_strings
+    ):
+        return None
+    if any(
+        not isinstance(presentation.get(key), int)
+        or isinstance(presentation[key], bool)
+        or presentation[key] < 1
+        for key in ("revision", "generation")
+    ):
+        return None
+    delivery_ids = presentation.get("deliveryIds")
+    delivery_receipts = presentation.get("deliveryReceipts")
+    if (
+        not isinstance(delivery_ids, list)
+        or not 1 <= len(delivery_ids) <= 32
+        or any(not isinstance(value, str) or not value.strip() for value in delivery_ids)
+        or len(set(delivery_ids)) != len(delivery_ids)
+        or not isinstance(delivery_receipts, list)
+        or len(delivery_receipts) != len(delivery_ids)
+    ):
+        return None
+    sorted_ids = sorted(delivery_ids)
+    normalized_receipts = sorted(
+        (
+            {
+                "deliveryId": receipt.get("deliveryId") if isinstance(receipt, dict) else None,
+                "graphResultHash": (
+                    str(receipt.get("graphResultHash") or "").strip().lower()
+                    if isinstance(receipt, dict)
+                    else ""
+                ),
+            }
+            for receipt in delivery_receipts
+        ),
+        key=lambda receipt: str(receipt["deliveryId"] or ""),
+    )
+    if any(
+        receipt["deliveryId"] != sorted_ids[index]
+        or not re.fullmatch(r"[a-f0-9]{64}", receipt["graphResultHash"])
+        for index, receipt in enumerate(normalized_receipts)
+    ):
+        return None
+    normalized_presentation = {
+        **presentation,
+        "deliveryIds": sorted_ids,
+        "deliveryReceipts": normalized_receipts,
+    }
+    return {
+        **data,
+        "text": text,
+        "logicalTurnId": logical_turn_id.strip(),
+        "cortexPresentation": normalized_presentation,
+    }
 # === VIVENTIUM END ===
 
 
@@ -884,6 +1102,33 @@ def extract_response_message_id(payload: dict[str, Any]) -> str:
     if isinstance(message_id, str) and message_id:
         return message_id
     return ""
+
+
+def extract_telegram_delivery_message_ids(value: Any) -> list[str]:
+    candidates: list[Any] = []
+    if isinstance(value, dict):
+        for key in (
+            "telegramMessageIds",
+            "telegram_message_ids",
+            "messageIds",
+            "message_ids",
+        ):
+            if key in value:
+                raw = value.get(key)
+                candidates.extend(raw if isinstance(raw, (list, tuple, set)) else [raw])
+        if value.get("message_id") is not None:
+            candidates.append(value.get("message_id"))
+    elif isinstance(value, (list, tuple, set)):
+        candidates.extend(value)
+    elif getattr(value, "message_id", None) is not None:
+        candidates.append(getattr(value, "message_id"))
+    return list(
+        dict.fromkeys(
+            str(candidate).strip()[:256]
+            for candidate in candidates
+            if candidate is not None and str(candidate).strip()
+        )
+    )[:32]
 # === VIVENTIUM END ===
 
 
@@ -987,7 +1232,69 @@ async def _noop_async_context() -> AsyncIterator[None]:
     yield
 
 
-def _stream_error_message(error: Optional[str]) -> str:
+# === VIVENTIUM START ===
+# Feature: Structured Telegram stream-error presentation.
+# Purpose: Prefer LibreChat's typed public error class over brittle inspection of human-facing
+# text, while retaining legacy text classification for older stream payloads.
+_STRUCTURED_STREAM_ERROR_MESSAGES = {
+    "stream_expired": "Response stream expired during reconnect. Please send the message again.",
+    "provider_billing": "Provider billing issue. Please check Plans & Billing.",
+    "provider_connected_account_reconnect_required": (
+        "Model connection needs reconnect. Open Viventium in the browser and reconnect the AI provider, then retry."
+    ),
+    "provider_unauthorized": (
+        "Model connection needs reconnect. Open Viventium in the browser and reconnect the AI provider, then retry."
+    ),
+    "provider_auth_missing": (
+        "The configured model provider authentication is unavailable. Open Viventium in the browser, reconnect the AI provider, then retry."
+    ),
+    "provider_access_denied": "The model provider denied access to this request.",
+    "provider_rate_limited": "The model provider rate-limited this request. Please try again shortly.",
+    "provider_quota_exhausted": (
+        "The selected model provider quota is exhausted. Try again after the reset or use the configured fallback."
+    ),
+    "provider_response_deadline_exceeded": (
+        "The model response exceeded this turn's configured deadline and was stopped. Please retry the turn."
+    ),
+    "provider_temporarily_unavailable": (
+        "The model provider is temporarily unavailable. Please try again shortly."
+    ),
+    "context_length_exceeded": "The request was too large for the model context.",
+    "mcp_tool_failure": "Tool connection error. Please retry.",
+    "tool_failure": "Tool connection error. Please retry.",
+    "late_stream_termination": "The model stream ended before a response was available.",
+    "local_retrieval_timeout": (
+        "Local retrieval timed out before the model response could be completed."
+    ),
+    "post_stream_finalization": (
+        "The response completed, but post-response finalization failed."
+    ),
+    "tool_cortex_deferred_main_response": "Background work is still finishing this response.",
+    "recoverable_provider_error": (
+        "The model provider hit a recoverable issue before returning a result."
+    ),
+    "completion_error": "The model provider could not complete this request.",
+}
+
+_FOLLOWUP_RECOVERABLE_ERROR_CLASSES = {
+    "completion_error",
+    "late_stream_termination",
+    "local_retrieval_timeout",
+    "post_stream_finalization",
+    "recoverable_provider_error",
+    "tool_cortex_deferred_main_response",
+}
+
+
+def _stream_error_message(error: Optional[str], *, error_class: Optional[str] = None) -> str:
+    normalized_error_class = str(error_class or "").strip().lower()
+    if normalized_error_class:
+        if normalized_error_class == "provider_connected_account_reconnect_required" and error:
+            return sanitize_telegram_text(error)
+        return _STRUCTURED_STREAM_ERROR_MESSAGES.get(
+            normalized_error_class,
+            _STRUCTURED_STREAM_ERROR_MESSAGES["completion_error"],
+        )
     fallback = (os.getenv("VIVENTIUM_TELEGRAM_STREAM_ERROR_MESSAGE") or "").strip()
     if fallback:
         return fallback
@@ -1037,15 +1344,52 @@ def _stream_error_message(error: Optional[str]) -> str:
     return "Connection error. Please retry."
 
 
-def _bridge_error_event(message: str, *, speak: bool = False) -> dict[str, Any]:
-    return {"type": "bridge_error", "text": message, "speak": speak}
+# === VIVENTIUM END ===
+
+
+def _bridge_error_event(
+    message: str,
+    *,
+    speak: bool = False,
+    error_class: Optional[str] = None,
+    recoverable: bool = False,
+) -> dict[str, Any]:
+    event: dict[str, Any] = {"type": "bridge_error", "text": message, "speak": speak}
+    if error_class:
+        event["error_class"] = str(error_class)
+    if recoverable:
+        event["recoverable"] = True
+    return event
+
+
+# === VIVENTIUM START: retry only the typed pre-ingress Parallel Work readiness receipt ===
+def _parallel_work_not_ready_start_error(error: Exception) -> bool:
+    if not isinstance(error, httpx.HTTPStatusError):
+        return False
+    if getattr(error.response, "status_code", None) != 503:
+        return False
+    try:
+        payload = error.response.json()
+    except Exception:
+        return False
+    return bool(
+        isinstance(payload, dict)
+        and payload.get("code") == "PARALLEL_WORK_NOT_READY"
+        and payload.get("retryable") is True
+    )
 
 
 def _start_chat_error_safe_to_retry(error: Exception) -> bool:
-    return isinstance(error, (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout))
+    return isinstance(
+        error,
+        (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout),
+    ) or _parallel_work_not_ready_start_error(error)
 
 
 def _start_chat_error_message(error: Exception) -> str:
+    if _parallel_work_not_ready_start_error(error):
+        return "Parallel work is still starting. This Telegram request was not accepted; please retry in a moment."
+
     if _start_chat_error_safe_to_retry(error):
         return "Viventium's local API is starting or unavailable. Please retry in a moment."
 
@@ -1080,6 +1424,7 @@ def _start_chat_error_message(error: Exception) -> str:
             return f"Viventium's local API returned HTTP {status_code}. Please retry."
 
     return "Viventium could not start this Telegram turn. Please retry."
+# === VIVENTIUM END ===
 
 
 def _empty_response_message(error_context: Optional[str] = None) -> str:
@@ -1134,6 +1479,40 @@ def extract_final_error(payload: dict[str, Any]) -> Optional[str]:
                 return "Agent error"
 
     return None
+
+
+def extract_final_error_class(payload: dict[str, Any]) -> str:
+    """Extract the trusted structural error class without inferring intent from prose."""
+
+    for key in ("error_class", "errorClass", "error_code", "errorCode", "code"):
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip().lower()
+
+    error = payload.get("error")
+    if isinstance(error, dict):
+        for key in ("error_class", "errorClass", "class", "code"):
+            value = error.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip().lower()
+
+    response = payload.get("responseMessage")
+    if not isinstance(response, dict):
+        return ""
+    for key in ("error_class", "errorClass", "error_code", "errorCode", "code"):
+        value = response.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip().lower()
+    content = response.get("content")
+    if isinstance(content, list):
+        for part in content:
+            if not isinstance(part, dict) or part.get("type") != "error":
+                continue
+            for key in ("error_class", "errorClass", "error_code", "errorCode", "code"):
+                value = part.get(key)
+                if isinstance(value, str) and value.strip():
+                    return value.strip().lower()
+    return ""
 
 
 def _diagnose_empty_response(payload: dict[str, Any]) -> str:
@@ -1447,15 +1826,18 @@ class LibreChatBridge:
         self._get_agent_id = get_agent_id
         self._set_agent_id = set_agent_id
         self.on_message_callback: Optional[Callable[..., Awaitable[None]]] = None
+        self.on_retraction_callback: Optional[Callable[[int, str], Awaitable[None]]] = None
         self._insight_tasks: set[asyncio.Task] = set()
         self._insight_seen: dict[str, set[str]] = {}
         self._insight_refs: dict[str, int] = {}
         # === VIVENTIUM START ===
-        # Feature: Keep Telegram follow-ups aligned with the active LibreChat stream.
-        # Reason: Track stream state + cortex activity so DB polling does not stop before follow-ups persist.
-        self._active_stream_by_chat: dict[str, str] = {}
+        # Feature: Keep Telegram follow-ups aligned with every live LibreChat stream.
+        # Reason: Rapid independent Telegram turns may overlap. A newer source event must not
+        # discard the older turn's auth identity or late cortex/worker delivery state.
+        self._active_stream_by_chat: dict[str, set[str]] = {}
         self._stream_final_events: dict[str, asyncio.Event] = {}
         self._pending_followups: dict[str, str] = {}
+        self._pending_stream_errors: dict[str, dict[str, str]] = {}
         self._insight_task_by_stream: dict[str, asyncio.Task] = {}
         self._response_message_ids: dict[str, str] = {}
         self._conversation_by_stream: dict[str, str] = {}
@@ -1472,14 +1854,20 @@ class LibreChatBridge:
         self._delivery_disposition_required_by_stream: dict[str, bool] = {}
         self._glasshive_delivery_dispatcher_task: Optional[asyncio.Task] = None
         self._glasshive_delivery_dispatcher_id = f"tg-{uuid.uuid4().hex[:12]}"
+        self._cortex_ack_store = _CortexTelegramAckStore()
+        self._cortex_ack_dispatcher_task: Optional[asyncio.Task] = None
         # === VIVENTIUM END ===
         # === VIVENTIUM START ===
-        # Feature: Optional per-chat serialization (disable for OpenClaw-style responsiveness).
+        # Feature: Receptive same-chat Main intake.
+        # Purpose: Core source-order and presentation acknowledgement own ordered revisions. The
+        # bridge must admit a newer Telegram segment while the prior provider stream is still open;
+        # otherwise Main, steer, and revision input all wait behind provider latency.
+        # Legacy full-stream serialization remains an explicit diagnostic option only.
         self.serialize_per_chat = _parse_bool_env(
             (os.getenv("VIVENTIUM_TELEGRAM_SERIALIZE_PER_CHAT") or "").strip(),
             False,
         )
-        # Preserve lock map for optional serialized mode.
+        # Preserve one lock per active Telegram chat.
         self._chat_locks: dict[str, asyncio.Lock] = {}
         self._trace_enabled = (os.getenv("VIVENTIUM_TELEGRAM_TRACE") or "").strip() == "1"
         # === VIVENTIUM END ===
@@ -1491,6 +1879,439 @@ class LibreChatBridge:
 
     def set_on_message_callback(self, callback: Callable[..., Awaitable[None]]):
         self.on_message_callback = callback
+
+    def set_on_retraction_callback(
+        self,
+        callback: Callable[[int, str], Awaitable[None]],
+    ) -> None:
+        self.on_retraction_callback = callback
+
+    async def _retract_cortex_presentation_refs(self, presentation_refs: list[str]) -> None:
+        if not self.on_retraction_callback:
+            logger.warning("Cortex Telegram retraction callback is unavailable")
+            return
+        for presentation_ref in presentation_refs:
+            match = re.fullmatch(r"telegram:([^:]+):([^:]+)", str(presentation_ref or ""))
+            if not match:
+                continue
+            try:
+                await self.on_retraction_callback(int(match.group(1)), match.group(2))
+            except Exception as exc:
+                logger.warning("Cortex Telegram retraction failed: %s", type(exc).__name__)
+
+    async def _settle_cortex_acknowledgement(
+        self,
+        ack_key: str,
+        payload: dict[str, Any],
+    ) -> str:
+        status = await self.ack_delivery_status(
+            payload["logical_turn_id"],
+            payload["revision"],
+            payload["state"],
+            payload.get("presentation_ref") or "",
+            payload.get("presentation_refs") or None,
+            cortex_presentation=payload.get("cortex_presentation"),
+        )
+        if status == "recorded":
+            self._cortex_ack_store.mark_done(ack_key)
+            return status
+        if status in {"conflict", "stale_revision", "stale_source_order", "not_found"}:
+            await self._retract_cortex_presentation_refs(payload.get("presentation_refs") or [])
+            self._cortex_ack_store.mark_done(ack_key)
+        return status
+
+    async def _drain_cortex_acknowledgements(self, *, limit: int = 25) -> int:
+        rows = self._cortex_ack_store.due(limit)
+        for ack_key, payload in rows:
+            try:
+                await self._settle_cortex_acknowledgement(ack_key, payload)
+            except Exception as exc:
+                logger.warning("Cortex Telegram acknowledgement retry failed: %s", type(exc).__name__)
+        return len(rows)
+
+    def start_cortex_ack_dispatcher(self) -> None:
+        if self._cortex_ack_dispatcher_task and not self._cortex_ack_dispatcher_task.done():
+            return
+        self._cortex_ack_dispatcher_task = asyncio.create_task(
+            self._run_cortex_ack_dispatcher(),
+            name="cortex-telegram-ack-dispatcher",
+        )
+        self._track_task(self._cortex_ack_dispatcher_task)
+
+    def stop_cortex_ack_dispatcher(self) -> None:
+        task = self._cortex_ack_dispatcher_task
+        if task and not task.done():
+            task.cancel()
+        self._cortex_ack_dispatcher_task = None
+
+    async def _run_cortex_ack_dispatcher(self) -> None:
+        while True:
+            try:
+                await self._dispatch_cortex_delivery_cycle()
+                await asyncio.sleep(2.0)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.warning("Cortex Telegram acknowledgement dispatcher failed: %s", type(exc).__name__)
+                await asyncio.sleep(2.0)
+
+    @staticmethod
+    def _validate_cortex_authority(
+        payload: Any,
+        *,
+        require_presentation: bool,
+        expected_claim: Optional[dict[str, Any]] = None,
+    ) -> Optional[dict[str, Any]]:
+        if not isinstance(payload, dict):
+            return None
+        claim_keys = {
+            "ownerId",
+            "messageId",
+            "parentMessageId",
+            "revision",
+            "generation",
+            "deliveryIds",
+            "deliveryReceipts",
+            "claimToken",
+            "surface",
+        }
+        required_keys = claim_keys | ({"presentationLeaseToken"} if require_presentation else set())
+        if set(payload) != required_keys or payload.get("surface") != "telegram":
+            return None
+        for key in ("ownerId", "messageId", "parentMessageId", "claimToken"):
+            value = payload.get(key)
+            if not isinstance(value, str) or not value.strip() or len(value) > 256:
+                return None
+        for key in ("revision", "generation"):
+            value = payload.get(key)
+            if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+                return None
+        delivery_ids = payload.get("deliveryIds")
+        receipts = payload.get("deliveryReceipts")
+        if (
+            not isinstance(delivery_ids, list)
+            or not delivery_ids
+            or len(delivery_ids) > 25
+            or any(not isinstance(value, str) or not value or len(value) > 256 for value in delivery_ids)
+            or delivery_ids != sorted(set(delivery_ids))
+            or not isinstance(receipts, list)
+            or len(receipts) != len(delivery_ids)
+        ):
+            return None
+        normalized_receipts: list[dict[str, str]] = []
+        for index, receipt in enumerate(receipts):
+            if not isinstance(receipt, dict) or set(receipt) != {"deliveryId", "graphResultHash"}:
+                return None
+            delivery_id = receipt.get("deliveryId")
+            graph_hash = receipt.get("graphResultHash")
+            if (
+                delivery_id != delivery_ids[index]
+                or not isinstance(graph_hash, str)
+                or not re.fullmatch(r"[a-f0-9]{64}", graph_hash)
+            ):
+                return None
+            normalized_receipts.append(
+                {"deliveryId": delivery_id, "graphResultHash": graph_hash}
+            )
+        if require_presentation:
+            lease_token = payload.get("presentationLeaseToken")
+            if not isinstance(lease_token, str) or not lease_token or len(lease_token) > 256:
+                return None
+        if expected_claim is not None:
+            expected = LibreChatBridge._validate_cortex_authority(
+                expected_claim,
+                require_presentation=False,
+            )
+            if expected is None:
+                return None
+            for key in claim_keys:
+                if payload.get(key) != expected.get(key):
+                    return None
+        return {
+            **payload,
+            "deliveryIds": list(delivery_ids),
+            "deliveryReceipts": normalized_receipts,
+        }
+
+    @classmethod
+    def _validate_cortex_delivery(cls, payload: Any) -> Optional[dict[str, Any]]:
+        required_keys = {
+            "deliveryId",
+            "streamId",
+            "telegramChatId",
+            "telegramUserId",
+            "telegramMessageId",
+            "telegramMessageThreadId",
+            "sourceSequence",
+            "text",
+            "logicalTurnId",
+            "logicalTurnRevision",
+            "cortexClaim",
+        }
+        if not isinstance(payload, dict) or set(payload) != required_keys:
+            return None
+        claim = cls._validate_cortex_authority(
+            payload.get("cortexClaim"),
+            require_presentation=False,
+        )
+        source_sequence = payload.get("sourceSequence")
+        logical_revision = payload.get("logicalTurnRevision")
+        thread_id = payload.get("telegramMessageThreadId")
+        if (
+            claim is None
+            or not isinstance(payload.get("deliveryId"), str)
+            or payload.get("deliveryId") not in claim["deliveryIds"]
+            or not isinstance(payload.get("streamId"), str)
+            or not payload.get("streamId")
+            or len(payload.get("streamId")) > 256
+            or not isinstance(payload.get("telegramChatId"), str)
+            or not re.fullmatch(r"-?[1-9][0-9]*", payload.get("telegramChatId"))
+            or not isinstance(payload.get("telegramUserId"), str)
+            or not re.fullmatch(r"[1-9][0-9]*", payload.get("telegramUserId"))
+            or not isinstance(payload.get("telegramMessageId"), str)
+            or not re.fullmatch(r"[1-9][0-9]*", payload.get("telegramMessageId"))
+            or not isinstance(thread_id, str)
+            or (thread_id != "" and not re.fullmatch(r"[1-9][0-9]*", thread_id))
+            or not isinstance(source_sequence, int)
+            or isinstance(source_sequence, bool)
+            or source_sequence < 1
+            or str(source_sequence) != payload.get("telegramMessageId")
+            or not isinstance(payload.get("text"), str)
+            or not payload.get("text").strip()
+            or not isinstance(payload.get("logicalTurnId"), str)
+            or not payload.get("logicalTurnId")
+            or not isinstance(logical_revision, int)
+            or isinstance(logical_revision, bool)
+            or logical_revision < 1
+        ):
+            return None
+        return {**payload, "cortexClaim": claim}
+
+    async def _claim_cortex_deliveries(self, *, limit: int = 10) -> list[dict[str, Any]]:
+        if not self.base_url or not self.secret:
+            return []
+        url = f"{self.base_url}/api/viventium/telegram/cortex/deliveries/claim"
+        payload = {
+            "limit": max(1, min(int(limit or 1), 25)),
+            "leaseMs": 120_000,
+        }
+        timeout = httpx.Timeout(10.0, connect=5.0, read=10.0, write=5.0, pool=5.0)
+        async with httpx.AsyncClient(
+            timeout=timeout,
+            **_async_client_options_for_url(url),
+        ) as client:
+            response = await client.post(
+                url,
+                json=payload,
+                headers={"X-VIVENTIUM-TELEGRAM-SECRET": self.secret},
+            )
+        if response.status_code != 200:
+            raise RuntimeError(f"Cortex Telegram delivery claim failed ({response.status_code})")
+        data = response.json()
+        deliveries = data.get("deliveries") if isinstance(data, dict) else None
+        if not isinstance(deliveries, list):
+            return []
+        validated = []
+        for delivery in deliveries:
+            exact = self._validate_cortex_delivery(delivery)
+            if exact is None:
+                logger.warning("Cortex Telegram dispatcher rejected a malformed claim")
+                continue
+            validated.append(exact)
+        return validated
+
+    async def _authorize_cortex_delivery(
+        self,
+        delivery: dict[str, Any],
+    ) -> Optional[dict[str, Any]]:
+        claim = self._validate_cortex_authority(
+            delivery.get("cortexClaim"),
+            require_presentation=False,
+        )
+        current = delivery.get("cortexPresentation") or claim
+        current_is_presentation = isinstance(current, dict) and "presentationLeaseToken" in current
+        current_authority = self._validate_cortex_authority(
+            current,
+            require_presentation=current_is_presentation,
+            expected_claim=claim,
+        )
+        if claim is None or current_authority is None:
+            return None
+        url = f"{self.base_url}/api/viventium/telegram/cortex/deliveries/authorize"
+        timeout = httpx.Timeout(10.0, connect=5.0, read=10.0, write=5.0, pool=5.0)
+        async with httpx.AsyncClient(
+            timeout=timeout,
+            **_async_client_options_for_url(url),
+        ) as client:
+            response = await client.post(
+                url,
+                json={"cortexClaim": current_authority, "leaseMs": 120_000},
+                headers={"X-VIVENTIUM-TELEGRAM-SECRET": self.secret},
+            )
+        if response.status_code == 409:
+            return None
+        if response.status_code != 200:
+            raise RuntimeError(
+                f"Cortex Telegram delivery authorization failed ({response.status_code})"
+            )
+        data = response.json()
+        presentation = data.get("cortexPresentation") if isinstance(data, dict) else None
+        exact = self._validate_cortex_authority(
+            presentation,
+            require_presentation=True,
+            expected_claim=claim,
+        )
+        if (
+            exact is None
+            or (
+                current_is_presentation
+                and exact.get("presentationLeaseToken")
+                != current_authority.get("presentationLeaseToken")
+            )
+        ):
+            return None
+        return exact
+
+    async def _mark_cortex_delivery_status(
+        self,
+        delivery: dict[str, Any],
+        status: str,
+    ) -> bool:
+        if status not in {"failed", "suppressed", "delivery_unknown"}:
+            return False
+        claim = self._validate_cortex_authority(
+            delivery.get("cortexClaim"),
+            require_presentation=False,
+        )
+        presentation = self._validate_cortex_authority(
+            delivery.get("cortexPresentation"),
+            require_presentation=True,
+            expected_claim=claim,
+        )
+        if claim is None or (status == "delivery_unknown" and presentation is None):
+            return False
+        payload: dict[str, Any] = {"status": status}
+        if presentation is not None:
+            payload["cortexPresentation"] = presentation
+        else:
+            payload["cortexClaim"] = claim
+        url = f"{self.base_url}/api/viventium/telegram/cortex/deliveries/status"
+        timeout = httpx.Timeout(10.0, connect=5.0, read=10.0, write=5.0, pool=5.0)
+        async with httpx.AsyncClient(
+            timeout=timeout,
+            **_async_client_options_for_url(url),
+        ) as client:
+            response = await client.post(
+                url,
+                json=payload,
+                headers={"X-VIVENTIUM-TELEGRAM-SECRET": self.secret},
+            )
+        if response.status_code == 409:
+            return False
+        if response.status_code != 200:
+            raise RuntimeError(
+                f"Cortex Telegram delivery status update failed ({response.status_code})"
+            )
+        return True
+
+    async def _cortex_delivery_is_current(self, delivery: dict[str, Any]) -> bool:
+        try:
+            return await self.source_order_is_current(
+                telegram_user_id=delivery["telegramUserId"],
+                telegram_chat_id=delivery["telegramChatId"],
+                telegram_message_thread_id=delivery["telegramMessageThreadId"],
+                source_sequence=delivery["sourceSequence"],
+            )
+        except Exception as exc:
+            logger.warning(
+                "Cortex Telegram dispatch source-order check failed closed: %s",
+                type(exc).__name__,
+            )
+            return False
+
+    async def _deliver_cortex_delivery(self, delivery: dict[str, Any]) -> bool:
+        exact = self._validate_cortex_delivery(delivery)
+        if exact is None:
+            return False
+        if is_no_response_only(exact["text"]):
+            await self._mark_cortex_delivery_status(exact, "suppressed")
+            return True
+        if not await self._cortex_delivery_is_current(exact):
+            await self._mark_cortex_delivery_status(exact, "suppressed")
+            return False
+
+        stream_id = exact["streamId"]
+        previous_identity = self._stream_identity.get(stream_id)
+        previous_identity_copy = dict(previous_identity) if isinstance(previous_identity, dict) else None
+        self._set_stream_identity(
+            stream_id=stream_id,
+            telegram_chat_id=exact["telegramChatId"],
+            telegram_user_id=exact["telegramUserId"],
+            telegram_username=(previous_identity_copy or {}).get("telegram_username", ""),
+            voice_mode=(previous_identity_copy or {}).get("voice_mode") == "1",
+            input_mode=(previous_identity_copy or {}).get("input_mode", ""),
+            voice_route=(previous_identity_copy or {}).get("voice_route"),
+            telegram_message_id=exact["telegramMessageId"],
+            telegram_message_thread_id=exact["telegramMessageThreadId"],
+            logical_turn_id=exact["logicalTurnId"],
+            logical_turn_revision=exact["logicalTurnRevision"],
+        )
+        transport_authorized = False
+
+        async def authorize_before_side_effect() -> bool:
+            nonlocal transport_authorized
+            if not await self._cortex_delivery_is_current(exact):
+                raise _TelegramPollDeliveryStale()
+            presentation = await self._authorize_cortex_delivery(exact)
+            if presentation is None:
+                raise _CortexDeliveryAuthorizationLost(
+                    "cortex_telegram_delivery_authorization_lost"
+                )
+            exact["cortexPresentation"] = presentation
+            transport_authorized = True
+            return True
+
+        try:
+            sent = await self._send_followup_text_once(
+                exact["telegramChatId"],
+                exact["text"],
+                stream_id=stream_id,
+                cortex_delivery=exact,
+                enforce_order_fence=True,
+                authorize_before_side_effect=authorize_before_side_effect,
+            )
+            if sent:
+                return True
+            await self._mark_cortex_delivery_status(
+                exact,
+                "delivery_unknown" if transport_authorized else "failed",
+            )
+            return False
+        except _TelegramPollDeliveryStale:
+            await self._mark_cortex_delivery_status(
+                exact,
+                "delivery_unknown" if transport_authorized else "suppressed",
+            )
+            return False
+        except Exception as exc:
+            logger.warning("Cortex Telegram durable delivery failed: %s", type(exc).__name__)
+            await self._mark_cortex_delivery_status(
+                exact,
+                "delivery_unknown" if transport_authorized else "failed",
+            )
+            return False
+        finally:
+            if previous_identity_copy is None:
+                self._stream_identity.pop(stream_id, None)
+            else:
+                self._stream_identity[stream_id] = previous_identity_copy
+
+    async def _dispatch_cortex_delivery_cycle(self) -> int:
+        await self._drain_cortex_acknowledgements()
+        deliveries = await self._claim_cortex_deliveries(limit=10)
+        for delivery in deliveries:
+            await self._deliver_cortex_delivery(delivery)
+        return len(deliveries)
 
     # === VIVENTIUM START ===
     # Feature: Durable GlassHive Telegram delivery dispatcher.
@@ -1514,6 +2335,40 @@ class LibreChatBridge:
             task.cancel()
         self._glasshive_delivery_dispatcher_task = None
 
+    def _glasshive_delivery_attempt_timeout_s(self) -> float:
+        lease_s = max(float(self.glasshive_delivery_lease_ms) / 1000.0, 1.0)
+        return max(1.0, min(30.0, lease_s / 2.0))
+
+    async def _deliver_glasshive_delivery_bounded(
+        self,
+        delivery: dict[str, Any],
+    ) -> bool:
+        try:
+            return await asyncio.wait_for(
+                self._deliver_glasshive_delivery(delivery),
+                timeout=self._glasshive_delivery_attempt_timeout_s(),
+            )
+        except asyncio.TimeoutError:
+            transport_authorized = isinstance(delivery.get("dispatchPermit"), dict)
+            status = "delivery_unknown" if transport_authorized else "failed"
+            detail = (
+                "GlassHive callback delivery timed out after Telegram transport authorization"
+                if transport_authorized
+                else "GlassHive callback delivery timed out before Telegram transport authorization"
+            )
+            try:
+                await self._mark_glasshive_delivery_status(
+                    delivery,
+                    status,
+                    **({"reason": detail} if transport_authorized else {"error": detail}),
+                )
+            except Exception as exc:
+                logger.warning(
+                    "GlassHive timed-out delivery status could not be recorded: %s",
+                    exc,
+                )
+            return False
+
     async def _run_glasshive_delivery_dispatcher(self) -> None:
         interval_s = max(self.glasshive_delivery_poll_s, 1.0)
         max_backoff_s = max(self.glasshive_delivery_max_backoff_s, interval_s)
@@ -1531,7 +2386,7 @@ class LibreChatBridge:
                     await asyncio.sleep(interval_s)
                     continue
                 for delivery in claimed:
-                    await self._deliver_glasshive_delivery(delivery)
+                    await self._deliver_glasshive_delivery_bounded(delivery)
             except asyncio.CancelledError:
                 return
             except Exception as exc:
@@ -1540,8 +2395,6 @@ class LibreChatBridge:
                     max_backoff_s,
                     interval_s * (2 ** min(consecutive_failures - 1, 10)),
                 )
-                # One warning identifies the outage; subsequent identical
-                # attempts back off quietly until one recovery message.
                 if consecutive_failures == 1:
                     logger.warning(
                         "GlassHive delivery dispatcher dependency unavailable; "
@@ -1586,14 +2439,23 @@ class LibreChatBridge:
         *,
         error: str = "",
         reason: str = "",
-    ) -> None:
+    ) -> bool:
         delivery_id = str(delivery.get("deliveryId") or "").strip()
         claim_id = str(delivery.get("claimId") or "").strip()
         if not delivery_id or not claim_id:
-            return
+            return False
         url = f"{self.base_url}/api/viventium/telegram/glasshive/deliveries/{urllib.parse.quote(delivery_id)}/status"
         headers = {"X-VIVENTIUM-TELEGRAM-SECRET": self.secret}
         payload = {"claimId": claim_id, "status": status}
+        dispatch_permit = delivery.get("dispatchPermit")
+        if status in {"sent", "delivery_unknown"} and isinstance(dispatch_permit, dict):
+            payload["dispatchPermit"] = dispatch_permit
+        if status == "sent":
+            message_ids = extract_telegram_delivery_message_ids(
+                delivery.get("telegramSentMessageIds")
+            )
+            if message_ids:
+                payload["telegramMessageIds"] = message_ids
         if error:
             payload["error"] = error[:1000]
         if reason:
@@ -1606,9 +2468,269 @@ class LibreChatBridge:
             response = await client.post(url, json=payload, headers=headers)
             if response.status_code == 409:
                 logger.warning("GlassHive delivery claim was lost before status=%s", status)
-                return
+                return False
             if response.status_code != 200:
                 raise RuntimeError(f"GlassHive delivery status update failed ({response.status_code})")
+        return True
+
+    async def _authorize_glasshive_delivery(
+        self,
+        delivery: dict[str, Any],
+    ) -> Optional[dict[str, Any]]:
+        delivery_id = str(delivery.get("deliveryId") or "").strip()
+        claim_id = str(delivery.get("claimId") or "").strip()
+        if not delivery_id or not claim_id:
+            return None
+        url = (
+            f"{self.base_url}/api/viventium/telegram/glasshive/deliveries/"
+            f"{urllib.parse.quote(delivery_id)}/authorize"
+        )
+        timeout = httpx.Timeout(10.0, connect=5.0, read=10.0, write=5.0, pool=5.0)
+        async with httpx.AsyncClient(
+            timeout=timeout,
+            **_async_client_options_for_url(url),
+        ) as client:
+            response = await client.post(
+                url,
+                json={
+                    "claimId": claim_id,
+                    "leaseMs": min(self.glasshive_delivery_lease_ms, 300_000),
+                },
+                headers={"X-VIVENTIUM-TELEGRAM-SECRET": self.secret},
+            )
+        if response.status_code == 409:
+            return None
+        if response.status_code != 200:
+            raise RuntimeError(f"GlassHive delivery authorization failed ({response.status_code})")
+        data = response.json()
+        permit = data.get("permit") if isinstance(data, dict) else None
+        return self._validate_glasshive_dispatch_permit(permit, delivery)
+
+    @staticmethod
+    def _glasshive_dispatch_permit_expiry(
+        permit: dict[str, Any],
+    ) -> Optional[datetime]:
+        raw_expiry = permit.get("expiresAt")
+        if not isinstance(raw_expiry, str) or not raw_expiry.strip():
+            return None
+        normalized = raw_expiry.strip()
+        if normalized.endswith("Z"):
+            normalized = f"{normalized[:-1]}+00:00"
+        try:
+            expiry = datetime.fromisoformat(normalized)
+        except ValueError:
+            return None
+        if expiry.tzinfo is None:
+            return None
+        return expiry.astimezone(timezone.utc)
+
+    def _validate_glasshive_dispatch_permit(
+        self,
+        payload: Any,
+        delivery: dict[str, Any],
+        *,
+        previous: Optional[dict[str, Any]] = None,
+    ) -> Optional[dict[str, Any]]:
+        if not isinstance(payload, dict):
+            return None
+        required_keys = {
+            "deliveryId",
+            "claimId",
+            "surface",
+            "permitId",
+            "permitGeneration",
+            "expiresAt",
+            "resultRevision",
+            "resultDigest",
+        }
+        permit_id = payload.get("permitId")
+        generation = payload.get("permitGeneration")
+        revision = payload.get("resultRevision")
+        digest = payload.get("resultDigest")
+        if (
+            set(payload) != required_keys
+            or payload.get("deliveryId") != str(delivery.get("deliveryId") or "").strip()
+            or payload.get("claimId") != str(delivery.get("claimId") or "").strip()
+            or payload.get("surface") != "telegram"
+            or not isinstance(permit_id, str)
+            or not permit_id
+            or len(permit_id) > 256
+            or not isinstance(generation, int)
+            or isinstance(generation, bool)
+            or generation < 1
+            or not isinstance(revision, int)
+            or isinstance(revision, bool)
+            or revision < 1
+            or not isinstance(digest, str)
+            or len(digest) != 71
+            or not digest.startswith("sha256:")
+            or any(character not in "0123456789abcdef" for character in digest[7:])
+        ):
+            return None
+        expiry = self._glasshive_dispatch_permit_expiry(payload)
+        if expiry is None or expiry <= datetime.now(timezone.utc):
+            return None
+        if previous is None:
+            return dict(payload)
+        previous_expiry = self._glasshive_dispatch_permit_expiry(previous)
+        if (
+            previous_expiry is None
+            or permit_id != previous.get("permitId")
+            or generation != previous.get("permitGeneration")
+            or revision != previous.get("resultRevision")
+            or digest != previous.get("resultDigest")
+            or expiry <= previous_expiry
+        ):
+            return None
+        return dict(payload)
+
+    async def _renew_glasshive_delivery(
+        self,
+        delivery: dict[str, Any],
+        permit: dict[str, Any],
+    ) -> Optional[dict[str, Any]]:
+        delivery_id = str(delivery.get("deliveryId") or "").strip()
+        claim_id = str(delivery.get("claimId") or "").strip()
+        url = (
+            f"{self.base_url}/api/viventium/telegram/glasshive/deliveries/"
+            f"{urllib.parse.quote(delivery_id)}/renew"
+        )
+        timeout = httpx.Timeout(10.0, connect=5.0, read=10.0, write=5.0, pool=5.0)
+        async with httpx.AsyncClient(
+            timeout=timeout,
+            **_async_client_options_for_url(url),
+        ) as client:
+            response = await client.post(
+                url,
+                json={
+                    "claimId": claim_id,
+                    "dispatchPermit": permit,
+                    "leaseMs": min(self.glasshive_delivery_lease_ms, 300_000),
+                },
+                headers={"X-VIVENTIUM-TELEGRAM-SECRET": self.secret},
+            )
+        if response.status_code == 409:
+            return None
+        if response.status_code != 200:
+            raise RuntimeError(f"GlassHive delivery renewal failed ({response.status_code})")
+        data = response.json()
+        renewed = data.get("permit") if isinstance(data, dict) else None
+        return self._validate_glasshive_dispatch_permit(
+            renewed,
+            delivery,
+            previous=permit,
+        )
+
+    async def _release_glasshive_delivery(
+        self,
+        delivery: dict[str, Any],
+        permit: dict[str, Any],
+    ) -> bool:
+        delivery_id = str(delivery.get("deliveryId") or "").strip()
+        claim_id = str(delivery.get("claimId") or "").strip()
+        if not delivery_id or not claim_id:
+            return False
+        url = (
+            f"{self.base_url}/api/viventium/telegram/glasshive/deliveries/"
+            f"{urllib.parse.quote(delivery_id)}/release"
+        )
+        timeout = httpx.Timeout(10.0, connect=5.0, read=10.0, write=5.0, pool=5.0)
+        try:
+            async with httpx.AsyncClient(
+                timeout=timeout,
+                **_async_client_options_for_url(url),
+            ) as client:
+                response = await client.post(
+                    url,
+                    json={"claimId": claim_id, "dispatchPermit": permit},
+                    headers={"X-VIVENTIUM-TELEGRAM-SECRET": self.secret},
+                )
+            return response.status_code == 200
+        except Exception as exc:
+            logger.warning("GlassHive Telegram permit release failed: %s", exc)
+            return False
+
+    async def _send_glasshive_with_permit(
+        self,
+        delivery: dict[str, Any],
+        chat_id: str,
+        text: str,
+        permit: dict[str, Any],
+    ) -> tuple[Any, dict[str, Any]]:
+        permit_holder = {"value": permit}
+        permit_lock = asyncio.Lock()
+        authorized_side_effects = 0
+        first_side_effect_authorized = asyncio.Event()
+        renewal_interval_s = max(
+            0.01,
+            min(15.0, self.glasshive_delivery_lease_ms / 3000.0),
+        )
+
+        async def renew_before_next_side_effect() -> bool:
+            nonlocal authorized_side_effects
+            async with permit_lock:
+                try:
+                    renewed = await self._renew_glasshive_delivery(
+                        delivery,
+                        permit_holder["value"],
+                    )
+                except Exception as exc:
+                    raise _GlassHiveDeliveryAuthorizationLost(
+                        str(exc),
+                        transport_started=authorized_side_effects > 0,
+                    ) from exc
+                if not renewed:
+                    raise _GlassHiveDeliveryAuthorizationLost(
+                        "glasshive_delivery_authorization_lost",
+                        transport_started=authorized_side_effects > 0,
+                    )
+                permit_holder["value"] = renewed
+                delivery["dispatchPermit"] = renewed
+                authorized_side_effects += 1
+                first_side_effect_authorized.set()
+            return True
+
+        send_task = asyncio.create_task(
+            self._send_followup_text(
+                chat_id,
+                text,
+                return_receipt=True,
+                before_side_effect=renew_before_next_side_effect,
+            )
+        )
+
+        async def keep_authorized() -> None:
+            await first_side_effect_authorized.wait()
+            while True:
+                await asyncio.sleep(renewal_interval_s)
+                async with permit_lock:
+                    renewed = await self._renew_glasshive_delivery(
+                        delivery,
+                        permit_holder["value"],
+                    )
+                    if not renewed:
+                        raise _GlassHiveDeliveryAuthorizationLost(
+                            "glasshive_delivery_authorization_lost",
+                            transport_started=authorized_side_effects > 0,
+                        )
+                    permit_holder["value"] = renewed
+                    delivery["dispatchPermit"] = renewed
+
+        renewal_task = asyncio.create_task(keep_authorized())
+        try:
+            done, _ = await asyncio.wait(
+                {send_task, renewal_task},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if renewal_task in done:
+                renewal_task.result()
+            return await send_task, permit_holder["value"]
+        finally:
+            if not send_task.done():
+                send_task.cancel()
+                await asyncio.gather(send_task, return_exceptions=True)
+            renewal_task.cancel()
+            await asyncio.gather(renewal_task, return_exceptions=True)
 
     async def _claim_glasshive_delivery_for_callback(
         self,
@@ -1634,14 +2756,70 @@ class LibreChatBridge:
             await self._mark_glasshive_delivery_status(delivery, "suppressed", reason="{NTA}")
             return True
         try:
-            sent = await self._send_followup_text(chat_id, text)
+            permit = await self._authorize_glasshive_delivery(delivery)
+        except Exception as exc:
+            await self._mark_glasshive_delivery_status(
+                delivery,
+                "failed",
+                error=f"Telegram authorization failed: {str(exc)[:200]}",
+            )
+            return False
+        if not permit:
+            return False
+        delivery["dispatchPermit"] = permit
+        try:
+            result, final_permit = await self._send_glasshive_with_permit(
+                delivery, chat_id, text, permit
+            )
+            delivery["dispatchPermit"] = final_permit
+            sent = bool(result.get("sent")) if isinstance(result, dict) else bool(result)
+            message_ids = (
+                extract_telegram_delivery_message_ids(result)
+                if isinstance(result, dict)
+                else []
+            )
+            if sent and message_ids:
+                delivery["telegramSentMessageIds"] = message_ids
+                settled = await self._mark_glasshive_delivery_status(delivery, "sent")
+                return settled is not False
             if sent:
-                await self._mark_glasshive_delivery_status(delivery, "sent")
-                return True
-            await self._mark_glasshive_delivery_status(delivery, "failed", error="Telegram send returned false")
+                await self._mark_glasshive_delivery_status(
+                    delivery,
+                    "delivery_unknown",
+                    reason="telegram_receipt_missing_after_send",
+                )
+                return False
+            await self._release_glasshive_delivery(delivery, delivery["dispatchPermit"])
+            delivery.pop("dispatchPermit", None)
+            await self._mark_glasshive_delivery_status(
+                delivery, "failed", error="Telegram send returned false"
+            )
+            return False
+        except _GlassHiveDeliveryAuthorizationLost as exc:
+            if not exc.transport_started:
+                await self._release_glasshive_delivery(
+                    delivery,
+                    delivery["dispatchPermit"],
+                )
+                delivery.pop("dispatchPermit", None)
+                await self._mark_glasshive_delivery_status(
+                    delivery,
+                    "failed",
+                    error=f"Telegram pre-send authorization failed: {str(exc)[:200]}",
+                )
+                return False
+            await self._mark_glasshive_delivery_status(
+                delivery,
+                "delivery_unknown",
+                reason=f"telegram_send_outcome_unknown:{str(exc)[:200]}",
+            )
             return False
         except Exception as exc:
-            await self._mark_glasshive_delivery_status(delivery, "failed", error=str(exc))
+            await self._mark_glasshive_delivery_status(
+                delivery,
+                "delivery_unknown",
+                reason=f"telegram_send_outcome_unknown:{str(exc)[:200]}",
+            )
             return False
     # === VIVENTIUM END ===
 
@@ -1698,36 +2876,18 @@ class LibreChatBridge:
             return False
 
     def _is_stream_active(self, chat_id: str, stream_id: str) -> bool:
-        return self._active_stream_by_chat.get(chat_id) == stream_id
+        return stream_id in self._active_stream_by_chat.get(chat_id, set())
 
     def _set_active_stream(self, chat_id: str, stream_id: str) -> None:
-        previous = self._active_stream_by_chat.get(chat_id)
-        if previous and previous != stream_id:
-            keep_previous_glasshive = self._has_glasshive_seen(previous) and not self._has_followup_sent(previous)
-            self._trace(
-                "LibreChatBridge replacing active stream: chat_id=%s old_stream=%s new_stream=%s",
-                chat_id,
-                previous,
-                stream_id,
-            )
-            self._cancel_insight_task(previous)
-            if not keep_previous_glasshive:
-                self._cancel_followup_task(previous)
-                self._pending_followups.pop(previous, None)
-                self._response_message_ids.pop(previous, None)
-                self._conversation_by_stream.pop(previous, None)
-                self._followup_sent.discard(previous)
-                self._followup_send_lock_by_stream.pop(previous, None)
-                self._stream_identity.pop(previous, None)
-                self._cortex_seen_by_stream.pop(previous, None)
-                self._glasshive_seen_by_stream.discard(previous)
-                self._stream_text_by_stream.pop(previous, None)
-                self._brief_main_reply_by_stream.pop(previous, None)
-                self._voice_route_by_stream.pop(previous, None)
-        self._active_stream_by_chat[chat_id] = stream_id
+        streams = self._active_stream_by_chat.setdefault(chat_id, set())
+        streams.add(stream_id)
 
     def _clear_active_stream(self, chat_id: str, stream_id: str) -> None:
-        if self._active_stream_by_chat.get(chat_id) == stream_id:
+        streams = self._active_stream_by_chat.get(chat_id)
+        if not streams:
+            return
+        streams.discard(stream_id)
+        if not streams:
             self._active_stream_by_chat.pop(chat_id, None)
 
     def _cancel_insight_task(self, stream_id: str) -> None:
@@ -1781,7 +2941,7 @@ class LibreChatBridge:
         self,
         *,
         stream_id: Optional[str],
-        emit: Callable[[], Awaitable[None]],
+        emit: Callable[[], Awaitable[bool]],
     ) -> bool:
         # === VIVENTIUM START ===
         # Feature: Phase A/B follow-up race guard.
@@ -1790,8 +2950,7 @@ class LibreChatBridge:
         # Fix: per-stream lock + check-and-mark in one critical section.
         # === VIVENTIUM END ===
         if not stream_id:
-            await emit()
-            return True
+            return bool(await emit())
         lock = self._followup_send_lock_by_stream.get(stream_id)
         if lock is None:
             lock = asyncio.Lock()
@@ -1799,9 +2958,192 @@ class LibreChatBridge:
         async with lock:
             if self._has_followup_sent(stream_id):
                 return False
-            await emit()
-            self._mark_followup_sent(stream_id)
+            sent = bool(await emit())
+            if sent:
+                self._mark_followup_sent(stream_id)
+            return sent
+
+    def _poll_delivery_authority(
+        self,
+        stream_id: Optional[str],
+        cortex_delivery: Optional[dict[str, Any]] = None,
+    ) -> Optional[dict[str, Any]]:
+        identity = self._stream_identity.get(stream_id or "", {})
+        logical_turn_id = str(identity.get("logical_turn_id") or "").strip()
+        raw_revision = identity.get("logical_turn_revision")
+        if cortex_delivery:
+            delivery_turn_id = str(cortex_delivery.get("logicalTurnId") or "").strip()
+            delivery_revision = cortex_delivery.get("logicalTurnRevision")
+            if logical_turn_id and delivery_turn_id != logical_turn_id:
+                return None
+            if raw_revision is not None and delivery_revision != raw_revision:
+                return None
+            logical_turn_id = delivery_turn_id
+            raw_revision = delivery_revision
+        try:
+            source_sequence = int(identity.get("telegram_message_id"))
+            logical_turn_revision = int(raw_revision)
+        except (TypeError, ValueError):
+            return None
+        raw_thread_id = str(identity.get("telegram_message_thread_id") or "").strip()
+        try:
+            thread_id = int(raw_thread_id) if raw_thread_id else 0
+        except (TypeError, ValueError):
+            return None
+        if (
+            source_sequence <= 0
+            or logical_turn_revision <= 0
+            or isinstance(raw_revision, bool)
+            or not logical_turn_id
+            or not str(identity.get("telegram_user_id") or "").strip()
+            or not str(identity.get("telegram_chat_id") or "").strip()
+            or (raw_thread_id and thread_id <= 0)
+        ):
+            return None
+        return {
+            "telegram_user_id": identity["telegram_user_id"],
+            "telegram_chat_id": identity["telegram_chat_id"],
+            "telegram_message_thread_id": raw_thread_id,
+            "source_sequence": source_sequence,
+            "logical_turn_id": logical_turn_id,
+            "logical_turn_revision": logical_turn_revision,
+        }
+
+    async def _poll_delivery_is_current(self, authority: dict[str, Any]) -> bool:
+        try:
+            return await self.source_order_is_current(
+                telegram_user_id=authority["telegram_user_id"],
+                telegram_chat_id=authority["telegram_chat_id"],
+                telegram_message_thread_id=authority["telegram_message_thread_id"],
+                source_sequence=authority["source_sequence"],
+            )
+        except Exception as exc:
+            logger.warning(
+                "Telegram poll delivery source-order check failed closed: %s",
+                type(exc).__name__,
+            )
+            return False
+
+    async def _record_poll_delivery_state(
+        self,
+        *,
+        authority: dict[str, Any],
+        state: str,
+        presentation_refs: list[str],
+        cortex_delivery: Optional[dict[str, Any]],
+    ) -> str:
+        payload = {
+            "logical_turn_id": authority["logical_turn_id"],
+            "revision": authority["logical_turn_revision"],
+            "state": state,
+            "presentation_ref": presentation_refs[-1],
+            "presentation_refs": presentation_refs,
+            "cortex_presentation": (
+                cortex_delivery.get("cortexPresentation")
+                if state == "committed" and cortex_delivery
+                else None
+            ),
+        }
+        ack_key = self._cortex_ack_store.enqueue(payload)
+        return await self._settle_cortex_acknowledgement(ack_key, payload)
+
+    async def _send_poll_delivery(
+        self,
+        chat_id: str,
+        text: str,
+        *,
+        stream_id: Optional[str],
+        cortex_delivery: Optional[dict[str, Any]],
+        authorize_before_side_effect: Optional[Callable[[], Awaitable[bool]]] = None,
+    ) -> bool:
+        authority = self._poll_delivery_authority(stream_id, cortex_delivery)
+        if authority is None:
+            logger.warning("Telegram poll delivery suppressed without complete turn authority")
+            return False
+        if not await self._poll_delivery_is_current(authority):
+            return False
+
+        async def ensure_current_before_transport() -> bool:
+            if not await self._poll_delivery_is_current(authority):
+                raise _TelegramPollDeliveryStale()
+            if authorize_before_side_effect is not None:
+                await authorize_before_side_effect()
             return True
+
+        receipt = await self._send_followup_text(
+            chat_id,
+            text,
+            stream_id=stream_id,
+            return_receipt=True,
+            before_side_effect=ensure_current_before_transport,
+        )
+        message_ids = (
+            receipt.get("message_ids")
+            if isinstance(receipt, dict) and receipt.get("sent") is True
+            else []
+        )
+        target_chat_id = self._resolve_telegram_chat_id(
+            chat_id=chat_id,
+            stream_id=stream_id,
+        )
+        if target_chat_id is None or not message_ids:
+            if isinstance(receipt, dict) and receipt.get("stale") is True:
+                return False
+            raise RuntimeError("Telegram poll delivery returned no exact presentation receipt")
+        presentation_refs = [
+            f"telegram:{target_chat_id}:{message_id}"
+            for message_id in message_ids
+            if str(message_id).strip()
+        ]
+        if not presentation_refs:
+            raise RuntimeError("Telegram poll delivery returned no exact presentation receipt")
+        transport_reported_stale = (
+            isinstance(receipt, dict) and receipt.get("stale") is True
+        )
+        if transport_reported_stale or not await self._poll_delivery_is_current(authority):
+            await self._retract_cortex_presentation_refs(presentation_refs)
+            status = await self._record_poll_delivery_state(
+                authority=authority,
+                state="partial_removed",
+                presentation_refs=presentation_refs,
+                cortex_delivery=cortex_delivery,
+            )
+            if status != "recorded":
+                logger.warning(
+                    "Telegram stale poll delivery acknowledgement was not recorded: %s",
+                    status,
+                )
+            return False
+        status = await self._record_poll_delivery_state(
+            authority=authority,
+            state="committed",
+            presentation_refs=presentation_refs,
+            cortex_delivery=cortex_delivery,
+        )
+        if status != "recorded":
+            logger.warning(
+                "Telegram poll delivery acknowledgement was not recorded: %s",
+                status,
+            )
+        if status in {
+            "conflict",
+            "stale_revision",
+            "stale_source_order",
+            "not_found",
+        }:
+            removal_status = await self._record_poll_delivery_state(
+                authority=authority,
+                state="partial_removed",
+                presentation_refs=presentation_refs,
+                cortex_delivery=cortex_delivery,
+            )
+            if removal_status != "recorded":
+                logger.warning(
+                    "Telegram retracted poll delivery acknowledgement was not recorded: %s",
+                    removal_status,
+                )
+            return False
+        return True
 
     async def _send_followup_text_once(
         self,
@@ -1809,9 +3151,66 @@ class LibreChatBridge:
         text: str,
         *,
         stream_id: Optional[str],
+        cortex_delivery: Optional[dict[str, Any]] = None,
+        enforce_order_fence: bool = False,
+        authorize_before_side_effect: Optional[Callable[[], Awaitable[bool]]] = None,
     ) -> bool:
-        async def _emit() -> None:
-            await self._send_followup_text(chat_id, text, stream_id=stream_id)
+        async def _emit() -> bool:
+            if enforce_order_fence:
+                return await self._send_poll_delivery(
+                    chat_id,
+                    text,
+                    stream_id=stream_id,
+                    cortex_delivery=cortex_delivery,
+                    authorize_before_side_effect=authorize_before_side_effect,
+                )
+            if not cortex_delivery:
+                return bool(
+                    await self._send_followup_text(chat_id, text, stream_id=stream_id)
+                )
+            receipt = await self._send_followup_text(
+                chat_id,
+                text,
+                stream_id=stream_id,
+                return_receipt=True,
+            )
+            message_ids = (
+                receipt.get("message_ids")
+                if isinstance(receipt, dict) and receipt.get("sent") is True
+                else []
+            )
+            target_chat_id = self._resolve_telegram_chat_id(
+                chat_id=chat_id,
+                stream_id=stream_id,
+            )
+            if target_chat_id is None or not message_ids:
+                raise RuntimeError("Cortex Telegram delivery returned no exact presentation receipt")
+            presentation_refs = [
+                f"telegram:{target_chat_id}:{message_id}"
+                for message_id in message_ids
+                if str(message_id).strip()
+            ]
+            payload = {
+                "logical_turn_id": cortex_delivery["logicalTurnId"],
+                "revision": cortex_delivery["logicalTurnRevision"],
+                "state": "committed",
+                "presentation_ref": presentation_refs[-1],
+                "presentation_refs": presentation_refs,
+                "cortex_presentation": cortex_delivery["cortexPresentation"],
+            }
+            ack_key = self._cortex_ack_store.enqueue(payload)
+            status = await self._settle_cortex_acknowledgement(ack_key, payload)
+            if status != "recorded":
+                logger.warning(
+                    "Cortex Telegram presentation acknowledgement was not recorded: %s",
+                    status,
+                )
+            return status not in {
+                "conflict",
+                "stale_revision",
+                "stale_source_order",
+                "not_found",
+            }
 
         return await self._emit_followup_once(stream_id=stream_id, emit=_emit)
 
@@ -1821,11 +3220,18 @@ class LibreChatBridge:
         insights: list[dict[str, Any]],
         *,
         stream_id: Optional[str],
+        enforce_order_fence: bool = True,
     ) -> bool:
-        async def _emit() -> None:
-            await self._send_pending_insights(chat_id, insights, stream_id=stream_id)
-
-        return await self._emit_followup_once(stream_id=stream_id, emit=_emit)
+        voice_mode = self._stream_voice_mode(stream_id)
+        text = self._format_pending_insights(insights, voice_mode=voice_mode)
+        if not text:
+            return False
+        return await self._send_followup_text_once(
+            chat_id,
+            text,
+            stream_id=stream_id,
+            enforce_order_fence=enforce_order_fence,
+        )
 
     def _set_stream_identity(
         self,
@@ -1837,6 +3243,10 @@ class LibreChatBridge:
         voice_mode: Optional[bool] = None,
         input_mode: str = "",
         voice_route: Optional[dict[str, Any]] = None,
+        telegram_message_id: Any = "",
+        telegram_message_thread_id: Any = "",
+        logical_turn_id: str = "",
+        logical_turn_revision: Optional[int] = None,
     ) -> None:
         self._stream_identity[stream_id] = {
             "telegram_chat_id": telegram_chat_id,
@@ -1845,6 +3255,10 @@ class LibreChatBridge:
             "voice_mode": "1" if voice_mode else "",
             "input_mode": input_mode or "",
             "voice_route": voice_route or None,
+            "telegram_message_id": str(telegram_message_id or ""),
+            "telegram_message_thread_id": str(telegram_message_thread_id or ""),
+            "logical_turn_id": str(logical_turn_id or ""),
+            "logical_turn_revision": logical_turn_revision,
         }
 
     def _get_identity_params(self, stream_id: str) -> dict[str, str]:
@@ -1917,7 +3331,9 @@ class LibreChatBridge:
         preference_convo_id: Optional[str] = None,
         raw_message: Optional[str] = None,
         stream_id: Optional[str] = None,
-    ) -> bool:
+        return_receipt: bool = False,
+        before_side_effect: Optional[Callable[[], Awaitable[bool]]] = None,
+    ) -> Any:
         if not self.on_message_callback:
             return False
         # === VIVENTIUM START ===
@@ -1989,10 +3405,43 @@ class LibreChatBridge:
             *,
             payload_parse_mode: Optional[str],
             payload_voice_audio: Optional[bytes],
-        ) -> None:
+        ) -> Any:
+            if return_receipt:
+                callback_parameters = inspect.signature(self.on_message_callback).parameters
+                accepts_kwargs = any(
+                    parameter.kind is inspect.Parameter.VAR_KEYWORD
+                    for parameter in callback_parameters.values()
+                )
+                callback_kwargs: dict[str, Any] = {}
+                if accepts_kwargs or "parse_mode" in callback_parameters:
+                    callback_kwargs["parse_mode"] = payload_parse_mode
+                if accepts_kwargs or "voice_audio" in callback_parameters:
+                    callback_kwargs["voice_audio"] = payload_voice_audio
+                identity = self._stream_identity.get(stream_id or "", {})
+                raw_thread_id = str(identity.get("telegram_message_thread_id") or "").strip()
+                if raw_thread_id.isdigit() and int(raw_thread_id) > 0:
+                    if accepts_kwargs or "message_thread_id" in callback_parameters:
+                        callback_kwargs["message_thread_id"] = int(raw_thread_id)
+                if before_side_effect is not None and (
+                    accepts_kwargs or "before_side_effect" in callback_parameters
+                ):
+                    callback_kwargs["before_side_effect"] = before_side_effect
+                elif before_side_effect is not None:
+                    await before_side_effect()
+                if asyncio.iscoroutinefunction(self.on_message_callback):
+                    return await self.on_message_callback(
+                        target_chat_id,
+                        payload,
+                        **callback_kwargs,
+                    )
+                return self.on_message_callback(
+                    target_chat_id,
+                    payload,
+                    **callback_kwargs,
+                )
             if asyncio.iscoroutinefunction(self.on_message_callback):
                 try:
-                    await self.on_message_callback(
+                    return await self.on_message_callback(
                         target_chat_id,
                         payload,
                         parse_mode=payload_parse_mode,
@@ -2000,16 +3449,16 @@ class LibreChatBridge:
                     )
                 except TypeError:
                     try:
-                        await self.on_message_callback(
+                        return await self.on_message_callback(
                             target_chat_id,
                             payload,
                             parse_mode=payload_parse_mode,
                         )
                     except TypeError:
-                        await self.on_message_callback(target_chat_id, payload)
+                        return await self.on_message_callback(target_chat_id, payload)
             else:
                 try:
-                    self.on_message_callback(
+                    return self.on_message_callback(
                         target_chat_id,
                         payload,
                         parse_mode=payload_parse_mode,
@@ -2017,15 +3466,16 @@ class LibreChatBridge:
                     )
                 except TypeError:
                     try:
-                        self.on_message_callback(
+                        return self.on_message_callback(
                             target_chat_id,
                             payload,
                             parse_mode=payload_parse_mode,
                         )
                     except TypeError:
-                        self.on_message_callback(target_chat_id, payload)
+                        return self.on_message_callback(target_chat_id, payload)
 
         try:
+            delivered_message_ids: list[str] = []
             # === VIVENTIUM START ===
             # Feature: Chunk proactive follow-up text before callback delivery.
             # Purpose: Telegram rejects oversized messages; split long follow-ups while
@@ -2037,7 +3487,8 @@ class LibreChatBridge:
                     chunk
                     for segment in delivery_plan.segments
                     for chunk in split_telegram_html(
-                        render_telegram_markdown(segment, strip_voice_markup=True)
+                        render_telegram_markdown(segment, strip_voice_markup=True),
+                        limit=3500,
                     )
                     if chunk.strip()
                 ]
@@ -2045,23 +3496,47 @@ class LibreChatBridge:
             else:
                 payloads = [
                     chunk
-                    for chunk in split_telegram_html(message)
+                    for chunk in split_telegram_html(message, limit=3500)
                     if chunk.strip()
                 ]
                 payload_parse_mode = parse_mode
-            if payloads:
-                last_index = len(payloads) - 1
-                for index, payload in enumerate(payloads):
-                    await _invoke_callback(
-                        payload,
-                        payload_parse_mode=payload_parse_mode,
-                        payload_voice_audio=voice_audio if index == last_index else None,
-                    )
-                return True
+
+            if not payloads:
+                if return_receipt:
+                    return {"sent": False, "message_ids": []}
+                return False
+
+            last_index = len(payloads) - 1
+            for index, payload in enumerate(payloads):
+                callback_result = await _invoke_callback(
+                    payload,
+                    payload_parse_mode=payload_parse_mode,
+                    payload_voice_audio=voice_audio if index == last_index else None,
+                )
+                delivered_message_ids.extend(
+                    extract_telegram_delivery_message_ids(callback_result)
+                )
+            if return_receipt:
+                return {
+                    "sent": True,
+                    "message_ids": list(dict.fromkeys(delivered_message_ids))[:32],
+                }
+            return True
             # === VIVENTIUM END ===
+        except _GlassHiveDeliveryAuthorizationLost:
+            raise
+        except _TelegramPollDeliveryStale:
+            if return_receipt:
+                return {
+                    "sent": bool(delivered_message_ids),
+                    "message_ids": list(dict.fromkeys(delivered_message_ids))[:32],
+                    "stale": True,
+                }
             return False
         except Exception as exc:
             logger.warning("Failed to deliver Telegram callback: %s", exc)
+            if return_receipt:
+                raise
             try:
                 await _invoke_callback(
                     TELEGRAM_CALLBACK_INTERRUPTED_NOTICE,
@@ -2190,16 +3665,21 @@ class LibreChatBridge:
         # === VIVENTIUM START ===
         # Feature: Pass Telegram identity for per-user linking and auth.
         # === VIVENTIUM END ===
-        telegram_chat_id = (
-            kwargs.get("telegram_chat_id")
-            or kwargs.get("telegramChatId")
-            or chat_id
-        )
+        telegram_chat_id_value = kwargs.get("telegram_chat_id") or kwargs.get("telegramChatId")
+        telegram_chat_id = telegram_chat_id_value or chat_id
         telegram_user_id = kwargs.get("telegram_user_id") or kwargs.get("telegramUserId") or ""
         telegram_username = kwargs.get("telegram_username") or kwargs.get("telegramUsername") or ""
         telegram_message_id = kwargs.get("telegram_message_id") or kwargs.get("telegramMessageId") or ""
+        telegram_message_thread_id = kwargs.get("telegram_message_thread_id")
+        if telegram_message_thread_id is None:
+            telegram_message_thread_id = kwargs.get("telegramMessageThreadId")
+        if telegram_message_thread_id is None:
+            telegram_message_thread_id = ""
         telegram_update_id = kwargs.get("telegram_update_id") or kwargs.get("telegramUpdateId") or ""
         source_event_id = kwargs.get("source_event_id") or kwargs.get("sourceEventId") or ""
+        provided_source_order_scope = kwargs.get("source_order_scope")
+        if provided_source_order_scope is None:
+            provided_source_order_scope = kwargs.get("sourceOrderScope")
         # === VIVENTIUM START ===
         # Feature: Voice mode metadata for surface-specific formatting.
         voice_mode = kwargs.get("voice_mode")
@@ -2219,10 +3699,92 @@ class LibreChatBridge:
         client_timezone = kwargs.get("client_timezone") or kwargs.get("clientTimezone") or None
         # Feature: Optional trace id for timing/log correlation.
         trace_id = kwargs.get("trace_id") or kwargs.get("traceId") or ""
+        reply_context = kwargs.get("reply_context") or kwargs.get("replyContextV1") or None
         # === VIVENTIUM END ===
+        source_surface = str(kwargs.get("surface") or "telegram").strip().lower()
+        if source_surface not in {"telegram", "web", "voice", "workbench"}:
+            yield _bridge_error_event(
+                "Telegram message order could not be verified. Please retry.",
+                speak=False,
+            )
+            return
+        try:
+            normalized_source_sequence = int(telegram_message_id)
+        except (TypeError, ValueError):
+            normalized_source_sequence = 0
+        raw_thread_id = str(telegram_message_thread_id).strip()
+        try:
+            normalized_thread_id = int(raw_thread_id) if raw_thread_id else 0
+        except (TypeError, ValueError):
+            normalized_thread_id = -1
+        source_order_scope = str(provided_source_order_scope or "")
+        valid_source_identity = bool(
+            telegram_user_id
+            and telegram_chat_id_value
+            and normalized_source_sequence > 0
+            and (not raw_thread_id or normalized_thread_id > 0)
+        )
+        source_event_id = str(source_event_id or "")
+        if source_surface == "telegram" and not valid_source_identity:
+            yield _bridge_error_event(
+                "Telegram message order could not be verified. Please retry.",
+                speak=False,
+            )
+            return
+        if source_surface != "telegram":
+            source_order_scope = ""
+            source_event_id = ""
+        elif bool(source_order_scope) != bool(source_event_id):
+            yield _bridge_error_event(
+                "Telegram message order could not be verified. Please retry.",
+                speak=False,
+            )
+            return
+        elif source_order_scope and (
+            not re.fullmatch(r"[a-f0-9]{64}", source_order_scope)
+            or not re.fullmatch(r"[a-f0-9]{64}", source_event_id)
+        ):
+            yield _bridge_error_event(
+                "Telegram message order could not be verified. Please retry.",
+                speak=False,
+            )
+            return
+        if source_surface == "telegram" and not source_order_scope:
+            try:
+                observation = await self.observe_source_order(
+                    telegram_user_id=telegram_user_id,
+                    telegram_chat_id=telegram_chat_id,
+                    telegram_message_thread_id=telegram_message_thread_id,
+                    source_sequence=telegram_message_id,
+                )
+            except TelegramLinkRequired:
+                raise
+            except Exception as exc:
+                logger.error(
+                    "LibreChatBridge source-order observation failed before chat admission: %s",
+                    type(exc).__name__,
+                )
+                yield _bridge_error_event(
+                    "Telegram message order could not be verified. Please retry.",
+                    speak=False,
+                )
+                return
+            if observation["stale"]:
+                yield {"type": "superseded", "reason": "stale_source_order"}
+                return
+            source_order_scope = str(observation.get("source_order_scope") or "")
+            source_event_id = str(observation.get("source_event_id") or "")
+            if not re.fullmatch(r"[a-f0-9]{64}", source_order_scope) or not re.fullmatch(
+                r"[a-f0-9]{64}", source_event_id
+            ):
+                yield _bridge_error_event(
+                    "Telegram message order could not be verified. Please retry.",
+                    speak=False,
+                )
+                return
         lock: Optional[asyncio.Lock] = self._get_chat_lock(chat_id) if self.serialize_per_chat else None
         # === VIVENTIUM START ===
-        # Serialize per-chat requests only when explicitly enabled.
+        # Core normally owns source order. Explicit legacy serialization is diagnostic-only.
         # === VIVENTIUM END ===
         if lock and lock.locked():
             self._trace("LibreChatBridge waiting for prior run: chat_id=%s", chat_id)
@@ -2265,6 +3827,14 @@ class LibreChatBridge:
                     start_kwargs["audio_requested"] = audio_requested
                 if source_event_id:
                     start_kwargs["source_event_id"] = str(source_event_id)
+                if source_order_scope:
+                    start_kwargs["source_order_scope"] = source_order_scope
+                if telegram_message_thread_id:
+                    start_kwargs["telegram_message_thread_id"] = str(
+                        telegram_message_thread_id
+                    )
+                if reply_context:
+                    start_kwargs["reply_context"] = reply_context
                 session = await self._start_chat_with_connect_retry(**start_kwargs)
                 if trace_id:
                     self._timing_log(trace_id, "lc_chat_http", chat_start_ts)
@@ -2280,6 +3850,10 @@ class LibreChatBridge:
                 yield _bridge_error_event(_start_chat_error_message(exc), speak=False)
                 return
             if not session:
+                return
+
+            if session.superseded:
+                yield {"type": "superseded", "reason": "stale_source_order"}
                 return
 
             if session.logical_turn_id:
@@ -2308,6 +3882,10 @@ class LibreChatBridge:
                 voice_mode=voice_mode,
                 input_mode=input_mode,
                 voice_route=session.voice_route,
+                telegram_message_id=telegram_message_id,
+                telegram_message_thread_id=telegram_message_thread_id,
+                logical_turn_id=session.logical_turn_id,
+                logical_turn_revision=session.revision,
             )
             self._set_active_stream(chat_id, session.stream_id)
             if session.conversation_id:
@@ -2400,12 +3978,15 @@ class LibreChatBridge:
         preference_convo_id: Optional[str],
         voice_mode: Optional[bool],
         input_mode: str,
+        telegram_message_thread_id: str = "",
         source_event_id: str = "",
+        source_order_scope: str = "",
         audio_requested: Optional[bool] = None,
         files: Optional[list] = None,  # === VIVENTIUM: File upload support ===
         message_timestamp: Optional[str] = None,  # === VIVENTIUM: Time context support ===
         client_timezone: Optional[str] = None,  # === VIVENTIUM: Timezone context support ===
         trace_id: Optional[str] = None,  # === VIVENTIUM: Timing/log correlation ===
+        reply_context: Optional[dict[str, Any]] = None,
     ) -> Optional[LibreChatSession]:
         payload: Dict[str, Any] = {
             "text": text,
@@ -2423,10 +4004,16 @@ class LibreChatBridge:
             payload["telegramUsername"] = telegram_username
         if telegram_message_id:
             payload["telegramMessageId"] = telegram_message_id
+        if telegram_message_thread_id:
+            payload["telegramMessageThreadId"] = telegram_message_thread_id
         if telegram_update_id:
             payload["telegramUpdateId"] = telegram_update_id
         if source_event_id:
             payload["sourceEventId"] = source_event_id
+        if source_order_scope:
+            payload["sourceOrderScope"] = source_order_scope
+        if reply_context:
+            payload["replyContextV1"] = reply_context
         # === VIVENTIUM START ===
         # Feature: Opportunistic voice preference sync for scheduler parity.
         pref_convo_id = preference_convo_id or telegram_chat_id
@@ -2477,7 +4064,7 @@ class LibreChatBridge:
             **_async_client_options_for_url(chat_url),
         ) as client:
             resp = await client.post(chat_url, json=payload, headers=headers)
-            if resp.status_code != 200:
+            if resp.status_code not in {200, 202}:
                 link_payload = None
                 try:
                     link_payload = resp.json()
@@ -2495,6 +4082,18 @@ class LibreChatBridge:
                     response=resp,
                 )
             data = resp.json()
+
+        if (
+            resp.status_code == 202
+            and isinstance(data, dict)
+            and data.get("code") == "source_order_superseded"
+            and data.get("superseded") is True
+        ):
+            return LibreChatSession(
+                stream_id="",
+                conversation_id=conversation_id,
+                superseded=True,
+            )
 
         if isinstance(data, dict) and data.get("duplicate") is True:
             self._trace(
@@ -2550,6 +4149,7 @@ class LibreChatBridge:
         revision: int,
         state: str,
         presentation_ref: str = "",
+        presentation_refs: Optional[list[str]] = None,
     ) -> bool:
         """Best-effort acknowledgement to an optional generic core lifecycle endpoint."""
 
@@ -2559,9 +4159,84 @@ class LibreChatBridge:
                 revision,
                 state,
                 presentation_ref,
+                presentation_refs,
             )
             == "recorded"
         )
+
+    async def observe_source_order(
+        self,
+        *,
+        telegram_user_id: Any,
+        telegram_chat_id: Any,
+        telegram_message_thread_id: Any,
+        source_sequence: Any,
+    ) -> dict[str, Any]:
+        """Advance Core's authenticated Telegram source watermark before other awaits."""
+
+        try:
+            normalized_sequence = int(source_sequence)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Invalid Telegram source sequence") from exc
+        if normalized_sequence <= 0 or not self.base_url or not self.secret:
+            raise RuntimeError("Telegram source-order authority is unavailable")
+        payload = {
+            "telegramUserId": str(telegram_user_id or ""),
+            "telegramChatId": str(telegram_chat_id or ""),
+            "telegramMessageThreadId": str(telegram_message_thread_id or ""),
+            "sourceSequence": normalized_sequence,
+        }
+        headers = {"X-VIVENTIUM-TELEGRAM-SECRET": self.secret}
+        url = f"{self.base_url}/api/viventium/telegram/source-order"
+        timeout = httpx.Timeout(10.0, connect=5.0, read=10.0, write=5.0, pool=5.0)
+        async with httpx.AsyncClient(
+            timeout=timeout,
+            **_async_client_options_for_url(url),
+        ) as client:
+            response = await client.post(url, json=payload, headers=headers)
+        if not 200 <= int(response.status_code) < 300:
+            try:
+                body = response.json()
+            except Exception:
+                body = {}
+            if isinstance(body, dict) and body.get("linkRequired") and body.get("linkUrl"):
+                raise TelegramLinkRequired(
+                    body.get("linkUrl", ""),
+                    body.get("message") or "Link your Viventium account to use Telegram.",
+                )
+            request = getattr(response, "request", httpx.Request("POST", url))
+            raise httpx.HTTPStatusError(
+                f"Telegram source-order observation failed ({response.status_code})",
+                request=request,
+                response=response,
+            )
+        body = response.json()
+        if not isinstance(body, dict) or body.get("observed") is not True:
+            raise RuntimeError("Telegram source-order authority returned an invalid response")
+        durability = body.get("durability")
+        replica_safe = body.get("replicaSafe")
+        if durability not in {"process", "durable"} or not isinstance(replica_safe, bool):
+            raise RuntimeError("Telegram source-order authority omitted its durability capability")
+        latest = int(body.get("latestSourceSequence"))
+        source_order_scope = str(body.get("sourceOrderScope") or "")
+        source_event_id = str(body.get("sourceEventId") or "")
+        if not re.fullmatch(r"[a-f0-9]{64}", source_order_scope) or not re.fullmatch(
+            r"[a-f0-9]{64}", source_event_id
+        ):
+            raise RuntimeError("Telegram source-order authority omitted its trusted scope")
+        return {
+            "latest_source_sequence": latest,
+            "observed_at": int(body.get("observedAt") or 0),
+            "stale": bool(body.get("stale")) or normalized_sequence < latest,
+            "durability": durability,
+            "replica_safe": replica_safe,
+            "source_order_scope": source_order_scope,
+            "source_event_id": source_event_id,
+        }
+
+    async def source_order_is_current(self, **kwargs) -> bool:
+        observation = await self.observe_source_order(**kwargs)
+        return not observation["stale"]
 
     async def ack_delivery_status(
         self,
@@ -2569,6 +4244,9 @@ class LibreChatBridge:
         revision: int,
         state: str,
         presentation_ref: str = "",
+        presentation_refs: Optional[list[str]] = None,
+        *,
+        cortex_presentation: Optional[dict[str, Any]] = None,
     ) -> str:
         """Return enough lifecycle truth to retract a final that became stale in transit."""
 
@@ -2594,12 +4272,19 @@ class LibreChatBridge:
         }
         if presentation_ref:
             payload["presentation_ref"] = str(presentation_ref)
+        if presentation_refs:
+            payload["presentation_refs"] = [str(value) for value in presentation_refs if value]
+        if cortex_presentation:
+            payload["cortex_presentation"] = cortex_presentation
         headers = {"x-viventium-adapter-secret": adapter_secret}
         timeout = httpx.Timeout(10.0, connect=5.0, read=10.0, write=10.0, pool=5.0)
         max_attempts = 3
         for attempt in range(max_attempts):
             try:
-                async with httpx.AsyncClient(timeout=timeout) as client:
+                async with httpx.AsyncClient(
+                    timeout=timeout,
+                    **_async_client_options_for_url(url),
+                ) as client:
                     response = await client.post(url, json=payload, headers=headers)
             except Exception as exc:
                 if attempt + 1 >= max_attempts:
@@ -2612,13 +4297,17 @@ class LibreChatBridge:
                 continue
             status_code = int(response.status_code)
             if 200 <= status_code < 300:
-                return "recorded"
+                try:
+                    body = response.json()
+                except Exception:
+                    body = {}
+                return "recorded" if body.get("acknowledged") is True else "unavailable"
             try:
                 body = response.json()
             except Exception:
                 body = {}
             error = body.get("error") if isinstance(body, dict) else None
-            if error in {"stale_revision", "conflict", "not_found"}:
+            if error in {"stale_revision", "stale_source_order", "conflict", "not_found"}:
                 return str(error)
             retryable = status_code in {408, 425, 429} or status_code >= 500
             if not retryable or attempt + 1 >= max_attempts:
@@ -2764,28 +4453,65 @@ class LibreChatBridge:
                                 if response_message_id:
                                     self._response_message_ids[stream_id] = response_message_id
 
-                                # === VIVENTIUM START ===
-                                # Feature: Check for explicit errors in final payload before treating as empty.
-                                # Added: 2026-02-01
                                 final_error = extract_final_error(payload)
-                                if final_error:
-                                    logger.warning(
-                                        "LibreChatBridge final error: chat_id=%s stream_id=%s error=%s",
-                                        chat_id,
-                                        stream_id,
-                                        final_error,
-                                    )
-                                    yield _bridge_error_event(
-                                        _stream_error_message(final_error),
-                                        speak=False,
-                                    )
-                                    return
-                                # === VIVENTIUM END ===
-
+                                final_error_class = extract_final_error_class(payload)
                                 final_text = extract_final_response_text(payload)
                                 final_attachments = extract_attachments(payload)
                                 has_final_attachments = len(final_attachments) > 0
                                 deferred_internal_final = _is_deferred_internal_final(payload)
+                                response_payload = payload.get("responseMessage")
+                                response_content = (
+                                    response_payload.get("content")
+                                    if isinstance(response_payload, dict)
+                                    else None
+                                )
+                                final_cortex_parts = extract_cortex_parts(response_content)
+
+                                # === VIVENTIUM START ===
+                                # Feature: Recover structured pre-follow-up completion failures.
+                                # Purpose: A typed recoverable final with durable response identity may be
+                                # replaced by the existing Main/cortex follow-up. Keep the failure pending
+                                # instead of committing a false Telegram connection bubble.
+                                if final_error:
+                                    public_error = _stream_error_message(
+                                        final_error,
+                                        error_class=final_error_class or None,
+                                    )
+                                    can_recover_in_followup = bool(
+                                        response_message_id
+                                        and final_error_class in _FOLLOWUP_RECOVERABLE_ERROR_CLASSES
+                                        and (final_cortex_parts or deferred_internal_final)
+                                    )
+                                    if can_recover_in_followup:
+                                        self._mark_cortex_seen(stream_id)
+                                        self._pending_stream_errors[stream_id] = {
+                                            "error_class": final_error_class,
+                                            "message": public_error,
+                                        }
+                                        if self._schedule_followup_poll(stream_id, chat_id):
+                                            yield _bridge_error_event(
+                                                "",
+                                                speak=False,
+                                                error_class=final_error_class,
+                                                recoverable=True,
+                                            )
+                                            return
+                                        self._pending_stream_errors.pop(stream_id, None)
+
+                                    logger.warning(
+                                        "LibreChatBridge final error: chat_id=%s stream_id=%s class=%s",
+                                        chat_id,
+                                        stream_id,
+                                        final_error_class or "unstructured",
+                                    )
+                                    yield _bridge_error_event(
+                                        public_error,
+                                        speak=False,
+                                        error_class=final_error_class or None,
+                                    )
+                                    return
+                                # === VIVENTIUM END ===
+
                                 if response_message_id and (
                                     self._has_cortex_seen(stream_id)
                                     or self._has_glasshive_seen(stream_id)
@@ -2896,19 +4622,37 @@ class LibreChatBridge:
 
     # === VIVENTIUM START ===
     # Feature: DB-backed follow-up polling to mirror LibreChat UI.
-    def _schedule_followup_poll(self, stream_id: str, chat_id: str) -> None:
+    def _schedule_followup_poll(self, stream_id: str, chat_id: str) -> bool:
         if not self.on_message_callback:
-            return
+            return False
         if self.followup_timeout_s <= 0 and not self._has_glasshive_seen(stream_id):
-            return
+            return False
         if self._has_followup_sent(stream_id):
-            return
+            return False
         existing = self._followup_task_by_stream.get(stream_id)
         if existing and not existing.done():
-            return
+            return True
         task = asyncio.create_task(self._poll_for_followup(stream_id=stream_id, chat_id=chat_id))
         self._followup_task_by_stream[stream_id] = task
         self._track_task(task)
+        return True
+
+    async def _send_pending_stream_error_once(self, stream_id: str, chat_id: str) -> bool:
+        pending = self._pending_stream_errors.get(stream_id)
+        if not isinstance(pending, dict):
+            return False
+        message = str(pending.get("message") or "").strip()
+        if not message:
+            return False
+        sent = await self._send_followup_text_once(
+            chat_id,
+            message,
+            stream_id=stream_id,
+            enforce_order_fence=True,
+        )
+        if sent:
+            self._pending_stream_errors.pop(stream_id, None)
+        return sent
 
     async def _fetch_followup_state(
         self,
@@ -3016,8 +4760,6 @@ class LibreChatBridge:
             if not message_id:
                 return
             while time.monotonic() - started_at < timeout_s:
-                if not poll_glasshive and not self._is_stream_active(chat_id, stream_id):
-                    return
                 if self._has_followup_sent(stream_id):
                     return
 
@@ -3062,7 +4804,7 @@ class LibreChatBridge:
                                     return
                                 delivery = await self._claim_glasshive_delivery_for_callback(latest)
                                 if delivery:
-                                    sent = await self._deliver_glasshive_delivery(delivery)
+                                    sent = await self._deliver_glasshive_delivery_bounded(delivery)
                                 else:
                                     if callback_id:
                                         pending_glasshive_callback = latest
@@ -3083,6 +4825,7 @@ class LibreChatBridge:
                                         chat_id,
                                         text,
                                         stream_id=stream_id,
+                                        enforce_order_fence=True,
                                     )
                                 if sent:
                                     self._mark_followup_sent(stream_id)
@@ -3124,6 +4867,7 @@ class LibreChatBridge:
                                 chat_id,
                                 text,
                                 stream_id=stream_id,
+                                enforce_order_fence=True,
                             )
                             # Prevent insight fallback after a merged follow-up is finalized.
                             if sent:
@@ -3136,6 +4880,7 @@ class LibreChatBridge:
                             chat_id,
                             _prepare_followup_delivery_text(canonical_text),
                             stream_id=stream_id,
+                            enforce_order_fence=True,
                         )
                         if sent:
                             self._cancel_insight_task(stream_id)
@@ -3172,14 +4917,17 @@ class LibreChatBridge:
                         if grace_start is None:
                             grace_start = time.monotonic()
                         elif (time.monotonic() - grace_start) >= grace_s:
+                            sent_insight = False
                             if self.allow_insight_fallback:
                                 insights = extract_completed_cortex_insights(last_parts)
                                 if insights:
-                                    await self._send_pending_insights_once(
+                                    sent_insight = await self._send_pending_insights_once(
                                         chat_id,
                                         insights,
                                         stream_id=stream_id,
                                     )
+                            if not sent_insight:
+                                await self._send_pending_stream_error_once(stream_id, chat_id)
                             return
 
                 await asyncio.sleep(interval_s)
@@ -3199,21 +4947,17 @@ class LibreChatBridge:
                         )
                     sent = True
                 elif delivery:
-                    sent = await self._deliver_glasshive_delivery(delivery)
+                    sent = await self._deliver_glasshive_delivery_bounded(delivery)
                 elif is_no_response_only(pending_glasshive_text):
                     sent = True
                 else:
                     logger.warning(
-                        "LibreChatBridge GlassHive callback %s had no durable delivery row before timeout; sending legacy fallback once",
+                        "LibreChatBridge GlassHive callback %s had no claimable durable delivery row before timeout; unfenced legacy send suppressed",
                         pending_glasshive_callback.get("callbackId")
                         or pending_glasshive_callback.get("callback_id")
                         or "unknown",
                     )
-                    sent = await self._send_followup_text_once(
-                        chat_id,
-                        pending_glasshive_text,
-                        stream_id=stream_id,
-                    )
+                    sent = True
                 if sent:
                     self._mark_followup_sent(stream_id)
                     self._cancel_insight_task(stream_id)
@@ -3222,11 +4966,14 @@ class LibreChatBridge:
             if self.allow_insight_fallback:
                 insights = extract_completed_cortex_insights(last_parts)
                 if insights:
-                    await self._send_pending_insights_once(
+                    sent = await self._send_pending_insights_once(
                         chat_id,
                         insights,
                         stream_id=stream_id,
                     )
+                    if sent:
+                        return
+            await self._send_pending_stream_error_once(stream_id, chat_id)
         except asyncio.CancelledError:
             return
         finally:
@@ -3234,6 +4981,7 @@ class LibreChatBridge:
             insight_task = self._insight_task_by_stream.get(stream_id)
             if not insight_task or insight_task.done():
                 self._pending_followups.pop(stream_id, None)
+                self._pending_stream_errors.pop(stream_id, None)
                 self._stream_final_events.pop(stream_id, None)
                 self._response_message_ids.pop(stream_id, None)
                 self._conversation_by_stream.pop(stream_id, None)
@@ -3336,6 +5084,7 @@ class LibreChatBridge:
 
                                 # === VIVENTIUM START ===
                                 # Prefer a single merged follow-up event over per-cortex updates.
+                                followup_delivery = extract_cortex_followup_delivery(payload)
                                 followup_text = extract_cortex_followup(payload)
                                 if followup_text:
                                     if self._has_followup_sent(stream_id):
@@ -3367,6 +5116,8 @@ class LibreChatBridge:
                                         chat_id,
                                         followup_text,
                                         stream_id=stream_id,
+                                        cortex_delivery=followup_delivery,
+                                        enforce_order_fence=True,
                                     )
                                     if sent:
                                         self._cancel_followup_task(stream_id)
@@ -3579,7 +5330,9 @@ class LibreChatBridge:
         text: str,
         *,
         stream_id: Optional[str] = None,
-    ) -> bool:
+        return_receipt: bool = False,
+        before_side_effect: Optional[Callable[[], Awaitable[bool]]] = None,
+    ) -> Any:
         if not text:
             return False
         # === VIVENTIUM START ===
@@ -3609,5 +5362,7 @@ class LibreChatBridge:
             preference_convo_id=str(chat_id),
             raw_message=text,
             stream_id=stream_id,
+            return_receipt=return_receipt,
+            before_side_effect=before_side_effect,
         )
     # === VIVENTIUM END ===

@@ -180,7 +180,7 @@ GO for source publication after nested components merge first and the parent pin
 | Parent | `docs/requirements_and_learnings/40_Public_Private_Boundaries_and_License_Matrix.md` | M | Public product, operator, or QA documentation | Yes | Clean | Low; reviewed |
 | Parent | `docs/requirements_and_learnings/45_Runtime_Feature_QA_Map.md` | M | Public product, operator, or QA documentation | Yes | Clean | Medium; reviewed and tested |
 | Parent | `docs/requirements_and_learnings/48_GlassHive_Workstation_Sandbox_Runtime.md` | M | Public product, operator, or QA documentation | Yes | Clean | Medium; reviewed and tested |
-| Parent | `docs/requirements_and_learnings/55_GlassHive_User_Control_Plane_and_Persistent_Workspaces.md` | A | Public product, operator, or QA documentation | Yes | Clean | Medium; reviewed and tested |
+| Parent | `docs/requirements_and_learnings/57_GlassHive_User_Control_Plane_and_Persistent_Workspaces.md` | A | Public product, operator, or QA documentation | Yes | Clean | Medium; reviewed and tested |
 | Parent | `qa/feature-user-use-case-checklist.md` | M | Regression or acceptance evidence | Yes | Clean | Low; reviewed |
 | Parent | `qa/glasshive-mcp-capability-broker/cases.md` | M | Regression or acceptance evidence | Yes | Clean | High; covered by focused and broader tests |
 | Parent | `qa/glasshive-user-control-plane/cases.md` | A | Regression or acceptance evidence | Yes | Clean | Medium; reviewed and tested |
@@ -197,7 +197,6 @@ GO for source publication after nested components merge first and the parent pin
 | Parent | `qa/release-readiness/cases.md` | M | Current release pin acceptance evidence | Yes | Clean | Medium; pin contract tested |
 | Parent | `qa/release-test-owners.yaml` | M | Regression or acceptance evidence | Yes | Clean | Low; reviewed |
 | Parent | `qa/scheduling-cortex/cases.md` | M | Regression or acceptance evidence | Yes | Clean | Low; reviewed |
-| Parent | `qa/scheduling-cortex/reports/2026-08-06-glasshive-principal-authority-and-retry-budget.md` | A | Regression or acceptance evidence | Yes | Clean | High; covered by focused and broader tests |
 | Parent | `release/native-payload/components.json` | M | Exact merged LibreChat payload pin | Yes | Clean | High; manifest contract tested |
 | Parent | `scripts/viventium/config_compiler.py` | M | Configuration and runtime integration | Yes | Clean | Medium; reviewed and tested |
 | Parent | `tests/release/test_config_compiler.py` | M | Regression or acceptance evidence | Yes | Clean | Medium; reviewed and tested |

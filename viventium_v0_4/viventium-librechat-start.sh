@@ -533,10 +533,6 @@ MODERN_PLAYGROUND_DIR="$ROOT_DIR/agent-starter-react"
 VOICE_GATEWAY_DIR="$ROOT_DIR/voice-gateway"
 GOOGLE_MCP_DIR="$ROOT_DIR/MCPs/google_workspace_mcp"
 VIVENTIUM_APP_SUPPORT_ROOT="${VIVENTIUM_APP_SUPPORT_DIR:-$HOME/Library/Application Support/Viventium}"
-# === VIVENTIUM START ===
-# Feature: Helper-safe installed Scheduling Cortex runtime component.
-# Purpose: a menu-bar launch must execute and build Scheduler only under App Support, never inside
-# a protected source checkout. Direct developer launches keep using the selected source checkout.
 SCHEDULING_MCP_SOURCE_DIR="$LIBRECHAT_DIR/viventium/MCPs/scheduling-cortex"
 SCHEDULING_MCP_INSTALLED_DIR="$VIVENTIUM_APP_SUPPORT_ROOT/runtime/components/scheduling-cortex"
 if [[ -n "${VIVENTIUM_HELPER_CORE_ROOT:-}" ]]; then
@@ -544,7 +540,6 @@ if [[ -n "${VIVENTIUM_HELPER_CORE_ROOT:-}" ]]; then
 else
   SCHEDULING_MCP_DIR="${VIVENTIUM_SCHEDULING_MCP_DIR:-$SCHEDULING_MCP_SOURCE_DIR}"
 fi
-# === VIVENTIUM END ===
 GLASSHIVE_DIR="$ROOT_DIR/GlassHive"
 GLASSHIVE_RUNTIME_DIR="$GLASSHIVE_DIR/runtime_phase1"
 GLASSHIVE_UI_DIR="$GLASSHIVE_DIR/frontends/glass-drive-ui"
@@ -556,6 +551,8 @@ TELEGRAM_COMPONENT_SELECTION_FILE="${VIVENTIUM_TELEGRAM_COMPONENT_SELECTION_FILE
 TELEGRAM_COMPONENT_TOOL="${VIVENTIUM_TELEGRAM_COMPONENT_TOOL:-$VIVENTIUM_CORE_DIR/scripts/viventium/telegram_runtime_component.py}"
 TELEGRAM_CODEX_DIR="$ROOT_DIR/telegram-codex"
 CODE_INTERPRETER_DIR="$LIBRECHAT_DIR/viventium/services/librecodeinterpreter"
+export VIVENTIUM_APP_SUPPORT_DIR="${VIVENTIUM_APP_SUPPORT_DIR:-$VIVENTIUM_APP_SUPPORT_ROOT}"
+export VIVENTIUM_HEALTH_COMMAND="${VIVENTIUM_HEALTH_COMMAND:-$VIVENTIUM_APP_SUPPORT_ROOT/health/runtime/bin/viventium-health}"
 TELEGRAM_RUNTIME_CONFIG_ENV_FILE="${VIVENTIUM_TELEGRAM_RUNTIME_ENV_FILE:-}"
 if [[ -z "$TELEGRAM_RUNTIME_CONFIG_ENV_FILE" ]]; then
   if [[ -n "${VIVENTIUM_ENV_FILE:-}" ]]; then
@@ -597,7 +594,6 @@ TELEGRAM_CODEX_ENV_FILE="${VIVENTIUM_TELEGRAM_CODEX_ENV_FILE:-$(resolve_path_or_
 TELEGRAM_CODEX_SETTINGS_FILE="${VIVENTIUM_TELEGRAM_CODEX_SETTINGS_FILE:-$(resolve_path_or_default "$TELEGRAM_CODEX_RUNTIME_SETTINGS_FILE" "$VIVENTIUM_APP_SUPPORT_ROOT/runtime/telegram-codex/settings.yaml" "$TELEGRAM_CODEX_DIR/config/settings.yaml")}"
 TELEGRAM_CODEX_PROJECTS_FILE="${VIVENTIUM_TELEGRAM_CODEX_PROJECTS_FILE:-$(resolve_path_or_default "$TELEGRAM_CODEX_RUNTIME_PROJECTS_FILE" "$VIVENTIUM_APP_SUPPORT_ROOT/runtime/telegram-codex/projects.yaml" "$TELEGRAM_CODEX_DIR/config/projects.yaml")}"
 # === VIVENTIUM END ===
-# === VIVENTIUM START ===
 # Canonical user preferences are always private App Support state. Install/upgrade migrates the
 # legacy repo-local directory without deleting it; only an explicit operator override may select
 # another location. Keep the root owner-private from its first launcher-created state so upgrade
@@ -611,7 +607,6 @@ ensure_private_telegram_user_configs_dir() {
 
 TELEGRAM_USER_CONFIGS_DIR="${VIVENTIUM_TELEGRAM_USER_CONFIGS_DIR:-$VIVENTIUM_APP_SUPPORT_ROOT/state/telegram-user-configs}"
 ensure_private_telegram_user_configs_dir "$TELEGRAM_USER_CONFIGS_DIR"
-# === VIVENTIUM END ===
 SKYVERN_ENV_FILE="${VIVENTIUM_SKYVERN_ENV_FILE:-$(resolve_path_or_default \
   "$ROOT_DIR/docker/skyvern/.env" \
   "$ROOT_DIR/docker/skyvern/.env" \
@@ -664,6 +659,7 @@ GLASSHIVE_MCP_PID_FILE="$LOG_ROOT/glasshive_mcp.pid"
 GLASSHIVE_UI_PID_FILE="$LOG_ROOT/glasshive_ui.pid"
 VOICE_GATEWAY_PID_FILE="$LOG_ROOT/voice_gateway.pid"
 TELEGRAM_BOT_PID_FILE="$LOG_ROOT/telegram_bot.pid"
+TELEGRAM_BOT_READY_FILE="$LOG_ROOT/telegram_bot.ready"
 TELEGRAM_LOCAL_BOT_API_PID_FILE="$LOG_ROOT/telegram-local-bot-api.pid"
 TELEGRAM_LOCAL_BOT_API_LOG_FILE="$LOG_DIR/telegram-local-bot-api.log"
 TELEGRAM_LOCAL_BOT_API_STATE_DIR="${VIVENTIUM_TELEGRAM_LOCAL_BOT_API_STATE_DIR:-}"
@@ -672,11 +668,25 @@ TELEGRAM_LOCAL_BOT_API_TEMP_DIR="${VIVENTIUM_TELEGRAM_LOCAL_BOT_API_TEMP_DIR:-}"
 TELEGRAM_LOCAL_BOT_API_HOSTED_LOGOUT_MARKER_FILE="${VIVENTIUM_TELEGRAM_LOCAL_BOT_API_HOSTED_LOGOUT_MARKER_FILE:-}"
 TELEGRAM_BOT_DEFERRED_PID_FILE="$LOG_ROOT/telegram_bot_deferred.pid"
 TELEGRAM_BOT_DEFERRED_MARKER_FILE="$LOG_ROOT/telegram_bot_deferred.pending"
-TELEGRAM_BOT_LAUNCHCTL_LABEL="${VIVENTIUM_TELEGRAM_BOT_LAUNCHCTL_LABEL:-ai.viventium.telegram-bot}"
+telegram_launchctl_instance="${VIVENTIUM_DEV_ENV_INSTANCE_ID:-}"
+if [[ -n "$telegram_launchctl_instance" ]]; then
+  telegram_launchctl_instance="$(
+    printf '%s' "$telegram_launchctl_instance" \
+      | tr -cs 'A-Za-z0-9._-' '-' \
+      | sed -E 's/^-+//; s/-+$//'
+  )"
+fi
+if [[ -n "$telegram_launchctl_instance" ]]; then
+  telegram_launchctl_default_label="ai.viventium.telegram-bot.${telegram_launchctl_instance}"
+else
+  telegram_launchctl_default_label="ai.viventium.telegram-bot"
+fi
+TELEGRAM_BOT_LAUNCHCTL_LABEL="${VIVENTIUM_TELEGRAM_BOT_LAUNCHCTL_LABEL:-$telegram_launchctl_default_label}"
 TELEGRAM_CODEX_PID_FILE="$LOG_ROOT/telegram_codex.pid"
 MONGO_CONTAINER_NAME="${VIVENTIUM_LOCAL_MONGO_CONTAINER:-viventium-mongodb}"
 MONGO_VOLUME_NAME="${VIVENTIUM_LOCAL_MONGO_VOLUME:-viventium-mongodb-data}"
 MONGO_IMAGE="${MONGO_IMAGE:-mongo:8.0.17}"
+MONGO_REPLICA_SET="${VIVENTIUM_LOCAL_MONGO_REPLICA_SET:-viventium-rs}"
 MEILI_CONTAINER_NAME="${VIVENTIUM_LOCAL_MEILI_CONTAINER:-viventium-meilisearch}"
 MEILI_VOLUME_NAME="${VIVENTIUM_LOCAL_MEILI_VOLUME:-viventium-meilisearch-data}"
 MEILI_IMAGE="${MEILI_IMAGE:-getmeili/meilisearch:v1.43.0}"
@@ -688,12 +698,54 @@ MEILI_DOCKER_LOG_MAX_FILE="${VIVENTIUM_LOCAL_MEILI_DOCKER_LOG_MAX_FILE:-3}"
 MEILI_ENV="${VIVENTIUM_LOCAL_MEILI_ENV:-production}"
 MEILI_MAX_INDEXING_MEMORY="${MEILI_MAX_INDEXING_MEMORY:-512MiB}"
 MEILI_MAX_INDEXING_THREADS="${MEILI_MAX_INDEXING_THREADS:-1}"
+PARALLEL_REDIS_CONTAINER_NAME="${VIVENTIUM_PARALLEL_REDIS_CONTAINER:-viventium-parallel-redis-${VIVENTIUM_RUNTIME_PROFILE}}"
+PARALLEL_REDIS_VOLUME_NAME="${VIVENTIUM_PARALLEL_REDIS_VOLUME:-${PARALLEL_REDIS_CONTAINER_NAME}-data}"
+PARALLEL_REDIS_IMAGE="${VIVENTIUM_PARALLEL_REDIS_IMAGE:-redis:7-alpine}"
 PYTHON_BIN="${VIVENTIUM_PYTHON_BIN:-${PYTHON_BIN:-python3}}"
 if declare -F ensure_python_requirements_file >/dev/null 2>&1; then
   PYTHON_BIN="$(ensure_python_requirements_file \
     "$PYTHON_BIN" \
     "$VIVENTIUM_CORE_DIR/scripts/viventium/requirements-installer.txt")"
 fi
+
+# === VIVENTIUM START ===
+# Installed local-QA fault controls are private, expiring, and bound to this checkout.
+# Ambient variables cannot enable them; only the validated App Support session can.
+LOCAL_QA_CONTROL_SCRIPT="$VIVENTIUM_CORE_DIR/scripts/viventium/local_qa_runtime_control.py"
+LOCAL_QA_CONTROL_STATE="$VIVENTIUM_APP_SUPPORT_ROOT/runtime/local-qa/active.json"
+clear_local_qa_runtime_exports() {
+  unset VIVENTIUM_LOCAL_QA_CASE_ID VIVENTIUM_LOCAL_QA_CASE_TOKEN
+  unset VIVENTIUM_LOCAL_QA_SESSION_REF VIVENTIUM_LOCAL_QA_MODE
+  unset VIVENTIUM_LOCAL_QA_CANDIDATE_DIGEST
+  unset VIVENTIUM_LOCAL_QA_COMPONENT_ARTIFACT_DIGEST
+  unset VIVENTIUM_TELEGRAM_LOCAL_QA_MODE VIVENTIUM_GLASSHIVE_LOCAL_QA_MODE
+  unset VIVENTIUM_RELEASE_LOCAL_QA_MODE
+  unset VIVENTIUM_LOCAL_QA_SERVICE_ACK_HELPER VIVENTIUM_LOCAL_QA_ACK_ROOT
+  unset VIVENTIUM_LOCAL_QA_ACTIVE_STATE VIVENTIUM_LOCAL_QA_INSTALLED_ROOT
+  unset VIVENTIUM_LOCAL_QA_ARTIFACT_IDENTITY VIVENTIUM_LOCAL_QA_REQUEST
+}
+
+load_local_qa_runtime_control() {
+  clear_local_qa_runtime_exports
+  if [[ -f "$LOCAL_QA_CONTROL_STATE" && -x "$LOCAL_QA_CONTROL_SCRIPT" ]]; then
+    local local_qa_exports=""
+    if local_qa_exports="$(
+      "$PYTHON_BIN" "$LOCAL_QA_CONTROL_SCRIPT" emit-shell \
+        --state "$LOCAL_QA_CONTROL_STATE" \
+        --installed-root "$VIVENTIUM_CORE_DIR" \
+        --artifact-identity "$VIVENTIUM_APP_SUPPORT_ROOT/runtime/parallel-work-artifact-identity.json" \
+        --local-qa-request "$VIVENTIUM_APP_SUPPORT_ROOT/runtime/parallel-work-local-qa-request.json" \
+        2>/dev/null
+    )"; then
+      eval "$local_qa_exports"
+    else
+      echo "[viventium] Ignoring invalid or expired local-QA session." >&2
+    fi
+  fi
+}
+
+load_local_qa_runtime_control
+# === VIVENTIUM END ===
 DOCKER_BIN="$(command -v docker || true)"
 
 docker() {
@@ -709,10 +761,30 @@ docker() {
     local compose_up_timeout="${VIVENTIUM_DOCKER_COMPOSE_UP_TIMEOUT_SECONDS:-600}"
     timeout_seconds="$compose_timeout"
     local compose_index=1
-    if [[ "${docker_args[$compose_index]:-}" == "-f" ]]; then
-      compose_index=$((compose_index + 2))
-    fi
-    if [[ "${docker_args[$compose_index]:-}" == "up" ]]; then
+    local compose_command=""
+    local compose_arg=""
+    while (( compose_index < ${#docker_args[@]} )); do
+      compose_arg="${docker_args[$compose_index]}"
+      case "$compose_arg" in
+        "--project-name"|"-p"|"--file"|"-f"|"--env-file"|"--profile"|"--ansi"|"--progress"|"--parallel")
+          compose_index=$((compose_index + 2))
+          continue
+          ;;
+        --project-name=*|--file=*|--env-file=*|--profile=*|--ansi=*|--progress=*|--parallel=*|--compatibility|--dry-run)
+          compose_index=$((compose_index + 1))
+          continue
+          ;;
+        --*)
+          compose_index=$((compose_index + 1))
+          continue
+          ;;
+        *)
+          compose_command="$compose_arg"
+          break
+          ;;
+      esac
+    done
+    if [[ "$compose_command" == "up" ]]; then
       timeout_seconds="$compose_up_timeout"
     fi
   elif [[ "${docker_args[0]:-}" == "run" ]]; then
@@ -1331,9 +1403,10 @@ GLASSHIVE_MCP_PID_FILE="$LOG_ROOT/glasshive_mcp.pid"
 GLASSHIVE_UI_PID_FILE="$LOG_ROOT/glasshive_ui.pid"
 VOICE_GATEWAY_PID_FILE="$LOG_ROOT/voice_gateway.pid"
 TELEGRAM_BOT_PID_FILE="$LOG_ROOT/telegram_bot.pid"
+TELEGRAM_BOT_READY_FILE="$LOG_ROOT/telegram_bot.ready"
 TELEGRAM_BOT_DEFERRED_PID_FILE="$LOG_ROOT/telegram_bot_deferred.pid"
 TELEGRAM_BOT_DEFERRED_MARKER_FILE="$LOG_ROOT/telegram_bot_deferred.pending"
-TELEGRAM_BOT_LAUNCHCTL_LABEL="${VIVENTIUM_TELEGRAM_BOT_LAUNCHCTL_LABEL:-ai.viventium.telegram-bot}"
+TELEGRAM_BOT_LAUNCHCTL_LABEL="${VIVENTIUM_TELEGRAM_BOT_LAUNCHCTL_LABEL:-${TELEGRAM_BOT_LAUNCHCTL_LABEL:-ai.viventium.telegram-bot}}"
 TELEGRAM_BOT_WATCHDOG_PID_FILE="$LOG_ROOT/telegram_bot_watchdog.pid"
 TELEGRAM_CODEX_PID_FILE="$LOG_ROOT/telegram_codex.pid"
 DETACHED_LAUNCH_PGID_FILE="$LOG_ROOT/detached-launch.pgid"
@@ -1739,47 +1812,6 @@ write_ms365_runtime_exports() {
     printf 'MS365_MCP_AUTH_URL=%s\n' "$MS365_MCP_AUTH_URL"
     printf 'MS365_MCP_TOKEN_URL=%s\n' "$MS365_MCP_TOKEN_URL"
   } >"$export_file"
-
-  local runtime_env_file="${VIVENTIUM_ENV_FILE:-}"
-  if [[ -n "$runtime_env_file" && -f "$runtime_env_file" ]]; then
-    "$PYTHON_BIN" - "$runtime_env_file" \
-      "MS365_MCP_PORT=$MS365_MCP_PORT" \
-      "MS365_MCP_SERVER_URL=$MS365_MCP_SERVER_URL" \
-      "MS365_MCP_AUTH_URL=$MS365_MCP_AUTH_URL" \
-      "MS365_MCP_TOKEN_URL=$MS365_MCP_TOKEN_URL" <<'PY'
-from pathlib import Path
-import sys
-
-runtime_env_path = Path(sys.argv[1])
-updates = {}
-for arg in sys.argv[2:]:
-    key, value = arg.split("=", 1)
-    updates[key] = value
-
-lines = runtime_env_path.read_text(encoding="utf-8").splitlines()
-seen: set[str] = set()
-out: list[str] = []
-
-for line in lines:
-    stripped = line.lstrip()
-    if not stripped or stripped.startswith("#") or "=" not in line:
-        out.append(line)
-        continue
-
-    key, _value = line.split("=", 1)
-    if key in updates:
-        out.append(f"{key}={updates[key]}")
-        seen.add(key)
-    else:
-        out.append(line)
-
-for key, value in updates.items():
-    if key not in seen:
-        out.append(f"{key}={value}")
-
-runtime_env_path.write_text("\n".join(out) + "\n", encoding="utf-8")
-PY
-  fi
 }
 
 load_ms365_runtime_exports_if_present() {
@@ -1820,8 +1852,11 @@ if [[ -z "${VIVENTIUM_CALL_SESSION_SECRET:-}" ]]; then
 fi
 SCHEDULING_MCP_PORT="${SCHEDULING_MCP_PORT:-$VIVENTIUM_SCHEDULING_MCP_PORT}"
 GLASSHIVE_RUNTIME_PORT="${GLASSHIVE_RUNTIME_PORT:-8766}"
+GLASSHIVE_HTTP_REQUEST_HEAD_MIN_BYTES=524288
+GLASSHIVE_HTTP_REQUEST_HEAD_MAX_BYTES="${GLASSHIVE_HTTP_REQUEST_HEAD_MAX_BYTES:-$GLASSHIVE_HTTP_REQUEST_HEAD_MIN_BYTES}"
 GLASSHIVE_MCP_PORT="${GLASSHIVE_MCP_PORT:-8767}"
 GLASSHIVE_UI_PORT="${GLASSHIVE_UI_PORT:-8780}"
+export GLASSHIVE_RUNTIME_BASE_URL="${GLASSHIVE_RUNTIME_BASE_URL:-http://127.0.0.1:${GLASSHIVE_RUNTIME_PORT}}"
 export GLASSHIVE_OPERATOR_BASE_URL="${GLASSHIVE_OPERATOR_BASE_URL:-http://127.0.0.1:${GLASSHIVE_UI_PORT}}"
 SCHEDULER_SECRET_GENERATED=false
 if [[ -z "${VIVENTIUM_SCHEDULER_SECRET:-}" ]]; then
@@ -2163,11 +2198,8 @@ playground_source_ref() {
 }
 
 PLAYGROUND_SOURCE_REF="$(playground_source_ref "$PLAYGROUND_APP_DIR" || true)"
-# === VIVENTIUM START ===
-# Feature: Voice readiness and runtime identity guard.
-# Purpose: Give LibreChat the exact source identity it must verify before creating a call session.
+# Give LibreChat the exact source identity it must verify before creating a call session.
 export VIVENTIUM_PLAYGROUND_SOURCE_REF="$PLAYGROUND_SOURCE_REF"
-# === VIVENTIUM END ===
 
 # Service enable/disable flags (env overrides)
 START_GOOGLE_MCP="${START_GOOGLE_MCP:-true}"
@@ -2308,6 +2340,7 @@ FIRECRAWL_STARTED_BY_SCRIPT=false
 PROMPT_WORKBENCH_STARTED_BY_SCRIPT=false
 SKYVERN_STARTED_BY_SCRIPT=false
 MONGO_STARTED_BY_SCRIPT=false
+PARALLEL_REDIS_STARTED_BY_SCRIPT=false
 MONGO_NATIVE_STARTED_BY_SCRIPT=false
 MEILI_NATIVE_STARTED_BY_SCRIPT=false
 
@@ -2317,6 +2350,8 @@ MS365_MCP_CALLBACK_PID=""
 TELEGRAM_BOT_PID=""
 TELEGRAM_LOCAL_BOT_API_PID=""
 V1_AGENT_PID=""
+
+
 
 require_cmd() {
   local cmd="$1"
@@ -3222,6 +3257,7 @@ migrate_legacy_telegram_launchctl_receipt() {
   write_telegram_launchctl_receipt
 }
 
+
 stop_telegram_launchctl_job() {
   [[ "$(uname -s)" == "Darwin" ]] || return 0
   command -v launchctl >/dev/null 2>&1 || return 0
@@ -3266,11 +3302,8 @@ find_running_telegram_bot_pids() {
   find_scope_pattern_pids "python.*bot.py" "$telegram_dir_scope"
 }
 
-# === VIVENTIUM START ===
-# Feature: Cross-checkout Telegram poller handoff.
-# The Python helper validates token-hash receipts against PID start identity,
-# cwd, command, and uid before any signal. JSON parsing keeps secrets out of
-# command arguments and shell logs.
+# The handoff helper validates token-hash receipts against PID start identity,
+# cwd, command, and uid before any signal.
 telegram_handoff_json_field() {
   local payload="${1:-}"
   local field="${2:-}"
@@ -3343,7 +3376,26 @@ stop_owned_telegram_poller() {
     --state-dir "$TELEGRAM_POLLER_STATE_DIR" \
     --pid-file "$TELEGRAM_BOT_PID_FILE" >/dev/null
 }
-# === VIVENTIUM END ===
+
+telegram_bot_ready() {
+  local pid="${1:-}"
+  [[ -n "$pid" ]] || return 1
+  ps -p "$pid" >/dev/null 2>&1 || return 1
+  [[ -f "$TELEGRAM_BOT_READY_FILE" ]] || return 1
+  [[ "$(tr -cd '0-9' <"$TELEGRAM_BOT_READY_FILE")" == "$pid" ]]
+}
+
+wait_for_telegram_bot_ready() {
+  local pid="${1:-}"
+  local retries="${2:-30}"
+  local attempt
+  for ((attempt = 0; attempt < retries; attempt++)); do
+    telegram_bot_ready "$pid" && return 0
+    ps -p "$pid" >/dev/null 2>&1 || return 1
+    sleep 1
+  done
+  return 1
+}
 
 telegram_deferred_pid_is_running() {
   local pid
@@ -3755,6 +3807,62 @@ remove_compose_service_containers() {
       docker rm -f $container_ids >/dev/null 2>&1 || true
     fi
   done
+}
+
+parallel_work_runtime_instance() {
+  local instance="${VIVENTIUM_DEV_ENV_INSTANCE_ID:-${VIVENTIUM_RUNTIME_PROFILE:-isolated}}"
+  instance="$(printf '%s' "$instance" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9_.-' '-')"
+  instance="${instance#-}"
+  instance="${instance%-}"
+  [[ -n "$instance" ]] || instance="isolated"
+  printf '%s\n' "$instance"
+}
+
+stop_parallel_work_runtime_containers() {
+  if [[ "$SKIP_DOCKER" == "true" ]]; then
+    return 0
+  fi
+  if ! command -v docker >/dev/null 2>&1 || ! docker_daemon_ready; then
+    return 0
+  fi
+
+  local instance
+  instance="$(parallel_work_runtime_instance)"
+  remove_compose_project_containers "viventium-parallel-proxy-${instance}"
+
+  local redis_container
+  redis_container=$(
+    docker ps -aq --filter "name=^/${PARALLEL_REDIS_CONTAINER_NAME}$" 2>/dev/null |
+      head -1 || true
+  )
+  if [[ -z "$redis_container" ]]; then
+    return 0
+  fi
+
+  local redis_service_label
+  local redis_stack_label
+  local redis_profile_label
+  local redis_contract_label
+  redis_service_label=$(
+    docker inspect -f '{{ index .Config.Labels "viventium.service" }}' "$redis_container" 2>/dev/null || true
+  )
+  redis_stack_label=$(
+    docker inspect -f '{{ index .Config.Labels "viventium.stack" }}' "$redis_container" 2>/dev/null || true
+  )
+  redis_profile_label=$(
+    docker inspect -f '{{ index .Config.Labels "viventium.profile" }}' "$redis_container" 2>/dev/null || true
+  )
+  redis_contract_label=$(
+    docker inspect -f '{{ index .Config.Labels "viventium.contract" }}' "$redis_container" 2>/dev/null || true
+  )
+  if [[
+    "$redis_service_label" == "parallel-work-redis" &&
+      "$redis_stack_label" == "viventium_v0_4" &&
+      "$redis_profile_label" == "$VIVENTIUM_RUNTIME_PROFILE" &&
+      "$redis_contract_label" == "parallel-work-redis-v1"
+  ]]; then
+    docker rm -f "$redis_container" >/dev/null 2>&1 || true
+  fi
 }
 
 resolve_python_bin() {
@@ -4319,6 +4427,11 @@ read_env_kv() {
   return 1
 }
 
+# Quiesced upgrade validation must prove the candidate process without changing
+# the owner-controlled ignored .env before the outer transaction commits. The
+# existing auth/encryption state wins; a missing/default value gets an
+# in-process-only replacement so a first upgrade from an absent file can still
+# validate safely.
 env_file_has_assignment() {
   local file="$1"
   local key="$2"
@@ -4354,11 +4467,7 @@ resolve_persisted_owner_credential() {
   return 1
 }
 
-# Quiesced upgrade validation must prove the candidate process without changing
-# the owner-controlled ignored .env before the outer transaction commits. The
-# existing auth/encryption state wins; a missing/default value gets an
-# in-process-only replacement so a first upgrade from an absent file can still
-# validate safely.
+
 prepare_librechat_env_for_quiesced_validation() {
   local env_file="$LIBRECHAT_RUNTIME_ENV_FILE"
   local key=""
@@ -4932,7 +5041,7 @@ reconcile_viventium_user_defaults() {
   if (
     cd "$LIBRECHAT_DIR" &&
       ensure_librechat_server_packages_ready &&
-      node "$reconcile_script"
+      USE_REDIS=false USE_REDIS_STREAMS=false node "$reconcile_script"
   ) >"$reconcile_log" 2>&1; then
     log_success "Viventium user defaults reconciled"
     return 0
@@ -5157,6 +5266,7 @@ run_librechat_npm() {
   fi
   npm "$@"
 }
+
 
 run_librechat_dependency_install() {
   if [[ -f "package-lock.json" ]]; then
@@ -5480,6 +5590,208 @@ PY
   return 1
 }
 
+mongo_replica_set_ready() {
+  [[ "$MONGO_REPLICA_SET" =~ ^[A-Za-z0-9._-]+$ ]] || return 1
+  command -v mongosh >/dev/null 2>&1 || return 1
+  local direct_uri="mongodb://127.0.0.1:${MONGO_PORT}/admin?directConnection=true&serverSelectionTimeoutMS=3000"
+  mongosh "$direct_uri" --quiet --eval "
+const hello = db.hello();
+if (hello.setName !== '${MONGO_REPLICA_SET}' || hello.isWritablePrimary !== true) quit(2);
+" >/dev/null 2>&1
+}
+
+initialize_local_mongo_replica_set() {
+  [[ "$MONGO_REPLICA_SET" =~ ^[A-Za-z0-9._-]+$ ]] || {
+    log_error "Invalid local MongoDB replica-set name"
+    return 1
+  }
+  command -v mongosh >/dev/null 2>&1 || {
+    log_error "mongosh is required to initialize transactional local MongoDB"
+    return 1
+  }
+  local direct_uri="mongodb://127.0.0.1:${MONGO_PORT}/admin?directConnection=true&serverSelectionTimeoutMS=3000"
+  local member_host="127.0.0.1:${MONGO_PORT}"
+  local initiated=false
+  for _ in $(seq 1 30); do
+    if mongosh "$direct_uri" --quiet --eval "
+const expected = '${MONGO_REPLICA_SET}';
+const replication = db.adminCommand({ getCmdLineOpts: 1 })?.parsed?.replication || {};
+const configured = replication?.replSet || replication?.replSetName || '';
+if (configured !== expected) quit(3);
+const hello = db.hello();
+if (hello.setName && hello.setName !== expected) quit(4);
+if (!hello.setName) {
+  const result = rs.initiate({ _id: expected, members: [{ _id: 0, host: '${member_host}' }] });
+  if (!result.ok && result.codeName !== 'AlreadyInitialized') quit(5);
+}
+" >/dev/null 2>&1; then
+      initiated=true
+      break
+    fi
+    sleep 1
+  done
+  if [[ "$initiated" != "true" ]]; then
+    log_error "MongoDB is not configured for the required local transaction replica set"
+    return 1
+  fi
+  for _ in $(seq 1 30); do
+    if mongo_replica_set_ready; then
+      log_success "MongoDB transaction replica set is ready"
+      return 0
+    fi
+    sleep 1
+  done
+  log_error "MongoDB replica set did not elect a writable primary"
+  return 1
+}
+
+ensure_local_mongo_replica_set() {
+  if [[ "${MONGO_IS_LOCAL:-false}" != "true" ]]; then
+    return 0
+  fi
+  initialize_local_mongo_replica_set
+}
+
+ensure_parallel_work_redis_ready() {
+  if ! is_truthy "${VIVENTIUM_PARALLEL_WORK_AVAILABLE:-false}"; then
+    return 0
+  fi
+  if ! is_truthy "${USE_REDIS:-false}" || ! is_truthy "${USE_REDIS_STREAMS:-false}"; then
+    log_error "Parallel Work requires USE_REDIS=true and USE_REDIS_STREAMS=true"
+    return 1
+  fi
+  if [[ ! "${REDIS_URI:-}" =~ ^redis://127\.0\.0\.1:([1-9][0-9]{0,4})$ ]]; then
+    log_error "Parallel Work REDIS_URI must be a secret-free redis://127.0.0.1:<port> URI"
+    return 1
+  fi
+
+  local parallel_redis_port="${BASH_REMATCH[1]}"
+  if (( 10#$parallel_redis_port > 65535 )); then
+    log_error "Parallel Work Redis port is outside the valid TCP range"
+    return 1
+  fi
+  if [[ -z "$DOCKER_BIN" ]]; then
+    log_error "Docker not found (required for dedicated Parallel Work Redis)"
+    return 1
+  fi
+  if [[ "$SKIP_DOCKER" == "true" ]]; then
+    if ! docker_daemon_ready; then
+      log_error "Cannot verify Parallel Work Redis while --skip-docker is enabled and Docker is unavailable"
+      return 1
+    fi
+  elif ! ensure_docker_daemon_for_service "dedicated Parallel Work Redis"; then
+    return 1
+  fi
+
+  local existing=""
+  existing=$(docker ps -aq --filter "name=^/${PARALLEL_REDIS_CONTAINER_NAME}$" 2>/dev/null | head -1 || true)
+  if [[ -n "$existing" ]]; then
+    local redis_service_label=""
+    local redis_stack_label=""
+    local redis_profile_label=""
+    local redis_contract_label=""
+    local redis_image=""
+    local redis_command=""
+    local redis_restart_policy=""
+    local redis_mount_contract=""
+    redis_service_label=$(docker inspect -f '{{ index .Config.Labels "viventium.service" }}' "$existing" 2>/dev/null || true)
+    redis_stack_label=$(docker inspect -f '{{ index .Config.Labels "viventium.stack" }}' "$existing" 2>/dev/null || true)
+    redis_profile_label=$(docker inspect -f '{{ index .Config.Labels "viventium.profile" }}' "$existing" 2>/dev/null || true)
+    redis_contract_label=$(docker inspect -f '{{ index .Config.Labels "viventium.contract" }}' "$existing" 2>/dev/null || true)
+    redis_image=$(docker inspect -f '{{.Config.Image}}' "$existing" 2>/dev/null || true)
+    redis_command=$(docker inspect -f '{{json .Config.Cmd}}' "$existing" 2>/dev/null || true)
+    redis_restart_policy=$(docker inspect -f '{{.HostConfig.RestartPolicy.Name}}' "$existing" 2>/dev/null || true)
+    redis_mount_contract=$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/data"}}{{.Name}}|{{.Type}}|{{.RW}}{{end}}{{end}}' "$existing" 2>/dev/null || true)
+    if [[ "$redis_service_label" != "parallel-work-redis" ]] ||
+      [[ "$redis_stack_label" != "viventium_v0_4" ]] ||
+      [[ "$redis_profile_label" != "$VIVENTIUM_RUNTIME_PROFILE" ]] ||
+      [[ "$redis_contract_label" != "parallel-work-redis-v1" ]] ||
+      [[ "$redis_image" != "$PARALLEL_REDIS_IMAGE" ]] ||
+      [[ "$redis_command" != '["redis-server","--appendonly","yes","--appendfsync","everysec"]' ]] ||
+      [[ "$redis_restart_policy" != "unless-stopped" ]] ||
+      [[ "$redis_mount_contract" != "${PARALLEL_REDIS_VOLUME_NAME}|volume|true" ]]; then
+      log_error "Refusing to reuse Redis container without the exact Viventium Parallel Work ownership, image, command, restart, and writable-volume contract"
+      return 1
+    fi
+    local running=""
+    running=$(docker inspect -f '{{.State.Running}}' "$existing" 2>/dev/null || true)
+    if [[ "$running" != "true" ]]; then
+      if [[ "$SKIP_DOCKER" == "true" ]]; then
+        log_error "Parallel Work Redis is stopped and --skip-docker forbids starting it"
+        return 1
+      fi
+      if ! docker start "$PARALLEL_REDIS_CONTAINER_NAME" >/dev/null; then
+        log_error "Failed to start the dedicated Parallel Work Redis container"
+        return 1
+      fi
+      PARALLEL_REDIS_STARTED_BY_SCRIPT=true
+    fi
+  else
+    if [[ "$SKIP_DOCKER" == "true" ]]; then
+      log_error "Parallel Work Redis is absent and --skip-docker forbids creating it"
+      return 1
+    fi
+    if port_in_use "$parallel_redis_port"; then
+      log_error "Parallel Work Redis loopback port is occupied by another service"
+      return 1
+    fi
+    log_info "Starting dedicated Parallel Work Redis on 127.0.0.1:${parallel_redis_port}"
+    if ! docker run -d \
+      --name "$PARALLEL_REDIS_CONTAINER_NAME" \
+      --label "viventium.stack=viventium_v0_4" \
+      --label "viventium.service=parallel-work-redis" \
+      --label "viventium.profile=${VIVENTIUM_RUNTIME_PROFILE}" \
+      --label "viventium.contract=parallel-work-redis-v1" \
+      --restart unless-stopped \
+      -p "127.0.0.1:${parallel_redis_port}:6379" \
+      -v "${PARALLEL_REDIS_VOLUME_NAME}:/data" \
+      "$PARALLEL_REDIS_IMAGE" \
+      redis-server --appendonly yes --appendfsync everysec >/dev/null; then
+      log_error "Failed to create the dedicated Parallel Work Redis container"
+      return 1
+    fi
+    PARALLEL_REDIS_STARTED_BY_SCRIPT=true
+  fi
+
+  local published_port=""
+  published_port=$(docker port "$PARALLEL_REDIS_CONTAINER_NAME" 6379/tcp 2>/dev/null | head -1 || true)
+  if [[ "$published_port" != "127.0.0.1:${parallel_redis_port}" ]]; then
+    log_error "Parallel Work Redis is not bound to its exact loopback host port"
+    return 1
+  fi
+
+  local redis_ping=""
+  local redis_ready=false
+  for _ in $(seq 1 30); do
+    redis_ping=$(docker exec "$PARALLEL_REDIS_CONTAINER_NAME" redis-cli ping 2>/dev/null || true)
+    if [[ "$redis_ping" == "PONG" ]]; then
+      redis_ready=true
+      break
+    fi
+    sleep 1
+  done
+  if [[ "$redis_ready" != "true" ]]; then
+    log_error "Dedicated Parallel Work Redis did not become ready"
+    return 1
+  fi
+
+  local redis_appendonly=""
+  local redis_appendfsync=""
+  redis_appendonly=$(docker exec "$PARALLEL_REDIS_CONTAINER_NAME" redis-cli --raw CONFIG GET appendonly 2>/dev/null | tail -n 1 || true)
+  redis_appendfsync=$(docker exec "$PARALLEL_REDIS_CONTAINER_NAME" redis-cli --raw CONFIG GET appendfsync 2>/dev/null | tail -n 1 || true)
+  if [[ "$redis_appendonly" != "yes" || "$redis_appendfsync" != "everysec" ]]; then
+    log_error "Refusing Parallel Work Redis because its live AOF durability settings drifted"
+    return 1
+  fi
+  if ! docker exec "$PARALLEL_REDIS_CONTAINER_NAME" sh -c 'probe="/data/.viventium-write-probe-$$"; (umask 077 && : > "$probe") && rm -f "$probe"'; then
+    log_error "Refusing Parallel Work Redis because its dedicated /data volume is not writable"
+    return 1
+  fi
+
+  log_success "Dedicated Parallel Work Redis is ready"
+  return 0
+}
+
 start_local_mongodb_container() {
   if [[ "$GLOBAL_DOCKER_CLEANUP_ALLOWED" != "true" ]]; then
     log_info "Alternate App Support runtime detected; using runtime-local native MongoDB instead of a shared Docker container"
@@ -5543,6 +5855,7 @@ start_local_mongodb_container() {
     -p "$publish_arg" \
     -v "$mongo_mount" \
     "$MONGO_IMAGE" \
+    --replSet "$MONGO_REPLICA_SET" \
     --bind_ip_all >/dev/null; then
     log_error "Failed to create MongoDB container ($MONGO_CONTAINER_NAME)"
     return 1
@@ -5577,6 +5890,7 @@ start_local_mongodb_native() {
     --logpath "$MONGO_NATIVE_LOG_FILE" \
     --logappend \
     --port "$MONGO_PORT" \
+    --replSet "$MONGO_REPLICA_SET" \
     "${bind_args[@]}" >/dev/null 2>&1 < /dev/null &
   local mongo_native_pid=$!
   echo "$mongo_native_pid" > "$MONGO_NATIVE_PID_FILE"
@@ -5594,12 +5908,15 @@ ensure_mongodb_ready() {
   resolve_mongo_connection
 
   if mongo_ping "$MONGO_URI"; then
-    if ! record_mongo_engine_identity; then
-      log_error "MongoDB is reachable, but its exact runtime engine could not be recorded"
-      return 1
+    if ensure_local_mongo_replica_set; then
+      if ! record_mongo_engine_identity; then
+        log_error "MongoDB is reachable, but its exact runtime engine could not be recorded"
+        return 1
+      fi
+      log_success "MongoDB ready at ${MONGO_HOST}:${MONGO_PORT}"
+      return 0
     fi
-    log_success "MongoDB ready at ${MONGO_HOST}:${MONGO_PORT}"
-    return 0
+    return 1
   fi
 
   if [[ "$MONGO_IS_LOCAL" != "true" ]]; then
@@ -5622,18 +5939,23 @@ ensure_mongodb_ready() {
   local retries=45
   for _ in $(seq 1 "$retries"); do
     if mongo_ping "$MONGO_URI"; then
-      if ! record_mongo_engine_identity; then
-        log_error "MongoDB started, but its exact runtime engine could not be recorded"
-        return 1
+      if ensure_local_mongo_replica_set; then
+        if ! record_mongo_engine_identity; then
+          log_error "MongoDB started, but its exact runtime engine could not be recorded"
+          return 1
+        fi
+        log_success "MongoDB ready at ${MONGO_HOST}:${MONGO_PORT}"
+        return 0
       fi
-      log_success "MongoDB ready at ${MONGO_HOST}:${MONGO_PORT}"
-      return 0
+      return 1
     fi
     sleep 1
   done
 
   log_error "MongoDB did not become ready in time at ${MONGO_HOST}:${MONGO_PORT}"
-  if command -v docker >/dev/null 2>&1; then
+  if [[ "$GLOBAL_DOCKER_CLEANUP_ALLOWED" == "true" ]] &&
+    command -v docker >/dev/null 2>&1
+  then
     docker logs --tail 40 "$MONGO_CONTAINER_NAME" 2>/dev/null || true
   fi
   if [[ -f "$MONGO_NATIVE_LOG_FILE" ]]; then
@@ -5687,6 +6009,19 @@ except (TypeError, ValueError, json.JSONDecodeError):
   fi
 
   log_success "Memory and provider-key unique indexes are ready"
+}
+
+ensure_orchestration_indexes() {
+  local migration_script="$LIBRECHAT_DIR/scripts/viventium-sync-orchestration-indexes.js"
+  if [[ ! -f "$migration_script" ]]; then
+    log_error "Required orchestration index migration helper is missing"
+    return 1
+  fi
+  if ! MONGO_URI="$MONGO_URI" node "$migration_script" --apply --json >/dev/null; then
+    log_error "Required callback and insight outbox indexes could not be created"
+    return 1
+  fi
+  log_success "Callback and insight outbox indexes are ready"
 }
 
 resolve_meili_connection() {
@@ -5828,6 +6163,70 @@ meili_http_functional_ready() {
   meili_recent_failed_task_health "$host_url"
 }
 
+restart_viventium_owned_meilisearch_listener() {
+  local restarted=false
+  local existing=""
+  local native_pid=""
+  local stack_label=""
+  local service_label=""
+  local native_status=0
+  local native_receipt_present=false
+
+  # Preflight every discovered target before stopping either one. A mixed
+  # owned/unowned pair must not produce a partial recycle.
+  if [[ "$GLOBAL_DOCKER_CLEANUP_ALLOWED" == "true" ]] &&
+    command -v docker >/dev/null 2>&1
+  then
+    existing=$(docker ps -aq --filter "name=^/${MEILI_CONTAINER_NAME}$" 2>/dev/null | head -1 || true)
+    if [[ -n "$existing" ]]; then
+      stack_label="$(docker inspect -f '{{ index .Config.Labels "viventium.stack" }}' "$existing" 2>/dev/null || true)"
+      service_label="$(docker inspect -f '{{ index .Config.Labels "viventium.service" }}' "$existing" 2>/dev/null || true)"
+      if [[ "$stack_label" != "viventium_v0_4" || "$service_label" != "meilisearch" ]]; then
+        log_error "A foreign container uses the configured Meilisearch name; refusing to remove it"
+        return 2
+      fi
+    fi
+  fi
+
+  if [[ -e "$MEILI_NATIVE_PID_FILE" || -L "$MEILI_NATIVE_PID_FILE" ]]; then
+    native_receipt_present=true
+    native_status=0
+    native_pid="$(native_meilisearch_pid_matches_receipt)" || native_status=$?
+    if [[ "$native_status" == "2" ]]; then
+      log_error "Native Meilisearch PID receipt does not match the live process; refusing to signal it"
+      return 2
+    fi
+  fi
+
+  if [[ -n "$native_pid" ]]; then
+    log_warn "Configured Meilisearch key does not match the Viventium-owned local listener; recycling the native process"
+    kill "$native_pid" >/dev/null 2>&1 || return 3
+    sleep 1
+    if kill -0 "$native_pid" >/dev/null 2>&1; then
+      local confirmed_pid=""
+      native_status=0
+      confirmed_pid="$(native_meilisearch_pid_matches_receipt)" || native_status=$?
+      if [[ "$native_status" != "0" || "$confirmed_pid" != "$native_pid" ]]; then
+        log_error "Native Meilisearch PID identity changed during shutdown; refusing SIGKILL"
+        return 2
+      fi
+      kill -9 "$native_pid" >/dev/null 2>&1 || return 3
+    fi
+    restarted=true
+  fi
+  if [[ "$native_receipt_present" == "true" ]]; then
+    rm -f "$MEILI_NATIVE_PID_FILE" || return 3
+  fi
+
+  if [[ -n "$existing" ]]; then
+    log_warn "Configured Meilisearch key does not match the Viventium-owned local listener; recycling the local container"
+    docker rm -f "$existing" >/dev/null 2>&1 || return 3
+    restarted=true
+  fi
+
+  [[ "$restarted" == "true" ]]
+}
+
 native_meilisearch_pid_matches_receipt() {
   local data_root="${VIVENTIUM_LOCAL_MEILI_DATA_PATH:-$VIVENTIUM_STATE_ROOT/meili-data}"
   local http_address="${MEILI_BIND_HOST}:${MEILI_PORT}"
@@ -5910,70 +6309,6 @@ if (
     raise SystemExit(2)
 print(pid)
 PY
-}
-
-restart_viventium_owned_meilisearch_listener() {
-  local restarted=false
-  local existing=""
-  local native_pid=""
-  local stack_label=""
-  local service_label=""
-  local native_status=0
-  local native_receipt_present=false
-
-  # Preflight every discovered target before stopping either one. A mixed
-  # owned/unowned pair must not produce a partial recycle.
-  if [[ "$GLOBAL_DOCKER_CLEANUP_ALLOWED" == "true" ]] &&
-    command -v docker >/dev/null 2>&1
-  then
-    existing=$(docker ps -aq --filter "name=^/${MEILI_CONTAINER_NAME}$" 2>/dev/null | head -1 || true)
-    if [[ -n "$existing" ]]; then
-      stack_label="$(docker inspect -f '{{ index .Config.Labels "viventium.stack" }}' "$existing" 2>/dev/null || true)"
-      service_label="$(docker inspect -f '{{ index .Config.Labels "viventium.service" }}' "$existing" 2>/dev/null || true)"
-      if [[ "$stack_label" != "viventium_v0_4" || "$service_label" != "meilisearch" ]]; then
-        log_error "A foreign container uses the configured Meilisearch name; refusing to remove it"
-        return 2
-      fi
-    fi
-  fi
-
-  if [[ -e "$MEILI_NATIVE_PID_FILE" || -L "$MEILI_NATIVE_PID_FILE" ]]; then
-    native_receipt_present=true
-    native_status=0
-    native_pid="$(native_meilisearch_pid_matches_receipt)" || native_status=$?
-    if [[ "$native_status" == "2" ]]; then
-      log_error "Native Meilisearch PID receipt does not match the live process; refusing to signal it"
-      return 2
-    fi
-  fi
-
-  if [[ -n "$native_pid" ]]; then
-    log_warn "Configured Meilisearch key does not match the Viventium-owned local listener; recycling the native process"
-    kill "$native_pid" >/dev/null 2>&1 || return 3
-    sleep 1
-    if kill -0 "$native_pid" >/dev/null 2>&1; then
-      local confirmed_pid=""
-      native_status=0
-      confirmed_pid="$(native_meilisearch_pid_matches_receipt)" || native_status=$?
-      if [[ "$native_status" != "0" || "$confirmed_pid" != "$native_pid" ]]; then
-        log_error "Native Meilisearch PID identity changed during shutdown; refusing SIGKILL"
-        return 2
-      fi
-      kill -9 "$native_pid" >/dev/null 2>&1 || return 3
-    fi
-    restarted=true
-  fi
-  if [[ "$native_receipt_present" == "true" ]]; then
-    rm -f "$MEILI_NATIVE_PID_FILE" || return 3
-  fi
-
-  if [[ -n "$existing" ]]; then
-    log_warn "Configured Meilisearch key does not match the Viventium-owned local listener; recycling the local container"
-    docker rm -f "$existing" >/dev/null 2>&1 || return 3
-    restarted=true
-  fi
-
-  [[ "$restarted" == "true" ]]
 }
 
 meili_log_indicates_incompatible_data() {
@@ -6140,6 +6475,7 @@ recover_incompatible_local_meili_data() {
   done
   return 1
 }
+
 
 start_local_meilisearch_container() {
   if [[ "$GLOBAL_DOCKER_CLEANUP_ALLOWED" != "true" ]]; then
@@ -7013,6 +7349,7 @@ PY
   return 0
 }
 
+
 stop_running_services() {
   local reason="${1:-Restart requested - stopping running services}"
   local done_msg="${2:-Restart cleanup complete}"
@@ -7038,24 +7375,26 @@ stop_running_services() {
     kill_port_listeners "$LC_API_PORT" "$LIBRECHAT_DIR"
     kill_port_listeners "$LC_FRONTEND_PORT" "$LIBRECHAT_DIR"
     kill_port_listeners "$VIVENTIUM_SANDPACK_BUNDLER_PORT" "$LIBRECHAT_DIR"
-    kill_by_pattern_scoped "node.*api/server" "$LIBRECHAT_DIR"
-    kill_by_pattern_scoped "npm run backend:dev" "$LIBRECHAT_DIR"
-    kill_by_pattern_scoped "npm exec nodemon api/server/index.js" "$LIBRECHAT_DIR"
-    kill_by_pattern_scoped "cross-env NODE_ENV=development npx nodemon api/server/index.js" "$LIBRECHAT_DIR"
-    kill_by_pattern_scoped "node .*nodemon api/server/index.js" "$LIBRECHAT_DIR"
-    kill_by_pattern_scoped "vite.*frontend" "$LIBRECHAT_DIR"
-    kill_by_pattern_scoped "npm run dev --host" "$LIBRECHAT_DIR"
-    kill_by_pattern_scoped "cross-env NODE_ENV=development vite" "$LIBRECHAT_DIR"
-    kill_by_pattern_scoped "npm ci" "$LIBRECHAT_DIR"
-    kill_by_pattern_scoped "npm install" "$LIBRECHAT_DIR"
-    kill_by_pattern_scoped "npm run build" "$LIBRECHAT_DIR"
-    kill_by_pattern_scoped "node .*rollup" "$LIBRECHAT_DIR"
-    kill_by_pattern_scoped "rollup -c --silent --bundleConfigAsCjs" "$LIBRECHAT_DIR"
-    kill_by_pattern_scoped_excluding "viventium-start.sh" "$LIBRECHAT_DIR" "${stop_excluded_pids[@]}"
-    kill_by_pattern_scoped "cross-env NODE_ENV=production vite build" "$LIBRECHAT_DIR"
-    # Drain any remaining LibreChat runtime children rooted in the workspace.
-    kill_scope_runtime_processes "$LIBRECHAT_DIR" "$LIBRECHAT_DIR"
-    kill_orphaned_scope_runtime_processes "$LIBRECHAT_DIR" "$LIBRECHAT_DIR"
+    if runtime_allows_workspace_wide_process_sweep; then
+      kill_by_pattern_scoped "node.*api/server" "$LIBRECHAT_DIR"
+      kill_by_pattern_scoped "npm run backend:dev" "$LIBRECHAT_DIR"
+      kill_by_pattern_scoped "npm exec nodemon api/server/index.js" "$LIBRECHAT_DIR"
+      kill_by_pattern_scoped "cross-env NODE_ENV=development npx nodemon api/server/index.js" "$LIBRECHAT_DIR"
+      kill_by_pattern_scoped "node .*nodemon api/server/index.js" "$LIBRECHAT_DIR"
+      kill_by_pattern_scoped "vite.*frontend" "$LIBRECHAT_DIR"
+      kill_by_pattern_scoped "npm run dev --host" "$LIBRECHAT_DIR"
+      kill_by_pattern_scoped "cross-env NODE_ENV=development vite" "$LIBRECHAT_DIR"
+      kill_by_pattern_scoped "npm ci" "$LIBRECHAT_DIR"
+      kill_by_pattern_scoped "npm install" "$LIBRECHAT_DIR"
+      kill_by_pattern_scoped "npm run build" "$LIBRECHAT_DIR"
+      kill_by_pattern_scoped "node .*rollup" "$LIBRECHAT_DIR"
+      kill_by_pattern_scoped "rollup -c --silent --bundleConfigAsCjs" "$LIBRECHAT_DIR"
+      kill_by_pattern_scoped_excluding "viventium-start.sh" "$LIBRECHAT_DIR" "${stop_excluded_pids[@]}"
+      kill_by_pattern_scoped "cross-env NODE_ENV=production vite build" "$LIBRECHAT_DIR"
+      # Drain any remaining LibreChat runtime children rooted in the workspace.
+      kill_scope_runtime_processes "$LIBRECHAT_DIR" "$LIBRECHAT_DIR"
+      kill_orphaned_scope_runtime_processes "$LIBRECHAT_DIR" "$LIBRECHAT_DIR"
+    fi
   fi
 
   # Agents Playground
@@ -7111,9 +7450,14 @@ stop_running_services() {
   else
     telegram_dir=""
   fi
-  # Receipt-backed stop rejects PID reuse and never signals an unknown process.
-  stop_owned_telegram_poller || true
+  # The launchd label is compiled per runtime/dev environment, so removing
+  # this exact job is scoped even when broad workspace process sweeps are
+  # intentionally disabled. Boot it out before stopping the receipt-backed
+  # owner; otherwise KeepAlive can resurrect the stale bot between stop and
+  # start. The receipt-backed stop rejects PID reuse and never signals an
+  # unknown process.
   stop_telegram_launchctl_job
+  stop_owned_telegram_poller || true
   stop_telegram_local_bot_api
   local telegram_deferred_pid
   telegram_deferred_pid="$(read_pid_file "$TELEGRAM_BOT_DEFERRED_PID_FILE")"
@@ -7162,16 +7506,20 @@ stop_running_services() {
       kill_port_listeners "$GLASSHIVE_RUNTIME_PORT" "$GLASSHIVE_RUNTIME_DIR"
       kill_port_listeners "$GLASSHIVE_MCP_PORT" "$GLASSHIVE_RUNTIME_DIR"
       kill_port_listeners "$GLASSHIVE_UI_PORT" "$GLASSHIVE_UI_DIR"
+      kill_by_pattern_scoped "uv run uvicorn workers_projects_runtime.api:create_app --factory" "$GLASSHIVE_RUNTIME_DIR"
       kill_by_pattern_scoped "uv run uvicorn workers_projects_runtime.api:app" "$GLASSHIVE_RUNTIME_DIR"
       kill_by_pattern_scoped "uv run python -m workers_projects_runtime.mcp_server" "$GLASSHIVE_RUNTIME_DIR"
       kill_by_pattern_scoped "uv run uvicorn glass_drive_ui.server:app" "$GLASSHIVE_UI_DIR"
     fi
   fi
+  stop_parallel_work_runtime_containers
 
   # === VIVENTIUM START ===
   # Feature: Stop Skyvern stack on restart/stop when enabled.
   # === VIVENTIUM END ===
-  if [[ "$START_SKYVERN" == "true" && "$SKIP_DOCKER" != "true" ]] && runtime_allows_workspace_wide_process_sweep; then
+  if [[ "$GLOBAL_DOCKER_CLEANUP_ALLOWED" == "true" && "$START_SKYVERN" == "true" && "$SKIP_DOCKER" != "true" ]] &&
+    runtime_allows_workspace_wide_process_sweep
+  then
     local skyvern_script="$ROOT_DIR/viventium-skyvern-start.sh"
     if [[ -x "$skyvern_script" ]]; then
       "$skyvern_script" stop >/dev/null 2>&1 || true
@@ -7295,8 +7643,8 @@ stop_running_services() {
             docker rm -f "$meili_container" >/dev/null 2>&1 || true
           fi
         fi
-      fi
 
+      fi
     else
       log_warn "Docker is not running; skipping container cleanup"
     fi
@@ -7434,6 +7782,7 @@ kill_known_playground_listeners() {
   fi
 }
 
+
 find_free_port() {
   local start_port="$1"
   shift || true
@@ -7462,11 +7811,18 @@ wait_for_http() {
   local url="$1"
   local label="$2"
   local retries="${3:-30}"
+  local readiness_secret="${4:-}"
   if ! [[ "$retries" =~ ^[0-9]+$ ]] || [[ "$retries" -lt 1 ]]; then
     retries=30
   fi
   for _ in $(seq 1 "$retries"); do
-    if curl -s --max-time 3 "$url" >/dev/null 2>&1; then
+    if [[ -n "$readiness_secret" ]]; then
+      if printf 'X-VIVENTIUM-TELEGRAM-SECRET: %s\n' "$readiness_secret" \
+        | curl -fsS --max-time 3 -H @- "$url" >/dev/null 2>&1; then
+        log_success "$label ready"
+        return 0
+      fi
+    elif curl -fsS --max-time 3 "$url" >/dev/null 2>&1; then
       log_success "$label ready"
       return 0
     fi
@@ -7528,10 +7884,6 @@ librechat_api_health_url() {
   printf '%s/health\n' "${origin%/}"
 }
 
-librechat_api_http_healthy() {
-  curl -fsS --max-time 3 "$(librechat_api_health_url)" >/dev/null 2>&1
-}
-
 librechat_sandpack_healthy() {
   local api_pids=""
   local sandpack_pids=""
@@ -7551,8 +7903,13 @@ librechat_sandpack_healthy() {
   return 1
 }
 
+
 librechat_api_healthy() {
   librechat_api_http_healthy && librechat_sandpack_healthy
+}
+
+librechat_api_http_healthy() {
+  curl -fsS --max-time 3 "$(librechat_api_health_url)" >/dev/null 2>&1
 }
 
 # === VIVENTIUM START ===
@@ -7636,6 +7993,7 @@ wait_for_librechat_runtime() {
   log_warn "$label did not respond with both API and isolated artifact health in time"
   return 1
 }
+
 
 scheduling_mcp_health_url() {
   printf 'http://localhost:%s/health\n' "$SCHEDULING_MCP_PORT"
@@ -7861,6 +8219,7 @@ restart_detached_librechat_backend() {
   fi
 
   log_warn "Detached LibreChat API watchdog restarting backend"
+  load_local_qa_runtime_control
   kill_port_listeners "$LC_API_PORT" "$LIBRECHAT_DIR"
   kill_port_listeners "$VIVENTIUM_SANDPACK_BUNDLER_PORT" "$LIBRECHAT_DIR"
   kill_by_pattern_scoped "node.*api/server" "$LIBRECHAT_DIR"
@@ -7974,7 +8333,7 @@ restart_scheduling_mcp_runtime() {
     log_warn "Scheduling Cortex MCP port $SCHEDULING_MCP_PORT is still owned outside the scheduler scope"
     return 1
   fi
-  start_scheduling_mcp
+  start_scheduling_mcp_after_librechat_gateway_ready
 }
 
 start_scheduling_mcp_watchdog() {
@@ -8046,9 +8405,11 @@ start_telegram_bot_watchdog() {
   if [[ "$START_TELEGRAM" != "true" ]]; then
     return 0
   fi
-  if ! detached_start_requested; then
-    return 0
-  fi
+  # === VIVENTIUM START ===
+  # Feature: Telegram bridge self-healing in every launcher lifecycle.
+  # Purpose: A transient Bot API startup failure must recover while a foreground QA or operator
+  # session remains active, not only after a detached launch.
+  # === VIVENTIUM END ===
 
   stop_telegram_bot_watchdog
 
@@ -8085,7 +8446,9 @@ start_telegram_bot_watchdog() {
 
   local watchdog_pid=$!
   printf '%s\n' "$watchdog_pid" >"$TELEGRAM_BOT_WATCHDOG_PID_FILE"
-  disown "$watchdog_pid" 2>/dev/null || true
+  if detached_start_requested; then
+    disown "$watchdog_pid" 2>/dev/null || true
+  fi
   log_info "Started Telegram bot watchdog (pid: $watchdog_pid, interval: ${interval_s}s)"
 }
 
@@ -9087,6 +9450,19 @@ cleanup() {
         docker rm -f "$mongo_container" >/dev/null 2>&1 || true
       fi
     fi
+    if [[ "$PARALLEL_REDIS_STARTED_BY_SCRIPT" == "true" ]]; then
+      local parallel_redis_container
+      parallel_redis_container=$(docker ps -aq --filter "name=^/${PARALLEL_REDIS_CONTAINER_NAME}$" 2>/dev/null | head -1 || true)
+      if [[ -n "$parallel_redis_container" ]]; then
+        local parallel_redis_service_label
+        local parallel_redis_contract_label
+        parallel_redis_service_label=$(docker inspect -f '{{ index .Config.Labels "viventium.service" }}' "$parallel_redis_container" 2>/dev/null || true)
+        parallel_redis_contract_label=$(docker inspect -f '{{ index .Config.Labels "viventium.contract" }}' "$parallel_redis_container" 2>/dev/null || true)
+        if [[ "$parallel_redis_service_label" == "parallel-work-redis" && "$parallel_redis_contract_label" == "parallel-work-redis-v1" ]]; then
+          docker rm -f "$parallel_redis_container" >/dev/null 2>&1 || true
+        fi
+      fi
+    fi
   fi
   if [[ "$SKIP_DOCKER" != "true" && "$LIVEKIT_STARTED_BY_SCRIPT" == "true" && -n "${LIVEKIT_CONTAINER_ID:-}" ]]; then
     docker rm -f "${LIVEKIT_CONTAINER_ID}" >/dev/null 2>&1 || true
@@ -9121,7 +9497,9 @@ cleanup() {
   fi
   echo -e "${GREEN}[viventium]${NC} All services stopped."
 }
-trap cleanup INT TERM EXIT
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 resolve_telegram_dir() {
   if [[ -d "$TELEGRAM_DIR_PRIMARY" ]]; then
@@ -9510,17 +9888,17 @@ glasshive_stack_ready() {
   local mcp_status=""
   local mcp_headers_file=""
   mcp_headers_file="$(mktemp "${TMPDIR:-/tmp}/viventium-glasshive-mcp-headers.XXXXXX")" || return 1
-  runtime_health="$(curl -fsS --max-time 3 "http://127.0.0.1:${GLASSHIVE_RUNTIME_PORT}/health" 2>/dev/null || true)"
-  ui_health="$(curl -fsS --max-time 3 "http://127.0.0.1:${GLASSHIVE_UI_PORT}/health" 2>/dev/null || true)"
+  runtime_health="$(curl -fsS "http://127.0.0.1:${GLASSHIVE_RUNTIME_PORT}/health" --max-time 3 2>/dev/null || true)"
+  ui_health="$(curl -fsS "http://127.0.0.1:${GLASSHIVE_UI_PORT}/health" --max-time 3 2>/dev/null || true)"
   mcp_status="$(
     curl -sS -D "$mcp_headers_file" \
       -o /dev/null -w '%{http_code}' --max-time 3 \
       -X POST "http://127.0.0.1:${GLASSHIVE_MCP_PORT}/mcp" 2>/dev/null || true
   )"
   if [[ "${GLASSHIVE_SECURITY_MODE:-}" == "multi_user" ]]; then
-    python3 -c 'import json,sys; p=json.load(sys.stdin); raise SystemExit(0 if p.get("status") == "ok" else 1)' \
+    "$PYTHON_BIN" -c 'import json,sys; p=json.load(sys.stdin); raise SystemExit(0 if p.get("status") == "ok" else 1)' \
       <<<"$runtime_health" >/dev/null 2>&1 &&
-      python3 -c 'import json,sys; p=json.load(sys.stdin); r=p.get("runtime") or {}; raise SystemExit(0 if p.get("status") == "ok" and r.get("status") == "ok" else 1)' \
+      "$PYTHON_BIN" -c 'import json,sys; p=json.load(sys.stdin); r=p.get("runtime") or {}; raise SystemExit(0 if p.get("status") == "ok" and r.get("status") == "ok" else 1)' \
         <<<"$ui_health" >/dev/null 2>&1 &&
       [[ "$mcp_status" == "401" ]] &&
       grep -qi '^www-authenticate:.*resource_metadata' "$mcp_headers_file"
@@ -9532,6 +9910,46 @@ glasshive_stack_ready() {
   [[ -n "$runtime_health" ]] &&
     [[ "$mcp_status" =~ ^[24][0-9][0-9]$ ]] &&
     [[ -n "$ui_health" ]]
+}
+
+# Provision the only two egress principals available to automatic Parallel
+# workers. Each worker later receives its own internal mission network; the
+# proxies are attached to that network by GlassHive after their immutable
+# substrate has been attested.
+start_parallel_work_proxy_substrate() {
+  if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
+    log_warn "Parallel clean-room proxies are unavailable because Docker is not ready"
+    return 1
+  fi
+
+  local proxy_dir="$ROOT_DIR/docker/parallel-work-proxy"
+  local compose_file="$proxy_dir/compose.yml"
+  if [[ ! -f "$compose_file" ]]; then
+    log_warn "Parallel clean-room proxy compose file not found: $compose_file"
+    return 1
+  fi
+
+  local instance
+  instance="$(parallel_work_runtime_instance)"
+
+  export WPR_PARALLEL_CLEAN_ROOM_NETWORK="${WPR_PARALLEL_CLEAN_ROOM_NETWORK:-viventium-parallel-${instance}}"
+  export WPR_PARALLEL_CLEAN_ROOM_PROVIDER_EGRESS_NETWORK="${WPR_PARALLEL_CLEAN_ROOM_PROVIDER_EGRESS_NETWORK:-viventium-parallel-egress-${instance}}"
+  export WPR_PARALLEL_CLEAN_ROOM_PROVIDER_PROXY_CONTAINER="${WPR_PARALLEL_CLEAN_ROOM_PROVIDER_PROXY_CONTAINER:-viventium-parallel-provider-${instance}}"
+  export WPR_PARALLEL_CLEAN_ROOM_BROKER_PROXY_CONTAINER="${WPR_PARALLEL_CLEAN_ROOM_BROKER_PROXY_CONTAINER:-viventium-parallel-broker-${instance}}"
+  export WPR_PARALLEL_CLEAN_ROOM_PROVIDER_PROXY_URL="${WPR_PARALLEL_CLEAN_ROOM_PROVIDER_PROXY_URL:-http://provider-egress:8080}"
+  export VIVENTIUM_PARALLEL_PROXY_IMAGE="${VIVENTIUM_PARALLEL_PROXY_IMAGE:-viventium-parallel-work-proxy:local}"
+
+  local project_name="viventium-parallel-proxy-${instance}"
+  if ! (
+    cd "$proxy_dir" &&
+      docker compose --project-name "$project_name" -f "$compose_file" up -d --build --remove-orphans
+  ) >"$LOG_DIR/parallel_work_proxy.log" 2>&1; then
+    log_warn "Parallel clean-room proxy startup failed; automatic Parallel work remains unavailable"
+    tail -20 "$LOG_DIR/parallel_work_proxy.log" 2>/dev/null || true
+    return 1
+  fi
+  log_success "Parallel clean-room proxy substrate is ready"
+  return 0
 }
 
 wait_for_glasshive_stack_ready() {
@@ -9582,10 +10000,19 @@ stop_candidate_glasshive_stack() {
   rm -f "$GLASSHIVE_UI_PID_FILE" "$GLASSHIVE_MCP_PID_FILE" "$GLASSHIVE_RUNTIME_PID_FILE"
 }
 
+
 start_glasshive() {
   if [[ "$START_GLASSHIVE" != "true" ]]; then
     log_info "Skipping GlassHive startup"
     return 0
+  fi
+
+  load_local_qa_runtime_control
+
+  if [[ ! "$GLASSHIVE_HTTP_REQUEST_HEAD_MAX_BYTES" =~ ^(0|[1-9][0-9]*)$ ]] ||
+    (( 10#$GLASSHIVE_HTTP_REQUEST_HEAD_MAX_BYTES < GLASSHIVE_HTTP_REQUEST_HEAD_MIN_BYTES )); then
+    log_error "GlassHive request-head limit must be an integer of at least $GLASSHIVE_HTTP_REQUEST_HEAD_MIN_BYTES bytes"
+    return 1
   fi
 
   if [[ ! -d "$GLASSHIVE_RUNTIME_DIR" ]]; then
@@ -9638,6 +10065,10 @@ start_glasshive() {
     return 1
   fi
 
+  if ! start_parallel_work_proxy_substrate; then
+    log_warn "GlassHive will start with isolated Parallel admission disabled"
+  fi
+
   log_info "Starting GlassHive runtime stack..."
   local glasshive_state_dir="${GLASSHIVE_STATE_DIR:-$VIVENTIUM_STATE_ROOT/glasshive}"
   mkdir -p "$glasshive_state_dir"
@@ -9652,18 +10083,21 @@ start_glasshive() {
     return 1
   fi
 
+  # Keep Uvicorn's HTTP parser above the bounded aggregate of GlassHive's signed
+  # bootstrap, developer-tail, and turn-context headers.
   # The runtime/worker process is a verifier-only context. Prevent its runtime-env loader from
   # re-importing signer material after the explicit environment removal. Hosted multi-user
   # deployments additionally require distinct OS users or containers for signer and runtime.
   env -u GLASSHIVE_INTERNAL_ASSERTION_PRIVATE_KEY_FILE \
     -u VIVENTIUM_ENV_FILE \
     VIVENTIUM_DISABLE_DEFAULT_RUNTIME_ENV=1 \
-    uv run uvicorn workers_projects_runtime.api:app --host 127.0.0.1 --port "$GLASSHIVE_RUNTIME_PORT" >"$LOG_DIR/glasshive_runtime.log" 2>&1 &
+    uv run uvicorn workers_projects_runtime.api:create_app --factory --http h11 --host 127.0.0.1 --port "$GLASSHIVE_RUNTIME_PORT" --h11-max-incomplete-event-size "$GLASSHIVE_HTTP_REQUEST_HEAD_MAX_BYTES" >"$LOG_DIR/glasshive_runtime.log" 2>&1 &
   GLASSHIVE_RUNTIME_PID=$!
   GLASSHIVE_STARTED_BY_SCRIPT=true
   echo "$GLASSHIVE_RUNTIME_PID" >"$GLASSHIVE_RUNTIME_PID_FILE"
 
-  uv run python -m workers_projects_runtime.mcp_server --transport streamable-http --host 127.0.0.1 --port "$GLASSHIVE_MCP_PORT" >"$LOG_DIR/glasshive_mcp.log" 2>&1 &
+  WPR_MCP_BASE_URL="http://127.0.0.1:${GLASSHIVE_RUNTIME_PORT}" \
+    uv run python -m workers_projects_runtime.mcp_server --transport streamable-http --host 127.0.0.1 --port "$GLASSHIVE_MCP_PORT" >"$LOG_DIR/glasshive_mcp.log" 2>&1 &
   GLASSHIVE_MCP_PID=$!
   GLASSHIVE_STARTED_BY_SCRIPT=true
   echo "$GLASSHIVE_MCP_PID" >"$GLASSHIVE_MCP_PID_FILE"
@@ -10188,14 +10622,6 @@ prepare_rag_pgdata_path() {
   esac
 }
 
-# === VIVENTIUM START ===
-# Feature: Existing-install RAG PostgreSQL credential continuity.
-# Purpose:
-# - The official PostgreSQL image applies POSTGRES_PASSWORD only to an empty PGDATA directory.
-# - Reconcile a stable owner-only credential against recognized persisted RAG clusters before the
-#   RAG API starts, without putting that secret in generated LibreChat env or command arguments.
-# Added: 2026-07-24
-# === VIVENTIUM END ===
 prepare_rag_postgres_credentials() {
   local migration_helper="$VIVENTIUM_CORE_DIR/scripts/viventium/rag_postgres_migration.py"
   local state_dir="${VIVENTIUM_RAG_POSTGRES_STATE_DIR:-$VIVENTIUM_STATE_ROOT/rag-postgres}"
@@ -10956,9 +11382,20 @@ start_v1_agent() {
 start_telegram_bot() {
   rm -f "$TELEGRAM_BOT_DEFERRED_PID_FILE"
   rm -f "$TELEGRAM_BOT_DEFERRED_MARKER_FILE"
+  rm -f "$TELEGRAM_BOT_READY_FILE"
   if [[ "$START_TELEGRAM" != "true" ]]; then
     log_info "Skipping Telegram bot startup"
     return 0
+  fi
+
+  load_local_qa_runtime_control
+
+  if ! wait_for_http "${LC_API_URL}/api/health" \
+    "LibreChat API before Telegram bot start" \
+    "${TELEGRAM_LIBRECHAT_START_RETRIES:-240}" \
+    "${VIVENTIUM_TELEGRAM_SECRET:-${VIVENTIUM_CALL_SESSION_SECRET:-}}"; then
+    log_warn "LibreChat API is not ready; Telegram bot startup remains deferred"
+    return 1
   fi
 
   local _env_unset_marker="__VIVENTIUM_UNSET__"
@@ -11168,6 +11605,7 @@ start_telegram_bot() {
   else
     log_info "Starting Telegram bot (backend=librechat)..."
   fi
+
   export VIVENTIUM_TELEGRAM_BACKEND="$telegram_backend"
   if [[ "$telegram_backend" == "librechat" ]]; then
     export VIVENTIUM_LIBRECHAT_ORIGIN="${VIVENTIUM_LIBRECHAT_ORIGIN:-${LC_API_URL}}"
@@ -11463,6 +11901,11 @@ PY
     VIVENTIUM_TELEGRAM_SERIALIZE_PER_CHAT
     VIVENTIUM_TELEGRAM_TRACE
     VIVENTIUM_TELEGRAM_TIMING_ENABLED
+    VIVENTIUM_APP_SUPPORT_DIR
+    VIVENTIUM_TELEGRAM_LOCAL_QA_MODE
+    VIVENTIUM_LOCAL_QA_CASE_ID
+    VIVENTIUM_LOCAL_QA_CASE_TOKEN
+    VIVENTIUM_LOCAL_QA_SESSION_REF
     VIVENTIUM_TELEGRAM_CHAT_TIMEOUT_S
     XAI_API_KEY
     VIVENTIUM_XAI_TTS_API_KEY
@@ -11495,6 +11938,7 @@ if [[ -z "\${BASE_URL:-}" ]]; then export BASE_URL="https://api.openai.com/v1"; 
 export CONFIG_DIR="$TELEGRAM_USER_CONFIGS_DIR"
 export VIVENTIUM_TELEGRAM_BACKEND="$telegram_backend"
 export VIVENTIUM_LIBRECHAT_ORIGIN="\${VIVENTIUM_LIBRECHAT_ORIGIN:-$LC_API_URL}"
+export VIVENTIUM_TELEGRAM_READY_FILE="$TELEGRAM_BOT_READY_FILE"
 export VIVENTIUM_TELEGRAM_OWNER_RECEIPT="$VIVENTIUM_TELEGRAM_OWNER_RECEIPT"
 export VIVENTIUM_TELEGRAM_OWNER_REPO_ROOT="$VIVENTIUM_CORE_DIR"
 export VIVENTIUM_TELEGRAM_EXECUTION_ROOT="$PWD"
@@ -11518,6 +11962,7 @@ EOF
       "$telegram_guard_timeout"
   )" || {
     log_error "Telegram handoff timeout normalization failed"
+    cleanup_current_telegram_launch_package || true
     restore_telegram_env
     popd >/dev/null
     popd >/dev/null
@@ -11603,12 +12048,14 @@ EOF
           | awk -F' = ' '/pid =/ {print $2; exit}' \
           | tr -cd '0-9'
       )"
-      if [[ -n "$TELEGRAM_BOT_PID" ]] && ps -p "$TELEGRAM_BOT_PID" >/dev/null 2>&1; then
+      if [[ -n "$TELEGRAM_BOT_PID" ]] && wait_for_telegram_bot_ready \
+        "$TELEGRAM_BOT_PID" "${VIVENTIUM_TELEGRAM_START_READY_RETRIES:-30}"; then
         telegram_started_with_launchctl=true
         write_telegram_launchctl_receipt
       else
-        log_warn "Telegram launchctl job did not report a running pid; falling back to direct nohup"
+        log_warn "Telegram launchctl job did not report application readiness; falling back to direct nohup"
         stop_telegram_launchctl_job
+        rm -f "$TELEGRAM_BOT_READY_FILE"
         TELEGRAM_BOT_PID=""
       fi
     else
@@ -11619,7 +12066,8 @@ EOF
     if detached_start_requested; then
       nohup "${telegram_launch_program[@]}" >"$LOG_DIR/telegram_bot.log" 2>&1 < /dev/null &
     else
-      nohup "$telegram_python" bot.py >"$LOG_DIR/telegram_bot.log" 2>&1 < /dev/null &
+      VIVENTIUM_TELEGRAM_READY_FILE="$TELEGRAM_BOT_READY_FILE" \
+        nohup "$telegram_python" bot.py >"$LOG_DIR/telegram_bot.log" 2>&1 < /dev/null &
     fi
     TELEGRAM_BOT_PID=$!
     if detached_start_requested; then
@@ -11717,7 +12165,7 @@ schedule_deferred_telegram_bot_start() {
   rm -f "$TELEGRAM_BOT_DEFERRED_PID_FILE"
   (
     trap 'rm -f "$TELEGRAM_BOT_DEFERRED_PID_FILE" "$TELEGRAM_BOT_DEFERRED_MARKER_FILE"' EXIT
-    if wait_for_http "${LC_API_URL}/health" "LibreChat API before Telegram bot start" "$background_retries"; then
+    if wait_for_http "${LC_API_URL}/api/health" "LibreChat API before Telegram bot start" "$background_retries" "${VIVENTIUM_TELEGRAM_SECRET:-${VIVENTIUM_CALL_SESSION_SECRET:-}}"; then
       if ! start_telegram_bot; then
         log_warn "Telegram bot startup had issues - continuing anyway"
       fi
@@ -11844,6 +12292,26 @@ start_dependency_bound_optional_services() {
   fi
 }
 
+# === VIVENTIUM START ===
+# Keep the scheduler MCP parallel without allowing its first tick to claim work before Core is ready.
+start_scheduling_mcp_after_librechat_gateway_ready() {
+  if [[ "${SKIP_LIBRECHAT:-false}" == "true" ]]; then
+    start_scheduling_mcp
+    return $?
+  fi
+
+  local gateway_retries="${SCHEDULING_LIBRECHAT_GATEWAY_READY_RETRIES:-$(default_librechat_health_retries)}"
+  if ! wait_for_http "${SCHEDULER_LIBRECHAT_URL%/}/api/health" \
+    "LibreChat scheduling gateway before Scheduling Cortex start" \
+    "$gateway_retries"; then
+    log_warn "Scheduling Cortex MCP startup deferred because the LibreChat scheduling gateway never became ready"
+    return 1
+  fi
+
+  start_scheduling_mcp
+}
+# === VIVENTIUM END ===
+
 queue_optional_services_parallel_with_librechat() {
   if [[ "$START_SEARXNG" == "true" ]]; then
     queue_parallel_optional_start \
@@ -11880,7 +12348,7 @@ queue_optional_services_parallel_with_librechat() {
   if [[ "$START_SCHEDULING_MCP" == "true" ]]; then
     queue_parallel_optional_start \
       "Scheduling Cortex MCP startup had issues - continuing anyway" \
-      start_scheduling_mcp
+      start_scheduling_mcp_after_librechat_gateway_ready
   fi
 
   if [[ "$START_GLASSHIVE" == "true" ]]; then
@@ -12000,6 +12468,8 @@ if [[ -n "${VIVENTIUM_WEB_SEARCH_PROVIDER:-}" ]]; then
 fi
 if [[ -n "${VIVENTIUM_CALL_SESSION_SECRET:-}" ]]; then
   echo -e "  Call Secret:       ${GREEN}Configured${NC}"
+else
+  echo -e "  Call Secret:       ${YELLOW}Not set${NC}"
 fi
 if [[ -n "${OPENAI_API_KEY:-}" && "${OPENAI_API_KEY}" != "user_provided" ]]; then
   echo -e "  OpenAI API Key:    ${GREEN}Configured${NC}"
@@ -12275,6 +12745,12 @@ if [[ "$SKIP_LIBRECHAT" != "true" ]]; then
   fi
   ensure_librechat_yaml || log_warn "LibreChat config missing; using default config"
   render_librechat_config || log_warn "LibreChat config generation failed; using default config"
+  if is_truthy "${VIVENTIUM_PARALLEL_WORK_AVAILABLE:-false}"; then
+    if ! ensure_parallel_work_redis_ready; then
+      log_error "Parallel Work Redis is required for LibreChat startup"
+      exit 1
+    fi
+  fi
 fi
 
 # ----------------------------
@@ -12368,6 +12844,8 @@ if [[ "$SKIP_LIBRECHAT" != "true" ]]; then
   START_LIBRECHAT=true
   LIBRECHAT_BACKEND_ALREADY_RUNNING=false
   LIBRECHAT_FRONTEND_ALREADY_RUNNING=false
+  LIBRECHAT_BACKEND_START_BLOCKED=false
+  LIBRECHAT_FRONTEND_START_BLOCKED=false
   if port_in_use "$LC_API_PORT"; then
     if librechat_api_http_healthy; then
       if ! librechat_sandpack_healthy; then
@@ -12375,17 +12853,21 @@ if [[ "$SKIP_LIBRECHAT" != "true" ]]; then
         kill_port_listeners "$LC_API_PORT" "$LIBRECHAT_DIR"
         kill_port_listeners "$VIVENTIUM_SANDPACK_BUNDLER_PORT" "$LIBRECHAT_DIR"
         if port_in_use "$LC_API_PORT" || port_in_use "$VIVENTIUM_SANDPACK_BUNDLER_PORT"; then
-          log_warn "LibreChat API/artifact ports remain occupied outside this checkout; skipping startup"
-          START_LIBRECHAT=false
+          log_warn "LibreChat API/artifact ports remain occupied outside this checkout; backend restart is blocked; continuing partial-stack repair"
+          LIBRECHAT_BACKEND_START_BLOCKED=true
         fi
       elif [[ "$RESTART_SERVICES" == "true" ]]; then
         log_warn "LibreChat already running - restarting"
         kill_port_listeners "$LC_API_PORT" "$LIBRECHAT_DIR"
         kill_port_listeners "$LC_FRONTEND_PORT" "$LIBRECHAT_DIR"
         kill_port_listeners "$VIVENTIUM_SANDPACK_BUNDLER_PORT" "$LIBRECHAT_DIR"
-        if port_in_use "$LC_API_PORT" || port_in_use "$LC_FRONTEND_PORT" || port_in_use "$VIVENTIUM_SANDPACK_BUNDLER_PORT"; then
-          log_warn "LibreChat ports still in use (outside scope); skipping startup"
-          START_LIBRECHAT=false
+        if port_in_use "$LC_API_PORT" || port_in_use "$VIVENTIUM_SANDPACK_BUNDLER_PORT"; then
+          log_warn "LibreChat API/artifact ports still in use (outside scope); backend restart is blocked; continuing partial-stack repair"
+          LIBRECHAT_BACKEND_START_BLOCKED=true
+        fi
+        if port_in_use "$LC_FRONTEND_PORT"; then
+          log_warn "LibreChat frontend port still in use (outside scope); frontend restart is blocked; continuing partial-stack repair"
+          LIBRECHAT_FRONTEND_START_BLOCKED=true
         fi
       else
         LIBRECHAT_BACKEND_ALREADY_RUNNING=true
@@ -12396,24 +12878,28 @@ if [[ "$SKIP_LIBRECHAT" != "true" ]]; then
         kill_port_listeners "$LC_API_PORT" "$LIBRECHAT_DIR"
         kill_port_listeners "$LC_FRONTEND_PORT" "$LIBRECHAT_DIR"
         kill_port_listeners "$VIVENTIUM_SANDPACK_BUNDLER_PORT" "$LIBRECHAT_DIR"
-        if port_in_use "$LC_API_PORT" || port_in_use "$LC_FRONTEND_PORT" || port_in_use "$VIVENTIUM_SANDPACK_BUNDLER_PORT"; then
-          log_warn "LibreChat ports still in use (outside scope); skipping startup"
-          START_LIBRECHAT=false
+        if port_in_use "$LC_API_PORT" || port_in_use "$VIVENTIUM_SANDPACK_BUNDLER_PORT"; then
+          log_warn "LibreChat API/artifact ports still in use (outside scope); backend restart is blocked; continuing partial-stack repair"
+          LIBRECHAT_BACKEND_START_BLOCKED=true
+        fi
+        if port_in_use "$LC_FRONTEND_PORT"; then
+          log_warn "LibreChat frontend port still in use (outside scope); frontend restart is blocked; continuing partial-stack repair"
+          LIBRECHAT_FRONTEND_START_BLOCKED=true
         fi
       else
-        log_warn "Port $LC_API_PORT in use - skipping LibreChat startup"
-        START_LIBRECHAT=false
+        log_warn "LibreChat API port $LC_API_PORT has an unhealthy listener; backend restart is blocked; continuing partial-stack repair"
+        LIBRECHAT_BACKEND_START_BLOCKED=true
       fi
     fi
   fi
 
-  if [[ "$START_LIBRECHAT" == "true" && "$LIBRECHAT_BACKEND_ALREADY_RUNNING" != "true" ]] && \
+  if [[ "$START_LIBRECHAT" == "true" && "$LIBRECHAT_BACKEND_ALREADY_RUNNING" != "true" && "$LIBRECHAT_BACKEND_START_BLOCKED" != "true" ]] && \
     port_in_use "$VIVENTIUM_SANDPACK_BUNDLER_PORT"; then
     log_warn "Isolated browser runtime port $VIVENTIUM_SANDPACK_BUNDLER_PORT is already occupied; attempting scoped cleanup"
     kill_port_listeners "$VIVENTIUM_SANDPACK_BUNDLER_PORT" "$LIBRECHAT_DIR"
     if port_in_use "$VIVENTIUM_SANDPACK_BUNDLER_PORT"; then
-      log_warn "Isolated browser runtime port remains occupied outside this checkout; skipping LibreChat startup"
-      START_LIBRECHAT=false
+      log_warn "Isolated browser runtime port remains occupied outside this checkout; backend restart is blocked; continuing partial-stack repair"
+      LIBRECHAT_BACKEND_START_BLOCKED=true
     fi
   fi
 
@@ -12424,8 +12910,12 @@ if [[ "$SKIP_LIBRECHAT" != "true" ]]; then
         kill_port_listeners "$LC_FRONTEND_PORT" "$LIBRECHAT_DIR"
         kill_port_listeners "$VIVENTIUM_SANDPACK_BUNDLER_PORT" "$LIBRECHAT_DIR"
         if port_in_use "$LC_FRONTEND_PORT"; then
-          log_warn "LibreChat port $LC_FRONTEND_PORT still in use (outside scope); skipping startup"
-          START_LIBRECHAT=false
+          log_warn "LibreChat frontend port $LC_FRONTEND_PORT still in use (outside scope); frontend restart is blocked; continuing partial-stack repair"
+          LIBRECHAT_FRONTEND_START_BLOCKED=true
+        fi
+        if port_in_use "$VIVENTIUM_SANDPACK_BUNDLER_PORT"; then
+          log_warn "Isolated browser runtime port remains occupied outside this checkout; backend restart is blocked; continuing partial-stack repair"
+          LIBRECHAT_BACKEND_START_BLOCKED=true
         fi
       else
         LIBRECHAT_FRONTEND_ALREADY_RUNNING=true
@@ -12436,21 +12926,29 @@ if [[ "$SKIP_LIBRECHAT" != "true" ]]; then
         kill_port_listeners "$LC_FRONTEND_PORT" "$LIBRECHAT_DIR"
         kill_port_listeners "$VIVENTIUM_SANDPACK_BUNDLER_PORT" "$LIBRECHAT_DIR"
         if port_in_use "$LC_FRONTEND_PORT"; then
-          log_warn "LibreChat port $LC_FRONTEND_PORT still in use (outside scope); skipping startup"
-          START_LIBRECHAT=false
+          log_warn "LibreChat frontend port $LC_FRONTEND_PORT still in use (outside scope); frontend restart is blocked; continuing partial-stack repair"
+          LIBRECHAT_FRONTEND_START_BLOCKED=true
+        fi
+        if port_in_use "$VIVENTIUM_SANDPACK_BUNDLER_PORT"; then
+          log_warn "Isolated browser runtime port remains occupied outside this checkout; backend restart is blocked; continuing partial-stack repair"
+          LIBRECHAT_BACKEND_START_BLOCKED=true
         fi
       else
-        log_warn "Port $LC_FRONTEND_PORT in use - skipping LibreChat startup"
-        START_LIBRECHAT=false
+        log_warn "LibreChat frontend port $LC_FRONTEND_PORT has an unhealthy listener; frontend restart is blocked; continuing partial-stack repair"
+        LIBRECHAT_FRONTEND_START_BLOCKED=true
       fi
     fi
   fi
 
   if [[ "$START_LIBRECHAT" == "true" ]]; then
-    if [[ "$LIBRECHAT_BACKEND_ALREADY_RUNNING" == "true" && "$LIBRECHAT_FRONTEND_ALREADY_RUNNING" == "true" ]]; then
-      log_success "LibreChat already running on ports $LC_API_PORT/$LC_FRONTEND_PORT"
+    if [[ ( "$LIBRECHAT_BACKEND_ALREADY_RUNNING" == "true" || "$LIBRECHAT_BACKEND_START_BLOCKED" == "true" ) && ( "$LIBRECHAT_FRONTEND_ALREADY_RUNNING" == "true" || "$LIBRECHAT_FRONTEND_START_BLOCKED" == "true" ) ]]; then
+      if [[ "$LIBRECHAT_BACKEND_START_BLOCKED" == "true" || "$LIBRECHAT_FRONTEND_START_BLOCKED" == "true" ]]; then
+        log_warn "LibreChat cannot repair either occupied service without restart authority"
+      else
+        log_success "LibreChat already running on ports $LC_API_PORT/$LC_FRONTEND_PORT"
+      fi
       START_LIBRECHAT=false
-    elif [[ "$LIBRECHAT_BACKEND_ALREADY_RUNNING" == "true" || "$LIBRECHAT_FRONTEND_ALREADY_RUNNING" == "true" ]]; then
+    elif [[ "$LIBRECHAT_BACKEND_ALREADY_RUNNING" == "true" || "$LIBRECHAT_FRONTEND_ALREADY_RUNNING" == "true" || "$LIBRECHAT_BACKEND_START_BLOCKED" == "true" || "$LIBRECHAT_FRONTEND_START_BLOCKED" == "true" ]]; then
       log_warn "LibreChat partial stack already running; starting the missing service(s)"
     fi
   fi
@@ -12504,6 +13002,9 @@ if [[ "$SKIP_LIBRECHAT" != "true" ]]; then
   if ! validation_runtime_is_quiesced; then
     ensure_memory_unique_indexes_if_clean
   fi
+  if ! ensure_orchestration_indexes; then
+    exit 1
+  fi
 
   if is_truthy "${SEARCH:-false}"; then
     if ! ensure_meilisearch_ready; then
@@ -12550,7 +13051,7 @@ if [[ "$SKIP_LIBRECHAT" != "true" ]]; then
     direct_librechat_reason=""
     if detached_start_requested; then
       direct_librechat_reason="detached launch"
-    elif [[ "$LIBRECHAT_BACKEND_ALREADY_RUNNING" == "true" || "$LIBRECHAT_FRONTEND_ALREADY_RUNNING" == "true" ]]; then
+    elif [[ "$LIBRECHAT_BACKEND_ALREADY_RUNNING" == "true" || "$LIBRECHAT_FRONTEND_ALREADY_RUNNING" == "true" || "$LIBRECHAT_BACKEND_START_BLOCKED" == "true" || "$LIBRECHAT_FRONTEND_START_BLOCKED" == "true" ]]; then
       direct_librechat_reason="partial stack repair"
     elif should_rebuild_librechat_packages; then
       direct_librechat_reason="LibreChat package rebuild required"
@@ -12608,7 +13109,7 @@ if [[ "$SKIP_LIBRECHAT" != "true" ]]; then
 
       if is_truthy "${SEARCH:-false}"; then
         echo -e "${YELLOW}[viventium]${NC} Ensuring local conversation search is fully indexed..."
-        if ! node scripts/viventium-sync-local-search.js; then
+        if ! USE_REDIS=false USE_REDIS_STREAMS=false node scripts/viventium-sync-local-search.js; then
           log_warn "Local conversation search sync failed; continuing without blocking frontend startup"
         fi
       fi
@@ -12616,13 +13117,13 @@ if [[ "$SKIP_LIBRECHAT" != "true" ]]; then
       # Keep detached/direct launches supervised by this shell so a later
       # frontend exit cannot strand Telegram behind a dead LibreChat API.
       STARTED_LIBRECHAT_PIDS=()
-      if [[ "$LIBRECHAT_BACKEND_ALREADY_RUNNING" != "true" ]]; then
+      if [[ "$LIBRECHAT_BACKEND_ALREADY_RUNNING" != "true" && "$LIBRECHAT_BACKEND_START_BLOCKED" != "true" ]]; then
         npm run backend:dev &
         BACKEND_PID=$!
         STARTED_LIBRECHAT_PIDS+=("$BACKEND_PID")
         sleep 5
       fi
-      if [[ "$LIBRECHAT_FRONTEND_ALREADY_RUNNING" != "true" ]]; then
+      if [[ "$LIBRECHAT_FRONTEND_ALREADY_RUNNING" != "true" && "$LIBRECHAT_FRONTEND_START_BLOCKED" != "true" ]]; then
         librechat_dev_host="${HOST:-::}"
         (
           cd client
@@ -12645,7 +13146,7 @@ fi
 if [[ "$DEFER_TELEGRAM_LIBRECHAT_START" == "true" ]]; then
   if ! schedule_deferred_telegram_bot_start; then
     log_warn "Unable to queue deferred Telegram bot startup; falling back to inline wait"
-    if wait_for_http "${LC_API_URL}/health" "LibreChat API before Telegram bot start" "${TELEGRAM_LIBRECHAT_START_RETRIES:-240}"; then
+    if wait_for_http "${LC_API_URL}/api/health" "LibreChat API before Telegram bot start" "${TELEGRAM_LIBRECHAT_START_RETRIES:-240}" "${VIVENTIUM_TELEGRAM_SECRET:-${VIVENTIUM_CALL_SESSION_SECRET:-}}"; then
       if ! start_telegram_bot; then
         log_warn "Telegram bot startup had issues - continuing anyway"
       fi
@@ -13125,7 +13626,27 @@ sleep 3
 if detached_start_requested; then
   start_detached_librechat_api_watchdog
   start_deferred_postcommit_finalizer
-  log_info "Skipping blocking post-start health checks for detached launch; detached watchdog will monitor LibreChat API/artifact health while helper/user surfaces monitor readiness"
+  # === VIVENTIUM START ===
+  # Feature: Cross-process startup single-flight through readiness.
+  # Purpose: Keep the parent bin/viventium claim owner alive until the user-facing surfaces have
+  # finished warming so a concurrent manual --restart cannot tear down the helper launch.
+  log_info "detached watchdog will monitor LibreChat API/artifact health while helper/user surfaces monitor readiness"
+  # === VIVENTIUM END ===
+  log_info "Waiting for user-facing surfaces before releasing the detached startup claim"
+  detached_health_failures=0
+  if [[ "$SKIP_LIBRECHAT" != "true" ]]; then
+    detached_api_retries="${LIBRECHAT_API_HEALTH_RETRIES:-$(default_librechat_health_retries)}"
+    detached_frontend_retries="${LIBRECHAT_FRONTEND_HEALTH_RETRIES:-$(default_librechat_health_retries)}"
+    wait_for_http "${LC_API_URL}/health" "LibreChat API" "$detached_api_retries" || detached_health_failures=$((detached_health_failures + 1))
+    wait_for_http "${LC_FRONTEND_URL}" "LibreChat Frontend" "$detached_frontend_retries" || detached_health_failures=$((detached_health_failures + 1))
+  fi
+  if [[ "$SKIP_PLAYGROUND" != "true" ]]; then
+    detached_playground_port="$(get_playground_port)"
+    wait_for_http "http://localhost:${detached_playground_port}" "$PLAYGROUND_LABEL" || detached_health_failures=$((detached_health_failures + 1))
+  fi
+  if [[ "$detached_health_failures" -gt 0 ]]; then
+    log_warn "Detached startup released after ${detached_health_failures} user-facing health check failure(s); the watchdog will continue recovery"
+  fi
 elif [[ "$SKIP_HEALTH_CHECKS" != "true" ]]; then
   run_health_checks
   finalize_pending_postcommit_after_first_start

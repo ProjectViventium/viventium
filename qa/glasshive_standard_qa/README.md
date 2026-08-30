@@ -71,10 +71,10 @@ closely observe, logs, db, code
 
 ## Current Status
 
-- Last named QA: `2026-05-23`; see
-  `qa/glasshive_standard_qa/reports/2026-05-23-standard-qa-current-run.md`.
-- Current result: `PASS` for locally controllable enterprise GlassHive paths exercised in the
-  current run; `PARTIAL` for the full every-profile/every-surface release matrix.
+- Last named historical QA: `2026-05-23`. Its formerly cited dated report is not present in this
+  repository, so the embedded summary below is context, not reproducible acceptance evidence.
+- Current result: `PARTIAL` pending a current rerun and a valid linked report. Do not restate the
+  historical local-path summary as a current `PASS`.
 - Strongly covered: automated runtime/API/MCP/UI/config/LibreChat callback tests, direct MCP before
   LibreChat, direct UI upload/download and scheduling, LibreChat current-fact, upload/download,
   callback download links, raw GlassHive scheduling, local enterprise auth/scoping probes, idle

@@ -8,9 +8,9 @@ Use stable `WEB-NNN` IDs for web search cases.
 
 | Case ID | Requirement | Surfaces | Automation | Last Run |
 | --- | --- | --- | --- | --- |
-| `WEB-001` | Configured provider readiness | CLI/status, generated runtime config | test_local_web_search_compose.py and test_preflight.py | NOT YET RUN (cataloged 2026-05-17; run when feature changes) |
-| `WEB-002` | Visible answer grounded in fetched evidence | Web chat, search/scrape logs summary, final answer | browser QA plus web-search tests | NOT YET RUN (cataloged 2026-05-17; run when feature changes) |
-| `WEB-003` | Degraded search is explicit | Web/Telegram final answer, status output | test_local_web_search_compose.py | NOT YET RUN (cataloged 2026-05-17; run when feature changes) |
+| `WEB-001` | Configured provider readiness | CLI/status, generated runtime config | test_local_web_search_compose.py and test_preflight.py | NOT RUN (cataloged 2026-05-17; run when feature changes) |
+| `WEB-002` | Visible answer grounded in fetched evidence | Web chat, search/scrape logs summary, final answer | browser QA plus web-search tests | NOT RUN (cataloged 2026-05-17; run when feature changes) |
+| `WEB-003` | Degraded search is explicit | Web/Telegram final answer, status output | test_local_web_search_compose.py | NOT RUN (cataloged 2026-05-17; run when feature changes) |
 | `WEB-004` | Voice and chat current-data request uses real search or proves degraded provider state | Web chat, voice/LiveKit transcript, persisted tool-call parts, local search backend health, hosted search backend status | real browser/computer + DB/log/state inspection | FAIL (escaped 2026-05-18; synthetic regression added, fix run pending) |
 | `WEB-005` | Web-search tool failures expose failure class and fallback policy | Web chat/model-facing tool output, browser/local-delegation fallback, logs/state | `modelFacingToolOutput.test.js` plus real browser QA | PARTIAL (2026-05-18 deterministic/runtime QA plus synthetic authenticated browser run; connected-model fallback run pending) |
 
@@ -18,9 +18,9 @@ Use stable `WEB-NNN` IDs for web search cases.
 
 | Use Case ID | Natural user action | Requirement / case link | Real surface to use | Supporting evidence to compare | Expected visible result | Last run |
 | --- | --- | --- | --- | --- | --- | --- |
-| `WEB-UC-001` | Ask a current-data question in web chat with Web Search enabled. | `docs/requirements_and_learnings/10_Open_Source_Web_Search.md` / `WEB-002` | LibreChat browser conversation | Web-search tool-call parts, local search backend health, hosted search backend status, request logs, generated `webSearch` config | Answer is grounded in fetched evidence and cites only returned sources. | NOT YET RUN (cataloged 2026-05-18; next feature run required) |
+| `WEB-UC-001` | Ask a current-data question in web chat with Web Search enabled. | `docs/requirements_and_learnings/10_Open_Source_Web_Search.md` / `WEB-002` | LibreChat browser conversation | Web-search tool-call parts, local search backend health, hosted search backend status, request logs, generated `webSearch` config | Answer is grounded in fetched evidence and cites only returned sources. | NOT RUN (cataloged 2026-05-18; next feature run required) |
 | `WEB-UC-002` | Ask the agent to look something up from a voice call or linked voice/chat transcript. | `docs/requirements_and_learnings/10_Open_Source_Web_Search.md`, `docs/requirements_and_learnings/06_Voice_Calls.md` / `WEB-004` | Modern Playground or linked LibreChat browser conversation | Visible transcript, persisted `web_search` tool-call parts, DB message state, API search errors or returned sources, local/hosted provider health | Search either succeeds with evidence or the answer names the degraded provider class without inventing facts. | FAIL (escaped 2026-05-18; fix run pending) |
-| `WEB-UC-003` | Try search while SearXNG, Firecrawl, hosted keys, or required local services are unavailable. | `docs/requirements_and_learnings/10_Open_Source_Web_Search.md` / `WEB-003` | Browser/Telegram/voice surface that exposes search | Health/status command, logs, generated config, persisted answer and tool artifact | User sees honest degraded-service wording and retry/setup path; no fake current facts. | NOT YET RUN (cataloged 2026-05-18; next feature run required) |
+| `WEB-UC-003` | Try search while SearXNG, Firecrawl, hosted keys, or required local services are unavailable. | `docs/requirements_and_learnings/10_Open_Source_Web_Search.md` / `WEB-003` | Browser/Telegram/voice surface that exposes search | Health/status command, logs, generated config, persisted answer and tool artifact | User sees honest degraded-service wording and retry/setup path; no fake current facts. | NOT RUN (cataloged 2026-05-18; next feature run required) |
 | `WEB-UC-004` | Ask for a named person/contact/date/current fact after the first web search attempt fails operationally. | `docs/requirements_and_learnings/10_Open_Source_Web_Search.md` / `WEB-005` | Browser chat with Web Search and local-delegation tool available | Tool output failure class, provider health, Docker/container state when local, delegation audit or browser fallback result, final wording | Assistant does not stop at generic search failure; it names the failure class and uses the available browser/local-delegation fallback or clearly states why fallback is unavailable. | PARTIAL (2026-05-18 deterministic/runtime QA plus synthetic authenticated browser run; connected-model fallback run pending) |
 
 ## `WEB-001` - Configured provider readiness
@@ -36,7 +36,7 @@ Use stable `WEB-NNN` IDs for web search cases.
 - Forbidden result: mocks, backend logs, source inspection, or model output are treated as full acceptance when a user-visible surface exists.
 - Evidence to capture: sanitized visible result, supporting command/test result, state/log summary, and public-safety review.
 - Automation: test_local_web_search_compose.py and test_preflight.py.
-- Last run: NOT YET RUN (cataloged 2026-05-17; not a substitute for the next real feature run).
+- Last run: NOT RUN (cataloged 2026-05-17; not a substitute for the next real feature run).
 
 ## `WEB-002` - Visible answer grounded in fetched evidence
 
@@ -51,7 +51,7 @@ Use stable `WEB-NNN` IDs for web search cases.
 - Forbidden result: mocks, backend logs, source inspection, or model output are treated as full acceptance when a user-visible surface exists.
 - Evidence to capture: sanitized visible result, supporting command/test result, state/log summary, and public-safety review.
 - Automation: browser QA plus web-search tests.
-- Last run: NOT YET RUN (cataloged 2026-05-17; not a substitute for the next real feature run).
+- Last run: NOT RUN (cataloged 2026-05-17; not a substitute for the next real feature run).
 
 ## `WEB-003` - Degraded search is explicit
 
@@ -66,7 +66,7 @@ Use stable `WEB-NNN` IDs for web search cases.
 - Forbidden result: mocks, backend logs, source inspection, or model output are treated as full acceptance when a user-visible surface exists.
 - Evidence to capture: sanitized visible result, supporting command/test result, state/log summary, and public-safety review.
 - Automation: test_local_web_search_compose.py.
-- Last run: NOT YET RUN (cataloged 2026-05-17; not a substitute for the next real feature run).
+- Last run: NOT RUN (cataloged 2026-05-17; not a substitute for the next real feature run).
 
 ## `WEB-004` - Voice And Chat Search Must Prove Real Retrieval Or Honest Degradation
 

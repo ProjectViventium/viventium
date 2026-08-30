@@ -14,6 +14,7 @@ import yaml
 from .import_mapper import create_import_live_draft
 from .paths import AGENT_SYNC_SCRIPT, LIBRECHAT_ROOT, REPO_ROOT, workbench_private_root
 from .prompt_service import source_agents_bundle
+from .redaction import redact_credential_assignments
 from . import drafts
 
 LIVE_TEXT_CACHE: dict[str, str] = {}
@@ -384,6 +385,7 @@ def _sanitize_output(text: str, *, private_paths: tuple[Path, ...] = ()) -> str:
 
     text = re.sub(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", "<email>", text, flags=re.I)
     text = re.sub(r'("userId"\s*:\s*")[0-9a-f]{12,32}(")', r'\1<user-id>\2', text, flags=re.I)
+    text = redact_credential_assignments(text)
     for label, pattern in PRIVATE_PATTERN_RULES:
         text = pattern.sub(f"<{label}>", text)
     return _redact_private_paths(text, private_paths)

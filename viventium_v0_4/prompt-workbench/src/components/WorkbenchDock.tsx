@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   Actions,
   DockLocation,
@@ -9,7 +9,7 @@ import {
 } from 'flexlayout-react';
 import { Activity, Clock3, GitCompareArrows, Map, PencilLine, RotateCcw, TestTube2 } from 'lucide-react';
 import { readLocalStorage, removeLocalStorage, writeLocalStorage } from '../storage';
-import type { DraftRecord, EvalBank, EvalRun, FlowGraph, FrameLog, PromptDetail, PromptRow, ScheduledPrompt, SyncStatus } from '../types';
+import type { DraftRecord, EvalBank, EvalRun, FlowGraph, FrameHealth, FrameLog, PromptDetail, PromptRow, ScheduledPrompt, SyncStatus } from '../types';
 import { PanelErrorBoundary } from './PanelErrorBoundary';
 
 const PromptFlow = lazy(() => import('./PromptFlow').then((module) => ({ default: module.PromptFlow })));
@@ -34,6 +34,9 @@ interface Props {
   evalRuns: EvalRun[];
   evalRunning: boolean;
   frames: FrameLog[];
+  frameHealth?: FrameHealth;
+  frameLoading: boolean;
+  frameLoadFailed: boolean;
   scheduledPrompts: ScheduledPrompt[];
   scheduleNewRequestNonce: number;
   themeMode: 'light' | 'dark';
@@ -55,6 +58,7 @@ interface Props {
   onDiscardDraft: (draft: DraftRecord) => void;
   onRunEval: (options: { maxCases?: number; live?: boolean; family?: string; surface?: string; promptId?: string; caseIds?: string[] }) => void;
   onSaveEvalCase: (options: { familyId: string; caseId: string; updatedCase: Record<string, unknown>; create?: boolean }) => void;
+  onRefreshFrames: () => void;
 }
 
 const layoutStorageKey = 'viventium.promptWorkbench.dockLayout.v5';
@@ -86,6 +90,9 @@ export function WorkbenchDock({
   evalRuns,
   evalRunning,
   frames,
+  frameHealth,
+  frameLoading,
+  frameLoadFailed,
   scheduledPrompts,
   scheduleNewRequestNonce,
   themeMode,
@@ -107,11 +114,18 @@ export function WorkbenchDock({
   onDiscardDraft,
   onRunEval,
   onSaveEvalCase,
+  onRefreshFrames,
 }: Props) {
   const [layoutModel, setLayoutModel] = useState(() => loadDockModel());
   const layoutModelRef = useRef(layoutModel);
+  const dockHostRef = useRef<HTMLDivElement>(null);
   const persistTimer = useRef(0);
   const pendingPersistModel = useRef<Model | null>(null);
+
+  useLayoutEffect(() => {
+    const measurementNodes = dockHostRef.current?.querySelectorAll<HTMLElement>('.flexlayout__layout_metrics');
+    measurementNodes?.forEach((node) => node.setAttribute('aria-hidden', 'true'));
+  }, [layoutModel]);
 
   const schedulePersistDockModel = useCallback((model: Model) => {
     pendingPersistModel.current = model;
@@ -157,6 +171,9 @@ export function WorkbenchDock({
       evalRuns,
       evalRunning,
       frames,
+      frameHealth,
+      frameLoading,
+      frameLoadFailed,
       scheduledPrompts,
       scheduleNewRequestNonce,
       themeMode,
@@ -164,7 +181,7 @@ export function WorkbenchDock({
       evalBlockReason,
       pushBlockReason,
     }),
-    [prompts, flow, selectedPromptId, selectedScheduledPromptId, selectedPrompt, promptLoading, syncStatus, reviewToken, drafts, evalBank, evalRuns, evalRunning, frames, scheduledPrompts, scheduleNewRequestNonce, themeMode, selectedPromptDirty, evalBlockReason, pushBlockReason],
+    [prompts, flow, selectedPromptId, selectedScheduledPromptId, selectedPrompt, promptLoading, syncStatus, reviewToken, drafts, evalBank, evalRuns, evalRunning, frames, frameHealth, frameLoading, frameLoadFailed, scheduledPrompts, scheduleNewRequestNonce, themeMode, selectedPromptDirty, evalBlockReason, pushBlockReason],
   );
 
   const resetLayout = () => {
@@ -273,7 +290,13 @@ export function WorkbenchDock({
         <div className="dock-panel-scroll">
           <PanelErrorBoundary label="Prompt Traces">
             <Suspense fallback={<div className="empty-state">Loading Prompt Traces...</div>}>
-              <FramePanel frames={tabState.frames} />
+              <FramePanel
+                frames={tabState.frames}
+                health={tabState.frameHealth}
+                loading={tabState.frameLoading}
+                loadFailed={tabState.frameLoadFailed}
+                onRefresh={onRefreshFrames}
+              />
             </Suspense>
           </PanelErrorBoundary>
         </div>
@@ -301,7 +324,7 @@ export function WorkbenchDock({
 
   return (
     <div className="dock-workspace">
-      <div className={`dock-host ${themeMode === 'dark' ? 'flexlayout__theme_dark' : 'flexlayout__theme_light'}`}>
+      <div ref={dockHostRef} className={`dock-host ${themeMode === 'dark' ? 'flexlayout__theme_dark' : 'flexlayout__theme_light'}`}>
         <button className="dock-reset-button" onClick={resetLayout} title="Restore default tabs and panes">
           <RotateCcw size={14} />
           Reset

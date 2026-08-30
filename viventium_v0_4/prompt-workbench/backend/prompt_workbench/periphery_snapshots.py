@@ -6,6 +6,7 @@ import os
 import re
 import subprocess
 import uuid
+from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -28,6 +29,11 @@ MAX_MODEL_MEMORY_CHARS = 500_000
 MAX_SCRATCHPADS = 80
 MAX_SCRATCHPAD_CHARS = 12_000
 MAX_TOTAL_SCRATCHPAD_CHARS = 160_000
+MAX_SCRATCHPAD_SCAN_ENTRIES = 4_096
+MAX_SCRATCHPAD_SCAN_DIRECTORIES = 256
+IGNORED_SCRATCHPAD_DIRECTORIES = frozenset(
+    {".git", ".venv", "__pycache__", "dist", "node_modules", "periphery", "venv"}
+)
 SNAPSHOT_RETENTION_COUNT = 14
 MAX_HEALTH_RECORD_SUMMARIES = 120
 MAX_HEALTH_RECORDS = 18
@@ -517,12 +523,44 @@ def _scratchpad_records(my_folder: str | None, labels: dict[str, Any]) -> list[d
     overrides = labels.get("scratchpads") if isinstance(labels.get("scratchpads"), dict) else {}
     records: list[dict[str, Any]] = []
     total_chars = 0
-    candidates = sorted(
-        root.rglob("*"),
-        key=lambda item: item.stat().st_mtime if item.is_file() else 0,
-        reverse=True,
-    )
-    for path in candidates:
+    candidates: list[tuple[float, Path]] = []
+    directories = deque([root])
+    inspected_entries = 0
+    inspected_directories = 0
+    while (
+        directories
+        and inspected_entries < MAX_SCRATCHPAD_SCAN_ENTRIES
+        and inspected_directories < MAX_SCRATCHPAD_SCAN_DIRECTORIES
+    ):
+        directory = directories.popleft()
+        inspected_directories += 1
+        try:
+            with os.scandir(directory) as entries:
+                for entry in entries:
+                    if inspected_entries >= MAX_SCRATCHPAD_SCAN_ENTRIES:
+                        break
+                    inspected_entries += 1
+                    try:
+                        if entry.is_symlink():
+                            continue
+                        if entry.is_dir(follow_symlinks=False):
+                            if entry.name not in IGNORED_SCRATCHPAD_DIRECTORIES:
+                                directories.append(Path(entry.path))
+                            continue
+                        path = Path(entry.path)
+                        if (
+                            not entry.is_file(follow_symlinks=False)
+                            or path.suffix.lower() not in {".md", ".txt", ".json"}
+                            or path.match("memory-proposals-*.json")
+                        ):
+                            continue
+                        candidates.append((entry.stat(follow_symlinks=False).st_mtime, path))
+                    except OSError:
+                        continue
+        except OSError:
+            continue
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    for _, path in candidates:
         if len(records) >= MAX_SCRATCHPADS:
             break
         try:
@@ -542,7 +580,11 @@ def _scratchpad_records(my_folder: str | None, labels: dict[str, Any]) -> list[d
         remaining_chars = max(0, MAX_TOTAL_SCRATCHPAD_CHARS - total_chars)
         content_limit = min(MAX_SCRATCHPAD_CHARS, remaining_chars)
         try:
-            content = path.read_text(encoding="utf-8")[:content_limit] if content_limit else ""
+            if content_limit:
+                with path.open("r", encoding="utf-8") as source:
+                    content = source.read(content_limit)
+            else:
+                content = ""
         except (OSError, UnicodeDecodeError):
             content = ""
         total_chars += len(content)

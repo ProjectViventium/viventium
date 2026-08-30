@@ -1,3 +1,4 @@
+<!-- qa-evidence-exempt: Historical evidence snapshot retained verbatim; retroactive v2 fields would invent evidence that was not captured during the run. -->
 # GlassHive Capacity-Retry Scheduler Thread-Safety QA
 
 **Date:** 2026-08-10
@@ -83,4 +84,3 @@ claim is made.
 This report contains no local paths, process IDs, account or conversation identifiers, raw panic
 files, private logs, credentials, prompts, or machine identity. Raw incident evidence remains outside
 the public repository.
-<!-- qa-evidence-exempt: Historical or specialized supporting artifact retained without retroactively inventing missing evidence; current release acceptance requires a fresh full-view report. -->

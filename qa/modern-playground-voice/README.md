@@ -22,6 +22,12 @@ cancellation, reconnect/persistence, post-call memory boundaries, and extended-c
 - When background agents activate, the modern playground should hear:
   - the immediate main-agent Phase A response
   - only a later persisted main-agent Phase B follow-up, if one is generated
+- In a normal Call, explicit speech can launch and control exact Worker Bees while Main remains the
+  sole voice and stays available. Exact files may enter through the linked chat, and generated
+  non-speech artifacts must appear once in linked chat/Active Work with a usable action. Hangup does
+  not cancel accepted work; passive Wing and Listen-Only cannot authorize new work.
+  The fail-closed full-journey verifier is
+  `scripts/mpv_061_full_journey_semantic_qa.js`; authority slice evidence cannot close MPV-061.
 - Raw background insight text must not appear as direct modern-playground transcript/TTS output.
 - LibreChat may still surface the same insight inside its background-insight UI card.
 - When the flow fails, the report must separate:

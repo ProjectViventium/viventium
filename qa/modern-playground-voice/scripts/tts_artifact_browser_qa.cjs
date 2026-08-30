@@ -294,7 +294,14 @@ async function cleanupCallArtifacts(db, { userId, callSessionId, conversationId 
     .find(messageFilter, { projection: { _id: 1 } })
     .toArray();
   const messageIds = messages.map((message) => message._id);
-  const [messageDelete, conversationDelete, ingressDelete, sessionDelete] = await Promise.all([
+  const [
+    messageDelete,
+    conversationDelete,
+    ingressDelete,
+    taskDelete,
+    speakerDelete,
+    sessionDelete,
+  ] = await Promise.all([
     db.collection('messages').deleteMany(messageFilter),
     conversationIds.length
       ? db
@@ -304,12 +311,16 @@ async function cleanupCallArtifacts(db, { userId, callSessionId, conversationId 
         ? db.collection('conversations').deleteMany({ user: userId, messages: { $in: messageIds } })
         : db.collection('conversations').deleteMany({ user: userId, conversationId }),
     db.collection('viventiumvoiceingressevents').deleteMany({ callSessionId }),
+    db.collection('viventiumvoicetasks').deleteMany({ callSessionId, userId }),
+    db.collection('viventiumvoicespeakersegments').deleteMany({ callSessionId }),
     db.collection('viventiumcallsessions').deleteOne({ callSessionId }),
   ]);
   return {
     messages: messageDelete.deletedCount,
     conversations: conversationDelete.deletedCount,
     ingressEvents: ingressDelete.deletedCount,
+    voiceTasks: taskDelete.deletedCount,
+    speakerSegments: speakerDelete.deletedCount,
     callSessions: sessionDelete.deletedCount,
   };
 }

@@ -3,7 +3,7 @@
 Date: 2026-04-13
 
 > Historical plan. Its Recall-default assumptions and release gates have been superseded by the
-> [living evidence audit](report.md),
+> [2026-07-18 evidence audit](reports/2026-07-18-express-installer-and-onboarding-audit.md),
 > [current case catalog](cases.md), and
 > [current remediation plan](express-installer-remediation-plan.md). Retain the content below for
 > lifecycle context; do not use it as the current Easy Install acceptance contract.

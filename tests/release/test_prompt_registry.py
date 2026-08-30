@@ -189,7 +189,9 @@ def test_source_yaml_prompt_refs_resolve_to_runtime_strings() -> None:
     assert "Before an external write" in agents["mainAgent"]["instructions"]
     assert "Destructive mutations—deleting, moving, archiving" in agents["mainAgent"]["instructions"]
     assert "Current Date & Time:" not in agents["mainAgent"]["instructions"]
-    assert "Use local delegation for long-running" in agents["mainAgent"]["instructions"]
+    assert "Automatic durable mission delegation is allowed only" in agents["mainAgent"]["instructions"]
+    assert "When delegation is allowed, use it for independently completable" in agents["mainAgent"]["instructions"]
+    assert "Never say work was delegated, accepted, queued, or is running unless" in agents["mainAgent"]["instructions"]
     assert isinstance(librechat["memory"]["agent"]["instructions"], str)
     assert isinstance(librechat["mcpServers"]["ms-365"]["serverInstructions"], str)
     assert "Microsoft 365 owns" in librechat["mcpServers"]["ms-365"]["serverInstructions"]
@@ -197,9 +199,26 @@ def test_source_yaml_prompt_refs_resolve_to_runtime_strings() -> None:
 
 def test_main_and_background_agent_execution_prompts_are_registry_owned() -> None:
     source = yaml.safe_load(AGENTS_SOURCE.read_text(encoding="utf-8"))
+    librechat_source = yaml.safe_load(LIBRECHAT_SOURCE.read_text(encoding="utf-8"))
     registry = load_prompt_registry(PROMPT_ROOT)
 
     assert source["mainAgent"]["instructions"] == {"promptRef": "main.conscious_agent"}
+    assert source["config"]["viventium"]["conversation_recall"]["prompt"] == {
+        "promptRef": "main.conversation_recall"
+    }
+    assert librechat_source["viventium"]["conversation_recall"]["prompt"] == {
+        "promptRef": "main.conversation_recall"
+    }
+    assert librechat_source["memory"]["agent"]["instructions"] == {
+        "promptRef": "memory.archivist"
+    }
+
+    reality_check = next(
+        agent
+        for agent in source["handoffAgents"]
+        if agent["id"] == "agent_viventium_reality_check_95aeb3"
+    )
+    assert reality_check["instructions"] == {"promptRef": "cortex.reality_check.execution"}
 
     for agent in source["backgroundAgents"]:
         instructions = agent.get("instructions")
@@ -239,6 +258,9 @@ def test_main_memory_policy_is_evidence_bound_and_has_no_confabulation_exemplars
 
     assert "Use only memories present in the current context or verified tool results" in prompt
     assert "Never imply prior knowledge, patterns, feelings, or personal history" in prompt
+    assert "The user may narrow which evidence sources are admissible for an answer" in prompt
+    assert "Treat excluded context as unavailable evidence for that response" in prompt
+    assert "If the request explicitly permits or asks for earlier context, use it normally" in prompt
     assert "Do not silently merge, reinterpret, or pick a winner" in prompt
     assert "state the conflict and its sources plainly" in prompt
     assert "We were iterating the pitch deck" not in prompt
@@ -256,23 +278,24 @@ def test_main_agent_keeps_glasshive_gateway_eager_and_defers_bulk_operations() -
     glasshive_operations = {
         tool
         for tool in main_agent.get("tools", [])
-        if tool.endswith("_mcp_glasshive-workers-projects")
+        if (
+            tool.endswith("_mcp_glasshive-workers-projects")
+            or tool in {"active_work_list", "active_work_action"}
+        )
         and not tool.startswith("sys__server__")
     }
 
     eager_gateway = {
-        "workspace_launch_mcp_glasshive-workers-projects",
-        "workspace_status_mcp_glasshive-workers-projects",
-        "workspace_wait_mcp_glasshive-workers-projects",
+        "worker_delegate_once_mcp_glasshive-workers-projects",
+        "active_work_list",
+        "active_work_action",
     }
     deferred_operations = glasshive_operations - eager_gateway
 
     assert eager_gateway <= glasshive_operations
-    assert deferred_operations
+    assert not deferred_operations
     assert all(options.get(tool, {}).get("defer_loading") is not True for tool in eager_gateway)
-    assert all(
-        options.get(tool, {}).get("defer_loading") is True for tool in deferred_operations
-    )
+    assert all(options.get(tool, {}).get("defer_loading") is not True for tool in glasshive_operations)
     assert options.get("file_search", {}).get("defer_loading") is not True
     assert options.get("sys__server__sys_mcp_glasshive-workers-projects", {}).get(
         "defer_loading"
@@ -559,7 +582,11 @@ def _load_glasshive_instruction_namespace():
             )
         )
     ]
-    namespace: dict[str, object] = {"os": os, "shutil": shutil}
+    namespace: dict[str, object] = {
+        "os": os,
+        "shutil": shutil,
+        "worker_prompt_layer_producer": lambda _scope: lambda function: function,
+    }
     exec(compile(ast.Module(body=selected_nodes, type_ignores=[]), str(GLASSHIVE_MCP_SERVER), "exec"), namespace)
     return namespace
 
@@ -670,29 +697,13 @@ def test_main_boundaries_do_not_repeat_live_data_and_tool_policy() -> None:
     assert "Before an external write" in tools
 
 
-def test_glasshive_worker_prompt_stays_concise_and_faithful(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("GLASSHIVE_HOST_WORKERS_ENABLED", "true")
-    monkeypatch.setenv("WPR_DEFAULT_EXECUTION_MODE", "host")
-
-    namespace = _load_glasshive_instruction_namespace()
+def test_main_delegation_acknowledgement_requires_a_verified_tool_receipt() -> None:
     registry = load_prompt_registry(PROMPT_ROOT)
-    rendered = render_prompt(
-        "mcp.glasshive_workers.server",
-        registry,
-        variables={
-            "glasshive_worker_capability_summary": namespace["_worker_capability_summary"](),
-            "glasshive_worker_execution_instruction": namespace["_worker_execution_instruction"](),
-        },
-    )
+    tools = render_prompt("main.tools", registry)
 
-    assert "Use the one GlassHive tool whose action matches the user's request" in rendered
-    assert "When the user gives an exact saved workspace name, launch it directly" in rendered
-    assert "Preserve the user's goal, constraints, files, and context" in rendered
-    assert "without inventing plans, success criteria, tool results, or extra workflow" in rendered
-    assert "never enumerate or summarize the tool catalog unless the user asks" in rendered
-    assert "tool_search" not in rendered
+    assert "must invoke the declared delegation tool" in tools
+    assert "Never say work was delegated, accepted, queued, or is running" in tools
+    assert "successful delegation-tool receipt" in tools
 
 
 def test_three_way_prompt_ref_resolution_matches_python_js_sync_and_runtime(
@@ -859,6 +870,31 @@ process.exit(0);
 
     assert "Private pattern local_absolute_path" in payload[str(unsafe_prompt)]
     assert "Prompt frontmatter missing" in payload[str(missing_field_prompt)]
+
+
+def test_glasshive_worker_prompt_stays_concise_and_faithful(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GLASSHIVE_HOST_WORKERS_ENABLED", "true")
+    monkeypatch.setenv("WPR_DEFAULT_EXECUTION_MODE", "host")
+
+    namespace = _load_glasshive_instruction_namespace()
+    registry = load_prompt_registry(PROMPT_ROOT)
+    rendered = render_prompt(
+        "mcp.glasshive_workers.server",
+        registry,
+        variables={
+            "glasshive_worker_capability_summary": namespace["_worker_capability_summary"](),
+            "glasshive_worker_execution_instruction": namespace["_worker_execution_instruction"](),
+        },
+    )
+
+    assert "Use the one GlassHive tool whose action matches the user's request" in rendered
+    assert "When the user gives an exact saved workspace name, launch it directly" in rendered
+    assert "Preserve the user's goal, constraints, files, and context" in rendered
+    assert "without inventing plans, success criteria, tool results, or extra workflow" in rendered
+    assert "never enumerate or summarize the tool catalog unless the user asks" in rendered
+    assert "tool_search" not in rendered
 
 
 def test_runtime_surface_prompt_fallbacks_match_registry_rendering(tmp_path: Path) -> None:

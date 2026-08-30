@@ -1,3 +1,4 @@
+<!-- qa-evidence-exempt: Historical evidence snapshot retained verbatim; retroactive v2 fields would invent evidence that was not captured during the run. -->
 # 2026-08-03 Nightly Routines Health Review
 
 Automation: `viventium-nightly-routines-qa`
@@ -100,4 +101,3 @@ ClaudeViv was not available on PATH. Local Claude CLI was invoked in review-only
 3. Keep watching historical GlassHive callback dead letters, but do not count them against Aug 3 because there is no active backlog and the built-in callbacks delivered.
 4. Run browser transcript recall/source-card proof only when a transcript-recall release/signoff specifically requires user-visible recall evidence.
 5. Re-run review-only Claude after the account limit resets if this audit is used as release evidence.
-<!-- qa-evidence-exempt: Historical or specialized supporting artifact retained without retroactively inventing missing evidence; current release acceptance requires a fresh full-view report. -->

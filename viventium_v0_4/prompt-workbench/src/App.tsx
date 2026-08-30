@@ -460,6 +460,9 @@ export default function App() {
           evalRuns={evalRunsQuery.data?.runs ?? []}
           evalRunning={evalMutation.isPending}
           frames={framesQuery.data?.frames ?? []}
+          frameHealth={framesQuery.data?.health}
+          frameLoading={framesQuery.isLoading || framesQuery.isFetching}
+          frameLoadFailed={framesQuery.isError}
           scheduledPrompts={scheduledPrompts}
           scheduleNewRequestNonce={scheduleNewRequestNonce}
           themeMode={resolvedTheme}
@@ -498,6 +501,7 @@ export default function App() {
           onDiscardDraft={(draft) => discardDraftMutation.mutate(draft)}
           onRunEval={(options) => evalMutation.mutate(options)}
           onSaveEvalCase={(options) => evalCaseDraftMutation.mutate(options)}
+          onRefreshFrames={() => void framesQuery.refetch()}
         />
       </main>
 

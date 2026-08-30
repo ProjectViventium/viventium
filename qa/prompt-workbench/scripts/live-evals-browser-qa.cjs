@@ -31,6 +31,7 @@ const PRIVATE_WORKBENCH_ROOT = path.join(
   "prompt-workbench",
 );
 const HEADED = process.argv.includes("--headed");
+const AUTH_ONLY = process.argv.includes("--auth-only");
 const FEELINGS_MAX_CASES = Math.max(
   1,
   Number.parseInt(
@@ -75,23 +76,29 @@ function readWorkbenchState() {
     );
   }
   const state = JSON.parse(fs.readFileSync(WORKBENCH_STATE, "utf8"));
-  const authUrl = String(state.authUrl || "");
-  const parsed = new URL(authUrl);
+  if (Object.hasOwn(state, "authUrl")) {
+    throw new Error("Prompt Workbench state still contains a retired bearer URL");
+  }
+  const url = String(state.url || "");
+  const parsed = new URL(url);
   if (!["127.0.0.1", "localhost"].includes(parsed.hostname)) {
     throw new Error("Prompt Workbench QA refuses a non-loopback URL");
   }
-  if (!parsed.searchParams.get("workbench_token")) {
-    throw new Error("Prompt Workbench launch token is missing");
+  if (
+    parsed.protocol !== "http:" ||
+    parsed.username ||
+    parsed.password ||
+    parsed.search ||
+    parsed.hash
+  ) {
+    throw new Error("Prompt Workbench QA requires a token-free loopback URL");
   }
-  return { authUrl, port: Number(state.port || parsed.port || 8781) };
+  return { url: parsed.origin, port: Number(state.port || parsed.port || 8781) };
 }
 
 async function readRuns(page) {
   return page.evaluate(async () => {
-    const token =
-      localStorage.getItem("viventium.promptWorkbench.launchToken") || "";
     const response = await fetch("/api/evals/runs", {
-      headers: { "x-viventium-workbench-token": token },
       cache: "no-store",
     });
     const body = await response.json();
@@ -277,11 +284,44 @@ async function main() {
     await context.addInitScript(() => {
       localStorage.removeItem("viventium.promptWorkbench.dockLayout.v5");
     });
+    if (AUTH_ONLY) {
+      await context.addInitScript(() => {
+        localStorage.setItem(
+          "viventium.promptWorkbench.launchToken",
+          "synthetic-retired-launch-token",
+        );
+        sessionStorage.setItem(
+          "viventium.promptWorkbench.launchToken",
+          "synthetic-retired-session-token",
+        );
+      });
+    }
     const page = await context.newPage();
     page.setDefaultTimeout(30_000);
     const consoleErrors = [];
     const failedRequests = [];
     const httpErrors = [];
+    const credentialRequests = [];
+    const externalRequests = [];
+    page.on("request", (request) => {
+      const requestUrl = new URL(request.url());
+      if (
+        !["http:", "https:"].includes(requestUrl.protocol)
+      ) {
+        return;
+      }
+      if (!["127.0.0.1", "localhost"].includes(requestUrl.hostname)) {
+        externalRequests.push(shortHash(requestUrl.hostname));
+      }
+      const headers = request.headers();
+      if (
+        requestUrl.searchParams.has("workbench_token") ||
+        headers["x-viventium-workbench-token"] ||
+        (headers.referer || "").includes("workbench_token=")
+      ) {
+        credentialRequests.push(shortHash(requestUrl.pathname));
+      }
+    });
     page.on("console", (message) => {
       if (message.type() === "error")
         consoleErrors.push(shortHash(message.text()));
@@ -306,11 +346,101 @@ async function main() {
       }
     });
 
-    await page.goto(state.authUrl, { waitUntil: "domcontentloaded" });
+    const navigation = await page.goto(state.url, {
+      waitUntil: "domcontentloaded",
+    });
     await page
       .getByText("Viventium Prompt Workbench", { exact: false })
       .first()
       .waitFor();
+
+    if (AUTH_ONLY) {
+      const initialAuth = await page.evaluate(async () => {
+        const response = await fetch("/api/auth/status", { cache: "no-store" });
+        return { status: response.status, ...(await response.json()) };
+      });
+      const storage = await page.evaluate(() => ({
+        localKeys: Object.keys(localStorage),
+        sessionKeys: Object.keys(sessionStorage),
+        url: window.location.href,
+        referrer: document.referrer,
+      }));
+      const rejectedHeader = await context.request.get(
+        `${state.url}/api/variables`,
+        {
+          headers: {
+            "x-viventium-workbench-token": "synthetic-retired-launch-token",
+          },
+        },
+      );
+      const rejectedBearer = await context.request.get(
+        `${state.url}/api/variables`,
+        {
+          headers: {
+            authorization: ["Bearer", "synthetic-rotated-launch-token"].join(" "),
+          },
+        },
+      );
+      await page.reload({ waitUntil: "domcontentloaded" });
+      await page
+        .getByText("Viventium Prompt Workbench", { exact: false })
+        .first()
+        .waitFor();
+      const reloadAuth = await page.evaluate(async () => {
+        const response = await fetch("/api/auth/status", { cache: "no-store" });
+        return { status: response.status, ...(await response.json()) };
+      });
+      const reloadedKeys = await page.evaluate(() => ({
+        local: Object.keys(localStorage),
+        session: Object.keys(sessionStorage),
+      }));
+      const screenshot = path.join(outputDir, "token-free-workbench.png");
+      await page.screenshot({ path: screenshot, fullPage: true });
+      result.artifacts.push(path.basename(screenshot));
+      result.metrics = {
+        workbenchPort: state.port,
+        authMethod: initialAuth.method,
+        rotatedHeaderStatus: rejectedHeader.status(),
+        rotatedBearerStatus: rejectedBearer.status(),
+        credentialRequestCount: credentialRequests.length,
+        externalRequestCount: externalRequests.length,
+        consoleErrorCount: consoleErrors.length,
+        failedRequestCount: failedRequests.length,
+      };
+      result.checks = {
+        tokenFreeBrowserUrl: !new URL(storage.url).search,
+        noReferrerDisclosure:
+          navigation?.headers()["referrer-policy"] === "no-referrer" &&
+          storage.referrer === "",
+        localAdminAuthenticated:
+          initialAuth.status === 200 &&
+          initialAuth.authenticated === true &&
+          initialAuth.admin === true &&
+          ["local_loopback_admin", "librechat_admin"].includes(initialAuth.method),
+        noPersistentBearer:
+          !storage.localKeys.includes("viventium.promptWorkbench.launchToken") &&
+          !storage.sessionKeys.includes("viventium.promptWorkbench.launchToken"),
+        rotatedCredentialsRejected:
+          rejectedHeader.status() === 401 && rejectedBearer.status() === 401,
+        reloadPreservesSafeAuthentication:
+          reloadAuth.authenticated === true &&
+          reloadAuth.admin === true &&
+          !reloadedKeys.local.includes("viventium.promptWorkbench.launchToken") &&
+          !reloadedKeys.session.includes("viventium.promptWorkbench.launchToken"),
+        noCredentialRequests: credentialRequests.length === 0,
+        noExternalRequests: externalRequests.length === 0,
+        noConsoleErrors: consoleErrors.length === 0,
+        noFailedRequests: failedRequests.length === 0,
+      };
+      result.pass = Object.values(result.checks).every(Boolean);
+      fs.writeFileSync(
+        path.join(outputDir, "result.json"),
+        `${JSON.stringify(result, null, 2)}\n`,
+      );
+      console.log(JSON.stringify(result, null, 2));
+      if (!result.pass) process.exitCode = 1;
+      return;
+    }
     await openEvals(page);
 
     const preview = await runUiEval(page, {

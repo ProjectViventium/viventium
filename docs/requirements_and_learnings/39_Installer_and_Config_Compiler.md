@@ -2,13 +2,17 @@
 
 ## Purpose
 
-This document is the public installer source of truth for the `./install.sh` and `bin/viventium`
-paths, plus the generated-runtime boundary enforced by the config compiler.
+This document owns the developer/source installer (`./install.sh` and `bin/viventium`) and the
+generated-runtime boundary enforced by the config compiler. The public Easy Install owner is the
+signed `Viventium.app` contract in
+[Public Productization and Release](38_Public_Productization_and_Release.md); normal users do not
+need Terminal, Git, or this source checkout.
 
 ## Owning Flow
 
-1. `./install.sh` clones or refreshes the repo checkout, then execs `bin/viventium install`.
-2. `bin/viventium install` owns the public first-run flow:
+1. For developer/source and legacy installs, `./install.sh` clones or refreshes the repo checkout,
+   then execs `bin/viventium install`.
+2. `bin/viventium install` owns that developer/source first-run flow:
    - wizard/config selection
    - preflight prerequisite detection and install
    - component bootstrap
@@ -49,28 +53,28 @@ directory. The public `bin/viventium health ...` command uses the same materiali
   - rotate randomly
   - avoid immediately repeating the same line
 
-## Easy Install Native And Docker Target Product Contract
+## Easy Install Product Contract
 
 ### Objective
 
-The supported Easy Install journey is for a nontechnical person on a clean Mac. One public command must
-install an exact Viventium release, open browser setup, connect one preferred model provider, prove
-that provider with a real request, and land in a useful persistent chat. Optional capabilities must
-never block the first useful answer.
+The supported Easy Install journey is for a nontechnical person on a clean Apple Silicon Mac. One
+signed and notarized app must install an exact Viventium release, open setup, connect one preferred
+model provider, prove that provider with a real request, and land in a useful persistent chat.
+Optional capabilities must never block the first useful answer.
 
-`Easy Install Native` and `Easy Install Docker` are the approved capability-profile target over one
-installer transaction, canonical config compiler, service supervisor, setup UI, connection-state
-model, upgrade/rollback path, and QA contract. They must not become separate installers or
-duplicate onboarding flows. The current immutable candidate packages Native only; Docker remains a
-source-candidate/physical-QA lane and must not be advertised as a shipped artifact yet.
+**Easy Install** is the one public recommended journey over one installer transaction, canonical
+config compiler, service supervisor, setup UI, connection-state model, upgrade/rollback path, and QA
+contract. “Native” and “Docker” below are internal capability and acceptance lanes, not public
+onboarding choices or separate installers.
 
-- `Easy Install Native` is the first clean-machine acceptance lane. Its required core is local account,
+- The internal native-core lane is the first clean-machine acceptance lane. Its required core is local account,
   provider connection, text chat, chat history, saved memory, built-in agents, Prompt Templates,
   Agent Builder, Feelings, restart persistence, repair, upgrade/rollback, and preserve-data
   uninstall/restore.
-- The planned `Easy Install Docker` profile uses the same state machine and adds Docker Desktop plus
-  the capabilities whose current owning runtimes require containers. A Docker failure must degrade
-  only those capabilities and must not falsify the native core's readiness.
+- The internal Docker-backed lane uses the same state machine and adds capabilities whose owning
+  runtimes require containers. Docker setup is optional after the first useful answer unless the
+  user selected Custom Settings. A Docker failure must degrade only those capabilities and must not
+  falsify native-core readiness.
 - “80% covered in the VM” means installer, onboarding, continuity, recovery, and core-product
   reliability—not a claim that 80% of all optional features run without Docker.
 
@@ -78,112 +82,18 @@ source-candidate/physical-QA lane and must not be advertised as a shipped artifa
 
 The normative Easy Install sequence is:
 
-`verified bootstrap -> read-only preflight -> recovery checkpoint -> journaled install -> live core health -> browser first-user setup -> OpenAI key save -> live provider probe -> first rendered optimized Viventium answer -> Ready`
+`verified bootstrap -> read-only preflight -> recovery checkpoint -> journaled install -> live core health -> browser first-user setup -> provider connection -> live provider probe -> first rendered answer -> optional setup`
 
 - The terminal asks no provider secret and no optional-integration question before browser setup.
 - Browser setup asks only what is necessary for the first useful answer. It preserves a drafted
   first prompt across authentication, failure, retry, and reload.
-- Services outside the immutable core require Custom Settings Install today. Easy Install must not
-  suggest that an omitted service can be added in place until a signed optional-component
-  transaction exists.
-- Supported OAuth-capable providers use the external system browser with state and PKCE. OpenAI and
-  Anthropic currently document subscription login for their own Codex and Claude Code clients, not
-  a general Viventium OAuth entitlement. Easy Install therefore defaults to a browser-entered API
-  key stored through the encrypted user-key path. The legacy direct subscription bridges remain an
-  explicit experimental Custom Settings option for compatible existing installs; they must not be
-  presented as official or stable, and the supported migration target is the vendor-owned client
-  integration surface (for OpenAI, `codex app-server`).
-- Provider evidence for this boundary:
-  - [OpenAI `codex app-server` auth endpoints](https://github.com/openai/codex/blob/main/codex-rs/app-server/README.md#auth-endpoints)
-    expose vendor-managed ChatGPT login for rich clients.
-  - [OpenAI Codex CLI sign-in guidance](https://help.openai.com/en/articles/11381614-api-codex-cli-and-sign-in-with-chatgpt)
-    says disconnect does not revoke generated API keys and no public automated key-deletion endpoint
-    exists.
-  - [Anthropic account/API separation guidance](https://support.anthropic.com/en/articles/9876003-i-subscribe-to-a-paid-claude-ai-plan-why-do-i-have-to-pay-separately-for-api-usage-on-console)
-    distinguishes Claude subscriptions from general API access.
+- OAuth-capable providers use the external system browser with state and PKCE. Providers that only
+  support API credentials use one browser secret field backed by macOS Keychain.
 - Consumer subscriptions and API entitlements are distinct. In particular, Groq API access and
   xAI API access must not be inferred from a Groq or Grok consumer account.
-- Easy Install exposes stable browser-entered API-key cards for OpenAI, Anthropic, Groq, and Grok
-  (xAI) in one Connected Accounts surface. Groq and Grok compile as `user_provided` custom
-  endpoints so the encrypted per-user key is required; removing it must prevent another provider
-  request rather than falling back to a machine-level credential or the literal sentinel.
-- The stable headed-browser lifecycle is proven for all four cards with synthetic loopback
-  providers: native Anthropic Messages protocol for Anthropic and OpenAI-compatible protocols for
-  OpenAI, Groq, and Grok. Each proof includes two answers, refresh and runtime-restart persistence,
-  invalid/quota/outage/network repair, local Disconnect with no new provider request, and key re-add.
-- That four-card proof covers credential transport, raw model selection, persistence, and failure
-  handling. It does not prove optimized Viventium main-agent, cortex, Feelings, memory, or quality
-  parity. OpenAI is the intended optimized Easy Install path today, but readiness is not claimed
-  until a live request and visible first answer succeed; other cards add
-  explicitly selected models without replacing the Viventium brain.
-- Provider selection remains explicit. Saving a Groq or Grok key does not silently change an
-  existing conversation's provider/model, and no provider is remapped to another provider.
 - `Configured` is never rendered as `Ready`. Readiness requires a current live self-test, records
   when it was tested, and classifies authentication, authorization/scope, quota/rate limit,
   network, unhealthy dependency, unsupported configuration, and update-required failures.
-
-Provider credentials have two distinct owners and must not drift between them:
-
-- Easy Install browser-entered keys are encrypted per-user LibreChat state. They are not canonical
-  config, macOS Keychain entries, generated runtime values, or reusable machine credentials. The
-  compiler exposes OpenAI, Anthropic, Groq, and Grok through the literal `user_provided` capability
-  sentinel; it never replaces that sentinel with another provider's machine key.
-- OpenAI and Anthropic retain user-first/platform-second behavior by default. Each user can set a
-  per-provider `personal_required` policy in Connected Accounts; while selected, missing,
-  unreadable, expired, or disconnected personal credentials must surface setup/reconnect guidance
-  and must never fall back to a machine/platform key. Store this policy separately from credential
-  material so Disconnect cannot silently undo the opt-out.
-- `runtime.auth.allowed_domains` is the public exact-domain allowlist for browser password signup
-  and OpenID login. The compiler normalizes it case-insensitively into LibreChat
-  `registration.allowedDomains`; omission or an empty list leaves existing open-domain behavior
-  unchanged. It is not projected into GlassHive hosted OIDC as mutable-email authorization;
-  GlassHive tenant/domain admission must be an IdP tenant plus deny-by-default app-role/group
-  assignment policy. Multi-user compilation requires a non-empty explicit OIDC role map; for Entra,
-  every enterprise application actually used requires assignment (or an equivalently reviewed and
-  tested Conditional Access/application-assignment gate). A single combined web-plus-API app
-  registration and split web/API registrations are both supported. GlassHive-specific
-  `human_auth.provider_email_login` describes only the external provider's email/password
-  capability, while `human_auth.allow_principal_enrollment` controls first-login principal
-  creation after that IdP boundary. The latter never enables public signup; when false, the
-  gateway-only operator CLI preapproves an exact immutable provider subject. Legacy
-  `runtime.auth.allow_email_login` and `runtime.auth.allow_registration` remain compiler fallbacks
-  for one release when explicitly present, but continue to own LibreChat's local-password policy
-  independently. If neither canonical nor legacy key is present, both GlassHive controls default
-  false.
-- `integrations.glasshive.enterprise.human_auth.local_password_login` is a separate default-false
-  gateway capability for administrator-provisioned credentials attached to exact preapproved OIDC
-  subjects. It has no LibreChat fallback. The optional `local_password_allowed_domains` constrains
-  only credential locators, never OIDC/MCP admission. Compilation derives a stable gateway-only
-  throttle HMAC key, excludes all three values from runtime/worker env, and leaves public signup,
-  reset, and MCP password grants structurally unavailable.
-- `integrations.glasshive.enterprise.human_auth.oidc_login_visible` is a presentation-only boolean
-  that defaults true. Setting it false hides the normal organization-login button but retains the
-  configured OIDC issuer+subject identity namespace and direct recovery endpoint. Compilation must
-  reject `false` unless local password login is enabled, so an operator cannot ship a browser with no
-  visible login method. This value is gateway-only and does not change MCP, runtime, worker, or
-  LibreChat identity/admission policy.
-- Custom Settings Install may reference machine-level provider keys from canonical config through
-  `keychain://` references. The compiler resolves OpenAI, Anthropic, Groq, and xAI through one
-  provider-to-runtime mapping, writes resolved source-runtime and service env files mode `0600`,
-  and keeps the immutable Native behavior contract secret-free with `user_provided` sentinels.
-- Hosted GlassHive deployment-managed worker credentials have a separate least-privilege output:
-  `service-env/glasshive-runtime-provider.env`. The compiler emits only complete, non-placeholder
-  OpenAI/Portkey/Anthropic/Bedrock route bundles into that file and emits none of those credentials
-  into the ordinary runtime or gateway service environment. Install it `root:root 0600`; systemd
-  PID 1 reads it before dropping to the runtime identity, while UI/MCP identities cannot read or
-  reference it. An incomplete route remains visibly unavailable rather than failing later with an
-  upstream authentication error.
-- Restart preserves encrypted per-user keys in the selected runtime database. Source upgrade
-  recompiles from canonical config inside its transaction and checkpoints database state; a
-  missing Keychain reference fails before generated runtime replacement. Portable snapshot/restore
-  intentionally excludes provider credentials and records reauthentication as required. Source
-  uninstall moves the complete App Support tree to its recoverable local removal backup; Native
-  uninstall removes runtime/payload material while preserving user data. Neither uninstall mode nor
-  restore may describe a local delete as provider-side revocation.
-- The headed lifecycle must inspect persistent browser state after valid-key entry, refresh,
-  runtime restart, invalid-key entry, Disconnect, and re-add. Cookies, local/session storage,
-  Cache Storage, and IndexedDB must not contain the synthetic credential. This check supports the
-  encrypted-server-state claim but does not prove a real provider account or final signed payload.
 
 ### Public Install Names And Compatibility Values
 
@@ -221,155 +131,13 @@ Deferred until the core is ready unless a later accepted requirement proves othe
 - voice, LiveKit, local speech models, and the modern voice playground;
 - conversation Recall/RAG, local SearXNG/Firecrawl, Code Interpreter, Microsoft 365 MCP, Skyvern,
   and GlassHive Docker workstation execution;
-- Google Workspace, remote access, transcript ingestion, and additional providers.
-
-Telegram, Slack, and WhatsApp have an optional **Settings > Channels** setup surface after core
-chat is ready:
-
-- Easy Install stores one admin-managed connection record per channel in the local database using
-  an authenticated AES-256-GCM envelope whose HKDF key domain is separated from other LibreChat
-  credentials. Browser storage and generated env files
-  never hold those browser-entered credentials. Authentication failure or the unreleased legacy
-  unauthenticated format requires reconnect and must never start a worker or be silently migrated.
-- LibreChat owns each browser record and its in-process channel worker. Inbound messages are
-  normalized and routed through the existing authenticated Viventium gateway and Main Agent; no
-  channel owns a direct model path. Connected means the provider test, worker startup, and required
-  provider-side activation have succeeded. Later faults become a specific degraded state.
-- Global provider credentials and worker controls are admin-only. Every signed-in user creates a
-  high-entropy, one-use, expiring code for their own account and sends `/pair CODE` privately from
-  the messaging identity they control. The server binds only to the authenticated code creator; an
-  admin cannot share a bearer code that grants the admin's conversations, memory, or tool context.
-- Custom Settings retains only the existing operator Telegram path. A configured
-  `integrations.telegram` token compiles to its consumed `0600` service env. Slack and WhatsApp
-  browser credentials have no parent YAML, Keychain, generated-env, or sidecar contract.
-- Slack Socket Mode requires a workspace app, app-level token, bot token, and the generated manifest
-  workflow. It does not require a signing secret.
-  WhatsApp means the official Business Cloud API and requires a stable public HTTPS callback from
-  `runtime.network.public_api_origin` or the administrator's validated **Public Viventium HTTPS
-  address** in Settings. The Settings value is a stable API origin, not a full callback URL: it must
-  use HTTPS, must not contain credentials/path/query/fragment, and must not resolve syntactically to
-  loopback, `.local`, or a private IP address. Viventium appends the secret connection-specific
-  callback path and displays the result for Meta. It stays action-required until Meta verifies that
-  callback and a correctly signed callback is received. Creating the external domain, tunnel, Meta
-  Business app, and provider approval remains an explicit vendor/network step; Consumer-account
-  automation, ephemeral quick-tunnel claims, and localhost-only webhook claims are not supported.
-- Any optional-channel setup or transport failure stays scoped to that channel. It must not block
-  installation, first provider connection, core browser chat, restart, upgrade, or recovery.
-- Native Easy Install channel turns use the same authenticated gateway chat and SSE routes, HMAC
-  signatures, AgentController/Main Agent path, and request timeouts as source installs, but their
-  HTTP client connects only through the absolute, owner-checked, mode-`0600`
-  `VIVENTIUM_NATIVE_API_SOCKET`. It must never fall back to the historical loopback API port. A
-  missing, stale, symlinked, foreign, or permission-drifted socket is a retryable
-  `connection_unavailable` condition; the 30-second worker reconciler is installed before initial
-  persistence/socket readiness so a repaired socket can self-heal without a process restart.
-
-Deferral is not permission to deliver a stale optional runtime. When Voice is enabled after core
-readiness or selected through **Custom Settings Install**, the supported browser surface is the
-modern Viventium playground. Its `/api/health` response must identify the exact surface, variant,
-and 40-character component source ref. A generic HTTP success or an old classic listener on the
-configured port is not healthy. An installed start or upgrade replaces a safely identified stale
-Viventium-managed listener; an unrelated process is never killed merely to reclaim its port.
-
-The Docker LiveKit server is an optional runtime artifact, not the nested placeholder checkout. Its
-release identity is owned by `release/optional-runtime-components.json` and must be invoked using the
-exact patch tag plus multi-architecture OCI index digest. A managed container is reusable only when
-its configured image and Viventium image/source labels match the lock. Custom external/native
-LiveKit remains allowed only when deliberately configured and reachable. Viventium does not discover
-or execute `livekit` or `livekit-server` from `PATH`: the upstream v1.13.4 release does not provide a
-Viventium-verified macOS server artifact, so an arbitrary local executable cannot satisfy release
-identity. Until a signed, version-verified native artifact is added, Voice uses the exact Docker
-runtime or a user-configured external endpoint; Custom Settings Install without either fails closed
-and explains how to enable Docker, configure `LIVEKIT_API_HOST`, or start without Voice. An explicit
-endpoint override that is unhealthy also fails closed without silently starting Docker, and an
-unconfigured listener occupying the default port is preserved but never adopted as LiveKit. The
-early Native dependency stack is not an alternate server owner: supported `bin/viventium start`
-skips LiveKit there and delegates Voice to the provenance-aware launcher. A direct attempt to enable
-Native-stack LiveKit fails before MongoDB/Meilisearch startup and never installs or executes a
-`PATH` binary. The v1.13 upgrade lane must explicitly test or migrate TURN credentials that omit
-TTL; port reachability alone does not prove TURN media.
-
-Each launcher-owned LiveKit container also carries a path-private runtime-owner digest derived from
-the selected runtime state root. Start, stop, stale cleanup, and upgrade may select only that exact
-owner. A legacy container without the owner label is eligible for one-time compatibility only when
-its runtime-profile name and published HTTP port match the selected runtime; a container carrying a
-different owner label is never adopted or removed. This prevents a clean install, dev environment,
-or alternate App Support root from stopping another healthy local Viventium Voice runtime.
-
-Stop and destructive pre-upgrade drains must export both generated `runtime.env` and
-`runtime.local.env` to every launcher/native-stack child, preserving local-file precedence. Sourcing
-without export is invalid because a child can otherwise fall back to another runtime profile's
-MongoDB port and either fail closed against the foreign engine or target the wrong dependency.
-Status output must report an explicitly disabled Scheduler as disabled, not as a configured but
-unhealthy endpoint.
-
-### Storage-Bounded Release QA
-
-Clean-machine proof must not consume unbounded owner-machine storage. Source, unit, compiler, and
-browser checks run before any disposable machine is created. After the candidate is frozen, QA may
-create one disposable VM at a time, capture public-safe evidence outside the VM, and delete that VM
-immediately after the case. Docker QA uses explicitly named Viventium test resources and measured
-before/after disk usage. It must never use global prune, delete unrelated volumes, or multiply
-machine clones to parallelize acceptance. Logical sparse-disk size and physical disk usage are
-reported separately.
-
-`scripts/viventium/qa_storage_guard.py` is the executable gate for that policy, and
-`qa/installer-resilience/storage-policy.json` owns its reviewed budgets. Before clone it requires an
-empty `viventium-qa-*` inventory, enough free space, a read-only Docker resource baseline, the exact
-Docker sparse-disk identity, and an exclusive persistent run lease. Clone always exports
-`TART_NO_AUTO_PRUNE=1`; Tart must never make storage available by automatically deleting another
-machine. Guarded work is an argument vector, not a shell string. Known shells, direct deletion tools,
-prune operations, and wildcard arguments are refused.
-
-The lease and receipt are intentionally not self-expiring. An interruption, child failure, missing
-pre-existing Docker resource, context/disk replacement, low free-space floor, or growth-budget breach
-stops only the guarded child process group and leaves `CLEANUP_REQUIRED`. A leader exit is not command
-completion: the guard probes the exact process group, terminates lingering descendants, escalates to
-`SIGKILL` even after the leader has exited, and refuses success unless that owned group is proven
-empty. Cleanup requires the run ID twice, refuses any unowned QA VM, and can delete only the exact
-receipt-owned VM. It never deletes a Docker container, image, volume, cache, or sparse disk. Cleanup
-also refuses to finish while any post-baseline Docker container, volume, or image remains; the
-reviewed QA driver must remove its own exact synthetic objects first. A persistent clean Docker-disk
-baseline blocks cumulative physical/logical growth across guarded runs; it is never silently reset.
-Raw resource IDs and machine-local receipts remain outside the public repository in private QA
-evidence.
-
-The default policy requires 100 GiB free before a run, aborts below 60 GiB, bounds total host growth
-at 32 GiB, Docker physical growth during a run at 16 GiB, Docker physical residue at 4 GiB, and
-Docker sparse logical growth from the persistent baseline at 64 GiB. These are safety ceilings, not
-resource requirements for Viventium. Changing them requires code review and the same fake-tool
-regressions; raising a limit to make a failing run pass is not remediation.
+- Telegram, Google Workspace, Slack, WhatsApp, remote access, transcript ingestion, and additional
+  providers.
 
 Meilisearch is not assumed to be a core prerequisite merely because the current source launcher
 starts it. The implementation must prove whether current chat startup requires it. If conversation
-search can be disabled safely, Easy Install Native defers Meilisearch and exposes it as an optional
+search can be disabled safely, the native-core lane defers Meilisearch and exposes it as an optional
 capability; otherwise the acceptance evidence must record why it remains in the core.
-
-### Isolated Browser Artifact Runtime
-
-LibreChat Artifacts execute browser code and therefore must never share the authenticated app
-origin. Every supported runtime owns a second loopback-only origin with one coherent identity:
-
-- Native uses the release-owned proxy on `127.0.0.1:3191`; the API listener is disabled and the
-  assembled `index.html` digest is bound into release metadata. Candidate builds require the exact
-  audited digest, while synthetic local-QA builds carry and verify their own recorded digest.
-- source local prod uses an API-owned listener on `127.0.0.1:3191`; the default `dev` environment
-  offsets it to `4191`; compatibility mode uses `3091`.
-- Docker must build or pin the exact Viventium LibreChat image that contains the listener and the
-  prepared runtime. Merely mapping a port on an unrelated upstream image is not support.
-
-`SANDPACK_BUNDLER_URL` and `SANDPACK_STATIC_BUNDLER_URL` are canonical absolute origin-root URLs
-for the same listener and must match its port. Runtime readiness requires the API and isolated
-artifact listeners to belong to the same process on source/Docker, or to the same guarded Native
-proxy release. Installer, status, helper, watchdog, stop/restart, upgrade, and collision recovery
-must include the isolated origin. A missing, stale, foreign, same-origin, traversal-capable, or
-non-on-prem runtime fails closed without being reported healthy.
-
-The isolated server permits only the required loopback/browser origins, validates `Host`, constrains
-framing to the app origin, exposes only regular files under the prepared root, and serves `GET` or
-`HEAD`. Unhashed runtime filenames must revalidate across upgrades; only demonstrably
-content-addressed assets may be immutable-cached. A cold artifact can still download declared npm
-dependencies from their package CDN; local bundler ownership means no CodeSandbox bundler or
-analytics transport, not zero dependency-network traffic.
 
 ### Packaging, Install, And Upgrade Boundary
 
@@ -393,61 +161,17 @@ analytics transport, not zero dependency-network traffic.
   publisher-hosted, digest-verified download is the safer implementation boundary.
 
 The historical source runtime's Node 20 requirement was not a shippable Native artifact decision;
-Node 20 is end-of-life. LibreChat declares exact Node `24.16.0`, and the Native component manifest
-pins the official Node.js Foundation arm64/x86_64 archives and digests for that version. A live
-August 1, 2026 compatibility matrix proved the same authenticated fetch and `@librechat/agents`
-run succeed on Node `24.14.0` and `24.16.0` but deterministically fail before HTTP under Homebrew
-Node `24.18.1`. Source install and upgrade therefore provision the manifest-matching official
-`24.16.0` runtime under App Support, verify its digest, Developer ID publisher, and exact version,
-and put it ahead of Homebrew/global Node. Preflight, shared PATH setup, doctor, dependency repair,
-and the LibreChat launcher reject patch drift instead of treating any Node 24 patch as validated.
-That is source-candidate evidence, not exact-artifact
+Node 20 is end-of-life. A July 18, 2026 source-candidate production client/data-provider build
+passes on Node `24.16.0`. Post-review remediation now aligns preflight, shared PATH setup, doctor,
+dependency repair, the LibreChat launcher, the optional Skyvern launcher, and the macOS helper CLI
+PATH on Node 24, with a six-surface regression contract; 90 focused preflight/launcher tests and a
+fresh helper build pass. That is source-candidate evidence, not exact-artifact
 acceptance. The first packaged candidate must ship one pinned official supported runtime and repeat
 build/start/restart/process-path proof on the exact installed artifact. Node single-executable
 applications remain active-development and are not the first packaging boundary; ship a pinned
 official runtime plus immutable production code first.
 
-Pull-request automation must use explicit architecture labels rather than `macos-latest`. The
-source-level compiler lane runs on both `macos-15` (`arm64`) and `macos-15-intel` (`x86_64`) and
-asserts the observed architecture before testing. All third-party GitHub Actions are pinned to full
-commit SHAs, workflow permissions default to read-only, Node automation uses major 24, and the
-secret-scan container is pinned by image digest. These hosted images contain developer tools, so
-their two-architecture source checks support but never replace the pristine no-tools payload gate.
-
-### Finder-Launched Native Bootstrap Experience
-
-Opening `ViventiumBootstrap.app` from Finder with no arguments is a native **Easy Install** surface,
-not a terminal-only wrapper. It must present one accessible AppKit window with a truthful current
-stage, progress, bounded public-safe detail, safe Cancel, visible success/failure, Retry, Quit, and
-Open Viventium. The window must never render child stdout/stderr, raw commands, paths, token-bearing
-URLs, secrets, or unbounded logs. Open Viventium uses the fixed local client origin; it never derives
-a destination from installer output.
-
-Cancellation begins cooperatively. The bootstrap sends an interrupt to the bundled installer,
-disables repeat cancellation, and says **Cancel requested — finishing a safe checkpoint…** while
-the installer's journaled recovery/activation boundary finishes. If the installer does not exit,
-the bootstrap escalates after bounded grace periods to termination and then kill so Cancel cannot
-leave an indefinitely running install. The Python installer owns every spawned release command in a
-separate process group, drains that group when interrupted, removes an unpublished staging attempt,
-restores the prior pointer before a durable health result, and preserves a health-passed activation.
-Abrupt termination may still require the durable journal to finish recovery on Retry. The window
-must never infer rollback merely from a signal; success or recovery remains owned by installer
-exit/health and journal evidence, not optimistic copy.
-
-Any command-line invocation, including `--self-check`, remains headless and forwards the exact
-arguments, stdout, stderr, and exit status while still executing only the signed bundled Python at
-`Contents/Resources/runtime/python/bin/python3`. The Finder window discards child streams rather than
-capturing or displaying them, which bounds memory and prevents secret/path disclosure.
-
-Standard AppKit controls carry explicit accessibility labels/help, Return activates the current
-primary action, Escape requests Cancel while work is active, and visual state is not communicated by
-color alone. Normal installs use indeterminate progress; when macOS Reduce Motion is enabled, the
-bootstrap shows a static progress state plus the same textual stage. This follows Apple's
-[AppKit accessibility guidance](https://developer.apple.com/documentation/appkit/accessibility-for-appkit),
-[accessibility label contract](https://developer.apple.com/documentation/appkit/nsaccessibilityprotocol/setaccessibilitylabel(_:)),
-and [Reduce Motion signal](https://developer.apple.com/documentation/appkit/nsworkspace/accessibilitydisplayshouldreducemotion).
-
-### Current Local Implementation Status — 2026-07-20
+### Current Local Implementation Status — 2026-07-18
 
 The local source candidate implements public **Easy Install** through the shared internal
 `install.experience: express` profile with Native
@@ -461,245 +185,18 @@ exact app-owned binary and its loopback listener/process arguments match; arbitr
 Homebrew Mongo remains a legacy/custom-path option only. API, web, status output, and the startup
 banner use loopback truth in local mode.
 
-For voice, local mode is a strict audio-egress boundary. Compilation must preserve local
-Whisper/Chatterbox routing or stop with a classified unsupported-route error; it must never rewrite
-an unavailable local provider or fallback to a hosted provider. Legacy Wing default fields are
-migration-only inputs, and every newly created call begins in Call mode.
-
 The browser handoff persists `setup=accounts` across registration/login, requires a configured
 trusted server origin for OAuth instead of trusting the request `Host`, and scopes popup/poll/manual
 completion work to one attempt identity so stale async results cannot corrupt a newer connection.
-The disposable browser lane proves the stable browser-entered API-key lifecycle for OpenAI,
-Anthropic, Groq, and Grok/xAI with synthetic loopback providers: two useful answers, refresh and
-runtime-restart persistence, invalid/quota/outage/network repair, local disconnect with zero later
-provider contact, and key re-add. This proves the integrated disposable source-runtime path only.
-The same lifecycle must still pass from the final immutable installed artifact before release.
+The disposable browser lane proves two consecutive popup cancellation/retry attempts, but no grant
+or first provider answer; provider readiness therefore remains setup-pending.
 
-### Source Easy Install Acceptance — 2026-07-23
-
-The supported non-Docker source entrypoint now passes the complete isolated acceptance sequence in
-`INST-033`: one headless Easy Install command, first browser setup, provider connection, two useful
-answers, refresh, process restart, warm reinstall, established-user upgrade, continuity checks, and
-owned uninstall. The run used only synthetic accounts and loopback providers under an isolated
-support root. It did not read or modify an owner installation, personal database, browser profile,
-Keychain, or conversation history.
-
-The source runtime now preserves the installing user's optimized public configuration rather than
-falling back to historical defaults:
-
-- the compiler provisions the Groq and xAI base URLs consumed by the generated LibreChat source of
-  truth, and their custom endpoints retain the full user-scoped endpoint configuration when the
-  Background Cortex initializes them;
-- the literal `user_provided` capability marker is never treated as a credential; saved encrypted
-  per-user keys remain the authority for browser-connected OpenAI, Anthropic, Groq, and Grok/xAI;
-- Settings > Channels provides the complete Telegram, Slack Socket Mode, and official WhatsApp
-  Business Cloud API setup, test, repair, pairing, disconnect, and status surfaces; optional
-  channel failure cannot block first chat;
-- the collapsed responsive navigation cannot leave an invisible sidebar intercepting the account
-  and Channels controls; and
-- lab-only OpenClaw is absent from public Easy Install setup and status output.
-
-The current isolated prerelease candidate pins merged LibreChat commit
-`71501b3cabf0e309f23c27231a49cd6d0ad31b78` in both the parent component lock and Native payload
-component manifest, merged modern-playground commit `95b324c7498c50a7421751e5dd71971e268a3a84`,
-merged GlassHive commit `f1de874257605d2d7336a180d169b3a616b1de68`, and merged Viventium-Health commit
-`91a9bbf5ff8bd0963dd3dc33bfd388c66fa7ed69` in the parent component lock. GlassHive is
-intentionally absent from the Native payload
-component manifest. The Google Workspace MCP source is pinned to merged public-main commit
-`0824701abcf490de2a5091c68a7b0738f2294b3f`. Both manifests declare `merged`; each updated
-component merge tree equals its audited review head, and the local component mirrors match those
-reviewed trees. Source and local-runtime PASS still do not
-substitute for a separately signed and notarized immutable Native artifact or vendor-side Telegram,
-Slack, or Meta account approval without credentials owned by the installing user.
-
-`scripts/viventium/native_payload.py` and its tests implement the signed-manifest, hostile-archive,
-immutable-activation, journal/lock, interruption recovery, idempotent re-activation, and health-
-gated rollback boundary. `scripts/viventium/build_native_payload.py` now produces deterministic,
-deflated per-architecture ZIPs and canonical manifests, with a visibly unsigned `local-qa` channel
-and a fail-closed signed `stable` channel. Determinism is guaranteed for the fixed and recorded
-build interpreter/toolchain used by one candidate; it is not a cross-interpreter compression claim.
-`assemble_native_payload.py`, the Native supervisor/process guard, and the bundled-Python bootstrap
-source own relocatable target execution. Runtime secrets are generated atomically under
-machine-local App Support state with mode `0600`, PID records bind signals to a release-owned
-guard/start token, and helper replacement requires an ownership marker with retained rollback. The
-public shell bootstrap has an opt-in Native hand-off with embedded release/digest/Developer ID trust
-slots, but those slots are intentionally empty; it refuses source fallback until approved public
-trust and signed bootstrap bytes are provisioned. The current default remains the source installer.
-The protected release lane is globally serialized and must advance the complete signed Native
-GitHub release history by exactly one sequence (the first release is sequence `1`). Every prior
-Native bootstrap index, including a retained draft, is downloaded, signature-verified with the
-pinned Ed25519 public key, structurally validated, and checked for duplicate tags/sequences and any
-gap in the complete `1..N` history before signing starts. The tagged `install.sh` carries a reviewed
-minimum-sequence floor equal to the candidate;
-it validates the outer signed sequence and requires the Developer-ID-signed app's embedded
-`release.json` to match the outer release tag, release id, origin, and sequence. The embedded policy
-then requires the separately signed payload manifest to match that same release id and sequence,
-while activation retains the owner-only highest-sequence state for established installs.
-
-This closes accidental sequence reuse, workflow races, mixed bootstrap/payload releases, and
-rollback on an established install. A truly pristine Mac has no prior high-water state, however,
-and cannot cryptographically distinguish an older valid signed bootstrap plus an older copy of the
-public shell from the current release without an independently authenticated freshness source.
-The reviewed sequence floor protects a current authentic shell; it is not a transparency log or
-timestamp authority. Public Native release acceptance therefore still requires an authenticated
-current bootstrap distribution boundary (or equivalent external append-only freshness authority)
-in addition to provisioning the intentionally absent signer and Apple trust values. No local test
-or source fallback may claim to satisfy that external authority.
-
-Native assembly is also a public/private boundary. Compiled prompt metadata uses identifiers and
-paths relative to the prompt-registry root; it must never serialize the compiler checkout path.
-Assembly removes runtime logs, audit JSON, Python bytecode, caches, and package-manager/development
-surfaces that the Native runtime does not execute. Node is staged as its exact executable plus
-license, MongoDB as `mongod` plus required notices, and Python as the interpreter, non-GUI standard
-library/native extensions, CPython license, and the exact hash-pinned python-build-standalone
-dependency-license set. The payload and Bootstrap receive byte-identical staged Python trees. Each
-copy is bound to the architecture archive digest, Python version, license-source commit/digest, and
-every staged path/mode/size/hash through the same deterministic component manifest; candidate and
-post-sign archive verification must validate both copies independently. The candidate producer
-strips producer-local Swift debug metadata and immediately ad-hoc re-signs both candidate
-executables so the linker signature remains valid. The bootstrap always invokes its bundled Python
-with `-B`, so self-check and install cannot write producer-local bytecode into the signed app.
-After the complete apps and helper ownership marker exist, the candidate workflow runs self-check,
-ad-hoc seals both outer app bundles, and strict-verifies them before scanning; the protected workflow
-later replaces those candidate signatures with Developer ID signatures. The producer then
-runs `verify_native_public_safety.py` over the exact assembled candidate. That gate rejects
-forbidden artifact shapes, scans every byte—including binaries—for the exact producer workspace and
-temporary prefixes, and scans Viventium-owned/generated surfaces for private home/temp paths and
-high-confidence credential material. The protected release workflow repeats the gate after download
-and again after signing/compliance generation, before packaging or release assets are created.
-
-The secret-free candidate workflow declares exact arm64/x86_64 lanes, verifies pinned Node
-`24.16.0`, Python `3.12.13`, MongoDB `8.0.23`, and the LibreChat component commit, builds the full
-LibreChat packages/static client, then installs only the backend workspace production dependency
-tree beside those build outputs. Frontend packages omitted from physical `node_modules` are not
-omitted from compliance: the exact Rollup input closure and package-owned notices must be normalized,
-copied, hash-bound, and verified before the backend-only tree is accepted. A missing compiled-client
-notice or unresolved build input is a release blocker. The workflow then compiles canonical
-defaults, builds both macOS apps, assembles the
-relocatable payload, and declares a real install/start/registration/Connected Accounts/health smoke.
-The assembled `release-metadata/build.json` must carry the exact sanitized projection of that
-component policy: the LibreChat full commit plus each shipped runtime version and architecture
-archive digest. Assembly rejects missing or malformed commit/digest values, and extracted artifact
-metadata is compared directly with the policy; producer paths, URLs, credentials, and local state
-are not part of the embedded projection.
-Native first-admin reconciliation runs against that pruned production tree. Its maintenance helper
-uses the driver already exposed by the retained Mongoose production dependency. The built
-`@librechat/api` package has a separate direct runtime import of `mongodb`, however, and Rollup keeps
-that import external. The package therefore declares `mongodb` as a peer dependency while the
-consuming backend declares it as a production dependency; keeping it only as a package build/test
-dependency is forbidden. After every production prune, the candidate workflow must execute the
-built `@librechat/api` entrypoint. Resolving the file without loading it is not sufficient, because
-that would miss an externalized direct import.
-The protected Native release workflow pins all actions, accepts only a successful same-repository and
-same-commit architecture candidate, signs nested code and both apps with Developer ID and hardened
-runtime, notarizes and staples supported containers, builds and verifies the signed manifest,
-independently installs/health-checks both architecture payloads and bootstrap archives, attests an
-exact public-asset allowlist, explicitly confirms GitHub immutable releases, and creates a complete
-draft. It does not publish. Both workflows fail closed until the release owner records approved
-manifest/Apple trust, MongoDB redistribution approval, protected Apple/manifest authorities, and
-repository environment controls. A provisional exact local-QA payload was installed in a disposable
-vanilla guest, but startup failed before registration because its pruned runtime omitted the direct
-`mongodb` dependency required by built `@librechat/api`. That candidate was rejected. The structural
-package-boundary fix and a clean install/build/prune/load regression now pass, but the replacement
-payload has not been rebuilt or rerun through the pristine lifecycle. No candidate Actions or
-Developer ID/notary run has occurred, so this remains `PARTIAL`, not production acceptance. The
-current evidence is recorded in
-`qa/installer-resilience/reports/2026-07-19-native-payload-production-integration.md`.
-
-Native canonical defaults have a separate compiler-owned `native-runtime.env` contract. It contains
-only relocatable behavior/model settings, fixed Native profile/ports, and disabled `START_*` flags;
-provider credential values, arbitrary secret-shaped keys, unresolved `${...}` values, build paths,
-and compiler-owned URL/path settings are forbidden. The exact `OPENAI_API_KEY=user_provided` and
-`ANTHROPIC_API_KEY=user_provided`, `GROQ_API_KEY=user_provided`, and
-`XAI_API_KEY=user_provided` entries are permitted fixed capability sentinels, not credentials; any
-other value or secret-shaped key fails validation. Assembly requires and copies that exact file,
-install validates it before writing the mode-`0600` App Support runtime environment, and child
-services start from a fixed system environment plus this contract, generated machine secrets, and
-explicit release-owned local paths/ports. Host provider values are never inherited; the four fixed
-sentinels replace them regardless of the invoking shell.
-The same contract carries `VIVENTIUM_CONNECTED_ACCOUNTS_ENABLED=true` as a capability declaration,
-not a credential. LibreChat projects that flag into startup configuration so Native Easy Install can
-show the stable OpenAI, Anthropic, Groq, and Grok API-key setup surface without inheriting a provider
-secret or enabling the separate experimental subscription bridge. A visible panel is not sufficient
-acceptance: the exact payload must save, use, repair, disconnect, re-add, and persist each supported
-synthetic provider lifecycle through the installed browser surface.
-An explicit `VIVENTIUM_CONNECTED_ACCOUNTS_ENABLED=false` is authoritative over legacy discovery
-signals. The capability flag never enables `/api/connected-accounts/*` subscription OAuth routes;
-those remain separately fail-closed behind `VIVENTIUM_EXPERIMENTAL_DIRECT_SUBSCRIPTION_AUTH`.
-The candidate compiler disables MCP servers whose runtimes are not bundled. First-admin success is
-not returned until the release-owned close hook has restarted the backend with direct registration
-closed. The one-time URL must exchange its query token for a bounded HttpOnly SameSite cookie and
-redirect to a token-free URL before rendering. Its CSP must allow only the required same-origin setup
-request; password confirmation, progress, service failure, mismatch, retry, replay, and ordinary
-`/register` navigation must all have explicit outcomes. The browser must never embed the token in
-page JavaScript or leave ordinary registration as a silent `403`. The compiler also emits a
-Native-specific agent bundle that removes tools, tool options,
-direct-action ownership, and handoffs backed only by unavailable MCP servers. Initial boot must not
-seed the agent system owner before the real admin exists, because that synthetic user would close
-first-user registration; the post-registration restart reconciles the new user's installer-owned
-defaults, resolves exactly one non-placeholder administrator by immutable user ID, seeds the exact
-compiled agent bundle under that owner, and verifies every shipped main/background agent plus both
-owner ACL resource types in MongoDB. The first resolved administrator ID is retained in the
-owner-only mode-`0600` first-admin state and managed agent baseline. Later starts must verify that
-exact ID and leave the established state unchanged even when more administrators exist; they must
-not sample or re-infer an owner from administrator ordering. Source installs without a stored owner
-may migrate the verified administrator who already owns the built-in main agent before considering
-single-admin inference. A Native upgrade from the historical closed first-admin state that lacks an
-owner ID must first resolve the exact shipped main-agent ID from the immutable agent bundle and
-verify that agent's author as a real administrator; valid canonical evidence is backfilled without
-enumerating administrators or mutating agents/ACLs, while the exactly-one-administrator fallback is
-reserved for a state with no usable shipped-agent evidence. An invalid, deleted, placeholder, or
-demoted stored owner fails closed with restore/promote-from-backup guidance and never silently
-rewrites protected owner state. Native CLI
-must carry that public-safe guidance out of the private maintenance log, and the helper must show the
-administrator/backup recovery path rather than irrelevant Docker advice. Email is not
-retained in first-admin state or used to re-infer ownership on an established multi-admin database. Candidate
-acceptance must probe direct port
-`3180` before setup, after setup, and after restart, then prove login and default-agent health. Those
-exact-candidate checks are declared but have not run, so this boundary remains `PARTIAL`.
-
-### Native Build And Release Contract
-
-- Local QA uses `build_native_payload.py --channel local-qa`; the unsigned manifest is accepted only
-  through the explicit verifier override and can prove deterministic packaging, hostile extraction,
-  activation, health, interruption, retry, and rollback behavior. It cannot prove publisher identity,
-  Gatekeeper acceptance, notarization, or public installation.
-- Production uses `build_native_payload.py --channel stable` only inside the protected workflow.
-  Stable output requires the private SSH manifest key, a committed allowed-signers policy, an approved
-  Apple team policy, Developer ID Application signing, hardened runtime, trusted timestamp,
-  notarization success, stapling where Apple supports it, and installed-artifact verification.
-- The manifest signer public key and Apple team identifier are public pinned policy. Private keys,
-  certificate material, passwords, and notary credentials are protected environment secrets and must
-  not transit candidate artifacts or public bootstrap environment variables.
-- The release workflow consumes architecture-specific payload/bootstrap roots from the implemented
-  successful same-commit producer. The producer assembles the pinned runtime without secrets,
-  declares complete inside-out Apple code-signing/staple targets, and runs target-like smoke checks.
-  Its actual dual-architecture execution and exact artifacts remain acceptance blockers, and its
-  distributable mode fails closed until the license matrix records MongoDB redistribution approval.
-- Native release workflows are globally serialized. Before any protected signing work, the workflow
-  verifies every GitHub release carrying a Native bootstrap index and signature, rejects incomplete,
-  malformed, unsigned, duplicate-tag, or duplicate-sequence history, requires sequence `1` for the
-  first release and exactly `highest + 1` thereafter, and requires the tagged public bootstrap's
-  embedded minimum sequence to equal that candidate. A release may not skip or reuse a sequence.
-- The public bootstrap downloads only an exact release-named bootstrap archive over HTTPS, verifies
-  its embedded SHA-256 and exact Developer ID team, validates the stapled ticket and Gatekeeper
-  assessment, binds the outer signed release identity/sequence to the app's embedded release policy,
-  and then hands off. The embedded policy binds the payload's signed release id and sequence, and
-  activation rejects anything below the established local high-water mark. Trust values are
-  compile/review inputs, not environment overrides.
-  Until real approved values and reviewed signed bootstrap digests exist, Native mode must fail
-  before network or source execution; source mode remains an explicitly separate developer/local-QA
-  path.
-
-Apple's current guidance requires Developer ID authority and hardened runtime for outside-App-Store
-distribution, `notarytool` submission, inspection of the accepted result, and stapling to supported
-containers. GitHub's current guidance supports protected environments, full action-SHA pinning,
-artifact attestations, and immutable releases built as a complete draft before publication. See the
-[Apple certificate guidance](https://developer.apple.com/help/account/certificates/create-developer-id-certificates/),
-[Apple notarization workflow](https://developer.apple.com/documentation/security/customizing-the-notarization-workflow),
-[GitHub environment controls](https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments),
-[GitHub secure-use guidance](https://docs.github.com/en/actions/reference/security/secure-use), and
-[GitHub immutable-release guidance](https://docs.github.com/en/enterprise-cloud@latest/code-security/concepts/supply-chain-security/immutable-releases).
+`scripts/viventium/native_payload.py` and its tests implement a reference signed-manifest,
+hostile-archive, immutable-activation, journal/lock, health-gated rollback boundary. This reference
+is not wired into `install.sh` or the public bootstrap, and the current disposable-VM run still used
+a sanitized source candidate and package-manager build. It therefore does not satisfy the final
+no-developer-tools or signed/notarized installed-artifact requirement. The authoritative result and
+remaining gates are recorded in `qa/installer-resilience/reports/2026-07-18-express-installer-and-onboarding-audit.md`.
 
 ### Easy Install Threat Model
 
@@ -725,10 +222,10 @@ owning boundary; prompts and model output are never security controls.
 
 ### Commands And Owning Structure
 
-- Public entrypoint: `./install.sh` and the future verified one-line bootstrap that invokes the same
-  installer contract.
-- Public lifecycle: `bin/viventium install`, `bin/viventium configure`, `bin/viventium status`,
-  `bin/viventium doctor`, `bin/viventium upgrade --restart`, snapshot/restore, and uninstall.
+- Public entrypoint and lifecycle: the signed `Viventium.app` UI and its app-owned service interface.
+- Developer/source and legacy compatibility entrypoints: `./install.sh`, `bin/viventium install`,
+  `configure`, `status`, `doctor`, `upgrade --restart`, snapshot/restore, and uninstall. These commands
+  implement the same underlying contracts but are not the normal-user onboarding journey.
 - Installer/config/compiler/runtime ownership remains under `scripts/viventium/` and
   `bin/viventium`; browser onboarding remains in the LibreChat nested repository and must follow
   the nested commit -> parent pin -> built artifact -> installed artifact delivery chain.
@@ -766,26 +263,16 @@ and no edits to generated App Support outputs as a product fix.
   requesting privileged macOS permissions, destructive clean-machine reset, or any cloud action.
 - Never: use personal state as a clean-install prerequisite; store provider secrets in tracked or
   generated plaintext config; call configured-only state ready; silently install Docker-only
-  capabilities in Easy Install Native; publish or push without explicit approval.
+  capabilities in the native-core lane; publish or push without explicit approval.
 
 ### Success Criteria
 
-Easy Install Native is accepted only when the exact candidate artifact completes the first-use sequence
+The internal native-core lane is accepted only when the exact candidate artifact completes the first-use sequence
 in a disposable clean macOS VM, every applicable happy/unhappy/recovery case has evidence, restart
 and restore preserve the promised state, and the measured resource budgets are recorded. Easy Install
-Docker is accepted only after the same artifact/state machine passes the Docker and physical-device
+The internal Docker-backed lane is accepted only after the same artifact/state machine passes the Docker and physical-device
 delta on the disposable MacBook Air. Until those gates pass, release wording remains `PARTIAL` or
 `BLOCKED`; source implementation alone is not “done.”
-
-## Native JavaScript Toolchain
-
-- The validated native runtime is Node 24.
-- The installer must pair it with `pnpm@10` and
-  prioritize the versioned Homebrew keg path over an unversioned `pnpm` installation.
-- Do not install or repair with an unversioned Homebrew `pnpm`; the exact supported runtime must
-  remain reproducible across clean installs and upgrades.
-- Preflight must execute `pnpm --version` after install/reinstall and fail honestly if the
-  versioned runtime still cannot execute.
 
 ## Config Compiler Boundary
 
@@ -796,6 +283,7 @@ delta on the disposable MacBook Air. Until those gates pass, release wording rem
   - service-specific env files such as `runtime/service-env/telegram.config.env`
 - GlassHive launch/watch defaults are part of that same generated-runtime contract:
   - `GLASSHIVE_DEFAULT_LAUNCH_SURFACE`
+  - `GLASSHIVE_SHOW_LIVE_TERMINAL_IN_DESKTOP`
   - `WPR_IDLE_DESKTOP_PRIME_BROWSER`
   - `GLASSHIVE_HOST_WORKERS_ENABLED`
   - `WPR_HOST_WORKSPACE_ROOT`
@@ -833,11 +321,6 @@ delta on the disposable MacBook Air. Until those gates pass, release wording rem
   - Scheduling Cortex is not a shared singleton; dev-env config/compile must give it an offset
     `scheduling_mcp_port`/`VIVENTIUM_SCHEDULING_MCP_PORT` and per-env scheduler DB so a dev env
     cannot satisfy local-prod scheduler health
-  - new-install Scheduler selection must be explicit in canonical config
-  - an explicit canonical Scheduler value wins on upgrade, including `false`; only a legacy missing
-    key with predecessor generated `START_SCHEDULING_MCP=true` may migrate to enabled
-  - migration writes the now-explicit choice back to canonical config while preserving unrelated
-    settings and config-file mode; schedules DB existence alone must never enable the sidecar
   - dev envs may offset app-facing ports, but shared singleton service ports must stay aligned with
     the installed runtime unless the operator explicitly chooses full isolation
   - generated env must expose the dev-env and shared-singleton state so launcher/helper surfaces can
@@ -875,21 +358,12 @@ delta on the disposable MacBook Air. Until those gates pass, release wording rem
     `VIVENTIUM_CONNECTED_ACCOUNTS_RETURN_ORIGIN`; leave blank for the normal configured
     `DOMAIN_SERVER`/public API return path, and set it only for local/off-network connected-account
     OAuth QA when the completion page must return to a localhost browser
-  - `llm.primary.auth_mode: user_provided` -> the vendor endpoint's `user_provided` sentinel so the
-    encrypted browser API-key dialog owns the secret instead of terminal config
-  - an explicit legacy `auth_mode: connected_account` ->
-    `VIVENTIUM_EXPERIMENTAL_DIRECT_SUBSCRIPTION_AUTH=true`; absence of that explicit config compiles
-    the flag to `false`, while the Connected Accounts setup page and stable API-key path remain
-    available
-- Scheduled agent automation is a separate compiler-owned policy under
-  `runtime.scheduled_agent`; supported installs currently emit the atomic
-  `openai` / `gpt-5.6-sol` / `xhigh` tuple as:
-  - `VIVENTIUM_SCHEDULED_AGENT_PROVIDER`
-  - `VIVENTIUM_SCHEDULED_AGENT_MODEL`
-  - `VIVENTIUM_SCHEDULED_AGENT_REASONING_EFFORT`
-  This override is scoped to the scheduler-secret-authenticated generation route. It must not alter
-  the conscious agent's ordinary interactive model/effort settings or be inferred from prompt text,
-  schedule names, agent names, or user identity.
+- The compiler must not emit a separate scheduled-Main provider/model/effort policy. A
+  `viventium_agent` schedule loads the persisted Main Agent configuration and fallback from Agent
+  Builder at run time; the scheduler owns timing and delivery only. The legacy
+  `runtime.scheduled_agent` field and `VIVENTIUM_SCHEDULED_AGENT_*` outputs are removed so compiler
+  state cannot drift from Agent Builder. Explicit `glasshive_host` Workbench automations retain
+  their separately compiled host-worker tuple.
 - Generated runtime config must not silently preserve hidden provider defaults from the source
   template when the installer/compiler already knows the machine's real auth surface.
 - The local launcher owns the fallback OpenAI picker inventory written to LibreChat runtime env:
@@ -915,54 +389,26 @@ delta on the disposable MacBook Air. Until those gates pass, release wording rem
     different alias such as `openAI`
 - The supported local nightly-routines policy is installed from canonical config, not from owner
   machine leftovers:
-  - the immutable Easy Install payload does not package Scheduler, GlassHive, Prompt Workbench,
-    nightly reflection, or scheduled memory hardening today; it must describe them as Custom
-    Settings Install features rather than installed or ready capabilities
-  - the source-checkout Easy Install is a different distribution capability: it bootstraps the
-    pinned GlassHive component before compilation, enables the GlassHive provider and host worker,
-    pins both its provider model and worker profile to Codex, and compiles the canonical Main to
-    `glasshive-harness` / `codex-cli:gpt-5.6-sol`
-  - `install.experience: express` alone must never imply that GlassHive exists. Source-wizard
-    defaults may enable it because that installer owns component bootstrap; the immutable Native
-    preset and compiled payload defaults remain GlassHive-off until that payload packages and
-    supervises the runtime
-  - Custom Settings Install may activate the workflow during setup; upgrades of that runtime preserve an existing
+  - new Easy Install installations include the feature definitions but defer GlassHive worker
+    activation, Prompt Workbench schedules, nightly reflection, and memory hardening until after the
+    first useful answer and explicit worker setup
+  - Custom Settings Install may activate the workflow during setup; upgrades preserve an existing
     explicit active or disabled posture instead of forcing the new-user default over it
   - the canonical `install.experience` plus declared feature enablement owns this distinction;
     missing `install.experience` is legacy existing-user state and must not be silently reclassified
   - `bin/viventium install`, `upgrade`, `configure`, `compile-config`, and `start` all run the same
     default-nightly reconciler before compiling runtime artifacts, so later CLI auth can be picked up
     without hand-editing App Support files
-  - each versioned default reconciliation is additive at the leaf level: a missing field may receive
-    the shipped default, while every present owner value remains authoritative, including explicit
-    `false` and valid empty-string choices. This applies to nightly routines, Prompt Workbench and
-    its seed, memory hardening, GlassHive, and host-worker settings
-  - after the current defaults marker is present, a reconciliation with no newly detected worker
-    profile is a byte-preserving no-op. An ordinary `start` must not rewrite canonical config merely
-    because it performs the shared reconciliation check, and unknown config leaves must survive a
-    real additive migration
   - the reconciler must never write a real account email, local absolute user path, raw prompt,
     transcript, token, or owner-specific value into canonical config
-  - outside source-checkout Easy Install, the default GlassHive worker profile may be filled from
-    the currently signed-in local worker CLI only when the profile field is absent: Codex when
-    `codex login status` succeeds, otherwise Claude when `claude auth status` succeeds. A present
-    empty value is still an explicit owner choice and is not replaced. Source Easy writes
-    `codex-cli` explicitly, so authentication discovery can never silently remap its Codex Main to
-    Claude
-  - when Custom Settings enables the GlassHive provider and its provider model is absent, the same
-    resolved worker profile fills the matching provider model (`codex-cli:gpt-5.6-sol` or
-    `claude-code:opus`) before compilation. Any explicit provider model is immutable owner intent:
-    defaults never rewrite it, and preflight requires authentication for that exact model's harness
+  - the default GlassHive worker profile is filled from the currently signed-in local worker CLI
+    only when no explicit profile is already configured: Codex when `codex login status` succeeds,
+    otherwise Claude when `claude auth status` succeeds
   - the reconciler must not overwrite an explicit configured worker profile on later `start`,
     `compile-config`, `configure`, or `upgrade`; user choice beats auto-detection
-  - source-checkout Easy Install requires `codex login status` to succeed because its canonical Main
-    is the Codex GlassHive model. Claude-only authentication is reported as available but does not
-    satisfy this gate and must never trigger provider fallback or model remapping
-  - Custom Settings Install with only host-worker capability and no provider may accept either
-    signed-in Codex or Claude CLI. Once the provider is enabled, preflight requires the harness for
-    its resolved provider model. Another authenticated CLI must not satisfy that model-specific gate
-    or cause a silent model remap; a disabled or setup-pending worker must not block immutable Easy
-    Install Native core readiness
+  - when GlassHive host-worker activation is explicitly enabled, preflight requires at least one
+    signed-in Codex or Claude CLI and gives one clear sign-in action if neither is usable; a disabled
+    or setup-pending worker must not block native-core readiness
   - OpenClaw may be reported as optional, but missing OpenClaw must not block the default nightly
     workflow when Codex or Claude is ready
   - worker CLI auth is not the same as model-provider API or connected-account auth for memory
@@ -981,61 +427,37 @@ delta on the disposable MacBook Air. Until those gates pass, release wording rem
 - Easy Install Brain Readiness is a first-class installer contract, owned by the shared
   `scripts/viventium/brain_readiness.py` registry and reflected in wizard prompts, preflight,
   generated config, install/status output, doctor-style health, and QA rows:
-  - immutable Easy Install Native installs the useful first-answer spine automatically: core app/helper, local
-    account, OpenAI provider connection, text chat/persistence, built-in agents, Prompt
+  - Easy Install installs the useful first-answer spine automatically: core app/helper, local
+    account, foundation-provider connection, text chat/persistence, built-in agents, Prompt
     Templates, Agent Builder, Feelings, and the setup/status shell
-  - source-checkout Easy Install additionally bootstraps GlassHive and uses its Codex harness for the
-    canonical Main; missing Codex authentication—including a Claude-only host—is a visible
-    preflight/readiness failure and never a reason to substitute the direct OpenAI Main or remap the
-    configured GlassHive model
-  - Scheduler, Prompt Workbench, nightly reflection, scheduled memory hardening, local voice,
-    Telegram, transcript ingest, Recall/RAG, web search, and productivity MCP services remain
-    supported through Custom Settings Install; GlassHive also remains Custom-only in the immutable
-    Native distribution until that payload carries its runtime and supervisor
+  - Scheduler, GlassHive, Prompt Workbench, nightly reflection, memory hardening, and local voice
+    remain first-class supported capabilities, but their activation is post-ready for a new Easy Install
+    install and missing prerequisites degrade only those capabilities
   - the built-in nightly flow is documented and tested as: scheduled prompt -> filled placeholders
     -> GlassHive run -> callback -> scheduler ledger -> Workbench shows completed
-  - in Custom Settings installs that enable the nightly workflow, the built-in schedule must be
-    active for the resolved first local admin and carry a bounded catch-up policy so a late local
-    scheduler tick does not permanently drop the reflection
+  - the built-in nightly schedule must be active for the resolved first local admin and carry a
+    bounded catch-up policy so a late local scheduler tick does not permanently drop the reflection
   - memory hardening and nightly reflection must resolve the installing user's first local admin
     path without asking for a developer email, hardcoding an owner account, or leaking private data
-  - provider API-key entry and optional channel connection are guided Easy Install surfaces;
-    user-owned or resource-heavy services stay behind Custom Settings Install until a signed
-    optional-component transaction exists
-  - Connected Accounts derives installation-fallback status from the resolved endpoint capability
-    metadata for every provider, including custom Groq and xAI endpoints. Absence of a per-user key
-    must not be presented as absence of an installation credential, and neither state proves live
-    provider readiness without a real request
-  - the Settings shell keeps a full-width horizontal tab rail until the viewport can accommodate a
-    vertical rail without compressing provider controls. Provider actions must wrap inside their
-    owning row at narrow widths; QA checks both left and right geometry rather than relying only on
-    document scroll width
+  - user-owned or resource-heavy surfaces are guided setup, not fake-ready defaults: primary AI
+    provider account/API-key, optional fallback provider, transcript folder, Conversation
+    Recall/RAG, web search provider, Telegram, Telegram Codex, Google Workspace MCP, Microsoft 365
+    MCP, and hosted voice when local voice is not viable
   - foundation fallback credential presence means `Configured`, not `Ready`; only a successful live
     provider request can prove credential validity, and status must not manufacture that proof
-  - Conversation Recall/RAG remains Custom Settings-only because it requires
-    Docker/Ollama/vector-resource consent; Docker presence alone must not turn it on
+  - Conversation Recall/RAG remains guided opt-in because it requires Docker/Ollama/vector-resource
+    consent; Docker presence alone must not turn it on
   - Transcript ingest is pending until `runtime.memory_hardening.transcripts.source_dir` is set by
     the wizard, helper, or `bin/viventium transcripts source set <folder>`; an empty source is a
     setup-pending state, not a failure
-  - Web Search is Custom Settings-only today. Its setup may use local Docker-backed
-    SearXNG/Firecrawl or hosted Serper/Firecrawl keys, and status
+  - Web Search is deferred until after Easy Install reaches a working first answer. Its later guided
+    setup may use local Docker-backed SearXNG/Firecrawl or hosted Serper/Firecrawl keys, and status
     must identify the exact degraded local service when enabled health is incomplete
   - Code Interpreter, Skyvern, OpenClaw, and Remote Access remain off by default. They are
     Custom Settings Install or later guided opt-in surfaces and must not appear enabled in public examples
     unless that example is clearly lab-scoped
-  - OpenClaw remains internal lab-only and absent from both public installer choices until
-    authenticated client wiring and lifecycle QA ship. If it is later enabled, its bridge defaults
-    to the reviewed E2B sandbox and requires
-    bridge authentication even on loopback. Direct host execution is never an implicit fallback:
-    it requires both `OPENCLAW_RUNTIME=direct` and the explicit
-    `OPENCLAW_ALLOW_DIRECT_HOST_EXEC=true` risk acknowledgement
-  - Telegram, Slack, and WhatsApp setup may be advertised as guided and encrypted, but not as
-    delivery-ready until provider activation, worker health, and a real inbound/outbound test agree;
-    a successful credential probe alone is not a successful message test
-  - when Custom Settings Install owns the packaged Telegram bridge, Settings > Channels identifies
-    that channel as externally managed and suppresses competing setup, repair, test, disconnect,
-    and self-service pairing controls. The page must not call it unconfigured or imply that browser
-    administration owns the existing bot
+  - WhatsApp must not be advertised as installed or configured until an owning runtime integration,
+    requirement doc, and QA surface exist
   - upgrades preserve explicit disables and never invent secrets, OAuth grants, transcript paths,
     user emails, local absolute paths, or private account state. They may add readiness/status cards
     and reconcile missing core-spine defaults idempotently.
@@ -1067,10 +489,7 @@ delta on the disposable MacBook Air. Until those gates pass, release wording rem
     matching-but-unloaded state is bootstrapped without bootout, and actual plist drift is replaced
     once with post-bootstrap verification. Lifecycle receipts contain only public-safe schedule,
     outcome, and generation-hash evidence. Install and uninstall also share a process lock so
-    overlapping supported entrypoints cannot interleave loader state. The loader snapshots exact
-    plist/marker bytes and modes plus loaded state before mutation; any later filesystem,
-    `launchctl`, verification, or receipt failure restores that exact state. Symlinked, special, or
-    non-current-user-owned inputs fail closed.
+    overlapping supported entrypoints cannot interleave loader state.
   - the installed macOS LaunchAgent command must invoke `scripts/viventium/memory_harden.py`
     directly with the generated runtime dir instead of routing scheduled hardening through
     `bin/viventium`; the user-facing launcher may be running when the 3am job fires
@@ -1091,10 +510,6 @@ delta on the disposable MacBook Air. Until those gates pass, release wording rem
   - `bin/viventium memory-harden` participates in active-runtime-checkout re-exec, so helper/manual
     hardening and schedule installation use the same protected-folder-safe runtime checkout resolver
     as start/stop/helper commands
-  - only the canonical per-user Application Support installation may mutate the single macOS
-    memory-hardening LaunchAgent by default; isolated clean-install and dev-runtime verification
-    must not replace or remove the live user's schedule. An intentional alternate installation may
-    opt in with `VIVENTIUM_ALLOW_NONCANONICAL_SCHEDULE_MUTATION=1`.
   - disabling the schedule clears the dry-run-first marker so a later re-enable gets the same
     first-run guard
   - when `dry_run_first` is enabled, the first scheduled apply with no marker performs a dry-run
@@ -1190,11 +605,9 @@ delta on the disposable MacBook Air. Until those gates pass, release wording rem
   - a stray `docker` CLI on `PATH` is not enough to treat Docker Desktop as available
   - shared Docker availability checks in wizard and preflight must require the real Docker Desktop
     app/cask install
-  - Web Search is deferred until after Easy Install reaches a working first answer. The user may
-    then rerun `bin/viventium configure` and choose Custom Settings Install to add local Web Search.
-    When Docker
-    Desktop is absent, the prompt must say that local SearXNG/Firecrawl requires automatic Docker
-    Desktop installation, while hosted Serper/Firecrawl requires user-owned keys
+  - Easy Install may offer local Web Search as a guided choice; when Docker Desktop is absent the
+    prompt must say that local SearXNG/Firecrawl requires automatic Docker Desktop installation,
+    while hosted Serper/Firecrawl requires user-owned keys
   - Easy Install keeps local Conversation Recall deferred by default instead of auto-enabling it
     from ambient Docker detection
 - Homebrew-installed CLI prerequisites must be validated as runnable tools, not just files on
@@ -1240,8 +653,8 @@ delta on the disposable MacBook Air. Until those gates pass, release wording rem
     root is user-scoped (`~/viventium`), and `/viventium` is valid only when doctor proves it is
     writable by the current user
   - the default host Codex automation tuple is `gpt-5.6-sol / xhigh`. The compiler emits the same
-    tuple for host and general Codex worker env so Prompt Workbench, Scheduling Cortex, GlassHive
-    bootstrap, and model-route evidence cannot silently diverge. The Viventium compiler also emits
+    tuple for host and general Codex worker env so explicit `glasshive_host` Prompt Workbench jobs,
+    GlassHive bootstrap, and model-route evidence cannot silently diverge. The compiler also emits
     the now-proven xHigh route flag by default; otherwise GlassHive's standalone safety clamp could
     turn a requested xHigh run into medium on a clean install
   - that host-worker setting is shared by unattended Workbench automation and direct host Codex
@@ -1357,21 +770,6 @@ delta on the disposable MacBook Air. Until those gates pass, release wording rem
   - public checkout bootstrap must accept vendored component source trees that were shipped inside
     the reviewed repo export; installer correctness must not depend on nested `.git` metadata being
     present on end-user machines
-  - a plain public source clone may begin without any managed component directory. Candidate
-    configuration validation must therefore fetch the pinned components selected by the validated
-    candidate before compiler dry-run when the LibreChat agent source-of-truth bundle is absent.
-    The prerequisite bootstrap is always idempotently run before canonical config apply, uses the
-    candidate rather than an owner's existing config for selection, and cannot short-circuit merely
-    because LibreChat is present while another selected component is incomplete. Component roots
-    and all existing path ancestors must be non-linked and resolve under the canonical checkout.
-    Both fixed tracked source files are independently verified as regular repo-contained files with
-    no linked parent before compiler load, with the agent bundle checked at the installer boundary
-    as well, so an otherwise bootable vendored component cannot redirect source-of-truth into an
-    external or private directory. This does not remove the separately declared approved private
-    LibreChat source override.
-    Failure leaves canonical config untouched, and retry revalidates the complete selected set even
-    if a previous partial attempt created LibreChat. The normal post-preflight bootstrap still runs as the
-    installation stage and verifies or completes the selected pinned component set
 - Installer UX affordances, including wait copy and inline animations, must not mutate or depend on
   generated App Support outputs to appear correct.
 - Telegram launcher parity follows the same rule: compiled Telegram service env must be the default
@@ -1577,106 +975,25 @@ delta on the disposable MacBook Air. Until those gates pass, release wording rem
 - The product default is operator-triggered manual snapshots, not mandatory daily full backups.
   Bounded private automation may exist later, but the shipped public contract must stay explicit and
   storage-aware.
-- Complete logical capture must reserve 10 GiB after a conservative estimate of the sanitized config,
-  schedules, uploads archive, transaction overhead, and the larger of locally visible Mongo storage
-  or allowlisted logical-collection statistics before it creates an attempt directory. It rechecks
-  that reserve between capture phases; a capacity failure removes the incomplete attempt and never
-  promotes it. Capture also refuses an archive source with more than 100,000 files, a relative path
-  longer than 1,024 UTF-8 bytes, or a relative path deeper than 32 components.
 - `bin/viventium restore` must first refuse any default or explicitly selected metadata-only
   attempt and any source/target overlap. Marker-less, partial, corrupt, or resource-abusive inputs
   fail before target creation. The validator must run from a stock standard-library Python without
   bootstrapping App Support, and must reject boolean schema versions, oversized artifacts, and
-  excessive declared or observed archive expansion. Archive headers are streamed through validation
-  before extraction: each archive is limited to 100,000 regular-file members, all bundle archives
-  together are limited to 200,000 members, and the same 1,024-byte/32-component path bounds apply.
-  The exact cap is valid; the next header fails closed. The declared upload-file count is bounded and
-  must equal the observed archive count, and extraction independently rechecks these rules to close
-  validation-to-use replacement.
-- Transactional independent restore must group its manifest-declared compressed plus uncompressed
-  working footprint plus 4 KiB of conservative filesystem metadata overhead per extracted archive
-  member by destination filesystem, and retain a 10 GiB reserve on each affected volume. This check
-  runs before target Mongo inspection, claim, journal, or target creation; filesystem and Mongo
-  phases recheck the reserve and enter the existing transaction-owned rollback path on failure.
+  excessive declared or observed archive expansion.
 - A producer's positive marker, complete domain ledger, typed artifacts, size/hash checks, and
-  format checks establish only a structurally valid candidate. A restore-ready public bundle also
-  requires the versioned logical-Mongo collection ledger, per-collection document counts/hashes,
-  bounded canonical Extended JSON validation, runtime/helper selection policy, and the exact
-  secret-exclusion contract. Legacy complete candidates remain valid for inspection but return
-  `recoverable: false`, `semanticValidation: not_performed`, and cannot enter apply.
-- The public logical-Mongo adapter exports an allowlist containing chats, messages, saved memory,
-  agents/assistants, projects, files metadata, feelings, prompts/presets, shares, authorization
-  structure, and sanitized users. It excludes token/session/provider-key/action/MCP/plugin-auth
-  credential collections, raw tool-call rows, and argument/result payloads embedded in message tool
-  parts, and exports only an allowlist of non-secret user fields. Any nonempty password, credential,
-  API-key, or auth-token field found in an otherwise allowed document fails the whole complete
-  capture. No partial bundle is promoted. Source installs use LibreChat's pinned Node MongoDB/BSON
-  packages, not separately installed host Mongo command-line tools.
-- Canonical config is restored as the authoring source, but inline secret values are replaced with
-  explicit null/reauth-required entries; safe `keychain://` references may remain. Generated env,
-  helper binding, and runtime YAML are never copied as authority and must be regenerated for the
-  target checkout/profile.
-- The bundle is mode-`0700` with mode-`0600` payload files and is not self-encrypted. Its manifest
-  states `not_self_encrypted_owner_only`; users must keep the machine-local bundle on an encrypted
-  host volume or encrypted external destination. Provider/channel/browser credentials are excluded
-  even on encrypted hosts and must be reauthenticated. Product wording must not imply portable
-  cryptographic encryption when only owner permissions and host-volume protection exist.
-- Uploaded files are a bounded, no-follow regular-file tar; schedules/background tasks use SQLite's
-  online backup API plus integrity checking. Recall/RAG indexes remain derived and are not copied as
-  canonical truth; restore writes the rebuild-required marker so vector-backed recall stays blocked
-  until rebuilt and explicitly acknowledged.
-- Source and Native installs share one canonical uploaded-file root:
-  `~/Library/Application Support/Viventium/data/uploads`. Generated runtime output publishes it as
-  `VIVENTIUM_LIBRECHAT_UPLOADS_ROOT`, `WPR_LIBRECHAT_UPLOADS_ROOT`, and
-  `WPR_BOOTSTRAP_SOURCE_ROOTS`; generated paths are outputs, not user-authored config.
-- The recognized source-install predecessor is only the current checkout's
-  `viventium_v0_4/LibreChat/uploads` directory. Before any upload-consuming service starts, a stopped
-  source launcher performs one bounded, owner-checked, no-follow migration into App Support and
-  leaves an exact compatibility symlink for predecessor compatibility. LibreChat itself resolves
-  `paths.uploads` from compiler-owned `VIVENTIUM_LIBRECHAT_UPLOADS_ROOT`, so two runtimes may share
-  one checkout without sharing uploaded bytes. If the checkout link is already the valid,
-  owner-private, receipted link of another Viventium App Support root, startup preserves and never
-  follows or overwrites that link, securely initializes the current runtime's canonical root, and
-  records a current-runtime receipt binding the observed link target by digest. Missing, malformed,
-  or unsafe proof still fails closed. The link contains no user bytes and is not a second authority.
-- The migration rejects foreign ownership, symlinks, hardlinks, special files, path/file/byte bounds,
-  source mutation during copy, an unexpected canonical path, and two populated roots. It never
-  merges or overwrites. A private transaction journal records staging, target activation,
-  predecessor backup, link activation, and commit; pre-commit interruption rolls back, committed
-  cleanup interruption recovers forward, and reruns are idempotent. A writer that is still running
-  requires a supported restart rather than an in-place move.
-- Pre-upgrade continuity capture fingerprints relative file paths and contents into only aggregate
-  file-count, byte-count, and SHA-256 fields. It emits no names, paths, or contents. Before migration,
-  the recognized legacy tree is the predecessor fallback; after the exact current-runtime link or
-  receipted shared-checkout isolation contract is active, that runtime's App Support root wins.
-  Ambiguous, unsafe, or unavailable trees fail strict semantic comparison when upload continuity
-  cannot be proven.
-- Complete capture follows the same authority rule: canonical App Support wins after migration,
-  while the nested predecessor is accepted only before migration. Independent restore stages uploads
-  inside the new App Support target at `data/uploads`; the source launcher's verified one-time step
-  creates the compatibility link for a restored checkout.
-- Apply accepts only an absent independent App Support target, a separate fresh checkout with no
-  existing App Support uploads target, and an empty credential-free loopback Mongo database with a different
-  database name from the source. The selected bundle must still be current-user owner-only at apply
-  time. Source/target/checkout overlap, symlinks, hardlinks, foreign-owned entries, existing/personal
-  state, nonempty databases, and legacy bundles fail before mutation.
-- The restore transaction stages config, schedules, files, Recall and reauthentication ledgers;
-  acquires a transaction-ID claim in the proven-empty isolated database, imports logical Mongo, then
-  activates target filesystem roots. Failure or `SIGINT`/`SIGTERM` removes transaction-owned
-  filesystem state and drops only a database carrying that transaction's claim. Pending activation
-  flags cover faults immediately after a directory rename. If rollback itself fails, the private
-  local journal remains with `rollback_incomplete` and the command fails closed.
-- Apply records the independent runtime selection in an owner-only, non-symlink ledger. The config
-  compiler accepts only a matching schema/profile/canonical-config/generated-output binding. The
-  restartable `v2` ledger additionally pins the credential-free loopback Mongo port and a distinct,
-  owner-only Mongo data path, so a full stop/start cannot silently fall back to source persistence.
-  Restore generates a fresh target-local internal call-session secret with mode `0600`; it does not
-  migrate the source internal secret or any provider, channel, browser, session, or OAuth secret.
-- `--allow-older-snapshot` and `--apply-telegram` remain refused compatibility flags. `--mark-recall-stale`
-  is accepted only as redundant compatibility wording because every supported restore marks Recall
-  stale. Restore success still means reconnect provider/channel accounts, reset browser-user
-  passwords through the supported recovery path, regenerate runtime/helper binding, rebuild Recall,
-  start, and prove the recovered visible user path; it never means credentials migrated.
+  format checks establish only a structurally valid complete-bundle candidate. They do not prove
+  recoverability. The CLI must keep `recoverable: false` and name the apply engine as unavailable
+  until a public capture/apply path restores an independent target and the required user-visible,
+  database, schedule, recall, channel, and reauthentication checks pass.
+- Structural and gzip validation do not prove Mongo archive semantics; the candidate result must say
+  `semanticValidation: not_performed` until a data-plane adapter verifies the contents.
+- The public apply engine is currently unavailable. After candidate validation, every non-validation
+  request exits `4` before live-audit creation, safety copies, channel writes, Recall markers, or any
+  target mutation. `--allow-older-snapshot`, `--apply-telegram`, and `--mark-recall-stale` are reserved
+  compatibility flags, not partial mutation paths.
+- A future transactional apply engine must stage into an independent target, make pre-apply safety
+  copies of directly affected state, validate every adapter, activate atomically, and write the
+  Recall rebuild-required and reauthentication ledgers before this contract can change.
 - `bin/viventium continuity-audit` owns the operator review surface for current continuity metadata
   and the explicit `--clear-recall-marker` acknowledgement after rebuild.
 - `bin/viventium upgrade` must capture pre/post continuity audits and treat their severity as part
@@ -1685,285 +1002,6 @@ delta on the disposable MacBook Air. Until those gates pass, release wording rem
   - `unknown`, malformed, or capture failure: do not auto-restart
   - `warning`: finish upgrade but require operator review
   - `ok`: continue normally
-- A mutating source-install upgrade is a machine-local transaction, distinct from the public
-  snapshot/restore product:
-  - register the transaction and arm interruption recovery before stopping a running stack
-  - after stop, create and hash a private pre-mutation checkpoint of canonical config, generated
-    runtime, runtime state, bootstrap Python state, legacy Mongo state, native data, and any
-    App-Support-contained explicit Mongo path. The checkpoint also owns the ignored
-    `LibreChat/.env` with exact absent/file semantics, App Support Telegram user preferences, and
-    Telegram-Codex pairings, plus `helper-config.json`. A checkpoint root, ancestor, or ordinary
-    continuity surface that is symlinked still fails before registration or snapshot. Nested links
-    inside generated runtime state are the narrow exception because browser and AI harness runtimes
-    create them as normal process state: the transaction records and restores only the owned link
-    inode and target text without following or reading the target, verifies the no-follow manifest
-    after copy and restore, and omits current-user-owned Unix sockets because they are nondurable
-    process endpoints. It continues rejecting FIFOs, devices, malformed entries, and any
-    non-current-user-owned entry
-  - quiesced candidate validation must not rewrite ignored `LibreChat/.env`. It resolves any missing
-    validation-only auth/encryption values in process memory. Before commit, the private ledger
-    compares path-free whole-file and field digests: existing `CREDS_KEY`, `CREDS_IV`, `JWT_SECRET`,
-    `JWT_REFRESH_SECRET`, and every launcher-unknown owner field remain exact, while only the
-    explicit launcher/compiler-managed field inventory may advance. Normal post-commit
-    reconciliation reads valid persisted auth/encryption values before ambient values and leaves
-    their lines untouched
-  - cross-checkout local promotion must not assume that an ignored `LibreChat/.env` exists in the
-    candidate checkout. An established runtime's previous active checkout is authoritative; its
-    owner environment must exist and be safe. A conflicting candidate owner environment is refused,
-    not silently preferred. Only a proven fresh activation may select an explicit source, then a
-    private curated source, then the candidate environment, or proceed from true absence. Missing
-    or corrupt checkout receipts do not prove freshness: canonical config, generated runtime,
-    helper config, database/schedule state, or continuity/install receipts make the activation
-    ambiguous and therefore fail closed
-  - before any candidate file write, compile, helper-intent change, doctor, stop, or publication,
-    the activation journal checkpoints the candidate `.env` as exact current-user-owned bytes,
-    mode, or absence through directory descriptors with no-follow checks. It then reads the
-    authoritative source once, binds that immutable snapshot to the candidate LibreChat revision,
-    stores an exact owner-only copy plus digest-only semantic manifest inside the candidate
-    generated runtime, and rejects source/target changes. An absent target is created from a fully
-    fsynced transaction-owned file and hard-linked atomically; a present target must already be
-    byte-exact, because promotion never overwrites an independent candidate owner environment, and
-    repeat activation creates only a transaction-named hard-link receipt to that existing inode.
-    The transaction link remains until commit or rollback, so a partial write is recoverable.
-    Candidate compilation and the first start consume the exact staged snapshot
-  - every pre-commit failure or crash restores the candidate `.env` exactly before restoring
-    generated runtime, binding, helper intent, and prior running state. Rollback first validates the
-    declared original-runtime inode/content proof and every state checkpoint, then atomically moves
-    the current candidate `.env` into a transaction-specific quarantine. Unplanned or concurrently
-    appearing owner state is left intact and recovery fails before runtime/binding mutation. When
-    runtime startup replaces `.env` with another inode containing its exact checkpoint bytes and
-    mode, rollback first claims the detached transaction link through an atomic no-replace
-    quarantine, then moves the validated inode without replacement into a transaction-unique `0700`
-    private directory on the candidate filesystem after its recorded inode, size, and digest still
-    match. Terminal disposal then validates the inode through an open descriptor, zeroes only a
-    detached single-link artifact, and moves the pathname into bounded per-checkout retirement
-    slots; it never unlinks a possible owner-environment pathname. A racing source replacement is
-    moved and rejected rather than deleted, and an external-volume checkout never depends on a
-    cross-filesystem move into App Support. The three canonical retirement names are fixed rather
-    than derived from the checkout path, and successful post-core cleanup migrates recognized
-    digest-suffixed predecessor slots to canonical zero-byte, single-link files. Checkpoint and
-    rollback are read-only toward those predecessor slots, and older in-progress journals that name
-    them remain recoverable. A filesystem without owner-only Unix directory modes and
-    atomic no-replace rename support is rejected rather than weakened. Any other target or link state
-    is preserved and fails closed. A missing
-    original-runtime backup can never be reported as rolled back
-  - commit atomically claims the accepted candidate `.env`, validates its protected/owner/unmanaged
-    semantics, and durably records its inode/content receipt before the irreversible commit marker.
-    The owner snapshot manifest and nested LibreChat revision are revalidated at publication,
-    post-start, and the immediate commit boundary. Restart and no-restart activation paths both
-    verify the materialized target; a real restarted candidate may advance only declared
-    runtime-managed fields. If an owner edit lands after acceptance validation, its inode/bytes are
-    preserved, the commit receipt records the post-boundary change, and a running candidate must
-    complete one alignment restart before helper finalization. Alignment captures the candidate
-    owner's exact size/content receipt before the real stop/start, uses the current
-    candidate owner file rather than the older staged snapshot as its canonical source, and accepts
-    alignment only when the same bytes remain after health. Safe same-content atomic launcher
-    rewrites may change inode without creating false drift. Post-commit cleanup failure is also forward-only: the journal records pending
-    cleanup, status remains inspectable, and finalization retains the journal until cleanup succeeds,
-    rather than attempting rollback or silently abandoning owner-state evidence. A deletion cannot be
-    repopulated from stale staged credentials, and an atomic save during restart remains pending for
-    another alignment attempt instead of being blessed against a stale running process. Persisted Meili, Google,
-    code-interpreter, Firecrawl, provider,
-    auth/encryption, empty assignments, and launcher-unknown owner fields win over
-    ambient/default/private fallbacks on later starts
-  - App Support Telegram user preferences and Telegram-Codex pairing roots remain byte-exact while
-    the candidate is quiesced. Their private aggregate manifest digests gate commit and their exact
-    stopped bytes restore on rollback; no user identifier or preference value enters public output
-  - `helper-config.json` restores byte-for-byte on rollback when no concurrent owner edit occurred.
-    When owner fields changed concurrently, rollback restores only declared helper-intent fields and
-    preserves the concurrent personalization. Before commit, only the declared runtime-owned
-    `runtimeSupervision` record may advance; status-bar visibility, protected-folder
-    permission, checkout binding, and every unknown/future user field compare by private digest and
-    must remain exact. Helper reinstall merges the existing object so those preferences and unknown
-    fields also survive the post-commit helper refresh. The running Swift helper uses the same
-    recursive raw-JSON merge when supervision or repaired checkout binding is persisted, preserving
-    unknown top-level and nested future fields and restoring owner-only `0600` file permissions
-  - inventory the active Mongo storage backend **and runtime engine** from the installed runtime;
-    `compat` named-volume installs must checkpoint and content-verify the exact Docker volume before
-    source mutation, Docker bind installs must record the inspected image plus exact App Support
-    path, and native binds must be explicitly distinguished from Docker-created WiredTiger data
-  - an enabled source/Docker Recall runtime must preserve its explicit PGVector bind as derived
-    state. If the candidate's internal PostgreSQL credential differs from the role stored in
-    existing `PGDATA`, startup reconciles one stable owner-only runtime credential only after
-    verifying the exact Compose mount, PostgreSQL system/database/role identity, and recognized RAG
-    schema. It streams a deterministic digest of the complete schema plus every UUID-ordered
-    collection and embedding row before and after the role-only SQL, so equal row counts cannot hide
-    changed metadata, document, or vector content. It journals before changing the role, never logs
-    or publishes the secret or corpus rows, never rewrites vector rows, and fails closed on foreign,
-    partial, or concurrently changing `PGDATA`
-  - fetch may observe the target before shutdown, but parent/source activation, component refresh,
-    candidate config compilation, and candidate doctor validation happen only after the checkpoint
-  - copy and hash the pre-pull transaction runner into the private transaction; every later
-    checkpoint/activate/rollback/commit command uses that immutable runner rather than candidate source
-  - candidate config/runtime remain private and separate until validation succeeds; prerequisite
-    discovery during upgrade is check-only because Homebrew/system installation is not a reversible
-    transaction (the operator applies missing prerequisites separately and retries)
-  - failure or interruption restores recognized parent/component revisions without discarding
-    unknown local work, restores the exact stopped file and named-volume checkpoint, quarantines a
-    component first cloned by the failed attempt, and returns the prior running/stopped state
-  - rollback must fail closed before overwriting state if a checkout has moved to an unrecognized
-    commit, gained tracked work, a state path crosses a symlink/ownership boundary, or a Docker
-    checkpoint cannot be verified
-  - exact stopped bytes are rollback evidence; they do not prove semantic reversal of an arbitrary
-    forward-only data migration. The ledger must record semantic migration reversal as not proven.
-- A fast-forwarding predecessor shell does not acquire functions introduced by the downloaded
-  successor. The reviewed first hop therefore has an explicit successor-owned handoff:
-  - `release/upgrade-support.json` publishes the exact parent-history floor, supported canonical
-    config/continuity schemas, state-contract versions, and conditional predecessor-state
-    requirements. Source ancestry alone is not enough: durable stopped or ambiguous Mongo storage
-    must also have a directly observed engine identity or an owner-only clean-stop engine receipt.
-    Predecessors older than that floor, unrelated histories, unknown schemas, and missing engine
-    proof fail closed before fetch or transaction creation instead of being called universal
-  - the predecessor's immutable transaction runner and active pointer remain the authority for
-    checkout activation, rollback, and outer commit; the successor may accept the candidate only
-    after it verifies that immutable proof, ancestry, the published support floor, and the exact
-    prebuilt helper artifact
-  - terminal finalization is idempotent. If a committed or rolled-back ledger survives with its
-    active pointer because interruption occurred after the durable terminal write but before
-    pointer cleanup, the next start/launch/upgrade clears that pointer and reruns bounded cleanup;
-    it must not attempt an impossible second state transition or strand every CLI entrypoint
-  - at the predecessor's `candidate_activated` checkpoint, the dynamically loaded successor
-    continuity auditor invokes the successor bridge under the still-live parent CLI lock
-  - the bridge starts only the recorded stopped storage authority, captures a semantic baseline
-    from the stopped checkpoint, then starts the successor core in a fail-closed quiesced mode.
-    Canonical uploads, agent seeding, scheduler, Recall/RAG, MCP/OAuth reconnect, channel workers,
-    stale-cortex recovery, Telegram, Telegram Codex, voice, GlassHive callbacks, remote mapping, and
-    Prompt Workbench remain disabled until the old shell commits. The bridge captures live state and
-    requires a strict semantic comparison while that exact writer inventory remains disabled
-  - because the predecessor runner does not know future protected surfaces, the successor bridge
-    separately checkpoints ignored `LibreChat/.env` and App Support `helper-config.json` before
-    quiesced launch and binds both private manifest digests into the receipt. After outer commit and
-    a successful full-runtime start, the finalizer rechecks protected auth/owner environment fields
-    using fail-closed dotenv parsing, including whitespace/export/multiline/duplicate assignments.
-    Owner provider credentials (including Groq, XAI, Google, MS365, Foundry, Firecrawl, and adjacent
-    API keys/secrets) are digest-protected and cannot be removed or rotated merely because their
-    names also participate in generated runtime configuration
-    plus every helper field except runtime-owned `runtimeSupervision`. Only an actual semantic
-    mismatch is labeled as that surface's drift; generic full-runtime health/start failures remain
-    resumable without a false diagnosis. On proven drift, the finalizer stops the candidate,
-    restores that exact checkpoint, records recovery, and refuses to finalize
-  - exact successor environment/helper checkpoints remain under owner-only transaction storage
-    only until terminal proof. Public Git ignores and staged checks reject both
-    `upgrade-backups/**` and `successor-bridge/**`. Finalization removes only the known private
-    checkpoint files, preserves known sanitized comparison receipts, and retries a failed private
-    cleanup on later recovery/finalization calls instead of silently treating residue as complete
-  - strict Mongo comparison is lifecycle-aware only for an explicit schema-owned TTL policy. The
-    private manifest records one canonical Extended-JSON SHA-256 digest and effective expiry time
-    per expiring document plus one count/hash for all non-expiring documents, but no raw ID, token,
-    key, account, message, prompt, or provider value. The comparator uses the post-candidate
-    manifest's `capturedAt` as the cutoff and may disregard an expiring document on both sides only
-    when its effective database expiry is at or before that cutoff
-  - the declared TTL policy covers `agentapikeys.expiresAt`, channel delivery/ingress-quota/worker
-    lease `expiresAt`, channel pairing-attempt `windowExpiresAt`, `channelpairingcodes.expiresAt`,
-    `conversations.expiredAt`, `gatewaylinktokens.expiresAt`, `keys.expiresAt`,
-    `messages.expiredAt`, `sessions.expiration`, `telegramlinktokens.expiresAt`, and
-    `tokens.expiresAt` at zero delay; `files.expiresAt` at one hour; and `users.expiresAt` at seven
-    days, plus the schema-owned Viventium call session, gateway/Telegram/voice ingress, and
-    GlassHive callback-delivery expiry fields. A missing/malformed ledger, timestamp, digest,
-    policy, or future/non-expiring document
-    fails closed. This normalization does not weaken aggregate comparison for non-TTL collections
-  - expired one-use pairing/link tokens and expired sessions are lifecycle-ephemeral. Active API
-    keys, provider keys, link/pairing tokens, sessions, temporary chats/messages/files, and expiring
-    users remain exact until their declared expiry. Durable connections, channel threads, user
-    mappings, auth/provider personalization, agents, prompts, schedules, saved memory, and ordinary
-    non-expiring content remain byte-exact
-  - strict local continuity fingerprints every non-system Mongo collection by default, including
-    `toolcalls` and future/custom collections. Backup/export policy may still omit raw tool-call
-    payloads; that secret boundary does not justify omitting owner-private local hashes. Known TTL
-    collections carry per-document expiry ledgers so only records actually expired by the live
-    capture cutoff may disappear. Active deliveries, pairing attempts, worker leases, ingress
-    quotas/deduplication, call/voice ingress sessions, and callback deliveries remain protected.
-    Candidate writers must still remain quiesced during stopped/live comparison
-  - scheduler continuity hashes every column and row in every non-internal scheduling SQLite table,
-    including task run/delivery/status/next-run/conversation state and durable
-    `scheduled_prompt_runs`; future tables are protected by default
-  - storage-only startup must use the immutable transaction's exact native path plus checkpoint
-    profile/port and the recorded predecessor executable hash/version/arguments/dbpath/signature
-    identity, or the exact recorded Docker immutable image ID with either its bind path or
-    named-volume identity. A temporary Docker validator is loopback-only, transaction-scoped,
-    readiness-proven, and removed only after its container ID, labels, immutable image ID, port
-    binding, and data mount revalidate;
-    it must never discover or substitute a path, image, or volume from candidate labels
-  - every future running runtime writes an owner-only, digest-protected engine receipt only after
-    direct process/container observation. A clean stop rechecks the same profile, path or volume,
-    container, executable hash/version or immutable image ID, then seals a storage anchor and
-    fsyncs the receipt and parent directory. The receipt is a dedicated stopped-state transaction
-    surface, so candidate startup cannot destroy predecessor proof on rollback. Unclean/crashed,
-    group-readable, symlinked, corrupt, re-bound, storage-changed, missing-binary, or missing-image
-    receipts fail closed
-  - accepted legacy ledgers that say only `app_support_bind` are not enough to choose an engine,
-    and install mode is never creator-engine proof. A directly observed running-native process or
-    inspected Docker container is sufficient. A stopped durable bind or named volume requires the
-    sealed receipt and exact revalidation. The exact support-floor predecessor can record neither
-    for a raw stopped isolated bind after its container/process is gone; its old inspected
-    Docker-bind branch can also omit an immutable image. Those states are conditionally
-    unsupported and require a separately released intermediate that observes the running engine
-    and performs a clean stop, or a complete supported snapshot restored into a fresh same-profile
-    install
-  - an immutable physical clone can be used only as a diagnostic prerequisite check. Successfully
-    opening the same WiredTiger clone with a candidate native binary or container does not prove
-    which engine created the original and cannot authorize opening or mutating the original
-  - helper/source/runtime intent, conversations, memory, recall, schedules, auth/provider state,
-    channel state, managed and user-edited agents, and uploads are acceptance surfaces, not
-    incidental files
-  - a previously stopped install returns to stopped before acceptance; canonical uploads migration
-    remains deferred until the outer transaction has committed so predecessor rollback remains
-    byte-exact, then the successor finalizer restores the original running/stopped intent. It keeps
-    an owner-private pending finalization identity instead of starting a previously stopped runtime.
-    The first later foreground or detached start inherits that exact identity, keeps health plus
-    API/OAuth traffic unavailable until startup mutators complete, and runs an after-health
-    terminalizer. That terminalizer rechecks the checkpointed LibreChat environment and helper
-    configuration before marking the bridge complete. A crash after API readiness but before
-    terminalization remains pending and retries; terminalizer/receipt/ledger failure stops the
-    owned runtime. `--skip-health-checks` cannot bypass this upgrade-only monitor
-  - every mutating current-shell upgrade, including `--skip-pull` where predecessor and successor
-    source identities are equal, creates its own `quiesced-upgrade-session.json` receipt. A
-    same-source refresh may not skip candidate startup, strict comparison, post-commit stop, or
-    original-intent restoration merely because no Git commit changed
-  - the active transaction plus owner-private quiesced receipt is a durable restart guard. A
-    predecessor restart after candidate activation inherits quiescence even though its parent shell
-    cannot inherit child environment variables. After commit, the new `start` and next upgrade paths
-    retry an incomplete first-hop/current-session finalizer, including when helper installation is
-    skipped or is a no-op on a non-macOS test host
-  - full startup after commit owns managed seeding, database migrations/index reconciliation, and
-    every configured sidecar health gate. The exact source/run ID arms an owner-only fsync'd API
-    finalization receipt. `/health`, `/api/health`, ordinary API routes, and OAuth routes remain
-    unavailable until role/category seed, channel TTL/index verification and worker restoration,
-    OAuth reconnect initialization, migration inspection, stale-cortex recovery, and generation
-    runtime initialization finish. Required failure writes a failed receipt and exits; same-run
-    retry increments its attempt and converges. Derived Meilisearch synchronization is explicitly
-    recorded as rebuildable degraded state instead of being called complete. A failure leaves the
-    validated receipt resumable, preserves protected-state proof, and blocks completion until
-    `start` or the next upgrade recovers. Because these gates run after source commit, this path is
-    forward-recoverable but is **not one globally atomic transaction**; release reporting must
-    distinguish the remaining non-atomic boundaries rather than claiming rollback of committed
-    source
-  - the public CLI always exports its resolved App Support authority before any start/finalizer
-    path and creates or repairs the root plus managed runtime/state/state-continuity/snapshot/log
-    directories as owner-only `0700`, even under a permissive caller umask. A managed-directory
-    symlink fails before child creation or chmod rather than following it. Armed and quiesced API
-    modes are mutually exclusive. Clustered development elects one durable receipt writer while
-    every worker retains process-local readiness, and replacement failures use bounded exponential
-    backoff so a deterministic startup failure cannot create a receipt-clobbering fork storm
-  - default role/access-role/category seeding is ordered and idempotent: existing nonempty/custom
-    permissions, access-role fields, and custom categories are not overwritten. Interruption after
-    any seed stage keeps API readiness failed and the next attempt reruns the complete sequence.
-    Gateway-link TTL conversion uses in-place `collMod`, verifies the exact resulting key/options,
-    never drops the index or documents, and retries safely if a later index step fails. Scheduler
-    schema DDL begins an explicit SQLite `BEGIN IMMEDIATE`; interruption between `ALTER`/`CREATE`
-    statements rolls the whole schema attempt back and retry preserves every schedule row
-  - the memory-hardening LaunchAgent is derived host state outside the App Support/source
-    transaction. Upgrade must not bootout, replace, bootstrap, or uninstall it before strict
-    comparison and commit. Reconcile it only after protected full-runtime and deferred-uploads
-    finalization; if reconciliation fails, the loader restores the exact prior plist/mode/loaded
-    state and the committed upgrade remains retryable through `bin/viventium compile-config`
-  - every acceptance and finalization result is recorded only in owner-private App Support and
-    transaction receipts; public QA artifacts contain synthetic evidence
-- This is a bounded upgrade-support contract, not a claim that every historical checkout can skip
-  directly to the current release. The current published floor is the exact reviewed predecessor
-  commit in `release/upgrade-support.json`, subject to its predecessor-state requirements. Older
-  installs and exact-floor installs without required creator-engine proof need a separately proven
-  intermediate bridge or the supported snapshot/restore path before they can be called supported.
 - When `--restart` is used, stop must succeed before source pull. Helper refresh uses `--no-launch`;
   only an accepted post-audit followed by a successful runtime restart may relaunch the helper, so
   its login auto-start loop cannot race the continuity gate.
@@ -1974,111 +1012,63 @@ delta on the disposable MacBook Air. Until those gates pass, release wording rem
 
 ## GlassHive provider and canonical LIFE compiler contract
 
-- Supported source/Docker installs that select GlassHive enable its provider and host runtime from
-  the same compiled capability. They bootstrap canonical LIFE and expose GlassHive in Agent Builder;
-  missing Codex/Claude authentication is a visible readiness state, not a reason to substitute
-  another provider. The immutable Easy Install Native payload does not package GlassHive today and
-  must keep the provider compiled out until a signed payload includes and proves that runtime.
+- Supported new installs enable the core GlassHive conversation-provider/body role required for the
+  selected subscription-first chat route. This role is part of **Ready to chat** and carries the
+  canonical LIFE bootstrap. The wider GlassHive worker/project/takeover plane is a separate optional
+  capability and must not block the first useful answer. Missing authentication for a selected core
+  body is a visible chat-readiness state; a missing optional worker plane is only a capability-level
+  degraded state. Custom/API-key configurations may select a different approved conversation route.
 - When GlassHive and its provider surface are enabled, compilation registers the exact custom
   endpoint ID `glasshive-harness` with visible label **GlassHive**, exact model inventory, context
   limits, title generation pinned to a configured fast direct model, and unsupported OpenAI request
-  parameters removed. Provider activation is explicit: both `integrations.glasshive.enabled` and
-  `integrations.glasshive.provider.enabled` must be true. A mismatched provider-only setting fails
-  compilation, and an integration-only setting never silently migrates Main.
+  parameters removed.
 - Compilation publishes provider capabilities under the Agent endpoint. Main chat, cortex execution,
-  Phase B, workspace binding, native tools, and activity stream are enabled; activation classifier,
-  real-time voice, and automatic fallback target are disabled. The same registry owns
-  `default_access` and `allow_full_access`, so Builder defaults and backend enforcement compile from
-  one product truth.
-- The generated runtime carries the GlassHive provider base URL, authenticated provider secret,
-  server-side principal/tenant and delegation/access grants, allowed workspace roots, and
-  `VIVENTIUM_LIFE_DIR`. It emits distinct secrets for the provider endpoint, MCP broker, and
-  GlassHive runtime/control plane; LibreChat receives only the endpoint and MCP credentials it
-  needs, never the runtime administrator token. The shared capability-broker secret signs fresh
-  bootstrap bundles; GlassHive verifies that signature before accepting any projected environment
-  or harness configuration. Disabled or unavailable GlassHive provider
-  configuration is pruned from both custom endpoints and model picker additions; stale picker
-  entries are forbidden.
-- The generated provider environment is explicit and portable:
-  - `GLASSHIVE_PROVIDER_BASE_URL` is the OpenAI-compatible `/v1` base URL.
-  - `GLASSHIVE_PROVIDER_API_KEY` is the provider-only bearer credential and must remain secret.
-  - `GLASSHIVE_PROVIDER_PRINCIPAL_ID` and `GLASSHIVE_PROVIDER_TENANT_ID` bind the trusted service
-    identity.
-  - `GLASSHIVE_PROVIDER_TRUST_IDENTITY_HEADERS` enables compiler-granted LibreChat owner
-    delegation; it is not a caller-controlled permission.
-  - `GLASSHIVE_PROVIDER_ALLOW_FULL_ACCESS`, `GLASSHIVE_PROVIDER_DEFAULT_ACCESS`,
-    `GLASSHIVE_PROVIDER_DEFAULT_WORKSPACE`, and
-    `GLASSHIVE_PROVIDER_ALLOWED_WORKSPACE_ROOTS` own the server-side workspace grant.
-  - `VIVENTIUM_LIFE_DIR` is the canonical LIFE location shared by bootstrap and provider defaults.
-  These keys are generated outputs. Public examples document the canonical config fields instead
-  of publishing generated credentials or owner-machine values.
-- Multi-user connected-account inference is a separate, opt-in compiler boundary under
-  `integrations.glasshive.enterprise.provider_accounts.inference_broker`:
-  - the broker and proxy origins must be fixed HTTPS URLs; worker requests cannot choose an origin,
-    path, adapter, or authorization header
-  - the configured enterprise OpenAI-compatible origin is operator-trusted infrastructure and may
-    be an approved private gateway. Compilation therefore enforces HTTPS and a fixed value rather
-    than public-IP-only reachability; deployment review owns DNS, TLS, network egress, and gateway
-    credentials. LibreChat disables redirect following and rejects every upstream `3xx`, and no
-    browser, MCP, worker, or grant request may add an origin or upstream header override
-  - every GlassHive tenant/owner maps to exactly one LibreChat user through an explicit reviewed
-    `owner_bindings` entry. `operator_verified` records an operator-reviewed mapping;
-    `shared_oidc_subject` is accepted only when both systems use the same canonical subject
-  - compilation fails closed when the broker is enabled without a verified mapping, with duplicate
-    owners, an unsupported proof, an insecure URL, or an incomplete configuration
-  - the generated runtime derives the broker signing secret from the existing scoped capability
-    secret. Operators do not provision a second shared secret and public config never contains it
-  - GlassHive receives only an owner-bound, run-bound, expiring grant and an allowlisted typed
-    adapter. The broker implements both Chat Completions and Responses for compatible consumers;
-    GlassHive's Codex issuer requests and enforces the Responses adapter. User API keys and
-    enterprise route credentials remain inside LibreChat; neither the bootstrap bundle nor a
-    persisted workspace, template, event, log, or run record may contain them
-  - the generated `VIVENTIUM_GLASSHIVE_INFERENCE_PROXY_URL` is consumed only by LibreChat's fixed
-    proxy route, while `GLASSHIVE_INFERENCE_BROKER_*` configures GlassHive's grant issuer client.
-    Disabled configuration emits none of these broker values
-  Subscription-based native Codex/Claude sign-in remains the isolated per-worker workstation path;
-  the inference broker does not translate consumer subscription sessions into an API protocol.
-- With the provider enabled, preflight requires at least one installed and authenticated
-  Codex or Claude CLI before a supported install completes. A missing login is an actionable manual
-  prerequisite (`codex login` or `claude auth login`), not a silent direct-model fallback. An
-  existing install whose harness authentication later expires keeps the saved provider/model and
-  reports `Action Required`; it must never rewrite the Agent to OpenAI.
-- The Viventium local profile deliberately grants its trusted LibreChat service identity delegation
-  and full access so Agent Builder can preserve per-user ownership and the approved LIFE/full
-  default. Full access disables harness sandbox and approval gates, and the Builder must say so.
-  Those are compiler-owned grants, not powers that an arbitrary request header may enable.
-  A generic GlassHive endpoint deployment remains portable and defaults to its configured principal,
-  default workspace, and workspace-only access.
-- Source/Docker install, configure, and committed upgrade additively bootstrap canonical LIFE from
-  the public-safe fixture whether or not GlassHive is enabled. When the provider is enabled, its
-  configured working-folder override remains authoritative; otherwise the per-user default is
-  `~/Documents/Viventium/Life`. Custom LIFE and allowed-workspace-root values must be absolute
-  server-side paths (a leading `~` is supported); relative values fail compilation rather than
-  resolving differently in the compiler, bootstrap CLI, and GlassHive process. The runtime-env
-  reader decodes exactly one compiler-emitted shell word without evaluating shell syntax, including
-  paths with spaces, apostrophes, or backslashes. Missing directories/files are created owner-only, existing
-  personalized content is never overwritten, and destination/root symlinks are skipped or rejected
-  rather than followed. A macOS Documents symlink is accepted only when its resolved destination
-  stays inside the current user's home, covering iCloud Desktop and Documents without permitting an
-  ancestor escape; a symlink loop produces the same bounded actionable bootstrap error, never a raw
-  traceback. File/directory/permission conflicts are collected while independent template
-  entries continue; the owner-only receipt records every relative conflict and the CLI reports
-  actionable names instead of a raw traceback. Template version/digest state is written under
-  private Viventium App Support—not inside LIFE. Upgrade writes that state only after source/runtime
-  commit, so rollback cannot claim a template version it did not retain. A malformed or unavailable
-  LIFE path is a start-blocking error when GlassHive is enabled because the provider cannot run
-  truthfully without its workspace; otherwise it is a visible warning and core direct chat may
-  continue.
-- The immutable Easy Install Native payload still has no LIFE-consuming GlassHive runtime. It does
-  not write an inert Documents scaffold or trigger a macOS Documents-access prompt. Native assembly
-  fails if any of the four shipped compiled defaults (`librechat.yaml`, `prompt-bundle.json`,
-  `native-runtime.env`, or `viventium-agents.yaml`) advertises either `glasshive-harness` or
-  `glasshive-workers-projects`; a future signed payload must ship and prove the consumer before it
-  can add a Native LIFE bootstrap.
+  Phase B, workspace binding, native tools, activity stream, the generic text fallback target, and
+  the optional provider-internal serial fallback are enabled; activation classifier and real-time
+  voice remain disabled. Every built-in Main/background/handoff Agent uses
+  `fallback_llm_provider: glasshive-harness`, `fallback_llm_model: claude-code:opus`, and fallback
+  reasoning effort `high`. `glasshive_options.fallback_*` remains an explicitly
+  configurable advanced option and is disabled by default. When GlassHive is disabled for an install,
+  runtime normalization replaces the built-in GlassHive fallback with a distinct direct-provider
+  fallback instead of silently dropping recovery.
+- The generated runtime carries the GlassHive provider base URL, authenticated provider secret, and
+  `VIVENTIUM_LIFE_DIR`. Disabled or unavailable GlassHive provider configuration is pruned from both
+  custom endpoints and model picker additions; stale picker entries are forbidden.
+- Install, upgrade, and start additively bootstrap the configured LIFE directory from the public-safe
+  fixture. Missing directories/files are created owner-only, existing personalized content is never
+  overwritten, and destination/root symlinks are skipped or rejected rather than followed. Template
+  version/digest state is written under private Viventium App Support—not inside LIFE. A malformed or
+  unavailable LIFE path is reported clearly but never prevents the core chat runtime from starting.
 - Bootstrap excludes `.git`, `CLAUDE.md`, `CODEX.md`, delegated-mission scaffolding, night-run
   receipts, and runtime logs. The canonical `AGENTS.md` is shared by both harnesses.
 - Generated runtime files remain compiler outputs. Operators must not patch App Support YAML/env or
   the live LIFE folder and call that a source fix.
+
+## LIFE Activation And Intent-Only Setup Contract
+
+This source-accepted contract is current product truth but is not yet implemented or accepted end
+to end. It extends the bootstrap rules above without authorizing background file discovery.
+
+- `viventium life` and the authenticated setup/LIFE API expose one canonical enabled state and LIFE
+  root. They validate owner scope, migrate a supported legacy root safely, and never place a private
+  path in process arguments, public logs, or public QA.
+- The Mac helper exposes **Setup**, **Open Life Folder**, **Choose Life Folders**, and a short
+  plain-language **What is Life?** explanation through that same validated boundary. These are views
+  and explicit user actions, not a second state store.
+- **Connect Your Life** is optional, dismissible, and resumable. It may collect categories, a short
+  custom note, Select/Clear all, and explicit native folder choices. Version 1 records intent only:
+  it does not scan, read, upload, index, ingest, watch, or claim that a selected source is connected.
+- The intent record is one human-readable managed block in
+  `Life/Sources/WHAT_TO_CONNECT.md`. Updates replace only that block and preserve all manual text
+  outside it. Connection wishes never enter `AGENTS.md` or `99_System/sources.yaml`.
+- A remote-phone user receives truthful guidance that native folder choice must happen on the Mac.
+  Remote setup cannot claim that a server-side path picker selected local folders.
+- Skip, defer, cancel, invalid path, permission denial, symlink, full disk, restart, upgrade, and
+  repeated submission preserve existing LIFE content and return one specific recovery action.
+
+Acceptance is owned by `INST-027` and `INST-UC-019` in
+`qa/installer-resilience/cases.md`. Until those cases pass, existing LIFE bootstrap coverage is only
+partial and must not be presented as the complete setup experience.
 
 ## Feelings compiler contract
 
@@ -2086,8 +1076,7 @@ delta on the disposable MacBook Air. Until those gates pass, release wording rem
 
 - operator availability and the per-user default-enabled seed;
 - agent scope (`all_agents` by default or `conscious_agent`);
-- all nine default Nature/half-life/enabled values, whose band semantics and product requirements
-  are owned by `54_Emotional_Cortex_And_Feeling_State.md`;
+- all nine default Nature/half-life/enabled values;
 - reaction activation mode (`always`, `classified`, or `disabled`);
 - reaction provider, model, Responses API, reasoning effort, Fast/Priority tier, and timeout;
 - classified-activation provider/model/confidence/timeout.
@@ -2152,39 +1141,33 @@ config and recompile/restart; they do not patch generated App Support env files.
     produce a false skipped/stopped state for enabled installs
   - the launcher must retry Telegram in the background and expose that pending state through
     `bin/viventium status`
-- Detached installer startup must track the detached launch ownership boundary, not only the
+- Partial LibreChat startup must repair each required surface independently:
+  - an occupied or unhealthy frontend port must not suppress startup of a missing Core API
+  - an occupied or unhealthy Core API port must not suppress startup of a missing frontend
+  - each blocked surface remains explicit while every launchable missing peer continues to repair
+- Detached installer startup must track the detached launch ownership boundary, not only a
   short-lived wrapper pid:
-  - `bin/viventium start` is allowed to hand control off to a detached process group and exit while
-    background builds continue
+  - the canonical detached `bin/viventium start` owner must remain alive while its process group has
+    live runtime peers; this gives release checks one exact, immutable checkout-to-process proof
   - install/start wait logic must therefore follow the recorded detached launch process group under
     `state/runtime/<profile>/detached-launch.pgid` before declaring early failure
-  - the launcher records start identities for surviving process-group members alongside the PGID;
-    destructive stop selection for a noncanonical App Support root requires at least one exact live
-    member match, and path/pattern/port matches are only corroboration
-  - two runtimes may deliberately share one checkout; stop/restart for one alternate App Support
-    root must never signal the other runtime merely because their process cwd or command paths match
-  - alternate App Support start/stop/restart must also preserve canonical/shared Docker services;
-    global compose names and container names do not prove per-runtime ownership, so noncanonical
-    launch disables machine-global Docker mutation until exact container receipts exist while
-    retaining runtime-owned native Mongo and per-runtime LiveKit startup
-  - an explicit `VIVENTIUM_ENV_FILE` is a complete runtime isolation boundary for direct LibreChat
-    startup and must not be supplemented with canonical production App Support credentials or
-    provider settings
   - otherwise clean first builds can be reported as `stopped during startup` during a valid warm-up
     handoff
+- Runtime-owner publication is transactional:
+  - a new start snapshots only an exact live prior owner before publishing its own signed state
+  - if that start exits, it restores the still-live prior owner; without one, it removes only its
+    own owner record
+  - it must never restore over a successor owner or leave a dead transient start as release proof
+- Foreground launcher signals must terminate startup before cleanup:
+  - `INT` and `TERM` exit with their normal signal status and then run the `EXIT` cleanup once
+  - cleanup must not return to startup work, create new watchdogs, or print a stopped result while
+    startup continues
 - Re-entrant launch requests during detached startup must be treated as the same in-flight boot:
   - helper/login-item auto-start can legitimately invoke `bin/viventium launch` while the detached
     install-owned startup is still warming
   - if the recorded detached launch process group is still alive, `bin/viventium launch` must
     return `already starting` instead of tearing the stack down and restarting it mid-boot
 - The CLI operation lock protects startup preparation, not the lifetime of the foreground stack:
-  - every installer exit path, including help, validation failure, recovery failure, successful
-    no-start installation, and successful runtime handoff, must release
-    `state/cli-operation.lock`; the install rollback trap must compose with lock cleanup instead of
-    replacing or disabling it
-  - a lock-owning CLI command that delegates to Python, Node, or a shell wrapper must retain the
-    parent shell through delegated completion so its EXIT/signal trap releases the lock; snapshot,
-    memory hardening, and memory dedupe must not discard that trap with `exec`
   - `bin/viventium start` must release `state/cli-operation.lock` after config compilation,
     schedule sync, and runtime handoff setup, before entering the long-running stack supervisor
   - otherwise status-bar actions such as Stop/Quit, prompt workbench launch, manual memory
@@ -2204,38 +1187,12 @@ config and recompile/restart; they do not patch generated App Support env files.
     not binary integrity or publisher provenance
   - the binary sidecar detects accidental replacement/corruption but does not replace Developer ID
     signing, notarization, or an immutable signed release manifest
-  - source-mode helper install and uninstall must validate `~/Applications` without following a
-    symlink and must refuse any `Viventium.app` or legacy helper bundle that is not owned by the
-    current user and identified by the exact Viventium bundle ID/executable shape
-  - validation is not a lease: creation of a missing `~/Applications` must be relative to an
-    owner-validated parent descriptor, and every later stage, rename, rollback, commit, and
-    uninstall must reopen the exact captured directory identity without following a replacement
-  - the capture binds a recursive content fingerprint for every recognized existing helper and the
-    staged candidate; changed same-inode contents stop deletion, commit, or rollback and retain the
-    identity-bound backup instead of treating a familiar filename as continuing authorization
-  - helper replacement is assembled and verified in a same-filesystem staging directory; an
-    existing recognized helper and the one supported marker-free legacy bundle are moved to
-    same-filesystem backups and restored on install failure before those backups are retired; the
-    activation result is persisted owner-only inside the private stage before the child returns so
-    a shell interruption cannot lose the information required for descriptor-safe recovery
-  - newly installed helper bundles carry a structured Viventium owner marker; uninstall never
-    removes an unrelated application merely because its filename resembles Viventium
   - when helper install runs from a checkout under macOS protected user folders such as
     `~/Documents`, `~/Desktop`, or `~/Downloads`, the helper runtime binding must prefer the
     supported public checkout outside those folders (default `~/viventium`) when that checkout is
     available
   - helper/status-bar config writes must use that same resolver so toggling the helper does not
     silently rebind it back to a protected-folder checkout and retrigger macOS TCC folder prompts
-  - helper install/upgrade must materialize a code-only Scheduling Cortex runtime component under
-    App Support and bind helper launches to it; Scheduler dependency installation and execution
-    must not occur in the selected source checkout, even when an explicitly acknowledged developer
-    checkout lives in a protected folder
-  - that component transaction excludes source `.venv`, caches, and DB files; the per-runtime
-    schedules DB remains under App Support state and survives helper code replacement unchanged.
-    An existing installed component `.venv` is transferred only within the same App Support
-    transaction; until the new component commits, failure moves it back into the predecessor backup
-    before restoring that exact backup. Backup cleanup after commit is non-rollbackable so a partial
-    cleanup cannot replace the accepted component with a venv-less predecessor
 - On April 19, 2026, macOS folder-access prompts exposed the same install/runtime boundary again:
   - the menu-bar helper itself is the macOS app that TCC evaluates, not the shell the user
     originally used to run install commands
@@ -2268,16 +1225,6 @@ config and recompile/restart; they do not patch generated App Support env files.
     pulling, or migrating code, runtime config, snapshots, or database state
   - helper refresh from this command should relaunch the status-bar helper so applying the setting
     does not make the menu disappear until the next login
-  - helper installation writes an owner-private forward-recovery receipt before changing config,
-    the installed scheduling component, compatibility launchers, app bundle, or login registration.
-    Config, launcher, and LaunchAgent files publish by atomic sibling replacement; Scheduler and
-    the helper bundle keep their own identity-bound rename transactions. A shell interruption at
-    any completed phase is retried by the next public `start`/`launch`, and the receipt clears only
-    after the bundle transaction and registration path finish
-  - helper supervision health includes every configured managed sidecar URL, including Scheduling
-    Cortex and Recall/RAG, in addition to Telegram process health. A core-healthy/sidecar-unhealthy
-    state remains visibly `Needs Attention` but still enters bounded repair backoff rather than
-    suppressing recovery forever
   - helper config carries the same explicit protected-folder acknowledgement so the helper does not
     silently self-heal the developer checkout back to `~/viventium`
   - global or stale checkout invocations of start, stop, and helper-binding commands should re-exec
@@ -2325,18 +1272,6 @@ config and recompile/restart; they do not patch generated App Support env files.
   - helper startup QA must inspect loginwindow/system logs, the helper process, helper logs, and the
     live runtime surfaces; the presence of a macOS login item alone is not proof that Viventium will
     start after reboot
-- A later-dead local-prod runtime is the same lifecycle responsibility, not a separate manual-heal
-  path:
-  - helper polling must reconcile a persisted running/stopped intent after the login launch window
-    has passed
-  - an unexpected stopped runtime is relaunched through the normal detached public CLI path with
-    bounded exponential backoff and a stable-health reset window
-  - repeated short-lived starts retain crash-loop history so helper polling cannot create restart
-    storms
-  - a user-selected `Stop` or `Quit` persists stopped intent before shutdown begins; polling must
-    not undo that choice
-  - helper reinstall/upgrade must preserve the supervision record alongside existing helper
-    preferences
 - The helper's `Advanced > Prompt Workbench` submenu is a separate lifecycle surface:
   - `Open` must start the workbench if needed and then open the browser
   - `Start` and `Stop` must call `bin/viventium prompt-workbench ...`, not the main stack start/stop
@@ -2396,6 +1331,9 @@ config and recompile/restart; they do not patch generated App Support env files.
     nested source had already been updated
   - release readiness for built-in agent/prompt/runtime changes therefore includes updating and
     verifying the parent component pin, not only reviewing the nested repo
+- On August 30, 2026, the reviewed public LibreChat follow-up merged at
+  `8c0b30234f5e99a56a1a0bac1f791575e60eea35`; the parent lock, Native payload manifest, and
+  installer lifecycle inventory must identify that same commit.
 - The same April 13, 2026 audit also clarified the existing-install upgrade boundary:
   - the startup seed path already upserts built-in agents from the checked-out bundle on every run
   - existing installs therefore self-heal only after the supported upgrade path refreshes the
@@ -2403,58 +1341,16 @@ config and recompile/restart; they do not patch generated App Support env files.
   - the product gap is not “missing reseed logic”; it is failing to move stale installs onto the
     reviewed pinned checkout before that reseed/upsert runs
 - On April 19, 2026, a live local rollback incident clarified the ownership boundary inside that
-  reseed path; the July 22 Easy Install audit added the missing safe-update half:
-  - startup reseed must not overwrite a real user edit to built-in agent fields
-  - protected fields include at least name/description, instructions, tools, model/provider, model
-    bags, voice model/provider/bag, conversation starters, category, and background cortex wiring
-  - every successful seed stores a mode-`0600`, app-owned, non-personal managed baseline outside git.
-    Upgrade performs a three-way comparison of prior shipped baseline, live value, and new shipped
-    value: untouched fields advance; live values already equal to the new bundle are idempotent;
-    user-edited fields remain live and are recorded as unresolved drift
-  - object fields merge by path, and `background_cortices` merges by stable `agent_id`, so one custom
-    activation prompt does not freeze unrelated shipped cortex improvements
-  - interrupted runs advance the baseline only after all agent writes/ACL work succeed. For the
-    first supported upgrade from a legacy install with no local baseline, `viventium upgrade`
-    captures the exact pre-pull and post-bootstrap LibreChat commits. The current CLI writes an
-    owner-only mode-`0600` one-time App Support record bound to those refs, the successor bundle,
-    the migration registry, and the immutable upgrade transaction; generated runtime files and
-    ambient environment variables are not trusted migration evidence. Previously shipped CLIs did
-    not write this handoff. On their first upgrade into a baseline-aware release, the new startup
-    path derives the predecessor only from the owner-only, runner-hash-verified upgrade ledger when
-    it proves the same predecessor/successor transition. A mode-`0600` per-transaction receipt
-    prevents that discovered migration from being recreated after consumption. The transitional
-    `runtime.env` marker remains supported and is removed before canonical regeneration, but it is
-    not required for an upgrade from the actual previously shipped CLI
-  - the public registry covers all 76 published parent lock revisions from the reviewed April 2,
-    2026 support floor: 64 retrievable LibreChat pins resolve to 22 managed-baseline groups, and
-    three lock entries are explicit tombstones because their nested objects were never published.
-    Standalone nested verification re-resolves all 64 objects without an adjacent parent checkout;
-    full regeneration requires an explicit exact parent repository root. The artifact records the
-    last parent lock-history commit it audited, and later parent checks stop at that immutable
-    boundary rather than moving branch HEAD; publishing the new nested pin therefore cannot force a
-    self-referential rewrite of the already-reviewed nested registry
-  - the seed path resolves only an exact registry match. The registry binds known predecessor
-    commits and their source-bundle hash to hash-only managed-field fingerprints; registry,
-    baseline, handoff, bundle, and source hashes are recomputed before use. A matching prior shipped
-    value advances to current source, while a live value that differs from both prior and current
-    remains protected. Exact interrupted retries reuse the same record; different, unknown,
-    malformed, ambiguous, stale, or tampered evidence fails closed. Successful consumption happens
-    durably only after every agent write, ACL update, and next-baseline write succeeds
-  - canonical runtime repair receives that same reconciled/effective assignment. It must not restore
-    incoming source values over protected live model/provider, tools, voice, prompt, or other managed
-    drift after the three-way update has preserved it
-  - the migration registry is a required native payload asset, so source, assembled payload, and
-    installed first-upgrade behavior cannot silently diverge. Native currently has no supported
-    cross-release upgrade lane: its `upgrade` command requires a future signed Bootstrap, and a
-    different immutable release root is refused rather than adopted in place. Fresh Native installs
-    seed current source and establish the local baseline; same-release starts reuse it. The future
-    signed release-replacement transaction must carry an authenticated predecessor identity into
-    this shipped registry before cross-release Native upgrade can be enabled. Reviewed sync
-    (`viventium-sync-agents.js compare` plus the narrowest safe push mode) remains the explicit path
-    for unsupported historical predecessors or intentionally reconciled user drift
-  - the startup seed path may still create missing built-ins, fill missing fields, migrate only the
-    placeholder owner to the one verified admin, repair ACLs, and apply canonical runtime
-    normalization to the effective live assignment
+  reseed path:
+  - startup reseed must not overwrite live user-managed built-in agent fields on existing installs
+  - protected live fields include at least name/description, instructions, tools, model/provider,
+    model bags, voice model/provider/bag, conversation starters, category, and background cortex
+    wiring
+  - the startup seed path may still create missing built-ins, fill missing fields, repair ACLs, and
+    apply canonical runtime normalization to the effective live assignment
+  - intentional changes to those live user-managed fields belong in reviewed sync flows such as
+    `viventium-sync-agents.js compare` plus the narrowest safe push mode, not in automatic startup
+    reseed
 - The same April 13, 2026 audit clarified the recall-default ownership boundary:
   - if local conversation recall should default on when the machine already supports the local
     recall path, that default must be set consistently in shared config-building layers
@@ -2489,10 +1385,6 @@ config and recompile/restart; they do not patch generated App Support env files.
   - the parent component pin itself must be the exact published full commit SHA from the nested
     component repo; a mistyped or locally copied hash is enough to break the supported fetch path
     even when the intended nested fix is already live on origin
-  - review-head pins must be marked `review-head-pending-merge` in both the parent component lock
-    and the Native component policy. The Native candidate producer fails closed until both records
-    are deliberately changed to `merged` after the nested changes land, and it independently checks
-    that the Native LibreChat commit equals the parent pin
   - a later July 19, 2026 audit separated clean refresh work from protected local work: a clean
     selected checkout at a different HEAD is `refresh_required` and may move to the exact pin, while
     dirty, unreadable, orphan-risk, unrelated, or unverifiable component state blocks before parent
@@ -2527,6 +1419,12 @@ config and recompile/restart; they do not patch generated App Support env files.
   - `bin/viventium status` must distinguish "configured but intentionally stopped" from "still
     starting" by reading the recorded stack-owner state instead of treating any failed live probe as
     startup in progress
+  - a user-issued Stop through a supported Viventium lifecycle surface must persist one shared
+    intentionally-stopped state consumed by the helper, login item, watchdogs, and component
+    supervisors; none may relaunch the stopped product or managed dependency until an explicit
+    Start/Restart clears that state; when raw process termination cannot be distinguished from a
+    crash, the UI must expose the persistent Stop action instead of promising that Activity Monitor
+    termination is authoritative
   - local loopback health checks in install summary should prefer `curl` before Python urllib on
     macOS hosts where Python probing can misreport localhost reachability
   - local Meilisearch readiness must require the configured API key, not only unauthenticated
@@ -2548,11 +1446,11 @@ config and recompile/restart; they do not patch generated App Support env files.
     agree when GlassHive is off
   - otherwise a missing local GlassHive MCP can surface to fresh users as a generic `No key found`
     error even though foundation-model auth is healthy
-- On May 31, 2026, the nightly-routines QA follow-up made GlassHive part of the supported
-  source/Docker install and upgrade path because the built-in nightly reflection uses scheduled
-  Workbench prompts delivered through GlassHive. The approved July 18, 2026 Easy Install Native
-  contract excludes that unshipped stack: existing explicit source/Docker state is preserved, while
-  new Native installs compile GlassHive, Workbench schedules, and worker-auth prompts out.
+- On May 31, 2026, the nightly-routines QA follow-up made GlassHive part of the supported local
+  install and upgrade path because the built-in nightly reflection uses scheduled Workbench prompts
+  delivered through GlassHive. The approved July 18, 2026 native-core acceptance contract narrows when it
+  activates: the capability remains supported, existing explicit state is preserved, and new
+  Easy Install installations defer worker auth and schedules until after the first useful answer.
 - The same April 13, 2026 remote clean-machine pass exposed the public-clone bootstrap boundary:
   - a shipped public checkout can contain vendored component source without nested git history
   - `bootstrap_components.py` must therefore treat a bootable vendored component tree as valid
@@ -2574,6 +1472,18 @@ config and recompile/restart; they do not patch generated App Support env files.
   - an OAuth provider may reject an access token before its stored expiry; the Codex route refreshes
     and replays exactly once on the first provider 401, deduplicates concurrent refreshes per user,
     and preserves the original authenticated fallback/error path if refresh fails
+- On August 4, 2026, a real reconnect with an already-usable credential exposed a separate browser
+  attempt boundary:
+  - saved credential expiry is account state, not proof that the newly opened popup completed; each
+    start returns an unpredictable `attemptId`, and the browser polls authenticated status for that
+    user, provider, and attempt
+  - starting again supersedes the older attempt; stale callbacks, popup messages, and in-flight
+    exchanges cannot complete or overwrite the newer attempt
+  - attempt state is process-local and expires after 30 minutes; a server restart during consent
+    asks the user to retry instead of accepting stale completion
+  - real Chrome acceptance with a pre-existing credential kept the provider chooser/consent popup
+    open beyond the old false-close window, then closed it only after the matching callback and
+    displayed the saved state
 - On April 9, 2026, a local restart verified the memory-writer contract end to end:
   - before restart, the live generated runtime still pointed memory at `openai / gpt-5.4` and the
     running helper logs showed the unsupported-provider initialization failure
@@ -2638,190 +1548,57 @@ config and recompile/restart; they do not patch generated App Support env files.
   - the hosted wizard must not silently default new installs to xAI before the user has explicitly
     configured and QA'd that provider
 
-### July 20, 2026 Ownership-Safe Failure And Removal Boundary
+## August 8, 2026 Cognitive Integrity Contract
 
-Isolated Easy Install Docker QA exposed three destructive-boundary rules that apply to every
-installation profile:
+The compiler now owns these continuity-critical values across source and generated runtime:
 
-- Helper ownership must survive across CLI processes. Install writes an atomic owner-only receipt
-  under canonical App Support state after an explicit helper skip or a successful helper install.
-  Uninstall reads and validates that receipt before moving App Support into the recoverable removal
-  backup. It removes the helper only when the receipt says this target owns it. A receipt-less legacy
-  install may migrate only after its helper config and bundle marker both prove the same canonical
-  target; unknown ownership fails closed without touching the helper.
-- A failed install must drain the exact detached process group that the attempt recorded before
-  rolling back config. The recorded group is signalable only when it is not the current CLI group and
-  its live command lines are scoped to this repo or App Support target. Cleanup sends bounded TERM,
-  then KILL only if required, and clears the matching group/native-Mongo pid records. It must never
-  use a broad name-based kill.
-- A disabled Telegram integration does not own the fixed LaunchAgent label merely because the label
-  exists. LaunchAgent submission writes a mode-`0600`, target-bound receipt; stop/restart may query or
-  boot out that label only with a valid receipt. Legacy migration additionally requires the recorded
-  Telegram PID, the live launchctl PID, and process scope to agree.
-- Local password recovery must follow the selected runtime, not a hard-coded parent/nested checkout
-  assumption. `password-reset-link` validates and resolves the selected LibreChat directory before
-  executing its helper. An explicit `DOMAIN_CLIENT` wins, followed by `CLIENT_URL`, then the compiled
-  `VIVENTIUM_PUBLIC_CLIENT_URL`; only when none is configured may the CLI synthesize the configured
-  loopback frontend origin. A missing or invalid selected source fails closed without issuing a
-  token. This keeps non-loopback deployments intact while making the default local Easy Install
-  recovery path work without extra origin configuration.
-- The immutable Native payload must expose the same local recovery capability. Its public CLI ships
-  `password-reset-link <email>`, starts the installed Native runtime when necessary, and invokes only
-  the payload's pinned Node executable and bundled LibreChat helper against the private Native
-  MongoDB Unix socket. It must
-  construct the child environment from the compiler-owned Native allowlist and machine-owned runtime
-  secrets rather than inheriting provider credentials from the calling shell. A missing helper,
-  mismatched release pointer, invalid email, or failed issuance is a hard failure; public browser
-  password reset remains disabled when no email delivery service is configured.
-- Immutable Native LibreChat must not expose its backend on the shared loopback API port. The
-  backend listens on one owner-checked Unix socket under the mode-`0700` Native runtime directory;
-  the browser-facing `3190` proxy validates the exact socket path, owner and mode before launch and
-  uses that socket for ordinary HTTP, first-admin registration, and WebSocket upgrades. Startup,
-  health, status, stop, and rollback bind the socket listener to the recorded LibreChat process
-  group, remove only a proven stale owned socket, and reject a symlink, non-socket, foreign owner, or
-  foreign listener. A process that acquires the historical TCP `3180` port must receive zero Native
-  traffic. Source and Docker profiles retain their documented TCP API contracts; this isolation is
-  specific to the immutable Native Easy Install runtime.
-- Immutable Native MongoDB must not expose an unauthenticated TCP listener, including loopback.
-  `mongod` binds only the exact support-owned Unix socket under the mode-`0700` runtime directory,
-  with socket mode `0600`; its automatic `/tmp` socket is disabled. Startup and maintenance bind
-  that socket to the recorded MongoDB process group, reject foreign/stale-unsafe paths, and fail if
-  any process in that group owns a TCP listener. Source and Docker profiles retain their separate
-  configured MongoDB TCP contracts.
-- The Native release is an **Easy Install** surface. Its public CLI and helper expose complete
-  snapshot and in-profile restore now that both use the shared public logical-bundle validator and
-  the Native transaction below. They must not advertise Custom Settings Install, in-place source
-  upgrade, or cross-profile migration while those implementations are absent. Ordinary users see
-  only actions that work.
-  Custom Settings Install remains a supported source-installer choice; moving an established Native
-  data directory to or from the source/Docker profile requires a separately reviewed migration and
-  must never be implied by a menu item. Native updates arrive through a newly verified signed
-  Bootstrap, not an in-place Git or package-manager command.
-- Native snapshot uses the installed immutable payload's pinned Python, Node, LibreChat Mongo/BSON
-  dependencies, and the exact owner-checked Mongo Unix socket. It captures only the allowlisted
-  logical Mongo collections, sanitized canonical config, bounded App-Support uploads, and an online
-  schedule backup. Provider/channel/browser credentials and derived Recall state remain excluded.
-  The frontend proxy and LibreChat writer stop before capture, no foreign Mongo client may retain the
-  private socket, and the exact prior stopped/Mongo-only/full service state returns afterward. A
-  successful semantic validation is required before the owner-only `LATEST_PATH` pointer is
-  atomically replaced; a failed capture preserves the prior pointer. Native manifests bind the
-  captured data schema and source release identity; restore accepts only the current release's
-  declared compatibility range and requires a reviewed migration for any schema transition.
-- Raw tool-call result and argument payloads are not portable continuity data. Tool-call collection
-  rows are excluded, and tool-call parts embedded in otherwise preserved message history have their
-  argument/result payload removed structurally. This intentionally trades tool-transcript fidelity
-  for the credential boundary: arbitrary plaintext returned by tools cannot be proven secret-free
-  from key names alone. Ordinary user and assistant message text remains canonical chat history and
-  therefore stays inside the owner-only, not-self-encrypted backup boundary.
-- Native restore accepts only a complete owner-only bundle whose recorded profile and database are
-  exactly `native` and `LibreChat`. Source/Docker bundles fail as unsupported migrations. Before any
-  live mutation or service stop, it bounds disk/time/file use, copies the source through no-follow
-  source descriptors into a private App-Support stage, proves source/copy hashes and inode stability,
-  validates only that private copy, stages files and a separate socket-only Mongo data directory,
-  imports through a transaction claim, and stops that isolated staging process. Its strict activation
-  and rollback journal covers the exact mutable roots: canonical config, Mongo data, uploads, Native
-  schedules, and Native continuity ledgers. Every rename has a durable pending/completed transition;
-  rollback first validates the complete remaining checkpoint and durably advances each reversed root
-  so a second process can resume after loss at any rollback rename. A missing/stale pid record cannot
-  authorize activation: fixed listeners, private sockets, process guards, and open handles below all
-  mutable roots must prove complete quiescence.
-- Native restore never replaces `native-runtime.json`, `runtime.env`, Native machine secrets, helper
-  binding, or the immutable release tree. The journal binds the exact prior stopped/Mongo-only/full
-  service intent. If the prior runtime was running, the restored runtime must start and pass installed
-  health before commit; activation/start/health failure or next-command recovery rolls back the
-  mutable roots and returns that exact prior service state before the journal is retired. Read-only
-  lifecycle commands fail closed while recovery is pending; mutating commands recover under the
-  installed release identity. A newly signed Bootstrap refuses to download or cross the release
-  identity boundary until the currently installed release has cleared its journal. Restore success
-  still requires local browser-password reset, account and channel reconnection, and Recall rebuild.
-  The retained pre-restore checkpoint is machine-local, owner-only, and not a portable encrypted
-  backup. Helper logs use owner-only directories and no-follow regular-file descriptors; an unsafe
-  log target disables that action instead of following or replacing another file.
-- Native compliance must bind both the declared license expression and the actual notice bytes
-  shipped for every physical package. A recognized SPDX token without a package-owned LICENSE,
-  LICENCE, COPYING, or NOTICE file is not a pass: the generator records `notice_present: false`,
-  marks the package for review, and the independent verifier rejects empty or tampered inventories.
-  Compiler/assembler component metadata is hash-bound objects, so generator and verifier must read
-  the nested `version` field rather than stringifying the whole record. Legal approval is never
-  inferred from a package name, a dependency being popular, or a permissive-looking declaration.
+- the saved-memory 8,000-token storage/read ceiling and exact per-key read profile
+- GlassHive provider `worker_native_tools`, `host_tools_transport: broker_mcp`, and declared
+  `host_tools: [file_search]`
+- a canonical Codex CLI invocation path whose sibling code-mode host exists when the enabled
+  runtime requires it; symlink paths are canonicalized only when the companion is proven
+- an optional `runtime.extra_env.VIVENTIUM_QA_EMAIL` selector used solely to resolve one non-admin
+  local Test Account for model QA; status output is redacted and writes use the supported CLI
 
-Docker-mode preflight must test the selected Docker endpoint, not merely the presence of a `docker`
-binary. QA harnesses that use a non-default isolated context must pin that endpoint for both healthy
-and daemon-down cases; otherwise a removed test context can fall back to an unrelated local Docker
-daemon and create false-green evidence.
+`bin/viventium cognitive-integrity --json` is the read-only convergence check. It compares tracked
+source, generated runtime, live provider capability transport, memory exposure, prompt bundle
+drift, Test Account selection, host-worker prerequisites, memory-hardening state, Prompt Workbench
+nightly state, and the optional Codex observer boundary. It does not repair or sync state.
 
-Source-installer checkouts must retain enough Git history to enforce the declared upgrade-support
-floor at the point that history is needed. New public installs use a tip-only, single-branch clone
-so installation does not download historical author metadata that is irrelevant to the runtime.
-Before the first mutating upgrade, that checkout is expanded from its configured remote branch
-after the read-only safety audit and before predecessor assessment, target fetch, or transaction
-start; failure to recover that history aborts without working-tree or runtime mutation. Re-running
-the public installer against an existing shallow checkout performs the same fail-closed expansion
-before updating it.
+Compiler acceptance must cover direct binary paths and symlinked installed paths, missing
+companions, source/live drift, missing or admin QA selectors, and observer-only automation status.
 
-### July 25, 2026 Installed Telegram And Existing-User Continuity Boundary
+Parallel Work compilation also emits two public-safe runtime receipts before the release projection:
 
-- Installed/helper/detached macOS Telegram never executes from the selected source checkout.
-  Install, upgrade, and activation assemble public tracked Telegram/shared/voice code, a compatible
-  recovery launcher, and the complete frozen dependency environment into content-addressed,
-  owner-only App Support roots. The environment is sealed and manifest-verified; optional local
-  voice dependencies are installed before publication, never on first message/start.
-- Frozen dependency assembly remains architecture-aware without weakening the lock: macOS Intel
-  uses pywhispercpp's supported `NO_REPAIR=1` source-build path because that release publishes no
-  Intel wheel, then imports the native module before publication. Failed/interrupted assembly
-  reopens only its transaction-owned sealed stage for deletion, so cleanup cannot mask the original
-  dependency error or strand an undeletable partial environment.
-- A present-invalid selection fails closed everywhere. A missing/unsafe selection on detached macOS
-  also fails closed with an actionable error; source fallback remains only a direct development or
-  non-macOS compatibility behavior.
-- Predecessor staging may create immutable component-store content and a private recovery selection,
-  but it must not change the live runtime selection before the activation/upgrade transaction.
-  Candidate failure resolves the staged verified predecessor component and invokes the packaged current
-  recovery launcher against predecessor source, so an older launcher cannot force Telegram back
-  into a protected checkout.
-- Canonical Telegram preferences live at
-  `~/Library/Application Support/Viventium/state/telegram-user-configs`. The migration leaves the
-  legacy source untouched, retains canonical-only values, preserves the proven active legacy value
-  on key conflicts, stores a byte-exact displaced canonical backup, honors an explicit custom
-  preference directory, and is idempotent. Runtime startup applies missing defaults in memory only;
-  a real user change is required before persistence.
-- A committed root-selection authority records the effective canonical or explicit custom
-  preference root. Public launcher, helper, normal upgrade, interrupted recovery, and dev-runtime
-  activation resolve that authority before starting a writer. A stale owner receipt, launch script,
-  checkout, or pre-migration transaction field cannot outvote it.
-- Recovery selections are immutable per staging attempt. A later upgrade may not overwrite the
-  exact selection file referenced by an active receipt. Migration journals complete while writers
-  are stopped, the effective root is reconciled, and the sealed receipt is refreshed while the
-  transaction is still passive; only then may rollback expose `rolled_back` recovery state.
-- If interrupted recovery has no receipt/journal and cannot stage a compatibility component, the
-  immutable core transaction may restore the verified checkpoint only in stopped mode. It must not
-  claim Telegram recovery or automatically relaunch from an unverified candidate.
-- The helper executes recovery validation with the selected sealed dependency Python, whose
-  external interpreter target is content-bound by the dependency manifest. Steady four-second
-  health polling performs only cheap receipt/intent checks; full environment hashing runs in the
-  detached launch submission with a bounded timeout, never as an unbounded MainActor poll.
-- Repeated seed/start work is a semantic no-op. Timestamp-enabled Mongo upserts disable automatic
-  timestamps for insert-only role/project reads, identical ACL grants use one atomic conditional
-  pipeline, and managed-agent updates prune equal fields. Continuity must compare full logical
-  documents rather than exclude timestamps that expose unwanted writes.
-- Every Telegram start uses an owner-only, per-attempt launch package. Its launcher, serialized
-  runtime environment, and copied configuration overlay are sealed together into the handoff
-  transaction and hash-verified before rollback execution. Successful commit removes the superseded
-  credential-bearing package; rollback removes the failed candidate package. A predecessor that
-  previously published native polling/webhook readiness must publish native readiness again after
-  rollback and may never be relabeled as legacy grace.
-- The normal detached/helper path opens only the verified App Support component and its copied launch
-  package. An explicitly preserved preference root under a macOS protected user folder remains the
-  user's authority, but the bot uses direct detached startup for that path instead of a launchd
-  context that cannot reliably open it.
-- Legacy canonical Telegram preferences created as `0755` directories and `0644` files are a
-  supported existing-user input. The stopped-writer migration must preserve every byte while
-  hardening to `0700` / `0600` through descriptor-bound no-follow traversal. Unsafe ownership,
-  writable modes, links, hard links, or swap races fail before an outside target can change.
-  First-run launcher creation and recovery reuse that Python no-follow directory primitive: every
-  ancestor is held by descriptor, the final `0700` change uses `fchmod`, and a custom root with a
-  linked ancestor fails without creating or changing anything behind the link.
-- Pinned Meilisearch is attempted before any arbitrary host binary. An incompatible default derived
-  index may be archived privately and rebuilt from Mongo only after the exact data/backup roots and
-  every same-name container/PID receipt pass ownership checks. Ownership or shutdown uncertainty
-  leaves the index and canonical Mongo conversations unchanged.
+- `parallel-work-readiness-facts.json` binds the validated prompt registry to a canonical hash and
+  records measured disk bytes/percentage under the configured warning/critical policy;
+- `parallel-work-artifact-identity.json` binds root revision/clean state, component pins and nested
+  HEADs, shipped helper source/binary hashes, and the installed prompt-bundle hash.
+
+`bin/viventium compile-config` passes both receipts to the release evaluator. The evaluator remeasures
+the source, nested repositories, and helper before it accepts the installed receipt. Missing or stale
+receipts fail closed. An explicit local QA override can permit test exposure only while source defaults
+remain dark/focused; it always compiles and displays as **PRE-GATE / NOT READY**, never **READY**.
+
+Automatic memory-hardening schedule sync is restricted to canonical installed App Support. A test,
+side-by-side dev environment, or explicitly redirected config may compile its own
+`VIVENTIUM_MEMORY_HARDENING_ENABLED` value, but that value must never install or remove the one
+user-level LaunchAgent. Release tests must isolate `HOME` and preserve a canonical-schedule sentinel
+while exercising noncanonical config writes. Explicit `memory-harden install-schedule` and
+`uninstall-schedule` remain the intentional operator surface.
+
+Startup diagnostics must never serialize the interpolated LibreChat/Viventium config. The loader may
+log only a secret-safe structural summary such as top-level keys and endpoint/MCP/capability names;
+tests must inject a sentinel secret and prove it is absent from every info/debug call. Generated
+runtime files and historical owner-only logs remain machine-local protected state, not public QA or
+authoring surfaces, and credential rotation/reconnection remains an explicit user action.
+
+<!-- VIVENTIUM-STABLE-REQUIREMENT-DECLARATIONS:START -->
+## Stable requirement declarations
+
+Each line is the canonical public owner declaration for one stable requirement ID. Detailed sections supply implementation context; they must not narrow or contradict these declared outcomes.
+
+ONB-007: LIFE has one canonical enabled/path contract, legacy-path migration, safe bootstrap, and owner-only scope. Viventium’s Mac helper exposes Setup, Open Life Folder, Choose Life Folders, and a plain-language “What is Life?” explanation through the same validated boundary; paths are never hardcoded or leaked through process arguments/logs.
+ONB-008: “Connect Your Life” is optional and skippable. It may collect categories, a short custom note, Select/Clear all, and explicit native folder choices, but v1 only records user intent. It never scans, reads, uploads, indexes, ingests, or falsely marks sources connected. Store a human-readable managed block in `Life/Sources/WHAT_TO_CONNECT.md`, preserve manual text outside it, never write wishes into `AGENTS.md` or `99_System/sources.yaml`, and tell remote-phone users that folder choice occurs on the Mac.
+ONB-013: A supported user Stop persists one shared intentionally-stopped state that every helper, login item, watchdog, and component supervisor honors until explicit Start/Restart. Raw process termination must not be called persistent when user intent cannot be distinguished from a crash.
+<!-- VIVENTIUM-STABLE-REQUIREMENT-DECLARATIONS:END -->

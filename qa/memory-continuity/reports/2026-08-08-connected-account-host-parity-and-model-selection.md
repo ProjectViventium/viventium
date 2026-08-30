@@ -1,3 +1,4 @@
+<!-- qa-evidence-exempt: Historical evidence snapshot retained verbatim; retroactive v2 fields would invent evidence that was not captured during the run. -->
 # Connected-Account, `/host`, And Cognitive-Parity RCA — 2026-08-08
 
 ## Outcome
@@ -177,4 +178,3 @@ One protected Agent Builder source/live merge remains review-required. No blind 
 performed. The parent and nested component worktrees are dirty and their commits, pins, compiled
 delivery artifacts, fresh-clone install, public push, and release are not part of this local proof.
 No cloud write, commit, push, or provider credential copy was performed.
-<!-- qa-evidence-exempt: Historical or specialized supporting artifact retained without retroactively inventing missing evidence; current release acceptance requires a fresh full-view report. -->

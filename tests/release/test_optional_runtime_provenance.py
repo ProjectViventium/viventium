@@ -1064,6 +1064,7 @@ def test_compiler_generated_local_livekit_endpoint_starts_locked_runtime_when_co
     compiler = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(compiler)
     config = compiler.load_yaml(ROOT / "config.minimal.example.yaml")
+    config["llm"]["primary"]["secret_value"] = "synthetic-openai-key"
     runtime_env = compiler.render_runtime_env(
         config, compiler.build_agent_assignments(config)
     )

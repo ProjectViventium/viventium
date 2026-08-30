@@ -1,3 +1,4 @@
+<!-- qa-evidence-exempt: Historical evidence snapshot retained verbatim; retroactive v2 fields would invent evidence that was not captured during the run. -->
 # ANTI-008 Version-10 Voice Acceptance Preflight — 2026-08-11
 
 ## Result
@@ -69,4 +70,3 @@ lookup, interruption, cancellation, recovery, and percentile gates all pass.
 This report contains only synthetic counts and content-free hashes. Raw identifiers, transcripts,
 screenshots, credentials, account details, machine names, and local evidence paths remain outside
 the public repository.
-<!-- qa-evidence-exempt: Focused blocked-preflight record retained as supporting evidence; current release acceptance requires a fresh full-view user-path report. -->

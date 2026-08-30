@@ -250,8 +250,8 @@ export function ScheduledPromptsPanel({
       manualRunScheduledPrompt(item.id, item.sourceKind === "user_schedule"),
     onSuccess: (_result, item) => {
       onLog(
-        item.sourceKind === "user_schedule"
-          ? "Manual Viventium schedule run started."
+        item.sourceKind === "user_schedule" || item.executor === "viventium_agent"
+          ? "Manual Viventium Main run started."
           : "Manual GlassHive run queued.",
       );
       queryClient.invalidateQueries({ queryKey: ["scheduledPrompts"] });
@@ -358,7 +358,7 @@ export function ScheduledPromptsPanel({
         ? selected.channel.join(", ")
         : (selected.channel ?? "scheduler");
       const confirmed = window.confirm(
-        `Run this Viventium-agent schedule now? It may deliver through ${channel}.`,
+        `Run this Viventium Main schedule now? It may deliver through ${channel}.`,
       );
       if (!confirmed) return;
     }
@@ -390,7 +390,7 @@ export function ScheduledPromptsPanel({
           <div className="schedule-panel-header">
             <div>
               <strong>Scheduled Prompts</strong>
-              <span>GlassHive host runs via Scheduling Cortex</span>
+              <span>Scheduled execution follows its declared route</span>
             </div>
             <button
               className="toolbar-button compact"
@@ -487,7 +487,7 @@ export function ScheduledPromptsPanel({
                   selected.executor === "glasshive_host" ? "active" : ""
                 }
               >
-                GlassHive host
+                GlassHive worker
               </span>
               <span
                 className={
@@ -496,7 +496,7 @@ export function ScheduledPromptsPanel({
                     : ""
                 }
               >
-                Viventium agent
+                Viventium Main (Agent Builder)
               </span>
             </div>
             <div className="execution-config-grid">
@@ -518,7 +518,7 @@ export function ScheduledPromptsPanel({
                   {selected.executionProfile ??
                     (selected.executor === "glasshive_host"
                       ? "codex-cli"
-                      : "main Viventium")}
+                      : "Viventium Main (Agent Builder)")}
                 </code>
               </div>
               <div>
@@ -527,11 +527,11 @@ export function ScheduledPromptsPanel({
                   {selected.executionMode ??
                     (selected.executor === "glasshive_host"
                       ? "host local machine"
-                      : "scheduler delivery")}
+                      : "inherits Agent Builder route and fallback at run time")}
                 </code>
               </div>
               <div>
-                <span>Effective scheduled model</span>
+                <span>{selected.executor === "glasshive_host" ? "Effective scheduled model" : "Last observed scheduled model"}</span>
                 <code>
                   {effectiveScheduledRun?.effectiveModel ??
                     selected.executionModel ??
@@ -539,7 +539,7 @@ export function ScheduledPromptsPanel({
                 </code>
               </div>
               <div>
-                <span>Effective scheduled effort</span>
+                <span>{selected.executor === "glasshive_host" ? "Effective scheduled effort" : "Last observed scheduled effort"}</span>
                 <code>
                   {effectiveScheduledRun?.effectiveReasoningEffort ??
                     selected.reasoningEffort ??
@@ -547,7 +547,7 @@ export function ScheduledPromptsPanel({
                 </code>
               </div>
               <div>
-                <span>Last disposition</span>
+                <span>Last scheduled disposition</span>
                 <code>
                   {effectiveScheduledRun?.disposition ?? "not recorded"}
                 </code>
@@ -664,8 +664,8 @@ export function ScheduledPromptsPanel({
                 })
               }
             >
-              <option value="glasshive_host">GlassHive host</option>
-              <option value="viventium_agent">Viventium agent</option>
+              <option value="glasshive_host">GlassHive worker</option>
+              <option value="viventium_agent">Viventium Main (Agent Builder)</option>
             </select>
             {isUserLevelSchedule && <small>Existing route</small>}
           </label>
@@ -983,13 +983,13 @@ export function ScheduledPromptsPanel({
             disabled={!selected || runMutation.isPending}
             title={
               isUserLevelSchedule
-                ? "Confirm before running this Viventium-agent schedule now."
+                ? "Confirm before running this Viventium Main schedule now."
                 : "Run this GlassHive scheduled prompt now."
             }
           >
             <Play size={15} />
             {isUserLevelSchedule || currentExecutor === "viventium_agent"
-              ? "Run Viventium"
+              ? "Run Viventium Main"
               : "Run GlassHive"}
           </button>
           <button
@@ -1563,12 +1563,12 @@ function labelize(value: string) {
 function executionLabel(prompt: ScheduledPrompt) {
   if (prompt.executor === "glasshive_host") {
     return prompt.glasshiveWorkerStrategy === "new_worker_each_run"
-      ? "Direct GlassHive Codex host worker, fresh worker per run."
-      : "Direct GlassHive Codex host worker, same worker continuity.";
+      ? "Direct GlassHive Codex worker, fresh worker per run."
+      : "Direct GlassHive Codex worker, same worker continuity.";
   }
   return prompt.sourceKind === "user_schedule"
-    ? "Existing user-level schedule delivered by the Viventium agent scheduler."
-    : `Workbench prompt delivered by the Viventium agent scheduler in a ${prompt.conversationPolicy ?? "new"} conversation.`;
+    ? "Inherits the persisted Main Agent route and fallback at run time."
+    : `Inherits the persisted Main Agent route and fallback at run time in a ${prompt.conversationPolicy ?? "new"} conversation.`;
 }
 
 function variableAutocomplete(

@@ -1,3 +1,4 @@
+<!-- qa-evidence-exempt: Historical evidence snapshot retained verbatim; retroactive v2 fields would invent evidence that was not captured during the run. -->
 # GlassHive Feelings Potency And Runtime-Artifact QA — 2026-08-03
 
 ## Verdict
@@ -264,4 +265,3 @@ was discovered and repaired through live worker-input tracing after that review.
 
 No raw private prompts, account identifiers, credentials, local absolute paths, or user data are
 stored in this report.
-<!-- qa-evidence-exempt: Historical or specialized supporting artifact retained without retroactively inventing missing evidence; current release acceptance requires a fresh full-view report. -->

@@ -49,6 +49,104 @@ ESCAPED_REGRESSION_FIELDS = {
     "speakerHistoryBeyond4096Accessible": "speaker-history-over-4096-access",
 }
 
+MPV_061_GATE_IDS = (
+    "mpv-061-trusted-wing-launch",
+    "mpv-061-trusted-wing-control",
+    "mpv-061-passive-wing-denial",
+    "mpv-061-listen-only-denial",
+)
+
+MPV_061_PASSING_EVIDENCE = {
+    "schema": "viventium.voice.worker-bee-authority-evidence.v1",
+    "authoritative": True,
+    "source": "owner_scoped_worker_mission_action_delivery_ledger",
+    "modeAuthoritySource": "persisted_call_session",
+    "acceptanceRunBindingMatched": True,
+    "installedRuntimeIdentityMatched": True,
+    "observationOrder": [
+        "trustedWingLaunch",
+        "trustedWingControl",
+        "passiveWingDenial",
+        "listenOnlyDenial",
+    ],
+    "cases": {
+        "trustedWingLaunch": {
+            "ordinal": 1,
+            "ledgerSequenceBefore": 10,
+            "ledgerSequenceAfter": 14,
+            "mode": "wing",
+            "actorTrust": "owner_participant",
+            "directlyAddressed": True,
+            "sideEffectAuthorityGranted": True,
+            "requestedMissionCount": 2,
+            "missionDelta": 2,
+            "acceptedLaunchReceiptDelta": 2,
+            "rejectedLaunchReceiptDelta": 0,
+            "workerLaunchInvocationDelta": 1,
+            "mainResponseDelta": 1,
+            "ttsInputDelta": 1,
+        },
+        "trustedWingControl": {
+            "ordinal": 2,
+            "ledgerSequenceBefore": 14,
+            "ledgerSequenceAfter": 16,
+            "mode": "wing",
+            "actorTrust": "owner_participant",
+            "directlyAddressed": True,
+            "sideEffectAuthorityGranted": True,
+            "controlAction": "steer",
+            "missionDelta": 0,
+            "acceptedActionReceiptDelta": 1,
+            "workerControlInvocationDelta": 1,
+            "targetWorkRefMatched": True,
+            "targetActionReceiptDelta": 1,
+            "nonTargetActionReceiptDelta": 0,
+            "mainResponseDelta": 1,
+            "ttsInputDelta": 1,
+        },
+        "passiveWingDenial": {
+            "ordinal": 3,
+            "ledgerSequenceBefore": 16,
+            "ledgerSequenceAfter": 17,
+            "mode": "wing",
+            "actorTrust": "owner_participant",
+            "directlyAddressed": False,
+            "transcriptObservationDelta": 1,
+            "missionDelta": 0,
+            "actionReceiptDelta": 0,
+            "workerLaunchInvocationDelta": 0,
+            "workerControlInvocationDelta": 0,
+            "toolInvocationDelta": 0,
+            "cortexInvocationDelta": 0,
+            "liveMemoryInvocationDelta": 0,
+            "mainResponseDelta": 0,
+            "ttsInputDelta": 0,
+        },
+        "listenOnlyDenial": {
+            "ordinal": 4,
+            "ledgerSequenceBefore": 17,
+            "ledgerSequenceAfter": 18,
+            "mode": "listen_only",
+            "actorTrust": "owner_participant",
+            "directlyAddressed": True,
+            "sideEffectAuthorityGranted": False,
+            "ambientTranscriptDelta": 1,
+            "missionDelta": 0,
+            "actionReceiptDelta": 0,
+            "workerLaunchInvocationDelta": 0,
+            "workerControlInvocationDelta": 0,
+            "toolInvocationDelta": 0,
+            "agentControllerInvocationDelta": 0,
+            "cortexInvocationDelta": 0,
+            "liveMemoryInvocationDelta": 0,
+            "titleModelInvocationDelta": 0,
+            "mainResponseDelta": 0,
+            "ttsInputDelta": 0,
+        },
+    },
+}
+
+
 
 def test_world_class_voice_endurance_contract_is_public_safe_and_exact(tmp_path: Path):
     assert HARNESS.exists()
@@ -94,6 +192,10 @@ def test_world_class_voice_endurance_contract_is_public_safe_and_exact(tmp_path:
     assert result["latency"]["completeTraceCount"] == 2
     assert result["execution"]["runtimeGatesExecuted"] is False
     assert all(value is None for value in result["escapedRegressions"].values())
+    assert result["workerBeeAuthority"]["scope"] == "authority_slice_only"
+    assert result["workerBeeAuthority"]["fullJourneyStatus"] == "NOT_RUN"
+    assert result["workerBeeAuthority"]["livePassClaimed"] is False
+    assert result["workerBeeAuthority"]["evidenceStatus"] == "NOT_EVALUATED"
     assert {gate["id"] for gate in result["gates"]} == {
         "self-test-replay",
         "self-test-traces",
@@ -122,10 +224,19 @@ def test_machine_readable_manifest_maps_every_mpv_case_to_fresh_fail_closed_runs
     }
 
     coverage = manifest["coverage"]
-    assert set(coverage) == {f"MPV-{case_id:03d}" for case_id in range(32, 57)}
+    expected_coverage = {f"MPV-{case_id:03d}" for case_id in range(32, 57)}
+    expected_coverage.add("MPV-061")
+    assert set(coverage) == expected_coverage
     for case_id, contract in coverage.items():
         assert contract["runs"], case_id
         assert contract["gates"], case_id
+
+    mpv_061 = coverage["MPV-061"]
+    assert mpv_061["runs"] == ["dev-audible-65m"]
+    assert mpv_061["gates"] == list(MPV_061_GATE_IDS)
+    assert mpv_061["scope"] == "authority_slice_only"
+    assert mpv_061["fullJourneyStatus"] == "NOT_RUN"
+    assert mpv_061["livePassClaim"] == "forbidden"
 
     runs = {run["id"]: run for run in manifest["runs"]}
     required_runs = {
@@ -133,6 +244,7 @@ def test_machine_readable_manifest_maps_every_mpv_case_to_fresh_fail_closed_runs
         "dev-reconnects",
         "dev-audible-65m",
         "dev-soak-120m",
+        "installed-prod-mpv-061-full-journey",
         "installed-prod-real-call",
         "clean-install-parity",
         "livekit-accepted-dependency-set",
@@ -170,11 +282,173 @@ def test_machine_readable_manifest_maps_every_mpv_case_to_fresh_fail_closed_runs
     assert acquisitions["noisySpeakerBank"]["missingResult"] == "FAIL"
     assert acquisitions["localOnlyEgress"]["passValue"] == 0
     assert acquisitions["noisySpeakerBank"]["maximumPassValue"] == 15
+    authority = acquisitions["mpv061WorkerBeeAuthority"]
+    assert authority["outputField"] == "workerBeeAuthority"
+    assert authority["schema"] == "viventium.voice.worker-bee-authority-evidence.v1"
+    assert authority["modeAuthoritySource"] == "persisted_call_session"
+    assert authority["acceptanceRunBindingRequired"] is True
+    assert authority["missingResult"] == "FAIL"
+    assert authority["requiredObservationOrder"] == [
+        "trustedWingLaunch",
+        "trustedWingControl",
+        "passiveWingDenial",
+        "listenOnlyDenial",
+    ]
+    assert authority["publicOutput"] == "content_free_counts_and_gate_states_only"
     assert all(command[0] == "jq" for command in acquisitions["verificationCommands"])
 
     serialized = json.dumps(manifest)
     assert re.search(r"/(?:Users|home)/[^/<]+/", serialized) is None
     assert "callSessionId=actual" not in serialized
+
+
+def test_mpv_061_worker_bee_authority_assertions_are_executable_and_fail_closed():
+    script = r"""
+const assert = require('assert');
+const {
+  applyMeasuredEvidence,
+  auditWorkerBeeAuthorityEvidence,
+  baseResult,
+} = require(process.argv[1]);
+const gateIds = JSON.parse(process.argv[2]);
+
+const passingEvidence = JSON.parse(process.argv[3]);
+
+function clone(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
+function apply(evidence) {
+  const result = baseResult('audible');
+  applyMeasuredEvidence(result, { externalEvidence: { workerBeeAuthority: evidence } }, 'audible');
+  return result;
+}
+
+const passingAudit = auditWorkerBeeAuthorityEvidence(passingEvidence);
+assert.strictEqual(passingAudit.scope, 'authority_slice_only');
+assert.strictEqual(passingAudit.fullJourneyStatus, 'NOT_RUN');
+assert.strictEqual(passingAudit.livePassClaimed, false);
+assert.strictEqual(passingAudit.evidenceStatus, 'VALID');
+assert.strictEqual(passingAudit.modeAuthoritySourceVerified, true);
+assert.strictEqual(passingAudit.acceptanceRunBindingMatched, true);
+assert.strictEqual(passingAudit.observationWindowCount, 4);
+for (const check of Object.values(passingAudit.checks)) {
+  assert.strictEqual(check.status, 'PASS');
+}
+
+const passing = apply(passingEvidence);
+assert.strictEqual(passing.evidence.workerBeeAuthorityWindows, 4);
+for (const gateId of gateIds) {
+  assert.strictEqual(passing.gates.find((gate) => gate.id === gateId).status, 'PASS');
+}
+
+const missing = apply(undefined);
+assert.strictEqual(missing.workerBeeAuthority.evidenceStatus, 'MISSING');
+assert.strictEqual(missing.evidence.workerBeeAuthorityWindows, 0);
+for (const gateId of gateIds) {
+  assert.strictEqual(missing.gates.find((gate) => gate.id === gateId).status, 'FAIL');
+}
+
+const untrustedLaunch = clone(passingEvidence);
+untrustedLaunch.cases.trustedWingLaunch.actorTrust = 'guest_participant';
+assert.strictEqual(
+  auditWorkerBeeAuthorityEvidence(untrustedLaunch).checks.trustedWingLaunch.status,
+  'FAIL',
+);
+
+for (const field of [
+  'missionDelta',
+  'actionReceiptDelta',
+  'workerLaunchInvocationDelta',
+  'workerControlInvocationDelta',
+  'toolInvocationDelta',
+  'cortexInvocationDelta',
+  'liveMemoryInvocationDelta',
+  'mainResponseDelta',
+  'ttsInputDelta',
+]) {
+  const passiveSideEffect = clone(passingEvidence);
+  passiveSideEffect.cases.passiveWingDenial[field] = 1;
+  assert.strictEqual(
+    auditWorkerBeeAuthorityEvidence(passiveSideEffect).checks.passiveWingDenial.status,
+    'FAIL',
+    field,
+  );
+}
+
+for (const field of [
+  'missionDelta',
+  'actionReceiptDelta',
+  'workerLaunchInvocationDelta',
+  'workerControlInvocationDelta',
+  'toolInvocationDelta',
+  'agentControllerInvocationDelta',
+  'cortexInvocationDelta',
+  'liveMemoryInvocationDelta',
+  'titleModelInvocationDelta',
+  'mainResponseDelta',
+  'ttsInputDelta',
+]) {
+  const listenOnlySideEffect = clone(passingEvidence);
+  listenOnlySideEffect.cases.listenOnlyDenial[field] = 1;
+  assert.strictEqual(
+    auditWorkerBeeAuthorityEvidence(listenOnlySideEffect).checks.listenOnlyDenial.status,
+    'FAIL',
+    field,
+  );
+}
+
+const crossMissionSteer = clone(passingEvidence);
+crossMissionSteer.cases.trustedWingControl.nonTargetActionReceiptDelta = 1;
+assert.strictEqual(
+  auditWorkerBeeAuthorityEvidence(crossMissionSteer).checks.trustedWingControl.status,
+  'FAIL',
+);
+
+const outOfOrder = clone(passingEvidence);
+outOfOrder.cases.passiveWingDenial.ledgerSequenceBefore = 15;
+const outOfOrderAudit = auditWorkerBeeAuthorityEvidence(outOfOrder);
+assert.strictEqual(outOfOrderAudit.evidenceStatus, 'INVALID');
+assert.ok(Object.values(outOfOrderAudit.checks).every((check) => check.status === 'FAIL'));
+
+const wrongModeAuthority = clone(passingEvidence);
+wrongModeAuthority.modeAuthoritySource = 'browser_ui';
+assert.strictEqual(
+  auditWorkerBeeAuthorityEvidence(wrongModeAuthority).evidenceStatus,
+  'INVALID',
+);
+
+const staleEvidence = clone(passingEvidence);
+staleEvidence.acceptanceRunBindingMatched = false;
+assert.strictEqual(
+  auditWorkerBeeAuthorityEvidence(staleEvidence).evidenceStatus,
+  'INVALID',
+);
+
+const privateInput = clone(passingEvidence);
+privateInput.cases.trustedWingLaunch.privateMissionIdentifier = 'private-mission-sentinel';
+assert.ok(
+  !JSON.stringify(auditWorkerBeeAuthorityEvidence(privateInput)).includes(
+    'private-mission-sentinel',
+  ),
+);
+"""
+    completed = subprocess.run(
+        [
+            "node",
+            "-e",
+            script,
+            str(HARNESS),
+            json.dumps(MPV_061_GATE_IDS),
+            json.dumps(MPV_061_PASSING_EVIDENCE),
+        ],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+
 
 
 def test_external_evidence_template_covers_all_behavior_and_quality_gates():
@@ -353,6 +627,7 @@ const {
   extractVoiceHopTraces,
   summarizeVoiceHopTraces,
 } = require(process.argv[1]);
+const workerBeeAuthority = JSON.parse(process.argv[2]);
 
 const task = (taskId, sequence, state, resultRef = '') => ({
   version: 1,
@@ -457,6 +732,7 @@ const allBehaviorPaths = Object.fromEntries(
   Object.keys(passingEvidenceResult.behaviorPaths).map((key) => [key, true])
 );
 applyMeasuredEvidence(passingEvidenceResult, { externalEvidence: {
+  workerBeeAuthority,
   taskOwnerCapabilityInventory: {
     authoritative: true,
     source: 'runtime_voice_task_owner_registry',
@@ -498,7 +774,13 @@ assert.ok(passingEvidenceResult.gates.length > 40);
 assert.ok(passingEvidenceResult.gates.every((gate) => gate.status === 'PASS'));
 """
     completed = subprocess.run(
-        ["node", "-e", script, str(HARNESS)],
+        [
+            "node",
+            "-e",
+            script,
+            str(HARNESS),
+            json.dumps(MPV_061_PASSING_EVIDENCE),
+        ],
         cwd=ROOT,
         text=True,
         capture_output=True,
@@ -765,6 +1047,19 @@ def test_modern_playground_case_ids_are_unique_and_manifest_coverage_resolves():
     coverage_ids = set(manifest["coverage"])
     assert coverage_ids <= set(case_ids)
     assert {f"MPV-{number:03d}" for number in range(32, 52)} <= coverage_ids
+    assert {f"MPV-{number:03d}" for number in range(57, 62)} <= set(case_ids)
+
+    assert "### MPV-054 LiveKit Dependency Promotion Gate" in cases
+    assert "### MPV-061 Full Queen Bee And Worker Bee Voice Parity" in cases
+    assert "MPV-054 Full Queen Bee And Worker Bee Voice Parity" not in cases
+    assert manifest["coverage"]["MPV-054"]["gates"] == [
+        "livekit-dependency-suite-parity",
+        "livekit-dependency-qoe-nonregression",
+        "livekit-dependency-warning-diff",
+        "livekit-dependency-build-install-clean-parity",
+        "livekit-dependency-promotion-decision",
+    ]
+    assert manifest["coverage"]["MPV-061"]["gates"] == list(MPV_061_GATE_IDS)
 
 
 def test_synthetic_audio_harness_labels_transport_success_as_semantically_unscored() -> None:

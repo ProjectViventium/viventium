@@ -29,7 +29,7 @@
 
 | Evidence surface | Result / sanitized pointer |
 | --- | --- |
-| Requirement, docs, and nested docs | Requirement 55 and `GHUCP-007` own the path |
+| Requirement, docs, and nested docs | Requirement 57 and `GHUCP-007` own the path |
 | Code, scripts, and automated harness | Runtime URL allowlist, terminal sanitizer, UI server, and control-plane suites |
 | Local/external prerequisite state | Installed canary healthy; provider page reachable |
 | Logs, DB/state/persistence | No post-readiness critical log; refresh kept the cancelled/reconnectable state |

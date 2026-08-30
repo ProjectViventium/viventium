@@ -11,7 +11,7 @@ The review inspected nine supplied files, ran seventeen read-only repository que
 internal research/review passes. A requested duplicate full release-suite run was intentionally not
 approved because the primary audit had already run it and the review boundary was read-only.
 
-Verdict: **FAIL.** The Express/public-release claim does not pass. The review independently validated the core
+Verdict: **FAIL for an Express/public-release claim**. The review independently validated the core
 installer, continuity, readiness, bootstrap, onboarding, delivery-drift, and clean-Mac evidence gaps.
 
 ## Corrections Incorporated

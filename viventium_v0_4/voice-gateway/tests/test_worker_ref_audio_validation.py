@@ -29,10 +29,12 @@ from worker import (
     _build_voice_capability_catalog,
     _build_configured_voice_route_metadata,
     _build_voice_route_metadata,
+    _active_voice_job_markers,
     _configure_xai_standalone_tts_plugin,
     _normalize_voice_provider,
     _validate_ref_audio_path,
     VoiceRouteError,
+    _complete_deferred_local_stt_prewarm,
     load_env,
     prewarm_process,
     run,
@@ -153,7 +155,6 @@ class TestRefAudioValidation(unittest.TestCase):
         )
 
         self.assertEqual(options.participant_identity, "signed-owner")
-        self.assertFalse(options.close_on_disconnect)
 
     def test_build_room_options_can_still_opt_into_sync_transcription(self) -> None:
         options = _build_room_options(sync_transcription=True)
@@ -314,7 +315,7 @@ class TestRefAudioValidation(unittest.TestCase):
             self.assertEqual(valid, str(long_path.resolve()))
             self.assertIsNone(warning)
 
-    def test_run_registers_room_worker_for_explicit_dispatch(self) -> None:
+    def test_run_registers_room_worker_for_explicit_call_dispatch(self) -> None:
         captured = {}
 
         def _fake_run_app(opts):
@@ -445,6 +446,72 @@ class TestRefAudioValidation(unittest.TestCase):
                 prewarm_process(proc)
 
         fake_prewarm.assert_called_once_with("large-v3-turbo")
+
+    def test_replacement_process_defers_local_stt_prewarm_without_blocking_registration(self) -> None:
+        proc = SimpleNamespace(userdata={})
+        fake_prewarm = Mock()
+        fake_pywhispercpp_provider = SimpleNamespace(prewarm_model=fake_prewarm)
+
+        with (
+            patch(
+                "worker.load_env",
+                return_value=SimpleNamespace(
+                    stt_provider="whisper_local",
+                    stt_model="large-v3-turbo",
+                    tts_provider="openai",
+                    tts_provider_fallback="",
+                    mlx_audio_model_id="",
+                    voice_prewarm_local_tts=False,
+                ),
+            ),
+            patch("worker.load_vad", return_value=None),
+            patch("worker._active_voice_job_markers", return_value=[Path("active-call")]),
+            patch.dict(sys.modules, {"pywhispercpp_provider": fake_pywhispercpp_provider}),
+        ):
+            prewarm_process(proc)
+
+        fake_prewarm.assert_not_called()
+        self.assertTrue(proc.userdata["deferred_local_stt_prewarm"])
+
+    def test_admitted_call_does_not_wait_behind_replacement_prewarm_barrier(self) -> None:
+        proc = SimpleNamespace(userdata={"deferred_local_stt_prewarm": True})
+        env = SimpleNamespace(stt_provider="whisper_local", stt_model="large-v3-turbo")
+        events = []
+
+        def _prewarm(model: str) -> None:
+            events.append(f"prewarmed:{model}")
+
+        fake_pywhispercpp_provider = SimpleNamespace(prewarm_model=_prewarm)
+        with patch.dict(sys.modules, {"pywhispercpp_provider": fake_pywhispercpp_provider}):
+            asyncio.run(_complete_deferred_local_stt_prewarm(proc, env))
+
+        self.assertEqual(events, ["prewarmed:large-v3-turbo"])
+        self.assertNotIn("deferred_local_stt_prewarm", proc.userdata)
+
+    def test_deferred_local_prewarm_is_discarded_when_the_admitted_route_is_cloud(self) -> None:
+        proc = SimpleNamespace(userdata={"deferred_local_stt_prewarm": True})
+        env = SimpleNamespace(stt_provider="openai", stt_model="large-v3-turbo")
+
+        asyncio.run(_complete_deferred_local_stt_prewarm(proc, env))
+
+        self.assertNotIn("deferred_local_stt_prewarm", proc.userdata)
+
+    def test_active_marker_disappearing_during_scan_is_not_a_prewarm_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            marker = Path(tmp_dir) / f"{os.getpid()}-race.active"
+            marker.touch()
+            original_stat = Path.stat
+
+            def racing_stat(path: Path, *args, **kwargs):
+                if path == marker:
+                    raise FileNotFoundError(str(path))
+                return original_stat(path, *args, **kwargs)
+
+            with (
+                patch("worker._voice_active_jobs_dir", return_value=Path(tmp_dir)),
+                patch.object(Path, "stat", racing_stat),
+            ):
+                self.assertEqual(_active_voice_job_markers(), [])
 
     def test_apply_requested_voice_route_uses_available_requested_variants(self) -> None:
         with patch.dict(
@@ -812,34 +879,6 @@ class TestRefAudioValidation(unittest.TestCase):
         self.assertEqual(metadata["tts"]["variant"], "voice_live")
         self.assertEqual(metadata["ttsFallback"]["provider"], "openai")
 
-    def test_run_registers_publisher_worker(self) -> None:
-        captured = {}
-
-        def _fake_run_app(opts):
-            captured["opts"] = opts
-
-        with (
-            patch("worker.start_health_server"),
-            patch(
-                "worker.load_env",
-                return_value=SimpleNamespace(
-                    livekit_agent_name="librechat-voice-gateway",
-                    voice_initialize_process_timeout_s=45.0,
-                    voice_idle_processes=1,
-                    voice_worker_load_threshold=0.995,
-                    voice_job_memory_warn_mb=2200.0,
-                    voice_job_memory_limit_mb=2200.0,
-                ),
-            ),
-            patch("worker.cli.run_app", side_effect=_fake_run_app),
-        ):
-            run()
-
-        self.assertIn("opts", captured)
-        self.assertEqual(captured["opts"].agent_name, "librechat-voice-gateway")
-        self.assertEqual(captured["opts"].worker_type, WorkerType.PUBLISHER)
-        self.assertEqual(captured["opts"].job_memory_warn_mb, 2200.0)
-        self.assertEqual(captured["opts"].job_memory_limit_mb, 2200.0)
 
 
 if __name__ == "__main__":

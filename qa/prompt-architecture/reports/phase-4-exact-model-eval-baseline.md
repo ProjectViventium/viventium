@@ -1,3 +1,4 @@
+<!-- qa-evidence-exempt: Historical evidence snapshot retained verbatim; retroactive v2 fields would invent evidence that was not captured during the run. -->
 # Prompt Registry Slice: Exact-Model Completion Baseline
 
 <!-- qa-evidence-exempt: Machine-generated blocked exact-model baseline; no real user-path QA execution occurred. -->

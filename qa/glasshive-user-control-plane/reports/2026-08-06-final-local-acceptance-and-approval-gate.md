@@ -53,7 +53,7 @@
 
 - Feature: individual GlassHive control plane and persistent workspaces.
 - Requirement: `GH-UCP-001` through `GH-UCP-018` in
-  `docs/requirements_and_learnings/55_GlassHive_User_Control_Plane_and_Persistent_Workspaces.md`.
+  `docs/requirements_and_learnings/57_GlassHive_User_Control_Plane_and_Persistent_Workspaces.md`.
 - Use case: secure entry, personal worker account, reusable workspace, connected capability,
   recurring work, and external MCP client without breaking existing Viventium behavior.
 - QA case: `GHUCP-001` through `GHUCP-033` and `GHUCP-UC-001` through `GHUCP-UC-011`.
@@ -68,9 +68,9 @@
 
 | Evidence surface | Required question | Result / sanitized pointer |
 | --- | --- | --- |
-| Requirement and use case | Which requirement, user case, and QA case is being proven? | Requirement 55, `GHUCP-001`–`033`, and the natural-use-case matrix above. |
+| Requirement and use case | Which requirement, user case, and QA case is being proven? | Requirement 57, `GHUCP-001`–`033`, and the natural-use-case matrix above. |
 | Code owning path | Which code path owns the behavior? | GlassHive runtime control plane/auth/MCP/scheduling, Glass Drive BFF/UI, LibreChat identity/provider/broker/scheduler bridge, and parent compiler/launcher. |
-| Docs and nested docs/repos | Which docs or nested repo docs define expected behavior? | Requirement 55, architecture/system maps, GlassHive MCP/UI docs, and the owning nested runtime READMEs. |
+| Docs and nested docs/repos | Which docs or nested repo docs define expected behavior? | Requirement 57, architecture/system maps, GlassHive MCP/UI docs, and the owning nested runtime READMEs. |
 | Scripts or harnesses | Which scripts, fixtures, QA harnesses, or automated suites exercised it? | Playwright CLI, runtime/UI/MCP suites, LibreChat Jest/package builds, compiler tests, and immutable-rollout tests. |
 | Local/external prerequisite state | Which prerequisite was proven healthy or degraded? | Local runtime/UI/MCP were healthy; synthetic provider and bearer auth were intentional; hosted IdP, real providers, and cloud release were not authorized. |
 | Logs | Which sanitized logs confirm or contradict the result? | Runtime/UI/MCP process output contained no uncaught happy-path errors; the negative disconnected-account probe returned its expected structured conflict. |

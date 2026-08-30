@@ -99,6 +99,32 @@ class TestVoiceProgressStateMachine(unittest.TestCase):
 
         self.assertEqual(machine.poll(now=10.0), [])
 
+    # === VIVENTIUM START ===
+    # A neutral progress utterance can already be queued in LiveKit when the
+    # authoritative task completes. Terminal truth must silence that stale
+    # handle so it cannot play after the real answer.
+    def test_terminal_task_event_stops_queued_progress_speech(self) -> None:
+        now = [0.0]
+        spoken = []
+        stopped = []
+        controller = AsyncVoiceProgressController(
+            machine=VoiceProgressStateMachine(enabled=True),
+            speak=lambda task_id, text: spoken.append((task_id, text)),
+            clock=lambda: now[0],
+            stop_active_speech=lambda: stopped.append(True),
+            initial_mode="call",
+        )
+        controller.on_task_event(_event())
+        now[0] = 1.2
+        controller.poll()
+
+        controller.on_task_event(_event(state="completed", phase="completed", sequence=2))
+
+        self.assertEqual(spoken, [("task_1", "I'm on it.")])
+        self.assertEqual(stopped, [True])
+
+    # === VIVENTIUM END ===
+
     def test_cancel_barrier_recovering_stays_active_and_never_speaks_completion(self) -> None:
         machine = VoiceProgressStateMachine(enabled=True)
         recovering = _event(

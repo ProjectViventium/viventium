@@ -263,6 +263,77 @@ def test_scheduling_mcp_has_health_checked_watchdog_contract() -> None:
     assert "trap - EXIT" in launcher_text
 
 
+def test_scheduling_mcp_waits_for_local_gateway_without_blocking_parallel_start() -> None:
+    launcher_text = (
+        REPO_ROOT / "viventium_v0_4" / "viventium-librechat-start.sh"
+    ).read_text(encoding="utf-8")
+    function_name = "start_scheduling_mcp_after_librechat_gateway_ready"
+    function_text = extract_shell_function(launcher_text, function_name)
+    restart_function_text = extract_shell_function(
+        launcher_text, "restart_scheduling_mcp_runtime"
+    )
+    queue_section = launcher_text.split(
+        "queue_optional_services_parallel_with_librechat() {", 1
+    )[1].split("\n}", 1)[0]
+
+    assert function_name in queue_section
+    assert f"  {function_name}" in restart_function_text
+    assert 'wait_for_http "${SCHEDULER_LIBRECHAT_URL%/}/api/health"' in function_text
+    assert "SCHEDULING_LIBRECHAT_GATEWAY_READY_RETRIES" in function_text
+
+    harness = f"""
+{function_text}
+default_librechat_health_retries() {{ printf '120\\n'; }}
+log_warn() {{ printf 'warn:%s\\n' "$*"; }}
+wait_for_http() {{
+  printf 'wait:%s:%s:%s\\n' "$1" "$2" "$3"
+  [[ "${{GATEWAY_READY:-false}}" == "true" ]]
+}}
+start_scheduling_mcp() {{ printf 'started\\n'; }}
+SKIP_LIBRECHAT="${{SKIP_LIBRECHAT:-false}}"
+SCHEDULER_LIBRECHAT_URL="http://127.0.0.1:43180/"
+SCHEDULING_LIBRECHAT_GATEWAY_READY_RETRIES=2
+if {function_name}; then
+  printf 'result:success\\n'
+else
+  printf 'result:failed\\n'
+fi
+"""
+
+    unavailable = subprocess.run(
+        ["bash", "-c", harness],
+        check=True,
+        capture_output=True,
+        text=True,
+        env={"PATH": "/usr/bin:/bin", "GATEWAY_READY": "false"},
+    )
+    assert "wait:http://127.0.0.1:43180/api/health:" in unavailable.stdout
+    assert "started" not in unavailable.stdout
+    assert "result:failed" in unavailable.stdout
+
+    ready = subprocess.run(
+        ["bash", "-c", harness],
+        check=True,
+        capture_output=True,
+        text=True,
+        env={"PATH": "/usr/bin:/bin", "GATEWAY_READY": "true"},
+    )
+    assert "wait:http://127.0.0.1:43180/api/health:" in ready.stdout
+    assert "started" in ready.stdout
+    assert "result:success" in ready.stdout
+
+    skipped = subprocess.run(
+        ["bash", "-c", harness],
+        check=True,
+        capture_output=True,
+        text=True,
+        env={"PATH": "/usr/bin:/bin", "SKIP_LIBRECHAT": "true"},
+    )
+    assert "wait:" not in skipped.stdout
+    assert "started" in skipped.stdout
+    assert "result:success" in skipped.stdout
+
+
 @pytest.mark.parametrize(
     ("health_kind", "installed_present", "expected_scopes", "listener_after"),
     [

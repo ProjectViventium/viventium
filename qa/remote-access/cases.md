@@ -93,7 +93,7 @@ Use stable `REMOTE-NNN` IDs for remote access cases.
   server candidates, or a TURN/TLS allocation with no selected relay pair as proof of a call.
 - Evidence to capture: sanitized selected-pair protocol/candidate types, worker/session presence,
   transcript match/count, cleanup counts, public runtime config alignment, and same-Wi-Fi result.
-- Last run: NOT RUN for this public candidate. Acceptance requires an isolated lab edge/router,
+- Last run: NOT RUN (cataloged 2026-07-22) for this public candidate. Acceptance requires an isolated lab edge/router,
   synthetic account, selected public media pair, fixture transcript, and exact cleanup evidence.
 
 ## `REMOTE-005` - Public-Edge Degradation Does Not Break Local Upgrade

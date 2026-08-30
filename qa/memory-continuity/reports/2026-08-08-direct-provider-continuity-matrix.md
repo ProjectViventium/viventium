@@ -1,3 +1,4 @@
+<!-- qa-evidence-exempt: Historical evidence snapshot retained verbatim; retroactive v2 fields would invent evidence that was not captured during the run. -->
 # Direct-provider continuity matrix — 2026-08-08
 
 - Status: passed
@@ -14,4 +15,3 @@
 | multilingual_paraphrase | completed | 19203 | 1 | 0 |  |
 
 Synthetic non-personal fixtures were inserted into isolated prior conversations and removed after each case. Raw prompts and responses remain in private local QA output; this report stores only categories, hashes, counts, timings, and failure classes.
-<!-- qa-evidence-exempt: Historical or specialized supporting artifact retained without retroactively inventing missing evidence; current release acceptance requires a fresh full-view report. -->

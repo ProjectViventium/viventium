@@ -1,9 +1,11 @@
 # Prompt Architecture and Token Efficiency
 
-**Document Version:** 0.3
-**Date:** 2026-05-07
+**Document Version:** 0.4
+**Last revised:** 2026-08-30
 **Owner:** Viventium Core
-**Status:** Phase 0 baseline and pre-compaction hardening in progress on local critical branch
+**Status:** PARTIAL living contract. Work has advanced beyond the Phase 0 baseline, but main-prompt
+compaction remains blocked by the MCP-ownership, source/compiled/live drift, exact-model, and
+real-surface gates recorded below.
 **Scope:** Main Viventium prompt, surface prompts, MCP/server instructions, background cortex
 activation/execution prompts, Phase B follow-up/NTA prompts, memory-context injection, and prompt
 observability.
@@ -37,6 +39,102 @@ ClaudeViv review conclusion:
 - Make drift gates fail closed, matching agent-sync discipline.
 
 ## Implementation Log
+
+### 2026-08-29 Source-Audit Reconciliation
+
+The retained prompt-architecture source adds five atomic requirements that earlier summaries made
+too broad or left implicit:
+
+1. A semantic judge is not accepted because it emitted valid structured output. Before the judge
+   can gate behavior, calibrate it against a predeclared hand-graded subset and a declared agreement
+   threshold. Keep raw cases, answers, and human grades private; public evidence contains only the
+   bank/version hashes, counts, threshold, agreement result, and sanitized blocker classes.
+2. Python compilation, JavaScript sync, and JavaScript runtime resolution share one versioned
+   semantic contract. One fixture matrix covers references, include order, strict variables,
+   `promptVars`, declared runtime placeholders, and failure behavior. All three paths must produce
+   identical bytes or equivalent typed failures. A mutation that drops any contract field fails.
+3. Only tracked authoring sources may enter prompt compilation. Generated, compiled, installed, and
+   Application Support outputs are never canonical inputs, including access through relative paths,
+   path traversal, or symlink aliases. Reject them before reading prompt content.
+4. Every runtime placeholder belongs to a declared allowlist owned by the prompt contract. A typo or
+   undeclared placeholder fails at compile/check time. A valid placeholder remains intact through
+   source, bundle, sync, and runtime resolution; it must never disappear into an implicit fallback
+   or leak model/private values into public evidence.
+5. Scheduling and GlassHive cognition belongs in MCP server instructions and tool schemas so every
+   supported client can discover the same operations, failure states, and duplicate-safety rules.
+   LibreChat may consume that contract, but it must not be the only client that receives it and no
+   client-specific copy becomes a second manual.
+
+Three source-review suggestions remain bounded decisions, not silent implementation mandates:
+
+- Keep one terminology map only if phase-name differences affect tooling, reports, or developer
+  interpretation. Descriptive aliases alone do not justify migration work.
+- Measure registry-scan cost before caching or restructuring it. Optimize only a reproducible,
+  material bottleneck.
+- Strengthen shallow prompt-reference assertions through the shared parity matrix above; do not
+  create a second overlapping test contract.
+
+Stable public source-ledger joins:
+
+| Source requirement | Current contract | Acceptance owner |
+| --- | --- | --- |
+| `GOV-001` | Workbench exposes exact source, owner, order, composition, compiled/rendered/live state, version, duplication, drift, and eval evidence. | `PROMPT-001` |
+| `GOV-002` | Every prompt/model behavior change compares the same sanitized positive, negative, and adjacent cases on the exact configured model, old versus proposed. | `PROMPT-007` |
+| `GOV-003` | No hidden inline prompt fallback exists outside visible, versioned Workbench lineage. | `PROMPT-001` |
+| `GOV-023` | A semantic judge is calibrated before it can gate behavior. | `PROMPT-003` |
+| `GOV-024` | Python compile, JavaScript sync, and JavaScript runtime resolution share one semantic contract. | `PROMPT-004` |
+| `GOV-025` | Generated or installed prompt inputs, including aliases, are rejected. | `PROMPT-005` |
+| `GOV-026` | Runtime placeholders are declared and preserved or fail closed. | `PROMPT-005` |
+| `GOV-027` | Scheduling and GlassHive cognition is portable through MCP contracts. | `PROMPT-006` |
+
+`OPEN-016` keeps phase-name normalization conditional on a proved tooling or interpretation cost.
+`OPEN-017` keeps registry-scan optimization conditional on a reproducible material benchmark.
+`OPEN-018` closes only through the `GOV-024` semantic parity contract; it does not authorize a
+second prompt-reference test system.
+
+Acceptance is owned by `PROMPT-001` and `PROMPT-003` through `PROMPT-007` in
+`qa/prompt-architecture/cases.md`. Structural and calibration gates `PROMPT-003`–`006`, the
+exact-model old-versus-proposed gate `PROMPT-007`, and applicable real-user surface QA are separate;
+none may substitute for another.
+
+### 2026-08-22 Repository Agent Instruction Architecture
+
+The repository instruction layer now follows one-source ownership instead of copying the same
+workflow into model-specific files:
+
+- Root `AGENTS.md` is the shared Viventium contract. Root `CLAUDE.md` imports it with `@AGENTS.md`
+  and contains no duplicated shared rules or generic model settings.
+- Personal communication preferences belong in user-level instructions or opt-in skills, not the
+  public project instruction layer.
+- Codex discovery stops at the active git root, so Viventium-managed nested component instructions
+  explicitly require the parent contract. Claude Code loads parent `CLAUDE.md` files and discovers
+  nested files on demand; each nested `CLAUDE.md` imports only its colocated `AGENTS.md`.
+- Contract tests verify instruction ownership, import pointers, size, and nested reachability. They
+  are structural guards, not evidence that a model followed the instructions on representative
+  tasks.
+- GPT-5.6 Sol and Opus 5 receive the complete outcome, relevant context, hard constraints,
+  authorization boundary, required evidence, success criteria, and output shape once. Generic
+  re-checks, mandatory verification subagents, and model-effort settings do not belong in project
+  prompt prose. Viventium's task-specific QA gates remain because they encode product acceptance.
+- Product prompt and model-behavior changes use Prompt Workbench for canonical source/live lineage
+  and same-input old-versus-proposed exact-model evaluation. Automated tests, Workbench evals, and
+  real-user QA remain separate evidence gates.
+- Skills remain on-demand. New public skills are source-reviewed before installation; overlapping
+  workflow skills are not stacked automatically. Deterministic requirements belong in tests,
+  permissions, or hooks rather than advisory prompt repetition.
+
+Primary sources:
+
+- [OpenAI GPT-5.6 model and prompting guidance](https://developers.openai.com/api/docs/guides/latest-model?model=gpt-5.6#prompting-best-practices)
+- [OpenAI Codex AGENTS.md guidance](https://learn.chatgpt.com/docs/agent-configuration/agents-md)
+- [Anthropic: Prompting Claude Opus 5](https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/prompting-claude-opus-5)
+- [Anthropic: Claude Code best practices](https://code.claude.com/docs/en/best-practices)
+
+Community sources may suggest useful skills or workflows, but they are discovery signals rather
+than repository authority. Recent large-scale skill studies report widespread defects and “smells”
+in public skill corpora, so popularity does not replace source review, bounded triggers, or local
+evaluation ([study of 138K SKILL.md files](https://arxiv.org/abs/2608.08453),
+[AgentSkillOS](https://arxiv.org/abs/2607.01456)).
 
 ### 2026-08-11 Truth-Seeking Prompt And Evaluation Ownership
 
@@ -297,8 +395,9 @@ Eval behavior is split into two human-facing modes:
 
 - **Preview**: validates which eval cases would run, records a public-safe selection summary, makes
   no model call, and must not be presented as model performance.
-- **Live exact-model run**: calls the canonical exact-model harness and is the path that records
-  performance against prompt hashes.
+- **Live configured-model run**: selects the canonical trusted runner for the case's real surface
+  and records performance against prompt hashes. A body field sent through the ordinary web route
+  is not native-surface evidence.
 
 The Workbench live-run button is an explicit action from an authenticated, loopback-only operator
 surface. It may invoke the canonical runner's short-lived local QA JWT path when no QA password is
@@ -307,6 +406,17 @@ JWT auth in CI or production, selects the QA account through its configurable
 `VIVENTIUM_QA_USER_NAME`/email contract, restores temporary state in `finally`, and removes synthetic
 conversations. A missing selector, account, API, or auth prerequisite is a recorded failed run, not
 a preview or silent pass.
+
+Every completed case must bind its authenticated QA owner and trusted source event to a metadata-only
+request hash in every completion prompt frame. The evaluator filters by that exact hash before it
+accepts the observed surface, agent, provider, or model. Missing, mixed, or unrelated-only request
+evidence and missing, mixed, or different surface telemetry fail before semantic credit. Telegram
+cases use the server-authenticated Telegram gateway and an exact disposable synthetic mapping;
+their session, mapping, conversations, and messages must be restored or removed in `finally`.
+Voice, Wing, Listen-Only, and Scheduler cases use the same native runner through their trusted
+gateways. The evaluator distinguishes the selected surface from the completion surface: Wing maps
+to `voice`, Scheduler maps to `workbench`, and Listen-Only must prove that no completion frame ran.
+Only one selected native surface may be certified per run.
 
 The Eval Designer must default to all eval cases linked to the selected prompt across families and
 surfaces. Creating or editing eval cases creates a reviewed `eval-edit` draft against the canonical
@@ -326,6 +436,20 @@ The former `Frames` tab is now `Prompt Traces`. A prompt trace is local metadata
 surface, model/provider, assembled layers, token estimates, and routing/decision metadata. The
 public-safe UI must explain that concept plainly and must not expose raw private prompt text or
 transcripts.
+
+Prompt Traces reuses the existing rotated Core debug log; it does not own a second production file
+sink or retention job. Core emits one bounded, allowlisted `PromptFrameTraceTelemetry` JSON record
+per frame through its normal logger. Raw prompts, transcripts, account values, paths, provider/model
+names, and unregistered fields are excluded; identities and permitted string decisions are opaque
+hashes. The legacy `VIVENTIUM_PROMPT_FRAME_FILE_LOG` path remains disabled.
+
+The loopback-admin Workbench endpoint reads only recent bounded tails from canonical Core debug-log
+names. It holds the owner-controlled log directory open while it enumerates and opens files, rejects
+symlinks, hard links, wrong-owner or writable paths, validates every field against the exact trace
+schema, and returns only the public-safe projection. The UI must distinguish `empty`, `degraded`, and
+`unavailable`, offer retry, and always label the result **local diagnostic · not release evidence**.
+Normal Core log rotation owns the storage ceiling and retention. These traces can support diagnosis;
+they cannot satisfy release attestation or installed user-path gates.
 
 Scheduling Cortex prompt work must show the prompt files and the config surfaces that make them
 real. Selecting `main.scheduling_self_continuity` or `mcp.scheduling_cortex.server` in Prompt
@@ -568,6 +692,11 @@ The helper starts Uvicorn without access logging so the launch token is not echo
 Variable rendering is scoped to the authenticated admin context; client-supplied user IDs or emails
 are not trusted for profile or memory rendering.
 
+`HARD-020` is stricter than a token-free address bar. Workbench authentication material must never
+enter a URL, browser history, referrer, access/application log, or persistent `localStorage` value.
+Launch and refresh use a short-lived exchange or verified same-machine session, and the browser
+security case must inspect every one of those sinks. `PW-053` / `PW-UC-026` owns acceptance.
+
 The built-in schedule is named **Subconscious Deep Thought** in the product UI, with
 **Nightly subconscious thought formation** documented as the template/legacy alias. It preserves
 the user's requested intent while removing direct database write language: memory changes are framed
@@ -761,7 +890,7 @@ This is still not permission to compact the main prompt. Remaining gates before 
   operational manuals are removed.
 - The prompt-bundle A/B/C drift gate must prove live, compiled, and source prompt hashes agree.
 
-### 2026-05-07 Local Critical Branch
+### 2026-05-07 Historical Local Critical-Branch Snapshot
 
 Branch: `codex/prompt-architecture-critical`
 
@@ -796,7 +925,7 @@ component pins agree:
 
 - Config compiler release tests: `76/76`
 - Install summary plus eval-harness release tests: `35/35`
-- Prompt-frame telemetry Jest tests: `7/7`
+- Prompt-frame telemetry Jest tests: `22/22`
 - Scheduling Cortex pytest suite: `83/83`
 - Live QA-account exact-model baseline: `3/3` selected web cases, reported as partial baseline.
 
@@ -925,6 +1054,38 @@ workload rather than a conscious-agent reasoning route.
   never be counted as a failed candidate response. Workbench history and UI expose aggregate counts
   and the sanitized blocker class, not raw provider bodies, prompts, responses, or credential
   fragments. Secret scrubbing must also remove provider-returned partially masked tokens.
+- Installed Workbench acceptance resolves the current provider/model from each eval family's actual
+  structured owner. Main families use Main, direct-execution families use their declared
+  `executionTarget`, and activation families use every declared cortex target plus only its
+  explicitly configured fallback routes. A specialist or activation route must never be rejected
+  because it differs from Main, and an undeclared model or fallback must never pass.
+- A successful Workbench execution receipt binds an exact route triple, not only a provider/model
+  pair. Its plan and persisted public-safe receipt carry requested and effective provider, model,
+  and effort, plus `fallbackUsed`, `fallbackAuthorized`, and a typed `fallbackReason`. The requested
+  triple must equal the configured primary. The effective triple must equal that primary or one
+  explicitly declared fallback triple; an effort-only change is a fallback under the same rule.
+  Primary execution requires reason `none`. A fallback requires an approved provider failure class,
+  and activation evidence also proves the matching earlier primary failure. Missing effort, an
+  undeclared triple, inconsistent fallback flags, a missing/unknown reason, or replay loss of any
+  lineage field fails closed. Raw provider error text stays private.
+- Prompt-frame route telemetry is versioned. New successful receipts require the complete structured
+  lineage contract; legacy frames that cannot prove effort or fallback reason remain unverified.
+  Persistence and independent history readback hash the complete execution-route object, so a
+  projected or replayed receipt cannot silently drop the added lineage.
+- Connected-launch evidence given to the semantic judge is receipt-bound and public-safe. Each
+  execution reports whether a View / Steer URL was returned, a URL hash, the exact execution-receipt
+  hash, and a binding hash over those two hashes. It never includes the raw URL, launch arguments, or
+  task text. This proves only that the exact launch receipt returned a mission-control link; it does
+  not prove a terminal artifact or completed deliverable.
+- Required semantic judging comes from the current family/case contract and direct-specialist
+  ownership, not from a run's self-reported `semanticJudgeRequired` flag. For activation, acceptance
+  reads the complete private runner summary and verifies
+  `selected cases × declared targets × repetitions` completed/passed decisions, all target routes,
+  and zero false, unavailable, inconsistent, or provider-error outcomes. Public output contains
+  only aggregate counts and configured-route facts.
+- Full installed acceptance requires current exact-model proof for every unique case in the current
+  bank. Old partial runs, omitted families, missing semantic verdicts, unverified specialist
+  identity, and a summary copied only from abbreviated runner stdout remain blocking.
 
 ### GPT-5.6 conscious and subconscious routes
 
@@ -943,13 +1104,31 @@ observer retain Sol/xHigh. Terra is not a durable-memory fallback unless it clea
 - Preserve provider-appropriate `reasoning_effort`: `xhigh` only for Deep Research and Red Team,
   `high` for Strategic Planning, `medium` for balanced cognition, and `low` for latency-sensitive or
   tool-heavy work.
+- Scheduled and manual Workbench runs must persist distinct provenance. Health uses the latest
+  scheduled receipt; a later manual success may be displayed as recovery evidence but cannot make a
+  failed or missed unattended run green. Historical rows without explicit provenance may be
+  classified only from their stored due time, recurrence, and timezone.
+- A current Workbench nightly row is scheduled evidence only when its persisted execution metadata
+  says `triggerKind=scheduled` and `triggerSource=scheduler_loop`. A projected/manual row, even at
+  the right wall-clock time and with a successful artifact, cannot satisfy nightly health.
+- Codex observer/companion health also fails closed when the feature probe is empty, malformed, or
+  lacks the expected `code_mode_host` capability. Process existence and a zero exit code alone do
+  not certify that the current app/runtime exposes the required feature.
+- Memory-maintenance health has the same no-false-green rule at its own boundary: requested and
+  effective receipt tuples must match each other and the current generated provider/model/effort.
+  Compiler defaults and direct-runtime fallbacks must agree, so loss of generated environment does
+  not silently change the selected memory model.
+- Workbench runtime ownership includes the source checkout. A healthy listener is current only when
+  its absolute or working-directory-resolved `--app-dir` belongs to that checkout. Restart may
+  reclaim that exact stale listener but must never kill another checkout or unrelated process.
 
-### Claude Opus 5 fallback
+### GlassHive Claude / Opus 5 fallback
 
-Every conscious/subconscious text route declares Claude Opus 5 as fallback. Fallback prompt
-behavior must preserve the same user-visible outcome and tool/evidence contract without carrying
-OpenAI-only `reasoning_effort` or `useResponsesApi` fields into Anthropic requests. Missing Anthropic
-auth is a classified fallback-availability blocker, not permission to downgrade silently.
+Every conscious/subconscious text route declares `glasshive-harness / claude-code:opus` at high
+effort as its generic Agent fallback. Fallback prompt behavior must preserve the same user-visible
+outcome and tool/evidence contract, and provider parameter sanitization must retain the supported
+GlassHive effort while dropping unrelated direct-provider fields. Missing GlassHive capability is a
+classified fallback-availability blocker, not permission to downgrade silently.
 
 ### GPT-5.5
 
@@ -1259,38 +1438,27 @@ Acceptance:
 
 Natural message bubbles and optional audio are surface decisions, not runtime classification tasks.
 The registered `surface.messaging.optional_audio` and `surface.messaging.bubble_boundaries` prompts
-teach the selected Main Agent the shared `{SKIP_VOICE}` and `{MSG_BREAK}` contract. Telegram audio
-and text prompts include those layers explicitly so Prompt Workbench can show source, compiled,
-live, include/dependent, and eval lineage.
+teach the Main Agent the shared `{SKIP_VOICE}` and `{MSG_BREAK}` contract. Telegram audio and text
+prompts include those layers explicitly so Prompt Workbench can show source, compiled, live,
+include/dependent, and eval lineage.
 
-Runtime recognizes only standalone reserved control lines outside code fences and block quotes. It
-must not decide that an answer is an email, non-conversational, too long, or better split by
+The runtime recognizes only standalone reserved control lines outside code fences and block quotes.
+It must not decide that an answer is an email, non-conversational, too long, or better split by
 matching words or prompt text. JavaScript and Python parsers share a versioned grammar and parity
-test. A compatible future messaging adapter consumes the same parsed intent while applying its own
-transport limits.
-
-The Main-response boundary also materializes the completed optional-audio decision as versioned
-`metadata.viventium.deliveryDisposition` for channel adapters. This does not move semantic judgment
-into runtime: prompt/model logic still chooses `skip` or `eligible`, while the response boundary
-validates and transports that choice separately from visible text. During rollout the legacy exact
-`{SKIP_VOICE}` line still wins. A producer may declare the structured contract required only when
-final events and replays are guaranteed to include it; required missing/malformed metadata fails
-closed to text-only, while an optional missing contract preserves legacy behavior. No adapter may
-infer or repair the decision from user wording, answer content, provider labels, or agent names.
+test. A compatible future Slack, WhatsApp, or other messaging adapter consumes that same parsed
+intent while applying its own transport limits.
 
 Acceptance:
 
-- copy-ready text may suppress optional audio without losing text;
-- an explicit request for text only/no audio suppresses optional audio without losing text;
-- ordinary conversation retains audio unless the agent has a semantic reason to suppress it;
-- an explicit request to hear/read/speak never suppresses audio;
-- natural conversation uses no more than two `{MSG_BREAK}` controls;
+- a copy-ready email returns complete text plus `{SKIP_VOICE}` when optional audio would be wasteful;
+- ordinary conversation keeps audio unless the agent has a semantic reason to suppress it;
+- an explicit request to hear/read/speak the answer never emits `{SKIP_VOICE}`;
+- short natural conversation may use zero or one `{MSG_BREAK}`, never more than two;
 - copy-ready artifacts do not receive semantic bubble breaks;
-- no complete or partial control appears in visible or persisted chat text;
-- one logical turn remains one persisted turn with at most one audio attachment;
-- stream completion, reconnect, and replay preserve the same valid structured disposition beside
-  the final text, and a required invalid/missing disposition cannot reach optional TTS;
-- exact-model evaluation covers positive and negative judgment, not only parser correctness.
+- no control or incomplete streaming prefix appears in visible or persisted chat text;
+- one logical assistant turn remains one persisted turn, and at most one audio attachment is sent;
+- Prompt Workbench's exact-model bank evaluates positive and negative cases rather than treating
+  parser correctness as proof of model judgment.
 
 ### Fix 8: Tier memory context instead of dumping everything blindly
 
@@ -1374,7 +1542,7 @@ Requirements:
 
 Acceptance:
 
-- `openAI / gpt-5.4` route health agrees with actual runtime product probes.
+- The configured product route's health agrees with actual runtime product probes.
 - MS365/Google MCP readiness distinguishes server started, OAuth connected, and tool call usable.
 
 ## Evaluation Plan
@@ -1383,9 +1551,10 @@ Acceptance:
 
 Build an eval runner that imports the real prompt builders and runs live selected routes:
 
-- main Viventium on Claude Opus 4.7
+- every affected configured exact route, including `openAI / gpt-5.6-sol` and the Claude Opus 5
+  fallback when applicable
 - voice route as actually selected live
-- GPT-5.4 background/productivity/research routes
+- background, productivity, and research routes as actually configured
 - fallback routes where configured
 
 Each prompt change must run old vs proposed prompt variants with the same sanitized inputs.
@@ -1560,13 +1729,30 @@ the same controls; runtime/UI must not branch on the title `Consciousness Contin
 - Anthropic Claude prompting best practices: `https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/claude-prompting-best-practices`
 - Anthropic tool definition guidance: `https://platform.claude.com/docs/en/agents-and-tools/tool-use/define-tools`
 
-## Approval Questions
+## Decision Record And Remaining Questions
 
-1. Approve Phase 0 and Phase 1 before any main prompt compaction?
-2. Approve provider-native structured output as the primary follow-up decision transport, with
+1. **OPEN:** Approve Phase 0 and Phase 1 before any main prompt compaction?
+2. **OPEN:** Approve provider-native structured output as the primary follow-up decision transport, with
    text-JSON only as fallback?
-3. Approve keeping memory injection tiers here while moving hardener behavior details into
+3. **OPEN:** Approve keeping memory injection tiers here while moving hardener behavior details into
    `20_Memory_System.md`?
 4. Resolved 2026-07-11: provider controls remain capability-scoped on spoken surfaces. The model
    appraises expressive versus restrained delivery from the private Feelings state and moment; no
    explicit user request, phrase gate, or runtime band-to-tag map is required.
+
+<!-- VIVENTIUM-STABLE-REQUIREMENT-DECLARATIONS:START -->
+## Stable requirement declarations
+
+Each line is the canonical public owner declaration for one stable requirement ID. Detailed sections supply implementation context; they must not narrow or contradict these declared outcomes.
+
+CC-027: Workbench is the operational view for schedule, prompt composition, model/effort, history, channel results, dependencies, latency, tokens/costs, and disposition; reuse Run Now and existing views. No separate continuity dashboard.
+GOV-001: Prompt Workbench shows exact source, ownership, order, composition, compiled/rendered/live state, version, duplication, drift, and eval evidence.
+GOV-002: Prompt/model behavior changes must compare sanitized positive, negative, and adjacent cases on the exact configured models, old versus proposed.
+GOV-003: No hidden inline prompt fallback outside Workbench lineage.
+GOV-023: A behavioral judge is not accepted from structured output alone. Calibrate it against a predeclared, hand-graded subset and publish only private-safe aggregate evidence.
+GOV-024: Python compile, JavaScript sync, and JavaScript runtime prompt resolvers share one semantic parity contract for references, includes, strictness, prompt variables, runtime placeholders, order, and failure behavior.
+GOV-025: Generated or installed runtime files, including aliases through relative paths or symlinks, are rejected as canonical prompt-compiler inputs. Clean tracked authoring sources remain valid.
+GOV-026: Every runtime prompt placeholder is declared. An undeclared or misspelled placeholder fails; a valid runtime placeholder survives source, bundle, sync, and runtime resolution without silent model leakage.
+GOV-027: Scheduling and GlassHive MCP cognition must be discoverable and usable by supported non-LibreChat agents/clients from server and tool contracts alone; do not copy a separate manual into each client.
+HARD-020: Prompt Workbench authentication material must not enter URLs, browser history, referrers, logs, or persistent `localStorage`.
+<!-- VIVENTIUM-STABLE-REQUIREMENT-DECLARATIONS:END -->

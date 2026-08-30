@@ -56,7 +56,7 @@ def test_feelings_case_catalog_preserves_truth_invariant_stable_ids() -> None:
     assert "`EMO-009` | Truth/safety invariant" in cases
     assert "Feelings modulate expression, not facts" in cases
     assert "`EMO-UC-013` | Ask a factual or safety-sensitive question under high affect" in cases
-    assert "`EMO-037` | Configurable conscious-only scope" in cases
+    assert "`EMO-037` | `PW-058`: configurable `conscious_agent` scope" in cases
     assert "`EMO-039` | Specialist-cortex affect independence" in cases
     assert "`EMO-040` | Phase-B conscious continuity" in cases
     assert "`EMO-041` | Workbench dynamic-context lineage" in cases

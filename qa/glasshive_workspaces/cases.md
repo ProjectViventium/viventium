@@ -1,4 +1,7 @@
-# GlassHive Workspaces QA Cases
+# GlassHive Local Worker-Workspace Lifecycle QA Cases
+
+These `GHWS-*` cases are the local worker-workspace foundation. They do not replace hosted personal
+control-plane cases under [`qa/glasshive-user-control-plane/`](../glasshive-user-control-plane/).
 
 ## Case ID Convention
 
@@ -8,12 +11,15 @@ Use stable `GHWS-NNN` IDs for glasshive workspaces cases.
 
 | Case ID | Requirement | User Outcome | Surfaces | Automation | Last Run |
 | --- | --- | --- | --- | --- | --- |
-| `GHWS-001` | Workspace/project lifecycle is resumable and maps tasks to the correct worker context. | User-visible behavior matches source, docs, persisted state, and logs | GlassHive projects, runs, workspaces, callbacks | `tests/release/test_stable_dev_runtime_workflows.py` plus user-grade QA when visible | PASS 2026-05-23 for local enterprise launcher/project workspace flow; see `qa/glasshive_azure_enterprise/reports/2026-05-23-launcher-watch-enterprise-qa.md`. |
-| `GHWS-002` | Public QA evidence is sanitized and reproducible | A PR reviewer can verify the behavior without private/local data | QA report, git diff, logs summary, generated artifacts | Public-safety scan plus relevant release tests | PASS 2026-08-12: both workspace-control reports passed the public-safety and QA-contract suites. |
-| `GHWS-003` | The modern Workspaces surface owns normal navigation and output inspection. | Brand, workspace, and output actions stay in the glossy app; inspecting a result never resumes compute. | Glass Drive Workspaces, Watch, artifact landing | UI/API regressions + Playwright | PASS 2026-08-12: local A-to-B replacement plus the accepted hosted canary's modern navigation, direct signed output, two real provider follow-ups, refresh persistence, and exact artifact landing passed. |
-| `GHWS-004` | Workspaces is a bounded multi-worker control room. | User can scan, open, and steer many workers without an offscreen poll/WebSocket storm or accidental input capture. | Workspaces overview, compact live API, desktop preview | UI/API/performance regressions + Playwright network trace | PASS 2026-08-12: local 1/4/5/25 matrix and parallel steering passed; the accepted hosted canary showed the real view-only noVNC stream and clean active-to-completed teardown. |
-| `GHWS-005` | Duplicate/template capability review is durable and human controlled. | Copied work cannot run with missing or silently broadened capabilities; refresh restores exact actions. | Duplicate, templates, Library, Connections, confirmation | Runtime transaction/concurrency tests + Playwright | PARTIAL 2026-08-11: local duplicate, storage-loss restore, human waiver, atomic/crash/legacy/template and concurrency coverage pass; installed two-user execution remains open. |
-| `GHWS-006` | Terminal workspace recovery stays actionable. | A failed, cancelled, or interrupted workspace keeps the Pause action named by recovery guidance, while Resume stays unavailable until a corrected follow-up exists. | Workspaces, Watch, provider-account recovery | UI policy regression + installed browser/provider mission | PARTIAL 2026-08-11: policy regression passes; exact installed failure-to-recovery rerun remains open. |
+| `GHWS-001` | Workspace/project lifecycle is resumable and maps tasks to the correct worker context. | User-visible behavior matches source, docs, persisted state, and logs | GlassHive projects, runs, workspaces, callbacks | `tests/release/test_stable_dev_runtime_workflows.py` plus user-grade QA when visible | PARTIAL 2026-08-29 documentation audit: embedded notes describe a 2026-05-23 browser run, but the cited dated report is absent; rerun the current candidate before PASS. |
+| `GHWS-002` | Public QA evidence is sanitized and reproducible | A PR reviewer can verify the behavior without private/local data | QA report, git diff, logs summary, generated artifacts | Public-safety scan plus relevant release tests | FAIL 2026-08-29 documentation audit: the cited public report is absent, so the reproducible-evidence requirement is not met. |
+| `GHWS-003` | First-time workspace entry uses product language and primary actions | User starts without worker or sandbox concepts | Glass Drive launch and watch UI | Glass Drive server tests plus real browser QA | PARTIAL 2026-04-16: embedded execution notes prove the labels and one launch/watch handoff; no dated report or current-candidate rerun exists. |
+| `GHWS-004` | Reopening a paused workspace preserves its identity and state | User returns to the same files, profile, and running workspace | Launch UI, runtime lifecycle, workspace state | Runtime lifecycle tests plus real browser/state QA | PARTIAL 2026-04-16: embedded notes prove same-worker pause/resume and a new queued run; browser-profile continuity and a dated report remain absent. |
+| `GHWS-005` | A new workspace is isolated from every existing workspace | User starts clean without inheriting another workspace's files or browser identity | Launch UI, filesystem, browser profile | Sandbox isolation tests plus real two-workspace QA | PARTIAL 2026-04-16: duplicate-copy boundaries were sampled, but two independently new workspaces and browser-profile isolation were not proved. |
+| `GHWS-006` | Duplicate copies approved files/context into a fresh identity only | User branches useful work without cloning private browser/home state | Launch UI, filesystem, runtime audit | Runtime/API and sandbox tests plus real browser/state QA | PARTIAL 2026-04-16: embedded notes prove a new worker/project, copied workspace marker, excluded home marker, and `worker.duplicated`; no dated report or current rerun exists. |
+| `GHWS-007` | Parent routing reuses the known workspace alias | User is returned to the right workspace without choosing a raw worker | Parent launch, alias map, runtime audit | Runtime/API tests plus real parent-flow QA | NOT RUN — cataloged 2026-08-29: same-worker manual reopen exists, but no recorded parent-known-alias journey proves automatic selection. |
+| `GHWS-008` | Non-technical users understand Open, Duplicate, and New | User can choose reopen, branch, or clean start without explanation of runtime internals | Launch UI | Moderated comprehension QA | NOT RUN — cataloged 2026-08-29: labels were inspected, but no non-technical reviewer result is recorded. |
+| `GHWS-009` | Failed launch remains visibly failed and auditable | User sees an explicit failure instead of a healthy orphan | Launch/watch UI, runtime audit | Failure-injection tests plus real browser/state QA | NOT RUN — cataloged 2026-08-29: no controlled failed-launch user path is recorded. |
 
 ## `GHWS-001` - Core User Flow
 
@@ -28,9 +34,10 @@ Use stable `GHWS-NNN` IDs for glasshive workspaces cases.
 - Forbidden result: backend logs, mocks, source inspection, or model completions are treated as full acceptance when a user-visible surface exists.
 - Evidence to capture: sanitized visible result, supporting command/test result, generated/runtime state summary, and docs/case links.
 - Automation: `tests/release/test_stable_dev_runtime_workflows.py` plus any narrower feature tests discovered during implementation.
-- Last run: PASS 2026-05-23 for the local enterprise launcher/project workspace path. Playwright
+- Last run: PARTIAL 2026-08-29 documentation audit. The embedded 2026-05-23 notes say Playwright
   created a synthetic task, verified async completion, reopened Project workspace, restarted the
-  runtime process, and verified retained workspace result state after reload.
+  runtime process, and verified retained workspace result state after reload. The cited dated
+  report is absent, so these notes do not support a current PASS.
 
 ## `GHWS-002` - Public-Safe Evidence Record
 
@@ -45,104 +52,88 @@ Use stable `GHWS-NNN` IDs for glasshive workspaces cases.
 - Forbidden result: a report includes private transcripts, account identifiers, raw runtime dumps, local home paths, tokens, or secret-bearing command lines.
 - Evidence to capture: public-safety scan result and link to the sanitized report.
 - Automation: public-safety pattern scan plus relevant release tests.
-- Last run: PASS 2026-08-12. Both workspace-control reports are public-safe, follow the current
-  evidence template, and passed the public-safety and QA-contract suites.
+- Last run: FAIL 2026-08-29 documentation audit. The cited dated public report is absent; embedded
+  summary text does not satisfy the reproducible-evidence requirement.
 
-## `GHWS-003` - Modern Navigation And Non-Mutating Output
+## `GHWS-003` - First-Time Workspace Entry
 
-- Requirement: normal users remain in Glass Drive and can inspect output directly.
-- Risk covered: brand text is inert, a primary action exposes `/ui/projects/*`, a hosted delivery
-  exposes an unusable worker-local `file:///workspace/...` target, two labels open the same Watch
-  page, or clicking a completed result unexpectedly resumes compute.
-- Steps: open Home, Workspaces, Watch, and a completed artifact; use brand, Open workspace, Open
-  output, and Download by pointer and keyboard; complete run A, observe run B start elsewhere, then
-  complete B without rebuilding the grid; inspect lifecycle calls and refresh.
-- Expected result: brand returns Home/Workspaces; one primary workspace action opens Watch; output
-  uses the exact scoped artifact/result action; B replaces A's links after its completion; no
-  inspection sends resume/start/message. Output disclosure exposes matching `aria-controls` and
-  changes View/Hide copy truthfully.
-- Forbidden result: normal navigation reaches the legacy runtime UI, exposes raw ids/tokens/JSON or
-  a worker-local file URL, or restarts work without an explicit Continue/Send action.
-- Evidence: browser URL/DOM, lifecycle network log, worker state before/after, artifact bytes/headers,
-  console, narrow-layout screenshots.
-- Last run: PASS 2026-08-12. A real local Chromium session with synthetic state proved brand and Watch
-  returned to the modern app; the preview opened Watch by pointer and the one visible Open workspace
-  action did so by keyboard; run B replaced run
-  A's delivery after a running transition without grid rebuild; keyboard View/Hide exposed matching
-  `aria-controls`; Open rendered B, Download remained distinct, and the lifecycle ledger stayed empty.
-  The accepted hosted canary repeated the modern brand/Watch route, completed two provider-backed
-  follow-ups, replaced the latest delivery without a grid rebuild, opened the exact signed text and
-  HTML artifact landings, preserved the result across refresh, and emitted no lifecycle mutation
-  from output inspection.
+- Requirement: a first-time user sees `Workspace`, `Open workspace`, `Duplicate workspace`, and
+  `New workspace` without worker IDs or sandbox language in the primary flow.
+- Steps: open Glass Drive with no workspace context; create a new workspace; follow the watch handoff.
+- Expected result: the user reaches the desktop-first workspace view without learning runtime terms.
+- Forbidden result: the primary flow asks the user to select a worker, sandbox, or opaque runtime ID.
+- Evidence to capture: launch and watch UI, route, runtime row, console/network state, and dated report.
+- Last run: PARTIAL 2026-04-16. Embedded README notes prove the primary labels and one watch handoff;
+  the dated report and current-candidate rerun are absent.
 
-## `GHWS-004` - Bounded Multi-Worker Control Room
+## `GHWS-004` - Reopen Existing Workspace
 
-- Requirement: Workspaces presents an executive overview without unbounded live surfaces.
-- Risk covered: every card opens an interactive noVNC socket, offscreen cards poll forever, or card
-  rerenders duplicate streams and capture user input.
-- Steps: exercise 1, 4, 5, and 25 mixed-state workspaces; scroll/filter/resize/refresh; inspect
-  requests, WebSockets, focus, preview interaction, state groups, and click-through behavior. Resolve
-  an enterprise opaque desktop-preview ref and verify its stored redirect retains `preview=1`.
-- Expected result: only visible cards poll compact state, calls do not overlap, no more than three
-  visible active cards receive view-only previews, signed and unsigned previews are both view-only,
-  and every other card has truthful state/output. No dead artifact thumbnail is promised where the
-  runtime has only a safe landing-page URL rather than raw image bytes.
-- Forbidden result: offscreen storm, more than the configured preview bound, duplicate sockets,
-  pointer/keyboard capture, or a fabricated desktop thumbnail.
-- Evidence: Playwright network/WebSocket counts, DOM/card states, browser performance trace, backend
-  compact/full request counters, console, mobile/tablet/desktop screenshots.
-- Last run: PASS 2026-08-12. Real local Chromium exercised 1, 4, 5, and 25 cards, compact
-  visible-only refresh, the three-preview bound, 320/768/1024 layouts, and parallel steering of two
-  workers without lifecycle mutation. Active-to-idle transition also hid the preview overlay and
-  exposed a keyboard Resume action that emitted one exact lifecycle request. The accepted hosted
-  canary then warmed and displayed a real view-only noVNC stream (`pointer-events: none`,
-  `tabindex=-1`), completed the task, removed the frame, and persisted the replacement delivery.
+- Requirement: opening a paused named workspace resumes the same underlying workspace and preserves
+  its files and browser profile when the remote site still accepts the session.
+- Steps: create a workspace and marker; pause; use `Open workspace`; compare identity, files, profile,
+  lifecycle events, and new run state.
+- Expected result: the same workspace resumes with its state intact and without raw worker wording.
+- Forbidden result: silent replacement, clean-state launch, false login guarantee, or lost marker.
+- Evidence to capture: before/after identity, marker hash, browser-profile state, lifecycle events, UI,
+  and dated report.
+- Last run: PARTIAL 2026-04-16. Same-worker pause/resume and a new queued run are recorded; full
+  browser-profile continuity and independent report evidence are missing.
 
-## `GHWS-005` - Atomic Duplicate/Template Reapproval
+## `GHWS-005` - New Workspace Isolation
 
-- Requirement: copied capability references require an exact destination decision before execution.
-- Risk covered: a legacy route, crash window, refresh, template instantiation, scope widening, or
-  browser-storage loss permits execution with global/fallback credentials.
-- Steps: duplicate through canonical and legacy routes; pause file copy mid-flight; instantiate a
-  template; refresh/restart; place the copied workspace beyond the first 100 favorite catalog rows;
-  attempt execution before decisions; omit and widen requested Library scopes; approve the exact
-  source scopes/select a concrete provider; duplicate an account-less preferred-fallback workspace;
-  disconnect and forget a selected account and repeat under preferred and required policy;
-  confirm Continue without for a non-transferable legacy connection/provider grant; race two
-  confirmations; repeat as another owner.
-- Expected result: the new workspace is born review-pending, server catalog restores stable action
-  ids, exact owner lookup restores review beyond the first catalog page, execution returns conflict
-  until every action resolves, omitted scopes bind to the copied subset, widened scopes fail,
-  account-less/disconnected/forgotten preferred fallback remains runnable, an unready required
-  selection blocks copy with reconnect-or-choose recovery, provider selection cannot be waived, non-transferable
-  legacy grants never claim setup, and one human confirmation resolves one action once.
-- Forbidden result: action disappears on message dispatch, sessionStorage is the authority, direct
-  connection grant is fabricated, a legacy route bypasses the gate, an unready account creates an
-  impossible review, or one user's labels reach another.
-- Evidence: visible review/confirm UI, refresh state, API conflicts/success, persisted report/grants,
-  concurrent confirmation result, two-owner isolation, no fallback provider execution.
-- Last run: PARTIAL 2026-08-11. Local Chromium duplicated a workspace, lost tab storage, restored
-  the exact review from the server catalog, opened the human-confirmation page, and resolved one
-  waivable action. Atomic/crash/legacy/template/concurrency tests pass; installed two-user execution
-  remains open.
+- Requirement: each new workspace receives independent files and browser/profile state.
+- Steps: create two new workspaces; place distinct files and synthetic browser state in each; inspect
+  both directions for leakage.
+- Expected result: neither workspace inherits or exposes the other's state.
+- Forbidden result: reused home/profile, copied session, cross-workspace file, or shared opaque ID.
+- Evidence to capture: two workspace identities, file hashes, profile roots, browser state, and audit.
+- Last run: PARTIAL 2026-04-16. The embedded duplicate check sampled one home-state exclusion, but
+  two independently new workspaces and full browser isolation were not run.
 
-## `GHWS-006` - Terminal Workspace Recovery
+## `GHWS-006` - Safe Duplicate Workspace
 
-- Requirement: recovery instructions and available actions must agree on every normal user surface.
-- Risk covered: a real provider mission reports that its sandbox isolation is stale and tells the
-  user to pause, while both Workspaces and Watch hide Pause because the latest run is failed.
-- Steps: run a provider-backed task against a deliberately stale synthetic sandbox; observe the
-  failed card in Workspaces and Watch; activate Pause by pointer and keyboard; if the account becomes
-  action-required, use Check connection; retry with a corrected follow-up; refresh after completion.
-- Expected result: failed/cancelled/interrupted cards show one enabled Pause action and no Resume;
-  Pause releases the stale substrate; Check connection restores Ready without setup when credentials
-  remain valid; the retry creates a clean substrate and completes with a durable output.
-- Forbidden result: guidance names an action that is hidden or disabled, Pause restarts the old run,
-  output inspection mutates lifecycle, or account recovery requires unnecessary OAuth.
-- Evidence: visible controls and messages, lifecycle request count, account state, container/mount
-  correlation, completed output, refresh persistence, and exact installed release provenance.
-- Last run: PARTIAL 2026-08-11. The installed candidate reproduced the hidden-Pause failure and a
-  no-OAuth Check connection recovery; the corrected exact-release browser rerun remains required.
+- Requirement: duplicate creates a fresh workspace identity, copies approved workspace files/context,
+  and does not silently copy browser-session or home state.
+- Steps: seed approved workspace and home/profile markers; duplicate from the UI; compare source and
+  destination identities, files, home/profile state, and audit events.
+- Expected result: the approved marker exists under a new worker/project; private home/profile state
+  is absent; `worker.duplicated` is recorded.
+- Forbidden result: source reopen, copied credentials/cookies/home state, missing approved files, or
+  duplicate launch without an audit event.
+- Evidence to capture: source/destination IDs, hashes, excluded-state check, UI, audit, and dated report.
+- Last run: PARTIAL 2026-04-16. Embedded notes prove the narrow marker/new-identity path; the dated
+  report and current-candidate rerun are absent.
+
+## `GHWS-007` - Parent Auto-Reuse
+
+- Requirement: when the parent already has a stable workflow-to-workspace alias, it selects that
+  workspace without asking the user to search raw workers.
+- Steps: bind a synthetic workflow alias; invoke the parent flow twice; compare selected workspace,
+  files, run records, and visible wording.
+- Expected result: the second invocation reuses the bound workspace automatically and visibly.
+- Forbidden result: random/new workspace, raw worker picker, or alias pointing to another workspace.
+- Evidence to capture: alias map, parent request/result, workspace ID, runtime audit, and user view.
+- Last run: NOT RUN — cataloged 2026-08-29. The recorded manual reopen does not prove parent-driven alias reuse.
+
+## `GHWS-008` - Non-Technical Comprehension
+
+- Requirement: a non-technical reviewer can identify reopen, branch, and clean-start actions from the
+  interface alone.
+- Steps: show the launch UI without coaching; ask how to reopen, branch, and start clean; record answers.
+- Expected result: the reviewer chooses Open, Duplicate, and New and needs no worker/sandbox explanation.
+- Forbidden result: reviewer confusion, runtime jargon dependency, or ambiguous action semantics.
+- Evidence to capture: synthetic test script, answers, observed hesitation/confusion, viewport, and UI.
+- Last run: NOT RUN — cataloged 2026-08-29. Label inspection is not a comprehension study.
+
+## `GHWS-009` - Launch Failure Audit Trail
+
+- Requirement: a launch failure remains explicit in both the user surface and durable audit state.
+- Steps: inject a controlled failure after workspace creation; inspect launch/watch UI, workspace and
+  project status, events, logs, and retry behavior.
+- Expected result: one actionable failure is visible and the workspace never appears healthy.
+- Forbidden result: healthy orphan, missing audit event, infinite spinner, or retry that duplicates work.
+- Evidence to capture: visible error, durable state/event, bounded logs, retry outcome, and dated report.
+- Last run: NOT RUN — cataloged 2026-08-29. No controlled failed-launch user journey is recorded.
 
 ## Natural User Use Case Checklist
 
@@ -151,10 +142,13 @@ rows before claiming a pass when the feature behavior changes.
 
 | Use Case ID | Natural user action | Requirement / case link | Real surface to use | Supporting evidence to compare | Expected visible result | Last run |
 | --- | --- | --- | --- | --- | --- | --- |
-| `GHWS-UC-001` | On GlassHive projects, runs, workspaces, callbacks, verify that workspace/project lifecycle is resumable and maps tasks to the correct worker context. | owning requirement for `GHWS-001` / `GHWS-001` | GlassHive projects, runs, workspaces, callbacks | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to GHWS-001. | User-visible behavior matches source, docs, persisted state, and logs | PASS 2026-05-23 local enterprise project/workspace flow. |
-| `GHWS-UC-002` | On QA report, git diff, logs summary, generated artifacts, create or review the public QA evidence record with setup/auth/config, empty-state, degraded-dependency, and privacy checks. | owning requirement for `GHWS-002` / `GHWS-002` | QA report, git diff, logs summary, generated artifacts | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to GHWS-002. | The user sees an honest setup, retry, or degraded-state result for GHWS-002; no fake success is accepted. | PASS 2026-08-12 for both workspace-control reports. |
-| `GHWS-UC-003` | After creating the public QA evidence record, rerun the scan after any retry, report update, or linked artifact change. | owning requirement for `GHWS-002` / `GHWS-002` | QA report, git diff, logs summary, generated artifacts | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to GHWS-002. | GHWS-002 remains correct after the persistence or parity step and final wording matches evidence. | PASS 2026-08-12 after template repair and public-safety rescan. |
-| `GHWS-UC-004` | From Workspaces, open several workers, inspect a completed output, and return Home without entering the legacy runtime UI or resuming work. | `GHWS-003` | Glass Drive Workspaces/Watch/artifact | Browser URL/network/state + artifact headers | Smooth modern navigation; output is direct and non-mutating. | PASS 2026-08-12 local matrix plus accepted hosted canary. |
-| `GHWS-UC-005` | Monitor and steer 1/4/5/25 active, starting, completed, failed, and unavailable workers from one overview. | `GHWS-004` | Glass Drive Workspaces | Network/WebSocket counts, DOM, compact/full API logs | Bounded view-only previews and truthful cards with no offscreen storm. | PASS 2026-08-12: local matrix/parallel steer plus accepted hosted view-only live stream. |
-| `GHWS-UC-006` | Duplicate or instantiate a workspace with copied capabilities, refresh, resolve or explicitly waive each exact action, then run. | `GHWS-005` | Workspaces, Library, Connections, confirmation | Browser/API/DB/concurrency evidence | Execution is blocked until server-owned review completes; no silent fallback or scope widening. | PARTIAL 2026-08-11: local browser restore/waiver plus automated server gates pass; installed two-user run open. |
-| `GHWS-UC-007` | From a failed/cancelled/interrupted workspace, pause the stale sandbox named by recovery guidance, repair the account if needed, and retry. | `GHWS-006` | Workspaces, Watch, Connections | Browser controls/network, lifecycle state, provider account, container/mount state, output | Pause is visible and non-resuming; repair is setup-free when credentials remain valid; retry completes and persists. | PARTIAL 2026-08-11: escaped hosted failure and policy regression recorded; corrected installed-release rerun open. |
+| `GHWS-UC-001` | On GlassHive projects, runs, workspaces, callbacks, verify that workspace/project lifecycle is resumable and maps tasks to the correct worker context. | owning requirement for `GHWS-001` / `GHWS-001` | GlassHive projects, runs, workspaces, callbacks | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to GHWS-001. | User-visible behavior matches source, docs, persisted state, and logs | PARTIAL 2026-08-29 documentation audit: historical notes exist, but the cited dated report is absent. |
+| `GHWS-UC-002` | On QA report, git diff, logs summary, generated artifacts, create or review the public QA evidence record with setup/auth/config, empty-state, degraded-dependency, and privacy checks. | owning requirement for `GHWS-002` / `GHWS-002` | QA report, git diff, logs summary, generated artifacts | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to GHWS-002. | The user sees an honest setup, retry, or degraded-state result for GHWS-002; no fake success is accepted. | FAIL 2026-08-29 documentation audit: no dated public report is present. |
+| `GHWS-UC-003` | After creating the public QA evidence record, rerun the scan after any retry, report update, or linked artifact change. | owning requirement for `GHWS-002` / `GHWS-002` | QA report, git diff, logs summary, generated artifacts | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to GHWS-002. | GHWS-002 remains correct after the persistence or parity step and final wording matches evidence. | FAIL 2026-08-29 documentation audit: the public report and rerun evidence are absent. |
+| `GHWS-UC-004` | Start a workspace for the first time without learning worker or sandbox concepts. | `GHWS-003` | Glass Drive launch and watch UI | UI, route, runtime row, console/network | Workspace-first desktop opens from clear primary actions. | PARTIAL 2026-04-16: labels and one handoff are embedded; dated/current evidence is absent. |
+| `GHWS-UC-005` | Pause and reopen the same workspace with its files and valid browser state. | `GHWS-004` | Launch UI and workspace desktop | Identity, files, profile, lifecycle events, run state | The same workspace resumes honestly. | PARTIAL 2026-04-16: same-worker pause/resume passed; full profile continuity is unproved. |
+| `GHWS-UC-006` | Create two clean workspaces and verify neither inherits the other's state. | `GHWS-005` | Launch UI and two workspace desktops | IDs, files, profiles, browser state, audit | Both environments remain isolated. | PARTIAL 2026-04-16: one duplicate home-state exclusion exists; the full two-new-workspace path is unrun. |
+| `GHWS-UC-007` | Duplicate useful workspace files into a fresh workspace without copying private session state. | `GHWS-006` | Launch UI and source/destination desktops | IDs, hashes, excluded state, audit | Approved context is copied; home/profile state is not. | PARTIAL 2026-04-16: narrow marker/new-identity proof exists without a dated/current report. |
+| `GHWS-UC-008` | Repeat a known parent workflow and return automatically to its bound workspace. | `GHWS-007` | Parent flow and workspace desktop | Alias, selected ID, runs, audit, UI | Correct reuse occurs without a raw worker picker. | NOT RUN — cataloged 2026-08-29. |
+| `GHWS-UC-009` | Choose reopen, branch, or clean start from the launch UI without coaching. | `GHWS-008` | Moderated launch-UI review | Reviewer answers and UI state | A non-technical reviewer correctly selects Open, Duplicate, and New. | NOT RUN — cataloged 2026-08-29. |
+| `GHWS-UC-010` | Trigger a controlled launch failure, inspect it, and retry. | `GHWS-009` | Launch/watch UI and runtime audit | Visible error, state, events, logs, retry | Failure stays explicit and no healthy orphan or duplicate appears. | NOT RUN — cataloged 2026-08-29. |

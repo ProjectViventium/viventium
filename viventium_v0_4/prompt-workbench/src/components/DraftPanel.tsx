@@ -98,7 +98,7 @@ export function DraftPanel({ drafts, selectedScheduledPrompt, onOpenSchedule, on
           )}
           {!supportsWorkbenchRendering && (
             <p className="small-copy user-schedule-render-note">
-              Rendered variables are intentionally hidden here because this existing schedule runs through the Viventium agent scheduler, not the Workbench GlassHive renderer.
+              Rendered variables are intentionally hidden here because this existing schedule runs through Viventium Main using its Agent Builder configuration, not the Workbench GlassHive renderer.
             </p>
           )}
         </article>

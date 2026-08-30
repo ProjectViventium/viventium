@@ -97,6 +97,11 @@ def test_deep_memory_is_one_always_on_background_cortex_with_recall_access() -> 
     assert len(cortex_matches) == 1
     activation = cortex_matches[0]["activation"]
     assert activation == {"enabled": True, "mode": "always"}
+    assert cortex_matches[0]["result_evidence"] == {
+        "visible_insight_requires": [
+            {"tool": "file_search", "receipt": "non_empty_sources"}
+        ]
+    }
     assert "file_search" in agent["tools"]
     assert agent["conversation_recall_agent_only"] is False
     assert agent["provider"] == "openAI"
@@ -182,7 +187,7 @@ def test_anti_sycophancy_graph_has_exactly_four_bounded_visible_handoff_edges() 
     assert all("prompt" not in edge and "promptKey" not in edge for edge in anti_edges)
     assert all(str(edge.get("description") or "").strip() for edge in anti_edges)
     assert main["recursion_limit"] == 40
-    assert main["hide_sequential_outputs"] is False
+    assert main["hide_sequential_outputs"] is True
 
 
 def test_every_main_handoff_uses_shared_history_without_manual_transfer_payload() -> None:

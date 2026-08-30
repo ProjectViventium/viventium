@@ -13,7 +13,7 @@ Use synthetic transcript fixtures and public-safe placeholders only.
   deletes after feeding transcript text to the model.
 - Evidence to capture: redacted run summary, `chars_fed_to_model`, transcript proposal count, no
   accepted stable-memory operations.
-- Last run: 2026-05-12, automated regression passed in
+- Last run: PASS 2026-05-12, automated regression passed in
   `api/test/scripts/viventium-memory-hardening.test.js`.
 
 ## MTM-002: Meeting Transcript Result Names Must Be Stable
@@ -26,7 +26,7 @@ Use synthetic transcript fixtures and public-safe placeholders only.
 - Forbidden result: The assistant sees or cites internal temporary source names instead of the
   stable summary artifact name.
 - Evidence to capture: file_search formatted output and source artifact.
-- Last run: 2026-05-12, automated regression passed in
+- Last run: PASS 2026-05-12, automated regression passed in
   `api/test/app/clients/tools/util/fileSearch.test.js`.
 
 ## MTM-003: Source Folder Sidecars Must Not Pollute Meeting Recall
@@ -70,7 +70,7 @@ Use synthetic transcript fixtures and public-safe placeholders only.
 - Forbidden result: Empty run directories or generic failures that cannot explain where the run
   failed.
 - Evidence to capture: redacted failure artifact and status output counts.
-- Last run: 2026-05-12, automated regression passed in
+- Last run: PASS 2026-05-12, automated regression passed in
   `api/test/scripts/viventium-memory-hardening.test.js`.
 
 ## MTM-006: Live RAG Runtime Must Be Proven Before Browser Recall Signoff
@@ -84,9 +84,13 @@ Use synthetic transcript fixtures and public-safe placeholders only.
   are missing, or after a derived vector rebuild without a scoped repair/reseed.
 - Evidence to capture: redacted RAG health, primary QA count unchanged check, QA-account source counts,
   file_search source attachments, and public-safe recovery note.
-- Last run: PASS-DEGRADED-AUTOMATED / USER-PATH NOT RUN 2026-07-18; synthetic unreachable-RAG
-  fixtures fail closed and prohibit browser signoff. Isolated browser transcript recall/source-card
-  acceptance remains NOT RUN.
+- Last run: PARTIAL 2026-08-09
+  ([nightly review](../memory-hardening/reports/2026-08-09-nightly-routines-health-review.md)); the
+  read-only overnight audit found RAG health `UP`; the scheduled hardener saw 40 transcript files,
+  ignored 6, left 34 processed/unchanged, and recorded 0 pending files, summary failures, vector
+  presence errors, deletes, or deferred vectors. One current inventory artifact was uploaded.
+  Browser transcript recall/source-card signoff was
+  not rerun because this nightly contract only required scheduled service proof.
 
 ## MTM-007: Chronological Recent Transcript Summary Must Use Inventory Context
 
@@ -105,7 +109,7 @@ Use synthetic transcript fixtures and public-safe placeholders only.
   statements as durable user beliefs.
 - Evidence to capture: visible browser answer, file_search tool call, inventory source count,
   source-backed inventory payload, answer-shape checks, and primary QA account untouched check.
-- Last run: 2026-05-13, executable eval and live browser QA passed in
+- Last run: PASS 2026-05-13, executable eval and live browser QA passed in
   `qa/meeting-transcript-memory/evals/run-evals.cjs` and
   `qa/meeting-transcript-memory/reports/2026-05-13-transcript-recall-repair-live-qa.md`.
 
@@ -118,7 +122,7 @@ Use synthetic transcript fixtures and public-safe placeholders only.
 - Forbidden result: The assistant cites the user's just-submitted prompt as conversation recall
   evidence for the answer.
 - Evidence to capture: source attachment IDs/content checks and final answer shape.
-- Last run: 2026-05-13, automated regression passed in
+- Last run: PASS 2026-05-13, automated regression passed in
   `api/test/app/clients/tools/util/fileSearch.test.js` and live QA passed in
   `qa/meeting-transcript-memory/reports/2026-05-13-transcript-recall-repair-live-qa.md`.
 
@@ -132,7 +136,7 @@ Use synthetic transcript fixtures and public-safe placeholders only.
 - Forbidden result: Older chat or QA prompts outrank transcript inventory/summary evidence and
   steer the answer away from the processed transcript corpus.
 - Evidence to capture: model-facing `File:` order, stored source order, and visible source cards.
-- Last run: 2026-05-13, automated regressions passed in
+- Last run: PASS 2026-05-13, automated regressions passed in
   `api/test/app/clients/tools/util/fileSearch.test.js`,
   `api/test/services/Files/processFileCitations.test.js`, and live QA passed in
   `qa/meeting-transcript-memory/reports/2026-05-13-transcript-recall-repair-live-qa.md`.
@@ -148,7 +152,7 @@ Use synthetic transcript fixtures and public-safe placeholders only.
   edits local state.
 - Evidence to capture: stale-lock fixture, dry-run exit status, run summary, and post-run lock
   absence.
-- Last run: PASS-OBSERVED 2026-08-09
+- Last run: PASS 2026-08-09
   ([nightly review](../memory-hardening/reports/2026-08-09-nightly-routines-health-review.md)); the
   scheduled hardener acquisition ran through completion, left `lock_held=false`, and kept stale-lock
   recovery proof healthy without the read-only audit forcing ingest or repair.
@@ -163,7 +167,7 @@ Use synthetic transcript fixtures and public-safe placeholders only.
 - Forbidden result: The run silently remaps to a different model, fails on the first unavailable
   model despite a configured fallback, or logs raw transcript/prompt text.
 - Evidence to capture: redacted model-attempt telemetry and selected provider/model/effort.
-- Last run: PASS-ROUTE-PROVEN 2026-08-09
+- Last run: PASS 2026-08-09
   ([nightly review](../memory-hardening/reports/2026-08-09-nightly-routines-health-review.md)); the
   configured OpenAI `gpt-5.6-luna` / `medium` route was selected, no fallback occurred, and no
   provider/runtime failures were recorded.
@@ -178,7 +182,7 @@ Use synthetic transcript fixtures and public-safe placeholders only.
 - Forbidden result: A scheduled or manual transcript ingest fails before scanning/summarizing only
   because an advisory probe timed out.
 - Evidence to capture: probe timeout value, attempt reasons, selected candidate, and run status.
-- Last run: PASS-ADVISORY / ROUTE-PROVEN 2026-08-09
+- Last run: PASS 2026-08-09
   ([nightly review](../memory-hardening/reports/2026-08-09-nightly-routines-health-review.md)); the
   advisory OpenAI probe succeeded and transcript scanning completed without reordering candidates or
   hard-failing maintenance.
@@ -193,9 +197,10 @@ Use synthetic transcript fixtures and public-safe placeholders only.
   transcript artifacts, or lets the assistant claim no transcript evidence exists.
 - Evidence to capture: vector-presence error count/reasons, content hashes requeued, stale-artifact
   count, and follow-up health check.
-- Last run: PASS-DEGRADED-AUTOMATED / USER-PATH NOT RUN 2026-07-18; synthetic vector-presence
-  errors produce no destructive repair or false no-transcript claim. Isolated live-health/browser
-  follow-up remains NOT RUN.
+- Last run: FAIL 2026-07-18
+  ([nightly review](../memory-hardening/reports/2026-07-18-nightly-routines-health-review.md)); the
+  scheduled hardener recorded vector-presence errors without destructive repair or false no-transcript
+  claims, but the follow-up RAG health check failed because the local runtime was unreachable.
 
 ## MTM-014: Live Browser QA Must Select A Real Connected QA Account
 
@@ -209,7 +214,7 @@ Use synthetic transcript fixtures and public-safe placeholders only.
   absent.
 - Evidence to capture: public-safe QA account hash, provider-credential row count, owner-unchanged
   guard, visible browser answer, and source attachments.
-- Last run: 2026-05-22, live browser QA auto-selected the connected non-owner QA clone, detected
+- Last run: PASS 2026-05-22, live browser QA auto-selected the connected non-owner QA clone, detected
   9 provider-credential rows, kept the owner transcript count unchanged, and passed all browser
   transcript-recall checks.
 
@@ -229,9 +234,9 @@ Use synthetic transcript fixtures and public-safe placeholders only.
 - Evidence to capture: validator rejection reason, accepted chat-corroborated correction path,
   transcript summary diarization caveat, sanitized incident notes, and live browser answer showing
   the corrected memory is used instead of the stale transcript-derived claim.
-- Last run: 2026-05-22, automated validator/eval regressions passed and owner-scoped browser QA
-  showed the corrected saved-memory answer; see
-  `qa/meeting-transcript-memory/reports/2026-05-22-transcript-identity-misattribution-qa.md`.
+- Last run: PARTIAL 2026-08-29 documentation audit. Historical notes say automated validator/eval
+  regressions and owner-scoped browser QA passed, but the cited dated report is absent; rerun before
+  using this as current acceptance evidence.
 
 ## MTM-016: Transcript Summaries Use Reference Context Without Importing Unsupported Facts
 
@@ -244,9 +249,8 @@ Use synthetic transcript fixtures and public-safe placeholders only.
   reference-only facts into transcript facts.
 - Evidence to capture: prompt snapshot/eval output showing `reference_context`, no unsupported fact
   import, and no content-specific runtime heuristic.
-- Last run: 2026-05-22, prompt/unit regression passed in the LibreChat memory-hardening Jest suite
-  and real QA summarizer isolation passed in
-  `qa/meeting-transcript-memory/reports/2026-05-22-reference-context-isolation-qa.md`.
+- Last run: PARTIAL 2026-08-29 documentation audit. Historical notes say the prompt/unit regression
+  and real summarizer-isolation QA passed, but the cited dated report is absent; rerun before a PASS.
 
 ## MTM-017: Historical Transcript Backfill Is Bounded And Resumable
 
@@ -280,8 +284,8 @@ Use synthetic transcript fixtures and public-safe placeholders only.
   effects.
 - Evidence to capture: helper menu/picker QA, CLI JSON output on a synthetic config, runtime env
   compiled value, source-folder-hash attachment filter test, and no private path in public QA.
-- Last run: PASS 2026-05-22; see
-  `qa/meeting-transcript-memory/reports/2026-05-22-transcript-folder-picker-batching-qa.md`.
+- Last run: PARTIAL 2026-08-29 documentation audit. The cited 2026-05-22 folder-picker/batching
+  report is absent, so the historical PASS is not reproducible on the current candidate.
 
 ## MTM-019: Installer Transcript Ingest Readiness
 
@@ -317,6 +321,29 @@ Use synthetic transcript fixtures and public-safe placeholders only.
   42-test file-search suite passed, and the real browser answer led with the exact summary, separated
   the requested meeting phases, preserved uncertainty, and survived reopen with zero console errors.
 
+## MTM-021: Automatic Configured-Folder Transcript Ingest
+
+- Scenario: Configure a synthetic transcript folder, start the normal local runtime, and add one
+  new synthetic transcript without invoking the manual ingest command.
+- Requirement: `DATA-005` and `docs/requirements_and_learnings/20_Memory_System.md`.
+- Risk covered: folder selection and manual ingest work, but newly added transcripts are never
+  discovered or summarized automatically.
+- Preconditions: an isolated synthetic folder, current canonical config, and the transcript index
+  and summarizer are available.
+- Steps:
+  1. Start from a caught-up index, add one synthetic transcript, and wait through the documented
+     discovery interval.
+  2. Verify one indexed source hash and one processed summary appear without a manual trigger.
+  3. Run the manual trigger and verify it is idempotent for the same file.
+- Expected outcome: the new file is discovered, ingested, and summarized automatically; the manual
+  trigger remains available and creates no duplicate.
+- Forbidden result: manual action is required for every new file, one source creates duplicate
+  summaries, or evidence exposes a real transcript, folder, account, or absolute path.
+- Evidence to capture: synthetic source/summary hashes, bounded discovery timing, index transitions,
+  manual-trigger result, sanitized logs, and cleanup proof.
+- Automation: focused transcript discovery/ingest tests plus the installed status-bar or CLI path.
+- Last run: NOT RUN — cataloged 2026-08-30.
+
 ## Natural User Use Case Checklist
 
 These rows are the minimum natural-user checklist gate for Meeting Transcript Memory. Add narrower feature-specific
@@ -325,10 +352,11 @@ rows before claiming a pass when the feature behavior changes.
 | Use Case ID | Natural user action | Requirement / case link | Real surface to use | Supporting evidence to compare | Expected visible result | Last run |
 | --- | --- | --- | --- | --- | --- | --- |
 | `MEETING-UC-001` | Ask a browser chat question that should use processed meeting transcript memory, then inspect visible answer sources and backend evidence. | `MTM-001`-`MTM-009`, `MTM-015`, `MTM-016`, `MTM-020` | Browser chat, file/source cards, processed transcript index, and sanitized logs | Model-facing file/source order, stored source order, visible source cards, memory hardening output, and dated QA report | The answer is grounded in processed transcript evidence, not attached raw files or unrelated memory, and sources are visible. Identity/person-role claims are not invented from transcript-only evidence. | PASS 2026-07-11 ([owner import report](reports/2026-07-11-owner-private-transcript-import-and-recall.md)); exact-summary-first source order and answer quality were visually verified in a real browser |
-| `MEETING-UC-002` | Try transcript ingest or recall when the sidecar/index/lock/provider/vector runtime is missing, stale, or degraded. | `MTM-010`-`MTM-017`, `MTM-020`, and degraded-state cases | CLI ingest/dry-run, browser chat degraded state, and sanitized logs | Stale-lock fixture, dry-run exit status, run summary, lock cleanup, model/vector telemetry, logs, and QA report | The system clears stale locks when safe, reports degraded prerequisites honestly, tries configured model fallbacks, processes bounded backfill batches, and does not fabricate transcript recall or identity. | PASS-DEGRADED-AUTOMATED/PARTIAL 2026-07-18; failure fixtures pass, isolated RAG/browser proof NOT RUN |
+| `MEETING-UC-002` | Try transcript ingest or recall when the sidecar/index/lock/provider/vector runtime is missing, stale, or degraded. | `MTM-010`-`MTM-017`, `MTM-020`, and degraded-state cases | CLI ingest/dry-run, browser chat degraded state, and sanitized logs | Stale-lock fixture, dry-run exit status, run summary, lock cleanup, model/vector telemetry, logs, and QA report | The system clears stale locks when safe, reports degraded prerequisites honestly, tries configured model fallbacks, processes bounded backfill batches, and does not fabricate transcript recall or identity. | PASS 2026-08-06 ([nightly review](../memory-hardening/reports/2026-08-06-nightly-routines-health-review.md)); RAG was healthy, evals passed, stale lock was gone, transcript/vector telemetry was clean, but the configured OpenAI route fell back after the advisory probe |
 | `MEETING-UC-003` | After ingest/repair, rerun the browser recall question and compare persistence/state across refresh or retry. | `MTM-001`-`MTM-017`, `MTM-020` | Browser chat, persisted message/source state, transcript index, and logs | Stored source order, visible source cards, memory hardening summary, and dated QA report | Recall remains grounded after retry/refresh and final wording matches persisted evidence; corrected chat memory outranks stale transcript-derived identity. | PASS 2026-07-11 ([owner import report](reports/2026-07-11-owner-private-transcript-import-and-recall.md)); all eight target vectors were present and the grounded answer/source cards survived conversation reopen |
-| `MEETING-UC-004` | Choose a transcripts folder from the status-bar helper, then ingest transcripts. | `MTM-018` | macOS helper menu/picker, CLI config patcher, generated runtime env, and transcript ingest summary | Picker visible state, config backup, runtime env value, source-folder-hash filter, bounded ingest output, and dated QA report | The chosen folder is persisted through canonical config for this install without hardcoded owner data, and ingest processes the current folder only. | PASS 2026-05-22; see `qa/meeting-transcript-memory/reports/2026-05-22-transcript-folder-picker-batching-qa.md` |
+| `MEETING-UC-004` | Choose a transcripts folder from the status-bar helper, then ingest transcripts. | `MTM-018` | macOS helper menu/picker, CLI config patcher, generated runtime env, and transcript ingest summary | Picker visible state, config backup, runtime env value, source-folder-hash filter, bounded ingest output, and dated QA report | The chosen folder is persisted through canonical config for this install without hardcoded owner data, and ingest processes the current folder only. | PARTIAL 2026-08-29 documentation audit: the cited dated report is absent; rerun required |
 | `MEETING-UC-005` | During Easy Install or Custom Settings Install, leave transcript ingest pending, choose a valid folder, and try a missing folder. | `39_Installer_and_Config_Compiler.md` / `MTM-019`, `INST-004` | installer wizard, `bin/viventium status`, generated env, transcript source CLI | Wizard choices, canonical config, generated env, status row, source-folder-hash readiness, public-safety scan. | Empty source is pending, valid source is configured, missing source is not marked ready, and no private path or transcript text is published. | PARTIAL 2026-05-31; automated wizard/status coverage added, user-grade clean install remains |
+| `MEETING-UC-006` | Add one synthetic transcript to the configured folder after the local runtime is already running, wait for discovery, then use the manual trigger once. | `DATA-005` / `MTM-021` | configured synthetic folder, transcript index, status-bar or CLI ingest, and recall surface | discovery timing, source and summary hashes, index state, manual-trigger receipt, sanitized logs, and cleanup | The new transcript is ingested and summarized without manual action; the later manual trigger is safe and does not duplicate it. | NOT RUN — cataloged 2026-08-30. |
 
 ## Release Test Traceability
 

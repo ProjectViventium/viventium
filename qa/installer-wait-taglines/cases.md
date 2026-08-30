@@ -8,8 +8,8 @@ Use stable `WAIT-NNN` IDs for installer wait taglines cases.
 
 | Case ID | Requirement | User Outcome | Surfaces | Automation | Last Run |
 | --- | --- | --- | --- | --- | --- |
-| `WAIT-001` | Long-running installer waits give useful non-misleading progress copy. | User-visible behavior matches source, docs, persisted state, and logs | installer terminal UX, logs, status output | `tests/release/test_installer_ui.py` plus user-grade QA when visible | NOT YET RUN (cataloged 2026-05-17; next feature run required) |
-| `WAIT-002` | Public QA evidence is sanitized and reproducible | A PR reviewer can verify the behavior without private/local data | QA report, git diff, logs summary, generated artifacts | Public-safety scan plus relevant release tests | NOT YET RUN (cataloged 2026-05-17; next feature run required) |
+| `WAIT-001` | Long-running installer waits give useful non-misleading progress copy. | User-visible behavior matches source, docs, persisted state, and logs | installer terminal UX, logs, status output | `tests/release/test_installer_ui.py` plus user-grade QA when visible | NOT RUN (cataloged 2026-05-17; next feature run required) |
+| `WAIT-002` | Public QA evidence is sanitized and reproducible | A PR reviewer can verify the behavior without private/local data | QA report, git diff, logs summary, generated artifacts | Public-safety scan plus relevant release tests | NOT RUN (cataloged 2026-05-17; next feature run required) |
 
 ## `WAIT-001` - Core User Flow
 
@@ -24,7 +24,7 @@ Use stable `WAIT-NNN` IDs for installer wait taglines cases.
 - Forbidden result: backend logs, mocks, source inspection, or model completions are treated as full acceptance when a user-visible surface exists.
 - Evidence to capture: sanitized visible result, supporting command/test result, generated/runtime state summary, and docs/case links.
 - Automation: `tests/release/test_installer_ui.py` plus any narrower feature tests discovered during implementation.
-- Last run: NOT YET RUN (cataloged 2026-05-17; not a substitute for the next real feature run).
+- Last run: NOT RUN (cataloged 2026-05-17; not a substitute for the next real feature run).
 
 ## `WAIT-002` - Public-Safe Evidence Record
 
@@ -39,7 +39,7 @@ Use stable `WAIT-NNN` IDs for installer wait taglines cases.
 - Forbidden result: a report includes private transcripts, account identifiers, raw runtime dumps, local home paths, tokens, or secret-bearing command lines.
 - Evidence to capture: public-safety scan result and link to the sanitized report.
 - Automation: public-safety pattern scan plus relevant release tests.
-- Last run: NOT YET RUN (cataloged 2026-05-17; run on each new public report).
+- Last run: NOT RUN (cataloged 2026-05-17; run on each new public report).
 
 ## Natural User Use Case Checklist
 
@@ -48,6 +48,6 @@ rows before claiming a pass when the feature behavior changes.
 
 | Use Case ID | Natural user action | Requirement / case link | Real surface to use | Supporting evidence to compare | Expected visible result | Last run |
 | --- | --- | --- | --- | --- | --- | --- |
-| `WAIT-UC-001` | On installer terminal UX, logs, status output, verify that long-running installer waits give useful non-misleading progress copy. | owning requirement for `WAIT-001` / `WAIT-001` | installer terminal UX, logs, status output | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to WAIT-001. | User-visible behavior matches source, docs, persisted state, and logs | NOT YET RUN (cataloged 2026-05-18; next feature run required) |
-| `WAIT-UC-002` | On QA report, git diff, logs summary, generated artifacts, create or review the public QA evidence record with setup/auth/config, empty-state, degraded-dependency, and privacy checks. | owning requirement for `WAIT-002` / `WAIT-002` | QA report, git diff, logs summary, generated artifacts | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to WAIT-002. | The user sees an honest setup, retry, or degraded-state result for WAIT-002; no fake success is accepted. | NOT YET RUN (cataloged 2026-05-18; next feature run required) |
-| `WAIT-UC-003` | After creating the public QA evidence record, rerun the scan after any retry, report update, or linked artifact change. | owning requirement for `WAIT-002` / `WAIT-002` | QA report, git diff, logs summary, generated artifacts | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to WAIT-002. | WAIT-002 remains correct after the persistence or parity step and final wording matches evidence. | NOT YET RUN (cataloged 2026-05-18; next feature run required) |
+| `WAIT-UC-001` | On installer terminal UX, logs, status output, verify that long-running installer waits give useful non-misleading progress copy. | owning requirement for `WAIT-001` / `WAIT-001` | installer terminal UX, logs, status output | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to WAIT-001. | User-visible behavior matches source, docs, persisted state, and logs | NOT RUN (cataloged 2026-05-18; next feature run required) |
+| `WAIT-UC-002` | On QA report, git diff, logs summary, generated artifacts, create or review the public QA evidence record with setup/auth/config, empty-state, degraded-dependency, and privacy checks. | owning requirement for `WAIT-002` / `WAIT-002` | QA report, git diff, logs summary, generated artifacts | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to WAIT-002. | The user sees an honest setup, retry, or degraded-state result for WAIT-002; no fake success is accepted. | NOT RUN (cataloged 2026-05-18; next feature run required) |
+| `WAIT-UC-003` | After creating the public QA evidence record, rerun the scan after any retry, report update, or linked artifact change. | owning requirement for `WAIT-002` / `WAIT-002` | QA report, git diff, logs summary, generated artifacts | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to WAIT-002. | WAIT-002 remains correct after the persistence or parity step and final wording matches evidence. | NOT RUN (cataloged 2026-05-18; next feature run required) |

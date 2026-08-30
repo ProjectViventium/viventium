@@ -1,3 +1,4 @@
+<!-- qa-evidence-exempt: Historical evidence snapshot retained verbatim; retroactive v2 fields would invent evidence that was not captured during the run. -->
 # Telegram Reconciliation and Fallback Recovery QA — 2026-08-06
 
 ## Outcome
@@ -148,4 +149,3 @@ message more precise if both the primary and fallback fail.
 - Browser persistence/reload and console: **PASS**.
 - Installed runtime restart and health: **PASS**.
 - Disposable QA data cleanup and public/private boundary: **PASS**.
-<!-- qa-evidence-exempt: Historical or specialized supporting artifact retained without retroactively inventing missing evidence; current release acceptance requires a fresh full-view report. -->

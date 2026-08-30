@@ -4,7 +4,7 @@
 
 This matrix maps every control-plane acceptance item to an owning requirement, a concrete case, the
 current evidence status, and the next acceptance gate. `PARTIAL` means source or automated evidence
-exists but the required user-grade path is incomplete. `PENDING` means no candidate-specific run is
+exists but the required user-grade path is incomplete. `NOT RUN` means no candidate-specific run is
 recorded. It must not be read as a release checklist with implied passes.
 
 | Acceptance item | Requirement | QA case(s) | Current evidence | Status | Remaining gate |
@@ -66,16 +66,16 @@ recorded. It must not be read as a release checklist with implied passes.
 | Fire-time broker renewal and provider lease | `GH-UCP-014` | `GHUCP-023` | Broker renewal and mission lease separately tested | PARTIAL | One integrated occurrence proof |
 | Exactly-once result plus upcoming/last/outcome/activity/callback/MCP | `GH-UCP-014` | `GHUCP-021`–`023` | Installed browser Run now produced one completed occurrence with visible history and zero remaining active run/request/lease/callback rows; source retry/callback coverage remains green | PARTIAL | Automatic fire/restart and revoke/renewal matrix |
 | Preserve direct GlassHive conversation agent | `GH-UCP-015` | `GHUCP-001`, `024` | Additive architecture and compatibility tests | PARTIAL | Installed web/channel/voice/scheduler regression |
-| Preserve session/LIFE/tools/activity/cancel/reconnect | `GH-UCP-015` | `GHUCP-024` | Existing specialized QA owners | PENDING for candidate | Full candidate core-provider acceptance |
-| No private customer/person/data/path leakage | `GH-UCP-016` | `GHUCP-025` | Candidate implementation/tests/docs use neutral synthetic data; branch-delta, documentation, QA, test-fixture, and commit-metadata scans are public-safe; protected downstream trees were not modified | PASS for current public candidate | Repeat if a later commit or build artifact changes the candidate |
+| Preserve session/LIFE/tools/activity/cancel/reconnect | `GH-UCP-015` | `GHUCP-024` | Existing specialized QA owners | NOT RUN for candidate | Full candidate core-provider acceptance |
+| No private customer/person/data/path leakage | `GH-UCP-016` | `GHUCP-025` | Current repository public-safety and boundary-contamination checks pass with neutral synthetic data | PARTIAL | Real two-user denial plus final candidate staged, generated, and build-artifact scans |
 | Hosted browser/MCP/JWKS split, header scrubbing, private runtime | `GH-UCP-002`–`004`, `017` | `GHUCP-030` | Real hosted local login plus missing-CSRF `403`, flag-off session revocation, and unchanged stable-listener behavior; exact topology contract and source OAuth/gateway components exist | PARTIAL | Identity-header spoof probes, real MCP clients, and negative runtime reachability |
 | Signer/runtime OS or container key separation | `GH-UCP-003`, `017` | `GHUCP-031` | Runtime readable-key refusal and verifier-only integrated launch guards exist | PARTIAL | Separate installed service identities/mounts, worker denial probe, and rotation proof |
-| Existing-DB clone migration and database-inclusive restore | `GH-UCP-007`, `017` | `GHUCP-032` | Per-component schema ledger and newer-database refusal tests pass | PARTIAL | Quiesced WAL-consistent backup, clone rehearsal, integrity/FK/count checks, cutover, and injected restore |
+| Existing-DB clone migration and database-inclusive restore | `GH-UCP-007`, `017` | `GHUCP-032` | Per-component schema ledger and newer-database refusal tests pass; the portable WAL backup, clone rehearsal, invariant, failure-injection, and database-restore harness passed on macOS and clean Debian | PARTIAL | Installed migration, cutover, browser/MCP restore, and preceding-artifact recovery |
 | Atomic runtime/MCP/BFF cutover and full readiness | `GH-UCP-017`, `018` | `GHUCP-033` | Exact sealed three-service canary passed browser, native MCP, provider, schedule, DB/lease, post-readiness logs, canary edge, stable-ingress invariants, and explicit commit | PASS for exact hosted cutover | Per-service/process-loss failure injection and full restore rollback |
 | Nested commit -> parent lock -> bootstrap -> compiler -> launcher -> installed runtime | `GH-UCP-017` | `GHUCP-026` | The installed Ultimate Phase 1 baseline is recorded as parent `35c2c83` / GlassHive `8153b6a`; accepted source follow-up is parent `54d1fb9` / GlassHive `103c8be`; the final parent candidate pins the documentation-only descendant of that accepted source implementation | PASS for recorded canary; source pin validated, not installed | Fresh public bootstrap/install in a new directory |
 | Fresh clone/install and upgrade/restart/restore/rollback | `GH-UCP-017` | `GHUCP-027` | Canary UI restart and local-auth flag-off/session-revocation/re-enable drill passed without changing stable-listener behavior | PARTIAL | Full clean-room install, upgrade, database restore, and preceding-binary rollback |
-| Upgrade worker/bootstrap through supported mechanisms | `GH-UCP-018` | `GHUCP-028` | Runtime requirement substrate exists | PENDING | Official-source review, candidate upgrade, capability/wildcard QA |
-| Happy/unhappy/accessibility/scale/performance full matrix | `GH-UCP-018` | `GHUCP-002`–`033` | Local browser and complete affected source suites cover the implemented local paths; hosted/external/installed cases remain classified below | PARTIAL as a whole | Execute every hosted, real-provider/client, installed, scale, accessibility, and delivery case and save public-safe evidence |
+| Upgrade worker/bootstrap through supported mechanisms | `GH-UCP-018` | `GHUCP-028` | Runtime requirement substrate exists | NOT RUN | Official-source review, candidate upgrade, capability/wildcard QA |
+| Happy/unhappy/accessibility/scale/performance full matrix | `GH-UCP-018` | `GHUCP-002`–`034` | Local browser and complete affected source suites cover the implemented local paths; hosted/external/installed cases remain classified below | PARTIAL as a whole | Execute every hosted, real-provider/client, installed, scale, accessibility, and delivery case and save public-safe evidence |
 
 ## Release Gate Summary
 
@@ -89,14 +89,14 @@ recorded. It must not be read as a release checklist with implied passes.
 | Real connected-service/Library approval | PARTIAL | Official native Outlook/SharePoint authorization and real personal-worker read/reuse pass; local browser also proves bootstrap Library add/remove. Confirmed write/revoke/two-user connected-service coverage and a real Library package used by a worker remain open |
 | Real Codex and Claude MCP clients | PASS for installed async path | Fresh isolated clients each used one `workspace_launch` plus one bounded `workspace_wait` to reuse the same owner-scoped Favorite workspace; clean-install and two-owner parity remain open |
 | Real scheduled fire-time renewal/exactly-once | PARTIAL | Installed browser Run now reached Completed with persisted history and idle backend; automatic user/delegation/grant renewal, DST, and restart remain open |
-| Viventium direct-conversation preservation | PENDING | No candidate-specific installed web/channel/voice run is recorded |
-| Hosted edge split and trusted-header boundary | PENDING | No installed path-aware browser/MCP/JWKS/private-runtime route proof exists |
+| Viventium direct-conversation preservation | NOT RUN | No candidate-specific installed web/channel/voice run is recorded |
+| Hosted edge split and trusted-header boundary | PARTIAL | The hosted local-login and real-edge CSRF-negative path passed, and source topology coverage exists. Identity-header spoof probes, real hosted MCP/JWKS routing, and negative private-runtime reachability remain open. |
 | Signer/runtime key isolation | PARTIAL | Source guards and bounded public-only rotation exist; separate installed OS/container identities and the installed rotation drill remain unproven |
-| Existing-DB migration/restore rehearsal | PARTIAL | Schema ledger is source-tested; no WAL-consistent backup, clone migration, or injected restore run exists |
+| Existing-DB migration/restore rehearsal | PARTIAL | The portable WAL backup, clone rehearsal, invariant, failure-injection, and database-restore harness passed on macOS and clean Debian; installed migration, browser/MCP restore, and preceding-artifact recovery remain open |
 | Atomic three-service cutover/readiness | PASS for exact canary | Installed immutable release passed all three services, canary edge, real browser/native clients, and unchanged stable ingress before explicit acceptance; failure-injection/restore remains open |
 | Exact nested pin and installed artifact | PASS for exact canary | Exact parent/nested commits matched the sealed installed health triplet and user-tested release |
-| Fresh clone/install/upgrade/rollback | PENDING | No clean-room candidate run is recorded |
-| Final public/private/license scan | PASS for current public candidate | Branch delta, final documentation/QA, test fixtures, commit metadata, links, and staged content are public-safe; repeat only if the candidate changes |
+| Fresh clone/install/upgrade/rollback | NOT RUN | No clean-room candidate run is recorded |
+| Final public/private/license scan | PARTIAL | Current repository public-safety and boundary-contamination checks pass; the final candidate staged, generated, build-artifact, and two-user scans remain open |
 
 The exact 2026-08-15 canary is accepted for the tested scope. Full original-goal completion remains
 **PARTIAL** because the pending and partial gates above are not implied by that release acceptance.

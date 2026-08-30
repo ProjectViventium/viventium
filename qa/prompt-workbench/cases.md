@@ -22,7 +22,7 @@ with the exact assembled registry output used for hashes, diffs, sync, and evals
 Forbidden Result: A second prompt parser, prompt database, divergent render output, or a readable
 view that changes, executes, strips, or hides runtime placeholders and literal prompt markers.
 
-Last Run: 2026-05-15, initial local implementation QA.
+Last Run: PASS 2026-05-15, initial local implementation QA.
 
 ## PW-002 Sync State Classification
 
@@ -42,7 +42,7 @@ summarized in counts and agent rows.
 
 Forbidden Result: Silent overwrite or a generic "changed" state that hides which side moved.
 
-Last Run: 2026-05-15, initial local implementation QA.
+Last Run: PASS 2026-05-15, initial local implementation QA.
 
 ## PW-003 Live Import Draft Safety
 
@@ -63,7 +63,7 @@ Expected Result: Clean edits create a private reviewed draft; ambiguous edits re
 Forbidden Result: Guessing across multiple source sections or writing private content into public
 source.
 
-Last Run: 2026-05-15, initial local implementation QA.
+Last Run: PASS 2026-05-15, initial local implementation QA.
 
 ## PW-004 Source Edit Draft
 
@@ -83,7 +83,7 @@ generated runtime file, or live agent is changed.
 
 Forbidden Result: Direct runtime/App Support generated-file edits or silent Mongo write.
 
-Last Run: 2026-05-15, initial local implementation QA.
+Last Run: PASS 2026-05-15, initial local implementation QA.
 
 ## PW-005 Eval Visibility
 
@@ -98,15 +98,11 @@ Steps:
 3. Inspect the run summary.
 
 Expected Result: Public-safe eval family/case table is visible; run output is stored under private
-workbench evidence; raw private outputs are not written into public QA. Commands, output tails, and
-sync-ledger results expose only availability and artifact names, never the default or a caller-
-supplied absolute private evidence root.
+workbench evidence; raw private outputs are not written into public QA.
 
-Forbidden Result: Raw prompts, transcripts, private eval outputs, ledger paths, or custom private
-root paths committed into public QA or returned by the public API.
+Forbidden Result: Raw prompts, transcripts, or private eval outputs committed into public QA.
 
-Last Run: PASS 2026-07-20; 127 Prompt Workbench release tests passed (3 optional skips), including
-custom private-root command/output redaction and path-free sync-ledger results.
+Last Run: PASS 2026-05-15, initial local implementation QA.
 
 ## PW-006 System Color Scheme
 
@@ -129,7 +125,7 @@ manual app toggle required.
 Forbidden Result: A dark system showing a light-only editor/canvas, unreadable chips/tables, or
 console errors.
 
-Last Run: 2026-05-15, local implementation QA after auto dark-mode support.
+Last Run: PASS 2026-05-15, local implementation QA after auto dark-mode support.
 
 ## PW-007 Draft Review Apply/Discard UI
 
@@ -158,7 +154,7 @@ starting text.
 Forbidden Result: Direct source write on save, raw private draft text returned by list APIs, or a
 stale draft remaining actionable after discard.
 
-Last Run: 2026-05-15, clean Playwright browser source edit/apply/revert flow.
+Last Run: PASS 2026-05-15, clean Playwright browser source edit/apply/revert flow.
 
 ## PW-008 Reviewed Push Guard
 
@@ -185,7 +181,7 @@ Forbidden Result: Reviewed push enabled before dry run, backend reviewed push by
 or pending-draft guards, stale review tokens blessing changed source, or any non-dry-run push
 during smoke QA.
 
-Last Run: 2026-05-21, local-only guarded sync check. `Push dry-run` returned a review token and
+Last Run: PASS 2026-05-21, local-only guarded sync check. `Push dry-run` returned a review token and
 the reviewed push endpoint refused to mutate because live/source drift was still classified as
 conflict.
 
@@ -221,7 +217,7 @@ Forbidden Result: Static decorative graph unrelated to backend prompt lineage, a
 undocumented runtime routing authority, or a double-click that only changes the graph while leaving
 the user stranded away from the prompt.
 
-Last Run: 2026-05-22, Playwright source-map and double-click navigation pass.
+Last Run: PASS 2026-05-22, Playwright source-map and double-click navigation pass.
 
 ## PW-029 Scheduled GlassHive Prompts
 
@@ -270,6 +266,8 @@ Steps:
 13. Open a preexisting user-level schedule row and confirm the detail pane identifies it as a
     user-level schedule with `viventium_agent` executor/channel metadata rather than converting it
     into a Workbench-private GlassHive definition.
+    Confirm the visible route says `Viventium Main (Agent Builder)`, explains that provider/model and
+    fallback are inherited at run time, and does not present a fixed schedule-owned model/effort.
     In Drafts and Schedules, confirm user-level rows show stored prompt text and regular scheduler
     route only; Workbench variable chips/rendered snapshots and memory write-mode controls must be
     hidden or marked not applicable.
@@ -277,9 +275,14 @@ Steps:
     `schedule` JSON is preserved unless the schedule controls were explicitly changed.
 14. Inspect the topbar sync actions and confirm Pull Live and Push Dry-run are green when current
    and orange when live/source work, conflicts, or blocking drafts need attention.
-15. Change a synthetic Workbench-private schedule between `GlassHive host` and `Viventium agent`.
+15. Change a synthetic Workbench-private schedule between `GlassHive host` and
+   `Viventium Main (Agent Builder)`.
    Confirm GlassHive schedules expose `same worker` / `new worker each run`, while Viventium
-   schedules expose `new conversation` / `same conversation`.
+   schedules expose `new conversation` / `same conversation` and inherit Main's Agent Builder route
+   plus fallback without copying those fields into schedule metadata.
+   Start the supported standalone Workbench without `SCHEDULER_LIBRECHAT_URL`, run the synthetic
+   Main schedule manually, and confirm it reaches the compiled `VIVENTIUM_LIBRECHAT_ORIGIN` rather
+   than the legacy `localhost:3080` fallback.
 16. Create a synthetic structured `memory-proposals-*.json` file under a private `my_folder` and
    confirm the proposal review panel lists actions, hashes, dry-run, and `Apply governed` controls.
    Apply only against synthetic QA data; for real user data, run dry-run and verify duplicate-key
@@ -293,7 +296,8 @@ GlassHive ids when available, private detail pointer, and signed callback update
 rendering never exposes raw Mongo credentials; memory writeback is governed or proposal-only.
 Existing user-level `scheduled_tasks` rows remain owned by Scheduling Cortex, appear in the same
 Prompt Flow/Schedules UI, and can be toggled/edited/run/deleted without duplicate Workbench
-definition rows. The built-in Workbench schedule appears as `Subconscious Deep Thought`; docs and
+definition rows. Their `viventium_agent` route follows the persisted Main Agent and fallback from
+Agent Builder at run time. The built-in Workbench schedule appears as `Subconscious Deep Thought`; docs and
 template metadata preserve `Nightly subconscious thought formation` as the nightly template alias.
 On fresh installs and upgrades, the built-in schedule is active by default, resolves the first local
 admin user without a hardcoded personal account, and uses the compiled GlassHive worker profile
@@ -311,8 +315,12 @@ Mongo credentials, direct `memoryentries` writes or prompt text that instructs d
 unauthenticated private prompt access, hardcoded real user identity in public artifacts, or raw
 rendered prompt/result text in public QA reports.
 
-Last Run: PASS-LIVE-CADENCE 2026-08-09
+Last Run: PASS 2026-08-09
 ([continuity report](../memory-continuity/reports/2026-08-09-universal-cognitive-continuity-parity.md)).
+The scheduled-Main inheritance addition passed live on 2026-08-18: Playwright showed the Agent
+Builder inheritance contract and historical-only provenance, a standalone manual run used the
+compiled LibreChat origin, and Telegram delivery completed through the persisted GlassHive Main.
+See the [Scheduling Cortex report](../scheduling-cortex/reports/2026-08-18-main-agent-builder-inheritance.md).
 The natural 03:00 local occurrence completed through Scheduler, GlassHive, callbacks, parent/child
 ledgers, and artifact validation. After a browser-side refresh, Workbench showed the row as
 `completed` / `scheduled run`, preserved `xhigh -> xhigh`, exposed the complete evidence snapshot
@@ -345,7 +353,7 @@ Forbidden Result: Inert eval controls, raw private prompt/eval output in public 
 prompt/case traceability. Clicking a non-selected eval row must not hang the browser main thread,
 trigger a Page Unresponsive dialog, or relabel a case under the wrong family.
 
-Last Run: 2026-05-21, Playwright production-bundle eval row-selection regression script.
+Last Run: PASS 2026-05-21, Playwright production-bundle eval row-selection regression script.
 
 ## PW-011 Workbench Navigation And Settings Polish
 
@@ -374,7 +382,7 @@ Forbidden Result: Placeholder logo, permanent useless "Ready" footer with no set
 and button navigation rows, clipped editor controls, or keyboard shortcuts stealing focus from text
 inputs.
 
-Last Run: 2026-05-15, Playwright desktop UX enhancement pass.
+Last Run: PASS 2026-05-15, Playwright desktop UX enhancement pass.
 
 ## PW-012 Responsive User QA
 
@@ -402,7 +410,7 @@ Forbidden Result: System-dark showing unreadable light-only controls, medium des
 overlap, eval editor/results panes intercepting table row clicks, or mobile panels escaping the
 viewport.
 
-Last Run: 2026-05-21, Playwright production-bundle eval layout regression at 1024, medium, and wide desktop viewports.
+Last Run: PASS 2026-05-21, Playwright production-bundle eval layout regression at 1024, medium, and wide desktop viewports.
 
 ## PW-019 Embedded Browser Responsiveness
 
@@ -436,7 +444,7 @@ Forbidden Result: A frozen embedded-browser tab, initial load pulling the Monaco
 settings popover blocking unrelated header controls after close, or a fixed-height header clipping
 action messages.
 
-Last Run: 2026-05-16, headed Chrome production-bundle regression after embedded-browser freeze fix.
+Last Run: PASS 2026-05-16, headed Chrome production-bundle regression after embedded-browser freeze fix.
 
 ## PW-020 Draft Tab Stale Bundle Recovery
 
@@ -466,7 +474,7 @@ interactive.
 Forbidden Result: A frozen tab, blank dock panel, uncaught chunk-load crash, stale HTML shell served
 as `304 Not Modified`, or old local layout state blocking tab interaction.
 
-Last Run: 2026-05-16, headed Chrome production-bundle QA with stale layout seed and simulated
+Last Run: PASS 2026-05-16, headed Chrome production-bundle QA with stale layout seed and simulated
 DraftPanel chunk failure.
 
 ## PW-013 Dockable Workbench Layout
@@ -493,7 +501,7 @@ one click away; reset restores the clean default layout.
 Forbidden Result: A fixed two-column dashboard that permanently wastes the editor canvas, or a
 closed view that cannot be reopened without reloading.
 
-Last Run: 2026-05-15, Playwright desktop light/dark UX pass.
+Last Run: PASS 2026-05-15, Playwright desktop light/dark UX pass.
 
 ## PW-014 Human-Readable Prompt Atlas
 
@@ -518,7 +526,7 @@ status dots instead of content hashes.
 Forbidden Result: Alphabetical prompt dump, repeated hash strings, or a tree that contradicts the
 backend include graph.
 
-Last Run: 2026-05-15, Playwright desktop light/dark UX pass.
+Last Run: PASS 2026-05-15, Playwright desktop light/dark UX pass.
 
 ## PW-015 Helper And CLI Lifecycle
 
@@ -546,7 +554,7 @@ Viventium stack untouched.
 Forbidden Result: Helper `Prompt Workbench > Stop` invoking `bin/viventium stop`, killing arbitrary
 loopback processes, or writing generated runtime config files.
 
-Last Run: 2026-05-15, local CLI/helper integration QA.
+Last Run: PASS 2026-05-15, local CLI/helper integration QA.
 
 ## PW-016 Prompt History And Eval Traceability
 
@@ -574,7 +582,7 @@ context without raw private draft bodies or absolute local paths.
 Forbidden Result: Users must hunt across unrelated tabs to understand a prompt, eval links are not
 prompt-specific, or public API responses expose private paths/raw draft text.
 
-Last Run: 2026-05-15, Playwright focused History view plus API privacy check.
+Last Run: PASS 2026-05-15, Playwright focused History view plus API privacy check.
 
 ## PW-030 Prompt Diff Wrapping And Working-Tree Source Visibility
 
@@ -609,7 +617,7 @@ Forbidden Result: One diff pane horizontally overflows while the other wraps, un
 changes disappear from the diff/history surfaces, or viewing the diff creates drafts, pushes live,
 or mutates cloud/runtime state.
 
-Last Run: 2026-05-22, local build, release regression, Claude review, and in-app browser QA.
+Last Run: PASS 2026-05-22, local build, release regression, Claude review, and in-app browser QA.
 
 ## PW-017 Eval Case Draft Editing
 
@@ -639,7 +647,7 @@ leaves the eval bank unchanged.
 Forbidden Result: Direct eval-bank write on Save, broad formatting-only diffs that obscure the
 real change, or private eval run artifact paths in public responses.
 
-Last Run: 2026-05-16, backend regression plus real Chrome eval-editor QA.
+Last Run: PASS 2026-05-16, backend regression plus real Chrome eval-editor QA.
 
 ## PW-018 Pending Draft Blocks Eval And Push
 
@@ -671,7 +679,7 @@ Forbidden Result: `source clean` while a draft is waiting, dry-run token creatio
 drafts, eval run records that appear to validate the pending draft, or 409 responses leaking raw
 prompt text.
 
-Last Run: 2026-05-16, pending-draft hardening plus stale-draft resolution pass.
+Last Run: PASS 2026-05-16, pending-draft hardening plus stale-draft resolution pass.
 
 ## PW-021 Draft Review Guidance
 
@@ -699,7 +707,7 @@ resolved.
 Forbidden Result: Users must infer from hash counts or sidebar metrics what to do next, or eval
 buttons remain visually primary/actionable for a draft that is not applied.
 
-Last Run: 2026-05-16, pending-draft hardening plus Chrome UX follow-up.
+Last Run: PASS 2026-05-16, pending-draft hardening plus Chrome UX follow-up.
 
 ## PW-022 Eval Create And Performance Clarity
 
@@ -730,7 +738,7 @@ Forbidden Result: Hidden linked cases because a default filter is active, whole-
 format churn, a create action that writes directly to public eval source, or preview runs presented
 as model-quality performance.
 
-Last Run: 2026-05-21, live exact-model local runtime pass. The harness ran 3 selected web cases and
+Last Run: PASS 2026-05-21, live exact-model local runtime pass. The harness ran 3 selected web cases and
 failed closed: 2 completed, 1 empty visible response, and 1 duplicate non-silent response hash group.
 
 ## PW-023 Prompt Traces Meaning
@@ -745,18 +753,29 @@ Surfaces: Web UI, API
 Steps:
 
 1. Open the `Prompt Traces` tab.
-2. Inspect the heading, empty state, and metrics.
-3. Confirm the UI explains that traces contain local metadata such as surface, model, layers, token
-   estimates, and routing decisions.
+2. Inspect the heading, source status, empty state, metrics, and retry action before any trace exists.
+3. Through the disposable local QA owner, complete one harmless real prompt run, refresh Prompt
+   Traces, and confirm one matching metadata row appears.
+4. Reload Prompt Workbench and confirm the row remains available from the existing rotated Core log.
+5. Exercise invalid, hard-linked, symlinked, replaced-parent, missing, and truncated-log fixtures.
+6. Confirm the UI explains that traces contain local metadata such as surface, hashed model/provider
+   identity, layers, token estimates, and routing decisions.
 
 Expected Result: The tab and panel are named `Prompt Traces`; empty state copy explains the concept
-plainly; raw private prompt text is not shown in the public-safe UI.
+plainly; strict metadata appears after the real run and reload; source failures are visible as
+degraded or unavailable; retry works; the UI says `local diagnostic · not release evidence`; raw
+private prompt text is not shown in the public-safe UI.
 
 Forbidden Result: A tab called `Frames` with no explanation, raw prompt or transcript text in the
-trace list, or metrics that look like eval performance.
+trace list, raw provider/model/account/path values, a custom production trace file or cleanup job,
+silent source failure, or metrics that look like eval or release performance.
 
-Last Run: 2026-05-16, real Chrome UX follow-up documented in
-`qa/prompt-workbench/reports/2026-05-16-usability-eval-flow-qa.md`.
+Last Run: PARTIAL 2026-08-26. The unsafe custom production file sink remains rejected
+and disabled. Source now reuses the bounded rotated Core log with a strict metadata-only producer,
+directory-descriptor reader, visible health, and no release-evidence claim. Core telemetry tests
+passed 22/22, Prompt Trace security/API tests passed 14/14, all Workbench backend tests passed 188/188,
+and the production UI build passed. A direct reader check truthfully returned `empty` with zero
+events. Installed real-run visibility, browser refresh, and reload persistence remain open.
 
 ## PW-024 Sidebar Collapse Storage Resilience
 
@@ -785,7 +804,7 @@ opens; the app silently degrades to non-persistent preferences when local storag
 Forbidden Result: Blank page, unmounted app shell, page error from storage access, a stuck collapse
 state, or inaccessible metadata collapse controls.
 
-Last Run: 2026-05-17, headed Chromium production-bundle QA with storage get/set/remove failures
+Last Run: PASS 2026-05-17, headed Chromium production-bundle QA with storage get/set/remove failures
 simulated before and after load, including Drafts tab navigation and Cmd+B sidebar toggle.
 
 ## PW-025 Operational Memory Prompt Coverage
@@ -821,7 +840,7 @@ Forbidden Result: Transcript/hardener prompts hidden in hardcoded scripts only, 
 throws a strict-variable render error, evals are absent from Workbench, preview writes live/cloud
 state, or public QA/UI exposes raw transcript text, local paths, account identifiers, or secrets.
 
-Last Run: 2026-05-21, Playwright CLI plus API/log QA passed for transcript summarizer and nightly
+Last Run: PASS 2026-05-21, Playwright CLI plus API/log QA passed for transcript summarizer and nightly
 hardener prompt coverage; local runtime bundle drift correctly showed the three new prompts as
 source-only and needing rebuild.
 
@@ -854,7 +873,7 @@ from the operator view.
 Forbidden Result: Only raw markdown punctuation, HTML injection from prompt text, stripped
 variables/tags, or no exact raw rendered view after the readable view is introduced.
 
-Last Run: 2026-05-22, Playwright rendered Read/Raw prompt QA.
+Last Run: PASS 2026-05-22, Playwright rendered Read/Raw prompt QA.
 
 ## PW-027 Scheduling Cortex Prompt And Config Coverage
 
@@ -887,7 +906,7 @@ Forbidden Result: Scheduling config discoverable only by manually opening source
 missing from scheduling prompts, raw runtime schedule state in public UI, or source config history
 leaking local absolute paths.
 
-Last Run: 2026-05-22, API and Playwright scheduling config coverage QA.
+Last Run: PASS 2026-05-22, API and Playwright scheduling config coverage QA.
 
 ## PW-028 LibreChat Account Menu Workbench Entry
 
@@ -920,7 +939,7 @@ Forbidden Result: A hardcoded stale workbench port in the browser bundle, no adm
 the account dropdown, non-admin access to the launcher, opening a cloud URL, changing
 connected-account provider state, or starting/stopping the main Viventium runtime.
 
-Last Run: 2026-05-22, LibreChat account-menu Workbench entry QA.
+Last Run: PASS 2026-05-22, LibreChat account-menu Workbench entry QA.
 
 ## PW-031 Diff Baseline And Sidecar Persistence
 
@@ -958,7 +977,7 @@ prompt-text special casing, a cloud mutation, a leaked `workbench_token` in stac
 the main runtime when only Workbench is stopped. Workbench must also not immediately restart after a
 user-visible Stop action while the stack watchdog is alive.
 
-Last Run: 2026-05-22, sidebar persistence, diff history baseline, and sidecar watchdog QA.
+Last Run: PASS 2026-05-22, sidebar persistence, diff history baseline, and sidecar watchdog QA.
 
 ## PW-032 One-Time Scheduled Prompt State Parity
 
@@ -986,29 +1005,26 @@ state instead of defaulting to daily `03:00`.
 Forbidden Result: Workbench shows `enabled · not scheduled`, checks `Enabled`, or displays a daily
 schedule for a fired one-time task unless the user explicitly changes the schedule type.
 
-Last Run: 2026-05-25, FAIL. Synthetic one-time due QA completed, but the Workbench row/editor
+Last Run: FAIL 2026-05-25. Synthetic one-time due QA completed, but the Workbench row/editor
 showed the definition as enabled with no next run and the editor fell back to a daily schedule. See
 `qa/scheduling-cortex/reports/2026-05-25-sched002-pw029-live-delivery-qa.md`.
 
-## PW-033 Custom Settings Nightly Reflection Readiness
+## PW-033 Easy Install Nightly Reflection Readiness
 
-Requirement: Custom Settings Install and upgrades of that runtime must seed and surface the built-in
-nightly reflection through the same production chain: scheduled prompt -> filled placeholders ->
-GlassHive run -> callback -> scheduler ledger -> Workbench shows completed. Immutable Easy Install
-must instead state that this service is not packaged.
+Requirement: Easy Install, Custom Settings Install, and upgrade paths must seed and surface the built-in nightly
+reflection through the same production chain: scheduled prompt -> filled placeholders -> GlassHive
+run -> callback -> scheduler ledger -> Workbench shows completed.
 
-User Outcome: A Custom Settings user gets the nightly reflection workflow without knowing internal
-scheduler or GlassHive wiring, while an Easy Install user is not told that omitted services are
-installed.
+User Outcome: A new user gets the nightly reflection workflow without knowing internal scheduler
+or GlassHive wiring, and status tells them whether it is ready, pending setup, degraded, or complete.
 
 Surfaces: Prompt Workbench UI, Scheduling Cortex, GlassHive callback, install/status summary,
 generated runtime config.
 
 Steps:
 
-1. Compile an Easy Install config and verify the omitted services are classified Custom Settings
-   only; compile a Custom Settings config and verify Workbench, seed-nightly, Scheduler, and
-   GlassHive env are enabled without developer account values.
+1. Compile an Easy Install config and verify Workbench, seed-nightly, Scheduler, and GlassHive env
+   are enabled without developer account values.
 2. Open Workbench and confirm the built-in nightly prompt is visible and active for the resolved
    first local admin user.
 3. Trigger or wait for a synthetic safe due run and verify placeholder population, GlassHive run
@@ -1023,10 +1039,11 @@ no raw prompt/result/private user identifier is written to public QA.
 Forbidden Result: A seeded schedule without GlassHive delivery, a callback success not reflected in
 Workbench, an owner-specific hardcoded account, or public evidence containing raw reflection text.
 
-Last Run: PASS-AUTOMATED/PARTIAL 2026-07-10
-([callback repair](../scheduling-cortex/reports/2026-07-10-workbench-callback-repair.md)). Synthetic
-bootstrap, placeholder, callback, ledger, and API regressions pass. Isolated clean-machine scheduled
-completion remains part of installer release QA and is NOT RUN here.
+Last Run: PASS 2026-08-09. The next natural 03:00 occurrence completed through the
+configured GlassHive host route. Refreshed Workbench state showed the completed scheduled row,
+`xhigh -> xhigh`, a complete current evidence snapshot, a passed current artifact with all eight
+declared references resolved, and the next due time advanced by one day. Earlier scheduled failures
+remain visible as truthful history.
 
 ## PW-034 Exact Runtime Background Activation Evals
 
@@ -1140,10 +1157,15 @@ unrestored Feelings state, leftover conversations, provider-crossed markup, or a
 being forced to contain a tag. An opening xAI wrapping tag without its required closing tag must
 fail deterministic validation rather than count as a supported control.
 
-Last Run: PASS-MODEL 2026-07-16 / PARTIAL-AUDIBLE-PROVIDER-PARITY. The final 35-case exact run
-passed all synthetic provider-behavior cases and all 35 semantic judgments with restoration and
-cleanup. Automated provider-boundary fixtures prove valid wrapper normalization and invalid-control
-stripping. Dedicated synthetic external-channel delivery and playback are NOT RUN. See
+Last Run: PARTIAL 2026-08-25. Prompt-frame evidence proved the
+Workbench exact-model runner executed Telegram-labelled cases with trusted surface `web`; those
+model scores are invalid as Telegram evidence. Historical real Telegram
+positive/calm/negative xAI delivery independently produced control counts `2/0/2`, clean visible
+text, and three delivered audio files without any request for emotion or markup. The repeated
+`5/5`, `5/5`, `3/3`, and `3/3` boundary measurements were intermediate steering evidence rather
+than the final bank/kernel acceptance. The final owner replay used valid xAI wrapping grammar and
+delivered a clean seven-second voice note; after restart, a real xAI square-wrapper fixture recorded
+`normalized_controls=1` and `stripped_controls=0`. See
 [`2026-07-14-feelings-activation-and-telegram-acceptance.md`](../emotional-cortex/reports/2026-07-14-feelings-activation-and-telegram-acceptance.md).
 
 ## PW-037 Scheduled Execution Provenance
@@ -1159,15 +1181,16 @@ row, and parent task.
 Forbidden Result: ambient `max` leaks into the provider request, migration resets user schedule
 fields, or `provider_request_rejected` appears only as generic failed.
 
-Last Run: PASS-AUTOMATED/PARTIAL 2026-07-18. Synthetic Scheduler -> GlassHive -> callback ->
-Workbench provenance and structured-failure regressions pass. An isolated automatic due-window run
-with browser persistence is NOT RUN for this public candidate.
+Last Run: PASS 2026-08-09
+([continuity report](../memory-continuity/reports/2026-08-09-universal-cognitive-continuity-parity.md)).
+The built-in natural 03:00 Workbench nightly completed through GlassHive and callbacks. Refreshed
+Workbench state, joined integrity, child/parent ledgers, requested/effective effort, evidence
+snapshot, and the current artifact all agree; the Aug 8 structured failure remains visible below it.
 
 ## PW-038 Memory Continuity Eval And Native Gate
 
 Requirement: Prompt Workbench links memory/recall prompts to a public-safe synthetic recent-event
-eval, while final continuity acceptance requires a dedicated isolated channel-to-browser/voice
-journey.
+eval, while final continuity acceptance remains the real Telegram to new Chrome/voice journey.
 
 Expected Result: no-live/live prompt evals are selectable and honest about surface-metadata scope;
 native QA separately proves Mongo revision, saved-memory versus recall provenance, visible web
@@ -1178,10 +1201,12 @@ Forbidden Result: same-thread exact-model output is represented as proof that Te
 detached persistence, conversation recall, or real voice delivery worked; governed apply reports
 success and then immediately re-compacts its reviewed value.
 
-Last Run: PASS-MODEL/PARTIAL 2026-07-15; all three synthetic `memory_recall` cases completed and
-passed semantic judging at score 1.0, and the governed-apply stateful regression passed. Dedicated
-isolated channel persistence, new-browser retrieval, audible voice, refresh, and cleanup remain
-NOT RUN.
+Last Run: PASS 2026-07-15; all three `memory_recall` cases completed and passed semantic
+judging at score 1.0. The isolated native journey independently proved Telegram persistence,
+new-browser saved-memory read, audible saved-memory and recall-only voice answers, persisted recall
+sources, owner-history recovery, and exact guarded QA restoration. A stateful regression also proved
+that governed apply writes a maintenance-eligible reviewed key exactly once
+([report](../memory-continuity/reports/2026-07-15-three-gate-memory-continuity-repair.md)).
 
 ## PW-039 Canonical Sidecar Checkout Ownership
 
@@ -1214,9 +1239,11 @@ Forbidden Result: accepting another checkout's health response as current readin
 unrelated listener, or reporting a successful current runtime while schedules execute through
 restored/dev Workbench code.
 
-Last Run: PASS 2026-07-13; focused ownership regressions passed, the active checkout reclaimed the
-recognized stale Workbench, the canonical port and state pointed to the active runtime, and two
-real nightly runs completed through the current Scheduler/GlassHive path.
+Last Run: PASS 2026-08-08. Browser QA exposed a stale current-checkout listener whose relative
+`--app-dir` made the old owner check miss it, so a restart selected a fallback port and served
+pre-fix code on the canonical port. Failure-first tests now resolve relative app directories against
+the process working directory while rejecting another checkout. The real managed restart reclaimed
+only that stale listener, returned to the canonical port, and served the current provenance code.
 
 ## PW-040 Recent Runs Live State And Reload Persistence
 
@@ -1243,8 +1270,9 @@ dock summary, and completed history survives reload with no console or network e
 Forbidden Result: a completed backend run exists while Recent Runs stays blank/stale because the
 component prefers an initial prop snapshot or collides with a differently shaped query cache entry.
 
-Last Run: PASS 2026-07-13; two real runs appeared with Sol/xHigh, Memory Off, evidence/artifact
-details, and remained visible after reload; focused tests and the production build passed.
+Last Run: PASS 2026-08-09. Browser refresh preserved the natural 03:00 scheduled row as
+completed above the earlier terminal failures, with the complete current evidence snapshot and a
+passed artifact whose 8/8 references resolved.
 
 ## PW-041 Managed-Local Timezone Survives Unrelated Saves
 
@@ -1264,10 +1292,10 @@ explicit schedule edit, including reselecting the current local timezone, sets `
 Forbidden Result: Saving only a prompt/title pins the current city, or a later restart rewrites a
 user-explicit fixed timezone.
 
-Last Run: PASS-AUTOMATED/PARTIAL 2026-07-14; the failure-first UI payload regression reproduced the
-defect, the backend local/fixed contract passed, and 126 scheduling/Workbench release tests passed
-with 5 environment skips. Isolated browser save/restart proof across two synthetic timezones is NOT
-RUN; no pre-existing user definition was inspected or modified.
+Last Run: PASS 2026-07-14; the failure-first UI payload regression reproduced
+the defect, the backend local/fixed contract passed, 126 scheduling/Workbench release tests passed
+with 5 environment skips, and real Chrome showed the rebuilt 03:00 America/Toronto definition after
+restart. A destructive edit of the user's real definition was intentionally not used as QA.
 
 ## PW-042 Direct Specialist Execution And Runtime-Context Lineage
 
@@ -1292,7 +1320,7 @@ Forbidden Result: routing either family through the conscious agent, injecting
 storing raw responses/private state in Workbench history, or treating unsupported mood inference as
 high-EQ insight.
 
-Last Run: PASS-MODEL 2026-07-15; Emotional Resonance passed 2/2 after a failure-first neutral-control
+Last Run: PARTIAL 2026-07-15; Emotional Resonance passed 2/2 after a failure-first neutral-control
 correction and Red Team passed 2/2, with one prompt dependency and zero Feelings runtime contexts.
 Current-build browser/reload acceptance remains pending until the exact checkout is promoted.
 
@@ -1317,7 +1345,7 @@ Forbidden Result: counting a 401/429/timeout/malformed judge response as a candi
 failure, retrying non-transient failures for every case, or copying raw provider error bodies or
 credential fragments into Workbench/public evidence.
 
-Last Run: PASS-AUTOMATED 2026-07-15; failure-first regressions cover unavailable versus valid-fail
+Last Run: PARTIAL 2026-07-15; failure-first regressions cover unavailable versus valid-fail
 classification and partially masked token redaction. Current-build Workbench browser display is
 part of `PW-UC-019`.
 
@@ -1354,6 +1382,78 @@ regressions; the saved run contained the same five IDs, completed 5/5, passed 5/
 showed 18 prompt dependencies plus one runtime-context dependency, persisted after reload, and had
 zero console, request, or HTTP errors. Focused boundary and runner tests passed.
 
+## PW-045 Cognitive Integrity, Label Isolation, And Control-Plane Drift
+
+- Requirement: `docs/requirements_and_learnings/49_Prompt_Architecture_and_Token_Efficiency.md`,
+  `20_Memory_System.md`, `32_Conversation_Recall_RAG.md`, and
+  `53_Viventium_Periphery_Nightly_Insights.md`.
+- Risk covered: Prompt Workbench, nightly routines, memory hardening, and the Codex observer report
+  each look healthy in isolation while runtime prompts/config, QA identity, provider capability, or
+  the active hardener schedule has drifted.
+- Steps:
+  1. Run `bin/viventium cognitive-integrity --json` against the active installed runtime.
+  2. Verify prompt/config parity, memory ceiling, host-tool transport, one non-admin QA account,
+     hardener health, Workbench nightly status, the separate opt-in Health Context and Consciousness
+     Continuity scheduled-run status, GlassHive companion readiness, and observer-only
+     Codex automation boundaries. Confirm scheduler inspection is SQLite read-only and selected-root
+     scoped, and inspect per-turn saved-memory read/writer receipts independently.
+  3. Run the nonce-isolated recall eval and inspect its exact GlassHive execution provenance.
+  4. Confirm the Workbench schedule remains the writer, the hardener remains a direct scheduled
+     writer, and the Codex automation remains an observer rather than a third writer.
+  5. Place a failed scheduled run below a later successful manual run and confirm integrity remains
+     blocked on the scheduled lane. Then complete a real scheduler fire and confirm only that
+     scheduled receipt clears the blocker.
+  6. Project a successful row without `triggerKind=scheduled` and
+     `triggerSource=scheduler_loop`; confirm nightly health remains blocked. Return empty/malformed
+     Codex feature-probe output and output missing `code_mode_host`; confirm observer health also
+     remains blocked.
+  7. Keep wearable acquisition successful while the separately enabled 06:15 Health Context run
+     fails, then complete a later manual run. Confirm the joined report stays blocked on
+     `workbenchHealthContext` until its own scheduler-proven run succeeds. Disable the optional
+     definition and confirm it no longer blocks.
+  8. Fail an enabled Consciousness Continuity occurrence while nightly, Health Context, and manual
+     continuity runs succeed. Confirm the joined report blocks on
+     `workbenchConsciousnessContinuity` until its own scheduler-proven occurrence succeeds.
+- Expected result: the integrity command fails closed on any blocking mismatch; the live eval cannot
+  pass through old prompt labels, reports, broad shell search, an unobserved fallback path, or a
+  manual run that masks a scheduled failure. UI history labels manual and scheduled provenance.
+- Forbidden result: independent green dashboards with a broken joined path, raw private evidence in
+  the report, an observer applying fixes, or a later manual success hiding a failed/missed schedule.
+- Last run: PASS 2026-08-08. The failure-first gate correctly blocked on the failed 03:00 run
+  despite a later manual completion. A real post-repair scheduler fire then completed through
+  GlassHive and artifact validation, the sole active definition was restored to 03:00 local, browser
+  labels persisted after reload, and cognitive integrity returned `ok` with zero blockers. See the
+  [final parity report](../memory-continuity/reports/2026-08-08-connected-account-host-parity-and-model-selection.md).
+  The 2026-08-09 regression extension separately passed fail-closed projected-nightly and malformed/
+  missing-capability Codex probe tests; post-activation joined integrity is recorded in the current
+  universal continuity report.
+
+## PW-053 Authentication Material Never Enters Browser Or Log Sinks
+
+Requirement: `HARD-020` in
+`docs/requirements_and_learnings/49_Prompt_Architecture_and_Token_Efficiency.md`.
+
+User Outcome: The installed Workbench authenticates without exposing any authentication material in
+URLs, browser history, referrers, access/application logs, or persistent `localStorage`.
+
+Steps:
+
+1. Open Workbench through every supported helper and same-machine browser entry path.
+2. Inspect the address/history entries, outgoing `Referer` headers, server/application logs, and
+   browser storage before launch, after authenticated navigation, after reload, and after logout.
+3. Repeat with expired, replayed, malformed, and wrong-owner launch material.
+4. Verify the supported short-lived exchange or verified local session succeeds and every invalid
+   value fails closed without being copied into another sink.
+
+Expected Result: No authentication value appears in any named sink; the valid session works and
+invalid/replayed material gives one precise recovery action.
+
+Forbidden Result: bearer/query/fragment credential, credential-bearing history or referrer, access
+or application log exposure, persistent `localStorage` authentication, or a security scan limited
+to the visible address bar.
+
+Last Run: NOT RUN — cataloged 2026-08-30.
+
 ## Natural User Use Case Checklist
 
 These rows are the minimum natural-user checklist gate for Prompt Workbench. Add narrower feature-specific
@@ -1361,30 +1461,37 @@ rows before claiming a pass when the feature behavior changes.
 
 | Use Case ID | Natural user action | Requirement / case link | Real surface to use | Supporting evidence to compare | Expected visible result | Last run |
 | --- | --- | --- | --- | --- | --- | --- |
-| `PW-UC-001` | Open the production Prompt Workbench, search the prompt atlas, select a prompt, and inspect Flow, Prompt, Live Drift, Drafts, Evals, and Prompt Traces. | `49_Prompt_Architecture_and_Token_Efficiency.md` / `PW-001`, `PW-002`, `PW-009`, `PW-014`, `PW-026` | Real browser against the built local workbench plus `/api/prompts`, `/api/sync/status`, `/api/drafts`, `/api/evals/runs`, and prompt detail APIs | Source prompt files, workbench API responses, browser console/network, built bundle, release tests, and public-safe QA reports | The atlas is human-readable, prompt detail matches registry output, Rendered has safe Read/Raw modes, Flow is a source-map view with selected-path highlighting and double-click prompt navigation, drift is explicit, no raw private state is exposed, and every network request succeeds or reports a clear blocked state. | 2026-05-22 rendered view and source-map browser QA - passed |
-| `PW-UC-002` | Use no-live eval controls, click through linked eval rows, run live exact-model eval when explicitly approved, and inspect blocked sync controls before any reviewed live push. | `49_Prompt_Architecture_and_Token_Efficiency.md` / `PW-005`, `PW-008`, `PW-010`, `PW-018`, `PW-022` | Real browser Evals and Live Drift panels plus `/api/evals/run` and sync status APIs | Eval bank, private run summary counts/hashes only, pending-draft state, sync state, browser console/network | Eval row selection stays responsive, preview clearly says no model call/no score, live exact-model failures are visible as failures, and reviewed push stays blocked until the guarded dry-run/review path is satisfied. | 2026-05-21 eval row-selection regression passed; live exact-model local run failed closed; local dry-run passed; reviewed push was blocked by conflict drift and not applied |
-| `PW-UC-003` | Refresh/reopen the workbench after an eval preview and confirm the selected prompt, run summary, and API-backed state still agree. | `49_Prompt_Architecture_and_Token_Efficiency.md` / `PW-010`, `PW-012`, `PW-015`, `PW-016` | Real browser reload/reopen plus backend health/build-version APIs | `/api/health`, `/api/build-version`, `/api/evals/runs`, browser requests, static index/cache headers, built artifact hash | The workbench reloads without console errors, the selected prompt can be found again, run history persists through private workbench state, and public API/build metadata omits local absolute paths. | 2026-05-18 publish browser QA - passed |
-| `PW-UC-004` | Search for transcript-ingest and nightly memory hardening prompts, inspect them, and run a no-live linked eval preview. | `49_Prompt_Architecture_and_Token_Efficiency.md` / `PW-025` | Real browser against built local workbench plus prompt/eval/context APIs | Source prompt files, eval bank promptRefs, strict-variable rendered preview, browser console/network, private run summary counts only | `memory.transcript_summarizer`, `memory.transcript_caveat`, and `memory.hardener_consolidation` are visible, editable through drafts, linked to evals/QA, show runtime bundle drift, and are safe to preview locally without live/cloud changes. | 2026-05-21 operational memory prompt coverage QA - passed; runtime bundle drift visible as source-only |
-| `PW-UC-005` | Use the Flow source map to understand the selected prompt's place in Viventium and jump to the prompt from the map. | `49_Prompt_Architecture_and_Token_Efficiency.md` / `PW-009`, `PW-025`, `PW-026` | Real browser against built local workbench plus prompt/eval APIs | Prompt registry rows, backend flow graph, eval-bank promptRefs, browser DOM/screenshot evidence, and release tests | Stage bands stay readable, selected memory/main paths are highlighted, unrelated prompts/evals are muted, and double-clicking a prompt node selects it and opens Prompt detail. | 2026-05-22 Playwright source-map QA - passed |
-| `PW-UC-006` | Search scheduling prompts and inspect prompt, config, evals, QA, and history together. | `49_Prompt_Architecture_and_Token_Efficiency.md` / `PW-016`, `PW-027` | Real browser against built local workbench plus prompt context API | Prompt registry rows, source YAML config summaries, eval-bank promptRefs, git metadata, browser DOM/screenshot evidence, and release tests | Scheduling continuity and MCP prompts show related direct-action owner config, main-agent tool exposure, MCP server config, linked evals, QA chips, and public-safe history. | 2026-05-22 scheduling config coverage QA - passed |
-| `PW-UC-007` | Open Prompt Workbench from the LibreChat account dropdown as an admin/operator. | `49_Prompt_Architecture_and_Token_Efficiency.md` / `PW-028` | Real browser against same-host local LibreChat plus `/api/viventium/prompt-workbench/start` and the managed workbench tab | Browser DOM/screenshot evidence, local API response, CLI status JSON, server logs, and route tests | The account dropdown shows Prompt Workbench directly below Connected Accounts for admins, selecting it opens the local managed workbench URL in a new tab, non-admin route access is blocked, and no cloud/provider account state changes. | 2026-05-22 LibreChat entry QA - passed |
-| `PW-UC-008` | Close the sync sidebar, reload, select diff baselines, and verify opt-in Workbench sidecar startup. | `49_Prompt_Architecture_and_Token_Efficiency.md` / `PW-031` | Real browser against built local Workbench plus `/api/prompts/:id/revisions/:revision`, compiler output, launcher smoke logs, and CLI status | Browser storage/DOM/screenshot evidence, prompt revision API, release tests, launcher pid/log state | Sidebar stays closed after reload, `Compare from` changes the actual diff baseline, the revision API is prompt-path/git based, and the local sidecar starts only when enabled without token leakage. | 2026-05-22 sidebar/diff/sidecar QA - passed |
-| `PW-UC-009` | Inspect the built-in nightly reflection schedule after Custom Settings Install or upgrade, then verify a completed run; separately inspect Easy Install omission wording. | `39_Installer_and_Config_Compiler.md` / `PW-033`, `INST-004` | Prompt Workbench UI, Scheduler ledger, GlassHive callbacks, install/status summary | Browser-visible schedule/completion, synthetic scheduler delivery fields, generated env keys, callback status counts, focused tests. | Custom Settings shows an active workflow for the resolved local admin; Easy Install says the service is not packaged; completed callbacks and Workbench state agree without private data leakage. | PARTIAL 2026-07-21; synthetic Custom Settings bootstrap/callback/ledger regressions pass, Easy Install registry truth passes, isolated automatic browser proof NOT RUN |
+| `PW-UC-001` | Open the production Prompt Workbench, search the prompt atlas, select a prompt, and inspect Flow, Prompt, Live Drift, Drafts, Evals, and Prompt Traces. | `49_Prompt_Architecture_and_Token_Efficiency.md` / `PW-001`, `PW-002`, `PW-009`, `PW-014`, `PW-026` | Real browser against the built local workbench plus `/api/prompts`, `/api/sync/status`, `/api/drafts`, `/api/evals/runs`, and prompt detail APIs | Source prompt files, workbench API responses, browser console/network, built bundle, release tests, and public-safe QA reports | The atlas is human-readable, prompt detail matches registry output, Rendered has safe Read/Raw modes, Flow is a source-map view with selected-path highlighting and double-click prompt navigation, drift is explicit, no raw private state is exposed, and every network request succeeds or reports a clear blocked state. | PASS 2026-05-22 rendered view and source-map browser QA - passed |
+| `PW-UC-002` | Use no-live eval controls, click through linked eval rows, run live exact-model eval when explicitly approved, and inspect blocked sync controls before any reviewed live push. | `49_Prompt_Architecture_and_Token_Efficiency.md` / `PW-005`, `PW-008`, `PW-010`, `PW-018`, `PW-022` | Real browser Evals and Live Drift panels plus `/api/evals/run` and sync status APIs | Eval bank, private run summary counts/hashes only, pending-draft state, sync state, browser console/network | Eval row selection stays responsive, preview clearly says no model call/no score, live exact-model failures are visible as failures, and reviewed push stays blocked until the guarded dry-run/review path is satisfied. | PASS 2026-05-21 eval row-selection regression passed; live exact-model local run failed closed; local dry-run passed; reviewed push was blocked by conflict drift and not applied |
+| `PW-UC-003` | Refresh/reopen the workbench after an eval preview and confirm the selected prompt, run summary, and API-backed state still agree. | `49_Prompt_Architecture_and_Token_Efficiency.md` / `PW-010`, `PW-012`, `PW-015`, `PW-016` | Real browser reload/reopen plus backend health/build-version APIs | `/api/health`, `/api/build-version`, `/api/evals/runs`, browser requests, static index/cache headers, built artifact hash | The workbench reloads without console errors, the selected prompt can be found again, run history persists through private workbench state, and public API/build metadata omits local absolute paths. | PASS 2026-05-18 publish browser QA - passed |
+| `PW-UC-004` | Search for transcript-ingest and nightly memory hardening prompts, inspect them, and run a no-live linked eval preview. | `49_Prompt_Architecture_and_Token_Efficiency.md` / `PW-025` | Real browser against built local workbench plus prompt/eval/context APIs | Source prompt files, eval bank promptRefs, strict-variable rendered preview, browser console/network, private run summary counts only | `memory.transcript_summarizer`, `memory.transcript_caveat`, and `memory.hardener_consolidation` are visible, editable through drafts, linked to evals/QA, show runtime bundle drift, and are safe to preview locally without live/cloud changes. | PASS 2026-05-21 operational memory prompt coverage QA - passed; runtime bundle drift visible as source-only |
+| `PW-UC-005` | Use the Flow source map to understand the selected prompt's place in Viventium and jump to the prompt from the map. | `49_Prompt_Architecture_and_Token_Efficiency.md` / `PW-009`, `PW-025`, `PW-026` | Real browser against built local workbench plus prompt/eval APIs | Prompt registry rows, backend flow graph, eval-bank promptRefs, browser DOM/screenshot evidence, and release tests | Stage bands stay readable, selected memory/main paths are highlighted, unrelated prompts/evals are muted, and double-clicking a prompt node selects it and opens Prompt detail. | PASS 2026-05-22 Playwright source-map QA - passed |
+| `PW-UC-006` | Search scheduling prompts and inspect prompt, config, evals, QA, and history together. | `49_Prompt_Architecture_and_Token_Efficiency.md` / `PW-016`, `PW-027` | Real browser against built local workbench plus prompt context API | Prompt registry rows, source YAML config summaries, eval-bank promptRefs, git metadata, browser DOM/screenshot evidence, and release tests | Scheduling continuity and MCP prompts show related direct-action owner config, main-agent tool exposure, MCP server config, linked evals, QA chips, and public-safe history. | PASS 2026-05-22 scheduling config coverage QA - passed |
+| `PW-UC-007` | Open Prompt Workbench from the LibreChat account dropdown as an admin/operator. | `49_Prompt_Architecture_and_Token_Efficiency.md` / `PW-028` | Real browser against same-host local LibreChat plus `/api/viventium/prompt-workbench/start` and the managed workbench tab | Browser DOM/screenshot evidence, local API response, CLI status JSON, server logs, and route tests | The account dropdown shows Prompt Workbench directly below Connected Accounts for admins, selecting it opens the local managed workbench URL in a new tab, non-admin route access is blocked, and no cloud/provider account state changes. | PASS 2026-05-22 LibreChat entry QA - passed |
+| `PW-UC-008` | Close the sync sidebar, reload, select diff baselines, and verify opt-in Workbench sidecar startup. | `49_Prompt_Architecture_and_Token_Efficiency.md` / `PW-031` | Real browser against built local Workbench plus `/api/prompts/:id/revisions/:revision`, compiler output, launcher smoke logs, and CLI status | Browser storage/DOM/screenshot evidence, prompt revision API, release tests, launcher pid/log state | Sidebar stays closed after reload, `Compare from` changes the actual diff baseline, the revision API is prompt-path/git based, and the local sidecar starts only when enabled without token leakage. | PASS 2026-05-22 sidebar/diff/sidecar QA - passed |
+| `PW-UC-009` | Inspect the built-in nightly reflection schedule after Easy Install or upgrade, then verify a completed run. | `39_Installer_and_Config_Compiler.md` / `PW-033`, `INST-004` | Prompt Workbench UI, Scheduler ledger, GlassHive callbacks, install/status summary | Browser-visible schedule/completion, sanitized scheduler delivery fields, generated env keys, callback status counts, focused tests. | Nightly reflection is active for the resolved local admin, placeholders are filled at run time, callbacks complete, and Workbench shows completed without private data leakage. | PASS 2026-08-26; the natural 03:00 occurrence acquired a real GlassHive lease, invoked the configured Codex route, completed and delivered without degraded dependencies, advanced to the next 03:00 occurrence, and made joined `workbenchNightly=ok`. |
 | `PW-UC-010` | Select the background activation family, preview it, run an approved live subset, inspect semantic/reliability metrics, and reload recent history. | `49_Prompt_Architecture_and_Token_Efficiency.md` / `PW-034`, `ACT-36` | Real Prompt Workbench browser plus `/api/evals/run`, exact-runtime activation runner, and private run history | Prompt bank/source hashes, aggregate metrics, browser console/network, backend dispatch, private report pointer | Preview makes no model calls; live mode uses the exact runtime classifier; unavailable calls are distinct from false decisions; reload preserves a public-safe run summary without raw prompt/response leakage. | PASS 2026-07-15: full exact runtime 737/737 across 67 cases and 11 targets; zero semantic errors/unavailable decisions; all primary-attempt errors recovered through the declared xAI fallback. Browser lineage/reload acceptance for the current build remains part of the final promotion pass ([report](../background_agents/reports/2026-07-15-specialist-cortex-activation-regression.md)) |
 | `PW-UC-011` | Run the current full Feelings matrix and inspect its result after completion or timeout. | `PW-035`, `EMO-030`, `EMO-038`, `EMO-042` | Real Prompt Workbench Evals UI plus live exact-model runner and QA DB | UI status, saved run record/report, fixture version/state, reaction potency, paired Care/Connection verdicts, synthetic conversation counts | Run has a proportional budget, semantic verdicts are saved, timeout is code 124 rather than an empty folder, transient judge transport failure is bounded and retried, and QA fixtures/conversations are restored/cleaned. | PASS 2026-07-16: clean current-family run completed and semantically passed 35/35 with zero retries, duplicate-response failures, unresolved asynchronous outputs, or judge outages; exact fixture restoration and complete cleanup passed. The five escaped cases also passed 5/5 through headed Workbench ([report](../emotional-cortex/reports/2026-07-16-feelings-range-potency-and-telegram-replay.md)) |
-| `PW-UC-012` | Inspect and run the feeling-aware Telegram/provider cases. | `PW-036`, `EMO-036` | Real Prompt Workbench Evals UI plus live exact-model runner | Prompt lineage, marker counts, semantic results, QA state restoration, cleanup, UI run code | Capable expressive providers use one fitting supported control without a user request; restrained/Feelings-off/plain/unsupported routes remain unmarked; the run is clean and reproducible | PASS-MODEL 2026-07-16: all nine Telegram/provider cases passed inside the 30/30 semantic family run; real xAI positive/calm/negative delivery passed previously, while broader real-provider audible delivery remains PARTIAL ([report](../emotional-cortex/reports/2026-07-15-feelings-reaction-potency-and-final-authority.md)) |
-| `PW-UC-013` | Trigger the built-in nightly definition and inspect requested/effective execution provenance. | `PW-037`, `SCHED-014` | isolated Workbench schedule detail | bootstrap, synthetic GlassHive evidence, callbacks, child/parent ledgers | Visible run provenance and terminal class agree across every layer. | PASS-AUTOMATED/PARTIAL 2026-07-18; provenance/ledger regressions pass, isolated automatic browser run NOT RUN |
-| `PW-UC-014` | Run the memory recent-event eval, then perform an isolated channel-to-new-web/voice continuity journey. | `PW-038`, `MEMCONT-004`, `RAG-005`, `MPV-020` | Workbench Evals, isolated channel, browser, Modern Playground | eval record, fixture revisions, tool sources, transcript/audio, cleanup | Prompt behavior passes and native surfaces independently prove persistence/retrieval/delivery. | PASS-MODEL/PARTIAL 2026-07-15; 3/3 synthetic memory cases passed semantic judging at score 1.0, isolated cross-surface proof NOT RUN |
-| `PW-UC-015` | Restart Viventium after another checkout left a healthy Workbench listener on the canonical port, then open Workbench and run the nightly definition. | `PW-039` | stack-managed Workbench CLI/browser plus Scheduler and GlassHive ledgers | listener PID/working directory, Workbench state, API/browser result, scheduled-run provenance | The active checkout safely reclaims only the stale Workbench, owns the canonical port, and completes the nightly run through the current runtime. | PASS 2026-07-13; active checkout reclaimed the recognized stale sidecar and two current-runtime nightly runs completed visibly |
-| `PW-UC-016` | Keep the nightly schedule open while a run completes, then reload the page. | `PW-040` | real Prompt Workbench Scheduled Prompts detail | live API query, cache keys, visible Recent Runs, expanded evidence/artifact detail, console/network | The newly completed run appears without a restart and remains after reload; its Sol/xHigh and quality details match backend state. | PASS 2026-07-13; two completed runs were visible before and after reload with no browser console errors |
-| `PW-UC-017` | Edit a built-in nightly prompt without touching schedule controls, then restart in another synthetic local timezone; separately make an explicit timezone edit. | `PW-041` | isolated Workbench schedule editor, API, scheduler DB fixture, restart | browser request payload, `schedule_timezone_mode`, visible timezone and next run | Unrelated edits keep `local` and follow the new Mac timezone; an explicit schedule edit becomes `fixed` and is preserved. | PASS-AUTOMATED/PARTIAL 2026-07-14; 126 scheduling/Workbench tests passed with 5 environment skips, isolated browser cross-timezone proof NOT RUN |
-| `PW-UC-018` | Select Emotional Resonance and Red Team direct-execution families, run both, inspect their prompt/runtime lineage, and reload history. | `49_Prompt_Architecture_and_Token_Efficiency.md` / `PW-042`, `ACT-44` | Real Prompt Workbench browser plus direct specialist runner and private run history | Target agent id hash, exact linked prompt/version hash, runtime-context ids/count, independent semantic verdicts, browser console/network, and persisted public-safe run summary | Each family invokes only its named specialist, records one execution-prompt dependency and zero Feelings runtime contexts, passes supported-inference/adversarial-independence rubrics, and persists without raw responses or private state values. | PASS-MODEL 2026-07-15: Emotional Resonance 2/2 and Red Team 2/2 independently judged; current-build browser/reload acceptance is pending ([report](../background_agents/reports/2026-07-15-specialist-cortex-execution.md)) |
-| `PW-UC-019` | Run an eval once with an unavailable semantic judge, then with a working judge, and inspect/reload both summaries. | `49_Prompt_Architecture_and_Token_Efficiency.md` / `PW-043` | exact-model runner plus real Prompt Workbench browser | runner status/counts, sanitized blocker, valid verdict, recent-run UI, reload, console/network | The outage is `blocked_semantic_judge` with one unavailable and zero semantic failures; the working route reports judged pass/fail normally; neither view exposes provider bodies or credential fragments. | PASS-AUTOMATED 2026-07-15 for classification/redaction; live Workbench display/reload pending final browser pass |
+| `PW-UC-012` | Inspect and run the feeling-aware Telegram/provider cases. | `PW-036`, `EMO-036`, `PW-048` | Real Prompt Workbench Evals UI plus trusted Telegram runner | Prompt lineage, requested/observed surface, marker counts, semantic results, QA state restoration, cleanup, UI run code | Capable expressive providers use one fitting supported control without a user request; restrained/Feelings-off/plain/unsupported routes remain unmarked; the run is clean and reproducible | PARTIAL 2026-08-25: historical real Telegram delivery remains supporting evidence, but the Workbench model run used trusted surface `web`; current native-surface model evidence is pending. |
+| `PW-UC-013` | Trigger the built-in nightly definition and inspect requested/effective execution provenance. | `PW-037`, `SCHED-014`, `PW-045` | real Workbench schedule detail | bootstrap, GlassHive evidence, callbacks, child/parent ledgers, trigger kind | Visible run provenance and terminal class agree across every layer; manual recovery cannot hide a scheduled failure. | PASS 2026-08-26; the natural 03:00 row completed and delivered on `gpt-5.6-sol` with requested/effective xHigh, exact scheduler provenance, no fallback or degraded dependency, and the historical failure remains visible. |
+| `PW-UC-014` | Run the memory recent-event eval, then perform the real Telegram-to-new-web/voice continuity journey. | `PW-038`, `MEMCONT-004`, `RAG-005`, `MPV-020` | Workbench Evals, Telegram, Chrome, Modern Playground | eval record, DB revisions, tool sources, transcript/audio, cleanup | Prompt behavior passes and native surfaces independently prove persistence/retrieval/delivery. | PASS 2026-07-15; 3/3 memory cases passed semantic judging at score 1.0, native Telegram persistence passed, fresh web and real voice calls recovered the synthetic event through saved memory and recall separately, and guarded cleanup restored the isolated QA account exactly ([report](../memory-continuity/reports/2026-07-15-three-gate-memory-continuity-repair.md)). |
+| `PW-UC-015` | Restart Viventium after another checkout or a relative-path process left a healthy Workbench listener on the canonical port, then open Workbench and run the nightly definition. | `PW-039` | stack-managed Workbench CLI/browser plus Scheduler and GlassHive ledgers | listener PID/working directory, Workbench state, API/browser result, scheduled-run provenance | The active checkout safely reclaims only its stale Workbench, owns the canonical port, and completes the nightly run through the current runtime. | PASS 2026-08-08; failure-first relative-app-dir regressions passed, the actual stale listener was reclaimed to the canonical port, current provenance UI loaded, and the real nightly completed through the current runtime |
+| `PW-UC-016` | Keep the nightly schedule open while a run completes, then reload the page. | `PW-040` | real Prompt Workbench Scheduled Prompts detail | live API query, cache keys, visible Recent Runs, expanded evidence/artifact detail, console/network | The newly completed run appears without a restart and remains after reload; its Sol/xHigh and quality details match backend state. | PASS 2026-08-03 ([nightly review](../memory-hardening/reports/2026-08-03-nightly-routines-health-review.md)); Playwright opened the live schedule detail, verified the completed Aug 3 run and artifact detail, reloaded, and saw the completed run persist before the local sidecar was later stopped by a user-stopped marker |
+| `PW-UC-017` | Edit a built-in nightly prompt without touching schedule controls, then restart in another local timezone; separately make an explicit timezone edit. | `PW-041` | Prompt Workbench schedule editor, API, scheduler DB, restart | browser request payload, `schedule_timezone_mode`, visible timezone and next run | Unrelated edits keep `local` and follow the new Mac timezone; an explicit schedule edit becomes `fixed` and is preserved. | PASS 2026-08-27; prior timezone contracts remain green, and current installed Chrome changed only the title of an inactive daily synthetic schedule, saved it, reloaded the persisted edit, restored it, and matched the exact pre-test core-config hash. The UI's channel-order normalization was also restored to the exact preimage through the supported schedule API. |
+| `PW-UC-018` | Select Emotional Resonance and Red Team direct-execution families, run both, inspect their prompt/runtime lineage, and reload history. | `49_Prompt_Architecture_and_Token_Efficiency.md` / `PW-042`, `ACT-44` | Real Prompt Workbench browser plus direct specialist runner and private run history | Target agent id hash, exact linked prompt/version hash, runtime-context ids/count, independent semantic verdicts, browser console/network, and persisted public-safe run summary | Each family invokes only its named specialist, records one execution-prompt dependency and zero Feelings runtime contexts, passes supported-inference/adversarial-independence rubrics, and persists without raw responses or private state values. | PARTIAL 2026-07-15: Emotional Resonance 2/2 and Red Team 2/2 independently judged; current-build browser/reload acceptance is pending ([report](../background_agents/reports/2026-07-15-specialist-cortex-execution.md)) |
+| `PW-UC-019` | Run an eval once with an unavailable semantic judge, then with a working judge, and inspect/reload both summaries. | `49_Prompt_Architecture_and_Token_Efficiency.md` / `PW-043` | exact-model runner plus real Prompt Workbench browser | runner status/counts, sanitized blocker, valid verdict, recent-run UI, reload, console/network | The outage is `blocked_semantic_judge` with one unavailable and zero semantic failures; the working route reports judged pass/fail normally; neither view exposes provider bodies or credential fragments. | PARTIAL 2026-07-15 for classification/redaction; live Workbench display/reload pending final browser pass |
 | `PW-UC-020` | Check several non-contiguous named eval cases, run them live, inspect lineage, and reload history. | `49_Prompt_Architecture_and_Token_Efficiency.md` / `PW-044`, `EMO-046` | real Prompt Workbench browser plus `/api/evals/run` and exact-model runner | visible checkbox state, request `caseIds`, saved selected IDs, lineage case IDs, runner filters, semantic counts, console/network | The same exact bounded case set appears at every layer; unknown/filter-mismatched IDs fail closed; the numeric first-N limit cannot silently substitute different cases. | PASS 2026-07-16: the five named Feelings regressions completed and passed 5/5 through the headed UI with matching lineage/history and zero browser/network/API errors ([report](../emotional-cortex/reports/2026-07-16-feelings-range-potency-and-telegram-replay.md)) |
+| `PW-UC-021` | Open the installed Workbench, inspect prompt lineage and Continuity, run one approved exact-model case, reload its history, and leave no synthetic residue. | `49_Prompt_Architecture_and_Token_Efficiency.md` / `PW-049` | installed token-free localhost Workbench browser and current APIs | build identity, registry/source/rendered/live hashes, visible edit controls, exact provider/model/agent/surface evidence, reload history, cleanup and owner-config fingerprints | The current installed journey passes only with explicit local QA authority; it uses a non-owner synthetic eval identity, preserves personal schedules, removes its exact draft/run, and stays `PRE-GATE / NOT READY`. | PARTIAL 2026-08-27: rebuilt installed Workbench, current backend/frontend receipt, healthy 80-frame trace source, 82-prompt registry, 175-case bank, exact configured Main route and semantic result, reload history, token-free browser security, exact synthetic cleanup, and unchanged personal schedule fingerprint passed. |
+| `PW-UC-022` | Open one synthetic continuity schedule and inspect its schedule, composed prompt, model and effort, history, destinations, dependencies, latency, cost, and disposition in existing Workbench views. | `CC-027` / `PW-051` | Prompt Workbench scheduled-prompt list, detail, history, and Run Now | source prompt and schedule metadata, rendered prompt, run/delivery ledger, model/effort, latency and cost | All operational facts are available through the existing Workbench control plane; no separate continuity dashboard or competing author exists. | NOT RUN — cataloged 2026-08-30. |
+| `PW-UC-023` | Rename and edit metadata on two synthetic schedules, then run the same behavior from each. | `CC-028` / `PW-046` | Prompt Workbench schedule editor and Scheduler | before/after metadata, schedule IDs, prompt selection, occurrence ledgers, and visible results | Behavior follows typed metadata and remains unchanged by title or display-name changes. | NOT RUN — cataloged 2026-08-30. |
+| `PW-UC-024` | Update one synthetic owner-scoped continuity schedule twice, run it manually and naturally, and reopen its existing conversation. | `CC-029` / `PW-046`, `SCHED-022` | Prompt Workbench, Scheduler, and durable conversation | schedule-object identity, registered prompt ID, occurrence rows, conversation receipt, and refresh | One scheduled object is updated in place, uses `scheduler.consciousness_continuity_opportunity`, and reuses the same durable conversation without exposing owner data. | NOT RUN — cataloged 2026-08-30. |
+| `PW-UC-025` | Run one synthetic scheduled answer to Web and Telegram and inspect the matching Workbench run. | `CC-050` / `PW-052` | Prompt Workbench, Web, Telegram, and delivery ledger | canonical output hash, per-destination payloads, message count, Workbench run row, and sanitized logs | One canonical answer is adapted once per destination; Telegram contains no `{MSG_BREAK}`, and Workbench records audit state without authoring a second answer. | NOT RUN — cataloged 2026-08-30. |
+| `PW-UC-026` | Open Workbench from every supported local entry, navigate/reload/logout, and inspect URL, history, referrer, logs, and persistent browser storage. | `HARD-020` / `PW-053` | Installed Workbench browser, helper launch, current APIs, and logs | address/history entries, `Referer` headers, access/application logs, `localStorage`, session state, invalid/replay controls | Authentication works through the supported exchange/session and no authentication material enters any named sink. | NOT RUN — cataloged 2026-08-30. |
 
 ## Release Test Traceability
 
 - `tests/release/test_prompt_workbench.py`
+- `tests/release/test_prompt_workbench_installed_journey_runner.py`
 - `tests/release/test_scheduled_glasshive_prompts.py`
 ## PW-046 Generic Continuity Schedule Control Plane
 
@@ -1417,9 +1524,229 @@ Forbidden Result: A continuity-specific page/title branch, hidden hard-coded run
 fabricated cost, missing active-window semantics, inaccessible mobile controls, private prompt
 expansion, or history limited to GlassHive.
 
-Last Run: PASS-CORE / PARTIAL-RESPONSIVE 2026-08-11; a headed browser verified discovery, prompt
-lineage, active-window fields, history, refresh, accessible named controls, and repaired terminal
-failure disposition. Three real Main runs completed `silent`; the latest two persisted after
-refresh, reused the same archived durable conversation, and showed Sol/xHigh plus both channel
-outcomes. The explicit light/dark plus 320px sweep remains outstanding
+Last Run: PASS 2026-08-27. Prior core schedule/run evidence remains valid. The current
+installed headed journey and personal Chrome completed keyboard sidebar collapse/restore, Light and
+Dark themes, 1512/1024/320 viewport fit, named controls, and a current exact-model run with reload.
+The off-screen FlexLayout measurement token was reproduced in the DOM without `aria-hidden`, repaired,
+rebuilt, restarted through the supported Workbench lifecycle, and verified with
+`aria-hidden="true"` while its measurement dimensions remained intact.
 ([report](../scheduling-cortex/reports/2026-08-11-consciousness-continuity-and-turn-coherence.md)).
+
+## PW-047 Installed Eval Family Ownership And Complete Decision Evidence
+
+Requirement: `docs/requirements_and_learnings/49_Prompt_Architecture_and_Token_Efficiency.md`.
+
+User Outcome: Prompt Workbench proves every current eval on its actual configured Main, specialist,
+or activation route without inventing a pass, hiding a missing semantic judge, or remapping a
+specialist to Main's model.
+
+Surfaces: authenticated local Workbench Evals UI, installed eval APIs, private run artifacts, and
+the read-only installed acceptance report.
+
+Steps:
+
+1. Read the current bank and identify each unique case, declared family runner, semantic-judge
+   requirement, direct specialist, and all activation targets.
+2. Partition each family into one plan per exact case surface. Run Main, direct Emotional
+   Resonance, direct Red Team, and full activation cases through their existing Workbench controls.
+   Keep web and other non-native plans separate from each native surface. Compare each observed
+   provider/model/effort triple with its exact current configured owner; allow only explicitly
+   declared fallback triples.
+3. Change a required semantic-judge claim to false, substitute Main's model for a specialist, omit
+   one activation target, remove one completed decision, delete requested/effective effort, change
+   effort alone, or delete the typed fallback reason. Verify every altered result fails acceptance
+   without modifying installed state.
+4. Confirm the private canonical activation artifact accounts for every
+   `selected case × target × repetition`, with no false positives, false negatives, unavailable
+   decisions, inconsistent decisions, or provider errors.
+5. Refresh the Workbench, inspect public-safe run history, and verify acceptance covers every
+   current bank case without publishing prompt text, provider bodies, credentials, or user data.
+   Requested/effective provider, model, effort, fallback authorization, and typed fallback reason
+   must survive persistence and independent readback unchanged.
+
+Expected Result: Each eval uses its real current owner and configured provider/model/effort triple;
+semantic-required cases have matching independent judgments; declared fallbacks and their typed
+reasons are explicit; complete current-bank evidence is required before acceptance can pass.
+
+Forbidden Result: Specialist-to-Main model remapping, a self-disabled semantic judge, a fabricated
+or abbreviated activation summary, undeclared provider/model/effort fallback, missing or mismatched
+effort, missing/unknown fallback reason, missing target/decision/case, stale candidate evidence,
+replay lineage loss, or private data in public output.
+
+Automation (explicit local PRE-GATE only):
+
+```bash
+VIVENTIUM_QA_ALLOW_PW_047_INSTALLED_FULL_BANK=1 node qa/prompt-workbench/scripts/run_pw_047_installed_full_bank.cjs --local-qa --full-current-bank --allow-live-eval --run-live
+```
+
+Cleanup is a separate exact-manifest action and never runs automatically:
+
+```bash
+VIVENTIUM_QA_ALLOW_PW_047_INSTALLED_FULL_BANK=1 node qa/prompt-workbench/scripts/run_pw_047_installed_full_bank.cjs --local-qa --cleanup-only --manifest=<private-PW-047-aggregate.json>
+```
+
+Last Run: NOT RUN — cataloged 2026-08-27. The runner's 35 deterministic contract tests
+pass, including missing/mismatched effort, undeclared effort-only fallback, missing typed fallback
+reason, and replay lineage-loss cases. A GET-only installed preflight bound bank version 7, 21
+families, 175 unique cases, the current
+source/build/live hashes, and all 21 configured family routes into 29 exact-surface plans: 15 web,
+12 native, and 2 other non-native. The plans cover all 175 cases exactly once and made zero
+`/api/evals/run` requests. No live model run, acceptance report, cleanup, or restart was executed.
+The remaining prerequisite is one explicitly authorized installed live run whose 29 canonical
+artifacts and history rows all pass candidate-bound readback.
+
+## PW-048 Requested Surface Must Equal Executed Surface
+
+Requirement: `docs/requirements_and_learnings/49_Prompt_Architecture_and_Token_Efficiency.md`.
+
+User Outcome: A Telegram-labelled Workbench eval tests the Telegram prompt path, not the ordinary
+web path with an untrusted surface field.
+
+Steps:
+
+1. Select `telegram_copy_ready_email_skips_optional_audio` in the installed Workbench.
+2. Run it through the ordinary agents endpoint and confirm trusted prompt-frame surface `web`
+   makes the run fail with `execution_surface_mismatch` before semantic credit.
+3. Run it through the authenticated Telegram gateway with an exact disposable synthetic mapping.
+4. Verify requested and completion-frame surfaces are both `telegram`, the configured Main route
+   and semantic verdict are bound to the same case and exact owner/source request hash, and
+   `finally` restores/deletes the mapping, session, messages, and conversation.
+5. Repeat with missing, mixed, stale, wrong-case, wrong-owner, and cleanup-failure evidence.
+6. Repeat the same contract for Voice, Wing -> Voice, Scheduler -> Workbench, and Listen-Only ->
+   no completion. A selected surface and its trusted completion surface are distinct typed facts.
+
+Expected Result: Only the trusted Telegram execution can pass. Public history shows safe hashes,
+counts, route, and surface status; no private text, owner identity, secret, or path appears.
+
+Forbidden Result: body-only surface authority, a web or concurrent response scored as Telegram,
+caller-created mapping proof, missing/mixed request identity, partial cleanup, semantic credit after
+surface mismatch, or a release receipt from local diagnostic evidence.
+
+Last Run: PARTIAL 2026-08-25. The fail-closed harness has 66 passing checks. Installed Workbench run
+`20260825T205236Z-684552dac37f` correctly failed with requested `telegram`, observed `web`. Trusted
+native execution and cleanup proof remain pending. Workbench source automation now routes all five
+trusted native surfaces and passed 262/262 tests; this is not installed evidence.
+
+## PW-049 Complete Installed Prompt Workbench Journey
+
+Requirement: `docs/requirements_and_learnings/49_Prompt_Architecture_and_Token_Efficiency.md`.
+
+User Outcome: One bounded runner proves that the installed Prompt Workbench is current, usable,
+exact-model faithful, persistent across reload, and clean after QA.
+
+Surfaces: installed token-free localhost Workbench UI, authenticated Workbench APIs, and private
+synthetic draft/eval storage.
+
+Steps:
+
+1. Require explicit local-QA, live-eval, and synthetic-artifact authorization before local access.
+2. Reject bearer URLs/storage and any stale backend; inspect the prompt registry and verify source,
+   rendered, compiled, and live lineage for Main and Consciousness Continuity prompts.
+3. Find the sole active owner Continuity schedule, prove its exact prompt links, edit only the local
+   browser buffer, reload, and confirm no owner schedule field changed.
+4. Create and discard one uniquely marked eval draft. Run one named semantic web case through the
+   visible Evals UI and its exact configured Main provider, model, agent, and surface.
+5. Verify the saved canonical result, synthetic non-owner identity, semantic verdict, fixture
+   restoration, conversation cleanup, and prompt-frame route evidence. Reload visible history.
+6. Remove only the exact marked draft and eval run. Confirm draft/eval histories return to their
+   baselines. Fail closed if any cleanup, browser, API, lineage, route, or owner-safety check fails.
+
+Expected Result: Every check passes on one current installed candidate; personal schedule data is
+unchanged; no bearer value or synthetic draft/eval remains; the report is private and explicitly
+`PRE-GATE / NOT READY`.
+
+Forbidden Result: stale source/build, bearer URL or browser storage, external/credential-bearing
+request, wrong provider/model/agent/surface, owner-account eval, saved schedule edit, broad cleanup,
+unrestored fixture, missing history, or release-ready evidence.
+
+Last Run: PARTIAL 2026-08-27. The bounded installed journey passed against the rebuilt current
+Workbench with token-free loopback administration, healthy `/api/frames`, 82
+source/rendered/compiled/live prompt rows, 175 eval cases, one exact configured Main web case with
+semantic evidence, history persistence after reload, unchanged personal schedule configuration,
+keyboard/theme/responsive checks, and exact synthetic draft/run cleanup. A runner false positive
+caused by its own injected failed-save 503 was repaired without suppressing other console errors.
+The result remains private and explicitly `PRE-GATE / NOT READY`; it is not release evidence.
+
+## PW-050 Nonterminal View / Steer Receipt Truth
+
+Requirement: `docs/requirements_and_learnings/49_Prompt_Architecture_and_Token_Efficiency.md` and
+`viventium_v0_4/GlassHive/docs/04_MCP_Publication_and_Client_Compatibility.md`.
+
+User Outcome: After Main starts parallel work, each mission-control link is clearly labeled
+`View / Steer <task>` and cannot be mistaken for the requested completed file or deliverable.
+
+Surfaces: GlassHive MCP launch result, GlassHive conversation-provider audit, Prompt Workbench
+exact-model semantic evidence, and visible Main response.
+
+Steps:
+
+1. Launch two distinct synthetic missions through the configured Main route while both remain
+   nonterminal.
+2. Verify each successful launch payload derives its exact `View / Steer <task>` label from typed
+   launch metadata and reports `link_kind=mission_control`, `state=nonterminal`.
+3. Verify provider-run evidence gives each execution its own receipt hash, reports
+   `viewSteerUrlPresent`, and binds the URL hash to that exact receipt without raw URL, task text,
+   launch arguments, token, account value, or local path.
+4. Confirm Main uses the canonical label and does not call the link a completed deliverable.
+5. Let both workers complete, then verify terminal artifacts through their separate exact receipts.
+
+Expected Result: Nonterminal links are truthful mission controls; same-URL/different-execution
+fixtures have the same URL hash but different receipt-binding hashes; terminal artifact proof stays
+separate.
+
+Forbidden Result: A deliverable-style nonterminal link label, a URL without an exact execution
+binding, raw private URL/token in judge evidence, prompt-keyword routing, or terminal credit from a
+mission-control receipt.
+
+Last Run: PARTIAL 2026-08-28. The automated supporting sub-result passed after failure-first tests
+reproduced the generic workspace label and missing receipt evidence. Source-level launch and
+exact-model harness regressions cover atomic/non-atomic paths, same-URL/different-receipt binding,
+and raw URL/task sanitization. The changed source is not compiled or active; no live eval or browser
+check was run. See the
+[`PW-050 report`](reports/2026-08-28-nonterminal-view-steer-receipt-truth.md).
+
+## PW-051 Single Workbench Continuity Control Plane
+
+Requirement: `CC-027` and
+`docs/requirements_and_learnings/49_Prompt_Architecture_and_Token_Efficiency.md`.
+
+User Outcome: The operator can audit and control one continuity schedule through existing Prompt
+Workbench views.
+
+Steps:
+
+1. Open one synthetic continuity schedule and inspect its source/effective prompt and version.
+2. Inspect model, effort, history, channel results, dependencies, latency, tokens, costs, and final
+   disposition; use the existing Run Now control once.
+3. Reload and verify the same schedule and run remain in the existing views.
+
+Expected Result: Workbench is the one operational view and audit sink for every stated fact; no
+separate continuity dashboard, prompt database, or duplicate author appears.
+
+Forbidden Result: a missing stated field, a second control plane, hidden runtime prompt text, or a
+Workbench record that authors another user answer.
+
+Last Run: NOT RUN — cataloged 2026-08-30.
+
+## PW-052 Canonical Scheduled Output Adaptation
+
+Requirement: `CC-050`, `docs/requirements_and_learnings/11_Scheduling_Cortex.md`, and
+`docs/requirements_and_learnings/49_Prompt_Architecture_and_Token_Efficiency.md`.
+
+User Outcome: One scheduled Main answer reaches each configured destination in its native format
+without duplicate authorship.
+
+Steps:
+
+1. Run one public-safe synthetic schedule configured for Web and Telegram.
+2. Correlate one canonical generated-output hash with both destination payloads and one Workbench
+   run record.
+3. Verify Telegram removes `{MSG_BREAK}` presentation syntax and Workbench stores audit state only.
+
+Expected Result: one canonical answer is adapted exactly once for each destination; delivery and
+audit records retain the same logical turn and revision.
+
+Forbidden Result: one model answer per destination, leaked `{MSG_BREAK}`, duplicate visible output,
+or Workbench acting as a second author.
+
+Last Run: NOT RUN — cataloged 2026-08-30.

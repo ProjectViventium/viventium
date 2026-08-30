@@ -1,6 +1,8 @@
 # Viventium Periphery And Nightly Insight Routines
 
-**Status:** Risk-radar pilot implemented and locally accepted 2026-07-11; WHOOP health-context integration connected, backfilled, activated, and locally accepted 2026-08-10
+**Status:** Risk-radar pilot implemented and locally accepted 2026-07-11; WHOOP acquisition was
+connected, backfilled, recovered, and locally re-accepted 2026-08-18; the distinct scheduled
+health-context analysis lane is `FAIL` as of 2026-08-25 (`PERI-014`)
 **Owner:** Viventium Core
 **Scope:** Private scratchpads, nightly insight formation, risk/opportunity/blind-spot analysis,
 health-pressure awareness, and optional surfacing into the conscious agent.
@@ -175,6 +177,11 @@ Current implementation:
   into prompt text.
 - Workbench startup seeding reconciles the built-in nightly definition and scheduler task so the
   live scheduled run receives the sidecar contract after a managed Workbench restart.
+- When current GlassHive policy rejects a built-in host-mode Periphery run because parallel work
+  must be isolated, Scheduling Cortex keeps that policy intact, retries in Docker, and changes only
+  the declared private output root to the worker's relative `artifacts/` root. The signed callback
+  then validates and imports the recognized artifact pair. This bridge is keyed by structured
+  template metadata and run identity, never prompt wording, user identity, or tool names.
 - Built-in health-context definitions carry a managed template revision. Source upgrades may
   reconcile that prompt only while it remains managed; the first owner edit marks it unmanaged so
   startup cannot silently overwrite private customization.
@@ -321,6 +328,11 @@ Daily acquisition remains the smaller three-day correction window.
 
 There are two recurrence lanes and each has exactly one owner:
 
+The 06:00/06:15 times below are editable current implementation defaults, not immutable product
+requirements. The accepted outcome is fresh complete acquisition plus later useful correlation,
+with independent truthful status and no duplicate pull. Historical hourly-sync/nightly-reconciliation
+wording does not silently override an operator-selected schedule.
+
 - `Viventium-Health` owns provider acquisition through its explicit macOS LaunchAgent. The default
   WHOOP pull runs at 06:00 local time, uses a three-day correction overlap, and appends rather than
   overwrites.
@@ -463,6 +475,45 @@ not a duplicated normalized health corpus.
   checkout whose local head differs from the parent component pin. It is not release-ready until
   that component change is isolated, reviewed, committed, and the parent pin/delivery artifacts are
   updated.
+
+#### 2026-08-18 degraded-access recovery and isolation hardening
+
+- The incident had two independent layers. WHOOP authorization had degraded and was restored
+  through the official owner-consent path; the provider archive, all six official read families,
+  rolling correction job, Settings state, and owner-only MCP were then healthy. A later Workbench
+  failure was not another WHOOP logout: its snapshot already reported complete provider evidence.
+- The later failure was a structured GlassHive `parallel_execution_isolation_required` rejection.
+  The saved Workbench route requested host execution and a private host workspace while the current
+  GlassHive policy correctly requires untrusted parallel missions to run in isolation.
+- Scheduling Cortex now reads the nested structured failure instead of flattening it to a generic
+  conflict. Recognized built-in `risk_radar` and `health_context` templates recover in Docker with a
+  relative artifact destination. On the signed completion callback, the host downloads through the
+  authenticated GlassHive artifact API and imports only a bounded paired sidecar whose schema,
+  module, and scheduled-run identity match the current run.
+- Import is fail-closed. Missing or invalid pairs fail the scheduled run; failed imports do not
+  apply governed memory or refresh the Periphery index. Destination writes are contained beneath
+  the declared private folder, do not follow parent symlinks, replace files atomically, and use
+  owner-only permissions for the complete directory chain and files. Sidecars must pass the same
+  required-field, timestamp, snapshot/source-ref, content-array, TTL, module, and run-binding shape
+  needed by the Workbench reader before import. Unknown/custom templates and memory proposal/apply
+  modes do not receive isolated private import authority.
+- Callback recovery is race-safe and retryable. Scheduling Cortex binds the selected worker before
+  assignment, answers a callback that beats that binding with the local retryable `404`, claims the
+  occurrence ledger before downloading/writing, and returns retryable `503` for a transient missing,
+  truncated, or unavailable pair. GlassHive's listing carries an explicit truncation flag because
+  directory entries also consume its bounded traversal limit. Duplicate callbacks cannot perform
+  the import unless their claim wins; a later signed completion may repair only the explicit
+  artifact-import failure classes.
+- Worker-home permission repair is restart-safe on Docker Desktop. It repairs contained regular
+  paths without traversing links or attempting to change transient Unix-socket ownership; writable
+  parent directories let Chromium replace stale endpoints. This prevents a browser socket left by
+  an earlier worker generation from turning a healthy isolated recovery into a sandbox-startup
+  failure.
+- A real installed-browser manual run exercised the exact rejected-host to isolated-worker recovery,
+  including the socket-bearing restarted-worker case. It completed through signed callback
+  reconciliation in 100.73 seconds, imported an exact Markdown/JSON pair, passed Workbench artifact
+  quality, and remained completed after reload. The same installed runtime still showed WHOOP
+  connected, daily corrections active, and all six official families.
 
 Cloud vendor APIs can support owners on iOS and Android without a Viventium mobile app, although the
 vendor's app may still be required to sync the device. Apple HealthKit, Android Health Connect, and
@@ -609,23 +660,32 @@ Before activating a new risk-radar or health-pressure routine:
 6. Health-pressure persistence is decided separately from risk-radar scratchpads. Status: separate
    design track; do not persist it through the periphery scratchpad path by default.
 7. WHOOP correlation is approved as an opt-in, memory-off health-context routine after fresh
-   provider authorization and accepted grounded output. Status: connected and active; a real
-   scheduler catch-up completed, a fresh artifact passed, and the next 06:15 run is persisted.
+   provider authorization and accepted grounded output. Status: acquisition remains connected and
+   an earlier scheduler catch-up produced a passed artifact, but current scheduled-analysis
+   acceptance is `FAIL` as of 2026-08-25: six consecutive analysis occurrences failed or lacked a
+   verified callback. Successful acquisition or historical/manual recovery cannot hide this gap;
+   see `PERI-014`.
 
 ## Cognitive Control-Plane Map
 
-The three recurring lanes are intentionally separate:
+The recurring product lanes and the optional observer are intentionally separate:
 
 | Lane | Trigger | Owning execution path | Evidence | Mutation authority |
 | --- | --- | --- | --- | --- |
 | Saved-memory hardening | local macOS schedule | direct memory-hardening wrapper | trigger receipt, run summary, provider/vector telemetry | bounded memory maintenance only |
 | Prompt Workbench nightly | scheduler definition | placeholders → GlassHive → callback → scheduler ledger → Workbench | definition, worker run, callback, ledger, visible result | scheduled prompt's declared work |
+| Opt-in health-context analysis | separate local daily scheduler definition | bounded health snapshot → GlassHive → callback → scheduler ledger → Workbench | its own active definition and latest scheduler-proven run | declared private correlation only; no WHOOP acquisition or memory write |
 | Codex nightly QA | Codex automation | `cognitive-integrity --json` plus read-only evidence review | integrity report and sanitized audit | none; observer only |
 
 The observer must open scheduling SQLite with an explicit read-only storage mode. Constructing an
 ordinary scheduler store is not observation: schema initialization, mirror sync, sanitization, and
 stale-run reconciliation can all write. The selected App Support root owns the database path; a
 test/dev observer must never fall through to canonical production state.
+
+The joined map independently evaluates the opt-in health-context schedule when active. A successful
+06:00 wearable acquisition, ordinary nightly run, or later manual health-context recovery cannot
+hide a failed, missing, stale, or unverified 06:15 scheduled analysis. Disabled or absent optional
+health-context definitions do not block the report.
 
 The joined map also consumes privacy-safe per-turn saved-memory read/writer receipts. This separates
 "configured" from "observed healthy" and prevents a working read path, healthy independent

@@ -1,13 +1,19 @@
 # Emotional Cortex QA
 
-Status: PARTIAL — accepted local web and xAI Telegram paths; broader surface certification remains open
+Status: PASS for the current connected-account Main and authenticated web/Reaction gate; broader
+cross-surface certification remains partial
 Feature doc: `docs/requirements_and_learnings/54_Emotional_Cortex_And_Feeling_State.md`
 Current implementation status: the nine-band production web path is accepted, including Mood,
 Openness, model-authored Inner state, motion tails, responsive interaction, range-specific additive
 felt-cause customization, and restart persistence. A post-fix Telegram xAI replay proves visible
 mixed-state embodiment, provider-valid expressive markup at the synthesis boundary, clean visible
-text, and delivered audio. LiveKit voice, non-xAI audible delivery, handoff, background-agent,
-GlassHive, two-tab, and long-off-soak certification remains partial.
+text, and delivered audio. GlassHive Main passes off/depleted/bright/mixed behavior, current-only
+developer authority, personality `none`, and an exact plugin-ID denial for the conflicting standalone
+Feelings plugin. The final connected-account bank completed 41/41 with zero operational failures;
+the raw semantic judge passed 40/41; its one false aggregate failed despite all seven item-level
+checks and its summary passing. Authenticated browser QA passed 46/46 with a healthy detached reaction. LiveKit voice,
+non-xAI audible delivery, handoff, background-agent, two-tab, and long-off-soak certification remains
+partial.
 
 ## Scope
 
@@ -25,7 +31,6 @@ This folder owns QA for Viventium's Feelings/emotional-state layer:
 - compact prompt capsule injection;
 - no-latency runtime contract;
 - production `/feelings` control surface;
-- native macOS V menu direct navigation to `/feelings`;
 - public/private evidence safety.
 
 ## Surfaces
@@ -36,6 +41,10 @@ This folder owns QA for Viventium's Feelings/emotional-state layer:
 - Production LibreChat `/feelings` route
 - Main, handoff, background, reaction, and GlassHive prompt paths
 - Web, voice, Telegram, and worker parity checks
+
+All files under `prototypes/` are visual or historical reference only. They do not own the band
+schema, defaults, or acceptance status. Production truth comes from the canonical compiler/runtime
+schema and the owning requirement/case contracts; a prototype mismatch cannot redefine it.
 
 ## Quality Bar
 
@@ -72,14 +81,15 @@ recovery into a performance pass.
 
 ## Latest Status
 
-- 2026-07-19 (native navigation): The rebuilt universal macOS helper exposes a first-level
-  `Open Feelings` item alongside the generic `Open` action. A clean isolated install used the
-  shipped prebuilt, the real menu opened the live `/feelings` surface while the local stack was
-  healthy, and the stopped-state menu showed the explicit `Start and Open Feelings` confirmation.
-  The focused release suite passed 22/22. Starting a second full local stack from the stopped-state
-  confirmation was deliberately not run while the user's primary stack was active, so that final
-  branch remains `PARTIAL`. See
-  `reports/2026-07-19-native-feelings-navigation.md`.
+- 2026-08-04 (full connected-account and browser gate): The exact endpoint completed 41/41 current
+  cases with zero transport, deterministic, retry, duplicate, or unresolved-async failure. Raw
+  semantic judging passed 40/41; the one rejected output passed all seven item-level checks and the
+  judge's own summary. Targeted repeats passed shipped-default on 4/4, inactive high Play 3/3, final off 3/3, and bad
+  news 3/3. One final kernel capsule remained at developer authority when on; off had none.
+  Authenticated browser QA passed 46/46 with a 2.161-second visible reply, healthy 2.738-second
+  configured reaction, UI/API/DB agreement, five responsive widths, no console/request failures,
+  synthetic cleanup, and exact state restoration. See
+  `reports/2026-08-04-connected-account-feelings-final-qa.md`.
 
 - 2026-07-16 (escaped potency and xAI provider grammar): Reproduced the high-Play mixed-state
   Telegram miss, verified the correct final Feelings capsule was present, and replaced weak
@@ -100,7 +110,7 @@ recovery into a performance pass.
   delete saved text, and the range editor uses keyboard-readable tabs and sliders. See
   `reports/2026-07-16-feelings-range-potency-and-telegram-replay.md`.
 
-- 2026-07-10 (post-review durability): Default fallback is now `claude-opus-4-8`; Feelings-only live
+- 2026-08-03 (fallback retirement): Default direct fallback is now `claude-opus-5`; Feelings-only live
   evals auto-require the semantic judge and independently hard-fail typed reaction mismatches;
   telemetry has a positive safe-field allowlist with a raw-prose/identifier canary; reduced motion is
   true `none`; and doc 54 contains a construct/separation/evidence ledger for all nine bands. The

@@ -8,14 +8,12 @@ Use stable `RAG-NNN` IDs for conversation recall rag cases.
 
 | Case ID | Requirement | User Outcome | Surfaces | Automation | Last Run |
 | --- | --- | --- | --- | --- | --- |
-| `RAG-001` | Recall answers are grounded in retrieved conversation/RAG evidence and omit unsupported live facts. | User-visible behavior matches source, docs, persisted state, and logs | browser chat, RAG API, embeddings preflight, logs | `tests/release/test_rag_api_override_contract.py` plus user-grade QA when visible | PASS-SERVICE/PROOF GAP 2026-06-11 ([nightly review](../memory-hardening/reports/2026-06-11-nightly-routines-health-review.md)); generated config expected local RAG, `/health` returned `UP`, Docker-backed prerequisites were reachable, and browser recall/source grounding remains unrun |
+| `RAG-001` | Recall answers are grounded in retrieved conversation/RAG evidence and omit unsupported live facts. | User-visible behavior matches source, docs, persisted state, and logs | browser chat, RAG API, embeddings preflight, logs | `tests/release/test_rag_api_override_contract.py` plus user-grade QA when visible | PARTIAL 2026-06-11 ([nightly review](../memory-hardening/reports/2026-06-11-nightly-routines-health-review.md)); generated config expected local RAG, `/health` returned `UP`, Docker-backed prerequisites were reachable, and browser recall/source grounding remains unrun |
 | `RAG-002` | Public QA evidence is sanitized and reproducible | A PR reviewer can verify the behavior without private/local data | QA report, git diff, logs summary, generated artifacts | Public-safety scan plus relevant release tests | PASS 2026-06-11 ([nightly review](../memory-hardening/reports/2026-06-11-nightly-routines-health-review.md)); report summarizes recovered RAG service health and the remaining browser-proof gap without raw private runtime data |
-| `RAG-003` | Background conversation-recall maintenance must not starve live recall search during voice calls. | Voice users get either fast grounded recall or an honest fast degraded result, not a 8-30s tool stall. | voice call, RAG API, vector DB, embeddings service, logs | Synthetic active-call recall/query harness plus RAG queue and voice latency logs | PARTIAL 2026-05-21 ([report](reports/2026-05-21-voice-call-recall-latency-rca.md)); RCA proved starvation risk, product fix not yet applied |
-| `RAG-004` | Planned Easy Docker and Custom Settings Recall/RAG opt-in must stay honest about Docker/Ollama/vector prerequisites; Native Easy must say it is not packaged. | A new Native user reaches chat without a false failure, while a Docker-profile user can opt in and see exact readiness/degraded state before recall is called ready. | installer wizard, preflight, generated env, RAG API, vector DB, browser recall | `test_wizard.py`, `test_install_summary.py`, `test_ollama_embeddings_prereqs.py`, user-grade browser recall QA | PASS-SERVICE/PARTIAL-USER 2026-07-21; Docker source-candidate opt-in, doctor, status, synthetic embed/query, and restart persistence pass in an isolated no-host-share Docker daemon; the Docker artifact is not shipped and browser model-answer proof remains unrun |
-| `RAG-005` | Lexical and vector recall run together and fail independently; lexical source hits preserve bounded adjacent-turn context through one batched expansion. | Exact names/recent events remain recoverable during vector degradation without suppressing healthy semantic evidence, splitting one natural event across isolated messages, or issuing per-hit before/after queries. | `file_search`, Mongo lexical rescue, RAG API, browser/voice recall | focused hybrid/context/query-count regressions plus isolated-account recall QA | PASS-AUTOMATED/PARTIAL 2026-07-20; focused memory/recall API 137/137, complete API 3,365 pass/19 skip, data schemas 405 pass/3 skip plus build; dedicated isolated-account browser and audible voice proof is NOT RUN |
-| `RAG-006` | RAG health and recovery are semantic, dependency-aware, serialized, and portable to an explicitly selected no-host-share Docker daemon. | Recall is never called healthy because a DOWN tuple arrived with HTTP 200, concurrent helpers cannot thrash one Compose project, and remote daemon binds do not touch unrelated client or daemon paths. | RAG route, PGVector/RAG Compose healthchecks, launcher recovery | `test_rag_api_override_contract.py`, compose validation, shell syntax | PASS-LIVE 2026-07-20; 20 parent contracts, 5 nested Compose/dependency contracts, semantic HTTP 200 `UP`, long-bind inspection, product-owned daemon namespace, and supported restart/query persistence pass |
-| `RAG-007` | PGVector is restart-persistent derived state, but snapshots and independent restores must require rebuild from restored canonical state. | Ordinary restart retains Recall; independent restore never presents copied/stale vectors as current. | snapshot, restore, RAG API, PGVector bind, continuity markers | continuity bundle validation plus synthetic live query | PASS-RESTART/PARTIAL-REBUILD 2026-07-20; pre/post supported restart query returned both synthetic facts, complete snapshot and independent restore passed, restored target contained 7 nonempty Mongo collections and an explicit rebuild-required marker; actual restored-corpus rebuild and browser answer remain unrun |
-| `RAG-008` | Existing persisted PGVector data must survive internal PostgreSQL credential changes without relying on the image's first-init environment behavior. | An established user upgrades and Recall starts with the same vector rows; no config reset, corpus deletion, or manual password repair is required. | launcher, PGVector container, owner-only migration state, RAG startup | `test_rag_postgres_migration.py`, opt-in disposable Docker tests | PASS-ISOLATED/PARTIAL-INSTALLED 2026-07-24 ([report](reports/2026-07-24-pgdata-credential-migration.md)); 19 focused contracts and two real disposable Docker passes now require equal full-schema plus streamed UUID-ordered collection/embedding row digests before/after role reconciliation, including same-count content-drift refusal, stable rerun, fresh-to-initialized promotion, old/new auth, and foreign-PGDATA refusal. Installed upgrade plus browser Recall proof remains unrun |
+| `RAG-003` | Background conversation-recall maintenance must not starve live recall search during voice calls. | Voice users get either fast grounded recall or an honest fast degraded result, not a 8-30s tool stall. | voice call, RAG API, vector DB, embeddings service, logs | Synthetic active-call recall/query harness plus RAG queue and voice latency logs | PARTIAL 2026-08-29 documentation audit: the embedded 2026-05-21 RCA notes identify starvation risk, but the cited report is absent and the product fix is not proven |
+| `RAG-004` | Installer Recall/RAG opt-in must stay honest about Docker/Ollama/vector prerequisites. | A new user can skip Recall/RAG without a false failure, or opt in and see exact readiness/degraded state before the brain is called ready. | installer wizard, preflight, generated env, RAG API, vector DB, browser recall | `test_wizard.py`, `test_install_summary.py`, `test_ollama_embeddings_prereqs.py`, user-grade browser recall QA | PARTIAL 2026-05-31; installer/status coverage added under `INST-004`, browser recall proof remains |
+| `RAG-005` | Lexical and vector recall run together and fail independently; lexical source hits preserve bounded adjacent-turn context. | Exact names/recent events remain recoverable during vector degradation without suppressing healthy semantic evidence or splitting one natural event across isolated messages. | `file_search`, Mongo lexical rescue, RAG API, browser/voice recall | focused `fileSearch.test.js` hybrid/context regressions plus native recall QA | PASS 2026-07-14; 46 regressions pass, fresh owner web and audible voice turns recovered the native Telegram event through visible `file_search` provenance, linked-chat reload preserved three source calls, and guarded cleanup rebuilt a digest-consistent marker-free corpus ([report](../memory-continuity/reports/2026-07-14-memory-continuity-incident-repair.md)) |
+| `RAG-006` | RAG health and recovery are semantic, dependency-aware, and serialized. | Recall is never called healthy because a DOWN tuple arrived with HTTP 200, and concurrent helpers cannot thrash one Compose project. | RAG route, PGVector/RAG Compose healthchecks, launcher recovery | `test_rag_api_override_contract.py`, compose validation, shell syntax | PARTIAL 2026-07-11; 11 behavioral/contract tests and live canonical HTTP 200 `UP`; legacy vector-only project and browser recall proof remain ([report](../memory-hardening/reports/2026-07-11-nightly-failure-prevention.md)) |
 
 ## `RAG-001` - Core User Flow
 
@@ -30,7 +28,7 @@ Use stable `RAG-NNN` IDs for conversation recall rag cases.
 - Forbidden result: backend logs, mocks, source inspection, or model completions are treated as full acceptance when a user-visible surface exists.
 - Evidence to capture: sanitized visible result, supporting command/test result, generated/runtime state summary, and docs/case links.
 - Automation: `tests/release/test_rag_api_override_contract.py` plus any narrower feature tests discovered during implementation.
-- Last run: PASS/PARTIAL-REPAIRED 2026-06-07
+- Last run: PARTIAL 2026-06-07
   ([repair follow-up](../memory-hardening/reports/2026-06-07-nightly-repair-follow-up.md));
   generated config expected `localhost:8110`, the live container had lost its host binding after a
   Docker-side failure, and the launcher now has a regression-covered self-heal for that binding
@@ -69,7 +67,9 @@ Use stable `RAG-NNN` IDs for conversation recall rag cases.
 - Forbidden result: live voice response waits for the full background embed timeout, silently drops recall, or reports success while vector search timed out.
 - Evidence to capture: sanitized voice request timing, RAG query timing, maintenance queue timing, DB corpus metadata, and visible/user-facing result.
 - Automation: add a synthetic active-maintenance/file-search latency harness before claiming fixed.
-- Last run: PARTIAL 2026-05-21 ([report](reports/2026-05-21-voice-call-recall-latency-rca.md)); live logs proved 8s recall query and 30s transcript query timeouts while background recall uploads were active.
+- Last run: PARTIAL 2026-08-29 documentation audit. Embedded 2026-05-21 notes record 8-second recall
+  and 30-second transcript query timeouts while background uploads were active. The cited dated
+  report is absent, so rerun evidence is required before accepting a fix.
 
 ## `RAG-004` - Installer Recall/RAG Opt-In Readiness
 
@@ -95,11 +95,8 @@ Use stable `RAG-NNN` IDs for conversation recall rag cases.
   includes private conversations/query text/screenshots.
 - Evidence to capture: wizard choices, generated env key summary, status row, RAG/vector health,
   browser visible result, and public-safety scan.
-- Last run: PASS-SERVICE/PARTIAL-USER 2026-07-20; supported Easy Install with Recall enabled
-  reached API, web, PGVector, and RAG health in an isolated no-host-share daemon. A synthetic file
-  embedded and queried successfully, and both distinctive facts survived supported stop/launch.
-  Browser model-answer grounding remains unrun because this lane did not bind a synthetic chat
-  provider.
+- Last run: PARTIAL 2026-05-31; automated installer/status coverage added, browser recall proof
+  remains.
 
 ## `RAG-005` - Hybrid Retrieval Failure Isolation
 
@@ -107,9 +104,6 @@ Use stable `RAG-NNN` IDs for conversation recall rag cases.
 - Confirm lexical hits do not skip vector calls and fused results contain both channels.
 - Split a synthetic event across adjacent eligible messages and confirm a matching source hit returns
   bounded same-conversation context containing the complete event.
-- Select four source hits and prove their context is expanded by one bounded aggregate/facet
-  operation, not up to eight overlapping before/after reads. Force expansion failure and prove the
-  primary authorized hits remain available.
 - Prime an existing authorized corpus while vector health is degraded and confirm the transient
   source-only mode survives DB metadata hydration without changing authorization-owned fields.
 - Fail lexical Mongo retrieval while vector succeeds, then fail vector retrieval while lexical
@@ -121,9 +115,13 @@ Use stable `RAG-NNN` IDs for conversation recall rag cases.
   crosses conversations or admits ineligible transcript/derived rows.
 - Evidence: focused tool tests, structured error/latency logs, source artifacts, visible grounded
   answer, and DB/RAG health correlation.
-- Last run: PASS-AUTOMATED/PARTIAL 2026-07-20; focused memory/recall API 137/137, complete API
-  3,365 pass/19 skip, and data schemas 405 pass/3 skip plus build. Dedicated isolated-account browser
-  grounding, audible delivery, linked-chat reload, and runtime-corpus cleanup remain NOT RUN.
+- Last run: PASS 2026-07-14; 46 focused retrieval tests and 40 recall prompt/filter/service
+  tests pass, live RAG health is semantic `UP`, the rebuilt live vector corpus places the native
+  Telegram parent before its timestamp-inverted assistant child, and a fresh owner Chrome chat
+  recovered the event on its first turn with visible `file_search` sources. A fresh audible owner
+  voice call then recovered it on the first turn through three persisted sources; linked-chat reload
+  preserved the answer and sources, and guarded cleanup rebuilt a marker-free digest-consistent corpus
+  ([report](../memory-continuity/reports/2026-07-14-memory-continuity-incident-repair.md)).
 
 ## `RAG-006` - Truthful Health And Serialized Recovery
 
@@ -138,33 +136,10 @@ Use stable `RAG-NNN` IDs for conversation recall rag cases.
   PGVector health; phantom state is explicit.
 - Forbidden: HTTP-only green, tuple body with status 200, concurrent compose mutation, infinite
   retry/recreate, or deleting vector state as automated recovery.
-- Last run: PASS-LIVE 2026-07-20; 20 parent behavioral/contract tests and 5 nested Compose/dependency
-  contracts pass. A no-host-share daemon used long bind syntax for a product-owned PostgreSQL path
-  and a byte-identical read-only route mirror, reached semantic HTTP 200 `UP`, and retained both
-  synthetic facts across the supported stop/launch lifecycle. Browser recall grounding is tracked
-  separately under `RAG-004`.
-
-## `RAG-008` - Persisted PGDATA Credential Continuity
-
-- Initialize disposable PGVector `PGDATA` under a synthetic predecessor password and seed the exact
-  known RAG relation names with one synthetic vector row.
-- Stop the predecessor container, run the supported migration helper with a new empty owner-state
-  directory, and compare PostgreSQL system identity, complete recognized schema digest, and streamed
-  deterministic digests of every UUID-ordered collection/embedding row before and after.
-- Authenticate from a separate container on the Compose network with both predecessor and migrated
-  credentials. Rerun the migration and confirm the owner credential does not rotate.
-- Interrupt role reconciliation after the pending journal is durable, rerun, and confirm the same
-  desired credential completes without exposing the secret in errors or receipts.
-- Add an unrelated relation, mismatch the PGDATA mount, remove/mismatch database or role identity,
-  and present a receipt without its credential. Each must fail before role mutation.
-- Expected: only recognized empty or legacy Viventium RAG clusters are adopted; the new credential
-  authenticates, the predecessor credential does not, system identity/schema/every row are
-  unchanged, and replay is stable.
-- Forbidden: deleting/reinitializing PGDATA, copying vector rows to a new cluster, accepting
-  `pg_isready` as password proof, logging/persisting the raw secret outside its `0600` file, adopting
-  foreign/partial schemas, or reporting installed/browser acceptance from an isolated DB test.
-- Last run: PASS-ISOLATED/PARTIAL-INSTALLED 2026-07-24
-  ([report](reports/2026-07-24-pgdata-credential-migration.md)).
+- Last run: PARTIAL 2026-07-11; 11 behavioral/contract tests pass and the canonical live
+  RAG/PGVector pair is healthy with semantic HTTP 200 `UP`. A legacy vector-only project remains to
+  retire through a controlled restart, and browser recall grounding remains pending
+  ([report](../memory-hardening/reports/2026-07-11-nightly-failure-prevention.md)).
 
 ## `RAG-007` - Cross-Provider Recall Capability And Provenance
 
@@ -182,7 +157,7 @@ Use stable `RAG-NNN` IDs for conversation recall rag cases.
 - Forbidden result: prompt-label leakage, broad filesystem search, a tool name without a completed
   call, a successful-empty result reported as provider failure, or provider failure reported as
   proof the fact is absent.
-- Last run: PASS-LIVE 2026-08-08. The latest provider-backed exact-model case completed in 16.8
+- Last run: PASS 2026-08-08. The latest provider-backed exact-model case completed in 16.8
   seconds with guarded cleanup; brokered `file_search` started/completed once, with zero native
   commands, broker errors, or stderr.
 
@@ -193,20 +168,16 @@ rows before claiming a pass when the feature behavior changes.
 
 | Use Case ID | Natural user action | Requirement / case link | Real surface to use | Supporting evidence to compare | Expected visible result | Last run |
 | --- | --- | --- | --- | --- | --- | --- |
-| `RAG-UC-001` | On browser chat, RAG API, embeddings preflight, logs, verify that recall answers are grounded in retrieved conversation/RAG evidence and omit unsupported live facts. | owning requirement for `RAG-001` / `RAG-001` | browser chat, RAG API, embeddings preflight, logs | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to RAG-001. | User-visible behavior matches source, docs, persisted state, and logs | PASS-SERVICE/PROOF GAP 2026-06-11 ([nightly review](../memory-hardening/reports/2026-06-11-nightly-routines-health-review.md)); service health passed and browser recall signoff remains unrun |
+| `RAG-UC-001` | On browser chat, RAG API, embeddings preflight, logs, verify that recall answers are grounded in retrieved conversation/RAG evidence and omit unsupported live facts. | owning requirement for `RAG-001` / `RAG-001` | browser chat, RAG API, embeddings preflight, logs | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to RAG-001. | User-visible behavior matches source, docs, persisted state, and logs | PARTIAL 2026-06-11 ([nightly review](../memory-hardening/reports/2026-06-11-nightly-routines-health-review.md)); service health passed and browser recall signoff remains unrun |
 | `RAG-UC-002` | On QA report, git diff, logs summary, generated artifacts, create or review the public QA evidence record with setup/auth/config, empty-state, degraded-dependency, and privacy checks. | owning requirement for `RAG-002` / `RAG-002` | QA report, git diff, logs summary, generated artifacts | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to RAG-002. | The user sees an honest setup, retry, or degraded-state result for RAG-002; no fake success is accepted. | PASS 2026-06-11 ([nightly review](../memory-hardening/reports/2026-06-11-nightly-routines-health-review.md)) |
 | `RAG-UC-003` | After creating the public QA evidence record, rerun the scan after any retry, report update, or linked artifact change. | owning requirement for `RAG-002` / `RAG-002` | QA report, git diff, logs summary, generated artifacts | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to RAG-002. | RAG-002 remains correct after the persistence or parity step and final wording matches evidence. | PASS 2026-06-11 ([nightly review](../memory-hardening/reports/2026-06-11-nightly-routines-health-review.md)) |
-| `RAG-UC-004` | During a voice call, ask for earlier conversation or transcript recall while a background recall refresh is active. | owning requirement for `RAG-003` / `RAG-003` | voice call, RAG API, vector DB, embeddings service, logs | Voice timing logs, RAG queue/upload/query logs, DB corpus metadata, and visible/user-facing result. | The user gets fast grounded recall or a clear fast degraded response; no 8-30s recall/tool stall. | PARTIAL 2026-05-21 ([report](reports/2026-05-21-voice-call-recall-latency-rca.md)); RCA only, fix not yet applied |
-| `RAG-UC-005` | Confirm Native Easy says Recall/RAG is not packaged; in the planned Easy Docker or Custom Settings profile, skip it, opt in without prerequisites, and opt in with services healthy. | `39_Installer_and_Config_Compiler.md` / `RAG-004`, `INST-004` | installer wizard, preflight, status, RAG API/vector DB, browser chat | Wizard output, generated env keys, preflight/degraded state, RAG/vector health, browser-visible grounded answer. | Native wording is truthful; Docker Recall is pending when skipped, prerequisite-gated when opted in, and only Ready after service and browser grounding proof. | PASS-SERVICE/PARTIAL-USER 2026-07-21; source-candidate opt-in and synthetic API retrieval pass on no-host-share Docker, while the shipped Docker artifact and browser model answer remain unrun |
-| `RAG-UC-006` | Mention a synthetic event in an isolated channel without explicitly saving it, then ask about it in a new voice conversation. | `32_Conversation_Recall_RAG.md` / `RAG-005` | isolated channel, Modern Playground voice, `file_search` | fixture message, recall corpus/freshness, tool sources, transcript/audio, logs | Voice visibly and audibly recovers the event through recall; saved memory is confirmed absent. | PARTIAL 2026-07-14; synthetic retrieval regressions pass, but the dedicated isolated-account channel-to-voice journey is NOT RUN |
-| `RAG-UC-007` | Start or inspect local Recall while PGVector is down or Compose state is inconsistent. | `32_Conversation_Recall_RAG.md` / `RAG-006` | launcher/status, RAG `/health`, Docker Compose | HTTP status/body, semantic probe result, compose health, serialized recovery log | Recall stays degraded with one actionable Docker blocker; no false ready state or repeated repair loop. | PASS-LIVE 2026-07-20; semantic health, long-bind ownership, isolated restart, and query persistence pass |
-| `RAG-UC-008` | Restart an enabled local Recall install, then snapshot and restore into an independent empty target. | `32_Conversation_Recall_RAG.md` / `RAG-007` | CLI stop/launch, snapshot, restore, RAG API | pre/post query, bundle manifest, restored Mongo counts, rebuild and reauth markers | Restart retains derived vectors; restore retains canonical state but explicitly blocks vector Recall until rebuild. | PASS-RESTART/PARTIAL-REBUILD 2026-07-20; complete snapshot and independent restore pass, restored target is correctly marked rebuild-required, actual rebuilt browser answer remains unrun |
-| `RAG-UC-009` | Upgrade or restart an established source/Docker install whose generated internal PostgreSQL credential no longer matches persisted PGDATA. | `32_Conversation_Recall_RAG.md` / `RAG-008` | supported upgrade/restart, PGVector, RAG API, browser chat | owner-only receipt/journal, mount/system-id/row comparison, RAG health, grounded browser Recall answer | The same corpus remains available after automatic credential reconciliation; foreign PGDATA blocks safely with a repair message. | PASS-ISOLATED/PARTIAL-INSTALLED 2026-07-24; real disposable PostgreSQL migration passed, while installed upgrade/RAG API/browser Recall is NOT RUN |
+| `RAG-UC-004` | During a voice call, ask for earlier conversation or transcript recall while a background recall refresh is active. | owning requirement for `RAG-003` / `RAG-003` | voice call, RAG API, vector DB, embeddings service, logs | Voice timing logs, RAG queue/upload/query logs, DB corpus metadata, and visible/user-facing result. | The user gets fast grounded recall or a clear fast degraded response; no 8-30s recall/tool stall. | PARTIAL 2026-08-29 documentation audit: embedded RCA notes only; dated report absent and fix not proven |
+| `RAG-UC-005` | During Easy Install setup, skip Recall/RAG, opt in without Docker, and opt in with services healthy. | `39_Installer_and_Config_Compiler.md` / `RAG-004`, `INST-004` | installer wizard, preflight, status, RAG API/vector DB, browser chat | Wizard output, generated env keys, preflight/degraded state, RAG/vector health, browser-visible grounded answer. | Recall is pending when skipped, prerequisite-gated when opted in, and only called ready after service and browser grounding proof. | PARTIAL 2026-05-31; automated setup/status coverage added, browser proof remains |
+| `RAG-UC-006` | Mention a synthetic event in Telegram without explicitly saving it, then ask about it in a new voice conversation. | `32_Conversation_Recall_RAG.md` / `RAG-005` | Telegram, real Modern Playground voice, `file_search` | Mongo message, recall corpus/freshness, tool sources, transcript/audio, logs | Voice visibly and audibly recovers the event through recall; saved memory is confirmed absent. | PASS 2026-07-14; fresh owner voice recovered the Telegram event on the first turn, persisted three `file_search` source parts through reload, delivered non-cancelled audio, and cleanup removed the synthetic event from Mongo and the rebuilt vector corpus |
+| `RAG-UC-007` | Start or inspect local Recall while PGVector is down or Compose state is inconsistent. | `32_Conversation_Recall_RAG.md` / `RAG-006` | launcher/status, RAG `/health`, Docker Compose | HTTP status/body, semantic probe result, compose health, serialized recovery log | Recall stays degraded with one actionable Docker blocker; no false ready state or repeated repair loop. | PARTIAL 2026-07-11; false-green state reproduced, canonical service recovered to semantic `UP`, legacy project cleanup/browser recall pending ([report](../memory-hardening/reports/2026-07-11-nightly-failure-prevention.md)) |
 
 ## Release Test Traceability
 
 - `tests/release/test_ollama_embeddings_prereqs.py`
 - `tests/release/test_rag_api_override_contract.py`
 - `tests/release/test_rag_compose_resource_guardrails.py`
-- `tests/release/test_rag_postgres_migration.py`
-- `tests/release/test_rag_postgres_migration_docker.py`

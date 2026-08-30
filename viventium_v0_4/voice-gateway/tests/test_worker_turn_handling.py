@@ -1,4 +1,7 @@
 import inspect
+import base64
+import hashlib
+import hmac
 import os
 import sys
 import tempfile
@@ -7,7 +10,7 @@ import unittest
 import asyncio
 import json
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -28,20 +31,24 @@ from worker import (
     _clear_active_voice_job_marker,
     _mark_active_voice_job,
     _voice_sync_transcription_enabled,
+    _record_completed_tts_trace,
     ViventiumVoiceAgent,
     _publish_livekit_speaker_segments,
     _publish_livekit_task_event,
     _interrupt_livekit_speech_handles,
     _interrupt_agent_session_speech,
+    _register_presentation_lifecycle_handlers,
     _apply_authoritative_call_mode_to_speech_planes,
+    _classify_authoritative_mode_sync,
     _suspend_all_call_speech_until_authoritative,
+    _suspend_call_response_playout_until_authoritative,
     _apply_task_cancel_suppression,
     AuthoritativeCallModeState,
+    VoiceEngagementAuthority,
     CallTaskStreamSpeechAuthority,
+    TaskStreamAudioAuthorityGate,
     _ingest_raw_stt_speaker_event,
     _linked_participant_speaker_context,
-    _participant_identity_connected,
-    _build_room_options,
     build_stt_selection,
     load_env,
     load_turn_detection,
@@ -51,41 +58,6 @@ from livekit.agents import StopResponse
 from livekit.agents.stt import SpeechData, SpeechEvent, SpeechEventType
 from livekit.agents.llm.chat_context import ChatContext, ChatMessage
 from speaker_segments import SpeakerSegmentTracker, SPEAKER_CONTEXT_EXTRA_KEY
-from worker import (
-    _apply_requested_voice_route,
-    _attach_room_diagnostics,
-    _build_assemblyai_stt_kwargs,
-    _build_voice_capability_catalog,
-    _ensure_turn_detector_runner_registered,
-    _semantic_turn_detector_status,
-    _silero_vad_kwargs_for_env,
-    _supports_semantic_turn_detector,
-    _turn_detector_model_is_cached,
-    _turn_detector_runner_registered,
-    _vad_kwargs_cache_key,
-    _active_voice_job_markers,
-    _wait_for_active_voice_jobs_before_prewarm,
-    _clear_active_voice_job_marker,
-    _mark_active_voice_job,
-    _voice_sync_transcription_enabled,
-    ViventiumVoiceAgent,
-    _publish_livekit_speaker_segments,
-    _publish_livekit_task_event,
-    _interrupt_livekit_speech_handles,
-    _interrupt_agent_session_speech,
-    _register_presentation_lifecycle_handlers,
-    _apply_authoritative_call_mode_to_speech_planes,
-    _suspend_all_call_speech_until_authoritative,
-    _apply_task_cancel_suppression,
-    AuthoritativeCallModeState,
-    CallTaskStreamSpeechAuthority,
-    _ingest_raw_stt_speaker_event,
-    _linked_participant_speaker_context,
-    build_stt_selection,
-    load_env,
-    load_turn_detection,
-    optional_module_available,
-)
 
 
 def _authoritative_state(*, mode="call", revision=7):
@@ -109,33 +81,373 @@ def _stream_health(state, *, status=200):
     }
 
 
+def _signed_voice_engagement(
+    *,
+    call_session_id="call_1",
+    turn_id="turn_000001",
+    participant_identity="owner",
+    segment_ids=None,
+    directly_addressed=True,
+    revision=1,
+    now_ms=1787659200000,
+    secret="synthetic-core-only-signing-secret",
+):
+    receipt = {
+        "version": 1,
+        "callSessionId": call_session_id,
+        "turnId": turn_id,
+        "participantIdentity": participant_identity,
+        "segmentIds": segment_ids or ["segment_000001"],
+        "directlyAddressed": directly_addressed,
+        "source": "semantic_model",
+        "revision": revision,
+        "issuedAtMs": now_ms,
+        "expiresAtMs": now_ms + 30_000,
+    }
+    signed_values = [
+        receipt["version"],
+        receipt["callSessionId"],
+        receipt["turnId"],
+        receipt["participantIdentity"],
+        receipt["segmentIds"],
+        receipt["directlyAddressed"],
+        receipt["source"],
+        receipt["revision"],
+        receipt["issuedAtMs"],
+        receipt["expiresAtMs"],
+    ]
+    encoded = json.dumps(signed_values, ensure_ascii=False, separators=(",", ":")).encode()
+    digest = hmac.new(secret.encode(), encoded, hashlib.sha256).digest()
+    receipt["attestation"] = base64.urlsafe_b64encode(digest).decode().rstrip("=")
+    return receipt
+
+
+async def _verify_synthetic_voice_engagement(receipt):
+    expected = _signed_voice_engagement(
+        call_session_id=receipt["callSessionId"],
+        turn_id=receipt["turnId"],
+        participant_identity=receipt["participantIdentity"],
+        segment_ids=receipt["segmentIds"],
+        directly_addressed=receipt["directlyAddressed"],
+        revision=receipt["revision"],
+        now_ms=receipt["issuedAtMs"],
+    )
+    return hmac.compare_digest(expected["attestation"], receipt["attestation"])
+
+
 class TestWorkerTurnHandling(unittest.TestCase):
-    def test_room_options_bind_backend_claimed_owner_across_refresh(self) -> None:
-        options = _build_room_options(
-            sync_transcription=False,
-            participant_identity="backend-claimed-owner",
-        )
+    def test_tts_completion_trace_requires_correlated_non_cancelled_metrics(self) -> None:
+        llm_impl = MagicMock()
+        llm_impl.record_completed_trace_stage.return_value = True
 
-        self.assertEqual(options.participant_identity, "backend-claimed-owner")
-        self.assertFalse(options.close_on_disconnect)
-
-    def test_participant_presence_is_scoped_to_backend_claimed_owner(self) -> None:
-        class Participant:
-            def __init__(self, identity: str):
-                self.identity = identity
-
-        room = SimpleNamespace(
-            remote_participants={"observer": Participant("observer")}
+        self.assertTrue(
+            _record_completed_tts_trace(
+                llm_impl,
+                SimpleNamespace(cancelled=False),
+                "request_1",
+            )
         )
         self.assertFalse(
-            _participant_identity_connected(room, "backend-claimed-owner")
+            _record_completed_tts_trace(
+                llm_impl,
+                SimpleNamespace(cancelled=True),
+                "request_2",
+            )
         )
-        room.remote_participants["backend-claimed-owner"] = Participant(
-            "backend-claimed-owner"
+        self.assertFalse(
+            _record_completed_tts_trace(
+                llm_impl,
+                SimpleNamespace(cancelled=False),
+                "",
+            )
         )
-        self.assertTrue(
-            _participant_identity_connected(room, "backend-claimed-owner")
+        llm_impl.record_completed_trace_stage.assert_called_once_with(
+            "request_1",
+            "tts.completed",
         )
+
+    def test_terminal_authoritative_mode_sync_does_not_apply_none_or_warn_unavailable(self) -> None:
+        self.assertEqual(
+            _classify_authoritative_mode_sync(None, terminal_state_seen=True),
+            "terminal",
+        )
+        self.assertEqual(
+            _classify_authoritative_mode_sync(None, terminal_state_seen=False),
+            "unavailable",
+        )
+        self.assertEqual(
+            _classify_authoritative_mode_sync("call", terminal_state_seen=False),
+            "apply",
+        )
+
+    @staticmethod
+    def _task_stream_audio_session():
+        class Audio:
+            can_pause = True
+
+            def __init__(self):
+                self.pauses = 0
+                self.resumes = 0
+                self.playback_enabled = True
+
+            def pause(self):
+                self.pauses += 1
+                self.playback_enabled = False
+
+            def resume(self):
+                self.resumes += 1
+                self.playback_enabled = True
+
+        class Output:
+            def __init__(self):
+                self.audio = Audio()
+                self.enabled = []
+
+            def set_audio_enabled(self, enabled):
+                self.enabled.append(enabled)
+
+        class Session:
+            def __init__(self):
+                self.output = Output()
+                self.interrupts = []
+
+            def interrupt(self, *, force=False):
+                self.interrupts.append(force)
+
+        return Session()
+
+    def test_task_stream_reconnect_before_first_token_gates_audio_without_cancelling_generation(self) -> None:
+        session = self._task_stream_audio_session()
+        gate = TaskStreamAudioAuthorityGate(session)
+        generation = {"state": "waiting_for_first_token", "finals": 0}
+
+        async def fetch_state():
+            return _authoritative_state(revision=8)
+
+        def apply_state(_state):
+            gate.restore()
+            return True
+
+        authority = CallTaskStreamSpeechAuthority(
+            call_session_id="call_1",
+            fetch_call_state=fetch_state,
+            suspend=gate.suspend,
+            terminate=gate.terminate,
+            apply_state=apply_state,
+        )
+
+        async def run():
+            await authority.on_stream_health(_stream_health("connected"))
+            self.assertTrue(authority.mark_session_ready(_authoritative_state()))
+            session.output.audio.pauses = 0
+            session.output.audio.resumes = 0
+            await authority.on_stream_health(_stream_health("disconnected"))
+            await authority.on_stream_health(_stream_health("connecting"))
+            self.assertEqual(generation["state"], "waiting_for_first_token")
+            await authority.on_stream_health(_stream_health("connected"))
+
+        asyncio.run(run())
+
+        self.assertTrue(authority.authoritative)
+        self.assertEqual(session.output.audio.pauses, 1)
+        self.assertEqual(session.output.audio.resumes, 1)
+        self.assertEqual(session.interrupts, [])
+        self.assertEqual(generation, {"state": "waiting_for_first_token", "finals": 0})
+
+    def test_task_stream_reconnect_midstream_restores_once_and_preserves_final_delivery(self) -> None:
+        session = self._task_stream_audio_session()
+        gate = TaskStreamAudioAuthorityGate(session)
+        generation = {"state": "streaming", "tokens": ["part one"], "finals": 0}
+
+        async def fetch_state():
+            generation["tokens"].append("part two")
+            return _authoritative_state(revision=9)
+
+        def apply_state(_state):
+            gate.restore()
+            return True
+
+        authority = CallTaskStreamSpeechAuthority(
+            call_session_id="call_1",
+            fetch_call_state=fetch_state,
+            suspend=gate.suspend,
+            terminate=gate.terminate,
+            apply_state=apply_state,
+        )
+
+        async def run():
+            await authority.on_stream_health(_stream_health("connected"))
+            self.assertTrue(authority.mark_session_ready(_authoritative_state()))
+            session.output.audio.pauses = 0
+            session.output.audio.resumes = 0
+            await authority.on_stream_health(_stream_health("disconnected"))
+            await authority.on_stream_health(_stream_health("connected"))
+            # Duplicate health/reconciliation must not replay the presentation.
+            await authority.on_stream_health(_stream_health("connected"))
+            generation["state"] = "completed"
+            generation["finals"] += 1
+
+        asyncio.run(run())
+
+        self.assertEqual(session.output.audio.pauses, 1)
+        self.assertEqual(session.output.audio.resumes, 1)
+        self.assertEqual(session.interrupts, [])
+        self.assertEqual(generation["tokens"], ["part one", "part two"])
+        self.assertEqual(generation["finals"], 1)
+
+    def test_transient_state_reconciliation_gates_audio_without_cancelling_attached_generation(
+        self,
+    ) -> None:
+        session = self._task_stream_audio_session()
+        gate = TaskStreamAudioAuthorityGate(session)
+        mode_state = AuthoritativeCallModeState()
+        mode_state.apply("call")
+
+        class Plane:
+            def __init__(self):
+                self.suspensions = 0
+
+            def suspend_until_authoritative(self):
+                self.suspensions += 1
+
+        progress = Plane()
+        followup = Plane()
+        attached_generation = {"state": "streaming", "finals": 0}
+
+        gated = _suspend_call_response_playout_until_authoritative(
+            progress_controller=progress,
+            followup_scheduler=followup,
+            audio_gate=gate,
+            authoritative_mode_state=mode_state,
+        )
+        attached_generation["state"] = "completed"
+        attached_generation["finals"] += 1
+
+        self.assertTrue(gated)
+        self.assertFalse(mode_state.allows_agent_dispatch)
+        self.assertEqual(progress.suspensions, 1)
+        self.assertEqual(followup.suspensions, 1)
+        self.assertEqual(session.output.audio.pauses, 1)
+        self.assertEqual(session.interrupts, [])
+        self.assertEqual(attached_generation, {"state": "completed", "finals": 1})
+
+        self.assertTrue(gate.restore())
+        self.assertEqual(session.output.audio.resumes, 1)
+
+    def test_authority_and_false_interruption_audio_holds_cannot_release_each_other(
+        self,
+    ) -> None:
+        session = self._task_stream_audio_session()
+        gate = TaskStreamAudioAuthorityGate(session)
+        self.assertTrue(gate.bind_current_output())
+
+        self.assertTrue(gate.suspend())
+        session.output.audio.pause()
+        session.output.audio.resume()
+        self.assertTrue(gate.gated)
+        self.assertFalse(session.output.audio.playback_enabled)
+        self.assertEqual(session.output.audio.pauses, 1)
+        self.assertEqual(session.output.audio.resumes, 0)
+
+        self.assertTrue(gate.restore())
+        self.assertTrue(session.output.audio.playback_enabled)
+        self.assertEqual(session.output.audio.resumes, 1)
+
+        session.output.audio.pause()
+        self.assertTrue(gate.suspend())
+        self.assertTrue(gate.restore())
+        self.assertFalse(session.output.audio.playback_enabled)
+        self.assertEqual(session.output.audio.pauses, 2)
+        self.assertEqual(session.output.audio.resumes, 1)
+
+        session.output.audio.resume()
+        self.assertTrue(session.output.audio.playback_enabled)
+        self.assertEqual(session.output.audio.resumes, 2)
+
+    def test_stale_reconnect_snapshot_stays_gated_and_call_end_interrupts(self) -> None:
+        session = self._task_stream_audio_session()
+        gate = TaskStreamAudioAuthorityGate(session)
+
+        async def fetch_state():
+            return _authoritative_state(revision=6)
+
+        def reject_stale(state):
+            if state["revision"] < 7:
+                return False
+            gate.restore()
+            return True
+
+        authority = CallTaskStreamSpeechAuthority(
+            call_session_id="call_1",
+            fetch_call_state=fetch_state,
+            suspend=gate.suspend,
+            terminate=gate.terminate,
+            apply_state=reject_stale,
+        )
+
+        async def run():
+            await authority.on_stream_health(_stream_health("connected"))
+            self.assertTrue(authority.mark_session_ready(_authoritative_state(revision=7)))
+            session.output.audio.pauses = 0
+            session.output.audio.resumes = 0
+            await authority.on_stream_health(_stream_health("disconnected"))
+            await authority.on_stream_health(_stream_health("connected"))
+            self.assertFalse(authority.authoritative)
+            await authority.on_stream_health(_stream_health("terminal", status=401))
+
+        asyncio.run(run())
+
+        self.assertEqual(session.output.audio.pauses, 1)
+        self.assertEqual(session.output.audio.resumes, 0)
+        self.assertEqual(session.interrupts, [True])
+
+    def test_presentation_events_distinguish_provisional_barge_in_from_generated_reply(self) -> None:
+        class Session:
+            def __init__(self):
+                self.handlers = {}
+
+            def on(self, name):
+                def register(handler):
+                    self.handlers[name] = handler
+                    return handler
+
+                return register
+
+        class Llm:
+            def __init__(self):
+                self.handles = []
+                self.provisional = 0
+
+            def register_speech_handle(self, handle):
+                self.handles.append(handle)
+
+            def note_provisional_interruption(self):
+                self.provisional += 1
+
+        session = Session()
+        llm = Llm()
+        _register_presentation_lifecycle_handlers(session, llm)
+
+        generated = object()
+        session.handlers["speech_created"](
+            SimpleNamespace(
+                source="generate_reply",
+                user_initiated=True,
+                speech_handle=generated,
+            )
+        )
+        session.handlers["speech_created"](
+            SimpleNamespace(source="say", user_initiated=True, speech_handle=object())
+        )
+        session.handlers["overlapping_speech"](
+            SimpleNamespace(is_interruption=False)
+        )
+        session.handlers["overlapping_speech"](
+            SimpleNamespace(is_interruption=True)
+        )
+
+        self.assertEqual(llm.handles, [generated])
+        self.assertEqual(llm.provisional, 1)
 
     def test_task_stream_401_or_death_never_authorizes_session_readiness(self) -> None:
         suspended = []
@@ -362,6 +674,588 @@ class TestWorkerTurnHandling(unittest.TestCase):
         self.assertEqual(
             context["speakerSegments"][0]["text"], "Synthetic listen only statement"
         )
+
+    def test_passive_wing_owner_turn_stops_before_any_llm_or_external_action(self) -> None:
+        tracker = SpeakerSegmentTracker(
+            call_session_id="call_1",
+            participant_identity="owner",
+            owner_signed=True,
+        )
+        tracker.ingest(
+            transcript="I should remember to pick up the blue folder tomorrow afternoon.",
+            is_final=True,
+            provider_speaker_id="A",
+            created_at=1.0,
+            start_time=0.0,
+            end_time=1.5,
+        )
+        mode_state = AuthoritativeCallModeState()
+        mode_state.apply("wing")
+        authority = VoiceEngagementAuthority(
+            call_session_id="call_1",
+            owner_participant_identity="owner",
+            verify_receipt=_verify_synthetic_voice_engagement,
+            clock_ms=lambda: 1787659200001,
+            wait_timeout_s=0.0,
+        )
+        persisted = []
+
+        async def persist(context, mode):
+            persisted.append((context, mode))
+
+        agent = ViventiumVoiceAgent(
+            instructions="test",
+            speaker_tracker=tracker,
+            authoritative_mode_state=mode_state,
+            voice_engagement_authority=authority,
+            persist_suppressed_turn=persist,
+        )
+        message = ChatMessage(
+            role="user",
+            content=["I should remember to pick up the blue folder tomorrow afternoon."],
+        )
+
+        with self.assertRaises(StopResponse):
+            asyncio.run(agent.on_user_turn_completed(ChatContext.empty(), message))
+
+        self.assertEqual(len(persisted), 1)
+        self.assertEqual(persisted[0][1], "wing")
+        self.assertNotIn("voiceEngagement", message.extra[SPEAKER_CONTEXT_EXTRA_KEY])
+
+    def test_signed_directly_addressed_owner_turn_crosses_wing_authority_once(self) -> None:
+        tracker = SpeakerSegmentTracker(
+            call_session_id="call_1",
+            participant_identity="owner",
+            owner_signed=True,
+        )
+        tracker.ingest(
+            transcript="Please launch the requested worker.",
+            is_final=True,
+            provider_speaker_id="A",
+            created_at=1.0,
+            start_time=0.0,
+            end_time=1.5,
+        )
+        mode_state = AuthoritativeCallModeState()
+        mode_state.apply("wing")
+        authority = VoiceEngagementAuthority(
+            call_session_id="call_1",
+            owner_participant_identity="owner",
+            verify_receipt=_verify_synthetic_voice_engagement,
+            clock_ms=lambda: 1787659200001,
+            wait_timeout_s=0.0,
+        )
+        receipt = _signed_voice_engagement()
+        packet = SimpleNamespace(
+            topic="viventium.voice.engagement.v1",
+            participant=SimpleNamespace(identity="owner"),
+            data=json.dumps(receipt).encode(),
+        )
+        self.assertTrue(authority.accept_packet(packet))
+        persisted = []
+
+        async def persist(context, mode):
+            persisted.append((context, mode))
+
+        agent = ViventiumVoiceAgent(
+            instructions="test",
+            speaker_tracker=tracker,
+            authoritative_mode_state=mode_state,
+            voice_engagement_authority=authority,
+            persist_suppressed_turn=persist,
+        )
+        message = ChatMessage(role="user", content=["Please launch the requested worker."])
+
+        asyncio.run(agent.on_user_turn_completed(ChatContext.empty(), message))
+
+        self.assertEqual(persisted, [])
+        self.assertEqual(
+            message.extra[SPEAKER_CONTEXT_EXTRA_KEY]["voiceEngagement"], receipt
+        )
+        self.assertFalse(authority.accept_packet(packet))
+
+    def test_signed_wing_turn_dispatches_only_after_two_fresh_owner_revision_checks(
+        self,
+    ) -> None:
+        tracker = SpeakerSegmentTracker(
+            call_session_id="call_1",
+            participant_identity="owner",
+            owner_signed=True,
+        )
+        tracker.ingest(
+            transcript="Please launch the requested worker.",
+            is_final=True,
+            provider_speaker_id="A",
+            created_at=1.0,
+            start_time=0.0,
+            end_time=1.5,
+        )
+        mode_state = AuthoritativeCallModeState()
+        mode_state.apply("wing")
+        authority = VoiceEngagementAuthority(
+            call_session_id="call_1",
+            owner_participant_identity="owner",
+            verify_receipt=_verify_synthetic_voice_engagement,
+            clock_ms=lambda: 1787659200001,
+            wait_timeout_s=0.0,
+        )
+        receipt = _signed_voice_engagement()
+        authority.accept_packet(
+            SimpleNamespace(
+                topic="viventium.voice.engagement.v1",
+                participant=SimpleNamespace(identity="owner"),
+                data=json.dumps(receipt).encode(),
+            )
+        )
+        refreshed = []
+
+        async def refresh(context):
+            refreshed.append(context["speakerSegments"][0]["revision"])
+            return {
+                "version": 1,
+                "callSessionId": "call_1",
+                "mode": "wing",
+                "status": "listening",
+                "revision": 8,
+                "speakerSegments": context["speakerSegments"],
+            }
+
+        agent = ViventiumVoiceAgent(
+            instructions="test",
+            speaker_tracker=tracker,
+            authoritative_mode_state=mode_state,
+            voice_engagement_authority=authority,
+            refresh_turn_authority=refresh,
+        )
+        message = ChatMessage(role="user", content=["Please launch the requested worker."])
+
+        asyncio.run(agent.on_user_turn_completed(ChatContext.empty(), message))
+
+        self.assertEqual(refreshed, [1, 1])
+        self.assertEqual(
+            message.extra[SPEAKER_CONTEXT_EXTRA_KEY]["voiceEngagement"], receipt
+        )
+
+    def test_signed_wing_turn_is_suppressed_when_persisted_mode_changes_during_receipt_wait(
+        self,
+    ) -> None:
+        tracker = SpeakerSegmentTracker(
+            call_session_id="call_1",
+            participant_identity="owner",
+            owner_signed=True,
+        )
+        tracker.ingest(
+            transcript="Please launch the requested worker.",
+            is_final=True,
+            provider_speaker_id="A",
+            created_at=1.0,
+            start_time=0.0,
+            end_time=1.5,
+        )
+        mode_state = AuthoritativeCallModeState()
+        mode_state.apply("wing")
+        receipt = _signed_voice_engagement()
+        persisted = []
+        refresh_count = 0
+
+        class RacingAuthority:
+            async def await_turn(self, _turn_id, _segments):
+                await asyncio.sleep(0)
+                return receipt
+
+        async def refresh(_context):
+            nonlocal refresh_count
+            refresh_count += 1
+            return {
+                "version": 1,
+                "callSessionId": "call_1",
+                "mode": "wing" if refresh_count == 1 else "listen_only",
+                "status": "listening",
+                "revision": 7 + refresh_count,
+                "speakerSegments": _context.get("speakerSegments", []),
+            }
+
+        async def persist(context, mode):
+            persisted.append((context, mode))
+
+        agent = ViventiumVoiceAgent(
+            instructions="test",
+            speaker_tracker=tracker,
+            authoritative_mode_state=mode_state,
+            voice_engagement_authority=RacingAuthority(),
+            persist_suppressed_turn=persist,
+            refresh_turn_authority=refresh,
+        )
+        message = ChatMessage(role="user", content=["Please launch the requested worker."])
+
+        with self.assertRaises(StopResponse):
+            asyncio.run(agent.on_user_turn_completed(ChatContext.empty(), message))
+
+        self.assertEqual([mode for _context, mode in persisted], ["listen_only"])
+        self.assertEqual(refresh_count, 2)
+        self.assertNotIn("voiceEngagement", message.extra[SPEAKER_CONTEXT_EXTRA_KEY])
+
+    def test_signed_wing_turn_is_suppressed_when_latest_persisted_segment_loses_owner_trust(
+        self,
+    ) -> None:
+        tracker = SpeakerSegmentTracker(
+            call_session_id="call_1",
+            participant_identity="owner",
+            owner_signed=True,
+        )
+        tracker.ingest(
+            transcript="Please launch the requested worker.",
+            is_final=True,
+            provider_speaker_id="A",
+            created_at=1.0,
+            start_time=0.0,
+            end_time=1.5,
+        )
+        mode_state = AuthoritativeCallModeState()
+        mode_state.apply("wing")
+        authority = VoiceEngagementAuthority(
+            call_session_id="call_1",
+            owner_participant_identity="owner",
+            verify_receipt=_verify_synthetic_voice_engagement,
+            clock_ms=lambda: 1787659200001,
+            wait_timeout_s=0.0,
+        )
+        receipt = _signed_voice_engagement()
+        authority.accept_packet(
+            SimpleNamespace(
+                topic="viventium.voice.engagement.v1",
+                participant=SimpleNamespace(identity="owner"),
+                data=json.dumps(receipt).encode(),
+            )
+        )
+        persisted = []
+        refresh_count = 0
+
+        async def refresh(context):
+            nonlocal refresh_count
+            refresh_count += 1
+            trusted = context["speakerSegments"][0]
+            downgraded = {
+                **trusted,
+                "revision": int(trusted["revision"]) + 1,
+                "uncertain": True,
+                "speaker": {
+                    **trusted["speaker"],
+                    "attribution": "unverified",
+                    "actorTrust": "shared_mic_unverified",
+                },
+            }
+            return {
+                "version": 1,
+                "callSessionId": "call_1",
+                "mode": "wing",
+                "status": "listening",
+                "revision": 8,
+                "speakerSegments": [trusted] if refresh_count == 1 else [downgraded],
+            }
+
+        async def persist(context, mode):
+            persisted.append((context, mode))
+
+        agent = ViventiumVoiceAgent(
+            instructions="test",
+            speaker_tracker=tracker,
+            authoritative_mode_state=mode_state,
+            voice_engagement_authority=authority,
+            persist_suppressed_turn=persist,
+            refresh_turn_authority=refresh,
+        )
+        message = ChatMessage(role="user", content=["Please launch the requested worker."])
+
+        with self.assertRaises(StopResponse):
+            asyncio.run(agent.on_user_turn_completed(ChatContext.empty(), message))
+
+        self.assertEqual([mode for _context, mode in persisted], ["wing"])
+        self.assertEqual(refresh_count, 2)
+        self.assertEqual(persisted[0][0]["speakerSegments"][0]["revision"], 2)
+        self.assertNotIn("voiceEngagement", message.extra[SPEAKER_CONTEXT_EXTRA_KEY])
+
+    def test_gateway_fails_closed_when_fresh_persisted_turn_authority_is_unavailable(self) -> None:
+        mode_state = AuthoritativeCallModeState()
+        mode_state.apply("call")
+        persisted = []
+
+        async def refresh(_context):
+            return None
+
+        async def persist(context, mode):
+            persisted.append((context, mode))
+
+        agent = ViventiumVoiceAgent(
+            instructions="test",
+            authoritative_mode_state=mode_state,
+            persist_suppressed_turn=persist,
+            refresh_turn_authority=refresh,
+        )
+
+        with self.assertRaises(StopResponse):
+            asyncio.run(
+                agent.on_user_turn_completed(
+                    ChatContext.empty(), ChatMessage(role="user", content=["Sensitive action"])
+                )
+            )
+
+        self.assertEqual([mode for _context, mode in persisted], ["uncertain"])
+
+    def test_gateway_fails_closed_when_persisted_call_session_changes_before_dispatch(
+        self,
+    ) -> None:
+        tracker = SpeakerSegmentTracker(
+            call_session_id="call_1",
+            participant_identity="owner",
+            owner_signed=True,
+        )
+        tracker.ingest(
+            transcript="Please launch the requested worker.",
+            is_final=True,
+            provider_speaker_id="A",
+            created_at=1.0,
+            start_time=0.0,
+            end_time=1.5,
+        )
+        mode_state = AuthoritativeCallModeState()
+        mode_state.apply("call")
+        persisted = []
+
+        async def refresh(context):
+            return {
+                "version": 1,
+                "callSessionId": "different_call",
+                "mode": "call",
+                "status": "listening",
+                "revision": 8,
+                "speakerSegments": context["speakerSegments"],
+            }
+
+        async def persist(context, mode):
+            persisted.append((context, mode))
+
+        agent = ViventiumVoiceAgent(
+            instructions="test",
+            speaker_tracker=tracker,
+            authoritative_mode_state=mode_state,
+            persist_suppressed_turn=persist,
+            refresh_turn_authority=refresh,
+        )
+
+        with self.assertRaises(StopResponse):
+            asyncio.run(
+                agent.on_user_turn_completed(
+                    ChatContext.empty(),
+                    ChatMessage(role="user", content=["Please launch the requested worker."]),
+                )
+            )
+
+        self.assertEqual([mode for _context, mode in persisted], ["uncertain"])
+        self.assertIsNone(mode_state.mode)
+
+    def test_forged_or_unsigned_browser_engagement_never_becomes_action_authority(self) -> None:
+        authority = VoiceEngagementAuthority(
+            call_session_id="call_1",
+            owner_participant_identity="owner",
+            verify_receipt=_verify_synthetic_voice_engagement,
+            clock_ms=lambda: 1787659200001,
+            wait_timeout_s=0.0,
+        )
+        signed = _signed_voice_engagement()
+        for participant, forged in [
+            ("guest", signed),
+            ("owner", {**signed, "attestation": "forged"}),
+            ("owner", {**signed, "callSessionId": "another_call"}),
+            ("owner", {**signed, "participantIdentity": "guest"}),
+            ("owner", {**signed, "source": "browser"}),
+            ("owner", {**signed, "expiresAtMs": 1787659199999}),
+        ]:
+            with self.subTest(participant=participant, payload=forged):
+                packet = SimpleNamespace(
+                    topic="viventium.voice.engagement.v1",
+                    participant=SimpleNamespace(identity=participant),
+                    data=json.dumps(forged).encode(),
+                )
+                self.assertFalse(authority.accept_packet(packet))
+
+        changed_turn = {**signed, "turnId": "turn_000002"}
+        structurally_valid_packet = SimpleNamespace(
+            topic="viventium.voice.engagement.v1",
+            participant=SimpleNamespace(identity="owner"),
+            data=json.dumps(changed_turn).encode(),
+        )
+        self.assertTrue(authority.accept_packet(structurally_valid_packet))
+        self.assertIsNone(
+            asyncio.run(
+                authority.await_turn(
+                    "turn_000002",
+                    [
+                        {
+                            "segmentId": "segment_000001",
+                            "turnId": "turn_000002",
+                            "revision": 1,
+                            "isFinal": True,
+                            "speaker": {
+                                "participantIdentity": "owner",
+                                "attribution": "verified",
+                                "actorTrust": "owner_participant",
+                            },
+                        }
+                    ],
+                )
+            )
+        )
+
+    def test_gateway_transport_secret_forgery_cannot_bypass_core_verification(self) -> None:
+        authority = VoiceEngagementAuthority(
+            call_session_id="call_1",
+            owner_participant_identity="owner",
+            verify_receipt=_verify_synthetic_voice_engagement,
+            clock_ms=lambda: 1787659200001,
+            wait_timeout_s=0.0,
+        )
+        forged = _signed_voice_engagement(secret="synthetic-call-secret")
+        packet = SimpleNamespace(
+            topic="viventium.voice.engagement.v1",
+            participant=SimpleNamespace(identity="owner"),
+            data=json.dumps(forged).encode(),
+        )
+        segments = [
+            {
+                "segmentId": "segment_000001",
+                "turnId": "turn_000001",
+                "revision": 1,
+                "isFinal": True,
+                "speaker": {
+                    "participantIdentity": "owner",
+                    "attribution": "verified",
+                    "actorTrust": "owner_participant",
+                },
+            }
+        ]
+        self.assertTrue(authority.accept_packet(packet))
+        self.assertFalse(hasattr(authority, "_call_secret"))
+        self.assertIsNone(asyncio.run(authority.await_turn("turn_000001", segments)))
+
+    def test_gateway_fails_closed_when_core_engagement_verification_is_unavailable(self) -> None:
+        authority = VoiceEngagementAuthority(
+            call_session_id="call_1",
+            owner_participant_identity="owner",
+            clock_ms=lambda: 1787659200001,
+            wait_timeout_s=0.0,
+        )
+        signed = _signed_voice_engagement()
+        packet = SimpleNamespace(
+            topic="viventium.voice.engagement.v1",
+            participant=SimpleNamespace(identity="owner"),
+            data=json.dumps(signed).encode(),
+        )
+        segments = [
+            {
+                "segmentId": "segment_000001",
+                "turnId": "turn_000001",
+                "revision": 1,
+                "isFinal": True,
+                "speaker": {
+                    "participantIdentity": "owner",
+                    "attribution": "verified",
+                    "actorTrust": "owner_participant",
+                },
+            }
+        ]
+
+        self.assertTrue(authority.accept_packet(packet))
+        self.assertIsNone(asyncio.run(authority.await_turn("turn_000001", segments)))
+
+    def test_gateway_waits_for_model_signed_owner_receipt_after_final_speaker_publication(self) -> None:
+        tracker = SpeakerSegmentTracker(
+            call_session_id="call_1",
+            participant_identity="owner",
+            owner_signed=True,
+        )
+        tracker.ingest(
+            transcript="Please launch the requested worker.",
+            is_final=True,
+            provider_speaker_id="A",
+            created_at=1.0,
+            start_time=0.0,
+            end_time=1.0,
+        )
+        segments, _ = tracker.finalize_turn("Please launch the requested worker.")
+        authority = VoiceEngagementAuthority(
+            call_session_id="call_1",
+            owner_participant_identity="owner",
+            verify_receipt=_verify_synthetic_voice_engagement,
+            clock_ms=lambda: 1787659200001,
+            wait_timeout_s=0.25,
+        )
+        receipt = _signed_voice_engagement()
+
+        async def relay_after_publication():
+            pending = asyncio.create_task(
+                authority.await_turn("turn_000001", segments)
+            )
+            await asyncio.sleep(0)
+            self.assertFalse(pending.done())
+            accepted = authority.accept_packet(
+                SimpleNamespace(
+                    topic="viventium.voice.engagement.v1",
+                    participant=SimpleNamespace(identity="owner"),
+                    data=json.dumps(receipt).encode(),
+                )
+            )
+            return accepted, await pending
+
+        accepted, delivered = asyncio.run(relay_after_publication())
+
+        self.assertTrue(accepted)
+        self.assertEqual(delivered, receipt)
+
+    def test_signed_negative_semantic_verdict_wakes_wing_without_granting_authority(self) -> None:
+        tracker = SpeakerSegmentTracker(
+            call_session_id="call_1",
+            participant_identity="owner",
+            owner_signed=True,
+        )
+        tracker.ingest(
+            transcript="A private ambient thought about a blue folder.",
+            is_final=True,
+            provider_speaker_id="A",
+            created_at=1.0,
+            start_time=0.0,
+            end_time=1.0,
+        )
+        segments, _ = tracker.finalize_turn(
+            "A private ambient thought about a blue folder."
+        )
+        authority = VoiceEngagementAuthority(
+            call_session_id="call_1",
+            owner_participant_identity="owner",
+            verify_receipt=_verify_synthetic_voice_engagement,
+            clock_ms=lambda: 1787659200001,
+            wait_timeout_s=0.25,
+        )
+        receipt = _signed_voice_engagement(directly_addressed=False)
+
+        async def relay_negative_decision():
+            pending = asyncio.create_task(
+                authority.await_turn("turn_000001", segments)
+            )
+            await asyncio.sleep(0)
+            accepted = authority.accept_packet(
+                SimpleNamespace(
+                    topic="viventium.voice.engagement.v1",
+                    participant=SimpleNamespace(identity="owner"),
+                    data=json.dumps(receipt).encode(),
+                )
+            )
+            return accepted, await pending
+
+        accepted, delivered = asyncio.run(relay_negative_decision())
+
+        self.assertTrue(accepted)
+        self.assertIsNone(delivered)
 
     def test_uncertain_mode_and_transition_race_fail_closed_then_call_restores(self) -> None:
         mode_state = AuthoritativeCallModeState()
@@ -1608,75 +2502,8 @@ class TestWorkerTurnHandling(unittest.TestCase):
         self.assertEqual(llm.handles, [generated])
         self.assertEqual(llm.provisional, 1)
 
-    def test_replacement_prewarm_never_outwaits_an_active_call(self) -> None:
-        marker = SimpleNamespace()
-        with (
-            patch.dict(
-                os.environ,
-                {"VIVENTIUM_VOICE_REPLACEMENT_PREWARM_MAX_WAIT_S": "0.01"},
-                clear=False,
-            ),
-            patch(
-                "worker._active_voice_job_markers",
-                side_effect=[[marker], [marker], []],
-            ) as active_markers,
-            patch("worker.time.monotonic", side_effect=[0.0, 1.0, 2.0]),
-            patch("worker.time.sleep"),
-        ):
-            _wait_for_active_voice_jobs_before_prewarm()
 
-        self.assertEqual(active_markers.call_count, 3)
 
-    def test_room_empty_participant_disconnect_clears_active_marker(self) -> None:
-        class FakeRoom:
-            name = "room"
-
-            def __init__(self) -> None:
-                self.handlers = {}
-                self.remote_participants = {}
-
-            def on(self, event_name):
-                def _register(handler):
-                    self.handlers[event_name] = handler
-                    return handler
-
-                return _register
-
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            with patch.dict(
-                os.environ,
-                {
-                    "TMPDIR": tmp_dir,
-                    "VIVENTIUM_VOICE_WORKER_RUN_ID": "test-run",
-                },
-                clear=False,
-            ):
-                marker = _mark_active_voice_job("job-1")
-                room = FakeRoom()
-                ctx = SimpleNamespace(room=room)
-                participant = SimpleNamespace(identity="owner")
-
-                _attach_room_diagnostics(
-                    ctx,
-                    call_session_id="test-call",
-                    active_job_marker=marker,
-                )
-                room.handlers["participant_disconnected"](participant)
-
-                self.assertNotIn(marker, _active_voice_job_markers())
-
-    def test_local_whisper_defaults_tts_prewarm_off_to_protect_stt_latency(self) -> None:
-        with patch.dict(
-            os.environ,
-            {
-                "VIVENTIUM_STT_PROVIDER": "whisper_local",
-                "VIVENTIUM_TTS_PROVIDER": "local_chatterbox_turbo_mlx_8bit",
-            },
-            clear=True,
-        ):
-            env = load_env()
-
-        self.assertFalse(env.voice_prewarm_local_tts)
 
 
 if __name__ == "__main__":

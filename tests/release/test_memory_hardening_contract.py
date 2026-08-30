@@ -14,6 +14,8 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[2]
 CONFIG_COMPILER_SPEC = importlib.util.spec_from_file_location(
@@ -31,6 +33,12 @@ MEMORY_HARDEN_SPEC = importlib.util.spec_from_file_location(
 assert MEMORY_HARDEN_SPEC and MEMORY_HARDEN_SPEC.loader
 memory_harden = importlib.util.module_from_spec(MEMORY_HARDEN_SPEC)
 MEMORY_HARDEN_SPEC.loader.exec_module(memory_harden)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_node_contract_probes_from_live_redis(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("USE_REDIS", "false")
+    monkeypatch.setenv("USE_REDIS_STREAMS", "false")
 
 
 def _prompt_body(path: Path) -> str:
@@ -104,6 +112,8 @@ def test_memory_hardening_defaults_are_launch_ready_and_opt_in() -> None:
     assert settings["transcripts"]["max_batches_per_invocation"] == 1
     assert settings["transcripts"]["reference_memory_max_chars"] == 24000
     assert settings["transcripts"]["reference_messages_max_chars"] == 36000
+
+
 
 
 def test_memory_hardening_model_timeout_matches_large_overnight_workload() -> None:
@@ -364,8 +374,105 @@ process.stdout.write(JSON.stringify({ defaultCandidates, explicitCandidates }));
 
     assert {candidate["provider"] for candidate in payload["defaultCandidates"]} == {"anthropic"}
     assert any(candidate["model"] == "claude-opus-5" for candidate in payload["defaultCandidates"])
-    assert any(candidate["model"] == "opus" for candidate in payload["defaultCandidates"])
+    assert not any(candidate["model"] == "opus" for candidate in payload["defaultCandidates"])
+    assert any(candidate["model"] == "opus" for candidate in payload["explicitCandidates"])
     assert any(candidate["provider"] == "openai" for candidate in payload["explicitCandidates"])
+
+
+@pytest.mark.parametrize(
+    ("configuration", "expected_candidates"),
+    [
+        pytest.param(
+            {
+                "VIVENTIUM_PRIMARY_PROVIDER": "openai",
+                "VIVENTIUM_SECONDARY_PROVIDER": "anthropic",
+                "VIVENTIUM_MEMORY_HARDENING_PROVIDER": "openai",
+                "VIVENTIUM_MEMORY_HARDENING_MODEL": "gpt-5.6-luna",
+                "VIVENTIUM_MEMORY_HARDENING_EFFORT": "medium",
+            },
+            [("openai", "gpt-5.6-luna", "medium")],
+            id="secondary-provider-is-not-fallback-authority",
+        ),
+        pytest.param(
+            {
+                "VIVENTIUM_PRIMARY_PROVIDER": "openai",
+                "VIVENTIUM_SECONDARY_PROVIDER": "anthropic",
+            },
+            [("openai", "gpt-5.6-luna", "medium")],
+            id="foundation-provider-list-is-not-fallback-authority",
+        ),
+        pytest.param(
+            {
+                "VIVENTIUM_PRIMARY_PROVIDER": "openai",
+                "VIVENTIUM_SECONDARY_PROVIDER": "anthropic",
+                "VIVENTIUM_MEMORY_HARDENING_PROVIDER": "openai",
+                "VIVENTIUM_MEMORY_HARDENING_MODEL": "gpt-5.6-luna",
+                "VIVENTIUM_MEMORY_HARDENING_EFFORT": "medium",
+                "VIVENTIUM_MEMORY_HARDENING_MODEL_FALLBACKS": "invalid-route",
+            },
+            [("openai", "gpt-5.6-luna", "medium")],
+            id="malformed-fallback-cannot-open-default-routes",
+        ),
+        pytest.param(
+            {
+                "VIVENTIUM_PRIMARY_PROVIDER": "openai",
+                "VIVENTIUM_SECONDARY_PROVIDER": "anthropic",
+                "VIVENTIUM_MEMORY_HARDENING_PROVIDER": "openai",
+                "VIVENTIUM_MEMORY_HARDENING_MODEL": "gpt-5.6-luna",
+                "VIVENTIUM_MEMORY_HARDENING_EFFORT": "medium",
+                "VIVENTIUM_MEMORY_HARDENING_MODEL_FALLBACKS": (
+                    "openai:gpt-5.6-luna:medium,"
+                    "anthropic:claude-opus-5:xhigh,"
+                    "anthropic:claude-opus-5:xhigh"
+                ),
+            },
+            [
+                ("openai", "gpt-5.6-luna", "medium"),
+                ("anthropic", "claude-opus-5", "xhigh"),
+            ],
+            id="declared-fallback-is-preserved-and-deduplicated",
+        ),
+        pytest.param(
+            {},
+            [("openai", "gpt-5.6-luna", "medium")],
+            id="ungenerated-default-cannot-silently-remap-provider",
+        ),
+    ],
+)
+def test_memory_hardening_direct_node_accepts_only_declared_fallbacks(
+    configuration: dict[str, str],
+    expected_candidates: list[tuple[str, str, str]],
+) -> None:
+    script = """
+const hardener = require('./viventium_v0_4/LibreChat/scripts/viventium-memory-hardening.js');
+for (const key of [
+  'VIVENTIUM_PRIMARY_PROVIDER',
+  'VIVENTIUM_SECONDARY_PROVIDER',
+  'VIVENTIUM_MEMORY_HARDENING_PROVIDER',
+  'VIVENTIUM_MEMORY_HARDENING_MODEL',
+  'VIVENTIUM_MEMORY_HARDENING_EFFORT',
+  'VIVENTIUM_MEMORY_HARDENING_ANTHROPIC_MODEL',
+  'VIVENTIUM_MEMORY_HARDENING_ANTHROPIC_EFFORT',
+  'VIVENTIUM_MEMORY_HARDENING_OPENAI_MODEL',
+  'VIVENTIUM_MEMORY_HARDENING_OPENAI_REASONING_EFFORT',
+  'VIVENTIUM_MEMORY_HARDENING_MODEL_FALLBACKS',
+]) delete process.env[key];
+Object.assign(process.env, JSON.parse(process.argv[1]));
+process.stdout.write(JSON.stringify(hardener.resolveProvider({}).candidates));
+"""
+    result = subprocess.run(
+        ["node", "-e", script, json.dumps(configuration)],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=True,
+        timeout=30,
+    )
+
+    assert [
+        (candidate["provider"], candidate["model"], candidate["effort"])
+        for candidate in json.loads(result.stdout)
+    ] == expected_candidates
 
 
 def test_memory_hardening_prefers_luna_medium_when_both_providers_are_available() -> None:
@@ -399,8 +506,10 @@ def test_memory_hardening_vector_presence_failures_are_not_model_failures() -> N
 const hardener = require('./viventium_v0_4/LibreChat/scripts/viventium-memory-hardening.js');
 const timeout = Object.assign(new Error('timed out'), { code: 'ETIMEDOUT' });
 const unavailable = Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' });
+const usageLimit = new Error('Usage limit reached before the CLI could parse the output schema.');
 process.stdout.write(JSON.stringify({
   modelTimeout: hardener.classifyModelCallFailure(timeout),
+  modelUsageLimit: hardener.classifyModelCallFailure(usageLimit),
   vectorTimeout: hardener.classifyVectorPresenceFailure(timeout),
   vectorUnavailable: hardener.classifyVectorPresenceFailure(unavailable)
 }));
@@ -416,6 +525,7 @@ process.stdout.write(JSON.stringify({
     payload = json.loads(result.stdout)
 
     assert payload["modelTimeout"] == "model_call_timeout"
+    assert payload["modelUsageLimit"] == "model_usage_limit"
     assert payload["vectorTimeout"] == "vector_presence_timeout"
     assert payload["vectorUnavailable"] == "vector_presence_unavailable"
 
@@ -1048,6 +1158,582 @@ def test_memory_hardening_wrapper_prefers_compiled_runtime_over_ambient_shell_en
     assert calls[0][1]["env"]["RAG_API_URL"] == "http://compiled-rag"
 
 
+
+
+
+
+def test_memory_hardening_status_does_not_open_live_redis_clients(
+    monkeypatch,
+    capsys,
+) -> None:
+    class Completed:
+        returncode = 0
+        stdout = json.dumps({"schedule_health": {}})
+        stderr = ""
+
+    observed: dict[str, object] = {}
+
+    def fake_run(*_args, **kwargs):
+        observed.update(kwargs)
+        return Completed()
+
+    monkeypatch.setattr(memory_harden, "node_command", lambda *_args: ["node"])
+    monkeypatch.setattr(memory_harden.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        memory_harden,
+        "launch_agent_status",
+        lambda _env: {"installed": True, "loaded": True},
+    )
+    args = make_memory_harden_args(repo_root=ROOT, command="status")
+    original_environment = {
+        "USE_REDIS": "true",
+        "USE_REDIS_STREAMS": "true",
+        "REDIS_URI": "redis://127.0.0.1:6379",
+        "UNRELATED_SETTING": "preserved",
+    }
+
+    assert memory_harden.run_status(args, {}, original_environment) == 0
+
+    launched_environment = observed["env"]
+    assert launched_environment["USE_REDIS"] == "false"
+    assert launched_environment["USE_REDIS_STREAMS"] == "false"
+    assert launched_environment["REDIS_URI"] == "redis://127.0.0.1:6379"
+    assert launched_environment["UNRELATED_SETTING"] == "preserved"
+    assert original_environment["USE_REDIS"] == "true"
+    assert original_environment["USE_REDIS_STREAMS"] == "true"
+    assert json.loads(capsys.readouterr().out)["schedule_health"]["state"] == (
+        "awaiting_first_run"
+    )
+
+
+@pytest.mark.parametrize("mode", ["help", "status"])
+def test_memory_hardening_direct_node_entrypoint_releases_inherited_redis_handles(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    mode: str,
+) -> None:
+    monkeypatch.setenv("USE_REDIS", "true")
+    monkeypatch.setenv("USE_REDIS_STREAMS", "true")
+    monkeypatch.setenv("REDIS_URI", "redis://127.0.0.1:1")
+    app_support_dir = tmp_path / "isolated-app-support"
+    arguments = ["--help"] if mode == "help" else ["--mode", "status"]
+
+    try:
+        result = subprocess.run(
+            [
+                "node",
+                str(ROOT / "viventium_v0_4/LibreChat/scripts/viventium-memory-hardening.js"),
+                *arguments,
+                "--app-support-dir",
+                str(app_support_dir),
+            ],
+            cwd=ROOT,
+            text=True,
+            capture_output=True,
+            check=True,
+            timeout=5,
+        )
+    except subprocess.TimeoutExpired:
+        pytest.fail("The standalone hardener retained inherited Redis handles after completing.")
+
+    if mode == "help":
+        assert "viventium-memory-hardening.js --mode dry-run" in result.stdout
+    else:
+        assert json.loads(result.stdout)["run_count"] == 0
+    assert not app_support_dir.exists()
+    assert os.environ["USE_REDIS"] == "true"
+    assert os.environ["USE_REDIS_STREAMS"] == "true"
+
+
+@pytest.mark.parametrize(
+    ("command", "scheduled", "dry_run_first", "until_caught_up"),
+    [
+        pytest.param("status", False, False, False, id="status"),
+        pytest.param("dry-run", False, False, False, id="direct-dry-run"),
+        pytest.param("apply", False, False, False, id="direct-apply"),
+        pytest.param("apply", True, False, False, id="scheduled-apply"),
+        pytest.param("dry-run", True, False, False, id="scheduled-dry-run"),
+        pytest.param("apply", True, True, False, id="scheduled-dry-run-first"),
+        pytest.param("ingest-transcripts", False, False, True, id="direct-backfill"),
+        pytest.param("ingest-transcripts", True, False, True, id="scheduled-backfill"),
+    ],
+)
+def test_memory_hardening_standalone_node_children_exit_without_redis_handles(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    command: str,
+    scheduled: bool,
+    dry_run_first: bool,
+    until_caught_up: bool,
+) -> None:
+    app_support_dir = tmp_path / "app-support"
+    args = make_memory_harden_args(
+        repo_root=ROOT,
+        app_support_dir=app_support_dir,
+        runtime_dir=tmp_path / "runtime",
+        command=command,
+        scheduled=scheduled,
+        trigger="launchd" if scheduled else None,
+        until_caught_up=until_caught_up,
+        json=False,
+    )
+    if scheduled:
+        args._launchd_invocation_proof = {
+            "version": 1,
+            "method": "launchctl_job_pid",
+            "verified": True,
+            "label": memory_harden.LAUNCH_AGENT_LABEL,
+            "pid": os.getpid(),
+            "parent_pid": 1,
+            "launchctl_status": "ok",
+            "observed_job_pid": os.getpid(),
+        }
+
+    runtime_environment = {
+        "USE_REDIS": "true",
+        "USE_REDIS_STREAMS": "true",
+        "REDIS_URI": "redis://127.0.0.1:6379",
+        "MONGO_URI": "mongodb://compiled-runtime",
+        "RAG_API_URL": "http://compiled-rag",
+        "VIVENTIUM_MEMORY_HARDENING_PROVIDER": "openai",
+        "VIVENTIUM_MEMORY_HARDENING_MODEL": "gpt-5.6-luna",
+        "VIVENTIUM_MEMORY_HARDENING_EFFORT": "medium",
+        "VIVENTIUM_MEMORY_HARDENING_DRY_RUN_FIRST": "true" if dry_run_first else "false",
+        "RUNTIME_ONLY_SETTING": "preserved",
+    }
+    original_runtime_environment = runtime_environment.copy()
+    monkeypatch.setenv("USE_REDIS", "true")
+    monkeypatch.setenv("USE_REDIS_STREAMS", "true")
+    monkeypatch.setenv("PARENT_ONLY_SETTING", "preserved")
+
+    child_script = """
+const redisEnabled = process.env.USE_REDIS === 'true' || process.env.USE_REDIS_STREAMS === 'true';
+if (redisEnabled) setInterval(() => {}, 1000);
+process.stdout.write(JSON.stringify({ schedule_health: {} }));
+"""
+    launched_environments: list[dict[str, str]] = []
+    real_subprocess_run = subprocess.run
+
+    def bounded_run(child_command, **kwargs):
+        launched_environments.append(dict(kwargs["env"]))
+        return real_subprocess_run(child_command, timeout=1, **kwargs)
+
+    monkeypatch.setattr(
+        memory_harden,
+        "node_command",
+        lambda *_args: ["node", "-e", child_script],
+    )
+    monkeypatch.setattr(memory_harden.subprocess, "run", bounded_run)
+    monkeypatch.setattr(memory_harden, "local_timezone_name", lambda: "America/Toronto")
+    monkeypatch.setattr(memory_harden, "running_on_battery_power", lambda: False)
+    monkeypatch.setattr(memory_harden, "thermal_state_constrained", lambda: False)
+    monkeypatch.setattr(
+        memory_harden,
+        "launch_agent_status",
+        lambda _env: {"installed": True, "loaded": True},
+    )
+
+    assert memory_harden.run_node(args, runtime_environment) == 0
+
+    [launched_environment] = launched_environments
+    assert launched_environment["USE_REDIS"] == "false"
+    assert launched_environment["USE_REDIS_STREAMS"] == "false"
+    assert launched_environment["MONGO_URI"] == "mongodb://compiled-runtime"
+    assert launched_environment["RAG_API_URL"] == "http://compiled-rag"
+    assert launched_environment["VIVENTIUM_MEMORY_HARDENING_PROVIDER"] == "openai"
+    assert launched_environment["VIVENTIUM_MEMORY_HARDENING_MODEL"] == "gpt-5.6-luna"
+    assert launched_environment["VIVENTIUM_MEMORY_HARDENING_EFFORT"] == "medium"
+    assert launched_environment["RUNTIME_ONLY_SETTING"] == "preserved"
+    assert launched_environment["PARENT_ONLY_SETTING"] == "preserved"
+    assert runtime_environment == original_runtime_environment
+    assert os.environ["USE_REDIS"] == "true"
+    assert os.environ["USE_REDIS_STREAMS"] == "true"
+
+    receipts = list(memory_harden.trigger_events_dir(app_support_dir).glob("*.json"))
+    if scheduled:
+        [receipt_path] = receipts
+        receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+        assert receipt["status"] == "success"
+        assert receipt["exit_code"] == 0
+        assert receipt["executed_command"] == ("dry-run" if dry_run_first else command)
+    else:
+        assert receipts == []
+
+
+@pytest.mark.parametrize(
+    ("configured_fallbacks", "ambient_fallbacks", "expected_candidates"),
+    [
+        pytest.param(None, None, [("openai", "gpt-5.6-luna")], id="requested-route-only"),
+        pytest.param(
+            None,
+            "anthropic:claude-opus-5:xhigh",
+            [("openai", "gpt-5.6-luna")],
+            id="ambient-provider-does-not-authorize-fallback",
+        ),
+        pytest.param(
+            "anthropic:claude-opus-5:xhigh",
+            None,
+            [("openai", "gpt-5.6-luna"), ("anthropic", "claude-opus-5")],
+            id="explicit-runtime-fallback-is-preserved",
+        ),
+        pytest.param(
+            "not-a-valid-provider-route",
+            None,
+            [("openai", "gpt-5.6-luna")],
+            id="malformed-fallback-never-opens-default-provider-list",
+        ),
+    ],
+)
+def test_memory_hardening_standalone_respects_only_explicit_fallback_authority(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    configured_fallbacks: str | None,
+    ambient_fallbacks: str | None,
+    expected_candidates: list[tuple[str, str]],
+) -> None:
+    args = make_memory_harden_args(
+        repo_root=ROOT,
+        app_support_dir=tmp_path / "app-support",
+        runtime_dir=tmp_path / "runtime",
+        command="dry-run",
+    )
+    if ambient_fallbacks:
+        monkeypatch.setenv("VIVENTIUM_MEMORY_HARDENING_MODEL_FALLBACKS", ambient_fallbacks)
+    else:
+        monkeypatch.delenv("VIVENTIUM_MEMORY_HARDENING_MODEL_FALLBACKS", raising=False)
+
+    runtime_environment = {
+        "VIVENTIUM_PRIMARY_PROVIDER": "openai",
+        "VIVENTIUM_SECONDARY_PROVIDER": "anthropic",
+        "VIVENTIUM_MEMORY_HARDENING_PROVIDER": "openai",
+        "VIVENTIUM_MEMORY_HARDENING_MODEL": "gpt-5.6-luna",
+        "VIVENTIUM_MEMORY_HARDENING_EFFORT": "medium",
+    }
+    if configured_fallbacks:
+        runtime_environment["VIVENTIUM_MEMORY_HARDENING_MODEL_FALLBACKS"] = configured_fallbacks
+
+    observed_path = tmp_path / "provider-candidates.json"
+    child_script = """
+const fs = require('fs');
+const hardener = require(process.argv[1]);
+fs.writeFileSync(process.argv[2], JSON.stringify(hardener.resolveProvider({}).candidates));
+"""
+    monkeypatch.setattr(
+        memory_harden,
+        "node_command",
+        lambda *_args: [
+            "node",
+            "-e",
+            child_script,
+            str(ROOT / "viventium_v0_4/LibreChat/scripts/viventium-memory-hardening.js"),
+            str(observed_path),
+        ],
+    )
+    monkeypatch.setattr(memory_harden, "running_on_battery_power", lambda: False)
+    monkeypatch.setattr(memory_harden, "thermal_state_constrained", lambda: False)
+
+    assert memory_harden.run_node(args, runtime_environment) == 0
+    candidates = json.loads(observed_path.read_text(encoding="utf-8"))
+    assert [(candidate["provider"], candidate["model"]) for candidate in candidates] == (
+        expected_candidates
+    )
+
+
+@pytest.mark.parametrize(
+    ("effective_provider", "effective_model", "effective_effort", "configured_fallback", "expected_exit"),
+    [
+        pytest.param("openai", "gpt-5.6-luna", "medium", None, 0, id="exact-requested-route"),
+        pytest.param(
+            "anthropic",
+            "claude-opus-5",
+            "xhigh",
+            None,
+            3,
+            id="undeclared-provider-switch-fails-closed",
+        ),
+        pytest.param(
+            "anthropic",
+            "claude-opus-5",
+            "xhigh",
+            "anthropic:claude-opus-5:xhigh",
+            0,
+            id="declared-fallback-is-explicitly-recorded",
+        ),
+    ],
+)
+def test_memory_hardening_scheduled_completion_finalizes_one_truthful_receipt(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    effective_provider: str,
+    effective_model: str,
+    effective_effort: str,
+    configured_fallback: str | None,
+    expected_exit: int,
+) -> None:
+    app_support_dir = tmp_path / "app-support"
+    args = make_memory_harden_args(
+        repo_root=ROOT,
+        app_support_dir=app_support_dir,
+        runtime_dir=tmp_path / "runtime",
+        command="apply",
+        scheduled=True,
+        trigger="launchd",
+    )
+    args._launchd_invocation_proof = {
+        "version": 1,
+        "method": "launchctl_job_pid",
+        "verified": True,
+        "label": memory_harden.LAUNCH_AGENT_LABEL,
+        "pid": os.getpid(),
+        "parent_pid": 1,
+        "launchctl_status": "ok",
+        "observed_job_pid": os.getpid(),
+    }
+    runtime_environment = {
+        "USE_REDIS": "true",
+        "USE_REDIS_STREAMS": "true",
+        "VIVENTIUM_PRIMARY_PROVIDER": "openai",
+        "VIVENTIUM_SECONDARY_PROVIDER": "anthropic",
+        "VIVENTIUM_MEMORY_HARDENING_PROVIDER": "openai",
+        "VIVENTIUM_MEMORY_HARDENING_MODEL": "gpt-5.6-luna",
+        "VIVENTIUM_MEMORY_HARDENING_EFFORT": "medium",
+        "VIVENTIUM_MEMORY_HARDENING_DRY_RUN_FIRST": "false",
+    }
+    if configured_fallback:
+        runtime_environment["VIVENTIUM_MEMORY_HARDENING_MODEL_FALLBACKS"] = configured_fallback
+
+    child_script = """
+const fs = require('fs');
+const path = require('path');
+const root = path.join(process.argv[1], 'state', 'memory-hardening', 'runs', 'run-exact');
+fs.mkdirSync(root, { recursive: true });
+fs.writeFileSync(path.join(root, 'summary.json'), JSON.stringify({
+  run_id: 'run-exact', status: 'success',
+  provider: process.argv[2], model: process.argv[3], effort: process.argv[4],
+}));
+if (process.env.USE_REDIS === 'true' || process.env.USE_REDIS_STREAMS === 'true') {
+  setInterval(() => {}, 1000);
+}
+"""
+    monkeypatch.setattr(
+        memory_harden,
+        "node_command",
+        lambda *_args: [
+            "node",
+            "-e",
+            child_script,
+            str(app_support_dir),
+            effective_provider,
+            effective_model,
+            effective_effort,
+        ],
+    )
+    real_subprocess_run = subprocess.run
+    monkeypatch.setattr(
+        memory_harden.subprocess,
+        "run",
+        lambda command, **kwargs: real_subprocess_run(command, timeout=1, **kwargs),
+    )
+    monkeypatch.setattr(memory_harden, "local_timezone_name", lambda: "America/Toronto")
+    monkeypatch.setattr(memory_harden, "running_on_battery_power", lambda: False)
+    monkeypatch.setattr(memory_harden, "thermal_state_constrained", lambda: False)
+
+    assert memory_harden.run_node(args, runtime_environment) == expected_exit
+
+    [receipt_path] = list(memory_harden.trigger_events_dir(app_support_dir).glob("*.json"))
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    assert receipt["run_id"] == "run-exact"
+    assert receipt["run_status"] == "success"
+    assert receipt["effective_provider"] == effective_provider
+    assert receipt["effective_model"] == effective_model
+    assert receipt["effective_effort"] == effective_effort
+    assert receipt["fallback_used"] is (effective_provider != "openai")
+    assert receipt["fallback_authorized"] is bool(configured_fallback)
+    assert receipt["exit_code"] == expected_exit
+    assert receipt["status"] == ("success" if expected_exit == 0 else "failed")
+    if expected_exit:
+        assert receipt["reason"] == "unauthorized_model_fallback"
+
+
+def test_memory_hardening_failed_process_still_reports_undeclared_completed_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    status_payload = {
+        "schedule_health": {
+            "state": "failed",
+            "healthy": False,
+            "execution_mismatch": False,
+            "latest_scheduled_trigger": {
+                "status": "failed",
+                "exit_code": -9,
+                "run_status": "success",
+                "requested_provider": "openai",
+                "requested_model": "gpt-5.6-luna",
+                "requested_effort": "medium",
+                "effective_provider": "anthropic",
+                "effective_model": "claude-opus-5",
+                "effective_effort": "xhigh",
+            },
+        }
+    }
+
+    class Completed:
+        returncode = 0
+        stdout = json.dumps(status_payload)
+        stderr = ""
+
+    monkeypatch.setattr(memory_harden, "node_command", lambda *_args: ["node"])
+    monkeypatch.setattr(memory_harden.subprocess, "run", lambda *_args, **_kwargs: Completed())
+    monkeypatch.setattr(
+        memory_harden,
+        "launch_agent_status",
+        lambda _env: {"installed": True, "loaded": True},
+    )
+
+    assert memory_harden.run_status(make_memory_harden_args(repo_root=ROOT, command="status"), {}, {}) == 0
+
+    health = json.loads(capsys.readouterr().out)["schedule_health"]
+    assert health["state"] == "failed"
+    assert health["healthy"] is False
+    assert health["execution_mismatch"] is True
+    assert health["fallback_used"] is True
+    assert health["fallback_authorized"] is False
+    assert health["fallback_reason"] == "unauthorized_model_fallback"
+    assert health["process_exit_class"] == "terminated_after_successful_run"
+
+
+def test_memory_hardening_authorized_fallback_never_certifies_the_requested_route(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    status_payload = {
+        "schedule_health": {
+            "state": "execution_mismatch",
+            "healthy": False,
+            "execution_mismatch": True,
+            "latest_scheduled_trigger": {
+                "status": "success",
+                "exit_code": 0,
+                "run_status": "success",
+                "requested_provider": "openai",
+                "requested_model": "gpt-5.6-luna",
+                "requested_effort": "medium",
+                "effective_provider": "anthropic",
+                "effective_model": "claude-opus-5",
+                "effective_effort": "xhigh",
+                "fallback_authorized": True,
+                "fallback_reason": "configured_model_fallback",
+            },
+        }
+    }
+
+    class Completed:
+        returncode = 0
+        stdout = json.dumps(status_payload)
+        stderr = ""
+
+    monkeypatch.setattr(memory_harden, "node_command", lambda *_args: ["node"])
+    monkeypatch.setattr(memory_harden.subprocess, "run", lambda *_args, **_kwargs: Completed())
+    monkeypatch.setattr(
+        memory_harden,
+        "launch_agent_status",
+        lambda _env: {"installed": True, "loaded": True},
+    )
+
+    assert memory_harden.run_status(make_memory_harden_args(repo_root=ROOT, command="status"), {}, {}) == 0
+
+    health = json.loads(capsys.readouterr().out)["schedule_health"]
+    assert health["fallback_used"] is True
+    assert health["fallback_authorized"] is True
+    assert health["fallback_reason"] == "configured_model_fallback"
+    assert health["execution_mismatch"] is True
+    assert health["state"] == "execution_mismatch"
+    assert health["healthy"] is False
+
+
+def test_memory_hardening_provider_override_is_the_receipted_execution_authority(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    app_support_dir = tmp_path / "app-support"
+    args = make_memory_harden_args(
+        repo_root=ROOT,
+        app_support_dir=app_support_dir,
+        runtime_dir=tmp_path / "runtime",
+        command="apply",
+        provider="openai",
+        scheduled=True,
+        trigger="launchd",
+    )
+    args._launchd_invocation_proof = {
+        "version": 1,
+        "method": "launchctl_job_pid",
+        "verified": True,
+        "label": memory_harden.LAUNCH_AGENT_LABEL,
+        "pid": os.getpid(),
+        "parent_pid": 1,
+        "launchctl_status": "ok",
+        "observed_job_pid": os.getpid(),
+    }
+    candidate_path = tmp_path / "override-candidates.json"
+    child_script = """
+const fs = require('fs');
+const path = require('path');
+const hardener = require(process.argv[1]);
+const selected = hardener.resolveProvider({ provider: 'openai', model: 'gpt-5.6-luna' });
+fs.writeFileSync(process.argv[3], JSON.stringify(selected.candidates));
+const root = path.join(process.argv[2], 'state', 'memory-hardening', 'runs', 'run-override');
+fs.mkdirSync(root, { recursive: true });
+fs.writeFileSync(path.join(root, 'summary.json'), JSON.stringify({
+  run_id: 'run-override', status: 'success', provider: selected.provider,
+  model: selected.model, effort: selected.effort,
+}));
+"""
+    monkeypatch.setattr(
+        memory_harden,
+        "node_command",
+        lambda *_args: [
+            "node",
+            "-e",
+            child_script,
+            str(ROOT / "viventium_v0_4/LibreChat/scripts/viventium-memory-hardening.js"),
+            str(app_support_dir),
+            str(candidate_path),
+        ],
+    )
+    monkeypatch.setattr(memory_harden, "local_timezone_name", lambda: "America/Toronto")
+    monkeypatch.setattr(memory_harden, "running_on_battery_power", lambda: False)
+    monkeypatch.setattr(memory_harden, "thermal_state_constrained", lambda: False)
+
+    assert memory_harden.run_node(
+        args,
+        {
+            "VIVENTIUM_PRIMARY_PROVIDER": "anthropic",
+            "VIVENTIUM_SECONDARY_PROVIDER": "openai",
+            "VIVENTIUM_MEMORY_HARDENING_PROVIDER": "anthropic",
+            "VIVENTIUM_MEMORY_HARDENING_MODEL": "claude-opus-5",
+            "VIVENTIUM_MEMORY_HARDENING_EFFORT": "xhigh",
+            "VIVENTIUM_MEMORY_HARDENING_OPENAI_MODEL": "gpt-5.6-luna",
+            "VIVENTIUM_MEMORY_HARDENING_OPENAI_REASONING_EFFORT": "medium",
+            "VIVENTIUM_MEMORY_HARDENING_DRY_RUN_FIRST": "false",
+        },
+    ) == 0
+
+    candidates = json.loads(candidate_path.read_text(encoding="utf-8"))
+    assert [(candidate["provider"], candidate["model"]) for candidate in candidates] == [
+        ("openai", "gpt-5.6-luna")
+    ]
+    [receipt_path] = list(memory_harden.trigger_events_dir(app_support_dir).glob("*.json"))
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    assert (
+        receipt["requested_provider"],
+        receipt["requested_model"],
+        receipt["requested_effort"],
+    ) == ("openai", "gpt-5.6-luna", "medium")
+    assert receipt["fallback_used"] is False
+
+
 def test_memory_hardening_wrapper_uses_provider_specific_model_for_override() -> None:
     class Args:
         repo_root = ROOT
@@ -1527,6 +2213,8 @@ def test_ingest_transcripts_until_caught_up_exits_partial_on_max_batches(monkeyp
     assert "max_batches_reached" in capsys.readouterr().out
 
 
+
+
 def test_memory_hardening_schedule_runs_wrapper_directly_without_cli_lock(tmp_path, monkeypatch) -> None:
     plist_path = tmp_path / "ai.viventium.memory-harden.plist"
     app_support_dir = tmp_path / "app-support"
@@ -1563,6 +2251,7 @@ def test_memory_hardening_schedule_runs_wrapper_directly_without_cli_lock(tmp_pa
         return Completed()
 
     monkeypatch.setattr(memory_harden, "launch_agent_path", lambda: plist_path)
+    monkeypatch.setattr(memory_harden, "canonical_app_support_dir", lambda: app_support_dir)
     monkeypatch.setattr(memory_harden.subprocess, "run", fake_run)
     monkeypatch.setattr(memory_harden.sys, "platform", "darwin")
 
@@ -1595,6 +2284,8 @@ def test_memory_hardening_schedule_runs_wrapper_directly_without_cli_lock(tmp_pa
     assert any("/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin" in item for item in program_arguments)
     assert "bin/viventium" not in " ".join(program_arguments)
     assert str(ROOT / "scripts" / "viventium" / "memory_harden.py") in program_arguments
+    assert str(Path(sys.executable).resolve()) in program_arguments
+    assert "python3" not in program_arguments
     assert "--runtime-dir" in program_arguments
     assert program_arguments[program_arguments.index("--user-email") + 1] == "qa@example.com"
     assert program_arguments[-6:] == [
@@ -1675,6 +2366,7 @@ def test_memory_hardening_schedule_repairs_drift_once_and_verifies_reload(tmp_pa
         return Completed()
 
     monkeypatch.setattr(memory_harden, "launch_agent_path", lambda: plist_path)
+    monkeypatch.setattr(memory_harden, "canonical_app_support_dir", lambda: app_support_dir)
     monkeypatch.setattr(memory_harden.subprocess, "run", fake_run)
     monkeypatch.setattr(memory_harden.sys, "platform", "darwin")
 
@@ -1723,6 +2415,7 @@ def test_memory_hardening_schedule_bootstraps_matching_unloaded_agent_without_bo
         return Completed()
 
     monkeypatch.setattr(memory_harden, "launch_agent_path", lambda: plist_path)
+    monkeypatch.setattr(memory_harden, "canonical_app_support_dir", lambda: app_support_dir)
     monkeypatch.setattr(memory_harden.subprocess, "run", fake_run)
     monkeypatch.setattr(memory_harden.sys, "platform", "darwin")
 
@@ -1761,6 +2454,7 @@ def test_memory_hardening_schedule_records_failed_post_bootstrap_verification(
         return Completed()
 
     monkeypatch.setattr(memory_harden, "launch_agent_path", lambda: plist_path)
+    monkeypatch.setattr(memory_harden, "canonical_app_support_dir", lambda: app_support_dir)
     monkeypatch.setattr(memory_harden.subprocess, "run", fake_run)
     monkeypatch.setattr(memory_harden.sys, "platform", "darwin")
 
@@ -1967,6 +2661,7 @@ def test_memory_hardening_schedule_records_failed_bootout(tmp_path, monkeypatch)
         return Completed()
 
     monkeypatch.setattr(memory_harden, "launch_agent_path", lambda: plist_path)
+    monkeypatch.setattr(memory_harden, "canonical_app_support_dir", lambda: app_support_dir)
     monkeypatch.setattr(memory_harden.subprocess, "run", fake_run)
     monkeypatch.setattr(memory_harden.sys, "platform", "darwin")
 
@@ -2121,6 +2816,10 @@ def test_memory_hardening_scheduled_trigger_writes_public_safe_receipt(tmp_path,
     public_blob = json.dumps(payload)
     assert str(tmp_path) not in public_blob
     assert "qa@example.com" not in public_blob
+
+
+
+
 
 
 def test_memory_hardening_manual_run_does_not_write_scheduled_trigger_receipt(tmp_path, monkeypatch) -> None:

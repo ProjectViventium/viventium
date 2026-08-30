@@ -8,9 +8,9 @@ Use stable `WEBTG-NNN` IDs for web search telegram cases.
 
 | Case ID | Requirement | User Outcome | Surfaces | Automation | Last Run |
 | --- | --- | --- | --- | --- | --- |
-| `WEBTG-001` | Web search answers in Telegram/browser are grounded in fetched evidence and degrade honestly when local services are unavailable. | User-visible behavior matches source, docs, persisted state, and logs | Telegram/browser prompt, SearXNG/Firecrawl health, answer citations | `tests/release/test_local_web_search_compose.py` plus user-grade QA when visible | NOT YET RUN (cataloged 2026-05-17; next feature run required) |
-| `WEBTG-002` | Public QA evidence is sanitized and reproducible | A PR reviewer can verify the behavior without private/local data | QA report, git diff, logs summary, generated artifacts | Public-safety scan plus relevant release tests | NOT YET RUN (cataloged 2026-05-17; next feature run required) |
-| `WEBTG-003` | Telegram current-data request proves search or honest provider degradation | Telegram send/receive, stored message parts, local search backend health, hosted search backend status | Telegram user-grade QA plus web-search tests | FAIL (escaped 2026-05-18 by analogous browser/voice path; Telegram rerun pending) |
+| `WEBTG-001` | Web search answers in Telegram/browser are grounded in fetched evidence and degrade honestly when local services are unavailable. | User-visible behavior matches source, docs, persisted state, and logs | Telegram/browser prompt, SearXNG/Firecrawl health, answer citations | `tests/release/test_local_web_search_compose.py` plus user-grade QA when visible | NOT RUN (cataloged 2026-05-17; next feature run required) |
+| `WEBTG-002` | Public QA evidence is sanitized and reproducible | A PR reviewer can verify the behavior without private/local data | QA report, git diff, logs summary, generated artifacts | Public-safety scan plus relevant release tests | NOT RUN (cataloged 2026-05-17; next feature run required) |
+| `WEBTG-003` | Telegram current-data request proves search or honest provider degradation | The Telegram answer uses fetched evidence or names the actual unavailable provider state. | Telegram send/receive, stored message parts, local search backend health, hosted search backend status | Telegram user-grade QA plus web-search tests | FAIL (escaped 2026-05-18 by analogous browser/voice path; Telegram rerun pending) |
 
 ## `WEBTG-001` - Core User Flow
 
@@ -25,7 +25,7 @@ Use stable `WEBTG-NNN` IDs for web search telegram cases.
 - Forbidden result: backend logs, mocks, source inspection, or model completions are treated as full acceptance when a user-visible surface exists.
 - Evidence to capture: sanitized visible result, supporting command/test result, generated/runtime state summary, and docs/case links.
 - Automation: `tests/release/test_local_web_search_compose.py` plus any narrower feature tests discovered during implementation.
-- Last run: NOT YET RUN (cataloged 2026-05-17; not a substitute for the next real feature run).
+- Last run: NOT RUN (cataloged 2026-05-17; not a substitute for the next real feature run).
 
 ## `WEBTG-002` - Public-Safe Evidence Record
 
@@ -40,7 +40,7 @@ Use stable `WEBTG-NNN` IDs for web search telegram cases.
 - Forbidden result: a report includes private transcripts, account identifiers, raw runtime dumps, local home paths, tokens, or secret-bearing command lines.
 - Evidence to capture: public-safety scan result and link to the sanitized report.
 - Automation: public-safety pattern scan plus relevant release tests.
-- Last run: NOT YET RUN (cataloged 2026-05-17; run on each new public report).
+- Last run: NOT RUN (cataloged 2026-05-17; run on each new public report).
 
 ## Natural User Use Case Checklist
 
@@ -49,8 +49,8 @@ rows before claiming a pass when the feature behavior changes.
 
 | Use Case ID | Natural user action | Requirement / case link | Real surface to use | Supporting evidence to compare | Expected visible result | Last run |
 | --- | --- | --- | --- | --- | --- | --- |
-| `WEBTG-UC-001` | On Telegram/browser prompt, SearXNG/Firecrawl health, answer citations, verify that web search answers in Telegram/browser are grounded in fetched evidence and degrade honestly when local services are unavailable. | owning requirement for `WEBTG-001` / `WEBTG-001` | Telegram/browser prompt, SearXNG/Firecrawl health, answer citations | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to WEBTG-001. | User-visible behavior matches source, docs, persisted state, and logs | NOT YET RUN (cataloged 2026-05-18; next feature run required) |
-| `WEBTG-UC-002` | On QA report, git diff, logs summary, generated artifacts, create or review the public QA evidence record with setup/auth/config, empty-state, degraded-dependency, and privacy checks. | owning requirement for `WEBTG-002` / `WEBTG-002` | QA report, git diff, logs summary, generated artifacts | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to WEBTG-002. | The user sees an honest setup, retry, or degraded-state result for WEBTG-002; no fake success is accepted. | NOT YET RUN (cataloged 2026-05-18; next feature run required) |
+| `WEBTG-UC-001` | On Telegram/browser prompt, SearXNG/Firecrawl health, answer citations, verify that web search answers in Telegram/browser are grounded in fetched evidence and degrade honestly when local services are unavailable. | owning requirement for `WEBTG-001` / `WEBTG-001` | Telegram/browser prompt, SearXNG/Firecrawl health, answer citations | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to WEBTG-001. | User-visible behavior matches source, docs, persisted state, and logs | NOT RUN (cataloged 2026-05-18; next feature run required) |
+| `WEBTG-UC-002` | On QA report, git diff, logs summary, generated artifacts, create or review the public QA evidence record with setup/auth/config, empty-state, degraded-dependency, and privacy checks. | owning requirement for `WEBTG-002` / `WEBTG-002` | QA report, git diff, logs summary, generated artifacts | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to WEBTG-002. | The user sees an honest setup, retry, or degraded-state result for WEBTG-002; no fake success is accepted. | NOT RUN (cataloged 2026-05-18; next feature run required) |
 | `WEBTG-UC-003` | Send a synthetic Telegram prompt asking Viventium to look something up with current public information while Web Search is enabled. | `docs/requirements_and_learnings/10_Open_Source_Web_Search.md` / `WEBTG-003` | Real Telegram bot send/receive path plus linked LibreChat persistence | Telegram delivery ledger, stored message/tool-call parts, local search backend health, hosted search backend status, request logs, generated `webSearch` config | Telegram answer either uses fetched evidence or states the configured provider is unavailable/retryable without inventing facts. | FAIL (escaped 2026-05-18 by analogous browser/voice path; Telegram rerun pending) |
 
 ## `WEBTG-003` - Telegram Search Must Prove Retrieval Or Honest Provider Degradation

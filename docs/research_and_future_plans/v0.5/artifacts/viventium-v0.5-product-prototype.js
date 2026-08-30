@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const PERSISTENCE_SLOT = "viventium-v05-living-mind-r3";
+  const STORE_KEY = "viventium-v05-living-mind-r3";
   const BRAND = "assets/brands/";
   const $ = (selector, root = document) => root.querySelector(selector);
   const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -133,7 +133,7 @@
 
   function loadState() {
     try {
-      const stored = JSON.parse(localStorage.getItem(PERSISTENCE_SLOT) || "{}");
+      const stored = JSON.parse(localStorage.getItem(STORE_KEY) || "{}");
       const typedReactions = Array.isArray(stored.reactions) && stored.reactions.every((entry) => entry.timestamp && entry.band && entry.direction && entry.strength && entry.cause && entry.sourceType);
       return { ...structuredClone(defaults), ...stored, reactions: typedReactions ? stored.reactions : structuredClone(sampleReactions), presence: { ...defaults.presence, ...(stored.presence || {}) }, sourceAccounts: { ...structuredClone(defaults.sourceAccounts), ...(stored.sourceAccounts || {}) }, feelings: Object.fromEntries(bands.map((band) => { const savedFeeling = (stored.feelings || {})[band.id] || {}; return [band.id, { ...defaults.feelings[band.id], ...savedFeeling, additions: { ...defaults.feelings[band.id].additions, ...(savedFeeling.additions || {}) } }]; })) };
     } catch { return structuredClone(defaults); }
@@ -143,7 +143,7 @@
   let toastTimer;
   let discoveryTimers = [];
   let activeSource = null;
-  const persist = () => { try { localStorage.setItem(PERSISTENCE_SLOT, JSON.stringify(state)); } catch { /* local prototype */ } };
+  const persist = () => { try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch { /* local prototype */ } };
   const allSources = () => [...aiSources, ...workerSources, ...reachSources, ...lifeSources];
   function syncSourceAccounts() { allSources().forEach((source) => { source.accounts = structuredClone(state.sourceAccounts[source.id] || []); }); }
   function saveSourceAccounts(source) { state.sourceAccounts[source.id] = structuredClone(source.accounts); }

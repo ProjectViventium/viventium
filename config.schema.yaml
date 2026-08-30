@@ -72,17 +72,6 @@ properties:
             type: integer
           auto_worker_profile:
             type: boolean
-      scheduled_agent:
-        type: object
-        properties:
-          provider:
-            type: string
-            enum: [openai]
-          model:
-            type: string
-          reasoning_effort:
-            type: string
-            enum: [xhigh]
       prompt_workbench:
         type: object
         properties:
@@ -235,6 +224,8 @@ properties:
                 enum: [detailed_summary_only, raw_and_summary, raw_only]
       background_followup_window_s:
         type: number
+        minimum: 0
+        maximum: 86400
       background_activation:
         type: object
         description: Bounded per-provider attempt budgets inside the shared and late activation-detection windows.
@@ -249,6 +240,14 @@ properties:
             minimum: 100
             maximum: 30000
             default: 2500
+          execution_timeout_s:
+            description: Optional total runtime cap for one background-cortex provider attempt. Omit or set null for no automatic execution deadline; provider fallback remains governed by provider health and the cortex's own terminal result.
+            default: null
+            oneOf:
+              - type: integer
+                minimum: 1
+                maximum: 86400
+              - type: 'null'
       glasshive_followup_timeout_s:
         type: number
         description: Seconds that Web, Telegram, and Voice should keep listening for GlassHive worker callbacks after the main response returns.
@@ -343,7 +342,7 @@ properties:
         type: object
       memory:
         type: object
-        description: Optional saved-memory writer route. It must use an authenticated configured foundation provider and affects only memory.agent.
+        description: Optional saved-memory writer route and explicitly authorized fallback. Each route must use an authenticated configured foundation provider and affects only memory.agent.
         required:
           - provider
           - model
@@ -355,6 +354,20 @@ properties:
           model:
             type: string
             minLength: 1
+          fallback:
+            type: object
+            description: Optional saved-memory-only fallback. Omission does not authorize automatic provider fallback.
+            required:
+              - provider
+              - model
+            additionalProperties: false
+            properties:
+              provider:
+                type: string
+                enum: [openai, anthropic]
+              model:
+                type: string
+                minLength: 1
       extra_provider_keys:
         type: object
   voice:
@@ -580,6 +593,72 @@ properties:
                     items:
                       type: string
                 description: Absolute server-side roots within which custom working folders may be selected; a leading ~ is supported.
+          orchestration:
+            type: object
+            description: Dark-by-default Parallel work availability, isolated Docker admission, resource, and snapshot limits. Requested availability still fails closed until GlassHive reports isolation-ready with no active host mission.
+            properties:
+              available:
+                type: boolean
+                default: false
+              default_mode:
+                type: string
+                enum: [focused, parallel]
+                default: focused
+              conversation_slots_per_cli:
+                type: integer
+                minimum: 1
+                default: 2
+              mission_slots_per_cli:
+                type: integer
+                minimum: 1
+                default: 3
+              account_active_limit:
+                type: integer
+                minimum: 1
+                default: 4
+              tenant_active_limit:
+                type: integer
+                minimum: 1
+                default: 12
+              max_child_processes:
+                type: integer
+                minimum: 1
+                default: 64
+              max_threads:
+                type: integer
+                minimum: 1
+                default: 2048
+              min_available_memory_mb:
+                type: integer
+                minimum: 1
+                default: 2048
+              min_available_disk_mb:
+                type: integer
+                minimum: 1
+                default: 4096
+              storage_pressure_critical_percent:
+                type: number
+                minimum: 50
+                maximum: 99.9
+                default: 90
+              storage_pressure_warning_margin_percent:
+                type: number
+                minimum: 1
+                maximum: 25
+                default: 10
+              snapshot_cache_ms:
+                type: integer
+                minimum: 1
+                default: 2000
+              snapshot_cold_timeout_ms:
+                type: integer
+                minimum: 1
+                default: 100
+              authorization_horizon_seconds:
+                type: integer
+                minimum: 60
+                maximum: 86400
+                default: 86400
           host_worker:
             type: object
             properties:
@@ -628,6 +707,10 @@ properties:
                 description: Project-instruction policy for Codex conversation workers. Viventium defaults to inherit so the harness runs in the exact chosen folder and honors its canonical AGENTS.md; exclude is an explicit opt-out for deployments that prohibit workspace instructions.
                 enum: [inherit, exclude]
                 default: inherit
+              codex_app_server_qa_enabled:
+                type: boolean
+                description: Opt-in QA probe only. Production GlassHive conversation transport remains codex exec.
+                default: false
               codex_plugin_cache:
                 type: string
               codex_ignore_user_config:

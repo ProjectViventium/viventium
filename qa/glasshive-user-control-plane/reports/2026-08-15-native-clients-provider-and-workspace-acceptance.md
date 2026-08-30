@@ -96,7 +96,7 @@ personal-account route stayed isolated and functional in the same installed rele
   after this committed acceptance.
 - A real sourced Library package install/upgrade/rollback used by a worker.
 
-Those remain PARTIAL or PENDING in the living coverage matrix and are not implied by this PASS.
+Those remain PARTIAL or NOT RUN in the living coverage matrix and are not implied by this PASS.
 
 ## Operational follow-up before another rollout
 

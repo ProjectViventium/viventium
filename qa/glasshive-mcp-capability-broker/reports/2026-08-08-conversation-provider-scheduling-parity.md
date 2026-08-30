@@ -1,3 +1,4 @@
+<!-- qa-evidence-exempt: Historical evidence snapshot retained verbatim; retroactive v2 fields would invent evidence that was not captured during the run. -->
 # Conversation-Provider Scheduling Parity RCA And QA
 
 Date: 2026-08-08
@@ -127,4 +128,3 @@ defect in the final extraction.
 The fix is active in the local installed runtime for QA. No public commit, push, pull request, cloud
 deployment, or live Agent sync was performed. Nested LibreChat changes still require their own review,
 commit, component pin/update, and shipped-artifact verification before any release claim.
-<!-- qa-evidence-exempt: Historical or specialized supporting artifact retained without retroactively inventing missing evidence; current release acceptance requires a fresh full-view report. -->

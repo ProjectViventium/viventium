@@ -112,7 +112,7 @@ async function runViewport(browser, url, viewport) {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
-  const browser = await chromium.launch({ headless: true });
+  const browser = await chromium.launch({ channel: 'chrome', headless: true });
   const results = [];
   try {
     for (const viewport of args.viewports) {

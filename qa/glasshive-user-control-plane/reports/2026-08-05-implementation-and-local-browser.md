@@ -28,7 +28,7 @@ partial.
 `feature -> requirement -> use case -> QA case -> expected result -> actual evidence -> remaining gap`
 
 - Feature: GlassHive individual-user control plane and persistent workspaces.
-- Requirement: requirement 55.
+- Requirement: requirement 57.
 - Use case: a signed-in user creates, keeps, finds, resumes, duplicates, connects, and schedules private work.
 - QA case: GHUCP-001 through GHUCP-029.
 - Expected result: user-visible state is owner scoped, clear, persistent, resumable, and honest about unavailable external prerequisites.
@@ -39,9 +39,9 @@ partial.
 
 | Evidence surface | Result / sanitized pointer |
 | --- | --- |
-| Requirement and use case | Requirement 55 and the GHUCP case catalog. |
+| Requirement and use case | Requirement 57 and the GHUCP case catalog. |
 | Code owning path | Glass Drive UI, GlassHive runtime, MCP resource, scheduler bridge, and LibreChat capability owner. |
-| Docs and nested docs/repos | Requirement 55, parent architecture/system maps, and nested GlassHive/LibreChat source docs. |
+| Docs and nested docs/repos | Requirement 57, parent architecture/system maps, and nested GlassHive/LibreChat source docs. |
 | Scripts or harnesses | Playwright browser harness plus UI, runtime, compiler, and LibreChat suites listed below. |
 | Local/external prerequisite state | Local synthetic services were available; external identity/provider/connector prerequisites were not configured. |
 | Logs | Sanitized local server and browser assertions were inspected. |

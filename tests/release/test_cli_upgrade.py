@@ -21,6 +21,9 @@ import time
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+DETACHED_COMMAND_CONTRACT = (
+    REPO_ROOT / "scripts/viventium/runtime_owner_command_contract.json"
+)
 LAST_SHIPPED_PARENT_WITHOUT_MANAGED_MIGRATION_HANDOFF = (
     "70569c4e1ab4d5ee0931d7eb03083814ff90171f"
 )
@@ -34,7 +37,14 @@ def write_executable(path: Path, content: str) -> None:
 
 def copy_cli_fixture(repo_root: Path) -> None:
     shutil.copy2(REPO_ROOT / "bin" / "viventium", repo_root / "bin" / "viventium")
+    (repo_root / "components.lock.json").write_text(
+        '{"version": 1, "components": []}\n', encoding="utf-8"
+    )
     (repo_root / "scripts" / "viventium").mkdir(parents=True, exist_ok=True)
+    shutil.copy2(
+        DETACHED_COMMAND_CONTRACT,
+        repo_root / "scripts/viventium/runtime_owner_command_contract.json",
+    )
     shutil.copy2(
         REPO_ROOT / "scripts" / "viventium" / "upgrade_transaction.py",
         repo_root / "scripts" / "viventium" / "upgrade_transaction.py",
@@ -200,6 +210,1023 @@ def test_compile_config_keeps_compile_phase_for_compiler_process() -> None:
     unset_index = function_def.index("unset VIVENTIUM_LIBRECHAT_SOURCE_PHASE")
 
     assert export_index < prepare_index < compiler_index < unset_index
+
+
+def test_release_identity_never_uses_repo_root_without_canonical_owner_state() -> None:
+    cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
+    compile_function = extract_shell_function(cli_source, "compile_config")
+    release_section = cli_source.rsplit("  release-check)", 1)[1].split("  status)", 1)[0]
+
+    assert "resolve_release_installed_root() {" in cli_source
+    assert 'installed_root="$(resolve_release_installed_root 2>/dev/null || true)"' in (
+        compile_function
+    )
+    assert 'installed_root="$(resolve_release_installed_root 2>/dev/null || true)"' in (
+        release_section
+    )
+    assert '--installed-root "$REPO_ROOT"' not in compile_function
+    assert '--installed-root "$REPO_ROOT"' not in release_section
+
+
+def test_release_installed_root_resolves_from_live_owner_state(tmp_path: Path) -> None:
+    cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
+    function_def = extract_shell_function(cli_source, "resolve_release_installed_root")
+    app_support = tmp_path / "app-support"
+    owner_repo = tmp_path / "owner-repo"
+    active_repo = tmp_path / "selected-repo"
+    owner_file = app_support / "state/runtime/isolated/stack-owner.json"
+    helper_file = app_support / "helper-config.json"
+    for path in (app_support, owner_repo, active_repo):
+        path.mkdir(parents=True, exist_ok=True)
+
+    completed = subprocess.run(
+        [
+            "bash",
+            "-c",
+            f"""
+set -euo pipefail
+APP_SUPPORT_DIR={json.dumps(str(app_support))}
+OWNER_FILE={json.dumps(str(owner_file))}
+OWNER_REPO={json.dumps(str(owner_repo))}
+ACTIVE_REPO={json.dumps(str(active_repo))}
+HELPER_FILE={json.dumps(str(helper_file))}
+stack_owner_state_file() {{ printf '%s\n' "$OWNER_FILE"; }}
+helper_config_file() {{ printf '%s\n' "$HELPER_FILE"; }}
+json_string_field() {{
+  if [[ "$1" == "$OWNER_FILE" && "$2" == "repoRoot" ]]; then printf '%s\n' "$OWNER_REPO"; return 0; fi
+  if [[ "$1" == "$OWNER_FILE" && "$2" == "appSupportDir" ]]; then printf '%s\n' "$APP_SUPPORT_DIR"; return 0; fi
+  if [[ "$1" == "$OWNER_FILE" && "$2" == "command" ]]; then printf '%s\n' start; return 0; fi
+  return 1
+}}
+active_runtime_checkout_repo_root() {{ printf '%s\n' "$ACTIVE_REPO"; }}
+path_is_viventium_runtime_repo_root() {{ [[ -d "$1" ]]; }}
+canonicalize_existing_dir() {{ (cd "$1" && pwd -P); }}
+runtime_owner_process_matches_state() {{ return 0; }}
+{function_def}
+resolve_release_installed_root
+""",
+        ],
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+    assert completed.stdout.strip() == str(owner_repo.resolve())
+
+
+def test_release_installed_root_rejects_stale_owner_without_live_process(
+    tmp_path: Path,
+) -> None:
+    cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
+    function_def = extract_shell_function(cli_source, "resolve_release_installed_root")
+    app_support = tmp_path / "app-support"
+    owner_repo = tmp_path / "owner-repo"
+    app_support.mkdir()
+    owner_repo.mkdir()
+
+    completed = subprocess.run(
+        [
+            "bash",
+            "-c",
+            f"""
+set -uo pipefail
+APP_SUPPORT_DIR={json.dumps(str(app_support))}
+stack_owner_state_file() {{ printf '%s\n' /tmp/stale-owner.json; }}
+json_string_field() {{
+  case "$2" in
+    repoRoot) printf '%s\n' {json.dumps(str(owner_repo))} ;;
+    appSupportDir) printf '%s\n' "$APP_SUPPORT_DIR" ;;
+    command) printf '%s\n' start ;;
+  esac
+}}
+path_is_viventium_runtime_repo_root() {{ [[ -d "$1" ]]; }}
+canonicalize_existing_dir() {{ (cd "$1" && pwd -P); }}
+runtime_owner_process_matches_state() {{ return 1; }}
+{function_def}
+resolve_release_installed_root
+""",
+        ],
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+
+    assert completed.returncode == 1
+    assert completed.stdout == ""
+
+
+def test_runtime_owner_match_rejects_live_python_process_with_viventium_bait_argument(
+    tmp_path: Path,
+) -> None:
+    cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
+    function_def = extract_shell_function(cli_source, "runtime_owner_process_matches_state")
+    app_support = tmp_path / "app-support"
+    owner_repo = tmp_path / "arbitrary-clone"
+    owner_file = app_support / "state/runtime/isolated/stack-owner.json"
+    executable = owner_repo / "bin/viventium"
+    write_executable(executable, "#!/bin/sh\nsleep 120\n")
+    owner_file.parent.mkdir(parents=True)
+    (app_support / "runtime").mkdir(parents=True)
+    process = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(120)", str(executable)],
+        cwd=owner_repo,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        started_at = " ".join(
+            subprocess.run(
+                ["ps", "-p", str(process.pid), "-o", "lstart="],
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.split()
+        )
+        command = " ".join(
+            subprocess.run(
+                ["ps", "-p", str(process.pid), "-o", "command="],
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.split()
+        )
+        payload = {
+            "contractVersion": 1,
+            "repoRoot": str(owner_repo.resolve()),
+            "appSupportDir": str(app_support.resolve()),
+            "runtimeDir": str((app_support / "runtime").resolve()),
+            "runtimeProfile": "isolated",
+            "command": "start",
+            "ownerPid": str(process.pid),
+            "ownerExecutablePath": str(executable.resolve()),
+            "ownerProcessCwd": str(owner_repo.resolve()),
+            "ownerProcessStartedAt": started_at,
+            "ownerProcessCommand": command,
+        }
+        payload["ownerBindingSha256"] = hashlib.sha256(
+            json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        owner_file.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+        owner_file.chmod(0o600)
+
+        completed = subprocess.run(
+            [
+                "bash",
+                "-c",
+                f"""
+set -uo pipefail
+PYTHON_BIN={json.dumps(sys.executable)}
+json_string_field() {{
+  "$PYTHON_BIN" -c 'import json,sys; print(json.load(open(sys.argv[1]))[sys.argv[2]])' "$1" "$2"
+}}
+{function_def}
+runtime_owner_process_matches_state {json.dumps(str(owner_file))}
+""",
+            ],
+            check=False,
+            text=True,
+            capture_output=True,
+        )
+    finally:
+        process.terminate()
+        process.wait(timeout=10)
+
+    assert completed.returncode == 1
+
+
+def test_runtime_owner_match_accepts_exact_live_viventium_script_and_signed_state(
+    tmp_path: Path,
+) -> None:
+    cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
+    function_def = extract_shell_function(cli_source, "runtime_owner_process_matches_state")
+    app_support = tmp_path / "app-support"
+    owner_repo = tmp_path / "active installed root"
+    owner_file = app_support / "state/runtime/isolated/stack-owner.json"
+    executable = owner_repo / "bin/viventium"
+    write_executable(executable, "#!/bin/sh\nsleep 120\n")
+    owner_file.parent.mkdir(parents=True)
+    (app_support / "runtime").mkdir(parents=True)
+    config_file = app_support / "config.yaml"
+    config_file.write_text("version: 1\n", encoding="utf-8")
+    components_lock_file = owner_repo / "components.lock.json"
+    components_lock_file.write_text('{"version": 1, "components": []}\n', encoding="utf-8")
+    installed_contract = owner_repo / "scripts/viventium/runtime_owner_command_contract.json"
+    installed_contract.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(DETACHED_COMMAND_CONTRACT, installed_contract)
+    shutil.copy2(
+        REPO_ROOT / "scripts/viventium/parallel_work_release_gate.py",
+        owner_repo / "scripts/viventium/parallel_work_release_gate.py",
+    )
+    contract = json.loads(DETACHED_COMMAND_CONTRACT.read_text(encoding="utf-8"))
+    values = {
+        "ownerExecutablePath": str(executable.resolve()),
+        "appSupportDir": str(app_support.resolve()),
+        "configFile": str(config_file.resolve()),
+        "runtimeDir": str((app_support / "runtime").resolve()),
+        "componentsLockFile": str(components_lock_file.resolve()),
+    }
+    owner_argv = [
+        str(token).format(**values)
+        for token in contract["detached"]["argvTemplate"]
+    ]
+    process = subprocess.Popen(
+        owner_argv,
+        cwd=owner_repo.resolve(),
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        started_at = " ".join(
+            subprocess.run(
+                ["ps", "-p", str(process.pid), "-o", "lstart="],
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.split()
+        )
+        command = " ".join(
+            subprocess.run(
+                ["ps", "-p", str(process.pid), "-o", "command="],
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.split()
+        )
+        payload = {
+            "contractVersion": 1,
+            "repoRoot": str(owner_repo.resolve()),
+            "appSupportDir": str(app_support.resolve()),
+            "configFile": str(config_file.resolve()),
+            "runtimeDir": str((app_support / "runtime").resolve()),
+            "componentsLockFile": str(components_lock_file.resolve()),
+            "runtimeProfile": "isolated",
+            "command": "start",
+            "ownerLaunchMode": "detached",
+            "ownerPid": str(process.pid),
+            "ownerExecutablePath": str(executable.resolve()),
+            "ownerProcessCwd": str(owner_repo.resolve()),
+            "ownerProcessStartedAt": started_at,
+            "ownerProcessCommand": command,
+        }
+        payload["ownerBindingSha256"] = hashlib.sha256(
+            json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        owner_file.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+        owner_file.chmod(0o600)
+
+        completed = subprocess.run(
+            [
+                "bash",
+                "-c",
+                f"""
+set -uo pipefail
+PYTHON_BIN={json.dumps(sys.executable)}
+json_string_field() {{
+  "$PYTHON_BIN" -c 'import json,sys; print(json.load(open(sys.argv[1]))[sys.argv[2]])' "$1" "$2"
+}}
+{function_def}
+runtime_owner_process_matches_state {json.dumps(str(owner_file))}
+""",
+            ],
+            check=False,
+            text=True,
+            capture_output=True,
+        )
+    finally:
+        process.terminate()
+        process.wait(timeout=10)
+
+    assert completed.returncode == 0, completed.stderr
+
+
+def test_stack_owner_state_writer_is_atomic_durable_and_private() -> None:
+    cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
+    function_def = extract_shell_function(cli_source, "write_stack_owner_state")
+
+    assert "tempfile.NamedTemporaryFile" in function_def
+    assert "os.fchmod" in function_def
+    assert "os.fsync" in function_def
+    assert "os.replace" in function_def
+    assert "0o600" in function_def
+
+
+def test_stack_owner_transition_restores_prior_live_owner_without_clobbering_successor(
+    tmp_path: Path,
+) -> None:
+    cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
+    capture_function = extract_shell_function(
+        cli_source, "capture_stack_owner_state_for_transition"
+    )
+    reconcile_function = extract_shell_function(
+        cli_source, "reconcile_stack_owner_state_on_exit"
+    )
+    owner_file = tmp_path / "stack-owner.json"
+    owner_file.write_text(
+        json.dumps({"ownerPid": "111", "marker": "prior"}) + "\n",
+        encoding="utf-8",
+    )
+
+    completed = subprocess.run(
+        [
+            "bash",
+            "-c",
+            f"""
+set -euo pipefail
+PYTHON_BIN={json.dumps(sys.executable)}
+OWNER_FILE={json.dumps(str(owner_file))}
+stack_owner_state_file() {{ printf '%s\\n' "$OWNER_FILE"; }}
+runtime_owner_process_matches_state() {{
+  [[ "$1" == "$STACK_OWNER_PREVIOUS_STATE_FILE" ]]
+}}
+json_string_field() {{
+  {json.dumps(sys.executable)} - "$1" "$2" <<'PY'
+import json
+import sys
+print(json.load(open(sys.argv[1], encoding="utf-8")).get(sys.argv[2], ""))
+PY
+}}
+{capture_function}
+{reconcile_function}
+capture_stack_owner_state_for_transition
+printf '{{"ownerPid":"%s","marker":"transient"}}\\n' "$$" >"$OWNER_FILE"
+STACK_OWNER_TRANSITION_ACTIVE=1
+reconcile_stack_owner_state_on_exit
+{json.dumps(sys.executable)} - "$OWNER_FILE" <<'PY'
+import json
+import sys
+payload = json.load(open(sys.argv[1], encoding="utf-8"))
+assert payload == {{"ownerPid": "111", "marker": "prior"}}, payload
+PY
+[[ ! -e "$STACK_OWNER_PREVIOUS_STATE_FILE" ]]
+
+capture_stack_owner_state_for_transition
+printf '{{"ownerPid":"999","marker":"successor"}}\\n' >"$OWNER_FILE"
+STACK_OWNER_TRANSITION_ACTIVE=1
+reconcile_stack_owner_state_on_exit
+{json.dumps(sys.executable)} - "$OWNER_FILE" <<'PY'
+import json
+import sys
+payload = json.load(open(sys.argv[1], encoding="utf-8"))
+assert payload == {{"ownerPid": "999", "marker": "successor"}}, payload
+PY
+[[ ! -e "$STACK_OWNER_PREVIOUS_STATE_FILE" ]]
+""",
+        ],
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+
+
+def test_stack_owner_transition_removes_failed_owner_without_prior_state(
+    tmp_path: Path,
+) -> None:
+    cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
+    capture_function = extract_shell_function(
+        cli_source, "capture_stack_owner_state_for_transition"
+    )
+    reconcile_function = extract_shell_function(
+        cli_source, "reconcile_stack_owner_state_on_exit"
+    )
+    owner_file = tmp_path / "stack-owner.json"
+
+    completed = subprocess.run(
+        [
+            "bash",
+            "-c",
+            f"""
+set -euo pipefail
+PYTHON_BIN={json.dumps(sys.executable)}
+OWNER_FILE={json.dumps(str(owner_file))}
+stack_owner_state_file() {{ printf '%s\\n' "$OWNER_FILE"; }}
+runtime_owner_process_matches_state() {{ return 1; }}
+json_string_field() {{
+  {json.dumps(sys.executable)} - "$1" "$2" <<'PY'
+import json
+import sys
+print(json.load(open(sys.argv[1], encoding="utf-8")).get(sys.argv[2], ""))
+PY
+}}
+{capture_function}
+{reconcile_function}
+capture_stack_owner_state_for_transition
+printf '{{"ownerPid":"%s","marker":"failed"}}\\n' "$$" >"$OWNER_FILE"
+STACK_OWNER_TRANSITION_ACTIVE=1
+reconcile_stack_owner_state_on_exit
+[[ ! -e "$OWNER_FILE" ]]
+[[ ! -e "$STACK_OWNER_PREVIOUS_STATE_FILE" ]]
+""",
+        ],
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+
+
+def test_detached_launcher_rejects_altered_shared_command_contract(
+    tmp_path: Path,
+) -> None:
+    cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
+    function_def = extract_shell_function(cli_source, "launch_stack_detached")
+    repo = tmp_path / "installed"
+    app_support = tmp_path / "app-support"
+    runtime = app_support / "runtime"
+    marker = tmp_path / "launched"
+    executable = repo / "bin/viventium"
+    write_executable(executable, f"#!/bin/sh\ntouch {shlex.quote(str(marker))}\n")
+    contract_path = repo / "scripts/viventium/runtime_owner_command_contract.json"
+    contract_path.parent.mkdir(parents=True, exist_ok=True)
+    altered = json.loads(DETACHED_COMMAND_CONTRACT.read_text(encoding="utf-8"))
+    altered["detached"]["argvTemplate"] = ["/bin/sleep"]
+    contract_path.write_text(json.dumps(altered) + "\n", encoding="utf-8")
+    runtime.mkdir(parents=True)
+    config = app_support / "config.yaml"
+    config.write_text("version: 1\n", encoding="utf-8")
+    lock = repo / "components.lock.json"
+    lock.write_text('{"version": 1, "components": []}\n', encoding="utf-8")
+    completed = subprocess.run(
+        [
+            "bash",
+            "-c",
+            f"""
+set -uo pipefail
+PYTHON_BIN={json.dumps(sys.executable)}
+REPO_ROOT={json.dumps(str(repo))}
+APP_SUPPORT_DIR={json.dumps(str(app_support))}
+CONFIG_FILE={json.dumps(str(config))}
+RUNTIME_DIR={json.dumps(str(runtime))}
+LOCK_FILE={json.dumps(str(lock))}
+DETACHED_START_PID=''
+ensure_app_support_layout() {{ :; }}
+initialize_telegram_user_config_authority() {{ return 0; }}
+user_surface_healthy() {{ return 1; }}
+runtime_optional_surfaces_healthy() {{ return 1; }}
+detached_launch_process_group_running() {{ return 1; }}
+runtime_start_claim_active() {{ return 1; }}
+is_stack_running() {{ return 1; }}
+capture_detached_start_log_offset() {{ :; }}
+stop_stack_for_upgrade() {{ :; }}
+{function_def}
+launch_stack_detached
+""",
+        ],
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+
+    assert completed.returncode != 0
+    assert "Unsupported runtime owner command contract" in completed.stderr
+    assert not marker.exists()
+
+
+def test_detached_launcher_accepts_the_current_complete_shared_command_contract(
+    tmp_path: Path,
+) -> None:
+    cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
+    function_def = extract_shell_function(cli_source, "launch_stack_detached")
+    repo = tmp_path / "installed"
+    app_support = tmp_path / "app-support"
+    runtime = app_support / "runtime"
+    marker = tmp_path / "launched"
+    executable = repo / "bin/viventium"
+    write_executable(executable, f"#!/bin/sh\ntouch {shlex.quote(str(marker))}\n")
+    contract_path = repo / "scripts/viventium/runtime_owner_command_contract.json"
+    contract_path.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(DETACHED_COMMAND_CONTRACT, contract_path)
+    runtime.mkdir(parents=True)
+    config = app_support / "config.yaml"
+    config.write_text("version: 1\n", encoding="utf-8")
+    lock = repo / "components.lock.json"
+    lock.write_text('{"version": 1, "components": []}\n', encoding="utf-8")
+    completed = subprocess.run(
+        [
+            "bash",
+            "-c",
+            f"""
+set -uo pipefail
+PYTHON_BIN={json.dumps(sys.executable)}
+REPO_ROOT={json.dumps(str(repo))}
+APP_SUPPORT_DIR={json.dumps(str(app_support))}
+CONFIG_FILE={json.dumps(str(config))}
+RUNTIME_DIR={json.dumps(str(runtime))}
+LOCK_FILE={json.dumps(str(lock))}
+DETACHED_START_PID=''
+ensure_app_support_layout() {{ :; }}
+initialize_telegram_user_config_authority() {{ return 0; }}
+user_surface_healthy() {{ return 1; }}
+runtime_optional_surfaces_healthy() {{ return 1; }}
+detached_launch_process_group_running() {{ return 1; }}
+runtime_start_claim_active() {{ return 1; }}
+is_stack_running() {{ return 1; }}
+capture_detached_start_log_offset() {{ :; }}
+stop_stack_for_upgrade() {{ :; }}
+{function_def}
+launch_stack_detached
+""",
+        ],
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    deadline = time.monotonic() + 2
+    while not marker.exists() and time.monotonic() < deadline:
+        time.sleep(0.02)
+    assert marker.exists()
+
+
+def test_detached_launcher_rejects_untyped_trailing_arguments(tmp_path: Path) -> None:
+    cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
+    function_def = extract_shell_function(cli_source, "launch_stack_detached")
+    repo = tmp_path / "installed"
+    app_support = tmp_path / "app-support"
+    runtime = app_support / "runtime"
+    marker = tmp_path / "launched"
+    executable = repo / "bin/viventium"
+    write_executable(
+        executable,
+        f"#!/bin/sh\nprintf launched > {shlex.quote(str(marker))}\n",
+    )
+    contract_path = repo / "scripts/viventium/runtime_owner_command_contract.json"
+    contract_path.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(DETACHED_COMMAND_CONTRACT, contract_path)
+    runtime.mkdir(parents=True)
+    config = app_support / "config.yaml"
+    config.write_text("version: 1\n", encoding="utf-8")
+    lock = repo / "components.lock.json"
+    lock.write_text('{"version": 1, "components": []}\n', encoding="utf-8")
+    completed = subprocess.run(
+        [
+            "bash",
+            "-c",
+            f"""
+set -uo pipefail
+PYTHON_BIN={json.dumps(sys.executable)}
+REPO_ROOT={json.dumps(str(repo))}
+APP_SUPPORT_DIR={json.dumps(str(app_support))}
+CONFIG_FILE={json.dumps(str(config))}
+RUNTIME_DIR={json.dumps(str(runtime))}
+LOCK_FILE={json.dumps(str(lock))}
+DETACHED_START_PID=''
+user_surface_healthy() {{ return 1; }}
+runtime_optional_surfaces_healthy() {{ return 1; }}
+detached_launch_process_group_running() {{ return 1; }}
+runtime_start_claim_active() {{ return 1; }}
+is_stack_running() {{ return 1; }}
+capture_detached_start_log_offset() {{ :; }}
+stop_stack_for_upgrade() {{ :; }}
+{function_def}
+launch_stack_detached --forged-flag
+""",
+        ],
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+
+    assert completed.returncode != 0
+    assert not marker.exists()
+
+
+def test_concurrent_stack_owner_writers_never_publish_partial_json(
+    tmp_path: Path,
+) -> None:
+    cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
+    function_def = extract_shell_function(cli_source, "write_stack_owner_state")
+    repo = tmp_path / "installed"
+    app_support = tmp_path / "app-support"
+    runtime = app_support / "runtime"
+    owner_file = app_support / "state/runtime/isolated/stack-owner.json"
+    executable = repo / "bin/viventium"
+    write_executable(executable, "#!/bin/sh\nexit 0\n")
+    runtime.mkdir(parents=True)
+    config = app_support / "config.yaml"
+    config.write_text("version: 1\n", encoding="utf-8")
+    lock = repo / "components.lock.json"
+    lock.write_text('{"version": 1, "components": []}\n', encoding="utf-8")
+    script = f"""
+set -euo pipefail
+PYTHON_BIN={json.dumps(sys.executable)}
+REPO_ROOT={json.dumps(str(repo))}
+APP_SUPPORT_DIR={json.dumps(str(app_support))}
+CONFIG_FILE={json.dumps(str(config))}
+RUNTIME_DIR={json.dumps(str(runtime))}
+LOCK_FILE={json.dumps(str(lock))}
+VIVENTIUM_RUNTIME_PROFILE=isolated
+stack_owner_state_file() {{ printf '%s\\n' {json.dumps(str(owner_file))}; }}
+value_is_true() {{ return 1; }}
+{function_def}
+write_stack_owner_state start
+"""
+    subprocess.run(["bash", "-c", script], check=True)
+    writers = [subprocess.Popen(["bash", "-c", script]) for _ in range(8)]
+    while any(writer.poll() is None for writer in writers):
+        payload = json.loads(owner_file.read_text(encoding="utf-8"))
+        assert payload["ownerBindingSha256"]
+    for writer in writers:
+        assert writer.wait(timeout=10) == 0
+
+    assert owner_file.stat().st_mode & 0o777 == 0o600
+    assert not list(owner_file.parent.glob(".stack-owner.json.*.tmp"))
+    crash_partial = owner_file.parent / ".stack-owner.json.crash.tmp"
+    crash_partial.write_text('{"contractVersion":', encoding="utf-8")
+    assert json.loads(owner_file.read_text(encoding="utf-8"))["contractVersion"] == 1
+
+
+def test_release_installed_root_ignores_selected_checkout_and_helper_without_live_owner(
+    tmp_path: Path,
+) -> None:
+    cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
+    function_def = extract_shell_function(cli_source, "resolve_release_installed_root")
+    selected_repo = tmp_path / "selected"
+    helper_repo = tmp_path / "helper"
+    selected_repo.mkdir()
+    helper_repo.mkdir()
+
+    completed = subprocess.run(
+        [
+            "bash",
+            "-c",
+            f"""
+set -uo pipefail
+APP_SUPPORT_DIR=/tmp/app-support
+stack_owner_state_file() {{ printf '%s\n' /tmp/missing-owner.json; }}
+helper_config_file() {{ printf '%s\n' /tmp/helper.json; }}
+json_string_field() {{
+  if [[ "$1" == "/tmp/helper.json" && "$2" == "repoRoot" ]]; then
+    printf '%s\n' {json.dumps(str(helper_repo))}
+    return 0
+  fi
+  return 1
+}}
+active_runtime_checkout_repo_root() {{ printf '%s\n' {json.dumps(str(selected_repo))}; }}
+path_is_viventium_runtime_repo_root() {{ [[ -d "$1" ]]; }}
+canonicalize_existing_dir() {{ (cd "$1" && pwd -P); }}
+runtime_owner_process_matches_state() {{ return 1; }}
+{function_def}
+resolve_release_installed_root
+""",
+        ],
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+
+    assert completed.returncode == 1
+    assert completed.stdout == ""
+
+
+def test_release_check_rejects_caller_installed_root_bypass(tmp_path: Path) -> None:
+    cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
+    function_def = extract_shell_function(
+        cli_source, "release_installed_root_argument_allowed"
+    )
+    release_section = cli_source.rsplit("  release-check)", 1)[1].split("  status)", 1)[0]
+    active = tmp_path / "active"
+    caller = tmp_path / "caller"
+    active.mkdir()
+    caller.mkdir()
+
+    completed = subprocess.run(
+        [
+            "bash",
+            "-c",
+            f"""
+set -uo pipefail
+canonicalize_existing_dir() {{ (cd "$1" && pwd -P); }}
+{function_def}
+release_installed_root_argument_allowed {json.dumps(str(caller))} {json.dumps(str(active))}
+""",
+        ],
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+
+    assert completed.returncode == 1
+    assert "release_installed_root_argument_allowed" in release_section
+
+
+def test_release_check_rejects_caller_controlled_fact_paths() -> None:
+    cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
+    release_section = cli_source.rsplit("  release-check)", 1)[1].split("  status)", 1)[0]
+
+    assert "release-check uses canonical facts from the active runtime" in release_section
+    assert "release-check uses the canonical artifact identity from the active runtime" in (
+        release_section
+    )
+
+
+def test_release_check_local_qa_persists_canonical_pre_gate_snapshot() -> None:
+    cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
+    usage = cli_source.split("    release-check)", 1)[1].split("    snapshot)", 1)[0]
+    release_section = cli_source.rsplit("  release-check)", 1)[1].split(
+        "  status)", 1
+    )[0]
+
+    assert "--local-qa" in usage
+    assert "--local-qa" in release_section
+    assert "--mode" in release_section
+    assert "local-qa" in release_section
+    assert "--allow-local-qa-override" in release_section
+    assert '"$RUNTIME_DIR/parallel-work-release-gate.json"' in release_section
+    assert '"$RUNTIME_DIR/parallel-work-local-qa-request.json"' in release_section
+    assert '"$RUNTIME_DIR/parallel-work-qa-case-receipts.json"' in release_section
+
+
+@pytest.mark.parametrize(
+    ("requested", "expected_mode", "expected_override"),
+    [
+        (True, "local-qa", True),
+        (False, "default", False),
+    ],
+)
+def test_compile_config_preserves_explicit_local_qa_request_across_restart(
+    tmp_path: Path,
+    requested: bool,
+    expected_mode: str,
+    expected_override: bool,
+) -> None:
+    cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
+    request_reader = extract_shell_function(
+        cli_source, "parallel_work_local_qa_requested"
+    )
+    compile_function = extract_shell_function(cli_source, "compile_config")
+    repo = tmp_path / "repo"
+    runtime = tmp_path / "runtime"
+    scripts = repo / "scripts" / "viventium"
+    scripts.mkdir(parents=True)
+    runtime.mkdir()
+    request = runtime / "parallel-work-local-qa-request.json"
+    request.write_text(
+        json.dumps(
+            {
+                "contractVersion": 1,
+                "mode": "local-qa",
+                "requested": requested,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    request.chmod(0o600)
+    write_executable(
+        scripts / "config_compiler.py",
+        "#!/usr/bin/env python3\nraise SystemExit(0)\n",
+    )
+    shutil.copy2(
+        REPO_ROOT / "scripts" / "viventium" / "local_qa_runtime_control.py",
+        scripts / "local_qa_runtime_control.py",
+    )
+    write_executable(
+        scripts / "parallel_work_release_gate.py",
+        "#!/usr/bin/env python3\n"
+        "import json, os, sys\n"
+        "from pathlib import Path\n"
+        "Path(os.environ['GATE_ARGS']).write_text(json.dumps(sys.argv[1:]), encoding='utf-8')\n"
+        "output = Path(sys.argv[sys.argv.index('--output') + 1])\n"
+        "output.write_text('{}\\n', encoding='utf-8')\n"
+        "raise SystemExit(1)\n",
+    )
+    gate_args = tmp_path / "gate-args.json"
+    completed = subprocess.run(
+        [
+            "bash",
+            "-c",
+            f"""
+set -euo pipefail
+PYTHON_BIN={shlex.quote(sys.executable)}
+REPO_ROOT={shlex.quote(str(repo))}
+RUNTIME_DIR={shlex.quote(str(runtime))}
+APP_SUPPORT_DIR={shlex.quote(str(tmp_path / 'app-support'))}
+CONFIG_FILE={shlex.quote(str(tmp_path / 'config.yaml'))}
+GENERATED_ENV={shlex.quote(str(runtime / 'runtime.env'))}
+GENERATED_LIBRECHAT_YAML={shlex.quote(str(runtime / 'librechat.yaml'))}
+stack_owner_state_file() {{ printf '%s' {shlex.quote(str(tmp_path / 'owner.json'))}; }}
+resolve_release_installed_root() {{ printf '%s' {shlex.quote(str(repo))}; }}
+refresh_repo_python() {{ :; }}
+ensure_app_support_layout() {{ :; }}
+prepare_runtime_exports() {{ :; }}
+{request_reader}
+{compile_function}
+compile_config
+""",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={**os.environ, "GATE_ARGS": str(gate_args)},
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    arguments = json.loads(gate_args.read_text(encoding="utf-8"))
+    assert arguments[arguments.index("--mode") + 1] == expected_mode
+    assert ("--allow-local-qa-override" in arguments) is expected_override
+
+
+def test_parallel_work_local_qa_request_writer_is_atomic_durable_and_private(
+    tmp_path: Path,
+) -> None:
+    cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
+    function_def = extract_shell_function(
+        cli_source, "write_parallel_work_local_qa_request"
+    )
+    request_path = tmp_path / "runtime/parallel-work-local-qa-request.json"
+    event_path = tmp_path / "atomic-events.txt"
+    probe_python = tmp_path / "atomic-probe-python"
+    write_executable(
+        probe_python,
+        f"""#!{sys.executable}
+import os
+import stat
+import sys
+
+event_path = os.environ["ATOMIC_EVENT_PATH"]
+real_fsync = os.fsync
+real_replace = os.replace
+
+def record(event):
+    with open(event_path, "a", encoding="utf-8") as stream:
+        stream.write(event + "\\n")
+
+def tracked_fsync(file_descriptor):
+    mode = os.fstat(file_descriptor).st_mode
+    record("directory_fsync" if stat.S_ISDIR(mode) else "file_fsync")
+    real_fsync(file_descriptor)
+
+def tracked_replace(source, target):
+    record("replace")
+    real_replace(source, target)
+
+os.fsync = tracked_fsync
+os.replace = tracked_replace
+sys.argv = sys.argv[1:]
+exec(compile(sys.stdin.read(), "<atomic-writer>", "exec"), {{"__name__": "__main__"}})
+""",
+    )
+    environment = os.environ.copy()
+    environment["ATOMIC_EVENT_PATH"] = str(event_path)
+    completed = subprocess.run(
+        [
+            "bash",
+            "-c",
+            f"""
+set -euo pipefail
+PYTHON_BIN={json.dumps(str(probe_python))}
+{function_def}
+write_parallel_work_local_qa_request {shlex.quote(str(request_path))} true
+""",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert json.loads(request_path.read_text(encoding="utf-8")) == {
+        "contractVersion": 1,
+        "mode": "local-qa",
+        "requested": True,
+    }
+    assert request_path.stat().st_mode & 0o777 == 0o600
+    assert function_def.count("os.fsync") >= 2
+    assert "os.replace" in function_def
+    assert "tempfile.NamedTemporaryFile" in function_def
+    assert event_path.read_text(encoding="utf-8").splitlines() == [
+        "file_fsync",
+        "replace",
+        "directory_fsync",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("failure_stage", "expected_requested", "expected_events"),
+    [
+        ("file_fsync", False, ["file_fsync"]),
+        ("replace", False, ["file_fsync", "replace"]),
+        ("directory_fsync", True, ["file_fsync", "replace", "directory_fsync"]),
+    ],
+)
+def test_parallel_work_local_qa_request_writer_failure_paths(
+    tmp_path: Path,
+    failure_stage: str,
+    expected_requested: bool,
+    expected_events: list[str],
+) -> None:
+    cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
+    function_def = extract_shell_function(
+        cli_source, "write_parallel_work_local_qa_request"
+    )
+    request_path = tmp_path / "runtime/parallel-work-local-qa-request.json"
+    request_path.parent.mkdir(parents=True)
+    request_path.write_text(
+        '{"contractVersion":1,"mode":"local-qa","requested":false}\n',
+        encoding="utf-8",
+    )
+    request_path.chmod(0o600)
+    event_path = tmp_path / "atomic-events.txt"
+    probe_python = tmp_path / "atomic-failure-python"
+    write_executable(
+        probe_python,
+        f"""#!{sys.executable}
+import os
+import stat
+import sys
+
+event_path = os.environ["ATOMIC_EVENT_PATH"]
+failure_stage = os.environ["ATOMIC_FAILURE_STAGE"]
+real_fsync = os.fsync
+real_replace = os.replace
+
+def record(event):
+    with open(event_path, "a", encoding="utf-8") as stream:
+        stream.write(event + "\\n")
+
+def tracked_fsync(file_descriptor):
+    mode = os.fstat(file_descriptor).st_mode
+    stage = "directory_fsync" if stat.S_ISDIR(mode) else "file_fsync"
+    record(stage)
+    if stage == failure_stage:
+        raise OSError("synthetic " + stage + " failure")
+    real_fsync(file_descriptor)
+
+def tracked_replace(source, target):
+    record("replace")
+    if failure_stage == "replace":
+        raise OSError("synthetic replace failure")
+    real_replace(source, target)
+
+os.fsync = tracked_fsync
+os.replace = tracked_replace
+sys.argv = sys.argv[1:]
+exec(compile(sys.stdin.read(), "<atomic-writer>", "exec"), {{"__name__": "__main__"}})
+""",
+    )
+    environment = os.environ.copy()
+    environment.update(
+        {
+            "ATOMIC_EVENT_PATH": str(event_path),
+            "ATOMIC_FAILURE_STAGE": failure_stage,
+        }
+    )
+
+    completed = subprocess.run(
+        [
+            "bash",
+            "-c",
+            f"""
+set -euo pipefail
+PYTHON_BIN={json.dumps(str(probe_python))}
+{function_def}
+write_parallel_work_local_qa_request {shlex.quote(str(request_path))} true
+""",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+
+    assert completed.returncode != 0
+    assert json.loads(request_path.read_text(encoding="utf-8"))["requested"] is expected_requested
+    assert event_path.read_text(encoding="utf-8").splitlines() == expected_events
+    assert list(request_path.parent.glob(f".{request_path.name}.*.tmp")) == []
+
+
+def test_release_installed_root_has_no_repo_fallback_without_owner_state() -> None:
+    cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
+    function_def = extract_shell_function(cli_source, "resolve_release_installed_root")
+    completed = subprocess.run(
+        [
+            "bash",
+            "-c",
+            f"""
+set -uo pipefail
+APP_SUPPORT_DIR=/nonexistent/app-support
+stack_owner_state_file() {{ printf '%s\n' /nonexistent/owner.json; }}
+helper_config_file() {{ printf '%s\n' /nonexistent/helper.json; }}
+json_string_field() {{ return 1; }}
+active_runtime_checkout_repo_root() {{ return 1; }}
+path_is_viventium_runtime_repo_root() {{ return 1; }}
+canonicalize_existing_dir() {{ return 1; }}
+{function_def}
+resolve_release_installed_root
+""",
+        ],
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+
+    assert completed.returncode == 1
+    assert completed.stdout == ""
 
 
 def test_doctor_compiler_invocations_ignore_generated_runtime_source_override() -> None:
@@ -851,7 +1878,7 @@ def test_upgrade_restart_hands_off_to_detached_health_checked_start() -> None:
 def test_public_cli_always_exports_the_canonical_app_support_directory() -> None:
     cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
     assignment = (
-        'APP_SUPPORT_DIR="${VIVENTIUM_APP_SUPPORT_DIR:-$HOME/Library/Application Support/Viventium}"'
+        'APP_SUPPORT_DIR="${VIVENTIUM_APP_SUPPORT_DIR:-$CANONICAL_APP_SUPPORT_DIR}"'
     )
     assignment_index = cli_source.index(assignment)
     export_index = cli_source.index(
@@ -2333,7 +3360,7 @@ def test_runtime_checkout_reexecs_helper_command_through_active_checkout(tmp_pat
     "message",
     [
         "LibreChat port 3190 still in use (outside scope); skipping startup",
-        "LibreChat API/artifact ports remain occupied outside this checkout; skipping startup",
+        "LibreChat API/artifact ports remain occupied outside this checkout; backend restart is blocked; continuing partial-stack repair",
         "Port 3080 in use - skipping LibreChat startup",
         (
             "Isolated browser runtime port remains occupied outside this checkout; "
@@ -2598,12 +3625,8 @@ def test_required_runtime_classifier_fixtures_track_launcher_messages() -> None:
         "LibreChat startup requires the validated Node ${VIVENTIUM_NODE_RUNTIME_VERSION} runtime",
         "MongoDB is required for LibreChat startup",
         "Meilisearch is required for local conversation search startup",
-        "LibreChat API/artifact ports remain occupied outside this checkout; skipping startup",
-        "LibreChat ports still in use (outside scope); skipping startup",
-        "Port $LC_API_PORT in use - skipping LibreChat startup",
-        "Isolated browser runtime port remains occupied outside this checkout; skipping LibreChat startup",
-        "LibreChat port $LC_FRONTEND_PORT still in use (outside scope); skipping startup",
-        "Port $LC_FRONTEND_PORT in use - skipping LibreChat startup",
+        "LibreChat API/artifact ports remain occupied outside this checkout; backend restart is blocked; continuing partial-stack repair",
+        "Isolated browser runtime port remains occupied outside this checkout; backend restart is blocked; continuing partial-stack repair",
         "MongoDB is required before LibreChat user-default reconciliation and agent seeding",
         "Meilisearch is required before LibreChat user-default reconciliation and agent seeding",
         "Playground directory not found, skipping",
@@ -4529,7 +5552,15 @@ def test_shipped_cli_process_bridges_first_upgrade_from_verified_ledger_and_pres
     fake_bin = tmp_path / "qa-process-bin"
     fake_bin.mkdir()
     fake_ps = fake_bin / "ps"
-    fake_ps.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    fake_ps.write_text(
+        "#!/bin/sh\n"
+        "case \"$*\" in\n"
+        "  *'-o lstart='*) printf 'Sat Aug 30 00:00:00 2026\\n' ;;\n"
+        "  *'-o command='*) printf 'synthetic-viventium-runtime-owner\\n' ;;\n"
+        "esac\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
     fake_ps.chmod(0o755)
     env = {
         **os.environ,
@@ -4753,7 +5784,15 @@ def test_next_upgrade_resumes_interrupted_telegram_migration_before_rollback(
     fake_bin = tmp_path / "qa-process-bin"
     fake_bin.mkdir()
     fake_ps = fake_bin / "ps"
-    fake_ps.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    fake_ps.write_text(
+        "#!/bin/sh\n"
+        "case \"$*\" in\n"
+        "  *'-o lstart='*) printf 'Sat Aug 30 00:00:00 2026\\n' ;;\n"
+        "  *'-o command='*) printf 'synthetic-viventium-runtime-owner\\n' ;;\n"
+        "esac\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
     fake_ps.chmod(0o755)
     env = {
         **os.environ,
@@ -6425,11 +7464,19 @@ exit 1
         f"  printf '%s\\n' '{repo_root}/viventium_v0_4/LibreChat npm ci'\n"
         "  exit 0\n"
         "fi\n"
-        "if [[ \"$*\" == *\"-p 5678 -o pgid=\"* ]]; then\n"
-        "  printf '777\\n'\n"
-        "  exit 0\n"
-        "fi\n"
-        "exit 1\n",
+    "if [[ \"$*\" == *\"-p 5678 -o pgid=\"* ]]; then\n"
+    "  printf '777\\n'\n"
+    "  exit 0\n"
+    "fi\n"
+    "if [[ \"$*\" == *\"-o lstart=\"* ]]; then\n"
+    "  printf 'Sat Aug 30 00:00:00 2026\\n'\n"
+    "  exit 0\n"
+    "fi\n"
+    "if [[ \"$*\" == *\"-o command=\"* ]]; then\n"
+    "  printf 'synthetic-viventium-runtime-owner\\n'\n"
+    "  exit 0\n"
+    "fi\n"
+    "exit 1\n",
         encoding="utf-8",
     )
     (fake_bin / "ps").chmod(0o755)
@@ -6620,3 +7667,134 @@ def test_launch_stack_detached_live_receipt_suppresses_partial_stack_restart(
 
     assert completed.stdout.strip() == "Viventium is already starting."
     assert not restart_marker.exists()
+
+
+def test_install_success_keeps_cli_lock_cleanup_armed() -> None:
+    cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
+    install_section = cli_source.rsplit("  install|bootstrap)", 1)[1].split(
+        "  upgrade|update)", 1
+    )[0]
+
+    assert install_section.count("INSTALL_TRAP_ACTIVE=0\n      trap cleanup_cli_lock EXIT") == 1
+    assert install_section.count("INSTALL_TRAP_ACTIVE=0\n    trap cleanup_cli_lock EXIT") == 1
+    assert "INSTALL_TRAP_ACTIVE=0\n      trap - EXIT" not in install_section
+    assert "INSTALL_TRAP_ACTIVE=0\n    trap - EXIT" not in install_section
+
+
+
+def test_detached_owner_waits_while_runtime_group_has_live_peers() -> None:
+    cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
+    function_def = extract_shell_function(cli_source, "hold_detached_runtime_owner")
+
+    completed = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                "set -euo pipefail\n"
+                f"{function_def}"
+                "VIVENTIUM_DETACHED_START=1\n"
+                "checks=0\n"
+                "value_is_true() { [[ \"${1:-}\" == 1 ]]; }\n"
+                "detached_owner_process_group_has_live_peer() {\n"
+                "  checks=$((checks + 1))\n"
+                "  (( checks < 3 ))\n"
+                "}\n"
+                "sleep() { :; }\n"
+                "hold_detached_runtime_owner\n"
+                "printf 'checks=%s\\n' \"$checks\"\n"
+            ),
+        ],
+        cwd=REPO_ROOT,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+    assert completed.stdout.strip() == "checks=3"
+
+
+
+def test_detached_owner_peer_probe_ignores_its_own_helper_processes() -> None:
+    cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
+    function_def = extract_shell_function(
+        cli_source, "detached_owner_process_group_has_live_peer"
+    )
+
+    completed = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                "set -euo pipefail\n"
+                f"{function_def}"
+                "if detached_owner_process_group_has_live_peer \"$$\"; then exit 9; fi\n"
+            ),
+        ],
+        cwd=REPO_ROOT,
+        check=False,
+        text=True,
+        capture_output=True,
+        start_new_session=True,
+        timeout=5,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+
+
+
+def test_detached_owner_peer_probe_detects_a_real_child_in_the_runtime_group() -> None:
+    cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
+    function_def = extract_shell_function(
+        cli_source, "detached_owner_process_group_has_live_peer"
+    )
+
+    completed = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                "set -euo pipefail\n"
+                f"{function_def}"
+                "sleep 5 & child_pid=$!\n"
+                "trap 'kill \"$child_pid\" 2>/dev/null || true' EXIT\n"
+                "detached_owner_process_group_has_live_peer \"$$\"\n"
+            ),
+        ],
+        cwd=REPO_ROOT,
+        check=False,
+        text=True,
+        capture_output=True,
+        start_new_session=True,
+        timeout=5,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+
+
+
+def test_attached_owner_does_not_wait_for_runtime_group() -> None:
+    cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
+    function_def = extract_shell_function(cli_source, "hold_detached_runtime_owner")
+
+    completed = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                "set -euo pipefail\n"
+                f"{function_def}"
+                "VIVENTIUM_DETACHED_START=0\n"
+                "value_is_true() { [[ \"${1:-}\" == 1 ]]; }\n"
+                "detached_owner_process_group_has_live_peer() { return 0; }\n"
+                "sleep() { return 99; }\n"
+                "hold_detached_runtime_owner\n"
+            ),
+        ],
+        cwd=REPO_ROOT,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+    assert completed.returncode == 0

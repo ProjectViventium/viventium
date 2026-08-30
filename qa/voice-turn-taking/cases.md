@@ -8,10 +8,10 @@ Use stable `VCTURN-NNN` IDs for voice turn taking cases.
 
 | Case ID | Requirement | User Outcome | Surfaces | Automation | Last Run |
 | --- | --- | --- | --- | --- | --- |
-| `VCTURN-001` | Interruptions, silence, and end-of-turn detection produce natural call turns and no stale follow-up speech. | User-visible behavior matches source, docs, persisted state, and logs | LiveKit/playground call, VAD/EOT logs, transcript | `tests/release/test_voice_playground_dispatch_contract.py` plus user-grade QA when visible | NOT YET RUN (cataloged 2026-05-17; next feature run required) |
-| `VCTURN-002` | Public QA evidence is sanitized and reproducible | A PR reviewer can verify the behavior without private/local data | QA report, git diff, logs summary, generated artifacts | Public-safety scan plus relevant release tests | NOT YET RUN (cataloged 2026-05-17; next feature run required) |
-| `VCTURN-003` | Local Whisper turn ending stays fast while barge-in interrupts TTS without implicitly cancelling authoritative work. | Pauses feel responsive; interruption is natural; explicit task cancellation remains separate and truthful | Modern Playground, Voice Gateway, LibreChat task/stream routes, Mongo messages, voice logs | Voice gateway/LibreChat focused tests plus real microphone/audio QA | Historical 2026-05-18 endpointing PASS; current interruption-versus-cancellation path is `PARTIAL` pending real audible rerun |
-| `VCTURN-004` | Synthetic speech with natural pauses is injected through the real LiveKit microphone path. | A fast endpointing profile does not split a resumed thought into multiple persisted turns | Modern Playground fake microphone, LiveKit, Whisper.cpp, LibreChat voice route, Mongo | Synthetic TTS fixture generator, fake-microphone QA harness, voice route tests, DB/log inspection | 2026-05-18 PASS |
+| `VCTURN-001` | Interruptions, silence, and end-of-turn detection produce natural call turns and no stale follow-up speech. | User-visible behavior matches source, docs, persisted state, and logs | LiveKit/playground call, VAD/EOT logs, transcript | `tests/release/test_voice_playground_dispatch_contract.py` plus user-grade QA when visible | NOT RUN (cataloged 2026-05-17; next feature run required) |
+| `VCTURN-002` | Public QA evidence is sanitized and reproducible | A PR reviewer can verify the behavior without private/local data | QA report, git diff, logs summary, generated artifacts | Public-safety scan plus relevant release tests | NOT RUN (cataloged 2026-05-17; next feature run required) |
+| `VCTURN-003` | Local Whisper turn ending stays fast while barge-in interrupts TTS without implicitly cancelling authoritative work. | Pauses feel responsive; interruption is natural; explicit task cancellation remains separate and truthful | Modern Playground, Voice Gateway, LibreChat task/stream routes, Mongo messages, voice logs | Voice gateway/LibreChat focused tests plus real microphone/audio QA | PARTIAL 2026-05-18; historical endpointing passed, but current interruption-versus-cancellation needs a real audible rerun |
+| `VCTURN-004` | Synthetic speech with natural pauses is injected through the real LiveKit microphone path. | A fast endpointing profile does not split a resumed thought into multiple persisted turns | Modern Playground fake microphone, LiveKit, Whisper.cpp, LibreChat voice route, Mongo | Synthetic TTS fixture generator, fake-microphone QA harness, voice route tests, DB/log inspection | PASS 2026-05-18 |
 
 ## `VCTURN-001` - Core User Flow
 
@@ -26,7 +26,7 @@ Use stable `VCTURN-NNN` IDs for voice turn taking cases.
 - Forbidden result: backend logs, mocks, source inspection, or model completions are treated as full acceptance when a user-visible surface exists.
 - Evidence to capture: sanitized visible result, supporting command/test result, generated/runtime state summary, and docs/case links.
 - Automation: `tests/release/test_voice_playground_dispatch_contract.py` plus any narrower feature tests discovered during implementation.
-- Last run: NOT YET RUN (cataloged 2026-05-17; not a substitute for the next real feature run).
+- Last run: NOT RUN (cataloged 2026-05-17; not a substitute for the next real feature run).
 
 ## `VCTURN-002` - Public-Safe Evidence Record
 
@@ -41,7 +41,7 @@ Use stable `VCTURN-NNN` IDs for voice turn taking cases.
 - Forbidden result: a report includes private transcripts, account identifiers, raw runtime dumps, local home paths, tokens, or secret-bearing command lines.
 - Evidence to capture: public-safety scan result and link to the sanitized report.
 - Automation: public-safety pattern scan plus relevant release tests.
-- Last run: NOT YET RUN (cataloged 2026-05-17; run on each new public report).
+- Last run: NOT RUN (cataloged 2026-05-17; run on each new public report).
 
 ## `VCTURN-003` - Fast Local Whisper Endpointing And Barge-In Interruption
 
@@ -73,9 +73,9 @@ Use stable `VCTURN-NNN` IDs for voice turn taking cases.
   residual gaps.
 - Automation: `voice-gateway/tests/test_*turn*`, `voice-gateway/tests/test_librechat_llm.py`,
   LibreChat `routes/viventium/__tests__/voice.spec.js`, and public-safe QA report.
-- Last run: historical 2026-05-18 PASS for local Whisper endpointing and Listen-Only pause
+- Last run: PARTIAL 2026-05-18; historical local Whisper endpointing and Listen-Only pause passed
   continuation. Current interruption-versus-explicit-cancellation acceptance is `PARTIAL` until the
-  post-change audible/browser/persistence path passes under MPV-038.
+  post-change audible/browser/persistence path passes under MPV-031.
 
 ## `VCTURN-004` - Synthetic Speech Pause Continuation
 
@@ -101,7 +101,7 @@ Use stable `VCTURN-NNN` IDs for voice turn taking cases.
   timing logs, DB row counts, cleanup counts, and public-safety scan.
 - Automation: `qa/modern-playground-voice/scripts/generate_synthetic_speech_fixtures.py` and
   `qa/modern-playground-voice/scripts/livekit_synthetic_audio_qa.js`.
-- Last run: 2026-05-18 PASS in
+- Last run: PASS 2026-05-18 in
   `qa/modern-playground-voice/reports/2026-05-18-synthetic-audio-livekit-continuation.md`.
 
 ## Natural User Use Case Checklist
@@ -111,6 +111,6 @@ rows before claiming a pass when the feature behavior changes.
 
 | Use Case ID | Natural user action | Requirement / case link | Real surface to use | Supporting evidence to compare | Expected visible result | Last run |
 | --- | --- | --- | --- | --- | --- | --- |
-| `VCTURN-UC-001` | On LiveKit/playground call, VAD/EOT logs, transcript, verify that interruptions, silence, and end-of-turn detection produce natural call turns and no stale follow-up speech. | owning requirement for `VCTURN-001` / `VCTURN-001` | LiveKit/playground call, VAD/EOT logs, transcript | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to VCTURN-001. | User-visible behavior matches source, docs, persisted state, and logs | NOT YET RUN (cataloged 2026-05-18; next feature run required) |
-| `VCTURN-UC-002` | On QA report, git diff, logs summary, generated artifacts, create or review the public QA evidence record with setup/auth/config, empty-state, degraded-dependency, and privacy checks. | owning requirement for `VCTURN-002` / `VCTURN-002` | QA report, git diff, logs summary, generated artifacts | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to VCTURN-002. | The user sees an honest setup, retry, or degraded-state result for VCTURN-002; no fake success is accepted. | NOT YET RUN (cataloged 2026-05-18; next feature run required) |
-| `VCTURN-UC-003` | After creating the public QA evidence record, rerun the scan after any retry, report update, or linked artifact change. | owning requirement for `VCTURN-002` / `VCTURN-002` | QA report, git diff, logs summary, generated artifacts | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to VCTURN-002. | VCTURN-002 remains correct after the persistence or parity step and final wording matches evidence. | NOT YET RUN (cataloged 2026-05-18; next feature run required) |
+| `VCTURN-UC-001` | On LiveKit/playground call, VAD/EOT logs, transcript, verify that interruptions, silence, and end-of-turn detection produce natural call turns and no stale follow-up speech. | owning requirement for `VCTURN-001` / `VCTURN-001` | LiveKit/playground call, VAD/EOT logs, transcript | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to VCTURN-001. | User-visible behavior matches source, docs, persisted state, and logs | NOT RUN (cataloged 2026-05-18; next feature run required) |
+| `VCTURN-UC-002` | On QA report, git diff, logs summary, generated artifacts, create or review the public QA evidence record with setup/auth/config, empty-state, degraded-dependency, and privacy checks. | owning requirement for `VCTURN-002` / `VCTURN-002` | QA report, git diff, logs summary, generated artifacts | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to VCTURN-002. | The user sees an honest setup, retry, or degraded-state result for VCTURN-002; no fake success is accepted. | NOT RUN (cataloged 2026-05-18; next feature run required) |
+| `VCTURN-UC-003` | After creating the public QA evidence record, rerun the scan after any retry, report update, or linked artifact change. | owning requirement for `VCTURN-002` / `VCTURN-002` | QA report, git diff, logs summary, generated artifacts | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to VCTURN-002. | VCTURN-002 remains correct after the persistence or parity step and final wording matches evidence. | NOT RUN (cataloged 2026-05-18; next feature run required) |

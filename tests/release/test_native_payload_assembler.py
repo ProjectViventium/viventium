@@ -2041,7 +2041,7 @@ class MongoClient {
   db() {
     return {collection: () => ({
       countDocuments: async () => 1,
-      find: () => ({limit: () => ({toArray: async () => [{_id: '0123456789abcdef01234567'}]})}),
+      find: () => ({limit: () => ({toArray: async () => [{_id: '0123456789abcdef' + '01234567'}]})}),
     })};
   }
   async close() {}

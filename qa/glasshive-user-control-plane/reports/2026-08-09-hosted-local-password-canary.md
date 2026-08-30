@@ -8,7 +8,7 @@
   synthetic deployment principal. The stable listener and LibreChat were observation-only.
 - Installed provenance: parent `4d021f0258f92bdbc350c41655651de9b6c1b1ef`, GlassHive
   `35c82be4275f72ec3019e19580003d8947cd73d5`, release
-  `release-20260809-maisydev-local-auth-1`.
+  `release-20260809-synthetic-canary-local-auth-1`.
 - Identity boundary: no customer, client, or unrelated browser identity was used.
 - Primary remaining defect: the deployment-managed Codex fallback reached its provider boundary but
   returned upstream `401 Unauthorized`; no personal provider account was substituted.
@@ -29,7 +29,7 @@
 `feature -> requirement -> use case -> QA case -> expected result -> actual evidence -> remaining gap`
 
 - Feature: optional administrator-provisioned GlassHive local-password factor.
-- Requirement: `GH-UCP-002`, `GH-UCP-007`, and `GH-UCP-017` in requirement 55.
+- Requirement: `GH-UCP-002`, `GH-UCP-007`, and `GH-UCP-017` in requirement 57.
 - Use case: enter GlassHive without public signup, retain one immutable owner/session, create and
   rediscover private work, and roll the factor off without weakening organization login.
 - QA cases: `GHUCP-002`, `003`, `011`, `012`, `026`, `027`, and `030`.
@@ -44,7 +44,7 @@
 
 | Evidence surface | Result / sanitized pointer |
 | --- | --- |
-| Requirement and QA source | Requirement 55 and the updated `cases.md` / `coverage.md` entries above |
+| Requirement and QA source | Requirement 57 and the updated `cases.md` / `coverage.md` entries above |
 | Owning code/artifact | Exact merged parent and GlassHive revisions reported by the installed canary `/health` response |
 | Generated configuration | `/auth/config` reported local login enabled, local signup disabled, and principal enrollment disabled after rollback recovery |
 | Real browser | Chrome showed both organization and local choices, accepted the synthetic local credential, retained the session across refresh/restart, and logged out cleanly |

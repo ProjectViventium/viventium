@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import subprocess
+import sys
 from pathlib import Path
 
 
@@ -23,38 +24,6 @@ def test_direct_librechat_dev_start_syncs_source_of_truth_config() -> None:
 
 def test_direct_librechat_dev_start_remains_valid_bash() -> None:
     subprocess.run(["bash", "-n", str(LIBRECHAT_START_PATH)], check=True)
-
-
-def test_direct_librechat_dev_start_compiles_prompt_registry_bundle() -> None:
-    launcher_text = LIBRECHAT_START_PATH.read_text(encoding="utf-8")
-
-    assert "resolve_prompt_registry_python() {" in launcher_text
-    assert '"$candidate" -c "import yaml"' in launcher_text
-    assert 'PROMPT_REGISTRY_PYTHON="$(resolve_prompt_registry_python)"' in launcher_text
-    assert "ensure_viventium_prompt_bundle() {" in launcher_text
-    assert "scripts/viventium/prompt_registry.py" in launcher_text
-    assert '"$PROMPT_REGISTRY_PYTHON" "$prompt_registry_script" --json-out "$target"' in launcher_text
-    assert 'export VIVENTIUM_PROMPT_BUNDLE_PATH="$target"' in launcher_text
-    assert "ensure_viventium_prompt_bundle" in launcher_text
-
-
-def test_full_stack_launcher_compiles_prompt_registry_bundle() -> None:
-    launcher_text = FULL_STACK_LAUNCHER_PATH.read_text(encoding="utf-8")
-
-    assert "scripts/viventium/prompt_registry.py" in launcher_text
-    assert '"$PYTHON_BIN" "$prompt_registry_script" --json-out "$prompt_bundle_target"' in launcher_text
-    assert 'export VIVENTIUM_PROMPT_BUNDLE_PATH="$prompt_bundle_target"' in launcher_text
-    assert "Prompt registry bundle generated at $prompt_bundle_target" in launcher_text
-    subprocess.run(["bash", "-n", str(FULL_STACK_LAUNCHER_PATH)], check=True)
-
-
-def test_full_stack_launcher_binds_librechat_host_deterministically() -> None:
-    launcher_text = FULL_STACK_LAUNCHER_PATH.read_text(encoding="utf-8")
-
-    assert "HOST=127.0.0.1" in launcher_text
-    assert 'upsert_env_kv "$env_file" "HOST" "127.0.0.1"' in launcher_text
-    assert 'export HOST="127.0.0.1"' in launcher_text
-    subprocess.run(["bash", "-n", str(FULL_STACK_LAUNCHER_PATH)], check=True)
 
 
 def test_direct_librechat_dev_start_preserves_explicitly_empty_runtime_values(
@@ -103,7 +72,7 @@ def test_direct_librechat_dev_start_explicit_runtime_root_is_a_shell_isolation_b
     loader_sequence = (
         "load_env_file_preserving_existing() {"
         + launcher_text.split("load_env_file_preserving_existing() {", 1)[1].split(
-            "# === VIVENTIUM START ===\n# Feature: Reuse Viventium's validated Python",
+            "# === VIVENTIUM START ===\n# Feature: Keep direct LibreChat dev starts aligned",
             1,
         )[0]
     )
@@ -157,6 +126,7 @@ def test_direct_librechat_dev_start_explicit_runtime_root_is_a_shell_isolation_b
         env={
             "HOME": str(fake_home),
             "PATH": "/usr/bin:/bin",
+            "PYTHON_BIN": sys.executable,
             "VIVENTIUM_ENV_FILE": str(explicit_runtime_env),
         },
         check=True,
@@ -176,7 +146,7 @@ def test_direct_librechat_dev_start_without_explicit_runtime_keeps_fallback_load
     loader_sequence = (
         "load_env_file_preserving_existing() {"
         + launcher_text.split("load_env_file_preserving_existing() {", 1)[1].split(
-            "# === VIVENTIUM START ===\n# Feature: Reuse Viventium's validated Python",
+            "# === VIVENTIUM START ===\n# Feature: Keep direct LibreChat dev starts aligned",
             1,
         )[0]
     )
@@ -209,10 +179,50 @@ def test_direct_librechat_dev_start_without_explicit_runtime_keeps_fallback_load
             + "\nprintf '%s|%s|%s' \"$SOURCE_ORDER\" \"$INSTALLED_ONLY\" \"$COMPONENT_ONLY\"\n",
         ],
         cwd=component_dir,
-        env={"HOME": str(fake_home), "PATH": "/usr/bin:/bin"},
+        env={
+            "HOME": str(fake_home),
+            "PATH": "/usr/bin:/bin",
+            "PYTHON_BIN": sys.executable,
+        },
         check=True,
         capture_output=True,
         text=True,
     )
 
     assert probe.stdout.endswith("installed|installed-value|component-value")
+
+
+def test_direct_librechat_dev_start_compiles_prompt_registry_bundle() -> None:
+    launcher_text = LIBRECHAT_START_PATH.read_text(encoding="utf-8")
+
+    assert "ensure_viventium_prompt_bundle() {" in launcher_text
+    assert "scripts/viventium/prompt_registry.py" in launcher_text
+    assert 'PYTHON_BIN="${VIVENTIUM_PYTHON_BIN:-${PYTHON_BIN:-python3}}"' in launcher_text
+    assert '"$PROMPT_REGISTRY_PYTHON" "$prompt_registry_script" --json-out "$target"' in launcher_text
+    assert (
+        '"$PROMPT_REGISTRY_PYTHON" - "$source_config" "$target_config" "$prompt_registry_script"'
+        in launcher_text
+    )
+    assert 'export VIVENTIUM_PROMPT_BUNDLE_PATH="$target"' in launcher_text
+    assert "ensure_viventium_prompt_bundle" in launcher_text
+
+
+def test_full_stack_launcher_compiles_prompt_registry_bundle() -> None:
+    launcher_text = FULL_STACK_LAUNCHER_PATH.read_text(encoding="utf-8")
+
+    assert "scripts/viventium/prompt_registry.py" in launcher_text
+    assert "ensure_python_requirements_file" in launcher_text
+    assert "scripts/viventium/requirements-installer.txt" in launcher_text
+    assert '"$PYTHON_BIN" "$prompt_registry_script" --json-out "$prompt_bundle_target"' in launcher_text
+    assert 'export VIVENTIUM_PROMPT_BUNDLE_PATH="$prompt_bundle_target"' in launcher_text
+    assert "Prompt registry bundle generated at $prompt_bundle_target" in launcher_text
+    subprocess.run(["bash", "-n", str(FULL_STACK_LAUNCHER_PATH)], check=True)
+
+
+def test_full_stack_launcher_binds_librechat_host_deterministically() -> None:
+    launcher_text = FULL_STACK_LAUNCHER_PATH.read_text(encoding="utf-8")
+
+    assert "HOST=127.0.0.1" in launcher_text
+    assert 'upsert_env_kv "$env_file" "HOST" "127.0.0.1"' in launcher_text
+    assert 'export HOST="127.0.0.1"' in launcher_text
+    subprocess.run(["bash", "-n", str(FULL_STACK_LAUNCHER_PATH)], check=True)
