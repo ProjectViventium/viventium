@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from speaker_segments import SpeakerSegmentTracker
+from speaker_segments import SpeakerSegmentTracker, shared_microphone_state_applies_to_track
 from worker import (
     AuthoritativeCallModeState,
     VoiceRouteError,
@@ -19,6 +19,7 @@ from worker import (
     _claim_voice_session,
     _establish_voice_response_plane,
     _mark_voice_session_ready,
+    _parse_dispatch_claim_id,
     _report_voice_gateway_failure,
     _report_voice_gateway_initialization_failure_and_abandon,
     _report_voice_initialization_failure_and_abandon,
@@ -70,6 +71,14 @@ def _claim(**overrides):
 
 
 class VoiceClaimBoundaryTests(unittest.TestCase):
+    def test_dispatch_claim_id_is_structural_and_bounded(self):
+        self.assertEqual(
+            _parse_dispatch_claim_id('{"callSessionId":"call-1","dispatchClaimId":"claim-1"}'),
+            "claim-1",
+        )
+        self.assertIsNone(_parse_dispatch_claim_id('{"callSessionId":"call-1"}'))
+        self.assertIsNone(_parse_dispatch_claim_id("not-json"))
+
     def test_task_stream_auth_rejection_never_calls_backend_ready(self):
         operations = []
 
@@ -252,6 +261,7 @@ class VoiceClaimBoundaryTests(unittest.TestCase):
                 expected_room_name="room-1",
                 expected_gateway_agent_name="voice-gateway",
                 expected_owner_participant_identity=None,
+                dispatch_claim_id="dispatch-claim-1",
             )
             await _report_voice_gateway_failure(
                 "http://backend",
@@ -271,6 +281,7 @@ class VoiceClaimBoundaryTests(unittest.TestCase):
                 expected_room_name="room-1",
                 expected_gateway_agent_name="voice-gateway",
                 expected_owner_participant_identity=None,
+                dispatch_claim_id="dispatch-claim-2",
             )
             ready = await _mark_voice_session_ready("http://backend", retry_auth)
             return first, reclaimed, ready
@@ -295,6 +306,13 @@ class VoiceClaimBoundaryTests(unittest.TestCase):
         self.assertEqual(ready_headers["X-VIVENTIUM-JOB-ID"], "job-2")
         self.assertEqual(ready_headers["X-VIVENTIUM-WORKER-ID"], "worker-2")
         self.assertEqual(ready_body, {"version": 1})
+        claim_headers = [
+            headers for url, headers, _body in RecoverySession.calls if url.endswith("/claim")
+        ]
+        self.assertEqual(
+            [headers.get("X-VIVENTIUM-DISPATCH-CLAIM") for headers in claim_headers],
+            ["dispatch-claim-1", "dispatch-claim-2"],
+        )
 
     def test_wrong_or_non_listening_ready_response_fails_closed(self):
         class Response:
@@ -877,6 +895,29 @@ class VoiceClaimBoundaryTests(unittest.TestCase):
         self.assertEqual(validated["callState"]["mode"], "listen_only")
         self.assertEqual(stale_dispatch_metadata["mode"], "call")
 
+    def test_claim_rejects_malformed_or_unbounded_shared_track_state(self):
+        expected = {
+            "expected_call_session_id": "call-1",
+            "expected_room_name": "room-1",
+            "expected_gateway_agent_name": "voice-gateway",
+            "expected_owner_participant_identity": "owner-1",
+        }
+        for shared_track_sids in ("TR_guest", [""], [f"TR_{index}" for index in range(65)]):
+            payload = _claim(
+                speakerSessionState={
+                    "version": 1,
+                    "callSessionId": "call-1",
+                    "revision": 1,
+                    "attributionState": "shared_mic_unverified",
+                    "detectedAt": "2026-08-09T12:00:00.000Z",
+                    "sharedTrackSids": shared_track_sids,
+                }
+            )
+            with self.subTest(shared_track_sids=shared_track_sids), self.assertRaisesRegex(
+                RuntimeError, "invalid canonical voice claim"
+            ):
+                _validate_voice_session_claim(payload, **expected)
+
     def test_reconnect_shared_mic_tombstone_prevents_owner_verification(self):
         claim = _claim(
             speakerSessionState={
@@ -919,6 +960,72 @@ class VoiceClaimBoundaryTests(unittest.TestCase):
         self.assertEqual(segment["speaker"]["attribution"], "unverified")
         self.assertEqual(segment["speaker"]["actorTrust"], "shared_mic_unverified")
         self.assertNotEqual(segment["speaker"]["actorTrust"], "owner_participant")
+
+    def test_reconnect_scoped_guest_tombstones_do_not_demote_separate_owner_track(self):
+        claim = _claim(
+            speakerSessionState={
+                "version": 1,
+                "callSessionId": "call-1",
+                "revision": 1,
+                "attributionState": "shared_mic_unverified",
+                "detectedAt": "2026-08-09T12:00:00.000Z",
+                "sourceTrackSid": "track-guest-2",
+                "sharedTrackSids": ["track-guest-1", "track-guest-2"],
+                "sourceParticipantIdentity": "guest-2",
+                "sharedParticipantIdentities": ["guest-1", "guest-2"],
+            }
+        )
+        validated = _validate_voice_session_claim(
+            claim,
+            expected_call_session_id="call-1",
+            expected_room_name="room-1",
+            expected_gateway_agent_name="voice-gateway",
+            expected_owner_participant_identity="owner-1",
+        )
+        state = validated["speakerSessionState"]
+        owner = SpeakerSegmentTracker(
+            call_session_id="call-1",
+            participant_identity="owner-1",
+            participant_name="Owner",
+            track_sid="track-owner",
+            owner_signed=True,
+            initial_shared_microphone=shared_microphone_state_applies_to_track(
+                state, "track-owner-reconnected", "owner-1"
+            ),
+        )
+        guest = SpeakerSegmentTracker(
+            call_session_id="call-1",
+            participant_identity="guest-2",
+            participant_name="Guest",
+            track_sid="track-guest-2",
+            participant_authenticated=True,
+            initial_shared_microphone=shared_microphone_state_applies_to_track(
+                state, "track-guest-reconnected", "guest-2"
+            ),
+        )
+
+        [owner_segment] = owner.ingest(
+            transcript="Owner remains verified after reconnect.",
+            is_final=True,
+            provider_speaker_id="speaker-a",
+            created_at=1.0,
+            start_time=0.0,
+            end_time=2.0,
+        )
+        [guest_segment] = guest.ingest(
+            transcript="Guest remains unverified after reconnect.",
+            is_final=True,
+            provider_speaker_id="speaker-a",
+            created_at=1.0,
+            start_time=0.0,
+            end_time=2.0,
+        )
+
+        self.assertEqual(owner_segment["speaker"]["actorTrust"], "owner_participant")
+        self.assertEqual(owner_segment["speaker"]["attribution"], "verified")
+        self.assertEqual(
+            guest_segment["speaker"]["actorTrust"], "shared_mic_unverified"
+        )
 
 
 class AuthoritativeRouteTests(unittest.TestCase):
