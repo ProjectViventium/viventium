@@ -1331,8 +1331,8 @@ config and recompile/restart; they do not patch generated App Support env files.
     nested source had already been updated
   - release readiness for built-in agent/prompt/runtime changes therefore includes updating and
     verifying the parent component pin, not only reviewing the nested repo
-- On August 30, 2026, the reviewed public LibreChat release closure merged through PR 113 at
-  `647e2d519fcb1cd9420a705b69aebdf9727a602d`; the parent lock, Native payload manifest, and
+- On August 31, 2026, the reviewed public LibreChat callback-effect closure merged through PR 114 at
+  `ae36f2ec680f9ae60903fa71aad2d94fece02c55`; the parent lock, Native payload manifest, and
   installer lifecycle inventory must identify that same commit.
 - The same April 13, 2026 audit also clarified the existing-install upgrade boundary:
   - the startup seed path already upserts built-in agents from the checked-out bundle on every run

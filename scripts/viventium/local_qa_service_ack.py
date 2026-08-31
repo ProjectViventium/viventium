@@ -255,6 +255,26 @@ def _script_entrypoint_index(
     return None
 
 
+def _macos_python_framework_image(executable: Path) -> Path | None:
+    if (
+        sys.platform != "darwin"
+        or executable.parent.name != "bin"
+        or re.fullmatch(r"python(?:3(?:\.\d+)?)?", executable.name) is None
+    ):
+        return None
+    try:
+        return (
+            executable.parent.parent
+            / "Resources"
+            / "Python.app"
+            / "Contents"
+            / "MacOS"
+            / "Python"
+        ).resolve(strict=True)
+    except (OSError, RuntimeError):
+        return None
+
+
 def _claimed_executable_is_live(
     executable: Path,
     *,
@@ -264,26 +284,23 @@ def _claimed_executable_is_live(
 ) -> bool:
     if live_image == executable:
         return True
-    if sys.platform == "darwin" and re.fullmatch(r"python(?:3(?:\.\d+)?)?", executable.name):
-        try:
-            framework_image = (
-                executable.parent.parent
-                / "Resources"
-                / "Python.app"
-                / "Contents"
-                / "MacOS"
-                / "Python"
-            ).resolve(strict=True)
-        except (OSError, RuntimeError):
-            framework_image = None
-        if executable.parent.name == "bin" and framework_image == live_image:
-            return True
+    if _macos_python_framework_image(executable) == live_image:
+        return True
     try:
         interpreter = _process_inspector()._script_interpreter(executable)
         cwd = _process_cwd(pid)
     except (AttributeError, OSError, RuntimeError, ValueError):
         return False
-    if interpreter is None or Path(interpreter[0]).resolve(strict=True) != live_image:
+    if interpreter is None:
+        return False
+    try:
+        interpreter_path = Path(interpreter[0]).resolve(strict=True)
+    except (OSError, RuntimeError):
+        return False
+    if (
+        interpreter_path != live_image
+        and _macos_python_framework_image(interpreter_path) != live_image
+    ):
         return False
     position = _script_entrypoint_index(live_argv)
     return position is not None and _argument_is_path(

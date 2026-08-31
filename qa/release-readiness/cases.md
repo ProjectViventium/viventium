@@ -77,8 +77,8 @@ Use `REL-NNN` for release-readiness and public-push packaging checks.
 - Forbidden result: stale ref or unreviewed local nested changes.
 - Evidence to capture: parent diff and nested SHA.
 - Automation: git inspection.
-- Last run: PASS 2026-08-30. Parent and Native payload manifests point at merged LibreChat commit
-  `647e2d519fcb1cd9420a705b69aebdf9727a602d`; the lifecycle inventory records the same ref.
+- Last run: PASS 2026-08-31. Parent and Native payload manifests point at merged LibreChat commit
+  `ae36f2ec680f9ae60903fa71aad2d94fece02c55`; the lifecycle inventory records the same ref.
 
 ## `REL-004` - Browser-Visible Background Cards
 

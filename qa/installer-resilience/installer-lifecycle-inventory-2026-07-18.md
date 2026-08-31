@@ -213,7 +213,7 @@ component refs below.
 
 | Component | Current ref | Local source state | Delivery evidence |
 | --- | --- | --- | --- |
-| LibreChat | `647e2d519fcb1cd9420a705b69aebdf9727a602d` | public `main` tip; reviewed tree clean | PRs 112-113 add the canonical three-tool GlassHive control plane and close provider telemetry, Meilisearch parity, callback-status, and recipient-identity release gaps. All 10 CI checks, focused contract suites, package/client builds, privacy scans, exact-tree verification, and independent reviews pass. |
+| LibreChat | `ae36f2ec680f9ae60903fa71aad2d94fece02c55` | public `main` tip; reviewed tree clean | PRs 112-114 add the canonical three-tool GlassHive control plane, close provider telemetry, Meilisearch parity, callback-status, and recipient-identity release gaps, and fence scheduled callback effects across retries and races without breaking legacy callbacks. All 10 prior CI checks, 118 focused callback tests plus 7 subtests, package/client builds, privacy scans, exact-tree verification, and independent reviews pass. |
 | agents-playground | `f7ea19564bd062e82aed775b7c8932b70fb8984e` | merged tree exact; review worktree clean | PR 1 merged reviewed head `112f646c...`; classic fallback only. Artifact identity remains open. |
 | livekit | `c20e96166726565f026f894ccca6f1cff2480741` | merged tree exact; review worktree clean | PR 1 merged reviewed head `8839980c...`; the locked Docker runtime is a separate delivery artifact. |
 | cartesia-voice-agent | `a37250ac2c2de1827853cdc2b2eebee4164b6c69` | merged tree exact; review worktree clean | PR 1 merged reviewed head `df2f0248...`; artifact identity remains open. |

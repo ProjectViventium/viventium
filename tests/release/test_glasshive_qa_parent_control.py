@@ -589,7 +589,16 @@ def test_root_parent_rejects_every_noncanonical_timestamp(timestamp: str) -> Non
 def test_cleanup_remains_available_after_the_exact_session_expires(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    actual_python = Path(sys.executable).resolve(strict=True)
+    trusted_python = tmp_path / "trusted-python"
+    trusted_python.write_text(
+        f"#!/bin/sh\nexec {shlex.quote(str(actual_python))} \"$@\"\n",
+        encoding="utf-8",
+    )
+    trusted_python.chmod(0o700)
     parent = load(PARENT, "glasshive_parent_expired_cleanup")
+    monkeypatch.setattr(parent.sys, "executable", str(trusted_python))
+    assert parent._python_binary() == str(trusted_python.resolve(strict=True))
     session_control = load(
         ROOT / "scripts" / "viventium" / "local_qa_runtime_control.py",
         "glasshive_parent_expired_session",

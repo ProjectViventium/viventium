@@ -559,6 +559,7 @@ def test_node_resolution_ignores_attacker_path(
         path.write_text(f"#!/bin/sh\necho {label}\n", encoding="utf-8")
         os.chmod(path, 0o755)
     monkeypatch.setattr(module, "TRUSTED_NODE_CANDIDATES", (trusted,), raising=False)
+    monkeypatch.delenv("VIVENTIUM_NODE_BINARY", raising=False)
     monkeypatch.setenv("PATH", str(attacker.parent))
 
     assert Path(module._node_binary()) == trusted.resolve()

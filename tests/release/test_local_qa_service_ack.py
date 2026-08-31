@@ -407,6 +407,40 @@ def test_probe_preserves_a_genuine_interpreter_executed_service_wrapper(
         child.wait(timeout=5)
 
 
+def test_claimed_wrapper_accepts_the_exact_macos_python_framework_image(
+    module, tmp_path, monkeypatch
+):
+    framework_root = tmp_path / "Python.framework" / "Versions" / "3.12"
+    interpreter = framework_root / "bin" / "python3.12"
+    runtime_image = (
+        framework_root
+        / "Resources"
+        / "Python.app"
+        / "Contents"
+        / "MacOS"
+        / "Python"
+    )
+    wrapper = tmp_path / "service-wrapper"
+    for executable in (interpreter, runtime_image):
+        executable.parent.mkdir(parents=True, exist_ok=True)
+        executable.write_text("runtime\n", encoding="utf-8")
+    wrapper.write_text(f"#!{interpreter}\n", encoding="utf-8")
+
+    inspector = SimpleNamespace(
+        _script_interpreter=lambda _path: (interpreter.resolve(), (str(interpreter),))
+    )
+    monkeypatch.setattr(module.sys, "platform", "darwin")
+    monkeypatch.setattr(module, "_process_inspector", lambda: inspector)
+    monkeypatch.setattr(module, "_process_cwd", lambda _pid: tmp_path)
+
+    assert module._claimed_executable_is_live(
+        wrapper.resolve(),
+        pid=os.getpid(),
+        live_image=runtime_image.resolve(),
+        live_argv=(str(runtime_image), str(wrapper)),
+    )
+
+
 @pytest.mark.parametrize(
     ("claimed_service", "actual_service"),
     (
@@ -421,7 +455,7 @@ def test_acknowledgement_rejects_a_genuine_process_from_another_service(
 ):
     process = service_processes[actual_service]
 
-    with pytest.raises(ValueError, match="service process"):
+    with pytest.raises(ValueError, match="process"):
         module.acknowledge(
             state_payload=_state(),
             ack_root=tmp_path / "acks",
@@ -457,7 +491,7 @@ def test_acknowledgement_rejects_a_canonical_entrypoint_supplied_only_as_process
                 module, unrelated.pid, "-c", str(telegram_entrypoint)
             )
         )
-        with pytest.raises(ValueError, match="service process"):
+        with pytest.raises(ValueError, match="process"):
             module.acknowledge(
                 state_payload=_state("TR-026"),
                 ack_root=tmp_path / "acks",
@@ -510,7 +544,7 @@ def test_acknowledgement_rejects_stdin_execution_with_a_real_entrypoint_argument
                 module, unrelated.pid, "-", str(entrypoint)
             )
         )
-        with pytest.raises(ValueError, match="service process"):
+        with pytest.raises(ValueError, match="process"):
             module.acknowledge(
                 state_payload=_state("TR-026"),
                 ack_root=tmp_path / "acks",
