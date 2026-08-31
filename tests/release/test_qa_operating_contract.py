@@ -1462,7 +1462,7 @@ def test_requirement_source_coverage_ledger_is_private_safe_and_resolves() -> No
         "durability": "committed_public_source_and_tracked_triage_manifest",
         "limitation": (
             "These markers preserve NOT RUN debt; they are not execution results. The separate "
-            "stale-case triage manifest keeps its own 2026-08-29 review boundary and remains "
+            "stale-case triage manifest keeps its own 2026-08-29 review boundary and is "
             "tracked separately."
         ),
     }
