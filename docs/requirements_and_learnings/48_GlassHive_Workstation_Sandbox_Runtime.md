@@ -351,13 +351,13 @@ Selenium base:
   manifest only when the matching Linux `extension-host` bundle is present in a worker-local or
   operator-provided Chrome plugin root; the runtime must not point Codex at a host macOS binary or a
   non-native-protocol proxy.
-- **Image tag**: `workers-projects-runtime-workstation:phase1-node22-docs9`
+- **Image tag**: `workers-projects-runtime-workstation:phase1-node22-docs8-openclaw2026.7.1-6`
 
 The versioned tag changes whenever either native harness pin changes. A retained older image must
 not be treated as ready merely because it exists: its Codex/Claude versions must pass the configured
 model and native-event probes. The 2026-08-13 Parallel Work QA escaped a `provider_request_rejected`
 failure where Codex 0.142.0 could start but truthfully rejected the configured GPT-5.6 model; the
-docs9 image and its regression pin Codex 0.147.0 and Claude Code 2.1.233.
+docs8/OpenClaw image and its regression pin Codex 0.147.0 and Claude Code 2.1.233.
 
 The workstation image must be capable of ordinary professional first-delivery work products. A
 worker should not need to hand-roll a minimal ZIP/DOCX or return Markdown/HTML only because the
