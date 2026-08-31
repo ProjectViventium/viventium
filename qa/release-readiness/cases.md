@@ -78,7 +78,7 @@ Use `REL-NNN` for release-readiness and public-push packaging checks.
 - Evidence to capture: parent diff and nested SHA.
 - Automation: git inspection.
 - Last run: PASS 2026-08-30. Parent and Native payload manifests point at merged LibreChat commit
-  `8c0b30234f5e99a56a1a0bac1f791575e60eea35`; the lifecycle inventory records the same ref.
+  `647e2d519fcb1cd9420a705b69aebdf9727a602d`; the lifecycle inventory records the same ref.
 
 ## `REL-004` - Browser-Visible Background Cards
 

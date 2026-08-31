@@ -8420,10 +8420,12 @@ start_telegram_bot_watchdog() {
     trap - EXIT
     trap 'exit 0' INT TERM HUP
     local consecutive_failures=0
+    local telegram_pid=""
 
     while true; do
       sleep "$interval_s"
-      if telegram_poller_is_ready; then
+      telegram_pid="$(read_pid_file "$TELEGRAM_BOT_PID_FILE")"
+      if telegram_poller_is_ready && telegram_bot_ready "$telegram_pid"; then
         consecutive_failures=0
         continue
       fi
@@ -8435,7 +8437,7 @@ start_telegram_bot_watchdog() {
 
       log_warn "Telegram bot watchdog detected ${consecutive_failures} failed liveness checks"
       log_warn "Telegram bot watchdog restarting Telegram bridge"
-      if start_telegram_bot; then
+      if RESTART_SERVICES=true start_telegram_bot; then
         consecutive_failures=0
       else
         log_warn "Telegram bot watchdog restart failed"

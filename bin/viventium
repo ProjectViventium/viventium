@@ -1554,7 +1554,7 @@ Usage:
   bin/viventium qa-control activate --case-id <case> [--expires-in-seconds <60-3600>]
   bin/viventium qa-control status
   bin/viventium qa-control verify-emo-feelings --evidence <private-emo-uc-047.json>
-  bin/viventium qa-control arm-telegram-race < private-tr014-scope.json
+  bin/viventium qa-control arm-telegram-race < private-tr026-scope.json
   bin/viventium qa-control audit-telegram-race
   bin/viventium qa-control cleanup-telegram-race
   bin/viventium qa-control prepare-emo-insight
@@ -1572,7 +1572,7 @@ Usage:
   bin/viventium qa-control clear --session-ref <qa_reference>
 
 Creates one private, expiring, candidate-bound local-QA session. It never enables a source default.
-Supported cases: TR-014, EMO-UC-047, EMO-UC-048, PWK-UC-016, PWK-UC-017, REL-UC-004.
+Supported cases: TR-026, EMO-UC-047, EMO-UC-048, MPV-061, PWK-UC-015, PWK-UC-016, PWK-UC-017, REL-UC-004.
 Restart the installed runtime after activate or clear so every service receives the same state.
 USAGE
       ;;

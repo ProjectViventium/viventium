@@ -475,6 +475,7 @@ def create_recovery_bundle(
         raise FileExistsError(backup_id)
     staging = destination / f".staging-{backup_id}-{os.getpid()}"
     staging.mkdir(mode=0o700)
+    published = False
 
     try:
         for _kind, filename in SOURCE_ARTIFACTS:
@@ -545,19 +546,21 @@ def create_recovery_bundle(
 
         for path in staging.iterdir():
             path.chmod(0o400)
-        staging.chmod(0o500)
         os.rename(staging, final_root)
+        published = True
+        final_root.chmod(0o500)
         directory_fd = os.open(destination, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
         try:
             os.fsync(directory_fd)
         finally:
             os.close(directory_fd)
     except Exception:
-        if staging.exists():
-            staging.chmod(0o700)
-            for path in staging.iterdir():
+        cleanup_root = final_root if published else staging
+        if cleanup_root.exists():
+            cleanup_root.chmod(0o700)
+            for path in cleanup_root.iterdir():
                 path.chmod(0o600)
-            shutil.rmtree(staging)
+            shutil.rmtree(cleanup_root)
         raise
 
     receipt = {

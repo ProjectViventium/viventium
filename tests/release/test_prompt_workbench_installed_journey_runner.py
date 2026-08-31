@@ -64,7 +64,7 @@ def test_runner_is_owned_and_not_claimed_installed() -> None:
     assert heading in cases
     section = cases.split(heading, 1)[1]
     assert "tests/release/test_prompt_workbench_installed_journey_runner.py" in cases
-    assert "Last Run: PASS-PRE-GATE 2026-08-27." in section
+    assert "Last Run: PARTIAL 2026-08-27." in section
 
 
 def test_browser_history_check_waits_for_the_reloaded_api_result() -> None:

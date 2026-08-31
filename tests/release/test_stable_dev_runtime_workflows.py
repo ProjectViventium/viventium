@@ -932,6 +932,8 @@ def test_dev_env_offsets_default_app_facing_and_local_runtime_ports_during_compi
     tmp_path: Path,
 ) -> None:
     config = minimal_config()
+    # Keep unrelated compiler assertions cross-architecture.
+    config["voice"]["mode"] = "disabled"
     for key in (
         "lc_api_port",
         "lc_frontend_port",

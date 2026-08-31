@@ -4,6 +4,7 @@ import base64
 import importlib.util
 import json
 import os
+import shutil
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -216,6 +217,10 @@ def test_parent_cli_uses_adapter_and_launcher_carries_canonical_contract() -> No
         "    VIVENTIUM_TELEGRAM_LOCAL_QA_MODE\n"
     ) in launcher
     assert "arm-telegram-race < private-tr026-scope.json" in cli
+    assert (
+        "Supported cases: TR-026, EMO-UC-047, EMO-UC-048, MPV-061, "
+        "PWK-UC-015, PWK-UC-016, PWK-UC-017, REL-UC-004."
+    ) in cli
     assert "--owner-user-id" not in cli
 
 
@@ -246,11 +251,18 @@ def test_private_scope_parser_is_exact_and_bounded() -> None:
 def test_parent_adapter_matches_the_real_telegram_component_api(tmp_path: Path) -> None:
     session = load(SESSION_SCRIPT, "local_qa_runtime_control_real_component")
     module = load(SCRIPT, "telegram_qa_parent_control_real_component")
+    installed = tmp_path / "installed"
+    component_relative = Path(
+        "viventium_v0_4/telegram-viventium/TelegramVivBot/utils/tr026_local_qa.py"
+    )
+    component_path = installed / component_relative
+    component_path.parent.mkdir(parents=True)
+    shutil.copy2(ROOT / component_relative, component_path)
     runtime = tmp_path / "runtime"
     state = runtime / "local-qa" / "active.json"
     identity = runtime / "parallel-work-artifact-identity.json"
     request = runtime / "parallel-work-local-qa-request.json"
-    write_artifact_identity(ROOT, identity)
+    write_artifact_identity(installed, identity)
     request.write_text(
         '{"contractVersion":1,"mode":"local-qa","requested":true}\n', encoding="utf-8"
     )
@@ -258,7 +270,7 @@ def test_parent_adapter_matches_the_real_telegram_component_api(tmp_path: Path) 
     now = datetime.now(timezone.utc)
     session.activate_session(
         state_path=state,
-        installed_root=ROOT,
+        installed_root=installed,
         artifact_identity_path=identity,
         local_qa_request_path=request,
         case_id="TR-026",
@@ -268,7 +280,7 @@ def test_parent_adapter_matches_the_real_telegram_component_api(tmp_path: Path) 
     )
     result = module.arm_telegram_race(
         state_path=state,
-        installed_root=ROOT,
+        installed_root=installed,
         artifact_identity_path=identity,
         local_qa_request_path=request,
         telegram_state_dir=runtime / "telegram",
@@ -286,7 +298,7 @@ def test_parent_adapter_matches_the_real_telegram_component_api(tmp_path: Path) 
     assert base64.urlsafe_b64encode(b"r" * 32).decode().rstrip("=") not in json.dumps(result)
     assert module.cleanup_telegram_race(
         state_path=state,
-        installed_root=ROOT,
+        installed_root=installed,
         artifact_identity_path=identity,
         telegram_state_dir=runtime / "telegram",
     )["cleaned"] is True

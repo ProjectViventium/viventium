@@ -4,6 +4,7 @@ import base64
 import importlib.util
 import json
 import os
+import shutil
 import stat
 import subprocess
 import sys
@@ -23,6 +24,12 @@ NESTED_FAULT_SERVICE = (
     / "viventium_v0_4"
     / "LibreChat"
     / "api/server/services/viventium/LocalQaCortexFaultService.js"
+)
+NESTED_FAULT_SERVICE_SOURCE = (
+    ROOT
+    / "viventium_v0_4"
+    / "LibreChat"
+    / "packages/api/src/localQa/cortexFaultService.ts"
 )
 NESTED_FAULT_CONTROL = (
     ROOT
@@ -508,7 +515,36 @@ def test_cli_docs_and_central_qa_ownership_expose_the_root_hookup() -> None:
     assert "tests/release/test_librechat_emo_qa_parent_control.py" in cases
     assert "fresh random namespace" in cases
     assert "raw owner" in cases
-    assert "NOT YET RUN" in cases
+    assert "NOT RUN" in cases
+
+
+def test_node_binary_accepts_the_explicit_validated_hosted_toolcache_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = load(SCRIPT, "librechat_emo_explicit_node_binary")
+    node = shutil.which("node")
+    assert node is not None
+    configured = Path(node).resolve(strict=True)
+    monkeypatch.setenv("VIVENTIUM_NODE_BINARY", str(configured))
+
+    assert module._node_binary() == str(configured)
+
+
+def test_node_binary_rejects_an_invalid_explicit_path_without_fallback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = load(SCRIPT, "librechat_emo_invalid_explicit_node_binary")
+    untrusted = tmp_path / "node"
+    untrusted.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    untrusted.chmod(0o777)
+    monkeypatch.setenv("VIVENTIUM_NODE_BINARY", str(untrusted))
+
+    with pytest.raises(ValueError, match="Node runtime"):
+        module._node_binary()
+
+    monkeypatch.setenv("VIVENTIUM_NODE_BINARY", "relative/node")
+    with pytest.raises(ValueError, match="Node runtime"):
+        module._node_binary()
 
 
 def test_fixture_helper_is_root_only_and_uses_installed_mongoose_schemas() -> None:
@@ -909,14 +945,15 @@ def test_mongo_uri_accepts_one_exact_loopback_seed(
 
 
 def test_root_fixture_contract_matches_nested_component_digest_authority() -> None:
-    nested = NESTED_FAULT_SERVICE.read_text(encoding="utf-8")
+    adapter = NESTED_FAULT_SERVICE.read_text(encoding="utf-8")
+    nested = NESTED_FAULT_SERVICE_SOURCE.read_text(encoding="utf-8")
     parent = SCRIPT.read_text(encoding="utf-8")
     fixture_source = FIXTURE_SCRIPT.read_text(encoding="utf-8")
 
-    assert (
-        "VIVENTIUM_LOCAL_QA_COMPONENT_ARTIFACT_DIGEST" in nested
-        and "VIVENTIUM_LOCAL_QA_COMPONENT_ARTIFACT_DIGEST" in parent
-    )
+    assert "VIVENTIUM_LOCAL_QA_COMPONENT_ARTIFACT_DIGEST" in nested
+    assert "VIVENTIUM_LOCAL_QA_COMPONENT_ARTIFACT_DIGEST" in parent
+    assert "COMPONENT_ARTIFACT_DIGEST_ENV" in adapter
+    assert "require('@librechat/api')" in adapter
     assert "'componentArtifactDigest'" in nested
     assert "parent?.metadata?.viventium?.localQaFixture" in nested
     assert "marker.componentArtifactDigest === componentArtifactDigest" in nested
@@ -924,79 +961,19 @@ def test_root_fixture_contract_matches_nested_component_digest_authority() -> No
     assert "artifactIdentityDigest" not in fixture_source
 
 
-def test_nested_control_emits_canonical_iso_milliseconds() -> None:
-    module = load(SCRIPT, "librechat_emo_qa_parent_control_nested_timestamp")
-    probe = r"""
-const Module = require('module');
-const originalLoad = Module._load;
-const row = {
-  schemaVersion: 1,
-  controlId: 'emo048_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-  caseTokenHash: `sha256:${'1'.repeat(64)}`,
-  boundary: 'cortex_ledger_first_write',
-  ownerScopeHash: `sha256:${'2'.repeat(64)}`,
-  conversationScopeHash: `sha256:${'3'.repeat(64)}`,
-  parentScopeHash: `sha256:${'4'.repeat(64)}`,
-  syntheticScope: true,
-  state: 'armed',
-  armedAt: new Date('2026-08-23T12:00:02.123Z'),
-  expiresAt: new Date('2026-08-23T12:02:02.456Z'),
-  purgeAt: new Date('2026-08-24T12:02:02.789Z'),
-  consumedAt: new Date('2026-08-23T12:01:02.111Z'),
-  clearedAt: new Date('2026-08-23T12:01:03.222Z'),
-  audit: [{ sequence: 1, event: 'armed', at: new Date('2026-08-23T12:00:02.123Z') }],
-};
-Module._load = function (request, parent, isMain) {
-  if (request === '@librechat/api') {
-    return {
-      createCortexLocalQaFaultControlManager: ({ store }) => ({
-        arm: async () => store.insert(row),
-        query: async () => [],
-        clear: async () => 0,
-        consume: async () => ({ triggered: false }),
-      }),
-    };
-  }
-  return originalLoad.call(this, request, parent, isMain);
-};
-const control = require(process.argv[1]);
-const privateModels = {
-  LocalQaCortexFaultIssuance: { create: async (value) => value },
-  LocalQaCortexFaultTerminalReceipt: {
-    collection: { replaceOne: async () => ({ acknowledged: true }) },
-  },
-};
-const service = control.createLocalQaCortexFaultService({
-  ControlModel: {
-    db: { model: (name) => privateModels[name] },
-    create: async (value) => ({
-      ...value,
-      consumedAt: row.consumedAt,
-      clearedAt: row.clearedAt,
-    }),
-  },
-  UserModel: {},
-  ConversationModel: {},
-  MessageModel: {},
-  env: {},
-});
-service.arm({}).then((value) => process.stdout.write(JSON.stringify(value)));
-"""
-    completed = subprocess.run(
-        [module._node_binary(), "-e", probe, str(NESTED_FAULT_SERVICE)],
-        check=True,
-        capture_output=True,
-        text=True,
-        timeout=10,
-    )
-    emitted = json.loads(completed.stdout)
+def test_nested_component_owns_canonical_iso_millisecond_serialization() -> None:
+    source = NESTED_FAULT_SERVICE_SOURCE.read_text(encoding="utf-8")
 
-    assert emitted["armedAt"] == "2026-08-23T12:00:02.123+00:00"
-    assert emitted["expiresAt"] == "2026-08-23T12:02:02.456+00:00"
-    assert emitted["purgeAt"] == "2026-08-24T12:02:02.789+00:00"
-    assert emitted["consumedAt"] == "2026-08-23T12:01:02.111+00:00"
-    assert emitted["clearedAt"] == "2026-08-23T12:01:03.222+00:00"
-    assert emitted["audit"][0]["at"] == "2026-08-23T12:00:02.123+00:00"
+    assert "date.toISOString().replace(/Z$/, '+00:00')" in source
+    for expression in (
+        "armedAt: dateIso(row.armedAt)",
+        "expiresAt: dateIso(row.expiresAt)",
+        "purgeAt: dateIso(row.purgeAt)",
+        "consumedAt: dateIso(row.consumedAt)",
+        "clearedAt: dateIso(row.clearedAt)",
+        "at: dateIso(event.at)",
+    ):
+        assert expression in source
 
 
 def _run_nested_scope_cli(

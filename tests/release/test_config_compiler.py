@@ -3252,9 +3252,13 @@ def test_render_runtime_env_emits_glasshive_launch_env_only_when_enabled(tmp_pat
     assert glasshive_headers["X-Viventium-Surface"] == "{{LIBRECHAT_BODY_VIVENTIUMSURFACE}}"
     assert glasshive_headers["X-Viventium-Input-Mode"] == "{{LIBRECHAT_BODY_VIVENTIUMINPUTMODE}}"
     assert glasshive_headers["X-Viventium-Stream-Id"] == "{{LIBRECHAT_BODY_VIVENTIUMSTREAMID}}"
-    assert glasshive_headers["X-Viventium-Telegram-Chat-Id"] == "{{LIBRECHAT_BODY_VIVENTIUMTELEGRAMCHATID}}"
-    assert glasshive_headers["X-Viventium-Telegram-User-Id"] == "{{LIBRECHAT_BODY_VIVENTIUMTELEGRAMUSERID}}"
-    assert glasshive_headers["X-Viventium-Telegram-Message-Id"] == "{{LIBRECHAT_BODY_VIVENTIUMTELEGRAMMESSAGEID}}"
+    assert {
+        "X-Viventium-Telegram-Chat-Id",
+        "X-Viventium-Telegram-User-Id",
+        "X-Viventium-Telegram-Message-Id",
+        "X-Viventium-Voice-Call-Session-Id",
+        "X-Viventium-Voice-Request-Id",
+    }.isdisjoint(glasshive_headers)
     assert glasshive_headers["X-Viventium-Request-Files"] == "{{LIBRECHAT_BODY_FILES_JSON_B64}}"
     assert glasshive_headers["X-Viventium-Tool-Resources"] == "{{LIBRECHAT_BODY_TOOL_RESOURCES_JSON_B64}}"
 

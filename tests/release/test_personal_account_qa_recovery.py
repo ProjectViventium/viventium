@@ -178,6 +178,72 @@ def test_creates_private_owner_bound_atomic_recovery_bundle(tmp_path: Path) -> N
     assert not any(path.name.startswith(".staging-") for path in destination.iterdir())
 
 
+def test_publication_renames_a_traversable_staging_directory_before_sealing_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "source"
+    destination = tmp_path / "private-backups"
+    write_source_bundle(source)
+    observed_modes: list[int] = []
+    real_rename = recovery.os.rename
+
+    def inspect_rename(source_path: Path, destination_path: Path) -> None:
+        observed_modes.append(Path(source_path).stat().st_mode & 0o777)
+        real_rename(source_path, destination_path)
+
+    monkeypatch.setattr(recovery.os, "rename", inspect_rename)
+
+    receipt = recovery.create_recovery_bundle(
+        source_root=source,
+        destination_root=destination,
+        owner_id=OWNER_ID,
+        review_set_sha256=REVIEW_SET_SHA256,
+        public_roots=[REPO_ROOT],
+        mongo_restore_verifier=verified_mongo_restore,
+        now=fixed_now,
+    )
+
+    bundle = destination / str(receipt["backupId"])
+    assert observed_modes == [0o700]
+    assert bundle.stat().st_mode & 0o777 == 0o500
+
+
+def test_publication_failure_after_rename_removes_the_incomplete_bundle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "source"
+    destination = tmp_path / "private-backups"
+    write_source_bundle(source)
+    real_open = recovery.os.open
+
+    failed = False
+
+    def fail_destination_fsync_open(
+        path: object, flags: int, *args: object, **kwargs: object
+    ) -> int:
+        nonlocal failed
+        if Path(path) == destination and not failed and kwargs.get("dir_fd") is None:
+            failed = True
+            raise OSError("synthetic directory fsync failure")
+        return real_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(recovery.os, "open", fail_destination_fsync_open)
+
+    with pytest.raises(OSError, match="synthetic directory fsync failure"):
+        recovery.create_recovery_bundle(
+            source_root=source,
+            destination_root=destination,
+            owner_id=OWNER_ID,
+            review_set_sha256=REVIEW_SET_SHA256,
+            public_roots=[REPO_ROOT],
+            mongo_restore_verifier=verified_mongo_restore,
+            now=fixed_now,
+        )
+
+    assert destination.is_dir()
+    assert list(destination.iterdir()) == []
+
+
 def test_rejects_destination_inside_public_repository(tmp_path: Path) -> None:
     source = tmp_path / "source"
     write_source_bundle(source)

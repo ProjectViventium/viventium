@@ -519,6 +519,7 @@ def test_help_is_side_effect_free_and_current_diagnostic_is_fail_closed(
         "diagnostic_active_runtime_identity_unproven",
         "installed_runtime_metadata_conflict",
         "installed_runtime_owner_mismatch",
+        "runtime_owner_state_unavailable",
     }
     assert payload["releaseLabel"] == "PRE-GATE / NOT READY"
     assert payload["receiptEligible"] is False

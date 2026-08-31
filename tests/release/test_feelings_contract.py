@@ -142,7 +142,7 @@ def test_main_identity_does_not_preselect_open_loop_work_over_current_feeling() 
     ) in core
     assert "Move forward. Hate loops." not in core
     assert "If the same request repeats three times, mention it gently." in core
-    assert "version: 7" in memory
+    assert "version: 8" in memory
     assert "open loops" not in memory.lower()
     assert "Use only memories present in the current context or verified tool results." in memory
 

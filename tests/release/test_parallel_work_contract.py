@@ -126,7 +126,7 @@ def test_full_worker_capability_parity_is_cross_feature_and_release_blocking() -
     assert "`TGDOC-010`" in parallel_cases
     assert "### MPV-061 Full Queen Bee And Worker Bee Voice Parity" in voice_cases
     assert "## `TGDOC-010` - Worker Bee File Input And Output Parity" in file_cases
-    voice_status = voice_cases.split("`MPV-UC-025`", 1)[1].splitlines()[0]
+    voice_status = voice_cases.split("`MPV-061`", 1)[1].splitlines()[0]
     assert "FAIL 2026-08-25" in voice_status
     assert "cannot dilute that observed failure" in voice_status
     assert "NOT RUN" in file_cases.split("`TGDOC-010`", 1)[1].splitlines()[0]

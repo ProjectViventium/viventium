@@ -6,6 +6,7 @@ import importlib.util
 import json
 import os
 import secrets
+import shlex
 import sqlite3
 import sys
 import types
@@ -899,8 +900,18 @@ def test_cleanup_rejects_same_size_parent_state_mutation_before_fixture_delete(
 
 def test_root_private_fd_runs_arm_query_clear_cleanup_against_the_real_component(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    actual_python = Path(sys.executable).resolve(strict=True)
+    trusted_python = tmp_path / "trusted-python"
+    trusted_python.write_text(
+        f"#!/bin/sh\nexec {shlex.quote(str(actual_python))} \"$@\"\n",
+        encoding="utf-8",
+    )
+    trusted_python.chmod(0o700)
     parent = load(PARENT, "glasshive_parent_real_component_flow")
+    monkeypatch.setattr(parent.sys, "executable", str(trusted_python))
+    assert parent._python_binary() == str(trusted_python.resolve(strict=True))
     state, session = private_state("PWK-UC-017")
     database = tmp_path / "runtime.sqlite3"
     seed_control_fixture(database, state)

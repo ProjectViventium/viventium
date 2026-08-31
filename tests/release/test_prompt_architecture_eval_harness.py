@@ -3221,7 +3221,9 @@ def test_exact_model_eval_harness_requires_local_jwt_opt_in(tmp_path: Path) -> N
             **os.environ,
             "VIVENTIUM_QA_PASSWORD": "",
             "VIVENTIUM_QA_ALLOW_LOCAL_JWT": "",
+            "NODE_ENV": "test",
         }
+        env.pop("CI", None)
 
         result = subprocess.run(
             [

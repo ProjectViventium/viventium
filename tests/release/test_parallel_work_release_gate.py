@@ -5331,10 +5331,22 @@ def test_repository_inventory_contains_original_sequence_and_release_claim_gate(
     assert result.source_defaults_dark is True
     # Preserve every shared-tree QA row. Full capability parity in PWK-UC-019 is
     # release-blocking and may not be omitted to retain an earlier count.
-    assert len(result.gates) == 84
-    # Catalog prose is inventory only. With no structured receipts, all 84
-    # candidate cases remain open even where the Markdown row says PASS.
-    assert len(result.open_gates) == 84
+    expected_case_ids = {
+        "EMO-UC-047",
+        "EMO-UC-048",
+        "MPV-061",
+        *(f"PWK-{number:03d}" for number in range(1, 76)),
+        *(f"PWK-UC-{number:03d}" for number in range(1, 44)),
+        *(f"REL-{number:03d}" for number in range(1, 7)),
+        *(f"REL-UC-{number:03d}" for number in range(1, 5)),
+        "TGDOC-010",
+        "TR-026",
+    }
+    assert case_ids == expected_case_ids
+    assert len(result.gates) == len(expected_case_ids)
+    # Catalog prose is inventory only. With no structured receipts, every
+    # candidate case remains open even where the Markdown row says PASS.
+    assert len(result.open_gates) == len(result.gates)
 
     parallel_cases = (ROOT / "qa/parallel-orchestrator/cases.md").read_text(
         encoding="utf-8"

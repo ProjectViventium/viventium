@@ -179,7 +179,15 @@ def _control_script(installed_root: Path) -> Path:
 
 
 def _node_binary() -> str:
-    for candidate in TRUSTED_NODE_CANDIDATES:
+    configured = str(os.environ.get("VIVENTIUM_NODE_BINARY") or "").strip()
+    if configured:
+        configured_path = Path(configured)
+        if not configured_path.is_absolute():
+            raise ValueError("installed Node runtime is unavailable")
+        candidates = (configured_path,)
+    else:
+        candidates = TRUSTED_NODE_CANDIDATES
+    for candidate in candidates:
         try:
             if not candidate.is_absolute():
                 continue
@@ -193,7 +201,7 @@ def _node_binary() -> str:
                 and os.access(exact, os.X_OK)
             ):
                 return str(exact)
-        except (OSError, RuntimeError):
+        except (OSError, RuntimeError, ValueError):
             continue
     raise ValueError("installed Node runtime is unavailable")
 

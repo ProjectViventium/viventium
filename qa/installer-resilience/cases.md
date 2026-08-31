@@ -584,6 +584,62 @@ Google/Microsoft OAuth detail remains in `qa/mcp-oauth/`.
   payload, completed provider answer, restore, full fault matrix, or physical-Mac Docker delta has
   passed.
 
+### `INST-017` supported Easy Install API-key lifecycle procedure
+
+- Preconditions: a disposable runtime built from the integrated LibreChat candidate; one synthetic
+  `.invalid` local user; the selected OpenAI, Anthropic, Groq, or Grok endpoint configured to a
+  loopback-compatible stub; no real provider account or credential; experimental direct
+  subscription auth disabled.
+- User actions: open Connected Accounts, enter a synthetic API key, run a live test/send two useful
+  prompts, refresh, restart, replace with an invalid key, recover, exercise quota/outage/network
+  failures, Disconnect locally, try chat while disconnected, and add the valid synthetic key again.
+  After every credential mutation plus refresh/restart, inspect cookies, local/session storage,
+  Cache Storage, and IndexedDB without publishing the synthetic value or a raw storage dump.
+- Expected result: a saved key is only Configured until a live request succeeds; useful answers
+  render and persist; each failure names one repair action; Disconnect deletes only Viventium's
+  encrypted user key, reports Disconnected, and prevents another provider request; re-adding the
+  key restores useful chat.
+- Forbidden result: direct OAuth offered by default; configuration called Ready without a live
+  request; provider contact after Disconnect; answer loss after refresh/restart; secret values in
+  logs, browser storage, screenshots, reports, or diagnostics; API-only evidence presented as
+  browser acceptance.
+- Automation: `qa/installer-resilience/scripts/openai-api-key-lifecycle-qa.cjs`, owned by
+  `tests/release/test_openai_api_key_lifecycle_qa.py`, plus supporting release contracts.
+- Current result: **PARTIAL** on 2026-07-20. The scoped raw-provider lifecycle passed in headed
+  Chromium against the integrated disposable arm64 runtime for OpenAI, Anthropic, Groq, and Grok,
+  with zero external browser network attempts; see the dated reports. This result does not prove the
+  optimized Viventium first-answer path and does not substitute for signed-payload,
+  pristine-install, restore, accessibility, Docker, Intel, or delivery-alignment gates. The
+  browser-residue guard and its fail-closed offline regression pass on 2026-07-21, but that added
+  inspection has not yet been rerun in the headed lifecycle and is not retroactively claimed by the
+  2026-07-20 evidence.
+
+### `INST-017` experimental compatibility-bridge lifecycle procedure
+
+- Preconditions: a disposable runtime built from the integrated LibreChat candidate; one synthetic
+  `.invalid` local user; OAuth token and Codex Responses URLs configured to the loopback stub
+  described in `qa/installer-resilience/README.md`; no real provider account.
+- User actions: deny authorization, retry and close the popup, retry and grant in the visible
+  synthetic provider page, send two useful prompts, refresh, restart, force expiry and early 401,
+  force failed refresh, follow reconnect guidance, Disconnect locally, try chat while disconnected,
+  and regrant.
+- Expected result: every successful grant is visibly Connected; answers render and persist; each
+  refresh happens exactly once; failed refresh gives one actionable repair path; Disconnect deletes
+  Viventium's stored credential, reports Disconnected, refuses chat without contacting the provider,
+  and explains provider account controls for upstream invalidation; regrant restores useful chat.
+- Forbidden result: any non-loopback browser/provider request, OAuth start reported as connection,
+  a local delete labeled as provider revocation, silent refresh/disconnect failure, provider contact
+  after local Disconnect, answer loss after refresh/restart, secrets or OAuth state in public output,
+  or mocked/API-only evidence presented as browser acceptance.
+- Automation: `node qa/installer-resilience/scripts/openai-connected-account-lifecycle-qa.cjs`.
+- Boundary: this is supplemental compatibility evidence, not the Easy Install default and not an
+  official OpenAI integration. It requires `VIVENTIUM_EXPERIMENTAL_DIRECT_SUBSCRIPTION_AUTH=true`.
+- Provider-side revocation is unsupported; Disconnect removes only Viventium's local credential,
+  and provider account controls remain the truthful upstream invalidation path.
+- Current result: **PARTIAL.** The browser lifecycle was not run on 2026-07-20. The local provider
+  self-test and release contracts pass. The integrated candidate is not ready, so the disposable VM
+  remains stopped and no real-browser result is claimed.
+
 ## `INST-024` - Single Supported Node Runtime
 
 - Requirement: preflight, shared PATH setup, doctor, dependency installation, production build,

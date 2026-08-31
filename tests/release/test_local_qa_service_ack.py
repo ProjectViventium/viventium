@@ -29,6 +29,26 @@ def _load_module():
     return module
 
 
+def _wait_until_ready(check, *, timeout_seconds: float = 5.0):
+    deadline = time.monotonic() + timeout_seconds
+    last_error: Exception | None = None
+    while time.monotonic() < deadline:
+        try:
+            value = check()
+        except (OSError, RuntimeError, ValueError) as error:
+            last_error = error
+        else:
+            if value:
+                return value
+        time.sleep(0.01)
+    raise AssertionError("test process did not reach its expected live identity") from last_error
+
+
+def _process_argv_contains(module, pid: int, *expected: str) -> bool:
+    _image, argv = module._kernel_process_image_and_argv(pid)
+    return all(value in argv for value in expected)
+
+
 def _state(case_id: str = "PWK-UC-016") -> dict[str, object]:
     started = datetime(2026, 8, 25, 0, 0, tzinfo=timezone.utc)
     return {
@@ -133,6 +153,14 @@ def service_processes(tmp_path, module, monkeypatch):
                 "pid": child.pid,
             }
         assert len({process["pid"] for process in processes.values()}) == 3
+        for service_id, process in processes.items():
+            _wait_until_ready(
+                lambda service_id=service_id, process=process: module._service_process_identity_valid(
+                    service_id,
+                    process["pid"],
+                    process["executable"],
+                )
+            )
         yield processes
     finally:
         for process in processes.values():
@@ -369,7 +397,7 @@ def test_probe_preserves_a_genuine_interpreter_executed_service_wrapper(
         stderr=subprocess.DEVNULL,
     )
     try:
-        identity = module.probe_process(child.pid, wrapper)
+        identity = _wait_until_ready(lambda: module.probe_process(child.pid, wrapper))
 
         assert identity["pid"] == child.pid
         assert identity["executablePath"] == str(wrapper.resolve())
@@ -424,7 +452,11 @@ def test_acknowledgement_rejects_a_canonical_entrypoint_supplied_only_as_process
         stderr=subprocess.DEVNULL,
     )
     try:
-        time.sleep(0.05)
+        _wait_until_ready(
+            lambda: _process_argv_contains(
+                module, unrelated.pid, "-c", str(telegram_entrypoint)
+            )
+        )
         with pytest.raises(ValueError, match="service process"):
             module.acknowledge(
                 state_payload=_state("TR-026"),
@@ -473,6 +505,11 @@ def test_acknowledgement_rejects_stdin_execution_with_a_real_entrypoint_argument
     unrelated.stdin.write(stdin_program)
     unrelated.stdin.close()
     try:
+        _wait_until_ready(
+            lambda: _process_argv_contains(
+                module, unrelated.pid, "-", str(entrypoint)
+            )
+        )
         with pytest.raises(ValueError, match="service process"):
             module.acknowledge(
                 state_payload=_state("TR-026"),

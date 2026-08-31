@@ -435,6 +435,12 @@ def test_source_easy_install_compiles_canonical_main_to_glasshive_codex(
     assert compiled_agents["mainAgent"]["glasshive_options"] == {
         "workspace": {"mode": "life"},
         "access": "full",
+        "orchestration": {
+            "default_mode": "focused",
+            "parallel_available": True,
+            "worker_profile": "codex-cli",
+            "fallback_worker_profile": "claude-code",
+        },
     }
     assert runtime_env["START_GLASSHIVE"] == "true"
     assert runtime_env["VIVENTIUM_FC_CONSCIOUS_LLM_PROVIDER"] == "glasshive-harness"
