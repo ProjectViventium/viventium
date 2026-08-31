@@ -14,6 +14,8 @@ import sys
 import tempfile
 from pathlib import Path
 
+import yaml
+
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from stage_native_component import StagingError, stage_component  # noqa: E402
 from verify_native_component_manifest import (  # noqa: E402
@@ -152,8 +154,28 @@ def read_components(path: Path) -> dict[str, object]:
 def validate_native_compiled_defaults(compiled: Path) -> None:
     """Reject provider advertisements for runtimes absent from the Native payload."""
 
+    config_path = compiled / "config.yaml"
+    try:
+        config = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError) as error:
+        raise AssemblyError("Native compiled default is unavailable or invalid: config.yaml") from error
+    glasshive = (config.get("integrations") or {}).get("glasshive") or {}
+    enabled_paths = {
+        "integrations.glasshive.enabled": glasshive.get("enabled"),
+        "integrations.glasshive.provider.enabled": (
+            glasshive.get("provider") or {}
+        ).get("enabled"),
+        "integrations.glasshive.host_worker.enabled": (
+            glasshive.get("host_worker") or {}
+        ).get("enabled"),
+    }
+    enabled = next((path for path, value in enabled_paths.items() if value is True), "")
+    if enabled:
+        raise AssemblyError(f"Native compiled defaults enable unavailable GlassHive runtime: {enabled}")
+
     forbidden_markers = ("glasshive-harness", "glasshive-workers-projects")
     for name in (
+        "config.yaml",
         "librechat.yaml",
         "prompt-bundle.json",
         "native-runtime.env",
@@ -491,11 +513,11 @@ def assemble(args: argparse.Namespace) -> dict[str, object]:
             )
             destination.chmod(0o755)
 
-        default_config = repo / "config.minimal.example.yaml"
+        default_config = compiled / "config.yaml"
         copy_safe(
             default_config,
             payload / "runtime" / "defaults" / "config.yaml",
-            boundary=repo,
+            boundary=compiled,
             source_date_epoch=args.source_date_epoch,
         )
         for name in ("librechat.yaml", "prompt-bundle.json", "native-runtime.env", "viventium-agents.yaml"):

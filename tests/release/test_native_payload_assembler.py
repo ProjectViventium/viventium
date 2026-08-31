@@ -180,6 +180,16 @@ def fixture_inputs(tmp_path: Path) -> dict[str, Path]:
     file(bootstrap / "Contents" / "Info.plist", "<plist/>\n")
 
     compiled = tmp_path / "compiled"
+    file(
+        compiled / "config.yaml",
+        "version: 1\n"
+        "install:\n  mode: native\n  experience: express\n"
+        "integrations:\n"
+        "  glasshive:\n"
+        "    enabled: false\n"
+        "    provider:\n      enabled: false\n"
+        "    host_worker:\n      enabled: false\n",
+    )
     file(compiled / "librechat.yaml", "version: 1.3.4\ncache: false\n")
     file(compiled / "prompt-bundle.json", '{"schema_version":1,"prompts":[]}\n')
     file(
@@ -408,6 +418,9 @@ def test_assembler_builds_deterministic_relocatable_payload_and_bootstrap(tmp_pa
     assert not (payload / "runtime" / "mongodb" / "bin" / "mongos").exists()
     assert (payload / "runtime" / "librechat" / "client" / "dist" / "index.html").is_file()
     assert (payload / "runtime" / "defaults" / "viventium-agents.yaml").is_file()
+    assert (payload / "runtime" / "defaults" / "config.yaml").read_bytes() == (
+        inputs["compiled"] / "config.yaml"
+    ).read_bytes()
     assembled_agents = yaml.safe_load(
         (payload / "runtime" / "defaults" / "viventium-agents.yaml").read_text(encoding="utf-8")
     )
@@ -531,6 +544,7 @@ def test_assembler_rejects_missing_built_runtime_and_external_symlink(tmp_path: 
     tuple(
         (artifact, marker)
         for artifact in (
+            "config.yaml",
             "librechat.yaml",
             "prompt-bundle.json",
             "native-runtime.env",
@@ -555,6 +569,73 @@ def test_assembler_rejects_unavailable_glasshive_native_advertisements(
 
     assert completed.returncode != 0
     assert "advertise unavailable GlassHive runtime" in completed.stderr
+
+
+@pytest.mark.parametrize(
+    "path",
+    (
+        ("enabled",),
+        ("provider", "enabled"),
+        ("host_worker", "enabled"),
+    ),
+)
+def test_assembler_rejects_enabled_unbundled_glasshive_config(
+    tmp_path: Path,
+    path: tuple[str, ...],
+) -> None:
+    inputs = fixture_inputs(tmp_path)
+    config_path = inputs["compiled"] / "config.yaml"
+    config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    target = config["integrations"]["glasshive"]
+    for part in path[:-1]:
+        target = target[part]
+    target[path[-1]] = True
+    config_path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
+
+    completed = run_assembler(tmp_path, inputs, tmp_path / "candidate")
+
+    assert completed.returncode != 0
+    assert "enable unavailable GlassHive runtime" in completed.stderr
+
+
+def test_native_candidate_config_excludes_unbundled_glasshive(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = yaml.safe_load(
+        (REPO_ROOT / "config.minimal.example.yaml").read_text(encoding="utf-8")
+    )
+    glasshive = config.setdefault("integrations", {}).setdefault("glasshive", {})
+    glasshive["enabled"] = False
+    glasshive.setdefault("provider", {})["enabled"] = False
+    glasshive.setdefault("host_worker", {})["enabled"] = False
+    config_path = tmp_path / "native-config.yaml"
+    compiled = tmp_path / "compiled"
+    config_path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
+
+    subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "scripts/viventium/config_compiler.py"),
+            "--config",
+            str(config_path),
+            "--output-dir",
+            str(compiled),
+        ],
+        cwd=REPO_ROOT,
+        check=True,
+    )
+    shutil.copyfile(config_path, compiled / "config.yaml")
+
+    load_native_assembler(monkeypatch).validate_native_compiled_defaults(compiled)
+    inputs = fixture_inputs(tmp_path / "assembly-inputs")
+    inputs["compiled"] = compiled
+    output = tmp_path / "candidate"
+    completed = run_assembler(tmp_path, inputs, output)
+    assert completed.returncode == 0, completed.stderr
+    assert (
+        output / "payload" / "runtime" / "defaults" / "config.yaml"
+    ).read_bytes() == config_path.read_bytes()
 
 
 def test_assembler_rejects_unattestable_component_metadata(tmp_path: Path) -> None:
@@ -687,6 +768,9 @@ def test_local_qa_install_and_health_entrypoints_run_without_target_build_tools(
     )
     assert install.returncode == 0, install.stderr
     assert (support / "config.yaml").is_file()
+    assert (support / "config.yaml").read_bytes() == (
+        inputs["compiled"] / "config.yaml"
+    ).read_bytes()
     installed_env = (support / "runtime" / "runtime.env").read_text(encoding="utf-8")
     assert installed_env == (payload / "runtime" / "defaults" / "native-runtime.env").read_text(
         encoding="utf-8"
@@ -1464,6 +1548,7 @@ def test_candidate_workflow_is_exact_dual_arch_relocatable_producer() -> None:
         "viventium-native-install",
         "viventium-native-health",
         "native-payload-root-${{ matrix.expected_arch }}",
+        "compiled-defaults/config.yaml",
         "native-runtime.env",
         "scheduling_cortex",
         "-iTCP:3180",
@@ -1483,6 +1568,9 @@ def test_candidate_workflow_is_exact_dual_arch_relocatable_producer() -> None:
     assert "python -VV" in workflow
     assert "glasshive:\n              enabled: false" in workflow
     assert "glasshive: { enabled: false }" not in workflow
+    assert 'native_glasshive["enabled"] = False' in workflow
+    assert 'native_glasshive.setdefault("provider", {})["enabled"] = False' in workflow
+    assert 'native_glasshive.setdefault("host_worker", {})["enabled"] = False' in workflow
     assert "VIVENTIUM_LOCAL_SUBSCRIPTION_AUTH=true" not in workflow
     assert '/bin/cp -R "${RUNNER_TEMP}/components/python"' not in workflow
     assert '"token": sys.argv[1]' not in workflow

@@ -286,11 +286,12 @@ concrete blocker instead of spending indefinitely.
 
 ### Why Selenium's Docker Image (Not Selenium Grid)
 
-GlassHive source currently uses **`selenium/standalone-chromium:latest`** as the Docker base image
-for worker containers. This is not Selenium Grid (the multi-node browser-test orchestrator). The
-floating tag is current implementation truth, not acceptable release provenance: a release
-candidate must replace it with the reviewed digest pin required by document 57. The image is used
-because it bundles:
+GlassHive source uses the reviewed, digest-pinned
+**`selenium/standalone-chromium:4.46.0-20260707@sha256:3400b92f1cddb2dfaaf358654e8f7d83d7be45192fb73c5f28c25faa28d36504`**
+Docker base image for worker containers.
+This is not Selenium Grid (the multi-node browser-test orchestrator). Release candidates must keep
+the exact digest pin required by document 57; a floating tag is not acceptable provenance. The
+image is used because it bundles:
 
 - Chromium browser
 - Xvfb virtual display server

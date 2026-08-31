@@ -181,13 +181,20 @@ jobs:
           source = yaml.safe_load(Path("config.minimal.example.yaml").read_text(encoding="utf-8"))
           source.setdefault("integrations", {}).setdefault("sequential_thinking", {})["enabled"] = False
           source.setdefault("integrations", {}).setdefault("scheduling_cortex", {})["enabled"] = False
-          Path(os.environ["RUNNER_TEMP"], "native-config.yaml").write_text(
-              yaml.safe_dump(source, sort_keys=False), encoding="utf-8"
+          native_glasshive = source.setdefault("integrations", {}).setdefault("glasshive", {})
+          native_glasshive["enabled"] = False
+          native_glasshive.setdefault("provider", {})["enabled"] = False
+          native_glasshive.setdefault("host_worker", {})["enabled"] = False
+          rendered = yaml.safe_dump(source, sort_keys=False)
+          Path(os.environ["RUNNER_TEMP"], "native-config.yaml").write_text(rendered, encoding="utf-8")
+          Path(os.environ["RUNNER_TEMP"], "compiled-defaults", "config.yaml").write_text(
+            rendered, encoding="utf-8"
           )
           PY
           python scripts/viventium/config_compiler.py \
             --config "${RUNNER_TEMP}/native-config.yaml" \
             --output-dir "${RUNNER_TEMP}/compiled-defaults"
+          test -s "${RUNNER_TEMP}/compiled-defaults/config.yaml"
           test -s "${RUNNER_TEMP}/compiled-defaults/librechat.yaml"
           test -s "${RUNNER_TEMP}/compiled-defaults/prompt-bundle.json"
           test -s "${RUNNER_TEMP}/compiled-defaults/native-runtime.env"
