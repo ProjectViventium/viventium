@@ -91,6 +91,8 @@ jobs:
             --strict-pinned
       - name: Install and build LibreChat runtime artifacts
         working-directory: viventium_v0_4/LibreChat
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
         run: |
           npm ci --ignore-scripts
           npm run build:packages

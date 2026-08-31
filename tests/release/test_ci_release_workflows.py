@@ -260,6 +260,38 @@ def test_config_compile_runs_native_continuity_and_release_boundary_suites() -> 
     assert "python -m pytest -q tests" in source
 
 
+@pytest.mark.parametrize(
+    ("workflow_name", "job_name", "step_name"),
+    (
+        (
+            "config-compile.yml",
+            "python",
+            "Install and build LibreChat runtime artifacts",
+        ),
+        (
+            "native-payload-candidate.yml",
+            "assemble",
+            "Build and prune the exact LibreChat production runtime",
+        ),
+    ),
+)
+def test_librechat_production_build_steps_provision_sufficient_node_heap(
+    workflow_name: str,
+    job_name: str,
+    step_name: str,
+) -> None:
+    workflow = yaml.safe_load(
+        (WORKFLOW_ROOT / workflow_name).read_text(encoding="utf-8")
+    )
+    step = next(
+        candidate
+        for candidate in workflow["jobs"][job_name]["steps"]
+        if candidate.get("name") == step_name
+    )
+
+    assert step.get("env", {}).get("NODE_OPTIONS") == "--max-old-space-size=4096"
+
+
 def test_hosted_setup_python_uses_available_minor_selector() -> None:
     selectors: list[tuple[str, str, str]] = []
     for path in _workflow_paths():

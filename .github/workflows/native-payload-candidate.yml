@@ -151,6 +151,8 @@ jobs:
           "${RUNNER_TEMP}/components/python/bin/python3" --version | /usr/bin/grep -Fx "Python 3.12.13"
           "${RUNNER_TEMP}/components/mongodb/bin/mongod" --version | /usr/bin/grep -F "v8.0.23"
       - name: Build and prune the exact LibreChat production runtime
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
         run: |
           set -euo pipefail
           export PATH="${RUNNER_TEMP}/components/node/bin:$PATH"
