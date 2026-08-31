@@ -50,28 +50,22 @@ Owning docs:
 
 ## Latest Status
 
-Implementation and follow-up browser QA are recorded in
-`qa/prompt-workbench/reports/2026-05-15-implementation-qa.md` and
-`qa/prompt-workbench/reports/2026-05-16-usability-eval-flow-qa.md`. The latest rendered-prompt and
-Flow source-map pass is recorded in
-`qa/prompt-workbench/reports/2026-05-22-rendered-flow-source-map-qa.md`. Scheduling Cortex prompt
-and config coverage is recorded in
-`qa/prompt-workbench/reports/2026-05-22-scheduling-config-workbench-qa.md`. Scheduled GlassHive
-prompts are covered in
-`qa/prompt-workbench/reports/2026-05-22-scheduled-glasshive-prompts-qa.md`. The LibreChat Connected
-Accounts entry-point pass is recorded in
-`qa/prompt-workbench/reports/2026-05-22-librechat-connected-accounts-workbench-entry-qa.md`.
-Sidebar persistence, explicit diff history baselines, and opt-in sidecar/watchdog startup are
-recorded in `qa/prompt-workbench/reports/2026-05-22-sidebar-diff-sidecar-qa.md`.
+The retained implementation and browser reports are
+[`2026-05-15-implementation-qa.md`](reports/2026-05-15-implementation-qa.md) and
+[`2026-05-16-usability-eval-flow-qa.md`](reports/2026-05-16-usability-eval-flow-qa.md). Five reports
+formerly cited for the 2026-05-22 rendered-flow, scheduling-config, scheduled-GlassHive,
+Connected-Accounts, and sidebar/diff/sidecar claims are not present in this repository. Those
+claims are historical context only and are not current release evidence.
 
-Current workbench checks pass, including browser prompt edit/draft/apply/revert, focused History
-view, linked eval/QA visibility, eval case draft/discard, dry-run-only live sync review, pending
-draft blocks for eval/push, stale/already-applied draft resolution, no-op eval draft prevention,
-stale dry-run token protection, automatic light/dark mode, real Chrome eval-case create/discard
-input behavior, and Prompt Traces copy that explains the former "frames" surface. The broader
-prompt-registry regression bundle has previously shown
-protected-source drift in the nested LibreChat prompt bundle; see the report before claiming the
-full prompt source tree is clean.
+Current truth lives in [`cases.md`](cases.md): `PW-046` is installed-pass evidence, `PW-047` is
+`NOT RUN / PRE-GATE`, `PW-048` is `PARTIAL`, `PW-049` is a pre-gate pass that is not release
+readiness, and `PW-050` is `PARTIAL` with its
+[`2026-08-28` report](reports/2026-08-28-nonterminal-view-steer-receipt-truth.md). Do not claim the
+full prompt source tree or Workbench release gate is clean until every current case has valid,
+linked evidence.
 
 The 2026-05-16 pass intentionally did not run reviewed live sync or live exact-model evals. It
 verified the safe no-live preview and dry-run paths plus the exact-model adapter command shape.
+The 2026-08-28 retry4 regression now has source-level guards for canonical nonterminal
+`View / Steer <task>` labels and per-execution hashed receipt evidence. Installed compilation,
+activation, and one exact-model rerun remain pending; see `PW-050`.

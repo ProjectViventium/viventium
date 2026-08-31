@@ -66,6 +66,18 @@ CONTROL_PLANE_MAP: tuple[dict[str, str], ...] = (
         "evidence": "one active definition and latest scheduled delivery state, distinct from manual recovery",
     },
     {
+        "key": "workbench_health_context",
+        "owner": "opt-in Prompt Workbench health definition + Scheduler + GlassHive callback ledger",
+        "trigger": "separate managed local daily health-context schedule",
+        "evidence": "enabled definition and its own latest scheduled delivery, independent of acquisition and manual recovery",
+    },
+    {
+        "key": "workbench_consciousness_continuity",
+        "owner": "opt-in Prompt Workbench continuity definition + Scheduler + GlassHive callback ledger",
+        "trigger": "managed same-Main consciousness continuity opportunity",
+        "evidence": "enabled source prompt and its own latest scheduled result, independent of manual runs",
+    },
+    {
         "key": "qa_test_account",
         "owner": "canonical runtime.extra_env selector + local non-admin LibreChat account",
         "trigger": "Prompt Workbench live eval or local native-surface QA",
@@ -428,7 +440,15 @@ def _memory_continuity_runtime_status(
     }
 
 
-def _nightly_status(user_id: str, *, now: datetime | None = None) -> dict[str, Any]:
+def _scheduled_prompt_status(
+    user_id: str,
+    *,
+    template_id: str | None = None,
+    source_prompt_id: str | None = None,
+    optional: bool = False,
+    reason_prefix: str | None = None,
+    now: datetime | None = None,
+) -> dict[str, Any]:
     observed_at = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     try:
         rows = scheduled_prompts.list_scheduled_prompts(
@@ -437,9 +457,27 @@ def _nightly_status(user_id: str, *, now: datetime | None = None) -> dict[str, A
         ).get("scheduledPrompts") or []
     except Exception:
         rows = []
-    nightlies = [row for row in rows if row.get("templateId") == scheduled_prompts.NIGHTLY_TEMPLATE_ID]
-    active = [row for row in nightlies if row.get("active") is True]
-    row = active[0] if len(active) == 1 else nightlies[0] if nightlies else {}
+    definitions = [
+        row
+        for row in rows
+        if (
+            row.get("templateId") == template_id
+            if template_id is not None
+            else row.get("sourcePromptId") == source_prompt_id
+        )
+    ]
+    active = [row for row in definitions if row.get("active") is True]
+    row = active[0] if len(active) == 1 else definitions[0] if definitions else {}
+    if optional and not active:
+        return {
+            "status": "ok",
+            "enabled": False,
+            "reasons": [],
+            "definitionCount": len(definitions),
+            "activeCount": 0,
+            "latestScheduledStatus": None,
+            "lastErrorClass": None,
+        }
     recent_runs = row.get("recentRuns") if isinstance(row.get("recentRuns"), list) else []
     latest_run = recent_runs[0] if recent_runs and isinstance(recent_runs[0], dict) else {}
     unknown_runs = [
@@ -478,12 +516,13 @@ def _nightly_status(user_id: str, *, now: datetime | None = None) -> dict[str, A
         "timed_out",
         "timeout",
     }
-    definition_healthy = len(nightlies) == 1 and len(active) == 1
+    definition_healthy = len(definitions) == 1 and len(active) == 1
+    reason_prefix = reason_prefix or ("health_context" if optional else "nightly")
     reasons: list[str] = []
-    if len(nightlies) != 1:
-        reasons.append("nightly_definition_count_invalid")
+    if len(definitions) != 1:
+        reasons.append(f"{reason_prefix}_definition_count_invalid")
     if len(active) != 1:
-        reasons.append("nightly_active_count_invalid")
+        reasons.append(f"{reason_prefix}_active_count_invalid")
     if not latest_scheduled:
         reasons.append("scheduled_run_not_observed")
     elif str(latest_scheduled.get("triggerKind") or "").strip().lower() != "scheduled":
@@ -518,8 +557,9 @@ def _nightly_status(user_id: str, *, now: datetime | None = None) -> dict[str, A
     )
     return {
         "status": status,
+        **({"enabled": True} if optional else {}),
         "reasons": reasons,
-        "definitionCount": len(nightlies),
+        "definitionCount": len(definitions),
         "activeCount": len(active),
         "lastStatus": latest_scheduled.get("status") or row.get("lastStatus"),
         "latestAnyStatus": latest_run.get("status") or row.get("lastStatus"),
@@ -538,6 +578,37 @@ def _nightly_status(user_id: str, *, now: datetime | None = None) -> dict[str, A
         "executor": row.get("executor"),
         "executionProfile": row.get("executionProfile"),
     }
+
+
+def _nightly_status(user_id: str, *, now: datetime | None = None) -> dict[str, Any]:
+    return _scheduled_prompt_status(
+        user_id,
+        template_id=scheduled_prompts.NIGHTLY_TEMPLATE_ID,
+        now=now,
+    )
+
+
+def _health_context_status(user_id: str, *, now: datetime | None = None) -> dict[str, Any]:
+    return _scheduled_prompt_status(
+        user_id,
+        template_id=scheduled_prompts.HEALTH_CONTEXT_TEMPLATE_ID,
+        optional=True,
+        now=now,
+    )
+
+
+def _consciousness_continuity_status(
+    user_id: str,
+    *,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    return _scheduled_prompt_status(
+        user_id,
+        source_prompt_id="scheduler.consciousness_continuity_opportunity",
+        optional=True,
+        reason_prefix="consciousness_continuity",
+        now=now,
+    )
 
 
 def _conversation_recall_runtime_status() -> dict[str, Any]:
@@ -604,6 +675,8 @@ def cognitive_integrity_report(*, user_id: str) -> dict[str, Any]:
         "liveMemoryExposure": live_contract["memoryExposure"],
         "glasshiveHostWorkerRuntime": _runtime_codex_worker_status(),
         "workbenchNightly": _nightly_status(user_id),
+        "workbenchHealthContext": _health_context_status(user_id),
+        "workbenchConsciousnessContinuity": _consciousness_continuity_status(user_id),
         "qaTestAccount": qa_test_account,
         "qaAccountSavedMemoryReadRuntime": memory_runtime["savedMemoryRead"],
         "qaAccountImmediateMemoryWriterRuntime": memory_runtime["immediateMemoryWriter"],

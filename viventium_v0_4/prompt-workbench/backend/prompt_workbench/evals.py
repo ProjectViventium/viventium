@@ -8,16 +8,19 @@ import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from .paths import (
     ACTIVATION_MODEL_EVAL_SCRIPT,
     EXACT_MODEL_EVAL_SCRIPT,
+    NATIVE_SURFACE_EVAL_SCRIPT,
     PROMPT_BANK_PATH,
     REPO_ROOT,
     workbench_private_root,
 )
 from .prompt_service import load_eval_bank
 from .promptfoo_adapter import prompt_bank_to_promptfoo
+from .redaction import redact_credential_assignments
 from . import drafts
 
 
@@ -33,10 +36,32 @@ RUNTIME_CONTEXT_CONTRACTS: dict[str, dict[str, str]] = {
     }
 }
 
+NATIVE_SURFACE_COMPLETION_SURFACES = {
+    "telegram": "telegram",
+    "voice": "voice",
+    "wing": "voice",
+    "listen_only": "voice",
+    "scheduler": "workbench",
+}
+NATIVE_SURFACES = frozenset(NATIVE_SURFACE_COMPLETION_SURFACES)
+
 RUNNER_SUMMARY_COUNT_FIELDS = {
+    "selectedCaseCount",
+    "selectedTargetCount",
+    "repetitions",
     "resultCount",
     "completedCount",
+    "passCount",
+    "failureCount",
     "failedCount",
+    "failedCaseRunCount",
+    "falsePositiveCount",
+    "falseNegativeCount",
+    "unavailableCount",
+    "unavailableRequiredCount",
+    "timeoutOrProviderErrorCount",
+    "inconsistentDecisionCount",
+    "semanticInconsistentDecisionCount",
     "semanticJudgedCount",
     "semanticPassedCount",
     "semanticFailedCount",
@@ -44,6 +69,127 @@ RUNNER_SUMMARY_COUNT_FIELDS = {
     "duplicateResponseQualityFailureCount",
     "unresolvedAsyncQualityFailureCount",
 }
+RUNNER_SUMMARY_QUALITY_LIST_COUNTS = {
+    "duplicateResponseQualityFailures": "duplicateResponseQualityFailureCount",
+    "unresolvedAsyncQualityFailures": "unresolvedAsyncQualityFailureCount",
+}
+
+PUBLIC_RUN_FIELDS = frozenset(
+    {
+        "id",
+        "mode",
+        "returnCode",
+        "resultCount",
+        "selectedCaseCount",
+        "cases",
+        "createdAt",
+        "live",
+        "maxCases",
+        "family",
+        "surface",
+        "promptId",
+        "promptHash",
+        "selectedCaseIds",
+        "lineageManifest",
+        "executionTarget",
+        "executionRoute",
+        "semanticJudgeRequired",
+        "runnerSummary",
+        "timeoutSeconds",
+        "command",
+        "stdoutTail",
+        "stderrTail",
+        "candidateSourceHash",
+    }
+)
+PUBLIC_ROUTE_FIELDS = frozenset(
+    {
+        "status",
+        "reason",
+        "requestedProvider",
+        "requestedModel",
+        "requestedEffort",
+        "effectiveProvider",
+        "effectiveModel",
+        "effectiveEffort",
+        "fallbackUsed",
+        "fallbackAuthorized",
+        "fallbackReason",
+        "configuredProvider",
+        "configuredModel",
+        "configuredProviderHash",
+        "configuredModelHash",
+        "observedProviderHash",
+        "observedModelHash",
+        "completedCaseCount",
+        "artifactSha256",
+        "routes",
+        "caseEvidence",
+        "routeExecution",
+    }
+)
+PUBLIC_ROUTE_VARIANT_FIELDS = frozenset(
+    {
+        "targetKey",
+        "requestedProvider",
+        "requestedModel",
+        "requestedEffort",
+        "configuredProvider",
+        "configuredModel",
+        "effectiveProvider",
+        "effectiveModel",
+        "effectiveEffort",
+        "fallbackUsed",
+        "fallbackAuthorized",
+        "fallbackReason",
+    }
+)
+PUBLIC_CASE_EVIDENCE_FIELDS = frozenset(
+    {
+        "caseId",
+        "agentIdHash",
+        "requestIdentityHash",
+        "surface",
+        "completionSurface",
+        "completionExpected",
+        "semanticJudged",
+        "semanticPassed",
+        "targetKey",
+        "repetition",
+        "required",
+        "allowed",
+        "actual",
+        "passed",
+        "requestedProvider",
+        "requestedModel",
+        "requestedEffort",
+        "effectiveProvider",
+        "effectiveModel",
+        "effectiveEffort",
+        "fallbackReason",
+        "primaryFailureVerified",
+    }
+)
+
+TYPED_FALLBACK_REASONS = frozenset(
+    {
+        "provider_access_denied",
+        "provider_auth_missing",
+        "provider_connected_account_reconnect_required",
+        "provider_error",
+        "provider_invalid_response",
+        "provider_network",
+        "provider_quota_exhausted",
+        "provider_quota_or_billing",
+        "provider_rate_limited",
+        "provider_response_deadline_exceeded",
+        "provider_response_failed",
+        "provider_server_error",
+        "provider_temporarily_unavailable",
+        "provider_timeout",
+        "provider_unauthorized",
+    }
+)
 
 
 def _live_eval_timeout_seconds(max_cases: int, runner: Path) -> int:
@@ -122,6 +268,14 @@ def run_exact_model_eval(
             "Explicit eval case IDs do not match the current family, surface, or prompt filters: "
             + ", ".join(missing_case_ids)
         )
+    selected_surfaces = {
+        str(row["case"].get("surface") or "web").strip() or "web" for row in selected
+    }
+    effective_surface = surface
+    if live and len(selected_surfaces) == 1 and not effective_surface:
+        selected_surface = next(iter(selected_surfaces))
+        if selected_surface in NATIVE_SURFACES:
+            effective_surface = selected_surface
     semantic_judge_required = any(
         row["family"].get("semanticJudge") is True
         or row["case"].get("semanticJudge") is True
@@ -130,12 +284,13 @@ def run_exact_model_eval(
     execution_target = _background_execution_target(
         bank, family, selected=selected
     )
+    semantic_judge_required = semantic_judge_required or execution_target is not None
     lineage_manifest = _eval_lineage_manifest(
         selected, execution_target=execution_target
     )
-    run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    run_id = f"{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}-{uuid4().hex[:12]}"
     output_dir = workbench_private_root() / "eval-runs" / run_id
-    output_dir.mkdir(parents=True, exist_ok=True)
+    output_dir.mkdir(parents=True, exist_ok=False)
     prompt_hash = _prompt_hash(prompt_id)
     if not live:
         cases = [
@@ -173,7 +328,12 @@ def run_exact_model_eval(
             encoding="utf-8",
         )
         return _public_run_record(record)
-    runner = _eval_runner(bank=bank, family=family, prompt_id=prompt_id)
+    runner = _eval_runner(
+        bank=bank,
+        family=family,
+        prompt_id=prompt_id,
+        selected=selected,
+    )
     cmd = [
         "node",
         str(runner),
@@ -187,8 +347,8 @@ def run_exact_model_eval(
         cmd.append(f"--family={family}")
     if requested_case_ids:
         cmd.append(f"--case-ids={','.join(requested_case_ids)}")
-    if surface:
-        cmd.append(f"--surface={surface}")
+    if effective_surface:
+        cmd.append(f"--surface={effective_surface}")
     if prompt_id and _runner_accepts_prompt_filter(
         runner=runner,
         bank=bank,
@@ -203,11 +363,12 @@ def run_exact_model_eval(
         # completion would not evaluate the behavior the selected eval contract claims to measure.
         cmd.append("--semantic-judge")
     child_env: dict[str, str] | None = None
-    if runner == EXACT_MODEL_EVAL_SCRIPT:
+    if runner in {EXACT_MODEL_EVAL_SCRIPT, NATIVE_SURFACE_EVAL_SCRIPT}:
         # A live run is an explicit action from the authenticated, loopback-only Workbench.
-        # Let the canonical harness mint its short-lived local QA token without storing or
-        # forwarding a password. The harness still rejects this path in CI and production.
-        cmd.append("--local-jwt-fallback")
+        # Let the selected canonical harness mint short-lived local QA authority without storing
+        # or forwarding a password. Both harnesses reject this path in CI and production.
+        if runner == EXACT_MODEL_EVAL_SCRIPT:
+            cmd.append("--local-jwt-fallback")
         child_env = os.environ.copy()
         child_env["VIVENTIUM_QA_ALLOW_LOCAL_JWT"] = "1"
     elif runner == ACTIVATION_MODEL_EVAL_SCRIPT:
@@ -245,6 +406,55 @@ def run_exact_model_eval(
     if isinstance(stderr, bytes):
         stderr = stderr.decode("utf-8", errors="replace")
     runner_summary = _public_runner_summary(stdout)
+    if runner in {
+        EXACT_MODEL_EVAL_SCRIPT,
+        NATIVE_SURFACE_EVAL_SCRIPT,
+        ACTIVATION_MODEL_EVAL_SCRIPT,
+    }:
+        try:
+            artifact_name = {
+                EXACT_MODEL_EVAL_SCRIPT: "exact-model-eval.json",
+                NATIVE_SURFACE_EVAL_SCRIPT: "native-surface-playwright-qa.json",
+                ACTIVATION_MODEL_EVAL_SCRIPT: "activation-model-eval.json",
+            }[runner]
+            artifact = json.loads((output_dir / artifact_name).read_text(encoding="utf-8"))
+            canonical_summary = artifact.get("summary") if isinstance(artifact, dict) else None
+            if isinstance(canonical_summary, dict):
+                runner_summary = _public_runner_summary(json.dumps(canonical_summary))
+        except (OSError, UnicodeError, json.JSONDecodeError, TypeError, ValueError):
+            pass
+    if runner == EXACT_MODEL_EVAL_SCRIPT:
+        execution_route = _exact_model_execution_route(
+            output_dir,
+            execution_target=execution_target,
+            selected_case_ids=selected_case_ids,
+            semantic_judge_required=semantic_judge_required,
+        )
+    elif runner == NATIVE_SURFACE_EVAL_SCRIPT:
+        execution_route = _native_surface_execution_route(
+            output_dir,
+            execution_target=execution_target,
+            selected_case_ids=selected_case_ids,
+            requested_surface=effective_surface,
+            semantic_judge_required=semantic_judge_required,
+        )
+    elif runner == ACTIVATION_MODEL_EVAL_SCRIPT:
+        selected_family = family or str((selected[0]["family"] if selected else {}).get("id") or "")
+        execution_route = _activation_model_execution_route(
+            output_dir,
+            bank=bank,
+            family_id=selected_family,
+            selected_case_ids=selected_case_ids,
+        )
+    else:
+        execution_route = None
+    if execution_route and execution_route.get("status") != "verified" and return_code == 0:
+        return_code = 1
+        runner_summary = {
+            **(runner_summary or {}),
+            "status": "blocked",
+            "blockedReason": str(execution_route.get("reason") or "configured_execution_route_mismatch"),
+        }
     actual_result_count = (
         runner_summary.get("resultCount")
         if runner_summary and isinstance(runner_summary.get("resultCount"), int)
@@ -262,7 +472,7 @@ def run_exact_model_eval(
         "live": live,
         "maxCases": effective_max_cases,
         "family": family,
-        "surface": surface,
+        "surface": effective_surface,
         "promptId": prompt_id,
         "promptHash": prompt_hash,
         "selectedCaseIds": [str(row["case"].get("id") or "") for row in selected],
@@ -271,7 +481,9 @@ def run_exact_model_eval(
         "runnerSummary": runner_summary,
         "lineageManifest": lineage_manifest,
         "executionTarget": execution_target,
+        "executionRoute": execution_route,
         "semanticJudgeRequired": semantic_judge_required,
+        "candidateSourceHash": _workbench_candidate_source_hash(),
     }
     (output_dir / "workbench-run.json").write_text(
         json.dumps(record, indent=2, sort_keys=True) + "\n",
@@ -359,6 +571,8 @@ def _eval_lineage_manifest(
         fixture = case.get("fixture") or {}
         if isinstance(fixture, dict) and "feelings" in fixture:
             runtime_context_ids.add("runtime.feelings.current_state")
+    if execution_target and str(execution_target.get("promptRef") or "").strip():
+        root_prompt_ids.add(str(execution_target["promptRef"]).strip())
 
     registry = load_prompt_registry(prompt_service.PROMPTS_ROOT)
     prompt_dependencies: dict[str, dict[str, Any]] = {}
@@ -528,6 +742,977 @@ def _sha(value: str, length: int = 16) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()[:length]
 
 
+def _route_effort(value: Any) -> str:
+    effort = str(value or "").strip().lower()
+    return effort if re.fullmatch(r"[a-z0-9][a-z0-9._:-]{0,31}", effort) else ""
+
+
+def _configured_activation_effort(provider: str, model: str) -> str:
+    """Mirror BackgroundCortexService.configuredActivationReasoningEffort exactly."""
+
+    normalized_provider = str(provider or "").strip().lower()
+    normalized_model = str(model or "").strip().lower()
+    if normalized_provider == "groq" and normalized_model.startswith("openai/gpt-oss-"):
+        return "low"
+    if normalized_provider == "groq" and normalized_model.startswith("qwen/qwen3.6-"):
+        return "none"
+    return "provider_default"
+
+
+def _agent_route(agent: dict[str, Any]) -> dict[str, Any] | None:
+    provider = str(agent.get("provider") or agent.get("endpoint") or "").strip()
+    parameters = agent.get("model_parameters")
+    parameters = parameters if isinstance(parameters, dict) else {}
+    model = str(agent.get("model") or parameters.get("model") or "").strip()
+    effort = _route_effort(
+        agent.get("reasoning_effort")
+        or agent.get("effort")
+        or parameters.get("reasoning_effort")
+        or parameters.get("effort")
+    )
+    if not provider or not model or not effort:
+        return None
+    fallbacks: list[dict[str, str]] = []
+    fallback_parameters = agent.get("fallback_llm_model_parameters")
+    fallback_parameters = fallback_parameters if isinstance(fallback_parameters, dict) else {}
+    fallback_provider = str(agent.get("fallback_llm_provider") or "").strip()
+    fallback_model = str(
+        agent.get("fallback_llm_model") or fallback_parameters.get("model") or ""
+    ).strip()
+    if fallback_provider or fallback_model or fallback_parameters:
+        fallback_effort = _route_effort(
+            agent.get("fallback_reasoning_effort")
+            or fallback_parameters.get("reasoning_effort")
+            or fallback_parameters.get("effort")
+        )
+        if not fallback_provider or not fallback_model or not fallback_effort:
+            return None
+        fallbacks.append(
+            {
+                "provider": fallback_provider,
+                "model": fallback_model,
+                "effort": fallback_effort,
+            }
+        )
+    return {
+        "provider": provider,
+        "model": model,
+        "effort": effort,
+        "fallbacks": fallbacks,
+    }
+
+
+def _configured_execution_route(execution_target: dict[str, str] | None) -> dict[str, Any] | None:
+    from . import prompt_service
+
+    try:
+        bundle = prompt_service.source_agents_bundle()
+    except (OSError, ValueError, TypeError):
+        return None
+    if execution_target:
+        target_id = str(execution_target.get("agentId") or "")
+        agent = next(
+            (
+                row
+                for row in bundle.get("backgroundAgents") or []
+                if isinstance(row, dict) and str(row.get("id") or "") == target_id
+            ),
+            None,
+        )
+    else:
+        agent = bundle.get("mainAgent")
+    if not isinstance(agent, dict):
+        return None
+    return _agent_route(agent)
+
+
+def _configured_execution_agent_hash(execution_target: dict[str, str] | None) -> str | None:
+    from . import prompt_service
+
+    try:
+        bundle = prompt_service.source_agents_bundle()
+    except (OSError, ValueError, TypeError):
+        return None
+    if execution_target:
+        target_id = str(execution_target.get("agentId") or "")
+        agent = next(
+            (
+                row
+                for row in bundle.get("backgroundAgents") or []
+                if isinstance(row, dict) and str(row.get("id") or "") == target_id
+            ),
+            None,
+        )
+    else:
+        agent = bundle.get("mainAgent")
+    agent_id = str((agent or {}).get("id") or "").strip() if isinstance(agent, dict) else ""
+    return _sha(agent_id) if agent_id else None
+
+
+def _configured_family_execution_route(family_id: str) -> dict[str, Any] | None:
+    from . import prompt_service
+
+    requested = str(family_id or "").strip()
+    if not requested:
+        return None
+    try:
+        bank = load_eval_bank()
+        family = next(
+            (
+                row
+                for row in bank.get("families") or []
+                if isinstance(row, dict) and str(row.get("id") or "") == requested
+            ),
+            None,
+        )
+    except (OSError, UnicodeError, ValueError, TypeError):
+        return None
+    if not isinstance(family, dict):
+        return None
+
+    runner = str(family.get("runner") or "")
+    if runner == "background_execution":
+        target = family.get("executionTarget") or family.get("execution_target")
+        agent_id = str((target or {}).get("agentId") or "").strip() if isinstance(target, dict) else ""
+        prompt_ref = str((target or {}).get("promptRef") or "").strip() if isinstance(target, dict) else ""
+        configured = _configured_execution_route(target) if agent_id and prompt_ref else None
+        if configured is None:
+            return None
+        return {
+            "kind": "background_execution",
+            "family": requested,
+            "agentId": agent_id,
+            "promptRef": prompt_ref,
+            **configured,
+        }
+
+    if runner != "background_activation":
+        configured = _configured_execution_route(None)
+        return {"kind": "main", "family": requested, **configured} if configured else None
+
+    try:
+        bundle = prompt_service.source_agents_bundle()
+    except (OSError, UnicodeError, ValueError, TypeError):
+        return None
+    main = bundle.get("mainAgent") if isinstance(bundle, dict) else None
+    cortex_rows = main.get("background_cortices") if isinstance(main, dict) else None
+    cortices = {
+        str(row.get("agent_id") or ""): row.get("activation")
+        for row in cortex_rows or []
+        if isinstance(row, dict) and isinstance(row.get("activation"), dict)
+    }
+    declared = family.get("activationTargets") or family.get("activation_targets")
+    if not isinstance(declared, list) or not declared:
+        return None
+    targets: list[dict[str, Any]] = []
+    seen_keys: set[str] = set()
+    for item in declared:
+        if not isinstance(item, dict):
+            return None
+        target_key = str(item.get("key") or "").strip()
+        agent_id = str(item.get("agentId") or item.get("agent_id") or "").strip()
+        configured = cortices.get(agent_id)
+        if not target_key or target_key in seen_keys or not isinstance(configured, dict):
+            return None
+        provider = str(configured.get("provider") or "").strip()
+        model = str(configured.get("model") or "").strip()
+        if not provider or not model:
+            return None
+        effort = _configured_activation_effort(provider, model)
+        fallbacks: list[dict[str, str]] = []
+        seen_routes = {(provider, model, effort)}
+        for fallback in configured.get("fallbacks") or []:
+            if not isinstance(fallback, dict):
+                return None
+            fallback_provider = str(fallback.get("provider") or "").strip()
+            fallback_model = str(fallback.get("model") or "").strip()
+            fallback_effort = _configured_activation_effort(
+                fallback_provider, fallback_model
+            )
+            route = (fallback_provider, fallback_model, fallback_effort)
+            if not fallback_provider or not fallback_model or route in seen_routes:
+                return None
+            seen_routes.add(route)
+            fallbacks.append(
+                {
+                    "provider": fallback_provider,
+                    "model": fallback_model,
+                    "effort": fallback_effort,
+                }
+            )
+        targets.append(
+            {
+                "targetKey": target_key,
+                "provider": provider,
+                "model": model,
+                "effort": effort,
+                "fallbacks": fallbacks,
+            }
+        )
+        seen_keys.add(target_key)
+    return {
+        "kind": "background_activation",
+        "family": requested,
+        "targets": sorted(targets, key=lambda row: str(row["targetKey"])),
+    }
+
+
+def _route_triple(route: dict[str, Any]) -> tuple[str, str, str]:
+    return (
+        str(route.get("provider") or "").strip(),
+        str(route.get("model") or "").strip(),
+        _route_effort(route.get("effort")),
+    )
+
+
+def _configured_route_variants(configured: dict[str, Any]) -> list[dict[str, Any]]:
+    return [configured, *(configured.get("fallbacks") or [])]
+
+
+def _validate_observed_lineage(
+    configured: dict[str, Any],
+    *,
+    requested_provider_hash: str,
+    requested_model_hash: str,
+    requested_effort: str,
+    effective_provider_hash: str,
+    effective_model_hash: str,
+    effective_effort: str,
+    fallback_used: Any,
+    fallback_reason: str,
+) -> tuple[dict[str, Any] | None, str | None]:
+    primary_provider, primary_model, primary_effort = _route_triple(configured)
+    if (
+        requested_provider_hash != _sha(primary_provider)
+        or requested_model_hash != _sha(primary_model)
+        or requested_effort != primary_effort
+    ):
+        return None, "configured_execution_route_mismatch"
+    variants = {
+        (_sha(provider), _sha(model), effort): {
+            "provider": provider,
+            "model": model,
+            "effort": effort,
+        }
+        for provider, model, effort in map(
+            _route_triple, _configured_route_variants(configured)
+        )
+        if provider and model and effort
+    }
+    effective_key = (
+        effective_provider_hash,
+        effective_model_hash,
+        effective_effort,
+    )
+    effective = variants.get(effective_key)
+    if effective is None:
+        return None, "configured_execution_route_mismatch"
+    actual_fallback = effective_key != (
+        _sha(primary_provider),
+        _sha(primary_model),
+        primary_effort,
+    )
+    normalized_reason = str(fallback_reason or "").strip().lower()
+    if not isinstance(fallback_used, bool) or fallback_used is not actual_fallback:
+        return None, "fallback_lineage_mismatch"
+    if actual_fallback:
+        if normalized_reason not in TYPED_FALLBACK_REASONS:
+            return None, "fallback_reason_missing"
+    elif normalized_reason != "none":
+        return None, "fallback_reason_mismatch"
+    return (
+        {
+            "requestedProvider": primary_provider,
+            "requestedModel": primary_model,
+            "requestedEffort": primary_effort,
+            "effectiveProvider": effective["provider"],
+            "effectiveModel": effective["model"],
+            "effectiveEffort": effective["effort"],
+            "fallbackUsed": actual_fallback,
+            "fallbackAuthorized": actual_fallback,
+            "fallbackReason": normalized_reason,
+        },
+        None,
+    )
+
+
+def _exact_model_execution_route(
+    output_dir: Path,
+    *,
+    execution_target: dict[str, str] | None,
+    selected_case_ids: list[str] | None = None,
+    semantic_judge_required: bool = False,
+) -> dict[str, Any]:
+    configured = _configured_execution_route(execution_target)
+    if not configured:
+        return {"status": "unverified", "reason": "configured_execution_route_unavailable"}
+    provider_hash = _sha(configured["provider"])
+    model_hash = _sha(configured["model"])
+    result: dict[str, Any] = {
+        "requestedProvider": configured["provider"],
+        "requestedModel": configured["model"],
+        "requestedEffort": configured["effort"],
+        "configuredProvider": configured["provider"],
+        "configuredModel": configured["model"],
+        "configuredProviderHash": provider_hash,
+        "configuredModelHash": model_hash,
+    }
+    try:
+        artifact_bytes = (output_dir / "exact-model-eval.json").read_bytes()
+        payload = json.loads(artifact_bytes.decode("utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return {"status": "unverified", **result, "reason": "execution_artifact_unavailable"}
+    rows = payload.get("liveResults") if isinstance(payload, dict) else None
+    completed = [row for row in rows or [] if isinstance(row, dict) and row.get("status") == "completed"]
+    if not completed:
+        safe_failure_reasons = {
+            "execution_request_identity_unavailable",
+            "execution_surface_mismatch",
+            "execution_surface_unavailable",
+            "multiple_execution_surfaces_observed",
+        }
+        observed_failure_reasons = {
+            str(row.get("error") or "")
+            for row in rows or []
+            if isinstance(row, dict) and str(row.get("error") or "") in safe_failure_reasons
+        }
+        if len(observed_failure_reasons) == 1:
+            return {
+                "status": "unverified",
+                **result,
+                "reason": next(iter(observed_failure_reasons)),
+            }
+        return {"status": "unverified", **result, "reason": "completed_execution_unavailable"}
+
+    observed: dict[tuple[str, str, str, bool, str], dict[str, Any]] = {}
+    case_evidence: list[dict[str, Any]] = []
+    expected_agent_hash = (
+        _sha(str(execution_target.get("agentId") or ""))
+        if isinstance(execution_target, dict)
+        else ""
+    )
+    summary = payload.get("summary") if isinstance(payload, dict) else None
+    arguments = payload.get("args") if isinstance(payload, dict) else None
+    if selected_case_ids is not None:
+        declared_agent_hash = str((arguments or {}).get("agentIdHash") or "")
+        summarized_agent_hash = str((summary or {}).get("agentIdHash") or "")
+        if (
+            not re.fullmatch(r"[0-9a-f]{16}", declared_agent_hash)
+            or declared_agent_hash != summarized_agent_hash
+            or (expected_agent_hash and declared_agent_hash != expected_agent_hash)
+        ):
+            return {"status": "unverified", **result, "reason": "execution_agent_identity_mismatch"}
+        expected_agent_hash = declared_agent_hash
+        if len(completed) != len(selected_case_ids):
+            return {"status": "unverified", **result, "reason": "execution_case_coverage_unverified"}
+    for row in completed:
+        request_identity_hash = str(row.get("requestIdentityHash") or "")
+        observed_request_identity_hash = str(row.get("observedRequestIdentityHash") or "")
+        if (
+            not re.fullmatch(r"[0-9a-f]{16}", request_identity_hash)
+            or observed_request_identity_hash != request_identity_hash
+        ):
+            return {"status": "unverified", **result, "reason": "execution_request_identity_mismatch"}
+        evidence = row.get("promptFrameEvidenceForJudge")
+        if isinstance(evidence, str):
+            try:
+                evidence = json.loads(evidence)
+            except json.JSONDecodeError:
+                evidence = None
+        frames = evidence.get("prompt_frames") if isinstance(evidence, dict) else None
+        relevant = [
+            frame
+            for frame in frames or []
+            if isinstance(frame, dict)
+            and frame.get("prompt_family") in {"main_run_create", "main_runtime"}
+            and frame.get("request_identity_hash") == request_identity_hash
+        ]
+        if not relevant:
+            return {"status": "unverified", **result, "reason": "execution_request_identity_mismatch"}
+        route_frames = [frame for frame in relevant if frame.get("source") == "runtime_route_log"]
+        frame = (route_frames or relevant)[-1] if relevant else None
+        observed_provider = str((frame or {}).get("provider_hash") or "").removeprefix("h")
+        observed_model = str((frame or {}).get("model_hash") or "").removeprefix("h")
+        requested_provider = str(
+            (frame or {}).get("requested_provider_hash") or ""
+        ).removeprefix("h")
+        requested_model = str(
+            (frame or {}).get("requested_model_hash") or ""
+        ).removeprefix("h")
+        requested_effort = _route_effort((frame or {}).get("requested_effort"))
+        effective_effort = _route_effort((frame or {}).get("effective_effort"))
+        fallback_used = (frame or {}).get("fallback_used")
+        fallback_reason = str((frame or {}).get("fallback_reason") or "").strip().lower()
+        if not re.fullmatch(r"[0-9a-f]{16}", observed_provider) or not re.fullmatch(
+            r"[0-9a-f]{16}", observed_model
+        ) or not re.fullmatch(r"[0-9a-f]{16}", requested_provider) or not re.fullmatch(
+            r"[0-9a-f]{16}", requested_model
+        ) or not requested_effort or not effective_effort:
+            return {"status": "unverified", **result, "reason": "execution_route_evidence_unavailable"}
+        lineage, lineage_error = _validate_observed_lineage(
+            configured,
+            requested_provider_hash=requested_provider,
+            requested_model_hash=requested_model,
+            requested_effort=requested_effort,
+            effective_provider_hash=observed_provider,
+            effective_model_hash=observed_model,
+            effective_effort=effective_effort,
+            fallback_used=fallback_used,
+            fallback_reason=fallback_reason,
+        )
+        if lineage is None:
+            return {"status": "mismatch", **result, "reason": lineage_error}
+        observed[
+            (
+                observed_provider,
+                observed_model,
+                effective_effort,
+                bool(fallback_used),
+                fallback_reason,
+            )
+        ] = lineage
+        if selected_case_ids is not None:
+            case_id = str(row.get("caseId") or "")
+            if case_id not in selected_case_ids or any(item["caseId"] == case_id for item in case_evidence):
+                return {"status": "unverified", **result, "reason": "execution_case_coverage_unverified"}
+            observed_agent_hash = str(
+                (frame or {}).get("agent_id_hash")
+                or (frame or {}).get("agentIdHash")
+                or ""
+            ).removeprefix("h")
+            if observed_agent_hash != expected_agent_hash:
+                return {"status": "unverified", **result, "reason": "execution_agent_identity_mismatch"}
+            judge = row.get("semanticJudge")
+            judged = isinstance(judge, dict) and judge.get("status") == "judged"
+            passed = judged and judge.get("pass") is True
+            if semantic_judge_required:
+                judge_model_hash = str((summary or {}).get("judgeModelHash") or "")
+                attempts = (judge or {}).get("attemptCount")
+                raw_hash = str((judge or {}).get("rawHash") or "")
+                if (
+                    not passed
+                    or not re.fullmatch(r"[0-9a-f]{16}", judge_model_hash)
+                    or judge_model_hash != str((arguments or {}).get("judgeModelHash") or "")
+                    or not isinstance(attempts, int)
+                    or isinstance(attempts, bool)
+                    or attempts < 1
+                    or not re.fullmatch(r"[0-9a-f]{16}", raw_hash)
+                ):
+                    return {"status": "unverified", **result, "reason": "semantic_judge_verdict_unverified"}
+            case_evidence.append(
+                {
+                    "caseId": case_id,
+                    "agentIdHash": observed_agent_hash,
+                    "requestIdentityHash": request_identity_hash,
+                    "semanticJudged": judged,
+                    "semanticPassed": passed,
+                }
+            )
+
+    if len(observed) != 1:
+        return {"status": "mismatch", **result, "reason": "multiple_execution_routes_observed"}
+    observed_provider, observed_model, _effort, _fallback, _reason = next(iter(observed))
+    lineage = next(iter(observed.values()))
+    result.update(
+        {
+            **lineage,
+            "observedProviderHash": observed_provider,
+            "observedModelHash": observed_model,
+            "completedCaseCount": len(completed),
+        }
+    )
+    if selected_case_ids is not None:
+        result["artifactSha256"] = hashlib.sha256(artifact_bytes).hexdigest()
+        result["caseEvidence"] = case_evidence
+    return {"status": "verified", **result}
+
+
+def _native_surface_execution_route(
+    output_dir: Path,
+    *,
+    execution_target: dict[str, str] | None,
+    selected_case_ids: list[str],
+    requested_surface: str | None,
+    semantic_judge_required: bool,
+) -> dict[str, Any]:
+    configured = _configured_execution_route(execution_target)
+    expected_agent_hash = _configured_execution_agent_hash(execution_target)
+    if not configured or not re.fullmatch(r"[0-9a-f]{16}", expected_agent_hash or ""):
+        return {"status": "unverified", "reason": "configured_execution_identity_unavailable"}
+    provider_hash = _sha(configured["provider"])
+    model_hash = _sha(configured["model"])
+    result: dict[str, Any] = {
+        "requestedProvider": configured["provider"],
+        "requestedModel": configured["model"],
+        "requestedEffort": configured["effort"],
+        "configuredProvider": configured["provider"],
+        "configuredModel": configured["model"],
+        "configuredProviderHash": provider_hash,
+        "configuredModelHash": model_hash,
+    }
+    artifact_path = output_dir / "native-surface-playwright-qa.json"
+    try:
+        artifact_bytes = artifact_path.read_bytes()
+        payload = json.loads(artifact_bytes.decode("utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return {"status": "unverified", **result, "reason": "native_execution_artifact_unavailable"}
+    if not isinstance(payload, dict):
+        return {"status": "unverified", **result, "reason": "native_execution_artifact_invalid"}
+
+    summary = payload.get("summary")
+    arguments = payload.get("args")
+    selection = payload.get("selection")
+    cleanup = payload.get("cleanup")
+    browser_probe = payload.get("browserProbe")
+    rows = payload.get("cases")
+    expected_surface = str(requested_surface or "").strip()
+    if (
+        not expected_surface
+        or not isinstance(summary, dict)
+        or not isinstance(arguments, dict)
+        or not isinstance(selection, dict)
+        or not isinstance(cleanup, dict)
+        or not isinstance(browser_probe, dict)
+        or not isinstance(rows, list)
+    ):
+        return {"status": "unverified", **result, "reason": "native_execution_contract_missing"}
+    if (
+        str(arguments.get("agentIdHash") or "") != expected_agent_hash
+        or str(arguments.get("surface") or "") != expected_surface
+        or selection.get("selectedCaseIds") != selected_case_ids
+        or selection.get("selectedCaseCount") != len(selected_case_ids)
+        or str(selection.get("requestedSurface") or "") != expected_surface
+    ):
+        return {"status": "unverified", **result, "reason": "native_execution_selection_mismatch"}
+    expected_status = (
+        "completed_with_semantic_native_surface_evidence"
+        if semantic_judge_required
+        else "completed_native_surface_evidence_without_semantic_judge"
+    )
+    accepted_statuses = {expected_status}
+    if not semantic_judge_required:
+        accepted_statuses.add("completed_with_semantic_native_surface_evidence")
+    if (
+        summary.get("status") not in accepted_statuses
+        or summary.get("browserOk") is not True
+        or summary.get("cleanupOk") is not True
+        or summary.get("selectedCoverageOk") is not True
+        or summary.get("completionEvidenceOk") is not True
+        or summary.get("selectedCaseCount") != len(selected_case_ids)
+        or summary.get("resultCount") != len(selected_case_ids)
+        or summary.get("completedCount") != len(selected_case_ids)
+        or summary.get("failedCount") != 0
+        or cleanup.get("ok") is not True
+        or cleanup.get("status") != "complete"
+        or browser_probe.get("ok") is not True
+    ):
+        return {"status": "unverified", **result, "reason": "native_execution_summary_unverified"}
+    if semantic_judge_required and (
+        summary.get("semanticRequired") is not True
+        or summary.get("semanticJudgedCount") != len(selected_case_ids)
+        or summary.get("semanticPassedCount") != len(selected_case_ids)
+        or summary.get("semanticFailedCount") != 0
+    ):
+        return {"status": "unverified", **result, "reason": "semantic_judge_verdict_unverified"}
+    if len(rows) != len(selected_case_ids):
+        return {"status": "unverified", **result, "reason": "execution_case_coverage_unverified"}
+
+    case_evidence: list[dict[str, Any]] = []
+    seen_case_ids: set[str] = set()
+    observed_routes: dict[tuple[str, str, str, bool, str], dict[str, Any]] = {}
+    expected_completion_surface = NATIVE_SURFACE_COMPLETION_SURFACES.get(expected_surface)
+    completion_expected = expected_surface != "listen_only"
+    if not expected_completion_surface:
+        return {"status": "unverified", **result, "reason": "native_execution_surface_unsupported"}
+    for row in rows:
+        if not isinstance(row, dict):
+            return {"status": "unverified", **result, "reason": "native_case_evidence_invalid"}
+        case_id = str(row.get("caseId") or "")
+        request_hash = str(row.get("requestIdentityHash") or "")
+        agent_hash = str(row.get("actualCompletionAgentIdHash") or "")
+        provider_hashes = row.get("completionProviderHashes")
+        model_hashes = row.get("completionModelHashes")
+        private = row.get("private")
+        frames = private.get("completionFrames") if isinstance(private, dict) else None
+        if (
+            case_id not in selected_case_ids
+            or case_id in seen_case_ids
+            or row.get("status") != "completed"
+            or row.get("surface") != expected_surface
+            or row.get("requestedSurface") != expected_surface
+            or row.get("requestedCompletionSurface") != expected_completion_surface
+            or row.get("observedCompletionSurface")
+            != (expected_completion_surface if completion_expected else "none")
+            or row.get("completionExpected") is not completion_expected
+            or row.get("completionSurfaceVerified") is not True
+            or not re.fullmatch(r"[0-9a-f]{16}", request_hash)
+            or not isinstance(frames, list)
+        ):
+            return {"status": "unverified", **result, "reason": "native_case_evidence_unverified"}
+        if completion_expected:
+            if agent_hash != expected_agent_hash or not frames:
+                return {
+                    "status": "unverified",
+                    **result,
+                    "reason": "native_case_evidence_unverified",
+                }
+            frame_lineages: dict[
+                tuple[str, str, str, bool, str], dict[str, Any]
+            ] = {}
+            for frame in frames:
+                if (
+                    not isinstance(frame, dict)
+                    or frame.get("prompt_family") not in {"main_run_create", "main_runtime"}
+                    or frame.get("surface") != expected_completion_surface
+                    or frame.get("agent_id_hash") != expected_agent_hash
+                    or frame.get("request_identity_hash") != request_hash
+                ):
+                    return {
+                        "status": "unverified",
+                        **result,
+                        "reason": "native_request_bound_frame_unverified",
+                    }
+                lineage, lineage_error = _validate_observed_lineage(
+                    configured,
+                    requested_provider_hash=_sha(
+                        str(frame.get("requested_provider") or "")
+                    ),
+                    requested_model_hash=_sha(str(frame.get("requested_model") or "")),
+                    requested_effort=_route_effort(frame.get("requested_effort")),
+                    effective_provider_hash=_sha(
+                        str(frame.get("effective_provider") or frame.get("provider") or "")
+                    ),
+                    effective_model_hash=_sha(
+                        str(frame.get("effective_model") or frame.get("model") or "")
+                    ),
+                    effective_effort=_route_effort(frame.get("effective_effort")),
+                    fallback_used=frame.get("fallback_used"),
+                    fallback_reason=str(frame.get("fallback_reason") or ""),
+                )
+                if lineage is None:
+                    return {"status": "mismatch", **result, "reason": lineage_error}
+                route_key = (
+                    _sha(lineage["effectiveProvider"]),
+                    _sha(lineage["effectiveModel"]),
+                    lineage["effectiveEffort"],
+                    lineage["fallbackUsed"],
+                    lineage["fallbackReason"],
+                )
+                frame_lineages[route_key] = lineage
+            if len(frame_lineages) != 1:
+                return {
+                    "status": "unverified",
+                    **result,
+                    "reason": "multiple_execution_routes_observed",
+                }
+            route_key, lineage = next(iter(frame_lineages.items()))
+            if (
+                provider_hashes != [route_key[0]]
+                or model_hashes != [route_key[1]]
+                or row.get("requestedProviderHashes") != [provider_hash]
+                or row.get("requestedModelHashes") != [model_hash]
+                or row.get("requestedEfforts") != [configured["effort"]]
+                or row.get("effectiveEfforts") != [lineage["effectiveEffort"]]
+                or row.get("fallbackUsed") is not lineage["fallbackUsed"]
+                or row.get("fallbackReasons") != [lineage["fallbackReason"]]
+            ):
+                return {
+                    "status": "unverified",
+                    **result,
+                    "reason": "native_case_evidence_unverified",
+                }
+            if row.get("completionFrameCount") != len(frames):
+                return {
+                    "status": "unverified",
+                    **result,
+                    "reason": "native_completion_frame_count_mismatch",
+                }
+            observed_routes[route_key] = lineage
+        elif (
+            agent_hash != "not_applicable"
+            or provider_hashes != []
+            or model_hashes != []
+            or row.get("requestedProviderHashes") != []
+            or row.get("requestedModelHashes") != []
+            or row.get("requestedEfforts") != []
+            or row.get("effectiveEfforts") != []
+            or row.get("fallbackUsed") is not False
+            or row.get("fallbackReasons") != []
+            or frames
+            or row.get("completionFrameCount") != 0
+        ):
+            return {
+                "status": "unverified",
+                **result,
+                "reason": "native_suppressed_completion_evidence_invalid",
+            }
+        judged = row.get("semanticJudged") is True
+        passed = row.get("semanticPass") is True
+        judge = row.get("judge")
+        if semantic_judge_required and (
+            not judged
+            or not passed
+            or not isinstance(judge, dict)
+            or judge.get("verdict") != "pass"
+            or not re.fullmatch(r"[0-9a-f]{16}", str(judge.get("responseHash") or ""))
+        ):
+            return {"status": "unverified", **result, "reason": "semantic_judge_verdict_unverified"}
+        seen_case_ids.add(case_id)
+        case_evidence.append(
+            {
+                "caseId": case_id,
+                "agentIdHash": agent_hash,
+                "requestIdentityHash": request_hash,
+                "surface": expected_surface,
+                "completionSurface": expected_completion_surface,
+                "completionExpected": completion_expected,
+                "semanticJudged": judged,
+                "semanticPassed": passed,
+            }
+        )
+    if seen_case_ids != set(selected_case_ids) or len(observed_routes) > 1:
+        return {"status": "unverified", **result, "reason": "execution_case_coverage_unverified"}
+    route_result: dict[str, Any] = {
+        "routeExecution": "suppressed_by_surface_contract",
+        "effectiveProvider": configured["provider"],
+        "effectiveModel": configured["model"],
+        "effectiveEffort": configured["effort"],
+        "fallbackUsed": False,
+        "fallbackAuthorized": False,
+        "fallbackReason": "none",
+    }
+    if completion_expected:
+        if len(observed_routes) != 1:
+            return {"status": "unverified", **result, "reason": "execution_route_evidence_unavailable"}
+        observed_provider, observed_model, _effort, _fallback, _reason = next(
+            iter(observed_routes)
+        )
+        lineage = next(iter(observed_routes.values()))
+        route_result = {
+            **lineage,
+            "routeExecution": "executed",
+            "observedProviderHash": observed_provider,
+            "observedModelHash": observed_model,
+        }
+    return {
+        "status": "verified",
+        **result,
+        **route_result,
+        "completedCaseCount": len(rows),
+        "artifactSha256": hashlib.sha256(artifact_bytes).hexdigest(),
+        "routes": sorted(str(value) for value in summary.get("routes") or []),
+        "caseEvidence": sorted(case_evidence, key=lambda item: selected_case_ids.index(item["caseId"])),
+    }
+
+
+def _activation_model_execution_route(
+    output_dir: Path,
+    *,
+    bank: dict[str, Any],
+    family_id: str,
+    selected_case_ids: list[str] | None = None,
+) -> dict[str, Any]:
+    try:
+        artifact_bytes = (output_dir / "activation-model-eval.json").read_bytes()
+        payload = json.loads(artifact_bytes.decode("utf-8"))
+    except (OSError, ValueError, TypeError, UnicodeError, json.JSONDecodeError):
+        return {"status": "unverified", "reason": "activation_execution_artifact_unavailable"}
+
+    family = next(
+        (
+            row
+            for row in bank.get("families") or []
+            if isinstance(row, dict) and str(row.get("id") or "") == family_id
+        ),
+        None,
+    )
+    target_rows = (family or {}).get("activationTargets") or (family or {}).get("activation_targets") or []
+    targets = {
+        str(row.get("key") or ""): str(row.get("agentId") or row.get("agent_id") or "")
+        for row in target_rows
+        if isinstance(row, dict)
+    }
+    configured_family = _configured_family_execution_route(family_id)
+    configured_targets = {
+        str(row.get("targetKey") or ""): row
+        for row in (configured_family or {}).get("targets") or []
+        if isinstance(row, dict)
+    }
+    if (
+        not targets
+        or (configured_family or {}).get("kind") != "background_activation"
+        or set(configured_targets) != set(targets)
+    ):
+        return {"status": "unverified", "reason": "activation_configured_target_unavailable"}
+    results = payload.get("results") if isinstance(payload, dict) else None
+    completed = [
+        row
+        for row in results or []
+        if isinstance(row, dict) and isinstance(row.get("actual"), bool) and not row.get("error")
+    ]
+    if not completed:
+        return {"status": "unverified", "reason": "activation_completed_execution_unavailable"}
+
+    routes: dict[tuple[str, str, str, str, str], dict[str, Any]] = {}
+    case_evidence: list[dict[str, Any]] = []
+    observed_decisions: set[tuple[str, str, int]] = set()
+    for row in completed:
+        target_key = str(row.get("targetKey") or "")
+        configured = configured_targets.get(target_key)
+        if not isinstance(configured, dict):
+            return {"status": "unverified", "reason": "activation_configured_target_unavailable"}
+        primary_provider = str(configured.get("provider") or "")
+        primary_model = str(configured.get("model") or "")
+        primary_effort = _route_effort(configured.get("effort"))
+        observed_provider = str(row.get("providerUsed") or "")
+        observed_model = str(row.get("modelUsed") or "")
+        observed_effort = _route_effort(row.get("effortUsed"))
+        requested_provider = str(row.get("requestedProvider") or "")
+        requested_model = str(row.get("requestedModel") or "")
+        requested_effort = _route_effort(row.get("requestedEffort"))
+        effective_provider = str(row.get("effectiveProvider") or "")
+        effective_model = str(row.get("effectiveModel") or "")
+        effective_effort = _route_effort(row.get("effectiveEffort"))
+        fallback_reason = str(row.get("fallbackReason") or "").strip().lower()
+        if (
+            not observed_effort
+            or not requested_effort
+            or not effective_effort
+            or effective_provider != observed_provider
+            or effective_model != observed_model
+            or effective_effort != observed_effort
+        ):
+            return {"status": "unverified", "reason": "execution_effort_lineage_missing"}
+        lineage, lineage_error = _validate_observed_lineage(
+            configured,
+            requested_provider_hash=_sha(requested_provider),
+            requested_model_hash=_sha(requested_model),
+            requested_effort=requested_effort,
+            effective_provider_hash=_sha(observed_provider),
+            effective_model_hash=_sha(observed_model),
+            effective_effort=observed_effort,
+            fallback_used=(
+                observed_provider,
+                observed_model,
+                observed_effort,
+            )
+            != (primary_provider, primary_model, primary_effort),
+            fallback_reason=fallback_reason,
+        )
+        if lineage is None:
+            return {"status": "mismatch", "reason": lineage_error}
+        attempts = row.get("providerAttempts")
+        if not isinstance(attempts, list):
+            return {"status": "unverified", "reason": "activation_provider_completion_unverified"}
+        completed_attempt_index = next(
+            (
+                index
+                for index, attempt in enumerate(attempts or [])
+                if isinstance(attempt, dict)
+                and attempt.get("status") == "completed"
+                and attempt.get("provider") == observed_provider
+                and attempt.get("model") == observed_model
+                and _route_effort(attempt.get("effort")) == observed_effort
+            ),
+            None,
+        )
+        if completed_attempt_index is None:
+            return {"status": "unverified", "reason": "activation_provider_completion_unverified"}
+        completed_attempt = attempts[completed_attempt_index]
+        fallback_used = lineage["fallbackUsed"]
+        if (
+            str(completed_attempt.get("fallbackReason") or "").strip().lower()
+            != fallback_reason
+            or completed_attempt.get("source") != ("fallback" if fallback_used else "primary")
+        ):
+            return {"status": "mismatch", "reason": "fallback_lineage_mismatch"}
+        if fallback_used:
+            prior_reason = next(
+                (
+                    str((attempt.get("error") or {}).get("class") or "")
+                    .strip()
+                    .lower()
+                    for attempt in reversed(attempts[:completed_attempt_index])
+                    if isinstance(attempt, dict)
+                    and isinstance(attempt.get("error"), dict)
+                    and str((attempt.get("error") or {}).get("class") or "").strip()
+                ),
+                "",
+            )
+            if prior_reason != fallback_reason:
+                return {"status": "mismatch", "reason": "fallback_reason_mismatch"}
+        primary_failure_verified = any(
+            isinstance(attempt, dict)
+            and attempt.get("provider") == primary_provider
+            and attempt.get("model") == primary_model
+            and _route_effort(attempt.get("effort")) == primary_effort
+            and attempt.get("status")
+            in {"error", "failed", "timeout", "unavailable", "skipped_unhealthy"}
+            for attempt in (attempts or [])[:completed_attempt_index]
+        )
+        if selected_case_ids is not None:
+            case_id = str(row.get("caseId") or "")
+            repetition = row.get("repetition")
+            required = row.get("required")
+            allowed_decision = row.get("allowed")
+            actual = row.get("actual")
+            passed = row.get("pass")
+            if (
+                case_id not in selected_case_ids
+                or not isinstance(repetition, int)
+                or isinstance(repetition, bool)
+                or repetition < 1
+                or not isinstance(required, bool)
+                or not isinstance(allowed_decision, bool)
+                or not isinstance(actual, bool)
+                or not isinstance(passed, bool)
+            ):
+                return {"status": "unverified", "reason": "activation_decision_evidence_unavailable"}
+            key = (case_id, target_key, repetition)
+            if key in observed_decisions:
+                return {"status": "unverified", "reason": "activation_decision_duplicate"}
+            observed_decisions.add(key)
+            expected_pass = actual if required else allowed_decision or not actual
+            if passed is not True or expected_pass is not True:
+                return {"status": "mismatch", "reason": "activation_decision_incorrect"}
+            if fallback_used and not primary_failure_verified:
+                return {"status": "unverified", "reason": "activation_primary_failure_unverified"}
+            case_evidence.append(
+                {
+                    "caseId": case_id,
+                    "targetKey": target_key,
+                    "repetition": repetition,
+                    "required": required,
+                    "allowed": allowed_decision,
+                    "actual": actual,
+                    "passed": passed,
+                    "requestedProvider": primary_provider,
+                    "requestedModel": primary_model,
+                    "requestedEffort": primary_effort,
+                    "effectiveProvider": observed_provider,
+                    "effectiveModel": observed_model,
+                    "effectiveEffort": observed_effort,
+                    "fallbackReason": fallback_reason,
+                    "primaryFailureVerified": primary_failure_verified,
+                }
+            )
+        routes[(target_key, observed_provider, observed_model, observed_effort, fallback_reason)] = {
+            "targetKey": target_key,
+            **lineage,
+            "configuredProvider": primary_provider,
+            "configuredModel": primary_model,
+        }
+    result = {
+        "status": "verified",
+        "completedCaseCount": len(completed),
+        "routes": sorted(routes.values(), key=lambda row: str(row["targetKey"])),
+    }
+    if selected_case_ids is not None:
+        result["artifactSha256"] = hashlib.sha256(artifact_bytes).hexdigest()
+        result["caseEvidence"] = case_evidence
+    return result
+
+
 def _public_runner_summary(stdout: str) -> dict[str, Any] | None:
     """Keep only aggregate eval evidence; never copy paths or private artifacts into the UI."""
 
@@ -553,16 +1738,30 @@ def _public_runner_summary(stdout: str) -> dict[str, Any] | None:
         value = parsed.get(key)
         if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
             public[key] = value
+    for list_key, count_key in RUNNER_SUMMARY_QUALITY_LIST_COUNTS.items():
+        value = parsed.get(list_key)
+        if not isinstance(value, list):
+            continue
+        derived_count = len(value)
+        if count_key in public and public[count_key] != derived_count:
+            public["status"] = "blocked"
+            public["blockedReason"] = "runner_summary_quality_count_mismatch"
+            continue
+        public[count_key] = derived_count
     return public or None
 
 
 def _eval_runner(
-    *, bank: dict[str, Any], family: str | None, prompt_id: str | None
+    *,
+    bank: dict[str, Any],
+    family: str | None,
+    prompt_id: str | None,
+    selected: list[dict[str, dict[str, Any]]] | None = None,
 ) -> Path:
     families = bank.get("families") or []
     if family:
-        selected = next((row for row in families if row.get("id") == family), None)
-        if selected and selected.get("runner") == "background_activation":
+        selected_family = next((row for row in families if row.get("id") == family), None)
+        if selected_family and selected_family.get("runner") == "background_activation":
             return ACTIVATION_MODEL_EVAL_SCRIPT
     if prompt_id:
         for row in families:
@@ -570,6 +1769,11 @@ def _eval_runner(
                 continue
             if prompt_id in set(row.get("promptRefs") or row.get("prompt_refs") or []):
                 return ACTIVATION_MODEL_EVAL_SCRIPT
+    selected_surfaces = {
+        str(row.get("case", {}).get("surface") or "web") for row in selected or []
+    }
+    if len(selected_surfaces) == 1 and next(iter(selected_surfaces), "web") in NATIVE_SURFACES:
+        return NATIVE_SURFACE_EVAL_SCRIPT
     return EXACT_MODEL_EVAL_SCRIPT
 
 
@@ -857,10 +2061,61 @@ def _array_has_objects(text: str, array_start: int, array_end: int) -> bool:
 
 
 def _public_run_record(record: dict[str, Any]) -> dict[str, Any]:
-    public = dict(record)
-    output_dir = str(public.pop("outputDir", "") or "")
+    public = {key: value for key, value in record.items() if key in PUBLIC_RUN_FIELDS}
+    output_dir = str(record.get("outputDir", "") or "")
     public["privateOutputAvailable"] = bool(output_dir)
     public["artifactName"] = Path(output_dir).name if output_dir else None
+    summary = public.get("runnerSummary")
+    if isinstance(summary, dict):
+        public["runnerSummary"] = _public_runner_summary(json.dumps(summary))
+    route = public.get("executionRoute")
+    if isinstance(route, dict):
+        public_route = {key: value for key, value in route.items() if key in PUBLIC_ROUTE_FIELDS}
+        _retain_typed_fallback_reason(public_route)
+        for field, allowed in (
+            ("routes", PUBLIC_ROUTE_VARIANT_FIELDS),
+            ("caseEvidence", PUBLIC_CASE_EVIDENCE_FIELDS),
+        ):
+            if isinstance(public_route.get(field), list):
+                projected_items = [
+                    {key: value for key, value in item.items() if key in allowed}
+                    for item in public_route[field]
+                    if isinstance(item, dict)
+                ]
+                for item in projected_items:
+                    _retain_typed_fallback_reason(item)
+                public_route[field] = projected_items
+        public["executionRoute"] = public_route
+    manifest = public.get("lineageManifest")
+    if isinstance(manifest, dict):
+        public_manifest = dict(manifest)
+        dependencies = public_manifest.get("promptDependencies")
+        if isinstance(dependencies, list):
+            public_manifest["promptDependencies"] = []
+            for dependency in dependencies:
+                if not isinstance(dependency, dict):
+                    continue
+                safe_dependency = {
+                    key: value
+                    for key, value in dependency.items()
+                    if key
+                    in {
+                        "id",
+                        "kind",
+                        "status",
+                        "direct",
+                        "path",
+                        "contentHash",
+                        "bodyHash",
+                        "renderedHash",
+                        "deliveryKind",
+                        "deliveryTarget",
+                    }
+                }
+                if str(safe_dependency.get("path") or "").startswith("/"):
+                    safe_dependency.pop("path", None)
+                public_manifest["promptDependencies"].append(safe_dependency)
+        public["lineageManifest"] = public_manifest
     if "command" in public:
         public["command"] = _safe_command(
             [str(item) for item in public.get("command") or []],
@@ -874,6 +2129,16 @@ def _public_run_record(record: dict[str, Any]) -> dict[str, Any]:
         str(public.get("stderrTail") or ""), private_paths=private_paths
     )
     return public
+
+
+def _retain_typed_fallback_reason(record: dict[str, Any]) -> None:
+    if "fallbackReason" not in record:
+        return
+    reason = str(record.get("fallbackReason") or "").strip().lower()
+    if reason == "none" or reason in TYPED_FALLBACK_REASONS:
+        record["fallbackReason"] = reason
+    else:
+        record.pop("fallbackReason", None)
 
 
 def _prompt_hash(prompt_id: str | None) -> str | None:
@@ -913,12 +2178,31 @@ def _safe_command(
     ]
 
 
+def _workbench_candidate_source_hash() -> str | None:
+    import sys
+
+    app_module = sys.modules.get("prompt_workbench.app")
+    boot_hash = getattr(app_module, "_BACKEND_BOOT_SOURCE_HASH", None)
+    if isinstance(boot_hash, str) and re.fullmatch(r"[0-9a-f]{16}", boot_hash):
+        return boot_hash
+    digest = hashlib.sha256()
+    try:
+        for source in sorted(Path(__file__).parent.glob("*.py")):
+            digest.update(source.name.encode("utf-8"))
+            digest.update(b"\0")
+            digest.update(source.read_bytes())
+    except OSError:
+        return None
+    return digest.hexdigest()[:16]
+
+
 def _sanitize_output(text: str, *, private_paths: tuple[Path, ...] = ()) -> str:
     import re
     from scripts.viventium.prompt_registry import PRIVATE_PATTERN_RULES
 
     text = re.sub(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", "<email>", text, flags=re.I)
     text = re.sub(r'("userId"\s*:\s*")[0-9a-f]{12,32}(")', r'\1<user-id>\2', text, flags=re.I)
+    text = redact_credential_assignments(text)
     for label, pattern in PRIVATE_PATTERN_RULES:
         text = pattern.sub(f"<{label}>", text)
     return _redact_private_paths(text, private_paths)

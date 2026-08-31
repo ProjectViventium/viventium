@@ -146,22 +146,22 @@ There was also a config-layer gap for SambaNova:
 
 - Groq, 2s:
   - `qa/results/activation_provider_benchmarks/2026-04-12T20-44-32-533Z/activation-provider-benchmark.json`
-  - `qa/results/activation_provider_benchmarks/2026-04-12T20-44-32-533Z/activation-provider-benchmark.md`
+  - Markdown report generated locally; not retained as a public artifact.
 - Anthropic Haiku 4.5, 2s:
   - `qa/results/activation_provider_benchmarks/2026-04-12T20-44-46-405Z/activation-provider-benchmark.json`
-  - `qa/results/activation_provider_benchmarks/2026-04-12T20-44-46-405Z/activation-provider-benchmark.md`
+  - Markdown report generated locally; not retained as a public artifact.
 - Anthropic Haiku 4.5, 10s:
   - `qa/results/activation_provider_benchmarks/2026-04-12T20-45-19-138Z/activation-provider-benchmark.json`
-  - `qa/results/activation_provider_benchmarks/2026-04-12T20-45-19-138Z/activation-provider-benchmark.md`
+  - Markdown report generated locally; not retained as a public artifact.
 - SambaNova 70B, 2s:
   - `qa/results/activation_provider_benchmarks/2026-04-12T20-45-53-549Z/activation-provider-benchmark.json`
-  - `qa/results/activation_provider_benchmarks/2026-04-12T20-45-53-549Z/activation-provider-benchmark.md`
+  - Markdown report generated locally; not retained as a public artifact.
 - SambaNova 8B, 2s:
   - `qa/results/activation_provider_benchmarks/2026-04-12T20-46-40-713Z/activation-provider-benchmark.json`
-  - `qa/results/activation_provider_benchmarks/2026-04-12T20-46-40-713Z/activation-provider-benchmark.md`
+  - Markdown report generated locally; not retained as a public artifact.
 - SambaNova Maverick, 2s:
   - `qa/results/activation_provider_benchmarks/2026-04-12T20-46-44-157Z/activation-provider-benchmark.json`
-  - `qa/results/activation_provider_benchmarks/2026-04-12T20-46-44-157Z/activation-provider-benchmark.md`
+  - Markdown report generated locally; not retained as a public artifact.
 
 ## Superseded Evidence
 

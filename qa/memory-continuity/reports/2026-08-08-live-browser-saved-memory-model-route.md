@@ -1,8 +1,11 @@
-# Live browser saved-memory model-route QA — 2026-08-08
+<!-- qa-evidence-exempt: Generated focused browser artifact; full-view user-grade acceptance is owned by the universal cognitive-continuity report. -->
+
+# Live browser saved-memory model-route QA — 2026-08-26
 
 - Status: PASS
 - Signed-in surface: local LibreChat, non-admin QA account
-- Writer route: openai / gpt-5.6-luna
+- Writer route: openAI / gpt-5.6-luna
+- Writer effort: medium
 - Conversation recall during both turns: disabled
 - Synthetic fact written through browser chat: yes
 - Stored fact visible in Memories panel: yes
@@ -13,11 +16,10 @@
 - LibreChat and GlassHive synthetic conversation/session cleanup verified: yes
 - Original account preferences restored: yes
 - Account hash: f9ffb8f8a012
-- Write conversation hash: cb053628a9df
-- Read conversation hash: e1f49091b1b4
+- Write conversation hash: 88522950bbfc
+- Read conversation hash: 5aaab297e5ab
 - Private screenshot/result artifacts: saved outside repository
 
-The test used a unique synthetic preference, never repeated that preference in the recovery prompt, and disabled conversation recall before both turns. This proves the general saved-memory write/read path rather than transcript recall or knowledge of a particular person/entity.
+The test used an ordinary-language durable preference without a memory command or named-person/pet fixture, never repeated that preference in the recovery prompt, and disabled conversation recall before both turns. This proves the general saved-memory write/read path rather than transcript recall or a phrase/entity-specific rule.
 
 Raw prompts, responses, memory values, account identifiers, screenshots, tokens, local paths, and database identifiers are intentionally excluded from this public report.
-<!-- qa-evidence-exempt: Historical or specialized supporting artifact retained without retroactively inventing missing evidence; current release acceptance requires a fresh full-view report. -->

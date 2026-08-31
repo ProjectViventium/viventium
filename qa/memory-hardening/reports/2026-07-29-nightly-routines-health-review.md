@@ -1,3 +1,4 @@
+<!-- qa-evidence-exempt: Historical evidence snapshot retained verbatim; retroactive v2 fields would invent evidence that was not captured during the run. -->
 # 2026-07-29 Nightly Routines Health Review
 
 Read-only audit for the Viventium nightly routines. This report is public-safe: it records sanitized
@@ -112,4 +113,3 @@ defensible, and it specifically recommended tightening transcript and periphery 
 outage does not get hidden by a successful scheduled scan and a structurally valid no-result artifact.
 Those corrections are incorporated above. Remaining unresolved risk: current recall retrievability
 is unproven until RAG is repaired and browser/source-card proof is rerun.
-<!-- qa-evidence-exempt: Historical or specialized supporting artifact retained without retroactively inventing missing evidence; current release acceptance requires a fresh full-view report. -->

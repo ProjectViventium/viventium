@@ -1,3 +1,4 @@
+<!-- qa-evidence-exempt: Historical evidence snapshot retained verbatim; retroactive v2 fields would invent evidence that was not captured during the run. -->
 # Codex Worker Native Policy And Feeling Authority QA — 2026-08-02
 
 ## Result
@@ -114,4 +115,3 @@ Changed authority intentionally pays one serial replacement for quality.
 - No upstream issue, outreach, or socialization was performed.
 - Claude review was unavailable because the local account reported its usage limit; it was not used
   as a substitute for code, config, UI, log, or DB evidence.
-<!-- qa-evidence-exempt: Historical or specialized supporting artifact retained without retroactively inventing missing evidence; current release acceptance requires a fresh full-view report. -->

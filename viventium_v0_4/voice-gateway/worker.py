@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import inspect
 import importlib.util
 import json
@@ -22,11 +23,12 @@ import sys
 import time
 import threading
 import wave
-from http.server import BaseHTTPRequestHandler, HTTPServer
 from dataclasses import dataclass, replace
+from datetime import datetime, timezone
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from importlib import metadata as importlib_metadata
 from pathlib import Path
-from typing import Any, NoReturn, Optional
+from typing import Any, Callable, NoReturn, Optional
 from urllib.parse import quote, urlencode
 
 import aiohttp
@@ -614,38 +616,17 @@ def _active_voice_job_markers() -> list[Path]:
         except (ValueError, IndexError):
             marker.unlink(missing_ok=True)
             continue
-        age_s = now - marker.stat().st_mtime
+        try:
+            age_s = now - marker.stat().st_mtime
+        except FileNotFoundError:
+            # A call can finish between the directory scan and this stat. Marker churn is normal
+            # under concurrent calls and must never fail process prewarm.
+            continue
         if age_s > stale_after_s or not _pid_is_alive(pid):
             marker.unlink(missing_ok=True)
             continue
         active.append(marker)
     return active
-
-
-def _wait_for_active_voice_jobs_before_prewarm() -> None:
-    max_wait_s = _parse_float_env(
-        "VIVENTIUM_VOICE_REPLACEMENT_PREWARM_MAX_WAIT_S",
-        20.0,
-    )
-    if max_wait_s <= 0:
-        return
-
-    started = time.monotonic()
-    logged = False
-    while _active_voice_job_markers():
-        elapsed = time.monotonic() - started
-        if elapsed >= max_wait_s:
-            logger.info(
-                "[voice-gateway] Replacement prewarm waited %.1fs for active calls; continuing so the worker keeps a spare process.",
-                elapsed,
-            )
-            return
-        if not logged:
-            logger.info(
-                "[voice-gateway] Delaying replacement local-model prewarm while an active voice call is running."
-            )
-            logged = True
-        time.sleep(0.25)
 
 
 def _normalize_turn_detection(mode: str) -> str:
@@ -2347,9 +2328,13 @@ def _validate_voice_session_claim(
     state = payload.get("speakerSessionState")
     normalized_state = None
     if state is not None:
-        shared_track_sids = state.get("sharedTrackSids") if isinstance(state, dict) else None
+        shared_track_sids = (
+            state.get("sharedTrackSids") if isinstance(state, dict) else None
+        )
         shared_participant_identities = (
-            state.get("sharedParticipantIdentities") if isinstance(state, dict) else None
+            state.get("sharedParticipantIdentities")
+            if isinstance(state, dict)
+            else None
         )
         if (
             not isinstance(state, dict)
@@ -2611,6 +2596,7 @@ async def _abandon_voice_session_claim(
         released,
     )
     return released
+
 
 
 async def _report_voice_gateway_failure(
@@ -3042,6 +3028,44 @@ def build_stt(env: Env, vad: Optional[Any]) -> Any:
     return stt_impl
 
 
+def _prewarm_local_whisper_model(env: Env) -> None:
+    from pywhispercpp_provider import prewarm_model
+
+    logger.info(
+        "[voice-gateway] Prewarming local whisper.cpp STT model (%s)",
+        env.stt_model,
+    )
+    try:
+        prewarm_model(env.stt_model)
+    except Exception as exc:
+        logger.error(
+            "[voice-gateway] Local whisper.cpp STT prewarm failed for %s; refusing to register an unhealthy local STT worker: %s",
+            env.stt_model,
+            exc,
+        )
+        raise RuntimeError(
+            f"Local Whisper.cpp STT prewarm failed for {env.stt_model}; worker will not register."
+        ) from exc
+
+
+async def _complete_deferred_local_stt_prewarm(proc: JobProcess, env: Env) -> None:
+    # === VIVENTIUM START ===
+    # Feature: admitted-call-safe replacement worker recovery.
+    # Purpose: an idle replacement must not compete with an active call merely to stay warm. Once
+    # LiveKit admits a real second call, however, waiting for every older call to end leaves the new
+    # room unjoined and produces a false gateway timeout. At that point this process is no longer
+    # speculative capacity: initialize it immediately and still fail closed before it can publish
+    # a voice session if the configured local model is unhealthy.
+    if not proc.userdata.get("deferred_local_stt_prewarm"):
+        return
+    if not _is_local_whisper_stt(env.stt_provider):
+        proc.userdata.pop("deferred_local_stt_prewarm", None)
+        return
+    await asyncio.to_thread(_prewarm_local_whisper_model, env)
+    proc.userdata.pop("deferred_local_stt_prewarm", None)
+    # === VIVENTIUM END ===
+
+
 def prewarm_process(proc: JobProcess) -> None:
     env = load_env()
     proc.userdata["voice_env"] = env
@@ -3054,24 +3078,19 @@ def prewarm_process(proc: JobProcess) -> None:
 
     provider = _normalize_stt_provider(env.stt_provider)
     if provider in {"pywhispercpp", "whisper_local"}:
-        from pywhispercpp_provider import prewarm_model
-
-        _wait_for_active_voice_jobs_before_prewarm()
-        logger.info(
-            "[voice-gateway] Prewarming local whisper.cpp STT model (%s)",
-            env.stt_model,
-        )
-        try:
-            prewarm_model(env.stt_model)
-        except Exception as exc:
-            logger.error(
-                "[voice-gateway] Local whisper.cpp STT prewarm failed for %s; refusing to register an unhealthy local STT worker: %s",
-                env.stt_model,
-                exc,
+        # === VIVENTIUM START ===
+        # Feature: do not let replacement prewarm outlive LiveKit process initialization.
+        # A long-running call may legitimately hold the accelerator for hours. Blocking here makes
+        # every replacement process time out until the pool stops replenishing. Register a cold
+        # spare and complete the same fail-closed warmup at job entry after the active marker clears.
+        if _active_voice_job_markers():
+            proc.userdata["deferred_local_stt_prewarm"] = True
+            logger.info(
+                "[voice-gateway] Deferring replacement local-model prewarm until the active call ends."
             )
-            raise RuntimeError(
-                f"Local Whisper.cpp STT prewarm failed for {env.stt_model}; worker will not register."
-            ) from exc
+        else:
+            _prewarm_local_whisper_model(env)
+        # === VIVENTIUM END ===
 
     tts_providers = {
         _normalize_voice_provider(env.tts_provider),
@@ -3175,6 +3194,22 @@ def _metric_ms(metrics: Any, key: str) -> str:
     return "n/a" if value is None else f"{value * 1000.0:.3f}"
 
 
+def _record_completed_tts_trace(
+    llm_impl: LibreChatLLM,
+    metrics: Any,
+    correlation_id: str,
+) -> bool:
+    trace_id = str(correlation_id or "").strip()
+    cancelled = (
+        metrics.get("cancelled", False)
+        if isinstance(metrics, dict)
+        else getattr(metrics, "cancelled", False)
+    )
+    if not trace_id or bool(cancelled):
+        return False
+    return llm_impl.record_completed_trace_stage(trace_id, "tts.completed")
+
+
 def _metric_seconds(metrics: Any, key: str) -> float:
     value = _metric_value(metrics, key)
     return 0.0 if value is None else value
@@ -3241,6 +3276,18 @@ def _apply_authoritative_call_mode_to_speech_planes(
         _interrupt_agent_session_speech(session)
 
 
+def _classify_authoritative_mode_sync(
+    authoritative_mode: Optional[str],
+    *,
+    terminal_state_seen: bool,
+) -> str:
+    if authoritative_mode is not None:
+        return "apply"
+    if terminal_state_seen:
+        return "terminal"
+    return "unavailable"
+
+
 def _suspend_all_call_speech_until_authoritative(
     *,
     progress_controller: Any,
@@ -3253,6 +3300,21 @@ def _suspend_all_call_speech_until_authoritative(
     progress_controller.suspend_until_authoritative()
     followup_scheduler.suspend_until_authoritative()
     _interrupt_agent_session_speech(session)
+
+
+def _suspend_call_response_playout_until_authoritative(
+    *,
+    progress_controller: Any,
+    followup_scheduler: Any,
+    audio_gate: Any,
+    authoritative_mode_state: Optional[Any] = None,
+) -> bool:
+    """Pause uncertain playout without cancelling the attached durable generation."""
+    if authoritative_mode_state is not None:
+        authoritative_mode_state.suspend()
+    progress_controller.suspend_until_authoritative()
+    followup_scheduler.suspend_until_authoritative()
+    return bool(audio_gate.suspend())
 
 
 def _apply_task_cancel_suppression(
@@ -3418,6 +3480,185 @@ def _linked_participant_speaker_context(
 
 
 # === VIVENTIUM START ===
+# Feature: Signed, owner-bound Wing engagement authority.
+# Purpose: A browser only relays Core's short-lived model decision; unsigned, stale, cross-turn,
+# guest, shared-microphone, or unfinished speech can never authorize worker/tool execution.
+VOICE_ENGAGEMENT_TOPIC = "viventium.voice.engagement.v1"
+VOICE_ENGAGEMENT_MAX_TTL_MS = 30_000
+
+
+class VoiceEngagementAuthority:
+    """Relay owner decisions to Core, which alone holds their private signing authority."""
+
+    def __init__(
+        self,
+        *,
+        call_session_id: str,
+        owner_participant_identity: str,
+        verify_receipt: Optional[Callable[[dict[str, Any]], Any]] = None,
+        clock_ms: Optional[Callable[[], int]] = None,
+        wait_timeout_s: float = 10.0,
+    ) -> None:
+        self._call_session_id = str(call_session_id or "")
+        self._owner_participant_identity = str(owner_participant_identity or "")
+        self._verify_receipt = verify_receipt
+        self._clock_ms = clock_ms or (lambda: int(time.time() * 1000.0))
+        self._wait_timeout_s = min(max(float(wait_timeout_s), 0.0), 15.0)
+        self._receipts_by_turn: dict[str, dict[str, Any]] = {}
+        self._events_by_turn: dict[str, asyncio.Event] = {}
+        self._consumed_turns: dict[str, None] = {}
+
+    def _valid_receipt(self, value: Any) -> bool:
+        if not isinstance(value, dict):
+            return False
+        segment_ids = value.get("segmentIds")
+        revision = value.get("revision")
+        issued_at_ms = value.get("issuedAtMs")
+        expires_at_ms = value.get("expiresAtMs")
+        attestation = value.get("attestation")
+        now_ms = self._clock_ms()
+        if (
+            value.get("version") != 1
+            or isinstance(value.get("version"), bool)
+            or value.get("callSessionId") != self._call_session_id
+            or not isinstance(value.get("turnId"), str)
+            or not value.get("turnId")
+            or value.get("participantIdentity") != self._owner_participant_identity
+            or not isinstance(segment_ids, list)
+            or not 1 <= len(segment_ids) <= 32
+            or any(
+                not isinstance(segment_id, str)
+                or not segment_id
+                or len(segment_id) > 160
+                for segment_id in segment_ids
+            )
+            or len(set(segment_ids)) != len(segment_ids)
+            or not isinstance(value.get("directlyAddressed"), bool)
+            or value.get("source") != "semantic_model"
+            or not isinstance(revision, int)
+            or isinstance(revision, bool)
+            or revision <= 0
+            or not isinstance(issued_at_ms, int)
+            or isinstance(issued_at_ms, bool)
+            or not isinstance(expires_at_ms, int)
+            or isinstance(expires_at_ms, bool)
+            or expires_at_ms <= issued_at_ms
+            or expires_at_ms - issued_at_ms > VOICE_ENGAGEMENT_MAX_TTL_MS
+            or now_ms < issued_at_ms - 5_000
+            or now_ms >= expires_at_ms
+            or not isinstance(attestation, str)
+            or len(attestation) != 43
+            or any(
+                not character.isascii()
+                or not (character.isalnum() or character in {"-", "_"})
+                for character in attestation
+            )
+        ):
+            return False
+        return True
+
+    def accept_packet(self, packet: Any) -> bool:
+        if str(getattr(packet, "topic", "") or "") != VOICE_ENGAGEMENT_TOPIC:
+            return False
+        participant_identity = str(
+            getattr(getattr(packet, "participant", None), "identity", "") or ""
+        )
+        if participant_identity != self._owner_participant_identity:
+            return False
+        raw = getattr(packet, "data", b"")
+        if not isinstance(raw, (bytes, bytearray)) or not raw or len(raw) > 16_000:
+            return False
+        try:
+            value = json.loads(bytes(raw).decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return False
+        if not self._valid_receipt(value):
+            return False
+        turn_id = value["turnId"]
+        if turn_id in self._consumed_turns:
+            return False
+        previous = self._receipts_by_turn.get(turn_id)
+        if previous is not None and int(value["revision"]) <= int(previous["revision"]):
+            return False
+        self._receipts_by_turn[turn_id] = value
+        while len(self._receipts_by_turn) > 64:
+            self._receipts_by_turn.pop(next(iter(self._receipts_by_turn)))
+        event = self._events_by_turn.get(turn_id)
+        if event is not None:
+            event.set()
+        return True
+
+    def _matches_final_owner_segments(
+        self, value: dict[str, Any], segments: list[dict[str, Any]]
+    ) -> bool:
+        if not segments or len(value["segmentIds"]) != len(segments):
+            return False
+        expected_revision = max(int(segment.get("revision", 0)) for segment in segments)
+        if int(value["revision"]) != expected_revision:
+            return False
+        return all(
+            segment.get("segmentId") == value["segmentIds"][index]
+            and segment.get("turnId") == value["turnId"]
+            and segment.get("isFinal") is True
+            and segment.get("overlap") is not True
+            and segment.get("uncertain") is not True
+            and segment.get("speaker", {}).get("participantIdentity")
+            == self._owner_participant_identity
+            and segment.get("speaker", {}).get("attribution") == "verified"
+            and segment.get("speaker", {}).get("actorTrust") == "owner_participant"
+            for index, segment in enumerate(segments)
+        )
+
+    def matches_current_turn(
+        self, value: dict[str, Any], segments: list[dict[str, Any]]
+    ) -> bool:
+        """Revalidate consumed signed authority against the latest persisted revisions."""
+        return (
+            self._valid_receipt(value)
+            and value.get("directlyAddressed") is True
+            and self._matches_final_owner_segments(value, segments)
+        )
+
+    async def await_turn(
+        self, turn_id: str, segments: list[dict[str, Any]]
+    ) -> Optional[dict[str, Any]]:
+        if not turn_id or turn_id in self._consumed_turns:
+            return None
+        receipt = self._receipts_by_turn.get(turn_id)
+        if receipt is None and self._wait_timeout_s > 0:
+            event = self._events_by_turn.setdefault(turn_id, asyncio.Event())
+            try:
+                await asyncio.wait_for(event.wait(), timeout=self._wait_timeout_s)
+            except asyncio.TimeoutError:
+                return None
+            finally:
+                self._events_by_turn.pop(turn_id, None)
+            receipt = self._receipts_by_turn.get(turn_id)
+        if receipt is None:
+            return None
+        self._receipts_by_turn.pop(turn_id, None)
+        self._consumed_turns[turn_id] = None
+        while len(self._consumed_turns) > 256:
+            self._consumed_turns.pop(next(iter(self._consumed_turns)))
+        if not self.matches_current_turn(receipt, segments):
+            return None
+        if self._verify_receipt is None:
+            return None
+        try:
+            verified = self._verify_receipt(receipt)
+            if inspect.isawaitable(verified):
+                verified = await verified
+        except Exception as error:
+            logger.warning(
+                "[VoiceWing] engagement_verification_failed category=%s",
+                type(error).__name__,
+            )
+            return None
+        if verified is not True or not self.matches_current_turn(receipt, segments):
+            return None
+        return receipt
+
+
 # Feature: Cartesia voice-control tags are TTS-only, never user transcript text.
 class AuthoritativeCallModeState:
     """Shared fail-closed mode gate for every response-producing call plane."""
@@ -3447,6 +3688,156 @@ class AuthoritativeCallModeState:
 
     def suspend(self) -> None:
         self._authoritative = False
+
+
+class _ReasonScopedAudioPauseCoordinator:
+    """Keep LiveKit and Viventium pause owners from releasing each other."""
+
+    _ATTRIBUTE = "_viventium_reason_scoped_pause_coordinator"
+    _LIVEKIT_REASON = "livekit_false_interruption"
+
+    def __init__(self, audio: Any) -> None:
+        self._audio = audio
+        self._original_pause = audio.pause
+        self._original_resume = audio.resume
+        self._holds: set[str] = set()
+
+    @classmethod
+    def bind(cls, audio: Any) -> "_ReasonScopedAudioPauseCoordinator":
+        existing = getattr(audio, cls._ATTRIBUTE, None)
+        if isinstance(existing, cls):
+            return existing
+        coordinator = cls(audio)
+        setattr(audio, cls._ATTRIBUTE, coordinator)
+        audio.pause = coordinator.pause
+        audio.resume = coordinator.resume
+        return coordinator
+
+    def hold(self, reason: str) -> None:
+        if reason in self._holds:
+            return
+        if not self._holds:
+            self._original_pause()
+        self._holds.add(reason)
+
+    def release(self, reason: str) -> None:
+        if reason not in self._holds:
+            if not self._holds and reason == self._LIVEKIT_REASON:
+                self._original_resume()
+            return
+        if len(self._holds) == 1:
+            self._original_resume()
+        self._holds.remove(reason)
+
+    def pause(self) -> None:
+        self.hold(self._LIVEKIT_REASON)
+
+    def resume(self) -> None:
+        self.release(self._LIVEKIT_REASON)
+
+
+class TaskStreamAudioAuthorityGate:
+    """Pause response playout during a recoverable task-stream authority gap.
+
+    The task SSE is an authorization/lifecycle plane, not the owner of the active Main
+    generation. A transient reconnect must therefore stop audible playout without cancelling
+    the durable generation. Terminal stream failures still use ``terminate`` and interrupt the
+    speech handle so a stale or ended call can never resume it later.
+    """
+
+    def __init__(self, session: Any) -> None:
+        self._session = session
+        self._gated = False
+        self._terminated = False
+        self._pause_coordinator: Optional[_ReasonScopedAudioPauseCoordinator] = None
+        self._disabled_output = False
+
+    @property
+    def gated(self) -> bool:
+        return self._gated
+
+    def bind_current_output(self) -> bool:
+        output = getattr(self._session, "output", None)
+        audio = getattr(output, "audio", None)
+        if audio is None or not bool(getattr(audio, "can_pause", False)):
+            return False
+        try:
+            self._pause_coordinator = _ReasonScopedAudioPauseCoordinator.bind(audio)
+        except Exception as exc:
+            logger.warning(
+                "[VoiceTask] response_audio_bind_failed error=%s generationPreserved=false",
+                type(exc).__name__,
+            )
+            self._pause_coordinator = None
+            return False
+        return True
+
+    def suspend(self) -> bool:
+        if self._terminated or self._gated:
+            return not self._terminated
+        output = getattr(self._session, "output", None)
+        audio = getattr(output, "audio", None)
+        try:
+            if audio is not None and bool(getattr(audio, "can_pause", False)):
+                if not self.bind_current_output() or self._pause_coordinator is None:
+                    self.terminate()
+                    return False
+                self._pause_coordinator.hold("viventium_authority")
+            elif output is not None and callable(
+                getattr(output, "set_audio_enabled", None)
+            ):
+                # Supported RoomIO outputs are pause-capable. Keep this fallback for startup
+                # and test adapters where no active sink exists; disabling output preserves the
+                # model task and prevents any newly-created speech from attaching a sink.
+                output.set_audio_enabled(False)
+                self._disabled_output = True
+            else:
+                logger.error(
+                    "[VoiceTask] response_audio_gate_unavailable generationPreserved=false"
+                )
+                self.terminate()
+                return False
+        except Exception as exc:
+            logger.warning(
+                "[VoiceTask] response_audio_gate_failed error=%s generationPreserved=false",
+                type(exc).__name__,
+            )
+            self.terminate()
+            return False
+        self._gated = True
+        return True
+
+    def restore(self) -> bool:
+        if self._terminated:
+            return False
+        if not self._gated:
+            return True
+        try:
+            if self._pause_coordinator is not None:
+                self._pause_coordinator.release("viventium_authority")
+            elif self._disabled_output:
+                output = getattr(self._session, "output", None)
+                if output is None or not callable(
+                    getattr(output, "set_audio_enabled", None)
+                ):
+                    return False
+                output.set_audio_enabled(True)
+        except Exception as exc:
+            logger.warning(
+                "[VoiceTask] response_audio_restore_failed error=%s speechRemainsGated=true",
+                type(exc).__name__,
+            )
+            return False
+        self._disabled_output = False
+        self._gated = False
+        return True
+
+    def terminate(self) -> None:
+        if self._terminated:
+            return
+        self._terminated = True
+        self._gated = True
+        _interrupt_agent_session_speech(self._session)
 
 
 class CallTaskStreamSpeechAuthority:
@@ -3479,11 +3870,13 @@ class CallTaskStreamSpeechAuthority:
         fetch_call_state: Any,
         suspend: Any,
         apply_state: Any,
+        terminate: Optional[Any] = None,
     ) -> None:
         self._call_session_id = call_session_id
         self._fetch_call_state = fetch_call_state
         self._suspend = suspend
         self._apply_state = apply_state
+        self._terminate = terminate or suspend
         self._session_ready = False
         self._stream_connected = False
         self._authoritative = False
@@ -3530,7 +3923,10 @@ class CallTaskStreamSpeechAuthority:
             self._session_ready = False
             self._suspend()
             return False
-        self._apply_state(state)
+        if self._apply_state(state) is False:
+            self._session_ready = False
+            self._suspend()
+            return False
         self._session_ready = True
         self._authoritative = True
         return True
@@ -3552,7 +3948,8 @@ class CallTaskStreamSpeechAuthority:
             return False
         if not self._valid_call_state(snapshot):
             return False
-        self._apply_state(snapshot)
+        if self._apply_state(snapshot) is False:
+            return False
         self._authoritative = True
         return True
 
@@ -3564,6 +3961,11 @@ class CallTaskStreamSpeechAuthority:
             and health.get("state") in self._STREAM_STATES
         )
         state = health.get("state") if valid else "invalid"
+        if state in {"invalid", "terminal", "stopped"}:
+            self._stream_connected = False
+            self._authoritative = False
+            self._terminate()
+            return
         if state != "connected":
             self._stream_connected = False
             self._authoritative = False
@@ -3579,9 +3981,13 @@ class CallTaskStreamSpeechAuthority:
         ):
             self._stream_connected = False
             self._authoritative = False
-            self._suspend()
+            self._terminate()
             return
 
+        if self._stream_connected and self._authoritative:
+            # Replayed/duplicate connected health for the same live subscription is not a new
+            # authority transition and must not pause/resume or re-present the current response.
+            return
         self._stream_connected = True
         # A 2xx reconnect proves transport/auth, but not current call state. Keep
         # all speech interrupted until a fresh authoritative state snapshot lands.
@@ -3638,19 +4044,129 @@ class ViventiumVoiceAgent(Agent):
         *,
         speaker_tracker: Optional[SpeakerSegmentTracker] = None,
         authoritative_mode_state: Optional[AuthoritativeCallModeState] = None,
+        voice_engagement_authority: Optional[VoiceEngagementAuthority] = None,
         persist_suppressed_turn: Optional[Any] = None,
         on_finalized_speaker_context: Optional[Any] = None,
         on_interim_speaker_changes: Optional[Any] = None,
         speaker_timeline_offset: Optional[Any] = None,
+        refresh_turn_authority: Optional[Any] = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
         self._speaker_tracker = speaker_tracker
         self._authoritative_mode_state = authoritative_mode_state
+        self._voice_engagement_authority = voice_engagement_authority
         self._persist_suppressed_turn = persist_suppressed_turn
         self._on_finalized_speaker_context = on_finalized_speaker_context
         self._on_interim_speaker_changes = on_interim_speaker_changes
         self._speaker_timeline_offset = speaker_timeline_offset
+        self._refresh_turn_authority = refresh_turn_authority
+
+    async def _suppress_current_turn(
+        self, context: dict[str, Any], mode: str
+    ) -> None:
+        try:
+            if self._persist_suppressed_turn is not None:
+                await self._persist_suppressed_turn(context, mode)
+        except Exception as exc:
+            logger.warning(
+                "[%s] suppressed_turn_persist_failed error=%s responseSuppressed=true",
+                "VoiceWing" if mode == "wing" else "VoiceMode",
+                type(exc).__name__,
+            )
+        raise StopResponse()
+
+    async def _refresh_current_turn_authority(
+        self, context: dict[str, Any]
+    ) -> None:
+        if self._refresh_turn_authority is None:
+            return
+        previous_segments = context.get("speakerSegments")
+        expected_segments = (
+            previous_segments if isinstance(previous_segments, list) else []
+        )
+        try:
+            result = self._refresh_turn_authority(context)
+            current = await result if inspect.isawaitable(result) else result
+        except Exception as error:
+            logger.warning(
+                "[VoiceMode] turn_authority_refresh_failed category=%s",
+                type(error).__name__,
+            )
+            current = None
+        expected_call_session_id = (
+            str(expected_segments[0].get("callSessionId") or "")
+            if expected_segments
+            else str(
+                getattr(self._voice_engagement_authority, "_call_session_id", "")
+                or ""
+            )
+        )
+        mode = current.get("mode") if isinstance(current, dict) else None
+        if (
+            not isinstance(current, dict)
+            or current.get("version") != 1
+            or mode not in {"call", "wing", "listen_only"}
+            or current.get("status") in {"ended", "failed"}
+            or (
+                expected_call_session_id
+                and current.get("callSessionId") != expected_call_session_id
+            )
+        ):
+            if self._authoritative_mode_state is not None:
+                self._authoritative_mode_state.suspend()
+            await self._suppress_current_turn(context, "uncertain")
+
+        if self._authoritative_mode_state is not None:
+            self._authoritative_mode_state.apply(mode)
+
+        if expected_segments:
+            stored_segments = current.get("speakerSegments")
+            latest_by_id = {
+                item.get("segmentId"): item
+                for item in stored_segments
+                if isinstance(item, dict) and item.get("segmentId")
+            } if isinstance(stored_segments, list) else {}
+            latest_segments = [
+                latest_by_id[item.get("segmentId")]
+                for item in expected_segments
+                if isinstance(item, dict) and item.get("segmentId") in latest_by_id
+            ]
+            context["speakerSegments"] = latest_segments
+            expected_owner = all(
+                item.get("isFinal") is True
+                and item.get("speaker", {}).get("actorTrust") == "owner_participant"
+                and item.get("speaker", {}).get("attribution") == "verified"
+                for item in expected_segments
+            )
+            still_owner = (
+                current.get("speakerAttributionState") != "shared_mic_unverified"
+                and len(latest_segments) == len(expected_segments)
+                and all(
+                    item.get("callSessionId") == expected_call_session_id
+                    and item.get("turnId") == original.get("turnId")
+                    and item.get("isFinal") is True
+                    and item.get("uncertain") is not True
+                    and item.get("overlap") is not True
+                    and item.get("speaker", {}).get("actorTrust")
+                    == "owner_participant"
+                    and item.get("speaker", {}).get("attribution") == "verified"
+                    and item.get("speaker", {}).get("participantIdentity")
+                    == original.get("speaker", {}).get("participantIdentity")
+                    for item, original in zip(latest_segments, expected_segments)
+                )
+            )
+            if len(latest_segments) != len(expected_segments) or (
+                expected_owner and not still_owner
+            ):
+                await self._suppress_current_turn(
+                    context,
+                    "listen_only" if mode == "listen_only" else
+                    "wing" if mode == "wing" else "uncertain",
+                )
+
+        if mode == "listen_only":
+            await self._suppress_current_turn(context, "listen_only")
 
     async def on_user_turn_completed(self, turn_ctx: Any, new_message: Any) -> None:
         _ = turn_ctx
@@ -3671,21 +4187,49 @@ class ViventiumVoiceAgent(Agent):
                 finalized = self._on_finalized_speaker_context(context)
                 if inspect.isawaitable(finalized):
                     await finalized
+        await self._refresh_current_turn_authority(context)
         mode_state = self._authoritative_mode_state
+        if mode_state is not None and mode_state.mode == "wing":
+            segments = context.get("speakerSegments")
+            bounded_segments = segments if isinstance(segments, list) else []
+            turn_id = (
+                str(bounded_segments[0].get("turnId") or "")
+                if bounded_segments
+                else ""
+            )
+            receipt = (
+                await self._voice_engagement_authority.await_turn(
+                    turn_id, bounded_segments
+                )
+                if self._voice_engagement_authority is not None
+                else None
+            )
+            await self._refresh_current_turn_authority(context)
+            segments = context.get("speakerSegments")
+            current_segments = segments if isinstance(segments, list) else []
+            current_mode = mode_state.mode if mode_state is not None else None
+            if (
+                receipt is not None
+                and current_mode == "wing"
+                and (
+                    self._refresh_turn_authority is None
+                    or (
+                        isinstance(self._voice_engagement_authority, VoiceEngagementAuthority)
+                        and self._voice_engagement_authority.matches_current_turn(
+                            receipt, current_segments
+                        )
+                    )
+                )
+            ):
+                context["voiceEngagement"] = receipt
+                return
+            await self._suppress_current_turn(
+                context,
+                "listen_only" if current_mode == "listen_only" else "wing",
+            )
         if mode_state is None or mode_state.allows_agent_dispatch:
             return
-        try:
-            if self._persist_suppressed_turn is not None:
-                await self._persist_suppressed_turn(
-                    context,
-                    mode_state.suppressed_mode,
-                )
-        except Exception as exc:
-            logger.warning(
-                "[VoiceMode] suppressed_turn_persist_failed error=%s responseSuppressed=true",
-                type(exc).__name__,
-            )
-        raise StopResponse()
+        await self._suppress_current_turn(context, mode_state.suppressed_mode)
 
     async def stt_node(self, audio: Any, model_settings: Any) -> Any:
         raw_events = super().stt_node(audio, model_settings)
@@ -3810,6 +4354,7 @@ class CortexFollowupScheduler:
         *,
         cortex_expected: Optional[bool] = None,
         glasshive_expected: bool = False,
+        presentation_is_current: Optional[Callable[[], bool]] = None,
     ) -> None:
         _ = recent_response
         should_poll_cortex = bool(pending_insights) if cortex_expected is None else bool(cortex_expected)
@@ -3841,6 +4386,7 @@ class CortexFollowupScheduler:
                 should_poll_cortex=should_poll_cortex,
                 should_poll_glasshive=should_poll_glasshive,
                 allow_stale_delivery=allow_stale_delivery,
+                presentation_is_current=presentation_is_current,
             )
         )
         self._task = task
@@ -3864,6 +4410,7 @@ class CortexFollowupScheduler:
         should_poll_cortex: bool,
         should_poll_glasshive: bool,
         allow_stale_delivery: bool,
+        presentation_is_current: Optional[Callable[[], bool]],
     ) -> None:
         try:
             started_at = time.monotonic()
@@ -3908,6 +4455,16 @@ class CortexFollowupScheduler:
             timeout = aiohttp.ClientTimeout(total=10)
             async with aiohttp.ClientSession(timeout=timeout) as session:
                 while time.monotonic() < deadline:
+                    if (
+                        presentation_is_current is not None
+                        and not presentation_is_current()
+                    ):
+                        logger.info(
+                            "[VoicePresentation] stale_followup_suppressed message_id=%s seq=%s durableWorkPreserved=true",
+                            message_id,
+                            seq,
+                        )
+                        return
                     if not allow_stale_delivery and seq != self._seq:
                         if log_latency:
                             logger.info(
@@ -3921,6 +4478,11 @@ class CortexFollowupScheduler:
 
                     if should_poll_glasshive:
                         glasshive_data = await self._fetch_glasshive(session, message_id)
+                        if (
+                            presentation_is_current is not None
+                            and not presentation_is_current()
+                        ):
+                            return
                         if isinstance(glasshive_data, dict):
                             latest = glasshive_data.get("latest")
                             if isinstance(latest, dict):
@@ -3940,14 +4502,41 @@ class CortexFollowupScheduler:
                                         )
                                         return
                                     delivery = await self._claim_glasshive_delivery(session, latest)
-                                    if delivery:
-                                        text = str(
-                                            delivery.get("fullText")
-                                            or delivery.get("text")
-                                            or text
-                                        ).strip()
-                                    else:
-                                        text = text.strip()
+                                    callback_id = str(
+                                        latest.get("callbackId")
+                                        or latest.get("callback_id")
+                                        or ""
+                                    ).strip()
+                                    if not callback_id or delivery is None:
+                                        logger.info(
+                                            "[VoicePresentation] unclaimed_glasshive_terminal_suppressed message_id=%s callback_id=%s",
+                                            message_id,
+                                            callback_id or "missing",
+                                        )
+                                        return
+                                    text = str(
+                                        delivery.get("fullText")
+                                        or delivery.get("text")
+                                        or text
+                                    ).strip()
+                                    worker_presentation = delivery.get(
+                                        "workerCompletionPresentation"
+                                    )
+                                    if worker_presentation is not None:
+                                        text = str(delivery.get("text") or "").strip()
+                                        if (
+                                            self._validate_glasshive_worker_presentation(
+                                                delivery, text
+                                            )
+                                            is None
+                                        ):
+                                            await self._mark_glasshive_delivery_status(
+                                                session,
+                                                delivery,
+                                                "failed",
+                                                error="voice_worker_completion_presentation_invalid",
+                                            )
+                                            return
                                     if is_no_response_only(text):
                                         if log_latency:
                                             logger.info(
@@ -3956,13 +4545,12 @@ class CortexFollowupScheduler:
                                                 seq,
                                                 message_id,
                                             )
-                                        if delivery:
-                                            await self._mark_glasshive_delivery_status(
-                                                session,
-                                                delivery,
-                                                "suppressed",
-                                                reason="{NTA}",
-                                            )
+                                        await self._mark_glasshive_delivery_status(
+                                            session,
+                                            delivery,
+                                            "suppressed",
+                                            reason="{NTA}",
+                                        )
                                         return
                                     if log_latency:
                                         logger.info(
@@ -3972,10 +4560,58 @@ class CortexFollowupScheduler:
                                             message_id,
                                             len(text),
                                         )
-                                    spoken = self._speak(
+                                    permit = (
+                                        await self._authorize_glasshive_delivery(
+                                            session,
+                                            delivery,
+                                        )
+                                    )
+                                    if permit is None:
+                                        return
+                                    permit = (
+                                        await self._renew_glasshive_delivery_permit(
+                                            session,
+                                            delivery,
+                                            permit,
+                                        )
+                                    )
+                                    if permit is None:
+                                        return
+                                    if worker_presentation is not None and (
+                                        self._validate_glasshive_worker_presentation(
+                                            delivery, text
+                                        )
+                                        is None
+                                    ):
+                                        await self._mark_glasshive_delivery_status(
+                                            session,
+                                            delivery,
+                                            "delivery_unknown",
+                                            dispatch_permit=permit,
+                                            reason="voice_worker_completion_presentation_changed",
+                                        )
+                                        return
+                                    spoken, speech_handle = self._start_speech(
                                         text,
                                         seq,
                                         allow_stale_delivery=allow_stale_delivery,
+                                        presentation_is_current=presentation_is_current,
+                                    )
+                                    if not spoken or speech_handle is None:
+                                        await self._release_glasshive_delivery_permit(
+                                            session,
+                                            delivery,
+                                            permit,
+                                        )
+                                        return
+                                    spoken = await self._maintain_glasshive_speech_permit(
+                                        session,
+                                        delivery,
+                                        permit,
+                                        speech_handle,
+                                        seq=seq,
+                                        allow_stale_delivery=allow_stale_delivery,
+                                        presentation_is_current=presentation_is_current,
                                     )
                                     if log_latency:
                                         logger.info(
@@ -3984,13 +4620,6 @@ class CortexFollowupScheduler:
                                             seq,
                                             message_id,
                                             spoken,
-                                        )
-                                    if delivery:
-                                        await self._mark_glasshive_delivery_status(
-                                            session,
-                                            delivery,
-                                            "sent" if spoken else "failed",
-                                            error="" if spoken else "voice follow-up was not spoken",
                                         )
                                     return
 
@@ -4024,7 +4653,12 @@ class CortexFollowupScheduler:
                                         message_id,
                                         len(text),
                                     )
-                                spoken = self._speak(text, seq, allow_stale_delivery=allow_stale_delivery)
+                                spoken = self._speak(
+                                    text,
+                                    seq,
+                                    allow_stale_delivery=allow_stale_delivery,
+                                    presentation_is_current=presentation_is_current,
+                                )
                                 if log_latency:
                                     logger.info(
                                         "[VoiceLatency][Followup] cortex_speak_result_ms=%s seq=%s message_id=%s spoken=%s",
@@ -4108,7 +4742,9 @@ class CortexFollowupScheduler:
         except asyncio.CancelledError:
             return
         except Exception as exc:
-            logger.warning("[voice-gateway] Follow-up polling failed: %s", exc)
+            logger.warning(
+                "[voice-gateway] Follow-up polling failed: %s", type(exc).__name__
+            )
 
     async def _fetch_cortex(
         self, session: aiohttp.ClientSession, message_id: str
@@ -4135,11 +4771,10 @@ class CortexFollowupScheduler:
                     )
                     return None
                 if resp.status != 404:
-                    body = await resp.text()
                     logger.warning(
-                        "[voice-gateway] Follow-up poll failed (status=%s, body=%s)",
+                        "[voice-gateway] Follow-up poll failed (status=%s, category=%s)",
                         resp.status,
-                        body,
+                        "upstream_unavailable" if resp.status >= 500 else "request_rejected",
                     )
         except Exception:
             return None
@@ -4171,11 +4806,10 @@ class CortexFollowupScheduler:
                     )
                     return None
                 if resp.status != 404:
-                    body = await resp.text()
                     logger.warning(
-                        "[voice-gateway] GlassHive poll failed (status=%s, body=%s)",
+                        "[voice-gateway] GlassHive poll failed (status=%s, category=%s)",
                         resp.status,
-                        body,
+                        "upstream_unavailable" if resp.status >= 500 else "request_rejected",
                     )
         except Exception:
             return None
@@ -4210,27 +4844,31 @@ class CortexFollowupScheduler:
                     return None
                 payload = await resp.json()
                 deliveries = payload.get("deliveries") if isinstance(payload, dict) else None
-                if isinstance(deliveries, list) and deliveries:
+                if isinstance(deliveries, list) and len(deliveries) == 1:
                     first = deliveries[0]
-                    return first if isinstance(first, dict) else None
+                    if not isinstance(first, dict):
+                        return None
+                    claimed_owner = str(first.get("userId") or "").strip()
+                    expected_owner = str(latest.get("userId") or "").strip()
+                    if (
+                        first.get("callbackId") != callback_id
+                        or first.get("voiceCallSessionId") != self._auth.call_session_id
+                        or not claimed_owner
+                        or (expected_owner and claimed_owner != expected_owner)
+                        or not str(first.get("deliveryId") or "").strip()
+                        or not str(first.get("claimId") or "").strip()
+                    ):
+                        logger.warning(
+                            "[voice-gateway] GlassHive delivery claim rejected "
+                            "(category=delivery_scope_mismatch)"
+                        )
+                        return None
+                    return first
         except Exception:
             return None
         return None
 
-    async def _mark_glasshive_delivery_status(
-        self,
-        session: aiohttp.ClientSession,
-        delivery: dict[str, Any],
-        status: str,
-        *,
-        error: str = "",
-        reason: str = "",
-    ) -> None:
-        delivery_id = str(delivery.get("deliveryId") or "").strip()
-        claim_id = str(delivery.get("claimId") or "").strip()
-        if not delivery_id or not claim_id:
-            return
-        url = f"{self._origin}/api/viventium/voice/glasshive/deliveries/{delivery_id}/status"
+    def _glasshive_delivery_headers(self) -> dict[str, str]:
         headers = {
             "X-VIVENTIUM-CALL-SESSION": self._auth.call_session_id,
             "X-VIVENTIUM-CALL-SECRET": self._auth.call_secret,
@@ -4239,41 +4877,626 @@ class CortexFollowupScheduler:
             headers["X-VIVENTIUM-JOB-ID"] = self._auth.job_id
         if self._auth.worker_id:
             headers["X-VIVENTIUM-WORKER-ID"] = self._auth.worker_id
+        return headers
+
+    @staticmethod
+    def _prefixed_lower_hex(value: Any, prefix: str, length: int) -> bool:
+        if not isinstance(value, str) or not value.startswith(prefix):
+            return False
+        suffix = value[len(prefix) :]
+        return len(suffix) == length and all(
+            character in "0123456789abcdef" for character in suffix
+        )
+
+    def _validate_glasshive_worker_presentation(
+        self,
+        delivery: dict[str, Any],
+        text: str,
+    ) -> Optional[dict[str, Any]]:
+        presentation = delivery.get("workerCompletionPresentation")
+        if not isinstance(presentation, dict) or set(presentation) != {
+            "version",
+            "presentationRef",
+            "callSessionId",
+            "turnId",
+            "revision",
+            "responseMessageId",
+            "responseDigest",
+            "bindings",
+        }:
+            return None
+        normalized_text = str(text or "").strip()
+        bindings = presentation.get("bindings")
+        if (
+            presentation.get("version") != 1
+            or presentation.get("revision") != 1
+            or not normalized_text
+            or not self._prefixed_lower_hex(
+                presentation.get("presentationRef"),
+                "voice_worker_completion_",
+                64,
+            )
+            or not self._prefixed_lower_hex(
+                presentation.get("turnId"),
+                "voice_worker_completion_turn_",
+                64,
+            )
+            or presentation.get("callSessionId") != self._auth.call_session_id
+            or delivery.get("voiceCallSessionId") != self._auth.call_session_id
+            or presentation.get("responseMessageId")
+            != delivery.get("callbackMessageId")
+            or presentation.get("turnId") != delivery.get("voiceRequestId")
+            or presentation.get("responseDigest")
+            != "sha256:"
+            + hashlib.sha256(normalized_text.encode("utf-8")).hexdigest()
+            or not isinstance(bindings, list)
+            or not 1 <= len(bindings) <= 32
+        ):
+            return None
+        binding_keys = {
+            "originRef",
+            "workRef",
+            "workerId",
+            "runId",
+            "callbackRef",
+            "attemptNumber",
+            "resultKey",
+            "acceptedOperationId",
+            "terminalCallbackId",
+            "resultDigest",
+            "resultRevision",
+            "effectGeneration",
+        }
+        work_refs: set[str] = set()
+        result_keys: set[str] = set()
+        for binding in bindings:
+            if not isinstance(binding, dict) or set(binding) != binding_keys:
+                return None
+            string_fields = ("originRef", "workRef", "workerId", "runId")
+            if any(
+                not isinstance(binding.get(field), str)
+                or not str(binding[field]).strip()
+                or len(str(binding[field])) > 4096
+                for field in string_fields
+            ):
+                return None
+            if (
+                not self._prefixed_lower_hex(
+                    binding.get("callbackRef"), "callback_sha256:", 64
+                )
+                or not self._prefixed_lower_hex(
+                    binding.get("resultKey"), "ghtr_", 64
+                )
+                or not self._prefixed_lower_hex(
+                    binding.get("acceptedOperationId"), "", 32
+                )
+                or not self._prefixed_lower_hex(
+                    binding.get("terminalCallbackId"), "cb_terminal_", 64
+                )
+                or not self._prefixed_lower_hex(
+                    binding.get("resultDigest"), "sha256:", 64
+                )
+                or any(
+                    not isinstance(binding.get(field), int)
+                    or isinstance(binding.get(field), bool)
+                    or int(binding[field]) < 1
+                    for field in (
+                        "attemptNumber",
+                        "resultRevision",
+                        "effectGeneration",
+                    )
+                )
+                or binding["workRef"] in work_refs
+                or binding["resultKey"] in result_keys
+            ):
+                return None
+            work_refs.add(binding["workRef"])
+            result_keys.add(binding["resultKey"])
+        return dict(presentation)
+
+    @staticmethod
+    def _glasshive_dispatch_permit_expiry(
+        permit: dict[str, Any],
+    ) -> Optional[datetime]:
+        raw_expiry = permit.get("expiresAt")
+        if not isinstance(raw_expiry, str) or not raw_expiry.strip():
+            return None
+        normalized = raw_expiry.strip()
+        if normalized.endswith("Z"):
+            normalized = f"{normalized[:-1]}+00:00"
+        try:
+            expiry = datetime.fromisoformat(normalized)
+        except ValueError:
+            return None
+        if expiry.tzinfo is None:
+            return None
+        return expiry.astimezone(timezone.utc)
+
+    def _validate_glasshive_dispatch_permit(
+        self,
+        payload: Any,
+        delivery: dict[str, Any],
+        *,
+        previous: Optional[dict[str, Any]] = None,
+        require_future: bool = True,
+    ) -> Optional[dict[str, Any]]:
+        if not isinstance(payload, dict):
+            return None
+        required_keys = {
+            "deliveryId",
+            "claimId",
+            "surface",
+            "permitId",
+            "permitGeneration",
+            "expiresAt",
+            "resultRevision",
+            "resultDigest",
+        }
+        if set(payload) != required_keys:
+            return None
+
+        delivery_id = str(delivery.get("deliveryId") or "").strip()
+        claim_id = str(delivery.get("claimId") or "").strip()
+        permit_id = payload.get("permitId")
+        generation = payload.get("permitGeneration")
+        revision = payload.get("resultRevision")
+        digest = payload.get("resultDigest")
+        if (
+            not delivery_id
+            or not claim_id
+            or payload.get("deliveryId") != delivery_id
+            or payload.get("claimId") != claim_id
+            or payload.get("surface") != "voice"
+            or not isinstance(permit_id, str)
+            or not permit_id
+            or len(permit_id) > 256
+            or not isinstance(generation, int)
+            or isinstance(generation, bool)
+            or generation < 1
+            or not isinstance(revision, int)
+            or isinstance(revision, bool)
+            or revision < 1
+            or not isinstance(digest, str)
+            or len(digest) != 71
+            or not digest.startswith("sha256:")
+            or any(character not in "0123456789abcdef" for character in digest[7:])
+        ):
+            return None
+
+        expiry = self._glasshive_dispatch_permit_expiry(payload)
+        if expiry is None:
+            return None
+        if require_future and expiry <= datetime.now(timezone.utc):
+            return None
+
+        if previous is not None:
+            previous_expiry = self._glasshive_dispatch_permit_expiry(previous)
+            previous_generation = previous.get("permitGeneration")
+            if (
+                previous_expiry is None
+                or not isinstance(previous_generation, int)
+                or isinstance(previous_generation, bool)
+                or permit_id != previous.get("permitId")
+                or generation != previous_generation
+                or revision != previous.get("resultRevision")
+                or digest != previous.get("resultDigest")
+                or expiry <= previous_expiry
+            ):
+                return None
+        return dict(payload)
+
+    async def _authorize_glasshive_delivery(
+        self,
+        session: aiohttp.ClientSession,
+        delivery: dict[str, Any],
+    ) -> Optional[dict[str, Any]]:
+        delivery_id = str(delivery.get("deliveryId") or "").strip()
+        claim_id = str(delivery.get("claimId") or "").strip()
+        if not delivery_id or not claim_id:
+            return None
+        url = (
+            f"{self._origin}/api/viventium/voice/glasshive/deliveries/"
+            f"{quote(delivery_id, safe='')}/authorize"
+        )
+        try:
+            async with session.post(
+                url,
+                headers=self._glasshive_delivery_headers(),
+                json={"claimId": claim_id, "leaseMs": 60_000},
+            ) as resp:
+                if resp.status in {409, 401, 403, 404}:
+                    return None
+                if resp.status != 200:
+                    logger.warning(
+                        "[voice-gateway] GlassHive speech authorization failed (status=%s)",
+                        resp.status,
+                    )
+                    return None
+                response_payload = await resp.json()
+        except Exception as exc:
+            logger.warning(
+                "[voice-gateway] GlassHive speech authorization failed (error=%s)",
+                type(exc).__name__,
+            )
+            return None
+        if not isinstance(response_payload, dict) or set(response_payload) != {"permit"}:
+            return None
+        return self._validate_glasshive_dispatch_permit(
+            response_payload.get("permit"),
+            delivery,
+        )
+
+    async def _renew_glasshive_delivery_permit(
+        self,
+        session: aiohttp.ClientSession,
+        delivery: dict[str, Any],
+        permit: dict[str, Any],
+    ) -> Optional[dict[str, Any]]:
+        delivery_id = str(delivery.get("deliveryId") or "").strip()
+        claim_id = str(delivery.get("claimId") or "").strip()
+        current = self._validate_glasshive_dispatch_permit(
+            permit,
+            delivery,
+            require_future=False,
+        )
+        if not delivery_id or not claim_id or current is None:
+            return None
+        url = (
+            f"{self._origin}/api/viventium/voice/glasshive/deliveries/"
+            f"{quote(delivery_id, safe='')}/renew"
+        )
+        try:
+            async with session.post(
+                url,
+                headers=self._glasshive_delivery_headers(),
+                json={
+                    "claimId": claim_id,
+                    "dispatchPermit": current,
+                    "leaseMs": 60_000,
+                },
+            ) as resp:
+                if resp.status in {409, 401, 403, 404}:
+                    return None
+                if resp.status != 200:
+                    logger.warning(
+                        "[voice-gateway] GlassHive speech permit renewal failed (status=%s)",
+                        resp.status,
+                    )
+                    return None
+                response_payload = await resp.json()
+        except Exception as exc:
+            logger.warning(
+                "[voice-gateway] GlassHive speech permit renewal failed (error=%s)",
+                type(exc).__name__,
+            )
+            return None
+        if not isinstance(response_payload, dict) or set(response_payload) != {"permit"}:
+            return None
+        return self._validate_glasshive_dispatch_permit(
+            response_payload.get("permit"),
+            delivery,
+            previous=current,
+        )
+
+    async def _release_glasshive_delivery_permit(
+        self,
+        session: aiohttp.ClientSession,
+        delivery: dict[str, Any],
+        permit: dict[str, Any],
+    ) -> bool:
+        delivery_id = str(delivery.get("deliveryId") or "").strip()
+        claim_id = str(delivery.get("claimId") or "").strip()
+        current = self._validate_glasshive_dispatch_permit(
+            permit,
+            delivery,
+            require_future=False,
+        )
+        if not delivery_id or not claim_id or current is None:
+            return False
+        url = (
+            f"{self._origin}/api/viventium/voice/glasshive/deliveries/"
+            f"{quote(delivery_id, safe='')}/release"
+        )
+        try:
+            async with session.post(
+                url,
+                headers=self._glasshive_delivery_headers(),
+                json={"claimId": claim_id, "dispatchPermit": current},
+            ) as resp:
+                if resp.status != 200:
+                    return False
+                response_payload = await resp.json()
+        except Exception:
+            return False
+        return response_payload == {"released": True}
+
+    async def _complete_glasshive_worker_presentation(
+        self,
+        session: aiohttp.ClientSession,
+        delivery: dict[str, Any],
+        permit: dict[str, Any],
+    ) -> bool:
+        text = str(delivery.get("text") or "").strip()
+        presentation = self._validate_glasshive_worker_presentation(delivery, text)
+        current_permit = self._validate_glasshive_dispatch_permit(
+            permit,
+            delivery,
+        )
+        delivery_id = str(delivery.get("deliveryId") or "").strip()
+        claim_id = str(delivery.get("claimId") or "").strip()
+        if not delivery_id or not claim_id or presentation is None or current_permit is None:
+            return False
+        url = (
+            f"{self._origin}/api/viventium/voice/glasshive/deliveries/"
+            f"{quote(delivery_id, safe='')}/presentation-complete"
+        )
+        try:
+            async with session.post(
+                url,
+                headers=self._glasshive_delivery_headers(),
+                json={
+                    "claimId": claim_id,
+                    "dispatchPermit": current_permit,
+                    "presentationRef": presentation["presentationRef"],
+                },
+            ) as resp:
+                if resp.status != 200:
+                    return False
+                response_payload = await resp.json()
+        except Exception:
+            return False
+        settled = (
+            response_payload.get("delivery")
+            if isinstance(response_payload, dict)
+            and set(response_payload) == {"delivery"}
+            else None
+        )
+        settled_presentation = (
+            settled.get("workerCompletionPresentation")
+            if isinstance(settled, dict)
+            else None
+        )
+        return bool(
+            isinstance(settled, dict)
+            and settled.get("deliveryId") == delivery_id
+            and settled.get("status") == "sent"
+            and settled.get("voiceCallSessionId") == self._auth.call_session_id
+            and isinstance(settled_presentation, dict)
+            and settled_presentation.get("presentationRef")
+            == presentation["presentationRef"]
+        )
+
+    async def _mark_glasshive_delivery_status(
+        self,
+        session: aiohttp.ClientSession,
+        delivery: dict[str, Any],
+        status: str,
+        *,
+        dispatch_permit: Optional[dict[str, Any]] = None,
+        error: str = "",
+        reason: str = "",
+    ) -> bool:
+        delivery_id = str(delivery.get("deliveryId") or "").strip()
+        claim_id = str(delivery.get("claimId") or "").strip()
+        if not delivery_id or not claim_id:
+            return False
+        url = (
+            f"{self._origin}/api/viventium/voice/glasshive/deliveries/"
+            f"{quote(delivery_id, safe='')}/status"
+        )
         payload: dict[str, Any] = {"claimId": claim_id, "status": status}
+        if status in {"sent", "delivery_unknown"}:
+            validated_permit = self._validate_glasshive_dispatch_permit(
+                dispatch_permit,
+                delivery,
+            )
+            if validated_permit is None:
+                return False
+            payload["dispatchPermit"] = validated_permit
         if error:
             payload["error"] = error[:1000]
         if reason:
             payload["reason"] = reason[:1000]
         try:
-            async with session.post(url, headers=headers, json=payload) as resp:
+            async with session.post(
+                url,
+                headers=self._glasshive_delivery_headers(),
+                json=payload,
+            ) as resp:
                 if resp.status == 409:
                     logger.warning(
                         "[voice-gateway] GlassHive delivery claim was lost before status=%s",
                         status,
                     )
-                    return
+                    return False
                 if resp.status != 200:
                     logger.warning(
                         "[voice-gateway] GlassHive delivery status update failed (status=%s)",
                         resp.status,
                     )
+                    return False
         except Exception as exc:
-            logger.warning("[voice-gateway] GlassHive delivery status update failed: %s", exc)
+            logger.warning(
+                "[voice-gateway] GlassHive delivery status update failed (error=%s)",
+                type(exc).__name__,
+            )
+            return False
+        return True
 
-    def _speak(self, text: str, seq: int, *, allow_stale_delivery: bool = False) -> bool:
-        if not allow_stale_delivery and seq != self._seq:
-            return False
-        if self._mode == "listen_only" or not self._authoritative_mode_available:
-            return False
+    @staticmethod
+    def _speech_handle_is_done(handle: Any) -> bool:
         try:
-            # No-response is an intentional "say nothing" signal.
+            return bool(handle.done())
+        except Exception:
+            return False
+
+    def _interrupt_speech_handle(self, handle: Any) -> None:
+        self._speech_handles.discard(handle)
+        try:
+            if not self._speech_handle_is_done(handle):
+                handle.interrupt(force=True)
+        except Exception as exc:
+            logger.warning(
+                "[voice-gateway] GlassHive speech cancellation failed (error=%s)",
+                type(exc).__name__,
+            )
+
+    async def _maintain_glasshive_speech_permit(
+        self,
+        session: aiohttp.ClientSession,
+        delivery: dict[str, Any],
+        permit: dict[str, Any],
+        speech_handle: Any,
+        *,
+        seq: int,
+        allow_stale_delivery: bool,
+        presentation_is_current: Optional[Callable[[], bool]],
+    ) -> bool:
+        current_permit = permit
+        completed = asyncio.Event()
+        loop = asyncio.get_running_loop()
+
+        def _speech_completed(_handle: Any) -> None:
+            loop.call_soon_threadsafe(completed.set)
+
+        async def settle_completed_speech(reason: str) -> bool:
+            presentation = delivery.get("workerCompletionPresentation")
+            if presentation is not None:
+                settled = await self._complete_glasshive_worker_presentation(
+                    session,
+                    delivery,
+                    current_permit,
+                )
+            else:
+                settled = await self._mark_glasshive_delivery_status(
+                    session,
+                    delivery,
+                    "sent",
+                    dispatch_permit=current_permit,
+                )
+            if not settled:
+                await self._mark_glasshive_delivery_status(
+                    session,
+                    delivery,
+                    "delivery_unknown",
+                    dispatch_permit=current_permit,
+                    reason=reason,
+                )
+            return settled
+
+        try:
+            add_done_callback = getattr(speech_handle, "add_done_callback", None)
+            if callable(add_done_callback):
+                add_done_callback(_speech_completed)
+            if self._speech_handle_is_done(speech_handle):
+                completed.set()
+            while not self._speech_handle_is_done(speech_handle):
+                expiry = self._glasshive_dispatch_permit_expiry(current_permit)
+                if expiry is None:
+                    self._interrupt_speech_handle(speech_handle)
+                    await self._mark_glasshive_delivery_status(
+                        session,
+                        delivery,
+                        "delivery_unknown",
+                        dispatch_permit=current_permit,
+                        reason="voice_speech_permit_invalid_after_transport",
+                    )
+                    return False
+                remaining_s = (expiry - datetime.now(timezone.utc)).total_seconds()
+                renew_after_s = max(0.0, min(30.0, remaining_s * 0.5))
+                try:
+                    await asyncio.wait_for(completed.wait(), timeout=renew_after_s)
+                except asyncio.TimeoutError:
+                    renewal_remaining_s = (
+                        expiry - datetime.now(timezone.utc)
+                    ).total_seconds()
+                    renewed = None
+                    if renewal_remaining_s > 0:
+                        try:
+                            renewed = await asyncio.wait_for(
+                                self._renew_glasshive_delivery_permit(
+                                    session,
+                                    delivery,
+                                    current_permit,
+                                ),
+                                timeout=max(0.001, renewal_remaining_s * 0.8),
+                            )
+                        except asyncio.TimeoutError:
+                            renewed = None
+                    if renewed is None:
+                        if self._speech_handle_is_done(speech_handle):
+                            return await settle_completed_speech(
+                                "voice_speech_settlement_unknown"
+                            )
+                        self._interrupt_speech_handle(speech_handle)
+                        await self._mark_glasshive_delivery_status(
+                            session,
+                            delivery,
+                            "delivery_unknown",
+                            dispatch_permit=current_permit,
+                            reason="voice_partial_speech_permit_renewal_failed",
+                        )
+                        return False
+                    current_permit = renewed
+
+            return await settle_completed_speech("voice_speech_settlement_unknown")
+        except asyncio.CancelledError:
+            speech_completed = self._speech_handle_is_done(speech_handle)
+            self._interrupt_speech_handle(speech_handle)
+            if speech_completed:
+                await asyncio.shield(
+                    settle_completed_speech(
+                        "voice_speech_cancelled_during_settlement",
+                    )
+                )
+            else:
+                await asyncio.shield(
+                    self._mark_glasshive_delivery_status(
+                        session,
+                        delivery,
+                        "delivery_unknown",
+                        dispatch_permit=current_permit,
+                        reason="voice_speech_cancelled_after_transport",
+                    )
+                )
+            raise
+        except Exception as exc:
+            self._interrupt_speech_handle(speech_handle)
+            await self._mark_glasshive_delivery_status(
+                session,
+                delivery,
+                "delivery_unknown",
+                dispatch_permit=current_permit,
+                reason=f"voice_speech_outcome_unknown:{type(exc).__name__}",
+            )
+            logger.warning(
+                "[voice-gateway] GlassHive speech permit lifecycle failed (error=%s)",
+                type(exc).__name__,
+            )
+            return False
+
+    def _start_speech(
+        self,
+        text: str,
+        seq: int,
+        *,
+        allow_stale_delivery: bool = False,
+        presentation_is_current: Optional[Callable[[], bool]] = None,
+    ) -> tuple[bool, Any]:
+        if presentation_is_current is not None and not presentation_is_current():
+            return False, None
+        if not allow_stale_delivery and seq != self._seq:
+            return False, None
+        if self._mode == "listen_only" or not self._authoritative_mode_available:
+            return False, None
+        try:
             if is_no_response_only(text):
-                return False
+                return False, None
             cleaned = sanitize_voice_followup_text(text)
             if contains_no_response_tag(text):
                 cleaned = strip_inline_nta(cleaned)
             if not cleaned:
-                return False
+                return False, None
             cleaned = cap_voice_followup_for_tts(cleaned)
             handle = self._session.say(
                 cleaned,
@@ -4287,10 +5510,26 @@ class CortexFollowupScheduler:
                     add_done_callback(
                         lambda completed: self._speech_handles.discard(completed)
                     )
-            return True
+            return True, handle
         except Exception as exc:
             logger.warning("[voice-gateway] Failed to speak follow-up: %s", exc)
-            return False
+            return False, None
+
+    def _speak(
+        self,
+        text: str,
+        seq: int,
+        *,
+        allow_stale_delivery: bool = False,
+        presentation_is_current: Optional[Callable[[], bool]] = None,
+    ) -> bool:
+        spoken, _handle = self._start_speech(
+            text,
+            seq,
+            allow_stale_delivery=allow_stale_delivery,
+            presentation_is_current=presentation_is_current,
+        )
+        return spoken
 # === VIVENTIUM END ===
 
 
@@ -4441,6 +5680,17 @@ async def entrypoint(ctx: JobContext) -> None:
     except VoiceRouteError as exc:
         await _fail_voice_route_initialization(exc)
         raise
+    try:
+        await _complete_deferred_local_stt_prewarm(ctx.proc, env)
+    except Exception as exc:
+        classified = VoiceRouteError(
+            "provider_failure",
+            modality="stt",
+            provider=_normalize_stt_provider(env.stt_provider),
+            reason="local model prewarm failed",
+        )
+        await _fail_voice_route_initialization(classified)
+        raise classified from exc
 
     # Build LibreChat-backed LLM
     # === VIVENTIUM START ===
@@ -4609,6 +5859,7 @@ async def entrypoint(ctx: JobContext) -> None:
                     provider="xai",
                     reason="credentials are unavailable",
                 )
+        # === VIVENTIUM END ===
 
             if not HAS_XAI_TTS or xai_plugin is None:
                 _raise_route_error(
@@ -4973,6 +6224,7 @@ async def entrypoint(ctx: JobContext) -> None:
                     "tts_first_byte",
                     (timestamp - duration + max(ttfb, 0.0)) * 1000.0,
                 )
+            _record_completed_tts_trace(llm_impl, metrics, correlation_id)
             logger.info(
                 "[VoiceLatency] tts_provider_metrics callSessionId=%s correlationId=%s provider=%s label=%s request_id=%s ttfb_ms=%s duration_ms=%s audio_duration_ms=%s streamed=%s cancelled=%s characters=%s",
                 call_session_id,
@@ -5205,6 +6457,11 @@ async def entrypoint(ctx: JobContext) -> None:
         ),
         **owner_speaker_context,
     )
+    voice_engagement_authority = VoiceEngagementAuthority(
+        call_session_id=call_session_id,
+        owner_participant_identity=owner_participant_identity,
+        verify_receipt=llm_impl.verify_voice_engagement,
+    )
 
     async def _persist_ambient_speaker_session_state(
         state: dict[str, Any]
@@ -5270,7 +6527,8 @@ async def entrypoint(ctx: JobContext) -> None:
         on_ambient_turn=_persist_ambient_turn,
         on_session_state_change=_persist_ambient_speaker_session_state,
         owner_present=lambda: _participant_identity_connected(
-            ctx.room, owner_participant_identity
+            ctx.room,
+            owner_participant_identity,
         ),
         initial_speaker_session_state=speaker_session_state,
         segment_sequencer=segment_sequencer,
@@ -5282,21 +6540,43 @@ async def entrypoint(ctx: JobContext) -> None:
             progress_controller.poll()
 
     latest_pushed_mode_revision = [int(claimed_call_state["revision"])]
+    task_stream_audio_gate = TaskStreamAudioAuthorityGate(session)
 
     def _suspend_for_task_stream_uncertainty() -> None:
-        _suspend_all_call_speech_until_authoritative(
+        # A recoverable task-SSE gap revokes playout authority, not ownership of the durable
+        # Main generation. Pause audio and the auxiliary speech planes; a fresh owner-scoped
+        # snapshot below is the only path that may restore them.
+        _suspend_call_response_playout_until_authoritative(
             progress_controller=progress_controller,
             followup_scheduler=followup_scheduler,
-            session=session,
+            audio_gate=task_stream_audio_gate,
             authoritative_mode_state=authoritative_mode_state,
         )
 
-    def _apply_task_stream_call_state(state: dict[str, Any]) -> None:
+    def _terminate_for_task_stream_failure() -> None:
+        authoritative_mode_state.suspend()
+        progress_controller.suspend_until_authoritative()
+        followup_scheduler.suspend_until_authoritative()
+        task_stream_audio_gate.terminate()
+
+    def _apply_task_stream_call_state(state: dict[str, Any]) -> bool:
         nonlocal call_mode
+        revision = int(state["revision"])
+        if revision < latest_pushed_mode_revision[0]:
+            logger.warning(
+                "[VoiceMode] task_stream_snapshot_rejected callSessionId=%s reason=stale_revision revision=%s latest=%s speechRemainsGated=true",
+                call_session_id,
+                revision,
+                latest_pushed_mode_revision[0],
+            )
+            return False
+        mode = str(state["mode"])
+        if mode in {"call", "wing"} and not task_stream_audio_gate.restore():
+            return False
         call_mode = str(state["mode"])
         latest_pushed_mode_revision[0] = max(
             latest_pushed_mode_revision[0],
-            int(state["revision"]),
+            revision,
         )
         authoritative_mode_state.apply(call_mode)
         _apply_authoritative_call_mode_to_speech_planes(
@@ -5306,12 +6586,14 @@ async def entrypoint(ctx: JobContext) -> None:
             followup_scheduler=followup_scheduler,
             session=session,
         )
+        return True
 
     task_stream_authority = CallTaskStreamSpeechAuthority(
         call_session_id=call_session_id,
         fetch_call_state=llm_impl.get_call_state,
         suspend=_suspend_for_task_stream_uncertainty,
         apply_state=_apply_task_stream_call_state,
+        terminate=_terminate_for_task_stream_failure,
     )
     llm_impl.set_call_task_event_stream_health_handler(
         task_stream_authority.on_stream_health
@@ -5319,15 +6601,18 @@ async def entrypoint(ctx: JobContext) -> None:
 
     @ctx.room.on("data_received")
     def _on_authoritative_call_state_packet(packet: Any) -> None:
+        if str(getattr(packet, "topic", "") or "") == VOICE_ENGAGEMENT_TOPIC:
+            accepted = voice_engagement_authority.accept_packet(packet)
+            logger.info(
+                "[VoiceWing] engagement_receipt_received callSessionId=%s accepted=%s",
+                call_session_id,
+                accepted,
+            )
+            return
         if str(getattr(packet, "topic", "") or "") != "viventium.call.state.v1":
             return
         if not voice_session_ready[0] or not task_stream_authority.authoritative:
-            _suspend_all_call_speech_until_authoritative(
-                progress_controller=progress_controller,
-                followup_scheduler=followup_scheduler,
-                session=session,
-                authoritative_mode_state=authoritative_mode_state,
-            )
+            _suspend_for_task_stream_uncertainty()
             logger.warning(
                 "[VoiceMode] push_rejected callSessionId=%s reason=response_plane_not_authoritative speechSuspended=true",
                 call_session_id,
@@ -5389,17 +6674,19 @@ async def entrypoint(ctx: JobContext) -> None:
         mode, status, revision = parsed
         latest_pushed_mode_revision[0] = revision
         if status in {"failed", "ended"}:
-            _suspend_all_call_speech_until_authoritative(
-                progress_controller=progress_controller,
-                followup_scheduler=followup_scheduler,
-                session=session,
-                authoritative_mode_state=authoritative_mode_state,
-            )
+            _terminate_for_task_stream_failure()
             logger.info(
                 "[VoiceMode] push_terminal callSessionId=%s status=%s revision=%s",
                 call_session_id,
                 status,
                 revision,
+            )
+            return
+        if mode in {"call", "wing"} and not task_stream_audio_gate.restore():
+            _suspend_for_task_stream_uncertainty()
+            logger.warning(
+                "[VoiceMode] push_rejected callSessionId=%s reason=response_audio_restore_failed speechSuspended=true",
+                call_session_id,
             )
             return
         authoritative_mode_state.apply(mode)
@@ -5420,26 +6707,24 @@ async def entrypoint(ctx: JobContext) -> None:
         )
 
     async def _sync_authoritative_mode() -> None:
+        terminal_state_seen = [False]
+
         def _on_mode_transition(previous_mode: str, current_mode: str) -> None:
             followup_scheduler.set_mode(current_mode)
             if previous_mode != "listen_only" and current_mode == "listen_only":
                 _interrupt_agent_session_speech(session)
 
         def _on_state_uncertain() -> None:
-            _suspend_all_call_speech_until_authoritative(
+            _suspend_call_response_playout_until_authoritative(
                 progress_controller=progress_controller,
                 followup_scheduler=followup_scheduler,
-                session=session,
+                audio_gate=task_stream_audio_gate,
                 authoritative_mode_state=authoritative_mode_state,
             )
 
         def _on_terminal_state(status: str) -> None:
-            _suspend_all_call_speech_until_authoritative(
-                progress_controller=progress_controller,
-                followup_scheduler=followup_scheduler,
-                session=session,
-                authoritative_mode_state=authoritative_mode_state,
-            )
+            terminal_state_seen[0] = True
+            _terminate_for_task_stream_failure()
             logger.info(
                 "[VoiceMode] terminal_state callSessionId=%s status=%s backendTaskPreserved=true",
                 call_session_id,
@@ -5449,24 +6734,10 @@ async def entrypoint(ctx: JobContext) -> None:
             if callable(shutdown):
                 result = shutdown()
                 if inspect.isawaitable(result):
-                    shutdown_task = asyncio.create_task(result)
-                    terminal_shutdown_tasks.add(shutdown_task)
-
-                    def _consume_terminal_shutdown(completed: asyncio.Task[Any]) -> None:
-                        terminal_shutdown_tasks.discard(completed)
-                        if completed.cancelled():
-                            return
-                        try:
-                            completed.exception()
-                        except Exception:
-                            logger.debug(
-                                "[VoiceMode] terminal shutdown cleanup failed",
-                                exc_info=True,
-                            )
-
-                    shutdown_task.add_done_callback(_consume_terminal_shutdown)
+                    asyncio.create_task(result)
 
         async def _reconcile_once() -> None:
+            terminal_state_seen[0] = False
             if not task_stream_authority.authoritative:
                 restored = await task_stream_authority.reconcile()
                 if restored:
@@ -5475,7 +6746,7 @@ async def entrypoint(ctx: JobContext) -> None:
                         call_session_id,
                     )
                 else:
-                    _on_state_uncertain()
+                    _suspend_for_task_stream_uncertainty()
                     logger.warning(
                         "[VoiceMode] progress_suspended callSessionId=%s reason=task_stream_unavailable audioConnected=true",
                         call_session_id,
@@ -5490,22 +6761,37 @@ async def entrypoint(ctx: JobContext) -> None:
                 on_state_uncertain=_on_state_uncertain,
                 on_terminal_state=_on_terminal_state,
             )
-            if authoritative_mode is None:
+            sync_outcome = _classify_authoritative_mode_sync(
+                authoritative_mode,
+                terminal_state_seen=terminal_state_seen[0],
+            )
+            if sync_outcome != "apply":
+                if sync_outcome == "unavailable":
+                    logger.warning(
+                        "[VoiceMode] progress_suspended callSessionId=%s reason=authoritative_state_unavailable audioConnected=true",
+                        call_session_id,
+                    )
+                return
+            if (
+                authoritative_mode in {"call", "wing"}
+                and not task_stream_audio_gate.restore()
+            ):
+                _on_state_uncertain()
                 logger.warning(
-                    "[VoiceMode] progress_suspended callSessionId=%s reason=authoritative_state_unavailable audioConnected=true",
+                    "[VoiceMode] response_audio_restore_failed callSessionId=%s speechSuspended=true",
                     call_session_id,
                 )
-            else:
-                authoritative_mode_state.apply(authoritative_mode)
-                # Also clears a prior fail-safe suspension when the mode value is unchanged.
-                followup_scheduler.set_mode(authoritative_mode)
-                if authoritative_mode != previous_mode:
-                    logger.info(
-                        "[VoiceMode] mode_changed callSessionId=%s previous=%s current=%s reconnect=false",
-                        call_session_id,
-                        previous_mode,
-                        authoritative_mode,
-                    )
+                return
+            authoritative_mode_state.apply(authoritative_mode)
+            # Also clears a prior fail-safe suspension when the mode value is unchanged.
+            followup_scheduler.set_mode(authoritative_mode)
+            if authoritative_mode != previous_mode:
+                logger.info(
+                    "[VoiceMode] mode_changed callSessionId=%s previous=%s current=%s reconnect=false",
+                    call_session_id,
+                    previous_mode,
+                    authoritative_mode,
+                )
 
         await run_authoritative_mode_reconciliation(
             reconcile_once=_reconcile_once,
@@ -5519,7 +6805,6 @@ async def entrypoint(ctx: JobContext) -> None:
 
     progress_poll_task: Optional[asyncio.Task[None]] = None
     mode_sync_task: Optional[asyncio.Task[None]] = None
-    terminal_shutdown_tasks: set[asyncio.Task[Any]] = set()
 
     async def _stop_progress_and_mode_sync(*_args: Any) -> None:
         tasks = [
@@ -5606,9 +6891,12 @@ async def entrypoint(ctx: JobContext) -> None:
         revisions.extend(overlap_revisions)
         context["speakerSegmentRevisions"] = revisions
         session_states = speaker_tracker.pop_session_state_changes()
-        if revisions or session_states:
+        # Persist every final owner turn before publication so model classification and the final
+        # gateway dispatch both re-read the same durable, revision-aware authority.
+        finalized_for_authority = segments
+        if finalized_for_authority or revisions or session_states:
             await llm_impl.post_speaker_segment_revisions(
-                revisions,
+                [*finalized_for_authority, *revisions],
                 session_state=session_states[-1] if session_states else None,
             )
         if segments or overlap_revisions:
@@ -5617,6 +6905,22 @@ async def entrypoint(ctx: JobContext) -> None:
                 [*segments, *overlap_revisions],
                 owner_participant_identity=owner_participant_identity,
             )
+
+    async def _refresh_persisted_owner_turn_authority(
+        context: dict[str, Any],
+    ) -> Optional[dict[str, Any]]:
+        segments = context.get("speakerSegments")
+        bounded_segments = segments if isinstance(segments, list) else []
+        turn_id = (
+            str(bounded_segments[0].get("turnId") or "")
+            if bounded_segments and isinstance(bounded_segments[0], dict)
+            else ""
+        )
+        if turn_id:
+            return await llm_impl.get_turn_authority(turn_id)
+        state = await llm_impl.get_call_state()
+        return {**state, "speakerSegments": []} if isinstance(state, dict) else None
+
     logger.info(
         "[voice-gateway] AgentSession callSessionId=%s turn_detection=%s turn_end_reason=%s min_interrupt=%ss min_interrupt_words=%s min_endpoint=%ss max_endpoint=%ss false_interrupt_timeout=%s resume_false_interrupt=%s min_consecutive_speech_delay=%ss aec_warmup_duration=%s",
         call_session_id,
@@ -5742,10 +7046,12 @@ async def entrypoint(ctx: JobContext) -> None:
         tts=tts_impl,
         speaker_tracker=speaker_tracker,
         authoritative_mode_state=authoritative_mode_state,
+        voice_engagement_authority=voice_engagement_authority,
         persist_suppressed_turn=_persist_suppressed_owner_turn,
         on_finalized_speaker_context=_on_finalized_owner_speaker_context,
         on_interim_speaker_changes=_on_owner_interim_speaker_changes,
         speaker_timeline_offset=multi_track_ingress.call_timeline_offset_s,
+        refresh_turn_authority=_refresh_persisted_owner_turn_authority,
     )
 
     # === VIVENTIUM START ===
@@ -5772,6 +7078,7 @@ async def entrypoint(ctx: JobContext) -> None:
                 ),
             ),
         )
+        task_stream_audio_gate.bind_current_output()
     except Exception:
         _reported, released = (
             await _report_voice_gateway_initialization_failure_and_abandon(
@@ -5910,8 +7217,6 @@ def run() -> None:
         entrypoint_fnc=entrypoint,
         prewarm_fnc=prewarm_process,
         agent_name=env.livekit_agent_name,
-        # Explicit AgentDispatchClient dispatches are room jobs. Owner authority remains bound
-        # separately to the canonical participant identity returned by the signed backend claim.
         worker_type=WorkerType.ROOM,
         initialize_process_timeout=initialize_process_timeout_s,
         num_idle_processes=idle_processes,

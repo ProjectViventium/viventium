@@ -64,6 +64,7 @@ else
 fi
 MONGO_PID_FILE="${VIVENTIUM_MONGO_NATIVE_PID_FILE:-$NATIVE_STATE_DIR/mongod.pid}"
 MONGO_LOG_FILE="$NATIVE_LOG_DIR/mongod.log"
+MONGO_REPLICA_SET="${VIVENTIUM_LOCAL_MONGO_REPLICA_SET:-viventium-rs}"
 MONGO_ENGINE_IDENTITY_HELPER="$REPO_ROOT/scripts/viventium/mongo_engine_identity.py"
 MONGO_ENGINE_IDENTITY_PREPARED=false
 MONGODB_NATIVE_VERSION="8.0.23"
@@ -334,7 +335,8 @@ mongo_process_matches_expected() {
   expected_data_dir="$(canonical_existing_dir "$MONGO_DATA_DIR")" || return 1
   mongo_executable_matches_expected "$pid" || return 1
   command_line_has_option_value "$command_line" "--port" "$MONGO_PORT" || return 1
-  command_line_has_option_value "$command_line" "--dbpath" "$expected_data_dir"
+  command_line_has_option_value "$command_line" "--dbpath" "$expected_data_dir" || return 1
+  command_line_has_option_value "$command_line" "--replSet" "$MONGO_REPLICA_SET"
 }
 
 meili_process_matches_expected() {
@@ -393,54 +395,63 @@ express_mongo_listener_matches_expected() {
   mongo_executable_matches_expected "$pid" || return 1
   command_line_has_option_value "$command_line" "--port" "$MONGO_PORT" || return 1
   command_line_has_option_value "$command_line" "--dbpath" "$expected_data_dir" || return 1
+  command_line_has_option_value "$command_line" "--replSet" "$MONGO_REPLICA_SET" || return 1
 }
 
-canonical_existing_dir() {
-  local candidate="$1"
-  (cd "$candidate" >/dev/null 2>&1 && pwd -P)
+mongo_replica_set_ready() {
+  [[ "$MONGO_REPLICA_SET" =~ ^[A-Za-z0-9._-]+$ ]] || return 1
+  command -v mongosh >/dev/null 2>&1 || return 1
+  local direct_uri="mongodb://${MONGO_HOST}:${MONGO_PORT}/admin?directConnection=true&serverSelectionTimeoutMS=3000"
+  mongosh "$direct_uri" --quiet --eval "
+const hello = db.hello();
+if (hello.setName !== '${MONGO_REPLICA_SET}' || hello.isWritablePrimary !== true) quit(2);
+" >/dev/null 2>&1
 }
 
-mongo_listener_data_dir() {
-  if ! command -v mongosh >/dev/null 2>&1; then
+initialize_mongo_replica_set() {
+  [[ "$MONGO_REPLICA_SET" =~ ^[A-Za-z0-9._-]+$ ]] || {
+    echo "[native] ERROR: invalid local MongoDB replica-set name" >&2
+    return 1
+  }
+  command -v mongosh >/dev/null 2>&1 || {
+    echo "[native] ERROR: mongosh is required to initialize transactional local MongoDB" >&2
+    return 1
+  }
+  local direct_uri="mongodb://${MONGO_HOST}:${MONGO_PORT}/admin?directConnection=true&serverSelectionTimeoutMS=3000"
+  local member_host="127.0.0.1:${MONGO_PORT}"
+  local initiated=false
+  local attempt
+  for attempt in $(seq 1 30); do
+    if mongosh "$direct_uri" --quiet --eval "
+const expected = '${MONGO_REPLICA_SET}';
+const replication = db.adminCommand({ getCmdLineOpts: 1 })?.parsed?.replication || {};
+const configured = replication?.replSet || replication?.replSetName || '';
+if (configured !== expected) quit(3);
+const hello = db.hello();
+if (hello.setName && hello.setName !== expected) quit(4);
+if (!hello.setName) {
+  const result = rs.initiate({ _id: expected, members: [{ _id: 0, host: '${member_host}' }] });
+  if (!result.ok && result.codeName !== 'AlreadyInitialized') quit(5);
+}
+" >/dev/null 2>&1; then
+      initiated=true
+      break
+    fi
+    sleep 1
+  done
+  if [[ "$initiated" != "true" ]]; then
+    echo "[native] ERROR: MongoDB is not configured for the required local transaction replica set" >&2
     return 1
   fi
-
-  local mongo_admin_uri="mongodb://${MONGO_HOST}:${MONGO_PORT}/admin?directConnection=true&serverSelectionTimeoutMS=3000"
-  mongosh "$mongo_admin_uri" --quiet --eval '
-const result = db.adminCommand({ getCmdLineOpts: 1 });
-if (!result.ok || !result.parsed || !result.parsed.storage || !result.parsed.storage.dbPath) {
-  quit(2);
-}
-print(result.parsed.storage.dbPath);
-' 2>/dev/null | tail -n 1
-}
-
-mongo_listener_matches_expected() {
-  if [[ "${VIVENTIUM_INSTALL_EXPERIENCE:-legacy}" == "express" ]]; then
-    express_mongo_listener_matches_expected
-    return $?
-  fi
-
-  local listener_data_dir expected_data_dir canonical_listener_data_dir
-  listener_data_dir="$(mongo_listener_data_dir)" || return 1
-  [[ -n "$listener_data_dir" ]] || return 1
-  expected_data_dir="$(canonical_existing_dir "$MONGO_DATA_DIR")" || return 1
-  canonical_listener_data_dir="$(canonical_existing_dir "$listener_data_dir")" || return 1
-  [[ "$canonical_listener_data_dir" == "$expected_data_dir" ]]
-}
-
-express_mongo_listener_matches_expected() {
-  [[ -f "$MONGO_PID_FILE" ]] || return 1
-  local pid command_line expected_data_dir
-  pid="$(tr -d '[:space:]' <"$MONGO_PID_FILE" 2>/dev/null || true)"
-  [[ "$pid" =~ ^[0-9]+$ ]] || return 1
-  kill -0 "$pid" >/dev/null 2>&1 || return 1
-  command_line="$(process_command_line "$pid")"
-  [[ -n "$command_line" ]] || return 1
-  expected_data_dir="$(canonical_existing_dir "$MONGO_DATA_DIR")" || return 1
-  [[ "$command_line" == *"$MONGODB_NATIVE_BINARY"* ]] || return 1
-  [[ "$command_line" == *"--port $MONGO_PORT"* ]] || return 1
-  [[ "$command_line" == *"--dbpath $expected_data_dir"* ]] || return 1
+  for attempt in $(seq 1 30); do
+    if mongo_replica_set_ready; then
+      echo "[native] MongoDB transaction replica set is ready"
+      return 0
+    fi
+    sleep 1
+  done
+  echo "[native] ERROR: MongoDB replica set did not elect a writable primary" >&2
+  return 1
 }
 
 wait_for_port() {
@@ -682,56 +693,16 @@ verify_express_mongod_binary() {
 }
 
 select_mongod_binary() {
-  if [[ "${VIVENTIUM_FIRST_UPGRADE_BRIDGE_INTERNAL:-0}" == "1" &&
-    -n "${VIVENTIUM_BRIDGE_MONGOD_BINARY:-}" ]]
-  then
-    if [[ ! -x "$VIVENTIUM_BRIDGE_MONGOD_BINARY" ||
-      -L "$VIVENTIUM_BRIDGE_MONGOD_BINARY" ]]
-    then
-      echo "[native] ERROR: recorded MongoDB bridge binary is unavailable or unsafe." >&2
+  if [[ "${VIVENTIUM_FIRST_UPGRADE_BRIDGE_INTERNAL:-0}" == "1" ]]; then
+    local bridge_binary="${VIVENTIUM_BRIDGE_MONGOD_BINARY:-}"
+    if [[ "$bridge_binary" != /* || ! -f "$bridge_binary" || -L "$bridge_binary" || ! -x "$bridge_binary" ]]; then
+      echo "[native] ERROR: MongoDB-only bridge requires its ledger-verified executable." >&2
       return 1
     fi
-    printf '%s\n' "$VIVENTIUM_BRIDGE_MONGOD_BINARY"
-    return 0
-  fi
-  if [[ "${VIVENTIUM_INSTALL_EXPERIENCE:-legacy}" == "express" ]]; then
-    if ! verify_express_mongod_binary; then
-      echo "[native] ERROR: Easy Install will not fall back to Homebrew or an unverified PATH mongod; repair the pinned MongoDB runtime first." >&2
-      return 1
-    fi
-    printf '%s\n' "$MONGODB_NATIVE_BINARY"
+    printf '%s\n' "$bridge_binary"
     return 0
   fi
 
-  ensure_brew_pkg mongodb/brew/mongodb-community@8.0 mongod >&2 || return 1
-  command -v mongod
-}
-
-verify_express_mongod_binary() {
-  local binary="$MONGODB_NATIVE_BINARY"
-  if [[ ! -x "$binary" ]]; then
-    echo "[native] ERROR: pinned MongoDB ${MONGODB_NATIVE_VERSION} runtime is missing; rerun bin/viventium preflight --apply before starting Easy Install." >&2
-    return 1
-  fi
-  if ! /usr/bin/codesign --verify --strict --verbose=2 "$binary" >/dev/null 2>&1; then
-    echo "[native] ERROR: pinned MongoDB runtime failed code-signature verification; rerun the preserve-data repair flow." >&2
-    return 1
-  fi
-  local signing_details=""
-  signing_details="$(/usr/bin/codesign -dv --verbose=4 "$binary" 2>&1 || true)"
-  if ! printf '%s\n' "$signing_details" | grep -Fq "TeamIdentifier=${MONGODB_NATIVE_TEAM_ID}"; then
-    echo "[native] ERROR: pinned MongoDB runtime publisher does not match the approved MongoDB Team ID." >&2
-    return 1
-  fi
-  local version_output=""
-  version_output="$("$binary" --version 2>/dev/null || true)"
-  if ! printf '%s\n' "$version_output" | grep -Fq "db version v${MONGODB_NATIVE_VERSION}"; then
-    echo "[native] ERROR: pinned MongoDB runtime version does not match ${MONGODB_NATIVE_VERSION}." >&2
-    return 1
-  fi
-}
-
-select_mongod_binary() {
   if [[ "${VIVENTIUM_INSTALL_EXPERIENCE:-legacy}" == "express" ]]; then
     if ! verify_express_mongod_binary; then
       echo "[native] ERROR: Easy Install will not fall back to Homebrew or an unverified PATH mongod; repair the pinned MongoDB runtime first." >&2
@@ -763,7 +734,8 @@ start_mongo() {
     fi
     write_pid "$listener_pid" "$MONGO_PID_FILE"
     echo "[native] MongoDB already listening on ${MONGO_PORT}; verified configured persistence identity and adopted listener PID ${listener_pid}"
-    return 0
+    initialize_mongo_replica_set
+    return $?
   fi
   mongod_binary="$(select_mongod_binary)" || return 1
   ensure_soft_open_file_limit 65536
@@ -774,10 +746,12 @@ start_mongo() {
     --dbpath "$MONGO_DATA_DIR" \
     --logpath "$MONGO_LOG_FILE" \
     --logappend \
+    --replSet "$MONGO_REPLICA_SET" \
     --setParameter diagnosticDataCollectionEnabled=false \
     >"$MONGO_LOG_FILE" 2>&1 &
   write_pid "$!" "$MONGO_PID_FILE"
   wait_for_port "$MONGO_PORT" "MongoDB"
+  initialize_mongo_replica_set
 }
 
 mongo_bridge_pid_matches_expected() {
@@ -916,7 +890,7 @@ start_meili() {
 
   if meili_log_indicates_incompatible_data; then
     echo "[native] Detected incompatible Meilisearch data format; archiving legacy data and retrying"
-    stop_pid_file_if_matches "$MEILI_PID_FILE" "Meilisearch" meili_process_matches_expected
+    stop_pid_file "$MEILI_PID_FILE" "Meilisearch"
     archive_incompatible_meili_data
     start_meili_process
     wait_for_port "$MEILI_PORT" "Meilisearch"

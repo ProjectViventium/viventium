@@ -51,6 +51,42 @@ def test_direct_detached_librechat_fallback_supervises_backend_and_frontend() ->
     assert 'exec env PORT="$LC_FRONTEND_PORT" npm run frontend:dev' not in launcher_text
 
 
+def test_local_mongodb_is_a_single_node_replica_set_for_callback_transactions() -> None:
+    launcher_text = (REPO_ROOT / "viventium_v0_4" / "viventium-librechat-start.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'MONGO_REPLICA_SET="${VIVENTIUM_LOCAL_MONGO_REPLICA_SET:-viventium-rs}"' in launcher_text
+    assert 'initialize_local_mongo_replica_set() {' in launcher_text
+    assert 'mongo_replica_set_ready() {' in launcher_text
+    assert '--replSet "$MONGO_REPLICA_SET"' in launcher_text
+    assert 'ensure_local_mongo_replica_set' in launcher_text
+    assert "replication?.replSet ||" in launcher_text
+
+
+def test_orchestration_indexes_are_created_before_librechat_starts() -> None:
+    launcher_text = (REPO_ROOT / "viventium_v0_4" / "viventium-librechat-start.sh").read_text(
+        encoding="utf-8"
+    )
+    migration = (
+        REPO_ROOT
+        / "viventium_v0_4"
+        / "LibreChat"
+        / "scripts"
+        / "viventium-sync-orchestration-indexes.js"
+    ).read_text(encoding="utf-8")
+
+    assert "ensure_orchestration_indexes() {" in launcher_text
+    assert "viventium-sync-orchestration-indexes.js" in launcher_text
+    assert launcher_text.index("\n  if ! ensure_orchestration_indexes") < launcher_text.index(
+        "Starting LibreChat (backend+frontend)"
+    )
+    assert "cortex_outbox_replay_due" in migration
+    assert "viventiumcortexinsightoutboxes" in migration
+    assert "viventiumglasshivecallbackeffectoutboxes" in migration
+    assert "expireAfterSeconds: 0" in migration
+
+
 def test_librechat_partial_stack_reuses_healthy_api_without_skipping_frontend() -> None:
     launcher_text = (REPO_ROOT / "viventium_v0_4" / "viventium-librechat-start.sh").read_text(
         encoding="utf-8"
@@ -60,8 +96,21 @@ def test_librechat_partial_stack_reuses_healthy_api_without_skipping_frontend() 
     assert 'LIBRECHAT_FRONTEND_ALREADY_RUNNING=false' in launcher_text
     assert 'LibreChat partial stack already running; starting the missing service(s)' in launcher_text
     assert 'direct_librechat_reason="partial stack repair"' in launcher_text
-    assert 'if [[ "$LIBRECHAT_BACKEND_ALREADY_RUNNING" != "true" ]]; then' in launcher_text
-    assert 'if [[ "$LIBRECHAT_FRONTEND_ALREADY_RUNNING" != "true" ]]; then' in launcher_text
+    assert 'if [[ "$LIBRECHAT_BACKEND_ALREADY_RUNNING" != "true" && "$LIBRECHAT_BACKEND_START_BLOCKED" != "true" ]]; then' in launcher_text
+    assert 'if [[ "$LIBRECHAT_FRONTEND_ALREADY_RUNNING" != "true" && "$LIBRECHAT_FRONTEND_START_BLOCKED" != "true" ]]; then' in launcher_text
+
+
+def test_librechat_partial_stack_starts_the_missing_peer_when_one_port_is_unhealthy() -> None:
+    launcher_text = (REPO_ROOT / "viventium_v0_4" / "viventium-librechat-start.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'LIBRECHAT_BACKEND_START_BLOCKED=false' in launcher_text
+    assert 'LIBRECHAT_FRONTEND_START_BLOCKED=false' in launcher_text
+    assert 'backend restart is blocked; continuing partial-stack repair' in launcher_text
+    assert 'frontend restart is blocked; continuing partial-stack repair' in launcher_text
+    assert 'if [[ "$LIBRECHAT_BACKEND_ALREADY_RUNNING" != "true" && "$LIBRECHAT_BACKEND_START_BLOCKED" != "true" ]]; then' in launcher_text
+    assert 'if [[ "$LIBRECHAT_FRONTEND_ALREADY_RUNNING" != "true" && "$LIBRECHAT_FRONTEND_START_BLOCKED" != "true" ]]; then' in launcher_text
 
 
 def test_deferred_telegram_start_retries_in_background_until_librechat_api_is_ready() -> None:
@@ -81,6 +130,87 @@ def test_deferred_telegram_start_retries_in_background_until_librechat_api_is_re
     assert 'telegram_deferred_start_pending() {' in launcher_text
     assert 'elif telegram_deferred_start_pending; then' in launcher_text
     assert 'starting (waiting for LibreChat API)' in launcher_text
+
+
+def test_deferred_telegram_start_waits_for_core_health_not_parallel_work_readiness() -> None:
+    launcher_text = (REPO_ROOT / "viventium_v0_4" / "viventium-librechat-start.sh").read_text(
+        encoding="utf-8"
+    )
+    deferred_start = launcher_text[
+        launcher_text.index("schedule_deferred_telegram_bot_start() {") :
+        launcher_text.index("\nstart_telegram_codex() {")
+    ]
+
+    assert '"${LC_API_URL}/api/health"' in deferred_start
+    assert '"${LC_API_URL}/api/viventium/health/parallel-work"' not in deferred_start
+    assert "LibreChat API before Telegram bot start" in deferred_start
+
+
+def test_http_readiness_rejects_non_2xx_and_every_telegram_start_uses_core_health() -> None:
+    launcher_text = (REPO_ROOT / "viventium_v0_4" / "viventium-librechat-start.sh").read_text(
+        encoding="utf-8"
+    )
+    wait_for_http = extract_shell_function(launcher_text, "wait_for_http")
+    start_telegram = launcher_text[
+        launcher_text.index("start_telegram_bot() {") :
+        launcher_text.index("\nschedule_deferred_telegram_bot_start() {")
+    ]
+    deferred_fallback = launcher_text[
+        launcher_text.index('if [[ "$DEFER_TELEGRAM_LIBRECHAT_START" == "true" ]]; then') :
+        launcher_text.index("\n# ----------------------------\n# Agents Playground")
+    ]
+
+    assert "curl -fsS --max-time 3" in wait_for_http
+    assert "-H @-" in wait_for_http
+    assert "X-VIVENTIUM-TELEGRAM-SECRET" in wait_for_http
+    assert '"${LC_API_URL}/api/health"' in start_telegram
+    assert '"${LC_API_URL}/api/viventium/health/parallel-work"' not in start_telegram
+    assert '"${LC_API_URL}/api/health"' in deferred_fallback
+    assert '"${LC_API_URL}/api/viventium/health/parallel-work"' not in deferred_fallback
+
+
+def test_ms365_runtime_endpoint_refresh_does_not_mutate_compiled_runtime_env(
+    tmp_path: Path,
+) -> None:
+    launcher_text = (REPO_ROOT / "viventium_v0_4" / "viventium-librechat-start.sh").read_text(
+        encoding="utf-8"
+    )
+    function = extract_shell_function(launcher_text, "write_ms365_runtime_exports")
+    runtime_env = tmp_path / "runtime.env"
+    runtime_env.write_text("IMMUTABLE=1\nMS365_MCP_PORT=6274\n", encoding="utf-8")
+    original = runtime_env.read_bytes()
+    export_file = tmp_path / "state" / "ms365.runtime.env"
+
+    subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                "set -euo pipefail\n"
+                f"{function}"
+                f"PYTHON_BIN={shlex.quote(sys.executable)}\n"
+                f"VIVENTIUM_ENV_FILE={shlex.quote(str(runtime_env))}\n"
+                f"MS365_MCP_RUNTIME_EXPORT_FILE={shlex.quote(str(export_file))}\n"
+                "MS365_MCP_PORT=6388\n"
+                "MS365_MCP_SERVER_URL=http://localhost:6388/mcp\n"
+                "MS365_MCP_AUTH_URL=http://localhost:6388/authorize\n"
+                "MS365_MCP_TOKEN_URL=http://localhost:6388/token\n"
+                "write_ms365_runtime_exports\n"
+            ),
+        ],
+        cwd=REPO_ROOT,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+    assert runtime_env.read_bytes() == original
+    assert export_file.read_text(encoding="utf-8").splitlines() == [
+        "MS365_MCP_PORT=6388",
+        "MS365_MCP_SERVER_URL=http://localhost:6388/mcp",
+        "MS365_MCP_AUTH_URL=http://localhost:6388/authorize",
+        "MS365_MCP_TOKEN_URL=http://localhost:6388/token",
+    ]
 
 
 def test_telegram_bot_survives_detached_launcher_exit() -> None:
@@ -164,6 +294,17 @@ def test_cleanup_kills_librechat_processes_only_inside_librechat_scope() -> None
     assert 'kill_by_pattern_scoped "vite.*client" "$LIBRECHAT_DIR"' in cleanup_block
 
 
+def test_launcher_signals_exit_before_running_exit_cleanup() -> None:
+    launcher_text = (REPO_ROOT / "viventium_v0_4" / "viventium-librechat-start.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert "trap cleanup EXIT" in launcher_text
+    assert "trap 'exit 130' INT" in launcher_text
+    assert "trap 'exit 143' TERM" in launcher_text
+    assert "trap cleanup INT TERM EXIT" not in launcher_text
+
+
 def test_voice_gateway_requirements_check_detects_version_drift(tmp_path: Path) -> None:
     launcher_text = (REPO_ROOT / "viventium_v0_4" / "viventium-librechat-start.sh").read_text(
         encoding="utf-8"
@@ -244,7 +385,10 @@ def test_local_search_sync_failure_does_not_abort_frontend_startup() -> None:
         encoding="utf-8"
     )
 
-    assert 'if ! node scripts/viventium-sync-local-search.js; then' in launcher_text
+    assert (
+        'if ! USE_REDIS=false USE_REDIS_STREAMS=false node scripts/viventium-sync-local-search.js; then'
+        in launcher_text
+    )
     assert 'Local conversation search sync failed; continuing without blocking frontend startup' in launcher_text
 
 
@@ -490,3 +634,22 @@ def test_scope_detection_matches_processes_by_working_directory(tmp_path: Path) 
     finally:
         sleeper.terminate()
         sleeper.wait(timeout=5)
+
+
+
+def test_each_supervised_service_generation_reloads_the_active_local_qa_session() -> None:
+    launcher_text = (REPO_ROOT / "viventium_v0_4" / "viventium-librechat-start.sh").read_text(
+        encoding="utf-8"
+    )
+    loader = extract_shell_function(launcher_text, "load_local_qa_runtime_control")
+    assert "clear_local_qa_runtime_exports" in loader
+    assert '"$LOCAL_QA_CONTROL_SCRIPT" emit-shell' in loader
+
+    for function_name in (
+        "restart_detached_librechat_backend",
+        "start_glasshive",
+        "start_telegram_bot",
+    ):
+        assert "load_local_qa_runtime_control" in extract_shell_function(
+            launcher_text, function_name
+        )

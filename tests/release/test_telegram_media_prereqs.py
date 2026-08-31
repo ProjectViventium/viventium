@@ -229,6 +229,44 @@ def test_detached_telegram_start_uses_user_launchd_job() -> None:
     assert "start_telegram_bot_watchdog" in script_text
 
 
+def test_telegram_watchdog_supervises_foreground_and_detached_launches() -> None:
+    script_text = START_SCRIPT_PATH.read_text(encoding="utf-8")
+    watchdog_block = script_text[
+        script_text.index("start_telegram_bot_watchdog() {") :
+        script_text.index("\nstart_prompt_workbench_watchdog() {")
+    ]
+
+    assert 'if ! detached_start_requested; then\n    return 0\n  fi' not in watchdog_block
+    assert 'if detached_start_requested; then\n    disown "$watchdog_pid"' in watchdog_block
+
+
+def test_telegram_launcher_requires_application_ready_receipt_not_only_a_live_pid() -> None:
+    script_text = START_SCRIPT_PATH.read_text(encoding="utf-8")
+    start_block = script_text[
+        script_text.index("start_telegram_bot() {") :
+        script_text.index("\nschedule_deferred_telegram_bot_start() {")
+    ]
+    watchdog_block = script_text[
+        script_text.index("start_telegram_bot_watchdog() {") :
+        script_text.index("\nstart_prompt_workbench_watchdog() {")
+    ]
+    bot_text = (REPO_ROOT / "viventium_v0_4/telegram-viventium/TelegramVivBot/bot.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'TELEGRAM_BOT_READY_FILE="$LOG_ROOT/telegram_bot.ready"' in script_text
+    assert 'export VIVENTIUM_TELEGRAM_READY_FILE="$TELEGRAM_BOT_READY_FILE"' in start_block
+    assert (
+        'VIVENTIUM_TELEGRAM_READY_FILE="$TELEGRAM_BOT_READY_FILE" \\\n'
+        '        nohup "$telegram_python" bot.py' in start_block
+    )
+    assert "wait_for_telegram_bot_ready" in start_block
+    assert '"$TELEGRAM_BOT_PID" "${VIVENTIUM_TELEGRAM_START_READY_RETRIES:-30}"' in start_block
+    assert 'telegram_bot_ready "$telegram_pid"' in watchdog_block
+    assert 'os.environ.get("VIVENTIUM_TELEGRAM_READY_FILE")' in bot_text
+    assert "_write_telegram_ready_marker()" in bot_text
+
+
 def test_launcher_includes_managed_local_telegram_bot_api_runtime() -> None:
     script_text = START_SCRIPT_PATH.read_text(encoding="utf-8")
 

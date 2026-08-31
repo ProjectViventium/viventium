@@ -1,0 +1,262 @@
+{
+  "schemaVersion": 1,
+  "contractId": "main-continuity-v1",
+  "title": "Main Continuity Kernel",
+  "status": "implementation_in_progress",
+  "privateSourceRefs": [
+    {
+      "id": "MC-SRC-001",
+      "description": "Private continuity incident findings and approved repair plan",
+      "range": "L1-L135"
+    }
+  ],
+  "candidateArtifacts": [
+    {
+      "id": "MC-CAND-NOT-RUN",
+      "evidenceClass": "not-run",
+      "artifactIdentity": "No candidate or shipped artifact was exercised for this case."
+    },
+    {
+      "id": "MC-CAND-HISTORICAL-LIVE-2026-08-20",
+      "evidenceClass": "historical-live",
+      "artifactIdentity": "Installed dirty local runtime exercised on 2026-08-20; the complete nested source fingerprint was not retained in public evidence."
+    },
+    {
+      "id": "MC-CAND-PREFINAL-LIVE-2026-08-21",
+      "evidenceClass": "pre-final-live",
+      "artifactIdentity": "Installed dirty local runtime exercised on 2026-08-21 before the latest visible-fragment, null-hook, and incident-blocking repairs; the complete source fingerprint was not retained."
+    },
+    {
+      "id": "MC-CAND-PRE-P0-LIVE-2026-08-21",
+      "evidenceClass": "pre-final-live",
+      "artifactIdentity": "LibreChat HEAD 1b59b20b6fb0e3098aba1a527f47f8a36281c2fd dirty-tree db61bc72402a335939d8444493edc732efe0bc229de1d310e31ba00c36c6a0b2; GlassHive HEAD 6167132ad0aa1d8d6d30746fe9c9631f56310d9f dirty-tree 115d24b590c8e49c918efc6da98fe432a8afc973690422d78bff22d0d9c2c0a6; activated in the installed local runtime on 2026-08-21 at about 10:08 local; superseded by later incident-blocking repairs."
+    },
+    {
+      "id": "MC-CAND-HISTORICAL-AUTOMATED-2026-08-20",
+      "evidenceClass": "historical-automated",
+      "artifactIdentity": "Owning automated suites exercised against the dirty local source on 2026-08-20; the complete nested source fingerprint was not retained in public evidence."
+    },
+    {
+      "id": "MC-CAND-PRE-P0-AUTOMATED-2026-08-21",
+      "evidenceClass": "pre-final-automated",
+      "artifactIdentity": "Owning suites exercised LibreChat HEAD 1b59b20b6fb0e3098aba1a527f47f8a36281c2fd dirty-tree db61bc72402a335939d8444493edc732efe0bc229de1d310e31ba00c36c6a0b2 and GlassHive HEAD 6167132ad0aa1d8d6d30746fe9c9631f56310d9f dirty-tree 115d24b590c8e49c918efc6da98fe432a8afc973690422d78bff22d0d9c2c0a6 on 2026-08-21; this source preceded later incident-blocking repairs."
+    },
+    {
+      "id": "MC-CAND-PREFINAL-TELEGRAM-LIVE-2026-08-21",
+      "evidenceClass": "pre-final-live",
+      "artifactIdentity": "Installed repaired dirty source exercised in Telegram on 2026-08-21 at 11:07-11:08 local, before the final browser-only liveness edit; its exact content fingerprint was not frozen at send time, and the natural reply plus voice remained visible after the final restart."
+    },
+    {
+      "id": "MC-CAND-FINAL-LIVE-2026-08-21",
+      "evidenceClass": "final-source-live",
+      "artifactIdentity": "Parent HEAD c9ce8dde116cab7338d78d81ac82e6d2f278abe5 dirty-tree status-z efc08f1dc1dd55932001e277b479841148d4879546cfb3812cb9879d9fa08306; LibreChat HEAD 1b59b20b6fb0e3098aba1a527f47f8a36281c2fd dirty-tree status-z f1698438edb6471d5216525ffa314e9501f93ca1bbd25fc45de70cc4a4542bb2 with robust diff-and-untracked-content fingerprint d23aece22f84e00ea5951c16a3f2cc32ac9d0957d1782f187f61a78e7d21d917 and final projection hash 6819106bcd67a41f849a50196d2770f2b9c3174001bbba4ca06c2a2a72b26f48; GlassHive HEAD 6167132ad0aa1d8d6d30746fe9c9631f56310d9f dirty-tree status-z b3f9793ec68aa22976f0b7861e16e230cd20e1f7039b0269498d356f11581d9b; terminal-stream owning hashes useResumableSSE c591228276259e4c3f341720dc71be247438a96a3e00f1d2d07ee30159c1132e, SSE queries 9c2c419955ec00b129ae52056a0182ab02b6efaafd9b2be0d47a631bc0e6dfb1, data-service 781043c7241e74e8b294d7bbef0ac09547b87da3d2eb2bcd84fc90f08478f822, GenerationJobManager 692e2341e26cb230751795acacf522c05b9beef5e77debb3cac0e14a2f471c3a, and agents route 99f615e6cab17890cf84c6d48e12d0678981161e6e5b2cf803d7d756e70fe636; activated in the installed local runtime on 2026-08-21 with API at 14:42:38 and frontend at 14:42:43 local after source and build completion; runtime telemetry LibreChat source 94a23f691958f17b, agent fa9d01796812e14e, compiled/live config 931aae799e3b4343, and compiler 3f03818390bca5f8."
+    },
+    {
+      "id": "MC-CAND-FINAL-AUTOMATED-2026-08-21",
+      "evidenceClass": "final-source-automated",
+      "artifactIdentity": "Parent HEAD c9ce8dde116cab7338d78d81ac82e6d2f278abe5 dirty-tree status-z efc08f1dc1dd55932001e277b479841148d4879546cfb3812cb9879d9fa08306; LibreChat HEAD 1b59b20b6fb0e3098aba1a527f47f8a36281c2fd dirty-tree status-z f1698438edb6471d5216525ffa314e9501f93ca1bbd25fc45de70cc4a4542bb2 with robust diff-and-untracked-content fingerprint d23aece22f84e00ea5951c16a3f2cc32ac9d0957d1782f187f61a78e7d21d917 and final projection hash 6819106bcd67a41f849a50196d2770f2b9c3174001bbba4ca06c2a2a72b26f48; GlassHive HEAD 6167132ad0aa1d8d6d30746fe9c9631f56310d9f dirty-tree status-z b3f9793ec68aa22976f0b7861e16e230cd20e1f7039b0269498d356f11581d9b; terminal-stream owning hashes useResumableSSE c591228276259e4c3f341720dc71be247438a96a3e00f1d2d07ee30159c1132e, SSE queries 9c2c419955ec00b129ae52056a0182ab02b6efaafd9b2be0d47a631bc0e6dfb1, data-service 781043c7241e74e8b294d7bbef0ac09547b87da3d2eb2bcd84fc90f08478f822, GenerationJobManager 692e2341e26cb230751795acacf522c05b9beef5e77debb3cac0e14a2f471c3a, and agents route 99f615e6cab17890cf84c6d48e12d0678981161e6e5b2cf803d7d756e70fe636; activated in the installed local runtime on 2026-08-21 with API at 14:42:38 and frontend at 14:42:43 local after source and build completion; runtime telemetry LibreChat source 94a23f691958f17b, agent fa9d01796812e14e, compiled/live config 931aae799e3b4343, and compiler 3f03818390bca5f8."
+    }
+  ],
+  "requirements": [
+    {
+      "id": "MCK-001",
+      "title": "Same cognitive Main",
+      "sourceRefs": ["MC-SRC-001:L3-L18", "MC-SRC-001:L83-L87"],
+      "owners": [
+        "viventium_v0_4/LibreChat/api/server/controllers/agents/client.js",
+        "viventium_v0_4/GlassHive/runtime_phase1/src/workers_projects_runtime/conversation_provider.py"
+      ],
+      "expected": "One owner-scoped continuity domain and one immutable admitted snapshot per logical turn serve primary, fallback, retry, schedule, Telegram, and Phase B.",
+      "implementationStatus": "partial_candidate_unverified",
+      "qaCases": ["MC-001", "MC-002", "MC-003", "MC-017", "MC-040", "MC-042", "MC-043", "MC-044", "MC-045", "MC-046"]
+    },
+    {
+      "id": "MCK-002",
+      "title": "Stable authority and invocation context",
+      "sourceRefs": ["MC-SRC-001:L42-L44", "MC-SRC-001:L89-L93"],
+      "owners": [
+        "viventium_v0_4/LibreChat/api/server/controllers/agents/client.js",
+        "viventium_v0_4/GlassHive/runtime_phase1/src/workers_projects_runtime/conversation_provider.py"
+      ],
+      "expected": "Only declared stable authority can rotate a native binding; time, Feelings, Active Work, reply, schedule, and health state remain per-turn.",
+      "implementationStatus": "partial_candidate_unverified",
+      "qaCases": ["MC-004", "MC-005", "MC-018", "MC-041"]
+    },
+    {
+      "id": "MCK-003",
+      "title": "Explicit bounded replay and semantic compaction",
+      "sourceRefs": ["MC-SRC-001:L12-L13", "MC-SRC-001:L95-L107"],
+      "owners": [
+        "viventium_v0_4/LibreChat/api/server/controllers/agents/client.js",
+        "viventium_v0_4/GlassHive/runtime_phase1/src/workers_projects_runtime/conversation_provider.py",
+        "viventium_v0_4/GlassHive/runtime_phase1/src/workers_projects_runtime/store.py"
+      ],
+      "expected": "ReplayDecisionV1 declares bootstrap or delta, budget, epoch, digest, protected turns, tool pairs, semantic summary, output reserve, and usage scope.",
+      "implementationStatus": "partial_candidate_unverified",
+      "qaCases": ["MC-006", "MC-007", "MC-008", "MC-009", "MC-019", "MC-038", "MC-041"]
+    },
+    {
+      "id": "MCK-004",
+      "title": "Scheduling is Main later",
+      "sourceRefs": ["MC-SRC-001:L11", "MC-SRC-001:L45", "MC-SRC-001:L109-L115"],
+      "owners": [
+        "viventium_v0_4/LibreChat/viventium/MCPs/scheduling-cortex/scheduling_cortex/dispatch.py",
+        "viventium_v0_4/LibreChat/viventium/MCPs/scheduling-cortex/scheduling_cortex/storage.py",
+        "viventium_v0_4/prompt-workbench/backend/prompt_workbench/scheduled_prompts.py"
+      ],
+      "expected": "Main schedules join the Main continuity domain while new/same visible-thread policy, internal envelope visibility, isolated worker policy, and compact recurrence state stay distinct.",
+      "implementationStatus": "partial_candidate_unverified",
+      "qaCases": ["MC-010", "MC-011", "MC-012", "MC-020", "MC-039"]
+    },
+    {
+      "id": "MCK-005",
+      "title": "Typed Telegram reply provenance",
+      "sourceRefs": ["MC-SRC-001:L14", "MC-SRC-001:L28", "MC-SRC-001:L46-L47", "MC-SRC-001:L117-L121"],
+      "owners": [
+        "viventium_v0_4/telegram-viventium/TelegramVivBot/bot.py",
+        "viventium_v0_4/telegram-viventium/TelegramVivBot/utils/librechat_bridge.py",
+        "viventium_v0_4/LibreChat/api/server/routes/viventium/telegram.js",
+        "viventium_v0_4/LibreChat/api/server/services/viventium/TelegramReplyProvenanceService.js"
+      ],
+      "expected": "ReplyContextV1 is owner/chat scoped, bounded, resolved from durable outbound IDs, and separate from user text; unknown provenance cannot assert denial or spoofing.",
+      "implementationStatus": "partial_candidate_unverified",
+      "qaCases": ["MC-001", "MC-013", "MC-014", "MC-015", "MC-016"]
+    },
+    {
+      "id": "MCK-006",
+      "title": "Durable scheduled delivery",
+      "sourceRefs": ["MC-SRC-001:L14", "MC-SRC-001:L46", "MC-SRC-001:L117-L120"],
+      "owners": [
+        "viventium_v0_4/LibreChat/api/db/viventiumGlassHiveCallbackDelivery.js",
+        "viventium_v0_4/LibreChat/viventium/MCPs/scheduling-cortex/scheduling_cortex/dispatch.py",
+        "viventium_v0_4/prompt-workbench/backend/prompt_workbench/scheduled_prompts.py"
+      ],
+      "expected": "All Telegram chunks map to one logical assistant message; schedule sends use idempotent delivery receipts and transport retry never regenerates the AI result.",
+      "implementationStatus": "partial_candidate_unverified",
+      "qaCases": ["MC-013", "MC-021", "MC-022", "MC-039"]
+    },
+    {
+      "id": "MCK-007",
+      "title": "Governed rapid and parallel turns",
+      "sourceRefs": ["MC-SRC-001:L43", "MC-SRC-001:L123-L125"],
+      "owners": [
+        "viventium_v0_4/GlassHive/runtime_phase1/src/workers_projects_runtime/conversation_provider.py",
+        "viventium_v0_4/GlassHive/runtime_phase1/src/workers_projects_runtime/store.py"
+      ],
+      "expected": "Independent work delegates; rapid corrections coalesce or supersede; unavoidable siblings share a bounded snapshot, TTL, and deterministic accepted-turn commit.",
+      "implementationStatus": "partial_candidate_unverified",
+      "qaCases": ["MC-003", "MC-023", "MC-024", "MC-042", "MC-044"]
+    },
+    {
+      "id": "MCK-008",
+      "title": "Recall and memory degraded truth",
+      "sourceRefs": ["MC-SRC-001:L15", "MC-SRC-001:L79-L81"],
+      "owners": [
+        "viventium_v0_4/LibreChat/api/server/controllers/agents/client.js",
+        "scripts/viventium/health-check.sh"
+      ],
+      "expected": "Recall supplements live continuity and reports healthy empty, unavailable, auth, timeout, stale, source-only, and recovered states without deleting data.",
+      "implementationStatus": "partial_candidate_unverified",
+      "qaCases": ["MC-025", "MC-026", "MC-027"]
+    },
+    {
+      "id": "MCK-009",
+      "title": "Structured quiet failure truth",
+      "sourceRefs": ["MC-SRC-001:L16", "MC-SRC-001:L127-L129"],
+      "owners": [
+        "viventium_v0_4/LibreChat/viventium/MCPs/scheduling-cortex/scheduling_cortex/scheduler.py",
+        "viventium_v0_4/LibreChat/viventium/MCPs/scheduling-cortex/scheduling_cortex/dispatch.py",
+        "viventium_v0_4/GlassHive/runtime_phase1/src/workers_projects_runtime/failure_classification.py"
+      ],
+      "expected": "One versioned closed failure contract drives exact retry wording, coalescing, useful-answer precedence, and an approval-gated reversible pause policy; release validation prevents contract drift.",
+      "implementationStatus": "partial_candidate_unverified",
+      "qaCases": ["MC-028", "MC-029", "MC-030"]
+    },
+    {
+      "id": "MCK-010",
+      "title": "Schedule idempotency and protected live drift",
+      "sourceRefs": ["MC-SRC-001:L76-L81"],
+      "owners": [
+        "viventium_v0_4/LibreChat/viventium/MCPs/scheduling-cortex/scheduling_cortex/storage.py",
+        "viventium_v0_4/LibreChat/scripts/viventium-sync-agents.js"
+      ],
+      "expected": "Exact structural schedule replay creates one schedule; duplicate containment pauses only after reviewed dry run; protected agent drift is reconciled through A/B/C comparison.",
+      "implementationStatus": "partial_candidate_unverified",
+      "qaCases": ["MC-031", "MC-032"]
+    },
+    {
+      "id": "MCK-011",
+      "title": "Exact-candidate delivery chain",
+      "sourceRefs": ["MC-SRC-001:L80", "MC-SRC-001:L131"],
+      "owners": [
+        "components.lock.json",
+        "scripts/viventium",
+        "qa/main-continuity"
+      ],
+      "expected": "Requirement, nested source, parent pin, built artifact, installed receipt/process, restart, and exact-candidate QA form one machine-checked trace.",
+      "implementationStatus": "partial_candidate_unverified",
+      "qaCases": ["MC-033", "MC-034", "MC-035"]
+    },
+    {
+      "id": "MCK-012",
+      "title": "No capability regression",
+      "sourceRefs": ["MC-SRC-001:L67-L70", "MC-SRC-001:L131"],
+      "owners": [
+        "viventium_v0_4/LibreChat",
+        "viventium_v0_4/GlassHive",
+        "qa/main-continuity"
+      ],
+      "expected": "Continuity fixes preserve Agent Builder authority, native intelligence, tools, connectors, workspaces, refresh/resume, external MCP control, and general worker autonomy.",
+      "implementationStatus": "partial_candidate_unverified",
+      "qaCases": ["MC-024", "MC-036", "MC-037", "MC-040", "MC-043", "MC-044", "MC-045", "MC-046"]
+    }
+  ],
+  "qaCases": [
+    {"id":"MC-001","surface":"telegram","name":"Reply why to a scheduled Main output","expected":"Typed ownership resolves the exact logical assistant output; user text stays only why.","candidateArtifactRefs":["MC-CAND-HISTORICAL-LIVE-2026-08-20","MC-CAND-PREFINAL-TELEGRAM-LIVE-2026-08-21"],"result":"PARTIAL","supportingResult":"PASS-LIVE","lastRun":"2026-08-21; a natural exact Telegram reply object on repaired pre-liveness source resolved the automated result as Viventium-authored and preserved the reply plus voice; the later final edit was browser-only, but no new Telegram generation was sent after final activation"},
+    {"id":"MC-002","surface":"telegram","name":"Terse reply after reopen","expected":"A short yes or yeah retains the immediate assistant referent.","candidateArtifactRefs":["MC-CAND-PRE-P0-LIVE-2026-08-21"],"result":"PARTIAL","supportingResult":"PASS-LIVE","lastRun":"2026-08-21; after pre-P0 dirty-source activation and restart, a natural terse Telegram follow-up retained the active recommendation objective; one completed main_context_v1 delta, one accepted Main turn, and no fallback or provider error; final-source browser liveness does not replace a final-source terse Telegram generation"},
+    {"id":"MC-003","surface":"browser","name":"Rapid revision","expected":"Corrections are ordered once and one current answer commits.","candidateArtifactRefs":["MC-CAND-NOT-RUN"],"result":"NOT RUN","catalogedOn":"2026-08-21"},
+    {"id":"MC-004","surface":"context","name":"Per-turn context does not rotate binding","expected":"Time, Feelings, Active Work, reply, and health changes do not replace the native Main session.","candidateArtifactRefs":["MC-CAND-HISTORICAL-LIVE-2026-08-20","MC-CAND-HISTORICAL-AUTOMATED-2026-08-20"],"result":"PARTIAL","supportingResult":"PASS-LIVE","lastRun":"2026-08-20; resumed Telegram native session plus automated mutation matrix"},
+    {"id":"MC-005","surface":"context","name":"Authority change creates epoch","expected":"A reviewed Agent Builder authority change advances the epoch and rotates only incompatible bindings.","candidateArtifactRefs":["MC-CAND-NOT-RUN"],"result":"NOT RUN","catalogedOn":"2026-08-21"},
+    {"id":"MC-006","surface":"context","name":"Bounded new-session bootstrap","expected":"Bootstrap stays within 50 percent of the provider window and retains current plus three turns.","candidateArtifactRefs":["MC-CAND-HISTORICAL-AUTOMATED-2026-08-20"],"result":"PARTIAL","supportingResult":"PASS-AUTOMATED","lastRun":"2026-08-20; exact candidate runtime suite and 100-turn synthetic soak"},
+    {"id":"MC-007","surface":"context","name":"Synthetic overlapping-turn A/B/C admission","expected":"Only accepted deltas are projected; no full duplicate replay occurs.","candidateArtifactRefs":["MC-CAND-PREFINAL-LIVE-2026-08-21","MC-CAND-PRE-P0-AUTOMATED-2026-08-21"],"result":"PARTIAL","lastRun":"2026-08-21; pre-final live sequential Telegram delta passed; synthetic overlapping-turn accepted/reserved admission and crash recovery pass automation, but a real simultaneous-turn run and later repaired source are not proved"},
+    {"id":"MC-008","surface":"context","name":"Semantic compaction","expected":"A persisted valid summary preserves pending asks, commitments, corrections, IDs, recurrence outcomes, and tool pairs.","candidateArtifactRefs":["MC-CAND-PRE-P0-AUTOMATED-2026-08-21"],"result":"PARTIAL","lastRun":"2026-08-21; isolated structured compactor produced a real accepted summary and retained three recent turns; complete semantic field matrix and later repaired source remain unproved"},
+    {"id":"MC-009","surface":"context","name":"Overflow compact and retry","expected":"One compact-and-retry uses the same epoch, digest policy, and capability ceiling; a second overflow fails closed.","candidateArtifactRefs":["MC-CAND-PRE-P0-AUTOMATED-2026-08-21"],"result":"PARTIAL","supportingResult":"PASS-AUTOMATED","lastRun":"2026-08-21; pre-P0 same-epoch compact/retry and second-overflow fail-closed regression passed; forced live overflow and later repaired source remain unrun"},
+    {"id":"MC-010","surface":"scheduler","name":"Main new schedule","expected":"A new visible schedule thread receives bounded Main continuity.","candidateArtifactRefs":["MC-CAND-PREFINAL-LIVE-2026-08-21"],"result":"PARTIAL","supportingResult":"PASS-LIVE","lastRun":"2026-08-21; a pre-final enabled viventium_agent Workbench Run Now used the configured GlassHive/Codex Main, delivered once to LibreChat and Telegram, and its adjacent natural follow-up retained shared Main continuity; exact typed reply-object provenance remains MC-001"},
+    {"id":"MC-011","surface":"scheduler","name":"Main same schedule","expected":"The schedule thread persists and also receives bounded Main continuity.","candidateArtifactRefs":["MC-CAND-PREFINAL-LIVE-2026-08-21"],"result":"PARTIAL","supportingResult":"PASS-LIVE","lastRun":"2026-08-21; one pre-final recurring Main schedule retained one visible conversation across four deliveries and bounded owner continuity"},
+    {"id":"MC-012","surface":"scheduler","name":"Isolated GlassHive schedule","expected":"Isolated work receives only its authorized bounded snapshot and never claims Main identity.","candidateArtifactRefs":["MC-CAND-HISTORICAL-LIVE-2026-08-20"],"result":"PARTIAL","supportingResult":"PASS-LIVE","lastRun":"2026-08-20; existing managed memory-off schedule ran on requested/effective Docker lane, imported validated artifact, and survived Workbench reload"},
+    {"id":"MC-013","surface":"telegram","name":"Multi-chunk scheduled delivery","expected":"Every Telegram chunk ID maps to one logical message and any chunk reply resolves it.","candidateArtifactRefs":["MC-CAND-HISTORICAL-LIVE-2026-08-20","MC-CAND-HISTORICAL-AUTOMATED-2026-08-20"],"result":"PARTIAL","lastRun":"2026-08-20; dispatch-to-stream receipt regressions passed, but the live run covered one chunk only"},
+    {"id":"MC-014","surface":"telegram","name":"Unknown or deleted reply","expected":"Viventium says it cannot verify the referent and makes no denial or security claim.","candidateArtifactRefs":["MC-CAND-NOT-RUN"],"result":"NOT RUN","catalogedOn":"2026-08-21"},
+    {"id":"MC-015","surface":"telegram","name":"Foreign or forged reply","expected":"Owner/chat scoping prevents lookup or attribution across boundaries.","candidateArtifactRefs":["MC-CAND-NOT-RUN"],"result":"NOT RUN","catalogedOn":"2026-08-21"},
+    {"id":"MC-016","surface":"telegram","name":"Group third-party injection","expected":"Quoted third-party text remains untrusted provenance and never becomes owner-authored instruction.","candidateArtifactRefs":["MC-CAND-FINAL-AUTOMATED-2026-08-21"],"result":"PARTIAL","supportingResult":"PASS-AUTOMATED","lastRun":"2026-08-21; final-source regressions preserve foreign-bot, anonymous-admin, and third-party sender roles and keep group reply captions out of the owner-authored prompt body; a real group user path remains unrun"},
+    {"id":"MC-017","surface":"context","name":"Primary and fallback snapshot parity","expected":"Both authoring attempts use the same snapshot digest and capability ceiling.","candidateArtifactRefs":["MC-CAND-HISTORICAL-AUTOMATED-2026-08-20"],"result":"PARTIAL","supportingResult":"PASS-AUTOMATED","lastRun":"2026-08-20; real chatCompletion session-to-direct carrier test preserved snapshot digest, context, and tool ceiling; live forced fallback pending"},
+    {"id":"MC-018","surface":"context","name":"No unexpected worker replacement","expected":"One hundred mutable-context turns keep the compatible native binding.","candidateArtifactRefs":["MC-CAND-HISTORICAL-AUTOMATED-2026-08-20"],"result":"PARTIAL","supportingResult":"PASS-AUTOMATED","lastRun":"2026-08-20; 100-turn synthetic mixed-continuity soak"},
+    {"id":"MC-019","surface":"context","name":"Usage accounting scope","expected":"Current request usage is distinct from retained native-session usage and cannot prune a tiny message incorrectly.","candidateArtifactRefs":["MC-CAND-HISTORICAL-AUTOMATED-2026-08-20"],"result":"PARTIAL","supportingResult":"PASS-AUTOMATED","lastRun":"2026-08-20; visible-message accounting regressions"},
+    {"id":"MC-020","surface":"scheduler","name":"Recurrence state and internal envelope","expected":"Only compact recurrence state persists; internal control content is absent from UI, recall, and saved memory.","candidateArtifactRefs":["MC-CAND-PREFINAL-LIVE-2026-08-21"],"result":"PARTIAL","lastRun":"2026-08-21; a pre-final manual Main run kept its envelope internal, memory-ineligible, and out of accepted user text, while an earlier recurring run advanced RecurrenceStateV1; legacy sidebar history still exposes an internal marker and account-wide cleanup or migration is open"},
+    {"id":"MC-021","surface":"telegram","name":"Transport failure retry","expected":"Delivery retries the accepted render once without model regeneration or duplicate bubbles.","candidateArtifactRefs":["MC-CAND-NOT-RUN"],"result":"NOT RUN","catalogedOn":"2026-08-21"},
+    {"id":"MC-022","surface":"telegram","name":"Send and acknowledgement crash windows","expected":"Confirmed receipts are reused; an ambiguous send is recorded as delivery_unknown and is not automatically resent.","candidateArtifactRefs":["MC-CAND-NOT-RUN"],"result":"NOT RUN","catalogedOn":"2026-08-21"},
+    {"id":"MC-023","surface":"browser","name":"Background delegation and Active Work","expected":"Main remains responsive; independent work persists, reports completion, and survives refresh.","candidateArtifactRefs":["MC-CAND-NOT-RUN"],"result":"NOT RUN","catalogedOn":"2026-08-21"},
+    {"id":"MC-024","surface":"glasshive","name":"Native workspace and tool continuity","expected":"Named workspace, native tools/connectors, external MCP, refresh, and resume remain available.","candidateArtifactRefs":["MC-CAND-PREFINAL-LIVE-2026-08-21"],"result":"PARTIAL","lastRun":"2026-08-21; pre-final natural Telegram connected-service tools and browser refresh passed; one useful Main answer remained visible, but the full connector or workspace matrix, later repaired source, and first-answer performance remain open"},
+    {"id":"MC-025","surface":"recall","name":"Recall healthy and grounded","expected":"A real older fact is retrieved with correct scope and provenance.","candidateArtifactRefs":["MC-CAND-NOT-RUN"],"result":"NOT RUN","catalogedOn":"2026-08-21"},
+    {"id":"MC-026","surface":"recall","name":"Recall unavailable variants","expected":"Empty, auth, timeout, stale, and source-only states are distinct; Main remains coherent from live context.","candidateArtifactRefs":["MC-CAND-NOT-RUN"],"result":"NOT RUN","catalogedOn":"2026-08-21"},
+    {"id":"MC-027","surface":"recall","name":"Recall recovery","expected":"In-place credential repair restores health and grounded retrieval without data loss.","candidateArtifactRefs":["MC-CAND-HISTORICAL-LIVE-2026-08-20"],"result":"PARTIAL","lastRun":"2026-08-20; backup, health, and retained counts passed; grounded user retrieval pending"},
+    {"id":"MC-028","surface":"scheduler","name":"One-time retry wording","expected":"Visible text states the exact retry time or terminal action for the same occurrence.","candidateArtifactRefs":["MC-CAND-HISTORICAL-LIVE-2026-08-20"],"result":"PARTIAL","supportingResult":"PASS-LIVE","lastRun":"2026-08-20; controlled private Telegram failure fixture displayed the exact automatic retry timestamp"},
+    {"id":"MC-029","surface":"scheduler","name":"Recurring failure wording","expected":"Visible text states next occurrence only when the failed occurrence will not retry.","candidateArtifactRefs":["MC-CAND-HISTORICAL-LIVE-2026-08-20"],"result":"PARTIAL","supportingResult":"PASS-LIVE","lastRun":"2026-08-20; controlled private Telegram failure fixture stated that the occurrence ended and only the next scheduled occurrence remained enabled"},
+    {"id":"MC-030","surface":"scheduler","name":"Repeated same-root coalescing","expected":"One actionable notice represents repeated incidents; reversible pause runs only when approved.","candidateArtifactRefs":["MC-CAND-NOT-RUN"],"result":"NOT RUN","catalogedOn":"2026-08-21"},
+    {"id":"MC-031","surface":"scheduler","name":"Exact structural idempotency","expected":"Exact create/replay yields one schedule while a meaningful changed schedule stays distinct.","candidateArtifactRefs":["MC-CAND-HISTORICAL-AUTOMATED-2026-08-20"],"result":"PARTIAL","supportingResult":"PASS-AUTOMATED","lastRun":"2026-08-20; atomic fingerprint regressions preserve meaningful user metadata and exclude scheduler-owned recurrence, failure, misfire, heartbeat, and overlap state"},
+    {"id":"MC-032","surface":"operations","name":"Protected live drift dry run","expected":"A/B/C schedule and agent drift is visible before any pause or sync; history is preserved.","candidateArtifactRefs":["MC-CAND-PREFINAL-LIVE-2026-08-21"],"result":"PARTIAL","lastRun":"2026-08-21; seven reviewed duplicates remain paused; reviewed Main presentation fields and one Connected Accounts return edge were applied; fourteen unrelated protected drifts remain untouched"},
+    {"id":"MC-033","surface":"delivery","name":"Nested source and parent pin","expected":"The parent manifest points to the exact tested nested commits.","candidateArtifactRefs":["MC-CAND-NOT-RUN"],"result":"NOT RUN","catalogedOn":"2026-08-21"},
+    {"id":"MC-034","surface":"delivery","name":"Built and installed artifact identity","expected":"Built artifacts, installed receipt, and running processes match the tested source candidate.","candidateArtifactRefs":["MC-CAND-NOT-RUN"],"result":"NOT RUN","catalogedOn":"2026-08-21"},
+    {"id":"MC-035","surface":"delivery","name":"Restart, isolation, and privacy","expected":"Dev/prod remain isolated, state persists after restart, and public artifacts contain no private data.","candidateArtifactRefs":["MC-CAND-HISTORICAL-LIVE-2026-08-20"],"result":"PARTIAL","lastRun":"2026-08-20; supported local restart and public/private scan passed; clean install pending"},
+    {"id":"MC-036","surface":"browser","name":"Normal chat terminal liveness and persistence","expected":"A normal answer survives transport loss, resume, completion, refresh, and persisted-state reconciliation without duplicate or vanished text.","candidateArtifactRefs":["MC-CAND-FINAL-LIVE-2026-08-21","MC-CAND-FINAL-AUTOMATED-2026-08-21"],"result":"PARTIAL","supportingResult":"PASS-LIVE","lastRun":"2026-08-21; exact final-source isolated headed Chrome recovered an offline backend-completed FINAL without reload, cleared Stop, showed one assistant with no phantom branch or provider error, preserved the Stop-flow partial through refresh, and retained one assistant with no Stop after refresh; exact lost-terminal and 404 remain automated-only because the live recovery replayed FINAL, and provider abort or tombstone remains partial or not run"},
+    {"id":"MC-037","surface":"soak","name":"Mixed continuity soak","expected":"At least 100 mixed turns have bounded inputs, correct attribution, no duplicate envelopes, stable bindings, and accepted-turn-only advancement.","candidateArtifactRefs":["MC-CAND-HISTORICAL-AUTOMATED-2026-08-20"],"result":"PARTIAL","supportingResult":"PASS-AUTOMATED","lastRun":"2026-08-20; 100-turn synthetic mixed-continuity soak"},
+    {"id":"MC-038","surface":"glasshive","name":"Bounded context-header transport","expected":"The real HTTP parser accepts every application-valid bounded context-header combination while retaining a finite request-head limit.","candidateArtifactRefs":["MC-CAND-HISTORICAL-LIVE-2026-08-20"],"result":"PARTIAL","supportingResult":"PASS-LIVE","lastRun":"2026-08-20; pinned 512 KiB h11 buffer and query-aware application guard; real 20 KiB and 300 KiB probes returned HTTP 200, 550 KiB header and query probes returned HTTP 431"},
+    {"id":"MC-039","surface":"scheduler","name":"Durable Workbench manual Main receipt","expected":"Run Now atomically creates one leased pre-dispatch receipt; scheduled and manual authoring exclude each other; active work renews or retains ownership; terminal states clear it; a blocked automatic occurrence is deferred once instead of lost at misfire; stale active states reconcile; Workbench and scheduler share one database resolver.","candidateArtifactRefs":["MC-CAND-HISTORICAL-LIVE-2026-08-20","MC-CAND-HISTORICAL-AUTOMATED-2026-08-20"],"result":"PARTIAL","lastRun":"2026-08-20; after supported restart, live configured Main Run Now held a lease, rejected a real scheduled claim, completed silent or nta once, cleared the lease, persisted after browser reload, and emitted no Telegram error or noise; all three synchronous Run Now branches share identity-bound heartbeat code; automated long-overlap deferral, waiting_external retention, lease renewal, terminal clearing, stale recovery, runtime-metadata-safe idempotency, and shared-path cases passed; 188 Workbench plus 101 scheduler or storage tests and 10 subtests passed; full live defer-after-long-overlap remains unrun"},
+    {"id":"MC-040","surface":"cross-surface","name":"Natural Telegram to browser referent","expected":"A recent Telegram objective and service referent remain available in a normal browser turn without copying the full transcript or performing an external write.","candidateArtifactRefs":["MC-CAND-PREFINAL-LIVE-2026-08-21"],"result":"PARTIAL","supportingResult":"PASS-LIVE","lastRun":"2026-08-21; pre-final natural read-only Telegram service request, terse follow-up, unsent browser draft, terse browser clarification, refresh, Mongo, and runtime logs"},
+    {"id":"MC-041","surface":"context","name":"Physical worker rotation keeps bounded Main continuity","expected":"A compatible logical Main session can rotate its physical worker, receive bounded accepted bootstrap evidence, and admit only unseen message keys.","candidateArtifactRefs":["MC-CAND-PREFINAL-LIVE-2026-08-21"],"result":"PARTIAL","supportingResult":"PASS-LIVE","lastRun":"2026-08-21; pre-final occupancy-driven Telegram worker rotation retained the terse referent; same logical session and bounded bootstrap completed without re-owning accepted keys"},
+    {"id":"MC-042","surface":"glasshive","name":"Same-turn Main re-entry after specialist","expected":"Main can hand off internally and re-enter in the exact same logical turn without duplicate rejection, stale output reuse, or relaxed conflicts for another turn.","candidateArtifactRefs":["MC-CAND-PREFINAL-LIVE-2026-08-21","MC-CAND-PRE-P0-AUTOMATED-2026-08-21"],"result":"PARTIAL","lastRun":"2026-08-21; a pre-final natural Main-to-Reality-Check-to-Main turn completed as three requests under one snapshot and produced one visible Main answer; later interleaved-fragment source is automated-only"},
+    {"id":"MC-043","surface":"presentation","name":"Primary-final single answer and latency","expected":"A declared primary-final graph exposes one useful Main answer, retains specialist tool evidence internally, persists the same text, and meets the quality-plus-performance metric.","candidateArtifactRefs":["MC-CAND-PREFINAL-LIVE-2026-08-21","MC-CAND-PRE-P0-AUTOMATED-2026-08-21"],"result":"PARTIAL","lastRun":"2026-08-21; a pre-final in-process primary-final graph passed live with one Main answer and retained specialist evidence; first connected-service latency remained about 57 seconds and later flat-projection source is automated-only"},
+    {"id":"MC-044","surface":"browser","name":"Parallel Main comparison survives refresh","expected":"Two selected Main source components each author one participant-owned visible part, render as two distinct columns, and remain distinct after refresh.","candidateArtifactRefs":["MC-CAND-PREFINAL-LIVE-2026-08-21","MC-CAND-PRE-P0-AUTOMATED-2026-08-21"],"result":"PARTIAL","lastRun":"2026-08-21; a pre-final run produced two participant-owned Mongo parts and two browser columns that survived refresh; later interleaved-fragment source is automated-only"},
+    {"id":"MC-045","surface":"presentation","name":"Visible delta ownership survives persistence","expected":"A StandardGraph ownerless streamed answer is stamped to its sole structural participant; a multi-agent pre-step delta remains explicitly unowned, is never attributed to another participant, and neither visible answer is pruned on refresh.","candidateArtifactRefs":["MC-CAND-FINAL-AUTOMATED-2026-08-21"],"result":"PARTIAL","supportingResult":"PASS-AUTOMATED","lastRun":"2026-08-21; repaired-source real-shaped StandardGraph projection or prune, primary-final multi-agent hiding, exact-advance interleaved A/B/A, continuous-text, and split {NTA} cases passed 302 API plus 40 frontend assertions before a later liveness-only edit that did not touch the owning files; final-source stream lifecycle suites also passed; live forced out-of-order interleaving remains unrun"},
+    {"id":"MC-046","surface":"persistence","name":"Structured visible-text projection","expected":"Multiple visible content parts keep a structural boundary in legacy text, provider history, resumable saves, and recall while ordinary single-part answers stay unchanged.","candidateArtifactRefs":["MC-CAND-PRE-P0-AUTOMATED-2026-08-21"],"result":"PARTIAL","supportingResult":"PASS-AUTOMATED","lastRun":"2026-08-21; pre-P0 shared projection, Mongo mirror, request or client history, and recall regressions pass; an explicitly different sanitized text remains authoritative; prior live two-part evidence proved the escaped fused-text shape, but the repaired projection was not written again to the personal corpus"}
+  ]
+}

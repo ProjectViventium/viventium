@@ -26,7 +26,7 @@ restore, and atomic runtime/MCP/BFF readiness. They are now explicit requirement
 `feature -> requirement -> use case -> QA case -> expected result -> actual evidence -> remaining gap`
 
 - Feature: GlassHive user control plane deployment safety.
-- Requirement: requirement 55 hosted routing, key isolation, migration, and atomic rollout gates.
+- Requirement: requirement 57 hosted routing, key isolation, migration, and atomic rollout gates.
 - Use case: an operator promotes one exact candidate without exposing the worker runtime or losing state.
 - QA case: GHUCP-030 through GHUCP-033.
 - Expected result: every service and data boundary is proven before ingress switches, with a tested rollback.
@@ -37,9 +37,9 @@ restore, and atomic runtime/MCP/BFF readiness. They are now explicit requirement
 
 | Evidence surface | Result / sanitized pointer |
 | --- | --- |
-| Requirement and use case | Requirement 55 and GHUCP-030 through GHUCP-033. |
+| Requirement and use case | Requirement 57 and GHUCP-030 through GHUCP-033. |
 | Code owning path | Deployment launcher, schema ledgers, assertion boundary, and route contract. |
-| Docs and nested docs/repos | Requirement 55, this QA catalog, and nested GlassHive runtime documentation. |
+| Docs and nested docs/repos | Requirement 57, this QA catalog, and nested GlassHive runtime documentation. |
 | Scripts or harnesses | Focused launcher, schema, and assertion tests described below. |
 | Local/external prerequisite state | Source test environment only; hosted identity, ingress, and services were not provisioned. |
 | Logs | Sanitized test summaries only; no live service logs were collected. |

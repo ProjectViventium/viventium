@@ -2,7 +2,7 @@
 
 This folder retains provider/route hardening coverage. The complete current one-click lifecycle,
 browser/Telegram authority, task durability, automatic-speaker, memory, and endurance contract is
-owned by `qa/modern-playground-voice/cases.md` MPV-032 through MPV-054; do not use VCHARD-001 as a
+owned by `qa/modern-playground-voice/cases.md` MPV-025 through MPV-047; do not use VCHARD-001 as a
 substitute for those user-grade gates.
 
 ## Case ID Convention
@@ -13,8 +13,8 @@ Use stable `VCHARD-NNN` IDs for voice call hardening cases.
 
 | Case ID | Requirement | User Outcome | Surfaces | Automation | Last Run |
 | --- | --- | --- | --- | --- | --- |
-| `VCHARD-001` | Voice calls handle provider failures, route selection, and fallback wording without breaking the call. | User-visible behavior matches source, docs, persisted state, and logs | LiveKit/playground call, voice gateway logs, UI final state | `tests/release/test_voice_playground_dispatch_contract.py` plus user-grade QA when visible | NOT YET RUN (cataloged 2026-05-17; next feature run required) |
-| `VCHARD-002` | Public QA evidence is sanitized and reproducible | A PR reviewer can verify the behavior without private/local data | QA report, git diff, logs summary, generated artifacts | Public-safety scan plus relevant release tests | NOT YET RUN (cataloged 2026-05-17; next feature run required) |
+| `VCHARD-001` | Voice calls handle provider failures, route selection, and fallback wording without breaking the call. | User-visible behavior matches source, docs, persisted state, and logs | LiveKit/playground call, voice gateway logs, UI final state | `tests/release/test_voice_playground_dispatch_contract.py` plus user-grade QA when visible | NOT RUN (cataloged 2026-05-17; next feature run required) |
+| `VCHARD-002` | Public QA evidence is sanitized and reproducible | A PR reviewer can verify the behavior without private/local data | QA report, git diff, logs summary, generated artifacts | Public-safety scan plus relevant release tests | NOT RUN (cataloged 2026-05-17; next feature run required) |
 
 ## `VCHARD-001` - Core User Flow
 
@@ -29,7 +29,7 @@ Use stable `VCHARD-NNN` IDs for voice call hardening cases.
 - Forbidden result: backend logs, mocks, source inspection, or model completions are treated as full acceptance when a user-visible surface exists.
 - Evidence to capture: sanitized visible result, supporting command/test result, generated/runtime state summary, and docs/case links.
 - Automation: `tests/release/test_voice_playground_dispatch_contract.py` plus any narrower feature tests discovered during implementation.
-- Last run: NOT YET RUN (cataloged 2026-05-17; not a substitute for the next real feature run).
+- Last run: NOT RUN (cataloged 2026-05-17; not a substitute for the next real feature run).
 
 ## `VCHARD-002` - Public-Safe Evidence Record
 
@@ -44,7 +44,7 @@ Use stable `VCHARD-NNN` IDs for voice call hardening cases.
 - Forbidden result: a report includes private transcripts, account identifiers, raw runtime dumps, local home paths, tokens, or secret-bearing command lines.
 - Evidence to capture: public-safety scan result and link to the sanitized report.
 - Automation: public-safety pattern scan plus relevant release tests.
-- Last run: NOT YET RUN (cataloged 2026-05-17; run on each new public report).
+- Last run: NOT RUN (cataloged 2026-05-17; run on each new public report).
 
 ## Natural User Use Case Checklist
 
@@ -53,6 +53,6 @@ rows before claiming a pass when the feature behavior changes.
 
 | Use Case ID | Natural user action | Requirement / case link | Real surface to use | Supporting evidence to compare | Expected visible result | Last run |
 | --- | --- | --- | --- | --- | --- | --- |
-| `VCHARD-UC-001` | On LiveKit/playground call, voice gateway logs, UI final state, verify that voice calls handle provider failures, route selection, and fallback wording without breaking the call. | owning requirement for `VCHARD-001` / `VCHARD-001` | LiveKit/playground call, voice gateway logs, UI final state | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to VCHARD-001. | User-visible behavior matches source, docs, persisted state, and logs | NOT YET RUN (cataloged 2026-05-18; next feature run required) |
-| `VCHARD-UC-002` | On QA report, git diff, logs summary, generated artifacts, create or review the public QA evidence record with setup/auth/config, empty-state, degraded-dependency, and privacy checks. | owning requirement for `VCHARD-002` / `VCHARD-002` | QA report, git diff, logs summary, generated artifacts | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to VCHARD-002. | The user sees an honest setup, retry, or degraded-state result for VCHARD-002; no fake success is accepted. | NOT YET RUN (cataloged 2026-05-18; next feature run required) |
-| `VCHARD-UC-003` | After creating the public QA evidence record, rerun the scan after any retry, report update, or linked artifact change. | owning requirement for `VCHARD-002` / `VCHARD-002` | QA report, git diff, logs summary, generated artifacts | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to VCHARD-002. | VCHARD-002 remains correct after the persistence or parity step and final wording matches evidence. | NOT YET RUN (cataloged 2026-05-18; next feature run required) |
+| `VCHARD-UC-001` | On LiveKit/playground call, voice gateway logs, UI final state, verify that voice calls handle provider failures, route selection, and fallback wording without breaking the call. | owning requirement for `VCHARD-001` / `VCHARD-001` | LiveKit/playground call, voice gateway logs, UI final state | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to VCHARD-001. | User-visible behavior matches source, docs, persisted state, and logs | NOT RUN (cataloged 2026-05-18; next feature run required) |
+| `VCHARD-UC-002` | On QA report, git diff, logs summary, generated artifacts, create or review the public QA evidence record with setup/auth/config, empty-state, degraded-dependency, and privacy checks. | owning requirement for `VCHARD-002` / `VCHARD-002` | QA report, git diff, logs summary, generated artifacts | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to VCHARD-002. | The user sees an honest setup, retry, or degraded-state result for VCHARD-002; no fake success is accepted. | NOT RUN (cataloged 2026-05-18; next feature run required) |
+| `VCHARD-UC-003` | After creating the public QA evidence record, rerun the scan after any retry, report update, or linked artifact change. | owning requirement for `VCHARD-002` / `VCHARD-002` | QA report, git diff, logs summary, generated artifacts | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to VCHARD-002. | VCHARD-002 remains correct after the persistence or parity step and final wording matches evidence. | NOT RUN (cataloged 2026-05-18; next feature run required) |

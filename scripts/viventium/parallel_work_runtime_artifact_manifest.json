@@ -1,0 +1,321 @@
+{
+  "contractVersion": 1,
+  "entries": [
+    {
+      "kind": "file",
+      "path": "bin/viventium",
+      "trackedOnly": true
+    },
+    {
+      "kind": "file",
+      "path": "scripts/viventium/feelings_qa_parent_control.py",
+      "trackedOnly": false
+    },
+    {
+      "kind": "file",
+      "path": "scripts/viventium/glasshive_qa_fixture.py",
+      "trackedOnly": false
+    },
+    {
+      "kind": "file",
+      "path": "scripts/viventium/glasshive_qa_parent_control.py",
+      "trackedOnly": false
+    },
+    {
+      "kind": "file",
+      "path": "scripts/viventium/librechat_emo_qa_fixture.js",
+      "trackedOnly": false
+    },
+    {
+      "kind": "file",
+      "path": "scripts/viventium/librechat_emo_qa_parent_control.py",
+      "trackedOnly": false
+    },
+    {
+      "kind": "file",
+      "path": "scripts/viventium/local_qa_runtime_control.py",
+      "trackedOnly": false
+    },
+    {
+      "kind": "file",
+      "path": "scripts/viventium/local_qa_service_ack.py",
+      "trackedOnly": false
+    },
+    {
+      "kind": "file",
+      "path": "scripts/viventium/release_claim_qa_fault.py",
+      "trackedOnly": false
+    },
+    {
+      "kind": "file",
+      "path": "scripts/viventium/telegram_qa_parent_control.py",
+      "trackedOnly": false
+    },
+    {
+      "kind": "file",
+      "path": "viventium_v0_4/viventium-librechat-start.sh",
+      "trackedOnly": true
+    },
+    {
+      "excludeDirectories": [
+        "__tests__",
+        "cache",
+        "data",
+        "node_modules",
+        "test",
+        "tests"
+      ],
+      "excludeFileSuffixes": [".spec.js", ".test.js"],
+      "extensions": [".cjs", ".js", ".json", ".mjs"],
+      "kind": "tree",
+      "path": "viventium_v0_4/LibreChat/api/app",
+      "trackedOnly": true
+    },
+    {
+      "excludeDirectories": [
+        "__tests__",
+        "cache",
+        "data",
+        "node_modules",
+        "test",
+        "tests"
+      ],
+      "excludeFileSuffixes": [".spec.js", ".test.js"],
+      "extensions": [".cjs", ".js", ".json", ".mjs"],
+      "kind": "tree",
+      "path": "viventium_v0_4/LibreChat/api/cache",
+      "trackedOnly": true
+    },
+    {
+      "excludeDirectories": [
+        "__tests__",
+        "cache",
+        "data",
+        "node_modules",
+        "test",
+        "tests"
+      ],
+      "excludeFileSuffixes": [".spec.js", ".test.js"],
+      "extensions": [".cjs", ".js", ".json", ".mjs"],
+      "kind": "tree",
+      "path": "viventium_v0_4/LibreChat/api/config",
+      "trackedOnly": true
+    },
+    {
+      "excludeDirectories": [
+        "__tests__",
+        "cache",
+        "data",
+        "node_modules",
+        "test",
+        "tests"
+      ],
+      "excludeFileSuffixes": [".spec.js", ".test.js"],
+      "extensions": [".cjs", ".js", ".json", ".mjs"],
+      "kind": "tree",
+      "path": "viventium_v0_4/LibreChat/api/db",
+      "trackedOnly": true
+    },
+    {
+      "excludeDirectories": [
+        "__tests__",
+        "cache",
+        "data",
+        "node_modules",
+        "test",
+        "tests"
+      ],
+      "excludeFileSuffixes": [".spec.js", ".test.js"],
+      "extensions": [".cjs", ".js", ".json", ".mjs"],
+      "kind": "tree",
+      "path": "viventium_v0_4/LibreChat/api/models",
+      "trackedOnly": true
+    },
+    {
+      "excludeDirectories": [
+        "__tests__",
+        "cache",
+        "data",
+        "node_modules",
+        "test",
+        "tests"
+      ],
+      "excludeFileSuffixes": [".spec.js", ".test.js"],
+      "extensions": [".cjs", ".handlebars", ".js", ".json", ".mjs"],
+      "kind": "tree",
+      "path": "viventium_v0_4/LibreChat/api/server",
+      "trackedOnly": true
+    },
+    {
+      "excludeDirectories": [
+        "__tests__",
+        "cache",
+        "data",
+        "node_modules",
+        "test",
+        "tests"
+      ],
+      "excludeFileSuffixes": [".spec.js", ".test.js"],
+      "extensions": [".cjs", ".js", ".json", ".mjs"],
+      "kind": "tree",
+      "path": "viventium_v0_4/LibreChat/api/strategies",
+      "trackedOnly": true
+    },
+    {
+      "excludeDirectories": [
+        "__tests__",
+        "cache",
+        "data",
+        "node_modules",
+        "test",
+        "tests"
+      ],
+      "excludeFileSuffixes": [".spec.js", ".test.js"],
+      "extensions": [".cjs", ".js", ".json", ".mjs"],
+      "kind": "tree",
+      "path": "viventium_v0_4/LibreChat/api/utils",
+      "trackedOnly": true
+    },
+    {
+      "kind": "file",
+      "path": "viventium_v0_4/LibreChat/api/package.json",
+      "trackedOnly": true
+    },
+    {
+      "kind": "file",
+      "path": "viventium_v0_4/LibreChat/api/typedefs.js",
+      "trackedOnly": true
+    },
+    {
+      "kind": "file",
+      "path": "viventium_v0_4/LibreChat/api/server/services/viventium/localQaServiceAck.js",
+      "trackedOnly": false
+    },
+    {
+      "kind": "file",
+      "path": "viventium_v0_4/LibreChat/package.json",
+      "trackedOnly": true
+    },
+    {
+      "kind": "file",
+      "path": "viventium_v0_4/LibreChat/package-lock.json",
+      "trackedOnly": true
+    },
+    {
+      "kind": "file",
+      "path": "viventium_v0_4/LibreChat/client/package.json",
+      "trackedOnly": true
+    },
+    {
+      "kind": "file",
+      "path": "viventium_v0_4/LibreChat/packages/api/package.json",
+      "trackedOnly": true
+    },
+    {
+      "kind": "file",
+      "path": "viventium_v0_4/LibreChat/packages/client/package.json",
+      "trackedOnly": true
+    },
+    {
+      "kind": "file",
+      "path": "viventium_v0_4/LibreChat/packages/data-provider/package.json",
+      "trackedOnly": true
+    },
+    {
+      "kind": "file",
+      "path": "viventium_v0_4/LibreChat/packages/data-provider/react-query/package.json",
+      "trackedOnly": true
+    },
+    {
+      "kind": "file",
+      "path": "viventium_v0_4/LibreChat/packages/data-schemas/package.json",
+      "trackedOnly": true
+    },
+    {
+      "excludeDirectories": [],
+      "excludeFileSuffixes": [],
+      "extensions": [".cjs", ".js", ".json", ".mjs", ".node", ".wasm"],
+      "kind": "tree",
+      "path": "viventium_v0_4/LibreChat/packages/api/dist",
+      "trackedOnly": false
+    },
+    {
+      "excludeDirectories": [],
+      "excludeFileSuffixes": [],
+      "extensions": [".cjs", ".js", ".json", ".mjs", ".node", ".wasm"],
+      "kind": "tree",
+      "path": "viventium_v0_4/LibreChat/packages/data-schemas/dist",
+      "trackedOnly": false
+    },
+    {
+      "excludeDirectories": [],
+      "excludeFileSuffixes": [],
+      "extensions": [".cjs", ".js", ".json", ".mjs", ".node", ".wasm"],
+      "kind": "tree",
+      "path": "viventium_v0_4/LibreChat/packages/data-provider/dist",
+      "trackedOnly": false
+    },
+    {
+      "excludeDirectories": [],
+      "excludeFileSuffixes": [],
+      "extensions": [".css", ".html", ".js", ".json", ".mjs", ".wasm"],
+      "kind": "tree",
+      "path": "viventium_v0_4/LibreChat/client/dist",
+      "trackedOnly": false
+    },
+    {
+      "excludeDirectories": [
+        "__pycache__",
+        "cache",
+        "data",
+        "test",
+        "tests"
+      ],
+      "excludeFileSuffixes": [],
+      "extensions": [
+        ".json",
+        ".py"
+      ],
+      "kind": "tree",
+      "path": "viventium_v0_4/GlassHive/runtime_phase1/src",
+      "trackedOnly": true
+    },
+    {
+      "kind": "file",
+      "path": "viventium_v0_4/GlassHive/runtime_phase1/src/workers_projects_runtime/local_qa_service_ack.py",
+      "trackedOnly": false
+    },
+    {
+      "excludeDirectories": [
+        "__pycache__",
+        "cache",
+        "data",
+        "test",
+        "tests"
+      ],
+      "excludeFileSuffixes": [],
+      "extensions": [
+        ".json",
+        ".py"
+      ],
+      "kind": "tree",
+      "path": "viventium_v0_4/telegram-viventium/TelegramVivBot",
+      "trackedOnly": true
+    },
+    {
+      "kind": "file",
+      "path": "viventium_v0_4/telegram-viventium/TelegramVivBot/local_qa_service_ack.py",
+      "trackedOnly": false
+    },
+    {
+      "kind": "file",
+      "path": "viventium_v0_4/telegram-viventium/TelegramVivBot/utils/orchestration.py",
+      "trackedOnly": false
+    },
+    {
+      "kind": "file",
+      "path": "viventium_v0_4/telegram-viventium/TelegramVivBot/utils/tr026_local_qa.py",
+      "trackedOnly": false
+    }
+  ]
+}

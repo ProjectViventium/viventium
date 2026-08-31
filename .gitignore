@@ -150,6 +150,8 @@ docs/archive/
 projects/
 !templates/life-*/Projects/
 !templates/life-*/Projects/**
+!docs/research_and_future_plans/v0.5/test-Life-v0.01/Projects/
+!docs/research_and_future_plans/v0.5/test-Life-v0.01/Projects/**
 qa/results/*
 !qa/results/
 !qa/results/README.md

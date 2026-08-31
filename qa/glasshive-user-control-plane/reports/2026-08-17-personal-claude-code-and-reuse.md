@@ -31,7 +31,7 @@
 
 | Evidence surface | Result / sanitized pointer |
 | --- | --- |
-| Requirement, docs, and nested docs | Requirement 55 and cases `007`, `009`, `012` own the behavior |
+| Requirement, docs, and nested docs | Requirement 57 and cases `007`, `009`, `012` own the behavior |
 | Code, scripts, and automated harness | Provider setup, mission binding, UI/BFF, pin, and release suites |
 | Local/external prerequisite state | Provider consent and installed canary were healthy |
 | Logs, DB/state/persistence | Two observed runs, zero observed failures, persisted output and Favorite metadata |

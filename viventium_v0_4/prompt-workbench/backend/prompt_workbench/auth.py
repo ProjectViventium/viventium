@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+import ipaddress
 import os
 import sqlite3
 import subprocess
 import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
@@ -35,35 +37,6 @@ class AuthContext:
 
 def _env_flag(name: str) -> bool:
     return (os.getenv(name) or "").strip().lower() in {"1", "true", "yes", "on"}
-
-
-def _configured_launch_token() -> str:
-    return (os.getenv("VIVENTIUM_PROMPT_WORKBENCH_LAUNCH_TOKEN") or "").strip()
-
-
-def _request_token(request: Request) -> str:
-    header = request.headers.get("x-viventium-workbench-token", "").strip()
-    if header:
-        return header
-    auth = request.headers.get("authorization", "")
-    if auth.startswith("Bearer "):
-        return auth.removeprefix("Bearer ").strip()
-    return ""
-
-
-def _token_auth(request: Request) -> AuthContext | None:
-    expected = _configured_launch_token()
-    if not expected:
-        return None
-    if _request_token(request) != expected:
-        return None
-    return AuthContext(
-        authenticated=True,
-        admin=True,
-        method="launch_token",
-        user_id=(os.getenv("VIVENTIUM_PROMPT_WORKBENCH_ADMIN_USER_ID") or "local-admin").strip(),
-        email=(os.getenv("VIVENTIUM_PROMPT_WORKBENCH_ADMIN_EMAIL") or "").strip(),
-    )
 
 
 def _is_loopback_request(request: Request) -> bool:
@@ -211,12 +184,34 @@ def _local_loopback_admin_auth(request: Request) -> AuthContext | None:
     )
 
 
+def strict_loopback_origin(configured: str) -> str:
+    configured = configured.strip()
+    try:
+        parsed = urllib.parse.urlsplit(configured)
+        hostname = parsed.hostname or ""
+        parsed.port
+        loopback = hostname.lower() == "localhost" or ipaddress.ip_address(hostname).is_loopback
+    except (ValueError, UnicodeError):
+        raise ValueError("Admin verification requires a strict loopback origin") from None
+    if (
+        not loopback
+        or parsed.scheme not in {"http", "https"}
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path not in {"", "/"}
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise ValueError("Admin verification requires a strict loopback origin")
+    return f"{parsed.scheme}://{parsed.netloc}"
+
+
 def _librechat_origin() -> str:
-    return (
+    return strict_loopback_origin(
         os.getenv("VIVENTIUM_LIBRECHAT_ORIGIN")
         or os.getenv("LIBRECHAT_API_URL")
         or "http://127.0.0.1:3080"
-    ).rstrip("/")
+    )
 
 
 def _librechat_admin_auth(request: Request) -> AuthContext | None:
@@ -229,7 +224,14 @@ def _librechat_admin_auth(request: Request) -> AuthContext | None:
         headers["Authorization"] = auth
     if not headers:
         return None
-    req = urllib.request.Request(f"{_librechat_origin()}/api/admin/verify", headers=headers, method="GET")
+    try:
+        origin = _librechat_origin()
+    except ValueError:
+        return AuthContext(False, False, reason="admin_verification_origin_not_loopback")
+    req = urllib.request.Request(f"{origin}/api/admin/verify", method="GET")
+    for name, value in headers.items():
+        # urllib does not copy unredirected headers onto a redirect request.
+        req.add_unredirected_header(name, value)
     try:
         with urllib.request.urlopen(req, timeout=3) as resp:
             status = resp.status
@@ -253,6 +255,8 @@ def _librechat_admin_auth(request: Request) -> AuthContext | None:
 
 
 def get_auth_context(request: Request) -> AuthContext:
+    if "x-viventium-workbench-token" in request.headers:
+        return AuthContext(False, False, reason="workbench_bearer_auth_is_not_supported")
     if _env_flag("VIVENTIUM_PROMPT_WORKBENCH_AUTH_DISABLED") and (
         _env_flag("CODEX_CI") or bool(os.getenv("PYTEST_CURRENT_TEST"))
     ):
@@ -262,15 +266,18 @@ def get_auth_context(request: Request) -> AuthContext:
             method="disabled_for_tests",
             user_id=(os.getenv("VIVENTIUM_PROMPT_WORKBENCH_ADMIN_USER_ID") or "test-admin").strip(),
         )
-    token_context = _token_auth(request)
-    if token_context:
-        return token_context
+    if not _is_loopback_request(request):
+        return AuthContext(False, False, reason="non_loopback_admin_access_is_not_supported")
     librechat_context = _librechat_admin_auth(request)
     if librechat_context:
         return librechat_context
+    if request.headers.get("authorization"):
+        return AuthContext(False, False, reason="invalid_admin_credentials")
     local_admin_context = _local_loopback_admin_auth(request)
     if local_admin_context:
         return local_admin_context
+    if request.headers.get("cookie"):
+        return AuthContext(False, False, reason="invalid_admin_credentials")
     return AuthContext(False, False, reason="missing_or_invalid_admin_auth")
 
 

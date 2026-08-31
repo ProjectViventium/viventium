@@ -70,9 +70,10 @@ class; surface is deliberately excluded so canonical interactive A+C behavior su
 web/Telegram/voice transition. Repeated webhook delivery with the same `source_event_id` is
 idempotent within its interaction class.
 
-A superseded job may be best-effort aborted to stop authoring, but its stale finalization cannot
-save or emit current assistant prose. An unfinished assistant row is removed from conversation
-context and replaced only by content-free audit metadata; refresh must not restore B.
+A superseded `response_and_authoring` job may be best-effort aborted, but stale finalization cannot
+save or emit current assistant prose. A `response_only` adapter stops stale prose and presentation
+without cancelling already accepted durable work. An unfinished assistant row is removed from
+conversation context and replaced only by content-free audit metadata; refresh must not restore B.
 
 ### Adapter capabilities and delivery acknowledgement
 
@@ -85,11 +86,15 @@ type InteractionAdapterCapabilities = {
 };
 ```
 
-Web and Telegram text, finalized Telegram voice-note transcripts, and file/text source segments are
-`immediate` + `response_and_authoring`. Live voice is `provisional` + `response_only`: acoustic
-barge-in stops speech provisionally, false interruption may resume through the existing LiveKit
-mechanism, and only a stable utterance supersedes the old presentation. Speech interruption never
-implies durable backend-work cancellation.
+Web is `immediate` + `response_and_authoring`. Telegram text, finalized voice-note transcripts, and
+file/text source segments are `immediate` + `response_only`: a later Telegram source revises stale
+prose and presentation, but it preserves already accepted missions, tool effects, and background
+work. The reason is authority: Telegram source order owns presentation order, while only an explicit
+exact-work Stop owns durable-work cancellation. Accepted work receipts move to the surviving
+revision or a truthful follow-up. Live voice is `provisional` + `response_only`: acoustic barge-in
+stops speech provisionally, false interruption may resume through the existing LiveKit mechanism,
+and only a stable utterance supersedes the old presentation. Speech interruption never implies
+durable backend-work cancellation.
 
 Delivery uses one contract with a credential scoped to the presenting adapter:
 
@@ -124,17 +129,22 @@ never mutates or closes the current revision.
 
 Telegram and voice retry the exact same idempotent acknowledgement payload up to three times, with
 a short backoff, for transport failures, HTTP 408/425/429, and 5xx responses. Semantic rejections
-such as stale revision, ownership conflict, or unknown turn are not retried. If all attempts fail,
-no outcome is recorded and the response remains provisional until a valid receipt arrives.
-Generation completion alone is never evidence that Telegram text was delivered or voice audio was
-heard.
+such as stale revision, ownership conflict, or unknown turn are not retried. Generation completion
+alone is never evidence that Telegram text was delivered or voice audio was heard.
 
-This bounded retry removes the ordinary transient-failure gap without adding a persistent adapter
-outbox. It cannot make presentation and core persistence atomic across processes: if an adapter
-process dies after visible text or audible playout but before any acknowledgement reaches the core,
-the core still truthfully knows only that delivery is unconfirmed. A later revision may therefore
-supersede that provisional record. Closing that final ambiguity would require durable adapter-side
-receipt storage and reconciliation and is intentionally outside this minimal design.
+After Telegram exhausts those immediate retries, it durably records a bounded local recovery intent
+before it removes or replaces visible output. Recovery uses exact claim tokens and generations.
+Every source-order recovery edit or delete of an existing message also holds an in-process
+per-message mutex and a private, bounded hashed advisory-lock slot across the Telegram call and
+exact-generation settlement. Wall-clock
+expiry never authorizes another live process to mutate that message. A contender waits, then
+revalidates its durable generation before calling Telegram. Process death releases the OS lock, so
+recovery may then take over without an older call returning later. A late newly created message can
+be compensating-deleted by its creator, with failed deletion stored for retry; an old generation
+never rolls an existing message back over newer content. Restart reconciliation produces one
+truthful retryable terminal or records the current receipt. The private local ledger has bounded
+TTL, a `0700` parent, and `0600` database and lock files. This closes silent Telegram loss across bot
+restarts; it does not claim Mongo or installed-client atomicity.
 
 For server-authority web output, canonical final persistence is durable presentation truth. If the
 process dies after persisting the replayable final event but before its in-process commit receipt is
@@ -157,10 +167,39 @@ effect is never repeated merely because the earlier presentation was interrupted
   messages stay distinct, stale previews are deleted, deletion failure suppresses later edits and
   records degraded delivery without a false connection error.
 - **Telegram voice notes/files:** finalized transcript and file source segments are never deleted as
-  assistant output. Pending transcription preserves receipt order; a failed transcription lets the
-  later segment proceed with a truthful unavailable-transcription state.
+  assistant output. Pending transcription preserves receipt order. Any failed voice transcription,
+  including a captioned voice message, emits one truthful retry error and stops before Core; the
+  user retries the complete source instead of silently submitting caption-only context.
 - **Live voice:** stable barge-in stops stale speech permanently while false barge-in may resume;
   only confirmed audible playback commits the presentation, backend work remains durable, and the
   surviving context includes the ordered stable user segments.
 - **Callbacks/future adapters:** revision metadata is mandatory; future adapters implement the two
   capabilities and delivery acknowledgement without core channel-name branches.
+
+### Parallel Work source accounting
+
+Parallel Work does not replace logical-turn supersession. Each stable rapid source event is stored
+with ordered segment identity, and the surviving revision receives every unresolved segment. A
+trusted mission handoff carries the exact selected segments plus a bounded recent conversation
+branch; replay deduplicates by source identity, never by similar text. Once atomic delegation
+commits, later revisions may replace presentation wording but cannot cancel or duplicate the
+mission. See [`55_Parallel_Work_Orchestration.md`](55_Parallel_Work_Orchestration.md).
+
+<!-- VIVENTIUM-STABLE-REQUIREMENT-DECLARATIONS:START -->
+## Stable requirement declarations
+
+Each line is the canonical public owner declaration for one stable requirement ID. Detailed sections supply implementation context; they must not narrow or contradict these declared outcomes.
+
+CC-019: Voice interruption stops presentation only, not durable scheduled/mission work.
+CC-038: Supersession is a lifecycle disposition, never “Connection error. Please retry.”
+CC-039: Reuse active-job lookup, conversation ID, and cross-replica abort transport. Use in-memory lock plus atomic Redis transaction/Lua across replicas.
+CC-040: `source_event_id` makes webhook/source retries idempotent. Never merge unrelated users or conversations.
+CC-041: Adapter capability shape is structural: `segment_stability` is `immediate` or `provisional`; `supersede_scope` is `response_and_authoring` or `response_only`. Future channels implement the interface; core does not branch on names.
+CC-043: Never cancel committed external effects, GlassHive missions, or background tasks from presentation supersession. Preserve tool receipts.
+CC-045: Delivery acknowledgement includes logical turn, revision, one of `committed`, `partial_removed`, or `failed`, and optional presentation reference. Authenticate owner, adapter, turn, and revision.
+CC-046: Web commit = final persistence + successful stream completion; Telegram commit = successful final send/edit; Voice commit = completed playback. Preview text and partial speech are not commits.
+CC-047: Web refresh cannot restore stale B. Telegram keeps A/C as separate sources, retracts preview B, and truthfully records degraded deletion without false connection errors.
+CC-048: Telegram voice-note transcript is source input, never assistant output. Pending transcription preserves receipt order; failure answers C with a truthful unavailable state. File semantics remain intact.
+CC-049: Stable live-voice barge-in supersedes presentation only. False barge-in may resume; stale speech must not resume after a stable interruption.
+CC-056: Validate A→B→C→D on Web, Telegram text/triple burst/voice-note/file, live stable/false barge-in, callbacks, concurrent isolated conversations, restart/reload, transcript failure, and a durable effect before C.
+<!-- VIVENTIUM-STABLE-REQUIREMENT-DECLARATIONS:END -->

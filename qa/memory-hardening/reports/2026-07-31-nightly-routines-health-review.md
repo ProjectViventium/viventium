@@ -1,3 +1,4 @@
+<!-- qa-evidence-exempt: Historical evidence snapshot retained verbatim; retroactive v2 fields would invent evidence that was not captured during the run. -->
 # 2026-07-31 Nightly Routines Health Review
 
 Read-only audit of the Viventium overnight maintenance lanes after their scheduled
@@ -100,4 +101,3 @@ but the memory hardener and transcript sublane missed today's due window, RAG
 API health blocks transcript recall proof, and scheduler launchd supervision is
 degraded. This was not caused by an early observer run, timezone travel, DST, a
 power-budget skip, or an intentionally empty eligible-user selection.
-<!-- qa-evidence-exempt: Historical or specialized supporting artifact retained without retroactively inventing missing evidence; current release acceptance requires a fresh full-view report. -->

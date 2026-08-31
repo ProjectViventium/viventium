@@ -46,8 +46,9 @@ This document defines the system behavior that must remain true regardless of fu
 ## UI Order and Timing Guarantees
 - Activation cards must appear before the main response (if any activations occurred).
 - The main response must not wait for background agents to finish.
-- A deterministic hold is allowed only when an activated tool scope has no matching main-agent
-  direct-action surface.
+- The shipped async defaults do not hold Main. An operator may restore the legacy fail-closed tool
+  hold with `VIVENTIUM_VOICE_PHASE_A_ASYNC_ALLOW_TOOL_HOLD=false`; that hold applies only when an
+  activated tool scope has no matching Main direct-action surface.
 - Background completion rows should update independently while the user can continue chatting.
 - Follow-up appears only once all activated agents are done, and only once per user turn.
 
@@ -147,6 +148,10 @@ Conversation exports must render background events as readable text (not raw JSO
 - Empty voice follow-up generation for a normal follow-up stays silent; fallback insight text is
   reserved for explicit replacement/deferred-primary flows that own the user-visible answer.
 - Background processing should never interrupt or block speech generation.
+- Main must not start unsolicited foreground research or tool work during a live voice turn. An
+  immediate answer uses already available evidence and states what remains unverified; later
+  background value follows the normal Phase B path. An explicit current-turn lookup/tool request is
+  still permitted and must stay interruptible/cancellable and evidence-grounded.
 - When a real spoken surface carries a Feelings capsule, the model appraises the state and moment as
   expressive or restrained. A strongly outward state in an emotionally meaningful or relational
   reply is expressive even when plain wording already carries tone; a containing state or neutral
@@ -168,15 +173,26 @@ Conversation exports must render background events as readable text (not raw JSO
 
 ## Smart Messaging Delivery
 
-- Messaging surfaces treat optional audio and multiple bubbles as views of one logical Main Agent
-  answer.
-- The model may emit standalone `{SKIP_VOICE}` to suppress optional audio while delivering complete
-  text, except when the user explicitly asks to hear/read/speak the answer.
+- Messaging surfaces treat optional audio and multiple chat bubbles as delivery views of one
+  logical Main Agent answer.
+- The model may end an answer with standalone `{SKIP_VOICE}` to suppress optional audio while still
+  delivering the complete text. Explicit requests to hear/read/speak the answer override that
+  option.
 - The model may place standalone `{MSG_BREAK}` between complete conversational beats. Runtime caps
-  this at two breaks/three bubbles and does not invent delays.
-- Controls apply only as standalone lines outside fenced code and quotes. Literal examples remain
-  visible; incomplete reserved streaming suffixes do not.
-- Runtime parses structure but never infers artifact type, intent, or delivery preference from
-  keywords, length, provider, agent name, or prompt text.
-- The clean answer persists once. Any audio is synthesized once and attached only to the final
-  delivered bubble.
+  this at two breaks/three semantic bubbles and does not invent delays.
+- Controls are consumed only as standalone lines outside fenced code and quotes. Literal examples
+  remain visible; incomplete reserved streaming prefixes do not.
+- Runtime parses model-authored structure but never infers artifact type, user intent, or delivery
+  preference from keywords, length, provider, agent name, or prompt text.
+- The clean answer persists once. If audio is sent, it is synthesized once from that clean logical
+  answer and attached only to the final delivered bubble.
+- Telegram's existing optional text-audio preference is displayed as `Smart voice for text`.
+  Compatible future messaging adapters must reuse the same versioned grammar and semantics.
+# Main continuity
+
+The user experiences one cognitive Viventium Main across browser, Telegram, schedules, fallback,
+and internal handoffs. Core owns one bounded `MainContextSnapshotV1` and accepted logical-turn state;
+GlassHive executes `ReplayDecisionV1` without reconstructing a second memory. Typed
+`ReplyContextV1` and `RecurrenceStateV1` preserve provenance while internal envelopes remain hidden
+and memory-ineligible. See `docs/requirements_and_learnings/56_Main_Continuity_Kernel.md` in the
+parent repository and `qa/main-continuity/` for acceptance status.

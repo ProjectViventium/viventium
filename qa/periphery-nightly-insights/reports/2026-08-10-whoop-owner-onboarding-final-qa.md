@@ -1,3 +1,4 @@
+<!-- qa-evidence-exempt: Historical evidence snapshot retained verbatim; retroactive v2 fields would invent evidence that was not captured during the run. -->
 # WHOOP owner onboarding final QA — 2026-08-10
 
 ## Outcome
@@ -42,4 +43,3 @@ honest hybrid boundary for official exports and app-only screenshots.
 
 No secret, health payload, screenshot, personal identifier, account identifier, conversation
 identifier, hostname, or local absolute path is recorded here.
-<!-- qa-evidence-exempt: Historical or specialized supporting artifact retained without retroactively inventing missing evidence; current release acceptance requires a fresh full-view report. -->

@@ -1450,7 +1450,6 @@ def test_snapshot_wrapper_writes_manifest_without_private_helper(tmp_path: Path)
     assert "metadata-only continuity audit" in result.stderr
     assert "No recoverable backup payload was created" in result.stderr
 
-
 def test_snapshot_metadata_fallback_never_reuses_latest_snapshot(tmp_path: Path) -> None:
     home = tmp_path / "home"
     output_root = tmp_path / "snapshots"

@@ -1,3 +1,4 @@
+<!-- qa-evidence-exempt: Historical evidence snapshot retained verbatim; retroactive v2 fields would invent evidence that was not captured during the run. -->
 # 2026-08-05 Nightly Routines Health Review
 
 Automation: `viventium-nightly-routines-qa`
@@ -122,4 +123,3 @@ recovery before the next window rather than calling tomorrow guaranteed blocked.
 4. Investigate why the Workbench evidence snapshot saw Mongo missing at run time while Mongo was healthy at audit time; this likely needs a startup readiness gate rather than a snapshot-quality workaround.
 5. Keep the unchanged old GlassHive queued rows and historical dead-letter callbacks as P2 cleanup/watch items.
 6. Repair separate user/account schedule issues before relying on user-level routines: connected-account reconnect, Telegram mapping, and bad-request rows.
-<!-- qa-evidence-exempt: Historical or specialized supporting artifact retained without retroactively inventing missing evidence; current release acceptance requires a fresh full-view report. -->

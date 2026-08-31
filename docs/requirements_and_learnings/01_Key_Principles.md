@@ -1,6 +1,9 @@
 # Key Coding Principles for Viventium
 
-**Purpose**: This document serves as the definitive reference for all AI assistants working on this codebase. These principles must be followed in every interaction to ensure consistent, high-quality development.
+**Purpose**: This document is the cross-product principles reference for Viventium work. `AGENTS.md`
+governs how work is performed; the current owning feature document governs feature-specific product
+truth. When this document conflicts with either one, follow that narrower current authority and
+repair the stale statement here.
 
 ---
 
@@ -171,14 +174,6 @@ also shape delivery through controls the selected TTS provider really supports.
   - user connected account first when supported and available
   - explicit API key from canonical/generated runtime env next
   - otherwise show a clear action to connect the account or provide the key
-- A user's explicit per-provider `personal_required` policy is the one exception to platform
-  fallback: use that user's connected credential or fail with reconnect/setup guidance. The
-  backward-compatible default remains `personal_preferred`, which keeps the precedence above.
-- Login-domain restrictions have one canonical input, `runtime.auth.allowed_domains`, and compile
-  to LibreChat's existing `registration.allowedDomains` enforcement for both password registration
-  and its federated login. An omitted or empty list preserves the open-domain default. GlassHive's
-  separate hosted OIDC gateway does not authorize from mutable email claims; enforce its tenant and
-  app-role/group admission at the IdP.
 - Do not silently seed or expose models that the current configured auth mode cannot actually use
 - Local installer and runtime health checks must be honest about mixed-mode dependencies:
   - if a feature still needs Docker Desktop in a nominally native install, say so before startup
@@ -486,8 +481,13 @@ also shape delivery through controls the selected TTS provider really supports.
   missing path, record what supporting evidence was gathered, and do not use mocks, unit tests, logs,
   DB rows, source inspection, or another model's review as a substitute for required user evidence.
 - Supporting evidence cannot replace required user-path evidence.
+- **`CORE-014` — Change authorization boundary.** Preserve unrelated work and make the smallest
+  evidence-backed change that satisfies the authorized scope. A diagnosis or proposal does not
+  authorize implementation; implementation starts only when the request includes that authority.
 - Completion reports must explicitly say what was run, what was not run, what visible UX/result was
   observed, what backend/log/DB/state evidence supports it, and what mismatch or residual fix remains.
+  **`CORE-015`** requires that final report to stay short and plain and to name every open gate
+  honestly; concise wording must never hide an unrun, partial, blocked, or failed requirement.
 - Keep one living QA area per feature or flow:
   - `qa/<feature>/README.md` for scope, owning docs, surfaces, quality bar, and latest status
   - `qa/<feature>/cases.md` for durable case IDs, expected outcomes, forbidden outcomes, automation,
@@ -546,7 +546,8 @@ The `docs/requirements_and_learnings/` directory serves as the **central reposit
 - Each feature/concept should have exactly **one comprehensive document** that contains everything about it
 
 #### 2. When Working on New Features/Projects
-- **All documents in this directory must be added/updated** when working on new features or projects
+- Update the **one owning feature document** when product truth changes. Update other documents only
+  when their own contract or an explicit cross-feature pointer also changed.
 - If the new feature/project has key requirements or learnings tied to a single concept or feature, they **must be documented here**
 - Example: If working on background agents and how they surface results:
   - User's requirements → Document in the background agents document
@@ -598,6 +599,25 @@ A developer referring to a single document about a respective feature **must per
 - ✅ **Consistency** - Single source prevents conflicting information
 - ✅ **Maintainability** - Easier to keep documentation current
 
+#### 6. Private Source to Public Requirement Coverage
+
+Raw user prompts, private task transcripts, attachments, and screenshots stay outside this public
+repository. Preserve anti-drift traceability without copying that material here:
+
+- maintain [`requirement_source_coverage.yaml`](requirement_source_coverage.yaml) as the public-safe,
+  machine-readable source-family audit receipt;
+- use opaque public source aliases and digests, never task/conversation IDs or private text;
+- record source-retention quality, owning requirement IDs, QA IDs, disposition, current evidence,
+  and the remaining gap;
+- keep exact recoverable wording only in an authorized private ledger;
+- mark incomplete historical retention as `partial_source_retention`. Never claim word-for-word
+  coverage for purged or unavailable follow-ups.
+
+The public receipt proves that each accepted source family has an owner and QA path and binds that
+family to a verified private digest. It does not expose or replace the private exact-message
+evidence, prove purged wording, make dirty bytes durable, or satisfy the generated product/service
+source-to-pin-to-artifact-to-installed-to-QA registry required by `ONB-011`.
+
 ---
 
 ## 🔍 Root Cause Analysis Methodology
@@ -606,14 +626,15 @@ A developer referring to a single document about a respective feature **must per
 1. **Break down the problem** to the smallest steps and things you can - small and full coverage
 2. **Go to first principle thinking** and truly nail down the issue
 3. **Stop assuming you have a fix and jumping to the build!**
-4. **You need to have complete concrete evidence** only after you've gone through EVERYTHING
-5. **Then finally refer to web** for additional context if needed
-6. **LEAVE NO STONE UNTURNED**
+4. Gather complete concrete evidence for the owning flow and actual blast radius.
+5. Refer to authoritative external sources when the decision needs current or third-party facts.
+6. Do not leave an applicable path or evidence surface unexamined.
 7. When asking a second model or sub-agent to review the issue, sanitize private values whenever a placeholder will preserve the reasoning task
 
 ### Priority-Based Approach
 - Address issues in priority order based on severity (Critical → High → Medium → Low)
-- Create comprehensive analysis documents before implementation
+- Record analysis in the owning document or a private scratch artifact only when it materially helps
+  implementation or preserves a durable decision.
 - Validate, test, and explore fixes before implementing
 
 ---
@@ -621,7 +642,9 @@ A developer referring to a single document about a respective feature **must per
 ## 📚 Codebase Study Requirements
 
 ### General Rules:
-- **Do not overfit!** Read the documentation priority to any change for both `viventium_v0_3_py/viventium_v1` and `viventium_v0_4` (we are no longer updating v0_3, so assume features and fixes and changes are all meant for viventium_v0_4)
+- **Do not overfit.** `viventium_v0_4` is the active stack. Read the owning v0.4 path by relevance;
+  inspect `viventium_v0_3_py/viventium_v1` only for an explicitly scoped migration, comparison, or
+  legacy regression.
 - Ask yourself, based on the codebase and docs, what other parallel usecases are supported? and would my plan or solution fix only this? or the full scope for various cases. 
 - Based on documentation, gain the background and context before making changes
 - **Do not patch** Do a full analysis of components and things that are involved so that you fix the root cause without breaking any other functionality at its root, instead of patch of patch!
@@ -629,6 +652,10 @@ A developer referring to a single document about a respective feature **must per
 - **Study the codebase** and understand the existing logic, flow, patterns, and principles
 - Make changes the proper way in full, covering edge cases
 - Ensure changes are consistent with the existing codebase and principles
+- **`CORE-005` — Smallest native mechanism.** Reuse the smallest existing product or upstream-native
+  primitive that satisfies the full requirement. Add a new abstraction only when current-path
+  evidence proves a reusable gap; do not create duplicate infrastructure or speculative future
+  architecture for one complaint.
 
 ### Before Any Change:
 - Understand existing components, patterns, and abstractions
@@ -671,6 +698,13 @@ A developer referring to a single document about a respective feature **must per
     cortex inherits an existing configured route when one exists rather than using a stale UI model list.
     Provider attempt budgets are structured runtime config, and failure of one configured route must
     continue through the remaining fallback chain within the enclosing Phase A budget.
+
+### Model-Semantics And Typed-Runtime Boundary
+
+`CORE-003` assigns semantic judgment to the configured model. Runtime code owns typed identity,
+authorization, scope, configuration, state, durability, concurrency, and transport. `CORE-004`
+forbids regex, keyword, substring, provider-name, prompt-text, or user-identity intent routing; only
+deterministic structural parsing of declared metadata is allowed.
 
 ### CRITICAL RULE: No Hardcoded NLU in Runtime Code
 - Intent detection, provider clarification, and history classification must be owned by LLM activation classifiers plus YAML-configured activation prompts.
@@ -738,7 +772,6 @@ A developer referring to a single document about a respective feature **must per
      - `viventium-sync-agents.js push --env=<env>` — full push (DANGEROUS, see warning below)
 - `env` is set via `--env=<env>` (or `VIVENTIUM_ENV=<env>`); use the target runtime environment name for pull/push operations.
 - This ensures you're working with the actual deployed configurations, not assumptions
-- Canonical artifact/snapshot path conventions are documented in `docs/requirements_and_learnings/27_Artifact_Storage_Standard.md`
 
 #### CRITICAL: Push Safety Rules (Learned 2026-02-15)
 - **ALWAYS use `--prompts-only` for prompt/instruction/cortex activation changes**. This is the safe mode that skips `tools`, `model`, `provider`, and other UI-managed fields.
@@ -782,48 +815,37 @@ A developer referring to a single document about a respective feature **must per
 #### Model Governance Rule (Launch-Ready Baseline)
 - Out-of-the-box Viventium conscious and subconscious execution must stay within the current
   launch-ready model families unless a newer documented evaluation replaces them:
-  - `glasshive-harness / codex-cli:gpt-5.6-sol` for the conscious agent and every substantive
-    background cortex when the local GlassHive provider is enabled
-  - the workload-owned effort map remains `low|medium|high|xhigh`; Red Team and Deep Research use
-    `xhigh`, Strategic Planning uses `high`, and lighter cortices retain their lower effort
-  - direct `openAI / gpt-5.6-sol|terra` or `anthropic / claude-opus-5` execution is the explicit
-    GlassHive-disabled install profile, not the default for a GlassHive-enabled install
-  - `anthropic / claude-opus-5` as the text-execution fallback
+  - `openAI / gpt-5.6-sol` for the conscious agent and quality-first reasoning cortices
+  - `openAI / gpt-5.6-terra` for balanced, latency-sensitive, and tool-heavy cortices
+  - `glasshive-harness / claude-code:opus / high` (Claude / Opus 5) as the generic Agent text fallback when GlassHive is enabled
   - voice remains the explicit `xai / grok-4.5` route with `reasoning_effort: low`
-- Memory writers, activation classifiers, helper/title models, and autonomous GlassHive mission
-  workers are separate workloads with their own documented model contracts; do not infer their
-  model from the GlassHive conversation-provider matrix.
+- Memory writers, activation classifiers, helper/title models, and GlassHive workers are separate
+  workloads with their own documented model contracts; do not infer their model from the
+  conscious/subconscious execution matrix.
 - Unattended analytical automations default to OpenAI `gpt-5.6-sol` with `xhigh` reasoning. This
-  includes Prompt Workbench/GlassHive scheduled analysis and the optional independent memory
-  observer. Immediate saved-memory writing and nightly hardening are separate exact-mutation
-  workloads: their evaluated default is OpenAI `gpt-5.6-luna` at `medium`, while deep reflection
-  remains Sol/xHigh. A different route must be an explicit, documented operator fallback with
-  visible requested/effective model evidence; never silently change the governed model or effort.
+  includes Prompt Workbench/GlassHive scheduled analysis and OpenAI memory hardening. A different
+  route must be an explicit, documented operator fallback with visible requested/effective model
+  evidence; never silently lower the model or effort.
 - "Automation" in that rule does not mean ordinary conscious chat, user reminder delivery,
   activation classification, voice reactions, or other latency-sensitive in-turn work. Those keep
   their own evaluated contracts. The GlassHive host Codex substrate is shared with direct host
   delegations, so its Sol/xHigh deployment default also applies there unless explicitly overridden.
+- A scheduled task with `executor="viventium_agent"` is the ordinary conscious Main Agent running
+  later, not a separate analytical automation. It must reload the persisted Agent Builder route,
+  parameters, GlassHive options, tools, and fallback unchanged at each run. Scheduler code/config
+  must not own a parallel provider/model/effort tuple or delete the Agent Builder fallback.
 - Do not add a model picker entry or built-in agent assignment for a model that the target provider
-  inventory does not expose. The current verified Anthropic managed default is
-  `claude-opus-5`; explicit existing model overrides remain protected compatibility state.
-- Anthropic's canonical Opus 5 ID is `claude-opus-5`; Google Cloud uses the same ID and the newer
-  Bedrock Mantle Messages API uses `anthropic.claude-opus-5`. Official specifications are a
-  1M-token context, 128K maximum output, and standard pricing of $5 input / $25 output per million
-  tokens. The API effort ladder is `low|medium|high|xhigh|max`; `xhigh` is the recommended starting
-  point for coding and agentic work, while `max` is reserved for capability-critical work:
-  <https://platform.claude.com/docs/en/about-claude/models/whats-new-opus-5>.
-- Opus 5 thinking is on by default and explicit adaptive thinking remains valid. Thinking may be
-  disabled only at `high` effort or below; a disabled-thinking request at `xhigh` or `max` must fail
-  clearly before provider dispatch. Opus 5 requests must not carry sampling parameters. LibreChat's
-  existing `bedrock` endpoint is the legacy Converse transport, so it must not advertise Opus 5
-  until the separate Mantle Messages API transport is implemented.
+  inventory does not expose. As of the local May 6, 2026 inventory, `claude-sonnet-4-7` is not a
+  supported Anthropic model for Viventium; use direct `claude-opus-5` or the declared
+  `glasshive-harness / claude-code:opus` Opus 5 route until a verified provider catalog and model QA
+  update replace this baseline.
 - Picker availability and built-in assignment are separate decisions. Direct OpenAI API-key routes
   expose `gpt-5.6`, `gpt-5.6-sol`, `gpt-5.6-terra`, and `gpt-5.6-luna`. The distinct ChatGPT
   connected-account route exposes only the provider-verified `gpt-5.6-sol` and `gpt-5.6-terra`
   slugs after the July 9, 2026 Agent Builder QA pass. The built-in execution matrix therefore uses
   explicit Sol/Terra slugs rather than the alias or Luna so API-key and connected-account installs
   share one proven model surface.
-- Direct OpenAI GPT-5.6 Agent Builder records default `useResponsesApi: true` when that field is unset because
+- GPT-5.6 Agent Builder records default `useResponsesApi: true` when that field is unset because
   reasoning, tool use, and multi-turn agents are the Responses-shaped workload. Preserve an explicit
   user choice. Do not invent a `gpt-5.6-pro` slug: GPT-5.6 Pro is an API reasoning mode, not a model.
 - GPT-5.6 effort is workload-owned:
@@ -841,9 +863,7 @@ A developer referring to a single document about a respective feature **must per
     Scout's July 17, 2026 shutdown superseded its April benchmark
   - Anthropic Haiku-class activation is acceptable as a fallback or alternative only when the
     benchmark for the target environment proves it fits the chosen budget
-  - at least one of `OpenAI` or `Anthropic` remains required for auxiliary/direct fallback routes on
-    install; when GlassHive is enabled, conscious and cortex authoring use its authenticated harness
-    endpoint instead of depending on each LibreChat user having direct execution credentials
+  - at least one of `OpenAI` or `Anthropic` must be configured for main/background execution on install
   - do not treat `x_ai` alone as a sufficient built-in background-agent foundation for launch-ready installs
 - Do **not** silently drift back to older defaults such as `gpt-4o` or `gpt-4o-mini` just because a pull or reset changed stored config.
 - The same rule applies to secondary runtime paths such as deferred/background follow-up generation:
@@ -893,68 +913,64 @@ A developer referring to a single document about a respective feature **must per
 
 - `glasshive-harness` is a real Agent Provider/Model choice, not an MCP tool wrapped by another LLM
   and not a parallel conscious-engine field. Any main agent or substantive cortex may select it.
-- Its exact initial model IDs are `codex-cli:gpt-5.6-sol` and `claude-code:opus`. Provider/model
+- Its exact initial model IDs are `codex-cli:gpt-5.6-sol` and `claude-code:opus` (currently displayed
+  as **Claude / Opus 5**, matching the native CLI's resolved `claude-opus-5`). Provider/model
   resolution must fail visibly on an unknown value; it must never coerce an unknown provider to
   OpenAI.
-- The portable baseline is ordinary authenticated OpenAI Chat Completions: a client may send only
-  `model`, `messages`, and `stream`. Viventium session, activity, workspace, and access context are
-  optional extensions layered on that baseline, not prerequisites that couple GlassHive to
-  LibreChat. Common non-shape tuning fields may be accepted and ignored for client portability;
-  unsupported orchestration shapes such as client-owned tools or response formats fail with an
-  OpenAI-shaped error.
-- GlassHive also exposes an additive OpenAI Responses adapter for new direct clients. It must share
-  the exact Chat Completions request/session/run core, not fork orchestration. Simple text/messages,
-  instructions, streaming, reasoning effort, and same-owner `previous_response_id` continuity are
-  supported; unsupported tool or multimodal shapes fail loudly. Chat Completions remains supported
-  for broad custom-provider compatibility.
-- This dual surface follows the current portability boundary documented by the upstream projects:
-  OpenAI recommends Responses for new API clients while continuing to support Chat Completions;
-  OpenAI-compatible clients and gateways commonly expose either protocol. ACP is a JSON-RPC
-  process/thread contract between an editor and an external agent, and MCP connects an AI host to
-  tools and context. Neither replaces a general HTTP conversation endpoint. The Claude Agent SDK is
-  an implementation option behind GlassHive's harness profile, not a client-facing provider
-  protocol. See the official
-  [OpenAI migration guide](https://developers.openai.com/api/docs/guides/migrate-to-responses),
-  [OpenAI Chat reference](https://developers.openai.com/api/reference/resources/chat),
-  [Claude Agent SDK](https://github.com/anthropics/claude-agent-sdk-python),
-  [Agent Client Protocol](https://zed.dev/acp), and
-  [MCP architecture](https://modelcontextprotocol.io/docs/learn/architecture).
-- Provider, GlassHive control-plane/runtime, and MCP broker credentials are separate trust domains.
-  A provider bearer token maps to a server-configured principal and tenant. Caller-supplied owner
-  identity and full-host access are honored only when that credential has an explicit server-side
-  delegation/access grant; ordinary endpoint clients default to workspace access.
-- Trusted capability/bootstrap bundles are freshness-bounded and HMAC-authenticated with a
-  dedicated broker secret before GlassHive may project environment or harness configuration. A
-  provider bearer alone must never be able to inject a bootstrap bundle.
 - Provider behavior is selected from compiled capability metadata. GlassHive is eligible for main
-  chat, cortex execution, Phase-B follow-up, and the cascaded Voice Call LLM pipeline, but not
-  Phase-A classification, native real-time speech-to-speech, or automatic fallback selection. The
-  capability contract keeps `voice_pipeline_llm` separate from `native_realtime_voice`; the legacy
-  `realtime_voice` flag is only a backward-compatibility alias. Do not branch on its label.
+  chat, cortex execution, Phase-B follow-up, and the Agent Builder's generic text fallback, but not
+  Phase-A classification or real-time Voice LLM. A GlassHive primary may separately declare one
+  optional provider-internal serial fallback model in `glasshive_options`; that advanced option is
+  disabled by default and does not replace `fallback_llm_*`. Do not branch on provider labels.
 - A harness-backed turn has one authoring intelligence. GlassHive executes harness-native and
   brokered tools itself; LibreChat owns the existing graph, persistence, content parts, and UI but
   does not place a wrapper model in front of the harness.
+- Preserve native role semantics end to end. Stable identity and non-negotiable product guardrails
+  belong in project/developer instructions; the current request-scoped Feeling authority belongs in
+  one native developer instruction; the user's ask stays user-authored; assistant history stays
+  assistant-authored; and tool output stays untrusted tool evidence. Never flatten higher-authority
+  state into user text or use prompt reminders as a security/configuration control.
 - Conversation mode is distinct from a delegated mission. It answers naturally in the selected
   working folder, may clarify, and must not create mission scaffolding, force artifacts or a
   `FINAL REPORT`, or write runtime logs/transcripts into LIFE.
 - The default binding is the canonical per-user `~/Documents/Viventium/Life`, full access, and the
-  selected model's declared recommended effort. Those defaults are compiler/capability-owned, not
-  UI literals. Full access disables harness sandbox and approval gates and is appropriate only for
-  the deliberately trusted local profile. `AGENTS.md` is canonical for Codex and Claude.
-- The standard stream always exposes an OpenAI-compatible lifecycle. The currently shipped Codex
-  and Claude CLI profiles expose safe normalized activity while working and publish assistant text
-  only after their native terminal event. `/v1/models` therefore declares `incremental_text: false`
-  for both. Adapters must not fabricate token deltas, working preambles, or hidden reasoning.
+  selected model's declared recommended effort. `AGENTS.md` is canonical for Codex and Claude.
 - One native session is active per tenant/owner/conversation/agent. Reconnect attaches to the same
-  request/session; explicit user cancel is the only browser action that terminates it. Once native
-  execution starts, no retry, overflow recovery, speculative redo, or model fallback may create a
-  second authoring run.
+  request/session; explicit user cancel is the only browser action that terminates it. Queue/wait and
+  process-start and provider-switch lifecycle events are not authored output. Once the native harness has produced
+  authoring evidence—visible text, reasoning, a plan, a tool action, or file activity—no retry,
+  overflow recovery, speculative redo, or model fallback may create a second authoring run.
+- Before any authoring evidence, a structured retryable quota/rate admission failure may use the one
+  Agent Builder `fallback_llm_*` route. The outer message, stream, and conversation stay stable while
+  a same-provider fallback receives a distinct attempt-scoped idempotency key so the failed primary
+  record is not replayed. Cancellation must target the active attempt. Lifecycle-only status is not
+  authoring evidence; visible text and genuine reasoning/plan/tool/file activity are. An explicitly
+  configured provider-internal fallback remains a separate, optional serial mechanism.
+- Host-run ownership must survive service-process boundaries. The active-session record is the
+  durable ownership signal for a host CLI launched by another process; reconciliation must require
+  the expected run id, a live owner-service PID, and a fresh matching `running` heartbeat before it
+  preserves the run. The child PID alone is not ownership proof and must not let a dead owner pin a
+  run indefinitely. A fresh owner heartbeat may briefly lease finalization after the child exits;
+  once the lease is absent or stale, reconciliation interrupts the run as structured retryable
+  provider loss and terminates any ownerless child. A process-local `Popen` map is supporting state,
+  not sufficient ownership evidence for a shared store/runtime root.
+- Processor success and recovered completion must use state-guarded compare-and-set transitions; a
+  late CLI return cannot resurrect a failed, interrupted, or cancelled run. An explicit user Stop
+  remains cancelled and never starts fallback. An involuntary structured/retryable interruption is
+  exposed as provider failure so the configured pre-authoring Agent fallback can recover it.
+- A declared model, workspace, access, or native worker-policy binding change may supersede a
+  session only at a new-turn boundary: terminate the old worker first, start exactly one replacement,
+  and seed complete visible history. This is a serial configuration migration, not retry authority,
+  and must never overlap two authoring runs.
+- Hash stable native policy and mutable developer state separately. Present and changed state uses
+  the serial replacement boundary; present and unchanged state resumes; absent state on a later
+  speaking phase carries the pinned state forward. Persist request/session/run identity and terminal
+  outcomes for idempotency, reconnect, cancel, and latency evidence, but never persist private prompt
+  contents into public QA artifacts. Validate exact-ID capability policy after worker-local config is
+  materialized and fail closed on drift.
 - Main, Phase B, and cortex requests use distinct structured idempotency roles. The provider's
   `workspace` access setting limits writes to the chosen folder but does not pretend required
   runtime reads are a filesystem chroot; the UI and QA must describe this honestly.
-- Requests without an explicit message/idempotency identity are independent turns, even when their
-  text is identical. Only an explicit stable key may reattach a transport retry to an existing
-  authoring run.
 - The broader v0.5 Brain Pack, night-worker, and Insights thesis is not activated by this provider.
   This is the smallest core upgrade: supported Provider/Model integration plus canonical LIFE.
 
@@ -1045,9 +1061,6 @@ A developer referring to a single document about a respective feature **must per
 - ❌ Skip studying the codebase first
 - ❌ Modify many places in open source code (causes merge conflicts)
 
-### Exception (Explicit User-Approved Private Secrets)
-- If the user explicitly requests committing secrets for a private repo workflow, document the exception in `docs/requirements_and_learnings/04_Git_Private_Workflow.md` and confirm the repo is private.
-
 ### Always:
 - ✅ Study open source projects well and their src code
 - ✅ Use as much as what's already there
@@ -1069,17 +1082,18 @@ A developer referring to a single document about a respective feature **must per
 - **Make sure test files are in an organized folder and not all over the place!**
 - Update or create the owning `qa/<feature>/README.md` and `qa/<feature>/cases.md`
 - Add dated QA run evidence under the feature QA folder before claiming user-facing completion
-- Follow existing test organization patterns:
-  - Backend tests: `viventium_v0_3_py/viventium_v1/tests/`
-  - Unit tests: `viventium_v0_3_py/viventium_v1/tests/unit/`
-  - Integration tests: `viventium_v0_3_py/viventium_v1/tests/integration/`
+- Follow the owning active test and QA paths. Use
+  [`45_Runtime_Feature_QA_Map.md`](45_Runtime_Feature_QA_Map.md), the owning `qa/<feature>/README.md`,
+  and the current v0.4 component test layout. Retired v0.3 test directories are historical evidence,
+  not the default location for new tests.
 
 ---
 
 ## 🔄 Suggested Approach for Fixes
 
 ### Implementation Workflow:
-1. **Create comprehensive analysis document** (e.g., `docs/VIVENTIUM_ISSUES_ANALYSIS.md`)
+1. Trace the owning flow and record material analysis in its existing owner; use private scratch for
+   temporary investigation rather than creating a generic duplicate analysis document.
 2. **Identify root causes** using first principles thinking
 3. **Prioritize issues** by severity (Critical → High → Medium → Low)
 4. **Explore, test, validate** fixes before implementation
@@ -1094,7 +1108,7 @@ A developer referring to a single document about a respective feature **must per
 ## 📝 Summary Checklist
 
 Before making any change, ensure:
-- [ ] Read relevant documentation for both `viventium_v0_3_py/viventium_v1` and `viventium_v0_4`
+- [ ] Read the relevant active v0.4 owner; read v0.3 only for scoped migration or legacy evidence
 - [ ] Studied existing codebase, patterns, and components
 - [ ] Identified existing functionality that can be reused
 - [ ] Understood the root cause (if fixing an issue)
@@ -1149,7 +1163,12 @@ what it knows and has made unknown/unavailable evidence explicit. Product behavi
 The parity requirement applies to Viventium, LibreChat-native providers, GlassHive conversation
 providers, Telegram, browser, voice, and background/callback paths. The same authorized host
 capability must be available through a structured transport; provider labels, agent names, prompt
-text, and user identity are not legal routing predicates.
+text, and user identity are not legal routing predicates. Parity covers the full mission-relevant
+input, reasoning, action, and output path—not only the model or tool list. Delegating to a durable
+worker must preserve exact supported uploads/files/media, memory and recall, project context,
+connected capabilities, citations/sources, generated artifacts, and truthful one-time delivery for
+the same authorized goal. A surface may change presentation, but it must not silently narrow the
+ability. Every new capability requires an explicit Worker Bee and Telegram/Web/Voice QA mapping.
 
 ## Same-Main Continuity And Logical-Turn Integrity
 
@@ -1185,3 +1204,63 @@ Presentation interruption and work cancellation are different operations:
   completion follow-up;
 - web, Telegram, voice, scheduler, Workbench/manual runs, callbacks, and future adapters each meet
   the Quality + Performance outcome metric without inventing channel-specific coordinators.
+
+Parallel Work extends this invariant. One Main stays the sole author and manager while independent
+durable objectives may become GlassHive mission roots. Native Codex/Claude children coordinate only
+inside a root; they do not become competing Mains or a second public registry. Rapid input remains
+ordered and accounted once, accepted missions survive presentation supersession, and only an
+explicit exact-work Stop cancels them. The full authority, lifecycle, context, performance, and
+release contract lives in [`55_Parallel_Work_Orchestration.md`](55_Parallel_Work_Orchestration.md).
+Its locked product-language contract defines **Queen Bee** as Main and **Worker Bee** as one durable
+mission root, including rapid A/B/C behavior, exact interruption and control semantics, cross-surface
+visibility, and full mission-scoped input, memory, tool, file/artifact, output, and delivery parity.
+These are aliases, not new runtime layers.
+
+## Agent-Sync Artifact-Chain Boundary
+
+`CORE-013` joins delivery identity to agent synchronization. Before any agent sync changes live
+state, compare the source definition, live definition, and approved public contract as A/B/C drift;
+classify each difference; and produce an exact dry-run plan that shows every proposed mutation and
+preserved field. Acceptance then requires the reviewed source, nested component commit, parent pin,
+compiled or prebuilt artifact, installed runtime identity, visible behavior, and durable state to
+agree. A source-only edit, unreviewed blanket sync, or dry run that omits a changed field is not
+completion. `MC-032` and `MC-UC-007` own the sync-drift journey; the delivery chain remains covered
+by `MC-033`–`MC-035` and their existing cross-owner cases.
+
+<!-- VIVENTIUM-STABLE-REQUIREMENT-DECLARATIONS:START -->
+## Stable requirement declarations
+
+Each line is the canonical public owner declaration for one stable requirement ID. Detailed sections supply implementation context; they must not narrow or contradict these declared outcomes.
+
+CC-057: Workbench needs headed browser/accessibility QA; Telegram needs real preview/voice-note/degraded wording; Voice needs audible QA.
+CC-058: Correlate UI with logs, SQLite, Mongo, job state, callback outbox, Feeling version, generated config, source, component pin, prompt artifact, builds, and installed runtime.
+CC-059: Public docs are sanitized. Exact prompts, personal schedules, chats, IDs, and machine paths remain private.
+CORE-001: Optimize **Quality (Intelligence, Relevance, Usefulness, Alignment) + Performance (Fast, Smooth, Reliable)**. A faster but less useful path is a regression.
+CORE-002: One Main owns the relationship, judgment, management, and final answer. Helpers inform or execute; they do not become competing speakers.
+CORE-003: Let the configured model make semantic decisions. Runtime owns typed identity, authorization, state, durability, and transport.
+CORE-004: Do not use regex or keyword matching to detect routing, provider selection, scheduling intent, email phrasing, or productivity scope.
+CORE-005: Prefer the smallest proven native mechanism and reuse existing Viventium, LibreChat, GlassHive, Codex, and Claude primitives.
+CORE-006: The host is a faithful courier: pass the goal, exact constraints, files, relevant factual context, verified capabilities, and results. Do not invent a plan, provider/tool list, artifact, or success rubric for the worker.
+CORE-007: Parity means the same authorized outcome capability across direct Main, GlassHive/Codex, GlassHive/Claude, Web, Telegram, Voice, scheduler, callback, and future adapters. Presentation may differ; ability may not silently narrow.
+CORE-008: Distinguish healthy empty results from unavailable, stale, timeout, rate limit, missing auth/config, rejected, unsupported, and missing local prerequisites.
+CORE-009: Never claim acceptance, running, completion, delivery, fallback, memory, tools, route, model, Feeling, or readiness without exact evidence.
+CORE-010: Preserve owner isolation, least authority, public/private separation, and secret-safe evidence.
+CORE-011: Product truth belongs in one owning requirements document; repeatable QA belongs in one owning QA inventory; related docs point to the owner.
+CORE-012: A user-visible feature is not complete from unit tests, logs, DB rows, API output, mocks, or model review alone. Exercise the real installed surface.
+CORE-013: Completion is an artifact-chain claim: source, nested component commit, parent pin, compiled/prebuilt artifact, installed runtime identity, visible behavior, and durable state must agree. Before agent sync, compare source/live A/B/C drift and prove the dry-run plan.
+CORE-014: Preserve unrelated work. Make the smallest evidence-backed change. Separate diagnosis/proposal from implementation authority.
+CORE-015: Final reports must be short, plain, evidence-based, and honest about open gates.
+GOV-004: Maintain a private source/thread ledger and public-safe requirement/QA/evidence/gap coverage. Raw prompts/screenshots remain private.
+GOV-005: Each requirement maps to one current owner, natural use case, expected result, actual evidence, and remaining gap.
+GOV-006: Distinguish current truth, history, proposals, superseded ideas, review findings, and open choices.
+GOV-007: Fix contradictions, stale status, broken links, overclaimed PASS, noncanonical states, invalid evidence, and owner gaps only after primary-source revalidation.
+GOV-008: A future developer must understand background, goals, expected behavior, exact requirements, edge cases, integration points, and the preferred development method from the owning sources.
+GOV-009: “Fully aligned” means no recoverable requirement is missing, contradicted, assigned to the wrong owner, supported only by stale evidence, or represented by an overclaimed status.
+GOV-010: Use the path of least resistance: surgical structural fixes, native/proven primitives, sparse obvious UI, no prompt-specific branch or provider wiring.
+GOV-011: Prove real Browser/Desktop/Telegram/Voice behavior with logs, DB, docs, generated and installed artifacts; report briefly and truthfully.
+GOV-012: Run at least two fresh-context review cycles and revise between them. Continue toward the 8/10 gate for at most four loops; never inflate the score or claim completion only to cross the gate. Then run the separately requested Claude review-only pass.
+GOV-013: Persist through routine local blockers and use already authorized local setup/browser/computer paths instead of repeatedly asking the user to perform ordinary in-scope setup. Do not broaden authority or bypass real approval/security boundaries.
+GOV-015: User-facing placement/design changes require product-specific visual thinking and real responsive, light/dark, interaction, and accessibility QA. Independent design review supports but does not replace user-path proof.
+GOV-021: Keep only requirements and QA that close a sourced behavior, safety, compatibility, or user-experience gap. Do not add ceremonial gates, date-bump stale cases, recreate historical reports, or broaden architecture merely to make the inventory look complete.
+GOV-022: “Complete” means complete for the owning trigger→runtime→visible-result flow and its real blast radius. Older blanket “review EVERYTHING / leave no stone unturned” wording must not force whole-project ceremony for a narrow fix.
+<!-- VIVENTIUM-STABLE-REQUIREMENT-DECLARATIONS:END -->

@@ -170,6 +170,121 @@ class TestSpeakerSegmentTracker(unittest.TestCase):
         self.assertEqual(final["speaker"]["attribution"], "verified")
         self.assertEqual(final["revision"], interim["revision"] + 1)
 
+    def test_unattributed_interim_is_revised_by_its_verified_provider_final(self) -> None:
+        tracker = self._tracker()
+        interim = tracker.ingest(
+            transcript="Synthetic owner",
+            is_final=False,
+            provider_speaker_id=None,
+            created_at=100.0,
+            start_time=10.0,
+            end_time=10.4,
+        )[0]
+        final = tracker.ingest(
+            transcript="Synthetic owner directly requests a worker",
+            is_final=True,
+            provider_speaker_id="A",
+            created_at=100.8,
+            start_time=10.0,
+            end_time=11.2,
+        )[0]
+        segments, revisions = tracker.finalize_turn(
+            "Synthetic owner directly requests a worker"
+        )
+
+        self.assertEqual(final["segmentId"], interim["segmentId"])
+        self.assertEqual(final["revision"], interim["revision"] + 1)
+        self.assertEqual(len(segments), 1)
+        self.assertEqual(revisions, [])
+        self.assertTrue(segments[0]["isFinal"])
+        self.assertEqual(segments[0]["speaker"]["attribution"], "verified")
+        self.assertEqual(segments[0]["speaker"]["actorTrust"], "owner_participant")
+        self.assertEqual(segments[0]["speaker"]["providerSpeakerId"], "A")
+
+    def test_unattributed_interim_cannot_hide_a_second_provider_speaker(self) -> None:
+        tracker = self._tracker()
+        tracker.ingest(
+            transcript="A stable first owner sentence",
+            is_final=True,
+            provider_speaker_id="A",
+            created_at=100.0,
+            start_time=10.0,
+            end_time=11.0,
+        )
+        tracker.finalize_turn("A stable first owner sentence")
+        tracker.ingest(
+            transcript="Another voice",
+            is_final=False,
+            provider_speaker_id=None,
+            created_at=101.0,
+            start_time=11.0,
+            end_time=11.3,
+        )
+        tracker.ingest(
+            transcript="Another voice from the same microphone",
+            is_final=True,
+            provider_speaker_id="B",
+            created_at=101.8,
+            start_time=11.0,
+            end_time=12.0,
+        )
+        segments, revisions = tracker.finalize_turn(
+            "Another voice from the same microphone"
+        )
+
+        self.assertTrue(tracker.shared_microphone_detected)
+        self.assertTrue(revisions)
+        self.assertTrue(
+            all(
+                segment["speaker"]["actorTrust"] != "owner_participant"
+                for segment in [*segments, *revisions]
+            )
+        )
+
+    def test_opaque_owner_identity_is_never_a_display_name(self) -> None:
+        opaque_identity = "owner-6e91db8f-57a2-4d19-92bb-fdbe5be8b752"
+        tracker = SpeakerSegmentTracker(
+            call_session_id="call_public_safe",
+            participant_identity=opaque_identity,
+            participant_name=opaque_identity,
+            track_sid="TR_audio_owner",
+            owner_signed=True,
+        )
+        segment = tracker.ingest(
+            transcript="A stable owner sentence",
+            is_final=True,
+            provider_speaker_id="A",
+            created_at=100.0,
+            start_time=10.0,
+            end_time=11.0,
+        )[0]
+
+        self.assertEqual(segment["speaker"]["participantIdentity"], opaque_identity)
+        self.assertEqual(segment["speaker"]["label"], "You")
+        self.assertNotEqual(segment["speaker"].get("participantName"), opaque_identity)
+
+    def test_opaque_guest_identity_is_never_a_display_name(self) -> None:
+        opaque_identity = "guest-6e91db8f-57a2-4d19-92bb-fdbe5be8b752"
+        tracker = SpeakerSegmentTracker(
+            call_session_id="call_public_safe",
+            participant_identity=opaque_identity,
+            participant_name=opaque_identity,
+            track_sid="TR_audio_guest",
+            participant_authenticated=True,
+        )
+        segment = tracker.ingest(
+            transcript="A stable guest sentence",
+            is_final=True,
+            provider_speaker_id="A",
+            created_at=100.0,
+            start_time=10.0,
+            end_time=11.0,
+        )[0]
+
+        self.assertEqual(segment["speaker"]["participantIdentity"], opaque_identity)
+        self.assertEqual(segment["speaker"]["label"], "Participant")
+        self.assertNotEqual(segment["speaker"].get("participantName"), opaque_identity)
+
     def test_second_provider_speaker_downgrades_entire_track_deterministically(self) -> None:
         tracker = self._tracker()
         first_changes = tracker.ingest(

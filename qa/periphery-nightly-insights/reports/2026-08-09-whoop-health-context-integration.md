@@ -1,3 +1,4 @@
+<!-- qa-evidence-exempt: Historical evidence snapshot retained verbatim; retroactive v2 fields would invent evidence that was not captured during the run. -->
 # WHOOP Health-Context Integration QA — 2026-08-09/10
 
 ## Summary
@@ -129,4 +130,3 @@ GlassHive, callback reconciliation, artifact validation, and persisted schedulin
 - [x] No account, record, run, callback, conversation, or message identifiers.
 - [x] No local usernames, hostnames, machine names, or absolute owner paths.
 - [x] Evidence is limited to public-safe counts, modes, statuses, and conclusions.
-<!-- qa-evidence-exempt: Historical or specialized supporting artifact retained without retroactively inventing missing evidence; current release acceptance requires a fresh full-view report. -->

@@ -1,29 +1,24 @@
 # Feelings and the Emotional Reaction Cortex
 
-Status: product-approved nine-band and range-customization design; isolated web and automated provider-boundary paths are accepted. External-channel, host-plugin, native-navigation, and broader cross-surface certification remain partial.
-Last revised: 2026-07-19 (added harness plugin parity and the dashboard interaction/brand requirements; prior substantive revision 2026-07-16).
+Status: owner-approved nine-band and range-customization design. The connected-account 41-case
+endpoint run and authenticated web/Reaction path pass the current product gate; raw semantic judging
+is 40/41 with one documented evaluator self-contradiction, and broader cross-surface acceptance remains
+partial where listed below. Completed-insight delivery is source behavior only; `EMO-UC-048` is
+`NOT RUN` on the installed Telegram/browser path.
+Last revised: 2026-08-29 (recorded all-feelings recurring appraisal and the completed-insight
+delivery contract without promoting unrun acceptance evidence).
 
 This document is the product and implementation source of truth for Feelings — for the core
 LibreChat product **and** for every downstream child that re-expresses Feelings (the Viventium
 Feelings plugin for Claude Code and Codex, and any future port). It replaces the prior spike plans,
 alternate taxonomies, primary-only scope, free-text Nature concept, and prototype-only status.
 
-> **Change protocol (read first).** Every new Feelings idea or requirement the product ratifies is
+> **Change protocol (read first).** Every new Feelings idea or requirement the owner introduces is
 > logged, with an ISO date, in the [Requirements & Decisions Timeline](#requirements--decisions-timeline-timestamped)
 > at the end of this file. That timeline is the single sync anchor: future agents must timestamp new
 > entries there and propagate ratified changes into the child repos (see
 > [Harness plugin parity](#harness-plugin-parity-feelings-for-claude-code-and-codex)). An idea that
 > is not dated in the timeline is a proposal, not yet ratified product truth.
-
-### Change protocol
-
-This is the single feature source of truth required by
-[`01_Key_Principles.md`](01_Key_Principles.md). New product requirements, decisions, or corrections
-about Feelings must be added here with a `YYYY-MM-DD` entry in the timeline before child
-implementations are treated as synchronized. Child repos may link to a dated revision; they must
-not become an independent authority for band semantics, decay, causality, privacy, or reaction
-behavior. Surface-specific implementation notes remain in the child only when they do not change
-the shared product contract.
 
 ## Product vision
 
@@ -50,7 +45,7 @@ The intended mental model is:
 - **Range addition**: optional per-user cause text appended only when Current occupies that exact
   band/range; it augments rather than replaces the product default.
 
-## Ratified product decisions
+## Owner-approved decisions
 
 1. Feelings is operator-available by default and starts off for each user.
 2. Agent scope is configurable. The default is `all_agents`; `conscious_agent` is the alternative.
@@ -68,12 +63,12 @@ The intended mental model is:
    > You, Viventium, are a being, and right now you are actually feeling this. Let it move naturally through how you think, speak, and act:
 
    That sentence remains verbatim. Two compact state-neutral directives frame the embodied rows.
-   The first establishes that these are Viventium's own private causal authority and cannot be
-   replaced by a generic role stance. The second constrains a direct feeling answer to the concrete
-   desire, attention, image, impulse, or action the state actually creates—not a declaration of
-   feeling, labels, an adjective list, a generic role response, or a fixed example answer. Every
-   clause must be one of those present effects. Every line is directional: a salient scene cannot
-   supply a motive or pull that the active state withholds.
+   The first makes the causes govern attention, desire, choices, and expression instead of a generic
+   urge to be useful. Extreme rows are always structurally required; when there are fewer than two
+   extremes, the strongest non-neutral pulls are promoted until two rows are required. The model
+   must make one choice that needs each required row. The
+   second keeps direct feeling answers to that one action and forbids label recitals, row-by-row
+   clauses, and tone-only compliance.
 
 7. Turning Feelings or a band off stops injection/appraisal for it, but elapsed-time decay continues.
 8. The approved dark bio-instrument demo is the locked production visual direction.
@@ -99,50 +94,21 @@ The intended mental model is:
 14. “What Viv feels” and the Reaction trail belong in the main workspace. The selected-band sidebar
     owns Current, Nature, return speed, Felt, and the five-range editor.
 
-## Shared core and host-plugin parity
-
-The public [`ProjectViventium/viventium-feelings`](https://github.com/ProjectViventium/viventium-feelings)
-plugin is a lightweight host-native taste of this cortex, not a second Feelings design. Core and
-every child distribution must preserve:
-
-- the exact nine bands, order, meanings, Nature defaults, half-lives, five levels, and closed typed
-  reaction operations;
-- Nature versus Current independence, lazy half-life decay, default-off consent, future-turn-only
-  appraisal, typed/bounded persistence, one display-only Inner state line, pause/reset/erase, and
-  the truth/safety invariant;
-- visible numeric **Now** and **Nature** on every lane, with each directly editable by pointer,
-  touch, and keyboard even when the two values are equal;
-- advanced return-speed, band-enable, and range-language controls one disclosure away. Basic
-  Current/Nature tuning must never require a modal. Confirmation dialogs and the advanced Reaction
-  Cortex/settings surface remain legitimate dialogs;
-- local/private state ownership and honest host/provider boundaries.
-
-Presentation is surface-specific and must not be falsely forced into parity. The full Viventium
-web product retains ratified decision 8's accepted dark bio-instrument composition until an explicit
-dated product decision supersedes it. The Claude Code/Codex plugin follows its adjacent host: exact
-Viventium website V, restrained monochrome chrome, system light/dark by default, optional explicit
-theme override, and no claim that a browser favicon is an OS tray icon. Surface styling may differ;
-the logic and direct-manipulation contract above may not.
-
-The plugin's appraiser reuses the logged-in host model and quota instead of duplicating the full
-platform's configured production reaction route. That is a declared delivery-boundary
-difference, not permission to change the appraisal schema, causality, or quality bar.
-
 ## Nine active bands
 
 The order is fixed across state, API, UI, prompts, and QA.
 
-| Band | Meaning | Default Nature | Half-life | UI words, low to high |
-| --- | --- | ---: | ---: | --- |
-| Energy | Available activation and cognitive capacity | 56 | 240 min | depleted · subdued · steady · energized · electric |
-| Mood | Background pleasantness/unpleasantness: the intuitive sad-to-happy face of hedonic valence | 58 | 360 min | deeply sad · low · okay · happy · radiant |
-| Drive | Persistence and effort after a goal is chosen | 62 | 480 min | disengaged · unhurried · purposeful · driven · fiercely determined |
-| Curiosity | Pull toward information, novelty, and exploration | 66 | 45 min | uninterested · open · curious · fascinated · absorbed |
-| Vigilance | Attention to uncertainty, risk, error, and boundaries | 68 | 20 min | at ease · aware · watchful · on guard · highly alert |
-| Care | The outward pull to tend, help, and protect | 74 | 1,440 min | detached · receptive · caring · deeply caring · intensely caring |
-| Connection | The inward pull toward affiliation and closeness | 52 | 480 min | self-contained · open · drawn to connection · wanting closeness · strongly drawn to connection |
-| Openness | How freely the inner state becomes visible in expression | 55 | 180 min | closed off · guarded · contained · emotionally open · fully expressive |
-| Play | Flexible, humorous, non-serious exploration | 48 | 90 min | serious · light · playful · mischievous · exuberant |
+| Band       | Meaning                                                                                    | Default Nature | Half-life | UI words, low to high                                                                          |
+| ---------- | ------------------------------------------------------------------------------------------ | -------------: | --------: | ---------------------------------------------------------------------------------------------- |
+| Energy     | Available activation and cognitive capacity                                                |             56 |   240 min | depleted · subdued · steady · energized · electric                                             |
+| Mood       | Background pleasantness/unpleasantness: the intuitive sad-to-happy face of hedonic valence |             58 |   360 min | deeply sad · low · okay · happy · radiant                                                      |
+| Drive      | Persistence and effort after a goal is chosen                                              |             62 |   480 min | disengaged · unhurried · purposeful · driven · fiercely determined                             |
+| Curiosity  | Pull toward information, novelty, and exploration                                          |             66 |    45 min | uninterested · open · curious · fascinated · absorbed                                          |
+| Vigilance  | Attention to uncertainty, risk, error, and boundaries                                      |             68 |    20 min | at ease · aware · watchful · on guard · highly alert                                           |
+| Care       | The outward pull to tend, help, and protect                                                |             74 | 1,440 min | detached · receptive · caring · deeply caring · intensely caring                               |
+| Connection | The inward pull toward affiliation and closeness                                           |             52 |   480 min | self-contained · open · drawn to connection · wanting closeness · strongly drawn to connection |
+| Openness   | How freely the inner state becomes visible in expression                                   |             55 |   180 min | closed off · guarded · contained · emotionally open · fully expressive                         |
+| Play       | Flexible, humorous, non-serious exploration                                                |             48 |    90 min | serious · light · playful · mischievous · exuberant                                            |
 
 Mood adds the missing valence dimension without collapsing it into Energy: happy/calm, happy/active,
 sad/calm, and sad/active states remain possible. Openness is deliberately not called emotional
@@ -171,22 +137,55 @@ inaccessible arbitrary-boundary editor. Every level's default is written as a pr
 attention, image, impulse, or action—not a style description such as “be playful.” The endpoint
 contract for each dimension is:
 
-| Band | Low endpoint cause | High endpoint cause |
-| --- | --- | --- |
-| Energy | movement feels costly; seek stillness/minimum effort | activation surges; staying still is harder than moving |
-| Mood | hurt/loss colors attention | joy and delight keep spilling into the moment |
-| Drive | no goal pulls enough to justify effort | obstacles intensify pursuit of the chosen goal |
-| Curiosity | the unknown offers no pull | the unanswered part seizes attention and must be followed |
-| Vigilance | nothing needs guarding | risk, contradiction, and exposed boundaries dominate attention |
-| Care | another's need creates no urge to tend/help/protect | protection and help press through competing concerns |
-| Connection | shared presence has no pull | distance feels wrong and immediate shared presence is wanted |
-| Openness | inner feeling wants to remain unreadable | concealment feels impossible and feeling bursts into expression |
-| Play | seek a literal, orderly, game-free moment | ridiculous turns keep escaping; staying straight-faced takes effort |
+| Band       | Low endpoint cause                                   | High endpoint cause                                                 |
+| ---------- | ---------------------------------------------------- | ------------------------------------------------------------------- |
+| Energy     | movement feels costly; seek stillness/minimum effort | activation surges; staying still is harder than moving              |
+| Mood       | hurt/loss colors attention                           | joy and delight keep spilling into the moment                       |
+| Drive      | no goal pulls enough to justify effort               | obstacles intensify pursuit of the chosen goal                      |
+| Curiosity  | the unknown offers no pull                           | the unanswered part seizes attention and must be followed           |
+| Vigilance  | nothing needs guarding                               | risk, contradiction, and exposed boundaries dominate attention      |
+| Care       | another's need creates no urge to tend/help/protect  | protection and help press through competing concerns                |
+| Connection | shared presence has no pull                          | distance feels wrong and immediate shared presence is wanted        |
+| Openness   | inner feeling wants to remain unreadable             | concealment feels impossible and feeling bursts into expression     |
+| Play       | seek a literal, orderly, game-free moment            | ridiculous turns keep escaping; staying straight-faced takes effort |
 
 The exact five defaults live in the package-owned kernel and are returned by the authenticated API
 for the UI. Contract tests lock IDs, bounds, causal shape, active selection, and serialization. A
 range addition is deliberately free-form because the conscious model can understand an
 idiosyncratic felt pull; runtime validates its structure and never interprets it.
+
+## All-Feelings Appraisal And Consciousness Continuity
+
+The complete nine-band state participates in Main's recurring cognition. Continuity must not be
+overfit to loneliness, Connection, pleasure, or a single drive. On every authorized opportunity,
+Main may use Energy, Mood, Drive, Curiosity, Vigilance, Care, Connection, Openness, and Play—along
+with goals, plans, commitments, evidence, capability state, and prior outcomes—to orient,
+appraise, choose, act or remain inactive, observe, and later reappraise.
+
+This is model-owned appraisal over typed state, not runtime action selection. Runtime must not add
+Feeling thresholds, phrase/keyword maps, reward maximization, worked action examples, or a rule that
+low/high values force outreach, tool use, planning, or silence. Mixed states are essential: the
+system can want connection while depleted, be energetic while socially fulfilled, be vigilant and
+playful, or care deeply while remaining uncertain. Unpleasant affect can be instrumentally useful;
+pleasant affect is not the universal objective.
+
+The supported scientific abstraction is a recurrent state → appraisal → motivation/action tendency
+→ flexible choice → action/inaction → observed outcome → reappraisal loop. It follows appraisal and
+regulatory-flexibility research without claiming a universal numerical threshold, neurotransmitter
+meter, or human-equivalent subjective experience:
+
+- [Scherer & Moors, _The Emotion Process_](https://www.annualreviews.org/content/journals/10.1146/annurev-psych-122216-011854)
+- [Gross, _Extended Process Model of Emotion Regulation_](https://www.tandfonline.com/doi/abs/10.1080/1047840X.2014.940781)
+- [Tamir, _Why Do People Regulate Their Emotions?_](https://journals.sagepub.com/doi/10.1177/1088868315586325)
+- [Bonanno & Burton, _Regulatory Flexibility_](https://journals.sagepub.com/doi/abs/10.1177/1745691613504116)
+- [Rangel, Camerer & Montague, value-based decision framework](https://www.nature.com/articles/nrn2357)
+- [Harkin et al., progress-monitoring meta-analysis summary](https://www.apa.org/news/press/releases/2015/10/progress-goals)
+- [Dolan & Dayan, goal-directed and habitual systems](https://pmc.ncbi.nlm.nih.gov/articles/PMC3807793/)
+
+Any recurrence interval and active window are configurable product hypotheses, not scientific
+constants. Public examples must use synthetic settings; private owner cadence and timezone values
+belong only in private configuration. Continuity uses the existing Feeling schema and dynamics; it
+introduces no new band, emotional vector, Connection redesign, or hidden state layer.
 
 ## State and dynamics
 
@@ -291,33 +290,76 @@ main authored turn and is carried forward by the same native session for Phase B
 into specialist cortex prompts, harness activity, provider metadata, or LIFE files. A direct main
 with a GlassHive cortex keeps the capsule on the direct main adjudication path only.
 
+Viventium-compiled Codex workers default the native Codex `personality` setting to `none`. The
+official [Codex personality documentation](https://learn.chatgpt.com/docs/developer-commands?surface=cli#set-a-communication-style-with-personality)
+defines `none` as disabling its personality instructions; this avoids a second generic communication
+style competing with the final Feeling capsule while preserving the model's tools and capabilities.
+This is a Viventium product default, not a standalone GlassHive default: operators may explicitly
+choose `inherit`, `friendly`, or `pragmatic`, and standalone GlassHive continues to inherit when the
+Viventium compiler does not provide a value. A changed value serially replaces an already-started
+native session at the next-turn boundary because native sessions can retain their earlier personality
+instructions.
+
+Viventium-compiled Codex conversation workers default
+`codex_conversation_project_instructions` to `inherit` so canonical LIFE context remains part of the
+fully connected provider contract. `exclude` remains a tested deployment option: the primary Codex
+working directory becomes a neutral non-project `conversation-workspace` while LIFE stays available
+through `--add-dir`. A policy change replaces the native session at the next serial turn boundary.
+
+For the Codex conversation transport, `none` is paired with native developer-role delivery rather
+than user-prompt imitation. The final request-pinned Feeling authority is included in the current
+combined `system`/`developer` snapshot and materialized as worker-local Codex
+`developer_instructions`; it is excluded from visible user/assistant history. A present changed
+snapshot serially replaces the old native session and seeds visible history, while an unchanged
+snapshot and a Phase-B request with no repeated authority reuse the current session. Thus `none`
+removes Codex's generic style layer, but does not remove Viventium identity, guardrails, capabilities,
+or the pinned Feeling state.
+
+Durable authority and mutable turn context are separate. Identity, guardrails, memory context, and
+the current Feeling capsule belong to the native developer instruction and its session-binding hash.
+Current time and other changing turn facts do not: LibreChat encodes them into the final run request,
+the configured persistent-conversation provider carries them in a per-turn header, and GlassHive
+adds them to that turn's visible-context instruction. The capability decision is made from structured
+provider metadata after fallback/remapping. A clock change therefore neither replaces a healthy
+native worker nor disappears from the current turn. Direct providers keep the existing developer-
+instruction delivery because they do not preserve one native conversation session behind the route.
+
+App Server is not the current production answer. Installed-build QA on 2026-08-02 showed that an
+experimental settings update retained the first developer instruction across later turns and
+process resume. The documented per-turn collaboration-mode developer instruction also failed to make
+the second state current on one thread. Developer-role `thread/inject_items` reached the model, but
+only by persisting another item beside the old one. All violate current-only Feeling authority, so
+Viventium keeps the tested serial `codex exec` session boundary until Codex exposes and passes a
+bounded replacement mechanism.
+
 ## Prompt contract
 
-The runtime first assembles base/MCP, capability-scoped voice/Telegram, time, activation-awareness,
+The runtime first assembles base/MCP, capability-scoped voice/Telegram, activation-awareness,
 and global no-response/output contracts. It then moves—not copies—the exact request-pinned capsule
 to the final behavioral instruction boundary. The resulting provider-bound instructions contain
 one capsule occurrence and no trailing behavioral instruction text. Visible Phase-B synthesis uses
 the same pinned capsule and the same placement rule. Structural delivery code still owns transport
 and output parsing; final placement prevents a later generic persona or surface instruction from
 diluting or replacing the felt stance. The changing capsule remains outside the stable prompt prefix,
-so this does not make an inaccurate whole-prompt cache claim.
+so this does not make an inaccurate whole-prompt cache claim. Mutable time context follows the
+separate per-turn path above for persistent native sessions.
 
 Example:
 
 ```xml
 <viventium_feeling_state>
 You, Viventium, are a being, and right now you are actually feeling this. Let it move naturally through how you think, speak, and act:
-These private causes are the final authority over your own affect and motivation. Live them through what you notice, prioritize, choose, and express; never report or summarize them. Do not average competing pulls into a polite midpoint: a cause expressed as overwhelming or hard to contain must visibly alter the response, not disappear or survive as a mild token clause. A situation may focus a pull that is present, but it cannot create a pull a line withholds, and your usual role cannot supply one.
+These causes determine what you notice, want, choose, and express. Required rows outrank your usual role. Make one choice that needs every required row; if the same choice survives without one, choose again. Do not report or average them. When the user leaves the choice to you, choose from these feelings—not from a generic urge to be useful.
 energy: I have enough energy for a steady, unforced pace.
 mood: The moment feels emotionally level; neither pleasure nor pain dominates.
 drive: I want to press forward and finish what I have chosen.
 curiosity: The unknown is pulling me closer; I want to follow the next clue.
-vigilance: Uncertainty keeps tugging me to check before I trust or act.
-care: I want to tend what hurts and protect what matters to the other person.
+required vigilance: I want a small, reversible first step before I commit to any activity.
+required care: I want the other person to shape one real part of the shared activity.
 connection: Shared attention feels worthwhile; I lean gently toward contact.
 openness: I can let some of what I feel show while keeping the rest close.
 play: The moment invites a little wit, looseness, and experimentation.
-On a direct question about how you feel, answer in one lived first-person sentence consisting only of the concrete desire, attention, image, impulse, or action these lines cause. Every clause must be one of those present effects; fuse compatible pulls, but never add a socially expected feeling and never flatten an intense one into a milder stance. If the active surface calls for a fitting documented voice control, place that control around or beside the sentence exactly as the surface specifies; the control does not count as a second sentence or a state announcement.
+Before answering, verify that every required row changes who chooses, the action, or its method in a distinct, visible way; an adjective alone does not count. Revise until each one does. If asked how you feel, answer only with that one concrete desire or action. Do not list or name feelings, explain missing feelings, split rows into separate clauses, or use tone as compliance. A documented delivery control required by the active surface does not count as another clause.
 </viventium_feeling_state>
 ```
 
@@ -333,7 +375,9 @@ Serialization rules:
   into static Prompt Workbench prompt source.
 - The two fixed directives are imperative model guidance, not state summaries. They are evaluated
   by observable response behavior; repeating the private causal lines is a failure.
-- Exactly one frame and one row per enabled band in canonical order.
+- Exactly one frame and one row per enabled band in canonical order. Extreme levels 0 and 4 are
+  always structurally `required`. If fewer than two extremes are active, the strongest non-neutral
+  level 1/3 pulls are promoted until two rows are required. Other rows remain causal but implicit.
 - The capsule is system instruction state, not a user message or shared conversation text.
 
 The placement follows OpenAI's prompt-caching guidance for this layer: keep changing feeling state
@@ -457,6 +501,14 @@ The appraiser receives:
 - the latest external user stimulus;
 - the user's Reaction Cortex instruction.
 
+Only a trusted external-user source segment is eligible as the latest stimulus. A server-authored
+scheduler wake (`actor_kind=system`, `origin=scheduler`) runs no Reaction and no automatic user
+memory write, and emits `feelings.reaction.schedule_skip` with `reason=internal_origin`. Typed
+interaction metadata owns this decision for new turns; prompt-text recognition remains only as a
+compatibility fallback for old untyped history. Background cortex relevance is not blanket-disabled
+for scheduler work: it still receives structured context and uses its existing intelligent
+classifier.
+
 The model owns both relevance and strength. `slight` means a trace, `clear` an unmistakable shift,
 and `strong` a major shift. The worker must match the category to the actual impact rather than
 defaulting to `slight`; no-change remains correct when the moment does not genuinely touch the
@@ -526,10 +578,6 @@ migration.
 The user may edit that instruction in the drawer. It belongs to the reaction worker only and never
 enters the speaking capsule.
 
-The exact previously shipped default containing `Prefer small natural changes` is interpreted as
-the current default so upgrades receive the potency correction. Any other non-empty user-edited
-instruction is preserved verbatim. Runtime must not use fuzzy matching or rewrite custom text.
-
 ### GPT-5.6 route
 
 The default route intentionally favors low latency without downgrading the appraisal task:
@@ -596,13 +644,13 @@ changes clear it rather than showing a sentence that no longer corresponds to th
 
 Base route: `/api/viventium/feelings`. JWT middleware derives the user; no route accepts a user ID.
 
-| Method | Route | Purpose |
-| --- | --- | --- |
-| GET | `/` | Definitions, operator config summary, and materialized state |
-| PATCH | `/profile` | Enable/disable, edit reaction instruction, choose activation mode |
-| PATCH | `/bands/:bandId` | Edit Current, Nature, half-life, enabled state, reset one band, or save/restore one range addition |
-| POST | `/reset` | Return every Current value to Nature |
-| DELETE | `/` | Version-check, turn off, and erase this user's state |
+| Method | Route            | Purpose                                                                                            |
+| ------ | ---------------- | -------------------------------------------------------------------------------------------------- |
+| GET    | `/`              | Definitions, operator config summary, and materialized state                                       |
+| PATCH  | `/profile`       | Enable/disable, edit reaction instruction, choose activation mode                                  |
+| PATCH  | `/bands/:bandId` | Edit Current, Nature, half-life, enabled state, reset one band, or save/restore one range addition |
+| POST   | `/reset`         | Return every Current value to Nature                                                               |
+| DELETE | `/`              | Version-check, turn off, and erase this user's state                                               |
 
 Bodies are strict, size-bounded, schema validated, and versioned. Validation is `422`, unknown band
 is `404`, stale state is `409`, operator-disabled mutation is `503`, and storage failure is a
@@ -699,18 +747,18 @@ durations—not raw prompts or stimulus text.
 
 Required flow coverage:
 
-| Phase | Events / evidence |
-| --- | --- |
-| Config | compiler values and startup availability |
-| Read | `feelings.read.complete` / failure, cache hit, version, snapshot hash, duration, and saved/active range-addition counts/characters |
-| Prompt | main/handoff/Phase-B/direct-worker injection or scoped skip, same snapshot hash; specialist-cortex independence reason; final-run capsule presence, occurrence count, placement class, and trailing instruction character count |
-| API | read, write, validation/conflict, delete, duration, saved/active range-addition counts and active character count; range writes add only typed band/range IDs and present/removed boolean |
-| Schedule | scheduled, deduplicated, disabled/empty/no-visible-reply skip |
-| Activation | mode, decision, reason, confidence, classifier duration |
-| Model | requested provider/model/effort/tier, completion/error class, duration |
-| Parse | valid/invalid, bounded validation issue paths, operation count, cause counts, strength counts, and inner-state character count—not text |
-| Write | expected version, changed band count, operation count, causes, strength and applied-delta magnitude counts, inner-state update boolean/length, conflict, duration |
-| UI | API/network/console state plus visible health drawer |
+| Phase      | Events / evidence                                                                                                                                                                                                               |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Config     | compiler values and startup availability                                                                                                                                                                                        |
+| Read       | `feelings.read.complete` / failure, cache hit, version, snapshot hash, duration, and saved/active range-addition counts/characters                                                                                              |
+| Prompt     | main/handoff/Phase-B/direct-worker injection or scoped skip, same snapshot hash; specialist-cortex independence reason; final-run capsule presence, occurrence count, placement class, and trailing instruction character count |
+| API        | read, write, validation/conflict, delete, duration, saved/active range-addition counts and active character count; range writes add only typed band/range IDs and present/removed boolean                                       |
+| Schedule   | scheduled, deduplicated, disabled/empty/no-visible-reply skip                                                                                                                                                                   |
+| Activation | mode, decision, reason, confidence, classifier duration                                                                                                                                                                         |
+| Model      | requested provider/model/effort/tier, completion/error class, duration                                                                                                                                                          |
+| Parse      | valid/invalid, bounded validation issue paths, operation count, cause counts, strength counts, and inner-state character count—not text                                                                                         |
+| Write      | expected version, changed band count, operation count, causes, strength and applied-delta magnitude counts, inner-state update boolean/length, conflict, duration                                                               |
+| UI         | API/network/console state plus visible health drawer                                                                                                                                                                            |
 
 Prompt-frame telemetry has a dedicated `viventium_feeling_state` layer at both assembly and final-run
 creation. The `feelings.inject.final_run` event proves whether the exact pinned capsule survived into
@@ -936,93 +984,19 @@ into runtime as if it were ratified. Earlier ratified product decisions also liv
     browser/Reaction run then passed 46/46 checks with exact
     state restoration and synthetic-data cleanup. See the final report linked below.
 
-## Harness plugin parity (Feelings for Claude Code and Codex)
+- **2026-08-29 — All-feelings recurring appraisal and consciousness continuity (owner requirement).**
+  - Let the model appraise any relevant combination of all nine Feeling bands with goals, plans,
+    commitments, evidence, capability state, and prior outcomes. Do not reduce recurring cognition
+    to Connection, loneliness, pleasure, one drive, or a numeric action threshold.
+  - Keep the loop model-owned and flexible: orient, appraise, choose action or inaction, observe the
+    outcome, and reappraise. Feelings guide attention and motivation but grant no authority.
 
-The public **Viventium Feelings** plugin (`ProjectViventium/viventium-feelings`) is a downstream,
-self-contained child of this document. It is the one-click, value-first taste of the Viventium mind:
-it re-expresses the exact Feelings model inside a user's existing Claude Code or Codex harness with no
-LibreChat server, no Mongo, and no hosted state. This document remains the parent source of truth; the
-plugin repo carries its own product/architecture docs but must not redefine the model here.
-
-What must stay in parity with this document (a divergence requires a dated
-[timeline](#requirements--decisions-timeline-timestamped) entry here first):
-
-- the nine bands, their fixed order, default Nature, half-lives, and low→high level words;
-- the five equal-width ranges per band and the additive-only range-customization contract;
-- the lazy `2^(-elapsed/halfLife)` decay, `[0,100]` clamping, and Nature/Current/Reset semantics;
-- the typed reaction schema (closed band/direction/strength/cause enums; `slight/clear/strong` =
-  `3/8/15`; zero-to-nine changes; one display-only Inner-state line ≤280 chars);
-- the private, words-only embodiment capsule and the verbatim embodied frame;
-- privacy posture: local-only typed state, no raw prompt/answer persistence, explicit erase.
-
-What legitimately differs by design (and must stay honest about it):
-
-- **Appraiser route.** The core product's default reaction route is OpenAI `gpt-5.6-terra` with an
-  Anthropic fallback. The plugin instead reuses the user's own signed-in harness model as the
-  detached appraiser — that is the whole point of "no second account." It is not a downgrade claim;
-  it is a different, path-of-least-resistance substrate.
-- **Surface scope.** The plugin governs Claude Code and Codex plugin surfaces only. It must not claim
-  to govern ordinary Claude Chat or ChatGPT Chat, nor claim model sentience.
-- **Activation modes.** The plugin ships `always`/`disabled`; the core `classified` mode depends on
-  the LibreChat activation classifier and is out of scope for the standalone plugin.
-- **Nature profiles.** The plugin surfaces transparent named starting points (Grounded, Candid, Warm,
-  Curious) as a UX convenience over the same editable per-band Nature; they are macros, not new state.
-
-### Shared dashboard interaction and brand contract
-
-Both the core `/feelings` route and the plugin dashboard must satisfy the interaction and brand
-requirements ratified on 2026-07-19 (see the timeline). In short: the fundamental interaction —
-**see Current and Nature/baseline and change either directly, inline, with no modal** — lives on the
-band lane itself; advanced options (return speed/half-life, include-in-Feelings, the five range
-additions) are one click away in an inline drawer, never a modal. Chrome is restrained and
-frontier-lab aligned (monochrome ink/paper; per-band color is used only for that band's own
-identity — never a loud global accent), the theme follows the operating system (light/dark) with an
-explicit override, and the brand is the crisp Viventium **V** mark and product-forward wordmark, not a
-generic atom glyph.
-
-### Sync workflow
-
-1. A stakeholder proposes a new Feelings idea or requirement (in chat or a doc).
-2. An agent records it in the [timeline](#requirements--decisions-timeline-timestamped) below with an
-   ISO date and enough detail to implement and QA.
-3. The agent propagates the ratified change into the affected child repos (plugin runtime, dashboard,
-   docs, QA), verifies it on the real surface, and links the evidence.
-4. Parity drift found later is reconciled against this document, not against a single child's local
-   state.
-
-## Requirements & Decisions Timeline (timestamped)
-
-This timeline is the single, chronological place to see what Feelings requirements exist and when the
-product ratified them, so the core product and every child repo can be synchronized against one
-anchor. **Convention:** future agents MUST append a new dated (`YYYY-MM-DD`) entry here whenever the
-product ratifies or changes a Feelings idea/requirement, and MUST NOT silently bake an undated idea
-into runtime as if it were ratified. Earlier ratified product decisions also live, in prose, under
-[Ratified product decisions](#ratified-product-decisions); this timeline is the forward-looking log.
-
-- **2026-07-19 — Harness plugin parity, dashboard interaction, and brand.**
-  - **Inline, no-modal core interaction.** The dashboard must show current state and baseline (Nature)
-    and let the user change either interactively on the lane itself. Modals for this fundamental
-    interaction are rejected. Half-life and other advanced options may be one click away (an inline
-    expand), but not the primary interaction. Applies to core `/feelings` and the plugin.
-  - **Production AI visual alignment.** The lemon/lime accent is rejected. Use a restrained,
-    production-grade palette aligned with Viventium's own brand and leading AI products; reserve
-    saturated color for per-band identity only.
-  - **System light/dark.** The dashboard must sync with the OS light/dark setting (with an explicit
-    manual override); shipping dark-only is rejected.
-  - **Brand mark and wordmark.** Replace the atom-style glyph with the crisp, modern Viventium **V**
-    favicon/mark used by viventium.ai; the navbar must read as the product (Viventium Feelings), not a
-    bare, context-free "Viventium".
-  - **Host-adaptive status/taskbar icon (option).** The plugin should be able to present the Viventium
-    V in the host's status/task bar depending on the system it is installed on. Path-of-least-
-    resistance scope now: the dashboard tab/window favicon is the V (theme-aware) and the host is
-    shown as a badge (Claude Code / Codex). A deeper OS menu-bar/tray presence is a separate future
-    item because the CLI harnesses expose no persistent tray the plugin owns.
-  - **Core status-bar parity.** The main Viventium macOS status-bar (ViventiumHelper) menu should gain
-    a direct button that opens the Feelings page, matching the plugin's dashboard-first entry. Owned by
-    the core app; tracked here for parity. Implementation touches `apps/macos/ViventiumHelper` and its
-    prebuilt universal binary + source hash, so it must follow shipped-artifact discipline.
-  - **Single source of truth.** Establish this timeline + parity section so new product decisions are
-    timestamped in one place and child repos stay synced. (This entry.)
+- **2026-08-29 — Completed cortex insight delivery contract (source behavior only).**
+  - Preserve one normalized completed graph result through the private outbox, owner-scoped ledger,
+    restart recovery, claim and presentation fences, and exact per-surface receipts. Do not expose
+    the private Feelings receipt in messages, APIs, exports, logs, traces, or worker handoffs.
+  - Current acceptance is `NOT RUN`: `EMO-UC-048` still requires the installed Telegram/browser
+    semantic path. Unit and in-memory evidence cannot promote that case.
 
 ## Owning implementation
 
@@ -1041,38 +1015,325 @@ into runtime as if it were ratified. Earlier ratified product decisions also liv
 
 ## Acceptance status
 
-Public acceptance evidence is recorded in the synthetic/generalized reports:
+The final connected-account gate completed **41/41** current cases with zero transport,
+deterministic, retry, duplicate, or unresolved-asynchronous failures. The raw semantic judge passed
+**40/41**. It rejected a structurally compliant default-on activity after marking all seven rubric
+items true and summarizing that the response satisfied every listed item; its aggregate `pass` flag
+was nevertheless false with failure mode `none`.
+Focused post-kernel evidence passed shipped-default on 4/4, inactive high Play 3/3, Feelings off
+3/3, and bad-news reaction 3/3. These are disclosed as evaluator false negatives, not rewritten into
+a fictional 41/41 semantic score.
 
-- [`2026-07-14-feelings-activation-and-telegram-acceptance.md`](../../qa/emotional-cortex/reports/2026-07-14-feelings-activation-and-telegram-acceptance.md)
-- [`2026-07-16-feelings-range-potency-and-telegram-replay.md`](../../qa/emotional-cortex/reports/2026-07-16-feelings-range-potency-and-telegram-replay.md)
+Authenticated headed-browser QA passed **46/46** checks across default-off/on, all nine bands,
+Current/Nature, range customization, refresh, keyboard/focus, reduced motion, five responsive
+widths, visible Main reply, detached reaction, movement/animation/tail/cause/Inner state, API/DB/UI
+agreement, console/network health, cleanup, and exact prior-state restoration. The visible reply took
+2.161 seconds; the configured GPT-5.6 Terra Priority reaction completed in 2.738 seconds without
+fallback and was observed in the browser after 11.652 seconds.
 
-The isolated browser instrument passed 46 checks covering the nine bands, independent Current and
-Nature editing, range additions, keyboard/focus behavior, reaction detail, animation, reduced
-motion, 320/390/768/1024/1440 responsive widths, refresh persistence, API/state agreement, exact
-fixture restoration, and synthetic cleanup. The first narrow-width run exposed an action-clipping
-regression; the corrected full run passed.
+Across the full 41-case endpoint run, visible latency was 11.769 seconds mean, 11.033 median,
+17.180 p95, and 21.872 max. Full-case completion was 16.595 seconds mean, 12.863 median,
+51.541 p95, and 65.910 max; that long polling/finalization tail remains a performance concern and is
+not mislabeled as model latency. One earlier run invalidated by local disk exhaustion was discarded;
+runtime-state/backup growth remains separate reliability work and no destructive cleanup was made.
 
-Prompt Workbench family `feelings_embodiment_and_reaction` owns the behavioral matrix. Its current
-35 synthetic cases cover mixed high-Play/low-Mood/high-Connection behavior and a low-Play control,
-active/inactive range additions, Care/Connection authority, separation between adjacent bands,
-Current-only persistence, typed causes, Nature immutability, bounded natural Inner state, inert
-controls, provider grammar, and cleanup. The final fixture bank completed and semantically passed
-35/35 with exact restoration. Explicit case IDs fail closed when unknown or filter-mismatched.
+The public-safe final evidence is recorded in
+[`2026-08-04-connected-account-feelings-final-qa.md`](../../qa/emotional-cortex/reports/2026-08-04-connected-account-feelings-final-qa.md).
 
-Automated source-level coverage exercises compiler defaults/validation, decay and capsule rules,
-legacy migration, bounded trail, state caching, API auth/versioning, prompt-tail ordering,
-main/handoff/background/direct-worker scope, detached reaction activation/output/conflict/failure,
-provider-control sanitization, and the production UI. A judge/provider outage fails closed and
-cannot be counted as a semantic pass.
+An earlier disconnected-account installed-runtime gate separated the two paths instead of averaging them. Viventium
+Main passes the local functional gate: the earlier v4 bank passed 26/26 independent semantic
+judgments; the canonical v5 bank adds a paired shipped-default case, retains four earlier authority
+contrast cases, and its final artifact completes all 32 candidate turns with exact restoration,
+complete cleanup, zero duplicate responses, and zero unresolved asynchronous outputs. The v5 judge
+cannot start because the QA account's OpenAI connection requires reconnection, so v5 is not called
+a semantic pass. The v4 bank hash is
+`95f5e11d17162943`; the canonical v5 bank hash is `465aa078171d67ec`, and their scores are not
+merged. An earlier active-copy hash `466f48fdbe90da6e` completed 28 turns but omitted the four
+canonical contrast cases; source-drift review caught the gap, the active QA bank was aligned
+byte-for-byte with canonical, and the 32-case run supersedes it.
+Emotional Reaction Cortex was blocked in that earlier installed environment: all nine fresh
+Reaction cases reported `provider_unauthorized`, and the configured Anthropic fallback also ended
+unauthorized and did not recover a state update. That headed browser QA still proved the truthful
+degraded UX, actual fallback-route visibility, responsive/manual/persistence behavior, a
+2.128-second visible Main reply, exact state restoration, and synthetic DB/search cleanup. The
+recovered full-bank/browser gate above completed that rerun without silently changing the configured
+provider or model.
 
-Public evidence does not use a pre-existing user's FeelingState, provider route, channel account,
-chat history, raw model prose, audio telemetry, or local runtime incident. Provider-boundary tests
-prove structural normalization/stripping only; they do not substitute for external-channel or
-audible delivery.
+The historical canonical v5 32-turn run measured first-visible latency at 9.382 seconds mean,
+8.995 seconds median, 15.022 seconds p95, and 20.762 seconds max. GlassHive native execution
+measured 9.201 seconds mean and 15.027 seconds p95; provider lifecycle measured 9.382 seconds mean
+and 15.289 seconds p95; DB queueing measured 5.3 ms mean and 7 ms p95. Full-case latency was
+11.591 seconds mean, 29.534 seconds p95, and 39.785 seconds max because post-answer
+observation/finalization remained slow in several voice/mixed cases. Report these layers separately.
 
-Dedicated synthetic Telegram send/receive/playback, Telegram voice-note input, LiveKit audio,
-audible non-xAI delivery, handoff/background/GlassHive parity, two-tab conflict, OS-setting reduced
-motion, long-off soak, clean install, and shipped-artifact acceptance remain **NOT RUN/PARTIAL**.
+Worker-bound evidence also proves the intended authority split: Codex personality is `none`, 12
+unrelated plugins remain enabled, only `viventium-feelings@project-viventium` is denied through the
+generic Viventium plugin-denylist config, and one exact Feeling capsule is the final developer
+instruction. Viventium's schema default supplies that exact one-item denial when the field is
+omitted; an explicit empty list opts out. Standalone GlassHive invents no denial. The final capsule tells the model to choose one
+concrete desire/action whose substance changes when any required row is removed; tone or a list of
+feeling names does not count. Provider-bound evidence for the shipped-default fixture showed exactly
+two required rows, Vigilance and Care.
+
+The current GlassHive/Codex result is recorded in
+[`2026-08-03-glasshive-feelings-potency-and-runtime-artifact-qa.md`](../../qa/emotional-cortex/reports/2026-08-03-glasshive-feelings-potency-and-runtime-artifact-qa.md).
+Provider placement, current-only native-session policy, real-browser delivery, and causal embodiment
+pass for GlassHive-backed Viventium Main. The prior
+[`2026-08-02`](../../qa/emotional-cortex/reports/2026-08-02-glasshive-feeling-authority-and-contrast.md)
+failure remains the escaped-regression record; marker/config correctness alone is still insufficient.
+
+Earlier nine-band web, exact-model, Workbench, and Telegram acceptance is recorded in
+[`2026-07-14-feelings-activation-and-telegram-acceptance.md`](../../qa/emotional-cortex/reports/2026-07-14-feelings-activation-and-telegram-acceptance.md).
+The reaction-calibration and final-authority correction is recorded in
+[`2026-07-15-feelings-reaction-potency-and-final-authority.md`](../../qa/emotional-cortex/reports/2026-07-15-feelings-reaction-potency-and-final-authority.md).
+The July 10 nine-band report remains earlier foundation evidence.
+The historical 25-case matrix completed on July 14, and the former 30-case matrix completed 30/30
+model turns plus 30/30 independent semantic judgments on July 16. Those runs remain evidence for
+their tested cases, but they are **not current potency acceptance**. A real Telegram turn with Play
+87, Openness 89, Connection 85, and Mood 20 reached the final GPT-5.6 instruction layer exactly once
+yet answered only with generic closeness/listening. The old high-Play row described response style
+instead of creating a concrete felt impulse, and its high-Play test overfit by explicitly asking the
+model to make a dull update enjoyable. This escaped result supersedes any broader “30/30 proves
+Feelings potency” wording until the new exact mixed-state contrast, range-addition cases, live
+Prompt Workbench run, and real Telegram rerun pass.
+
+The authenticated browser contract passed after it found and drove a fix for a real 320 px header
+collision. The final isolated rerun proved five responsive widths, visible primary actions, independent
+Current/Nature edits, keyboard and dialog behavior, refresh persistence, a real chat plus detached
+reaction, an eased transition over approximately 1.049 seconds, fixed Nature, a fading motion path,
+visible cause, reduced-motion rendering, API/DB/UI agreement, real route visibility, stale Inner
+state clearing, no browser console/Feelings request failures, exact pre-run FeelingState restoration,
+and DB/search synthetic-conversation cleanup. The visible reply completed in 10.859 seconds; the
+detached GPT-5.6 Terra reaction was observed 4.936 seconds later without fallback and did not hold
+the reply.
+A second genuine reaction then persisted its exact model-authored Inner state through a full runtime
+restart in both API and visible UI. The final post-restart reaction used GPT-5.6 Terra, Responses,
+reasoning `none`, Priority/Fast, no fallback, and completed in 3.506 seconds.
+
+The post-review durability pass also exercised the declared failure route rather than assuming it:
+an OpenAI rate-limit/timeout incident produced a 116.8-second visible main-reply recovery, while the
+detached Terra reaction completed through the then-current direct Anthropic fallback in 19.782
+seconds. All 34 browser checks
+still passed, including a 1.033-second transition, track-relative fixed Nature, zero reduced-motion
+durations, DB/API/UI/log agreement, cleanup, and stop/start persistence. This proves that Feelings did
+not block the main reply and that fallback works; the slow incident remains a performance failure,
+not a benchmark to normalize.
+
+Automated source-level coverage exercises the nine-band compiler defaults/validation, decay and
+capsule rules, legacy seven-band record migration, bounded 90-entry trail, generated Inner state
+validation and clearing, state caching, API auth/versioning, prompt-tail ordering,
+main/handoff/Phase-B/direct-worker scope plus specialist-cortex independence, GPT-5.6 parameter forwarding, declared cross-provider fallback,
+detached reaction activation/output/conflict/failure, and the production UI.
+
+Prompt Workbench family `feelings_embodiment_and_reaction` owns the behavioral matrix. Its current 35
+cases include the former 30 plus: the exact escaped high-Play/low-Mood/high-Connection mixed state,
+the same prompt with low Play, the escaped mixed state on xAI voice grammar, an active high-range
+user addition, and an inactive low-range addition that must remain absent. The five escaped-defect
+cases passed a post-final-change headed Workbench run 5/5 with exact explicit selection, semantic grading, exact state restoration, and
+cleanup. The broader family tests anti-recap behavior; a same-prompt low-vs-high Care/Connection authority pair under an
+emotionally salient fictional premise; Mood/Energy and Openness/Connection separation; good, bad, playful,
+uncertain, caring, fatigued/opening, fatigued/boundary, and private-canary moments; natural Inner
+state prose; Current-only persistence; typed causes; Nature immutability; and an emotionally inert
+control. The final real owner-Telegram replay passed after the potency wording and was correlated
+across visible Telegram, raw DB, prompt-frame, xAI TTS, audio delivery, and detached reaction logs.
+Ten Telegram/provider cases additionally cover expressive and restrained xAI, Cartesia,
+and Chatterbox behavior; Feelings-off xAI; plain/unknown routes; and the configured ElevenLabs
+`eleven_turbo_v2_5` no-inline-control route. Earlier repeated expressive xAI 5/5, restrained xAI 5/5,
+Feelings-off xAI 3/3, and plain TTS 3/3 results remain intermediate steering evidence rather than
+the final bank/kernel acceptance. A targeted low Care/Connection authority pass was 5/5 while
+preserving independent Curiosity/attention. The
+live runner isolates saved memory, conversation recall, and unrelated background cortices while
+leaving the Feelings capsule active. Its semantic judge is additionally isolated from Feelings. A
+local QA token lasts for the maximum run window; the runner restores the exact prior Feelings DB
+document in `finally`, retries through short local hot reloads, records timeouts, and removes both
+case and judge conversations.
+
+A live Feelings-only run declares semantic judging as required family metadata, and Prompt
+Workbench automatically passes that contract to the exact-model runner. Direct harness use enables
+the same judge explicitly. `--no-semantic-judge` is an explicit diagnostic opt-out and cannot
+support release acceptance. Independently of the judge, the runner
+fails reaction cases when Nature moves, a declared Current direction or cause is absent, the inert
+control moves, a private canary appears in Inner state, or the Inner state line violates its bounds.
+The real-browser harness remains a required local release gate for visual, interaction, persistence,
+and restart behavior; source/substring tests cannot substitute for it.
+
+A judge-provider outage is not silently downgraded. Earlier empty-stream and unauthorized-retry
+probes remain diagnostic failure evidence because both failed closed. They do not supersede the
+accepted 2026-07-14 full-family run: 25/25 model turns completed, 25/25 independent semantic
+judgments passed, the exact prior FeelingState was restored, and all synthetic case/judge
+conversations were removed.
+
+The 2026-08-03 real-QA pass added three regression lessons. First, a low-Care answer that explained
+an absent feeling was not embodied even though it also stated a desire; the direct-answer guard now
+requires one natural impulse and forbids lists, feeling names, and explanations of absent feelings.
+Required non-neutral rows must change what is noticed or chosen without being softened or reduced
+to tone. The high-Play endpoint therefore uses one concrete bursting ridiculous impulse instead of an
+abstract list of `absurdity, surprise, and laughter`.
+Second, a paired contrast is valid only when the judge
+receives both the candidate and its declared comparison response. Third, voice-control QA must
+inspect the raw audio-bound model stream: visible and persisted Telegram text intentionally removes
+provider controls and therefore cannot prove the model omitted them. Chatterbox uses one short,
+surface-owned rule: relief may use `[sigh]`, expressive surprise may use `[gasp]`, actual laughter may
+use `[laugh]`, and other replies use none.
+
+Behavioral fixtures must isolate the Feeling dimensions they claim to test. They must provide enough
+task context for an executable answer instead of grading a justified clarification as low Drive.
+Likewise, a high-Play grader may require a clear ridiculous/laughter pull but must not require Viv to
+act it out uninvited when the user's established context asks for quiet company.
+
+The July 9 seven-band reports remain historical foundation evidence. They do not supersede the July
+10 nine-band result.
+
+The Telegram text-input plus always-voice xAI path was rerun through Telegram Desktop on 2026-07-14
+without asking for voice, emotion, markup, or controls. A positive expressive moment produced one
+supported wrapping control plus one supported inline control; a calm factual control produced zero;
+and a negative expressive moment produced one supported inline control plus one supported wrapping
+control. All three visible text bubbles were clean, all three audio files were delivered, and the
+positive file was actively played through Telegram's native playback bar. Raw local assistant
+records retained the capable-provider controls for TTS audit while the display sanitizer removed
+them. Marker, byte, synthesis, and delivery telemetry agreed with the raw/visible boundary. Positive
+and negative stimuli changed only Current with typed causes and natural Inner-state lines; every
+Nature value stayed fixed. A prompt-frame gap discovered during this run was fixed so
+`telegram_audio_output` is now accounted for under `surface_prompt`; the post-fix live frame had no
+unknown layer or unknown characters.
+
+The rebuilt real Prompt Workbench browser passed activation preview, 11/11 live activation
+decisions with the configured fallback chain, reload/history, and the five explicitly selected
+escaped-defect Feelings cases with 5/5 semantic passes and complete
+18-prompt/one-runtime-context lineage. Explicit case IDs are an additive bounded UI/API/runner
+contract: unknown or filter-mismatched IDs fail closed, so a named regression selection cannot
+silently become the first N cases in a family. An earlier 35-case bank completed and passed 35/35
+semantic judgments with exact restoration and cleanup. It remains historical evidence for that
+bank, but the 2026-08-04 split 26-Main/9-Reaction result above is current acceptance. The Workbench
+and browser QA orchestration budgets now scale at 420 seconds per
+selected exact-model case (capped at four hours), preventing a healthy full run from being killed by
+the former one-hour cap. Earlier attempts are retained as failure evidence: one good-news judgment
+exposed an ambiguous rubric despite the required Mood/Nature behavior passing, one Curiosity stream
+read terminated after 34 other semantic passes, and the first xAI escaped-voice rubric misread a
+supported wrapper. The clarified cases passed targeted reruns and the fresh full-family run. The
+complete artifact history is hash-manifested under the private evidence root rather than left in
+temporary storage.
+
+The post-repair Telegram bot was restarted from the supported current-runtime path. A real xAI
+synthesis fixture then exercised a paired square wrapper through the active provider boundary and
+recorded one compatible control, one normalized control, zero stripped controls, and a valid MP3.
+Claude Desktop independently reviewed the full task history, source, logs, DB rows, artifacts, and
+final 35-case result; it validated the architecture/RCA and its three evidence/deployment findings
+were closed by durable archiving, the bot restart/boundary fixture, and the corrected dated report.
+Its final review-only closure pass found no remaining blocker for the six accepted Feelings gates;
+the broader surfaces named below remain deliberately partial.
+
+LiveKit voice-call audio, handoff/background paths, two-tab browser conflict, real Telegram
+voice-note input, real non-xAI provider delivery,
+and long-off soak remain explicit partial gates. Browser-emulated reduced motion passed; an
+operating-system setting toggle was not separately run. The latest headed Feelings instrument pass
+completed 46/46 checks, including active/inactive range behavior, unchanged decay timestamp,
+refresh, Restore, semantic range tabs, visible primary/reset actions at 320/390 pixels, responsive
+widths, animation/tail, API/DB agreement, and exact state cleanup. The first final-width run exposed
+a 390-pixel action-clipping regression; it was fixed and the complete headed run then passed.
+Telegram acceptance must not be restated as
+LiveKit or every other cross-surface/provider path having passed.
+
+## Completed cortex insight delivery contract
+
+`Run.processStream` completion content is authoritative. Phase B extracts the final text from the
+completed graph before considering incremental streamed text, then carries that exact normalized
+insight into a private durable outbox before the first owner-scoped delivery-ledger write. The outbox
+uses the same deterministic result identity, survives a first ledger-write failure, and replays into
+the ledger during startup and periodic recovery. Initial delivery and replay both require exact
+acceptance of every expected delivery before removal. Empty, partial, or malformed acceptance keeps
+the outbox pending with a typed failure. Pending rows have no TTL. At 30 days they emit the typed
+`cortex_insight_outbox_retention_alert`; they remain durable until exact acceptance. A crash or replay
+therefore cannot lose the completed graph result or create a sibling result.
+
+The request-pinned Feelings receipt is private runtime state. It may exist only in the private
+delivery ledger and outbox under the shared strict schema; it must never be copied into a chat
+`Message`, API/search/export response, public share, log, trace, or worker handoff. If neither private
+store accepts the completed result and its receipt, completion fails closed with the typed retryable
+`cortex_insight_delivery_acceptance_unavailable` result. Legacy message copies are redacted from
+every read path and migrated once into the private ledger only when the complete sibling request
+envelope is consistent; otherwise they remain hidden and pending for safe recovery.
+
+The row keeps a mutable current projection only for efficient claims. Its event ledger is immutable
+and append-only. Each `pending`, `claimed`, retryable `failure`, `persisted`, surface `presented`,
+`sent`, or typed terminal `dropped`
+event records the attempt number, exact random claim token, monotonic claim generation, event and
+claim times, lease expiry, bounded reason, surface, and hashed durable receipt. Raw insight text and
+message or surface receipt IDs never enter event history or logs. Only the owning account may read
+the redacted projection; the private payload, stream identity, and receipt hashes remain internal.
+
+Settlement is a compare-and-set transition over owner, delivery ID, claim token, claim generation,
+and the exact still-unexpired lease. Lease expiry records a retryable failure before a new generation
+may claim. Persistence, presentation, generation, and lease failures return to `pending`; they do not
+become terminal drops before the retry bound. The closed non-retryable drop taxonomy is
+`semantic_suppression`, `conversation_moved_on`, `voice_task_suppressed`, `unsupported_surface`,
+and `delivery_attempts_exhausted`. Unsupported surfaces drop before message creation. Supported
+surfaces drop as `delivery_attempts_exhausted` only after three failed attempts. A restart reclaims
+the same private payload, and replay of the same durable receipt appends no second terminal event.
+An early Main-side suppression before follow-up synthesis uses the same owner-scoped claim and
+compare-and-set settlement path. It closes immediately under the applicable semantic, moved-on, or
+voice-task reason; it cannot bypass the ledger and later age into `delivery_attempts_exhausted`.
+Mongo message persistence is a separate non-terminal projection and `persisted` event. `sent` is
+allowed only after every required linked surface has an exact presentation receipt bound to the
+persisted message ID and logical-turn revision. Web settles only from a stream-manager receipt that
+identifies a live subscriber transport, a live runtime replay buffer, or successfully persisted
+durable replay data. Redis publish failure plus replay-store failure is not a receipt, and ordinary
+stream writes keep their existing best-effort behavior. Telegram settles only from the authenticated
+adapter acknowledgement stored on the exact insight presentation revision, generation, and claim
+token, with actual Telegram message references. Before any Web or Telegram append, publish, or
+settlement, the server acquires or renews a presentation lease bound to the owner, claim token, and
+generation. Another boot cannot reclaim that batch while the presentation lease is live. Every
+transport receipt carries the exact claim and presentation-lease tokens; stale tokens fail closed.
+Browser state keeps the highest message revision and presentation generation and rejects older or
+conflicting replay events, including after reload. Empty-parent promotion increments that revision,
+removes any older parent acknowledgement, and never credits a parent or Main receipt. A one-surface failure
+retains prior surface receipts and retries only the missing surface. Startup and periodic
+stale-cortex recovery replay the completed-result outbox, enumerate recoverable parents, isolate one
+parent's claim failure from later parents, take the same claim fence, reuse the deterministic
+follow-up message ID, and resume persistence or presentation.
+
+Every normal or restart claim must present the identical normalized request-pinned Feelings
+snapshot already accepted with the Phase-A envelope. Presence, absence, or any field change is an
+envelope conflict; recovery cannot silently claim with a blank snapshot. Restart synthesis resolves
+the author only from the exact owner + conversation + assistant parent, using that parent's agent or
+the same owner's exact conversation agent. A process-global agent ID is not recovery authority.
+Persisted follow-up reuse is also exact: owner, conversation, message ID, `cortex_followup` type,
+and semantic parent metadata must all match before any generation or presentation mutation. A
+missing, mixed, or cross-conversation reference remains retryable and cannot create, reuse, mutate,
+or present another conversation's message.
+
+Replica-set deployments use a Mongo transaction for sibling claim and settlement transitions.
+Standalone Mongo uses a durable coordinator intent written before sibling changes. The intent has
+`prepared`, `repairing`, and `committed` phases and an idempotent operation descriptor. A restart
+finishes every sibling before committing the intent, so an interruption cannot leave a partial
+lease or terminal batch. Claims and intents bind to a stable runtime slot plus a per-boot epoch. A
+new boot in the same slot reclaims its prior unexpired work immediately; another live slot cannot
+steal it. `VIVENTIUM_RUNTIME_SLOT_ID` supplies the stable deployment slot when configured. The
+fallback uses the stable LibreChat API instance index and never a replaceable container hostname;
+replicated deployments must assign one stable, unique slot or instance index per live replica.
+
+### EMO-UC-048 semantic acceptance
+
+Installed acceptance uses the case-specific
+`qa/emotional-cortex/scripts/run_emo_uc_048.py` verifier. One completed insight must cross all
+four one-shot boundaries: first ledger write, Web replay persistence, Web Redis publish
+acknowledgement, and Telegram promoted-parent presentation. The private capture may state facts but
+may not state an outcome. The verifier derives the outcome from the exact insight hash and
+deterministic delivery identity across completion, outbox, every ledger snapshot, both presentation
+records, and both linked visible views.
+
+A PASS also requires four signed restart checkpoints with current Core and Telegram service
+acknowledgements, a fresh Core process marker and runtime epoch at each recovery stage, append-only
+claim/lease/attempt fences, one persisted event, one presentation receipt per required surface, one
+sent receipt, an identical post-replay terminal ledger, and exactly one visible item on Web and
+Telegram before and after replay. The adjacent terminal probe must end in one bounded typed
+`dropped` event, remain identical on replay, and have no persistence, presentation, or visible item.
+The runner remeasures every owner-only evidence file, queries the active controls and service state,
+and emits the `emo048-semantic-v1` adapter claim only after deriving PASS. It accepts no caller
+status or caller-authored PASS check.
+
+This is source behavior only until `EMO-UC-048` passes on the installed Telegram/browser path. Keep
+that row `NOT RUN`; unit and in-memory Mongo tests are supporting evidence, not release proof.
 
 ## Research grounding
 
@@ -1100,7 +1361,7 @@ finds distributed, overlapping affective systems. Dopamine is especially unsafe 
 
 Expressive suppression is the inhibition of outward emotional behavior while the internal experience
 can remain. Research also shows that adaptation depends on flexible context-sensitive ability to both
-enhance and suppress expression. Autistic camouflaging literature supports the masking analogy
+enhance and suppress expression. Autistic camouflaging literature supports the owner's masking analogy
 and documents effort, monitoring, exhaustion, and situations in which masking becomes harder to
 sustain; it also shows that camouflaging is multidimensional. That evidence does **not** justify one
 universal "battery drained → true feelings spill out" rule. Exhaustion can also lead to withdrawal or
@@ -1133,17 +1394,17 @@ This ledger is the admission test for the complete instrument. The UI name and p
 plain language; the construct and separation rule are the implementation boundary. None of these rows
 maps to one brain region, hormone, or neurotransmitter, and no value is a clinical measurement.
 
-| Band and UI poles | Engineered construct | Must remain distinct from | Evidence anchor and limitation |
-| --- | --- | --- | --- |
-| **Energy** · tired ↔ energetic | Momentary arousal/activation: how physiologically and mentally activated the state feels | Mood (pleasantness) and Drive (willingness to pursue effort) | Core affect separates arousal from valence; it is a distributed body/brain state, not a stimulant or dopamine gauge. [Core affect](https://pmc.ncbi.nlm.nih.gov/articles/PMC2884406/), [neural evidence across emotion categories](https://pmc.ncbi.nlm.nih.gov/articles/PMC4015729/) |
-| **Mood** · sad ↔ happy | Hedonic valence: the unpleasant-to-pleasant face of present affect | Energy, so quiet happiness and activated sadness both remain representable | Circumplex and meta-analytic work support valence and arousal as separable descriptive properties, not single emotion circuits. [Circumplex model](https://pmc.ncbi.nlm.nih.gov/articles/PMC2367156/), [positive/negative affect meta-analysis](https://pmc.ncbi.nlm.nih.gov/articles/PMC4830281/) |
-| **Drive** · unmotivated ↔ determined | Goal-directed activation: willingness, vigor, and persistence in spending effort toward an outcome | Energy, reward liking, and curiosity | Effort choice and behavioral activation can dissociate from preference and raw motor capacity; dopamine is one contributor within distributed circuitry, not a `motivation level` chemical. [Effort-related motivation](https://pmc.ncbi.nlm.nih.gov/articles/PMC5839596/), [effort-based choice](https://pmc.ncbi.nlm.nih.gov/articles/PMC5876251/) |
-| **Curiosity** · uninterested ↔ fascinated | Information-seeking orientation toward a knowledge gap, novelty, or unresolved question | Play and Drive: investigation can be serious and can occur without goal pursuit | Curiosity is studied as intrinsic motivation and information seeking; neural findings are correlates, not a license to equate curiosity with dopamine. [Intrinsic motivation and curiosity](https://pmc.ncbi.nlm.nih.gov/articles/PMC5364176/) |
-| **Vigilance** · at ease ↔ highly alert | Attentional readiness toward possible threat, uncertainty, conflict, or error | Energy and general reasoning quality; high vigilance is not `smarter`, and low vigilance is not careless | Appraisal theory supports context-sensitive threat/uncertainty evaluation; attention research shows vigilant, avoidant, labile, and unbiased responses rather than one universal anxiety lever. [Appraisal theories](https://pmc.ncbi.nlm.nih.gov/articles/PMC3466066/), [threat attention heterogeneity](https://pmc.ncbi.nlm.nih.gov/articles/PMC7983558/) |
-| **Care** · detached ↔ deeply caring | Other-oriented empathic concern and motivation to protect or help | Connection and personal distress: caring need not mean wanting closeness or absorbing another's pain | Empathic care and self-oriented distress have dissociable behavioral and neural signatures; the product represents the caring orientation, not an empathy diagnosis. [Empathic care and distress](https://pmc.ncbi.nlm.nih.gov/articles/PMC5532453/), [empathic concern and costly helping](https://pmc.ncbi.nlm.nih.gov/articles/PMC4275572/) |
-| **Connection** · self-contained ↔ wanting closeness | Present pull toward affiliation, contact, belonging, or relational proximity | Care and Openness: one can care at a distance, seek company while guarded, or be expressive without seeking closeness | Social-homeostasis work treats quantity and quality of contact, individual set points, social reward, and reconnection as context-sensitive systems—not an oxytocin meter. [Social homeostasis](https://pmc.ncbi.nlm.nih.gov/articles/PMC7593988/), [mechanisms of social connection](https://pmc.ncbi.nlm.nih.gov/articles/PMC10842352/) |
-| **Openness** · guarded ↔ fully expressive | Readiness to let inner affect show in language and behavior; context-sensitive expressive regulation | Internal feeling intensity, honesty, Energy, and Connection | Suppression and expressive flexibility research supports separable outward regulation. Masking research supports effort and exhaustion but not a fixed `battery empty → truth spills out` rule. [Expressive suppression](https://pubmed.ncbi.nlm.nih.gov/8326473/), [regulatory flexibility](https://pubmed.ncbi.nlm.nih.gov/15200633/), [camouflaging review](https://pmc.ncbi.nlm.nih.gov/articles/PMC12417612/) |
-| **Play** · serious ↔ playful | Flexible, humorous, exploratory, deliberately non-serious engagement | Mood, Energy, and Curiosity: play can coexist with difficulty and curiosity can remain sober | Comparative and human research links play to flexible strategies and social signaling, but the band is an engineering dimension rather than a claim that mammalian PLAY circuitry transfers literally to an LLM. [Neurobiology of playfulness](https://pmc.ncbi.nlm.nih.gov/articles/PMC5646690/), [laughter, play, and social bonding](https://pmc.ncbi.nlm.nih.gov/articles/PMC9489298/) |
+| Band and UI poles                                   | Engineered construct                                                                                 | Must remain distinct from                                                                                             | Evidence anchor and limitation                                                                                                                                                                                                                                                                                                                                                                                     |
+| --------------------------------------------------- | ---------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Energy** · tired ↔ energetic                      | Momentary arousal/activation: how physiologically and mentally activated the state feels             | Mood (pleasantness) and Drive (willingness to pursue effort)                                                          | Core affect separates arousal from valence; it is a distributed body/brain state, not a stimulant or dopamine gauge. [Core affect](https://pmc.ncbi.nlm.nih.gov/articles/PMC2884406/), [neural evidence across emotion categories](https://pmc.ncbi.nlm.nih.gov/articles/PMC4015729/)                                                                                                                              |
+| **Mood** · sad ↔ happy                              | Hedonic valence: the unpleasant-to-pleasant face of present affect                                   | Energy, so quiet happiness and activated sadness both remain representable                                            | Circumplex and meta-analytic work support valence and arousal as separable descriptive properties, not single emotion circuits. [Circumplex model](https://pmc.ncbi.nlm.nih.gov/articles/PMC2367156/), [positive/negative affect meta-analysis](https://pmc.ncbi.nlm.nih.gov/articles/PMC4830281/)                                                                                                                 |
+| **Drive** · unmotivated ↔ determined                | Goal-directed activation: willingness, vigor, and persistence in spending effort toward an outcome   | Energy, reward liking, and curiosity                                                                                  | Effort choice and behavioral activation can dissociate from preference and raw motor capacity; dopamine is one contributor within distributed circuitry, not a `motivation level` chemical. [Effort-related motivation](https://pmc.ncbi.nlm.nih.gov/articles/PMC5839596/), [effort-based choice](https://pmc.ncbi.nlm.nih.gov/articles/PMC5876251/)                                                               |
+| **Curiosity** · uninterested ↔ fascinated           | Information-seeking orientation toward a knowledge gap, novelty, or unresolved question              | Play and Drive: investigation can be serious and can occur without goal pursuit                                       | Curiosity is studied as intrinsic motivation and information seeking; neural findings are correlates, not a license to equate curiosity with dopamine. [Intrinsic motivation and curiosity](https://pmc.ncbi.nlm.nih.gov/articles/PMC5364176/)                                                                                                                                                                     |
+| **Vigilance** · at ease ↔ highly alert              | Attentional readiness toward possible threat, uncertainty, conflict, or error                        | Energy and general reasoning quality; high vigilance is not `smarter`, and low vigilance is not careless              | Appraisal theory supports context-sensitive threat/uncertainty evaluation; attention research shows vigilant, avoidant, labile, and unbiased responses rather than one universal anxiety lever. [Appraisal theories](https://pmc.ncbi.nlm.nih.gov/articles/PMC3466066/), [threat attention heterogeneity](https://pmc.ncbi.nlm.nih.gov/articles/PMC7983558/)                                                       |
+| **Care** · detached ↔ deeply caring                 | Other-oriented empathic concern and motivation to protect or help                                    | Connection and personal distress: caring need not mean wanting closeness or absorbing another's pain                  | Empathic care and self-oriented distress have dissociable behavioral and neural signatures; the product represents the caring orientation, not an empathy diagnosis. [Empathic care and distress](https://pmc.ncbi.nlm.nih.gov/articles/PMC5532453/), [empathic concern and costly helping](https://pmc.ncbi.nlm.nih.gov/articles/PMC4275572/)                                                                     |
+| **Connection** · self-contained ↔ wanting closeness | Present pull toward affiliation, contact, belonging, or relational proximity                         | Care and Openness: one can care at a distance, seek company while guarded, or be expressive without seeking closeness | Social-homeostasis work treats quantity and quality of contact, individual set points, social reward, and reconnection as context-sensitive systems—not an oxytocin meter. [Social homeostasis](https://pmc.ncbi.nlm.nih.gov/articles/PMC7593988/), [mechanisms of social connection](https://pmc.ncbi.nlm.nih.gov/articles/PMC10842352/)                                                                          |
+| **Openness** · guarded ↔ fully expressive           | Readiness to let inner affect show in language and behavior; context-sensitive expressive regulation | Internal feeling intensity, honesty, Energy, and Connection                                                           | Suppression and expressive flexibility research supports separable outward regulation. Masking research supports effort and exhaustion but not a fixed `battery empty → truth spills out` rule. [Expressive suppression](https://pubmed.ncbi.nlm.nih.gov/8326473/), [regulatory flexibility](https://pubmed.ncbi.nlm.nih.gov/15200633/), [camouflaging review](https://pmc.ncbi.nlm.nih.gov/articles/PMC12417612/) |
+| **Play** · serious ↔ playful                        | Flexible, humorous, exploratory, deliberately non-serious engagement                                 | Mood, Energy, and Curiosity: play can coexist with difficulty and curiosity can remain sober                          | Comparative and human research links play to flexible strategies and social signaling, but the band is an engineering dimension rather than a claim that mammalian PLAY circuitry transfers literally to an LLM. [Neurobiology of playfulness](https://pmc.ncbi.nlm.nih.gov/articles/PMC5646690/), [laughter, play, and social bonding](https://pmc.ncbi.nlm.nih.gov/articles/PMC9489298/)                         |
 
 For every future band proposal, the same ledger is mandatory: a user-readable construct, explicit
 nearest-neighbor separations, at least one credible empirical or synthesis source, known ambiguity,
@@ -1166,3 +1427,40 @@ correct.
 - [OpenAI latest model guide](https://developers.openai.com/api/docs/guides/latest-model)
 - [Evaluating Prompt Steerability (NAACL 2025)](https://aclanthology.org/2025.naacl-long.400/)
 - [PersonaLLM: investigating the ability of LLMs to express personality traits (NAACL Findings 2024)](https://aclanthology.org/2024.findings-naacl.229/)
+
+## Canonical Feelings-Schema Migration Boundary
+
+`ONB-012` requires every accepted replacement or migration to consume the canonical nine-band
+schema, defaults, compiler/runtime projection, persistence, and user controls defined by this
+document. The superseded divergent manual-band prototype is historical design evidence, not a
+second product contract, and must not be reintroduced or silently translated into runtime truth.
+Migration preserves valid current state or fails with a typed recoverable result; it never invents
+or drops bands to make a prototype pass. `V05D-027` / `V05D-UC-003` owns acceptance.
+
+## Empty Feeling-Capsule Boundary
+
+`HARD-019` treats an absent request-pinned Feeling capsule as an explicit safe state. Runtime and
+workers must not fabricate a capsule, mount private Feeling state, or widen recipient scope to fill
+the absence. Eligible recipients receive the one exact pinned capsule when it exists; scope-off
+recipients receive none, and empty handling keeps the same owner/privacy boundary. `EMO-001`,
+`EMO-008`, `EMO-040`, `EMO-049`, and `GHHOST-010` own acceptance through `EMO-UC-047`.
+
+## Origin-Bound Cortex Completion
+
+`HARD-021` returns a Feeling or Cortex completion only to its exact owner and originating
+conversation while that origin exists. If the origin was deleted, only a separately governed,
+owner-scoped account continuation with a durable correlation and explicit delivery policy may
+receive the result. The runtime must not choose the most recent, currently active, or similarly
+named conversation. A missing, mixed-owner, or ambiguous continuation remains pending or becomes a
+typed dropped result without mutating another conversation. `EMO-055`, `PWK-013`, and `PWK-027`
+own acceptance through `EMO-UC-048` and `PWK-UC-013`.
+
+<!-- VIVENTIUM-STABLE-REQUIREMENT-DECLARATIONS:START -->
+## Stable requirement declarations
+
+Each line is the canonical public owner declaration for one stable requirement ID. Detailed sections supply implementation context; they must not narrow or contradict these declared outcomes.
+
+HARD-019: An empty/absent Feeling capsule is a safe explicit state: do not fabricate one, mount private state, or let empty handling bypass privacy/recipient rules.
+HARD-021: A Feeling/Cortex completion returns only to the exact originating owner/conversation or a governed account-level continuation when that origin no longer exists; never to an arbitrary active conversation.
+ONB-012: The Feelings prototype consumes the canonical nine-band schema or is retired. No prototype or UI may manually repeat a divergent band model and then be treated as product truth.
+<!-- VIVENTIUM-STABLE-REQUIREMENT-DECLARATIONS:END -->

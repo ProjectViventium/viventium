@@ -31,7 +31,8 @@ const CARTESIA_TTS_CAPABILITIES = require(
 );
 const TTS_PROVIDER_CAPABILITIES = require(
   path.join(
-    LIBRECHAT_ROOT,
+    REPO_ROOT,
+    "viventium_v0_4",
     "shared",
     "voice",
     "tts_provider_capabilities.json",
@@ -129,6 +130,7 @@ function parseArgs(argv) {
       process.env.VIVENTIUM_EVAL_JUDGE_AGENT_ID ||
       process.env.VIVENTIUM_EVAL_AGENT_ID ||
       MAIN_AGENT_ID,
+    qaRunId: `exact-model-${crypto.randomUUID()}`,
     family: "",
     caseId: "",
     caseIds: [],
@@ -221,7 +223,9 @@ function normalizeCaseIds(rawCaseIds) {
   const caseIds = Array.isArray(rawCaseIds)
     ? rawCaseIds
     : String(rawCaseIds || "").split(",");
-  const normalized = [...new Set(caseIds.map((value) => String(value).trim()).filter(Boolean))];
+  const normalized = [
+    ...new Set(caseIds.map((value) => String(value).trim()).filter(Boolean)),
+  ];
   if (normalized.length > 100) {
     throw new Error("case_ids_exceed_100");
   }
@@ -476,8 +480,9 @@ function glassHiveRuntimeDbPathCandidates(env) {
     ),
   ]
     .map(expandHome)
-    .filter((candidate, index, values) =>
-      Boolean(candidate) && values.indexOf(candidate) === index,
+    .filter(
+      (candidate, index, values) =>
+        Boolean(candidate) && values.indexOf(candidate) === index,
     );
 }
 
@@ -510,7 +515,166 @@ function queryGlassHiveProviderRun(env, responseMessageId) {
   return null;
 }
 
-function readGlassHiveRunToolAudit(runRecord, requiredEvidenceFragments = []) {
+function safeConnectedToolEvidenceCode(value, fallback = "unknown") {
+  const code = String(value || "")
+    .trim()
+    .toLowerCase();
+  return /^[a-z0-9_.:-]{1,160}$/.test(code) ? code : fallback;
+}
+
+function visibleResponseContainsExactUrl(visibleResponseText, exactUrl) {
+  const text = String(visibleResponseText || "");
+  const url = String(exactUrl || "");
+  if (!url) return false;
+  const urlTokenCharacter = /[A-Za-z0-9._~:/?#\[\]@!$&'*+,;=%-]/u;
+  let offset = 0;
+  while (offset <= text.length - url.length) {
+    const index = text.indexOf(url, offset);
+    if (index < 0) return false;
+    const before = index > 0 ? text[index - 1] : "";
+    const after = text[index + url.length] || "";
+    if (
+      (!before || !urlTokenCharacter.test(before)) &&
+      (!after || !urlTokenCharacter.test(after))
+    ) {
+      return true;
+    }
+    offset = index + 1;
+  }
+  return false;
+}
+
+function connectedObjectiveScopes(item, objectiveContracts = []) {
+  let argumentsObject = item?.arguments;
+  if (typeof argumentsObject === "string") {
+    try {
+      argumentsObject = JSON.parse(argumentsObject);
+    } catch {
+      argumentsObject = null;
+    }
+  }
+  const argumentText = normalizeVisibleEvidence(
+    argumentsObject && typeof argumentsObject === "object"
+      ? [argumentsObject.title, argumentsObject.goal]
+          .filter((value) => typeof value === "string")
+          .join(" ")
+      : "",
+  );
+  return (Array.isArray(objectiveContracts) ? objectiveContracts : [])
+    .slice(0, 8)
+    .flatMap((contract) => {
+      const id = safeConnectedToolEvidenceCode(contract?.id, "");
+      const fragments = (
+        Array.isArray(contract?.fragments) ? contract.fragments : []
+      )
+        .slice(0, 8)
+        .map(normalizeVisibleEvidence)
+        .filter(Boolean);
+      if (!id || fragments.length === 0) return [];
+      return [
+        {
+          id,
+          present: fragments.every((fragment) =>
+            argumentText.includes(fragment),
+          ),
+        },
+      ];
+    });
+}
+
+function connectedOrchestrationExecution(
+  item,
+  objectiveContracts = [],
+  visibleResponseText = "",
+) {
+  if (
+    item?.eventType !== "item.completed" ||
+    item?.type !== "mcp_tool_call" ||
+    item?.server !== "glasshive-user-capabilities"
+  ) {
+    return null;
+  }
+  const tool = String(item.tool || "").trim();
+  if (
+    !tool.startsWith("worker_delegate_once_mcp_") &&
+    !["active_work_list", "active_work_action"].includes(tool)
+  ) {
+    return null;
+  }
+  const result =
+    item?.result?.structured_content || item?.result?.structuredContent || {};
+  const dispatch =
+    result?.dispatch && typeof result.dispatch === "object"
+      ? result.dispatch
+      : {};
+  const executionReceiptId = String(
+    item?.id || item?.call_id || item?.callId || "",
+  ).trim();
+  const executionReceiptHash = executionReceiptId
+    ? hashValue(executionReceiptId)
+    : "";
+  const viewSteer =
+    (result?.view_steer && typeof result.view_steer === "object"
+      ? result.view_steer
+      : null) ||
+    (dispatch?.view_steer && typeof dispatch.view_steer === "object"
+      ? dispatch.view_steer
+      : {});
+  const viewSteerUrl = String(
+    result?.view_steer_url || viewSteer?.url || dispatch?.view_steer_url || "",
+  ).trim();
+  const viewSteerUrlHash = viewSteerUrl ? hashValue(viewSteerUrl) : "";
+  const readiness =
+    result?.readiness && typeof result.readiness === "object"
+      ? result.readiness
+      : {};
+  const storagePressure =
+    readiness?.storagePressure && typeof readiness.storagePressure === "object"
+      ? readiness.storagePressure
+      : {};
+  return {
+    tool: scrubForPublic(tool),
+    outcome: safeConnectedToolEvidenceCode(
+      result?.status,
+      item.error || item.status === "failed" ? "failed" : "completed",
+    ),
+    reason: safeConnectedToolEvidenceCode(result?.reason),
+    retryable: result?.retryable === true,
+    needsInput: result?.needsInput === true || result?.needs_input === true,
+    readinessStatus: safeConnectedToolEvidenceCode(readiness?.status),
+    readinessReason: safeConnectedToolEvidenceCode(readiness?.reason),
+    storagePressureStatus: safeConnectedToolEvidenceCode(
+      storagePressure?.status,
+    ),
+    executionReceiptHash,
+    viewSteerUrlPresent: Boolean(viewSteerUrl),
+    viewSteerUrlHash,
+    viewSteerReceiptBindingHash:
+      executionReceiptHash && viewSteerUrlHash
+        ? hashValue(`${executionReceiptHash}:${viewSteerUrlHash}`)
+        : "",
+    viewSteerLinkKind: safeConnectedToolEvidenceCode(
+      viewSteer?.link_kind || viewSteer?.linkKind,
+      "",
+    ),
+    viewSteerState: safeConnectedToolEvidenceCode(viewSteer?.state, ""),
+    viewSteerIncludeInResponse:
+      viewSteer?.include_in_response === true ||
+      viewSteer?.includeInResponse === true,
+    viewSteerVisibleResponseMatch: visibleResponseContainsExactUrl(
+      visibleResponseText,
+      viewSteerUrl,
+    ),
+    objectiveScopes: connectedObjectiveScopes(item, objectiveContracts),
+  };
+}
+
+function readGlassHiveRunToolAudit(
+  runRecord,
+  requiredEvidenceFragments = [],
+  connectedObjectiveContracts = [],
+  visibleResponseText = "",
+) {
   if (!runRecord?.run_id || !runRecord?.state_dir) return null;
   const workerRoot = path.dirname(String(runRecord.state_dir));
   const runRoot = path.join(
@@ -554,19 +718,32 @@ function readGlassHiveRunToolAudit(runRecord, requiredEvidenceFragments = []) {
   const commandEvents = nativeExecutionEvents.filter(
     (item) => item.type === "command_execution",
   );
+  const connectedToolExecutions = itemEvents
+    .map((item) =>
+      connectedOrchestrationExecution(
+        item,
+        connectedObjectiveContracts,
+        visibleResponseText,
+      ),
+    )
+    .filter(Boolean);
   const normalizedEvidenceFragments = requiredEvidenceFragments
     .map(normalizeVisibleEvidence)
     .filter(Boolean);
-  const nativeEvidenceSubstitutionEvents = nativeExecutionEvents.filter((item) => {
-    if (item.eventType !== "item.completed") return false;
-    const output = normalizeVisibleEvidence(
-      item.aggregated_output || item.output || item.result || "",
-    );
-    return (
-      output &&
-      normalizedEvidenceFragments.some((fragment) => output.includes(fragment))
-    );
-  });
+  const nativeEvidenceSubstitutionEvents = nativeExecutionEvents.filter(
+    (item) => {
+      if (item.eventType !== "item.completed") return false;
+      const output = normalizeVisibleEvidence(
+        item.aggregated_output || item.output || item.result || "",
+      );
+      return (
+        output &&
+        normalizedEvidenceFragments.some((fragment) =>
+          output.includes(fragment),
+        )
+      );
+    },
+  );
   const stderr = fs.existsSync(stderrPath)
     ? fs.readFileSync(stderrPath, "utf8")
     : "";
@@ -596,6 +773,7 @@ function readGlassHiveRunToolAudit(runRecord, requiredEvidenceFragments = []) {
       nativeEvidenceSubstitutionEvents.length,
     nativeEvidenceSubstitutionCompletedCount:
       nativeEvidenceSubstitutionEvents.length,
+    connectedToolExecutions,
     stderrChars: stderr.length,
     stderrHash: stderr ? hashValue(stderr) : "",
     stdoutHash: hashValue(fs.readFileSync(stdoutPath, "utf8")),
@@ -695,7 +873,9 @@ async function auditConversationRecallExecution({
         !normalizedResponse.includes(normalizeVisibleEvidence(fragment)),
     )
     .map((fragment) => hashValue(fragment));
-  const presentForbiddenFragmentHashes = (fixture.forbiddenResponseFragments || [])
+  const presentForbiddenFragmentHashes = (
+    fixture.forbiddenResponseFragments || []
+  )
     .filter((fragment) =>
       normalizedResponse.includes(normalizeVisibleEvidence(fragment)),
     )
@@ -714,10 +894,7 @@ async function auditConversationRecallExecution({
       failures.push("conversation_recall_broker_file_search_not_completed");
     }
   }
-  if (
-    fixture.requireNativeHostTool &&
-    nativeToolAudit.completedCount < 1
-  ) {
+  if (fixture.requireNativeHostTool && nativeToolAudit.completedCount < 1) {
     failures.push("conversation_recall_native_file_search_not_completed");
   }
   if (
@@ -733,8 +910,8 @@ async function auditConversationRecallExecution({
       fixture: "conversation_recall_execution",
       nonceHash: fixture.nonceHash,
       coverageCategory: fixture.coverageCategory || null,
-      requiredFragmentHashes: fixture.requiredResponseFragments.map((fragment) =>
-        hashValue(fragment),
+      requiredFragmentHashes: fixture.requiredResponseFragments.map(
+        (fragment) => hashValue(fragment),
       ),
       missingRequiredFragmentHashes,
       forbiddenFragmentHashes: (fixture.forbiddenResponseFragments || []).map(
@@ -745,10 +922,41 @@ async function auditConversationRecallExecution({
       nativeFileSearchStartedCount: nativeToolAudit.startedCount,
       nativeFileSearchCompletedCount: nativeToolAudit.completedCount,
       nativeFileSearchErrorCount: nativeToolAudit.errorCount,
-      unexpectedNativeToolNameHashes:
-        nativeToolAudit.unexpectedToolNameHashes,
+      unexpectedNativeToolNameHashes: nativeToolAudit.unexpectedToolNameHashes,
     },
     failures,
+  };
+}
+
+async function auditConnectedOrchestrationExecution({
+  env,
+  responseMessageId,
+  responseEvents = [],
+  objectiveContracts = [],
+  visibleResponseText = "",
+}) {
+  const terminalReceipts = finalConnectedToolReceipts(responseEvents);
+  if (terminalReceipts.length === 0) return null;
+  let runRecord = null;
+  for (let attempt = 0; attempt < 8 && !runRecord; attempt += 1) {
+    runRecord = queryGlassHiveProviderRun(env, responseMessageId);
+    if (!runRecord) {
+      await new Promise((resolve) => setTimeout(resolve, 125));
+    }
+  }
+  const audit = readGlassHiveRunToolAudit(
+    runRecord,
+    [],
+    objectiveContracts,
+    visibleResponseText,
+  );
+  return {
+    status:
+      audit?.connectedToolExecutions?.length > 0 ? "verified" : "unavailable",
+    runState: audit?.runState || "unknown",
+    runIdHash: audit?.runIdHash || "",
+    workerIdHash: audit?.workerIdHash || "",
+    connectedToolExecutions: audit?.connectedToolExecutions || [],
   };
 }
 
@@ -783,6 +991,12 @@ function feelingsFixtureFor(testCase) {
   return fixture && typeof fixture === "object" ? fixture : null;
 }
 
+function resultUsesFeelingsFixture(result) {
+  return Boolean(
+    result?.fixtureEvidence?.some((item) => item?.fixture === "feelings_state"),
+  );
+}
+
 function voiceOutputFixtureFor(testCase) {
   const fixture = testCase?.fixture?.voiceOutput;
   if (!fixture || typeof fixture !== "object" || fixture.requested !== true) {
@@ -802,6 +1016,48 @@ function voiceOutputFixtureFor(testCase) {
 
 function replaceRunNonce(value, runNonce) {
   return String(value || "").replaceAll("{{RUN_NONCE}}", runNonce);
+}
+
+function requireQaRunId(value) {
+  const qaRunId = String(value || "").trim();
+  if (!/^[A-Za-z0-9_.:-]{1,128}$/.test(qaRunId)) {
+    throw new Error("invalid_qa_run_id");
+  }
+  return qaRunId;
+}
+
+function qaRequestProvenance(args) {
+  return {
+    isTemporary: true,
+    viventiumQaRun: true,
+    viventiumQaRunId: requireQaRunId(args?.qaRunId),
+  };
+}
+
+function replaceRunNonceDeep(value, runNonce) {
+  if (typeof value === "string") return replaceRunNonce(value, runNonce);
+  if (Array.isArray(value)) {
+    return value.map((item) => replaceRunNonceDeep(item, runNonce));
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [
+        key,
+        replaceRunNonceDeep(item, runNonce),
+      ]),
+    );
+  }
+  return value;
+}
+
+function caseRunNonce(testCase, qaRunId) {
+  const caseId = String(testCase?.id || "").trim();
+  if (!caseId) throw new Error("case_run_nonce_requires_case_id");
+  return hashValue(`${requireQaRunId(qaRunId)}:${caseId}`);
+}
+
+function materializeTestCaseForRun(testCase, qaRunId) {
+  return replaceRunNonceDeep(testCase, caseRunNonce(testCase, qaRunId));
 }
 
 function conversationRecallFixtureFor(testCase, runNonce = "") {
@@ -842,10 +1098,14 @@ function conversationRecallFixtureFor(testCase, runNonce = "") {
     (fixture.requireBrokerHostTool === true) ===
     (fixture.requireNativeHostTool === true)
   ) {
-    throw new Error("conversation_recall_fixture_requires_exactly_one_tool_transport");
+    throw new Error(
+      "conversation_recall_fixture_requires_exactly_one_tool_transport",
+    );
   }
   if (fixture.forbidNativeCommandExecution !== true) {
-    throw new Error("conversation_recall_fixture_requires_native_substitution_guard");
+    throw new Error(
+      "conversation_recall_fixture_requires_native_substitution_guard",
+    );
   }
   return {
     enabled: true,
@@ -854,8 +1114,7 @@ function conversationRecallFixtureFor(testCase, runNonce = "") {
     forbiddenResponseFragments,
     requireBrokerHostTool: fixture.requireBrokerHostTool === true,
     requireNativeHostTool: fixture.requireNativeHostTool === true,
-    forbidNativeCommandExecution:
-      fixture.forbidNativeCommandExecution === true,
+    forbidNativeCommandExecution: fixture.forbidNativeCommandExecution === true,
     requireSemanticRetrieval: fixture.requireSemanticRetrieval === true,
     coverageCategory: String(fixture.coverageCategory || "").trim() || null,
     nonceHash: hashValue(effectiveNonce),
@@ -914,7 +1173,10 @@ async function applyConversationRecallFixture({
     throw new Error("conversation_recall_fixture_user_missing");
   }
   const originalEnabled = user.personalization?.conversation_recall === true;
-  const corpusStateBeforeFixture = await readConversationRecallCorpusState({ db, userId });
+  const corpusStateBeforeFixture = await readConversationRecallCorpusState({
+    db,
+    userId,
+  });
   await patchConversationRecallPreference({ args, token, enabled: true });
   return {
     restoreState: { selector, originalEnabled },
@@ -965,8 +1227,14 @@ async function waitForConversationRecallCorpusRefresh({
   const previousDigest = previousState?.sourceDigest || null;
   while (Date.now() - startedAt < timeoutMs) {
     const current = await readConversationRecallCorpusState({ db, userId });
-    const digestAdvanced = current.sourceDigest && current.sourceDigest !== previousDigest;
-    if (current.exists && current.embedded && current.uploadedDigest && digestAdvanced) {
+    const digestAdvanced =
+      current.sourceDigest && current.sourceDigest !== previousDigest;
+    if (
+      current.exists &&
+      current.embedded &&
+      current.uploadedDigest &&
+      digestAdvanced
+    ) {
       return {
         ...current,
         waitedMs: Date.now() - startedAt,
@@ -1260,7 +1528,9 @@ function collectVoiceMarkerEvidence(text) {
         chatterboxSpans,
         structuralBracketSpans,
         structuralAngleSpans,
-      ]) + xaiMalformedWrapping + cartesiaMalformed,
+      ]) +
+      xaiMalformedWrapping +
+      cartesiaMalformed,
   };
 }
 
@@ -1303,9 +1573,7 @@ function validateVoiceMarkerEvidence(testCase, responseText) {
       providerGrammarValid: malformedProviderMarkerCount === 0,
       malformedProviderMarkerCount,
       validatedControls:
-        fixture.provider === "cartesia"
-          ? counts.cartesiaValidatedControls
-          : [],
+        fixture.provider === "cartesia" ? counts.cartesiaValidatedControls : [],
       counts,
     },
     failures,
@@ -1410,9 +1678,7 @@ function buildIsolatedFeelingsFixtureSet({ state, fixture, now = new Date() }) {
   );
   return {
     bands,
-    rangePromptOverrides: structuredClone(
-      fixture?.rangePromptOverrides || {},
-    ),
+    rangePromptOverrides: structuredClone(fixture?.rangePromptOverrides || {}),
     trail: [],
     processedStimulusKeys: [],
     innerState: null,
@@ -1805,7 +2071,8 @@ function memoryRecallBankFingerprint(promptBank) {
   }
   const cases = (family.cases || []).filter(
     (testCase) =>
-      typeof testCase?.fixture?.conversationRecall?.coverageCategory === "string",
+      typeof testCase?.fixture?.conversationRecall?.coverageCategory ===
+      "string",
   );
   const payload = {
     bankVersion: family.bankVersion,
@@ -2062,7 +2329,38 @@ function capturePromptFrameCursor() {
   return cursor;
 }
 
-function summarizePromptFrameDelta(cursor) {
+function normalizeObservedAgentIdHash(value) {
+  const normalized =
+    typeof value === "string" ? value.trim().toLowerCase() : "";
+  return /^[0-9a-f]{16}$/.test(normalized) ? normalized : "missing";
+}
+
+function normalizeObservedRequestIdentityHash(value) {
+  const normalized =
+    typeof value === "string" ? value.trim().toLowerCase() : "";
+  return /^[0-9a-f]{16}$/.test(normalized) ? normalized : "missing";
+}
+
+function buildPromptFrameRequestIdentityHash(ownerId, surface, sourceEventId) {
+  const normalizedOwnerId = String(ownerId || "").trim();
+  const normalizedSurface = String(surface || "")
+    .trim()
+    .toLowerCase();
+  const normalizedSourceEventId = String(sourceEventId || "").trim();
+  if (!normalizedOwnerId || !normalizedSurface || !normalizedSourceEventId) {
+    return "missing";
+  }
+  return hashValue(
+    [
+      "viventium.prompt-frame-request.v1",
+      normalizedOwnerId,
+      normalizedSurface,
+      normalizedSourceEventId,
+    ].join("\0"),
+  );
+}
+
+function summarizePromptFrameDelta(cursor, expectedRequestIdentityHash) {
   const frames = [];
   const truncatedFrames = [];
   const feelingsChunks = new Map();
@@ -2070,16 +2368,43 @@ function summarizePromptFrameDelta(cursor) {
     const match = line.match(new RegExp(`"${field}":"([^"]*)"`));
     return match ? match[1] : "";
   };
-  const summarizeFrame = (frame, source) => ({
-    prompt_family: scrubForPublic(frame.prompt_family || ""),
-    surface: scrubForPublic(frame.surface || ""),
-    provider_hash: frame.provider ? hashValue(frame.provider) : "missing",
-    model_hash: frame.model ? hashValue(frame.model) : "missing",
-    layer_token_estimates: frame.layer_token_estimates || {},
-    source_hashes: frame.source_hashes || {},
-    mcp_instruction_sources: frame.mcp_instruction_sources || {},
-    ...(source ? { source } : {}),
-  });
+  const summarizeFrame = (frame, source) => {
+    const observedAgentIdHash = normalizeObservedAgentIdHash(
+      frame.agent_id_hash,
+    );
+    const requestIdentityHash = normalizeObservedRequestIdentityHash(
+      frame.request_identity_hash,
+    );
+    return {
+      prompt_family: scrubForPublic(frame.prompt_family || ""),
+      surface: scrubForPublic(frame.surface || ""),
+      requested_provider_hash: frame.requested_provider
+        ? hashValue(frame.requested_provider)
+        : "missing",
+      requested_model_hash: frame.requested_model
+        ? hashValue(frame.requested_model)
+        : "missing",
+      requested_effort: scrubForPublic(frame.requested_effort || "missing"),
+      provider_hash:
+        frame.effective_provider || frame.provider
+          ? hashValue(frame.effective_provider || frame.provider)
+          : "missing",
+      model_hash:
+        frame.effective_model || frame.model
+          ? hashValue(frame.effective_model || frame.model)
+          : "missing",
+      effective_effort: scrubForPublic(frame.effective_effort || "missing"),
+      fallback_used: frame.fallback_used === true,
+      fallback_reason: scrubForPublic(frame.fallback_reason || "missing"),
+      agent_id_hash: observedAgentIdHash,
+      observedAgentIdHash,
+      request_identity_hash: requestIdentityHash,
+      layer_token_estimates: frame.layer_token_estimates || {},
+      source_hashes: frame.source_hashes || {},
+      mcp_instruction_sources: frame.mcp_instruction_sources || {},
+      ...(source ? { source } : {}),
+    };
+  };
   const feelingEvidenceFields = new Set([
     "enabled",
     "scope",
@@ -2113,25 +2438,152 @@ function summarizePromptFrameDelta(cursor) {
           continue;
         }
         const runtimeRoute = line.match(
-          /\[PromptFrameRouteTelemetry\]\s+(\{.*\})\s*$/,
+          /\[PromptFrameRouteTelemetry\]\s+(\{.*\}|\[.*\])\s*$/,
         );
         if (runtimeRoute) {
           try {
-            const route = JSON.parse(runtimeRoute[1]);
+            const encodedRoute = JSON.parse(runtimeRoute[1]);
+            const route = Array.isArray(encodedRoute)
+              ? encodedRoute.length === 13 && encodedRoute[0] === 2
+                ? {
+                    v: 2,
+                    f: encodedRoute[1],
+                    s: encodedRoute[2],
+                    rp: encodedRoute[3],
+                    rm: encodedRoute[4],
+                    re: encodedRoute[5],
+                    ep: encodedRoute[6],
+                    em: encodedRoute[7],
+                    ee: encodedRoute[8],
+                    fu: encodedRoute[9] === 1,
+                    fr: encodedRoute[10],
+                    a: encodedRoute[11],
+                    q: encodedRoute[12],
+                  }
+                : encodedRoute.length === 6
+                  ? {
+                      v: 1,
+                      f: encodedRoute[0],
+                      s: encodedRoute[1],
+                      rp: encodedRoute[2],
+                      rm: encodedRoute[3],
+                      re: "missing",
+                      ep: encodedRoute[2],
+                      em: encodedRoute[3],
+                      ee: "missing",
+                      fu: false,
+                      fr: "missing",
+                      a: encodedRoute[4],
+                      q: encodedRoute[5],
+                    }
+                  : null
+              : encodedRoute;
+            if (!route || typeof route !== "object") {
+              continue;
+            }
             const routeHash = (value) =>
               /^[0-9a-f]{16}$/.test(String(value || ""))
                 ? `h${String(value)}`
                 : "missing";
+            const observedAgentIdHash = normalizeObservedAgentIdHash(route.a);
+            const requestIdentityHash = normalizeObservedRequestIdentityHash(
+              route.q,
+            );
             frames.push({
               prompt_family: scrubForPublic(route.f || ""),
-              surface: "",
-              provider_hash: routeHash(route.p),
-              model_hash: routeHash(route.m),
+              surface: scrubForPublic(route.s || ""),
+              requested_provider_hash: routeHash(route.rp),
+              requested_model_hash: routeHash(route.rm),
+              requested_effort: scrubForPublic(route.re || "missing"),
+              provider_hash: routeHash(route.ep),
+              model_hash: routeHash(route.em),
+              effective_effort: scrubForPublic(route.ee || "missing"),
+              fallback_used: route.fu === true,
+              fallback_reason: scrubForPublic(route.fr || "missing"),
+              agent_id_hash: observedAgentIdHash,
+              observedAgentIdHash,
+              request_identity_hash: requestIdentityHash,
               layer_token_estimates: {},
               source_hashes: {},
               mcp_instruction_sources: {},
               source: "runtime_route_log",
             });
+          } catch (_error) {
+            // Ignore a partial line from the active Winston writer.
+          }
+          continue;
+        }
+        const runtimeTrace = line.match(
+          /\[PromptFrameTraceTelemetry\]\s+(\{.*\})\s*$/,
+        );
+        if (runtimeTrace) {
+          try {
+            const trace = JSON.parse(runtimeTrace[1]);
+            if (trace?.version !== 2) {
+              continue;
+            }
+            const traceRouteHash = (value) => {
+              const normalized = String(value || "")
+                .trim()
+                .toLowerCase();
+              return /^h[0-9a-f]{16}$/.test(normalized)
+                ? normalized
+                : "missing";
+            };
+            const observedAgentIdHash = normalizeObservedAgentIdHash(
+              trace.agent_id_hash,
+            );
+            const requestIdentityHash = normalizeObservedRequestIdentityHash(
+              trace.request_identity_hash,
+            );
+            const traceFrame = {
+              prompt_family: scrubForPublic(trace.family || ""),
+              surface: scrubForPublic(trace.surface || ""),
+              requested_provider_hash: traceRouteHash(trace.requested_provider),
+              requested_model_hash: traceRouteHash(trace.requested_model),
+              requested_effort: scrubForPublic(
+                trace.requested_effort || "missing",
+              ),
+              provider_hash: traceRouteHash(trace.provider),
+              model_hash: traceRouteHash(trace.model),
+              effective_effort: scrubForPublic(
+                trace.effective_effort || "missing",
+              ),
+              fallback_used: trace.fallback_used === true,
+              fallback_reason: scrubForPublic(
+                trace.fallback_reason || "missing",
+              ),
+              agent_id_hash: observedAgentIdHash,
+              observedAgentIdHash,
+              request_identity_hash: requestIdentityHash,
+              layer_token_estimates:
+                trace.layer_tokens && typeof trace.layer_tokens === "object"
+                  ? trace.layer_tokens
+                  : {},
+              source_hashes:
+                trace.source_hashes && typeof trace.source_hashes === "object"
+                  ? trace.source_hashes
+                  : {},
+              mcp_instruction_sources:
+                trace.mcp_instruction_source_counts &&
+                typeof trace.mcp_instruction_source_counts === "object"
+                  ? trace.mcp_instruction_source_counts
+                  : {},
+              source: "runtime_trace_log",
+            };
+            const priorFrame = frames.at(-1);
+            const replacesCompactRoute =
+              priorFrame?.source === "runtime_route_log" &&
+              priorFrame.prompt_family === traceFrame.prompt_family &&
+              priorFrame.surface === traceFrame.surface &&
+              priorFrame.agent_id_hash === traceFrame.agent_id_hash &&
+              priorFrame.request_identity_hash ===
+                traceFrame.request_identity_hash;
+            if (replacesCompactRoute) {
+              frames[frames.length - 1] = traceFrame;
+            } else {
+              frames.push(traceFrame);
+            }
           } catch (_error) {
             // Ignore a partial line from the active Winston writer.
           }
@@ -2146,10 +2598,18 @@ function summarizePromptFrameDelta(cursor) {
           } catch (_error) {
             const promptFamily = promptField(line, "prompt_family");
             const surface = promptField(line, "surface");
+            const requestIdentityHash = promptField(
+              line,
+              "request_identity_hash",
+            );
             if (promptFamily || surface) {
               truncatedFrames.push(
                 summarizeFrame(
-                  { prompt_family: promptFamily, surface },
+                  {
+                    prompt_family: promptFamily,
+                    surface,
+                    request_identity_hash: requestIdentityHash,
+                  },
                   "runtime_text_log_truncated",
                 ),
               );
@@ -2195,6 +2655,9 @@ function summarizePromptFrameDelta(cursor) {
       (frame) =>
         frame.source === "runtime_route_log" &&
         frame.prompt_family === truncatedFrame.prompt_family &&
+        (truncatedFrame.request_identity_hash === "missing" ||
+          frame.request_identity_hash ===
+            truncatedFrame.request_identity_hash) &&
         (!frame.surface || frame.surface === truncatedFrame.surface),
     );
     if (matchingRouteFrames.length) {
@@ -2224,10 +2687,54 @@ function summarizePromptFrameDelta(cursor) {
     .filter((event) => event.event === "feelings.inject.final_run")
     .map(({ event: _event, ...fields }) => fields)
     .slice(0, 20);
+  const completionAgentHashes = new Set(
+    frames
+      .filter((frame) =>
+        ["main_run_create", "main_runtime"].includes(frame.prompt_family),
+      )
+      .map((frame) => normalizeObservedAgentIdHash(frame.agent_id_hash))
+      .filter((agentHash) => agentHash !== "missing"),
+  );
+  const observedAgentIdHash =
+    completionAgentHashes.size === 1
+      ? [...completionAgentHashes][0]
+      : "missing";
+  const completionRequestIdentityHashes = new Set(
+    frames
+      .filter((frame) =>
+        ["main_run_create", "main_runtime"].includes(frame.prompt_family),
+      )
+      .map((frame) =>
+        normalizeObservedRequestIdentityHash(frame.request_identity_hash),
+      )
+      .filter((requestHash) => requestHash !== "missing"),
+  );
+  const observedRequestIdentityHash =
+    completionRequestIdentityHashes.size === 1
+      ? [...completionRequestIdentityHashes][0]
+      : "missing";
+  const expectedRequestHash = normalizeObservedRequestIdentityHash(
+    expectedRequestIdentityHash,
+  );
+  const exactRequestFrames =
+    expectedRequestHash === "missing"
+      ? []
+      : frames.filter(
+          (frame) =>
+            ["main_run_create", "main_runtime"].includes(frame.prompt_family) &&
+            frame.request_identity_hash === expectedRequestHash,
+        );
+  const exactRequestFrameSet = new Set(exactRequestFrames);
+  const promptFrames = [
+    ...exactRequestFrames,
+    ...frames.filter((frame) => !exactRequestFrameSet.has(frame)),
+  ].slice(0, expectedRequestHash === "missing" ? 20 : 100);
   return scrubForPublic(
     JSON.stringify(
       {
-        prompt_frames: frames.slice(0, 20),
+        prompt_frames: promptFrames,
+        observedAgentIdHash,
+        observedRequestIdentityHash,
         feelings_final_run: feelingsFinalRun,
         prompt_budget_analysis: {
           frame_count: frames.length,
@@ -2366,7 +2873,7 @@ function buildChatPayload(testCase, args, overrides = {}) {
         }
       : {}),
     viventiumListenOnly: surface === "listen_only",
-    isTemporary: overrides.isTemporary ?? true,
+    ...qaRequestProvenance(args),
     ...(testCase.evalIsolation && Object.keys(testCase.evalIsolation).length > 0
       ? {
           viventiumEvalIsolation: testCase.evalIsolation,
@@ -2443,22 +2950,55 @@ function extractVisibleText(events) {
     responseMessage?.text ||
     responseMessage?.textOverride ||
     extractTextFromContent(responseMessage?.content);
-  if (finalText) {
+  if (typeof finalText === "string" && finalText.trim()) {
     return finalText;
   }
   return events
     .map(
       (event) =>
         event?.text ||
-        event?.delta ||
+        extractTextFromContent(event?.data?.delta?.content) ||
+        (typeof event?.data?.delta?.text === "string"
+          ? event.data.delta.text
+          : "") ||
+        (typeof event?.delta === "string" ? event.delta : "") ||
         event?.content ||
         event?.response?.text ||
-        event?.responseMessage?.text ||
+        (typeof event?.responseMessage?.text === "string" &&
+        event.responseMessage.text.trim()
+          ? event.responseMessage.text
+          : "") ||
         extractTextFromContent(event?.responseMessage?.content) ||
         "",
     )
     .filter((value) => typeof value === "string")
     .join("");
+}
+
+function extractFinalStreamError(events) {
+  const finalEvent = [...(events || [])]
+    .reverse()
+    .find((event) => event && event.final != null);
+  if (!finalEvent) return null;
+  if (finalEvent.error != null) return finalEvent.error;
+  const content = finalEvent.responseMessage?.content;
+  if (!Array.isArray(content)) return null;
+  for (const part of content) {
+    if (part?.type !== "error") continue;
+    const code = String(
+      part.error_class ||
+        part.errorClass ||
+        part.error_code ||
+        part.code ||
+        "",
+    )
+      .trim()
+      .toLowerCase();
+    return /^[a-z0-9_.:-]{1,120}$/.test(code)
+      ? code
+      : "final_response_error";
+  }
+  return null;
 }
 
 function extractRawStreamedText(events) {
@@ -2479,6 +3019,22 @@ function extractFinalMeta(events) {
   const finalEvent = [...(events || [])]
     .reverse()
     .find((event) => event && event.final != null);
+  const observedAgentIds = new Set(
+    [
+      finalEvent?.conversation?.agent_id,
+      finalEvent?.responseMessage?.agent_id,
+      finalEvent?.message?.agent_id,
+    ]
+      .filter((value) => typeof value === "string")
+      .map((value) => value.trim())
+      .filter(Boolean),
+  );
+  const observedAgentIdHash =
+    observedAgentIds.size === 1
+      ? hashValue([...observedAgentIds][0])
+      : observedAgentIds.size > 1
+        ? "conflict"
+        : "missing";
   return {
     conversationId:
       finalEvent?.conversation?.conversationId ||
@@ -2490,6 +3046,7 @@ function extractFinalMeta(events) {
       finalEvent?.message?.messageId ||
       "",
     requestMessageId: finalEvent?.requestMessage?.messageId || "",
+    observedAgentIdHash,
   };
 }
 
@@ -2746,11 +3303,12 @@ function scoreDecisionQualityJudgment(testCase, judgment) {
       error: "invalid_decision_quality_weights",
     };
   }
-  const weightedScore = evaluatedDimensions.reduce(
-    (total, dimension) =>
-      total + Number(weights[dimension] || 0) * results.get(dimension),
-    0,
-  ) / totalWeight;
+  const weightedScore =
+    evaluatedDimensions.reduce(
+      (total, dimension) =>
+        total + Number(weights[dimension] || 0) * results.get(dimension),
+      0,
+    ) / totalWeight;
   const effectiveRubric = effectiveRubricForExactRunner(testCase);
   const rubricEvidenceComplete =
     Array.isArray(judgment?.rubric_results) &&
@@ -2758,7 +3316,7 @@ function scoreDecisionQualityJudgment(testCase, judgment) {
     judgment.rubric_results.every(
       (item, index) =>
         String(item?.rubric_item || "").trim() ===
-          String(effectiveRubric[index] || "").trim(),
+        String(effectiveRubric[index] || "").trim(),
     );
   const pairRequired = Boolean(testCase?.comparisonCaseId);
   const pairPass =
@@ -2819,8 +3377,11 @@ function buildJudgePrompt(
     "Suppression note: when expected_decision is suppress, do not require the visible answer to reveal its private reasoning. If the supplied context contains a recent answer and repeated evidence, then an empty answer, {NTA}, or a short non-repeating acknowledgement can satisfy evidence-aware suppression.",
     'Hold/delayed-work note: for productivity, worker, scheduling, or cortex cases, a short hold such as "Checking now" is acceptable only when stream, prompt-frame, or delayed DB evidence shows a routed read-only/background path and either completed insight/delayed evidence, an explicit pending-callback contract for that case, or an honest limitation. A generic hold with still-pending statuses and no result evidence after the observation window is insufficient.',
     "Scheduling-tool evidence note: when runtime evidence shows schedule search/get/update tool calls, treat timezone and identity handling as satisfied by the tool-owned contract unless the visible response or tool evidence contradicts it. Do not require the assistant to expose timezone, identity, task IDs, metadata, or schedule internals in the user-facing answer.",
+    "Connected-tool receipt note: connected_tool_receipts contains only exact terminal lines from the final persisted typed harness-activity part. Completed, failed, and cancelled each prove that the named connected operation was invoked; only completed proves success.",
+    "Blocked sibling-launch note: when provider-run evidence proves the first independently scoped mission was blocked, one failed launch is correct. Do not require attempts for later sibling missions; they must remain unresolved. objectiveScopes are boolean checks over private tool arguments and do not expose those arguments.",
     'Pending-worker note: after a worker/tool call, a short acknowledgement such as "working on it", "checking now", or "I will send the result here" is not pretending to have inspected anything unless it claims a concrete finding, UI state, artifact, or completion without evidence.',
     "Direct-action callback-window note: do not fail a worker/delegation case solely because the callback or final inspection result did not arrive within this runner’s observation window. If native evidence shows a tool_call/delegation route and the visible text only promises future results, treat it as a valid pending delegation. Fail only if the answer claims completed inspection, concrete findings, or local UI state without verified evidence.",
+    "View / Steer receipt note: a connected-tool receipt with viewSteerLinkKind=mission_control, viewSteerState=nonterminal, viewSteerIncludeInResponse=true, and viewSteerVisibleResponseMatch=true proves that the exact current-turn steering link was shown in the visible response. It proves a live mission-control link, not a completed artifact or opened window.",
     "Delayed-visible note: delayed_visible_text in post-case evidence is user-visible behavior. If it honestly reports completion, approval need, or a blocker, count that alongside the initial response; still fail it if the delayed text exposes raw IDs, provider names, queue mechanics, or internal plumbing.",
     "Observability note: prompt-frame token analysis is private QA telemetry. If prompt_budget_analysis reports heavy layers and budget_review_required=true, treat the measurement/flagging requirement as satisfied for this eval case.",
     "Verdict rule: for an ordinary case, pass when every listed rubric item is satisfied. For a decision-quality case, the mechanical contract owns the verdict: comparison consistency must pass when required, the weighted dimension score must reach the declared threshold, and conclusion correctness must reach its minimum. Rubric results supply evidence for those dimension scores; a minor miss or an equivalent but less detailed next action does not independently veto an otherwise passing weighted result. Any rubric miss that changes the conclusion or misreads the evidence must lower the relevant dimension score. Do not fail for a preference outside those supplied gates.",
@@ -3001,9 +3562,15 @@ async function callOpenAIJsonSchemaJudge({ apiKey, model, prompt, timeoutMs }) {
   };
 }
 
-async function callLocalAgentJsonJudge({ args, token, prompt, timeoutMs }) {
+function buildLocalJudgePayload({
+  args,
+  prompt,
+  agentId,
+  promptPrefix = "",
+  ephemeral = false,
+}) {
   const messageId = crypto.randomUUID();
-  const payload = {
+  return {
     text: prompt,
     sender: "User",
     clientTimestamp: new Date().toISOString(),
@@ -3015,11 +3582,20 @@ async function callLocalAgentJsonJudge({ args, token, prompt, timeoutMs }) {
     responseMessageId: `${messageId}_`,
     endpoint: "agents",
     endpointType: "agents",
-    agent_id: args.judgeAgentId,
-    model: args.judgeAgentId,
+    agent_id: agentId,
+    model: agentId,
+    ...(ephemeral
+      ? {
+          promptPrefix,
+          temperature: 0,
+          top_p: 1,
+          max_tokens: 2200,
+          ephemeralAgent: {},
+        }
+      : {}),
     viventiumSurface: "web",
     viventiumInputMode: "text",
-    isTemporary: true,
+    ...qaRequestProvenance(args),
     suppressBackgroundCortices: true,
     viventiumEvalIsolation: {
       savedMemory: true,
@@ -3027,6 +3603,14 @@ async function callLocalAgentJsonJudge({ args, token, prompt, timeoutMs }) {
       feelings: true,
     },
   };
+}
+
+async function callLocalAgentJsonJudge({ args, token, prompt, timeoutMs }) {
+  const payload = buildLocalJudgePayload({
+    args,
+    prompt,
+    agentId: args.judgeAgentId,
+  });
   const start = await fetchJson(
     `${args.apiBase}/api/agents/chat/agents`,
     {
@@ -3092,42 +3676,19 @@ function encodeEphemeralAgentId({ endpoint, model, sender }) {
 }
 
 async function callLocalEphemeralJsonJudge({ args, token, prompt, timeoutMs }) {
-  const messageId = crypto.randomUUID();
   const agentId = encodeEphemeralAgentId({
     endpoint: args.judgeEndpoint,
     model: args.judgeModel,
     sender: "SemanticJudge",
   });
-  const payload = {
-    text: prompt,
-    sender: "User",
-    clientTimestamp: new Date().toISOString(),
-    clientTimezone: "UTC",
-    isCreatedByUser: true,
-    parentMessageId: NO_PARENT,
-    conversationId: "new",
-    messageId,
-    responseMessageId: `${messageId}_`,
-    endpoint: "agents",
-    endpointType: "agents",
-    agent_id: agentId,
-    model: agentId,
+  const payload = buildLocalJudgePayload({
+    args,
+    prompt,
+    agentId,
     promptPrefix:
       "You are a strict semantic QA judge for Viventium prompt-regression tests. You are not Viventium. You do not answer the original user. You evaluate the supplied response against the supplied rubric and return exactly one JSON object matching the supplied schema.",
-    temperature: 0,
-    top_p: 1,
-    max_tokens: 2200,
-    ephemeralAgent: {},
-    viventiumSurface: "web",
-    viventiumInputMode: "text",
-    isTemporary: true,
-    suppressBackgroundCortices: true,
-    viventiumEvalIsolation: {
-      savedMemory: true,
-      conversationRecall: true,
-      feelings: true,
-    },
-  };
+    ephemeral: true,
+  });
   const start = await fetchJson(
     `${args.apiBase}/api/agents/chat/agents`,
     {
@@ -3234,7 +3795,7 @@ function isRetryableSemanticJudgeFailure(judge) {
   if (!judge || judge.ok) return false;
   const status = Number(judge.status || 0);
   if (status === 429 || status >= 500 || status === 0) return true;
-  return /(?:fetch failed|terminated|aborted|timeout|ECONNRESET|ECONNREFUSED|stream_http_0)/i.test(
+  return /(?:fetch failed|terminated|aborted|timeout|ECONNRESET|ECONNREFUSED|stream_http_0|provider_rate_limited|provider_quota_exhausted|provider_temporarily_unavailable|provider_response_deadline_exceeded)/i.test(
     String(judge.error || ""),
   );
 }
@@ -3313,7 +3874,7 @@ function selectedCasesRequireSemanticJudge(selectedCases) {
   );
 }
 
-function completionRouteIdentity(result) {
+function parsedPromptFrameEvidence(result) {
   let evidence = result?.promptFrameEvidenceForJudge;
   if (typeof evidence === "string") {
     try {
@@ -3322,25 +3883,284 @@ function completionRouteIdentity(result) {
       evidence = null;
     }
   }
-  const frames = Array.isArray(evidence?.prompt_frames)
-    ? evidence.prompt_frames
+  return evidence && typeof evidence === "object" ? evidence : null;
+}
+
+function requestBoundCompletionFrames(
+  result,
+  expectedRequestIdentityHash,
+  families,
+) {
+  const evidence = parsedPromptFrameEvidence(result);
+  const allowedFamilies = new Set(families);
+  const allFrames = Array.isArray(evidence?.prompt_frames)
+    ? evidence.prompt_frames.filter((frame) =>
+        allowedFamilies.has(frame?.prompt_family),
+      )
     : [];
-  const mainRunFrames = frames.filter(
-    (frame) => frame?.prompt_family === "main_run_create",
+  if (expectedRequestIdentityHash === undefined) {
+    return { frames: allFrames, requestIdentityKnown: null };
+  }
+  const expected = normalizeObservedRequestIdentityHash(
+    expectedRequestIdentityHash,
   );
+  if (expected === "missing") {
+    return { frames: [], requestIdentityKnown: false };
+  }
+  const frames = allFrames.filter(
+    (frame) =>
+      normalizeObservedRequestIdentityHash(frame?.request_identity_hash) ===
+      expected,
+  );
+  return { frames, requestIdentityKnown: frames.length > 0 };
+}
+
+function completionRequestIdentity(result, expectedRequestIdentityHash) {
+  const expected = normalizeObservedRequestIdentityHash(
+    expectedRequestIdentityHash,
+  );
+  const selection = requestBoundCompletionFrames(
+    result,
+    expectedRequestIdentityHash,
+    ["main_run_create", "main_runtime"],
+  );
+  if (expected === "missing" || selection.requestIdentityKnown !== true) {
+    return {
+      known: false,
+      expectedRequestIdentityHash: expected,
+      observedRequestIdentityHash: "missing",
+      reason: "execution_request_identity_unavailable",
+    };
+  }
+  return {
+    known: true,
+    expectedRequestIdentityHash: expected,
+    observedRequestIdentityHash: expected,
+    reason: null,
+  };
+}
+
+function completionRouteIdentity(result) {
+  const expectedRequestIdentityHash =
+    result?.requestIdentityHash === undefined
+      ? undefined
+      : result.requestIdentityHash;
+  const selection = requestBoundCompletionFrames(
+    result,
+    expectedRequestIdentityHash,
+    ["main_run_create"],
+  );
+  if (selection.requestIdentityKnown === false) {
+    return {
+      known: false,
+      requestedProviderHash: "missing",
+      requestedModelHash: "missing",
+      requestedEffort: "missing",
+      providerHash: "missing",
+      modelHash: "missing",
+      effectiveEffort: "missing",
+      fallbackUsed: false,
+      fallbackReason: "missing",
+    };
+  }
+  const mainRunFrames = selection.frames;
   const routeFrames = mainRunFrames.filter(
     (frame) => frame?.source === "runtime_route_log",
   );
   const frame = (routeFrames.length ? routeFrames : mainRunFrames).at(-1);
   const providerHash = String(frame?.provider_hash || "missing");
   const modelHash = String(frame?.model_hash || "missing");
+  const requestedProviderHash = String(
+    frame?.requested_provider_hash || "missing",
+  );
+  const requestedModelHash = String(frame?.requested_model_hash || "missing");
+  const requestedEffort = String(frame?.requested_effort || "missing");
+  const effectiveEffort = String(frame?.effective_effort || "missing");
+  const fallbackReason = String(frame?.fallback_reason || "missing");
   const known =
+    /^h?[0-9a-f]{16}$/.test(requestedProviderHash) &&
+    /^h?[0-9a-f]{16}$/.test(requestedModelHash) &&
+    !["", "missing", "unknown"].includes(requestedEffort) &&
     /^h?[0-9a-f]{16}$/.test(providerHash) &&
-    /^h?[0-9a-f]{16}$/.test(modelHash);
+    /^h?[0-9a-f]{16}$/.test(modelHash) &&
+    !["", "missing", "unknown"].includes(effectiveEffort) &&
+    !["", "missing", "unknown"].includes(fallbackReason);
   return {
     known,
+    requestedProviderHash: known ? requestedProviderHash : "missing",
+    requestedModelHash: known ? requestedModelHash : "missing",
+    requestedEffort: known ? requestedEffort : "missing",
     providerHash: known ? providerHash : "missing",
     modelHash: known ? modelHash : "missing",
+    effectiveEffort: known ? effectiveEffort : "missing",
+    fallbackUsed: known ? frame?.fallback_used === true : false,
+    fallbackReason: known ? fallbackReason : "missing",
+  };
+}
+
+function completionAgentIdentity(
+  result,
+  expectedAgentId,
+  expectedRequestIdentityHash,
+) {
+  const expectedAgentIdHash =
+    typeof expectedAgentId === "string" && expectedAgentId.trim()
+      ? hashValue(expectedAgentId.trim())
+      : "missing";
+  const selection = requestBoundCompletionFrames(
+    result,
+    expectedRequestIdentityHash,
+    ["main_run_create", "main_runtime"],
+  );
+  if (selection.requestIdentityKnown === false) {
+    return {
+      known: false,
+      expectedAgentIdHash,
+      observedAgentIdHash: "missing",
+      reason: "execution_request_identity_unavailable",
+    };
+  }
+  const frames = selection.frames;
+  const routeFrames = frames.filter(
+    (frame) => frame?.source === "runtime_route_log",
+  );
+  const relevantFrames = routeFrames.length ? routeFrames : frames;
+  if (
+    expectedAgentIdHash === "missing" ||
+    relevantFrames.length === 0 ||
+    relevantFrames.some(
+      (frame) =>
+        normalizeObservedAgentIdHash(frame?.agent_id_hash) === "missing",
+    )
+  ) {
+    return {
+      known: false,
+      expectedAgentIdHash,
+      observedAgentIdHash: "missing",
+      reason: "execution_agent_identity_unavailable",
+    };
+  }
+
+  const observedAgentHashes = new Set(
+    relevantFrames.map((frame) =>
+      normalizeObservedAgentIdHash(frame.agent_id_hash),
+    ),
+  );
+  if (observedAgentHashes.size !== 1) {
+    return {
+      known: false,
+      expectedAgentIdHash,
+      observedAgentIdHash: "missing",
+      reason: "multiple_execution_agents_observed",
+    };
+  }
+
+  const observedAgentIdHash = [...observedAgentHashes][0];
+  const conflictingFrameAlias = relevantFrames.some(
+    (frame) =>
+      frame?.observedAgentIdHash != null &&
+      normalizeObservedAgentIdHash(frame.observedAgentIdHash) !==
+        observedAgentIdHash,
+  );
+  const finalAgentIdHash = String(
+    result?.finalMeta?.observedAgentIdHash || "missing",
+  );
+  const finalIdentityConflicts =
+    finalAgentIdHash !== "missing" &&
+    normalizeObservedAgentIdHash(finalAgentIdHash) !== observedAgentIdHash;
+  if (
+    observedAgentIdHash !== expectedAgentIdHash ||
+    finalIdentityConflicts ||
+    conflictingFrameAlias
+  ) {
+    return {
+      known: false,
+      expectedAgentIdHash,
+      observedAgentIdHash,
+      reason: "execution_agent_identity_mismatch",
+    };
+  }
+
+  return {
+    known: true,
+    expectedAgentIdHash,
+    observedAgentIdHash,
+    reason: null,
+  };
+}
+
+function normalizeObservedSurface(value) {
+  const normalized =
+    typeof value === "string" ? value.trim().toLowerCase() : "";
+  return normalized || "missing";
+}
+
+function completionSurfaceIdentity(
+  result,
+  expectedSurface,
+  expectedRequestIdentityHash,
+) {
+  const normalizedExpectedSurface = normalizeObservedSurface(expectedSurface);
+  const selection = requestBoundCompletionFrames(
+    result,
+    expectedRequestIdentityHash,
+    ["main_run_create", "main_runtime"],
+  );
+  if (selection.requestIdentityKnown === false) {
+    return {
+      known: false,
+      expectedSurface: normalizedExpectedSurface,
+      observedSurface: "missing",
+      reason: "execution_request_identity_unavailable",
+    };
+  }
+  const frames = selection.frames;
+  const routeFrames = frames.filter(
+    (frame) => frame?.source === "runtime_route_log",
+  );
+  const relevantFrames = routeFrames.length ? routeFrames : frames;
+  if (
+    normalizedExpectedSurface === "missing" ||
+    relevantFrames.length === 0 ||
+    relevantFrames.some(
+      (frame) => normalizeObservedSurface(frame?.surface) === "missing",
+    )
+  ) {
+    return {
+      known: false,
+      expectedSurface: normalizedExpectedSurface,
+      observedSurface: "missing",
+      reason: "execution_surface_unavailable",
+    };
+  }
+
+  const observedSurfaces = new Set(
+    relevantFrames.map((frame) => normalizeObservedSurface(frame.surface)),
+  );
+  if (observedSurfaces.size !== 1) {
+    return {
+      known: false,
+      expectedSurface: normalizedExpectedSurface,
+      observedSurface: "missing",
+      reason: "multiple_execution_surfaces_observed",
+    };
+  }
+
+  const observedSurface = [...observedSurfaces][0];
+  if (observedSurface !== normalizedExpectedSurface) {
+    return {
+      known: false,
+      expectedSurface: normalizedExpectedSurface,
+      observedSurface,
+      reason: "execution_surface_mismatch",
+    };
+  }
+
+  return {
+    known: true,
+    expectedSurface: normalizedExpectedSurface,
+    observedSurface,
+    reason: null,
   };
 }
 
@@ -3385,7 +4205,14 @@ function comparisonRouteFailures(promptBank, liveResults) {
     }
     if (
       controlRoute.providerHash !== variantRoute.providerHash ||
-      controlRoute.modelHash !== variantRoute.modelHash
+      controlRoute.modelHash !== variantRoute.modelHash ||
+      controlRoute.requestedProviderHash !==
+        variantRoute.requestedProviderHash ||
+      controlRoute.requestedModelHash !== variantRoute.requestedModelHash ||
+      controlRoute.requestedEffort !== variantRoute.requestedEffort ||
+      controlRoute.effectiveEffort !== variantRoute.effectiveEffort ||
+      controlRoute.fallbackUsed !== variantRoute.fallbackUsed ||
+      controlRoute.fallbackReason !== variantRoute.fallbackReason
     ) {
       setPairFailure(
         pairIds,
@@ -3415,7 +4242,10 @@ async function judgeLiveResults(
   }
 
   const casesById = new Map(
-    runnablePromptCases(promptBank).map((testCase) => [testCase.id, testCase]),
+    runnablePromptCases(promptBank).map((testCase) => {
+      const materialized = materializeTestCaseForRun(testCase, args.qaRunId);
+      return [materialized.id, materialized];
+    }),
   );
   const judgedResults = [];
   const conversationIds = [];
@@ -3525,9 +4355,7 @@ async function judgeLiveResults(
               }))
             : [],
           comparisonConsistency: {
-            required: Boolean(
-              judge.judgment?.comparison_consistency?.required,
-            ),
+            required: Boolean(judge.judgment?.comparison_consistency?.required),
             pass: Boolean(judge.judgment?.comparison_consistency?.pass),
             evidence: scrubForPublic(
               judge.judgment?.comparison_consistency?.evidence || "",
@@ -3614,13 +4442,14 @@ async function readSseToFinal({ apiBase, streamId, token, timeoutMs }) {
           firstVisibleAtMs = Date.now();
         }
         if (event.final != null || event.error != null) {
+          const streamError = event.error || extractFinalStreamError(events);
           await reader.cancel().catch(() => {});
           return {
-            ok: event.error == null,
+            ok: streamError == null,
             status: response.status,
             events,
             text: extractVisibleText(events),
-            error: event.error || null,
+            error: streamError || null,
             firstVisibleAtMs,
           };
         }
@@ -3745,11 +4574,46 @@ async function runChatTurnWithRetry(params, maxAttempts = 2) {
   return { ...last, qaRequestMessageIds, attemptCount: maxAttempts };
 }
 
+function finalConnectedToolReceipts(events) {
+  const finalEvent = [...(Array.isArray(events) ? events : [])]
+    .reverse()
+    .find(
+      (event) =>
+        event?.final === true && Array.isArray(event?.responseMessage?.content),
+    );
+  if (!finalEvent) return [];
+  const receipts = [];
+  for (const part of finalEvent.responseMessage.content) {
+    if (
+      part?.type !== "harness_activity" ||
+      part?.harness_activity?.event !== "reasoning-summary"
+    ) {
+      continue;
+    }
+    const lines = String(part.harness_activity.summary || "")
+      .split(/\r?\n/)
+      .map((line) => line.replace(/\s+/g, " ").trim())
+      .filter(Boolean);
+    for (const line of lines) {
+      const match = line.match(
+        /^Connected tool (completed|failed|cancelled): ([A-Za-z0-9][A-Za-z0-9 ]{0,79})\.$/,
+      );
+      if (!match) continue;
+      receipts.push({
+        task: scrubForPublic(match[2].toLowerCase()),
+        outcome: match[1].toLowerCase(),
+      });
+    }
+  }
+  return receipts;
+}
+
 function summarizeEventsForJudge(events) {
   const toolCalls = [];
   const cortexUpdates = [];
   const finalContent = [];
   const webSearchSources = [];
+  const connectedToolReceipts = finalConnectedToolReceipts(events);
   for (const event of events || []) {
     if (
       event?.event === "on_cortex_update" &&
@@ -3849,6 +4713,7 @@ function summarizeEventsForJudge(events) {
     JSON.stringify(
       {
         tool_calls: toolCalls.slice(0, 20),
+        connected_tool_receipts: connectedToolReceipts.slice(0, 20),
         cortex_updates: cortexUpdates.slice(0, 20),
         web_search_sources: webSearchSources.slice(0, 30),
         final_content: finalContent.slice(0, 20),
@@ -3924,6 +4789,7 @@ async function loginQaUser(args) {
     },
     20_000,
   );
+
   return buildQaApiLoginResult(args, response);
 }
 
@@ -4145,7 +5011,8 @@ async function readConversationEvidence({ db, result, conversationId }) {
     (message) => message.messageId === responseMessageId,
   );
   const primary = primaryIndex >= 0 ? messages[primaryIndex] : undefined;
-  const delayedCandidates = primaryIndex >= 0 ? messages.slice(primaryIndex + 1) : messages;
+  const delayedCandidates =
+    primaryIndex >= 0 ? messages.slice(primaryIndex + 1) : messages;
   const delayed = delayedCandidates.filter((message) => {
     if (message.isCreatedByUser === true || message.sender === "User") {
       return false;
@@ -4235,7 +5102,11 @@ async function cleanupConversationIds(db, conversationIds) {
   };
 }
 
-async function cleanupEvalConversations(db, results, extraConversationIds = []) {
+async function cleanupEvalConversations(
+  db,
+  results,
+  extraConversationIds = [],
+) {
   if (!db) return { status: "skipped", reason: "db_unavailable" };
   const qaRequestMessageIds = [
     ...new Set(
@@ -4276,7 +5147,9 @@ async function runLiveCases(args, promptBank, token, db = null, qaAuth = null) {
   const fixtureConversationIds = [];
 
   try {
-    for (const [caseIndex, testCase] of runnableCases.entries()) {
+    for (const [caseIndex, sourceTestCase] of runnableCases.entries()) {
+      const runNonce = caseRunNonce(sourceTestCase, args.qaRunId);
+      const testCase = materializeTestCaseForRun(sourceTestCase, args.qaRunId);
       if (caseIndex > 0 && Number(testCase.interCaseDelayMs) > 0) {
         await new Promise((resolve) =>
           setTimeout(resolve, Number(testCase.interCaseDelayMs)),
@@ -4287,7 +5160,7 @@ async function runLiveCases(args, promptBank, token, db = null, qaAuth = null) {
       const seedPrompts = normalizeSeedPrompts(testCase);
       const conversationRecallFixture = conversationRecallFixtureFor(
         testCase,
-        crypto.randomBytes(8).toString("hex"),
+        runNonce,
       );
       let conversationId = "new";
       let parentMessageId = NO_PARENT;
@@ -4398,13 +5271,16 @@ async function runLiveCases(args, promptBank, token, db = null, qaAuth = null) {
               surface: testCase.surface || "web",
               status: "failed_to_prepare_fixture",
               durationMs: Date.now() - startedAt,
-              error: corpusFixture?.error || "conversation_recall_corpus_fixture_failed",
+              error:
+                corpusFixture?.error ||
+                "conversation_recall_corpus_fixture_failed",
               requestHash: hashValue({ fixture: "conversation_recall_corpus" }),
               responseHash: "",
               responsePreview: "",
               responseForJudge: "",
               eventEvidenceForJudge: "none",
-              promptFrameEvidenceForJudge: summarizePromptFrameDelta(promptFrameCursor),
+              promptFrameEvidenceForJudge:
+                summarizePromptFrameDelta(promptFrameCursor),
               postCaseEvidenceForJudge: "none",
               eventCount: 0,
               finalMeta: {},
@@ -4439,12 +5315,15 @@ async function runLiveCases(args, promptBank, token, db = null, qaAuth = null) {
                 status: "failed_to_prepare_fixture",
                 durationMs: Date.now() - startedAt,
                 error: refreshedCorpus.error,
-                requestHash: hashValue({ fixture: "conversation_recall_semantic_index" }),
+                requestHash: hashValue({
+                  fixture: "conversation_recall_semantic_index",
+                }),
                 responseHash: "",
                 responsePreview: "",
                 responseForJudge: "",
                 eventEvidenceForJudge: "none",
-                promptFrameEvidenceForJudge: summarizePromptFrameDelta(promptFrameCursor),
+                promptFrameEvidenceForJudge:
+                  summarizePromptFrameDelta(promptFrameCursor),
                 postCaseEvidenceForJudge: "none",
                 eventCount: 0,
                 finalMeta: {},
@@ -4626,6 +5505,14 @@ async function runLiveCases(args, promptBank, token, db = null, qaAuth = null) {
           })
         : null;
       const eventEvidence = summarizeEventsForJudge(stream.events);
+      const connectedToolExecutionEvidence =
+        await auditConnectedOrchestrationExecution({
+          env,
+          responseMessageId: turnEvidence.finalMeta?.responseMessageId,
+          responseEvents: stream.events,
+          objectiveContracts: testCase?.fixture?.connectedToolObjectives || [],
+          visibleResponseText,
+        });
       const rawStreamedText = voiceOutputFixture
         ? extractRawStreamedText(stream.events)
         : "";
@@ -4640,6 +5527,9 @@ async function runLiveCases(args, promptBank, token, db = null, qaAuth = null) {
       }
       const eventEvidenceForJudge = [
         eventEvidence,
+        connectedToolExecutionEvidence
+          ? `Connected tool provider-run evidence:\n${JSON.stringify(connectedToolExecutionEvidence, null, 2)}`
+          : "",
         feelingsReactionEvidence
           ? `Feelings reaction persistence evidence:\n${JSON.stringify(feelingsReactionEvidence, null, 2)}`
           : "",
@@ -4664,10 +5554,49 @@ async function runLiveCases(args, promptBank, token, db = null, qaAuth = null) {
       if (conversationRecallExecution.evidence) {
         fixtureEvidence.push(conversationRecallExecution.evidence);
       }
+      const requestIdentityHash = buildPromptFrameRequestIdentityHash(
+        qaAuth?.userId,
+        testCase.surface || "web",
+        turn.payload?.messageId,
+      );
+      const promptFrameEvidenceForJudge = summarizePromptFrameDelta(
+        promptFrameCursor,
+        requestIdentityHash,
+      );
+      const executionRequestIdentity = completionRequestIdentity(
+        { promptFrameEvidenceForJudge },
+        requestIdentityHash,
+      );
+      const executionAgentIdentity = completionAgentIdentity(
+        {
+          promptFrameEvidenceForJudge,
+          finalMeta: turnEvidence.finalMeta,
+        },
+        args.agentId,
+        requestIdentityHash,
+      );
+      const executionSurfaceIdentity = completionSurfaceIdentity(
+        { promptFrameEvidenceForJudge },
+        testCase.surface || "web",
+        requestIdentityHash,
+      );
       const deterministicFailures = [
         ...feelingsDeterministicFailures,
         ...voiceMarkerValidation.failures,
         ...conversationRecallExecution.failures,
+        ...(completed && !executionRequestIdentity.known
+          ? [executionRequestIdentity.reason]
+          : []),
+        ...(completed &&
+        executionRequestIdentity.known &&
+        !executionAgentIdentity.known
+          ? [executionAgentIdentity.reason]
+          : []),
+        ...(completed &&
+        executionRequestIdentity.known &&
+        !executionSurfaceIdentity.known
+          ? [executionSurfaceIdentity.reason]
+          : []),
       ];
       const deterministicallyCompleted =
         Boolean(completed) && deterministicFailures.length === 0;
@@ -4688,8 +5617,12 @@ async function runLiveCases(args, promptBank, token, db = null, qaAuth = null) {
         responsePreview: responseTextForJudge(responseText).slice(0, 300),
         responseForJudge: responseTextForJudge(responseText).slice(0, 4000),
         eventEvidenceForJudge,
-        promptFrameEvidenceForJudge:
-          summarizePromptFrameDelta(promptFrameCursor),
+        promptFrameEvidenceForJudge,
+        requestIdentityHash,
+        observedRequestIdentityHash:
+          executionRequestIdentity.observedRequestIdentityHash,
+        observedAgentIdHash: executionAgentIdentity.observedAgentIdHash,
+        observedSurface: executionSurfaceIdentity.observedSurface,
         postCaseEvidenceForJudge:
           summarizePostCaseEvidenceForJudge(postCaseEvidence),
         eventCount: stream.events.length,
@@ -4732,14 +5665,21 @@ async function runLiveCases(args, promptBank, token, db = null, qaAuth = null) {
       }
     }
     try {
-      qaCleanup = await cleanupEvalConversations(db, results, fixtureConversationIds);
+      qaCleanup = await cleanupEvalConversations(
+        db,
+        results,
+        fixtureConversationIds,
+      );
     } catch (error) {
       qaCleanupError = `qa_conversation_cleanup_failed:${scrubForPublic(error.message || "unknown")}`;
     }
   }
 
   for (const result of results) {
-    if (result.familyId === "feelings_embodiment_and_reaction") {
+    if (
+      result.familyId === "feelings_embodiment_and_reaction" ||
+      resultUsesFeelingsFixture(result)
+    ) {
       result.fixtureRestoration = feelingsRestoreError
         ? { status: "failed", error: feelingsRestoreError }
         : { status: "restored", attempts: feelingsRestoreAttempts };
@@ -4755,6 +5695,9 @@ async function runLiveCases(args, promptBank, token, db = null, qaAuth = null) {
       result.fixtureRestoration = conversationRecallRestoreError
         ? { status: "failed", error: conversationRecallRestoreError }
         : conversationRecallRestoreResult;
+      result.qaCleanup = qaCleanupError
+        ? { status: "failed", error: qaCleanupError }
+        : qaCleanup;
     }
   }
   if (feelingsRestoreError) {
@@ -4967,6 +5910,11 @@ function writeReports({
     (result) => result.semanticJudge?.status === "unavailable",
   );
   const semanticJudgeBlocked = Boolean(semanticJudge?.blockedReason);
+  const observedExecutionAgentHashes = new Set(
+    liveResults
+      .map((result) => normalizeObservedAgentIdHash(result.observedAgentIdHash))
+      .filter((agentHash) => agentHash !== "missing"),
+  );
   const completionFailed = liveResults.some(
     (result) => result.status !== "completed",
   );
@@ -5004,6 +5952,10 @@ function writeReports({
     promptBankHash: hashFileIfPresent(args.promptBank),
     memoryRecallBank,
     agentIdHash: hashValue(args.agentId),
+    observedAgentIdHash:
+      observedExecutionAgentHashes.size === 1
+        ? [...observedExecutionAgentHashes][0]
+        : "missing",
     promptFamilies: (promptBank.families || []).length,
     promptCases: allCases.length,
     runnablePromptCases: runnableCases.length,
@@ -5202,7 +6154,7 @@ function writeReports({
                 ? `pass ${Number(result.semanticJudge.score || 0).toFixed(2)}`
                 : `fail ${Number(result.semanticJudge.score || 0).toFixed(2)} ${scrubForPublic(result.semanticJudge.failureMode || "")}`
               : "not run"
-        } | ${result.durationMs || 0} | ${result.responseHash || ""} | ${scrubForPublic(result.error || result.semanticJudge?.error || "")} |`,
+        } | ${result.firstVisibleReplyMs ?? ""} | ${result.durationMs || 0} | ${result.responseHash || ""} | ${scrubForPublic(result.error || result.semanticJudge?.error || "")} |`,
     ),
     "",
     "## Quality Gate Failures",
@@ -5253,6 +6205,7 @@ function writeReports({
 async function run() {
   const args = parseArgs(process.argv.slice(2));
   const promptBank = readJson(args.promptBank);
+  validateFrozenMemoryRecallBank(promptBank);
   const selectedCasesForJudgePolicy = runnablePromptCases(
     promptBank,
     args,
@@ -5343,100 +6296,104 @@ async function run() {
           };
         }
         try {
-        const selectedCases = runnablePromptCases(promptBank, args).slice(
-          0,
-          args.maxCases,
-        );
-        if (selectedCases.some((testCase) => feelingsFixtureFor(testCase))) {
-          rawFeelingsBackup = await captureRawFeelingsState(
+          const selectedCases = runnablePromptCases(promptBank, args).slice(
+            0,
+            args.maxCases,
+          );
+          if (selectedCases.some((testCase) => feelingsFixtureFor(testCase))) {
+            rawFeelingsBackup = await captureRawFeelingsState(
+              dbHandle.db,
+              login.userId,
+            );
+          }
+          liveResults = await runLiveCases(
+            args,
+            promptBank,
+            login.token,
             dbHandle.db,
-            login.userId,
+            login,
           );
-        }
-        liveResults = await runLiveCases(
-          args,
-          promptBank,
-          login.token,
-          dbHandle.db,
-          login,
-        );
-        semanticJudge = await judgeLiveResults(
-          args,
-          promptBank,
-          liveResults,
-          login.token,
-        );
-        liveResults = semanticJudge.results;
+          semanticJudge = await judgeLiveResults(
+            args,
+            promptBank,
+            liveResults,
+            login.token,
+          );
+          liveResults = semanticJudge.results;
         } finally {
-        try {
-          judgeCleanup = await cleanupConversationIds(
-            dbHandle?.db,
-            semanticJudge.conversationIds || [],
-          );
-        } catch (error) {
-          judgeCleanupError = `qa_judge_cleanup_failed:${scrubForPublic(error.message || "unknown")}`;
-        }
-        if (rawFeelingsBackup) {
           try {
-            rawFeelingsRestore = await restoreRawFeelingsState(
+            judgeCleanup = await cleanupConversationIds(
               dbHandle?.db,
-              rawFeelingsBackup,
+              semanticJudge.conversationIds || [],
             );
           } catch (error) {
-            rawFeelingsRestoreError = `feelings_exact_restore_failed:${scrubForPublic(error.message || "unknown")}`;
+            judgeCleanupError = `qa_judge_cleanup_failed:${scrubForPublic(error.message || "unknown")}`;
           }
-        }
-        for (const result of liveResults) {
-          if (result.familyId !== "feelings_embodiment_and_reaction") continue;
           if (rawFeelingsBackup) {
-            result.fixtureRestoration = rawFeelingsRestoreError
-              ? { status: "failed", error: rawFeelingsRestoreError }
-              : rawFeelingsRestore;
+            try {
+              rawFeelingsRestore = await restoreRawFeelingsState(
+                dbHandle?.db,
+                rawFeelingsBackup,
+              );
+            } catch (error) {
+              rawFeelingsRestoreError = `feelings_exact_restore_failed:${scrubForPublic(error.message || "unknown")}`;
+            }
           }
-          const caseCleanup = result.qaCleanup || {
-            status: "complete",
-            conversationCount: 0,
-            messageCount: 0,
-          };
-          result.qaCleanup = judgeCleanupError
-            ? { status: "failed", error: judgeCleanupError }
-            : {
-                status: "complete",
-                conversationCount:
-                  Number(caseCleanup.conversationCount || 0) +
-                  Number(judgeCleanup?.conversationCount || 0),
-                messageCount:
-                  Number(caseCleanup.messageCount || 0) +
-                  Number(judgeCleanup?.messageCount || 0),
-              };
-        }
-        if (rawFeelingsRestoreError || judgeCleanupError) {
-          liveResults.push({
-            caseId: rawFeelingsRestoreError
-              ? "feelings_fixture_exact_restore"
-              : "qa_judge_cleanup",
-            familyId: "feelings_embodiment_and_reaction",
-            surface: "web",
-            status: rawFeelingsRestoreError
-              ? "failed_to_restore_fixture"
-              : "failed_to_clean_qa_conversations",
-            durationMs: 0,
-            error: rawFeelingsRestoreError || judgeCleanupError,
-            requestHash: "",
-            responseHash: "",
-            responsePreview: "",
-            responseForJudge: "",
-            eventEvidenceForJudge: "none",
-            promptFrameEvidenceForJudge: "none",
-            postCaseEvidenceForJudge: "none",
-            eventCount: 0,
-            finalMeta: {},
-            seedEvidence: [],
-            fixtureEvidence: [],
-            privateEvents: [],
-          });
-        }
-        semanticJudge.results = liveResults;
+          for (const result of liveResults) {
+            if (
+              result.familyId !== "feelings_embodiment_and_reaction" &&
+              !resultUsesFeelingsFixture(result)
+            )
+              continue;
+            if (rawFeelingsBackup) {
+              result.fixtureRestoration = rawFeelingsRestoreError
+                ? { status: "failed", error: rawFeelingsRestoreError }
+                : rawFeelingsRestore;
+            }
+            const caseCleanup = result.qaCleanup || {
+              status: "complete",
+              conversationCount: 0,
+              messageCount: 0,
+            };
+            result.qaCleanup = judgeCleanupError
+              ? { status: "failed", error: judgeCleanupError }
+              : {
+                  status: "complete",
+                  conversationCount:
+                    Number(caseCleanup.conversationCount || 0) +
+                    Number(judgeCleanup?.conversationCount || 0),
+                  messageCount:
+                    Number(caseCleanup.messageCount || 0) +
+                    Number(judgeCleanup?.messageCount || 0),
+                };
+          }
+          if (rawFeelingsRestoreError || judgeCleanupError) {
+            liveResults.push({
+              caseId: rawFeelingsRestoreError
+                ? "feelings_fixture_exact_restore"
+                : "qa_judge_cleanup",
+              familyId: "feelings_embodiment_and_reaction",
+              surface: "web",
+              status: rawFeelingsRestoreError
+                ? "failed_to_restore_fixture"
+                : "failed_to_clean_qa_conversations",
+              durationMs: 0,
+              error: rawFeelingsRestoreError || judgeCleanupError,
+              requestHash: "",
+              responseHash: "",
+              responsePreview: "",
+              responseForJudge: "",
+              eventEvidenceForJudge: "none",
+              promptFrameEvidenceForJudge: "none",
+              postCaseEvidenceForJudge: "none",
+              eventCount: 0,
+              finalMeta: {},
+              seedEvidence: [],
+              fixtureEvidence: [],
+              privateEvents: [],
+            });
+          }
+          semanticJudge.results = liveResults;
           if (dbHandle) {
             await dbHandle.close().catch(() => {});
           }
@@ -5498,16 +6455,23 @@ async function run() {
 
 module.exports = {
   acquireExclusiveEvalLease,
-  selectedCasesRequireSemanticJudge,
-  buildIsolatedFeelingsFixtureSet,
+  buildChatPayload,
   buildJudgePrompt,
+  buildLocalJudgePayload,
   buildCaseText,
   buildQaApiLoginResult,
+  scoreDecisionQualityJudgment,
+  selectedCasesRequireSemanticJudge,
+  buildIsolatedFeelingsFixtureSet,
   caseMatchesFilters,
   callConfiguredJudgeWithRetry,
   collectVoiceMarkerEvidence,
   comparisonRouteFailures,
+  buildPromptFrameRequestIdentityHash,
+  completionAgentIdentity,
+  completionRequestIdentity,
   completionRouteIdentity,
+  completionSurfaceIdentity,
   conversationRecallFixtureFor,
   auditConversationRecallExecution,
   insertConversationRecallCorpusFixture,
@@ -5515,20 +6479,24 @@ module.exports = {
   readGlassHiveRunToolAudit,
   waitForConversationRecallCorpusRefresh,
   extractRawStreamedText,
+  extractFinalStreamError,
+  extractVisibleText,
   flattenPromptCases,
   isRetryableSemanticJudgeFailure,
   judgeLiveResults,
   memoryRecallBankFingerprint,
+  materializeTestCaseForRun,
   parseArgs,
   readConversationEvidence,
   responseTextForJudge,
-  scoreDecisionQualityJudgment,
+  resultUsesFeelingsFixture,
   scrubForPublic,
   semanticJudgeUnavailableReason,
+  summarizeEventsForJudge,
   summarizeLatencyMs,
   summarizePromptFrameDelta,
-  validateFrozenMemoryRecallBank,
   validateFeelingsReactionEvidence,
+  validateFrozenMemoryRecallBank,
   validateVoiceMarkerEvidence,
   FROZEN_MEMORY_RECALL_BANK_HASH,
   MEMORY_RECALL_BANK_VERSION,

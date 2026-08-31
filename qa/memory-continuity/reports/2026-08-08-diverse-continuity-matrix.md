@@ -1,3 +1,4 @@
+<!-- qa-evidence-exempt: Historical evidence snapshot retained verbatim; retroactive v2 fields would invent evidence that was not captured during the run. -->
 # Prompt Registry Slice: Exact-Model Completion Baseline
 
 Generated: 2026-08-08T23:06:55.255Z
@@ -83,4 +84,3 @@ Generated: 2026-08-08T23:06:55.255Z
 - Treat prompt-bundle and runtime-config drift checks, not source-vs-compiled YAML hash equality, as the live prompt-registry drift gate.
 - `partial_baseline` and `partial_semantic_passed` mean the run completed only the selected subset, not the full prompt bank.
 - This completion-baseline runner uses the main chat endpoint with surface metadata; true voice, Telegram, scheduler, Wing, and Listen-Only surface runners remain separate gates.
-<!-- qa-evidence-exempt: Historical or specialized supporting artifact retained without retroactively inventing missing evidence; current release acceptance requires a fresh full-view report. -->

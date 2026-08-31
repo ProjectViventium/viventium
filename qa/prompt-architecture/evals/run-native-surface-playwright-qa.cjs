@@ -28,6 +28,14 @@ const PRIVATE_ROOT =
 const FRAME_ROOT = path.join(PRIVATE_ROOT, 'prompt-observability', 'frame-logs');
 const USER_AGENT =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 ViventiumNativeSurfaceQA/1.0';
+const QA_MAPPING_RUN_FIELD = 'viventiumNativeSurfaceQaRunId';
+const COMPLETION_PROMPT_FAMILIES = new Set([
+  'main_assembly',
+  'main_runtime',
+  'main_run_create',
+]);
+const MAX_QA_CLEANUP_ROWS = 4096;
+let lastTelegramSourceSequence = 0;
 
 function timestampSlug(date = new Date()) {
   return date.toISOString().replace(/[:.]/g, '-');
@@ -53,6 +61,22 @@ function parseArgs(argv) {
     postCaseObserveMs: 25_000,
     followUpGraceMs: Number.parseInt(process.env.VIVENTIUM_EVAL_FOLLOWUP_GRACE_MS || '30000', 10),
     maxCases: Number.MAX_SAFE_INTEGER,
+    maxCasesSpecified: false,
+    maxCasesInvalid: false,
+    family: '',
+    familySpecified: false,
+    caseId: '',
+    caseIdSpecified: false,
+    caseIds: [],
+    caseIdsSpecified: false,
+    caseIdsMalformed: false,
+    surface: '',
+    surfaceSpecified: false,
+    promptId: '',
+    promptIdSpecified: false,
+    duplicateSelectors: [],
+    runLive: false,
+    qaRunId: `native-surface-${crypto.randomUUID()}`,
     runJudge: true,
     judgeEndpoint: DEFAULT_JUDGE_ENDPOINT,
     judgeModel: DEFAULT_JUDGE_MODEL,
@@ -90,10 +114,54 @@ function parseArgs(argv) {
         args.followUpGraceMs = parsed;
       }
     } else if (arg.startsWith('--max-cases=')) {
+      args.maxCasesSpecified = true;
       const parsed = Number.parseInt(arg.slice('--max-cases='.length), 10);
       if (Number.isFinite(parsed) && parsed > 0) {
         args.maxCases = parsed;
+      } else {
+        args.maxCasesInvalid = true;
       }
+    } else if (arg.startsWith('--family=')) {
+      if (args.familySpecified) {
+        args.duplicateSelectors.push('family');
+      }
+      args.familySpecified = true;
+      args.family = arg.slice('--family='.length).trim();
+    } else if (arg.startsWith('--case-id=')) {
+      if (args.caseIdSpecified) {
+        args.duplicateSelectors.push('case-id');
+      }
+      args.caseIdSpecified = true;
+      args.caseId = arg.slice('--case-id='.length).trim();
+    } else if (arg.startsWith('--case-ids=')) {
+      if (args.caseIdsSpecified) {
+        args.duplicateSelectors.push('case-ids');
+      }
+      args.caseIdsSpecified = true;
+      const requestedCaseIds = arg.slice('--case-ids='.length).split(',');
+      args.caseIdsMalformed =
+        args.caseIdsMalformed || requestedCaseIds.some((value) => !value.trim());
+      args.caseIds = requestedCaseIds.map((value) => value.trim()).filter(Boolean);
+    } else if (arg.startsWith('--surface=')) {
+      if (args.surfaceSpecified) {
+        args.duplicateSelectors.push('surface');
+      }
+      args.surfaceSpecified = true;
+      args.surface = arg.slice('--surface='.length).trim();
+    } else if (arg.startsWith('--prompt-id=')) {
+      if (args.promptIdSpecified) {
+        args.duplicateSelectors.push('prompt-id');
+      }
+      args.promptIdSpecified = true;
+      args.promptId = arg.slice('--prompt-id='.length).trim();
+    } else if (arg === '--run-live') {
+      args.runLive = true;
+    } else if (arg === '--no-live') {
+      args.runLive = false;
+    } else if (arg === '--semantic-judge') {
+      args.runJudge = true;
+    } else if (arg === '--no-semantic-judge') {
+      args.runJudge = false;
     } else if (arg === '--no-judge') {
       args.runJudge = false;
     } else if (arg.startsWith('--judge-endpoint=')) {
@@ -348,16 +416,374 @@ function readJson(filePath) {
 
 function flattenPromptCases(promptBank) {
   return (promptBank.families || []).flatMap((family) =>
-    (family.cases || []).map((testCase) => ({
-      familyId: family.id,
-      familyGoal: family.goal,
-      ...testCase,
-      decisionQualityContract: {
-        ...(family.decisionQualityContract || {}),
-        ...(testCase.decisionQualityContract || {}),
-      },
-    })),
+    (family.cases || []).map((testCase) => {
+      const familySemanticJudge = family.semanticJudge === true;
+      return {
+        familyId: family.id,
+        familyGoal: family.goal,
+        ...testCase,
+        familySemanticJudge,
+        semanticJudge: familySemanticJudge || testCase.semanticJudge === true,
+        promptRefs: [
+          ...new Set([
+            ...(Array.isArray(family.promptRefs) ? family.promptRefs : []),
+            ...(Array.isArray(testCase.promptRefs) ? testCase.promptRefs : []),
+          ]),
+        ],
+        decisionQualityContract: {
+          ...(family.decisionQualityContract || {}),
+          ...(testCase.decisionQualityContract || {}),
+        },
+      };
+    }),
   );
+}
+
+function selectPromptCases(promptBank, args = {}) {
+  if ((args.duplicateSelectors || []).length > 0) {
+    throw new Error('native_surface_case_selection_duplicate_selector');
+  }
+  if (args.maxCasesInvalid) {
+    throw new Error('native_surface_case_selection_invalid_max_cases');
+  }
+  if (
+    (args.familySpecified && !args.family) ||
+    (args.caseIdSpecified && !args.caseId) ||
+    (args.surfaceSpecified && !args.surface) ||
+    (args.promptIdSpecified && !args.promptId)
+  ) {
+    throw new Error('native_surface_case_selection_empty_selector');
+  }
+  if (args.caseIdSpecified && args.caseIdsSpecified) {
+    throw new Error('native_surface_case_selection_conflict');
+  }
+  if (args.caseIdsSpecified && args.caseIds.length === 0) {
+    throw new Error('native_surface_case_selection_empty_requested_ids');
+  }
+  if (args.caseIdsMalformed) {
+    throw new Error('native_surface_case_selection_malformed_requested_ids');
+  }
+  if (new Set(args.caseIds || []).size !== (args.caseIds || []).length) {
+    throw new Error('native_surface_case_selection_duplicate');
+  }
+  let cases = flattenPromptCases(promptBank);
+  if (args.family) {
+    cases = cases.filter((testCase) => testCase.familyId === args.family);
+  }
+  if (args.caseId) {
+    cases = cases.filter((testCase) => testCase.id === args.caseId);
+  }
+  if (args.caseIdsSpecified) {
+    const requested = new Set(args.caseIds);
+    cases = cases.filter((testCase) => requested.has(testCase.id));
+  }
+  if (args.surface) {
+    cases = cases.filter((testCase) => (testCase.surface || 'web') === args.surface);
+  }
+  if (args.promptId) {
+    cases = cases.filter((testCase) => testCase.promptRefs.includes(args.promptId));
+  }
+  if (args.caseIdsSpecified) {
+    const byId = new Map();
+    for (const testCase of cases) {
+      const matches = byId.get(testCase.id) || [];
+      matches.push(testCase);
+      byId.set(testCase.id, matches);
+    }
+    const missing = args.caseIds.filter((caseId) => !byId.has(caseId));
+    if (missing.length > 0) {
+      throw new Error(`native_surface_case_selection_missing:${missing.join(',')}`);
+    }
+    if (args.caseIds.some((caseId) => byId.get(caseId).length !== 1)) {
+      throw new Error('native_surface_case_selection_ambiguous');
+    }
+    if (args.maxCases < args.caseIds.length) {
+      throw new Error('native_surface_case_selection_truncated');
+    }
+    return args.caseIds.map((caseId) => byId.get(caseId)[0]);
+  }
+  if (cases.length === 0) {
+    throw new Error('native_surface_case_selection_empty');
+  }
+  if (args.caseId && cases.length !== 1) {
+    throw new Error('native_surface_case_selection_ambiguous');
+  }
+  return cases.slice(0, args.maxCases || Number.MAX_SAFE_INTEGER);
+}
+
+function caseRequiresSemanticJudge(testCase) {
+  return (
+    testCase?.familySemanticJudge === true ||
+    testCase?.semanticJudge === true ||
+    testCase?.decisionQualityContract?.transportPassIsSemanticPass === false
+  );
+}
+
+function assertNativeLiveRunRequested(args = {}) {
+  if (args.runLive !== true) {
+    throw new Error('native_surface_live_run_not_authorized');
+  }
+}
+
+function buildPromptFrameRequestIdentityHash({ ownerId, surface, sourceEventId } = {}) {
+  const normalizedOwnerId = String(ownerId || '').trim();
+  const normalizedSurface = String(surface || '')
+    .trim()
+    .toLowerCase();
+  const normalizedSourceEventId = String(sourceEventId || '').trim();
+  if (!normalizedOwnerId || !normalizedSurface || !normalizedSourceEventId) {
+    throw new Error('prompt_frame_request_identity_context_invalid');
+  }
+  return hashValue(
+    [
+      'viventium.prompt-frame-request.v1',
+      normalizedOwnerId,
+      normalizedSurface,
+      normalizedSourceEventId,
+    ].join('\0'),
+  );
+}
+
+function buildTelegramSourceOrderScope({
+  ownerId,
+  telegramUserId,
+  telegramChatId,
+  messageThreadId = '',
+} = {}) {
+  const values = [ownerId, telegramUserId, telegramChatId].map((value) =>
+    String(value || '').trim(),
+  );
+  if (values.some((value) => !value)) {
+    throw new Error('telegram_source_order_identity_invalid');
+  }
+  return crypto
+    .createHash('sha256')
+    .update(
+      [
+        'viventium.telegram-source-order.v2',
+        'telegram-interactive-v1',
+        ...values,
+        String(messageThreadId || '').trim(),
+      ].join('\0'),
+    )
+    .digest('hex');
+}
+
+function buildTelegramSourceEventId({ sourceOrderScope, sourceSequence } = {}) {
+  if (
+    !/^[0-9a-f]{64}$/.test(String(sourceOrderScope || '')) ||
+    !Number.isSafeInteger(sourceSequence) ||
+    sourceSequence <= 0
+  ) {
+    throw new Error('telegram_source_event_identity_invalid');
+  }
+  return crypto
+    .createHash('sha256')
+    .update(
+      [
+        'viventium.telegram-source-event.v1',
+        String(sourceOrderScope),
+        String(sourceSequence),
+      ].join('\0'),
+    )
+    .digest('hex');
+}
+
+function nextTelegramSourceSequence() {
+  const candidate = Date.now() * 1000 + crypto.randomInt(0, 1000);
+  lastTelegramSourceSequence = Math.max(candidate, lastTelegramSourceSequence + 1);
+  if (!Number.isSafeInteger(lastTelegramSourceSequence)) {
+    throw new Error('telegram_source_sequence_overflow');
+  }
+  return lastTelegramSourceSequence;
+}
+
+function trustedCompletionSurface(nativeSurface) {
+  const normalized = String(nativeSurface || 'web').trim() || 'web';
+  if (normalized === 'scheduler') {
+    return 'workbench';
+  }
+  if (normalized === 'wing' || normalized === 'listen_only') {
+    return 'voice';
+  }
+  return normalized;
+}
+
+function completionPromptFrames(frames) {
+  return (frames || []).filter(
+    (frame) =>
+      frame?.event === 'viventium.prompt_frame' &&
+      COMPLETION_PROMPT_FAMILIES.has(String(frame.prompt_family || '')),
+  );
+}
+
+function promptFramesForRequest(frames, requestIdentityHash) {
+  const expectedRequestIdentityHash = String(requestIdentityHash || '').trim().toLowerCase();
+  if (!/^[0-9a-f]{16}$/.test(expectedRequestIdentityHash)) {
+    return [];
+  }
+  return (frames || []).filter(
+    (frame) =>
+      frame?.event === 'viventium.prompt_frame' &&
+      frame.request_identity_hash === expectedRequestIdentityHash,
+  );
+}
+
+function completionPromptFramesForRequest(frames, requestIdentityHash) {
+  return completionPromptFrames(promptFramesForRequest(frames, requestIdentityHash));
+}
+
+function assertCompletionPromptFrameSurface(frames, requestedSurface, requestIdentityHash) {
+  const expected = String(requestedSurface || 'web').trim() || 'web';
+  const expectedRequestIdentityHash = String(requestIdentityHash || '').trim().toLowerCase();
+  if (!/^[0-9a-f]{16}$/.test(expectedRequestIdentityHash)) {
+    throw new Error('completion_prompt_frame_request_identity_expected_invalid');
+  }
+  const allCompletionFrames = completionPromptFrames(frames);
+  if (allCompletionFrames.length === 0) {
+    throw new Error('completion_prompt_frame_missing');
+  }
+  if (
+    allCompletionFrames.some(
+      (frame) => !/^[0-9a-f]{16}$/.test(String(frame.request_identity_hash || '')),
+    )
+  ) {
+    throw new Error('completion_prompt_frame_request_identity_missing');
+  }
+  const completionFrames = completionPromptFramesForRequest(
+    allCompletionFrames,
+    expectedRequestIdentityHash,
+  );
+  if (completionFrames.length === 0) {
+    throw new Error('completion_prompt_frame_request_identity_unrelated_only');
+  }
+  const observed = [...new Set(completionFrames.map((frame) => String(frame.surface || '')))].sort();
+  if (observed.length !== 1 || observed[0] !== expected) {
+    throw new Error('completion_prompt_frame_surface_mismatch');
+  }
+  const observedAgentIdHashes = completionFrames.map((frame) =>
+    String(frame.agent_id_hash || '').toLowerCase(),
+  );
+  const agentIdHashes = [...new Set(observedAgentIdHashes)];
+  if (
+    observedAgentIdHashes.some((value) => !/^[0-9a-f]{16}$/.test(value)) ||
+    agentIdHashes.length !== 1
+  ) {
+    throw new Error(
+      observedAgentIdHashes.some((value) => !/^[0-9a-f]{16}$/.test(value))
+        ? 'completion_prompt_frame_agent_identity_missing'
+        : 'completion_prompt_frame_agent_identity_mixed',
+    );
+  }
+  const providers = completionFrames.map((frame) => String(frame.provider || '').trim());
+  const models = completionFrames.map((frame) => String(frame.model || '').trim());
+  const requestedProviders = completionFrames.map((frame) =>
+    String(frame.requested_provider || '').trim(),
+  );
+  const requestedModels = completionFrames.map((frame) =>
+    String(frame.requested_model || '').trim(),
+  );
+  const requestedEfforts = completionFrames.map((frame) =>
+    String(frame.requested_effort || '').trim(),
+  );
+  const effectiveEfforts = completionFrames.map((frame) =>
+    String(frame.effective_effort || '').trim(),
+  );
+  const fallbackReasons = completionFrames.map((frame) =>
+    String(frame.fallback_reason || '').trim(),
+  );
+  if (
+    providers.some((value) => !value || ['missing', 'none', 'unknown'].includes(value.toLowerCase())) ||
+    models.some((value) => !value || ['missing', 'none', 'unknown'].includes(value.toLowerCase())) ||
+    requestedProviders.some(
+      (value) => !value || ['missing', 'none', 'unknown'].includes(value.toLowerCase()),
+    ) ||
+    requestedModels.some(
+      (value) => !value || ['missing', 'none', 'unknown'].includes(value.toLowerCase()),
+    ) ||
+    requestedEfforts.some((value) => !value || ['missing', 'unknown'].includes(value.toLowerCase())) ||
+    effectiveEfforts.some((value) => !value || ['missing', 'unknown'].includes(value.toLowerCase())) ||
+    fallbackReasons.some((value) => !value || ['missing', 'unknown'].includes(value.toLowerCase()))
+  ) {
+    throw new Error('completion_prompt_frame_route_identity_missing');
+  }
+  const fallbackUsedValues = [...new Set(completionFrames.map((frame) => frame.fallback_used))];
+  if (
+    fallbackUsedValues.some((value) => typeof value !== 'boolean') ||
+    fallbackUsedValues.length !== 1 ||
+    (fallbackUsedValues[0]
+      ? fallbackReasons.some((value) => value === 'none')
+      : fallbackReasons.some((value) => value !== 'none'))
+  ) {
+    throw new Error('completion_prompt_frame_fallback_lineage_invalid');
+  }
+  const completionProviderHashes = [
+    ...new Set(providers.map((value) => hashValue(value))),
+  ].sort();
+  const completionModelHashes = [
+    ...new Set(models.map((value) => hashValue(value))),
+  ].sort();
+  return {
+    verified: true,
+    requestedSurface: expected,
+    observedSurface: observed[0],
+    completionFrameCount: completionFrames.length,
+    requestIdentityHash: expectedRequestIdentityHash,
+    actualCompletionAgentIdHash: agentIdHashes[0],
+    completionProviderHashes,
+    completionModelHashes,
+    requestedProviderHashes: [...new Set(requestedProviders.map((value) => hashValue(value)))].sort(),
+    requestedModelHashes: [...new Set(requestedModels.map((value) => hashValue(value)))].sort(),
+    requestedEfforts: [...new Set(requestedEfforts)].sort(),
+    effectiveEfforts: [...new Set(effectiveEfforts)].sort(),
+    fallbackUsed: fallbackUsedValues[0],
+    fallbackReasons: [...new Set(fallbackReasons)].sort(),
+  };
+}
+
+function completionEvidenceForCase(
+  frames,
+  requestedSurface,
+  requestIdentityHash,
+  completionExpected = true,
+) {
+  const expectedRequestIdentityHash = String(requestIdentityHash || '').trim().toLowerCase();
+  if (!/^[0-9a-f]{16}$/.test(expectedRequestIdentityHash)) {
+    throw new Error('completion_prompt_frame_request_identity_expected_invalid');
+  }
+  if (completionExpected) {
+    return {
+      completionExpected: true,
+      ...assertCompletionPromptFrameSurface(
+        frames,
+        requestedSurface,
+        expectedRequestIdentityHash,
+      ),
+    };
+  }
+  const allCompletionFrames = completionPromptFrames(frames);
+  if (
+    allCompletionFrames.some(
+      (frame) => !/^[0-9a-f]{16}$/.test(String(frame.request_identity_hash || '')),
+    )
+  ) {
+    throw new Error('completion_prompt_frame_request_identity_missing');
+  }
+  const observed = completionPromptFramesForRequest(frames, expectedRequestIdentityHash);
+  if (observed.length > 0) {
+    throw new Error('unexpected_completion_prompt_frame');
+  }
+  return {
+    completionExpected: false,
+    verified: true,
+    requestedSurface: String(requestedSurface || 'web').trim() || 'web',
+    observedSurface: 'none',
+    completionFrameCount: 0,
+    requestIdentityHash: expectedRequestIdentityHash,
+    actualCompletionAgentIdHash: 'not_applicable',
+    completionProviderHashes: [],
+    completionModelHashes: [],
+  };
 }
 
 function caseAllowsEmpty(testCase) {
@@ -442,6 +868,8 @@ function baseChatPayload(testCase, args, overrides = {}) {
     model: args.agentId,
     viventiumSurface: testCase.surface || 'web',
     viventiumInputMode: testCase.surface === 'voice' ? 'voice' : 'text',
+    viventiumQaRun: true,
+    viventiumQaRunId: args.qaRunId,
     isTemporary: true,
   };
 }
@@ -520,22 +948,44 @@ function extractVisibleText(events) {
     responseMessage?.text ||
     responseMessage?.textOverride ||
     extractTextFromContent(responseMessage?.content);
-  if (finalText) {
+  if (typeof finalText === 'string' && finalText.trim()) {
     return finalText;
   }
   return events
     .map(
       (event) =>
         event?.text ||
-        event?.delta ||
+        extractTextFromContent(event?.data?.delta?.content) ||
+        (typeof event?.data?.delta?.text === 'string' ? event.data.delta.text : '') ||
+        (typeof event?.delta === 'string' ? event.delta : '') ||
         event?.content ||
         event?.response?.text ||
-        event?.responseMessage?.text ||
+        (typeof event?.responseMessage?.text === 'string' && event.responseMessage.text.trim()
+          ? event.responseMessage.text
+          : '') ||
         extractTextFromContent(event?.responseMessage?.content) ||
         '',
     )
     .filter((value) => typeof value === 'string')
     .join('');
+}
+
+function extractFinalStreamError(events) {
+  const finalEvent = [...(events || [])].reverse().find((event) => event && event.final != null);
+  if (!finalEvent) return null;
+  if (finalEvent.error != null) return finalEvent.error;
+  const content = finalEvent.responseMessage?.content;
+  if (!Array.isArray(content)) return null;
+  for (const part of content) {
+    if (part?.type !== 'error') continue;
+    const code = String(
+      part.error_class || part.errorClass || part.error_code || part.code || '',
+    )
+      .trim()
+      .toLowerCase();
+    return /^[a-z0-9_.:-]{1,120}$/.test(code) ? code : 'final_response_error';
+  }
+  return null;
 }
 
 function extractFinalMeta(events) {
@@ -730,13 +1180,14 @@ async function readSseToFinal({ url, headers = {}, timeoutMs }) {
         }
         events.push(event);
         if (event.final != null || event.error != null) {
+          const streamError = event.error || extractFinalStreamError(events);
           await reader.cancel().catch(() => {});
           return {
-            ok: event.error == null,
+            ok: streamError == null,
             status: response.status,
             events,
             text: extractVisibleText(events),
-            error: event.error || null,
+            error: streamError || null,
           };
         }
       }
@@ -823,6 +1274,305 @@ function summarizeFrames(frames) {
   return { surfaces, families, models, layers, frameCount: frames.length };
 }
 
+function assertSelectedSyntheticQaUser({ qaEmail, ownerEmail, user }) {
+  const selectedEmail = String(user?.email || '').trim().toLowerCase();
+  const expectedQaEmail = String(qaEmail || '').trim().toLowerCase();
+  const personalOwnerEmail = String(ownerEmail || '').trim().toLowerCase();
+  if (!personalOwnerEmail) {
+    throw new Error('personal_owner_identity_guard_required');
+  }
+  if (!user?._id || !expectedQaEmail || selectedEmail !== expectedQaEmail) {
+    throw new Error('selected_synthetic_qa_account_mismatch');
+  }
+  if (selectedEmail === personalOwnerEmail) {
+    throw new Error('personal_owner_account_refused');
+  }
+  const role = String(user.role || '').trim().toUpperCase();
+  if (role === 'ADMIN') {
+    throw new Error('admin_qa_account_refused');
+  }
+  if (role !== 'USER') {
+    throw new Error('non_admin_synthetic_qa_role_required');
+  }
+  const emailParts = selectedEmail.split('@');
+  if (
+    emailParts.length !== 2 ||
+    !emailParts[0] ||
+    !new Set(['example.com', 'viventium.local', 'localhost']).has(emailParts[1])
+  ) {
+    throw new Error('synthetic_qa_account_required');
+  }
+  if (user.viventiumApprovalStatus !== 'approved') {
+    throw new Error('approved_synthetic_qa_account_required');
+  }
+  if (
+    user.locked === true ||
+    user.isLocked === true ||
+    user.banned === true
+  ) {
+    throw new Error('unavailable_qa_account_refused');
+  }
+  return String(user._id);
+}
+
+function normalizeIdentifierSet(values) {
+  return new Set(
+    [...(values || [])]
+      .map((value) => String(value || '').trim())
+      .filter((value) => value && value !== 'new'),
+  );
+}
+
+async function cleanupExactQaArtifacts({
+  db,
+  qaUser,
+  qaEmail,
+  ownerEmail,
+  qaRunId,
+  runStartedAt,
+  sessionRecord,
+  mappingState,
+  preexistingConversationIds,
+  trackedConversationIds,
+}) {
+  const userId = assertSelectedSyntheticQaUser({ qaEmail, ownerEmail, user: qaUser });
+  const startedAt = runStartedAt instanceof Date ? runStartedAt : new Date(runStartedAt || 0);
+  const runId = String(qaRunId || '').trim();
+  if (
+    !db ||
+    typeof db.collection !== 'function' ||
+    Number.isNaN(startedAt.getTime()) ||
+    !/^[A-Za-z0-9._:-]{1,128}$/.test(runId)
+  ) {
+    throw new Error('native_surface_qa_cleanup_context_invalid');
+  }
+
+  const failures = [];
+  let removedMessageCount = 0;
+  let removedConversationCount = 0;
+  let removedSessionCount = 0;
+  let mappingAction = 'skipped';
+
+  try {
+    const tracked = normalizeIdentifierSet(trackedConversationIds);
+    const preexisting = normalizeIdentifierSet(preexistingConversationIds);
+    const messages = await db
+      .collection('messages')
+      .find({
+        user: userId,
+        createdAt: { $gte: startedAt },
+        'metadata.viventium.qaRun': true,
+        'metadata.viventium.qaRunId': runId,
+      })
+      .limit(MAX_QA_CLEANUP_ROWS + 1)
+      .toArray();
+    if (messages.length > MAX_QA_CLEANUP_ROWS) {
+      throw new Error('qa_cleanup_message_limit_exceeded');
+    }
+    if ([...tracked].some((conversationId) => preexisting.has(conversationId))) {
+      throw new Error('qa_cleanup_preexisting_conversation_refused');
+    }
+    const scopedConversationIds = new Set(
+      messages.map((message) => String(message?.conversationId || '').trim()).filter(Boolean),
+    );
+    const unprovenTrackedIds = [...tracked].filter(
+      (conversationId) => !scopedConversationIds.has(conversationId),
+    );
+    if (unprovenTrackedIds.length > 0) {
+      const unprovenRows = await db
+        .collection('conversations')
+        .find({ user: userId, conversationId: { $in: unprovenTrackedIds } })
+        .limit(unprovenTrackedIds.length + 1)
+        .toArray();
+      if (unprovenRows.length > 0) {
+        throw new Error('qa_cleanup_unproven_conversation_refused');
+      }
+    }
+    for (const message of messages) {
+      const createdAtMs = new Date(message?.createdAt || 0).getTime();
+      if (
+        !message?._id ||
+        String(message.user || '') !== userId ||
+        !scopedConversationIds.has(String(message.conversationId || '')) ||
+        !Number.isFinite(createdAtMs) ||
+        createdAtMs < startedAt.getTime() ||
+        message?.metadata?.viventium?.qaRun !== true ||
+        message?.metadata?.viventium?.qaRunId !== runId
+      ) {
+        throw new Error('qa_cleanup_message_scope_invalid');
+      }
+    }
+
+    const conversations = scopedConversationIds.size
+      ? await db
+          .collection('conversations')
+          .find({ user: userId, conversationId: { $in: [...scopedConversationIds] } })
+          .limit(scopedConversationIds.size + 1)
+          .toArray()
+      : [];
+    if (conversations.length > scopedConversationIds.size) {
+      throw new Error('qa_cleanup_conversation_scope_ambiguous');
+    }
+    for (const conversation of conversations) {
+      if (
+        !conversation?._id ||
+        String(conversation.user || '') !== userId ||
+        !scopedConversationIds.has(String(conversation.conversationId || ''))
+      ) {
+        throw new Error('qa_cleanup_conversation_scope_invalid');
+      }
+    }
+    for (const conversationId of scopedConversationIds) {
+      const expectedCount = messages.filter(
+        (message) => String(message.conversationId || '') === conversationId,
+      ).length;
+      const actualCount = await db
+        .collection('messages')
+        .countDocuments({ user: userId, conversationId });
+      if (actualCount !== expectedCount) {
+        throw new Error('qa_cleanup_conversation_contains_unowned_rows');
+      }
+    }
+
+    for (const message of messages) {
+      const removed = await db.collection('messages').deleteOne({
+        _id: message._id,
+        user: userId,
+        conversationId: message.conversationId,
+        'metadata.viventium.qaRun': true,
+        'metadata.viventium.qaRunId': runId,
+      });
+      if (removed?.deletedCount !== 1) {
+        throw new Error('qa_cleanup_message_delete_unverified');
+      }
+      removedMessageCount += 1;
+    }
+    for (const conversation of conversations) {
+      const remaining = await db.collection('messages').countDocuments({
+        user: userId,
+        conversationId: conversation.conversationId,
+      });
+      if (remaining !== 0) {
+        throw new Error('qa_cleanup_conversation_not_empty');
+      }
+      const removed = await db.collection('conversations').deleteOne({
+        _id: conversation._id,
+        user: userId,
+        conversationId: conversation.conversationId,
+      });
+      if (removed?.deletedCount !== 1) {
+        throw new Error('qa_cleanup_conversation_delete_unverified');
+      }
+      removedConversationCount += 1;
+    }
+    const remainingRunMessages = await db.collection('messages').countDocuments({
+      user: userId,
+      'metadata.viventium.qaRun': true,
+      'metadata.viventium.qaRunId': runId,
+    });
+    if (remainingRunMessages !== 0) {
+      throw new Error('qa_cleanup_message_residue');
+    }
+  } catch (error) {
+    failures.push(error.message || 'qa_cleanup_artifact_failure');
+  }
+
+  try {
+    if (mappingState) {
+      const telegramUserId = String(mappingState.telegramUserId || '');
+      const current = await db.collection('telegramusermappings').findOne({ telegramUserId });
+      if (
+        !current?._id ||
+        String(current._id) !== String(mappingState.currentId || '') ||
+        String(current.libreChatUserId || '') !== userId ||
+        current[QA_MAPPING_RUN_FIELD] !== runId
+      ) {
+        throw new Error('qa_cleanup_mapping_scope_invalid');
+      }
+      if (mappingState.originalDocument) {
+        const restored = await db.collection('telegramusermappings').replaceOne(
+          {
+            _id: current._id,
+            telegramUserId,
+            libreChatUserId: qaUser._id,
+            [QA_MAPPING_RUN_FIELD]: runId,
+          },
+          mappingState.originalDocument,
+        );
+        if (restored?.matchedCount !== 1) {
+          throw new Error('qa_cleanup_mapping_restore_unverified');
+        }
+        const verified = await db.collection('telegramusermappings').findOne({
+          _id: mappingState.originalDocument._id,
+        });
+        if (stableStringify(verified) !== stableStringify(mappingState.originalDocument)) {
+          throw new Error('qa_cleanup_mapping_restore_mismatch');
+        }
+        mappingAction = 'restored';
+      } else {
+        const removed = await db.collection('telegramusermappings').deleteOne({
+          _id: current._id,
+          telegramUserId,
+          libreChatUserId: qaUser._id,
+          [QA_MAPPING_RUN_FIELD]: runId,
+        });
+        if (removed?.deletedCount !== 1) {
+          throw new Error('qa_cleanup_mapping_delete_unverified');
+        }
+        const residue = await db.collection('telegramusermappings').findOne({
+          _id: current._id,
+        });
+        if (residue) {
+          throw new Error('qa_cleanup_mapping_delete_residue');
+        }
+        mappingAction = 'deleted';
+      }
+    }
+  } catch (error) {
+    failures.push(error.message || 'qa_cleanup_mapping_failure');
+  }
+
+  try {
+    if (sessionRecord) {
+      if (
+        !sessionRecord._id ||
+        String(sessionRecord.user || '') !== userId ||
+        !String(sessionRecord.refreshTokenHash || '')
+      ) {
+        throw new Error('qa_cleanup_session_scope_invalid');
+      }
+      const removed = await db.collection('sessions').deleteOne({
+        _id: sessionRecord._id,
+        user: sessionRecord.user,
+        refreshTokenHash: sessionRecord.refreshTokenHash,
+      });
+      if (removed?.deletedCount !== 1) {
+        throw new Error('qa_cleanup_session_delete_unverified');
+      }
+      const residue = await db.collection('sessions').findOne({ _id: sessionRecord._id });
+      if (residue) {
+        throw new Error('qa_cleanup_session_delete_residue');
+      }
+      removedSessionCount = 1;
+    }
+  } catch (error) {
+    failures.push(error.message || 'qa_cleanup_session_failure');
+  }
+
+  if (failures.length > 0) {
+    const error = new Error(`native_surface_qa_cleanup_failed:${failures.join(',')}`);
+    error.code = 'native_surface_qa_cleanup_failed';
+    throw error;
+  }
+  return {
+    cleaned: true,
+    mappingAction,
+    removedSessionCount,
+    removedMessageCount,
+    removedConversationCount,
+  };
+}
+
 async function createQaAuth({ args, env }) {
   if (process.env.CI || process.env.NODE_ENV === 'production') {
     throw new Error('Local QA JWT auth is forbidden in CI or production');
@@ -834,76 +1584,196 @@ async function createQaAuth({ args, env }) {
   const mongoUri = env.MONGO_URI;
   const jwtSecret = env.JWT_SECRET;
   const jwtRefreshSecret = env.JWT_REFRESH_SECRET;
-  if (!mongoUri || !jwtSecret || !jwtRefreshSecret) {
+  const configuredQaEmail = String(env.VIVENTIUM_QA_EMAIL || '').trim().toLowerCase();
+  const ownerEmail = String(env.VIVENTIUM_QA_OWNER_EMAIL || '').trim().toLowerCase();
+  if (!mongoUri || !jwtSecret || !jwtRefreshSecret || !configuredQaEmail || !ownerEmail) {
     throw new Error('Missing local QA auth prerequisites');
+  }
+  if (configuredQaEmail !== String(args.qaEmail || '').trim().toLowerCase()) {
+    throw new Error('configured_synthetic_qa_account_mismatch');
   }
 
   const { MongoClient, ObjectId } = require(path.join(LIBRECHAT_ROOT, 'node_modules', 'mongodb'));
   const jwt = require(path.join(LIBRECHAT_ROOT, 'node_modules', 'jsonwebtoken'));
   const client = new MongoClient(mongoUri);
-  await client.connect();
-  const dbName = new URL(mongoUri).pathname.replace(/^\//, '') || 'LibreChatViventium';
-  const db = client.db(dbName);
-  const user = await db.collection('users').findOne({ email: args.qaEmail });
-  if (!user?._id) {
-    await client.close();
-    throw new Error('QA user not found');
-  }
+  const runStartedAt = new Date();
+  let db = null;
+  let user = null;
+  let sessionRecord = null;
+  let mappingState = null;
+  let preexistingConversationIds = new Set();
+  try {
+    await client.connect();
+    const dbName = new URL(mongoUri).pathname.replace(/^\//, '') || 'LibreChatViventium';
+    db = client.db(dbName);
+    user = await db.collection('users').findOne({ email: configuredQaEmail });
+    const userId = assertSelectedSyntheticQaUser({
+      qaEmail: configuredQaEmail,
+      ownerEmail,
+      user,
+    });
+    const existingConversations = await db
+      .collection('conversations')
+      .find({ user: userId })
+      .project({ conversationId: 1 })
+      .toArray();
+    preexistingConversationIds = normalizeIdentifierSet(
+      existingConversations.map((conversation) => conversation.conversationId),
+    );
 
-  const userId = user._id.toString();
-  const accessToken = jwt.sign(
-    {
-      id: userId,
-      username: user.username,
-      provider: user.provider,
-      email: user.email,
-    },
-    jwtSecret,
-    { expiresIn: '2h' },
-  );
-
-  const sessionId = new ObjectId();
-  const expiration = new Date(Date.now() + 2 * 60 * 60 * 1000);
-  const refreshToken = jwt.sign(
-    { id: userId, sessionId: sessionId.toString() },
-    jwtRefreshSecret,
-    { expiresIn: Math.floor((expiration.getTime() - Date.now()) / 1000) },
-  );
-  const refreshTokenHash = crypto.createHash('sha256').update(refreshToken).digest('hex');
-  await db.collection('sessions').insertOne({
-    _id: sessionId,
-    user: user._id,
-    expiration,
-    refreshTokenHash,
-  });
-
-  const syntheticTelegramUserId = `qa_native_${hashValue(`${userId}:${args.agentId}`, 12)}`;
-  await db.collection('telegramusermappings').updateOne(
-    { telegramUserId: syntheticTelegramUserId },
-    {
-      $set: {
-        telegramUserId: syntheticTelegramUserId,
-        telegramUsername: 'qa_native_surface',
-        libreChatUserId: user._id,
-        linkedAt: new Date(),
-        lastSeenAt: new Date(),
-        alwaysVoiceResponse: false,
-        voiceResponsesEnabled: true,
+    const accessToken = jwt.sign(
+      {
+        id: userId,
+        username: user.username,
+        provider: user.provider,
+        email: user.email,
       },
-    },
-    { upsert: true },
-  );
+      jwtSecret,
+      { expiresIn: '2h' },
+    );
 
-  return {
-    close: () => client.close(),
-    db,
-    userId,
-    userEmailHash: hashValue(user.email || ''),
-    accessToken,
-    refreshToken,
-    sessionId: sessionId.toString(),
-    syntheticTelegramUserId,
-  };
+    const sessionId = new ObjectId();
+    const expiration = new Date(Date.now() + 2 * 60 * 60 * 1000);
+    const refreshToken = jwt.sign(
+      { id: userId, sessionId: sessionId.toString() },
+      jwtRefreshSecret,
+      { expiresIn: Math.floor((expiration.getTime() - Date.now()) / 1000) },
+    );
+    const refreshTokenHash = crypto.createHash('sha256').update(refreshToken).digest('hex');
+    sessionRecord = {
+      _id: sessionId,
+      user: user._id,
+      expiration,
+      refreshTokenHash,
+    };
+    const sessionInsert = await db.collection('sessions').insertOne(sessionRecord);
+    if (sessionInsert?.acknowledged !== true) {
+      throw new Error('native_surface_qa_session_creation_failed');
+    }
+
+    const syntheticTelegramUserId = `qa_native_${hashValue(`${userId}:${args.agentId}`, 12)}`;
+    const mappingCollection = db.collection('telegramusermappings');
+    const originalMapping = await mappingCollection.findOne({
+      telegramUserId: syntheticTelegramUserId,
+    });
+    if (originalMapping && String(originalMapping.libreChatUserId || '') !== userId) {
+      throw new Error('synthetic_telegram_mapping_owner_mismatch');
+    }
+    const mappingDocument = {
+      telegramUserId: syntheticTelegramUserId,
+      telegramUsername: 'qa_native_surface',
+      libreChatUserId: user._id,
+      linkedAt: new Date(),
+      lastSeenAt: new Date(),
+      alwaysVoiceResponse: false,
+      voiceResponsesEnabled: true,
+      [QA_MAPPING_RUN_FIELD]: args.qaRunId,
+    };
+    if (originalMapping) {
+      mappingState = {
+        telegramUserId: syntheticTelegramUserId,
+        currentId: originalMapping._id,
+        originalDocument: originalMapping,
+      };
+      const updated = await mappingCollection.updateOne(
+        {
+          _id: originalMapping._id,
+          telegramUserId: syntheticTelegramUserId,
+          libreChatUserId: user._id,
+        },
+        { $set: mappingDocument },
+      );
+      if (updated?.matchedCount !== 1) {
+        throw new Error('synthetic_telegram_mapping_update_failed');
+      }
+    } else {
+      const inserted = await mappingCollection.insertOne(mappingDocument);
+      if (inserted?.acknowledged !== true || !inserted.insertedId) {
+        throw new Error('synthetic_telegram_mapping_creation_failed');
+      }
+      mappingState = {
+        telegramUserId: syntheticTelegramUserId,
+        currentId: inserted.insertedId,
+        originalDocument: null,
+      };
+    }
+
+    const trackedConversationIds = new Set();
+    let cleanupPromise = null;
+    const cleanup = () => {
+      if (!cleanupPromise) {
+        cleanupPromise = (async () => {
+          try {
+            return await cleanupExactQaArtifacts({
+              db,
+              qaUser: user,
+              qaEmail: configuredQaEmail,
+              ownerEmail,
+              qaRunId: args.qaRunId,
+              runStartedAt,
+              sessionRecord,
+              mappingState,
+              preexistingConversationIds,
+              trackedConversationIds,
+            });
+          } finally {
+            await client.close();
+          }
+        })();
+      }
+      return cleanupPromise;
+    };
+
+    return {
+      cleanup,
+      trackCreatedConversations(values) {
+        for (const value of values || []) {
+          const conversationId = String(value?.conversationId || value || '').trim();
+          if (!conversationId || conversationId === 'new') {
+            continue;
+          }
+          if (preexistingConversationIds.has(conversationId)) {
+            throw new Error('qa_run_reused_preexisting_conversation');
+          }
+          trackedConversationIds.add(conversationId);
+        }
+      },
+      db,
+      userId,
+      userEmailHash: hashValue(user.email || ''),
+      accessToken,
+      refreshToken,
+      sessionId: sessionId.toString(),
+      syntheticTelegramUserId,
+    };
+  } catch (error) {
+    let cleanupError = null;
+    if (db && user && (sessionRecord || mappingState)) {
+      try {
+        await cleanupExactQaArtifacts({
+          db,
+          qaUser: user,
+          qaEmail: configuredQaEmail,
+          ownerEmail,
+          qaRunId: args.qaRunId,
+          runStartedAt,
+          sessionRecord,
+          mappingState,
+          preexistingConversationIds,
+          trackedConversationIds: new Set(),
+        });
+      } catch (candidate) {
+        cleanupError = candidate;
+      }
+    }
+    await client.close().catch(() => {});
+    if (cleanupError) {
+      const failure = new Error('native_surface_qa_setup_cleanup_failed');
+      failure.cause = cleanupError;
+      throw failure;
+    }
+    throw error;
+  }
 }
 
 async function createCallSession({ args, token, requestedVoiceRoute = null }) {
@@ -930,8 +1800,21 @@ async function createCallSession({ args, token, requestedVoiceRoute = null }) {
   return response.body;
 }
 
-async function runAgentsTurn({ args, token, testCase, text, conversationId = 'new', parentMessageId = NO_PARENT }) {
+async function runAgentsTurn({
+  args,
+  token,
+  ownerId,
+  testCase,
+  text,
+  conversationId = 'new',
+  parentMessageId = NO_PARENT,
+}) {
   const payload = baseChatPayload(testCase, args, { text, conversationId, parentMessageId });
+  const requestIdentityHash = buildPromptFrameRequestIdentityHash({
+    ownerId,
+    surface: trustedCompletionSurface(testCase.surface),
+    sourceEventId: payload.messageId,
+  });
   const start = await fetchJson(
     `${args.apiBase}/api/agents/chat/agents`,
     {
@@ -952,6 +1835,7 @@ async function runAgentsTurn({ args, token, testCase, text, conversationId = 'ne
       text: '',
       error: `agents_start_http_${start.status}`,
       route: 'agents_api',
+      requestIdentityHash,
       startBodyKeys: Object.keys(start.body || {}).slice(0, 20),
     };
   }
@@ -967,6 +1851,7 @@ async function runAgentsTurn({ args, token, testCase, text, conversationId = 'ne
     text: stream.text,
     error: stream.error,
     route: 'agents_api',
+    requestIdentityHash,
     streamIdHash: hashValue(start.body.streamId),
     eventCount: stream.events.length,
     finalMeta: extractFinalMeta(stream.events),
@@ -976,16 +1861,18 @@ async function runAgentsTurn({ args, token, testCase, text, conversationId = 'ne
   };
 }
 
-async function runAgentsSurface({ args, token, testCase }) {
+async function runAgentsSurface({ args, token, ownerId, testCase }) {
   const seedPrompts = normalizeSeedPrompts(testCase);
   let conversationId = 'new';
   let parentMessageId = NO_PARENT;
   const seedEvidence = [];
+  const cleanupFinalMetas = [];
 
   for (const seedText of seedPrompts) {
     const seed = await runAgentsTurn({
       args,
       token,
+      ownerId,
       testCase,
       text: seedText,
       conversationId,
@@ -996,6 +1883,9 @@ async function runAgentsSurface({ args, token, testCase }) {
       responseHash: hashValue(seed.text || ''),
       eventCount: seed.eventCount || 0,
     });
+    if (seed.finalMeta?.conversationId) {
+      cleanupFinalMetas.push(seed.finalMeta);
+    }
     if (!seed.ok || !seed.finalMeta?.conversationId || !seed.finalMeta?.responseMessageId) {
       return {
         ...seed,
@@ -1012,15 +1902,27 @@ async function runAgentsSurface({ args, token, testCase }) {
   const result = await runAgentsTurn({
     args,
     token,
+    ownerId,
     testCase,
     text: buildText(testCase),
     conversationId,
     parentMessageId,
   });
-  return { ...result, seedEvidence };
+  if (result.finalMeta?.conversationId) {
+    cleanupFinalMetas.push(result.finalMeta);
+  }
+  return { ...result, seedEvidence, cleanupFinalMetas };
 }
 
-async function runVoiceSurface({ args, token, env, testCase, listenOnly = false, wingMode = false }) {
+async function runVoiceSurface({
+  args,
+  token,
+  ownerId,
+  env,
+  testCase,
+  listenOnly = false,
+  wingMode = false,
+}) {
   const session = await createCallSession({
     args,
     token,
@@ -1037,6 +1939,12 @@ async function runVoiceSurface({ args, token, env, testCase, listenOnly = false,
     'Content-Type': 'application/json',
     'User-Agent': USER_AGENT,
   };
+  const sourceEventId = crypto.randomUUID();
+  const requestIdentityHash = buildPromptFrameRequestIdentityHash({
+    ownerId,
+    surface: 'voice',
+    sourceEventId,
+  });
 
   if (listenOnly) {
     await fetchJson(
@@ -1073,6 +1981,9 @@ async function runVoiceSurface({ args, token, env, testCase, listenOnly = false,
         viventiumInputMode: 'voice_call',
         voiceMode: true,
         voiceProvider: 'plain_tts',
+        sourceEventId,
+        viventiumQaRun: true,
+        viventiumQaRunId: args.qaRunId,
       }),
     },
     30_000,
@@ -1084,6 +1995,7 @@ async function runVoiceSurface({ args, token, env, testCase, listenOnly = false,
       startStatus: start.status,
       text: '',
       route: 'voice_gateway_listen_only',
+      requestIdentityHash,
       error: start.ok ? null : `listen_only_http_${start.status}`,
       statusBodyHash: hashValue(start.body || {}),
       callSessionHash: hashValue(session.callSessionId),
@@ -1096,6 +2008,7 @@ async function runVoiceSurface({ args, token, env, testCase, listenOnly = false,
       startStatus: start.status,
       text: '',
       route: 'voice_gateway',
+      requestIdentityHash,
       error: `voice_start_http_${start.status}`,
       startBodyKeys: Object.keys(start.body || {}).slice(0, 20),
       callSessionHash: hashValue(session.callSessionId),
@@ -1112,6 +2025,7 @@ async function runVoiceSurface({ args, token, env, testCase, listenOnly = false,
     streamStatus: stream.status,
     text: stream.text,
     route: 'voice_gateway',
+    requestIdentityHash,
     error: stream.error,
     streamIdHash: hashValue(start.body.streamId),
     callSessionHash: hashValue(session.callSessionId),
@@ -1124,6 +2038,18 @@ async function runVoiceSurface({ args, token, env, testCase, listenOnly = false,
 }
 
 async function runTelegramSurface({ args, env, qaAuth, testCase }) {
+  const sourceSequence = nextTelegramSourceSequence();
+  const sourceOrderScope = buildTelegramSourceOrderScope({
+    ownerId: qaAuth.userId,
+    telegramUserId: qaAuth.syntheticTelegramUserId,
+    telegramChatId: qaAuth.syntheticTelegramUserId,
+  });
+  const sourceEventId = buildTelegramSourceEventId({ sourceOrderScope, sourceSequence });
+  const requestIdentityHash = buildPromptFrameRequestIdentityHash({
+    ownerId: qaAuth.userId,
+    surface: 'telegram',
+    sourceEventId,
+  });
   const body = {
     text: buildText(testCase),
     conversationId: 'new',
@@ -1131,27 +2057,46 @@ async function runTelegramSurface({ args, env, qaAuth, testCase }) {
     telegramUserId: qaAuth.syntheticTelegramUserId,
     telegramChatId: qaAuth.syntheticTelegramUserId,
     telegramUsername: 'qa_native_surface',
-    telegramMessageId: `qa-${crypto.randomUUID()}`,
-    telegramUpdateId: `qa-${crypto.randomUUID()}`,
+    telegramMessageId: String(sourceSequence),
+    telegramUpdateId: String(sourceSequence),
+    telegramMessageThreadId: '',
+    sourceSequence,
+    sourceOrderScope,
+    sourceEventId,
     traceId: `qa-${crypto.randomUUID()}`,
     voiceMode: testCase.surface === 'voice',
+    viventiumQaRun: true,
+    viventiumQaRunId: args.qaRunId,
   };
   const headers = {
     'X-VIVENTIUM-TELEGRAM-SECRET': env.VIVENTIUM_TELEGRAM_SECRET || '',
     'Content-Type': 'application/json',
     'User-Agent': USER_AGENT,
   };
-  const start = await fetchJson(
-    `${args.apiBase}/api/viventium/telegram/chat`,
-    { method: 'POST', headers, body: JSON.stringify(body) },
-    30_000,
-  );
+  let sourceOrder;
+  let start;
+  try {
+    ({ sourceOrder, start } = await startTelegramSurfaceTurn({ args, headers, body }));
+  } catch (error) {
+    return {
+      ok: false,
+      startStatus: 0,
+      text: '',
+      route: 'telegram_gateway',
+      requestIdentityHash,
+      sourceOrderObserved: false,
+      error: scrubForPublic(error?.message || 'telegram_source_order_observation_unverified'),
+    };
+  }
   if (!start.ok || !start.body?.streamId) {
     return {
       ok: false,
       startStatus: start.status,
       text: '',
       route: 'telegram_gateway',
+      requestIdentityHash,
+      sourceOrderObserved: true,
+      sourceOrderReceiptHash: hashValue(stableStringify(sourceOrder)),
       error: `telegram_start_http_${start.status}`,
       startBodyKeys: Object.keys(start.body || {}).slice(0, 20),
     };
@@ -1169,6 +2114,9 @@ async function runTelegramSurface({ args, env, qaAuth, testCase }) {
     streamStatus: stream.status,
     text: stream.text,
     route: 'telegram_gateway',
+    requestIdentityHash,
+    sourceOrderObserved: true,
+    sourceOrderReceiptHash: hashValue(stableStringify(sourceOrder)),
     error: stream.error,
     streamIdHash: hashValue(start.body.streamId),
     eventCount: stream.events.length,
@@ -1179,7 +2127,61 @@ async function runTelegramSurface({ args, env, qaAuth, testCase }) {
   };
 }
 
+async function startTelegramSurfaceTurn({ args, headers, body, fetcher = fetchJson }) {
+  const sourceSequence = Number(body?.sourceSequence);
+  const sourceOrder = await fetcher(
+    `${args.apiBase}/api/viventium/telegram/source-order`,
+    {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        telegramUserId: body?.telegramUserId,
+        telegramChatId: body?.telegramChatId,
+        telegramMessageThreadId: body?.telegramMessageThreadId,
+        telegramMessageId: body?.telegramMessageId,
+        sourceSequence,
+      }),
+    },
+    30_000,
+  );
+  if (
+    !Number.isSafeInteger(sourceSequence) ||
+    sourceSequence < 0 ||
+    !sourceOrder.ok ||
+    sourceOrder.body?.observed !== true ||
+    sourceOrder.body?.stale !== false ||
+    sourceOrder.body?.sourceOrderScope !== body?.sourceOrderScope ||
+    sourceOrder.body?.sourceEventId !== body?.sourceEventId ||
+    sourceOrder.body?.latestSourceSequence !== sourceSequence
+  ) {
+    throw new Error('telegram_source_order_observation_unverified');
+  }
+  const start = await fetcher(
+    `${args.apiBase}/api/viventium/telegram/chat`,
+    { method: 'POST', headers, body: JSON.stringify(body) },
+    30_000,
+  );
+  return {
+    sourceOrder: {
+      observed: true,
+      sourceOrderScope: sourceOrder.body.sourceOrderScope,
+      sourceEventId: sourceOrder.body.sourceEventId,
+      latestSourceSequence: sourceOrder.body.latestSourceSequence,
+      stale: false,
+      durability: scrubForPublic(sourceOrder.body.durability || ''),
+      replicaSafe: sourceOrder.body.replicaSafe === true,
+    },
+    start,
+  };
+}
+
 async function runSchedulerSurface({ args, env, qaAuth, testCase }) {
+  const sourceEventId = crypto.randomUUID();
+  const requestIdentityHash = buildPromptFrameRequestIdentityHash({
+    ownerId: qaAuth.userId,
+    surface: 'workbench',
+    sourceEventId,
+  });
   const headers = {
     'X-VIVENTIUM-SCHEDULER-SECRET': env.VIVENTIUM_SCHEDULER_SECRET || '',
     'Content-Type': 'application/json',
@@ -1196,7 +2198,10 @@ async function runSchedulerSurface({ args, env, qaAuth, testCase }) {
         agentId: args.agentId,
         userId: qaAuth.userId,
         scheduleId: `qa-native-${hashValue(testCase.id, 10)}`,
+        sourceEventId,
         viventiumSurface: 'scheduler',
+        viventiumQaRun: true,
+        viventiumQaRunId: args.qaRunId,
       }),
     },
     30_000,
@@ -1207,6 +2212,7 @@ async function runSchedulerSurface({ args, env, qaAuth, testCase }) {
       startStatus: start.status,
       text: '',
       route: 'scheduler_gateway',
+      requestIdentityHash,
       error: `scheduler_start_http_${start.status}`,
       startBodyKeys: Object.keys(start.body || {}).slice(0, 20),
     };
@@ -1224,6 +2230,7 @@ async function runSchedulerSurface({ args, env, qaAuth, testCase }) {
     streamStatus: stream.status,
     text: stream.text,
     route: 'scheduler_gateway',
+    requestIdentityHash,
     error: stream.error,
     streamIdHash: hashValue(start.body.streamId),
     eventCount: stream.events.length,
@@ -1236,7 +2243,7 @@ async function runSchedulerSurface({ args, env, qaAuth, testCase }) {
 
 async function runSurfaceCase({ args, env, qaAuth, token, testCase }) {
   if (testCase.surface === 'voice') {
-    return runVoiceSurface({ args, token, env, testCase });
+    return runVoiceSurface({ args, token, ownerId: qaAuth.userId, env, testCase });
   }
   if (testCase.surface === 'telegram') {
     return runTelegramSurface({ args, env, qaAuth, testCase });
@@ -1245,12 +2252,26 @@ async function runSurfaceCase({ args, env, qaAuth, token, testCase }) {
     return runSchedulerSurface({ args, env, qaAuth, testCase });
   }
   if (testCase.surface === 'listen_only') {
-    return runVoiceSurface({ args, token, env, testCase, listenOnly: true });
+    return runVoiceSurface({
+      args,
+      token,
+      ownerId: qaAuth.userId,
+      env,
+      testCase,
+      listenOnly: true,
+    });
   }
   if (testCase.surface === 'wing') {
-    return runVoiceSurface({ args, token, env, testCase, wingMode: true });
+    return runVoiceSurface({
+      args,
+      token,
+      ownerId: qaAuth.userId,
+      env,
+      testCase,
+      wingMode: true,
+    });
   }
-  return runAgentsSurface({ args, token, testCase });
+  return runAgentsSurface({ args, token, ownerId: qaAuth.userId, testCase });
 }
 
 async function observePostCaseDbEvidence({ db, result, maxObserveMs, followUpGraceMs }) {
@@ -1469,6 +2490,8 @@ async function runEphemeralJudgeTurn({ args, token, prompt }) {
     ephemeralAgent: {},
     viventiumSurface: 'web',
     viventiumInputMode: 'text',
+    viventiumQaRun: true,
+    viventiumQaRunId: args.qaRunId,
     isTemporary: true,
   };
   const start = await fetchJson(
@@ -1503,6 +2526,7 @@ async function runEphemeralJudgeTurn({ args, token, prompt }) {
     error: stream.error || null,
     status: stream.status,
     eventCount: stream.events.length,
+    finalMeta: extractFinalMeta(stream.events),
   };
 }
 
@@ -1578,6 +2602,7 @@ async function runJudge({
   comparisonTestCase = null,
 }) {
   let lastJudgeResult = null;
+  const cleanupFinalMetas = [];
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const judgePrompt = [
       attempt === 0
@@ -1592,6 +2617,9 @@ async function runJudge({
     ].filter(Boolean).join('\n\n');
     const judgeResult = await runEphemeralJudgeTurn({ args, token, prompt: judgePrompt });
     lastJudgeResult = judgeResult;
+    if (judgeResult.finalMeta?.conversationId) {
+      cleanupFinalMetas.push(judgeResult.finalMeta);
+    }
     const parsed = parseJudgeJson(judgeResult.text);
     if (!parsed) {
       continue;
@@ -1620,6 +2648,7 @@ async function runJudge({
       notes: typeof parsed.notes === 'string' ? parsed.notes : '',
       privateText: judgeResult.text,
       attempts: attempt + 1,
+      cleanupFinalMetas,
     };
   }
 
@@ -1631,6 +2660,7 @@ async function runJudge({
     error: lastJudgeResult?.error || 'judge_json_parse_failed',
     privateText: lastJudgeResult?.text || '',
     attempts: 2,
+    cleanupFinalMetas,
   };
 }
 
@@ -1769,18 +2799,112 @@ async function pageTitleSafe(_clientBase) {
   return 'captured_in_private_screenshot';
 }
 
+function hashFinalMeta(finalMeta) {
+  if (!finalMeta || typeof finalMeta !== 'object') {
+    return null;
+  }
+  const hashes = {};
+  for (const [key, value] of Object.entries(finalMeta)) {
+    if (String(value || '').trim()) {
+      hashes[`${key}Hash`] = hashValue(String(value));
+    }
+  }
+  return Object.keys(hashes).length > 0 ? hashes : null;
+}
+
+function artifactSafePromptFrame(frame) {
+  if (!frame || typeof frame !== 'object') {
+    return frame;
+  }
+  const { debug_redacted_layers: _debugLayers, ...safeFrame } = frame;
+  return safeFrame;
+}
+
+function artifactSafeResult(result) {
+  if (!result || typeof result !== 'object') {
+    return result;
+  }
+  const {
+    finalMeta,
+    cleanupFinalMetas,
+    privateEvents,
+    ...safeResult
+  } = result;
+  const events = Array.isArray(privateEvents) ? privateEvents : [];
+  const finalMetaHashes = hashFinalMeta(finalMeta);
+  return {
+    ...safeResult,
+    ...(finalMetaHashes ? { finalMetaHashes } : {}),
+    ...(Array.isArray(cleanupFinalMetas) && cleanupFinalMetas.length > 0
+      ? {
+          cleanupFinalMetaHashes: cleanupFinalMetas
+            .map(hashFinalMeta)
+            .filter(Boolean),
+        }
+      : {}),
+    privateEventCount: events.length,
+    privateEventHashes: events.map((event) => hashValue(event)),
+    nativeEventSummary: summarizeNativeEventsForJudge(events),
+  };
+}
+
+function artifactSafeJudge(judge) {
+  if (!judge || typeof judge !== 'object') {
+    return judge;
+  }
+  const { cleanupFinalMetas, ...safeJudge } = judge;
+  return {
+    ...safeJudge,
+    ...(Array.isArray(cleanupFinalMetas) && cleanupFinalMetas.length > 0
+      ? {
+          cleanupFinalMetaHashes: cleanupFinalMetas
+            .map(hashFinalMeta)
+            .filter(Boolean),
+        }
+      : {}),
+  };
+}
+
+function buildCanonicalArtifact(privateRun) {
+  return {
+    ...privateRun,
+    cases: (privateRun.cases || []).map((item) => {
+      const requestBoundFrames = promptFramesForRequest(
+        item.private?.frames,
+        item.requestIdentityHash,
+      );
+      const completionFrames = completionPromptFramesForRequest(
+        item.private?.completionFrames,
+        item.requestIdentityHash,
+      );
+      return {
+        ...item,
+        frameSummary: summarizeFrames(requestBoundFrames),
+        judge: artifactSafeJudge(item.judge),
+        private: item.private
+          ? {
+              ...item.private,
+              result: artifactSafeResult(item.private.result),
+              frames: requestBoundFrames.map(artifactSafePromptFrame),
+              completionFrames: completionFrames.map(artifactSafePromptFrame),
+            }
+          : item.private,
+      };
+    }),
+  };
+}
+
 async function main() {
   const args = parseArgs(process.argv.slice(2));
+  assertNativeLiveRunRequested(args);
   ensureDir(args.outputDir);
   ensureDir(path.dirname(args.publicReport));
 
   const env = loadLocalEnv();
   const promptBank = readJson(args.promptBank);
-  const cases = flattenPromptCases(promptBank).slice(0, args.maxCases);
-  const semanticRequired = cases.some(
-    (testCase) =>
-      testCase?.decisionQualityContract?.transportPassIsSemanticPass === false,
-  );
+  const cases = selectPromptCases(promptBank, args);
+  const selectedCaseIds = cases.map((testCase) => testCase.id);
+  const semanticRequired = cases.some(caseRequiresSemanticJudge);
   const runtimeHealth = await fetchJson(`${args.apiBase}/health`, {}, 10_000);
   const runtimeConfig = await fetchJson(`${args.apiBase}/api/config`, {}, 10_000);
 
@@ -1792,7 +2916,14 @@ async function main() {
       clientBaseHash: hashValue(args.clientBase),
       qaEmailHash: hashValue(args.qaEmail),
       agentIdHash: hashValue(args.agentId),
+      qaRunIdHash: hashValue(args.qaRunId),
       maxCases: args.maxCases,
+      family: args.family,
+      caseId: args.caseId,
+      caseIds: args.caseIds,
+      surface: args.surface,
+      promptId: args.promptId,
+      runLive: args.runLive,
       runJudge: args.runJudge,
       semanticRequired,
       judgeRouteHash: args.runJudge ? hashValue(`${args.judgeEndpoint}:${args.judgeModel}`) : '',
@@ -1809,6 +2940,16 @@ async function main() {
       },
     },
     browserProbe: null,
+    selection: {
+      requestedFamily: args.family || '',
+      requestedCaseId: args.caseId || '',
+      requestedCaseIds: args.caseIds,
+      requestedSurface: args.surface || '',
+      requestedPromptId: args.promptId || '',
+      selectedCaseIds,
+      selectedCaseCount: selectedCaseIds.length,
+    },
+    cleanup: { ok: false, status: 'pending' },
     cases: [],
   };
 
@@ -1831,6 +2972,17 @@ async function main() {
       let judge = null;
       let frameDelta = { frames: [], afterOffsets: offsets };
       let fixtureEvidence = [];
+      let completionEvidence = {
+        completionExpected: testCase.surface !== 'listen_only',
+        verified: false,
+        requestedSurface: trustedCompletionSurface(testCase.surface),
+        observedSurface: 'unknown',
+        completionFrameCount: 0,
+        requestIdentityHash: 'missing',
+        actualCompletionAgentIdHash: 'missing',
+        completionProviderHashes: [],
+        completionModelHashes: [],
+      };
       try {
         if (needsStarterMorningBriefingFixture(testCase)) {
           const fixtureResult = await applyStarterMorningBriefingFixture({
@@ -1851,6 +3003,13 @@ async function main() {
           token: qaAuth.accessToken,
           testCase,
         });
+        if (/^[0-9a-f]{16}$/.test(String(surfaceResult.requestIdentityHash || ''))) {
+          completionEvidence.requestIdentityHash = surfaceResult.requestIdentityHash;
+        }
+        qaAuth.trackCreatedConversations([
+          ...(surfaceResult.cleanupFinalMetas || []),
+          surfaceResult.finalMeta,
+        ]);
         const observeMs = surfaceResult.hasCortexActivation
           ? args.postCaseObserveMs
           : Math.min(args.postCaseObserveMs, 2500);
@@ -1863,20 +3022,49 @@ async function main() {
         await new Promise((resolve) => setTimeout(resolve, 750));
         frameDelta = readFrameDelta(caseOffsets);
         offsets = frameDelta.afterOffsets;
+        if (surfaceResult.ok) {
+          completionEvidence = completionEvidenceForCase(
+            frameDelta.frames,
+            trustedCompletionSurface(testCase.surface),
+            surfaceResult.requestIdentityHash,
+            testCase.surface !== 'listen_only',
+          );
+        }
       } catch (error) {
         surfaceResult = {
+          ...(surfaceResult || {}),
           ok: false,
-          text: '',
+          text: surfaceResult?.text || '',
           error: scrubForPublic(error.message || String(error)),
-          route: testCase.surface || 'web',
+          route: surfaceResult?.route || testCase.surface || 'web',
         };
       }
 
-      const frameSummary = summarizeFrames(frameDelta.frames);
+      const requestBoundFrames = promptFramesForRequest(
+        frameDelta.frames,
+        surfaceResult.requestIdentityHash,
+      );
+      const frameSummary = summarizeFrames(requestBoundFrames);
       privateRun.cases.push({
         caseId: testCase.id,
         familyId: testCase.familyId,
         surface: testCase.surface || 'web',
+        requestedSurface: testCase.surface || 'web',
+        requestedCompletionSurface: completionEvidence.requestedSurface,
+        observedCompletionSurface: completionEvidence.observedSurface,
+        completionExpected: completionEvidence.completionExpected,
+        completionSurfaceVerified: completionEvidence.verified,
+        completionFrameCount: completionEvidence.completionFrameCount,
+        requestIdentityHash: completionEvidence.requestIdentityHash,
+        actualCompletionAgentIdHash: completionEvidence.actualCompletionAgentIdHash,
+        completionProviderHashes: completionEvidence.completionProviderHashes,
+        completionModelHashes: completionEvidence.completionModelHashes,
+        requestedProviderHashes: completionEvidence.requestedProviderHashes || [],
+        requestedModelHashes: completionEvidence.requestedModelHashes || [],
+        requestedEfforts: completionEvidence.requestedEfforts || [],
+        effectiveEfforts: completionEvidence.effectiveEfforts || [],
+        fallbackUsed: completionEvidence.fallbackUsed === true,
+        fallbackReasons: completionEvidence.fallbackReasons || [],
         route: surfaceResult.route || 'unknown',
         status: surfaceResult.ok ? 'completed' : 'failed',
         durationMs: Date.now() - startedAt,
@@ -1895,10 +3083,17 @@ async function main() {
         eventCount: surfaceResult.eventCount || 0,
         frameSummary,
         judge,
+        semanticJudged: false,
+        semanticPass: false,
+        semanticState: 'not_run',
         private: {
           fixtureEvidence,
           result: surfaceResult,
-          frames: frameDelta.frames,
+          frames: requestBoundFrames,
+          completionFrames: completionPromptFramesForRequest(
+            frameDelta.frames,
+            surfaceResult.requestIdentityHash,
+          ),
         },
       });
     }
@@ -1927,6 +3122,9 @@ async function main() {
             score: 0,
             error: `comparison_case_unavailable:${scrubForPublic(testCase.comparisonCaseId)}`,
           };
+          item.semanticJudged = true;
+          item.semanticPass = false;
+          item.semanticState = 'semantic_pair_unavailable';
           continue;
         }
         item.judge = await runJudge({
@@ -1937,21 +3135,44 @@ async function main() {
           comparisonResult,
           comparisonTestCase,
         });
+        qaAuth.trackCreatedConversations(item.judge.cleanupFinalMetas || []);
+        item.semanticJudged = Boolean(item.judge?.verdict);
+        item.semanticPass = item.judge?.verdict === 'pass';
+        item.semanticState = item.judge?.verdict || 'not_run';
         await new Promise((resolve) => setTimeout(resolve, 500));
         const judgeDelta = readFrameDelta(offsets);
         offsets = judgeDelta.afterOffsets;
       }
     }
   } finally {
+    let cleanupFailure = null;
     if (qaAuth) {
-      await qaAuth.close().catch(() => {});
+      try {
+        const cleanup = await qaAuth.cleanup();
+        if (cleanup?.cleaned !== true) {
+          throw new Error('native_surface_qa_cleanup_unverified');
+        }
+        privateRun.cleanup = { ok: true, status: 'complete', ...cleanup };
+      } catch (error) {
+        cleanupFailure = error;
+        privateRun.cleanup = {
+          ok: false,
+          status: 'failed',
+          error: scrubForPublic(error?.code || error?.message || 'native_surface_qa_cleanup_failed'),
+        };
+      }
+    }
+    if (cleanupFailure) {
+      privateRun.cleanupFailure = scrubForPublic(
+        cleanupFailure?.code || cleanupFailure?.message || 'native_surface_qa_cleanup_failed',
+      );
     }
   }
 
   const privateJsonPath = path.join(args.outputDir, 'native-surface-playwright-qa.json');
-  fs.writeFileSync(privateJsonPath, JSON.stringify(privateRun, null, 2));
-
   const summary = summarizeRun(privateRun);
+  privateRun.summary = summary;
+  fs.writeFileSync(privateJsonPath, JSON.stringify(buildCanonicalArtifact(privateRun), null, 2));
   writePublicReport({ args, summary, privateRun, privateJsonPath });
 
   console.log(
@@ -1961,6 +3182,13 @@ async function main() {
         publicReport: path.relative(REPO_ROOT, args.publicReport),
         privateJsonPathHash: hashValue(privateJsonPath),
         privateJsonWritten: true,
+        selectedCaseCount: summary.selectedCaseCount,
+        resultCount: summary.resultCount,
+        completedCount: summary.completedCount,
+        failedCount: summary.failedCount,
+        semanticJudgedCount: summary.semanticJudgedCount,
+        semanticPassedCount: summary.semanticPassedCount,
+        semanticFailedCount: summary.semanticFailedCount,
         completed: summary.completed,
         failed: summary.failed,
         semanticPass: summary.semanticPass,
@@ -1976,7 +3204,10 @@ async function main() {
   );
 
   if (
-    summary.failed > 0 ||
+    !summary.selectedCoverageOk ||
+    !summary.completionEvidenceOk ||
+    !summary.cleanupOk ||
+    summary.failedCount > 0 ||
     (summary.semanticRequired && summary.judged !== summary.total) ||
     summary.semanticPartial > 0 ||
     summary.semanticFail > 0 ||
@@ -1990,6 +3221,17 @@ async function main() {
 
 function summarizeRun(privateRun) {
   const cases = privateRun.cases || [];
+  const selectedCaseIds = (privateRun.selection?.selectedCaseIds || []).map(String);
+  const resultCaseIds = cases.map((item) => String(item.caseId || ''));
+  const selectedCaseCount = Number(privateRun.selection?.selectedCaseCount || 0);
+  const resultCount = cases.length;
+  const selectedCoverageOk =
+    selectedCaseCount > 0 &&
+    selectedCaseCount === selectedCaseIds.length &&
+    selectedCaseCount === resultCount &&
+    new Set(selectedCaseIds).size === selectedCaseIds.length &&
+    new Set(resultCaseIds).size === resultCaseIds.length &&
+    stableStringify(selectedCaseIds) === stableStringify(resultCaseIds);
   const completed = cases.filter((item) => item.status === 'completed').length;
   const failed = cases.length - completed;
   const judged = cases.filter((item) => item.judge?.verdict).length;
@@ -1998,6 +3240,47 @@ function summarizeRun(privateRun) {
   const semanticFail = cases.filter(
     (item) => item.judge && !['pass', 'partial'].includes(item.judge.verdict),
   ).length;
+  const semanticFailedCount = judged - semanticPass;
+  const completionEvidenceOk = cases.every((item) => {
+    const contractPresent =
+      typeof item.requestedSurface === 'string' &&
+      item.requestedSurface.length > 0 &&
+      typeof item.requestedCompletionSurface === 'string' &&
+      item.requestedCompletionSurface.length > 0 &&
+      typeof item.observedCompletionSurface === 'string' &&
+      item.observedCompletionSurface.length > 0 &&
+      typeof item.completionExpected === 'boolean' &&
+      typeof item.completionSurfaceVerified === 'boolean' &&
+      /^[0-9a-f]{16}$/.test(String(item.requestIdentityHash || '')) &&
+      typeof item.actualCompletionAgentIdHash === 'string' &&
+      Array.isArray(item.completionProviderHashes) &&
+      Array.isArray(item.completionModelHashes) &&
+      typeof item.semanticPass === 'boolean' &&
+      Array.isArray(item.private?.completionFrames);
+    if (!contractPresent || item.status !== 'completed') {
+      return false;
+    }
+    if (item.completionExpected === false) {
+      return (
+        item.completionSurfaceVerified === true &&
+        item.observedCompletionSurface === 'none' &&
+        item.actualCompletionAgentIdHash === 'not_applicable' &&
+        item.private.completionFrames.length === 0
+      );
+    }
+    return (
+      item.completionSurfaceVerified === true &&
+      item.observedCompletionSurface === item.requestedCompletionSurface &&
+      /^[0-9a-f]{16}$/.test(item.actualCompletionAgentIdHash) &&
+      item.completionProviderHashes.length > 0 &&
+      item.completionModelHashes.length > 0 &&
+      item.private.completionFrames.length > 0 &&
+      item.private.completionFrames.every(
+        (frame) => frame.request_identity_hash === item.requestIdentityHash,
+      )
+    );
+  });
+  const cleanupOk = privateRun.cleanup?.ok === true;
   const routes = [...new Set(cases.map((item) => item.route).filter(Boolean))].sort();
   const surfaces = [...new Set(cases.map((item) => item.surface).filter(Boolean))].sort();
   const frameSurfaces = [
@@ -2045,6 +3328,9 @@ function summarizeRun(privateRun) {
       privateRun.args?.semanticRequired && judged !== cases.length
         ? 'semantic_judge_required'
         : privateRun.browserProbe?.ok &&
+      selectedCoverageOk &&
+      completionEvidenceOk &&
+      cleanupOk &&
       failed === 0 &&
       judged === cases.length &&
       semanticPartial === 0 &&
@@ -2052,11 +3338,26 @@ function summarizeRun(privateRun) {
       duplicateResponseQualityFailures.length === 0 &&
       unresolvedAsyncQualityFailures.length === 0
         ? 'completed_with_semantic_native_surface_evidence'
-        : privateRun.browserProbe?.ok && failed === 0 && judged === 0
+        : privateRun.browserProbe?.ok &&
+            selectedCoverageOk &&
+            completionEvidenceOk &&
+            cleanupOk &&
+            failed === 0 &&
+            judged === 0
           ? 'completed_native_surface_evidence_without_semantic_judge'
-        : 'completed_with_failures_or_gaps',
+          : 'completed_with_failures_or_gaps',
     browserOk: Boolean(privateRun.browserProbe?.ok),
+    cleanupOk,
+    selectedCoverageOk,
+    completionEvidenceOk,
     semanticRequired: Boolean(privateRun.args?.semanticRequired),
+    selectedCaseCount,
+    resultCount,
+    completedCount: completed,
+    failedCount: failed,
+    semanticJudgedCount: judged,
+    semanticPassedCount: semanticPass,
+    semanticFailedCount,
     total: cases.length,
     completed,
     failed,
@@ -2170,11 +3471,27 @@ function writePublicReport({ args, summary, privateRun, privateJsonPath }) {
 }
 
 module.exports = {
+  assertCompletionPromptFrameSurface,
+  assertNativeLiveRunRequested,
+  assertSelectedSyntheticQaUser,
+  buildCanonicalArtifact,
+  buildPromptFrameRequestIdentityHash,
+  buildTelegramSourceEventId,
+  buildTelegramSourceOrderScope,
   buildJudgePrompt,
   buildText,
+  caseRequiresSemanticJudge,
+  cleanupExactQaArtifacts,
+  completionEvidenceForCase,
+  extractFinalStreamError,
+  extractVisibleText,
   flattenPromptCases,
+  parseArgs,
   scoreNativeDecisionQualityJudgment,
+  selectPromptCases,
+  startTelegramSurfaceTurn,
   summarizeRun,
+  trustedCompletionSurface,
 };
 
 if (require.main === module) {

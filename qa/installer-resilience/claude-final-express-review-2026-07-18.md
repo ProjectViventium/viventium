@@ -8,8 +8,7 @@ VM evidence, provisional conclusions, and alternative explanations. The session 
 Extra effort in review-only mode. It was explicitly forbidden to edit, commit, push, publish,
 connect an account, or mutate personal/local/cloud state. Claude made no changes.
 
-Claude verdict: **PARTIAL**. Architecture passed after the documented corrections; the release
-conclusion remained partial.
+Claude verdict: **architecture `PASS-WITH-CORRECTIONS`; release conclusion `PARTIAL` upheld**.
 It independently supported the shared Express profile, backward-compatible custom path, exact
 Mongo pinning/security direction, zero-credential first boot, current-attempt log scoping, truthful
 startup gating, and the conclusion that the public bootstrap still installs mutable source rather
@@ -17,7 +16,7 @@ than an immutable signed payload.
 
 ## Finding Reconciliation
 
-| Claude finding | Disposition | Evidence |
+| Claude finding | Disposition | Result and evidence |
 | --- | --- | --- |
 | Express preflight/start could accept an arbitrary `PATH` Mongo or fall back to Homebrew. | VALIDATED, FIXED | Express now requires the exact app-owned MongoDB `8.0.23`, Developer ID team, version, process arguments, data path, and port. Legacy/custom paths retain their existing flexibility. Two new regressions failed before the correction and pass after it; the live VM restarted through the exact path. |
 | LibreChat nested state and parent delivery pin do not match. | VALIDATED, RELEASE BLOCKED | The tested nested HEAD is `a55efcdc4cfc0847877e30c90f76d693ba31cb25` plus uncommitted changes. `components.lock.json` pins its one-commit descendant `f051e431524e394f18cebcd0dda7df1685d328aa`. No commit, repin, build publication, or installed-artifact promotion was authorized. `INST-022` records this as `FAIL`. |

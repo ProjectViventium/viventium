@@ -17,7 +17,7 @@
 
 The first coherent pass rejected the superseded closeout and found seven defects:
 
-| Finding | Closure state | Verified correction |
+| Finding | Final status | Verified correction |
 | --- | --- | --- |
 | F1 stock-Python restore dependency/misclassification | CLOSED | Restore/check are standard-library-only, skip bootstrap/App Support creation, and pass 146-path and `-I -S` regressions |
 | F2 stale contradictory test totals | CLOSED | Living report/cases and reproducible commands use one exact final collected total |
@@ -29,7 +29,7 @@ The first coherent pass rejected the superseded closeout and found seven defects
 
 The follow-up then raised four minor residuals. The same session re-inspected their corrections:
 
-| Residual | Closure state | Verified correction |
+| Residual | Final status | Verified correction |
 | --- | --- | --- |
 | R1 bundle/config schema coupling | CLOSED | Separate bundle and config version constants plus a decoupling regression |
 | R2 untracked-parent upgrade behavior | CLOSED | Requirement, QA case, structured guidance, preservation, exit `3`, and no-App-Support-mutation evidence align |

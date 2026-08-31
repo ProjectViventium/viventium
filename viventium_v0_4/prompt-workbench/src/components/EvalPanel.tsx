@@ -333,7 +333,7 @@ export function EvalPanel({
             <span>live exact-model run</span>
           </label>
           <textarea
-            value={`${selectedRunCaseIds.length || Math.min(maxCases, visibleRows.length)} of ${visibleRows.length} case(s) will run. ${selectedRunCaseIds.length ? "Explicit case selection overrides the numeric limit." : "Cases run in bank order up to the numeric limit."} ${live ? "Live eval calls the exact-model harness and records performance." : "Preview validates selection only: no model call, no score."}${semanticJudgeRequired ? " Independent semantic rubric judging is required for live runs in this selection." : ""}`}
+            value={`${selectedRunCaseIds.length || Math.min(maxCases, visibleRows.length)} of ${visibleRows.length} case(s) will run. ${selectedRunCaseIds.length ? "Explicit case selection overrides the numeric limit." : "Cases run in bank order up to the numeric limit."} ${live ? "Live eval uses the configured model through the trusted runner for each selected surface and records performance." : "Preview validates selection only: no model call, no score."}${semanticJudgeRequired ? " Independent semantic rubric judging is required for live runs in this selection." : ""}`}
             readOnly
           />
           <button
@@ -342,7 +342,7 @@ export function EvalPanel({
             title={
               blockedReason ||
               (live
-                ? "Run selected cases through the exact-model harness"
+                ? "Run selected cases through their trusted surface runners"
                 : "Preview selected cases without model calls")
             }
             onClick={() => {
@@ -632,8 +632,36 @@ export function EvalPanel({
                   {run.runnerSummary?.blockedReason
                     ? ` · ${run.runnerSummary.blockedReason}`
                     : ""}
+                  {run.live && run.executionRoute
+                    ? ` · lineage ${run.executionRoute.status}${run.executionRoute.requestedProvider && run.executionRoute.requestedModel && run.executionRoute.requestedEffort ? ` · requested ${run.executionRoute.requestedProvider} / ${run.executionRoute.requestedModel} @ ${run.executionRoute.requestedEffort}` : ""}${run.executionRoute.effectiveProvider && run.executionRoute.effectiveModel && run.executionRoute.effectiveEffort ? ` · effective ${run.executionRoute.effectiveProvider} / ${run.executionRoute.effectiveModel} @ ${run.executionRoute.effectiveEffort}` : ""}${run.executionRoute.fallbackReason ? ` · fallback ${run.executionRoute.fallbackUsed ? "used" : "not used"} / ${run.executionRoute.fallbackAuthorized ? "authorized" : "not authorized"} / ${run.executionRoute.fallbackReason}` : ""}${run.executionRoute.routes?.length ? ` · ${run.executionRoute.routes.length} verified target(s)` : ""}${run.executionRoute.reason ? ` · ${run.executionRoute.reason}` : ""}`
+                    : ""}
                   {run.promptHash ? ` · ${run.promptHash}` : ""}
                 </small>
+                {run.executionRoute?.routes?.length ? (
+                  <details>
+                    <summary>Execution lineage</summary>
+                    <ul>
+                      {run.executionRoute.routes.map((route) => (
+                        <li key={route.targetKey}>
+                          <code>{route.targetKey}</code>
+                          <span>
+                            requested {route.requestedProvider} /{" "}
+                            {route.requestedModel} @ {route.requestedEffort} ·
+                            effective {route.effectiveProvider} /{" "}
+                            {route.effectiveModel} @ {route.effectiveEffort} ·
+                            fallback {route.fallbackUsed ? "used" : "not used"}
+                            {" / "}
+                            {route.fallbackAuthorized
+                              ? "authorized"
+                              : "not authorized"}
+                            {" / "}
+                            {route.fallbackReason}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </details>
+                ) : null}
                 {run.lineageManifest && (
                   <details>
                     <summary>Prompt and runtime context dependencies</summary>

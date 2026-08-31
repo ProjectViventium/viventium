@@ -1,3 +1,4 @@
+<!-- qa-evidence-exempt: Historical evidence snapshot retained verbatim; retroactive v2 fields would invent evidence that was not captured during the run. -->
 # Anti-Sycophancy Audible Playback And Worker-Port QA — 2026-08-10
 
 ## Result
@@ -116,4 +117,3 @@ preserving an explicit user request to look something up or use a tool now. The 
    visibility `<=500ms` after availability, no unexplained active-work silence beyond `5s`, and
    barge-in stop p95 `<=1.4s`. Mark `ANTI-008` `PASS` only if the audible/browser, persistence,
    exclusion, explicit-lookup, interruption, cancellation, recovery, and percentile gates all pass.
-<!-- qa-evidence-exempt: Historical or specialized supporting artifact retained without retroactively inventing missing evidence; current release acceptance requires a fresh full-view report. -->

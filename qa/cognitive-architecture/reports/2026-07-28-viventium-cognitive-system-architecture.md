@@ -1,3 +1,4 @@
+<!-- qa-evidence-exempt: Historical evidence snapshot retained verbatim; retroactive v2 fields would invent evidence that was not captured during the run. -->
 # Viventium Cognitive System Architecture — QA Run
 
 **Date:** 2026-07-28
@@ -66,4 +67,3 @@ deferred to the product owner.
 The proposal and rendered architecture are ready for product-owner design review. The editable source is
 structurally valid Draw.io XML, but editor import must not be described as proven until it is opened
 in a supported Draw.io surface.
-<!-- qa-evidence-exempt: Historical or specialized supporting artifact retained without retroactively inventing missing evidence; current release acceptance requires a fresh full-view report. -->

@@ -1,6 +1,35 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+QA_AUTHORITY_ENV_WAS_SET=0
+if [[ -n "${VIVENTIUM_APP_SUPPORT_DIR+x}" ||
+  -n "${VIVENTIUM_RUNTIME_DIR+x}" ||
+  -n "${VIVENTIUM_CONFIG_FILE+x}" ||
+  -n "${VIVENTIUM_COMPONENTS_LOCK_FILE+x}" ||
+  -n "${VIVENTIUM_CLI_LOCK_DIR+x}" ||
+  -n "${VIVENTIUM_RUNTIME_PROFILE+x}" ||
+  -n "${VIVENTIUM_PYTHON_BIN+x}" ||
+  -n "${VIVENTIUM_DISABLE_ACTIVE_CHECKOUT_REEXEC+x}" ||
+  -n "${VIVENTIUM_LOCAL_QA_CASE_ID+x}" ||
+  -n "${VIVENTIUM_LOCAL_QA_CASE_TOKEN+x}" ||
+  -n "${VIVENTIUM_LOCAL_QA_SESSION_REF+x}" ||
+  -n "${VIVENTIUM_LOCAL_QA_MODE+x}" ||
+  -n "${VIVENTIUM_LOCAL_QA_COMPONENT_ARTIFACT_DIGEST+x}" ||
+  -n "${VIVENTIUM_TELEGRAM_LOCAL_QA_MODE+x}" ||
+  -n "${VIVENTIUM_GLASSHIVE_LOCAL_QA_MODE+x}" ||
+  -n "${VIVENTIUM_RELEASE_LOCAL_QA_MODE+x}" ]]; then
+  QA_AUTHORITY_ENV_WAS_SET=1
+fi
+
+if [[ -z "${HOME:-}" ]]; then
+  for qa_early_argument in "$@"; do
+    if [[ "$qa_early_argument" == "qa-control" ]]; then
+      printf '%s\n' '{"error":"qa_authority_invalid"}' >&2
+      exit 2
+    fi
+  done
+fi
+
 resolve_script_source() {
   local source_path="${BASH_SOURCE[0]}"
   while [[ -L "$source_path" ]]; do
@@ -96,7 +125,33 @@ resolve_upgrade_transaction_python() {
   printf '%s\n' "$candidate"
 }
 
-APP_SUPPORT_DIR="${VIVENTIUM_APP_SUPPORT_DIR:-$HOME/Library/Application Support/Viventium}"
+canonicalize_user_home() {
+  local candidate="${HOME:-}"
+  [[ -n "$candidate" && "$candidate" == /* ]] || return 1
+
+  local missing_suffix=""
+  while [[ ! -d "$candidate" ]]; do
+    [[ "$candidate" != "/" ]] || return 1
+    local part
+    part="$(basename "$candidate")"
+    [[ -n "$part" && "$part" != "." && "$part" != ".." ]] || return 1
+    missing_suffix="/$part$missing_suffix"
+    candidate="$(dirname "$candidate")"
+  done
+
+  local resolved
+  resolved="$(cd "$candidate" >/dev/null 2>&1 && pwd -P)"
+  printf '%s%s\n' "${resolved%/}" "$missing_suffix"
+}
+
+CANONICAL_USER_HOME="$(canonicalize_user_home)"
+CANONICAL_APP_SUPPORT_DIR="$CANONICAL_USER_HOME/Library/Application Support/Viventium"
+CANONICAL_RUNTIME_DIR="$CANONICAL_APP_SUPPORT_DIR/runtime"
+GLOBAL_APP_SUPPORT_OPTION_COUNT=0
+GLOBAL_RUNTIME_OPTION_COUNT=0
+GLOBAL_CONFIG_OPTION_COUNT=0
+GLOBAL_LOCK_OPTION_COUNT=0
+APP_SUPPORT_DIR="${VIVENTIUM_APP_SUPPORT_DIR:-$CANONICAL_APP_SUPPORT_DIR}"
 export VIVENTIUM_APP_SUPPORT_DIR="$APP_SUPPORT_DIR"
 CONFIG_FILE="${VIVENTIUM_CONFIG_FILE:-$APP_SUPPORT_DIR/config.yaml}"
 RUNTIME_DIR="${VIVENTIUM_RUNTIME_DIR:-$APP_SUPPORT_DIR/runtime}"
@@ -202,9 +257,17 @@ parse_global_options() {
           exit 1
         fi
         APP_SUPPORT_DIR="${original_args[$((index + 1))]}"
+        GLOBAL_APP_SUPPORT_OPTION_COUNT=$((GLOBAL_APP_SUPPORT_OPTION_COUNT + 1))
         export VIVENTIUM_APP_SUPPORT_DIR="$APP_SUPPORT_DIR"
         refresh_runtime_paths
         index=$((index + 2))
+        ;;
+      --app-support-dir=*)
+        APP_SUPPORT_DIR="${arg#*=}"
+        GLOBAL_APP_SUPPORT_OPTION_COUNT=$((GLOBAL_APP_SUPPORT_OPTION_COUNT + 1))
+        export VIVENTIUM_APP_SUPPORT_DIR="$APP_SUPPORT_DIR"
+        refresh_runtime_paths
+        index=$((index + 1))
         ;;
       --config-file)
         if [[ $((index + 1)) -ge ${#original_args[@]} ]]; then
@@ -212,8 +275,15 @@ parse_global_options() {
           exit 1
         fi
         CONFIG_FILE="${original_args[$((index + 1))]}"
+        GLOBAL_CONFIG_OPTION_COUNT=$((GLOBAL_CONFIG_OPTION_COUNT + 1))
         export VIVENTIUM_CONFIG_FILE="$CONFIG_FILE"
         index=$((index + 2))
+        ;;
+      --config-file=*)
+        CONFIG_FILE="${arg#*=}"
+        GLOBAL_CONFIG_OPTION_COUNT=$((GLOBAL_CONFIG_OPTION_COUNT + 1))
+        export VIVENTIUM_CONFIG_FILE="$CONFIG_FILE"
+        index=$((index + 1))
         ;;
       --runtime-dir)
         if [[ $((index + 1)) -ge ${#original_args[@]} ]]; then
@@ -221,9 +291,17 @@ parse_global_options() {
           exit 1
         fi
         RUNTIME_DIR="${original_args[$((index + 1))]}"
+        GLOBAL_RUNTIME_OPTION_COUNT=$((GLOBAL_RUNTIME_OPTION_COUNT + 1))
         export VIVENTIUM_RUNTIME_DIR="$RUNTIME_DIR"
         refresh_runtime_paths
         index=$((index + 2))
+        ;;
+      --runtime-dir=*)
+        RUNTIME_DIR="${arg#*=}"
+        GLOBAL_RUNTIME_OPTION_COUNT=$((GLOBAL_RUNTIME_OPTION_COUNT + 1))
+        export VIVENTIUM_RUNTIME_DIR="$RUNTIME_DIR"
+        refresh_runtime_paths
+        index=$((index + 1))
         ;;
       --lock-file)
         if [[ $((index + 1)) -ge ${#original_args[@]} ]]; then
@@ -231,8 +309,15 @@ parse_global_options() {
           exit 1
         fi
         LOCK_FILE="${original_args[$((index + 1))]}"
+        GLOBAL_LOCK_OPTION_COUNT=$((GLOBAL_LOCK_OPTION_COUNT + 1))
         export VIVENTIUM_COMPONENTS_LOCK_FILE="$LOCK_FILE"
         index=$((index + 2))
+        ;;
+      --lock-file=*)
+        LOCK_FILE="${arg#*=}"
+        GLOBAL_LOCK_OPTION_COUNT=$((GLOBAL_LOCK_OPTION_COUNT + 1))
+        export VIVENTIUM_COMPONENTS_LOCK_FILE="$LOCK_FILE"
+        index=$((index + 1))
         ;;
       *)
         PARSED_ARGS+=("$arg")
@@ -261,36 +346,6 @@ ensure_viventium_health_runtime() {
   "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/viventium_health_runtime.py" install \
     --repo-root "$REPO_ROOT" \
     --app-support-dir "$APP_SUPPORT_DIR"
-}
-
-config_file_sha256() {
-  refresh_repo_python
-  "$PYTHON_BIN" - "$1" <<'PY'
-import errno
-import hashlib
-import os
-import stat
-import sys
-
-path = sys.argv[1]
-nofollow = getattr(os, "O_NOFOLLOW", None)
-if nofollow is None:
-    raise OSError(errno.ENOTSUP, "no-follow config reads are unavailable", path)
-descriptor = os.open(path, os.O_RDONLY | nofollow)
-try:
-    metadata = os.fstat(descriptor)
-    if not stat.S_ISREG(metadata.st_mode):
-        raise OSError(errno.EINVAL, "canonical config is not a regular file", path)
-    digest = hashlib.sha256()
-    while True:
-        chunk = os.read(descriptor, 1024 * 1024)
-        if not chunk:
-            break
-        digest.update(chunk)
-    print(digest.hexdigest())
-finally:
-    os.close(descriptor)
-PY
 }
 
 bootstrap_components_upgrade_checked() {
@@ -364,66 +419,6 @@ cleanup_cli_lock() {
   CLI_LOCK_OWNER=0
   export VIVENTIUM_CLI_LOCK_HELD=0
   unset VIVENTIUM_CLI_LOCK_DIR VIVENTIUM_CLI_LOCK_OWNER_PID
-}
-
-exit_cli_on_signal() {
-  local exit_status="${1:-1}"
-  trap - INT TERM
-  cleanup_cli_lock
-  exit "$exit_status"
-}
-
-install_cli_lock_traps() {
-  trap cleanup_cli_lock EXIT
-  trap 'exit_cli_on_signal 130' INT
-  trap 'exit_cli_on_signal 143' TERM
-}
-
-runtime_start_claim_file() {
-  printf '%s\n' "$APP_SUPPORT_DIR/state/runtime/startup-in-progress"
-}
-
-runtime_start_claim_active() {
-  local claim_file=""
-  local owner_pid=""
-  local owner_repo=""
-  local created_at=""
-  local owner_command=""
-  local now=""
-  claim_file="$(runtime_start_claim_file)"
-  [[ -f "$claim_file" && ! -L "$claim_file" ]] || return 1
-  [[ "$(stat -f '%u:%l' "$claim_file" 2>/dev/null || true)" == "$(id -u):1" ]] || return 1
-  owner_pid="$(sed -n '1p' "$claim_file")"
-  owner_repo="$(sed -n '2p' "$claim_file")"
-  created_at="$(sed -n '3p' "$claim_file")"
-  [[ "$owner_pid" =~ ^[0-9]+$ && "$owner_repo" == "$REPO_ROOT" && "$created_at" =~ ^[0-9]+$ ]] || return 1
-  kill -0 "$owner_pid" >/dev/null 2>&1 || return 1
-  now="$(date '+%s')"
-  (( now >= created_at && now - created_at <= 1800 )) || return 1
-  owner_command="$(ps -p "$owner_pid" -o command= 2>/dev/null || true)"
-  [[ "$owner_command" == *"bin/viventium"* ]]
-}
-
-write_runtime_start_claim() {
-  local claim_file=""
-  local temporary_file=""
-  claim_file="$(runtime_start_claim_file)"
-  temporary_file="${claim_file}.tmp.$$"
-  mkdir -p "$(dirname "$claim_file")"
-  (umask 077; printf '%s\n%s\n%s\n' "$$" "$REPO_ROOT" "$(date '+%s')" >"$temporary_file")
-  chmod 600 "$temporary_file"
-  mv -f "$temporary_file" "$claim_file"
-  export VIVENTIUM_RUNTIME_START_CLAIM_FILE="$claim_file"
-  export VIVENTIUM_RUNTIME_START_CLAIM_OWNER_PID="$$"
-  export VIVENTIUM_RUNTIME_START_CLAIM_REPO_ROOT="$REPO_ROOT"
-}
-
-clear_runtime_start_claim() {
-  local claim_file="${VIVENTIUM_RUNTIME_START_CLAIM_FILE:-$(runtime_start_claim_file)}"
-  [[ -f "$claim_file" && ! -L "$claim_file" ]] || return 0
-  [[ "$(sed -n '1p' "$claim_file")" == "${VIVENTIUM_RUNTIME_START_CLAIM_OWNER_PID:-$$}" ]] || return 0
-  [[ "$(sed -n '2p' "$claim_file")" == "${VIVENTIUM_RUNTIME_START_CLAIM_REPO_ROOT:-$REPO_ROOT}" ]] || return 0
-  rm -f "$claim_file"
 }
 
 stack_owner_state_file() {
@@ -530,27 +525,341 @@ drain_failed_install_runtime() {
   fi
 }
 
+
+detached_owner_process_group_has_live_peer() {
+  local owner_pid="${1:-$$}"
+  local owner_pgid=""
+  local peer_snapshot=""
+  local probe_pid=""
+  local probe_status=1
+
+  [[ "$owner_pid" =~ ^[0-9]+$ ]] || return 1
+  owner_pgid="$(ps -p "$owner_pid" -o pgid= 2>/dev/null | tr -d '[:space:]' || true)"
+  [[ "$owner_pgid" =~ ^[0-9]+$ ]] || return 1
+
+  peer_snapshot="$(mktemp "${TMPDIR:-/tmp}/viventium-owner-peers.XXXXXX")" || return 1
+  ps -Ao pid=,pgid=,state= >"$peer_snapshot" 2>/dev/null &
+  probe_pid="$!"
+  wait "$probe_pid" || {
+    rm -f "$peer_snapshot"
+    return 1
+  }
+  probe_status=0
+  awk -v target="$owner_pgid" -v owner="$owner_pid" -v probe="$probe_pid" \
+    '$2 == target && $1 != owner && $1 != probe && $3 !~ /Z/ { found = 1 } END { exit(found ? 0 : 1) }' \
+    "$peer_snapshot" || probe_status=$?
+  rm -f "$peer_snapshot"
+  return "$probe_status"
+}
+
+hold_detached_runtime_owner() {
+  local poll_seconds="${VIVENTIUM_DETACHED_OWNER_POLL_SECONDS:-2}"
+
+  value_is_true "${VIVENTIUM_DETACHED_START:-false}" || return 0
+  [[ "$poll_seconds" =~ ^[1-9][0-9]*$ ]] || poll_seconds=2
+  while detached_owner_process_group_has_live_peer "$$"; do
+    sleep "$poll_seconds"
+  done
+}
+
 write_stack_owner_state() {
   local command_name="${1:-unknown}"
   local owner_file=""
+  local owner_pid="$$"
+  local owner_process_started_at=""
+  local owner_process_command=""
+  local owner_executable_path=""
+  local owner_process_cwd=""
+  local owner_launch_mode="attached"
   owner_file="$(stack_owner_state_file)"
+  owner_process_started_at="$(ps -p "$owner_pid" -o lstart= 2>/dev/null || true)"
+  owner_process_command="$(ps -p "$owner_pid" -o command= 2>/dev/null || true)"
+  owner_executable_path="$(
+    cd "$(dirname "$REPO_ROOT/bin/viventium")" &&
+      printf '%s/%s\n' "$(pwd -P)" "$(basename "$REPO_ROOT/bin/viventium")"
+  )"
+  owner_process_cwd="$(pwd -P)"
+  if value_is_true "${VIVENTIUM_DETACHED_START:-false}"; then
+    owner_launch_mode="detached"
+  fi
+  if [[ -z "$owner_process_started_at" || -z "$owner_process_command" || ! -f "$owner_executable_path" ]]; then
+    echo "Unable to record the active runtime owner process." >&2
+    return 1
+  fi
   mkdir -p "$(dirname "$owner_file")"
-  "$PYTHON_BIN" - "$owner_file" "$REPO_ROOT" "$APP_SUPPORT_DIR" "${VIVENTIUM_RUNTIME_PROFILE:-isolated}" "$command_name" <<'PY'
+  "$PYTHON_BIN" - "$owner_file" "$REPO_ROOT" "$APP_SUPPORT_DIR" "$CONFIG_FILE" "$RUNTIME_DIR" "$LOCK_FILE" "${VIVENTIUM_RUNTIME_PROFILE:-isolated}" "$command_name" "$owner_launch_mode" "$owner_pid" "$owner_executable_path" "$owner_process_cwd" "$owner_process_started_at" "$owner_process_command" <<'PY'
+import hashlib
 import json
+import os
 import sys
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
-owner_file, repo_root, app_support_dir, runtime_profile, command_name = sys.argv[1:]
+(
+    owner_file,
+    repo_root,
+    app_support_dir,
+    config_file,
+    runtime_dir,
+    components_lock_file,
+    runtime_profile,
+    command_name,
+    owner_launch_mode,
+    owner_pid,
+    owner_executable_path,
+    owner_process_cwd,
+    owner_process_started_at,
+    owner_process_command,
+) = sys.argv[1:]
 payload = {
-    "repoRoot": repo_root,
-    "appSupportDir": app_support_dir,
+    "contractVersion": 1,
+    "repoRoot": str(Path(repo_root).resolve(strict=True)),
+    "appSupportDir": str(Path(app_support_dir).resolve(strict=True)),
+    "configFile": str(Path(config_file).resolve(strict=True)),
+    "runtimeDir": str(Path(runtime_dir).resolve(strict=True)),
+    "componentsLockFile": str(Path(components_lock_file).resolve(strict=True)),
     "runtimeProfile": runtime_profile,
     "command": command_name,
-    "updatedAt": datetime.now(timezone.utc).isoformat(),
+    "ownerLaunchMode": owner_launch_mode,
+    "ownerPid": owner_pid,
+    "ownerExecutablePath": str(Path(owner_executable_path).resolve(strict=True)),
+    "ownerProcessCwd": str(Path(owner_process_cwd).resolve(strict=True)),
+    "ownerProcessStartedAt": " ".join(owner_process_started_at.split()),
+    "ownerProcessCommand": " ".join(owner_process_command.split()),
 }
-Path(owner_file).write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+payload["ownerBindingSha256"] = hashlib.sha256(
+    json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+).hexdigest()
+payload.update({
+    "updatedAt": datetime.now(timezone.utc).isoformat(),
+})
+target = Path(owner_file).resolve()
+temporary_path = None
+try:
+    with tempfile.NamedTemporaryFile(
+        mode="w",
+        encoding="utf-8",
+        dir=target.parent,
+        prefix=f".{target.name}.",
+        suffix=".tmp",
+        delete=False,
+    ) as temporary:
+        temporary_path = Path(temporary.name)
+        os.fchmod(temporary.fileno(), 0o600)
+        temporary.write(json.dumps(payload, indent=2) + "\n")
+        temporary.flush()
+        os.fsync(temporary.fileno())
+    os.replace(temporary_path, target)
+    temporary_path = None
+    os.chmod(target, 0o600)
+    directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    directory_fd = os.open(target.parent, directory_flags)
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
+finally:
+    if temporary_path is not None:
+        temporary_path.unlink(missing_ok=True)
 PY
+}
+
+write_parallel_work_local_qa_request() {
+  local target="${1:-}"
+  local requested="${2:-false}"
+  [[ -n "$target" && ( "$requested" == "true" || "$requested" == "false" ) ]] || return 1
+  mkdir -p "$(dirname "$target")"
+  "$PYTHON_BIN" - "$target" "$requested" <<'PY'
+import json
+import os
+import sys
+import tempfile
+from pathlib import Path
+
+target = Path(sys.argv[1]).expanduser().resolve()
+payload = {
+    "contractVersion": 1,
+    "mode": "local-qa",
+    "requested": sys.argv[2] == "true",
+}
+temporary_path = None
+try:
+    with tempfile.NamedTemporaryFile(
+        mode="w",
+        encoding="utf-8",
+        dir=target.parent,
+        prefix=f".{target.name}.",
+        suffix=".tmp",
+        delete=False,
+    ) as temporary:
+        temporary_path = Path(temporary.name)
+        os.fchmod(temporary.fileno(), 0o600)
+        temporary.write(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+        temporary.flush()
+        os.fsync(temporary.fileno())
+    os.replace(temporary_path, target)
+    temporary_path = None
+    os.chmod(target, 0o600)
+    directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    directory_fd = os.open(target.parent, directory_flags)
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
+finally:
+    if temporary_path is not None:
+        temporary_path.unlink(missing_ok=True)
+PY
+}
+
+parallel_work_local_qa_requested() {
+  local request_path="${1:-}"
+  local validator="$REPO_ROOT/scripts/viventium/local_qa_runtime_control.py"
+  [[ -n "$request_path" && -f "$validator" ]] || return 1
+  "$PYTHON_BIN" - "$validator" "$request_path" <<'PY'
+import importlib.util
+import sys
+from pathlib import Path
+
+validator = Path(sys.argv[1])
+request = Path(sys.argv[2])
+spec = importlib.util.spec_from_file_location(
+    "viventium_local_qa_request_validator",
+    validator,
+)
+if spec is None or spec.loader is None:
+    raise SystemExit(1)
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+try:
+    spec.loader.exec_module(module)
+    module._require_local_qa_request(request)
+except (ImportError, OSError, RuntimeError, ValueError):
+    raise SystemExit(1) from None
+PY
+}
+
+runtime_owner_process_matches_state() {
+  local owner_file="${1:-}"
+  local owner_root=""
+  local validator=""
+  owner_root="$(json_string_field "$owner_file" repoRoot 2>/dev/null || true)"
+  [[ -n "$owner_root" ]] || return 1
+  validator="$owner_root/scripts/viventium/parallel_work_release_gate.py"
+  [[ -f "$validator" ]] || return 1
+  "$PYTHON_BIN" "$validator" --validate-owner-state "$owner_file" >/dev/null 2>&1
+}
+
+STACK_OWNER_PREVIOUS_STATE_FILE=""
+STACK_OWNER_TRANSITION_ACTIVE=0
+
+capture_stack_owner_state_for_transition() {
+  local owner_file=""
+  local previous_file=""
+  owner_file="$(stack_owner_state_file)"
+  previous_file="${owner_file}.previous.$$"
+  STACK_OWNER_PREVIOUS_STATE_FILE="$previous_file"
+  rm -f "$previous_file"
+
+  if [[ ! -f "$owner_file" || -L "$owner_file" ]]; then
+    return 0
+  fi
+
+  (umask 077; cp "$owner_file" "$previous_file") || return 1
+  chmod 600 "$previous_file"
+  if ! runtime_owner_process_matches_state "$previous_file"; then
+    rm -f "$previous_file"
+  fi
+}
+
+reconcile_stack_owner_state_on_exit() {
+  local owner_file=""
+  local previous_file="${STACK_OWNER_PREVIOUS_STATE_FILE:-}"
+  local restore_previous="false"
+
+  [[ "${STACK_OWNER_TRANSITION_ACTIVE:-0}" == "1" ]] || return 0
+  STACK_OWNER_TRANSITION_ACTIVE=0
+  owner_file="$(stack_owner_state_file)"
+  if [[ -n "$previous_file" && -f "$previous_file" ]] &&
+    runtime_owner_process_matches_state "$previous_file"; then
+    restore_previous="true"
+  fi
+
+  "$PYTHON_BIN" - "$owner_file" "$previous_file" "$$" "$restore_previous" <<'PY'
+import json
+import os
+import sys
+from pathlib import Path
+
+owner_file = Path(sys.argv[1])
+previous_file = Path(sys.argv[2]) if sys.argv[2] else None
+expected_pid = sys.argv[3]
+restore_previous = sys.argv[4] == "true"
+
+try:
+    current = json.loads(owner_file.read_text(encoding="utf-8"))
+except (FileNotFoundError, json.JSONDecodeError, OSError):
+    current = None
+
+if isinstance(current, dict) and str(current.get("ownerPid") or "") == expected_pid:
+    if restore_previous and previous_file is not None and previous_file.is_file():
+        os.replace(previous_file, owner_file)
+        os.chmod(owner_file, 0o600)
+    else:
+        owner_file.unlink(missing_ok=True)
+    directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    directory_fd = os.open(owner_file.parent, directory_flags)
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
+PY
+  if [[ -n "$previous_file" ]]; then
+    rm -f "$previous_file"
+  fi
+  STACK_OWNER_PREVIOUS_STATE_FILE=""
+}
+
+start_owner_transition_exit_cleanup() {
+  local exit_status=$?
+  trap - EXIT INT TERM
+  clear_runtime_start_claim || true
+  reconcile_stack_owner_state_on_exit || true
+  cleanup_cli_lock || true
+  exit "$exit_status"
+}
+
+resolve_release_installed_root() {
+  local candidate=""
+  local owner_file=""
+  local owner_app_support=""
+  local owner_command=""
+
+  owner_file="$(stack_owner_state_file)"
+  candidate="$(json_string_field "$owner_file" repoRoot 2>/dev/null || true)"
+  owner_app_support="$(json_string_field "$owner_file" appSupportDir 2>/dev/null || true)"
+  owner_command="$(json_string_field "$owner_file" command 2>/dev/null || true)"
+  if [[ "$owner_command" == "start" || "$owner_command" == "launch" ]] &&
+    [[ "$(canonicalize_existing_dir "$owner_app_support" 2>/dev/null || true)" == "$(canonicalize_existing_dir "$APP_SUPPORT_DIR" 2>/dev/null || true)" ]] &&
+    runtime_owner_process_matches_state "$owner_file" &&
+    path_is_viventium_runtime_repo_root "$candidate"; then
+    canonicalize_existing_dir "$candidate"
+    return 0
+  fi
+
+  return 1
+}
+
+release_installed_root_argument_allowed() {
+  local requested_root="${1:-}"
+  local active_root="${2:-}"
+  local requested_canonical=""
+  local active_canonical=""
+  [[ -n "$requested_root" && -n "$active_root" ]] || return 1
+  requested_canonical="$(canonicalize_existing_dir "$requested_root" 2>/dev/null || true)"
+  active_canonical="$(canonicalize_existing_dir "$active_root" 2>/dev/null || true)"
+  [[ -n "$requested_canonical" && "$requested_canonical" == "$active_canonical" ]]
 }
 
 set_helper_status_bar_visibility() {
@@ -615,18 +924,51 @@ PY
   [[ "$status" == "on" ]]
 }
 
-set_helper_runtime_intent() {
-  local desired_state="${1:-}"
-  case "$desired_state" in
-    running|stopped) ;;
-    *)
-      echo "Invalid helper runtime intent: $desired_state" >&2
-      return 2
-      ;;
-  esac
-  "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/helper_runtime_intent.py" \
-    --config "$(helper_config_file)" \
-    --desired "$desired_state"
+runtime_start_claim_file() {
+  printf '%s\n' "$APP_SUPPORT_DIR/state/runtime/startup-in-progress"
+}
+
+runtime_start_claim_active() {
+  local claim_file=""
+  local owner_pid=""
+  local owner_repo=""
+  local created_at=""
+  local owner_command=""
+  local now=""
+  claim_file="$(runtime_start_claim_file)"
+  [[ -f "$claim_file" && ! -L "$claim_file" ]] || return 1
+  [[ "$(stat -f '%u:%l' "$claim_file" 2>/dev/null || true)" == "$(id -u):1" ]] || return 1
+  owner_pid="$(sed -n '1p' "$claim_file")"
+  owner_repo="$(sed -n '2p' "$claim_file")"
+  created_at="$(sed -n '3p' "$claim_file")"
+  [[ "$owner_pid" =~ ^[0-9]+$ && "$owner_repo" == "$REPO_ROOT" && "$created_at" =~ ^[0-9]+$ ]] || return 1
+  kill -0 "$owner_pid" >/dev/null 2>&1 || return 1
+  now="$(date '+%s')"
+  (( now >= created_at && now - created_at <= 1800 )) || return 1
+  owner_command="$(ps -p "$owner_pid" -o command= 2>/dev/null || true)"
+  [[ "$owner_command" == *"bin/viventium"* ]]
+}
+
+write_runtime_start_claim() {
+  local claim_file=""
+  local temporary_file=""
+  claim_file="$(runtime_start_claim_file)"
+  temporary_file="${claim_file}.tmp.$$"
+  mkdir -p "$(dirname "$claim_file")"
+  (umask 077; printf '%s\n%s\n%s\n' "$$" "$REPO_ROOT" "$(date '+%s')" >"$temporary_file")
+  chmod 600 "$temporary_file"
+  mv -f "$temporary_file" "$claim_file"
+  export VIVENTIUM_RUNTIME_START_CLAIM_FILE="$claim_file"
+  export VIVENTIUM_RUNTIME_START_CLAIM_OWNER_PID="$$"
+  export VIVENTIUM_RUNTIME_START_CLAIM_REPO_ROOT="$REPO_ROOT"
+}
+
+clear_runtime_start_claim() {
+  local claim_file="${VIVENTIUM_RUNTIME_START_CLAIM_FILE:-$(runtime_start_claim_file)}"
+  [[ -f "$claim_file" && ! -L "$claim_file" ]] || return 0
+  [[ "$(sed -n '1p' "$claim_file")" == "${VIVENTIUM_RUNTIME_START_CLAIM_OWNER_PID:-$$}" ]] || return 0
+  [[ "$(sed -n '2p' "$claim_file")" == "${VIVENTIUM_RUNTIME_START_CLAIM_REPO_ROOT:-$REPO_ROOT}" ]] || return 0
+  rm -f "$claim_file"
 }
 
 read_cli_lock_metadata() {
@@ -789,6 +1131,14 @@ Commands:
   bootstrap-components
                     Fetch pinned public component repos from components.lock.json.
   compile-config    Render runtime env/yaml files from config.yaml.
+  qa-control      Manage one private, expiring installed-QA fault session.
+    prepare-glasshive --case-id <PWK-UC-016|PWK-UC-017> < private-owner-scope.json
+    arm-glasshive --boundary <boundary> [--ttl-seconds <1-3600>]
+    query-glasshive [--boundary <boundary>]
+    clear-glasshive [--boundary <boundary>]
+    cleanup-glasshive
+  qa-evidence     Record candidate-bound private QA evidence receipts.
+  release-check     Evaluate all Parallel Work release gates and typed readiness facts.
   doctor            Run preflight checks against the current config.
   register-link     Register this public Viventium instance under a viventium.ai vanity link.
   password-reset-link
@@ -989,7 +1339,7 @@ USAGE
     launch)
       cat <<'USAGE'
 Usage:
-  bin/viventium launch [launcher options]
+  bin/viventium launch
 
 Starts the current Viventium stack in the background and returns immediately.
 USAGE
@@ -1189,15 +1539,59 @@ Usage:
 Fetches or updates the pinned component repos from components.lock.json.
 USAGE
       ;;
+    qa-evidence)
+      cat <<'USAGE'
+Usage:
+  bin/viventium qa-evidence record --manifest <private-result.json>
+
+Records one local-QA receipt from verified files under the private App Support evidence root.
+The receipt is bound to the active installed candidate and cannot enable a release by itself.
+USAGE
+      ;;
+    qa-control)
+      cat <<'USAGE'
+Usage:
+  bin/viventium qa-control activate --case-id <case> [--expires-in-seconds <60-3600>]
+  bin/viventium qa-control status
+  bin/viventium qa-control verify-emo-feelings --evidence <private-emo-uc-047.json>
+  bin/viventium qa-control arm-telegram-race < private-tr026-scope.json
+  bin/viventium qa-control audit-telegram-race
+  bin/viventium qa-control cleanup-telegram-race
+  bin/viventium qa-control prepare-emo-insight
+  bin/viventium qa-control arm-emo-insight --boundary <boundary> [--ttl-seconds <1-3600>]
+  bin/viventium qa-control query-emo-insight [--boundary <boundary>]
+  bin/viventium qa-control clear-emo-insight [--boundary <boundary>]
+  bin/viventium qa-control cleanup-emo-insight
+  bin/viventium qa-control prepare-glasshive --case-id <PWK-UC-016|PWK-UC-017> < private-owner-scope.json
+  bin/viventium qa-control arm-glasshive --boundary <boundary> [--ttl-seconds <1-3600>]
+  bin/viventium qa-control query-glasshive [--boundary <boundary>]
+  bin/viventium qa-control clear-glasshive [--boundary <boundary>]
+  bin/viventium qa-control cleanup-glasshive
+  bin/viventium qa-control inject-release-claim
+  bin/viventium qa-control restore-release-claim
+  bin/viventium qa-control clear --session-ref <qa_reference>
+
+Creates one private, expiring, candidate-bound local-QA session. It never enables a source default.
+Supported cases: TR-026, EMO-UC-047, EMO-UC-048, MPV-061, PWK-UC-015, PWK-UC-016, PWK-UC-017, REL-UC-004.
+Restart the installed runtime after activate or clear so every service receives the same state.
+USAGE
+      ;;
+    release-check)
+      cat <<'USAGE'
+Usage:
+  bin/viventium release-check [--local-qa] [--json]
+
+Fails closed until QA, prompt/storage facts, and source/pin/prebuilt/installed identities pass.
+The explicit --local-qa path writes the canonical runtime snapshot and labels it PRE-GATE / NOT READY.
+USAGE
+      ;;
     snapshot)
       cat <<'USAGE'
 Usage:
   bin/viventium snapshot [--output-root <path>]
 
-Attempts a complete owner-only logical snapshot of canonical config, history/memory/agents,
-uploads, and schedules. Provider/channel credentials are excluded and require reauthentication.
-When a complete capture prerequisite is unavailable, writes metadata-only evidence without
-changing the prior last-good pointer until the new attempt is complete.
+Captures a local state snapshot under the current App Support directory and always writes a
+metadata-only continuity manifest even when no private companion snapshot helper is present.
 USAGE
       ;;
     restore)
@@ -1205,9 +1599,8 @@ USAGE
 Usage:
   bin/viventium restore [options]
 
-Validates a bundle without changing target state, or restores a complete logical bundle into an
-explicit empty App Support target, fresh checkout, and empty loopback Mongo database. Recall is
-marked for rebuild and provider/channel/browser credentials require reauthentication.
+Validates a complete-bundle candidate without changing target state. The transactional public
+restore/apply engine is not implemented yet, so non-validation requests exit PARTIAL.
 USAGE
       ;;
     uninstall)
@@ -1227,6 +1620,10 @@ USAGE
 
 compile_config() {
   local compile_status=0
+  local installed_root=""
+  local runtime_owner_state=""
+  runtime_owner_state="$(stack_owner_state_file)"
+  installed_root="$(resolve_release_installed_root 2>/dev/null || true)"
   refresh_repo_python
   ensure_app_support_layout "$APP_SUPPORT_DIR"
   if [[ -e "$GENERATED_ENV" || -L "$GENERATED_ENV" ]]; then
@@ -1237,16 +1634,53 @@ compile_config() {
   fi
   export VIVENTIUM_LIBRECHAT_SOURCE_PHASE="compile"
   prepare_runtime_exports
+  local compiler_args=(--config "$CONFIG_FILE" --output-dir "$RUNTIME_DIR")
+  if [[ -n "$installed_root" ]]; then
+    compiler_args+=(--installed-root "$installed_root")
+    compiler_args+=(--runtime-owner-state "$runtime_owner_state")
+  fi
+  compiler_args+=("$@")
   "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/config_compiler.py" \
-    --config "$CONFIG_FILE" \
-    --output-dir "$RUNTIME_DIR" \
-    "$@" || compile_status=$?
+    "${compiler_args[@]}" || compile_status=$?
   unset VIVENTIUM_LIBRECHAT_SOURCE_PHASE
   if [[ "$compile_status" -ne 0 ]]; then
     return "$compile_status"
   fi
   if [[ -f "$GENERATED_LIBRECHAT_YAML" ]]; then
     export VIVENTIUM_LIBRECHAT_SOURCE_OF_TRUTH="$GENERATED_LIBRECHAT_YAML"
+  fi
+  local release_snapshot="$RUNTIME_DIR/parallel-work-release-gate.json"
+  local release_readiness_facts="$RUNTIME_DIR/parallel-work-readiness-facts.json"
+  local release_artifact_identity="$RUNTIME_DIR/parallel-work-artifact-identity.json"
+  local release_qa_case_receipts="$RUNTIME_DIR/parallel-work-qa-case-receipts.json"
+  if [[ -z "$installed_root" ]]; then
+    # A compile without a live owner may create runtime inputs, but it cannot
+    # preserve or publish an owner-bound availability claim.
+    rm -f "$release_snapshot"
+    return 0
+  fi
+  local release_mode="default"
+  if parallel_work_local_qa_requested \
+    "$RUNTIME_DIR/parallel-work-local-qa-request.json"; then
+    release_mode="local-qa"
+  fi
+  local gate_args=(
+    --mode "$release_mode"
+    --readiness-facts "$release_readiness_facts"
+    --artifact-identity "$release_artifact_identity"
+    --qa-case-receipts "$release_qa_case_receipts"
+    --installed-prompt-bundle "$RUNTIME_DIR/prompt-bundle.json"
+    --output "$release_snapshot"
+    --json
+  )
+  if [[ "$release_mode" == "local-qa" ]]; then
+    gate_args+=(--allow-local-qa-override)
+  fi
+  gate_args+=(--installed-root "$installed_root")
+  gate_args+=(--runtime-owner-state "$runtime_owner_state")
+  if ! "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/parallel_work_release_gate.py" \
+    "${gate_args[@]}" >/dev/null; then
+    [[ -s "$release_snapshot" ]] || return 1
   fi
 }
 
@@ -1927,32 +2361,17 @@ clear_active_telegram_recovery_component() {
 }
 
 bootstrap_life() {
-  local life_bootstrap_script="$REPO_ROOT/scripts/viventium/life_bootstrap.py"
-  local runtime_env="${1:-$GENERATED_ENV}"
-  if [[ ! -f "$runtime_env" || ! -f "$life_bootstrap_script" ]]; then
+  if [[ ! -f "$GENERATED_ENV" ]]; then
     return 0
   fi
   local life_bootstrap_status=0
-  "$PYTHON_BIN" "$life_bootstrap_script" \
-    --runtime-env "$runtime_env" \
-    --state-file "$APP_SUPPORT_DIR/state/life-bootstrap.json" || life_bootstrap_status=$?
+  "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/life_bootstrap.py" \
+    --runtime-env "$GENERATED_ENV" \
+    --state-file "$APP_SUPPORT_DIR/state/life-bootstrap.json" \
+    --if-configured || life_bootstrap_status=$?
   if [[ "$life_bootstrap_status" -ne 0 ]]; then
-    if (
-      set +u
-      START_GLASSHIVE=false
-      # shellcheck disable=SC1090
-      source "$runtime_env"
-      case "${START_GLASSHIVE:-false}" in
-        1|true|TRUE|True|yes|YES|Yes|on|ON|On) exit 0 ;;
-        *) exit 1 ;;
-      esac
-    ); then
-      echo "[viventium] Error: canonical LIFE bootstrap is required by the enabled GlassHive runtime." >&2
-      echo "[viventium] Resolve the reported LIFE path conflict before starting chat." >&2
-      return "$life_bootstrap_status"
-    fi
     echo "[viventium] Warning: canonical LIFE bootstrap could not complete; chat startup will continue." >&2
-    echo "[viventium] Fix the configured LIFE path, then rerun bin/viventium configure or start." >&2
+    echo "[viventium] Fix the configured LIFE path, then rerun bin/viventium doctor or start." >&2
   fi
   return 0
 }
@@ -1961,13 +2380,17 @@ sync_memory_hardening_schedule() {
   if [[ "$(uname -s)" != "Darwin" || ! -f "$GENERATED_ENV" ]]; then
     return 0
   fi
-  local canonical_app_support_dir enabled schedule plist_path
-  canonical_app_support_dir="$HOME/Library/Application Support/Viventium"
-  if [[ "$APP_SUPPORT_DIR" != "$canonical_app_support_dir" && "${VIVENTIUM_ALLOW_NONCANONICAL_SCHEDULE_MUTATION:-0}" != "1" ]]; then
+  # A dev/test/side-by-side config must never install or remove the one user-level
+  # LaunchAgent. Explicit memory-harden schedule commands remain available for an
+  # intentionally selected state root; automatic config sync belongs only to the
+  # canonical installed runtime.
+  local canonical_app_support_dir="$HOME/Library/Application Support/Viventium"
+  if [[ "${APP_SUPPORT_DIR%/}" != "${canonical_app_support_dir%/}" && "${VIVENTIUM_ALLOW_NONCANONICAL_SCHEDULE_MUTATION:-0}" != "1" ]]; then
     echo "Warning: Skipping the machine-global memory hardening schedule for a noncanonical Application Support directory." >&2
     echo "Set VIVENTIUM_ALLOW_NONCANONICAL_SCHEDULE_MUTATION=1 only when this installation intentionally owns the single user LaunchAgent." >&2
     return 0
   fi
+  local enabled schedule plist_path
   enabled="$(
     awk -F= '$1=="VIVENTIUM_MEMORY_HARDENING_ENABLED"{print $2; exit}' "$GENERATED_ENV" | sed "s/^'//;s/'$//"
   )"
@@ -2059,6 +2482,7 @@ ensure_config_candidate_components() {
     return 1
   fi
 }
+
 
 prepare_config_candidate() {
   local config_input="$1"
@@ -2220,28 +2644,6 @@ display_safe_path() {
   fi
 }
 
-compare_upgrade_continuity_audits() {
-  local pre_upgrade_manifest="${1:-}"
-  local post_upgrade_manifest="${2:-}"
-  local label="${3:-upgrade-continuity-comparison}"
-  local output_path=""
-  local comparison_status=""
-  [[ -f "$pre_upgrade_manifest" && -f "$post_upgrade_manifest" ]] || return 1
-  output_path="$(continuity_audit_path "$label")"
-  "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/continuity_audit.py" compare \
-    --snapshot-manifest "$pre_upgrade_manifest" \
-    --live-manifest "$post_upgrade_manifest" \
-    --strict-semantic \
-    --output "$output_path" >/dev/null
-  comparison_status="$(continuity_audit_status "$output_path")"
-  echo "Upgrade continuity comparison written to $(display_safe_path "$output_path")"
-  if [[ "$comparison_status" != "ok" ]]; then
-    echo "Upgrade-protected config, conversations, memory, prompts, auth/channel state, or schedules could not be proven unchanged; rolling back." >&2
-    echo "Review $(display_safe_path "$output_path") before retrying." >&2
-    return 1
-  fi
-}
-
 continuity_audit_status() {
   local audit_path="$1"
   if [[ ! -f "$audit_path" ]]; then
@@ -2282,34 +2684,6 @@ run_macos_helper_installer() {
     --repo-root "$REPO_ROOT" \
     --app-support-dir "$APP_SUPPORT_DIR" \
     "$@"
-}
-
-arm_persistent_telegram_recovery_helper() {
-  [[ "$(uname -s)" == "Darwin" ]] || return 0
-  local helper_config="$APP_SUPPORT_DIR/helper-config.json"
-  local helper_bundle="${VIVENTIUM_HELPER_APP_BUNDLE:-${VIVENTIUM_HELPER_APP_DIR:-$HOME/Applications}/Viventium.app}"
-  if [[ ! -f "$helper_config" || -L "$helper_config" ||
-    ! -d "$helper_bundle" || -L "$helper_bundle" ]]
-  then
-    return 0
-  fi
-  local before_hash=""
-  local after_hash=""
-  before_hash="$(shasum -a 256 "$helper_config" | awk '{print $1}')"
-  if ! VIVENTIUM_HELPER_RECOVERY_ARM=1 \
-    run_macos_helper_installer install \
-      --no-launch \
-      --preserve-helper-config \
-      --recovery-bundle-only
-  then
-    echo "Upgrade could not pre-activate its persistent rollback-aware helper." >&2
-    return 1
-  fi
-  after_hash="$(shasum -a 256 "$helper_config" | awk '{print $1}')"
-  if [[ -z "$before_hash" || "$after_hash" != "$before_hash" ]]; then
-    echo "Persistent recovery helper activation changed protected helper configuration." >&2
-    return 1
-  fi
 }
 
 install_ownership_receipt_file() {
@@ -2417,6 +2791,7 @@ if marker.get("product") != "ai.viventium.helper" or marker.get("schema_version"
     raise SystemExit(1)
 PY
 }
+
 
 run_macos_helper_install_command() {
   local skip_login_item="${1:-0}"
@@ -2655,6 +3030,7 @@ recover_interrupted_helper_install() {
     return 1
   fi
 }
+
 
 runtime_checkout_status() {
   local active_repo=""
@@ -4361,6 +4737,10 @@ def runtime_connected(config, runtime_env, provider):
     return (
         str(runtime_env.get("VIVENTIUM_LOCAL_SUBSCRIPTION_AUTH") or "").strip().lower()
         in {"1", "true", "yes", "on"}
+        and str(
+            runtime_env.get("VIVENTIUM_EXPERIMENTAL_DIRECT_SUBSCRIPTION_AUTH") or ""
+        ).strip().lower()
+        in {"1", "true", "yes", "on"}
         and str(runtime_env.get(env_key) or "").strip().lower() == "connected_account"
     )
 
@@ -4457,6 +4837,7 @@ prepare_password_reset_link_runtime() {
     fi
   fi
 }
+
 
 removal_backup_root() {
   printf '%s\n' "${VIVENTIUM_REMOVAL_BACKUP_ROOT:-$HOME/Library/Application Support/Viventium Removed}"
@@ -4720,6 +5101,7 @@ read_local_env_assignment() {
   return 1
 }
 
+
 runtime_env_true() {
   local key="${1:-}"
   local default_value="${2:-false}"
@@ -4915,79 +5297,6 @@ api_surface_healthy() {
   local_http_surface_healthy "$port" "/api/health"
 }
 
-postcommit_api_finalization_ready() {
-  local run_id="${VIVENTIUM_POSTCOMMIT_FINALIZATION_ID:-}"
-  local source_id="${VIVENTIUM_POSTCOMMIT_SOURCE_ID:-}"
-  local receipt="$APP_SUPPORT_DIR/state/continuity/postcommit-api-finalization.json"
-  [[ -n "$run_id" ]] || return 0
-
-  "$PYTHON_BIN" - "$APP_SUPPORT_DIR" "$receipt" "$run_id" "$source_id" <<'PY'
-import json
-import os
-import re
-import stat
-import sys
-from pathlib import Path
-
-app_support = Path(os.path.abspath(sys.argv[1]))
-receipt = Path(os.path.abspath(sys.argv[2]))
-run_id = sys.argv[3]
-source_id = sys.argv[4]
-required = {
-    "database-connected",
-    "database-seed-ready",
-    "startup-checks-ready",
-    "interface-permissions-ready",
-    "mcp-runtime-ready",
-    "oauth-reconnect-ready",
-    "channel-persistence-ready",
-    "permission-migration-inspection",
-    "stale-cortex-recovery",
-    "generation-runtime-ready",
-}
-if not re.fullmatch(r"[0-9a-f]{64}", run_id):
-    raise SystemExit(1)
-if not re.fullmatch(r"[0-9a-f]{40,64}", source_id):
-    raise SystemExit(1)
-try:
-    receipt.relative_to(app_support)
-    if os.path.realpath(receipt) != str(receipt):
-        raise SystemExit(1)
-    metadata = receipt.lstat()
-    if (
-        not stat.S_ISREG(metadata.st_mode)
-        or metadata.st_uid != os.getuid()
-        or stat.S_IMODE(metadata.st_mode) != 0o600
-    ):
-        raise SystemExit(1)
-    payload = json.loads(receipt.read_text(encoding="utf-8"))
-except (OSError, ValueError, json.JSONDecodeError):
-    raise SystemExit(1)
-completed = payload.get("completed")
-degraded = payload.get("degraded")
-valid = (
-    payload.get("schemaVersion") == 1
-    and payload.get("runId") == run_id
-    and payload.get("sourceId") == source_id
-    and payload.get("status") == "ready"
-    and payload.get("stage") == "ready"
-    and isinstance(payload.get("attempt"), int)
-    and not isinstance(payload.get("attempt"), bool)
-    and payload["attempt"] >= 1
-    and isinstance(completed, list)
-    and all(isinstance(item, str) for item in completed)
-    and required.issubset(set(completed))
-    and isinstance(degraded, list)
-    and {
-        "stage": "derived-search-index",
-        "code": "best-effort-derived-state",
-    }
-    in degraded
-)
-raise SystemExit(0 if valid else 1)
-PY
-}
-
 frontend_surface_healthy() {
   local port="${1:-}"
   local_http_surface_healthy "$port" "/"
@@ -5049,6 +5358,7 @@ sandpack_runtime_required() {
   [[ -n "$(read_generated_env_value "SANDPACK_BUNDLER_URL" "")" || \
      -n "$(read_generated_env_value "SANDPACK_BUNDLER_LISTEN_PORT" "")" ]]
 }
+
 
 rag_api_surface_healthy() {
   local base_url=""
@@ -5188,21 +5498,6 @@ skyvern_surface_healthy() {
     local_http_surface_healthy "$port" "/openapi.json"
 }
 
-remote_tunnel_surface_healthy() {
-  local mode=""
-  local state_root=""
-  local state_file=""
-  mode="$(read_generated_env_value "VIVENTIUM_REMOTE_CALL_MODE" "disabled")"
-  [[ -n "$mode" && "$mode" != "disabled" ]] || return 0
-  state_root="$(read_generated_env_value "VIVENTIUM_STATE_ROOT" "")"
-  if [[ -z "$state_root" ]]; then
-    state_root="$APP_SUPPORT_DIR/state/runtime/${VIVENTIUM_RUNTIME_PROFILE:-isolated}"
-  fi
-  state_file="$state_root/public-network.json"
-  "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/remote_call_tunnel.py" status \
-    --state-file "$state_file" >/dev/null 2>&1
-}
-
 glasshive_surface_healthy() {
   local runtime_port=""
   local ui_port=""
@@ -5227,6 +5522,22 @@ prompt_workbench_surface_healthy() {
   port="$(read_generated_env_value "VIVENTIUM_PROMPT_WORKBENCH_PORT" "8781")"
   local_http_surface_healthy "$port" "/api/health"
 }
+
+remote_tunnel_surface_healthy() {
+  local mode=""
+  local state_root=""
+  local state_file=""
+  mode="$(read_generated_env_value "VIVENTIUM_REMOTE_CALL_MODE" "disabled")"
+  [[ -n "$mode" && "$mode" != "disabled" ]] || return 0
+  state_root="$(read_generated_env_value "VIVENTIUM_STATE_ROOT" "")"
+  if [[ -z "$state_root" ]]; then
+    state_root="$APP_SUPPORT_DIR/state/runtime/${VIVENTIUM_RUNTIME_PROFILE:-isolated}"
+  fi
+  state_file="$state_root/public-network.json"
+  "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/remote_call_tunnel.py" status \
+    --state-file "$state_file" >/dev/null 2>&1
+}
+
 
 runtime_pid_file_running() {
   local pid_file_name="${1:-}"
@@ -5363,6 +5674,7 @@ pid_matches_runtime_process_group() {
   [[ "$current_pgid" == "$recorded_pgid" ]]
 }
 
+
 pattern_running_in_repo() {
   local pattern="${1:-}"
   [[ -n "$pattern" ]] || return 1
@@ -5442,6 +5754,10 @@ capture_detached_start_log_offset() {
 }
 
 launch_stack_detached() {
+  if [[ "$#" -ne 0 ]]; then
+    echo "Detached launch accepts no trailing arguments." >&2
+    return 1
+  fi
   ensure_app_support_layout "$APP_SUPPORT_DIR"
   if [[ ! -f "$CONFIG_FILE" ]]; then
     echo "Missing config: $CONFIG_FILE" >&2
@@ -5485,9 +5801,10 @@ launch_stack_detached() {
   local detached_runtime_profile="${VIVENTIUM_RUNTIME_PROFILE:-isolated}"
   local detached_state_root="$APP_SUPPORT_DIR/state/runtime/$detached_runtime_profile"
   local child_pid
-  child_pid="$(
+  if ! child_pid="$(
     "$PYTHON_BIN" - "$launch_log" "$detached_repo_root" "$APP_SUPPORT_DIR" "$CONFIG_FILE" "$RUNTIME_DIR" "$detached_lock_file" "$detached_state_root" "$detached_runtime_profile" "$@" <<'PY'
 import os
+import json
 import subprocess
 import sys
 
@@ -5504,6 +5821,87 @@ env["VIVENTIUM_DETACHED_START"] = "1"
 env["VIVENTIUM_BASE_STATE_DIR"] = os.path.join(app_support_dir, "state")
 env["VIVENTIUM_STATE_ROOT"] = state_root
 env["VIVENTIUM_RUNTIME_PROFILE"] = runtime_profile
+
+contract_path = os.path.join(
+    repo_root,
+    "scripts",
+    "viventium",
+    "runtime_owner_command_contract.json",
+)
+try:
+    with open(contract_path, encoding="utf-8") as contract_file:
+        contract = json.load(contract_file)
+except (OSError, json.JSONDecodeError) as exc:
+    raise SystemExit("Unsupported runtime owner command contract") from exc
+canonical_detached = [
+    "{ownerExecutablePath}",
+    "--app-support-dir",
+    "{appSupportDir}",
+    "--config-file",
+    "{configFile}",
+    "--runtime-dir",
+    "{runtimeDir}",
+    "--lock-file",
+    "{componentsLockFile}",
+    "start",
+    "--restart",
+]
+canonical_attached = [
+    ["{ownerExecutablePath}", "{command}"],
+    ["{ownerExecutablePath}", "{command}", "--restart"],
+    [
+        "{ownerExecutablePath}",
+        "--app-support-dir",
+        "{appSupportDir}",
+        "--config-file",
+        "{configFile}",
+        "--runtime-dir",
+        "{runtimeDir}",
+        "--lock-file",
+        "{componentsLockFile}",
+        "{command}",
+    ],
+    [
+        "{ownerExecutablePath}",
+        "--app-support-dir",
+        "{appSupportDir}",
+        "--config-file",
+        "{configFile}",
+        "--runtime-dir",
+        "{runtimeDir}",
+        "--lock-file",
+        "{componentsLockFile}",
+        "{command}",
+        "--restart",
+    ],
+]
+canonical_wrappers = [
+    "",
+    "/bin/bash ",
+    "/bin/sh ",
+    "/bin/zsh ",
+    "/usr/bin/env bash ",
+    "bash ",
+    "sh ",
+    "zsh ",
+]
+if (
+    contract.get("contractVersion") != 1
+    or contract.get("detached")
+    != {
+        "allowTrailingArguments": False,
+        "command": "start",
+        "argvTemplate": canonical_detached,
+    }
+    or contract.get("attached")
+    != {
+        "allowTrailingArguments": False,
+        "commands": ["start", "launch"],
+        "argvTemplates": canonical_attached,
+    }
+    or contract.get("processWrappers") != canonical_wrappers
+):
+    raise SystemExit("Unsupported runtime owner command contract")
 compat_launcher = env.pop("VIVENTIUM_DETACHED_COMPAT_LAUNCHER", "").strip()
 if compat_launcher:
     env["VIVENTIUM_LAUNCHER_INTERNAL"] = "1"
@@ -5515,19 +5913,17 @@ if compat_launcher:
     env["VIVENTIUM_COMPONENTS_LOCK_FILE"] = lock_file
     cmd = ["/bin/bash", compat_launcher, "--restart", *extra_args]
 else:
+    values = {
+        "ownerExecutablePath": os.path.join(repo_root, "bin", "viventium"),
+        "appSupportDir": app_support_dir,
+        "configFile": config_file,
+        "runtimeDir": runtime_dir,
+        "componentsLockFile": lock_file,
+        "command": "start",
+    }
     cmd = [
-        os.path.join(repo_root, "bin", "viventium"),
-        "--app-support-dir",
-        app_support_dir,
-        "--config-file",
-        config_file,
-        "--runtime-dir",
-        runtime_dir,
-        "--lock-file",
-        lock_file,
-        "start",
-        "--restart",
-        *extra_args,
+        str(token).format_map(values)
+        for token in contract["detached"]["argvTemplate"]
     ]
 
 with open(launch_log, "ab", buffering=0) as log:
@@ -5543,7 +5939,11 @@ with open(launch_log, "ab", buffering=0) as log:
     )
     print(proc.pid)
 PY
-  )"
+  )"; then
+    echo "Unable to launch Viventium: runtime owner command contract validation failed." >&2
+    return 1
+  fi
+  [[ "$child_pid" =~ ^[0-9]+$ ]] || return 1
   DETACHED_START_PID="$child_pid"
   echo "Launched Viventium in the background (pid $child_pid)."
 }
@@ -5630,7 +6030,7 @@ launch_log_indicates_startup_failure() {
   # recover after the required user surfaces are healthy. Check only structural
   # required-surface gates against the raw log; color alone is not fatality.
   if printf '%s\n' "$tail_output" | grep -Eq \
-    '(\[viventium\].*(LibreChat .*skipping startup|.*skipping LibreChat startup|Playground .*skipping playground startup)|\[viventium\].*LibreChat config (missing|generation failed); using default config|\[viventium\].*(LibreChat directory not found:|LibreChat startup requires the validated Node|MongoDB is required (for LibreChat startup|before LibreChat user-default reconciliation and agent seeding)|Meilisearch is required (for local conversation search startup|before LibreChat user-default reconciliation and agent seeding)|Missing required command:|Playground directory not found, skipping|Configured playground port [0-9]+ is in use by an unrelated process; refusing to report it as healthy|Canonical uploads root is outside Viventium App Support|Canonical uploads migration helper is unavailable|LibreChat remains active; refusing to migrate uploads while files may be changing|LibreChat must be restarted once to migrate uploads into App Support safely))' || \
+    '(\[viventium\].*(LibreChat .*skipping startup|.*skipping LibreChat startup|Playground .*skipping playground startup|.*restart is blocked; continuing partial-stack repair)|\[viventium\].*LibreChat config (missing|generation failed); using default config|\[viventium\].*(LibreChat directory not found:|LibreChat startup requires the validated Node|MongoDB is required (for LibreChat startup|before LibreChat user-default reconciliation and agent seeding)|Meilisearch is required (for local conversation search startup|before LibreChat user-default reconciliation and agent seeding)|Missing required command:|Playground directory not found, skipping|Configured playground port [0-9]+ is in use by an unrelated process; refusing to report it as healthy|Canonical uploads root is outside Viventium App Support|Canonical uploads migration helper is unavailable|LibreChat remains active; refusing to migrate uploads while files may be changing|LibreChat must be restarted once to migrate uploads into App Support safely))' || \
     printf '%s\n' "$tail_output" | grep -Eq \
       '\[viventium\].*(No external LiveKit endpoint was configured|LiveKit is not reachable at|Configured LiveKit endpoint did not respond at|Could not replace the stale managed LiveKit container safely|LiveKit container is running but not responding at|Port [0-9]+ is already in use; refusing to treat it as LiveKit without explicit configuration|LiveKit did not respond after startup|Voice gateway directory not found, skipping|Local voice gateway requires Python 3[.]10[+])'
   then
@@ -6261,84 +6661,6 @@ start_stack_for_install() {
   if [[ -n "$frontend_port" ]]; then
     echo "If package builds are still running, try again shortly at http://localhost:${frontend_port}." >&2
   fi
-  return 1
-}
-
-wait_for_upgrade_runtime_health() {
-  local timeout_seconds="${VIVENTIUM_UPGRADE_RUNTIME_HEALTH_TIMEOUT_SECONDS:-${VIVENTIUM_INSTALL_START_HEALTH_TIMEOUT_SECONDS:-1800}}"
-  local poll_interval="${VIVENTIUM_INSTALL_START_POLL_SECONDS:-2}"
-  local launch_log="$APP_SUPPORT_DIR/logs/helper-start.log"
-  local deadline=$((SECONDS + timeout_seconds))
-
-  while (( SECONDS < deadline )); do
-    if install_surfaces_healthy &&
-      runtime_optional_surfaces_healthy &&
-      postcommit_api_finalization_ready
-    then
-      return 0
-    fi
-    if detached_start_failed_early "$launch_log"; then
-      return 2
-    fi
-    sleep "$poll_interval"
-  done
-  return 1
-}
-
-wait_for_quiesced_runtime_health() {
-  local timeout_seconds="${VIVENTIUM_UPGRADE_RUNTIME_HEALTH_TIMEOUT_SECONDS:-${VIVENTIUM_INSTALL_START_HEALTH_TIMEOUT_SECONDS:-1800}}"
-  local poll_interval="${VIVENTIUM_INSTALL_START_POLL_SECONDS:-2}"
-  local launch_log="$APP_SUPPORT_DIR/logs/helper-start.log"
-  local deadline=$((SECONDS + timeout_seconds))
-
-  while (( SECONDS < deadline )); do
-    # Quiesced successor acceptance intentionally proves only the core
-    # user-facing process artifact. Configured sidecars are held until the
-    # outer transaction commits and are verified by the ordinary full-runtime
-    # health gate during post-commit finalization.
-    if install_surfaces_healthy; then
-      return 0
-    fi
-    if detached_start_failed_early "$launch_log"; then
-      return 2
-    fi
-    sleep "$poll_interval"
-  done
-  return 1
-}
-
-restart_quiesced_runtime_after_upgrade() {
-  local launch_log="$APP_SUPPORT_DIR/logs/helper-start.log"
-  local timeout_seconds="${VIVENTIUM_INSTALL_START_HEALTH_TIMEOUT_SECONDS:-1800}"
-  local wait_status=0
-  local waiting_on=""
-
-  DETACHED_START_PID=""
-  echo "Starting Viventium successor in protected validation mode..."
-  VIVENTIUM_SUCCESSOR_VALIDATION_INTERNAL=1 \
-    VIVENTIUM_SUCCESSOR_VALIDATION_MODE=quiesced \
-    VIVENTIUM_SUCCESSOR_VALIDATION_DISABLED_WRITERS="$SUCCESSOR_VALIDATION_DISABLED_WRITERS" \
-    VIVENTIUM_DETACHED_INHERIT_CLI_LOCK=1 \
-    launch_stack_detached
-
-  wait_for_quiesced_runtime_health
-  wait_status=$?
-  if [[ "$wait_status" == "0" ]]; then
-    return 0
-  fi
-
-  waiting_on="$(install_waiting_on_surfaces || true)"
-  [[ -n "$waiting_on" ]] || waiting_on="quiesced core readiness checks"
-  if [[ "$wait_status" == "2" ]]; then
-    echo "Viventium successor stopped during protected validation startup." >&2
-  else
-    echo "Viventium successor did not become healthy before the protected validation timeout (${timeout_seconds}s)." >&2
-  fi
-  echo "Still waiting on: $waiting_on" >&2
-  if [[ -f "$launch_log" ]]; then
-    echo "Check the detached start log: $launch_log" >&2
-  fi
-  print_install_timeout_log_excerpt "$launch_log"
   return 1
 }
 
@@ -7061,6 +7383,102 @@ ensure_upgradeable_git_state() {
   : "$allow_dirty"
 }
 
+
+arm_persistent_telegram_recovery_helper() {
+  [[ "$(uname -s)" == "Darwin" ]] || return 0
+  local helper_config="$APP_SUPPORT_DIR/helper-config.json"
+  local helper_bundle="${VIVENTIUM_HELPER_APP_BUNDLE:-${VIVENTIUM_HELPER_APP_DIR:-$HOME/Applications}/Viventium.app}"
+  if [[ ! -f "$helper_config" || -L "$helper_config" ||
+    ! -d "$helper_bundle" || -L "$helper_bundle" ]]
+  then
+    return 0
+  fi
+  local before_hash=""
+  local after_hash=""
+  before_hash="$(shasum -a 256 "$helper_config" | awk '{print $1}')"
+  if ! VIVENTIUM_HELPER_RECOVERY_ARM=1 \
+    run_macos_helper_installer install \
+      --no-launch \
+      --preserve-helper-config \
+      --recovery-bundle-only
+  then
+    echo "Upgrade could not pre-activate its persistent rollback-aware helper." >&2
+    return 1
+  fi
+  after_hash="$(shasum -a 256 "$helper_config" | awk '{print $1}')"
+  if [[ -z "$before_hash" || "$after_hash" != "$before_hash" ]]; then
+    echo "Persistent recovery helper activation changed protected helper configuration." >&2
+    return 1
+  fi
+}
+
+capture_agent_source_ref() {
+  local source_json=""
+  source_json="$(
+    "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/agent_migration_state.py" source-ref \
+      --repo-root "$REPO_ROOT"
+  )" || return 1
+  "$PYTHON_BIN" -c '
+import json, re, sys
+value = str(json.loads(sys.argv[1]).get("source_ref") or "")
+if not re.fullmatch(r"[a-f0-9]{40}", value):
+    raise SystemExit("Upgrade source identity is invalid.")
+print(value, end="")
+' "$source_json"
+}
+
+compare_upgrade_continuity_audits() {
+  local pre_upgrade_manifest="${1:-}"
+  local post_upgrade_manifest="${2:-}"
+  local label="${3:-upgrade-continuity-comparison}"
+  local output_path=""
+  local comparison_status=""
+  [[ -f "$pre_upgrade_manifest" && -f "$post_upgrade_manifest" ]] || return 1
+  output_path="$(continuity_audit_path "$label")"
+  "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/continuity_audit.py" compare \
+    --snapshot-manifest "$pre_upgrade_manifest" \
+    --live-manifest "$post_upgrade_manifest" \
+    --strict-semantic \
+    --output "$output_path" >/dev/null
+  comparison_status="$(continuity_audit_status "$output_path")"
+  echo "Upgrade continuity comparison written to $(display_safe_path "$output_path")"
+  if [[ "$comparison_status" != "ok" ]]; then
+    echo "Upgrade-protected config, conversations, memory, prompts, auth/channel state, or schedules could not be proven unchanged; rolling back." >&2
+    echo "Review $(display_safe_path "$output_path") before retrying." >&2
+    return 1
+  fi
+}
+
+config_file_sha256() {
+  refresh_repo_python
+  "$PYTHON_BIN" - "$1" <<'PY'
+import errno
+import hashlib
+import os
+import stat
+import sys
+
+path = sys.argv[1]
+nofollow = getattr(os, "O_NOFOLLOW", None)
+if nofollow is None:
+    raise OSError(errno.ENOTSUP, "no-follow config reads are unavailable", path)
+descriptor = os.open(path, os.O_RDONLY | nofollow)
+try:
+    metadata = os.fstat(descriptor)
+    if not stat.S_ISREG(metadata.st_mode):
+        raise OSError(errno.EINVAL, "canonical config is not a regular file", path)
+    digest = hashlib.sha256()
+    while True:
+        chunk = os.read(descriptor, 1024 * 1024)
+        if not chunk:
+            break
+        digest.update(chunk)
+    print(digest.hexdigest())
+finally:
+    os.close(descriptor)
+PY
+}
+
 ensure_local_checkout_alignment() {
   local allow_dirty="${1:-0}"
   local expected_config_sha256="${2:-}"
@@ -7108,6 +7526,144 @@ for item in report.get("component_lock_drift", []):
     print(f"Managed component blocker: {name} ({status})")
 PY
   return "$status"
+}
+
+ensure_no_pending_agent_migration() {
+  local pending_state="$APP_SUPPORT_DIR/state/runtime/agent-managed-migration-pending.json"
+  if [[ -e "$pending_state" || -L "$pending_state" ]]; then
+    echo "Upgrade refused because the prior managed-agent migration has not finished." >&2
+    echo "Run bin/viventium start to finish it, then retry the upgrade." >&2
+    return 1
+  fi
+}
+
+exit_cli_on_signal() {
+  local exit_status="${1:-1}"
+  trap - INT TERM
+  cleanup_cli_lock
+  exit "$exit_status"
+}
+
+fast_forward_current_branch_to_target() {
+  local target_head="$1"
+  if [[ -z "$target_head" ]]; then
+    echo "Upgrade target commit is missing after fetch." >&2
+    return 1
+  fi
+  git -C "$REPO_ROOT" merge --ff-only "$target_head"
+}
+
+fetch_current_branch_target() {
+  local current_branch
+  local configured_remote
+  local merge_ref
+  current_branch="$(git -C "$REPO_ROOT" rev-parse --abbrev-ref HEAD)"
+  configured_remote="$(git -C "$REPO_ROOT" config --get "branch.${current_branch}.remote" || true)"
+  merge_ref="$(git -C "$REPO_ROOT" config --get "branch.${current_branch}.merge" || true)"
+  if [[ -z "$configured_remote" ]]; then
+    echo "Upgrade requires the current branch to have a configured Git remote." >&2
+    return 1
+  fi
+  if [[ "$merge_ref" != refs/heads/* ]]; then
+    echo "Upgrade requires the current branch to track a normal remote branch." >&2
+    return 1
+  fi
+  git -C "$REPO_ROOT" fetch "$configured_remote" "$merge_ref" >/dev/null
+  git -C "$REPO_ROOT" rev-parse --verify FETCH_HEAD
+}
+
+install_cli_lock_traps() {
+  trap cleanup_cli_lock EXIT
+  trap 'exit_cli_on_signal 130' INT
+  trap 'exit_cli_on_signal 143' TERM
+}
+
+postcommit_api_finalization_ready() {
+  local run_id="${VIVENTIUM_POSTCOMMIT_FINALIZATION_ID:-}"
+  local source_id="${VIVENTIUM_POSTCOMMIT_SOURCE_ID:-}"
+  local receipt="$APP_SUPPORT_DIR/state/continuity/postcommit-api-finalization.json"
+  [[ -n "$run_id" ]] || return 0
+
+  "$PYTHON_BIN" - "$APP_SUPPORT_DIR" "$receipt" "$run_id" "$source_id" <<'PY'
+import json
+import os
+import re
+import stat
+import sys
+from pathlib import Path
+
+app_support = Path(os.path.abspath(sys.argv[1]))
+receipt = Path(os.path.abspath(sys.argv[2]))
+run_id = sys.argv[3]
+source_id = sys.argv[4]
+required = {
+    "database-connected",
+    "database-seed-ready",
+    "startup-checks-ready",
+    "interface-permissions-ready",
+    "mcp-runtime-ready",
+    "oauth-reconnect-ready",
+    "channel-persistence-ready",
+    "permission-migration-inspection",
+    "stale-cortex-recovery",
+    "generation-runtime-ready",
+}
+if not re.fullmatch(r"[0-9a-f]{64}", run_id):
+    raise SystemExit(1)
+if not re.fullmatch(r"[0-9a-f]{40,64}", source_id):
+    raise SystemExit(1)
+try:
+    receipt.relative_to(app_support)
+    if os.path.realpath(receipt) != str(receipt):
+        raise SystemExit(1)
+    metadata = receipt.lstat()
+    if (
+        not stat.S_ISREG(metadata.st_mode)
+        or metadata.st_uid != os.getuid()
+        or stat.S_IMODE(metadata.st_mode) != 0o600
+    ):
+        raise SystemExit(1)
+    payload = json.loads(receipt.read_text(encoding="utf-8"))
+except (OSError, ValueError, json.JSONDecodeError):
+    raise SystemExit(1)
+completed = payload.get("completed")
+degraded = payload.get("degraded")
+valid = (
+    payload.get("schemaVersion") == 1
+    and payload.get("runId") == run_id
+    and payload.get("sourceId") == source_id
+    and payload.get("status") == "ready"
+    and payload.get("stage") == "ready"
+    and isinstance(payload.get("attempt"), int)
+    and not isinstance(payload.get("attempt"), bool)
+    and payload["attempt"] >= 1
+    and isinstance(completed, list)
+    and all(isinstance(item, str) for item in completed)
+    and required.issubset(set(completed))
+    and isinstance(degraded, list)
+    and {
+        "stage": "derived-search-index",
+        "code": "best-effort-derived-state",
+    }
+    in degraded
+)
+raise SystemExit(0 if valid else 1)
+PY
+}
+
+prepare_agent_migration_state() {
+  local predecessor_ref="$1"
+  local successor_ref="$2"
+  if [[ "$predecessor_ref" == "$successor_ref" ]]; then
+    return 0
+  fi
+  local transaction_id="${UPGRADE_TRANSACTION_DIR##*/}"
+  "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/agent_migration_state.py" prepare \
+    --repo-root "$REPO_ROOT" \
+    --app-support-dir "$APP_SUPPORT_DIR" \
+    --predecessor-ref "$predecessor_ref" \
+    --successor-ref "$successor_ref" \
+    --transaction-id "$transaction_id" >/dev/null
 }
 
 prove_fresh_dev_runtime_activation() {
@@ -7159,7 +7715,6 @@ raise SystemExit(0)
 PY
 }
 
-
 resolve_dev_runtime_librechat_owner_env_source() {
   local previous_repo="${1:-}"
   local established_runtime="${2:-0}"
@@ -7207,10 +7762,103 @@ resolve_dev_runtime_librechat_owner_env_source() {
   return 0
 }
 
-fetch_current_branch_target() {
+set_helper_runtime_intent() {
+  local desired_state="${1:-}"
+  case "$desired_state" in
+    running|stopped) ;;
+    *)
+      echo "Invalid helper runtime intent: $desired_state" >&2
+      return 2
+      ;;
+  esac
+  "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/helper_runtime_intent.py" \
+    --config "$(helper_config_file)" \
+    --desired "$desired_state"
+}
+
+wait_for_upgrade_runtime_health() {
+  local timeout_seconds="${VIVENTIUM_UPGRADE_RUNTIME_HEALTH_TIMEOUT_SECONDS:-${VIVENTIUM_INSTALL_START_HEALTH_TIMEOUT_SECONDS:-1800}}"
+  local poll_interval="${VIVENTIUM_INSTALL_START_POLL_SECONDS:-2}"
+  local launch_log="$APP_SUPPORT_DIR/logs/helper-start.log"
+  local deadline=$((SECONDS + timeout_seconds))
+
+  while (( SECONDS < deadline )); do
+    if install_surfaces_healthy &&
+      runtime_optional_surfaces_healthy &&
+      postcommit_api_finalization_ready
+    then
+      return 0
+    fi
+    if detached_start_failed_early "$launch_log"; then
+      return 2
+    fi
+    sleep "$poll_interval"
+  done
+  return 1
+}
+
+wait_for_quiesced_runtime_health() {
+  local timeout_seconds="${VIVENTIUM_UPGRADE_RUNTIME_HEALTH_TIMEOUT_SECONDS:-${VIVENTIUM_INSTALL_START_HEALTH_TIMEOUT_SECONDS:-1800}}"
+  local poll_interval="${VIVENTIUM_INSTALL_START_POLL_SECONDS:-2}"
+  local launch_log="$APP_SUPPORT_DIR/logs/helper-start.log"
+  local deadline=$((SECONDS + timeout_seconds))
+
+  while (( SECONDS < deadline )); do
+    # Quiesced successor acceptance intentionally proves only the core
+    # user-facing process artifact. Configured sidecars are held until the
+    # outer transaction commits and are verified by the ordinary full-runtime
+    # health gate during post-commit finalization.
+    if install_surfaces_healthy; then
+      return 0
+    fi
+    if detached_start_failed_early "$launch_log"; then
+      return 2
+    fi
+    sleep "$poll_interval"
+  done
+  return 1
+}
+
+restart_quiesced_runtime_after_upgrade() {
+  local launch_log="$APP_SUPPORT_DIR/logs/helper-start.log"
+  local timeout_seconds="${VIVENTIUM_INSTALL_START_HEALTH_TIMEOUT_SECONDS:-1800}"
+  local wait_status=0
+  local waiting_on=""
+
+  DETACHED_START_PID=""
+  echo "Starting Viventium successor in protected validation mode..."
+  VIVENTIUM_SUCCESSOR_VALIDATION_INTERNAL=1 \
+    VIVENTIUM_SUCCESSOR_VALIDATION_MODE=quiesced \
+    VIVENTIUM_SUCCESSOR_VALIDATION_DISABLED_WRITERS="$SUCCESSOR_VALIDATION_DISABLED_WRITERS" \
+    VIVENTIUM_DETACHED_INHERIT_CLI_LOCK=1 \
+    launch_stack_detached
+
+  wait_for_quiesced_runtime_health
+  wait_status=$?
+  if [[ "$wait_status" == "0" ]]; then
+    return 0
+  fi
+
+  waiting_on="$(install_waiting_on_surfaces || true)"
+  [[ -n "$waiting_on" ]] || waiting_on="quiesced core readiness checks"
+  if [[ "$wait_status" == "2" ]]; then
+    echo "Viventium successor stopped during protected validation startup." >&2
+  else
+    echo "Viventium successor did not become healthy before the protected validation timeout (${timeout_seconds}s)." >&2
+  fi
+  echo "Still waiting on: $waiting_on" >&2
+  if [[ -f "$launch_log" ]]; then
+    echo "Check the detached start log: $launch_log" >&2
+  fi
+  print_install_timeout_log_excerpt "$launch_log"
+  return 1
+}
+
+pull_current_branch_ff_only() {
   local current_branch
   local configured_remote
   local merge_ref
+  local remote_branch
   current_branch="$(git -C "$REPO_ROOT" rev-parse --abbrev-ref HEAD)"
   configured_remote="$(git -C "$REPO_ROOT" config --get "branch.${current_branch}.remote" || true)"
   merge_ref="$(git -C "$REPO_ROOT" config --get "branch.${current_branch}.merge" || true)"
@@ -7222,56 +7870,9 @@ fetch_current_branch_target() {
     echo "Upgrade requires the current branch to track a normal remote branch." >&2
     return 1
   fi
-  git -C "$REPO_ROOT" fetch "$configured_remote" "$merge_ref" >/dev/null
-  git -C "$REPO_ROOT" rev-parse --verify FETCH_HEAD
-}
-
-fast_forward_current_branch_to_target() {
-  local target_head="$1"
-  if [[ -z "$target_head" ]]; then
-    echo "Upgrade target commit is missing after fetch." >&2
-    return 1
-  fi
-  git -C "$REPO_ROOT" merge --ff-only "$target_head"
-}
-
-capture_agent_source_ref() {
-  local source_json=""
-  source_json="$(
-    "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/agent_migration_state.py" source-ref \
-      --repo-root "$REPO_ROOT"
-  )" || return 1
-  "$PYTHON_BIN" -c '
-import json, re, sys
-value = str(json.loads(sys.argv[1]).get("source_ref") or "")
-if not re.fullmatch(r"[a-f0-9]{40}", value):
-    raise SystemExit("Upgrade source identity is invalid.")
-print(value, end="")
-' "$source_json"
-}
-
-ensure_no_pending_agent_migration() {
-  local pending_state="$APP_SUPPORT_DIR/state/runtime/agent-managed-migration-pending.json"
-  if [[ -e "$pending_state" || -L "$pending_state" ]]; then
-    echo "Upgrade refused because the prior managed-agent migration has not finished." >&2
-    echo "Run bin/viventium start to finish it, then retry the upgrade." >&2
-    return 1
-  fi
-}
-
-prepare_agent_migration_state() {
-  local predecessor_ref="$1"
-  local successor_ref="$2"
-  if [[ "$predecessor_ref" == "$successor_ref" ]]; then
-    return 0
-  fi
-  local transaction_id="${UPGRADE_TRANSACTION_DIR##*/}"
-  "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/agent_migration_state.py" prepare \
-    --repo-root "$REPO_ROOT" \
-    --app-support-dir "$APP_SUPPORT_DIR" \
-    --predecessor-ref "$predecessor_ref" \
-    --successor-ref "$successor_ref" \
-    --transaction-id "$transaction_id" >/dev/null
+  remote_branch="${merge_ref#refs/heads/}"
+  git -C "$REPO_ROOT" fetch "$configured_remote" "$merge_ref"
+  git -C "$REPO_ROOT" pull --ff-only "$configured_remote" "$remote_branch"
 }
 
 if [[ $# -gt 0 ]]; then
@@ -7285,25 +7886,69 @@ if [[ $# -gt 0 ]]; then
   shift
 fi
 
+SKIP_PYTHON_BOOTSTRAP=0
 case "$COMMAND" in
-  restore)
-    PYTHON_BIN="${VIVENTIUM_PYTHON_BIN:-$(command -v python3)}"
-    export PYTHON_BIN
+  restore|qa-control|qa-evidence|release-check)
+    SKIP_PYTHON_BOOTSTRAP=1
     ;;
   upgrade|update)
-    # Register and checkpoint the upgrade before its candidate requirements can
-    # mutate the product-owned bootstrap environment. Reuse the already prepared
-    # product Python when it exists; do not fall back to an incomplete system
-    # Python merely because refresh is intentionally deferred.
-    if ! PYTHON_BIN="$(resolve_upgrade_transaction_python)"; then
-      echo "Upgrade needs the existing Viventium Python environment with its installer requirements." >&2
-      echo "Run bin/viventium preflight --apply, then retry the upgrade." >&2
-      exit 1
-    fi
-    export PYTHON_BIN
+    for read_only_arg in "$@"; do
+      if [[ "$read_only_arg" == "--check" ]]; then
+        SKIP_PYTHON_BOOTSTRAP=1
+        break
+      fi
+    done
     ;;
-  *) refresh_repo_python ;;
 esac
+
+case "$COMMAND" in
+  qa-control|qa-evidence|release-check)
+    if [[ "$QA_AUTHORITY_ENV_WAS_SET" != "0" ||
+      "$GLOBAL_APP_SUPPORT_OPTION_COUNT" != "0" ||
+      "$GLOBAL_RUNTIME_OPTION_COUNT" != "0" ||
+      "$GLOBAL_CONFIG_OPTION_COUNT" != "0" ||
+      "$GLOBAL_LOCK_OPTION_COUNT" != "0" ]]; then
+      printf '%s\n' '{"error":"qa_authority_invalid"}' >&2
+      exit 2
+    fi
+    unset VIVENTIUM_APP_SUPPORT_DIR VIVENTIUM_RUNTIME_DIR VIVENTIUM_CONFIG_FILE
+    unset VIVENTIUM_COMPONENTS_LOCK_FILE VIVENTIUM_CLI_LOCK_DIR
+    unset VIVENTIUM_RUNTIME_PROFILE VIVENTIUM_PYTHON_BIN
+    unset VIVENTIUM_DISABLE_ACTIVE_CHECKOUT_REEXEC
+    unset VIVENTIUM_LOCAL_QA_CASE_ID VIVENTIUM_LOCAL_QA_CASE_TOKEN
+    unset VIVENTIUM_LOCAL_QA_SESSION_REF VIVENTIUM_LOCAL_QA_MODE
+    unset VIVENTIUM_LOCAL_QA_COMPONENT_ARTIFACT_DIGEST
+    unset VIVENTIUM_TELEGRAM_LOCAL_QA_MODE VIVENTIUM_GLASSHIVE_LOCAL_QA_MODE
+    unset VIVENTIUM_RELEASE_LOCAL_QA_MODE
+    APP_SUPPORT_DIR="$CANONICAL_APP_SUPPORT_DIR"
+    RUNTIME_DIR="$CANONICAL_RUNTIME_DIR"
+    CONFIG_FILE="$CANONICAL_APP_SUPPORT_DIR/config.yaml"
+    LOCK_FILE="$REPO_ROOT/components.lock.json"
+    CLI_LOCK_DIR="$CANONICAL_APP_SUPPORT_DIR/state/cli-operation.lock"
+    export VIVENTIUM_APP_SUPPORT_DIR="$APP_SUPPORT_DIR"
+    export VIVENTIUM_RUNTIME_DIR="$RUNTIME_DIR"
+    refresh_runtime_paths
+    ;;
+esac
+if [[ ( "$COMMAND" == "upgrade" || "$COMMAND" == "update" ) &&
+  "$SKIP_PYTHON_BOOTSTRAP" != "1" ]]
+then
+  # Register and checkpoint the upgrade before its candidate requirements can
+  # mutate the product-owned bootstrap environment. Reuse the already prepared
+  # product Python when it exists; do not fall back to an incomplete system
+  # Python merely because refresh is intentionally deferred.
+  if ! PYTHON_BIN="$(resolve_upgrade_transaction_python)"; then
+    echo "Upgrade needs the existing Viventium Python environment with its installer requirements." >&2
+    echo "Run bin/viventium preflight --apply, then retry the upgrade." >&2
+    exit 1
+  fi
+  export PYTHON_BIN
+elif [[ "$SKIP_PYTHON_BOOTSTRAP" == "1" ]]; then
+  PYTHON_BIN="${VIVENTIUM_PYTHON_BIN:-$(command -v python3)}"
+  export PYTHON_BIN
+else
+  refresh_repo_python
+fi
 maybe_reexec_active_runtime_checkout "$COMMAND" "$@"
 
 case "$COMMAND" in
@@ -7827,6 +8472,477 @@ PY
       --lock-file "$LOCK_FILE" \
       "$@"
     ;;
+  qa-evidence)
+    if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+      subcommand_usage qa-evidence
+      exit 0
+    fi
+    if [[ $# -ne 3 || "${1:-}" != "record" || "${2:-}" != "--manifest" || -z "${3:-}" ]]; then
+      echo "qa-evidence accepts only record --manifest <path>." >&2
+      exit 1
+    fi
+    refresh_repo_python
+    installed_root="$(resolve_release_installed_root 2>/dev/null || true)"
+    if [[ -z "$installed_root" ]]; then
+      echo "qa-evidence requires an exact active installed runtime owner." >&2
+      exit 1
+    fi
+    acquire_cli_lock "$COMMAND"
+    qa_evidence_root="$APP_SUPPORT_DIR/qa/evidence"
+    mkdir -p "$qa_evidence_root"
+    chmod 700 "$APP_SUPPORT_DIR/qa" "$qa_evidence_root"
+    exec "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/parallel_work_qa_evidence.py" \
+      --root "$REPO_ROOT" \
+      --installed-root "$installed_root" \
+      --runtime-owner-state "$(stack_owner_state_file)" \
+      --artifact-identity "$RUNTIME_DIR/parallel-work-artifact-identity.json" \
+      --receipts "$RUNTIME_DIR/parallel-work-qa-case-receipts.json" \
+      --local-qa-request "$RUNTIME_DIR/parallel-work-local-qa-request.json" \
+      --local-qa-state "$RUNTIME_DIR/local-qa/active.json" \
+      --evidence-root "$APP_SUPPORT_DIR/qa/evidence" \
+      --manifest "$3"
+    ;;
+  qa-control)
+    if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+      subcommand_usage qa-control
+      exit 0
+    fi
+    refresh_repo_python
+    installed_root="$(resolve_release_installed_root 2>/dev/null || true)"
+    if [[ -z "$installed_root" ]]; then
+      echo "qa-control requires an exact active installed runtime owner." >&2
+      exit 1
+    fi
+    qa_control_state="$RUNTIME_DIR/local-qa/active.json"
+    qa_emo_parent_state="$RUNTIME_DIR/local-qa/emo-uc-048.json"
+    qa_emo_parent_args=(
+      --parent-state "$qa_emo_parent_state"
+      --session-state "$qa_control_state"
+      --installed-root "$installed_root"
+      --artifact-identity "$RUNTIME_DIR/parallel-work-artifact-identity.json"
+      --local-qa-request "$RUNTIME_DIR/parallel-work-local-qa-request.json"
+      --runtime-env "$GENERATED_LIBRECHAT_ENV"
+    )
+    export VIVENTIUM_GLASSHIVE_QA_PARENT_STATE="$RUNTIME_DIR/local-qa/pwk-uc-016-017.json"
+    export VIVENTIUM_GLASSHIVE_QA_SESSION_STATE="$qa_control_state"
+    export VIVENTIUM_GLASSHIVE_QA_INSTALLED_ROOT="$installed_root"
+    export VIVENTIUM_GLASSHIVE_QA_ARTIFACT_IDENTITY="$RUNTIME_DIR/parallel-work-artifact-identity.json"
+    export VIVENTIUM_GLASSHIVE_QA_LOCAL_REQUEST="$RUNTIME_DIR/parallel-work-local-qa-request.json"
+    export VIVENTIUM_GLASSHIVE_QA_RUNTIME_ENV="$GENERATED_ENV"
+    export VIVENTIUM_GLASSHIVE_QA_LIBRECHAT_ENV="$GENERATED_LIBRECHAT_ENV"
+    case "${1:-}" in
+      activate)
+        shift
+        qa_activate_user_args=()
+        qa_activate_case_seen=0
+        qa_activate_expiry_seen=0
+        while [[ $# -gt 0 ]]; do
+          case "${1:-}" in
+            --case-id)
+              if [[ "$qa_activate_case_seen" == "1" || $# -lt 2 || -z "${2:-}" ]]; then
+                echo "qa-control activate arguments are invalid." >&2
+                exit 1
+              fi
+              qa_activate_user_args+=("$1" "$2")
+              qa_activate_case_seen=1
+              shift 2
+              ;;
+            --expires-in-seconds)
+              if [[ "$qa_activate_expiry_seen" == "1" || $# -lt 2 || -z "${2:-}" ]]; then
+                echo "qa-control activate arguments are invalid." >&2
+                exit 1
+              fi
+              qa_activate_user_args+=("$1" "$2")
+              qa_activate_expiry_seen=1
+              shift 2
+              ;;
+            *)
+              echo "qa-control activate arguments are invalid." >&2
+              exit 1
+              ;;
+          esac
+        done
+        if [[ "$qa_activate_case_seen" != "1" ]]; then
+          echo "qa-control activate requires one case ID." >&2
+          exit 1
+        fi
+        acquire_cli_lock "$COMMAND"
+        exec "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/local_qa_runtime_control.py" \
+          activate --state "$qa_control_state" --installed-root "$installed_root" \
+          --artifact-identity "$RUNTIME_DIR/parallel-work-artifact-identity.json" \
+          --local-qa-request "$RUNTIME_DIR/parallel-work-local-qa-request.json" \
+          "${qa_activate_user_args[@]}"
+        ;;
+      status)
+        if [[ $# -ne 1 ]]; then
+          echo "qa-control status accepts no additional arguments." >&2
+          exit 1
+        fi
+        exec "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/local_qa_runtime_control.py" \
+          status --state "$qa_control_state" --installed-root "$installed_root" \
+          --artifact-identity "$RUNTIME_DIR/parallel-work-artifact-identity.json" \
+          --local-qa-request "$RUNTIME_DIR/parallel-work-local-qa-request.json"
+        ;;
+      verify-emo-feelings)
+        if [[ $# -ne 3 || "${2:-}" != "--evidence" || -z "${3:-}" ]]; then
+          echo "qa-control verify-emo-feelings requires one private evidence file." >&2
+          exit 1
+        fi
+        acquire_cli_lock "$COMMAND"
+        if ! exec 9<"$3"; then
+          echo "qa-control verify-emo-feelings could not open the private evidence file." >&2
+          exit 1
+        fi
+        exec "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/feelings_qa_parent_control.py" \
+          verify --state "$qa_control_state" --installed-root "$installed_root" \
+          --artifact-identity "$RUNTIME_DIR/parallel-work-artifact-identity.json" \
+          --local-qa-request "$RUNTIME_DIR/parallel-work-local-qa-request.json" \
+          --evidence-fd 9
+        ;;
+      arm-telegram-race)
+        if [[ $# -ne 1 ]]; then
+          echo "qa-control arm-telegram-race reads its private target scope from standard input." >&2
+          exit 1
+        fi
+        acquire_cli_lock "$COMMAND"
+        exec "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/telegram_qa_parent_control.py" \
+          arm --state "$qa_control_state" --installed-root "$installed_root" \
+          --artifact-identity "$RUNTIME_DIR/parallel-work-artifact-identity.json" \
+          --local-qa-request "$RUNTIME_DIR/parallel-work-local-qa-request.json" \
+          --telegram-state-dir "$RUNTIME_DIR/telegram" --scope-stdin
+        ;;
+      audit-telegram-race|cleanup-telegram-race)
+        if [[ $# -ne 1 ]]; then
+          echo "qa-control ${1:-} accepts no additional arguments." >&2
+          exit 1
+        fi
+        acquire_cli_lock "$COMMAND"
+        telegram_qa_action="audit"
+        if [[ "${1:-}" == "cleanup-telegram-race" ]]; then
+          telegram_qa_action="cleanup"
+        fi
+        exec "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/telegram_qa_parent_control.py" \
+          "$telegram_qa_action" --state "$qa_control_state" \
+          --installed-root "$installed_root" \
+          --artifact-identity "$RUNTIME_DIR/parallel-work-artifact-identity.json" \
+          --telegram-state-dir "$RUNTIME_DIR/telegram"
+        ;;
+      prepare-emo-insight)
+        if [[ $# -ne 1 ]]; then
+          echo "qa-control prepare-emo-insight accepts no additional arguments." >&2
+          exit 1
+        fi
+        acquire_cli_lock "$COMMAND"
+        exec "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/librechat_emo_qa_parent_control.py" \
+          prepare "${qa_emo_parent_args[@]}"
+        ;;
+      arm-emo-insight)
+        shift
+        qa_emo_user_args=()
+        qa_emo_boundary_seen=0
+        qa_emo_ttl_seen=0
+        while [[ $# -gt 0 ]]; do
+          case "${1:-}" in
+            --boundary)
+              if [[ "$qa_emo_boundary_seen" == "1" || $# -lt 2 || -z "${2:-}" ]]; then
+                echo "qa-control arm-emo-insight arguments are invalid." >&2
+                exit 1
+              fi
+              qa_emo_user_args+=("$1" "$2")
+              qa_emo_boundary_seen=1
+              shift 2
+              ;;
+            --ttl-seconds)
+              if [[ "$qa_emo_ttl_seen" == "1" || $# -lt 2 || -z "${2:-}" ]]; then
+                echo "qa-control arm-emo-insight arguments are invalid." >&2
+                exit 1
+              fi
+              qa_emo_user_args+=("$1" "$2")
+              qa_emo_ttl_seen=1
+              shift 2
+              ;;
+            *)
+              echo "qa-control arm-emo-insight arguments are invalid." >&2
+              exit 1
+              ;;
+          esac
+        done
+        if [[ "$qa_emo_boundary_seen" != "1" ]]; then
+          echo "qa-control arm-emo-insight requires one boundary." >&2
+          exit 1
+        fi
+        acquire_cli_lock "$COMMAND"
+        exec "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/librechat_emo_qa_parent_control.py" \
+          arm "${qa_emo_parent_args[@]}" "${qa_emo_user_args[@]}"
+        ;;
+      query-emo-insight|clear-emo-insight)
+        qa_emo_action="${1%-emo-insight}"
+        shift
+        qa_emo_user_args=()
+        if [[ $# -eq 2 && "${1:-}" == "--boundary" && -n "${2:-}" ]]; then
+          qa_emo_user_args+=("$1" "$2")
+        elif [[ $# -ne 0 ]]; then
+          echo "qa-control ${qa_emo_action}-emo-insight arguments are invalid." >&2
+          exit 1
+        fi
+        acquire_cli_lock "$COMMAND"
+        exec "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/librechat_emo_qa_parent_control.py" \
+          "$qa_emo_action" "${qa_emo_parent_args[@]}" "${qa_emo_user_args[@]}"
+        ;;
+      cleanup-emo-insight)
+        if [[ $# -ne 1 ]]; then
+          echo "qa-control cleanup-emo-insight accepts no additional arguments." >&2
+          exit 1
+        fi
+        acquire_cli_lock "$COMMAND"
+        exec "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/librechat_emo_qa_parent_control.py" \
+          cleanup "${qa_emo_parent_args[@]}"
+        ;;
+      prepare-glasshive)
+        shift
+        qa_glasshive_user_args=()
+        qa_glasshive_case_seen=0
+        while [[ $# -gt 0 ]]; do
+          case "${1:-}" in
+            --case-id)
+              if [[ "$qa_glasshive_case_seen" == "1" || $# -lt 2 || -z "${2:-}" ]]; then
+                echo "qa-control prepare-glasshive arguments are invalid." >&2
+                exit 1
+              fi
+              qa_glasshive_user_args+=("$1" "$2")
+              qa_glasshive_case_seen=1
+              shift 2
+              ;;
+            *)
+              echo "qa-control prepare-glasshive arguments are invalid." >&2
+              exit 1
+              ;;
+          esac
+        done
+        if [[ "$qa_glasshive_case_seen" != "1" ]]; then
+          echo "qa-control prepare-glasshive requires one case ID." >&2
+          exit 1
+        fi
+        acquire_cli_lock "$COMMAND"
+        exec "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/glasshive_qa_parent_control.py" \
+          prepare "${qa_glasshive_user_args[@]}" --owner-scope-stdin
+        ;;
+      arm-glasshive)
+        shift
+        qa_glasshive_user_args=()
+        qa_glasshive_boundary_seen=0
+        qa_glasshive_ttl_seen=0
+        while [[ $# -gt 0 ]]; do
+          case "${1:-}" in
+            --boundary)
+              if [[ "$qa_glasshive_boundary_seen" == "1" || $# -lt 2 || -z "${2:-}" ]]; then
+                echo "qa-control arm-glasshive arguments are invalid." >&2
+                exit 1
+              fi
+              qa_glasshive_user_args+=("$1" "$2")
+              qa_glasshive_boundary_seen=1
+              shift 2
+              ;;
+            --ttl-seconds)
+              if [[ "$qa_glasshive_ttl_seen" == "1" || $# -lt 2 || -z "${2:-}" ]]; then
+                echo "qa-control arm-glasshive arguments are invalid." >&2
+                exit 1
+              fi
+              qa_glasshive_user_args+=("$1" "$2")
+              qa_glasshive_ttl_seen=1
+              shift 2
+              ;;
+            *)
+              echo "qa-control arm-glasshive arguments are invalid." >&2
+              exit 1
+              ;;
+          esac
+        done
+        if [[ "$qa_glasshive_boundary_seen" != "1" ]]; then
+          echo "qa-control arm-glasshive requires one boundary." >&2
+          exit 1
+        fi
+        acquire_cli_lock "$COMMAND"
+        exec "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/glasshive_qa_parent_control.py" \
+          arm "${qa_glasshive_user_args[@]}"
+        ;;
+      query-glasshive|clear-glasshive)
+        qa_glasshive_action="${1%-glasshive}"
+        shift
+        qa_glasshive_user_args=()
+        if [[ $# -eq 2 && "${1:-}" == "--boundary" && -n "${2:-}" ]]; then
+          qa_glasshive_user_args+=("$1" "$2")
+        elif [[ $# -ne 0 ]]; then
+          echo "qa-control ${qa_glasshive_action}-glasshive arguments are invalid." >&2
+          exit 1
+        fi
+        acquire_cli_lock "$COMMAND"
+        exec "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/glasshive_qa_parent_control.py" \
+          "$qa_glasshive_action" "${qa_glasshive_user_args[@]}"
+        ;;
+      cleanup-glasshive)
+        if [[ $# -ne 1 ]]; then
+          echo "qa-control cleanup-glasshive accepts no additional arguments." >&2
+          exit 1
+        fi
+        acquire_cli_lock "$COMMAND"
+        exec "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/glasshive_qa_parent_control.py" cleanup
+        ;;
+      inject-release-claim|restore-release-claim)
+        if [[ $# -ne 1 ]]; then
+          echo "qa-control ${1:-} accepts no additional arguments." >&2
+          exit 1
+        fi
+        acquire_cli_lock "$COMMAND"
+        qa_fault_action="apply"
+        if [[ "${1:-}" == "restore-release-claim" ]]; then
+          qa_fault_action="restore"
+        fi
+        exec "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/release_claim_qa_fault.py" \
+          "$qa_fault_action" \
+          --session-state "$qa_control_state" \
+          --installed-root "$installed_root" \
+          --artifact-identity "$RUNTIME_DIR/parallel-work-artifact-identity.json" \
+          --readiness "$RUNTIME_DIR/parallel-work-readiness-facts.json" \
+          --backup "$RUNTIME_DIR/local-qa/release-claim-backup.json"
+        ;;
+      clear)
+        shift
+        qa_clear_user_args=()
+        qa_clear_session_ref_seen=0
+        while [[ $# -gt 0 ]]; do
+          if [[ "${1:-}" != "--session-ref" ||
+            "$qa_clear_session_ref_seen" == "1" ||
+            $# -lt 2 ||
+            -z "${2:-}" ]]; then
+            echo "qa-control clear arguments are invalid." >&2
+            exit 1
+          fi
+          qa_clear_user_args+=("$1" "$2")
+          qa_clear_session_ref_seen=1
+          shift 2
+        done
+        if [[ "$qa_clear_session_ref_seen" != "1" ]]; then
+          echo "qa-control clear requires one session reference." >&2
+          exit 1
+        fi
+        if [[ -f "$RUNTIME_DIR/local-qa/release-claim-backup.json" ]]; then
+          echo "Restore the active REL-UC-004 faults before clearing the QA session." >&2
+          exit 1
+        fi
+        acquire_cli_lock "$COMMAND"
+        if ! "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/librechat_emo_qa_parent_control.py" \
+          clear-gate "${qa_emo_parent_args[@]}" >/dev/null; then
+          echo "Clear the EMO-UC-048 controls and exact synthetic fixture before clearing the QA session." >&2
+          exit 1
+        fi
+        if ! "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/glasshive_qa_parent_control.py" \
+          clear-gate >/dev/null; then
+          echo "Clear the GlassHive fixture and controls before clearing the QA session." >&2
+          exit 1
+        fi
+        "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/telegram_qa_parent_control.py" \
+          cleanup --state "$qa_control_state" --installed-root "$installed_root" \
+          --artifact-identity "$RUNTIME_DIR/parallel-work-artifact-identity.json" \
+          --telegram-state-dir "$RUNTIME_DIR/telegram" >/dev/null
+        exec "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/local_qa_runtime_control.py" \
+          clear --state "$qa_control_state" "${qa_clear_user_args[@]}"
+        ;;
+      *)
+        echo "qa-control command is not supported." >&2
+        exit 1
+        ;;
+    esac
+    ;;
+  release-check)
+    if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+      subcommand_usage release-check
+      exit 0
+    fi
+    refresh_repo_python
+    release_input_args=("$@")
+    release_args=()
+    release_local_qa=0
+    release_has_installed_root=0
+    release_requested_installed_root=""
+    release_arg_index=0
+    while [[ "$release_arg_index" -lt "${#release_input_args[@]}" ]]; do
+      release_arg="${release_input_args[$release_arg_index]}"
+      case "$release_arg" in
+        --local-qa)
+          if [[ "$release_local_qa" == "1" ]]; then
+            echo "release-check accepts --local-qa only once." >&2
+            exit 1
+          fi
+          release_local_qa=1
+          ;;
+        --root|--root=*|--mode|--mode=*|--allow-local-qa-override|--readiness-facts|--readiness-facts=*|--artifact-identity|--artifact-identity=*|--qa-case-receipts|--qa-case-receipts=*|--installed-prompt-bundle|--installed-prompt-bundle=*|--output|--output=*)
+          echo "release-check uses canonical facts from the active runtime." >&2
+          echo "release-check uses the canonical artifact identity from the active runtime." >&2
+          exit 1
+          ;;
+        --installed-root)
+          if [[ "$release_has_installed_root" == "1" || $((release_arg_index + 1)) -ge ${#release_input_args[@]} || "${release_input_args[$((release_arg_index + 1))]}" == --* ]]; then
+            echo "release-check requires one valid --installed-root value." >&2
+            exit 1
+          fi
+          release_has_installed_root=1
+          release_requested_installed_root="${release_input_args[$((release_arg_index + 1))]}"
+          release_args+=(--installed-root "$release_requested_installed_root")
+          release_arg_index=$((release_arg_index + 1))
+          ;;
+        --installed-root=*)
+          if [[ "$release_has_installed_root" == "1" || -z "${release_arg#--installed-root=}" ]]; then
+            echo "release-check requires one valid --installed-root value." >&2
+            exit 1
+          fi
+          release_has_installed_root=1
+          release_requested_installed_root="${release_arg#--installed-root=}"
+          release_args+=(--installed-root "$release_requested_installed_root")
+          ;;
+        --runtime-owner-state|--runtime-owner-state=*)
+          echo "release-check resolves runtime owner state from the active runtime." >&2
+          exit 1
+          ;;
+        *)
+          release_args+=("$release_arg")
+          ;;
+      esac
+      release_arg_index=$((release_arg_index + 1))
+    done
+    installed_root="$(resolve_release_installed_root 2>/dev/null || true)"
+    runtime_owner_state="$(stack_owner_state_file)"
+    if [[ -z "$installed_root" ]]; then
+      echo "release-check requires an exact active installed runtime owner." >&2
+      exit 1
+    fi
+    if [[ "$release_has_installed_root" == "1" ]]; then
+      if ! release_installed_root_argument_allowed "$release_requested_installed_root" "$installed_root"; then
+        echo "release-check rejected --installed-root because it is not the active running checkout." >&2
+        exit 1
+      fi
+    else
+      release_args+=(--installed-root "$installed_root")
+    fi
+    release_args+=(
+      --readiness-facts "$RUNTIME_DIR/parallel-work-readiness-facts.json"
+      --artifact-identity "$RUNTIME_DIR/parallel-work-artifact-identity.json"
+      --qa-case-receipts "$RUNTIME_DIR/parallel-work-qa-case-receipts.json"
+      --installed-prompt-bundle "$RUNTIME_DIR/prompt-bundle.json"
+      --runtime-owner-state "$runtime_owner_state"
+    )
+    if [[ "$release_local_qa" == "1" ]]; then
+      release_args+=(
+        --mode local-qa
+        --allow-local-qa-override
+        --output "$RUNTIME_DIR/parallel-work-release-gate.json"
+      )
+      write_parallel_work_local_qa_request "$RUNTIME_DIR/parallel-work-local-qa-request.json" true
+    else
+      write_parallel_work_local_qa_request "$RUNTIME_DIR/parallel-work-local-qa-request.json" false
+    fi
+    exec "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/parallel_work_release_gate.py" "${release_args[@]}"
+    ;;
   status)
     ensure_app_support_layout "$APP_SUPPORT_DIR"
     if [[ ! -f "$CONFIG_FILE" ]]; then
@@ -7889,10 +9005,9 @@ PY
       subcommand_usage launch
       exit 0
     fi
-    # Authenticate an exact receipt-bound quiesced successor before generic
-    # interrupted-upgrade recovery. Otherwise a detached successor launched by
-    # the still-lock-owning outer transaction mistakes that same transaction for
-    # an interruption and deadlocks trying to recover itself.
+    # A quiesced successor re-enters through this public command. Inherit its
+    # verified parent lock before generic recovery, or recovery would mistake
+    # the live transaction for an interruption and deadlock on itself.
     if ! inherit_quiesced_successor_validation_if_active; then
       echo "Active upgrade validation state is unsafe; refusing to launch writers." >&2
       exit 1
@@ -8226,6 +9341,17 @@ PY
       echo "Run: bin/viventium install" >&2
       exit 1
     fi
+    # === VIVENTIUM START ===
+    # Feature: Bidirectional startup single-flight.
+    # Purpose: A manual start must not preempt the helper-owned startup after the CLI lock is
+    # released for the long-running launcher handoff.
+    # === VIVENTIUM END ===
+    if [[ "${VIVENTIUM_SUCCESSOR_VALIDATION_MODE:-}" != "quiesced" ]] &&
+      runtime_start_claim_active
+    then
+      echo "Viventium is already starting."
+      exit 0
+    fi
     if [[ "${VIVENTIUM_SUCCESSOR_VALIDATION_MODE:-}" != "quiesced" ]]; then
       bootstrap_components
       ensure_viventium_health_runtime >/dev/null
@@ -8238,6 +9364,19 @@ PY
     # === VIVENTIUM END ===
     if [[ "${VIVENTIUM_SUCCESSOR_VALIDATION_MODE:-}" != "quiesced" ]]; then
       apply_default_nightly_routines
+    fi
+    if [[ -f "$GENERATED_ENV" ]]; then
+      load_selected_runtime_environment_for_children
+    fi
+    # Record the new process before compilation. The transition restores a prior
+    # live owner if this candidate exits before or after runtime handoff.
+    if [[ "${VIVENTIUM_SUCCESSOR_VALIDATION_MODE:-}" != "quiesced" ]]; then
+      capture_stack_owner_state_for_transition
+      STACK_OWNER_TRANSITION_ACTIVE=1
+      trap start_owner_transition_exit_cleanup EXIT
+      trap 'exit 130' INT
+      trap 'exit 143' TERM
+      write_stack_owner_state "$COMMAND"
     fi
     compile_config
     if [[ "${VIVENTIUM_SUCCESSOR_VALIDATION_MODE:-}" != "quiesced" ]]; then
@@ -8265,7 +9404,6 @@ PY
             export MEILI_MASTER_KEY
           fi
         fi
-        write_stack_owner_state "$COMMAND"
         NATIVE_STACK_SKIP_MEILI=0
         if express_install_experience; then
           NATIVE_STACK_SKIP_MEILI=1
@@ -8273,8 +9411,6 @@ PY
         VIVENTIUM_NATIVE_STACK_SKIP_LIVEKIT=1 \
           VIVENTIUM_NATIVE_STACK_SKIP_MEILI="$NATIVE_STACK_SKIP_MEILI" \
           "$REPO_ROOT/scripts/viventium/native_stack.sh" start
-      else
-        write_stack_owner_state "$COMMAND"
       fi
       if [[ "${VIVENTIUM_VOICE_ENABLED:-true}" != "true" ]]; then
         EXTRA_ARGS+=(--skip-voice-gateway --skip-livekit)
@@ -8348,14 +9484,24 @@ PY
     # handoff setup. It must not be held by the long-running stack supervisor;
     # otherwise status, Stop/Quit, and manual memory-hardening jobs are blocked
     # while Viventium is healthy and running.
+    if [[ "${VIVENTIUM_SUCCESSOR_VALIDATION_MODE:-}" == "quiesced" ]]; then
+      start_status=0
+      export VIVENTIUM_SKIP_CANONICAL_RUNTIME_REGEN=1
+      VIVENTIUM_LAUNCHER_INTERNAL=1 "${START_CMD[@]}" || start_status=$?
+      exit "$start_status"
+    fi
     if ! write_runtime_start_claim; then
       echo "Unable to record the active Viventium startup claim." >&2
       exit 1
     fi
     cleanup_cli_lock
     start_status=0
+    export VIVENTIUM_SKIP_CANONICAL_RUNTIME_REGEN=1
     VIVENTIUM_LAUNCHER_INTERNAL=1 "${START_CMD[@]}" || start_status=$?
     clear_runtime_start_claim
+    if [[ "$start_status" == "0" ]]; then
+      hold_detached_runtime_owner
+    fi
     exit "$start_status"
     ;;
   stop)

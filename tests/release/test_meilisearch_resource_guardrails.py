@@ -56,3 +56,11 @@ def test_startup_local_search_backfill_gates_on_recent_failed_meili_tasks() -> N
     assert "client.getTasks({ statuses: ['failed'], limit: lookback })" in source
     assert "expectedMeiliPrimaryKey = '_meiliId'" in source
     assert "refusing to enqueue more local search sync work" in source
+
+
+def test_startup_local_search_uses_the_plugin_eligibility_contract_for_parity() -> None:
+    source = LOCAL_SEARCH_SYNC.read_text(encoding="utf-8")
+
+    assert "Message.getSyncProgress()" in source
+    assert "Conversation.getSyncProgress()" in source
+    assert "const meiliEligibleQuery" not in source

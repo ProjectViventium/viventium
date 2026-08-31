@@ -1,0 +1,63 @@
+{
+  "contractVersion": 1,
+  "detached": {
+    "allowTrailingArguments": false,
+    "command": "start",
+    "argvTemplate": [
+      "{ownerExecutablePath}",
+      "--app-support-dir",
+      "{appSupportDir}",
+      "--config-file",
+      "{configFile}",
+      "--runtime-dir",
+      "{runtimeDir}",
+      "--lock-file",
+      "{componentsLockFile}",
+      "start",
+      "--restart"
+    ]
+  },
+  "attached": {
+    "allowTrailingArguments": false,
+    "commands": ["start", "launch"],
+    "argvTemplates": [
+      ["{ownerExecutablePath}", "{command}"],
+      ["{ownerExecutablePath}", "{command}", "--restart"],
+      [
+        "{ownerExecutablePath}",
+        "--app-support-dir",
+        "{appSupportDir}",
+        "--config-file",
+        "{configFile}",
+        "--runtime-dir",
+        "{runtimeDir}",
+        "--lock-file",
+        "{componentsLockFile}",
+        "{command}"
+      ],
+      [
+        "{ownerExecutablePath}",
+        "--app-support-dir",
+        "{appSupportDir}",
+        "--config-file",
+        "{configFile}",
+        "--runtime-dir",
+        "{runtimeDir}",
+        "--lock-file",
+        "{componentsLockFile}",
+        "{command}",
+        "--restart"
+      ]
+    ]
+  },
+  "processWrappers": [
+    "",
+    "/bin/bash ",
+    "/bin/sh ",
+    "/bin/zsh ",
+    "/usr/bin/env bash ",
+    "bash ",
+    "sh ",
+    "zsh "
+  ]
+}

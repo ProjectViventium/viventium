@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import shlex
 import subprocess
 from pathlib import Path
-import shlex
+
 import pytest
 
 
@@ -80,516 +81,7 @@ def test_express_native_can_skip_meilisearch_without_changing_stop_cleanup() -> 
     assert 'NATIVE_STACK_SKIP_MEILI="${VIVENTIUM_NATIVE_STACK_SKIP_MEILI:-0}"' in script_text
     assert 'if [[ "$NATIVE_STACK_SKIP_MEILI" != "1" ]]; then' in start_case
     assert "start_meili" in start_case
-    assert (
-        'stop_pid_file_if_matches "$MEILI_PID_FILE" "Meilisearch" '
-        "meili_process_matches_expected"
-    ) in stop_case
-
-
-def test_native_mongo_stop_requires_a_fresh_running_engine_receipt() -> None:
-    script_text = NATIVE_STACK_PATH.read_text(encoding="utf-8")
-    function_def = extract_shell_function(
-        script_text,
-        "stop_recorded_native_mongo_engine",
-    )
-
-    completed = subprocess.run(
-        [
-            "bash",
-            "-lc",
-            (
-                "set -euo pipefail\n"
-                "MONGO_PID_FILE='/tmp/synthetic-mongod.pid'\n"
-                "run_mongo_engine_identity() { printf 'identity:%s\\n' \"$*\"; }\n"
-                f"{function_def}"
-                "MONGO_ENGINE_IDENTITY_PREPARED=false\n"
-                "stop_recorded_native_mongo_engine\n"
-                "MONGO_ENGINE_IDENTITY_PREPARED=true\n"
-                "stop_recorded_native_mongo_engine\n"
-            ),
-        ],
-        cwd=REPO_ROOT,
-        check=True,
-        text=True,
-        capture_output=True,
-    )
-
-    assert completed.stdout.splitlines() == [
-        "identity:stop-recorded-native-engine --pid-file /tmp/synthetic-mongod.pid"
-    ]
-
-
-def test_livekit_meta_matches_expected_accepts_matching_runtime_meta(tmp_path: Path) -> None:
-    script_text = NATIVE_STACK_PATH.read_text(encoding="utf-8")
-    function_def = extract_shell_function(script_text, "livekit_meta_matches_expected")
-    meta_file = tmp_path / "livekit.runtime.env"
-    meta_file.write_text(
-        "\n".join(
-            [
-                "LIVEKIT_NODE_IP=192.0.2.10",
-                "LIVEKIT_HTTP_PORT=7888",
-                "LIVEKIT_TCP_PORT=7889",
-                "LIVEKIT_UDP_PORT=7890",
-            ]
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-
-    completed = subprocess.run(
-        [
-            "bash",
-            "-lc",
-            (
-                "set -euo pipefail\n"
-                f"LIVEKIT_META_FILE='{meta_file}'\n"
-                "LIVEKIT_NODE_IP='192.0.2.10'\n"
-                "LIVEKIT_HTTP_PORT='7888'\n"
-                "LIVEKIT_TCP_PORT='7889'\n"
-                "LIVEKIT_UDP_PORT='7890'\n"
-                "LIVEKIT_TURN_DOMAIN=''\n"
-                "LIVEKIT_TURN_TLS_PORT=''\n"
-                "LIVEKIT_TURN_CERT_FILE=''\n"
-                "LIVEKIT_TURN_KEY_FILE=''\n"
-                f"{function_def}"
-                "if livekit_meta_matches_expected; then printf 'match\\n'; else printf 'mismatch\\n'; fi\n"
-            ),
-        ],
-        cwd=REPO_ROOT,
-        check=True,
-        text=True,
-        capture_output=True,
-    )
-
-    assert completed.stdout.strip() == "match"
-
-
-def test_detect_livekit_node_ip_prefers_lan_interface_address() -> None:
-    script_text = NATIVE_STACK_PATH.read_text(encoding="utf-8")
-    function_def = extract_shell_function(script_text, "detect_livekit_node_ip")
-
-    completed = subprocess.run(
-        [
-            "bash",
-            "-lc",
-                (
-                    "set -euo pipefail\n"
-                    "unset LIVEKIT_NODE_IP\n"
-                    "route() { printf '   interface: en7\\n'; }\n"
-                "ipconfig() {\n"
-                "  if [[ \"$1\" == \"getifaddr\" && \"$2\" == \"en7\" ]]; then\n"
-                "    printf '192.0.2.10\\n'\n"
-                "    return 0\n"
-                "  fi\n"
-                "  return 1\n"
-                "}\n"
-                f"{function_def}"
-                "detect_livekit_node_ip\n"
-            ),
-        ],
-        cwd=REPO_ROOT,
-        check=True,
-        text=True,
-        capture_output=True,
-    )
-
-    assert completed.stdout.strip() == "192.0.2.10"
-
-
-def test_detect_livekit_node_ip_falls_back_to_loopback() -> None:
-    script_text = NATIVE_STACK_PATH.read_text(encoding="utf-8")
-    function_def = extract_shell_function(script_text, "detect_livekit_node_ip")
-
-    completed = subprocess.run(
-        [
-            "bash",
-            "-lc",
-                (
-                    "set -euo pipefail\n"
-                    "unset LIVEKIT_NODE_IP\n"
-                    "route() { return 1; }\n"
-                "ipconfig() { return 1; }\n"
-                "hostname() { return 1; }\n"
-                f"{function_def}"
-                "detect_livekit_node_ip\n"
-            ),
-        ],
-        cwd=REPO_ROOT,
-        check=True,
-        text=True,
-        capture_output=True,
-    )
-
-    assert completed.stdout.strip() == "127.0.0.1"
-
-
-def test_ensure_soft_open_file_limit_raises_low_soft_limit() -> None:
-    script_text = NATIVE_STACK_PATH.read_text(encoding="utf-8")
-    function_def = extract_shell_function(script_text, "ensure_soft_open_file_limit")
-
-    completed = subprocess.run(
-        [
-            "bash",
-            "-lc",
-            (
-                "set -euo pipefail\n"
-                "soft_limit=256\n"
-                "ulimit() {\n"
-                "  if [[ \"$#\" -eq 1 && \"$1\" == \"-n\" ]]; then printf '%s\\n' \"$soft_limit\"; return 0; fi\n"
-                "  if [[ \"$#\" -eq 1 && \"$1\" == \"-Hn\" ]]; then printf 'unlimited\\n'; return 0; fi\n"
-                "  if [[ \"$#\" -eq 2 && \"$1\" == \"-Sn\" ]]; then soft_limit=\"$2\"; return 0; fi\n"
-                "  return 1\n"
-                "}\n"
-                f"{function_def}"
-                "ensure_soft_open_file_limit 65536 >/tmp/out\n"
-                "cat /tmp/out\n"
-                "printf 'soft=%s\\n' \"$soft_limit\"\n"
-            ),
-        ],
-        cwd=REPO_ROOT,
-        check=True,
-        text=True,
-        capture_output=True,
-    )
-
-    assert "Raised max open files soft limit to 65536" in completed.stdout
-    assert "soft=65536" in completed.stdout
-
-
-def test_ensure_soft_open_file_limit_is_noop_when_already_high() -> None:
-    script_text = NATIVE_STACK_PATH.read_text(encoding="utf-8")
-    function_def = extract_shell_function(script_text, "ensure_soft_open_file_limit")
-
-    completed = subprocess.run(
-        [
-            "bash",
-            "-lc",
-            (
-                "set -euo pipefail\n"
-                "soft_limit=65536\n"
-                "ulimit() {\n"
-                "  if [[ \"$#\" -eq 1 && \"$1\" == \"-n\" ]]; then printf '%s\\n' \"$soft_limit\"; return 0; fi\n"
-                "  if [[ \"$#\" -eq 1 && \"$1\" == \"-Hn\" ]]; then printf 'unlimited\\n'; return 0; fi\n"
-                "  if [[ \"$#\" -eq 2 && \"$1\" == \"-Sn\" ]]; then soft_limit=\"$2\"; return 0; fi\n"
-                "  return 1\n"
-                "}\n"
-                f"{function_def}"
-                "ensure_soft_open_file_limit 65536 >/tmp/out\n"
-                "cat /tmp/out\n"
-                "printf 'soft=%s\\n' \"$soft_limit\"\n"
-            ),
-        ],
-        cwd=REPO_ROOT,
-        check=True,
-        text=True,
-        capture_output=True,
-    )
-
-    assert completed.stdout.strip() == "soft=65536"
-
-
-def test_mongo_listener_data_dir_reads_the_running_server_dbpath() -> None:
-    script_text = NATIVE_STACK_PATH.read_text(encoding="utf-8")
-    function_def = extract_shell_function(script_text, "mongo_listener_data_dir")
-
-    completed = subprocess.run(
-        [
-            "bash",
-            "-lc",
-            (
-                "set -euo pipefail\n"
-                "MONGO_HOST='127.0.0.1'\n"
-                "MONGO_PORT='27117'\n"
-                "mongosh() { printf '/tmp/viventium-mongo-data\\n'; }\n"
-                f"{function_def}"
-                "mongo_listener_data_dir\n"
-            ),
-        ],
-        cwd=REPO_ROOT,
-        check=True,
-        text=True,
-        capture_output=True,
-    )
-
-    assert completed.stdout.strip() == "/tmp/viventium-mongo-data"
-
-
-def test_mongo_listener_matches_only_the_configured_data_dir(tmp_path: Path) -> None:
-    script_text = NATIVE_STACK_PATH.read_text(encoding="utf-8")
-    function_names = [
-        "canonical_existing_dir",
-        "mongo_listener_matches_expected",
-    ]
-    defs = "".join(extract_shell_function(script_text, name) for name in function_names)
-    expected_dir = tmp_path / "expected"
-    foreign_dir = tmp_path / "foreign"
-    expected_dir.mkdir()
-    foreign_dir.mkdir()
-
-    completed = subprocess.run(
-        [
-            "bash",
-            "-lc",
-            (
-                "set -euo pipefail\n"
-                f"MONGO_DATA_DIR='{expected_dir}'\n"
-                f"{defs}"
-                f"mongo_listener_data_dir() {{ printf '{foreign_dir}\\n'; }}\n"
-                "if mongo_listener_matches_expected; then printf 'match\\n'; else printf 'mismatch\\n'; fi\n"
-                f"mongo_listener_data_dir() {{ printf '{expected_dir}\\n'; }}\n"
-                "if mongo_listener_matches_expected; then printf 'match\\n'; else printf 'mismatch\\n'; fi\n"
-            ),
-        ],
-        cwd=REPO_ROOT,
-        check=True,
-        text=True,
-        capture_output=True,
-    )
-
-    assert completed.stdout.strip().splitlines() == ["mismatch", "match"]
-
-
-def test_start_mongo_refuses_a_listener_with_unexpected_persistence_identity() -> None:
-    script_text = NATIVE_STACK_PATH.read_text(encoding="utf-8")
-    function_def = extract_shell_function(script_text, "start_mongo")
-
-    completed = subprocess.run(
-        [
-            "bash",
-            "-lc",
-            (
-                "set -euo pipefail\n"
-                "MONGO_PORT='27117'\n"
-                "MONGO_PID_FILE='/tmp/viventium-synthetic-mongod.pid'\n"
-                "port_listening() { return 0; }\n"
-                "resolve_unique_listener_pid() { printf '222\\n'; }\n"
-                "mongo_process_matches_expected() { return 0; }\n"
-                "mongo_listener_matches_expected() { return 1; }\n"
-                f"{function_def}"
-                "start_mongo\n"
-            ),
-        ],
-        cwd=REPO_ROOT,
-        check=False,
-        text=True,
-        capture_output=True,
-    )
-
-    assert completed.returncode != 0
-    assert "refusing to use an unexpected persistence store" in completed.stderr
-
-
-def test_start_mongo_reuses_a_listener_with_matching_persistence_identity() -> None:
-    script_text = NATIVE_STACK_PATH.read_text(encoding="utf-8")
-    function_def = extract_shell_function(script_text, "start_mongo")
-
-    completed = subprocess.run(
-        [
-            "bash",
-            "-lc",
-            (
-                "set -euo pipefail\n"
-                "MONGO_PORT='27117'\n"
-                "MONGO_PID_FILE='/tmp/viventium-synthetic-mongod.pid'\n"
-                "port_listening() { return 0; }\n"
-                "resolve_unique_listener_pid() { printf '222\\n'; }\n"
-                "mongo_process_matches_expected() { return 0; }\n"
-                "mongo_listener_matches_expected() { return 0; }\n"
-                "write_pid() { :; }\n"
-                f"{function_def}"
-                "start_mongo\n"
-            ),
-        ],
-        cwd=REPO_ROOT,
-        check=True,
-        text=True,
-        capture_output=True,
-    )
-
-    assert "verified configured persistence identity" in completed.stdout
-
-
-def test_express_mongo_binary_selection_never_falls_back_to_homebrew(tmp_path: Path) -> None:
-    script_text = NATIVE_STACK_PATH.read_text(encoding="utf-8")
-    function_def = extract_shell_function(script_text, "select_mongod_binary")
-    brew_marker = tmp_path / "brew-called"
-
-    completed = subprocess.run(
-        [
-            "bash",
-            "-lc",
-            (
-                "set -euo pipefail\n"
-                "VIVENTIUM_INSTALL_EXPERIENCE='express'\n"
-                "MONGODB_NATIVE_BINARY='/missing/pinned/mongod'\n"
-                f"BREW_MARKER='{brew_marker}'\n"
-                "verify_express_mongod_binary() { return 1; }\n"
-                "ensure_brew_pkg() { printf called >\"$BREW_MARKER\"; return 0; }\n"
-                f"{function_def}"
-                "if select_mongod_binary >/tmp/mongod-selection.out 2>/tmp/mongod-selection.err; then\n"
-                "  printf 'selection=unexpected-success\\n'\n"
-                "else\n"
-                "  printf 'selection=failed-closed\\n'\n"
-                "fi\n"
-                "if [[ -e \"$BREW_MARKER\" ]]; then printf 'brew=called\\n'; else printf 'brew=not-called\\n'; fi\n"
-                "cat /tmp/mongod-selection.err\n"
-            ),
-        ],
-        cwd=REPO_ROOT,
-        check=True,
-        text=True,
-        capture_output=True,
-    )
-
-    assert "selection=failed-closed" in completed.stdout
-    assert "brew=not-called" in completed.stdout
-    assert "pinned MongoDB" in completed.stdout
-
-
-def test_livekit_meta_matches_expected_rejects_node_ip_drift(tmp_path: Path) -> None:
-    script_text = NATIVE_STACK_PATH.read_text(encoding="utf-8")
-    function_def = extract_shell_function(script_text, "livekit_meta_matches_expected")
-    meta_file = tmp_path / "livekit.runtime.env"
-    meta_file.write_text(
-        "\n".join(
-            [
-                "LIVEKIT_NODE_IP=127.0.0.1",
-                "LIVEKIT_HTTP_PORT=7888",
-                "LIVEKIT_TCP_PORT=7889",
-                "LIVEKIT_UDP_PORT=7890",
-            ]
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-
-    completed = subprocess.run(
-        [
-            "bash",
-            "-lc",
-            (
-                "set -euo pipefail\n"
-                f"LIVEKIT_META_FILE='{meta_file}'\n"
-                "LIVEKIT_NODE_IP='192.0.2.10'\n"
-                "LIVEKIT_HTTP_PORT='7888'\n"
-                "LIVEKIT_TCP_PORT='7889'\n"
-                "LIVEKIT_UDP_PORT='7890'\n"
-                f"{function_def}"
-                "if livekit_meta_matches_expected; then printf 'match\\n'; else printf 'mismatch\\n'; fi\n"
-            ),
-        ],
-        cwd=REPO_ROOT,
-        check=True,
-        text=True,
-        capture_output=True,
-    )
-
-    assert completed.stdout.strip() == "mismatch"
-
-
-def test_managed_livekit_listener_pid_requires_installer_managed_config_path() -> None:
-    script_text = NATIVE_STACK_PATH.read_text(encoding="utf-8")
-    listener_def = extract_shell_function(script_text, "managed_livekit_listener_pid")
-    process_def = extract_shell_function(script_text, "process_command_line")
-    command_match_def = extract_shell_function(script_text, "livekit_command_matches_expected")
-
-    completed = subprocess.run(
-        [
-            "bash",
-            "-lc",
-            (
-                "set -euo pipefail\n"
-                "LIVEKIT_PID_FILE='/tmp/does-not-exist'\n"
-                "LIVEKIT_CFG_FILE='/tmp/viventium/livekit/livekit.yaml'\n"
-                "pgrep() { printf '4242\\n'; }\n"
-                "ps() { printf '/usr/local/bin/livekit-server --config /tmp/other/livekit.yaml --node-ip 127.0.0.1\\n'; }\n"
-                f"{process_def}"
-                f"{command_match_def}"
-                f"{listener_def}"
-                "if managed_livekit_listener_pid >/tmp/out 2>/dev/null; then cat /tmp/out; else printf 'unmanaged\\n'; fi\n"
-            ),
-        ],
-        cwd=REPO_ROOT,
-        check=True,
-        text=True,
-        capture_output=True,
-    )
-
-    assert completed.stdout.strip() == "unmanaged"
-
-
-def test_start_livekit_fails_before_an_unverified_path_binary_can_run(tmp_path: Path) -> None:
-    script_text = NATIVE_STACK_PATH.read_text(encoding="utf-8")
-    function_names = [
-        "native_livekit_start_requested",
-        "validate_native_livekit_startup",
-        "start_livekit",
-    ]
-    defs = "".join(extract_shell_function(script_text, name) for name in function_names)
-    marker = tmp_path / "path-livekit-ran"
-    fake_bin = tmp_path / "bin"
-    fake_bin.mkdir()
-    fake_livekit = fake_bin / "livekit-server"
-    fake_livekit.write_text(f"#!/bin/sh\ntouch '{marker}'\n", encoding="utf-8")
-    fake_livekit.chmod(0o755)
-
-    completed = subprocess.run(
-        [
-            "/bin/bash",
-            "-c",
-            (
-                "set -euo pipefail\n"
-                "VOICE_ENABLED='true'\n"
-                "NATIVE_STACK_SKIP_LIVEKIT='0'\n"
-                f"{defs}"
-                "start_livekit\n"
-            ),
-        ],
-        cwd=REPO_ROOT,
-        env={"PATH": f"{fake_bin}:/usr/bin:/bin"},
-        check=False,
-        text=True,
-        capture_output=True,
-    )
-
-    assert completed.returncode == 1
-    assert not marker.exists()
-    assert "Native LiveKit startup is not a verified release path" in completed.stderr
-    assert "exact Docker runtime or a configured external endpoint" in completed.stderr
-
-
-def test_start_livekit_skip_cleanly_delegates_to_the_release_launcher() -> None:
-    script_text = NATIVE_STACK_PATH.read_text(encoding="utf-8")
-    defs = "".join(
-        extract_shell_function(script_text, name)
-        for name in (
-            "native_livekit_start_requested",
-            "validate_native_livekit_startup",
-            "start_livekit",
-        )
-    )
-
-    completed = subprocess.run(
-        [
-            "/bin/bash",
-            "-c",
-            (
-                "set -euo pipefail\n"
-                "VOICE_ENABLED='true'\n"
-                "NATIVE_STACK_SKIP_LIVEKIT='1'\n"
-                f"{defs}"
-                "start_livekit\n"
-            ),
-        ],
-        cwd=REPO_ROOT,
-        check=False,
-        text=True,
-        capture_output=True,
-    )
-
-    assert completed.returncode == 0
-    assert "launcher will own LiveKit startup" in completed.stdout
-    assert completed.stderr == ""
+    assert 'stop_pid_file_if_matches "$MEILI_PID_FILE" "Meilisearch" meili_process_matches_expected' in stop_case
 
 
 def test_native_stop_refuses_a_stale_pid_that_fails_runtime_identity(tmp_path: Path) -> None:
@@ -653,8 +145,9 @@ def test_native_identity_reads_full_argv_and_rejects_a_foreign_runtime(tmp_path:
             "-lc",
             (
                 "set -euo pipefail\n"
-                f"MONGO_DATA_DIR={shlex.quote(str(selected_mongo))}\n"
-                "MONGO_PORT='32117'\n"
+                    f"MONGO_DATA_DIR={shlex.quote(str(selected_mongo))}\n"
+                    "MONGO_PORT='32117'\n"
+                    "MONGO_REPLICA_SET='viventium-rs'\n"
                 f"MEILI_DATA_DIR={shlex.quote(str(selected_meili))}\n"
                 "MEILI_HOST='127.0.0.1'\n"
                 "MEILI_PORT='12700'\n"
@@ -675,8 +168,8 @@ def test_native_identity_reads_full_argv_and_rejects_a_foreign_runtime(tmp_path:
                 "        *' -p 20'* ) printf 'meilisearch\\n' ;;\n"
                 "      esac\n"
                 "      ;;\n"
-                "    *' -p 101 '*) printf '/opt/viventium/bin/mongod --bind_ip 127.0.0.1 --port 32117 --dbpath %s --logpath /tmp/mongod.log\\n' \"$SELECTED_MONGO\" ;;\n"
-                "    *' -p 102 '*) printf '/opt/viventium/bin/mongod --bind_ip 127.0.0.1 --port 32117 --dbpath %s --logpath /tmp/mongod.log\\n' \"$FOREIGN_MONGO\" ;;\n"
+                    "    *' -p 101 '*) printf '/opt/viventium/bin/mongod --bind_ip 127.0.0.1 --port 32117 --dbpath %s --logpath /tmp/mongod.log --replSet viventium-rs\\n' \"$SELECTED_MONGO\" ;;\n"
+                    "    *' -p 102 '*) printf '/opt/viventium/bin/mongod --bind_ip 127.0.0.1 --port 32117 --dbpath %s --logpath /tmp/mongod.log --replSet viventium-rs\\n' \"$FOREIGN_MONGO\" ;;\n"
                 "    *' -p 201 '*) printf '/opt/viventium/bin/meilisearch --http-addr 127.0.0.1:12700 --master-key synthetic --db-path %s --no-analytics\\n' \"$SELECTED_MEILI\" ;;\n"
                 "    *' -p 202 '*) printf '/opt/viventium/bin/meilisearch --http-addr 127.0.0.1:12700 --master-key synthetic --db-path %s --no-analytics\\n' \"$FOREIGN_MEILI\" ;;\n"
                 "  esac\n"
@@ -937,6 +430,7 @@ def test_start_mongo_adopts_unique_exact_listener_over_stale_pid(tmp_path: Path)
                 "resolve_unique_listener_pid() { printf '222\\n'; }\n"
                 "mongo_process_matches_expected() { [[ \"$1\" == '222' ]]; }\n"
                 "mongo_listener_matches_expected() { [[ \"$1\" == '222' ]]; }\n"
+                "initialize_mongo_replica_set() { printf 'replica-ready\\n'; }\n"
                 f"{defs}"
                 "start_mongo\n"
                 "printf 'pid=%s\\n' \"$(tr -d '[:space:]' <\"$MONGO_PID_FILE\")\"\n"
@@ -1003,6 +497,42 @@ def test_start_meili_adopts_only_one_exact_listener(
         assert "refusing" in completed.stderr
 
 
+def test_native_livekit_startup_fails_closed_before_listener_adoption(tmp_path: Path) -> None:
+    script_text = NATIVE_STACK_PATH.read_text(encoding="utf-8")
+    defs = "".join(
+        extract_shell_function(script_text, name)
+        for name in (
+            "native_livekit_start_requested",
+            "validate_native_livekit_startup",
+            "start_livekit",
+        )
+    )
+    pid_file = tmp_path / "livekit.pid"
+
+    completed = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                "set -euo pipefail\n"
+                "VOICE_ENABLED='true'\n"
+                "NATIVE_STACK_SKIP_LIVEKIT='0'\n"
+                f"LIVEKIT_PID_FILE={shlex.quote(str(pid_file))}\n"
+                f"{defs}"
+                "start_livekit\n"
+            ),
+        ],
+        cwd=REPO_ROOT,
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+
+    assert completed.returncode == 1
+    assert not pid_file.exists()
+    assert "Native LiveKit startup is not a verified release path" in completed.stderr
+
+
 def test_native_stop_validates_each_runtime_process_before_killing() -> None:
     script_text = NATIVE_STACK_PATH.read_text(encoding="utf-8")
     stop_case = script_text.split("case \"${1:-}\" in", 1)[1].split("  stop)", 1)[1].split("    ;;", 1)[0]
@@ -1012,3 +542,541 @@ def test_native_stop_validates_each_runtime_process_before_killing() -> None:
     assert "prepare_native_mongo_engine_identity_for_stop" in stop_case
     assert "stop_recorded_native_mongo_engine" in stop_case
     assert "seal_native_mongo_engine_identity_after_stop" in stop_case
+    assert 'stop_pid_file_if_matches "$MONGO_PID_FILE"' not in stop_case
+    assert stop_case.index("prepare_native_mongo_engine_identity_for_stop") < stop_case.index(
+        "stop_recorded_native_mongo_engine"
+    ) < stop_case.index("seal_native_mongo_engine_identity_after_stop")
+
+
+def test_livekit_meta_matches_expected_accepts_matching_runtime_meta(tmp_path: Path) -> None:
+    script_text = NATIVE_STACK_PATH.read_text(encoding="utf-8")
+    function_def = extract_shell_function(script_text, "livekit_meta_matches_expected")
+    meta_file = tmp_path / "livekit.runtime.env"
+    meta_file.write_text(
+        "\n".join(
+            [
+                "LIVEKIT_NODE_IP=192.0.2.10",
+                "LIVEKIT_HTTP_PORT=7888",
+                "LIVEKIT_TCP_PORT=7889",
+                "LIVEKIT_UDP_PORT=7890",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    completed = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                "set -euo pipefail\n"
+                f"LIVEKIT_META_FILE='{meta_file}'\n"
+                "LIVEKIT_NODE_IP='192.0.2.10'\n"
+                "LIVEKIT_HTTP_PORT='7888'\n"
+                "LIVEKIT_TCP_PORT='7889'\n"
+                "LIVEKIT_UDP_PORT='7890'\n"
+                "LIVEKIT_TURN_DOMAIN=''\n"
+                "LIVEKIT_TURN_TLS_PORT=''\n"
+                "LIVEKIT_TURN_CERT_FILE=''\n"
+                "LIVEKIT_TURN_KEY_FILE=''\n"
+                f"{function_def}"
+                "if livekit_meta_matches_expected; then printf 'match\\n'; else printf 'mismatch\\n'; fi\n"
+            ),
+        ],
+        cwd=REPO_ROOT,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+    assert completed.stdout.strip() == "match"
+
+
+def test_detect_livekit_node_ip_prefers_lan_interface_address() -> None:
+    script_text = NATIVE_STACK_PATH.read_text(encoding="utf-8")
+    function_def = extract_shell_function(script_text, "detect_livekit_node_ip")
+
+    completed = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                "set -euo pipefail\n"
+                "unset LIVEKIT_NODE_IP\n"
+                "route() { printf '   interface: en7\\n'; }\n"
+                "ipconfig() {\n"
+                "  if [[ \"$1\" == \"getifaddr\" && \"$2\" == \"en7\" ]]; then\n"
+                "    printf '192.0.2.10\\n'\n"
+                "    return 0\n"
+                "  fi\n"
+                "  return 1\n"
+                "}\n"
+                f"{function_def}"
+                "detect_livekit_node_ip\n"
+            ),
+        ],
+        cwd=REPO_ROOT,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+    assert completed.stdout.strip() == "192.0.2.10"
+
+
+def test_detect_livekit_node_ip_falls_back_to_loopback() -> None:
+    script_text = NATIVE_STACK_PATH.read_text(encoding="utf-8")
+    function_def = extract_shell_function(script_text, "detect_livekit_node_ip")
+
+    completed = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                "set -euo pipefail\n"
+                "unset LIVEKIT_NODE_IP\n"
+                "route() { return 1; }\n"
+                "ipconfig() { return 1; }\n"
+                "hostname() { return 1; }\n"
+                f"{function_def}"
+                "detect_livekit_node_ip\n"
+            ),
+        ],
+        cwd=REPO_ROOT,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+    assert completed.stdout.strip() == "127.0.0.1"
+
+
+def test_ensure_soft_open_file_limit_raises_low_soft_limit() -> None:
+    script_text = NATIVE_STACK_PATH.read_text(encoding="utf-8")
+    function_def = extract_shell_function(script_text, "ensure_soft_open_file_limit")
+
+    completed = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                "set -euo pipefail\n"
+                "soft_limit=256\n"
+                "ulimit() {\n"
+                "  if [[ \"$#\" -eq 1 && \"$1\" == \"-n\" ]]; then printf '%s\\n' \"$soft_limit\"; return 0; fi\n"
+                "  if [[ \"$#\" -eq 1 && \"$1\" == \"-Hn\" ]]; then printf 'unlimited\\n'; return 0; fi\n"
+                "  if [[ \"$#\" -eq 2 && \"$1\" == \"-Sn\" ]]; then soft_limit=\"$2\"; return 0; fi\n"
+                "  return 1\n"
+                "}\n"
+                f"{function_def}"
+                "ensure_soft_open_file_limit 65536 >/tmp/out\n"
+                "cat /tmp/out\n"
+                "printf 'soft=%s\\n' \"$soft_limit\"\n"
+            ),
+        ],
+        cwd=REPO_ROOT,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+    assert "Raised max open files soft limit to 65536" in completed.stdout
+    assert "soft=65536" in completed.stdout
+
+
+def test_ensure_soft_open_file_limit_is_noop_when_already_high() -> None:
+    script_text = NATIVE_STACK_PATH.read_text(encoding="utf-8")
+    function_def = extract_shell_function(script_text, "ensure_soft_open_file_limit")
+
+    completed = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                "set -euo pipefail\n"
+                "soft_limit=65536\n"
+                "ulimit() {\n"
+                "  if [[ \"$#\" -eq 1 && \"$1\" == \"-n\" ]]; then printf '%s\\n' \"$soft_limit\"; return 0; fi\n"
+                "  if [[ \"$#\" -eq 1 && \"$1\" == \"-Hn\" ]]; then printf 'unlimited\\n'; return 0; fi\n"
+                "  if [[ \"$#\" -eq 2 && \"$1\" == \"-Sn\" ]]; then soft_limit=\"$2\"; return 0; fi\n"
+                "  return 1\n"
+                "}\n"
+                f"{function_def}"
+                "ensure_soft_open_file_limit 65536 >/tmp/out\n"
+                "cat /tmp/out\n"
+                "printf 'soft=%s\\n' \"$soft_limit\"\n"
+            ),
+        ],
+        cwd=REPO_ROOT,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+    assert completed.stdout.strip() == "soft=65536"
+
+
+def test_mongo_listener_data_dir_reads_the_running_server_dbpath() -> None:
+    script_text = NATIVE_STACK_PATH.read_text(encoding="utf-8")
+    function_def = extract_shell_function(script_text, "mongo_listener_data_dir")
+
+    completed = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                "set -euo pipefail\n"
+                "MONGO_HOST='127.0.0.1'\n"
+                "MONGO_PORT='27117'\n"
+                "mongosh() { printf '/tmp/viventium-mongo-data\\n'; }\n"
+                f"{function_def}"
+                "mongo_listener_data_dir\n"
+            ),
+        ],
+        cwd=REPO_ROOT,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+    assert completed.stdout.strip() == "/tmp/viventium-mongo-data"
+
+
+def test_mongo_listener_matches_only_the_configured_data_dir(tmp_path: Path) -> None:
+    script_text = NATIVE_STACK_PATH.read_text(encoding="utf-8")
+    function_names = [
+        "canonical_existing_dir",
+        "mongo_listener_matches_expected",
+    ]
+    defs = "".join(extract_shell_function(script_text, name) for name in function_names)
+    expected_dir = tmp_path / "expected"
+    foreign_dir = tmp_path / "foreign"
+    expected_dir.mkdir()
+    foreign_dir.mkdir()
+
+    completed = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                "set -euo pipefail\n"
+                f"MONGO_DATA_DIR='{expected_dir}'\n"
+                f"{defs}"
+                f"mongo_listener_data_dir() {{ printf '{foreign_dir}\\n'; }}\n"
+                "if mongo_listener_matches_expected; then printf 'match\\n'; else printf 'mismatch\\n'; fi\n"
+                f"mongo_listener_data_dir() {{ printf '{expected_dir}\\n'; }}\n"
+                "if mongo_listener_matches_expected; then printf 'match\\n'; else printf 'mismatch\\n'; fi\n"
+            ),
+        ],
+        cwd=REPO_ROOT,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+    assert completed.stdout.strip().splitlines() == ["mismatch", "match"]
+
+
+def test_start_mongo_refuses_a_listener_with_unexpected_persistence_identity() -> None:
+    script_text = NATIVE_STACK_PATH.read_text(encoding="utf-8")
+    function_def = extract_shell_function(script_text, "start_mongo")
+
+    completed = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                "set -euo pipefail\n"
+                "MONGO_PORT='27117'\n"
+                "MONGO_PID_FILE='/tmp/synthetic-mongod.pid'\n"
+                "port_listening() { return 0; }\n"
+                "resolve_unique_listener_pid() { printf '4242\\n'; }\n"
+                "mongo_process_matches_expected() { return 0; }\n"
+                "mongo_listener_matches_expected() { return 1; }\n"
+                "write_pid() { printf 'adopted:%s\\n' \"$1\"; }\n"
+                f"{function_def}"
+                "start_mongo\n"
+            ),
+        ],
+        cwd=REPO_ROOT,
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+
+    assert completed.returncode != 0
+    assert "refusing to use an unexpected persistence store" in completed.stderr
+
+
+def test_start_mongo_reuses_a_listener_with_matching_persistence_identity() -> None:
+    script_text = NATIVE_STACK_PATH.read_text(encoding="utf-8")
+    function_def = extract_shell_function(script_text, "start_mongo")
+
+    completed = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                "set -euo pipefail\n"
+                "MONGO_PORT='27117'\n"
+                "MONGO_PID_FILE='/tmp/synthetic-mongod.pid'\n"
+                "port_listening() { return 0; }\n"
+                "resolve_unique_listener_pid() { printf '4242\\n'; }\n"
+                "mongo_process_matches_expected() { return 0; }\n"
+                    "mongo_listener_matches_expected() { return 0; }\n"
+                    "initialize_mongo_replica_set() { printf 'replica-ready\\n'; }\n"
+                "write_pid() { printf 'adopted:%s\\n' \"$1\"; }\n"
+                f"{function_def}"
+                "start_mongo\n"
+            ),
+        ],
+        cwd=REPO_ROOT,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+    assert "verified configured persistence identity" in completed.stdout
+    assert "adopted:4242" in completed.stdout
+
+
+def test_express_mongo_binary_selection_never_falls_back_to_homebrew(tmp_path: Path) -> None:
+    script_text = NATIVE_STACK_PATH.read_text(encoding="utf-8")
+    function_def = extract_shell_function(script_text, "select_mongod_binary")
+    brew_marker = tmp_path / "brew-called"
+
+    completed = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                "set -euo pipefail\n"
+                "VIVENTIUM_INSTALL_EXPERIENCE='express'\n"
+                "VIVENTIUM_BRIDGE_MONGOD_BINARY='/bin/sh'\n"
+                "MONGODB_NATIVE_BINARY='/missing/pinned/mongod'\n"
+                f"BREW_MARKER='{brew_marker}'\n"
+                "verify_express_mongod_binary() { return 1; }\n"
+                "ensure_brew_pkg() { printf called >\"$BREW_MARKER\"; return 0; }\n"
+                f"{function_def}"
+                "if select_mongod_binary >/tmp/mongod-selection.out 2>/tmp/mongod-selection.err; then\n"
+                "  printf 'selection=unexpected-success\\n'\n"
+                "else\n"
+                "  printf 'selection=failed-closed\\n'\n"
+                "fi\n"
+                "if [[ -e \"$BREW_MARKER\" ]]; then printf 'brew=called\\n'; else printf 'brew=not-called\\n'; fi\n"
+                "cat /tmp/mongod-selection.err\n"
+            ),
+        ],
+        cwd=REPO_ROOT,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+    assert "selection=failed-closed" in completed.stdout
+    assert "brew=not-called" in completed.stdout
+    assert "pinned MongoDB" in completed.stdout
+
+
+def test_first_upgrade_bridge_selects_ledger_verified_mongod(tmp_path: Path) -> None:
+    script_text = NATIVE_STACK_PATH.read_text(encoding="utf-8")
+    function_def = extract_shell_function(script_text, "select_mongod_binary")
+    bridge_mongod = tmp_path / "recorded-mongod"
+    bridge_mongod.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+    bridge_mongod.chmod(0o700)
+
+    completed = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                "set -euo pipefail\n"
+                "VIVENTIUM_FIRST_UPGRADE_BRIDGE_INTERNAL='1'\n"
+                "VIVENTIUM_INSTALL_EXPERIENCE='express'\n"
+                f"VIVENTIUM_BRIDGE_MONGOD_BINARY={shlex.quote(str(bridge_mongod))}\n"
+                "MONGODB_NATIVE_BINARY='/missing/pinned/mongod'\n"
+                "verify_express_mongod_binary() { return 1; }\n"
+                "ensure_brew_pkg() { return 1; }\n"
+                f"{function_def}"
+                "select_mongod_binary\n"
+            ),
+        ],
+        cwd=REPO_ROOT,
+        text=True,
+        capture_output=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.strip() == str(bridge_mongod)
+
+
+def test_livekit_meta_matches_expected_rejects_node_ip_drift(tmp_path: Path) -> None:
+    script_text = NATIVE_STACK_PATH.read_text(encoding="utf-8")
+    function_def = extract_shell_function(script_text, "livekit_meta_matches_expected")
+    meta_file = tmp_path / "livekit.runtime.env"
+    meta_file.write_text(
+        "\n".join(
+            [
+                "LIVEKIT_NODE_IP=127.0.0.1",
+                "LIVEKIT_HTTP_PORT=7888",
+                "LIVEKIT_TCP_PORT=7889",
+                "LIVEKIT_UDP_PORT=7890",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    completed = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                "set -euo pipefail\n"
+                f"LIVEKIT_META_FILE='{meta_file}'\n"
+                "LIVEKIT_NODE_IP='192.0.2.10'\n"
+                "LIVEKIT_HTTP_PORT='7888'\n"
+                "LIVEKIT_TCP_PORT='7889'\n"
+                "LIVEKIT_UDP_PORT='7890'\n"
+                f"{function_def}"
+                "if livekit_meta_matches_expected; then printf 'match\\n'; else printf 'mismatch\\n'; fi\n"
+            ),
+        ],
+        cwd=REPO_ROOT,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+    assert completed.stdout.strip() == "mismatch"
+
+
+def test_native_mongodb_uses_and_initializes_one_node_replica_set() -> None:
+    script_text = NATIVE_STACK_PATH.read_text(encoding="utf-8")
+
+    assert 'MONGO_REPLICA_SET="${VIVENTIUM_LOCAL_MONGO_REPLICA_SET:-viventium-rs}"' in script_text
+    assert 'initialize_mongo_replica_set() {' in script_text
+    assert 'mongo_replica_set_ready() {' in script_text
+    assert '--replSet "$MONGO_REPLICA_SET"' in script_text
+    assert "replication?.replSet ||" in script_text
+    start_mongo = extract_shell_function(script_text, "start_mongo")
+    assert "initialize_mongo_replica_set" in start_mongo
+
+
+def test_managed_livekit_listener_pid_requires_installer_managed_config_path() -> None:
+    script_text = NATIVE_STACK_PATH.read_text(encoding="utf-8")
+    listener_def = extract_shell_function(script_text, "managed_livekit_listener_pid")
+    function_names = [
+        "process_command_line",
+        "process_executable_identity",
+        "process_executable_basename_matches",
+        "command_line_has_option_value",
+        "livekit_command_matches_expected",
+    ]
+    defs = "".join(extract_shell_function(script_text, name) for name in function_names)
+
+    completed = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                "set -euo pipefail\n"
+                "LIVEKIT_PID_FILE='/tmp/does-not-exist'\n"
+                "LIVEKIT_CFG_FILE='/tmp/viventium/livekit/livekit.yaml'\n"
+                "LIVEKIT_NODE_IP='127.0.0.1'\n"
+                "pgrep() { printf '4242\\n'; }\n"
+                "ps() {\n"
+                "  if [[ \" $* \" == *' -o comm= '* ]]; then\n"
+                "    printf '/usr/local/bin/l\\n'\n"
+                "  elif [[ \" $* \" == *' -o ucomm= '* ]]; then\n"
+                "    printf 'livekit-server\\n'\n"
+                "  else\n"
+                "    printf '/usr/local/bin/livekit-server --config /tmp/other/livekit.yaml --node-ip 127.0.0.1\\n'\n"
+                "  fi\n"
+                "}\n"
+                f"{defs}"
+                f"{listener_def}"
+                "if managed_livekit_listener_pid >/tmp/out 2>/dev/null; then cat /tmp/out; else printf 'unmanaged\\n'; fi\n"
+            ),
+        ],
+        cwd=REPO_ROOT,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+    assert completed.stdout.strip() == "unmanaged"
+
+
+
+def test_native_mongo_stop_requires_a_fresh_running_engine_receipt() -> None:
+    script_text = NATIVE_STACK_PATH.read_text(encoding="utf-8")
+    function_def = extract_shell_function(
+        script_text,
+        "stop_recorded_native_mongo_engine",
+    )
+
+    completed = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                "set -euo pipefail\n"
+                "MONGO_PID_FILE='/tmp/synthetic-mongod.pid'\n"
+                "run_mongo_engine_identity() { printf 'identity:%s\\n' \"$*\"; }\n"
+                f"{function_def}"
+                "MONGO_ENGINE_IDENTITY_PREPARED=false\n"
+                "stop_recorded_native_mongo_engine\n"
+                "MONGO_ENGINE_IDENTITY_PREPARED=true\n"
+                "stop_recorded_native_mongo_engine\n"
+            ),
+        ],
+        cwd=REPO_ROOT,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+    assert completed.stdout.splitlines() == [
+        "identity:stop-recorded-native-engine --pid-file /tmp/synthetic-mongod.pid"
+    ]
+
+
+def test_start_livekit_never_restarts_managed_listener_when_runtime_meta_drifted(
+    tmp_path: Path,
+) -> None:
+    script_text = NATIVE_STACK_PATH.read_text(encoding="utf-8")
+    function_names = [
+        "native_livekit_start_requested",
+        "validate_native_livekit_startup",
+        "start_livekit",
+    ]
+    defs = "".join(extract_shell_function(script_text, name) for name in function_names)
+
+    mutation_marker = tmp_path / "listener-mutated"
+
+    completed = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                "set -euo pipefail\n"
+                "VOICE_ENABLED='true'\n"
+                "NATIVE_STACK_SKIP_LIVEKIT='0'\n"
+                f"MUTATION_MARKER={shlex.quote(str(mutation_marker))}\n"
+                "stop_pid() { touch \"$MUTATION_MARKER\"; }\n"
+                "nohup() { touch \"$MUTATION_MARKER\"; }\n"
+                f"{defs}"
+                "start_livekit\n"
+            ),
+        ],
+        cwd=REPO_ROOT,
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+
+    assert completed.returncode == 1
+    assert not mutation_marker.exists()
+    assert "Native LiveKit startup is not a verified release path" in completed.stderr

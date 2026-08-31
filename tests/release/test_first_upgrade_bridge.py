@@ -1000,8 +1000,10 @@ def test_clustered_api_records_every_parent_verified_finalization_stage() -> Non
 
     for stage in module.POSTCOMMIT_API_REQUIRED_STAGES:
         assert f"recordCompleted('{stage}')" in clustered
-    assert "GenerationJobManager.configure(streamServices)" in clustered
-    assert "GenerationJobManager.initialize()" in clustered
+    assert "initializeStreamServicesBeforeTraffic," in clustered
+    assert "const admitTraffic = () => app.listen(" in clustered
+    assert "await initializeStreamServicesBeforeTraffic({ admitTraffic });" in clustered
+    assert "GenerationJobManager.initialize();" not in clustered
     assert clustered.index("recordCompleted('generation-runtime-ready')") < (
         clustered.index("upgradeFinalization.markReady()")
     )

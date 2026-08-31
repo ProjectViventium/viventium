@@ -24,4 +24,5 @@
 
 - Case catalog: `cases.md`.
 - Reports: `reports/` for new dated public-safe runs.
-- Last catalog update: 2026-05-17.
+- Last catalog reconciliation: 2026-08-29. Current case-level status is authoritative in
+  `cases.md`; a historical pass never certifies a later dirty or installed candidate.

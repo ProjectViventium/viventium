@@ -1,13 +1,14 @@
+<!-- qa-evidence-exempt: Historical evidence snapshot retained verbatim; retroactive v2 fields would invent evidence that was not captured during the run. -->
 # Telegram first-turn connected-health scope — 2026-08-11
 
 ## Result
 
 PASS for the escaped Telegram/conversation-provider failure. PASS-AUTOMATED for the shared grant,
 fallback, and background-cortex lifecycle fixes; PARTIAL-CROSS-SURFACE because the browser voice
-gateway and scheduler were not rerun as real users in this pass. PARTIAL for restoring the newest
-WHOOP acquisition: the historical archive is readable, but WHOOP rejects the current rotated
-refresh grant and fresh provider consent could not be completed because the requested Chrome
-control connection was unavailable.
+gateway and scheduler were not rerun as real users in this pass. PARTIAL for restoring the newest WHOOP acquisition: the
+historical archive is readable, but WHOOP
+rejects the current rotated refresh grant and fresh provider consent could not be completed because
+the requested Chrome control connection was unavailable.
 
 ## Root cause
 
@@ -60,11 +61,11 @@ or state-root race was found. The old append-only archive remains readable.
 
 ## Not run
 
-- Fresh WHOOP consent and the post-consent forced refresh/daily pull remain blocked by the
-  unavailable Chrome control connection. No browser substitute, scraping, token exposure, or
-  destructive revoke was used.
-- The fresh degraded-state reconnect button was proven by the component test and build but could
-  not be visually exercised in the requested Chrome session for the same control-connection reason.
+- Fresh WHOOP consent and the post-consent forced refresh/daily pull remain blocked by the unavailable
+  Chrome control connection. No browser substitute, scraping, token exposure, or destructive revoke
+  was used.
+- The fresh degraded-state reconnect button was proven by the component test and build but could not
+  be visually exercised in the requested Chrome session for the same control-connection reason.
 - The real non-owner path was not repeated with a second human account; structural audience and
   broker isolation regressions passed.
 - Voice and scheduler gateway turns were not repeated on their real user surfaces; their shared
@@ -74,4 +75,3 @@ or state-root race was found. The old append-only archive remains readable.
 
 This report contains no health values or bodies, credentials, account or conversation identifiers,
 screenshots, usernames, emails, hostnames, or local absolute paths.
-<!-- qa-evidence-exempt: Historical or specialized supporting artifact retained without retroactively inventing missing evidence; current release acceptance requires a fresh full-view report. -->

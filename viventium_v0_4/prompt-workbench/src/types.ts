@@ -146,6 +146,24 @@ export interface EvalBank {
   families: EvalFamily[];
 }
 
+export type WorkbenchFallbackReason =
+  | "none"
+  | "provider_access_denied"
+  | "provider_auth_missing"
+  | "provider_connected_account_reconnect_required"
+  | "provider_error"
+  | "provider_invalid_response"
+  | "provider_network"
+  | "provider_quota_exhausted"
+  | "provider_quota_or_billing"
+  | "provider_rate_limited"
+  | "provider_response_deadline_exceeded"
+  | "provider_response_failed"
+  | "provider_server_error"
+  | "provider_temporarily_unavailable"
+  | "provider_timeout"
+  | "provider_unauthorized";
+
 export interface EvalRun {
   id: string;
   mode?: string;
@@ -182,6 +200,40 @@ export interface EvalRun {
     mode: "direct_background_agent";
     agentId: string;
     promptRef: string;
+  } | null;
+  executionRoute?: {
+    status: "verified" | "unverified" | "mismatch";
+    reason?: string;
+    requestedProvider?: string;
+    requestedModel?: string;
+    requestedEffort?: string;
+    effectiveProvider?: string;
+    effectiveModel?: string;
+    effectiveEffort?: string;
+    fallbackUsed?: boolean;
+    fallbackAuthorized?: boolean;
+    fallbackReason?: WorkbenchFallbackReason;
+    configuredProvider?: string;
+    configuredModel?: string;
+    configuredProviderHash?: string;
+    configuredModelHash?: string;
+    observedProviderHash?: string;
+    observedModelHash?: string;
+    completedCaseCount?: number;
+    routes?: Array<{
+      targetKey: string;
+      requestedProvider: string;
+      requestedModel: string;
+      requestedEffort: string;
+      configuredProvider: string;
+      configuredModel: string;
+      effectiveProvider: string;
+      effectiveModel: string;
+      effectiveEffort: string;
+      fallbackUsed: boolean;
+      fallbackAuthorized: boolean;
+      fallbackReason: WorkbenchFallbackReason;
+    }>;
   } | null;
   lineageManifest?: {
     schemaVersion?: number;
@@ -275,6 +327,21 @@ export interface FrameLog {
   layer_hashes: Record<string, string>;
   layer_tokens: Record<string, number>;
   decision: Record<string, unknown>;
+}
+
+export interface FrameHealth {
+  status: "ok" | "empty" | "degraded" | "unavailable";
+  source: "core_rotated_metadata_log";
+  reason:
+    | "none"
+    | "no_trace_events"
+    | "invalid_trace_events"
+    | "trusted_log_rejected"
+    | "trusted_log_unavailable";
+  filesScanned: number;
+  invalidEventCount: number;
+  truncatedReadCount: number;
+  releaseEvidence: false;
 }
 
 export interface AuthStatus {

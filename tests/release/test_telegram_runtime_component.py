@@ -1286,6 +1286,15 @@ def test_runtime_wiring_prepares_candidate_before_publication_and_start() -> Non
     first_upgrade_bridge = FIRST_UPGRADE_BRIDGE.read_text(encoding="utf-8")
     launcher = LAUNCHER.read_text(encoding="utf-8")
 
+    install_start = cli.index("\n  install|bootstrap)")
+    install = cli[install_start : cli.index("\n  upgrade|update)", install_start)]
+    install_compile = install.index("compile_config")
+    install_telegram = install.index(
+        'prepare_telegram_runtime_component "$REPO_ROOT" "$RUNTIME_DIR"'
+    )
+    install_life = install.index("bootstrap_life")
+    assert install_compile < install_telegram < install_life
+
     activation_start = cli.index("\n    activate-current)")
     activation = cli[
         activation_start :

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-'use strict';
+"use strict";
 
 /**
  * Real-browser acceptance test for the immediate saved-memory path.
@@ -10,32 +10,42 @@
  * the repository receives only a public-safe aggregate report.
  */
 
-const crypto = require('crypto');
-const { execFileSync } = require('child_process');
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
+const crypto = require("crypto");
+const { execFileSync } = require("child_process");
+const fs = require("fs");
+const os = require("os");
+const path = require("path");
 
-const REPO_ROOT = path.resolve(__dirname, '../../..');
-const LIBRECHAT_ROOT = path.join(REPO_ROOT, 'viventium_v0_4', 'LibreChat');
-const APP_SUPPORT = path.join(os.homedir(), 'Library', 'Application Support', 'Viventium');
-const DEFAULT_AGENT_ID = process.env.VIVENTIUM_QA_AGENT_ID || 'agent_viventium_main_95aeb3';
+const REPO_ROOT = path.resolve(__dirname, "../../..");
+const LIBRECHAT_ROOT = path.join(REPO_ROOT, "viventium_v0_4", "LibreChat");
+const APP_SUPPORT = path.join(
+  os.homedir(),
+  "Library",
+  "Application Support",
+  "Viventium",
+);
+const DEFAULT_AGENT_ID =
+  process.env.VIVENTIUM_QA_AGENT_ID || "agent_viventium_main_95aeb3";
 
 function hashValue(value, length = 16) {
-  return crypto.createHash('sha256').update(String(value || '')).digest('hex').slice(0, length);
+  return crypto
+    .createHash("sha256")
+    .update(String(value || ""))
+    .digest("hex")
+    .slice(0, length);
 }
 
 function timestampSlug(date = new Date()) {
-  return date.toISOString().replace(/[:.]/g, '-');
+  return date.toISOString().replace(/[:.]/g, "-");
 }
 
 function parseEnvFile(filePath) {
   const values = {};
   if (!fs.existsSync(filePath)) return values;
-  for (const rawLine of fs.readFileSync(filePath, 'utf8').split(/\r?\n/)) {
+  for (const rawLine of fs.readFileSync(filePath, "utf8").split(/\r?\n/)) {
     const line = rawLine.trim();
-    if (!line || line.startsWith('#') || !line.includes('=')) continue;
-    const index = line.indexOf('=');
+    if (!line || line.startsWith("#") || !line.includes("=")) continue;
+    const index = line.indexOf("=");
     const key = line.slice(0, index).trim();
     let value = line.slice(index + 1).trim();
     if (
@@ -51,19 +61,21 @@ function parseEnvFile(filePath) {
 }
 
 function loadRuntimeEnv() {
-  const runtime = path.join(APP_SUPPORT, 'runtime');
+  const runtime = path.join(APP_SUPPORT, "runtime");
   const candidates = [
-    path.join(runtime, 'runtime.env'),
-    path.join(runtime, 'runtime.local.env'),
-    path.join(runtime, 'service-env', 'librechat.env'),
-    path.join(LIBRECHAT_ROOT, '.env'),
+    path.join(runtime, "runtime.env"),
+    path.join(runtime, "runtime.local.env"),
+    path.join(runtime, "service-env", "librechat.env"),
+    path.join(LIBRECHAT_ROOT, ".env"),
   ];
   const env = { ...process.env };
   for (const candidate of candidates) {
     Object.assign(env, parseEnvFile(candidate));
   }
-  const port = String(env.VIVENTIUM_LOCAL_MONGO_PORT || '').trim();
-  const database = String(env.VIVENTIUM_LOCAL_MONGO_DB || 'LibreChatViventium').trim();
+  const port = String(env.VIVENTIUM_LOCAL_MONGO_PORT || "").trim();
+  const database = String(
+    env.VIVENTIUM_LOCAL_MONGO_DB || "LibreChatViventium",
+  ).trim();
   if (port) env.MONGO_URI = `mongodb://127.0.0.1:${port}/${database}`;
   return env;
 }
@@ -76,74 +88,93 @@ function parseArgs(argv) {
     startedAt,
     marker,
     agentId: DEFAULT_AGENT_ID,
-    qaUserHash: '',
-    apiBase: process.env.VIVENTIUM_QA_API_BASE || 'http://localhost:3180',
-    clientBase: process.env.VIVENTIUM_QA_CLIENT_BASE || 'http://localhost:3190',
-    headless: process.env.VIVENTIUM_QA_HEADLESS !== '0',
+    qaUserHash: "",
+    apiBase: process.env.VIVENTIUM_QA_API_BASE || "http://localhost:3180",
+    clientBase: process.env.VIVENTIUM_QA_CLIENT_BASE || "http://localhost:3190",
+    headless: process.env.VIVENTIUM_QA_HEADLESS !== "0",
     timeoutMs: Number(process.env.VIVENTIUM_QA_TIMEOUT_MS || 240000),
     privateOutputDir: path.join(
       APP_SUPPORT,
-      'private-user-data',
-      'qa',
-      'memory-continuity',
+      "private-user-data",
+      "qa",
+      "memory-continuity",
       stamp,
     ),
     publicReport: path.join(
       REPO_ROOT,
-      'qa',
-      'memory-continuity',
-      'reports',
-      '2026-08-08-live-browser-saved-memory-model-route.md',
+      "qa",
+      "memory-continuity",
+      "reports",
+      "2026-08-08-live-browser-saved-memory-model-route.md",
     ),
   };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     const next = argv[index + 1];
-    if (arg === '--headed') args.headless = false;
-    else if (arg === '--headless') args.headless = true;
-    else if (arg === '--agent-id') {
+    if (arg === "--headed") args.headless = false;
+    else if (arg === "--headless") args.headless = true;
+    else if (arg === "--agent-id") {
       args.agentId = next;
       index += 1;
-    } else if (arg === '--qa-user-hash') {
-      args.qaUserHash = String(next || '').trim().toLowerCase();
+    } else if (arg === "--qa-user-hash") {
+      args.qaUserHash = String(next || "")
+        .trim()
+        .toLowerCase();
       index += 1;
-    } else if (arg === '--timeout-ms') {
+    } else if (arg === "--timeout-ms") {
       args.timeoutMs = Number(next);
       index += 1;
-    } else if (arg === '--public-report') {
+    } else if (arg === "--public-report") {
       args.publicReport = path.resolve(next);
       index += 1;
     }
   }
-  args.apiBase = args.apiBase.replace(/\/$/, '');
-  args.clientBase = args.clientBase.replace(/\/$/, '');
+  args.apiBase = args.apiBase.replace(/\/$/, "");
+  args.clientBase = args.clientBase.replace(/\/$/, "");
   return args;
 }
 
 function ensureLocalQaAuth() {
-  if (process.env.CI || process.env.NODE_ENV === 'production') {
-    throw new Error('local_qa_jwt_forbidden_in_ci_or_production');
+  if (process.env.CI || process.env.NODE_ENV === "production") {
+    throw new Error("local_qa_jwt_forbidden_in_ci_or_production");
   }
-  if (process.env.VIVENTIUM_QA_ALLOW_LOCAL_JWT !== '1') {
-    throw new Error('local_qa_jwt_requires_VIVENTIUM_QA_ALLOW_LOCAL_JWT');
+  if (process.env.VIVENTIUM_QA_ALLOW_LOCAL_JWT !== "1") {
+    throw new Error("local_qa_jwt_requires_VIVENTIUM_QA_ALLOW_LOCAL_JWT");
   }
 }
 
 function safeError(value) {
-  return String(value || 'qa_failed')
-    .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, '<email>')
-    .replace(/https?:\/\/[^\s)]+/gi, '<url>')
-    .replace(/\/Users\/[^\s)]+/g, '<path>')
-    .replace(/\b[a-f0-9]{24}\b/gi, '<id>')
-    .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/g, 'Bearer <redacted>')
-    .replace(/\s+/g, ' ')
+  return String(value || "qa_failed")
+    .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, "<email>")
+    .replace(/https?:\/\/[^\s)]+/gi, "<url>")
+    .replace(/\/Users\/[^\s)]+/g, "<path>")
+    .replace(/\b[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}\b/gi, "<id>")
+    .replace(/\b[a-f0-9]{24}\b/gi, "<id>")
+    .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/g, "Bearer <redacted>")
+    .replace(/\s+/g, " ")
     .slice(0, 360);
 }
 
+function providerNamesMatch(observed, expected) {
+  const normalize = (value) =>
+    String(value || "")
+      .trim()
+      .toLowerCase();
+  const normalizedExpected = normalize(expected);
+  return (
+    normalizedExpected !== "" && normalize(observed) === normalizedExpected
+  );
+}
+
 async function createQaAuth({ env, db, user }) {
-  const jwt = require(path.join(LIBRECHAT_ROOT, 'node_modules', 'jsonwebtoken'));
-  const { ObjectId } = require(path.join(LIBRECHAT_ROOT, 'node_modules', 'mongodb'));
-  if (!env.JWT_SECRET || !env.JWT_REFRESH_SECRET) throw new Error('missing_jwt_prerequisites');
+  const jwt = require(
+    path.join(LIBRECHAT_ROOT, "node_modules", "jsonwebtoken"),
+  );
+  const { ObjectId } = require(
+    path.join(LIBRECHAT_ROOT, "node_modules", "mongodb"),
+  );
+  if (!env.JWT_SECRET || !env.JWT_REFRESH_SECRET)
+    throw new Error("missing_jwt_prerequisites");
   const sessionId = new ObjectId();
   const expiration = new Date(Date.now() + 2 * 60 * 60 * 1000);
   const refreshToken = jwt.sign(
@@ -159,13 +190,16 @@ async function createQaAuth({ env, db, user }) {
       email: user.email,
     },
     env.JWT_SECRET,
-    { expiresIn: '2h' },
+    { expiresIn: "2h" },
   );
-  await db.collection('sessions').insertOne({
+  await db.collection("sessions").insertOne({
     _id: sessionId,
     user: user._id,
     expiration,
-    refreshTokenHash: crypto.createHash('sha256').update(refreshToken).digest('hex'),
+    refreshTokenHash: crypto
+      .createHash("sha256")
+      .update(refreshToken)
+      .digest("hex"),
   });
   return { sessionId, refreshToken, accessToken };
 }
@@ -175,19 +209,19 @@ async function attachAuth({ context, args, auth }) {
   await context.addCookies(
     [args.apiBase, args.clientBase].flatMap((url) => [
       {
-        name: 'refreshToken',
+        name: "refreshToken",
         value: auth.refreshToken,
         url,
         httpOnly: true,
-        sameSite: 'Strict',
+        sameSite: "Strict",
         expires,
       },
       {
-        name: 'token_provider',
-        value: 'librechat',
+        name: "token_provider",
+        value: "librechat",
         url,
         httpOnly: true,
-        sameSite: 'Strict',
+        sameSite: "Strict",
         expires,
       },
     ]),
@@ -196,25 +230,29 @@ async function attachAuth({ context, args, auth }) {
 
 async function installAccessToken(page, fallbackToken) {
   const refreshed = await page.evaluate(async () => {
-    const response = await fetch('/api/auth/refresh', { method: 'POST' });
+    const response = await fetch("/api/auth/refresh", { method: "POST" });
     const payload = await response.json().catch(() => ({}));
-    return { ok: response.ok, token: typeof payload.token === 'string' ? payload.token : '' };
+    return {
+      ok: response.ok,
+      token: typeof payload.token === "string" ? payload.token : "",
+    };
   });
-  const token = refreshed.ok && refreshed.token ? refreshed.token : fallbackToken;
+  const token =
+    refreshed.ok && refreshed.token ? refreshed.token : fallbackToken;
   await page.evaluate((value) => {
-    window.dispatchEvent(new CustomEvent('tokenUpdated', { detail: value }));
+    window.dispatchEvent(new CustomEvent("tokenUpdated", { detail: value }));
   }, token);
   await page.waitForTimeout(400);
   return token;
 }
 
-async function apiJson({ args, token, pathname, method = 'GET', body }) {
+async function apiJson({ args, token, pathname, method = "GET", body }) {
   const response = await fetch(`${args.apiBase}${pathname}`, {
     method,
     headers: {
       Authorization: `Bearer ${token}`,
-      ...(body ? { 'Content-Type': 'application/json' } : {}),
-      'User-Agent': 'ViventiumSavedMemoryBrowserQA/1.0',
+      ...(body ? { "Content-Type": "application/json" } : {}),
+      "User-Agent": "ViventiumSavedMemoryBrowserQA/1.0",
     },
     ...(body ? { body: JSON.stringify(body) } : {}),
   });
@@ -226,8 +264,8 @@ async function setPreferences({ args, token, memories, conversationRecall }) {
   const response = await apiJson({
     args,
     token,
-    pathname: '/api/memories/preferences',
-    method: 'PATCH',
+    pathname: "/api/memories/preferences",
+    method: "PATCH",
     body: { memories, conversation_recall: conversationRecall },
   });
   const preferences = response.body?.preferences || {};
@@ -241,7 +279,7 @@ async function setPreferences({ args, token, memories, conversationRecall }) {
 }
 
 async function getMemories({ args, token }) {
-  const response = await apiJson({ args, token, pathname: '/api/memories' });
+  const response = await apiJson({ args, token, pathname: "/api/memories" });
   if (!response.ok || !Array.isArray(response.body?.memories)) {
     throw new Error(`memory_read_http_${response.status}`);
   }
@@ -260,40 +298,48 @@ async function waitForCondition(fn, { timeoutMs, intervalMs = 750, error }) {
 }
 
 async function submitPrompt(page, prompt) {
-  const input = page.getByLabel('Message input').or(page.getByPlaceholder(/^Message Viventium$/)).last();
-  await input.waitFor({ state: 'visible', timeout: 60000 });
+  const input = page
+    .getByLabel("Message input")
+    .or(page.getByPlaceholder(/^Message Viventium$/))
+    .last();
+  await input.waitFor({ state: "visible", timeout: 60000 });
   await input.fill(prompt);
-  await page.getByTestId('send-button').last().click({ timeout: 30000 });
+  await page.getByTestId("send-button").last().click({ timeout: 30000 });
 }
 
 function messageText(message) {
-  const text = typeof message?.text === 'string' ? message.text : '';
+  const text = typeof message?.text === "string" ? message.text : "";
   const content = Array.isArray(message?.content)
     ? message.content
         .map((part) => {
-          if (part?.type !== 'text') return '';
-          if (typeof part.text === 'string') return part.text;
-          return typeof part.text?.value === 'string' ? part.text.value : '';
+          if (part?.type !== "text") return "";
+          if (typeof part.text === "string") return part.text;
+          return typeof part.text?.value === "string" ? part.text.value : "";
         })
         .filter(Boolean)
-        .join('\n')
-    : '';
+        .join("\n")
+    : "";
   return `${text}\n${content}`.trim();
 }
 
 async function waitForTurn({ db, userId, prompt, startedAt, timeoutMs }) {
   const userMessage = await waitForCondition(
     () =>
-      db.collection('messages').findOne(
-        { user: userId, isCreatedByUser: true, text: prompt, createdAt: { $gte: startedAt } },
+      db.collection("messages").findOne(
+        {
+          user: userId,
+          isCreatedByUser: true,
+          text: prompt,
+          createdAt: { $gte: startedAt },
+        },
         { sort: { createdAt: -1, _id: -1 } },
       ),
-    { timeoutMs, error: 'browser_user_message_not_persisted' },
+    { timeoutMs, error: "browser_user_message_not_persisted" },
   );
   const assistantMessage = await waitForCondition(
     async () => {
       const rows = await db
-        .collection('messages')
+        .collection("messages")
         .find({
           user: userId,
           conversationId: userMessage.conversationId,
@@ -306,29 +352,41 @@ async function waitForTurn({ db, userId, prompt, startedAt, timeoutMs }) {
       const row =
         rows.find(
           (candidate) =>
-            candidate.parentMessageId === userMessage.messageId && candidate.unfinished !== true,
+            candidate.parentMessageId === userMessage.messageId &&
+            candidate.unfinished !== true,
         ) || rows.find((candidate) => candidate.unfinished !== true);
       return row && messageText(row).trim() ? row : null;
     },
-    { timeoutMs, intervalMs: 1000, error: 'browser_assistant_message_not_persisted' },
+    {
+      timeoutMs,
+      intervalMs: 1000,
+      error: "browser_assistant_message_not_persisted",
+    },
   );
-  return { userMessage, assistantMessage, assistantText: messageText(assistantMessage) };
+  return {
+    userMessage,
+    assistantMessage,
+    assistantText: messageText(assistantMessage),
+  };
 }
 
 async function waitForWriterReceipt({ userId, startedAt, timeoutMs }) {
   const userHash = hashValue(userId, 24);
   const receiptPath = path.join(
     APP_SUPPORT,
-    'state',
-    'memory-continuity-health',
+    "state",
+    "memory-continuity-health",
     `${userHash}.writer.json`,
   );
   return waitForCondition(
     async () => {
       try {
         const stat = fs.statSync(receiptPath);
-        const payload = JSON.parse(fs.readFileSync(receiptPath, 'utf8'));
-        if (stat.mtimeMs < startedAt.getTime() || Date.parse(payload.updatedAt || '') < startedAt.getTime()) {
+        const payload = JSON.parse(fs.readFileSync(receiptPath, "utf8"));
+        if (
+          stat.mtimeMs < startedAt.getTime() ||
+          Date.parse(payload.updatedAt || "") < startedAt.getTime()
+        ) {
           return null;
         }
         return payload;
@@ -336,107 +394,271 @@ async function waitForWriterReceipt({ userId, startedAt, timeoutMs }) {
         return null;
       }
     },
-    { timeoutMs, intervalMs: 1000, error: 'fresh_memory_writer_receipt_not_observed' },
+    {
+      timeoutMs,
+      intervalMs: 1000,
+      error: "fresh_memory_writer_receipt_not_observed",
+    },
   );
 }
 
 async function restoreMemory({ args, token, key, original, current }) {
-  if (!current) throw new Error('cleanup_memory_missing_after_write');
+  if (!current) throw new Error("cleanup_memory_missing_after_write");
   if (original) {
     const response = await apiJson({
       args,
       token,
       pathname: `/api/memories/entries/${encodeURIComponent(key)}`,
-      method: 'PATCH',
+      method: "PATCH",
       body: {
         key,
         value: original.value,
         expectedRevision: current.revision,
       },
     });
-    if (!response.ok) throw new Error(`cleanup_memory_restore_http_${response.status}`);
+    if (!response.ok)
+      throw new Error(`cleanup_memory_restore_http_${response.status}`);
   } else {
     const response = await apiJson({
       args,
       token,
       pathname: `/api/memories/entries/${encodeURIComponent(key)}?revision=${current.revision}`,
-      method: 'DELETE',
+      method: "DELETE",
     });
-    if (!response.ok) throw new Error(`cleanup_memory_delete_http_${response.status}`);
+    if (!response.ok)
+      throw new Error(`cleanup_memory_delete_http_${response.status}`);
   }
 }
 
 function sqliteJson(databasePath, sql) {
-  const output = execFileSync('sqlite3', ['-json', databasePath, sql], {
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
+  const output = execFileSync("sqlite3", ["-json", databasePath, sql], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
   }).trim();
   return output ? JSON.parse(output) : [];
 }
 
-function cleanupGlassHiveConversations(conversationIds) {
+function prepareGlassHiveRuntimeRecovery(databasePath, scope, options) {
+  if (!options.runtimeRecoveryDir) return [];
+  const runtimeRoot = path.resolve(
+    options.runtimeRoot ||
+      path.join(APP_SUPPORT, "state", "runtime", "isolated", "glasshive"),
+  );
+  const canonicalRuntimeRoot = fs.realpathSync(runtimeRoot);
+  const recoveryRoot = path.resolve(options.runtimeRecoveryDir);
+  const defaultPrivateRoot = path.resolve(
+    APP_SUPPORT,
+    "private-user-data",
+    "qa",
+  );
+  if (
+    !options.runtimeRoot &&
+    recoveryRoot !== defaultPrivateRoot &&
+    !recoveryRoot.startsWith(`${defaultPrivateRoot}${path.sep}`)
+  ) {
+    throw new Error("glasshive_cleanup_refused_unsafe_recovery_path");
+  }
+  const workers = sqliteJson(
+    databasePath,
+    `WITH target AS (SELECT DISTINCT project_id FROM provider_sessions WHERE ${scope})
+     SELECT worker_id, state, pid, state_dir
+     FROM workers
+     WHERE project_id IN (SELECT project_id FROM target);`,
+  );
+  const moves = [];
+  for (const worker of workers) {
+    const workerId = String(worker.worker_id || "").trim();
+    if (!/^wrk_[a-z0-9_]+$/i.test(workerId)) {
+      throw new Error("glasshive_cleanup_refused_invalid_worker_id");
+    }
+    if (
+      Number(worker.pid || 0) > 0 ||
+      !["ready", "terminated"].includes(String(worker.state))
+    ) {
+      throw new Error("glasshive_cleanup_refused_active_worker");
+    }
+    const stateDir = path.resolve(String(worker.state_dir || ""));
+    const workerRoot = path.dirname(stateDir);
+    if (!fs.existsSync(workerRoot)) continue;
+    if (fs.lstatSync(workerRoot).isSymbolicLink()) {
+      throw new Error("glasshive_cleanup_refused_symlink_worker_root");
+    }
+    const canonicalWorkerRoot = fs.realpathSync(workerRoot);
+    const relativeRoot = path.relative(
+      canonicalRuntimeRoot,
+      canonicalWorkerRoot,
+    );
+    const parts = relativeRoot.split(path.sep);
+    if (
+      stateDir !== path.join(workerRoot, "state") ||
+      relativeRoot.startsWith("..") ||
+      path.isAbsolute(relativeRoot) ||
+      parts.length !== 3 ||
+      !parts[0].endsWith("_runtime") ||
+      parts[1] !== "workers" ||
+      parts[2] !== workerId
+    ) {
+      throw new Error("glasshive_cleanup_refused_unsafe_worker_root");
+    }
+    moves.push({
+      source: workerRoot,
+      target: path.join(recoveryRoot, relativeRoot),
+    });
+  }
+  return moves;
+}
+
+function restoreGlassHiveRuntimeMoves(moves) {
+  for (const move of [...moves].reverse()) {
+    if (!fs.existsSync(move.target) || fs.existsSync(move.source)) continue;
+    fs.mkdirSync(path.dirname(move.source), { recursive: true, mode: 0o700 });
+    fs.renameSync(move.target, move.source);
+  }
+}
+
+function cleanupGlassHiveConversations(conversationIds, options = {}) {
   const exactIds = [...new Set(conversationIds.filter(Boolean))];
   if (exactIds.length === 0) return true;
-  if (!exactIds.every((value) => /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(value))) {
-    throw new Error('glasshive_cleanup_refused_invalid_conversation_id');
+  if (
+    !exactIds.every((value) =>
+      /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(value),
+    )
+  ) {
+    throw new Error("glasshive_cleanup_refused_invalid_conversation_id");
   }
-  const databasePath = path.join(
-    APP_SUPPORT,
-    'state',
-    'runtime',
-    'isolated',
-    'glasshive',
-    'runtime_phase1.db',
-  );
+  const databasePath =
+    options.databasePath ||
+    path.join(
+      APP_SUPPORT,
+      "state",
+      "runtime",
+      "isolated",
+      "glasshive",
+      "runtime_phase1.db",
+    );
   if (!fs.existsSync(databasePath)) return true;
-  const quotedIds = exactIds.map((value) => `'${value}'`).join(',');
+  const quotedIds = exactIds.map((value) => `'${value}'`).join(",");
   const scope = `conversation_id IN (${quotedIds})`;
-  const checks = sqliteJson(
-    databasePath,
-    `WITH target AS (SELECT * FROM provider_sessions WHERE ${scope})
+  const checks =
+    sqliteJson(
+      databasePath,
+      `WITH target AS (SELECT * FROM provider_sessions WHERE ${scope}),
+          target_projects AS (SELECT DISTINCT project_id FROM target),
+          target_workers AS (
+            SELECT worker_id FROM workers WHERE project_id IN (SELECT project_id FROM target_projects)
+          )
      SELECT
        (SELECT count(*) FROM target) AS session_count,
        (SELECT count(*) FROM provider_sessions WHERE worker_id IN (SELECT worker_id FROM target)) AS worker_session_count,
-       (SELECT count(*) FROM workers WHERE project_id IN (SELECT project_id FROM target)) AS project_worker_count,
-       (SELECT count(*) FROM callback_outbox WHERE worker_id IN (SELECT worker_id FROM target)) AS callback_count,
-       (SELECT count(*) FROM scheduled_runs WHERE worker_id IN (SELECT worker_id FROM target)) AS scheduled_count,
-       (SELECT count(*) FROM recurring_schedule_definitions WHERE worker_id IN (SELECT worker_id FROM target)) AS recurring_count;`,
-  )[0] || {};
+       (SELECT count(*) FROM workers WHERE project_id IN (SELECT project_id FROM target_projects)) AS project_worker_count,
+       (SELECT count(*) FROM provider_sessions WHERE project_id IN (SELECT project_id FROM target_projects) AND session_id NOT IN (SELECT session_id FROM target)) AS shared_session_count,
+       (SELECT count(*) FROM callback_outbox WHERE worker_id IN (SELECT worker_id FROM target_workers)) AS callback_count,
+       (SELECT count(*) FROM scheduled_runs WHERE worker_id IN (SELECT worker_id FROM target_workers)) AS scheduled_count,
+       (SELECT count(*) FROM recurring_schedule_definitions WHERE worker_id IN (SELECT worker_id FROM target_workers)) AS recurring_count;`,
+    )[0] || {};
   if (!checks.session_count) return true;
   if (
     checks.session_count !== checks.worker_session_count ||
-    checks.session_count !== checks.project_worker_count ||
+    checks.project_worker_count < checks.session_count ||
+    checks.shared_session_count !== 0 ||
     checks.callback_count !== 0 ||
     checks.scheduled_count !== 0 ||
     checks.recurring_count !== 0
   ) {
-    throw new Error('glasshive_cleanup_refused_shared_or_active_state');
+    throw new Error("glasshive_cleanup_refused_shared_or_active_state");
   }
-  execFileSync(
-    'sqlite3',
-    [
-      databasePath,
-      `PRAGMA foreign_keys=ON;
+  const runtimeMoves = prepareGlassHiveRuntimeRecovery(
+    databasePath,
+    scope,
+    options,
+  );
+  const movedRuntimeRoots = [];
+  try {
+    for (const move of runtimeMoves) {
+      fs.mkdirSync(path.dirname(move.target), { recursive: true, mode: 0o700 });
+      if (fs.existsSync(move.target)) {
+        throw new Error("glasshive_cleanup_recovery_target_exists");
+      }
+      if (
+        fs.statSync(move.source).dev !==
+        fs.statSync(path.dirname(move.target)).dev
+      ) {
+        throw new Error("glasshive_cleanup_recovery_cross_device");
+      }
+      fs.renameSync(move.source, move.target);
+      movedRuntimeRoots.push(move);
+    }
+  } catch {
+    restoreGlassHiveRuntimeMoves(movedRuntimeRoots);
+    throw new Error("glasshive_cleanup_runtime_recovery_failed");
+  }
+  try {
+    execFileSync(
+      "sqlite3",
+      [
+        databasePath,
+        `PRAGMA foreign_keys=ON;
        BEGIN IMMEDIATE;
        CREATE TEMP TABLE qa_target_sessions AS
          SELECT session_id, worker_id, project_id FROM provider_sessions WHERE ${scope};
+       CREATE TEMP TABLE qa_target_projects AS
+         SELECT DISTINCT project_id FROM qa_target_sessions;
+       CREATE TEMP TABLE qa_target_workers AS
+         SELECT worker_id FROM workers WHERE project_id IN (SELECT project_id FROM qa_target_projects);
+       CREATE TEMP TABLE qa_target_runs AS
+         SELECT run_id FROM runs WHERE worker_id IN (SELECT worker_id FROM qa_target_workers);
        DELETE FROM provider_activity WHERE request_id IN (
          SELECT request_id FROM provider_requests
          WHERE session_id IN (SELECT session_id FROM qa_target_sessions)
        );
        DELETE FROM provider_requests
          WHERE session_id IN (SELECT session_id FROM qa_target_sessions);
-       DELETE FROM events WHERE worker_id IN (SELECT worker_id FROM qa_target_sessions);
-       DELETE FROM runs WHERE worker_id IN (SELECT worker_id FROM qa_target_sessions);
+       DELETE FROM provider_account_run_fences
+         WHERE run_id IN (SELECT run_id FROM qa_target_runs);
+       DELETE FROM capability_grant_revocations
+         WHERE worker_id IN (SELECT worker_id FROM qa_target_workers)
+            OR run_id IN (SELECT run_id FROM qa_target_runs);
+       DELETE FROM host_run_leases
+         WHERE worker_id IN (SELECT worker_id FROM qa_target_workers)
+            OR run_id IN (SELECT run_id FROM qa_target_runs);
+       DELETE FROM lifecycle_operation_effects
+         WHERE worker_id IN (SELECT worker_id FROM qa_target_workers);
+       DELETE FROM callback_trace_events
+         WHERE run_id IN (SELECT run_id FROM qa_target_runs);
+       DELETE FROM capacity_attempts
+         WHERE run_id IN (SELECT run_id FROM qa_target_runs);
+       DELETE FROM run_attempts
+         WHERE run_id IN (SELECT run_id FROM qa_target_runs);
+       DELETE FROM terminal_callback_reconciliations
+         WHERE run_id IN (SELECT run_id FROM qa_target_runs);
+       DELETE FROM work_trace_events
+         WHERE run_id IN (SELECT run_id FROM qa_target_runs);
+       DELETE FROM run_action_uses
+         WHERE worker_id IN (SELECT worker_id FROM qa_target_workers)
+            OR source_run_id IN (SELECT run_id FROM qa_target_runs)
+            OR new_run_id IN (SELECT run_id FROM qa_target_runs);
+       DELETE FROM delegations
+         WHERE worker_id IN (SELECT worker_id FROM qa_target_workers)
+            OR initial_run_id IN (SELECT run_id FROM qa_target_runs)
+            OR current_run_id IN (SELECT run_id FROM qa_target_runs);
+       DELETE FROM events WHERE worker_id IN (SELECT worker_id FROM qa_target_workers);
+       DELETE FROM runs WHERE run_id IN (SELECT run_id FROM qa_target_runs);
        DELETE FROM provider_sessions
          WHERE session_id IN (SELECT session_id FROM qa_target_sessions);
-       DELETE FROM workers WHERE worker_id IN (SELECT worker_id FROM qa_target_sessions);
-       DELETE FROM projects WHERE project_id IN (SELECT project_id FROM qa_target_sessions);
+       DELETE FROM workers WHERE worker_id IN (SELECT worker_id FROM qa_target_workers);
+       DELETE FROM projects WHERE project_id IN (SELECT project_id FROM qa_target_projects);
+       DROP TABLE qa_target_runs;
+       DROP TABLE qa_target_workers;
+       DROP TABLE qa_target_projects;
        DROP TABLE qa_target_sessions;
        COMMIT;`,
-    ],
-    { stdio: ['ignore', 'pipe', 'pipe'] },
-  );
+      ],
+      { stdio: ["ignore", "pipe", "pipe"] },
+    );
+  } catch {
+    restoreGlassHiveRuntimeMoves(movedRuntimeRoots);
+    throw new Error("glasshive_cleanup_sql_failed");
+  }
   const remaining = sqliteJson(
     databasePath,
     `SELECT count(*) AS count FROM provider_sessions WHERE ${scope};`,
@@ -447,45 +669,53 @@ function cleanupGlassHiveConversations(conversationIds) {
 function writePublicReport({ args, result }) {
   fs.mkdirSync(path.dirname(args.publicReport), { recursive: true });
   const lines = [
-    '<!-- qa-evidence-exempt: Generated focused browser artifact; full-view user-grade acceptance is owned by the universal cognitive-continuity report. -->',
-    '',
+    "<!-- qa-evidence-exempt: Generated focused browser artifact; full-view user-grade acceptance is owned by the universal cognitive-continuity report. -->",
+    "",
     `# Live browser saved-memory model-route QA — ${new Date().toISOString().slice(0, 10)}`,
-    '',
-    `- Status: ${result.pass ? 'PASS' : 'FAIL'}`,
+    "",
+    `- Status: ${result.pass ? "PASS" : "FAIL"}`,
     `- Signed-in surface: local LibreChat, non-admin QA account`,
-    `- Writer route: ${result.writerProvider || 'not observed'} / ${result.writerModel || 'not observed'}`,
-    `- Writer effort: ${result.writerEffort || 'not observed'}`,
-    `- Conversation recall during both turns: ${result.recallDisabled ? 'disabled' : 'not proven'}`,
-    `- Synthetic fact written through browser chat: ${result.memoryStored ? 'yes' : 'no'}`,
-    `- Stored fact visible in Memories panel: ${result.memoryPanelVisible ? 'yes' : 'no'}`,
-    `- Fresh conversation recovered both requested fields: ${result.freshConversationRecovered ? 'yes' : 'no'}`,
-    `- Reload preserved the visible answer: ${result.reloadPreserved ? 'yes' : 'no'}`,
-    `- DB/message/receipt evidence agreed: ${result.backendEvidenceAgreed ? 'yes' : 'no'}`,
-    `- Revision-safe memory cleanup verified: ${result.memoryCleanupVerified ? 'yes' : 'no'}`,
-    `- LibreChat and GlassHive synthetic conversation/session cleanup verified: ${result.runtimeCleanupVerified ? 'yes' : 'no'}`,
-    `- Original account preferences restored: ${result.preferencesRestored ? 'yes' : 'no'}`,
-    `- Account hash: ${result.userHash || 'not available'}`,
-    `- Write conversation hash: ${result.writeConversationHash || 'not available'}`,
-    `- Read conversation hash: ${result.readConversationHash || 'not available'}`,
-    `- Private screenshot/result artifacts: ${result.privateArtifactsSaved ? 'saved outside repository' : 'not saved'}`,
-    '',
-    'The test used an ordinary-language durable preference without a memory command or named-person/pet fixture, never repeated that preference in the recovery prompt, and disabled conversation recall before both turns. This proves the general saved-memory write/read path rather than transcript recall or a phrase/entity-specific rule.',
-    '',
-    'Raw prompts, responses, memory values, account identifiers, screenshots, tokens, local paths, and database identifiers are intentionally excluded from this public report.',
+    `- Writer route: ${result.writerProvider || "not observed"} / ${result.writerModel || "not observed"}`,
+    `- Writer effort: ${result.writerEffort || "not observed"}`,
+    `- Conversation recall during both turns: ${result.recallDisabled ? "disabled" : "not proven"}`,
+    `- Synthetic fact written through browser chat: ${result.memoryStored ? "yes" : "no"}`,
+    `- Stored fact visible in Memories panel: ${result.memoryPanelVisible ? "yes" : "no"}`,
+    `- Fresh conversation recovered both requested fields: ${result.freshConversationRecovered ? "yes" : "no"}`,
+    `- Reload preserved the visible answer: ${result.reloadPreserved ? "yes" : "no"}`,
+    `- DB/message/receipt evidence agreed: ${result.backendEvidenceAgreed ? "yes" : "no"}`,
+    `- Revision-safe memory cleanup verified: ${result.memoryCleanupVerified ? "yes" : "no"}`,
+    `- LibreChat and GlassHive synthetic conversation/session cleanup verified: ${result.runtimeCleanupVerified ? "yes" : "no"}`,
+    `- Original account preferences restored: ${result.preferencesRestored ? "yes" : "no"}`,
+    `- Account hash: ${result.userHash || "not available"}`,
+    `- Write conversation hash: ${result.writeConversationHash || "not available"}`,
+    `- Read conversation hash: ${result.readConversationHash || "not available"}`,
+    `- Private screenshot/result artifacts: ${result.privateArtifactsSaved ? "saved outside repository" : "not saved"}`,
+    "",
+    "The test used an ordinary-language durable preference without a memory command or named-person/pet fixture, never repeated that preference in the recovery prompt, and disabled conversation recall before both turns. This proves the general saved-memory write/read path rather than transcript recall or a phrase/entity-specific rule.",
+    "",
+    "Raw prompts, responses, memory values, account identifiers, screenshots, tokens, local paths, and database identifiers are intentionally excluded from this public report.",
   ];
-  if (result.error) lines.push('', '## Error', '', `- ${safeError(result.error)}`);
-  fs.writeFileSync(args.publicReport, `${lines.join('\n')}\n`, 'utf8');
+  if (result.error)
+    lines.push("", "## Error", "", `- ${safeError(result.error)}`);
+  fs.writeFileSync(args.publicReport, `${lines.join("\n")}\n`, "utf8");
 }
 
 async function main() {
   ensureLocalQaAuth();
   const args = parseArgs(process.argv.slice(2));
   const env = loadRuntimeEnv();
-  if (!env.MONGO_URI) throw new Error('missing_mongo_uri');
-  const qaEmail = String(env.VIVENTIUM_QA_EMAIL || '').trim().toLowerCase();
-  if (!qaEmail && !args.qaUserHash) throw new Error('missing_viventium_qa_email');
-  const { MongoClient } = require(path.join(LIBRECHAT_ROOT, 'node_modules', 'mongodb'));
-  const { chromium } = require(path.join(LIBRECHAT_ROOT, 'node_modules', 'playwright'));
+  if (!env.MONGO_URI) throw new Error("missing_mongo_uri");
+  const qaEmail = String(env.VIVENTIUM_QA_EMAIL || "")
+    .trim()
+    .toLowerCase();
+  if (!qaEmail && !args.qaUserHash)
+    throw new Error("missing_viventium_qa_email");
+  const { MongoClient } = require(
+    path.join(LIBRECHAT_ROOT, "node_modules", "mongodb"),
+  );
+  const { chromium } = require(
+    path.join(LIBRECHAT_ROOT, "node_modules", "playwright"),
+  );
   const client = new MongoClient(env.MONGO_URI);
   const result = {
     pass: false,
@@ -499,7 +729,7 @@ async function main() {
     runtimeCleanupVerified: false,
     preferencesRestored: false,
     privateArtifactsSaved: false,
-    error: '',
+    error: "",
   };
   let browser;
   let db;
@@ -510,25 +740,38 @@ async function main() {
   let originalPreferences;
   const conversationIds = [];
   const promptMarker = args.marker;
-  const writePrompt =
-    `For future workshop packets, I use a graphite cover and the footer code is ${promptMarker}.`;
-  const readPrompt = 'Tell me my workshop-packet cover color and footer code. Answer with both only.';
+  const writePrompt = `For future workshop packets, I use a graphite cover and the footer code is ${promptMarker}.`;
+  const readPrompt =
+    "Tell me my workshop-packet cover color and footer code. Answer with both only.";
   let page;
   try {
     await client.connect();
-    db = client.db(new URL(env.MONGO_URI).pathname.replace(/^\//, '') || 'LibreChatViventium');
+    db = client.db(
+      new URL(env.MONGO_URI).pathname.replace(/^\//, "") ||
+        "LibreChatViventium",
+    );
     if (args.qaUserHash) {
       const candidates = await db
-        .collection('users')
-        .find({ role: { $ne: 'ADMIN' } })
-        .project({ _id: 1, email: 1, username: 1, provider: 1, role: 1, personalization: 1 })
+        .collection("users")
+        .find({ role: { $ne: "ADMIN" } })
+        .project({
+          _id: 1,
+          email: 1,
+          username: 1,
+          provider: 1,
+          role: 1,
+          personalization: 1,
+        })
         .toArray();
-      user = candidates.find((candidate) => hashValue(candidate._id, 12) === args.qaUserHash);
+      user = candidates.find(
+        (candidate) => hashValue(candidate._id, 12) === args.qaUserHash,
+      );
     } else {
-      user = await db.collection('users').findOne({ email: qaEmail });
+      user = await db.collection("users").findOne({ email: qaEmail });
     }
-    if (!user?._id) throw new Error('configured_qa_user_not_found');
-    if (String(user.role || '').toUpperCase() === 'ADMIN') throw new Error('configured_qa_user_must_be_non_admin');
+    if (!user?._id) throw new Error("configured_qa_user_not_found");
+    if (String(user.role || "").toUpperCase() === "ADMIN")
+      throw new Error("configured_qa_user_must_be_non_admin");
     result.userHash = hashValue(user._id, 12);
     originalPreferences = {
       memories: user.personalization?.memories !== false,
@@ -543,15 +786,18 @@ async function main() {
       ],
     };
     const [keyRows, tokenRows] = await Promise.all([
-      db.collection('keys').countDocuments(userQuery),
-      db.collection('tokens').countDocuments(userQuery),
+      db.collection("keys").countDocuments(userQuery),
+      db.collection("tokens").countDocuments(userQuery),
     ]);
-    if (keyRows + tokenRows === 0) throw new Error('qa_connected_account_credentials_not_found');
+    if (keyRows + tokenRows === 0)
+      throw new Error("qa_connected_account_credentials_not_found");
 
     auth = await createQaAuth({ env, db, user });
     token = auth.accessToken;
     const initialMemories = await getMemories({ args, token });
-    originalMemories = new Map(initialMemories.map((memory) => [memory.key, memory]));
+    originalMemories = new Map(
+      initialMemories.map((memory) => [memory.key, memory]),
+    );
     await setPreferences({
       args,
       token,
@@ -561,21 +807,30 @@ async function main() {
     result.recallDisabled = true;
 
     fs.mkdirSync(args.privateOutputDir, { recursive: true, mode: 0o700 });
-    browser = await chromium.launch({ channel: 'chrome', headless: args.headless });
+    browser = await chromium.launch({
+      channel: "chrome",
+      headless: args.headless,
+    });
     const context = await browser.newContext({
       baseURL: args.clientBase,
       viewport: { width: 1440, height: 960 },
     });
     await context.addInitScript(() => {
-      localStorage.setItem('fullPanelCollapse', 'false');
-      localStorage.setItem('react-resizable-panels:collapsed', 'false');
+      localStorage.setItem("fullPanelCollapse", "false");
+      localStorage.setItem("react-resizable-panels:collapsed", "false");
     });
     await attachAuth({ context, args, auth });
     page = await context.newPage();
     const agentUrl = `${args.clientBase}/c/new?agent_id=${encodeURIComponent(args.agentId)}`;
-    await page.goto(agentUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.goto(agentUrl, {
+      waitUntil: "domcontentloaded",
+      timeout: 60000,
+    });
     token = await installAccessToken(page, token);
-    await page.goto(agentUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.goto(agentUrl, {
+      waitUntil: "domcontentloaded",
+      timeout: 60000,
+    });
     token = await installAccessToken(page, token);
 
     const writeStartedAt = new Date();
@@ -588,30 +843,44 @@ async function main() {
       timeoutMs: args.timeoutMs,
     });
     conversationIds.push(writeTurn.userMessage.conversationId);
-    result.writeConversationHash = hashValue(writeTurn.userMessage.conversationId, 12);
+    result.writeConversationHash = hashValue(
+      writeTurn.userMessage.conversationId,
+      12,
+    );
     const receipt = await waitForWriterReceipt({
       userId: String(user._id),
       startedAt: writeStartedAt,
       timeoutMs: args.timeoutMs,
     });
-    result.writerProvider = receipt.provider || '';
-    result.writerModel = receipt.model || '';
-    result.writerEffort = receipt.effort || '';
-    if (receipt.status !== 'ok') throw new Error(`memory_writer_${receipt.reason || 'degraded'}`);
+    result.writerProvider = receipt.provider || "";
+    result.writerModel = receipt.model || "";
+    result.writerEffort = receipt.effort || "";
+    if (receipt.status !== "ok")
+      throw new Error(`memory_writer_${receipt.reason || "degraded"}`);
 
     const writtenMemory = await waitForCondition(
       async () => {
         const rows = await getMemories({ args, token });
-        const row = rows.find((memory) => memory.key === 'preferences');
-        const normalized = String(row?.value || '').toLowerCase();
-        return normalized.includes('graphite') && normalized.includes(promptMarker.toLowerCase()) ? row : null;
+        const row = rows.find((memory) => memory.key === "preferences");
+        const normalized = String(row?.value || "").toLowerCase();
+        return normalized.includes("graphite") &&
+          normalized.includes(promptMarker.toLowerCase())
+          ? row
+          : null;
       },
-      { timeoutMs: args.timeoutMs, intervalMs: 1000, error: 'synthetic_saved_memory_not_persisted' },
+      {
+        timeoutMs: args.timeoutMs,
+        intervalMs: 1000,
+        error: "synthetic_saved_memory_not_persisted",
+      },
     );
     result.memoryStored = true;
 
-    const memoryButtons = page.getByRole('button', { name: 'Memories', exact: true });
-    await memoryButtons.first().waitFor({ state: 'attached', timeout: 15000 });
+    const memoryButtons = page.getByRole("button", {
+      name: "Memories",
+      exact: true,
+    });
+    await memoryButtons.first().waitFor({ state: "attached", timeout: 15000 });
     let memoriesButton;
     for (let index = 0; index < (await memoryButtons.count()); index += 1) {
       const candidate = memoryButtons.nth(index);
@@ -622,24 +891,36 @@ async function main() {
     }
     if (memoriesButton) {
       await memoriesButton.click();
-      const memoryRegions = page.getByRole('region', { name: 'Memories', exact: true });
-      await memoryRegions.first().waitFor({ state: 'visible', timeout: 15000 });
-      const memoryFilter = memoryRegions.first().getByLabel('Filter memories');
+      const memoryRegions = page.getByRole("region", {
+        name: "Memories",
+        exact: true,
+      });
+      await memoryRegions.first().waitFor({ state: "visible", timeout: 15000 });
+      const memoryFilter = memoryRegions.first().getByLabel("Filter memories");
       if (await memoryFilter.isVisible().catch(() => false)) {
         await memoryFilter.fill(promptMarker);
       }
       await page.waitForTimeout(500);
-      const visiblePanelText = (await memoryRegions.allInnerTexts()).join('\n').toLowerCase();
+      const visiblePanelText = (await memoryRegions.allInnerTexts())
+        .join("\n")
+        .toLowerCase();
       result.memoryPanelVisible =
-        visiblePanelText.includes('graphite') && visiblePanelText.includes(promptMarker.toLowerCase());
+        visiblePanelText.includes("graphite") &&
+        visiblePanelText.includes(promptMarker.toLowerCase());
       await page.screenshot({
-        path: path.join(args.privateOutputDir, 'saved-memory-filtered-panel.png'),
+        path: path.join(
+          args.privateOutputDir,
+          "saved-memory-filtered-panel.png",
+        ),
         fullPage: true,
       });
       await memoriesButton.click().catch(() => {});
     }
 
-    await page.goto(agentUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.goto(agentUrl, {
+      waitUntil: "domcontentloaded",
+      timeout: 60000,
+    });
     token = await installAccessToken(page, token);
     const readStartedAt = new Date();
     await submitPrompt(page, readPrompt);
@@ -651,50 +932,61 @@ async function main() {
       timeoutMs: args.timeoutMs,
     });
     conversationIds.push(readTurn.userMessage.conversationId);
-    result.readConversationHash = hashValue(readTurn.userMessage.conversationId, 12);
+    result.readConversationHash = hashValue(
+      readTurn.userMessage.conversationId,
+      12,
+    );
     const normalizedAnswer = readTurn.assistantText.toLowerCase();
     result.freshConversationRecovered =
-      normalizedAnswer.includes('graphite') && normalizedAnswer.includes(promptMarker.toLowerCase());
+      normalizedAnswer.includes("graphite") &&
+      normalizedAnswer.includes(promptMarker.toLowerCase());
     const readReceipt = await waitForWriterReceipt({
       userId: String(user._id),
       startedAt: readStartedAt,
       timeoutMs: args.timeoutMs,
     });
-    if (readReceipt.status !== 'ok') {
-      throw new Error(`memory_writer_read_turn_${readReceipt.reason || 'degraded'}`);
+    if (readReceipt.status !== "ok") {
+      throw new Error(
+        `memory_writer_read_turn_${readReceipt.reason || "degraded"}`,
+      );
     }
     await page.waitForFunction(
       ({ color, marker }) => {
-        const text = (document.body.innerText || '').toLowerCase();
+        const text = (document.body.innerText || "").toLowerCase();
         return text.includes(color) && text.includes(marker);
       },
-      { color: 'graphite', marker: promptMarker.toLowerCase() },
+      { color: "graphite", marker: promptMarker.toLowerCase() },
       { timeout: 30000 },
     );
-    await page.reload({ waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.reload({ waitUntil: "domcontentloaded", timeout: 60000 });
     token = await installAccessToken(page, token);
     await page.waitForFunction(
       ({ color, marker }) => {
-        const text = (document.body.innerText || '').toLowerCase();
+        const text = (document.body.innerText || "").toLowerCase();
         return text.includes(color) && text.includes(marker);
       },
-      { color: 'graphite', marker: promptMarker.toLowerCase() },
+      { color: "graphite", marker: promptMarker.toLowerCase() },
       { timeout: 30000 },
     );
     result.reloadPreserved = true;
     result.backendEvidenceAgreed =
-      result.writerProvider === 'openai' &&
-      result.writerModel === 'gpt-5.6-luna' &&
-      result.writerEffort === 'medium' &&
-      String(writtenMemory.value).toLowerCase().includes(promptMarker.toLowerCase()) &&
+      providerNamesMatch(result.writerProvider, "openai") &&
+      result.writerModel === "gpt-5.6-luna" &&
+      result.writerEffort === "medium" &&
+      String(writtenMemory.value)
+        .toLowerCase()
+        .includes(promptMarker.toLowerCase()) &&
       result.freshConversationRecovered;
 
     await page.screenshot({
-      path: path.join(args.privateOutputDir, 'fresh-conversation-after-reload.png'),
+      path: path.join(
+        args.privateOutputDir,
+        "fresh-conversation-after-reload.png",
+      ),
       fullPage: true,
     });
     fs.writeFileSync(
-      path.join(args.privateOutputDir, 'result.private.json'),
+      path.join(args.privateOutputDir, "result.private.json"),
       JSON.stringify(
         {
           marker: promptMarker,
@@ -710,7 +1002,7 @@ async function main() {
         null,
         2,
       ),
-      { encoding: 'utf8', mode: 0o600 },
+      { encoding: "utf8", mode: 0o600 },
     );
     result.privateArtifactsSaved = true;
     result.pass =
@@ -727,7 +1019,7 @@ async function main() {
       try {
         fs.mkdirSync(args.privateOutputDir, { recursive: true, mode: 0o700 });
         await page.screenshot({
-          path: path.join(args.privateOutputDir, 'final-visible-state.png'),
+          path: path.join(args.privateOutputDir, "final-visible-state.png"),
           fullPage: true,
         });
         result.privateArtifactsSaved = true;
@@ -739,7 +1031,7 @@ async function main() {
       try {
         const rows = await getMemories({ args, token });
         const contaminated = rows.filter((memory) =>
-          String(memory.value || '').includes(promptMarker),
+          String(memory.value || "").includes(promptMarker),
         );
         for (const current of contaminated) {
           await restoreMemory({
@@ -752,10 +1044,11 @@ async function main() {
         }
         const after = await getMemories({ args, token });
         result.memoryCleanupVerified = !after.some((memory) =>
-          String(memory.value || '').includes(promptMarker),
+          String(memory.value || "").includes(promptMarker),
         );
       } catch (error) {
-        result.error = `${result.error || ''}\ncleanup: ${error?.message || error}`.trim();
+        result.error =
+          `${result.error || ""}\ncleanup: ${error?.message || error}`.trim();
         result.pass = false;
       }
       try {
@@ -766,38 +1059,51 @@ async function main() {
             memories: originalPreferences.memories,
             conversationRecall: originalPreferences.conversationRecall,
           });
-          const restored = await db.collection('users').findOne(
-            { _id: user._id },
-            { projection: { personalization: 1 } },
-          );
+          const restored = await db
+            .collection("users")
+            .findOne({ _id: user._id }, { projection: { personalization: 1 } });
           result.preferencesRestored =
-            (restored?.personalization?.memories !== false) === originalPreferences.memories &&
+            (restored?.personalization?.memories !== false) ===
+              originalPreferences.memories &&
             (restored?.personalization?.conversation_recall === true) ===
               originalPreferences.conversationRecall;
         }
       } catch (error) {
-        result.error = `${result.error || ''}\npreference cleanup: ${error?.message || error}`.trim();
+        result.error =
+          `${result.error || ""}\npreference cleanup: ${error?.message || error}`.trim();
         result.pass = false;
       }
       try {
-        const uniqueConversationIds = [...new Set(conversationIds.filter(Boolean))];
-        await db.collection('messages').deleteMany({
+        const uniqueConversationIds = [
+          ...new Set(conversationIds.filter(Boolean)),
+        ];
+        await db.collection("messages").deleteMany({
           user: String(user._id),
           conversationId: { $in: uniqueConversationIds },
         });
-        await db.collection('conversations').deleteMany({
+        await db.collection("conversations").deleteMany({
           user: String(user._id),
           conversationId: { $in: uniqueConversationIds },
         });
-        if (auth?.sessionId) await db.collection('sessions').deleteOne({ _id: auth.sessionId });
-        const remaining = await db.collection('messages').countDocuments({
+        if (auth?.sessionId)
+          await db.collection("sessions").deleteOne({ _id: auth.sessionId });
+        const remaining = await db.collection("messages").countDocuments({
           user: String(user._id),
           conversationId: { $in: uniqueConversationIds },
         });
-        const glassHiveClean = cleanupGlassHiveConversations(uniqueConversationIds);
+        const glassHiveClean = cleanupGlassHiveConversations(
+          uniqueConversationIds,
+          {
+            runtimeRecoveryDir: path.join(
+              args.privateOutputDir,
+              "glasshive-worker-roots",
+            ),
+          },
+        );
         result.runtimeCleanupVerified = remaining === 0 && glassHiveClean;
       } catch (error) {
-        result.error = `${result.error || ''}\nruntime cleanup: ${error?.message || error}`.trim();
+        result.error =
+          `${result.error || ""}\nruntime cleanup: ${error?.message || error}`.trim();
         result.pass = false;
       }
     }
@@ -811,7 +1117,7 @@ async function main() {
     writePublicReport({ args, result });
   }
   process.stdout.write(
-    `${JSON.stringify({ ...result, error: result.error ? safeError(result.error) : '' }, null, 2)}\n`,
+    `${JSON.stringify({ ...result, error: result.error ? safeError(result.error) : "" }, null, 2)}\n`,
   );
   process.exitCode = result.pass ? 0 : 1;
 }
@@ -833,5 +1139,6 @@ module.exports = {
   installAccessToken,
   loadRuntimeEnv,
   parseEnvFile,
+  providerNamesMatch,
   safeError,
 };

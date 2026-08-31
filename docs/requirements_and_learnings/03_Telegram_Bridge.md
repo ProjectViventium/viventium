@@ -25,6 +25,20 @@ stream back to Telegram through the existing bridge.
 - Background follow-ups must preserve the same formatting rules as the main response.
 - Telegram must mirror LibreChat UX for new features, including scheduled prompts and background
   follow-ups.
+- Telegram replies must send `ReplyContextV1` as a bounded typed descriptor. Quoted text and
+  extracted quoted-document evidence are untrusted reference data and must never be concatenated
+  into the new user-authored message. Core resolves assistant ownership from the authenticated
+  owner, current chat, and durable outbound Telegram message-ID receipt. Unknown or foreign
+  provenance yields `cannot verify`; it must never produce an authorship denial or spoof claim.
+- For a session-backed conversation provider, the resolved `ReplyContextV1` must travel in the
+  bounded invocation-local turn-context channel immediately with the current user turn. Storing it
+  only in mutable bootstrap/developer instructions is insufficient because a resumed native
+  session can keep its earlier developer authority. The reply capsule outranks time, Active Work,
+  source selection, owner-Main history, and stale visible ancestry when those sources conflict.
+- Every logical assistant result delivered to Telegram must persist one transport receipt with all
+  Telegram chunk IDs. This includes normal Main replies, scheduled Main results, and callbacks.
+  A reply to any chunk resolves the same logical output. A transport retry resends the accepted
+  result and never regenerates the AI turn.
 - Telegram text length, word count, and prompt keywords must never remove the agent's configured
   tools or MCP instructions. Tool availability must follow the same structural agent, capability,
   authentication, and server-health contract as web and voice. Latency optimizations may defer bulk
@@ -43,12 +57,6 @@ stream back to Telegram through the existing bridge.
   (`127.0.0.1`) to avoid localhost address-family ambiguity during restart windows. Status must
   treat Telegram as degraded when the bot process is alive but the configured LibreChat API origin
   cannot be reached.
-- HTTP clients created for an `http://` loopback LibreChat origin must not consult machine proxy
-  environment or synchronously load an unused TLS CA bundle on the Telegram event loop. This local
-  optimization must stay scheme- and host-bound: remote or HTTPS origins retain HTTPX's normal
-  certificate verification and environment behavior. It applies to bridge requests and attachment
-  downloads. No local request setup path may block the Bot API receive loop while preparing an
-  unused TLS verifier.
 - Successful LibreChat stream jobs must remain available briefly after completion so Telegram retry
   or resume can recover the final event. A late reconnect after a completed response must not become
   a synthetic generic connection error just because the generation job was deleted immediately.
@@ -111,99 +119,6 @@ keywords, or artifact type.
 Prompt-layer ownership and the runtime-vs-prompt boundary are also recorded in
 [`49_Prompt_Architecture_and_Token_Efficiency.md`](49_Prompt_Architecture_and_Token_Efficiency.md#fix-7a-keep-messaging-delivery-intent-model-owned-and-adapter-neutral).
 
-## Smart Messaging Delivery Controls
-
-Telegram text and optional audio are two delivery views of one Main Agent answer. The selected
-agent decides whether audio is useful and where a conversational answer has natural bubble
-boundaries; runtime only consumes these explicit structural controls:
-
-- `{SKIP_VOICE}` on a standalone line suppresses optional audio for that turn while preserving the
-  complete text. It is appropriate for read/copy/edit-first artifacts such as emails, code, tables,
-  exact wording, and dense reference material. It must not be used merely because conversation is
-  detailed or long. An explicit request for text only/no audio requires suppression, while an
-  explicit request to hear/read/speak takes precedence over the default semantic appraisal.
-- `{MSG_BREAK}` on a standalone line separates complete conversational beats. The agent usually
-  emits none and may emit at most two, so one logical turn creates at most three semantic bubbles.
-  It must not split code, quotations, emails, documents, tables, lists, or tiny fragments.
-
-Controls are case/whitespace tolerant only as standalone lines outside fenced code and block
-quotes. Literal mentions in prose, inline code, fenced examples, and quotes remain user content.
-Incomplete reserved suffixes are hidden during streaming. Streaming may update one reversible
-preview bubble, but it must not publish irreversible length chunks before the complete logical
-answer has been parsed for delivery controls. After parsing, each semantic segment is rendered once
-to Telegram HTML and then split into tag-balanced physical messages measured against Telegram's
-post-entity UTF-16 limit. This preserves code fences, expanded tables, emoji, and an early
-`{SKIP_VOICE}` or `{MSG_BREAK}` even when the answer later exceeds the transport limit.
-Preview coalescing happens before Markdown rendering so rapid token deltas do not repeatedly pay the
-full render/split cost. If a final or proactive multi-message delivery stops after any text has been
-shown, the runtime suppresses audio and sends a short visible interruption notice rather than
-silently presenting a truncated answer as complete.
-
-The clean response persists as one logical assistant turn. Semantic bubbles are transport messages,
-not duplicate history. Telegram-safe post-parse chunking remains an additional size guard: the
-at-most-three limit applies to semantic bubbles, while a response over the transport threshold can
-require more physical messages. If audio is sent, the clean logical answer is synthesized once and
-delivered once after the final physical text message. Runtime must never infer these choices from
-keywords, length, provider labels, agent names, or prompt text. Physical size splitting is mandatory
-and is not exposed as a user preference because Telegram cannot accept an oversized message.
-If a response stream fails after useful partial text arrives, the reversible preview is finalized
-with a clear retry notice and optional audio is suppressed. A transient final edit retries the same
-formatted HTML; only an explicit entity-parse failure uses a plain-text fallback. Failure to deliver
-text always suppresses audio.
-
-The grammar is versioned and shared by the LibreChat/JavaScript persistence boundary and Python
-messaging adapters. Compatible future adapters consume this contract instead of inventing
-channel-specific tokens. Telegram exposes the existing `ALWAYS_VOICE_RESPONSE` preference as
-`Smart voice for text`.
-
-### Structured final audio disposition
-
-The text marker remains a backward-compatible control, but it is not the rollout-safe authority for
-whether a completed Main response may receive optional Telegram audio. LibreChat final events may
-carry this versioned adapter contract beside the final text:
-
-```json
-{
-  "metadata": {
-    "viventium": {
-      "deliveryDisposition": {
-        "version": 1,
-        "audio": "skip",
-        "required": true,
-        "valid": true,
-        "source": "model"
-      }
-    }
-  }
-}
-```
-
-`audio` is exactly `skip` or `eligible`, `source` is exactly `model` or the migration-only
-`legacy_marker`, and the object has exactly those five fields with the declared types. Unknown
-versions, sources, extra fields, and malformed shapes are invalid. The chat-start response
-declares `deliveryDispositionRequired=true` only after the producing runtime guarantees that every
-applicable final and replay carries the contract. The Telegram bridge retains that requirement in
-its stream session and emits the validated disposition with the final text after reconnect or replay.
-
-The Telegram audio gate applies this order:
-
-1. An exact legacy `{SKIP_VOICE}` control still suppresses audio during migration.
-2. A valid structured `skip` suppresses audio.
-3. A valid structured `eligible` permits the existing voice-note or Smart voice preference gate; it
-   does not force audio when the user disabled it.
-4. If the producer declared the contract required, missing or malformed final metadata fails closed
-   to text-only delivery.
-5. If the producer did not declare it required, absent metadata preserves legacy behavior.
-
-This contract adds no audio pipeline and does not classify user wording, prompt text, agent names,
-providers, answer length, or artifact type. The model/prompt layer still owns semantic appraisal;
-the response boundary only makes the completed decision explicit and transport-stable. Telemetry may
-record presence, validity, required state, and the audio enum, but never private response text.
-
-The legacy `LONG_TEXT_SPLIT` preference is retired and is no longer forwarded to the bot. Physical
-Telegram limit enforcement is mandatory and semantic bubble boundaries belong only to the
-versioned `{MSG_BREAK}` control.
-
 ## Public-Safe Implementation Notes
 
 - Use the same product truth in Telegram and the web UI.
@@ -212,30 +127,20 @@ versioned `{MSG_BREAK}` control.
 - Do not embed private machine names, private paths, or owner-only debugging notes into the public
   contract.
 
-## Easy Install And Connected-Channel Ownership
+## Markdown Formatting Integrity
 
-- Easy Install exposes Telegram under **Settings > Channels** after core chat is usable. The
-  admin-entered token is encrypted server-side in the local database; it is not written to browser
-  storage, canonical YAML, `runtime.env`, or a service env.
-- LibreChat owns the browser connection record and the in-process Telegram text worker. Incoming
-  text enters the existing Viventium gateway and Main Agent pipeline; the channel worker does not
-  call a model directly.
-- Bot setup remains admin-only, while each signed-in user creates their own one-use pairing code
-  and sends it to the bot in a private chat. The code binds that Telegram identity only to the
-  authenticated Viventium user who created it; pairing in a group or sharing an admin identity is
-  forbidden.
-- Custom Settings Install remains backward-compatible: `integrations.telegram.enabled` and its
-  canonical Keychain token compile to `service-env/telegram.config.env` with mode `0600` and use the
-  existing supervised adapter path.
-- Browser and operator ownership are mutually exclusive. If the supervised operator bridge is
-  enabled, Settings must identify Telegram as managed by Custom Settings Install, suppress its
-  browser-owned setup/pairing/test/disconnect controls, and reject those mutation endpoints even
-  when called directly. If an otherwise browser-owned Telegram connection reports another poller,
-  Settings must fail closed with a repair action. Viventium must never stop an unknown poller or
-  silently replace the owner's established bridge. Operator ownership alone does not prove delivery
-  health; health remains owned by Custom Settings Install status and diagnostics.
-- Core web chat remains healthy when Telegram is disconnected, misconfigured, degraded, or waiting
-  for user action.
+- Main streamed answers, scheduled/proactive messages, and background follow-ups share
+  `render_telegram_markdown(...)` and the same Markdown-to-Telegram-HTML renderer.
+- The renderer protects converted fragments with internal placeholders. A later block wrapper can
+  contain an earlier emphasis placeholder, so restoration must resolve later/outer placeholders
+  before earlier/inner placeholders.
+- Escaped failure chain: nested emphasis in a Markdown block quote -> emphasis became an internal
+  placeholder -> the quote became a later placeholder containing it -> forward-only restoration
+  expanded the quote after the emphasis pass had already run -> Telegram stripped the NUL
+  delimiters and displayed `PH<number>` as user text.
+- The formatter regression gate must exercise the pure renderer, the main streamed reply path, and
+  the proactive/follow-up path with synthetic nested formatting. Literal internal placeholder
+  leakage is forbidden even if Telegram accepts and displays the surrounding block quote.
 
 ## Telegram Voice and Call Behavior
 
@@ -397,6 +302,14 @@ versioned `{MSG_BREAK}` control.
   a pidfile-free live bot from the same checkout must be adopted back into the PID contract, and
   multiple same-checkout bot processes must be collapsed to one instead of starting an additional
   poller.
+- Telegram startup readiness is bot-issued, not inferred from a Python PID:
+  - the bot writes an atomic process-bound marker only after Telegram application initialization
+    reaches the point where polling can start
+  - the launcher and watchdog accept readiness only when the marker PID matches the live bot PID
+  - optional command/description metadata refresh runs in a guarded background task; its timeout
+    must not delay polling, suppress the marker, or kill an otherwise usable bridge
+  - when Telegram itself is unreachable before initialization, no marker is valid and the
+    watchdog must keep reporting/retrying the unavailable state without claiming success
 - The same-token lock must live in a durable Viventium runtime lock directory, not a temporary
   directory that the OS may clean while the process is still running.
 - The macOS status-bar helper must not report the stack as simply running when Telegram is enabled
@@ -405,6 +318,10 @@ versioned `{MSG_BREAK}` control.
 - Telegram command/message handling must tolerate transient Bot API `getMe` timeouts without
   crashing the user turn. Reply-context fallback is allowed only when the reply sender actually
   exists; a non-reply message should continue through the normal LibreChat bridge path.
+- Reply provenance must be a bounded typed capsule, separate from user-authored text and native
+  session identity. Under pressure, quoted attachment text is omitted first with explicit counts;
+  ownership IDs and the current quote outrank time, Active Work, and older ancestry. Session and
+  direct-fallback carriers must project the same admitted capsule and snapshot digest.
 - Telegram error logs must identify failures with non-secret structural metadata such as update ID
   and message ID. They must not log raw Telegram update objects because those can include private
   message text, chat IDs, usernames, or attachments.
@@ -454,13 +371,32 @@ versioned `{MSG_BREAK}` control.
   account needs reconnect, Telegram must preserve both facts and name the reconnect action instead
   of showing a stale rate-limit message or generic connection failure.
 - For a GlassHive-backed main Agent, a native lifecycle `queued`, `waiting`, `started`, or provider
-  `fallback` event is not visible assistant authorship and must not suppress recovery. A structured retryable quota/rate
-  admission failure before text, reasoning, plan, tool, or file activity uses the configured
+  `fallback` event is not visible assistant authorship and must not suppress recovery. A structured
+  retryable quota, rate-limit, or terminal provider-response failure before visible authorship or
+  an external effect uses the configured
   Agent Builder `fallback_llm_*` route exactly once. The Telegram stream and outer response stay the
   same, while GlassHive receives a distinct fallback-attempt idempotency key so it starts Claude
   instead of replaying the failed Codex request. After any authoring evidence, the provider must
   return the honest terminal blocker instead of starting a second author. Cancellation during lazy
   initialization or fallback execution must prevent or stop the fallback attempt.
+- Authoring evidence is decided by delta *content*, never by delta arrival. A message or reasoning
+  frame that carries no text is stream scaffolding, so it must not commit the authoring run. Both
+  channels apply the same content predicate: a role-only message delta and a contentless reasoning
+  frame each leave the configured fallback reachable, while the first delta carrying visible text or
+  real reasoning content locks it. Gating on the reasoning event alone makes the fallback
+  unreachable for every harness-routed turn, because the harness opens that channel before the
+  provider has produced anything.
+- Graph coordination is not an external effect. A server-owned Main-to-specialist handoff must carry
+  structural effect metadata from graph ownership, independent of its generated tool name. If that
+  specialist's model fails at the exact pre-authoring provider boundary without a usable status or
+  code, its configured participant fallback retries first inside the same graph and turn. An
+  explicitly server-declared read-only inspection is likewise replay-safe. An external mutation or
+  unmarked tool remains effecting and locks provider replay fail-closed; email, calendar, durable
+  work, and every other external action are never inferred safe from their names or arguments. The
+  classification must be server-owned structural metadata propagated by the actual tool callback,
+  never a model-supplied string, tool-name heuristic, or argument inspection. When fallback succeeds
+  after the primary failed for missing provider authentication, the final turn must contain exactly
+  one actionable reconnect notice and one recovered answer, with no duplicate error answer.
 - Telegram SSE resume must tolerate the normal race where generation completes while the first
   stream connection is interrupted. The configured stream services should retain completed
   successful jobs for the store's short completion TTL and replay the cached final event to late
@@ -473,6 +409,16 @@ versioned `{MSG_BREAK}` control.
 - A timeout, network interruption, or SSE reconnect must reuse the same stream/idempotency key. It
   may reattach to the active native request, but it must never launch a second authoring run or send
   a late duplicate Telegram reply.
+- Native conversation continuity must survive terse follow-ups such as an approval, correction, or
+  pronoun that depends on the immediately preceding assistant turn. Turn-varying facts such as the
+  current timestamp belong in the per-turn context delivery channel; they must not be inserted into
+  durable developer/tool authority where they change the native-session snapshot and force a new
+  worker on every turn. Likewise, a conversation-session provider's aggregate input usage describes
+  its wider native prompt/session, not one LibreChat message. Visible-message pruning must therefore
+  use locally counted message content for providers that structurally declare both
+  `workspace_binding` and `conversation_session`, including when a generic adapter provider names the
+  native provider through `endpoint`. Existing malformed counts must be recomputed before pruning so
+  a tiny user message cannot evict the assistant question that gives it meaning.
 - Transport-level bridge fallbacks must remain text-mode diagnostics, not synthetic voice replies.
   When Telegram always-voice output is enabled, the bot may voice assistant answers, but it must not
   synthesize local transport/plumbing failures such as an exhausted expired-stream retry.
@@ -482,48 +428,12 @@ versioned `{MSG_BREAK}` control.
 - Telegram GlassHive delivery dispatcher tuning is operational only:
   - `VIVENTIUM_TELEGRAM_GLASSHIVE_DELIVERY_POLL_S` controls the background delivery poll interval
     and defaults to 5 seconds.
-  - Dependency failures use capped exponential backoff rather than retrying and logging every five
-    seconds. `VIVENTIUM_TELEGRAM_GLASSHIVE_DELIVERY_MAX_BACKOFF_S` defaults to 60 seconds. The
-    first failure and the eventual recovery are logged once; healthy empty-ledger polling returns
-    immediately to the normal five-second interval so late-reply correctness does not regress.
   - `VIVENTIUM_TELEGRAM_GLASSHIVE_DELIVERY_BATCH_SIZE` controls each claim batch and is capped at
     25.
   - `VIVENTIUM_TELEGRAM_GLASSHIVE_DELIVERY_LEASE_MS` controls the claim lease and defaults to 10
     minutes, capped at 10 minutes. A lost claim must be returned as a conflict and logged as
     observability, not silently treated as a successful status update.
   - These knobs must not replace the durable delivery ledger or become correctness requirements.
-
-## Poller Ownership Across Upgrades
-
-The same-token lock remains the final BotFather `getUpdates` exclusion boundary, but a bare PID is
-not sufficient runtime ownership evidence. Local runtime startup also maintains an owner-only,
-stable-state poller receipt containing only the token SHA-256 hash, PID, process-start identity,
-checkout root, working directory, launch descriptor path, readiness state, and a typed readiness
-proof. The token itself is never persisted in a receipt or transaction.
-
-Before an upgrade signals a predecessor, current process identity must agree with the receipt:
-owner uid, PID, process start identity, recognized `TelegramVivBot/bot.py` command, working
-directory, and checkout scope. A mismatch is treated as PID reuse or unknown ownership and must not
-be signalled. Pattern-based `bot.py` kills are not an allowed fallback.
-
-Restart handoff is transactional:
-
-1. Prove the predecessor and its owner-only rollback launch descriptor.
-2. Save a token-hash-only handoff transaction in stable runtime state.
-3. Stop only the revalidated predecessor with a graceful signal.
-4. Start the selected checkout and attach its revalidated process identity.
-5. `post_init` may schedule readiness observation but cannot publish it. Commit only after pinned
-   PTB reports both its Updater receive loop and Application update processor running, and the
-   receipt carries `polling_started` or `webhook_started`. A pre-poll `ready=true`, missing/unknown
-   proof, or failure between `post_init` and updater/application start keeps the transaction
-   rollback-capable.
-6. If startup fails or the launcher is interrupted, a detached guard restores the prior recognized
-   launch descriptor when it remains safe to do so.
-
-Older supported launchers that predate owner receipts may be migrated only from a current
-owner-controlled pid file whose live process is independently recognized by uid, command, and
-Telegram working directory. Their stable, owner-controlled launch descriptor must already exist
-before takeover; otherwise the predecessor remains untouched.
 
 ## Telegram Attachments
 
@@ -545,6 +455,14 @@ same attachment contract before the LibreChat turn starts. Voice notes and video
 inputs; regular audio/video files are attachments unless the user explicitly sends them through the
 voice-note affordance.
 
+Trusted bridge images are already visual inputs. JPEG, PNG, and other supported image uploads must
+not be rejected because a text document parser cannot extract text from them. The upload service
+must persist the exact owner-scoped bytes and project them through the active provider or GlassHive
+conversation bundle. A worker run receives real materialized files, not attachment placeholders.
+When Telegram assigns the same filename to several album photos, durable file ID owns resolution;
+filename fallback is allowed only when no durable file ID exists. Cross-owner and ambiguous matches
+fail closed.
+
 Telegram media groups/albums are one user turn. The bridge must coalesce updates with the same
 `media_group_id` for the same chat/thread/user, preserve the Telegram order, choose the
 caption-bearing item as the primary message when present, and forward all captured files in a single
@@ -552,20 +470,17 @@ LibreChat call. It must not dedupe files by content hash or filename, because re
 can be intentional user context. Authorization and API-key decorators must use lightweight identity
 extraction only; they must not download, transcribe, or parse attachments before the real handler.
 
+One logical attachment turn has one user-visible result. Main owns the normal answer. If a later
+background-cortex result is only a Unicode/punctuation/whitespace reformating of the already visible
+Main answer, it must be suppressed before Mongo persistence and Telegram delivery. This comparison
+must not suppress genuinely additive content and must not be implemented as a Telegram-only filter.
+
 Attachment capture and downstream processing failures must be visible. Telegram Bot API download
 failures, size-limit failures, unsupported binaries, and document-parser/provider upload failures
 must send one clear Telegram error and stop the turn before caption-only submission. The LibreChat
 Telegram route returns a typed attachment-processing failure (`422` with
 `attachmentProcessingError`) so the Python bridge can show the actual reason instead of a generic
 server error.
-
-A new Telegram conversation starts with provisional gateway identity, but any connected-tool or
-conversation-provider grant is signed only after LibreChat creates the durable conversation and
-response message ids. Provider refresh receives that finalized run body. A provisional `new`
-conversation or missing message id must never reach the capability broker as a valid turn scope.
-A broker-scope failure is a connected-tool authorization blocker, not evidence that the upstream
-provider rejected the owner. The visible answer must not blame WHOOP, another provider, or a web
-challenge unless an actual provider call produced that evidence.
 
 `.pptx` uploads are handled by the shared built-in `document_parser`, which extracts slide text and
 speaker notes into message context for the active agent. The same parser also extracts embedded PPTX
@@ -586,6 +501,8 @@ processing error; the caption must not continue alone.
   - examples: `.txt`, `.md`, `.json`, `.csv`, `.xml`, `.yaml`, code/config text
 - Provider-native raw attachments must stay raw when the current runtime can truly serialize them:
   - examples: images, PDFs, Google/OpenRouter audio/video, Bedrock document types
+- Trusted bridge images must preserve exact bytes and owner/file-ID identity when projected into a
+  provider or GlassHive worker workspace; they do not require text extraction.
 - Office/OpenDocument binaries that require OCR or a document parser must either:
   - use the configured OCR/document-parser path, or
   - fail honestly with a clear message when that extraction path is unavailable
@@ -602,9 +519,12 @@ processing error; the caption must not continue alone.
 - send non-image files as documents
 - preserve provider-native message attachments and only auto-promote the non-provider-native
   parseable remainder into context extraction before the agent run
+- materialize exact ordered image bytes into GlassHive conversation workspaces by owner-scoped file
+  ID; never resolve a same-name album by newest filename
 - preserve extracted document images as image message parts when the ingress surface supports the
   same vision contract as ordinary image uploads
 - reject files that are neither provider-native nor readable through context extraction
+- suppress a canonical duplicate cortex follow-up before persistence and delivery
 
 ## Evidence to Capture
 
@@ -613,7 +533,7 @@ processing error; the caption must not continue alone.
 - Mongo proof of the exact user and assistant turns
 - attachment delivery proof when files are involved
 
-## Logical-Turn Supersession
+## Logical-Turn Response Supersession
 
 [`09_Agent_Streaming_Usage.md`](09_Agent_Streaming_Usage.md) owns the cross-surface logical-turn,
 revision, adapter-capability, and delivery-acknowledgement contract. Telegram implements that shared
@@ -629,16 +549,32 @@ contract; it does not own a Telegram-only coordinator.
 
 - `LONG_TEXT` remains only a bounded pre-dispatch latency optimization. Rapid source messages stay
   distinct, ordered user segments after dispatch.
-- Telegram text, finalized voice-note transcripts, and file/clarification segments are stable on
-  receipt and may supersede unfinished assistant response/authoring for the same canonical
-  conversation.
-- Only the stale assistant preview is deleted. A user transcript or file source segment is never
-  deleted as though it were assistant output.
+- Telegram uses `response_only` supersession. Telegram text, finalized voice-note transcripts, and
+  file/clarification segments are stable on receipt. A newer source may revise only the unfinished
+  assistant response/authoring for the same canonical conversation.
+- Only stale assistant prose or previews are removed. Supersession never removes a user transcript,
+  file source segment, accepted external effect, or accepted durable work item.
 - Preview deletion failure records degraded delivery and prevents subsequent stale edits; it does
   not produce a false `Connection error. Please retry.` when the current revision succeeds.
 - Pending voice transcription preserves receipt order through the existing bounded wait. Failure
   produces a truthful unavailable-transcription result while later text may continue.
-- Committed external effects and durable GlassHive/background work survive presentation
-  supersession. Late results are re-attributed to the current logical turn or sent as truthful
-  completion follow-ups rather than silently dropped or delivered as stale prose.
+- Accepted external effects and durable GlassHive/background work keep their original identity and
+  continue once. A revised response may attach to or reference that accepted work, but must never
+  dispatch a duplicate. Its result is delivered exactly once as current-turn context or a truthful
+  completion follow-up, never as stale prose.
 - The successful final send/edit is Telegram's presentation commit. Streaming previews are not.
+
+## Parallel Work control surface
+
+[`55_Parallel_Work_Orchestration.md`](55_Parallel_Work_Orchestration.md) owns the account-wide
+Parallel Work contract. Telegram is a fast control surface, not a Telegram-only scheduler:
+
+- the toggle updates the linked LibreChat account without a model call;
+- Active Work consumes only opaque references and the server-returned action mask;
+- Message, Steer, and Queue use short-lived user/chat-scoped prompt capabilities; Stop requires a
+  confirmation; callback data never contains a raw work reference;
+- every command, setting, Active Work callback, ordinary message, captioned attachment, and
+  uncaptioned attachment handler uses nonblocking handoff;
+- disabling new Parallel Work launches never hides or cancels work already in flight;
+- provisional recoverable errors are held through the durable follow-up window and replaced by the
+  recovered revision instead of committing a stale generic connection error.

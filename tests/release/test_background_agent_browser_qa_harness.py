@@ -80,6 +80,8 @@ def test_interruption_restart_harness_classifies_active_and_recovered_cortex_sta
 
     assert "VIVENTIUM_QA_ALLOW_RUNTIME_RESTART" in source
     assert "VIVENTIUM_QA_ALLOW_LOCAL_JWT" in source
+    assert "VIVENTIUM_QA_MAIN_AGENT_ID" in source
+    assert "agent_id=${encodeURIComponent(args.mainAgentId)}" in source
     assert "waitForPersistedActiveCortex" in source
     assert "waitForRecoveredTerminalCortex" in source
     assert "recovery_reason" in source

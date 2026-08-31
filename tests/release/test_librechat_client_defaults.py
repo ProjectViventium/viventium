@@ -8,6 +8,7 @@ APP_PATH = ROOT / "viventium_v0_4" / "LibreChat" / "client" / "src" / "App.jsx"
 RECONCILE_SCRIPT_PATH = (
     ROOT / "viventium_v0_4" / "LibreChat" / "scripts" / "viventium-reconcile-user-defaults.js"
 )
+VITE_CONFIG_PATH = ROOT / "viventium_v0_4" / "LibreChat" / "client" / "vite.config.ts"
 SETTINGS_PATH = (
     ROOT / "viventium_v0_4" / "LibreChat" / "client" / "src" / "components" / "Nav" / "Settings.tsx"
 )
@@ -58,6 +59,13 @@ def test_viventium_user_defaults_reconcile_script_is_shipped() -> None:
 
     assert "buildMissingConversationRecallUpdate" in source
     assert "personalization.conversation_recall" in source
+
+
+def test_pwa_does_not_route_navigation_to_an_excluded_precache_entry() -> None:
+    source = VITE_CONFIG_PATH.read_text(encoding="utf-8")
+
+    assert "globIgnores: ['images/**/*', '**/*.map', 'index.html']" in source
+    assert "navigateFallback: null" in source
 
 
 def test_connected_channels_have_a_direct_settings_destination() -> None:

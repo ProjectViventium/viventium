@@ -7,9 +7,12 @@ import subprocess
 import sys
 import importlib.util
 import logging
+import threading
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 import yaml
@@ -21,11 +24,10 @@ WORKBENCH_BACKEND = REPO_ROOT / "viventium_v0_4" / "prompt-workbench" / "backend
 if str(WORKBENCH_BACKEND) not in sys.path:
     sys.path.insert(0, str(WORKBENCH_BACKEND))
 
-from prompt_workbench import drafts, import_mapper, periphery_snapshots, prompt_service, promptfoo_adapter, scheduled_prompts, sync_engine  # noqa: E402
+from prompt_workbench import cognitive_integrity, drafts, import_mapper, periphery_snapshots, prompt_service, promptfoo_adapter, scheduled_prompts, sync_engine  # noqa: E402
 from prompt_workbench import evals  # noqa: E402
 from prompt_workbench.paths import resolve_repo_path  # noqa: E402
 from prompt_workbench.runtime_env import load_viventium_runtime_env  # noqa: E402
-from prompt_workbench import cognitive_integrity, drafts, import_mapper, periphery_snapshots, prompt_service, promptfoo_adapter, scheduled_prompts, sync_engine  # noqa: E402
 
 
 PROMPT_ROOT = (
@@ -88,6 +90,626 @@ def test_workbench_render_matches_existing_prompt_registry() -> None:
 
     assert actual == expected
     assert "# Identity" in actual
+
+
+def test_cognitive_integrity_contract_distinguishes_worker_and_host_tools() -> None:
+    payload = {
+        "endpoints": {
+            "agents": {
+                "providerCapabilities": {
+                    "glasshive-harness": {
+                        "worker_native_tools": True,
+                        "host_tools_transport": "broker_mcp",
+                        "host_tools": ["file_search"],
+                    }
+                }
+            }
+        },
+        "memory": {
+            "tokenLimit": 8000,
+            "keyLimits": {"world": 1200, "preferences": 600},
+            "readProfile": {
+                "tokenLimit": 8000,
+                "keyLimits": {"world": 1200, "preferences": 600},
+            },
+        },
+    }
+
+    contract = cognitive_integrity._provider_and_memory_contract(payload)
+
+    assert contract["providerCapabilityTransport"]["status"] == "ok"
+    assert contract["memoryExposure"]["status"] == "ok"
+
+
+def test_cognitive_integrity_imports_from_workbench_launch_path(tmp_path: Path) -> None:
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(WORKBENCH_BACKEND)
+
+    completed = subprocess.run(
+        [sys.executable, "-c", "import prompt_workbench.cognitive_integrity"],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+
+
+def test_cognitive_integrity_contract_blocks_ambiguous_tools_and_hidden_memory() -> None:
+    payload = {
+        "endpoints": {
+            "agents": {
+                "providerCapabilities": {
+                    "glasshive-harness": {"native_tools": True}
+                }
+            }
+        },
+        "memory": {
+            "tokenLimit": 8000,
+            "keyLimits": {"world": 1200},
+            "readProfile": {"tokenLimit": 2200, "keyLimits": {"world": 320}},
+        },
+    }
+
+    contract = cognitive_integrity._provider_and_memory_contract(payload)
+
+    assert contract["providerCapabilityTransport"]["status"] == "blocked"
+    assert "ambiguous_native_tools_field_present" in contract["providerCapabilityTransport"]["reasons"]
+    assert contract["memoryExposure"]["status"] == "blocked"
+    assert "read_total_below_storage_total" in contract["memoryExposure"]["reasons"]
+
+
+def test_cognitive_integrity_contract_blocks_absent_memory_configuration() -> None:
+    contract = cognitive_integrity._provider_and_memory_contract(
+        {
+            "endpoints": {
+                "agents": {
+                    "providerCapabilities": {
+                        "glasshive-harness": {
+                            "worker_native_tools": True,
+                            "host_tools_transport": "broker_mcp",
+                            "host_tools": ["file_search"],
+                        }
+                    }
+                }
+            }
+        }
+    )
+
+    assert contract["memoryExposure"]["status"] == "blocked"
+    assert "memory_config_missing" in contract["memoryExposure"]["reasons"]
+
+
+def test_cognitive_integrity_blocks_failed_nightly_even_when_definition_is_active(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def list_scheduled_prompts(**kwargs: object) -> dict[str, object]:
+        captured.update(kwargs)
+        return {
+            "scheduledPrompts": [
+                {
+                    "templateId": scheduled_prompts.NIGHTLY_TEMPLATE_ID,
+                    "active": True,
+                    "lastStatus": "error",
+                    "executor": "glasshive_host",
+                    "executionProfile": "codex-cli",
+                    "latestScheduledRun": {
+                        "status": "failed",
+                        "triggerKind": "scheduled",
+                        "triggerSource": "scheduler_loop",
+                        "startedAt": "2026-08-08T07:00:17Z",
+                        "errorClass": "glasshive_evidence_check_failed",
+                    },
+                    "recentRuns": [
+                        {"status": "failed", "errorClass": "glasshive_evidence_check_failed"}
+                    ],
+                }
+            ]
+        }
+
+    monkeypatch.setattr(
+        cognitive_integrity.scheduled_prompts,
+        "list_scheduled_prompts",
+        list_scheduled_prompts,
+    )
+
+    result = cognitive_integrity._nightly_status("synthetic-user")
+
+    assert result["status"] == "blocked"
+    assert result["latestRunFailure"] is True
+    assert result["lastErrorClass"] == "glasshive_evidence_check_failed"
+    assert captured["read_only"] is True
+
+
+def test_cognitive_integrity_does_not_let_manual_recovery_mask_failed_scheduled_nightly(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def list_scheduled_prompts(**_: object) -> dict[str, object]:
+        return {
+            "scheduledPrompts": [
+                {
+                    "templateId": scheduled_prompts.NIGHTLY_TEMPLATE_ID,
+                    "active": True,
+                    "lastStatus": "completed",
+                    "executor": "glasshive_host",
+                    "executionProfile": "codex-cli",
+                    "latestScheduledRun": {
+                        "status": "failed",
+                        "triggerKind": "scheduled",
+                        "triggerSource": "scheduler_loop",
+                        "startedAt": "2026-08-08T07:00:17Z",
+                        "errorClass": "glasshive_evidence_check_failed",
+                    },
+                    "latestManualRun": {
+                        "status": "completed",
+                        "triggerKind": "manual",
+                        "triggerSource": "workbench_manual",
+                        "startedAt": "2026-08-08T15:46:44Z",
+                    },
+                    "recentRuns": [
+                        {
+                            "status": "completed",
+                            "triggerKind": "manual",
+                            "startedAt": "2026-08-08T15:46:44Z",
+                        },
+                        {
+                            "status": "failed",
+                            "triggerKind": "scheduled",
+                            "startedAt": "2026-08-08T07:00:17Z",
+                            "errorClass": "glasshive_evidence_check_failed",
+                        },
+                    ],
+                }
+            ]
+        }
+
+    monkeypatch.setattr(
+        cognitive_integrity.scheduled_prompts,
+        "list_scheduled_prompts",
+        list_scheduled_prompts,
+    )
+
+    result = cognitive_integrity._nightly_status("synthetic-user")
+
+    assert result["status"] == "blocked"
+    assert result["latestScheduledStatus"] == "failed"
+    assert result["latestManualStatus"] == "completed"
+    assert result["manualRecoveryAfterScheduledFailure"] is True
+    assert result["lastErrorClass"] == "glasshive_evidence_check_failed"
+
+
+def test_cognitive_integrity_blocks_when_manual_runs_evict_scheduled_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def list_scheduled_prompts(**_: object) -> dict[str, object]:
+        return {
+            "scheduledPrompts": [
+                {
+                    "templateId": scheduled_prompts.NIGHTLY_TEMPLATE_ID,
+                    "active": True,
+                    "lastStatus": "completed",
+                    "recentRuns": [
+                        {
+                            "status": "completed",
+                            "triggerKind": "manual",
+                            "startedAt": f"2026-08-08T1{minute}:00:00Z",
+                        }
+                        for minute in range(5)
+                    ],
+                }
+            ]
+        }
+
+    monkeypatch.setattr(
+        cognitive_integrity.scheduled_prompts,
+        "list_scheduled_prompts",
+        list_scheduled_prompts,
+    )
+
+    result = cognitive_integrity._nightly_status(
+        "synthetic-user",
+        now=datetime(2026, 8, 8, 16, 0, tzinfo=timezone.utc),
+    )
+
+    assert result["status"] == "blocked"
+    assert result["latestScheduledStatus"] is None
+    assert "scheduled_run_not_observed" in result["reasons"]
+
+
+def test_cognitive_integrity_blocks_stale_scheduled_nightly(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def list_scheduled_prompts(**_: object) -> dict[str, object]:
+        return {
+            "scheduledPrompts": [
+                {
+                    "templateId": scheduled_prompts.NIGHTLY_TEMPLATE_ID,
+                    "active": True,
+                    "lastStatus": "completed",
+                    "latestScheduledRun": {
+                        "status": "completed",
+                        "triggerKind": "scheduled",
+                        "startedAt": "2026-08-05T07:00:00Z",
+                    },
+                    "recentRuns": [],
+                }
+            ]
+        }
+
+    monkeypatch.setattr(
+        cognitive_integrity.scheduled_prompts,
+        "list_scheduled_prompts",
+        list_scheduled_prompts,
+    )
+
+    result = cognitive_integrity._nightly_status(
+        "synthetic-user",
+        now=datetime(2026, 8, 8, 16, 0, tzinfo=timezone.utc),
+    )
+
+    assert result["status"] == "blocked"
+    assert "scheduled_run_stale" in result["reasons"]
+    assert result["latestScheduledAt"] == "2026-08-05T07:00:00Z"
+
+
+def test_cognitive_integrity_rejects_a_projected_nightly_without_scheduler_provenance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        cognitive_integrity.scheduled_prompts,
+        "list_scheduled_prompts",
+        lambda **_: {
+            "scheduledPrompts": [
+                {
+                    "templateId": scheduled_prompts.NIGHTLY_TEMPLATE_ID,
+                    "active": True,
+                    "latestScheduledRun": {
+                        "status": "completed",
+                        "triggerKind": "unknown",
+                        "triggerSource": "scheduler_loop",
+                        "startedAt": "2026-08-08T07:00:00Z",
+                    },
+                    "recentRuns": [],
+                }
+            ]
+        },
+    )
+
+    result = cognitive_integrity._nightly_status(
+        "synthetic-user",
+        now=datetime(2026, 8, 8, 8, 0, tzinfo=timezone.utc),
+    )
+
+    assert result["status"] == "blocked"
+    assert "scheduled_run_provenance_invalid" in result["reasons"]
+
+
+def test_scheduling_db_path_honors_selected_app_support_root(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.delenv("SCHEDULING_DB_PATH", raising=False)
+    monkeypatch.setenv("VIVENTIUM_APP_SUPPORT_DIR", str(tmp_path))
+
+    assert scheduled_prompts._scheduling_db_path() == str(
+        tmp_path / "state" / "runtime" / "isolated" / "scheduling" / "schedules.db"
+    )
+
+
+def test_scheduling_db_path_honors_runtime_state_root(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.delenv("SCHEDULING_DB_PATH", raising=False)
+    monkeypatch.setenv("VIVENTIUM_STATE_ROOT", str(tmp_path))
+    monkeypatch.setenv("VIVENTIUM_APP_SUPPORT_DIR", str(tmp_path / "ignored"))
+
+    assert scheduled_prompts._scheduling_db_path() == str(
+        tmp_path / "scheduling" / "schedules.db"
+    )
+
+
+def test_cognitive_integrity_blocks_codex_symlink_that_hides_enabled_companion(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app_support = tmp_path / "app-support"
+    runtime_dir = app_support / "runtime"
+    runtime_dir.mkdir(parents=True)
+    bundle_cli = tmp_path / "bundle" / "codex"
+    bundle_cli.parent.mkdir()
+    bundle_cli.write_text("#!/bin/sh\necho 'code_mode_host stable true'\n", encoding="utf-8")
+    bundle_cli.chmod(0o755)
+    companion = bundle_cli.parent / "codex-code-mode-host"
+    companion.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    companion.chmod(0o755)
+    invocation = tmp_path / "bin" / "codex"
+    invocation.parent.mkdir()
+    invocation.symlink_to(bundle_cli)
+    (runtime_dir / "runtime.env").write_text(f"WPR_CODEX_BIN={invocation}\n", encoding="utf-8")
+    monkeypatch.setattr(cognitive_integrity, "APP_SUPPORT_VIVENTIUM_DIR", app_support)
+
+    result = cognitive_integrity._runtime_codex_worker_status()
+
+    assert result["status"] == "blocked"
+    assert result["binaryInvocation"] == "symlink"
+    assert result["companionReady"] is False
+    assert result["reasons"] == ["enabled_code_mode_host_companion_missing_at_invocation_path"]
+
+    (runtime_dir / "runtime.env").write_text(f"WPR_CODEX_BIN={bundle_cli}\n", encoding="utf-8")
+    assert cognitive_integrity._runtime_codex_worker_status()["status"] == "ok"
+
+
+def test_cognitive_integrity_rejects_successful_but_unparseable_codex_feature_probe(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app_support = tmp_path / "app-support"
+    runtime_dir = app_support / "runtime"
+    runtime_dir.mkdir(parents=True)
+    binary = tmp_path / "codex"
+    binary.write_text("#!/bin/sh\necho 'not structured feature output'\n", encoding="utf-8")
+    binary.chmod(0o755)
+    (runtime_dir / "runtime.env").write_text(f"WPR_CODEX_BIN={binary}\n", encoding="utf-8")
+    monkeypatch.setattr(cognitive_integrity, "APP_SUPPORT_VIVENTIUM_DIR", app_support)
+
+    result = cognitive_integrity._runtime_codex_worker_status()
+
+    assert result == {"status": "blocked", "reasons": ["codex_feature_probe_unparseable"]}
+
+
+def test_cognitive_integrity_requires_configured_non_admin_qa_account(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app_support = tmp_path / "app-support"
+    runtime_dir = app_support / "runtime"
+    runtime_dir.mkdir(parents=True)
+    monkeypatch.setattr(cognitive_integrity, "APP_SUPPORT_VIVENTIUM_DIR", app_support)
+
+    assert cognitive_integrity._qa_test_account_status()["reasons"] == [
+        "qa_test_account_not_configured"
+    ]
+
+    (runtime_dir / "runtime.env").write_text(
+        "VIVENTIUM_QA_EMAIL=qa-person@example.com\n"
+        "VIVENTIUM_LOCAL_MONGO_PORT=27117\n"
+        "VIVENTIUM_LOCAL_MONGO_DB=LibreChatViventium\n",
+        encoding="utf-8",
+    )
+    captured: dict[str, object] = {}
+
+    def fake_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        captured["command"] = command
+        captured["input"] = kwargs.get("input")
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout='{"count":1,"role":"USER","userId":"synthetic-user-id"}\n',
+            stderr="",
+        )
+
+    monkeypatch.setattr(cognitive_integrity.subprocess, "run", fake_run)
+
+    result = cognitive_integrity._qa_test_account_status()
+
+    assert result["status"] == "ok"
+    assert result["accountCount"] == 1
+    assert "qa-person@example.com" not in " ".join(captured["command"])
+    assert "qa-person@example.com" in str(captured["input"])
+
+
+def test_cognitive_integrity_blocks_a_degraded_per_turn_memory_writer(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import hashlib
+    import json
+
+    app_support = tmp_path / "app-support"
+    health_dir = app_support / "state" / "memory-continuity-health"
+    health_dir.mkdir(parents=True)
+    user_hash = hashlib.sha256(b"synthetic-user-id").hexdigest()[:24]
+    (health_dir / f"{user_hash}.read.json").write_text(
+        json.dumps({"status": "ok", "path": "read", "updatedAt": "2026-08-08T10:00:00Z"}),
+        encoding="utf-8",
+    )
+    (health_dir / f"{user_hash}.writer.json").write_text(
+        json.dumps(
+            {
+                "status": "degraded",
+                "path": "writer",
+                "reason": "provider_auth",
+                "updatedAt": "2026-08-08T10:01:00Z",
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(cognitive_integrity, "APP_SUPPORT_VIVENTIUM_DIR", app_support)
+
+    result = cognitive_integrity._memory_continuity_runtime_status(
+        user_hash,
+        now=datetime.fromisoformat("2026-08-08T10:02:00+00:00"),
+    )
+
+    assert result["savedMemoryRead"]["status"] == "ok"
+    assert result["savedMemoryRead"]["scope"] == "configured_qa_test_account"
+    assert result["immediateMemoryWriter"]["status"] == "blocked"
+    assert result["immediateMemoryWriter"]["reason"] == "provider_auth"
+    assert result["immediateMemoryWriter"]["scope"] == "configured_qa_test_account"
+
+
+def test_cognitive_integrity_blocks_missing_and_stale_memory_receipts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app_support = tmp_path / "app-support"
+    health_dir = app_support / "state" / "memory-continuity-health"
+    health_dir.mkdir(parents=True)
+    user_hash = "synthetic-user-hash"
+    monkeypatch.setattr(cognitive_integrity, "APP_SUPPORT_VIVENTIUM_DIR", app_support)
+
+    missing = cognitive_integrity._memory_continuity_runtime_status(
+        user_hash,
+        now=datetime(2026, 8, 8, 16, 0, tzinfo=timezone.utc),
+    )
+    assert missing["savedMemoryRead"]["status"] == "blocked"
+    assert missing["savedMemoryRead"]["reason"] == "no_runtime_receipt"
+    assert missing["immediateMemoryWriter"]["status"] == "blocked"
+
+    stale_payload = {
+        "status": "ok",
+        "updatedAt": "2026-08-06T10:00:00Z",
+        "provider": "openai",
+        "model": "synthetic-model",
+        "effort": "medium",
+    }
+    for path_key in ("read", "writer"):
+        (health_dir / f"{user_hash}.{path_key}.json").write_text(
+            json.dumps({**stale_payload, "path": path_key}),
+            encoding="utf-8",
+        )
+
+    stale = cognitive_integrity._memory_continuity_runtime_status(
+        user_hash,
+        now=datetime(2026, 8, 8, 16, 0, tzinfo=timezone.utc),
+    )
+    assert stale["savedMemoryRead"]["status"] == "blocked"
+    assert stale["savedMemoryRead"]["reason"] == "runtime_receipt_stale"
+    assert stale["immediateMemoryWriter"]["status"] == "blocked"
+    assert stale["immediateMemoryWriter"]["effort"] == "medium"
+
+
+def test_cognitive_integrity_blocks_unobserved_memory_paths_in_joined_report(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(cognitive_integrity, "_safe_runtime_drift", lambda _path: {"status": "ok"})
+    monkeypatch.setattr(cognitive_integrity, "_safe_prompt_drift", lambda: {"status": "ok"})
+    monkeypatch.setattr(
+        cognitive_integrity,
+        "load_source_of_truth_librechat_yaml",
+        lambda: {
+            "endpoints": {
+                "agents": {
+                    "providerCapabilities": {
+                        "glasshive-harness": {
+                            "worker_native_tools": True,
+                            "host_tools_transport": "broker_mcp",
+                            "host_tools": ["file_search"],
+                        }
+                    }
+                }
+            },
+            "memory": {
+                "tokenLimit": 1,
+                "keyLimits": {"core": 1},
+                "readProfile": {"tokenLimit": 1, "keyLimits": {"core": 1}},
+            },
+        },
+    )
+    monkeypatch.setattr(cognitive_integrity, "_live_contract", cognitive_integrity.load_source_of_truth_librechat_yaml)
+    monkeypatch.setattr(cognitive_integrity, "_runtime_codex_worker_status", lambda: {"status": "ok"})
+    monkeypatch.setattr(cognitive_integrity, "_nightly_status", lambda _user: {"status": "ok"})
+    monkeypatch.setattr(cognitive_integrity, "_health_context_status", lambda _user: {"status": "ok"})
+    monkeypatch.setattr(
+        cognitive_integrity,
+        "_consciousness_continuity_status",
+        lambda _user: {"status": "ok"},
+    )
+    monkeypatch.setattr(
+        cognitive_integrity,
+        "_qa_test_account_status",
+        lambda: {"status": "ok", "accountHash": "synthetic-hash"},
+    )
+    monkeypatch.setattr(
+        cognitive_integrity,
+        "_memory_continuity_runtime_status",
+        lambda _hash: {
+            "savedMemoryRead": {"status": "not_observed"},
+            "immediateMemoryWriter": {"status": "not_observed"},
+        },
+    )
+    monkeypatch.setattr(cognitive_integrity, "_memory_hardening_status", lambda: {"status": "ok"})
+    monkeypatch.setattr(cognitive_integrity, "_conversation_recall_runtime_status", lambda: {"status": "ok"})
+
+    result = cognitive_integrity.cognitive_integrity_report(user_id="synthetic-user")
+
+    assert result["status"] == "blocked"
+    assert "qaAccountSavedMemoryReadRuntime" in result["blockingChecks"]
+    assert "qaAccountImmediateMemoryWriterRuntime" in result["blockingChecks"]
+
+
+def test_cognitive_integrity_recall_health_requires_a_structured_up_response(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app_support = tmp_path / "app-support"
+    runtime_dir = app_support / "runtime"
+    runtime_dir.mkdir(parents=True)
+    (runtime_dir / "runtime.env").write_text(
+        "RAG_API_URL=http://127.0.0.1:9999\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(cognitive_integrity, "APP_SUPPORT_VIVENTIUM_DIR", app_support)
+
+    class FakeResponse:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return b"[]"
+
+    monkeypatch.setattr(cognitive_integrity.urllib.request, "urlopen", lambda *_args, **_kwargs: FakeResponse())
+
+    result = cognitive_integrity._conversation_recall_runtime_status()
+
+    assert result == {
+        "status": "blocked",
+        "reason": "recall_health_invalid_payload",
+        "httpStatus": 200,
+    }
+
+
+def test_cognitive_integrity_recall_health_accepts_only_explicit_up(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app_support = tmp_path / "app-support"
+    runtime_dir = app_support / "runtime"
+    runtime_dir.mkdir(parents=True)
+    (runtime_dir / "runtime.env").write_text(
+        "RAG_API_URL=http://127.0.0.1:9999\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(cognitive_integrity, "APP_SUPPORT_VIVENTIUM_DIR", app_support)
+
+    class FakeResponse:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return b'{"status":"UP"}'
+
+    monkeypatch.setattr(cognitive_integrity.urllib.request, "urlopen", lambda *_args, **_kwargs: FakeResponse())
+
+    result = cognitive_integrity._conversation_recall_runtime_status()
+
+    assert result["status"] == "ok"
+    assert result["declaredStatus"] == "UP"
 
 
 def test_sync_status_lists_each_canonical_background_agent_prompt_unit() -> None:
@@ -259,6 +881,186 @@ def test_workbench_rejects_non_loopback_host_header() -> None:
     assert client.get("/api/health", headers={"host": "evil.example"}).status_code == 400
 
 
+@pytest.mark.parametrize(
+    "headers",
+    [
+        {"x-viventium-workbench-token": "synthetic-current-launch-token"},
+        {"x-viventium-workbench-token": "synthetic-rotated-launch-token"},
+        {"authorization": "Bearer synthetic-current-launch-token"},
+        {"authorization": "Bearer synthetic-rotated-launch-token"},
+    ],
+)
+def test_workbench_rejects_current_and_rotated_legacy_bearers_without_loopback_fallback(
+    headers: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pytest.importorskip("httpx")
+    pytest.importorskip("fastapi.testclient")
+    monkeypatch.delenv("VIVENTIUM_PROMPT_WORKBENCH_AUTH_DISABLED", raising=False)
+    monkeypatch.setenv(
+        "VIVENTIUM_PROMPT_WORKBENCH_LAUNCH_TOKEN", "synthetic-current-launch-token"
+    )
+    monkeypatch.setenv("VIVENTIUM_PROMPT_WORKBENCH_ADMIN_USER_ID", "synthetic-admin")
+    from fastapi.testclient import TestClient
+    from prompt_workbench import auth
+    from prompt_workbench.app import app
+
+    monkeypatch.setattr(auth, "_is_loopback_request", lambda _request: True)
+    monkeypatch.setattr(auth, "_librechat_admin_auth", lambda _request: None)
+    client = TestClient(app)
+
+    assert client.get("/api/auth/status").json()["method"] == "local_loopback_admin"
+    assert client.get("/api/variables", headers=headers).status_code == 401
+    assert client.get("/api/auth/status", headers=headers).json()["authenticated"] is False
+
+
+@pytest.mark.parametrize(
+    "path",
+    (
+        "/api/prompts",
+        "/api/prompts/synthetic-prompt",
+        "/api/prompts/synthetic-prompt/workbench-context",
+        "/api/prompts/synthetic-prompt/revisions/synthetic-revision",
+        "/api/sync/status",
+        "/api/drafts",
+        "/api/drafts/synthetic-draft",
+        "/api/evals",
+        "/api/evals/runs",
+        "/api/evals/runs/synthetic-run",
+        "/api/evals/promptfoo/synthetic-prompt",
+        "/api/frames",
+    ),
+)
+def test_workbench_private_read_routes_reject_revoked_bearer_credentials(
+    path: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pytest.importorskip("httpx")
+    pytest.importorskip("fastapi.testclient")
+    monkeypatch.delenv("VIVENTIUM_PROMPT_WORKBENCH_AUTH_DISABLED", raising=False)
+    monkeypatch.setenv("VIVENTIUM_PROMPT_WORKBENCH_ADMIN_USER_ID", "synthetic-admin")
+    from fastapi.testclient import TestClient
+    from prompt_workbench import auth
+    from prompt_workbench.app import app
+
+    monkeypatch.setattr(auth, "_is_loopback_request", lambda _request: True)
+    monkeypatch.setattr(auth, "_librechat_admin_auth", lambda _request: None)
+
+    response = TestClient(app).get(
+        path,
+        headers={"x-viventium-workbench-token": "synthetic-revoked-bearer"},
+    )
+
+    assert response.status_code == 401
+
+
+def test_workbench_rejects_leaked_bearer_from_non_loopback_client(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pytest.importorskip("httpx")
+    pytest.importorskip("fastapi.testclient")
+    monkeypatch.delenv("VIVENTIUM_PROMPT_WORKBENCH_AUTH_DISABLED", raising=False)
+    monkeypatch.setenv("VIVENTIUM_PROMPT_WORKBENCH_LAUNCH_TOKEN", "synthetic-leaked-token")
+    from fastapi.testclient import TestClient
+    from prompt_workbench import auth
+    from prompt_workbench.app import app
+
+    monkeypatch.setattr(auth, "_is_loopback_request", lambda _request: False)
+    monkeypatch.setattr(auth, "_librechat_admin_auth", lambda _request: None)
+
+    response = TestClient(app).get(
+        "/api/variables", headers={"x-viventium-workbench-token": "synthetic-leaked-token"}
+    )
+
+    assert response.status_code == 401
+
+
+def test_workbench_rejects_remote_clients_even_with_a_verified_admin_cookie(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pytest.importorskip("httpx")
+    pytest.importorskip("fastapi.testclient")
+    monkeypatch.delenv("VIVENTIUM_PROMPT_WORKBENCH_AUTH_DISABLED", raising=False)
+    from fastapi.testclient import TestClient
+    from prompt_workbench import auth
+    from prompt_workbench.app import app
+
+    monkeypatch.setattr(auth, "_is_loopback_request", lambda _request: False)
+    monkeypatch.setattr(
+        auth,
+        "_librechat_admin_auth",
+        lambda _request: auth.AuthContext(
+            authenticated=True,
+            admin=True,
+            method="librechat_admin",
+            user_id="synthetic-admin",
+        ),
+    )
+    client = TestClient(app, cookies={"viventium_session": "synthetic-admin-session"})
+
+    assert client.get("/api/auth/status").json()["authenticated"] is False
+    assert client.get("/api/variables").status_code == 401
+
+
+def test_workbench_redirects_legacy_page_credentials_without_referrer_or_history_leak() -> None:
+    pytest.importorskip("httpx")
+    pytest.importorskip("fastapi.testclient")
+    from fastapi.testclient import TestClient
+    from prompt_workbench.app import app
+
+    secret = "synthetic-legacy-url-token"
+    client = TestClient(app)
+    response = client.get(
+        f"/?workbench_token={secret}&tab=evals",
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/?tab=evals"
+    assert response.headers["referrer-policy"] == "no-referrer"
+    assert "no-store" in response.headers["cache-control"]
+    assert secret not in response.text
+    assert secret not in json.dumps(dict(response.headers))
+
+
+def test_workbench_rejects_api_url_credentials_and_sets_no_referrer_policy() -> None:
+    pytest.importorskip("httpx")
+    pytest.importorskip("fastapi.testclient")
+    from fastapi.testclient import TestClient
+    from prompt_workbench.app import app
+
+    secret = "synthetic-legacy-url-token"
+    client = TestClient(app)
+    response = client.get(f"/api/health?workbench_token={secret}")
+    clean_response = client.get("/api/health")
+
+    assert response.status_code == 400
+    assert response.headers["referrer-policy"] == "no-referrer"
+    assert "no-store" in response.headers["cache-control"]
+    assert secret not in response.text
+    assert clean_response.headers["referrer-policy"] == "no-referrer"
+
+
+def test_workbench_frontend_and_browser_qa_never_store_or_transmit_launch_bearers() -> None:
+    api_source = (WORKBENCH_SRC / "api.ts").read_text(encoding="utf-8")
+    qa_source = (
+        REPO_ROOT / "qa" / "prompt-workbench" / "scripts" / "live-evals-browser-qa.cjs"
+    ).read_text(encoding="utf-8")
+
+    assert 'removeLocalStorage("viventium.promptWorkbench.launchToken")' in api_source
+    assert (
+        'window.sessionStorage.removeItem("viventium.promptWorkbench.launchToken")'
+        in api_source
+    )
+    assert "writeLocalStorage" not in api_source
+    assert "readLocalStorage" not in api_source
+    assert "sessionStorage.setItem" not in api_source
+    assert "x-viventium-workbench-token" not in api_source
+    assert "state.authUrl" not in qa_source
+    assert 'localStorage.getItem("viventium.promptWorkbench.launchToken")' not in qa_source
+    assert 'await page.goto(state.url,' in qa_source
+
+
 def test_scheduled_prompt_admin_auth_required(monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("httpx")
     pytest.importorskip("fastapi.testclient")
@@ -276,6 +1078,7 @@ def test_scheduled_prompt_admin_auth_required(monkeypatch: pytest.MonkeyPatch) -
 
     from prompt_workbench import auth
 
+    monkeypatch.setattr(auth, "_is_loopback_request", lambda _request: True)
     monkeypatch.setattr(auth, "_librechat_admin_auth", lambda request: auth.AuthContext(True, False, method="librechat"))
     assert client.get("/api/scheduled-prompts", headers={"authorization": "Bearer non-admin"}).status_code == 403
 
@@ -288,6 +1091,8 @@ def test_scheduled_prompt_admin_verify_carries_user_identity(monkeypatch: pytest
     from fastapi.testclient import TestClient
     from prompt_workbench import auth
     from prompt_workbench.app import app
+
+    monkeypatch.setattr(auth, "_is_loopback_request", lambda _request: True)
 
     class FakeAdminVerifyResponse:
         status = 200
@@ -309,6 +1114,89 @@ def test_scheduled_prompt_admin_verify_carries_user_identity(monkeypatch: pytest
     assert status.json()["admin"] is True
     assert status.json()["userId"] == "admin-user-1"
     assert status.json()["email"] == "admin@example.test"
+
+
+def test_workbench_accepts_only_the_existing_admin_cookie_without_a_launch_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pytest.importorskip("httpx")
+    pytest.importorskip("fastapi.testclient")
+    monkeypatch.delenv("VIVENTIUM_PROMPT_WORKBENCH_AUTH_DISABLED", raising=False)
+    monkeypatch.setenv("VIVENTIUM_PROMPT_WORKBENCH_LAUNCH_TOKEN", "synthetic-private-launch-token")
+    monkeypatch.setenv("VIVENTIUM_PROMPT_WORKBENCH_LOOPBACK_ADMIN_AUTH", "false")
+    from fastapi.testclient import TestClient
+    from prompt_workbench import auth
+    from prompt_workbench.app import app
+
+    monkeypatch.setattr(auth, "_is_loopback_request", lambda _request: True)
+
+    captured_headers: dict[str, str] = {}
+
+    class FakeAdminVerifyResponse:
+        status = 200
+
+        def read(self) -> bytes:
+            return json.dumps(
+                {"user": {"id": "cookie-admin-1", "email": "admin@example.test"}}
+            ).encode("utf-8")
+
+        def __enter__(self) -> "FakeAdminVerifyResponse":
+            return self
+
+        def __exit__(self, *_: object) -> None:
+            return None
+
+    def verify_admin_cookie(request: object, *_args: object, **_kwargs: object) -> FakeAdminVerifyResponse:
+        captured_headers.update(
+            {str(key).lower(): str(value) for key, value in request.header_items()}
+        )
+        return FakeAdminVerifyResponse()
+
+    monkeypatch.setattr(auth.urllib.request, "urlopen", verify_admin_cookie)
+    client = TestClient(app, cookies={"viventium_session": "synthetic-admin-session"})
+
+    status = client.get("/api/auth/status")
+
+    assert status.status_code == 200
+    assert status.json()["admin"] is True
+    assert status.json()["method"] == "librechat_admin"
+    assert status.json()["userId"] == "cookie-admin-1"
+    assert "viventium_session=synthetic-admin-session" in captured_headers["cookie"]
+    assert "authorization" not in captured_headers
+    assert "x-viventium-workbench-token" not in captured_headers
+
+
+@pytest.mark.parametrize(
+    "cookies",
+    (
+        {"unrelated_localhost_app": "synthetic-preference"},
+        {"refreshToken": "synthetic-expired-local-session"},
+        {"viventium_session": "synthetic-expired-admin-session"},
+    ),
+)
+def test_direct_loopback_admin_survives_ambient_or_expired_browser_cookies(
+    cookies: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pytest.importorskip("httpx")
+    pytest.importorskip("fastapi.testclient")
+    monkeypatch.delenv("VIVENTIUM_PROMPT_WORKBENCH_AUTH_DISABLED", raising=False)
+    monkeypatch.setenv("VIVENTIUM_PROMPT_WORKBENCH_ADMIN_USER_ID", "synthetic-owner-admin")
+    monkeypatch.setenv("VIVENTIUM_PROMPT_WORKBENCH_LOOPBACK_ADMIN_AUTH", "true")
+    from fastapi.testclient import TestClient
+    from prompt_workbench import auth
+    from prompt_workbench.app import app
+
+    monkeypatch.setattr(auth, "_is_loopback_request", lambda _request: True)
+    monkeypatch.setattr(auth, "_librechat_admin_auth", lambda _request: None)
+
+    client = TestClient(app, cookies=cookies)
+    status = client.get("/api/auth/status")
+
+    assert status.json()["authenticated"] is True
+    assert status.json()["method"] == "local_loopback_admin"
+    assert status.json()["userId"] == "synthetic-owner-admin"
+    assert client.get("/api/prompts").status_code == 200
 
 
 def test_direct_loopback_workbench_resolves_single_local_admin(
@@ -766,12 +1654,13 @@ def test_scheduled_prompt_object_has_drafts_preview_and_execution_config_ui() ->
     assert "includeMemoryWriteMode: !isUserLevelSchedule" in schedule_source
     assert "setScheduleTouched(true)" in schedule_source
     assert "schedule-execution-card" in schedule_source
-    assert "GlassHive host" in schedule_source
-    assert "Viventium agent" in schedule_source
+    assert "GlassHive worker" in schedule_source
+    assert "Viventium Main (Agent Builder)" in schedule_source
+    assert "Inherits the persisted Main Agent route and fallback at run time" in schedule_source
     assert "This user-level schedule does not use Workbench variable" in schedule_source
     assert "User-level scheduler policy" in schedule_source
     assert "confirmUserLevelDelivery" in api_source
-    assert "Manual Viventium schedule run started" in schedule_source
+    assert "Manual Viventium Main run started" in schedule_source
     assert "Run Viventium" in schedule_source
     assert "workspaceRoot" in schedule_source
     assert "executionProfile" in schedule_source
@@ -798,6 +1687,16 @@ def test_topbar_sync_actions_signal_pending_and_done_states() -> None:
     assert "need pull or merge before Push dry-run" in app_source
     assert ".toolbar-button.sync-action-done" in css_source
     assert ".toolbar-button.sync-action-needs-action" in css_source
+
+
+def test_prompt_trace_status_layout_keeps_healthy_copy_in_the_message_column() -> None:
+    frame_source = (WORKBENCH_SRC / "components" / "FramePanel.tsx").read_text(encoding="utf-8")
+    css_source = (WORKBENCH_SRC / "styles.css").read_text(encoding="utf-8")
+
+    assert "trace-source-status${showWarning ? ' has-warning' : ''}" in frame_source
+    assert "grid-template-columns: minmax(0, 1fr) auto;" in css_source
+    assert ".trace-source-status.has-warning" in css_source
+    assert "grid-template-columns: min-content minmax(0, 1fr) auto;" in css_source
 
 
 def test_scheduled_prompt_template_endpoint_and_user_scoping(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1109,6 +2008,203 @@ def test_nightly_prompt_update_preserves_local_mode_until_schedule_is_explicit(
     assert stored["metadata"]["schedule_timezone_mode"] == "fixed"
 
 
+def test_scheduled_prompt_update_persists_registered_source_prompt_link(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from prompt_workbench.app import ScheduledPromptPatchRequest
+
+    assert ScheduledPromptPatchRequest(
+        sourcePromptId="scheduler.consciousness_continuity_opportunity"
+    ).model_dump()["sourcePromptId"] == "scheduler.consciousness_continuity_opportunity"
+
+    monkeypatch.setenv("SCHEDULING_DB_PATH", str(tmp_path / "schedules.db"))
+    monkeypatch.setenv("VIVENTIUM_PRIVATE_USER_DATA_DIR", str(tmp_path / "private"))
+    monkeypatch.setenv(
+        "VIVENTIUM_LOCAL_MACHINE_GLASSHIVE_ROOT", str(tmp_path / "glasshive")
+    )
+    monkeypatch.setattr(scheduled_prompts, "_query_mongo_json", lambda script: None)
+
+    created = scheduled_prompts.create_scheduled_prompt(
+        {
+            "title": "Continuity",
+            "promptText": "Orient, appraise, choose, act, observe, and reappraise.",
+            "executor": "viventium_agent",
+        },
+        user_id="startup-admin",
+        email="startup-admin@example.test",
+    )
+
+    updated = scheduled_prompts.update_scheduled_prompt(
+        created["id"],
+        {"sourcePromptId": "scheduler.consciousness_continuity_opportunity"},
+        user_id="startup-admin",
+        email="startup-admin@example.test",
+    )
+
+    stored = scheduled_prompts.storage().get_scheduled_prompt_definition(created["id"])
+    task = scheduled_prompts.storage().get_task("startup-admin", stored["task_id"])
+    assert updated["sourcePromptId"] == "scheduler.consciousness_continuity_opportunity"
+    assert stored["source_prompt_id"] == "scheduler.consciousness_continuity_opportunity"
+    assert (
+        task["metadata"]["workbench_scheduled_prompt"]["source_prompt_id"]
+        == "scheduler.consciousness_continuity_opportunity"
+    )
+    assert (
+        task["metadata"]["prompt_context"]["effective_prompt_id"]
+        == "scheduler.consciousness_continuity_opportunity"
+    )
+
+
+def test_custom_memory_off_glasshive_schedule_uses_isolated_parallel_lane(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("SCHEDULING_DB_PATH", str(tmp_path / "schedules.db"))
+    monkeypatch.setenv("VIVENTIUM_PRIVATE_USER_DATA_DIR", str(tmp_path / "private"))
+    monkeypatch.setenv("VIVENTIUM_LOCAL_MACHINE_GLASSHIVE_ROOT", str(tmp_path / "glasshive"))
+    monkeypatch.setenv("VIVENTIUM_GLASSHIVE_ISOLATED_PARALLEL_POLICY", "true")
+    monkeypatch.setenv("VIVENTIUM_PARALLEL_WORK_EXECUTION_MODE", "docker")
+    monkeypatch.setenv("WPR_DEFAULT_EXECUTION_MODE", "host")
+    monkeypatch.setattr(scheduled_prompts, "_query_mongo_json", lambda script: None)
+
+    created = scheduled_prompts.create_scheduled_prompt(
+        {
+            "title": "Isolated synthetic task",
+            "promptText": "Return a bounded synthetic result.",
+            "executor": "glasshive_host",
+            "memoryWriteMode": "off",
+        },
+        user_id="startup-admin",
+        email="startup-admin@example.test",
+    )
+
+    store = scheduled_prompts.storage()
+    definition = store.get_scheduled_prompt_definition(created["id"])
+    task = store.get_task("startup-admin", definition["task_id"])
+    execution = definition["metadata"]["execution"]
+    workbench = task["metadata"]["workbench_scheduled_prompt"]
+    assert execution["execution_mode"] == "docker"
+    assert execution["workspace_root"] == ""
+    assert workbench["execution_mode"] == "docker"
+    assert workbench["workspace_root"] == ""
+    assert workbench["my_folder"] == ""
+    assert definition["my_folder"]
+    assert created["workspaceRoot"] == ""
+    assert created["myFolder"] == ""
+
+
+def test_governed_glasshive_schedule_keeps_configured_host_lane(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("SCHEDULING_DB_PATH", str(tmp_path / "schedules.db"))
+    monkeypatch.setenv("VIVENTIUM_PRIVATE_USER_DATA_DIR", str(tmp_path / "private"))
+    monkeypatch.setenv("VIVENTIUM_LOCAL_MACHINE_GLASSHIVE_ROOT", str(tmp_path / "glasshive"))
+    monkeypatch.setenv("VIVENTIUM_GLASSHIVE_ISOLATED_PARALLEL_POLICY", "true")
+    monkeypatch.setenv("VIVENTIUM_PARALLEL_WORK_EXECUTION_MODE", "docker")
+    monkeypatch.setenv("WPR_DEFAULT_EXECUTION_MODE", "host")
+    monkeypatch.setattr(scheduled_prompts, "_query_mongo_json", lambda script: None)
+
+    created = scheduled_prompts.create_scheduled_prompt(
+        {
+            "title": "Governed memory task",
+            "promptText": "Prepare a governed memory proposal.",
+            "executor": "glasshive_host",
+            "memoryWriteMode": "propose",
+        },
+        user_id="startup-admin",
+        email="startup-admin@example.test",
+    )
+
+    definition = scheduled_prompts.storage().get_scheduled_prompt_definition(created["id"])
+    assert definition["metadata"]["execution"]["execution_mode"] == "host"
+    assert definition["metadata"]["execution"]["workspace_root"]
+
+
+def test_nightly_seed_migrates_existing_memory_off_builtin_to_isolated_lane(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("SCHEDULING_DB_PATH", str(tmp_path / "schedules.db"))
+    monkeypatch.setenv("VIVENTIUM_PRIVATE_USER_DATA_DIR", str(tmp_path / "private"))
+    monkeypatch.setenv("VIVENTIUM_LOCAL_MACHINE_GLASSHIVE_ROOT", str(tmp_path / "glasshive"))
+    monkeypatch.setenv("VIVENTIUM_GLASSHIVE_ISOLATED_PARALLEL_POLICY", "true")
+    monkeypatch.setenv("VIVENTIUM_PARALLEL_WORK_EXECUTION_MODE", "docker")
+    monkeypatch.setenv("WPR_DEFAULT_EXECUTION_MODE", "host")
+    monkeypatch.setenv("WPR_HOST_WORKSPACE_ROOT", str(tmp_path / "host-workspace"))
+    monkeypatch.setenv("WPR_MODEL_HOST_CODEX_CLI", "gpt-test-scheduled")
+    monkeypatch.setenv("WPR_CODEX_CLI_REASONING_EFFORT", "xhigh")
+    monkeypatch.setattr(scheduled_prompts, "_query_mongo_json", lambda script: None)
+
+    template = scheduled_prompts.nightly_prompt_template()
+    created = scheduled_prompts.create_scheduled_prompt(
+        {
+            **template,
+            "templateId": scheduled_prompts.NIGHTLY_TEMPLATE_ID,
+            "active": True,
+            "memoryWriteMode": "off",
+        },
+        user_id="startup-admin",
+        email="startup-admin@example.test",
+    )
+    store = scheduled_prompts.storage()
+    definition = store.get_scheduled_prompt_definition(created["id"])
+    version_before = store.latest_scheduled_prompt_version(created["id"])
+    stale_metadata = dict(definition["metadata"])
+    stale_execution = dict(stale_metadata["execution"])
+    stale_execution.update(
+        {
+            "execution_mode": "host",
+            "workspace_root": str(tmp_path / "host-workspace"),
+        }
+    )
+    stale_metadata["execution"] = stale_execution
+    store.update_scheduled_prompt_definition(created["id"], {"metadata": stale_metadata})
+
+    task = store.get_task("startup-admin", definition["task_id"])
+    task_metadata = dict(task["metadata"])
+    task_metadata["execution"] = dict(stale_execution)
+    task_workbench = dict(task_metadata["workbench_scheduled_prompt"])
+    task_workbench.update(
+        {
+            "execution_mode": "host",
+            "workspace_root": str(tmp_path / "host-workspace"),
+        }
+    )
+    task_metadata["workbench_scheduled_prompt"] = task_workbench
+    store.update_task(
+        "startup-admin",
+        definition["task_id"],
+        {
+            "metadata": task_metadata,
+            "last_run_at": "2026-08-20T07:00:00Z",
+            "last_status": "error",
+            "last_error": "provider_quota_exhausted",
+            "last_generated_text": "preserved prior result",
+        },
+    )
+
+    scheduled_prompts.seed_nightly_prompt(
+        user_id="startup-admin",
+        email="startup-admin@example.test",
+    )
+
+    stored = store.get_scheduled_prompt_definition(created["id"])
+    task = store.get_task("startup-admin", definition["task_id"])
+    version_after = store.latest_scheduled_prompt_version(created["id"])
+    assert stored["metadata"]["execution"]["execution_mode"] == "docker"
+    assert stored["metadata"]["execution"]["workspace_root"] == ""
+    assert task["metadata"]["execution"]["execution_mode"] == "docker"
+    assert task["metadata"]["execution"]["workspace_root"] == ""
+    assert task["metadata"]["workbench_scheduled_prompt"]["execution_mode"] == "docker"
+    assert task["metadata"]["workbench_scheduled_prompt"]["workspace_root"] == ""
+    assert task["metadata"]["workbench_scheduled_prompt"]["my_folder"] == stored["my_folder"]
+    assert stored["active"] == 1
+    assert task["active"] == 1
+    assert task["last_run_at"] == "2026-08-20T07:00:00Z"
+    assert task["last_status"] == "error"
+    assert task["last_error"] == "provider_quota_exhausted"
+    assert task["last_generated_text"] == "preserved prior result"
+    assert version_after["id"] == version_before["id"]
+
+
 def test_nightly_seed_preserves_user_prompt_and_repairs_only_scheduler_task_plumbing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1314,6 +2410,7 @@ def test_scheduled_automation_tuple_is_config_driven_and_profile_aware(
         "WPR_MODEL_CODEX_CLI",
         "WPR_MODEL_CLAUDE_CODE",
         "WPR_CODEX_CLI_REASONING_EFFORT",
+        "WPR_CLAUDE_CODE_EFFORT",
     ):
         monkeypatch.delenv(name, raising=False)
 
@@ -1321,8 +2418,21 @@ def test_scheduled_automation_tuple_is_config_driven_and_profile_aware(
     assert scheduled_prompts._default_automation_reasoning_effort() == ""
 
     monkeypatch.setenv("WPR_MODEL_CLAUDE_CODE", "claude-configured-test")
+    monkeypatch.setenv("WPR_CLAUDE_CODE_EFFORT", "max")
     assert scheduled_prompts._default_automation_model("claude-code") == "claude-configured-test"
     assert scheduled_prompts._default_automation_model("unknown-profile") == ""
+
+    monkeypatch.setenv("GLASSHIVE_DEFAULT_FALLBACK_WORKER_PROFILE", "claude-code")
+    assert (
+        scheduled_prompts._default_glasshive_fallback_worker_profile("codex-cli")
+        == "claude-code"
+    )
+    assert scheduled_prompts._default_glasshive_fallback_worker_route("codex-cli") == {
+        "fallback_worker_profile": "claude-code",
+        "fallback_worker_model": "claude-configured-test",
+        "fallback_reasoning_effort": "max",
+    }
+    assert scheduled_prompts._default_glasshive_fallback_worker_profile("claude-code") == ""
 
 
 def test_scheduled_prompt_crud_manual_run_and_private_tables(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1339,6 +2449,9 @@ def test_scheduled_prompt_crud_manual_run_and_private_tables(tmp_path: Path, mon
     monkeypatch.setenv("SCHEDULING_GLASSHIVE_CALLBACK_SECRET", "test-secret")
     monkeypatch.setenv("WPR_MODEL_HOST_CODEX_CLI", "gpt-5.6-sol")
     monkeypatch.setenv("WPR_CODEX_CLI_REASONING_EFFORT", "xhigh")
+    monkeypatch.setenv("GLASSHIVE_DEFAULT_FALLBACK_WORKER_PROFILE", "claude-code")
+    monkeypatch.setenv("WPR_MODEL_CLAUDE_CODE", "claude-fallback-test")
+    monkeypatch.setenv("WPR_CLAUDE_CODE_EFFORT", "max")
     monkeypatch.setattr(scheduled_prompts, "_query_mongo_json", lambda script: None)
     from fastapi.testclient import TestClient
     from prompt_workbench.app import app
@@ -1361,6 +2474,9 @@ def test_scheduled_prompt_crud_manual_run_and_private_tables(tmp_path: Path, mon
     assert created.json()["active"] is False
     assert created.json()["executionModel"] == "gpt-5.6-sol"
     assert created.json()["reasoningEffort"] == "xhigh"
+    assert created.json()["fallbackWorkerProfile"] == "claude-code"
+    assert created.json()["fallbackWorkerModel"] == "claude-fallback-test"
+    assert created.json()["fallbackReasoningEffort"] == "max"
 
     patched = client.patch(f"/api/scheduled-prompts/{prompt_id}", json={"active": True})
     assert patched.status_code == 200
@@ -1372,6 +2488,8 @@ def test_scheduled_prompt_crud_manual_run_and_private_tables(tmp_path: Path, mon
     manual = client.post(f"/api/scheduled-prompts/{prompt_id}/manual-runs")
     assert manual.status_code == 200
     assert manual.json()["run"]["status"] == "queued"
+    assert manual.json()["run"]["triggerKind"] == "manual"
+    assert manual.json()["run"]["triggerSource"] == "workbench_manual"
     assert manual.json()["run"]["privateDetailPointer"].startswith("private://scheduled-prompt-run/")
     assert str(tmp_path) not in json.dumps(manual.json())
     duplicate = client.post(f"/api/scheduled-prompts/{prompt_id}/manual-runs")
@@ -1389,7 +2507,39 @@ def test_scheduled_prompt_crud_manual_run_and_private_tables(tmp_path: Path, mon
     assert task["metadata"]["workbench_scheduled_prompt"]["glasshive_worker_strategy"] == "new_worker_each_run"
     assert task["metadata"]["workbench_scheduled_prompt"]["execution_model"] == "gpt-5.6-sol"
     assert task["metadata"]["workbench_scheduled_prompt"]["reasoning_effort"] == "xhigh"
+    assert (
+        task["metadata"]["workbench_scheduled_prompt"]["fallback_worker_profile"]
+        == "claude-code"
+    )
+    assert (
+        task["metadata"]["workbench_scheduled_prompt"]["fallback_worker_model"]
+        == "claude-fallback-test"
+    )
+    assert (
+        task["metadata"]["workbench_scheduled_prompt"]["fallback_reasoning_effort"]
+        == "max"
+    )
     assert runs and Path(runs[0]["private_detail_path"]).exists()
+    assert runs[0]["trigger_kind"] == "manual"
+    assert runs[0]["trigger_source"] == "workbench_manual"
+    assert runs[0]["occurrence_key"] == runs[0]["run_id"]
+    assert runs[0]["lease_until"] is not None
+    due_at = datetime.fromisoformat(runs[0]["due_at"].replace("Z", "+00:00"))
+    started_at = datetime.fromisoformat(runs[0]["started_at"].replace("Z", "+00:00"))
+    assert due_at <= started_at
+    assert (started_at - due_at).total_seconds() < 1
+    assert runs[0]["execution_snapshot"]["dispatch_idempotency_key"] == runs[0]["run_id"]
+    blocked = store.claim_scheduled_prompt_occurrence(
+        task_id=task["id"],
+        user_id=task["user_id"],
+        executor=task["executor"],
+        due_at=task["next_run_at"],
+        lease_owner="scheduler-test",
+        now=runs[0]["started_at"],
+        lease_seconds=60,
+    )
+    assert blocked["claimed"] is False
+    assert blocked["reason"] == "task_has_active_occurrence"
     assert "mongodb://" not in Path(runs[0]["private_detail_path"]).read_text(encoding="utf-8")
 
 
@@ -1418,6 +2568,796 @@ def test_public_scheduled_run_exposes_requested_and_effective_effort_only() -> N
     assert "private" not in public
 
 
+def test_public_scheduled_run_exposes_backward_compatible_audit_outcomes() -> None:
+    public = scheduled_prompts._public_run(
+        {
+            "run_id": "run-audit-1",
+            "status": "completed",
+            "executor": "viventium_agent",
+            "disposition": "silent",
+            "started_at": "2026-08-10T13:00:00Z",
+            "completed_at": "2026-08-10T13:00:01.250Z",
+            "execution_snapshot_json": json.dumps(
+                {
+                    "model": "gpt-5.6-sol",
+                    "reasoning_effort": "xhigh",
+                    "usage": {"input_tokens": 120, "output_tokens": 30, "cost_usd": 0.012},
+                    "degraded_dependencies": ["calendar unavailable"],
+                    "private_prompt": "must not surface",
+                }
+            ),
+            "channel_outcomes_json": json.dumps(
+                {
+                    "workbench": {"outcome": "audit_only", "reason": "audit_sink"},
+                    "telegram": {
+                        "outcome": "suppressed",
+                        "reason": "no_useful_output",
+                        "generated_text": "must not surface",
+                    },
+                }
+            ),
+        }
+    )
+
+    assert public["disposition"] == "silent"
+    assert public["effectiveModel"] == "gpt-5.6-sol"
+    assert public["effectiveReasoningEffort"] == "xhigh"
+    assert public["latencyMs"] == 1250
+    assert public["usage"] == {"inputTokens": 120, "outputTokens": 30, "costUsd": 0.012}
+    assert public["degradedDependencies"] == ["calendar unavailable"]
+    assert public["channelOutcomes"] == {
+        "workbench": {"outcome": "audit_only", "reason": "audit_sink"},
+        "telegram": {"outcome": "suppressed", "reason": "no_useful_output"},
+    }
+    assert "private_prompt" not in json.dumps(public)
+    assert "generated_text" not in json.dumps(public)
+
+
+def test_schedules_panel_supports_windowed_intervals_and_audit_context() -> None:
+    source = (
+        REPO_ROOT
+        / "viventium_v0_4"
+        / "prompt-workbench"
+        / "src"
+        / "components"
+        / "ScheduledPromptsPanel.tsx"
+    ).read_text(encoding="utf-8")
+
+    assert '<option value="interval">Interval</option>' in source
+    assert 'active_window' in source
+    assert 'start_local' in source
+    assert 'end_local' in source
+    assert 'cadence: "restart_daily"' in source
+    assert 'Projected runs/day' in source
+    assert 'Dedicated conversation per run' in source
+    assert 'Dedicated durable conversation' in source
+    assert 'Destination channels' in source
+    assert 'deliveryLibreChat' in source
+    assert 'deliveryTelegram' in source
+    assert 'LibreChat chat' in source
+    assert 'Telegram' in source
+    assert 'Source prompt' in source
+    assert 'Standing Main capability' in source
+    assert 'Run envelope' in source
+    assert 'Canonical output' in source
+    assert 'Effective prompt' in source
+    assert 'Effective scheduled model' in source
+    assert 'Effective scheduled effort' in source
+    assert 'run.disposition' in source
+    assert 'run.effectiveModel' in source
+    assert 'run.channelOutcomes' in source
+    assert 'Latency:' in source
+    assert 'Tokens / cost: not recorded' in source
+    assert 'Degraded dependencies:' in source
+    assert 'silent, delivered, partial, superseded, or failed' in source
+    assert 'Workbench is an audit sink, not user delivery' in source
+    assert 'aria-describedby' in source
+    assert 'role="switch"' in source
+    assert 'aria-checked={item.active}' in source
+    assert 'aria-label={`${item.active ? "Disable" : "Enable"} ${item.title}`}' in source
+    assert 'className="schedule-row-select"' in source
+
+
+def test_schedules_panel_opens_related_prompts_in_the_normal_editor() -> None:
+    schedule_source = (
+        REPO_ROOT
+        / "viventium_v0_4"
+        / "prompt-workbench"
+        / "src"
+        / "components"
+        / "ScheduledPromptsPanel.tsx"
+    ).read_text(encoding="utf-8")
+    dock_source = (
+        REPO_ROOT
+        / "viventium_v0_4"
+        / "prompt-workbench"
+        / "src"
+        / "components"
+        / "WorkbenchDock.tsx"
+    ).read_text(encoding="utf-8")
+
+    assert "onOpenPrompt?: (id: string) => void" in schedule_source
+    assert "onOpenPrompt?.(selected.sourcePromptId!)" in schedule_source
+    assert "onOpenPrompt?.(selected.effectivePromptId!)" in schedule_source
+    assert "onOpenPrompt?.(selected.runEnvelopePromptId!)" in schedule_source
+    assert "onOpenPrompt?.(selected.canonicalOutputPromptId!)" in schedule_source
+    assert "onOpenPrompt?.(selected.standingCapabilityPromptId!)" in schedule_source
+    assert 'href={`/api/prompts/' not in schedule_source
+    assert "onOpenPrompt={onOpenPrompt}" in dock_source
+
+
+def test_dock_hides_flexlayout_measurement_text_from_the_accessibility_tree() -> None:
+    source = (
+        REPO_ROOT
+        / "viventium_v0_4"
+        / "prompt-workbench"
+        / "src"
+        / "components"
+        / "WorkbenchDock.tsx"
+    ).read_text(encoding="utf-8")
+
+    assert "useLayoutEffect" in source
+    assert "dockHostRef" in source
+    assert "querySelectorAll<HTMLElement>('.flexlayout__layout_metrics')" in source
+    assert "setAttribute('aria-hidden', 'true')" in source
+    assert 'ref={dockHostRef}' in source
+
+
+def test_scheduler_prompt_contracts_are_visible_as_workbench_related_sources() -> None:
+    envelope = prompt_service.related_config_for_prompt("scheduler.run_envelope")
+    opportunity = prompt_service.related_config_for_prompt(
+        "scheduler.consciousness_continuity_opportunity"
+    )
+    canonical_output = prompt_service.related_config_for_prompt("scheduler.canonical_output")
+
+    assert envelope[0]["selector"] == "SCHEDULER_RUN_ENVELOPE_TEMPLATE"
+    assert opportunity[0]["selector"] == (
+        "CONSCIOUSNESS_CONTINUITY_OPPORTUNITY_PROMPT_ID"
+    )
+    assert canonical_output[0]["selector"] == "buildScheduledCanonicalOutputInstructions"
+    assert all(
+        row["status"] == "source"
+        for row in [*envelope, *opportunity, *canonical_output]
+    )
+
+
+def test_legacy_nightly_runs_without_trigger_provenance_remain_unknown() -> None:
+    schedule = {"type": "daily", "time": "03:00", "timezone": "America/Toronto"}
+
+    scheduled = scheduled_prompts._public_run(
+        {"run_id": "run-scheduled", "due_at": "2026-08-08T07:00:00Z"},
+        schedule=schedule,
+        timezone_name="America/Toronto",
+    )
+    manual = scheduled_prompts._public_run(
+        {"run_id": "run-manual", "due_at": "2026-08-08T15:46:42Z"},
+        schedule=schedule,
+        timezone_name="America/Toronto",
+    )
+
+    assert scheduled["triggerKind"] == "unknown"
+    assert manual["triggerKind"] == "unknown"
+
+
+def test_caller_label_cannot_impersonate_scheduler_or_manual_provenance() -> None:
+    assert scheduled_prompts._public_run(
+        {
+            "run_id": "caller-labelled",
+            "trigger_kind": "scheduled",
+            "trigger_source": "unverified_caller",
+        }
+    )["triggerKind"] == "unknown"
+    assert scheduled_prompts._public_run(
+        {
+            "run_id": "scheduler-loop",
+            "trigger_kind": "scheduled",
+            "trigger_source": "scheduler_loop",
+        }
+    )["triggerKind"] == "scheduled"
+
+
+def test_scheduler_provenance_requires_due_time_to_match_declared_schedule() -> None:
+    schedule = {"type": "daily", "time": "03:00", "timezone": "America/Toronto"}
+    matching = scheduled_prompts._public_run(
+        {
+            "run_id": "scheduler-on-cadence",
+            "due_at": "2026-08-08T07:00:00Z",
+            "trigger_kind": "scheduled",
+            "trigger_source": "scheduler_loop",
+        },
+        schedule=schedule,
+        timezone_name="America/Toronto",
+    )
+    forged = scheduled_prompts._public_run(
+        {
+            "run_id": "scheduler-off-cadence",
+            "due_at": "2026-08-08T15:46:42Z",
+            "trigger_kind": "scheduled",
+            "trigger_source": "scheduler_loop",
+        },
+        schedule=schedule,
+        timezone_name="America/Toronto",
+    )
+
+    assert matching["triggerKind"] == "scheduled"
+    assert forged["triggerKind"] == "unknown"
+
+
+def test_public_definition_projects_latest_scheduled_outside_recent_manual_window() -> None:
+    class FakeStore:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, object]] = []
+
+        def get_task(self, *_args):
+            return None
+
+        def latest_scheduled_prompt_version(self, *_args):
+            return None
+
+        def list_scheduled_prompt_runs(self, **kwargs):
+            self.calls.append(kwargs)
+            if kwargs.get("trigger_kind") == "scheduled":
+                return [
+                    {
+                        "run_id": "scheduled-run",
+                        "status": "completed",
+                        "trigger_kind": "scheduled",
+                        "trigger_source": "scheduler_loop",
+                        "due_at": "2026-08-08T03:00:00Z",
+                        "started_at": "2026-08-08T07:00:00Z",
+                    }
+                ]
+            if kwargs.get("trigger_kind") == "manual":
+                return [
+                    {
+                        "run_id": "manual-run",
+                        "status": "completed",
+                        "trigger_kind": "manual",
+                        "trigger_source": "workbench_manual",
+                        "started_at": "2026-08-08T12:00:00Z",
+                    }
+                ]
+            return [
+                {
+                    "run_id": f"manual-{index}",
+                    "status": "completed",
+                    "trigger_kind": "manual",
+                    "trigger_source": "workbench_manual",
+                    "started_at": f"2026-08-08T1{index}:00:00Z",
+                }
+                for index in range(5)
+            ]
+
+    store = FakeStore()
+    public = scheduled_prompts._public_definition(
+        {
+            "id": "definition-1",
+            "task_id": None,
+            "schedule": {"type": "daily", "time": "03:00", "timezone": "UTC"},
+            "timezone": "UTC",
+            "active": True,
+        },
+        store=store,
+    )
+
+    assert len(public["recentRuns"]) == 5
+    assert public["latestScheduledRun"]["runId"] == "scheduled-run"
+    assert public["latestScheduledRun"]["triggerKind"] == "scheduled"
+    assert public["latestManualRun"]["runId"] == "manual-run"
+    assert any(
+        call.get("trigger_kind") == "scheduled"
+        and call.get("trigger_source") == "scheduler_loop"
+        for call in store.calls
+    )
+
+
+def _create_orphaned_nightly_run(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    template_id: str | None = None,
+) -> tuple[object, dict[str, object], dict[str, object]]:
+    monkeypatch.setenv("SCHEDULING_DB_PATH", str(tmp_path / "schedules.db"))
+    monkeypatch.setenv("VIVENTIUM_PRIVATE_USER_DATA_DIR", str(tmp_path / "private"))
+    monkeypatch.setenv("VIVENTIUM_LOCAL_MACHINE_GLASSHIVE_ROOT", str(tmp_path / "glasshive"))
+    monkeypatch.setenv("WPR_MODEL_HOST_CODEX_CLI", "synthetic-nightly-model")
+    monkeypatch.setenv("WPR_CODEX_CLI_REASONING_EFFORT", "xhigh")
+    monkeypatch.setattr(scheduled_prompts, "_query_mongo_json", lambda _script: None)
+
+    selected_template_id = template_id or scheduled_prompts.NIGHTLY_TEMPLATE_ID
+    is_health_context = selected_template_id == scheduled_prompts.HEALTH_CONTEXT_TEMPLATE_ID
+    template = (
+        scheduled_prompts.health_context_prompt_template()
+        if is_health_context
+        else scheduled_prompts.nightly_prompt_template()
+    )
+    schedule_time = "06:15" if is_health_context else "03:00"
+    created = scheduled_prompts.create_scheduled_prompt(
+        {
+            **template,
+            "templateId": selected_template_id,
+            "schedule": {"type": "daily", "time": schedule_time, "timezone": "UTC"},
+            "active": True,
+        },
+        user_id="synthetic-nightly-owner",
+        email="nightly@example.test",
+    )
+    store = scheduled_prompts.storage()
+    definition = store.get_scheduled_prompt_definition(str(created["id"]))
+    assert definition is not None
+    now = datetime.now(timezone.utc)
+    started = now - timedelta(hours=2)
+    due = now.replace(
+        hour=6 if is_health_context else 3,
+        minute=15 if is_health_context else 0,
+        second=0,
+        microsecond=0,
+    )
+    started_iso = started.isoformat().replace("+00:00", "Z")
+    due_iso = due.isoformat().replace("+00:00", "Z")
+    lease_until = (now + timedelta(hours=22)).isoformat().replace("+00:00", "Z")
+    store.update_task(
+        "synthetic-nightly-owner",
+        str(definition["task_id"]),
+        {
+            "last_run_at": started_iso,
+            "last_status": "running",
+            "last_error": None,
+            "last_delivery_outcome": "queued",
+            "updated_at": started_iso,
+        },
+    )
+    run = store.create_scheduled_prompt_run(
+        {
+            "run_id": "sp_run_orphaned_synthetic",
+            "task_id": definition["task_id"],
+            "definition_id": definition["id"],
+            "user_id": "synthetic-nightly-owner",
+            "due_at": due_iso,
+            "started_at": started_iso,
+            "status": "running",
+            "executor": "glasshive_host",
+            "glasshive_project_id": "prj_synthetic_nightly",
+            "glasshive_worker_id": "wrk_synthetic_nightly",
+            "glasshive_run_id": "run_synthetic_nightly",
+            "trigger_kind": "scheduled",
+            "trigger_source": "scheduler_loop",
+            "occurrence_key": "schedule:synthetic-nightly",
+            "lease_owner": "scheduler:999999999:synthetic-owner",
+            "lease_until": lease_until,
+            "disposition": "running",
+            "created_at": started_iso,
+            "updated_at": started_iso,
+        }
+    )
+    return store, definition, run
+
+
+def test_workbench_terminal_reconciliation_loads_canonical_runtime_authority(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("WPR_API_TOKEN", raising=False)
+    monkeypatch.delenv("GLASSHIVE_API_TOKEN", raising=False)
+    monkeypatch.delenv("GLASSHIVE_RUNTIME_URL", raising=False)
+    monkeypatch.delenv("WPR_API_URL", raising=False)
+    loaded: list[bool] = []
+
+    def load_runtime() -> None:
+        loaded.append(True)
+        os.environ["WPR_API_TOKEN"] = "synthetic-runtime-token"
+        os.environ["GLASSHIVE_RUNTIME_URL"] = "http://127.0.0.1:9876"
+
+    observed: dict[str, object] = {}
+
+    def get_run(url: str, headers: dict[str, str], timeout: int) -> dict[str, object]:
+        observed.update({"url": url, "headers": headers, "timeout": timeout})
+        return {"run_id": "run-safe", "state": "failed"}
+
+    monkeypatch.setattr(scheduled_prompts, "load_viventium_runtime_env", load_runtime)
+    monkeypatch.setattr(scheduled_prompts, "_get_json", get_run)
+
+    assert scheduled_prompts._glasshive_run_snapshot({"glasshive_run_id": "run-safe"}) == {
+        "run_id": "run-safe",
+        "state": "failed",
+    }
+    assert loaded == [True]
+    assert observed["url"] == "http://127.0.0.1:9876/v1/runs/run-safe"
+    assert observed["headers"]["Authorization"] == "Bearer synthetic-runtime-token"
+    assert observed["timeout"] == 2
+
+
+def test_workbench_stalled_nightly_reconciles_confirmed_worker_failure_and_parent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store, definition, original_run = _create_orphaned_nightly_run(tmp_path, monkeypatch)
+    provider_reads: list[str] = []
+
+    def terminal_snapshot(run: dict[str, object]) -> dict[str, object]:
+        provider_reads.append(str(run["glasshive_run_id"]))
+        return {
+            "run_id": "run_synthetic_nightly",
+            "worker_id": "wrk_synthetic_nightly",
+            "project_id": "prj_synthetic_nightly",
+            "state": "failed",
+            "failure_class": "provider_response_failed",
+            "ended_at": original_run["started_at"],
+            "instruction": "DO-NOT-EXPOSE-synthetic-provider-body",
+        }
+
+    monkeypatch.setattr(scheduled_prompts, "_glasshive_run_snapshot", terminal_snapshot)
+
+    result = scheduled_prompts.list_scheduled_prompts(user_id="synthetic-nightly-owner")
+
+    [public] = [
+        row
+        for row in result["scheduledPrompts"]
+        if row.get("id") == definition["id"]
+    ]
+    assert public["lastStatus"] == "error"
+    assert public["latestScheduledRun"]["status"] == "failed"
+    assert public["latestScheduledRun"]["errorClass"] == "provider_response_failed"
+    assert public["latestScheduledRun"]["completedAt"] == original_run["started_at"]
+    assert "DO-NOT-EXPOSE-synthetic-provider-body" not in json.dumps(public)
+    assert provider_reads == ["run_synthetic_nightly"]
+
+    [persisted] = store.list_scheduled_prompt_runs(definition_id=str(definition["id"]))
+    assert persisted["run_id"] == original_run["run_id"]
+    assert persisted["status"] == "failed"
+    assert persisted["disposition"] == "failed"
+    assert persisted["lease_until"] is None
+    assert persisted["lease_owner"] is None
+    parent = store.get_task("synthetic-nightly-owner", str(definition["task_id"]))
+    assert parent["last_status"] == "error"
+    assert parent["last_delivery_outcome"] == "failed"
+
+
+def test_workbench_read_only_nightly_reports_confirmed_failure_without_database_writes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store, definition, original_run = _create_orphaned_nightly_run(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        scheduled_prompts,
+        "_glasshive_run_snapshot",
+        lambda _run: {
+            "run_id": "run_synthetic_nightly",
+            "worker_id": "wrk_synthetic_nightly",
+            "project_id": "prj_synthetic_nightly",
+            "state": "failed",
+            "failure_class": "provider_response_failed",
+            "ended_at": original_run["started_at"],
+        },
+    )
+
+    result = scheduled_prompts.list_scheduled_prompts(
+        user_id="synthetic-nightly-owner",
+        read_only=True,
+    )
+
+    [public] = [
+        row
+        for row in result["scheduledPrompts"]
+        if row.get("id") == definition["id"]
+    ]
+    assert public["lastStatus"] == "error"
+    assert public["latestScheduledRun"]["status"] == "failed"
+    assert public["latestScheduledRun"]["errorClass"] == "provider_response_failed"
+    [persisted] = store.list_scheduled_prompt_runs(definition_id=str(definition["id"]))
+    assert persisted["status"] == "running"
+    assert persisted["lease_until"] == original_run["lease_until"]
+    parent = store.get_task("synthetic-nightly-owner", str(definition["task_id"]))
+    assert parent["last_status"] == "running"
+
+
+@pytest.mark.parametrize("read_only", [False, True], ids=["durable", "read-only"])
+def test_workbench_stale_nightly_never_falsely_fails_a_newer_parent_occurrence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    read_only: bool,
+) -> None:
+    store, definition, original_run = _create_orphaned_nightly_run(tmp_path, monkeypatch)
+    newer_started_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    store.update_task(
+        "synthetic-nightly-owner",
+        str(definition["task_id"]),
+        {
+            "last_run_at": newer_started_at,
+            "last_status": "running",
+            "updated_at": newer_started_at,
+        },
+    )
+    monkeypatch.setattr(
+        scheduled_prompts,
+        "_glasshive_run_snapshot",
+        lambda _run: {
+            "run_id": "run_synthetic_nightly",
+            "worker_id": "wrk_synthetic_nightly",
+            "project_id": "prj_synthetic_nightly",
+            "state": "failed",
+            "failure_class": "provider_response_failed",
+            "ended_at": original_run["started_at"],
+        },
+    )
+
+    result = scheduled_prompts.list_scheduled_prompts(
+        user_id="synthetic-nightly-owner",
+        read_only=read_only,
+    )
+
+    [public] = [
+        row
+        for row in result["scheduledPrompts"]
+        if row.get("id") == definition["id"]
+    ]
+    assert public["latestScheduledRun"]["status"] == "failed"
+    assert public["lastStatus"] == "running"
+    parent = store.get_task("synthetic-nightly-owner", str(definition["task_id"]))
+    assert parent["last_status"] == "running"
+    assert parent["last_run_at"] == newer_started_at
+
+
+@pytest.mark.parametrize(
+    "snapshot",
+    [
+        pytest.param(
+            {
+                "run_id": "run_synthetic_nightly",
+                "worker_id": "wrk_synthetic_nightly",
+                "project_id": "prj_synthetic_nightly",
+                "state": "running",
+            },
+            id="genuinely-running-worker",
+        ),
+        pytest.param(
+            {
+                "run_id": "run_synthetic_nightly",
+                "worker_id": "wrk_other_owner",
+                "project_id": "prj_synthetic_nightly",
+                "state": "failed",
+                "failure_class": "provider_response_failed",
+            },
+            id="foreign-worker-is-never-trusted",
+        ),
+        pytest.param(None, id="provider-temporarily-unavailable"),
+    ],
+)
+def test_workbench_never_falsely_fails_active_or_unverified_nightly_worker(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    snapshot: dict[str, object] | None,
+) -> None:
+    store, definition, _original_run = _create_orphaned_nightly_run(tmp_path, monkeypatch)
+    monkeypatch.setattr(scheduled_prompts, "_glasshive_run_snapshot", lambda _run: snapshot)
+
+    result = scheduled_prompts.list_scheduled_prompts(user_id="synthetic-nightly-owner")
+
+    [public] = [
+        row
+        for row in result["scheduledPrompts"]
+        if row.get("id") == definition["id"]
+    ]
+    assert public["latestScheduledRun"]["status"] == "running"
+    [persisted] = store.list_scheduled_prompt_runs(definition_id=str(definition["id"]))
+    assert persisted["status"] == "running"
+    parent = store.get_task("synthetic-nightly-owner", str(definition["task_id"]))
+    assert parent["last_status"] == "running"
+
+
+def test_workbench_completed_worker_without_verified_callback_stays_recoverably_blocked(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store, definition, original_run = _create_orphaned_nightly_run(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        scheduled_prompts,
+        "_glasshive_run_snapshot",
+        lambda _run: {
+            "run_id": "run_synthetic_nightly",
+            "worker_id": "wrk_synthetic_nightly",
+            "project_id": "prj_synthetic_nightly",
+            "state": "completed",
+            "ended_at": original_run["started_at"],
+        },
+    )
+
+    result = scheduled_prompts.list_scheduled_prompts(user_id="synthetic-nightly-owner")
+
+    [public] = [
+        row
+        for row in result["scheduledPrompts"]
+        if row.get("id") == definition["id"]
+    ]
+    assert public["latestScheduledRun"]["status"] == "failed"
+    assert public["latestScheduledRun"]["errorClass"] == "stale_run_reconciled"
+    [persisted] = store.list_scheduled_prompt_runs(definition_id=str(definition["id"]))
+    assert persisted["run_id"] == original_run["run_id"]
+    assert persisted["status"] == "failed"
+    assert persisted["error_class"] == "stale_run_reconciled"
+    assert persisted["callback_payload_json"] is None
+
+
+@pytest.mark.parametrize(
+    ("worker_state", "provider_failure", "expected_failure"),
+    [
+        pytest.param(
+            "failed",
+            "provider_quota_exhausted",
+            "provider_quota_exhausted",
+            id="provider-quota",
+        ),
+        pytest.param(
+            "completed",
+            None,
+            "stale_run_reconciled",
+            id="missing-signed-callback",
+        ),
+        pytest.param(
+            "failed",
+            "worker_launch_failed",
+            "worker_launch_failed",
+            id="failed-worker-launch",
+        ),
+    ],
+)
+def test_health_context_correlation_failure_never_hides_successful_whoop_acquisition(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    worker_state: str,
+    provider_failure: str | None,
+    expected_failure: str,
+) -> None:
+    store, definition, original_run = _create_orphaned_nightly_run(
+        tmp_path,
+        monkeypatch,
+        template_id=scheduled_prompts.HEALTH_CONTEXT_TEMPLATE_ID,
+    )
+    monkeypatch.setattr(
+        scheduled_prompts,
+        "_glasshive_run_snapshot",
+        lambda _run: {
+            "run_id": "run_synthetic_nightly",
+            "worker_id": "wrk_synthetic_nightly",
+            "project_id": "prj_synthetic_nightly",
+            "state": worker_state,
+            "failure_class": provider_failure,
+            "ended_at": original_run["started_at"],
+        },
+    )
+    monkeypatch.setattr(
+        scheduled_prompts.periphery_snapshots,
+        "preview_snapshot",
+        lambda _user_id, *, include_health: {
+            "healthEvidence": {
+                "status": "complete",
+                "provider": "whoop",
+                "acquisitionSchedule": "06:00",
+            },
+            "includeHealth": include_health,
+        },
+    )
+
+    result = scheduled_prompts.list_scheduled_prompts(user_id="synthetic-nightly-owner")
+    [correlation] = [
+        row
+        for row in result["scheduledPrompts"]
+        if row.get("id") == definition["id"]
+    ]
+    acquisition = scheduled_prompts.periphery_snapshot_status(
+        str(definition["id"]),
+        user_id="synthetic-nightly-owner",
+    )["snapshot"]
+
+    assert correlation["templateId"] == scheduled_prompts.HEALTH_CONTEXT_TEMPLATE_ID
+    assert correlation["schedule"]["time"] == "06:15"
+    assert correlation["memoryWriteMode"] == "off"
+    assert correlation["latestScheduledRun"]["status"] == "failed"
+    assert correlation["latestScheduledRun"]["errorClass"] == expected_failure
+    assert acquisition["includeHealth"] is True
+    assert acquisition["healthEvidence"] == {
+        "status": "complete",
+        "provider": "whoop",
+        "acquisitionSchedule": "06:00",
+    }
+    parent = store.get_task("synthetic-nightly-owner", str(definition["task_id"]))
+    assert parent["last_status"] == "error"
+
+
+def test_health_context_failed_launch_without_worker_preserves_acquisition_and_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store, definition, original_run = _create_orphaned_nightly_run(
+        tmp_path,
+        monkeypatch,
+        template_id=scheduled_prompts.HEALTH_CONTEXT_TEMPLATE_ID,
+    )
+    claimed = store.update_scheduled_prompt_run_if_current(
+        str(original_run["run_id"]),
+        {
+            "status": "failed",
+            "disposition": "failed",
+            "error_class": "completion_error",
+            "glasshive_run_id": None,
+            "glasshive_worker_id": None,
+            "glasshive_project_id": None,
+            "completed_at": original_run["started_at"],
+        },
+        expected_status="running",
+        expected_error_class=None,
+    )
+    assert claimed["updated"] is True
+    store.update_task(
+        "synthetic-nightly-owner",
+        str(definition["task_id"]),
+        {
+            "last_status": "error",
+            "last_delivery_outcome": "failed",
+            "last_delivery_reason": "completion_error",
+        },
+    )
+
+    def never_lookup_provider(_run: dict[str, object]) -> None:
+        raise AssertionError("A failed launch has no authenticated GlassHive run to reconcile.")
+
+    monkeypatch.setattr(scheduled_prompts, "_glasshive_run_snapshot", never_lookup_provider)
+    monkeypatch.setattr(
+        scheduled_prompts.periphery_snapshots,
+        "preview_snapshot",
+        lambda _user_id, *, include_health: {
+            "healthEvidence": {"status": "complete", "provider": "whoop"},
+            "includeHealth": include_health,
+        },
+    )
+
+    result = scheduled_prompts.list_scheduled_prompts(
+        user_id="synthetic-nightly-owner",
+        read_only=True,
+    )
+    [correlation] = [
+        row
+        for row in result["scheduledPrompts"]
+        if row.get("id") == definition["id"]
+    ]
+    acquisition = scheduled_prompts.periphery_snapshot_status(
+        str(definition["id"]),
+        user_id="synthetic-nightly-owner",
+    )["snapshot"]
+
+    assert correlation["schedule"]["time"] == "06:15"
+    assert correlation["lastStatus"] == "error"
+    assert correlation["latestScheduledRun"]["status"] == "failed"
+    assert correlation["latestScheduledRun"]["errorClass"] == "completion_error"
+    assert acquisition["healthEvidence"]["status"] == "complete"
+
+
+def test_workbench_external_manual_run_lease_never_hides_failure_for_a_day(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    renewals: list[dict[str, object]] = []
+
+    class LeaseStore:
+        @staticmethod
+        def get_scheduled_prompt_run(_run_id: str) -> dict[str, object]:
+            return {
+                "status": "waiting_external",
+                "lease_owner": "workbench:run-synthetic",
+            }
+
+        @staticmethod
+        def renew_scheduled_prompt_run_lease(_run_id: str, **kwargs: object) -> bool:
+            renewals.append(kwargs)
+            return True
+
+    monkeypatch.setattr(scheduled_prompts, "DEFAULT_OCCURRENCE_LEASE_SECONDS", 900)
+    monkeypatch.setattr(scheduled_prompts, "scheduled_prompt_stale_seconds", lambda: 86_400)
+
+    scheduled_prompts._extend_async_manual_run_lease(LeaseStore(), "run-synthetic")
+
+    [renewal] = renewals
+    assert renewal["lease_seconds"] == 900
+
+
 def test_workbench_scheduled_prompt_can_use_viventium_executor(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1442,37 +3382,199 @@ def test_workbench_scheduled_prompt_can_use_viventium_executor(
             "active": False,
             "memoryWriteMode": "off",
             "executor": "viventium_agent",
-            "channel": "librechat",
+            "channel": ["librechat", "telegram"],
             "conversationPolicy": "same",
         },
     )
     assert created.status_code == 200
     body = created.json()
     assert body["executor"] == "viventium_agent"
-    assert body["channel"] == "librechat"
+    assert body["executionProfile"] == "Viventium Main (Agent Builder)"
+    assert body["executionMode"] == "inherits Agent Builder route and fallback at run time"
+    assert body["executionModel"] is None
+    assert body["reasoningEffort"] is None
+    assert body["channel"] == ["librechat", "telegram"]
     assert body["conversationPolicy"] == "same"
     task = scheduled_prompts.storage().get_task(body["userId"], body["taskId"])
     assert task["executor"] == "viventium_agent"
-    assert task["channel"] == "librechat"
+    assert task["channel"] == ["librechat", "telegram"]
     assert task["conversation_policy"] == "same"
 
     calls = []
 
     def fake_dispatch(task_for_dispatch):
-        calls.append(task_for_dispatch["id"])
-        return {"delivery": {"outcome": "sent", "reason": "manual_run", "generated_text": "private"}}
+        calls.append(dict(task_for_dispatch))
+        preclaimed = scheduled_prompts.storage().get_scheduled_prompt_run(
+            task_for_dispatch["_scheduled_prompt_run_id"]
+        )
+        assert preclaimed["lease_until"] is not None
+        assert preclaimed["lease_owner"].startswith("workbench:")
+        return {
+            "conversation_id": "conversation-1",
+            "delivery": {
+                "outcome": "sent",
+                "reason": "manual_run",
+                "generated_text": "private",
+                "channels": {
+                    "librechat": {"outcome": "sent", "reason": "canonical"},
+                    "telegram": {"outcome": "failed", "reason": "channel_dispatch_failed"},
+                },
+            },
+            "channel_errors": {
+                "telegram": {
+                    "outcome": "failed",
+                    "reason": "channel_dispatch_failed",
+                    "error_class": "TimeoutError",
+                }
+            },
+            "execution": {
+                "provider": "openai",
+                "model": "gpt-test-scheduled",
+                "reasoning_effort": "xhigh",
+            },
+        }
 
     monkeypatch.setattr(scheduled_prompts, "dispatch_task", fake_dispatch)
     manual = client.post(f"/api/scheduled-prompts/{body['id']}/manual-runs")
     assert manual.status_code == 200
     assert manual.json()["run"]["executor"] == "viventium_agent"
     assert manual.json()["run"]["status"] == "completed"
+    assert manual.json()["run"]["triggerKind"] == "manual"
     assert manual.json()["run"]["resultSummary"] == "sent: manual_run"
+    assert manual.json()["run"]["disposition"] == "partial"
+    assert manual.json()["run"]["effectiveModel"] == "gpt-test-scheduled"
+    assert manual.json()["run"]["effectiveReasoningEffort"] == "xhigh"
+    assert manual.json()["run"]["interactionRef"] == "conversation:conversation-1"
+    assert calls[0]["_scheduled_prompt_run_id"] == manual.json()["run"]["runId"]
+    assert calls[0]["_scheduled_prompt_occurrence_key"] == manual.json()["run"]["runId"]
+    assert calls[0]["_scheduled_prompt_trigger_kind"] == "manual"
+    assert calls[0]["_scheduled_prompt_trigger_source"] == "workbench_manual"
+    assert manual.json()["run"]["channelOutcomes"] == {
+        "librechat": {"outcome": "sent", "reason": "canonical"},
+        "telegram": {"outcome": "failed", "reason": "channel_dispatch_failed"},
+    }
+    completed = scheduled_prompts.storage().get_scheduled_prompt_run(manual.json()["run"]["runId"])
+    assert completed["lease_owner"] is None
+    assert completed["lease_until"] is None
+    persisted_task = scheduled_prompts.storage().get_task(body["userId"], body["taskId"])
+    assert persisted_task["last_conversation_id"] == "conversation-1"
+    assert persisted_task["conversation_id"] == "conversation-1"
     duplicate = client.post(f"/api/scheduled-prompts/{body['id']}/manual-runs")
     assert duplicate.status_code == 200
     assert duplicate.json()["coalesced"] is True
     assert duplicate.json()["run"]["executor"] == "viventium_agent"
-    assert calls == [body["taskId"]]
+    assert [call["id"] for call in calls] == [body["taskId"]]
+
+
+def test_workbench_viventium_manual_run_failure_records_failed_disposition(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pytest.importorskip("httpx")
+    pytest.importorskip("fastapi.testclient")
+    monkeypatch.setenv("SCHEDULING_DB_PATH", str(tmp_path / "schedules.db"))
+    monkeypatch.setenv("VIVENTIUM_PRIVATE_USER_DATA_DIR", str(tmp_path / "private"))
+    monkeypatch.setenv("VIVENTIUM_LOCAL_MACHINE_GLASSHIVE_ROOT", str(tmp_path / "glasshive"))
+    monkeypatch.setenv("VIVENTIUM_PROMPT_WORKBENCH_AUTH_DISABLED", "1")
+    monkeypatch.setattr(scheduled_prompts, "_query_mongo_json", lambda script: None)
+    from fastapi.testclient import TestClient
+    from prompt_workbench.app import app
+
+    client = TestClient(app)
+    created = client.post(
+        "/api/scheduled-prompts",
+        json={
+            "title": "Failing Viventium route prompt",
+            "promptText": "Exercise the terminal audit path",
+            "schedule": {"type": "daily", "time": "03:00", "timezone": "UTC"},
+            "active": False,
+            "memoryWriteMode": "off",
+            "executor": "viventium_agent",
+            "channel": ["librechat", "telegram"],
+            "conversationPolicy": "same",
+        },
+    )
+    assert created.status_code == 200
+    definition = scheduled_prompts.storage().get_scheduled_prompt_definition(created.json()["id"])
+    task = scheduled_prompts.storage().get_task(definition["user_id"], definition["task_id"])
+
+    def failing_dispatch(_task):
+        raise TimeoutError("synthetic timeout")
+
+    monkeypatch.setattr(scheduled_prompts, "dispatch_task", failing_dispatch)
+    with pytest.raises(TimeoutError, match="synthetic timeout"):
+        scheduled_prompts._manual_run_workbench_viventium_agent(
+            scheduled_prompts.storage(), definition, task
+        )
+
+    [run] = scheduled_prompts.storage().list_scheduled_prompt_runs(
+        definition_id=created.json()["id"], limit=1
+    )
+    assert run["status"] == "failed"
+    assert run["disposition"] == "failed"
+
+
+def test_user_level_viventium_manual_run_failure_records_failed_disposition(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SCHEDULING_DB_PATH", str(tmp_path / "schedules.db"))
+    store = scheduled_prompts.storage()
+    now = "2026-08-20T12:00:00Z"
+    store.create_task(
+        {
+            "id": "task-user-manual-failure",
+            "user_id": "user-a",
+            "agent_id": "agent-main",
+            "prompt": "Synthetic scheduled Main failure",
+            "schedule": {"type": "daily", "time": "12:00", "timezone": "UTC"},
+            "channel": "librechat",
+            "executor": "viventium_agent",
+            "conversation_policy": "new",
+            "conversation_id": None,
+            "last_conversation_id": None,
+            "active": 1,
+            "created_by": "agent:agent-main",
+            "created_source": "user",
+            "created_at": now,
+            "updated_at": now,
+            "updated_by": "agent:agent-main",
+            "updated_source": "user",
+            "last_run_at": None,
+            "next_run_at": "2026-08-21T12:00:00Z",
+            "last_status": None,
+            "last_error": None,
+            "last_delivery_outcome": None,
+            "last_delivery_reason": None,
+            "last_delivery_at": None,
+            "last_generated_text": None,
+            "last_delivery": None,
+            "metadata": None,
+        }
+    )
+
+    monkeypatch.setattr(
+        scheduled_prompts,
+        "dispatch_task",
+        lambda _task: (_ for _ in ()).throw(TimeoutError("synthetic timeout")),
+    )
+
+    with pytest.raises(TimeoutError, match="synthetic timeout"):
+        scheduled_prompts.manual_run(
+            "user_schedule:task-user-manual-failure",
+            user_id="user-a",
+            confirm_user_level_delivery=True,
+        )
+
+    [run] = store.list_scheduled_prompt_runs(
+        task_id="task-user-manual-failure",
+        trigger_kind="manual",
+        trigger_source="workbench_manual",
+        limit=1,
+    )
+    assert run["status"] == "failed"
+    assert run["disposition"] == "failed"
+    assert run["error_class"] == "TimeoutError"
 
 
 def test_scheduled_prompt_memory_proposal_review_and_governed_apply(
@@ -1976,6 +4078,319 @@ def test_periphery_list_uses_generated_time_not_file_mtime(
     ]
 
 
+def test_periphery_collection_hardens_worker_created_artifact_permissions(tmp_path: Path) -> None:
+    my_folder = tmp_path / "my-folder"
+    root = my_folder / "periphery"
+    artifact_dir = root / "health_context" / "2026" / "08"
+    artifact_dir.mkdir(parents=True)
+    sidecar = artifact_dir / "20260810T160238Z.health_context.json"
+    markdown = sidecar.with_suffix(".md")
+    markdown.write_text("Synthetic private health context", encoding="utf-8")
+    sidecar.write_text(
+        json.dumps(
+            {
+                "schemaVersion": 1,
+                "moduleId": "health_context",
+                "generatedAt": "2026-08-10T16:02:38Z",
+                "scheduledRunRef": {"runId": "synthetic"},
+                "sourceRefs": [],
+                "confidence": "medium",
+                "severity": "low",
+                "timeSensitivity": "same_day",
+                "ttl": "P1D",
+                "staleAfter": "2099-08-11T16:02:38Z",
+                "observations": [],
+                "risks": [],
+                "blindSpots": [],
+                "opportunityCosts": [],
+                "opportunities": [],
+                "whatWouldMakeThisWrong": [],
+                "whenToSurface": [],
+                "proposedActions": [],
+                "memoryProposalRefs": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    for directory in (root, root / "health_context", root / "health_context" / "2026", artifact_dir):
+        directory.chmod(0o755)
+    sidecar.chmod(0o644)
+    markdown.chmod(0o644)
+
+    _, artifacts, invalid, _ = scheduled_prompts._collect_periphery(
+        str(my_folder),
+        user_id="user-a",
+    )
+
+    assert len(artifacts) == 1
+    assert invalid == []
+    assert sidecar.stat().st_mode & 0o777 == 0o600
+    assert markdown.stat().st_mode & 0o777 == 0o600
+    assert all(
+        directory.stat().st_mode & 0o777 == 0o700
+        for directory in (root, root / "health_context", root / "health_context" / "2026", artifact_dir)
+    )
+
+
+def test_periphery_collection_rejects_symlinked_worker_artifacts(tmp_path: Path) -> None:
+    my_folder = tmp_path / "my-folder"
+    root = my_folder / "periphery"
+    artifact_dir = root / "health_context" / "2026" / "08"
+    artifact_dir.mkdir(parents=True)
+    external_sidecar = tmp_path / "external-health-context.json"
+    external_sidecar.write_text("{}", encoding="utf-8")
+    external_sidecar.chmod(0o644)
+    sidecar = artifact_dir / "20260810T160238Z.health_context.json"
+    sidecar.symlink_to(external_sidecar)
+
+    _, artifacts, invalid, _ = scheduled_prompts._collect_periphery(
+        str(my_folder),
+        user_id="user-a",
+    )
+
+    assert artifacts == []
+    assert len(invalid) == 1
+    assert invalid[0]["reason"] == "unsafe_symlink"
+    assert external_sidecar.stat().st_mode & 0o777 == 0o644
+
+
+def test_periphery_read_reuses_ingestion_guard_for_symlinked_markdown(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("VIVENTIUM_LOCAL_MACHINE_GLASSHIVE_ROOT", str(tmp_path / "glasshive"))
+    my_folder = Path(scheduled_prompts._glasshive_my_folder("user-a"))
+    root = my_folder / "periphery"
+    artifact_dir = root / "health_context" / "2026" / "08"
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    sidecar = artifact_dir / "20260810T160238Z.health_context.json"
+    sidecar.write_text(
+        json.dumps(
+            {
+                "schemaVersion": 1,
+                "moduleId": "health_context",
+                "generatedAt": "2026-08-10T16:02:38Z",
+                "scheduledRunRef": {"runId": "synthetic"},
+                "sourceRefs": [],
+                "confidence": "medium",
+                "severity": "low",
+                "timeSensitivity": "same_day",
+                "ttl": "P1D",
+                "staleAfter": "2099-08-11T16:02:38Z",
+                "observations": [],
+                "risks": [],
+                "blindSpots": [],
+                "opportunityCosts": [],
+                "opportunities": [],
+                "whatWouldMakeThisWrong": [],
+                "whenToSurface": [],
+                "proposedActions": [],
+                "memoryProposalRefs": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    external_markdown = tmp_path / "outside-private-content.md"
+    external_markdown.write_text("must stay outside Periphery", encoding="utf-8")
+    sidecar.with_suffix(".md").symlink_to(external_markdown)
+    artifact_id = scheduled_prompts._periphery_artifact_id(sidecar, root)
+
+    with pytest.raises(ValueError, match="unsafe_symlink"):
+        scheduled_prompts.read_user_periphery_artifact(
+            user_id="user-a",
+            artifact_id=artifact_id,
+        )
+
+
+def test_periphery_collection_rejects_hard_linked_artifacts(tmp_path: Path) -> None:
+    my_folder = tmp_path / "my-folder"
+    root = my_folder / "periphery"
+    artifact_dir = root / "health_context" / "2026" / "08"
+    artifact_dir.mkdir(parents=True)
+    external_sidecar = tmp_path / "external-health-context.json"
+    external_sidecar.write_text("{}", encoding="utf-8")
+    external_sidecar.chmod(0o644)
+    sidecar = artifact_dir / "20260810T160238Z.health_context.json"
+    os.link(external_sidecar, sidecar)
+
+    _, artifacts, invalid, _ = scheduled_prompts._collect_periphery(
+        str(my_folder),
+        user_id="user-a",
+    )
+
+    assert artifacts == []
+    assert len(invalid) == 1
+    assert invalid[0]["reason"] == "unsafe_hard_link"
+    assert external_sidecar.stat().st_mode & 0o777 == 0o644
+
+
+def test_periphery_index_write_does_not_follow_preplanted_temp_symlink(tmp_path: Path) -> None:
+    my_folder = tmp_path / "my-folder"
+    root = my_folder / "periphery"
+    root.mkdir(parents=True)
+    external_file = tmp_path / "outside-index-target.json"
+    external_file.write_text("outside stays unchanged", encoding="utf-8")
+    external_mode = external_file.stat().st_mode & 0o777
+    (root / "._index.json.tmp").symlink_to(external_file)
+
+    scheduled_prompts._collect_periphery(str(my_folder), user_id="user-a")
+
+    assert external_file.read_text(encoding="utf-8") == "outside stays unchanged"
+    assert external_file.stat().st_mode & 0o777 == external_mode
+    assert not (root / "_index.json").is_symlink()
+    assert (root / "_index.json").stat().st_mode & 0o777 == 0o600
+    assert root.stat().st_mode & 0o777 == 0o700
+
+
+def test_periphery_collection_rejects_a_symlinked_root_without_writing_through_it(
+    tmp_path: Path,
+) -> None:
+    my_folder = tmp_path / "my-folder"
+    my_folder.mkdir()
+    external_root = tmp_path / "outside-periphery"
+    external_root.mkdir()
+    root = my_folder / "periphery"
+    root.symlink_to(external_root, target_is_directory=True)
+
+    _, artifacts, invalid, index = scheduled_prompts._collect_periphery(
+        str(my_folder),
+        user_id="user-a",
+    )
+
+    assert artifacts == []
+    assert invalid[0]["reason"] == "unsafe_symlink"
+    assert index["status"] == "blocked"
+    assert index["blockedReasons"] == ["unsafe_symlink"]
+    assert not (external_root / "_index.json").exists()
+
+
+def test_periphery_discovery_does_not_enumerate_a_symlinked_module_directory(
+    tmp_path: Path,
+) -> None:
+    my_folder = tmp_path / "my-folder"
+    root = my_folder / "periphery"
+    root.mkdir(parents=True)
+    external_module = tmp_path / "outside-module"
+    external_artifact_dir = external_module / "2026" / "08"
+    external_artifact_dir.mkdir(parents=True)
+    external_sidecar = external_artifact_dir / "private-name.health_context.json"
+    external_sidecar.write_text("{}", encoding="utf-8")
+    external_mode = external_sidecar.stat().st_mode & 0o777
+    (root / "health_context").symlink_to(external_module, target_is_directory=True)
+
+    _, artifacts, invalid, index = scheduled_prompts._collect_periphery(
+        str(my_folder),
+        user_id="user-a",
+    )
+
+    assert artifacts == []
+    assert len(invalid) == 1
+    assert invalid[0]["reason"] == "unsafe_symlink"
+    assert "private-name" not in json.dumps(invalid)
+    assert index["status"] == "blocked"
+    assert external_sidecar.stat().st_mode & 0o777 == external_mode
+
+
+def test_glasshive_folder_precreates_owner_only_periphery_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("VIVENTIUM_LOCAL_MACHINE_GLASSHIVE_ROOT", str(tmp_path / "glasshive"))
+
+    my_folder = Path(scheduled_prompts._glasshive_my_folder("user-a"))
+
+    assert (my_folder / "periphery").is_dir()
+    assert all(
+        directory.stat().st_mode & 0o777 == 0o700
+        for directory in (my_folder.parent, my_folder, my_folder / "periphery")
+    )
+
+
+def test_glasshive_folder_enforces_permissions_only_at_the_private_boundary(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("VIVENTIUM_LOCAL_MACHINE_GLASSHIVE_ROOT", str(tmp_path / "glasshive"))
+    my_folder = Path(scheduled_prompts._glasshive_my_folder("user-a"))
+
+    def deny_private_permission_change(descriptor: int, mode: int) -> None:
+        raise PermissionError("synthetic unsupported private permissions")
+
+    monkeypatch.setattr(scheduled_prompts.os, "fchmod", deny_private_permission_change)
+
+    assert Path(scheduled_prompts._glasshive_my_folder("user-a")) == my_folder
+    with pytest.raises(RuntimeError, match="private_continuity_permissions_unavailable"):
+        scheduled_prompts._glasshive_my_folder("user-a", require_private=True)
+
+
+def test_periphery_index_reports_partial_privacy_rejection_as_degraded() -> None:
+    index = scheduled_prompts._periphery_index_payload(
+        [{"moduleId": "health_context", "qualityStatus": "passed"}],
+        [
+            {"reason": "unsafe_hard_link"},
+            {"reason": "invalid_json"},
+        ],
+    )
+
+    assert index["status"] == "degraded"
+    assert index["blockedArtifactCount"] == 1
+    assert index["blockedReasons"] == ["unsafe_hard_link"]
+
+
+def test_periphery_collection_hardens_artifacts_beyond_index_limit(tmp_path: Path) -> None:
+    my_folder = tmp_path / "my-folder"
+    root = my_folder / "periphery"
+    artifact_dir = root / "health_context" / "2026" / "08"
+    artifact_dir.mkdir(parents=True)
+    sidecars: list[Path] = []
+    for index in range(scheduled_prompts.PERIPHERY_ARTIFACT_LIMIT + 3):
+        sidecar = artifact_dir / f"20260810T16{index:04d}Z.health_context.json"
+        sidecar.write_text("{}", encoding="utf-8")
+        sidecar.chmod(0o644)
+        sidecars.append(sidecar)
+
+    scheduled_prompts._collect_periphery(str(my_folder), user_id="user-a")
+
+    assert all(sidecar.stat().st_mode & 0o777 == 0o600 for sidecar in sidecars)
+
+
+def test_periphery_collection_fails_closed_when_private_permissions_cannot_be_applied(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    my_folder = tmp_path / "my-folder"
+    root = my_folder / "periphery"
+    artifact_dir = root / "health_context" / "2026" / "08"
+    artifact_dir.mkdir(parents=True)
+    sidecar = artifact_dir / "20260810T160238Z.health_context.json"
+    sidecar.write_text("{}", encoding="utf-8")
+    sidecar.chmod(0o644)
+    original_fchmod = os.fchmod
+    failed_once = False
+
+    def fail_for_first_private_file(descriptor: int, mode: int) -> None:
+        nonlocal failed_once
+        if mode == 0o600 and not failed_once:
+            failed_once = True
+            raise PermissionError("synthetic private-permission failure")
+        original_fchmod(descriptor, mode)
+
+    monkeypatch.setattr(scheduled_prompts.os, "fchmod", fail_for_first_private_file)
+
+    _, artifacts, invalid, index = scheduled_prompts._collect_periphery(
+        str(my_folder),
+        user_id="user-a",
+    )
+
+    assert artifacts == []
+    assert len(invalid) == 1
+    assert invalid[0]["reason"] == "private_permissions_unavailable"
+    assert index["status"] == "blocked"
+    assert index["blockedReasons"] == ["private_permissions_unavailable"]
+    assert sidecar.stat().st_mode & 0o777 == 0o644
+    assert root.stat().st_mode & 0o777 == 0o700
+
+
 def test_scheduled_prompt_periphery_artifacts_reject_invalid_and_foreign_files(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -2262,6 +4677,8 @@ def test_user_level_scheduled_tasks_show_in_workbench_and_can_be_managed(
             "title": "Renamed user schedule",
             "active": True,
             "schedule": {"type": "daily", "time": "06:15", "timezone": "UTC"},
+            "channel": ["librechat", "telegram"],
+            "conversationPolicy": "same",
         },
     )
     assert patched.status_code == 200
@@ -2270,13 +4687,23 @@ def test_user_level_scheduled_tasks_show_in_workbench_and_can_be_managed(
     task = scheduled_prompts.storage().get_task("user-a", "task-user-level")
     assert task["active"] == 1
     assert task["schedule"]["time"] == "06:15"
+    assert task["channel"] == ["librechat", "telegram"]
+    assert task["conversation_policy"] == "same"
     assert task["metadata"]["workbench_title"] == "Renamed user schedule"
 
-    monkeypatch.setattr(
-        scheduled_prompts,
-        "dispatch_task",
-        lambda task: {"delivery": {"outcome": "sent", "reason": "manual_run", "generated_text": "private result"}},
-    )
+    dispatched_tasks = []
+
+    def fake_user_schedule_dispatch(task_for_dispatch):
+        dispatched_tasks.append(dict(task_for_dispatch))
+        return {
+            "delivery": {
+                "outcome": "sent",
+                "reason": "manual_run",
+                "generated_text": "private result",
+            }
+        }
+
+    monkeypatch.setattr(scheduled_prompts, "dispatch_task", fake_user_schedule_dispatch)
     manual_without_confirmation = client.post(f"/api/scheduled-prompts/{user_schedule['id']}/manual-runs")
     assert manual_without_confirmation.status_code == 400
     assert "explicit delivery confirmation" in manual_without_confirmation.json()["detail"]
@@ -2286,11 +4713,27 @@ def test_user_level_scheduled_tasks_show_in_workbench_and_can_be_managed(
         json={"confirmUserLevelDelivery": True},
     )
     assert manual.status_code == 200
-    assert manual.json()["run"]["status"] == "success"
+    assert manual.json()["run"]["status"] == "completed"
+    assert manual.json()["run"]["triggerKind"] == "manual"
+    assert manual.json()["run"]["triggerSource"] == "workbench_manual"
+    assert manual.json()["run"]["disposition"] == "delivered"
     assert manual.json()["run"]["resultSummary"] == "sent: manual_run"
+    assert dispatched_tasks[0]["_scheduled_prompt_run_id"] == manual.json()["run"]["runId"]
+    assert dispatched_tasks[0]["_scheduled_prompt_occurrence_key"] == manual.json()["run"]["runId"]
+    assert dispatched_tasks[0]["_scheduled_prompt_trigger_kind"] == "manual"
+    assert dispatched_tasks[0]["_scheduled_prompt_trigger_source"] == "workbench_manual"
+    [persisted_manual_run] = scheduled_prompts.storage().list_scheduled_prompt_runs(
+        task_id="task-user-level",
+        trigger_kind="manual",
+        trigger_source="workbench_manual",
+        limit=1,
+    )
+    assert persisted_manual_run["status"] == "completed"
+    assert persisted_manual_run["disposition"] == "delivered"
     runs = client.get(f"/api/scheduled-prompts/{user_schedule['id']}/runs")
     assert runs.status_code == 200
-    assert runs.json()["runs"][0]["status"] == "success"
+    assert runs.json()["runs"][0]["status"] == "completed"
+    assert runs.json()["runs"][0]["triggerKind"] == "manual"
 
     scheduled_prompts.storage().update_task(
         "user-a",
@@ -2304,9 +4747,8 @@ def test_user_level_scheduled_tasks_show_in_workbench_and_can_be_managed(
             "updated_at": now,
         },
     )
-    failed_runs = client.get(f"/api/scheduled-prompts/{user_schedule['id']}/runs")
-    assert failed_runs.status_code == 200
-    failed_run = failed_runs.json()["runs"][0]
+    failed_task = scheduled_prompts.storage().get_task("user-a", "task-user-level")
+    failed_run = scheduled_prompts._public_task_run(failed_task)
     assert failed_run["status"] == "failed"
     assert "/Users/" not in failed_run["errorClass"]
     assert "mongodb://" not in failed_run["errorClass"]
@@ -2315,6 +4757,219 @@ def test_user_level_scheduled_tasks_show_in_workbench_and_can_be_managed(
     deleted = client.delete(f"/api/scheduled-prompts/{user_schedule['id']}")
     assert deleted.status_code == 200
     assert scheduled_prompts.storage().get_task("user-a", "task-user-level") is None
+
+
+def test_user_level_run_now_ignores_stale_task_running_projection(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SCHEDULING_DB_PATH", str(tmp_path / "schedules.db"))
+    monkeypatch.setenv("VIVENTIUM_PRIVATE_USER_DATA_DIR", str(tmp_path / "private"))
+    monkeypatch.setenv("VIVENTIUM_LOCAL_MACHINE_GLASSHIVE_ROOT", str(tmp_path / "glasshive"))
+    now = "2020-01-01T00:00:00Z"
+    store = scheduled_prompts.storage()
+    store.create_task(
+        {
+            "id": "task-stale-running",
+            "user_id": "user-a",
+            "agent_id": "agent-1",
+            "prompt": "Synthetic continuity check",
+            "schedule": {"type": "daily", "time": "06:15", "timezone": "UTC"},
+            "channel": "telegram",
+            "executor": "viventium_agent",
+            "conversation_policy": "same",
+            "conversation_id": None,
+            "last_conversation_id": None,
+            "active": 1,
+            "created_by": "agent:agent-1",
+            "created_source": "user",
+            "created_at": now,
+            "updated_at": now,
+            "updated_by": "agent:agent-1",
+            "updated_source": "user",
+            "last_run_at": now,
+            "next_run_at": "2026-08-21T10:15:00Z",
+            "last_status": "running",
+            "last_error": None,
+            "last_delivery_outcome": None,
+            "last_delivery_reason": None,
+            "last_delivery_at": None,
+            "last_generated_text": None,
+            "last_delivery": None,
+            "metadata": None,
+        }
+    )
+    dispatched = []
+
+    def fake_dispatch(task):
+        dispatched.append(task)
+        return {
+            "delivery": {
+                "outcome": "suppressed",
+                "reason": "nta",
+                "generated_text": None,
+            }
+        }
+
+    monkeypatch.setattr(scheduled_prompts, "dispatch_task", fake_dispatch)
+
+    result = scheduled_prompts._manual_run_locked(
+        "user_schedule:task-stale-running",
+        user_id="user-a",
+        confirm_user_level_delivery=True,
+    )
+
+    assert result.get("coalesced") is not True
+    assert len(dispatched) == 1
+    assert result["run"]["status"] == "completed"
+
+
+def test_manual_run_coalescing_names_the_actual_scheduled_owner() -> None:
+    response = scheduled_prompts._coalesced_manual_run_response(
+        {
+            "run_id": "scheduled-run",
+            "status": "running",
+            "trigger_kind": "scheduled",
+        }
+    )
+
+    assert response["dispatch"]["delivery"]["reason"] == (
+        "scheduled_occurrence_already_inflight"
+    )
+
+
+def test_user_level_manual_run_preserves_declared_executor_and_one_receipt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SCHEDULING_DB_PATH", str(tmp_path / "schedules.db"))
+    store = scheduled_prompts.storage()
+    now = "2026-08-20T12:00:00Z"
+    store.create_task(
+        {
+            "id": "task-user-worker",
+            "user_id": "user-a",
+            "agent_id": "agent-main",
+            "prompt": "Synthetic isolated work",
+            "schedule": {"type": "daily", "time": "12:00", "timezone": "UTC"},
+            "channel": "workbench",
+            "executor": "glasshive_host",
+            "conversation_policy": "new",
+            "conversation_id": None,
+            "last_conversation_id": None,
+            "active": 1,
+            "created_by": "agent:agent-main",
+            "created_source": "user",
+            "created_at": now,
+            "updated_at": now,
+            "updated_by": "agent:agent-main",
+            "updated_source": "user",
+            "last_run_at": None,
+            "next_run_at": "2026-08-21T12:00:00Z",
+            "last_status": None,
+            "last_error": None,
+            "last_delivery_outcome": None,
+            "last_delivery_reason": None,
+            "last_delivery_at": None,
+            "last_generated_text": None,
+            "last_delivery": None,
+            "metadata": {"workbench_scheduled_prompt": {"executor": "glasshive_host"}},
+        }
+    )
+    dispatched = []
+
+    def fake_dispatch(task_for_dispatch):
+        dispatched.append(dict(task_for_dispatch))
+        preclaimed = store.get_scheduled_prompt_run(task_for_dispatch["_scheduled_prompt_run_id"])
+        assert preclaimed["lease_until"] is not None
+        assert preclaimed["lease_owner"].startswith("workbench:")
+        return {
+            "delivery": {"outcome": "queued", "reason": "worker_queued"},
+            "execution": {"executor": "glasshive_host"},
+        }
+
+    monkeypatch.setattr(scheduled_prompts, "dispatch_task", fake_dispatch)
+
+    result = scheduled_prompts.manual_run(
+        "user_schedule:task-user-worker",
+        user_id="user-a",
+        confirm_user_level_delivery=True,
+    )
+
+    assert result["run"]["executor"] == "glasshive_host"
+    assert result["run"]["status"] == "queued"
+    assert result["run"]["triggerKind"] == "manual"
+    assert dispatched[0]["executor"] == "glasshive_host"
+    assert dispatched[0]["_scheduled_prompt_run_id"] == result["run"]["runId"]
+    assert dispatched[0]["_scheduled_prompt_occurrence_key"] == result["run"]["runId"]
+    runs = store.list_scheduled_prompt_runs(task_id="task-user-worker")
+    assert len(runs) == 1
+    assert runs[0]["executor"] == "glasshive_host"
+
+
+def test_user_level_manual_run_renews_lease_during_long_dispatch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SCHEDULING_DB_PATH", str(tmp_path / "schedules.db"))
+    monkeypatch.setattr(scheduled_prompts, "DEFAULT_OCCURRENCE_LEASE_SECONDS", 1)
+    store = scheduled_prompts.storage()
+    now = "2026-08-20T12:00:00Z"
+    store.create_task(
+        {
+            "id": "task-long-manual",
+            "user_id": "user-a",
+            "agent_id": "agent-main",
+            "prompt": "Synthetic long Main run",
+            "schedule": {"type": "daily", "time": "12:00", "timezone": "UTC"},
+            "channel": "telegram",
+            "executor": "viventium_agent",
+            "conversation_policy": "same",
+            "conversation_id": None,
+            "last_conversation_id": None,
+            "active": 1,
+            "created_by": "agent:agent-main",
+            "created_source": "user",
+            "created_at": now,
+            "updated_at": now,
+            "updated_by": "agent:agent-main",
+            "updated_source": "user",
+            "last_run_at": None,
+            "next_run_at": "2026-08-21T12:00:00Z",
+            "last_status": None,
+            "last_error": None,
+            "metadata": {},
+        }
+    )
+    overlapping_claims: list[dict[str, Any]] = []
+
+    def fake_dispatch(_task_for_dispatch: dict[str, Any]) -> dict[str, Any]:
+        time.sleep(1.3)
+        claim_now = scheduled_prompts._utc_now()
+        overlapping_claims.append(
+            store.claim_scheduled_prompt_occurrence(
+                task_id="task-long-manual",
+                user_id="user-a",
+                executor="viventium_agent",
+                due_at=claim_now,
+                lease_owner="scheduler:test",
+                now=claim_now,
+                lease_seconds=1,
+            )
+        )
+        return {"delivery": {"outcome": "sent", "reason": "manual_run"}}
+
+    monkeypatch.setattr(scheduled_prompts, "dispatch_task", fake_dispatch)
+
+    result = scheduled_prompts.manual_run(
+        "user_schedule:task-long-manual",
+        user_id="user-a",
+        confirm_user_level_delivery=True,
+    )
+
+    assert result["run"]["status"] == "completed"
+    assert overlapping_claims[0]["claimed"] is False
+    assert overlapping_claims[0]["reason"] == "task_has_active_occurrence"
 
 
 def test_workbench_startup_seeds_builtin_nightly_template(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -2357,6 +5012,11 @@ def test_workbench_startup_seeds_active_glasshive_nightly_from_runtime_profile(
     monkeypatch.setenv("VIVENTIUM_PROMPT_WORKBENCH_SEED_NIGHTLY_ACTIVE", "true")
     monkeypatch.setenv("VIVENTIUM_PROMPT_WORKBENCH_SEED_NIGHTLY_EXECUTOR", "glasshive_host")
     monkeypatch.setenv("GLASSHIVE_DEFAULT_WORKER_PROFILE", "claude-code")
+    monkeypatch.setenv("GLASSHIVE_DEFAULT_FALLBACK_WORKER_PROFILE", "codex-cli")
+    monkeypatch.setenv("WPR_MODEL_CLAUDE_CODE", "claude-primary-test")
+    monkeypatch.setenv("WPR_CLAUDE_CODE_EFFORT", "max")
+    monkeypatch.setenv("WPR_MODEL_HOST_CODEX_CLI", "gpt-fallback-test")
+    monkeypatch.setenv("WPR_CODEX_CLI_REASONING_EFFORT", "xhigh")
     monkeypatch.setattr(scheduled_prompts, "_query_mongo_json", lambda script: None)
     from fastapi.testclient import TestClient
     from prompt_workbench.app import app
@@ -2371,6 +5031,20 @@ def test_workbench_startup_seeds_active_glasshive_nightly_from_runtime_profile(
     task = scheduled_prompts.storage().get_task("startup-admin", seeded[0]["task_id"])
     assert task["executor"] == "glasshive_host"
     assert task["metadata"]["workbench_scheduled_prompt"]["execution_profile"] == "claude-code"
+    assert task["metadata"]["workbench_scheduled_prompt"]["execution_model"] == "claude-primary-test"
+    assert task["metadata"]["workbench_scheduled_prompt"]["reasoning_effort"] == "max"
+    assert (
+        task["metadata"]["workbench_scheduled_prompt"]["fallback_worker_profile"]
+        == "codex-cli"
+    )
+    assert (
+        task["metadata"]["workbench_scheduled_prompt"]["fallback_worker_model"]
+        == "gpt-fallback-test"
+    )
+    assert (
+        task["metadata"]["workbench_scheduled_prompt"]["fallback_reasoning_effort"]
+        == "xhigh"
+    )
     assert task["metadata"]["misfire_policy"] == {"mode": "catch_up", "max_late_s": 12 * 60 * 60}
 
 
@@ -2800,39 +5474,6 @@ def test_sync_status_does_not_return_local_absolute_paths(tmp_path: Path, monkey
     assert status["liveArtifactName"] == "viventium-agents.yaml"
 
 
-def test_prompt_workbench_redacts_custom_private_roots_and_ledger_paths(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    private_root = tmp_path / "custom-private-root"
-    private_artifact = private_root / "runs" / "result.json"
-    command = ["node", "runner.js", f"--output={private_artifact}"]
-
-    assert str(private_root) not in json.dumps(
-        evals._safe_command(command, private_paths=(private_root,))
-    )
-    assert str(private_root) not in evals._sanitize_output(
-        f"wrote {private_artifact}", private_paths=(private_root,)
-    )
-    assert str(private_root) not in json.dumps(
-        sync_engine._safe_command(command, private_paths=(private_root,))
-    )
-    assert str(private_root) not in sync_engine._sanitize_output(
-        f"wrote {private_artifact}", private_paths=(private_root,)
-    )
-
-    monkeypatch.setattr(sync_engine, "get_status", lambda private_root=None: {"agents": []})
-    result = sync_engine.refresh_ledger_after_reconcile(private_root=private_root)
-
-    assert result == {
-        "status": "updated",
-        "recordCount": 0,
-        "ledgerAvailable": True,
-        "ledgerName": "sync-ledger.json",
-    }
-    assert str(private_root) not in json.dumps(result)
-    assert (private_root / "sync-ledger.json").is_file()
-
-
 def test_pull_live_uses_pull_action(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[list[str]] = []
 
@@ -2927,6 +5568,221 @@ def test_live_eval_blocks_any_pending_prompt_draft(tmp_path: Path, monkeypatch: 
         evals.run_exact_model_eval(max_cases=1, live=True, prompt_id="main.voice_style")
 
 
+def write_verified_synthetic_exact_model_artifact(
+    command: list[str],
+    *,
+    case_ids: list[str],
+    provider: str = "synthetic-provider",
+    model: str = "synthetic-model",
+    agent_id: str = "synthetic-main-agent",
+) -> None:
+    output_directory = Path(
+        next(value.removeprefix("--output-dir=") for value in command if value.startswith("--output-dir="))
+    )
+    agent_hash = evals._sha(agent_id)
+    judge_hash = evals._sha("synthetic-judge-model")
+    payload = {
+        "summary": {"agentIdHash": agent_hash, "judgeModelHash": judge_hash, "resultCount": len(case_ids)},
+        "args": {"agentIdHash": agent_hash, "judgeModelHash": judge_hash},
+        "liveResults": [
+            {
+                "caseId": case_id,
+                "status": "completed",
+                "requestIdentityHash": evals._sha(f"synthetic-request:{case_id}"),
+                "observedRequestIdentityHash": evals._sha(f"synthetic-request:{case_id}"),
+                "semanticJudge": {
+                    "status": "judged",
+                    "pass": True,
+                    "attemptCount": 1,
+                    "rawHash": evals._sha(f"synthetic-judge-response:{case_id}"),
+                },
+                "promptFrameEvidenceForJudge": {
+                    "prompt_frames": [
+                        {
+                            "source": "runtime_route_log",
+                            "prompt_family": "main_runtime",
+                            "requested_provider_hash": evals._sha(provider),
+                            "requested_model_hash": evals._sha(model),
+                            "requested_effort": "medium",
+                            "provider_hash": evals._sha(provider),
+                            "model_hash": evals._sha(model),
+                            "effective_effort": "medium",
+                            "fallback_used": False,
+                            "fallback_reason": "none",
+                            "agent_id_hash": agent_hash,
+                            "request_identity_hash": evals._sha(
+                                f"synthetic-request:{case_id}"
+                            ),
+                        }
+                    ]
+                },
+            }
+            for case_id in case_ids
+        ],
+    }
+    (output_directory / "exact-model-eval.json").write_text(json.dumps(payload), encoding="utf-8")
+
+
+def write_verified_synthetic_native_surface_artifact(
+    command: list[str],
+    *,
+    case_ids: list[str],
+    surface: str = "telegram",
+    completion_surface: str | None = None,
+    completion_expected: bool = True,
+    provider: str = "synthetic-provider",
+    model: str = "synthetic-model",
+    agent_id: str = "synthetic-main-agent",
+) -> None:
+    output_directory = Path(
+        next(value.removeprefix("--output-dir=") for value in command if value.startswith("--output-dir="))
+    )
+    agent_hash = evals._sha(agent_id)
+    observed_completion_surface = completion_surface or {
+        "scheduler": "workbench",
+        "wing": "voice",
+        "listen_only": "voice",
+    }.get(surface, surface)
+    cases = []
+    for case_id in case_ids:
+        request_hash = evals._sha(f"synthetic-request:{case_id}")
+        completion_frames = (
+            [
+                {
+                    "event": "viventium.prompt_frame",
+                    "prompt_family": "main_run_create",
+                    "surface": observed_completion_surface,
+                    "provider": provider,
+                    "model": model,
+                    "requested_provider": provider,
+                    "requested_model": model,
+                    "requested_effort": "medium",
+                    "effective_provider": provider,
+                    "effective_model": model,
+                    "effective_effort": "medium",
+                    "fallback_used": False,
+                    "fallback_reason": "none",
+                    "agent_id_hash": agent_hash,
+                    "request_identity_hash": request_hash,
+                }
+            ]
+            if completion_expected
+            else []
+        )
+        cases.append(
+            {
+                "caseId": case_id,
+                "surface": surface,
+                "requestedSurface": surface,
+                "requestedCompletionSurface": observed_completion_surface,
+                "observedCompletionSurface": (
+                    observed_completion_surface if completion_expected else "none"
+                ),
+                "completionExpected": completion_expected,
+                "completionSurfaceVerified": True,
+                "completionFrameCount": len(completion_frames),
+                "requestIdentityHash": request_hash,
+                "actualCompletionAgentIdHash": (
+                    agent_hash if completion_expected else "not_applicable"
+                ),
+                "completionProviderHashes": (
+                    [evals._sha(provider)] if completion_expected else []
+                ),
+                "completionModelHashes": (
+                    [evals._sha(model)] if completion_expected else []
+                ),
+                "requestedProviderHashes": (
+                    [evals._sha(provider)] if completion_expected else []
+                ),
+                "requestedModelHashes": (
+                    [evals._sha(model)] if completion_expected else []
+                ),
+                "requestedEfforts": ["medium"] if completion_expected else [],
+                "effectiveEfforts": ["medium"] if completion_expected else [],
+                "fallbackUsed": False,
+                "fallbackReasons": ["none"] if completion_expected else [],
+                "status": "completed",
+                "semanticJudged": True,
+                "semanticPass": True,
+                "judge": {"verdict": "pass", "responseHash": evals._sha(f"judge:{case_id}")},
+                "private": {"completionFrames": completion_frames},
+            }
+        )
+    payload = {
+        "args": {
+            "agentIdHash": agent_hash,
+            "surface": surface,
+            "semanticRequired": True,
+        },
+        "selection": {
+            "requestedSurface": surface,
+            "selectedCaseIds": case_ids,
+            "selectedCaseCount": len(case_ids),
+        },
+        "browserProbe": {"ok": True},
+        "cleanup": {"ok": True, "status": "complete"},
+        "cases": cases,
+        "summary": {
+            "status": "completed_with_semantic_native_surface_evidence",
+            "browserOk": True,
+            "cleanupOk": True,
+            "selectedCoverageOk": True,
+            "completionEvidenceOk": True,
+            "semanticRequired": True,
+            "selectedCaseCount": len(case_ids),
+            "resultCount": len(case_ids),
+            "completedCount": len(case_ids),
+            "failedCount": 0,
+            "semanticJudgedCount": len(case_ids),
+            "semanticPassedCount": len(case_ids),
+            "semanticFailedCount": 0,
+            "routes": ["telegram_gateway"],
+            "surfaces": [surface],
+            "frameSurfaces": [observed_completion_surface] if completion_expected else [],
+        },
+    }
+    (output_directory / "native-surface-playwright-qa.json").write_text(
+        json.dumps(payload), encoding="utf-8"
+    )
+
+
+def test_exact_model_execution_route_rejects_unrelated_request_frames(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output_dir = tmp_path / "exact"
+    output_dir.mkdir()
+    command = [f"--output-dir={output_dir}"]
+    write_verified_synthetic_exact_model_artifact(command, case_ids=["case_one"])
+    monkeypatch.setattr(
+        evals,
+        "_configured_execution_route",
+        lambda _target: {
+            "provider": "synthetic-provider",
+            "model": "synthetic-model",
+            "effort": "medium",
+            "fallbacks": [],
+        },
+    )
+
+    def evaluate() -> dict[str, object]:
+        return evals._exact_model_execution_route(
+            output_dir,
+            execution_target={"agentId": "synthetic-main-agent"},
+            selected_case_ids=["case_one"],
+            semantic_judge_required=True,
+        )
+
+    assert evaluate()["status"] == "verified"
+    artifact_path = output_dir / "exact-model-eval.json"
+    payload = json.loads(artifact_path.read_text(encoding="utf-8"))
+    unrelated = dict(payload["liveResults"][0]["promptFrameEvidenceForJudge"]["prompt_frames"][0])
+    unrelated["request_identity_hash"] = evals._sha("unrelated-request")
+    payload["liveResults"][0]["promptFrameEvidenceForJudge"]["prompt_frames"] = [unrelated]
+    artifact_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    assert evaluate()["reason"] == "execution_request_identity_mismatch"
+
+
 def test_live_eval_runner_uses_prompt_bank_equals_flag(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     eval_root = tmp_path / "evals"
     eval_root.mkdir(parents=True)
@@ -2939,8 +5795,8 @@ def test_live_eval_runner_uses_prompt_bank_equals_flag(tmp_path: Path, monkeypat
                         "id": "voice_style",
                         "promptRefs": ["main.voice_style"],
                         "cases": [
-                            {"id": "case_one", "surface": "voice"},
-                            {"id": "case_two", "surface": "voice"},
+                            {"id": "case_one", "surface": "web"},
+                            {"id": "case_two", "surface": "web"},
                         ],
                     }
                 ]
@@ -2963,9 +5819,20 @@ def test_live_eval_runner_uses_prompt_bank_equals_flag(tmp_path: Path, monkeypat
         "load_eval_bank",
         lambda: json.loads(prompt_bank.read_text(encoding="utf-8")),
     )
+    monkeypatch.setattr(
+        evals,
+        "_configured_execution_route",
+        lambda _target: {
+            "provider": "synthetic-provider",
+            "model": "synthetic-model",
+            "effort": "medium",
+            "fallbacks": [],
+        },
+    )
 
     def fake_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
         captured.append((cmd, int(kwargs["timeout"]), kwargs.get("env")))
+        write_verified_synthetic_exact_model_artifact(cmd, case_ids=["case_two", "case_one"])
         return subprocess.CompletedProcess(cmd, 0, stdout="ok", stderr="")
 
     monkeypatch.setattr(evals.subprocess, "run", fake_run)
@@ -2994,6 +5861,253 @@ def test_live_eval_timeout_scales_for_multi_case_exact_model_runs() -> None:
     assert evals._live_eval_timeout_seconds(10, evals.EXACT_MODEL_EVAL_SCRIPT) == 4200
     assert evals._live_eval_timeout_seconds(30, evals.EXACT_MODEL_EVAL_SCRIPT) == 12600
     assert evals._live_eval_timeout_seconds(100, evals.EXACT_MODEL_EVAL_SCRIPT) == 14400
+
+
+def test_non_web_eval_cases_use_the_trusted_native_surface_runner(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    exact_runner = tmp_path / "run-exact-model-evals.cjs"
+    native_runner = tmp_path / "run-native-surface-playwright-qa.cjs"
+    exact_runner.write_text("// exact\n", encoding="utf-8")
+    native_runner.write_text("// native\n", encoding="utf-8")
+    bank = {
+        "families": [
+            {
+                "id": "telegram_smart_delivery",
+                "cases": [
+                    {
+                        "id": "telegram_copy_ready_email_skips_optional_audio",
+                        "surface": "telegram",
+                    }
+                ],
+            }
+        ]
+    }
+    selected = [
+        {
+            "family": bank["families"][0],
+            "case": bank["families"][0]["cases"][0],
+        }
+    ]
+
+    monkeypatch.setattr(evals, "EXACT_MODEL_EVAL_SCRIPT", exact_runner)
+    monkeypatch.setattr(evals, "NATIVE_SURFACE_EVAL_SCRIPT", native_runner)
+
+    assert (
+        evals._eval_runner(
+            bank=bank,
+            family="telegram_smart_delivery",
+            prompt_id=None,
+            selected=selected,
+        )
+        == native_runner
+    )
+
+
+@pytest.mark.parametrize("surface", ["telegram", "voice", "wing", "listen_only", "scheduler"])
+def test_every_trusted_non_web_surface_uses_the_native_surface_runner(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, surface: str
+) -> None:
+    exact_runner = tmp_path / "run-exact-model-evals.cjs"
+    native_runner = tmp_path / "run-native-surface-playwright-qa.cjs"
+    exact_runner.write_text("// exact\n", encoding="utf-8")
+    native_runner.write_text("// native\n", encoding="utf-8")
+    family = {"id": f"{surface}_family", "cases": [{"id": f"{surface}_case", "surface": surface}]}
+    monkeypatch.setattr(evals, "EXACT_MODEL_EVAL_SCRIPT", exact_runner)
+    monkeypatch.setattr(evals, "NATIVE_SURFACE_EVAL_SCRIPT", native_runner)
+
+    assert (
+        evals._eval_runner(
+            bank={"families": [family]},
+            family=family["id"],
+            prompt_id=None,
+            selected=[{"family": family, "case": family["cases"][0]}],
+        )
+        == native_runner
+    )
+
+
+@pytest.mark.parametrize(
+    ("surface", "completion_surface", "completion_expected"),
+    [
+        ("voice", "voice", True),
+        ("wing", "voice", True),
+        ("scheduler", "workbench", True),
+        ("listen_only", "voice", False),
+    ],
+)
+def test_native_surface_route_verifies_trusted_completion_surface_mapping(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    surface: str,
+    completion_surface: str,
+    completion_expected: bool,
+) -> None:
+    output_dir = tmp_path / surface
+    output_dir.mkdir()
+    command = [f"--output-dir={output_dir}"]
+    write_verified_synthetic_native_surface_artifact(
+        command,
+        case_ids=[f"{surface}_case"],
+        surface=surface,
+        completion_surface=completion_surface,
+        completion_expected=completion_expected,
+    )
+    monkeypatch.setattr(
+        evals,
+        "_configured_execution_route",
+        lambda _target: {
+            "provider": "synthetic-provider",
+            "model": "synthetic-model",
+            "effort": "medium",
+            "fallbacks": [],
+        },
+    )
+    monkeypatch.setattr(
+        evals,
+        "_configured_execution_agent_hash",
+        lambda _target: evals._sha("synthetic-main-agent"),
+    )
+
+    result = evals._native_surface_execution_route(
+        output_dir,
+        execution_target=None,
+        selected_case_ids=[f"{surface}_case"],
+        requested_surface=surface,
+        semantic_judge_required=True,
+    )
+
+    assert result["status"] == "verified"
+    assert result["caseEvidence"][0]["surface"] == surface
+    assert result["caseEvidence"][0]["completionSurface"] == completion_surface
+    assert result["caseEvidence"][0]["completionExpected"] is completion_expected
+
+
+def test_live_native_surface_eval_requires_request_bound_canonical_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bank = {
+        "families": [
+            {
+                "id": "telegram_smart_delivery",
+                "semanticJudge": True,
+                "promptRefs": ["surface.telegram_text"],
+                "cases": [
+                    {"id": "telegram_case", "surface": "telegram", "rubric": ["use text"]}
+                ],
+            }
+        ]
+    }
+    prompt_bank = tmp_path / "prompt-bank.json"
+    prompt_bank.write_text(json.dumps(bank), encoding="utf-8")
+    native_runner = tmp_path / "run-native-surface-playwright-qa.cjs"
+    native_runner.write_text("// synthetic native runner\n", encoding="utf-8")
+    private_root = tmp_path / "private"
+    captured: list[list[str]] = []
+
+    monkeypatch.setattr(drafts, "PROMPT_BANK_PATH", prompt_bank)
+    monkeypatch.setattr(drafts, "workbench_private_root", lambda: private_root)
+    monkeypatch.setattr(evals, "PROMPT_BANK_PATH", prompt_bank)
+    monkeypatch.setattr(evals, "NATIVE_SURFACE_EVAL_SCRIPT", native_runner)
+    monkeypatch.setattr(evals, "workbench_private_root", lambda: private_root)
+    monkeypatch.setattr(evals, "load_eval_bank", lambda: bank)
+    monkeypatch.setattr(
+        evals,
+        "_configured_execution_route",
+        lambda _target: {
+            "provider": "synthetic-provider",
+            "model": "synthetic-model",
+            "effort": "medium",
+            "fallbacks": [],
+        },
+    )
+    monkeypatch.setattr(
+        evals,
+        "_configured_execution_agent_hash",
+        lambda _target: evals._sha("synthetic-main-agent"),
+        raising=False,
+    )
+
+    def fake_run(cmd: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        captured.append(cmd)
+        write_verified_synthetic_native_surface_artifact(cmd, case_ids=["telegram_case"])
+        return subprocess.CompletedProcess(cmd, 0, stdout="{}", stderr="")
+
+    monkeypatch.setattr(evals.subprocess, "run", fake_run)
+
+    result = evals.run_exact_model_eval(
+        max_cases=1,
+        live=True,
+        family="telegram_smart_delivery",
+        surface="telegram",
+        case_ids=["telegram_case"],
+    )
+
+    assert result["returnCode"] == 0
+    assert result["executionRoute"]["status"] == "verified"
+    assert result["executionRoute"]["completedCaseCount"] == 1
+    assert result["executionRoute"]["caseEvidence"] == [
+        {
+            "caseId": "telegram_case",
+            "agentIdHash": evals._sha("synthetic-main-agent"),
+                "requestIdentityHash": evals._sha("synthetic-request:telegram_case"),
+                "surface": "telegram",
+                "completionSurface": "telegram",
+                "completionExpected": True,
+                "semanticJudged": True,
+            "semanticPassed": True,
+        }
+    ]
+    assert captured and "--case-ids=telegram_case" in captured[0]
+
+
+def test_native_surface_execution_route_rejects_unrelated_frames_and_false_cleanup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output_dir = tmp_path / "native"
+    output_dir.mkdir()
+    command = [f"--output-dir={output_dir}"]
+    write_verified_synthetic_native_surface_artifact(command, case_ids=["telegram_case"])
+    monkeypatch.setattr(
+        evals,
+        "_configured_execution_route",
+        lambda _target: {
+            "provider": "synthetic-provider",
+            "model": "synthetic-model",
+            "effort": "medium",
+            "fallbacks": [],
+        },
+    )
+    monkeypatch.setattr(
+        evals,
+        "_configured_execution_agent_hash",
+        lambda _target: evals._sha("synthetic-main-agent"),
+    )
+
+    def evaluate() -> dict[str, object]:
+        return evals._native_surface_execution_route(
+            output_dir,
+            execution_target=None,
+            selected_case_ids=["telegram_case"],
+            requested_surface="telegram",
+            semantic_judge_required=True,
+        )
+
+    assert evaluate()["status"] == "verified"
+
+    artifact_path = output_dir / "native-surface-playwright-qa.json"
+    payload = json.loads(artifact_path.read_text(encoding="utf-8"))
+    unrelated = dict(payload["cases"][0]["private"]["completionFrames"][0])
+    unrelated["request_identity_hash"] = evals._sha("unrelated-request")
+    payload["cases"][0]["private"]["completionFrames"].append(unrelated)
+    artifact_path.write_text(json.dumps(payload), encoding="utf-8")
+    assert evaluate()["reason"] == "native_request_bound_frame_unverified"
+
+    write_verified_synthetic_native_surface_artifact(command, case_ids=["telegram_case"])
+    payload = json.loads(artifact_path.read_text(encoding="utf-8"))
+    payload["cleanup"] = {"ok": False, "status": "failed"}
+    artifact_path.write_text(json.dumps(payload), encoding="utf-8")
+    assert evaluate()["reason"] == "native_execution_summary_unverified"
 
 
 def test_declared_semantic_eval_family_runs_its_rubric_judge(
@@ -3027,9 +6141,20 @@ def test_declared_semantic_eval_family_runs_its_rubric_judge(
     monkeypatch.setattr(evals, "PROMPT_BANK_PATH", prompt_bank)
     monkeypatch.setattr(evals, "workbench_private_root", lambda: private_root)
     monkeypatch.setattr(evals, "load_eval_bank", lambda: bank)
+    monkeypatch.setattr(
+        evals,
+        "_configured_execution_route",
+        lambda _target: {
+            "provider": "synthetic-provider",
+            "model": "synthetic-model",
+            "effort": "medium",
+            "fallbacks": [],
+        },
+    )
 
     def fake_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
         captured.append(cmd)
+        write_verified_synthetic_exact_model_artifact(cmd, case_ids=["case_a"])
         return subprocess.CompletedProcess(cmd, 0, stdout="ok", stderr="")
 
     monkeypatch.setattr(evals.subprocess, "run", fake_run)
@@ -3099,6 +6224,7 @@ def test_live_activation_eval_uses_dedicated_runtime_classifier_runner(
                         "activationTargets": [
                             {
                                 "key": "red_team",
+                                "agentId": "synthetic-red-team-agent",
                                 "promptRef": "cortex.red_team.activation",
                             }
                         ],
@@ -3137,12 +6263,64 @@ def test_live_activation_eval_uses_dedicated_runtime_classifier_runner(
     monkeypatch.setattr(
         evals, "load_eval_bank", lambda: json.loads(prompt_bank.read_text(encoding="utf-8"))
     )
+    monkeypatch.setattr(
+        prompt_service,
+        "source_agents_bundle",
+        lambda: {
+            "mainAgent": {
+                "background_cortices": [
+                    {
+                        "agent_id": "synthetic-red-team-agent",
+                        "activation": {"provider": "synthetic-provider", "model": "synthetic-model"},
+                    }
+                ]
+            }
+        },
+    )
 
     monkeypatch.setenv("VIVENTIUM_QA_USER_NAME", "Synthetic QA")
     monkeypatch.setenv("VIVENTIUM_CORTEX_LATE_DETECT_TIMEOUT_MS", "6000")
 
     def fake_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
         captured.append((cmd, kwargs.get("env")))
+        output_directory = Path(
+            next(value.removeprefix("--output-dir=") for value in cmd if value.startswith("--output-dir="))
+        )
+        payload = {
+            "summary": {"resultCount": 1},
+            "results": [
+                {
+                    "caseId": "red_team_explicit",
+                    "targetKey": "red_team",
+                    "repetition": 1,
+                    "required": True,
+                    "allowed": True,
+                    "actual": True,
+                    "pass": True,
+                    "providerUsed": "synthetic-provider",
+                    "modelUsed": "synthetic-model",
+                    "effortUsed": "provider_default",
+                    "requestedProvider": "synthetic-provider",
+                    "requestedModel": "synthetic-model",
+                    "requestedEffort": "provider_default",
+                    "effectiveProvider": "synthetic-provider",
+                    "effectiveModel": "synthetic-model",
+                    "effectiveEffort": "provider_default",
+                    "fallbackReason": "none",
+                    "providerAttempts": [
+                        {
+                            "provider": "synthetic-provider",
+                            "model": "synthetic-model",
+                            "effort": "provider_default",
+                            "source": "primary",
+                            "status": "completed",
+                            "fallbackReason": "none",
+                        }
+                    ],
+                }
+            ],
+        }
+        (output_directory / "activation-model-eval.json").write_text(json.dumps(payload), encoding="utf-8")
         return subprocess.CompletedProcess(cmd, 0, stdout="activation ok", stderr="")
 
     monkeypatch.setattr(evals.subprocess, "run", fake_run)
@@ -3226,9 +6404,24 @@ def test_background_execution_eval_targets_the_specialist_agent_directly(
     monkeypatch.setattr(evals, "EXACT_MODEL_EVAL_SCRIPT", runner)
     monkeypatch.setattr(evals, "workbench_private_root", lambda: private_root)
     monkeypatch.setattr(evals, "load_eval_bank", lambda: bank)
+    monkeypatch.setattr(
+        evals,
+        "_configured_execution_route",
+        lambda _target: {
+            "provider": "synthetic-provider",
+            "model": "synthetic-model",
+            "effort": "medium",
+            "fallbacks": [],
+        },
+    )
 
     def fake_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
         captured.append(cmd)
+        write_verified_synthetic_exact_model_artifact(
+            cmd,
+            case_ids=["reads_uncertain_subtext_without_inventing"],
+            agent_id="synthetic-eq-agent",
+        )
         return subprocess.CompletedProcess(cmd, 0, stdout="execution ok", stderr="")
 
     monkeypatch.setattr(evals.subprocess, "run", fake_run)
@@ -3363,6 +6556,40 @@ def test_live_eval_records_public_runner_summary_and_actual_result_count(
     }
     assert "publicReport" not in result["runnerSummary"]
     assert "privateJsonPathHash" not in result["runnerSummary"]
+
+
+def test_public_runner_summary_derives_quality_counts_from_canonical_lists() -> None:
+    summary = evals._public_runner_summary(
+        json.dumps(
+            {
+                "status": "partial_semantic_passed",
+                "duplicateResponseQualityFailures": [],
+                "unresolvedAsyncQualityFailures": [
+                    {"privateReason": "synthetic-private-detail"}
+                ],
+            }
+        )
+    )
+
+    assert summary == {
+        "status": "partial_semantic_passed",
+        "duplicateResponseQualityFailureCount": 0,
+        "unresolvedAsyncQualityFailureCount": 1,
+    }
+    assert "synthetic-private-detail" not in json.dumps(summary)
+
+    conflict = evals._public_runner_summary(
+        json.dumps(
+            {
+                "status": "partial_semantic_passed",
+                "duplicateResponseQualityFailureCount": 0,
+                "duplicateResponseQualityFailures": [{"privateReason": "hidden"}],
+            }
+        )
+    )
+    assert conflict["status"] == "blocked"
+    assert conflict["blockedReason"] == "runner_summary_quality_count_mismatch"
+    assert "hidden" not in json.dumps(conflict)
 
 
 def test_prompt_bank_registers_direct_specialist_execution_evals() -> None:
@@ -4077,6 +7304,691 @@ def test_prompt_workbench_cli_status_is_public_safe(tmp_path: Path) -> None:
     assert str(REPO_ROOT) not in completed.stdout
 
 
+def test_running_prompt_workbench_status_never_exposes_its_launch_token(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    secret = "synthetic-private-launch-token"
+    monkeypatch.setattr(
+        prompt_workbench_cli,
+        "read_state",
+        lambda _app_support: {
+            "pid": 4312,
+            "port": 8781,
+            "authUrl": f"http://127.0.0.1:8781?workbench_token={secret}",
+            "managedByStack": True,
+        },
+    )
+    monkeypatch.setattr(prompt_workbench_cli, "pid_running", lambda _pid: True)
+    monkeypatch.setattr(
+        prompt_workbench_cli,
+        "process_matches_workbench",
+        lambda _pid, _root, _port: True,
+    )
+    monkeypatch.setattr(prompt_workbench_cli, "http_healthy", lambda _port: True)
+
+    payload = prompt_workbench_cli.status_payload(REPO_ROOT, tmp_path)
+
+    assert payload["url"] == "http://127.0.0.1:8781"
+    assert "authUrl" not in payload
+    assert secret not in json.dumps(payload)
+
+
+@pytest.mark.parametrize("json_output", [False, True])
+def test_prompt_workbench_public_output_never_prints_legacy_auth_url(
+    json_output: bool,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    secret = "synthetic-private-launch-token"
+
+    prompt_workbench_cli.print_payload(
+        {
+            "status": "running",
+            "url": "http://127.0.0.1:8781",
+            "authUrl": f"http://127.0.0.1:8781?workbench_token={secret}",
+        },
+        json_output=json_output,
+    )
+
+    output = capsys.readouterr().out
+    assert "http://127.0.0.1:8781" in output
+    assert "authUrl" not in output
+    assert "workbench_token" not in output
+    assert secret not in output
+
+
+def test_prompt_workbench_open_uses_only_the_cookie_authenticated_base_url(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    secret = "synthetic-private-launch-token"
+    opened: list[str] = []
+    monkeypatch.setattr(
+        prompt_workbench_cli,
+        "start_server",
+        lambda _args: {
+            "status": "running",
+            "url": "http://127.0.0.1:8781",
+            "authUrl": f"http://127.0.0.1:8781?workbench_token={secret}",
+        },
+    )
+    monkeypatch.setattr(prompt_workbench_cli, "open_browser", opened.append)
+
+    result = prompt_workbench_cli.main(
+        [
+            "open",
+            "--repo-root",
+            str(REPO_ROOT),
+            "--app-support-dir",
+            str(tmp_path),
+            "--json",
+        ]
+    )
+
+    assert result == 0
+    assert opened == ["http://127.0.0.1:8781"]
+    output = capsys.readouterr().out
+    assert "authUrl" not in output
+    assert secret not in output
+
+
+def test_prompt_workbench_start_never_creates_or_inherits_launch_bearer_credentials(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    secret = "synthetic-rotated-launch-token"
+    app_support = tmp_path / "app-support"
+    launched_environments: list[dict[str, str]] = []
+    monkeypatch.delenv("VIVENTIUM_PROMPT_WORKBENCH_MANAGED_BY_STACK", raising=False)
+    monkeypatch.setenv("VIVENTIUM_PROMPT_WORKBENCH_LAUNCH_TOKEN", secret)
+    monkeypatch.setattr(prompt_workbench_cli, "choose_port", lambda *_args: 8781)
+    monkeypatch.setattr(prompt_workbench_cli, "ensure_assets_built", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        prompt_workbench_cli,
+        "resolve_launch_admin",
+        lambda _env: {"userId": "synthetic-admin", "email": ""},
+    )
+
+    def launch_process(*_args: object, **kwargs: object) -> SimpleNamespace:
+        launched_environments.append(dict(kwargs["env"]))
+        return SimpleNamespace(pid=4312)
+
+    monkeypatch.setattr(
+        prompt_workbench_cli.subprocess,
+        "Popen",
+        launch_process,
+    )
+    monkeypatch.setattr(prompt_workbench_cli, "workbench_source_mtime", lambda _root: 1.0)
+    monkeypatch.setattr(prompt_workbench_cli, "wait_for_health", lambda *_args, **_kwargs: True)
+
+    payload = prompt_workbench_cli.start_server(
+        SimpleNamespace(
+            repo_root=str(REPO_ROOT),
+            app_support_dir=str(app_support),
+            port=8781,
+            no_build=True,
+            timeout_seconds=1,
+        )
+    )
+
+    assert payload["url"] == "http://127.0.0.1:8781"
+    assert "authUrl" not in payload
+    assert secret not in json.dumps(payload)
+    assert prompt_workbench_cli.log_path(app_support).stat().st_mode & 0o777 == 0o600
+    state = prompt_workbench_cli.read_state(app_support)
+    assert "authUrl" not in state
+    assert "workbench_token" not in json.dumps(state)
+    assert secret not in json.dumps(state)
+    assert "VIVENTIUM_PROMPT_WORKBENCH_LAUNCH_TOKEN" not in launched_environments[0]
+
+
+def test_prompt_workbench_start_uses_the_selected_runtime_compiled_port(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app_support = tmp_path / "app-support"
+    runtime_dir = app_support / "runtime"
+    runtime_dir.mkdir(parents=True)
+    (runtime_dir / "runtime.env").write_text(
+        "VIVENTIUM_PROMPT_WORKBENCH_PORT=14781\n",
+        encoding="utf-8",
+    )
+    preferred_ports: list[int] = []
+    monkeypatch.delenv("VIVENTIUM_PROMPT_WORKBENCH_PORT", raising=False)
+    monkeypatch.delenv("VIVENTIUM_PROMPT_WORKBENCH_MANAGED_BY_STACK", raising=False)
+
+    def choose_port(_app_support: Path, _root: Path, preferred: int) -> int:
+        preferred_ports.append(preferred)
+        return preferred
+
+    monkeypatch.setattr(prompt_workbench_cli, "choose_port", choose_port)
+    monkeypatch.setattr(prompt_workbench_cli, "ensure_assets_built", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        prompt_workbench_cli,
+        "resolve_launch_admin",
+        lambda _env: {"userId": "synthetic-admin", "email": ""},
+    )
+    monkeypatch.setattr(
+        prompt_workbench_cli.subprocess,
+        "Popen",
+        lambda *_args, **_kwargs: SimpleNamespace(pid=4312),
+    )
+    monkeypatch.setattr(prompt_workbench_cli, "workbench_source_identity", lambda _root: "a" * 64)
+    monkeypatch.setattr(prompt_workbench_cli, "workbench_source_mtime", lambda _root: 1.0)
+    monkeypatch.setattr(prompt_workbench_cli, "wait_for_health", lambda *_args, **_kwargs: True)
+
+    payload = prompt_workbench_cli.start_server(
+        SimpleNamespace(
+            repo_root=str(REPO_ROOT),
+            app_support_dir=str(app_support),
+            port=None,
+            no_build=True,
+            timeout_seconds=1,
+        )
+    )
+
+    assert preferred_ports == [14781]
+    assert payload["port"] == 14781
+    assert payload["url"] == "http://127.0.0.1:14781"
+
+
+def test_prompt_workbench_private_state_strips_legacy_bearers_and_is_owner_only(
+    tmp_path: Path,
+) -> None:
+    app_support = tmp_path / "app-support"
+    private_directory = prompt_workbench_cli.state_dir(app_support)
+    private_directory.mkdir(parents=True)
+    os.chmod(private_directory, 0o755)
+    private_state = prompt_workbench_cli.state_path(app_support)
+    private_state.write_text("{}\n", encoding="utf-8")
+    os.chmod(private_state, 0o644)
+
+    prompt_workbench_cli.write_state(
+        app_support,
+        {"authUrl": "http://127.0.0.1:8781?workbench_token=synthetic-private-token"},
+    )
+
+    assert private_directory.stat().st_mode & 0o777 == 0o700
+    assert private_state.stat().st_mode & 0o777 == 0o600
+    assert "authUrl" not in prompt_workbench_cli.read_state(app_support)
+    assert "synthetic-private-token" not in private_state.read_text(encoding="utf-8")
+
+
+def test_prompt_workbench_start_hardens_existing_state_without_restart(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app_support = tmp_path / "app-support"
+    private_directory = prompt_workbench_cli.state_dir(app_support)
+    private_directory.mkdir(parents=True)
+    os.chmod(private_directory, 0o755)
+    private_state = prompt_workbench_cli.state_path(app_support)
+    private_state.write_text(
+        json.dumps(
+            {
+                "pid": 4312,
+                "port": 8781,
+                "url": "http://127.0.0.1:8781",
+                "authUrl": "http://127.0.0.1:8781?workbench_token=synthetic-private-token",
+            }
+        ),
+        encoding="utf-8",
+    )
+    os.chmod(private_state, 0o644)
+    private_log = prompt_workbench_cli.log_path(app_support)
+    private_log.parent.mkdir(parents=True, exist_ok=True)
+    private_log.write_text("Legacy synthetic private log\n", encoding="utf-8")
+    os.chmod(private_log, 0o644)
+    monkeypatch.delenv("VIVENTIUM_PROMPT_WORKBENCH_MANAGED_BY_STACK", raising=False)
+    monkeypatch.setattr(
+        prompt_workbench_cli,
+        "status_payload",
+        lambda _repo_root, _app_support: {
+            "status": "running",
+            "pid": 4312,
+            "port": 8781,
+            "url": "http://127.0.0.1:8781",
+        },
+    )
+    monkeypatch.setattr(prompt_workbench_cli, "state_source_is_stale", lambda _state, _root: False)
+    monkeypatch.setattr(
+        prompt_workbench_cli,
+        "stop_pid",
+        lambda _pid: pytest.fail("An existing Workbench must not restart to harden its state"),
+    )
+
+    payload = prompt_workbench_cli.start_server(
+        SimpleNamespace(
+            repo_root=str(REPO_ROOT),
+            app_support_dir=str(app_support),
+            port=8781,
+            no_build=True,
+            timeout_seconds=1,
+        )
+    )
+
+    assert payload["started"] is False
+    assert payload["pid"] == 4312
+    assert private_directory.stat().st_mode & 0o777 == 0o700
+    assert private_state.stat().st_mode & 0o777 == 0o600
+    assert private_log.stat().st_mode & 0o777 == 0o600
+    assert "authUrl" not in prompt_workbench_cli.read_state(app_support)
+    assert "synthetic-private-token" not in private_state.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    ("stack_requested", "initial_owner", "expected_owner"),
+    [(True, False, True), (False, False, False), (False, True, True)],
+)
+def test_explicit_stack_start_adopts_only_its_owned_running_prompt_workbench(
+    stack_requested: bool,
+    initial_owner: bool,
+    expected_owner: bool,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app_support = tmp_path / "app-support"
+    prompt_workbench_cli.write_state(
+        app_support,
+        {
+            "pid": 4312,
+            "port": 8781,
+            "url": "http://127.0.0.1:8781",
+            "authUrl": "http://127.0.0.1:8781?workbench_token=synthetic-private-token",
+            "managedByStack": initial_owner,
+        },
+    )
+    if stack_requested:
+        monkeypatch.setenv("VIVENTIUM_PROMPT_WORKBENCH_MANAGED_BY_STACK", "1")
+    else:
+        monkeypatch.delenv("VIVENTIUM_PROMPT_WORKBENCH_MANAGED_BY_STACK", raising=False)
+    monkeypatch.setattr(prompt_workbench_cli, "pid_running", lambda _pid: True)
+    monkeypatch.setattr(
+        prompt_workbench_cli,
+        "process_matches_workbench",
+        lambda _pid, _root, _port: True,
+    )
+    monkeypatch.setattr(prompt_workbench_cli, "http_healthy", lambda _port: True)
+    monkeypatch.setattr(prompt_workbench_cli, "state_source_is_stale", lambda _state, _root: False)
+    monkeypatch.setattr(
+        prompt_workbench_cli,
+        "stop_pid",
+        lambda _pid: pytest.fail("Stack ownership adoption must not restart the Workbench"),
+    )
+
+    payload = prompt_workbench_cli.start_server(
+        SimpleNamespace(
+            repo_root=str(REPO_ROOT),
+            app_support_dir=str(app_support),
+            port=8781,
+            no_build=True,
+            timeout_seconds=1,
+        )
+    )
+
+    assert payload["started"] is False
+    assert payload["pid"] == 4312
+    assert payload["managedByStack"] is expected_owner
+    assert prompt_workbench_cli.read_state(app_support)["managedByStack"] is expected_owner
+
+
+def test_prompt_workbench_concurrent_starts_share_one_private_lifecycle_owner(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app_support = tmp_path / "app-support"
+    first_launch_entered = threading.Event()
+    release_first_launch = threading.Event()
+    second_launch_entered = threading.Event()
+    launched_pids: list[int] = []
+    results: list[dict[str, object]] = []
+    errors: list[BaseException] = []
+    monkeypatch.setenv("VIVENTIUM_PROMPT_WORKBENCH_MANAGED_BY_STACK", "true")
+    monkeypatch.setattr(prompt_workbench_cli, "port_available", lambda _port: True)
+    monkeypatch.setattr(prompt_workbench_cli, "ensure_assets_built", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        prompt_workbench_cli,
+        "resolve_launch_admin",
+        lambda _env: {"userId": "synthetic-admin", "email": ""},
+    )
+    monkeypatch.setattr(prompt_workbench_cli, "workbench_source_mtime", lambda _root: 1.0)
+    monkeypatch.setattr(prompt_workbench_cli, "state_source_is_stale", lambda _state, _root: False)
+    monkeypatch.setattr(prompt_workbench_cli, "pid_running", lambda pid: pid in launched_pids)
+    monkeypatch.setattr(
+        prompt_workbench_cli,
+        "process_matches_workbench",
+        lambda pid, _root, _port=None: pid in launched_pids,
+    )
+    monkeypatch.setattr(prompt_workbench_cli, "http_healthy", lambda _port: True)
+    monkeypatch.setattr(prompt_workbench_cli, "wait_for_health", lambda *_args, **_kwargs: True)
+
+    def launch_process(*_args: object, **_kwargs: object) -> SimpleNamespace:
+        pid = 4312 + len(launched_pids)
+        launched_pids.append(pid)
+        if len(launched_pids) == 1:
+            first_launch_entered.set()
+            if not release_first_launch.wait(timeout=5):
+                raise AssertionError("Timed out while holding the synthetic first launch")
+        else:
+            second_launch_entered.set()
+        return SimpleNamespace(pid=pid)
+
+    monkeypatch.setattr(prompt_workbench_cli.subprocess, "Popen", launch_process)
+    args = SimpleNamespace(
+        repo_root=str(REPO_ROOT),
+        app_support_dir=str(app_support),
+        port=8781,
+        no_build=True,
+        timeout_seconds=1,
+    )
+
+    def start() -> None:
+        try:
+            results.append(prompt_workbench_cli.start_server(args))
+        except BaseException as exc:
+            errors.append(exc)
+
+    first = threading.Thread(target=start)
+    second = threading.Thread(target=start)
+    first.start()
+    try:
+        assert first_launch_entered.wait(timeout=2)
+        second.start()
+        second_launch_entered.wait(timeout=0.25)
+    finally:
+        release_first_launch.set()
+        first.join(timeout=5)
+        if second.ident is not None:
+            second.join(timeout=5)
+
+    assert not first.is_alive()
+    assert not second.is_alive()
+    assert errors == []
+    assert launched_pids == [4312]
+    assert sorted(result["started"] for result in results) == [False, True]
+    assert {result["pid"] for result in results} == {4312}
+    assert prompt_workbench_cli.read_state(app_support)["pid"] == 4312
+    lock_file = prompt_workbench_cli.state_dir(app_support) / "lifecycle.lock"
+    assert prompt_workbench_cli.state_dir(app_support).stat().st_mode & 0o777 == 0o700
+    assert lock_file.stat().st_mode & 0o777 == 0o600
+
+
+def test_prompt_workbench_start_rejects_another_process_preexisting_health(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app_support = tmp_path / "app-support"
+    stopped: list[int] = []
+    monkeypatch.delenv("VIVENTIUM_PROMPT_WORKBENCH_MANAGED_BY_STACK", raising=False)
+    monkeypatch.setattr(prompt_workbench_cli, "choose_port", lambda *_args: 8781)
+    monkeypatch.setattr(prompt_workbench_cli, "ensure_assets_built", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        prompt_workbench_cli,
+        "resolve_launch_admin",
+        lambda _env: {"userId": "synthetic-admin", "email": ""},
+    )
+    monkeypatch.setattr(prompt_workbench_cli.subprocess, "Popen", lambda *_args, **_kwargs: SimpleNamespace(pid=4312))
+    monkeypatch.setattr(prompt_workbench_cli, "pid_running", lambda pid: pid in {4312, 9912})
+    monkeypatch.setattr(
+        prompt_workbench_cli,
+        "process_matches_workbench",
+        lambda pid, _root, _port=None: pid in {4312, 9912},
+    )
+    monkeypatch.setattr(prompt_workbench_cli, "process_descendant_pids", lambda _pid: [])
+    monkeypatch.setattr(prompt_workbench_cli, "process_listens_on_port", lambda _pid, _port: False)
+    monkeypatch.setattr(prompt_workbench_cli, "http_healthy", lambda _port: True)
+    monkeypatch.setattr(prompt_workbench_cli, "workbench_source_mtime", lambda _root: 1.0)
+    monkeypatch.setattr(prompt_workbench_cli, "stop_pid", lambda pid: stopped.append(pid) or True)
+
+    with pytest.raises(RuntimeError, match="did not become healthy|does not own"):
+        prompt_workbench_cli.start_server(
+            SimpleNamespace(
+                repo_root=str(REPO_ROOT),
+                app_support_dir=str(app_support),
+                port=8781,
+                no_build=True,
+                timeout_seconds=0,
+            )
+        )
+
+    assert prompt_workbench_cli.read_state(app_support) == {}
+    assert 9912 not in stopped
+
+
+def test_prompt_workbench_status_never_deletes_a_replacement_owner_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app_support = tmp_path / "app-support"
+    stale = {"pid": 4312, "port": 8781, "url": "http://127.0.0.1:8781"}
+    replacement = {"pid": 5312, "port": 8781, "url": "http://127.0.0.1:8781"}
+    prompt_workbench_cli.write_state(app_support, stale)
+    replaced = False
+
+    def pid_running(pid: int) -> bool:
+        nonlocal replaced
+        if pid == 4312 and not replaced:
+            replaced = True
+            prompt_workbench_cli.write_state(app_support, replacement)
+        return pid == 5312
+
+    monkeypatch.setattr(prompt_workbench_cli, "pid_running", pid_running)
+
+    payload = prompt_workbench_cli.status_payload(REPO_ROOT, app_support)
+
+    assert payload["status"] == "stopped"
+    assert prompt_workbench_cli.read_state(app_support) == replacement
+
+
+def test_prompt_workbench_stop_never_deletes_a_replacement_owner_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app_support = tmp_path / "app-support"
+    stale = {"pid": 4312, "port": 8781, "url": "http://127.0.0.1:8781"}
+    replacement = {"pid": 5312, "port": 8781, "url": "http://127.0.0.1:8781"}
+    prompt_workbench_cli.write_state(app_support, stale)
+    monkeypatch.setattr(prompt_workbench_cli, "pid_running", lambda _pid: True)
+    monkeypatch.setattr(prompt_workbench_cli, "process_matches_workbench", lambda *_args: True)
+    monkeypatch.setattr(prompt_workbench_cli, "process_matches_owner_scope", lambda *_args: True)
+
+    def stop_and_replace(pid: int) -> bool:
+        assert pid == 4312
+        prompt_workbench_cli.write_state(app_support, replacement)
+        return True
+
+    monkeypatch.setattr(prompt_workbench_cli, "stop_pid", stop_and_replace)
+
+    payload = prompt_workbench_cli.stop_server(
+        SimpleNamespace(repo_root=str(REPO_ROOT), app_support_dir=str(app_support))
+    )
+
+    assert payload == {"status": "stopped", "stopped": True}
+    assert prompt_workbench_cli.read_state(app_support) == replacement
+    assert prompt_workbench_cli.user_stopped_marker_path(app_support).exists()
+
+
+def test_prompt_workbench_stop_never_kills_the_same_checkout_from_another_environment(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app_support = tmp_path / "app-support"
+    prompt_workbench_cli.write_state(
+        app_support,
+        {"pid": 4312, "port": 8781, "url": "http://127.0.0.1:8781"},
+    )
+    stopped: list[int] = []
+    monkeypatch.setattr(prompt_workbench_cli, "pid_running", lambda _pid: True)
+    monkeypatch.setattr(prompt_workbench_cli, "process_matches_workbench", lambda *_args: True)
+    monkeypatch.setattr(prompt_workbench_cli, "process_matches_owner_scope", lambda *_args: False)
+    monkeypatch.setattr(prompt_workbench_cli, "stop_pid", lambda pid: stopped.append(pid) or True)
+
+    payload = prompt_workbench_cli.stop_server(
+        SimpleNamespace(repo_root=str(REPO_ROOT), app_support_dir=str(app_support))
+    )
+
+    assert payload["status"] == "blocked"
+    assert payload["stopped"] is False
+    assert stopped == []
+
+
+def test_prompt_workbench_stale_restart_never_kills_another_environment(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app_support = tmp_path / "app-support"
+    prompt_workbench_cli.write_state(
+        app_support,
+        {
+            "pid": 4312,
+            "port": 8781,
+            "url": "http://127.0.0.1:8781",
+            "sourceMtime": 1.0,
+        },
+    )
+    stopped: list[int] = []
+    monkeypatch.delenv("VIVENTIUM_PROMPT_WORKBENCH_MANAGED_BY_STACK", raising=False)
+    monkeypatch.setattr(prompt_workbench_cli, "pid_running", lambda _pid: True)
+    monkeypatch.setattr(prompt_workbench_cli, "process_matches_workbench", lambda *_args: True)
+    monkeypatch.setattr(prompt_workbench_cli, "process_matches_owner_scope", lambda *_args: False)
+    monkeypatch.setattr(prompt_workbench_cli, "http_healthy", lambda _port: True)
+    monkeypatch.setattr(prompt_workbench_cli, "state_source_is_stale", lambda *_args: True)
+    monkeypatch.setattr(prompt_workbench_cli, "stop_pid", lambda pid: stopped.append(pid) or True)
+
+    with pytest.raises(RuntimeError, match="not owned by this runtime"):
+        prompt_workbench_cli.start_server(
+            SimpleNamespace(
+                repo_root=str(REPO_ROOT),
+                app_support_dir=str(app_support),
+                port=8781,
+                no_build=True,
+                timeout_seconds=1,
+            )
+        )
+
+    assert stopped == []
+
+
+def configure_synthetic_orphaned_workbench(
+    app_support: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> dict[str, str]:
+    process_environment = {
+        "VIVENTIUM_APP_SUPPORT_DIR": str(app_support.resolve()),
+        "VIVENTIUM_DEV_ENV_SCOPE_ACTIVE": "false",
+        "VIVENTIUM_PROMPT_WORKBENCH_MANAGED_BY_STACK": "true",
+    }
+    monkeypatch.setenv("VIVENTIUM_PROMPT_WORKBENCH_MANAGED_BY_STACK", "true")
+    monkeypatch.delenv("VIVENTIUM_DEV_ENV_SCOPE_ACTIVE", raising=False)
+    monkeypatch.setattr(prompt_workbench_cli, "port_available", lambda _port: False)
+    monkeypatch.setattr(prompt_workbench_cli, "listener_pids", lambda _port: [8216])
+    monkeypatch.setattr(prompt_workbench_cli, "pid_running", lambda pid: pid in {8202, 8216})
+    monkeypatch.setattr(
+        prompt_workbench_cli,
+        "process_matches_workbench",
+        lambda pid, root, port=None: pid in {8202, 8216}
+        and root.resolve() == WORKBENCH_ROOT.resolve()
+        and port == 8781,
+    )
+    monkeypatch.setattr(
+        prompt_workbench_cli,
+        "process_parent_pid",
+        lambda pid: {8216: 8202, 8202: 1}.get(pid, 0),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        prompt_workbench_cli,
+        "process_descendant_pids",
+        lambda pid: [8216] if pid == 8202 else [],
+    )
+    monkeypatch.setattr(
+        prompt_workbench_cli,
+        "process_listens_on_port",
+        lambda pid, port: pid == 8216 and port == 8781,
+    )
+    monkeypatch.setattr(
+        prompt_workbench_cli,
+        "process_uid",
+        lambda _pid: os.getuid(),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        prompt_workbench_cli,
+        "process_environment_value",
+        lambda _pid, key: process_environment.get(key),
+        raising=False,
+    )
+    monkeypatch.setattr(prompt_workbench_cli, "http_healthy", lambda _port: True)
+    monkeypatch.setattr(prompt_workbench_cli, "workbench_source_mtime", lambda _root: 1.0)
+    monkeypatch.setattr(
+        prompt_workbench_cli,
+        "stop_pid",
+        lambda pid: pytest.fail(f"Orphan recovery must not stop listener or wrapper {pid}"),
+    )
+    monkeypatch.setattr(
+        prompt_workbench_cli.subprocess,
+        "Popen",
+        lambda *_args, **_kwargs: pytest.fail("Orphan recovery must not launch another Workbench"),
+    )
+    return process_environment
+
+
+def test_managed_prompt_workbench_recovers_only_its_same_scope_orphan_as_stale(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app_support = tmp_path / "app-support"
+    configure_synthetic_orphaned_workbench(app_support, monkeypatch)
+
+    state = prompt_workbench_cli.recover_owned_workbench_state(
+        REPO_ROOT,
+        app_support,
+        8781,
+        managed_by_stack=True,
+    )
+
+    assert state["pid"] == 8202
+    assert state["repoRoot"] == str(REPO_ROOT)
+    assert state["managedByStack"] is True
+    assert state["sourceIdentity"] is None
+    assert prompt_workbench_cli.state_source_is_stale(state, WORKBENCH_ROOT) is True
+
+
+@pytest.mark.parametrize(
+    "mismatch",
+    ("app_support", "checkout", "user", "development_scope"),
+)
+def test_managed_prompt_workbench_never_adopts_or_stops_a_foreign_orphan(
+    mismatch: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app_support = tmp_path / "app-support"
+    process_environment = configure_synthetic_orphaned_workbench(app_support, monkeypatch)
+    if mismatch == "app_support":
+        process_environment["VIVENTIUM_APP_SUPPORT_DIR"] = str(tmp_path / "other-app-support")
+    elif mismatch == "checkout":
+        monkeypatch.setattr(prompt_workbench_cli, "process_matches_workbench", lambda *_args: False)
+    elif mismatch == "user":
+        monkeypatch.setattr(prompt_workbench_cli, "process_uid", lambda _pid: os.getuid() + 1)
+    else:
+        process_environment["VIVENTIUM_DEV_ENV_SCOPE_ACTIVE"] = "true"
+
+    with pytest.raises(RuntimeError, match="owned by another runtime or listener"):
+        prompt_workbench_cli.start_server(
+            SimpleNamespace(
+                repo_root=str(REPO_ROOT),
+                app_support_dir=str(app_support),
+                port=8781,
+                no_build=True,
+                timeout_seconds=1,
+            )
+        )
+
+    assert prompt_workbench_cli.read_state(app_support) == {}
+
+
 def test_prompt_workbench_cli_help_documents_scoped_stop() -> None:
     completed = subprocess.run(
         [str(REPO_ROOT / "bin" / "viventium"), "help", "prompt-workbench"],
@@ -4104,1419 +8016,6 @@ def test_prompt_workbench_lifecycle_script_scopes_process_ownership() -> None:
     assert '"__pycache__"' in script
     assert "viventium-librechat-start.sh" not in script
     assert "native_stack.sh" not in script
-
-
-def test_managed_prompt_workbench_reclaims_only_a_recognized_stale_workbench_listener(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    root = tmp_path / "current" / "viventium_v0_4" / "prompt-workbench"
-    app_support_dir = tmp_path / "app-support"
-    stopped: list[int] = []
-    available_checks = iter([False, True])
-    monkeypatch.setattr(
-        prompt_workbench_cli,
-        "read_state",
-        lambda app_support: {"pid": 4312, "port": 8781},
-    )
-    monkeypatch.setattr(prompt_workbench_cli, "listener_pids", lambda port: [4312])
-    monkeypatch.setattr(
-        prompt_workbench_cli,
-        "process_matches_workbench",
-        lambda pid, expected_root, expected_port: (
-            expected_root == root and expected_port == 8781
-        ),
-    )
-    monkeypatch.setattr(
-        prompt_workbench_cli,
-        "stop_pid",
-        lambda pid: stopped.append(pid) or True,
-    )
-    monkeypatch.setattr(prompt_workbench_cli, "port_available", lambda port: next(available_checks))
-    monkeypatch.setattr(prompt_workbench_cli.time, "sleep", lambda seconds: None)
-
-    reclaimed = prompt_workbench_cli.reclaim_stale_managed_workbench_port(
-        8781,
-        root,
-        app_support_dir,
-    )
-
-    assert reclaimed is True
-    assert stopped == [4312]
-
-
-def test_managed_prompt_workbench_refuses_to_kill_a_workbench_from_another_checkout(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    root = tmp_path / "current" / "viventium_v0_4" / "prompt-workbench"
-    app_support_dir = tmp_path / "app-support"
-    stopped: list[int] = []
-    monkeypatch.setattr(
-        prompt_workbench_cli,
-        "read_state",
-        lambda app_support: {"pid": 4312, "port": 8781},
-    )
-    monkeypatch.setattr(prompt_workbench_cli, "listener_pids", lambda port: [4312])
-    monkeypatch.setattr(
-        prompt_workbench_cli,
-        "process_matches_workbench",
-        lambda pid, expected_root, expected_port: False,
-    )
-    monkeypatch.setattr(
-        prompt_workbench_cli,
-        "stop_pid",
-        lambda pid: stopped.append(pid) or True,
-    )
-
-    reclaimed = prompt_workbench_cli.reclaim_stale_managed_workbench_port(
-        8781,
-        root,
-        app_support_dir,
-    )
-
-    assert reclaimed is False
-    assert stopped == []
-
-
-def test_prompt_workbench_port_selection_does_not_reuse_another_checkout(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    root = tmp_path / "current" / "viventium_v0_4" / "prompt-workbench"
-    monkeypatch.setattr(
-        prompt_workbench_cli,
-        "read_state",
-        lambda app_support: {"pid": 4312, "port": 8781},
-    )
-    monkeypatch.setattr(prompt_workbench_cli, "pid_running", lambda pid: True)
-    monkeypatch.setattr(prompt_workbench_cli, "http_healthy", lambda port: True)
-    monkeypatch.setattr(prompt_workbench_cli, "process_matches_workbench", lambda pid, expected: False)
-    monkeypatch.setattr(prompt_workbench_cli, "port_available", lambda port: port == 8782)
-
-    selected = prompt_workbench_cli.choose_port(tmp_path / "app-support", root, 8781)
-
-    assert selected == 8782
-
-
-def test_schedules_panel_prefers_live_query_data_over_a_stale_dock_snapshot() -> None:
-    source = (
-        REPO_ROOT
-        / "viventium_v0_4"
-        / "prompt-workbench"
-        / "src"
-        / "components"
-        / "ScheduledPromptsPanel.tsx"
-    ).read_text(encoding="utf-8")
-
-    live_query = "schedulesQuery.data?.scheduledPrompts ??"
-    dock_snapshot = "scheduledPrompts ??"
-    assert 'queryKey: ["scheduledPrompts", "panel"]' in source
-    assert source.index(live_query) < source.index(dock_snapshot)
-
-
-def test_schedules_panel_only_sends_schedule_for_new_or_touched_drafts() -> None:
-    source = (
-        REPO_ROOT
-        / "viventium_v0_4"
-        / "prompt-workbench"
-        / "src"
-        / "components"
-        / "ScheduledPromptsPanel.tsx"
-    ).read_text(encoding="utf-8")
-
-    assert "includeSchedule: !draft.id || scheduleTouched" in source
-    assert "includeSchedule: !isUserLevelSchedule || scheduleTouched" not in source
-
-
-def test_prompt_workbench_dev_server_ports_are_consistent() -> None:
-    lifecycle_script = (REPO_ROOT / "scripts" / "viventium" / "prompt_workbench.py").read_text(encoding="utf-8")
-    package_json = json.loads((REPO_ROOT / "viventium_v0_4" / "prompt-workbench" / "package.json").read_text(encoding="utf-8"))
-    vite_config = (REPO_ROOT / "viventium_v0_4" / "prompt-workbench" / "vite.config.ts").read_text(encoding="utf-8")
-    app_source = (
-        REPO_ROOT / "viventium_v0_4" / "prompt-workbench" / "backend" / "prompt_workbench" / "app.py"
-    ).read_text(encoding="utf-8")
-
-    assert "DEFAULT_PORT = 8781" in lifecycle_script
-    assert "--port 8781" in package_json["scripts"]["serve"]
-    assert "--port 8781" in package_json["scripts"]["dev:api"]
-    assert "'/api': 'http://127.0.0.1:8781'" in vite_config
-    assert "127.0.0.1:8765" not in app_source
-
-
-def test_cognitive_integrity_contract_distinguishes_worker_and_host_tools() -> None:
-    payload = {
-        "endpoints": {
-            "agents": {
-                "providerCapabilities": {
-                    "glasshive-harness": {
-                        "worker_native_tools": True,
-                        "host_tools_transport": "broker_mcp",
-                        "host_tools": ["file_search"],
-                    }
-                }
-            }
-        },
-        "memory": {
-            "tokenLimit": 8000,
-            "keyLimits": {"world": 1200, "preferences": 600},
-            "readProfile": {
-                "tokenLimit": 8000,
-                "keyLimits": {"world": 1200, "preferences": 600},
-            },
-        },
-    }
-
-    contract = cognitive_integrity._provider_and_memory_contract(payload)
-
-    assert contract["providerCapabilityTransport"]["status"] == "ok"
-    assert contract["memoryExposure"]["status"] == "ok"
-
-
-def test_cognitive_integrity_imports_from_workbench_launch_path(tmp_path: Path) -> None:
-    env = os.environ.copy()
-    env["PYTHONPATH"] = str(WORKBENCH_BACKEND)
-
-    completed = subprocess.run(
-        [sys.executable, "-c", "import prompt_workbench.cognitive_integrity"],
-        cwd=tmp_path,
-        env=env,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-
-    assert completed.returncode == 0, completed.stderr
-
-
-def test_cognitive_integrity_contract_blocks_ambiguous_tools_and_hidden_memory() -> None:
-    payload = {
-        "endpoints": {
-            "agents": {
-                "providerCapabilities": {
-                    "glasshive-harness": {"native_tools": True}
-                }
-            }
-        },
-        "memory": {
-            "tokenLimit": 8000,
-            "keyLimits": {"world": 1200},
-            "readProfile": {"tokenLimit": 2200, "keyLimits": {"world": 320}},
-        },
-    }
-
-    contract = cognitive_integrity._provider_and_memory_contract(payload)
-
-    assert contract["providerCapabilityTransport"]["status"] == "blocked"
-    assert "ambiguous_native_tools_field_present" in contract["providerCapabilityTransport"]["reasons"]
-    assert contract["memoryExposure"]["status"] == "blocked"
-    assert "read_total_below_storage_total" in contract["memoryExposure"]["reasons"]
-
-
-def test_cognitive_integrity_contract_blocks_absent_memory_configuration() -> None:
-    contract = cognitive_integrity._provider_and_memory_contract(
-        {
-            "endpoints": {
-                "agents": {
-                    "providerCapabilities": {
-                        "glasshive-harness": {
-                            "worker_native_tools": True,
-                            "host_tools_transport": "broker_mcp",
-                            "host_tools": ["file_search"],
-                        }
-                    }
-                }
-            }
-        }
-    )
-
-    assert contract["memoryExposure"]["status"] == "blocked"
-    assert "memory_config_missing" in contract["memoryExposure"]["reasons"]
-
-
-def test_cognitive_integrity_blocks_failed_nightly_even_when_definition_is_active(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    captured: dict[str, object] = {}
-
-    def list_scheduled_prompts(**kwargs: object) -> dict[str, object]:
-        captured.update(kwargs)
-        return {
-            "scheduledPrompts": [
-                {
-                    "templateId": scheduled_prompts.NIGHTLY_TEMPLATE_ID,
-                    "active": True,
-                    "lastStatus": "error",
-                    "executor": "glasshive_host",
-                    "executionProfile": "codex-cli",
-                    "latestScheduledRun": {
-                        "status": "failed",
-                        "triggerKind": "scheduled",
-                        "triggerSource": "scheduler_loop",
-                        "startedAt": "2026-08-08T07:00:17Z",
-                        "errorClass": "glasshive_evidence_check_failed",
-                    },
-                    "recentRuns": [
-                        {"status": "failed", "errorClass": "glasshive_evidence_check_failed"}
-                    ],
-                }
-            ]
-        }
-
-    monkeypatch.setattr(
-        cognitive_integrity.scheduled_prompts,
-        "list_scheduled_prompts",
-        list_scheduled_prompts,
-    )
-
-    result = cognitive_integrity._nightly_status("synthetic-user")
-
-    assert result["status"] == "blocked"
-    assert result["latestRunFailure"] is True
-    assert result["lastErrorClass"] == "glasshive_evidence_check_failed"
-    assert captured["read_only"] is True
-
-
-def test_cognitive_integrity_does_not_let_manual_recovery_mask_failed_scheduled_nightly(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    def list_scheduled_prompts(**_: object) -> dict[str, object]:
-        return {
-            "scheduledPrompts": [
-                {
-                    "templateId": scheduled_prompts.NIGHTLY_TEMPLATE_ID,
-                    "active": True,
-                    "lastStatus": "completed",
-                    "executor": "glasshive_host",
-                    "executionProfile": "codex-cli",
-                    "latestScheduledRun": {
-                        "status": "failed",
-                        "triggerKind": "scheduled",
-                        "triggerSource": "scheduler_loop",
-                        "startedAt": "2026-08-08T07:00:17Z",
-                        "errorClass": "glasshive_evidence_check_failed",
-                    },
-                    "latestManualRun": {
-                        "status": "completed",
-                        "triggerKind": "manual",
-                        "triggerSource": "workbench_manual",
-                        "startedAt": "2026-08-08T15:46:44Z",
-                    },
-                    "recentRuns": [
-                        {
-                            "status": "completed",
-                            "triggerKind": "manual",
-                            "startedAt": "2026-08-08T15:46:44Z",
-                        },
-                        {
-                            "status": "failed",
-                            "triggerKind": "scheduled",
-                            "startedAt": "2026-08-08T07:00:17Z",
-                            "errorClass": "glasshive_evidence_check_failed",
-                        },
-                    ],
-                }
-            ]
-        }
-
-    monkeypatch.setattr(
-        cognitive_integrity.scheduled_prompts,
-        "list_scheduled_prompts",
-        list_scheduled_prompts,
-    )
-
-    result = cognitive_integrity._nightly_status("synthetic-user")
-
-    assert result["status"] == "blocked"
-    assert result["latestScheduledStatus"] == "failed"
-    assert result["latestManualStatus"] == "completed"
-    assert result["manualRecoveryAfterScheduledFailure"] is True
-    assert result["lastErrorClass"] == "glasshive_evidence_check_failed"
-
-
-def test_cognitive_integrity_blocks_when_manual_runs_evict_scheduled_evidence(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    def list_scheduled_prompts(**_: object) -> dict[str, object]:
-        return {
-            "scheduledPrompts": [
-                {
-                    "templateId": scheduled_prompts.NIGHTLY_TEMPLATE_ID,
-                    "active": True,
-                    "lastStatus": "completed",
-                    "recentRuns": [
-                        {
-                            "status": "completed",
-                            "triggerKind": "manual",
-                            "startedAt": f"2026-08-08T1{minute}:00:00Z",
-                        }
-                        for minute in range(5)
-                    ],
-                }
-            ]
-        }
-
-    monkeypatch.setattr(
-        cognitive_integrity.scheduled_prompts,
-        "list_scheduled_prompts",
-        list_scheduled_prompts,
-    )
-
-    result = cognitive_integrity._nightly_status(
-        "synthetic-user",
-        now=datetime(2026, 8, 8, 16, 0, tzinfo=timezone.utc),
-    )
-
-    assert result["status"] == "blocked"
-    assert result["latestScheduledStatus"] is None
-    assert "scheduled_run_not_observed" in result["reasons"]
-
-
-def test_cognitive_integrity_blocks_stale_scheduled_nightly(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    def list_scheduled_prompts(**_: object) -> dict[str, object]:
-        return {
-            "scheduledPrompts": [
-                {
-                    "templateId": scheduled_prompts.NIGHTLY_TEMPLATE_ID,
-                    "active": True,
-                    "lastStatus": "completed",
-                    "latestScheduledRun": {
-                        "status": "completed",
-                        "triggerKind": "scheduled",
-                        "startedAt": "2026-08-05T07:00:00Z",
-                    },
-                    "recentRuns": [],
-                }
-            ]
-        }
-
-    monkeypatch.setattr(
-        cognitive_integrity.scheduled_prompts,
-        "list_scheduled_prompts",
-        list_scheduled_prompts,
-    )
-
-    result = cognitive_integrity._nightly_status(
-        "synthetic-user",
-        now=datetime(2026, 8, 8, 16, 0, tzinfo=timezone.utc),
-    )
-
-    assert result["status"] == "blocked"
-    assert "scheduled_run_stale" in result["reasons"]
-    assert result["latestScheduledAt"] == "2026-08-05T07:00:00Z"
-
-
-def test_cognitive_integrity_rejects_a_projected_nightly_without_scheduler_provenance(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(
-        cognitive_integrity.scheduled_prompts,
-        "list_scheduled_prompts",
-        lambda **_: {
-            "scheduledPrompts": [
-                {
-                    "templateId": scheduled_prompts.NIGHTLY_TEMPLATE_ID,
-                    "active": True,
-                    "latestScheduledRun": {
-                        "status": "completed",
-                        "triggerKind": "unknown",
-                        "triggerSource": "scheduler_loop",
-                        "startedAt": "2026-08-08T07:00:00Z",
-                    },
-                    "recentRuns": [],
-                }
-            ]
-        },
-    )
-
-    result = cognitive_integrity._nightly_status(
-        "synthetic-user",
-        now=datetime(2026, 8, 8, 8, 0, tzinfo=timezone.utc),
-    )
-
-    assert result["status"] == "blocked"
-    assert "scheduled_run_provenance_invalid" in result["reasons"]
-
-
-def test_scheduling_db_path_honors_selected_app_support_root(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    monkeypatch.delenv("SCHEDULING_DB_PATH", raising=False)
-    monkeypatch.setenv("VIVENTIUM_APP_SUPPORT_DIR", str(tmp_path))
-
-    assert scheduled_prompts._scheduling_db_path() == str(
-        tmp_path / "state" / "runtime" / "isolated" / "scheduling" / "schedules.db"
-    )
-
-
-def test_cognitive_integrity_blocks_codex_symlink_that_hides_enabled_companion(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    app_support = tmp_path / "app-support"
-    runtime_dir = app_support / "runtime"
-    runtime_dir.mkdir(parents=True)
-    bundle_cli = tmp_path / "bundle" / "codex"
-    bundle_cli.parent.mkdir()
-    bundle_cli.write_text("#!/bin/sh\necho 'code_mode_host stable true'\n", encoding="utf-8")
-    bundle_cli.chmod(0o755)
-    companion = bundle_cli.parent / "codex-code-mode-host"
-    companion.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-    companion.chmod(0o755)
-    invocation = tmp_path / "bin" / "codex"
-    invocation.parent.mkdir()
-    invocation.symlink_to(bundle_cli)
-    (runtime_dir / "runtime.env").write_text(f"WPR_CODEX_BIN={invocation}\n", encoding="utf-8")
-    monkeypatch.setattr(cognitive_integrity, "APP_SUPPORT_VIVENTIUM_DIR", app_support)
-
-    result = cognitive_integrity._runtime_codex_worker_status()
-
-    assert result["status"] == "blocked"
-    assert result["binaryInvocation"] == "symlink"
-    assert result["companionReady"] is False
-    assert result["reasons"] == ["enabled_code_mode_host_companion_missing_at_invocation_path"]
-
-    (runtime_dir / "runtime.env").write_text(f"WPR_CODEX_BIN={bundle_cli}\n", encoding="utf-8")
-    assert cognitive_integrity._runtime_codex_worker_status()["status"] == "ok"
-
-
-def test_cognitive_integrity_rejects_successful_but_unparseable_codex_feature_probe(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    app_support = tmp_path / "app-support"
-    runtime_dir = app_support / "runtime"
-    runtime_dir.mkdir(parents=True)
-    binary = tmp_path / "codex"
-    binary.write_text("#!/bin/sh\necho 'not structured feature output'\n", encoding="utf-8")
-    binary.chmod(0o755)
-    (runtime_dir / "runtime.env").write_text(f"WPR_CODEX_BIN={binary}\n", encoding="utf-8")
-    monkeypatch.setattr(cognitive_integrity, "APP_SUPPORT_VIVENTIUM_DIR", app_support)
-
-    result = cognitive_integrity._runtime_codex_worker_status()
-
-    assert result == {"status": "blocked", "reasons": ["codex_feature_probe_unparseable"]}
-
-
-def test_cognitive_integrity_requires_configured_non_admin_qa_account(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    app_support = tmp_path / "app-support"
-    runtime_dir = app_support / "runtime"
-    runtime_dir.mkdir(parents=True)
-    monkeypatch.setattr(cognitive_integrity, "APP_SUPPORT_VIVENTIUM_DIR", app_support)
-
-    assert cognitive_integrity._qa_test_account_status()["reasons"] == [
-        "qa_test_account_not_configured"
-    ]
-
-    (runtime_dir / "runtime.env").write_text(
-        "VIVENTIUM_QA_EMAIL=qa-person@example.com\n"
-        "VIVENTIUM_LOCAL_MONGO_PORT=27117\n"
-        "VIVENTIUM_LOCAL_MONGO_DB=LibreChatViventium\n",
-        encoding="utf-8",
-    )
-    captured: dict[str, object] = {}
-
-    def fake_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
-        captured["command"] = command
-        captured["input"] = kwargs.get("input")
-        return subprocess.CompletedProcess(
-            command,
-            0,
-            stdout='{"count":1,"role":"USER","userId":"synthetic-user-id"}\n',
-            stderr="",
-        )
-
-    monkeypatch.setattr(cognitive_integrity.subprocess, "run", fake_run)
-
-    result = cognitive_integrity._qa_test_account_status()
-
-    assert result["status"] == "ok"
-    assert result["accountCount"] == 1
-    assert "qa-person@example.com" not in " ".join(captured["command"])
-    assert "qa-person@example.com" in str(captured["input"])
-
-
-def test_cognitive_integrity_blocks_a_degraded_per_turn_memory_writer(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    import hashlib
-    import json
-
-    app_support = tmp_path / "app-support"
-    health_dir = app_support / "state" / "memory-continuity-health"
-    health_dir.mkdir(parents=True)
-    user_hash = hashlib.sha256(b"synthetic-user-id").hexdigest()[:24]
-    (health_dir / f"{user_hash}.read.json").write_text(
-        json.dumps({"status": "ok", "path": "read", "updatedAt": "2026-08-08T10:00:00Z"}),
-        encoding="utf-8",
-    )
-    (health_dir / f"{user_hash}.writer.json").write_text(
-        json.dumps(
-            {
-                "status": "degraded",
-                "path": "writer",
-                "reason": "provider_auth",
-                "updatedAt": "2026-08-08T10:01:00Z",
-            }
-        ),
-        encoding="utf-8",
-    )
-    monkeypatch.setattr(cognitive_integrity, "APP_SUPPORT_VIVENTIUM_DIR", app_support)
-
-    result = cognitive_integrity._memory_continuity_runtime_status(
-        user_hash,
-        now=datetime.fromisoformat("2026-08-08T10:02:00+00:00"),
-    )
-
-    assert result["savedMemoryRead"]["status"] == "ok"
-    assert result["savedMemoryRead"]["scope"] == "configured_qa_test_account"
-    assert result["immediateMemoryWriter"]["status"] == "blocked"
-    assert result["immediateMemoryWriter"]["reason"] == "provider_auth"
-    assert result["immediateMemoryWriter"]["scope"] == "configured_qa_test_account"
-
-
-def test_cognitive_integrity_blocks_missing_and_stale_memory_receipts(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    app_support = tmp_path / "app-support"
-    health_dir = app_support / "state" / "memory-continuity-health"
-    health_dir.mkdir(parents=True)
-    user_hash = "synthetic-user-hash"
-    monkeypatch.setattr(cognitive_integrity, "APP_SUPPORT_VIVENTIUM_DIR", app_support)
-
-    missing = cognitive_integrity._memory_continuity_runtime_status(
-        user_hash,
-        now=datetime(2026, 8, 8, 16, 0, tzinfo=timezone.utc),
-    )
-    assert missing["savedMemoryRead"]["status"] == "blocked"
-    assert missing["savedMemoryRead"]["reason"] == "no_runtime_receipt"
-    assert missing["immediateMemoryWriter"]["status"] == "blocked"
-
-    stale_payload = {
-        "status": "ok",
-        "updatedAt": "2026-08-06T10:00:00Z",
-        "provider": "openai",
-        "model": "synthetic-model",
-        "effort": "medium",
-    }
-    for path_key in ("read", "writer"):
-        (health_dir / f"{user_hash}.{path_key}.json").write_text(
-            json.dumps({**stale_payload, "path": path_key}),
-            encoding="utf-8",
-        )
-
-    stale = cognitive_integrity._memory_continuity_runtime_status(
-        user_hash,
-        now=datetime(2026, 8, 8, 16, 0, tzinfo=timezone.utc),
-    )
-    assert stale["savedMemoryRead"]["status"] == "blocked"
-    assert stale["savedMemoryRead"]["reason"] == "runtime_receipt_stale"
-    assert stale["immediateMemoryWriter"]["status"] == "blocked"
-    assert stale["immediateMemoryWriter"]["effort"] == "medium"
-
-
-def test_cognitive_integrity_blocks_unobserved_memory_paths_in_joined_report(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(cognitive_integrity, "_safe_runtime_drift", lambda _path: {"status": "ok"})
-    monkeypatch.setattr(cognitive_integrity, "_safe_prompt_drift", lambda: {"status": "ok"})
-    monkeypatch.setattr(
-        cognitive_integrity,
-        "load_source_of_truth_librechat_yaml",
-        lambda: {
-            "endpoints": {
-                "agents": {
-                    "providerCapabilities": {
-                        "glasshive-harness": {
-                            "worker_native_tools": True,
-                            "host_tools_transport": "broker_mcp",
-                            "host_tools": ["file_search"],
-                        }
-                    }
-                }
-            },
-            "memory": {
-                "tokenLimit": 1,
-                "keyLimits": {"core": 1},
-                "readProfile": {"tokenLimit": 1, "keyLimits": {"core": 1}},
-            },
-        },
-    )
-    monkeypatch.setattr(cognitive_integrity, "_live_contract", cognitive_integrity.load_source_of_truth_librechat_yaml)
-    monkeypatch.setattr(cognitive_integrity, "_runtime_codex_worker_status", lambda: {"status": "ok"})
-    monkeypatch.setattr(cognitive_integrity, "_nightly_status", lambda _user: {"status": "ok"})
-    monkeypatch.setattr(
-        cognitive_integrity,
-        "_qa_test_account_status",
-        lambda: {"status": "ok", "accountHash": "synthetic-hash"},
-    )
-    monkeypatch.setattr(
-        cognitive_integrity,
-        "_memory_continuity_runtime_status",
-        lambda _hash: {
-            "savedMemoryRead": {"status": "not_observed"},
-            "immediateMemoryWriter": {"status": "not_observed"},
-        },
-    )
-    monkeypatch.setattr(cognitive_integrity, "_memory_hardening_status", lambda: {"status": "ok"})
-    monkeypatch.setattr(cognitive_integrity, "_conversation_recall_runtime_status", lambda: {"status": "ok"})
-
-    result = cognitive_integrity.cognitive_integrity_report(user_id="synthetic-user")
-
-    assert result["status"] == "blocked"
-    assert "qaAccountSavedMemoryReadRuntime" in result["blockingChecks"]
-    assert "qaAccountImmediateMemoryWriterRuntime" in result["blockingChecks"]
-
-
-def test_cognitive_integrity_recall_health_requires_a_structured_up_response(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    app_support = tmp_path / "app-support"
-    runtime_dir = app_support / "runtime"
-    runtime_dir.mkdir(parents=True)
-    (runtime_dir / "runtime.env").write_text(
-        "RAG_API_URL=http://127.0.0.1:9999\n",
-        encoding="utf-8",
-    )
-    monkeypatch.setattr(cognitive_integrity, "APP_SUPPORT_VIVENTIUM_DIR", app_support)
-
-    class FakeResponse:
-        status = 200
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_args: object) -> None:
-            return None
-
-        def read(self) -> bytes:
-            return b"[]"
-
-    monkeypatch.setattr(cognitive_integrity.urllib.request, "urlopen", lambda *_args, **_kwargs: FakeResponse())
-
-    result = cognitive_integrity._conversation_recall_runtime_status()
-
-    assert result == {
-        "status": "blocked",
-        "reason": "recall_health_invalid_payload",
-        "httpStatus": 200,
-    }
-
-
-def test_cognitive_integrity_recall_health_accepts_only_explicit_up(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    app_support = tmp_path / "app-support"
-    runtime_dir = app_support / "runtime"
-    runtime_dir.mkdir(parents=True)
-    (runtime_dir / "runtime.env").write_text(
-        "RAG_API_URL=http://127.0.0.1:9999\n",
-        encoding="utf-8",
-    )
-    monkeypatch.setattr(cognitive_integrity, "APP_SUPPORT_VIVENTIUM_DIR", app_support)
-
-    class FakeResponse:
-        status = 200
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_args: object) -> None:
-            return None
-
-        def read(self) -> bytes:
-            return b'{"status":"UP"}'
-
-    monkeypatch.setattr(cognitive_integrity.urllib.request, "urlopen", lambda *_args, **_kwargs: FakeResponse())
-
-    result = cognitive_integrity._conversation_recall_runtime_status()
-
-    assert result["status"] == "ok"
-    assert result["declaredStatus"] == "UP"
-
-
-def test_scheduled_prompt_update_persists_registered_source_prompt_link(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from prompt_workbench.app import ScheduledPromptPatchRequest
-
-    assert ScheduledPromptPatchRequest(
-        sourcePromptId="scheduler.consciousness_continuity_opportunity"
-    ).model_dump()["sourcePromptId"] == "scheduler.consciousness_continuity_opportunity"
-
-    monkeypatch.setenv("SCHEDULING_DB_PATH", str(tmp_path / "schedules.db"))
-    monkeypatch.setenv("VIVENTIUM_PRIVATE_USER_DATA_DIR", str(tmp_path / "private"))
-    monkeypatch.setenv(
-        "VIVENTIUM_LOCAL_MACHINE_GLASSHIVE_ROOT", str(tmp_path / "glasshive")
-    )
-    monkeypatch.setattr(scheduled_prompts, "_query_mongo_json", lambda script: None)
-
-    created = scheduled_prompts.create_scheduled_prompt(
-        {
-            "title": "Continuity",
-            "promptText": "Orient, appraise, choose, act, observe, and reappraise.",
-            "executor": "viventium_agent",
-        },
-        user_id="startup-admin",
-        email="startup-admin@example.test",
-    )
-
-    updated = scheduled_prompts.update_scheduled_prompt(
-        created["id"],
-        {"sourcePromptId": "scheduler.consciousness_continuity_opportunity"},
-        user_id="startup-admin",
-        email="startup-admin@example.test",
-    )
-
-    stored = scheduled_prompts.storage().get_scheduled_prompt_definition(created["id"])
-    task = scheduled_prompts.storage().get_task("startup-admin", stored["task_id"])
-    assert updated["sourcePromptId"] == "scheduler.consciousness_continuity_opportunity"
-    assert stored["source_prompt_id"] == "scheduler.consciousness_continuity_opportunity"
-    assert (
-        task["metadata"]["workbench_scheduled_prompt"]["source_prompt_id"]
-        == "scheduler.consciousness_continuity_opportunity"
-    )
-    assert (
-        task["metadata"]["prompt_context"]["effective_prompt_id"]
-        == "scheduler.consciousness_continuity_opportunity"
-    )
-
-
-def test_public_scheduled_run_exposes_backward_compatible_audit_outcomes() -> None:
-    public = scheduled_prompts._public_run(
-        {
-            "run_id": "run-audit-1",
-            "status": "completed",
-            "executor": "viventium_agent",
-            "disposition": "silent",
-            "started_at": "2026-08-10T13:00:00Z",
-            "completed_at": "2026-08-10T13:00:01.250Z",
-            "execution_snapshot_json": json.dumps(
-                {
-                    "model": "gpt-5.6-sol",
-                    "reasoning_effort": "xhigh",
-                    "usage": {"input_tokens": 120, "output_tokens": 30, "cost_usd": 0.012},
-                    "degraded_dependencies": ["calendar unavailable"],
-                    "private_prompt": "must not surface",
-                }
-            ),
-            "channel_outcomes_json": json.dumps(
-                {
-                    "workbench": {"outcome": "audit_only", "reason": "audit_sink"},
-                    "telegram": {
-                        "outcome": "suppressed",
-                        "reason": "no_useful_output",
-                        "generated_text": "must not surface",
-                    },
-                }
-            ),
-        }
-    )
-
-    assert public["disposition"] == "silent"
-    assert public["effectiveModel"] == "gpt-5.6-sol"
-    assert public["effectiveReasoningEffort"] == "xhigh"
-    assert public["latencyMs"] == 1250
-    assert public["usage"] == {"inputTokens": 120, "outputTokens": 30, "costUsd": 0.012}
-    assert public["degradedDependencies"] == ["calendar unavailable"]
-    assert public["channelOutcomes"] == {
-        "workbench": {"outcome": "audit_only", "reason": "audit_sink"},
-        "telegram": {"outcome": "suppressed", "reason": "no_useful_output"},
-    }
-    assert "private_prompt" not in json.dumps(public)
-    assert "generated_text" not in json.dumps(public)
-
-
-def test_schedules_panel_supports_windowed_intervals_and_audit_context() -> None:
-    source = (
-        REPO_ROOT
-        / "viventium_v0_4"
-        / "prompt-workbench"
-        / "src"
-        / "components"
-        / "ScheduledPromptsPanel.tsx"
-    ).read_text(encoding="utf-8")
-
-    assert '<option value="interval">Interval</option>' in source
-    assert 'active_window' in source
-    assert 'start_local' in source
-    assert 'end_local' in source
-    assert 'cadence: "restart_daily"' in source
-    assert 'Projected runs/day' in source
-    assert 'Dedicated conversation per run' in source
-    assert 'Dedicated durable conversation' in source
-    assert 'Destination channels' in source
-    assert 'deliveryLibreChat' in source
-    assert 'deliveryTelegram' in source
-    assert 'LibreChat chat' in source
-    assert 'Telegram' in source
-    assert 'Source prompt' in source
-    assert 'Standing Main capability' in source
-    assert 'Run envelope' in source
-    assert 'Canonical output' in source
-    assert 'Effective prompt' in source
-    assert 'Effective scheduled model' in source
-    assert 'Effective scheduled effort' in source
-    assert 'run.disposition' in source
-    assert 'run.effectiveModel' in source
-    assert 'run.channelOutcomes' in source
-    assert 'Latency:' in source
-    assert 'Tokens / cost: not recorded' in source
-    assert 'Degraded dependencies:' in source
-    assert 'silent, delivered, partial, superseded, or failed' in source
-    assert 'Workbench is an audit sink, not user delivery' in source
-    assert 'aria-describedby' in source
-    assert 'role="switch"' in source
-    assert 'aria-checked={item.active}' in source
-    assert 'aria-label={`${item.active ? "Disable" : "Enable"} ${item.title}`}' in source
-    assert 'className="schedule-row-select"' in source
-
-
-def test_schedules_panel_opens_related_prompts_in_the_normal_editor() -> None:
-    schedule_source = (
-        REPO_ROOT
-        / "viventium_v0_4"
-        / "prompt-workbench"
-        / "src"
-        / "components"
-        / "ScheduledPromptsPanel.tsx"
-    ).read_text(encoding="utf-8")
-    dock_source = (
-        REPO_ROOT
-        / "viventium_v0_4"
-        / "prompt-workbench"
-        / "src"
-        / "components"
-        / "WorkbenchDock.tsx"
-    ).read_text(encoding="utf-8")
-
-    assert "onOpenPrompt?: (id: string) => void" in schedule_source
-    assert "onOpenPrompt?.(selected.sourcePromptId!)" in schedule_source
-    assert "onOpenPrompt?.(selected.effectivePromptId!)" in schedule_source
-    assert "onOpenPrompt?.(selected.runEnvelopePromptId!)" in schedule_source
-    assert "onOpenPrompt?.(selected.canonicalOutputPromptId!)" in schedule_source
-    assert "onOpenPrompt?.(selected.standingCapabilityPromptId!)" in schedule_source
-    assert 'href={`/api/prompts/' not in schedule_source
-    assert "onOpenPrompt={onOpenPrompt}" in dock_source
-
-
-def test_scheduler_prompt_contracts_are_visible_as_workbench_related_sources() -> None:
-    envelope = prompt_service.related_config_for_prompt("scheduler.run_envelope")
-    opportunity = prompt_service.related_config_for_prompt(
-        "scheduler.consciousness_continuity_opportunity"
-    )
-    canonical_output = prompt_service.related_config_for_prompt("scheduler.canonical_output")
-
-    assert envelope[0]["selector"] == "SCHEDULER_RUN_ENVELOPE_TEMPLATE"
-    assert opportunity[0]["selector"] == (
-        "CONSCIOUSNESS_CONTINUITY_OPPORTUNITY_PROMPT_ID"
-    )
-    assert canonical_output[0]["selector"] == "buildScheduledCanonicalOutputInstructions"
-    assert all(
-        row["status"] == "source"
-        for row in [*envelope, *opportunity, *canonical_output]
-    )
-
-
-def test_legacy_nightly_runs_without_trigger_provenance_remain_unknown() -> None:
-    schedule = {"type": "daily", "time": "03:00", "timezone": "America/Toronto"}
-
-    scheduled = scheduled_prompts._public_run(
-        {"run_id": "run-scheduled", "due_at": "2026-08-08T07:00:00Z"},
-        schedule=schedule,
-        timezone_name="America/Toronto",
-    )
-    manual = scheduled_prompts._public_run(
-        {"run_id": "run-manual", "due_at": "2026-08-08T15:46:42Z"},
-        schedule=schedule,
-        timezone_name="America/Toronto",
-    )
-
-    assert scheduled["triggerKind"] == "unknown"
-    assert manual["triggerKind"] == "unknown"
-
-
-def test_caller_label_cannot_impersonate_scheduler_or_manual_provenance() -> None:
-    assert scheduled_prompts._public_run(
-        {
-            "run_id": "caller-labelled",
-            "trigger_kind": "scheduled",
-            "trigger_source": "unverified_caller",
-        }
-    )["triggerKind"] == "unknown"
-    assert scheduled_prompts._public_run(
-        {
-            "run_id": "scheduler-loop",
-            "trigger_kind": "scheduled",
-            "trigger_source": "scheduler_loop",
-        }
-    )["triggerKind"] == "scheduled"
-
-
-def test_scheduler_provenance_requires_due_time_to_match_declared_schedule() -> None:
-    schedule = {"type": "daily", "time": "03:00", "timezone": "America/Toronto"}
-    matching = scheduled_prompts._public_run(
-        {
-            "run_id": "scheduler-on-cadence",
-            "due_at": "2026-08-08T07:00:00Z",
-            "trigger_kind": "scheduled",
-            "trigger_source": "scheduler_loop",
-        },
-        schedule=schedule,
-        timezone_name="America/Toronto",
-    )
-    forged = scheduled_prompts._public_run(
-        {
-            "run_id": "scheduler-off-cadence",
-            "due_at": "2026-08-08T15:46:42Z",
-            "trigger_kind": "scheduled",
-            "trigger_source": "scheduler_loop",
-        },
-        schedule=schedule,
-        timezone_name="America/Toronto",
-    )
-
-    assert matching["triggerKind"] == "scheduled"
-    assert forged["triggerKind"] == "unknown"
-
-
-def test_public_definition_projects_latest_scheduled_outside_recent_manual_window() -> None:
-    class FakeStore:
-        def __init__(self) -> None:
-            self.calls: list[dict[str, object]] = []
-
-        def get_task(self, *_args):
-            return None
-
-        def latest_scheduled_prompt_version(self, *_args):
-            return None
-
-        def list_scheduled_prompt_runs(self, **kwargs):
-            self.calls.append(kwargs)
-            if kwargs.get("trigger_kind") == "scheduled":
-                return [
-                    {
-                        "run_id": "scheduled-run",
-                        "status": "completed",
-                        "trigger_kind": "scheduled",
-                        "trigger_source": "scheduler_loop",
-                        "due_at": "2026-08-08T03:00:00Z",
-                        "started_at": "2026-08-08T07:00:00Z",
-                    }
-                ]
-            if kwargs.get("trigger_kind") == "manual":
-                return [
-                    {
-                        "run_id": "manual-run",
-                        "status": "completed",
-                        "trigger_kind": "manual",
-                        "trigger_source": "workbench_manual",
-                        "started_at": "2026-08-08T12:00:00Z",
-                    }
-                ]
-            return [
-                {
-                    "run_id": f"manual-{index}",
-                    "status": "completed",
-                    "trigger_kind": "manual",
-                    "trigger_source": "workbench_manual",
-                    "started_at": f"2026-08-08T1{index}:00:00Z",
-                }
-                for index in range(5)
-            ]
-
-    store = FakeStore()
-    public = scheduled_prompts._public_definition(
-        {
-            "id": "definition-1",
-            "task_id": None,
-            "schedule": {"type": "daily", "time": "03:00", "timezone": "UTC"},
-            "timezone": "UTC",
-            "active": True,
-        },
-        store=store,
-    )
-
-    assert len(public["recentRuns"]) == 5
-    assert public["latestScheduledRun"]["runId"] == "scheduled-run"
-    assert public["latestScheduledRun"]["triggerKind"] == "scheduled"
-    assert public["latestManualRun"]["runId"] == "manual-run"
-    assert any(
-        call.get("trigger_kind") == "scheduled"
-        and call.get("trigger_source") == "scheduler_loop"
-        for call in store.calls
-    )
-
-
-def test_workbench_viventium_manual_run_failure_records_failed_disposition(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    pytest.importorskip("httpx")
-    pytest.importorskip("fastapi.testclient")
-    monkeypatch.setenv("SCHEDULING_DB_PATH", str(tmp_path / "schedules.db"))
-    monkeypatch.setenv("VIVENTIUM_PRIVATE_USER_DATA_DIR", str(tmp_path / "private"))
-    monkeypatch.setenv("VIVENTIUM_LOCAL_MACHINE_GLASSHIVE_ROOT", str(tmp_path / "glasshive"))
-    monkeypatch.setenv("VIVENTIUM_PROMPT_WORKBENCH_AUTH_DISABLED", "1")
-    monkeypatch.setattr(scheduled_prompts, "_query_mongo_json", lambda script: None)
-    from fastapi.testclient import TestClient
-    from prompt_workbench.app import app
-
-    client = TestClient(app)
-    created = client.post(
-        "/api/scheduled-prompts",
-        json={
-            "title": "Failing Viventium route prompt",
-            "promptText": "Exercise the terminal audit path",
-            "schedule": {"type": "daily", "time": "03:00", "timezone": "UTC"},
-            "active": False,
-            "memoryWriteMode": "off",
-            "executor": "viventium_agent",
-            "channel": ["librechat", "telegram"],
-            "conversationPolicy": "same",
-        },
-    )
-    assert created.status_code == 200
-    definition = scheduled_prompts.storage().get_scheduled_prompt_definition(created.json()["id"])
-    task = scheduled_prompts.storage().get_task(definition["user_id"], definition["task_id"])
-
-    def failing_dispatch(_task):
-        raise TimeoutError("synthetic timeout")
-
-    monkeypatch.setattr(scheduled_prompts, "dispatch_task", failing_dispatch)
-    with pytest.raises(TimeoutError, match="synthetic timeout"):
-        scheduled_prompts._manual_run_workbench_viventium_agent(
-            scheduled_prompts.storage(), definition, task
-        )
-
-    [run] = scheduled_prompts.storage().list_scheduled_prompt_runs(
-        definition_id=created.json()["id"], limit=1
-    )
-    assert run["status"] == "failed"
-    assert run["disposition"] == "failed"
-
-
-def test_periphery_collection_hardens_worker_created_artifact_permissions(tmp_path: Path) -> None:
-    my_folder = tmp_path / "my-folder"
-    root = my_folder / "periphery"
-    artifact_dir = root / "health_context" / "2026" / "08"
-    artifact_dir.mkdir(parents=True)
-    sidecar = artifact_dir / "20260810T160238Z.health_context.json"
-    markdown = sidecar.with_suffix(".md")
-    markdown.write_text("Synthetic private health context", encoding="utf-8")
-    sidecar.write_text(
-        json.dumps(
-            {
-                "schemaVersion": 1,
-                "moduleId": "health_context",
-                "generatedAt": "2026-08-10T16:02:38Z",
-                "scheduledRunRef": {"runId": "synthetic"},
-                "sourceRefs": [],
-                "confidence": "medium",
-                "severity": "low",
-                "timeSensitivity": "same_day",
-                "ttl": "P1D",
-                "staleAfter": "2099-08-11T16:02:38Z",
-                "observations": [],
-                "risks": [],
-                "blindSpots": [],
-                "opportunityCosts": [],
-                "opportunities": [],
-                "whatWouldMakeThisWrong": [],
-                "whenToSurface": [],
-                "proposedActions": [],
-                "memoryProposalRefs": [],
-            }
-        ),
-        encoding="utf-8",
-    )
-    for directory in (root, root / "health_context", root / "health_context" / "2026", artifact_dir):
-        directory.chmod(0o755)
-    sidecar.chmod(0o644)
-    markdown.chmod(0o644)
-
-    _, artifacts, invalid, _ = scheduled_prompts._collect_periphery(
-        str(my_folder),
-        user_id="user-a",
-    )
-
-    assert len(artifacts) == 1
-    assert invalid == []
-    assert sidecar.stat().st_mode & 0o777 == 0o600
-    assert markdown.stat().st_mode & 0o777 == 0o600
-    assert all(
-        directory.stat().st_mode & 0o777 == 0o700
-        for directory in (root, root / "health_context", root / "health_context" / "2026", artifact_dir)
-    )
-
-
-def test_periphery_collection_rejects_symlinked_worker_artifacts(tmp_path: Path) -> None:
-    my_folder = tmp_path / "my-folder"
-    root = my_folder / "periphery"
-    artifact_dir = root / "health_context" / "2026" / "08"
-    artifact_dir.mkdir(parents=True)
-    external_sidecar = tmp_path / "external-health-context.json"
-    external_sidecar.write_text("{}", encoding="utf-8")
-    external_sidecar.chmod(0o644)
-    sidecar = artifact_dir / "20260810T160238Z.health_context.json"
-    sidecar.symlink_to(external_sidecar)
-
-    _, artifacts, invalid, _ = scheduled_prompts._collect_periphery(
-        str(my_folder),
-        user_id="user-a",
-    )
-
-    assert artifacts == []
-    assert len(invalid) == 1
-    assert invalid[0]["reason"] == "unsafe_symlink"
-    assert external_sidecar.stat().st_mode & 0o777 == 0o644
-
-
-def test_periphery_read_reuses_ingestion_guard_for_symlinked_markdown(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("VIVENTIUM_LOCAL_MACHINE_GLASSHIVE_ROOT", str(tmp_path / "glasshive"))
-    my_folder = Path(scheduled_prompts._glasshive_my_folder("user-a"))
-    root = my_folder / "periphery"
-    artifact_dir = root / "health_context" / "2026" / "08"
-    artifact_dir.mkdir(parents=True, exist_ok=True)
-    sidecar = artifact_dir / "20260810T160238Z.health_context.json"
-    sidecar.write_text(
-        json.dumps(
-            {
-                "schemaVersion": 1,
-                "moduleId": "health_context",
-                "generatedAt": "2026-08-10T16:02:38Z",
-                "scheduledRunRef": {"runId": "synthetic"},
-                "sourceRefs": [],
-                "confidence": "medium",
-                "severity": "low",
-                "timeSensitivity": "same_day",
-                "ttl": "P1D",
-                "staleAfter": "2099-08-11T16:02:38Z",
-                "observations": [],
-                "risks": [],
-                "blindSpots": [],
-                "opportunityCosts": [],
-                "opportunities": [],
-                "whatWouldMakeThisWrong": [],
-                "whenToSurface": [],
-                "proposedActions": [],
-                "memoryProposalRefs": [],
-            }
-        ),
-        encoding="utf-8",
-    )
-    external_markdown = tmp_path / "outside-private-content.md"
-    external_markdown.write_text("must stay outside Periphery", encoding="utf-8")
-    sidecar.with_suffix(".md").symlink_to(external_markdown)
-    artifact_id = scheduled_prompts._periphery_artifact_id(sidecar, root)
-
-    with pytest.raises(ValueError, match="unsafe_symlink"):
-        scheduled_prompts.read_user_periphery_artifact(
-            user_id="user-a",
-            artifact_id=artifact_id,
-        )
-
-
-def test_periphery_collection_rejects_hard_linked_artifacts(tmp_path: Path) -> None:
-    my_folder = tmp_path / "my-folder"
-    root = my_folder / "periphery"
-    artifact_dir = root / "health_context" / "2026" / "08"
-    artifact_dir.mkdir(parents=True)
-    external_sidecar = tmp_path / "external-health-context.json"
-    external_sidecar.write_text("{}", encoding="utf-8")
-    external_sidecar.chmod(0o644)
-    sidecar = artifact_dir / "20260810T160238Z.health_context.json"
-    os.link(external_sidecar, sidecar)
-
-    _, artifacts, invalid, _ = scheduled_prompts._collect_periphery(
-        str(my_folder),
-        user_id="user-a",
-    )
-
-    assert artifacts == []
-    assert len(invalid) == 1
-    assert invalid[0]["reason"] == "unsafe_hard_link"
-    assert external_sidecar.stat().st_mode & 0o777 == 0o644
-
-
-def test_periphery_index_write_does_not_follow_preplanted_temp_symlink(tmp_path: Path) -> None:
-    my_folder = tmp_path / "my-folder"
-    root = my_folder / "periphery"
-    root.mkdir(parents=True)
-    external_file = tmp_path / "outside-index-target.json"
-    external_file.write_text("outside stays unchanged", encoding="utf-8")
-    external_mode = external_file.stat().st_mode & 0o777
-    (root / "._index.json.tmp").symlink_to(external_file)
-
-    scheduled_prompts._collect_periphery(str(my_folder), user_id="user-a")
-
-    assert external_file.read_text(encoding="utf-8") == "outside stays unchanged"
-    assert external_file.stat().st_mode & 0o777 == external_mode
-    assert not (root / "_index.json").is_symlink()
-    assert (root / "_index.json").stat().st_mode & 0o777 == 0o600
-    assert root.stat().st_mode & 0o777 == 0o700
-
-
-def test_periphery_collection_rejects_a_symlinked_root_without_writing_through_it(
-    tmp_path: Path,
-) -> None:
-    my_folder = tmp_path / "my-folder"
-    my_folder.mkdir()
-    external_root = tmp_path / "outside-periphery"
-    external_root.mkdir()
-    root = my_folder / "periphery"
-    root.symlink_to(external_root, target_is_directory=True)
-
-    _, artifacts, invalid, index = scheduled_prompts._collect_periphery(
-        str(my_folder),
-        user_id="user-a",
-    )
-
-    assert artifacts == []
-    assert invalid[0]["reason"] == "unsafe_symlink"
-    assert index["status"] == "blocked"
-    assert index["blockedReasons"] == ["unsafe_symlink"]
-    assert not (external_root / "_index.json").exists()
-
-
-def test_periphery_discovery_does_not_enumerate_a_symlinked_module_directory(
-    tmp_path: Path,
-) -> None:
-    my_folder = tmp_path / "my-folder"
-    root = my_folder / "periphery"
-    root.mkdir(parents=True)
-    external_module = tmp_path / "outside-module"
-    external_artifact_dir = external_module / "2026" / "08"
-    external_artifact_dir.mkdir(parents=True)
-    external_sidecar = external_artifact_dir / "private-name.health_context.json"
-    external_sidecar.write_text("{}", encoding="utf-8")
-    external_mode = external_sidecar.stat().st_mode & 0o777
-    (root / "health_context").symlink_to(external_module, target_is_directory=True)
-
-    _, artifacts, invalid, index = scheduled_prompts._collect_periphery(
-        str(my_folder),
-        user_id="user-a",
-    )
-
-    assert artifacts == []
-    assert len(invalid) == 1
-    assert invalid[0]["reason"] == "unsafe_symlink"
-    assert "private-name" not in json.dumps(invalid)
-    assert index["status"] == "blocked"
-    assert external_sidecar.stat().st_mode & 0o777 == external_mode
-
-
-def test_glasshive_folder_precreates_owner_only_periphery_root(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("VIVENTIUM_LOCAL_MACHINE_GLASSHIVE_ROOT", str(tmp_path / "glasshive"))
-
-    my_folder = Path(scheduled_prompts._glasshive_my_folder("user-a"))
-
-    assert (my_folder / "periphery").is_dir()
-    assert all(
-        directory.stat().st_mode & 0o777 == 0o700
-        for directory in (my_folder.parent, my_folder, my_folder / "periphery")
-    )
-
-
-def test_glasshive_folder_enforces_permissions_only_at_the_private_boundary(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("VIVENTIUM_LOCAL_MACHINE_GLASSHIVE_ROOT", str(tmp_path / "glasshive"))
-    my_folder = Path(scheduled_prompts._glasshive_my_folder("user-a"))
-
-    def deny_private_permission_change(descriptor: int, mode: int) -> None:
-        raise PermissionError("synthetic unsupported private permissions")
-
-    monkeypatch.setattr(scheduled_prompts.os, "fchmod", deny_private_permission_change)
-
-    assert Path(scheduled_prompts._glasshive_my_folder("user-a")) == my_folder
-    with pytest.raises(RuntimeError, match="private_continuity_permissions_unavailable"):
-        scheduled_prompts._glasshive_my_folder("user-a", require_private=True)
-
-
-def test_periphery_index_reports_partial_privacy_rejection_as_degraded() -> None:
-    index = scheduled_prompts._periphery_index_payload(
-        [{"moduleId": "health_context", "qualityStatus": "passed"}],
-        [
-            {"reason": "unsafe_hard_link"},
-            {"reason": "invalid_json"},
-        ],
-    )
-
-    assert index["status"] == "degraded"
-    assert index["blockedArtifactCount"] == 1
-    assert index["blockedReasons"] == ["unsafe_hard_link"]
-
-
-def test_periphery_collection_hardens_artifacts_beyond_index_limit(tmp_path: Path) -> None:
-    my_folder = tmp_path / "my-folder"
-    root = my_folder / "periphery"
-    artifact_dir = root / "health_context" / "2026" / "08"
-    artifact_dir.mkdir(parents=True)
-    sidecars: list[Path] = []
-    for index in range(scheduled_prompts.PERIPHERY_ARTIFACT_LIMIT + 3):
-        sidecar = artifact_dir / f"20260810T16{index:04d}Z.health_context.json"
-        sidecar.write_text("{}", encoding="utf-8")
-        sidecar.chmod(0o644)
-        sidecars.append(sidecar)
-
-    scheduled_prompts._collect_periphery(str(my_folder), user_id="user-a")
-
-    assert all(sidecar.stat().st_mode & 0o777 == 0o600 for sidecar in sidecars)
-
-
-def test_periphery_collection_fails_closed_when_private_permissions_cannot_be_applied(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    my_folder = tmp_path / "my-folder"
-    root = my_folder / "periphery"
-    artifact_dir = root / "health_context" / "2026" / "08"
-    artifact_dir.mkdir(parents=True)
-    sidecar = artifact_dir / "20260810T160238Z.health_context.json"
-    sidecar.write_text("{}", encoding="utf-8")
-    sidecar.chmod(0o644)
-    original_fchmod = os.fchmod
-    failed_once = False
-
-    def fail_for_first_private_file(descriptor: int, mode: int) -> None:
-        nonlocal failed_once
-        if mode == 0o600 and not failed_once:
-            failed_once = True
-            raise PermissionError("synthetic private-permission failure")
-        original_fchmod(descriptor, mode)
-
-    monkeypatch.setattr(scheduled_prompts.os, "fchmod", fail_for_first_private_file)
-
-    _, artifacts, invalid, index = scheduled_prompts._collect_periphery(
-        str(my_folder),
-        user_id="user-a",
-    )
-
-    assert artifacts == []
-    assert len(invalid) == 1
-    assert invalid[0]["reason"] == "private_permissions_unavailable"
-    assert index["status"] == "blocked"
-    assert index["blockedReasons"] == ["private_permissions_unavailable"]
-    assert sidecar.stat().st_mode & 0o777 == 0o644
-    assert root.stat().st_mode & 0o777 == 0o700
 
 
 def test_prompt_workbench_process_owner_resolves_relative_app_dir_from_process_cwd(
@@ -5605,6 +8104,182 @@ def test_prompt_workbench_source_freshness_uses_recorded_source_mtime(
     assert prompt_workbench_cli.state_source_is_stale({"sourceMtime": 200.0}, tmp_path) is False
 
 
+def test_prompt_workbench_source_identity_detects_changed_bytes_with_unchanged_mtime(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "prompt-workbench"
+    source = root / "src" / "App.tsx"
+    source.parent.mkdir(parents=True)
+    source.write_text("first\n", encoding="utf-8")
+    fixed_time = 1_700_000_000_000_000_000
+    os.utime(source, ns=(fixed_time, fixed_time))
+    recorded = prompt_workbench_cli.workbench_source_identity(root)
+
+    source.write_text("other\n", encoding="utf-8")
+    os.utime(source, ns=(fixed_time, fixed_time))
+
+    assert source.stat().st_mtime_ns == fixed_time
+    assert prompt_workbench_cli.workbench_source_identity(root) != recorded
+    assert prompt_workbench_cli.state_source_is_stale(
+        {"sourceIdentity": recorded, "sourceMtime": source.stat().st_mtime},
+        root,
+    ) is True
+
+
+def test_prompt_workbench_content_identity_is_bounded_to_runtime_build_inputs(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "prompt-workbench"
+    inputs = {
+        "src/App.tsx": "app",
+        "public/viventium-logo.png": "logo",
+        "index.html": "index",
+        "package.json": "package",
+        "package-lock.json": "lock",
+        "tsconfig.json": "tsconfig",
+        "vite.config.ts": "vite",
+        "backend/prompt_workbench/app.py": "backend",
+    }
+    for relative, value in inputs.items():
+        candidate = root / relative
+        candidate.parent.mkdir(parents=True, exist_ok=True)
+        candidate.write_text(value, encoding="utf-8")
+    excluded = [
+        root / "dist" / "index.html",
+        root / "node_modules" / "synthetic" / "index.js",
+        root / "backend" / "tests" / "test_synthetic.py",
+        root / "src" / "__pycache__" / "synthetic.pyc",
+    ]
+    for candidate in excluded:
+        candidate.parent.mkdir(parents=True, exist_ok=True)
+        candidate.write_text("excluded", encoding="utf-8")
+
+    frontend_before = prompt_workbench_cli.frontend_input_identity(root)
+    runtime_before = prompt_workbench_cli.workbench_source_identity(root)
+    for candidate in excluded:
+        candidate.write_text("changed excluded", encoding="utf-8")
+    assert prompt_workbench_cli.frontend_input_identity(root) == frontend_before
+    assert prompt_workbench_cli.workbench_source_identity(root) == runtime_before
+
+    (root / "package-lock.json").write_text("changed lock", encoding="utf-8")
+    assert prompt_workbench_cli.frontend_input_identity(root) != frontend_before
+    assert prompt_workbench_cli.workbench_source_identity(root) != runtime_before
+
+
+def test_frontend_input_identity_matches_the_served_build_projection() -> None:
+    app_module = importlib.import_module("prompt_workbench.app")
+
+    assert prompt_workbench_cli.frontend_input_identity(
+        WORKBENCH_ROOT
+    ) == app_module._frontend_input_identity()
+
+
+def test_prompt_workbench_build_receipt_binds_inputs_and_built_bytes(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "prompt-workbench"
+    source = root / "src" / "App.tsx"
+    asset = root / "dist" / "assets" / "index.js"
+    source.parent.mkdir(parents=True)
+    asset.parent.mkdir(parents=True)
+    source.write_text("source", encoding="utf-8")
+    (root / "dist" / "index.html").write_text(
+        '<script src="/assets/index.js"></script>',
+        encoding="utf-8",
+    )
+    asset.write_text("built", encoding="utf-8")
+
+    prompt_workbench_cli.write_build_receipt(root)
+    assert prompt_workbench_cli.build_receipt_status(root)["receiptValid"] is True
+
+    asset.write_text("stale", encoding="utf-8")
+    status = prompt_workbench_cli.build_receipt_status(root)
+    assert status["assetsCurrent"] is False
+    assert status["receiptValid"] is False
+
+    prompt_workbench_cli.write_build_receipt(root)
+    source.write_text("changed", encoding="utf-8")
+    status = prompt_workbench_cli.build_receipt_status(root)
+    assert status["sourceCurrent"] is False
+    assert status["receiptValid"] is False
+
+
+def test_prompt_workbench_asset_builder_rebuilds_for_missing_or_stale_receipt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "prompt-workbench"
+    source = root / "src" / "App.tsx"
+    asset = root / "dist" / "assets" / "index.js"
+    source.parent.mkdir(parents=True)
+    asset.parent.mkdir(parents=True)
+    (root / "node_modules").mkdir()
+    source.write_text("first", encoding="utf-8")
+    (root / "dist" / "index.html").write_text(
+        '<script src="/assets/index.js"></script>',
+        encoding="utf-8",
+    )
+    asset.write_text("old", encoding="utf-8")
+    builds: list[list[str]] = []
+
+    def build(command: list[str], *_args: object, **_kwargs: object) -> None:
+        builds.append(command)
+        asset.write_text(f"built-{len(builds)}", encoding="utf-8")
+
+    monkeypatch.setattr(prompt_workbench_cli, "run_logged", build)
+
+    prompt_workbench_cli.ensure_assets_built(
+        root,
+        tmp_path / "workbench.log",
+        skip_build=False,
+    )
+    assert builds == [["npm", "run", "build"]]
+    assert prompt_workbench_cli.build_receipt_status(root)["receiptValid"] is True
+
+    fixed_time = source.stat().st_mtime_ns
+    source.write_text("other", encoding="utf-8")
+    os.utime(source, ns=(fixed_time, fixed_time))
+    prompt_workbench_cli.ensure_assets_built(
+        root,
+        tmp_path / "workbench.log",
+        skip_build=False,
+    )
+    assert builds == [["npm", "run", "build"], ["npm", "run", "build"]]
+    assert prompt_workbench_cli.build_receipt_status(root)["receiptValid"] is True
+
+
+def test_prompt_workbench_no_build_rejects_an_unverified_receipt(tmp_path: Path) -> None:
+    root = tmp_path / "prompt-workbench"
+    (root / "dist").mkdir(parents=True)
+    (root / "dist" / "index.html").write_text("stale", encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="verified frontend build receipt"):
+        prompt_workbench_cli.ensure_assets_built(
+            root,
+            tmp_path / "workbench.log",
+            skip_build=True,
+        )
+
+
+def test_recovered_owned_process_is_stale_until_its_source_identity_is_proven(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(prompt_workbench_cli, "workbench_source_identity", lambda _root: "a" * 64)
+
+    assert prompt_workbench_cli.state_source_is_stale(
+        {"sourceIdentity": None, "sourceMtime": 9999999999.0},
+        tmp_path,
+    ) is True
+    assert prompt_workbench_cli.current_workbench_requires_restart(
+        {"sourceIdentity": None},
+        {"status": "running", "port": 8781},
+        tmp_path,
+        managed_by_stack=True,
+        preferred_port=8781,
+    ) is True
+
+
 def test_prompt_workbench_legacy_state_fails_stale_when_source_changed_after_start(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -5614,6 +8289,92 @@ def test_prompt_workbench_legacy_state_fails_stale_when_source_changed_after_sta
 
     assert prompt_workbench_cli.state_source_is_stale({"startedAt": started}, tmp_path) is True
     assert prompt_workbench_cli.state_source_is_stale({}, tmp_path) is True
+
+
+def test_managed_prompt_workbench_reclaims_only_a_recognized_stale_workbench_listener(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "current" / "viventium_v0_4" / "prompt-workbench"
+    app_support = tmp_path / "app-support"
+    stopped: list[int] = []
+    available_checks = iter([False, True])
+    monkeypatch.setattr(prompt_workbench_cli, "listener_pids", lambda port: [4312])
+    monkeypatch.setattr(
+        prompt_workbench_cli,
+        "read_state",
+        lambda candidate: {"pid": 4312, "port": 8781} if candidate == app_support else {},
+    )
+    monkeypatch.setattr(
+        prompt_workbench_cli,
+        "process_matches_workbench",
+        lambda pid, expected_root, expected_port=None: expected_root == root and expected_port == 8781,
+    )
+    monkeypatch.setattr(prompt_workbench_cli, "process_matches_owner_scope", lambda *_args: True)
+    monkeypatch.setattr(
+        prompt_workbench_cli,
+        "stop_pid",
+        lambda pid: stopped.append(pid) or True,
+    )
+    monkeypatch.setattr(prompt_workbench_cli, "port_available", lambda port: next(available_checks))
+    monkeypatch.setattr(prompt_workbench_cli.time, "sleep", lambda seconds: None)
+
+    reclaimed = prompt_workbench_cli.reclaim_stale_managed_workbench_port(8781, root, app_support)
+
+    assert reclaimed is True
+    assert stopped == [4312]
+
+
+def test_managed_prompt_workbench_refuses_to_kill_a_workbench_from_another_checkout(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "current" / "viventium_v0_4" / "prompt-workbench"
+    stopped: list[int] = []
+    monkeypatch.setattr(prompt_workbench_cli, "listener_pids", lambda port: [4312])
+    monkeypatch.setattr(
+        prompt_workbench_cli,
+        "process_matches_workbench",
+        lambda pid, expected_root, expected_port=None: False,
+    )
+    monkeypatch.setattr(
+        prompt_workbench_cli,
+        "stop_pid",
+        lambda pid: stopped.append(pid) or True,
+    )
+
+    reclaimed = prompt_workbench_cli.reclaim_stale_managed_workbench_port(
+        8781,
+        root,
+        tmp_path / "app-support",
+    )
+
+    assert reclaimed is False
+    assert stopped == []
+
+
+def test_managed_prompt_workbench_refuses_to_reclaim_another_environment(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "current" / "viventium_v0_4" / "prompt-workbench"
+    app_support = tmp_path / "app-support"
+    prompt_workbench_cli.write_state(app_support, {"pid": 4312, "port": 8781})
+    stopped: list[int] = []
+    monkeypatch.setattr(prompt_workbench_cli, "port_available", lambda _port: False)
+    monkeypatch.setattr(prompt_workbench_cli, "listener_pids", lambda _port: [4312])
+    monkeypatch.setattr(prompt_workbench_cli, "process_matches_workbench", lambda *_args: True)
+    monkeypatch.setattr(prompt_workbench_cli, "process_matches_owner_scope", lambda *_args: False)
+    monkeypatch.setattr(prompt_workbench_cli, "stop_pid", lambda pid: stopped.append(pid) or True)
+
+    reclaimed = prompt_workbench_cli.reclaim_stale_managed_workbench_port(
+        8781,
+        root,
+        app_support,
+    )
+
+    assert reclaimed is False
+    assert stopped == []
 
 
 def test_dev_scoped_managed_prompt_workbench_never_reclaims_an_existing_listener(
@@ -5684,6 +8445,40 @@ def test_prompt_workbench_process_owner_requires_expected_port(
     assert prompt_workbench_cli.process_matches_workbench(4312, root, 10781) is False
 
 
+def test_prompt_workbench_listener_ownership_checks_only_the_owner_process_tree(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "current" / "viventium_v0_4" / "prompt-workbench"
+    monkeypatch.setattr(prompt_workbench_cli, "pid_running", lambda pid: pid in {4312, 4313})
+    monkeypatch.setattr(
+        prompt_workbench_cli,
+        "process_matches_workbench",
+        lambda pid, expected_root, expected_port=None: (
+            pid in {4312, 4313} and expected_root == root and expected_port == 14781
+        ),
+    )
+    monkeypatch.setattr(
+        prompt_workbench_cli,
+        "process_descendant_pids",
+        lambda owner_pid: [4313] if owner_pid == 4312 else [],
+        raising=False,
+    )
+    monkeypatch.setattr(
+        prompt_workbench_cli,
+        "process_listens_on_port",
+        lambda pid, port: pid == 4313 and port == 14781,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        prompt_workbench_cli,
+        "listener_pids",
+        lambda _port: pytest.fail("Listener ownership must not scan every machine socket."),
+    )
+
+    assert prompt_workbench_cli.process_owns_workbench_listener(4312, root, 14781) is True
+
+
 def test_managed_prompt_workbench_restarts_its_current_process_when_compiled_port_changes(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -5705,3 +8500,199 @@ def test_managed_prompt_workbench_restarts_its_current_process_when_compiled_por
         managed_by_stack=True,
         preferred_port=8781,
     ) is False
+
+
+def test_prompt_workbench_port_selection_does_not_reuse_another_checkout(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "current" / "viventium_v0_4" / "prompt-workbench"
+    monkeypatch.setattr(
+        prompt_workbench_cli,
+        "read_state",
+        lambda app_support: {"pid": 4312, "port": 8781},
+    )
+    monkeypatch.setattr(prompt_workbench_cli, "pid_running", lambda pid: True)
+    monkeypatch.setattr(prompt_workbench_cli, "http_healthy", lambda port: True)
+    monkeypatch.setattr(
+        prompt_workbench_cli,
+        "process_matches_workbench",
+        lambda pid, expected, expected_port=None: False,
+    )
+    monkeypatch.setattr(prompt_workbench_cli, "port_available", lambda port: port == 8782)
+
+    selected = prompt_workbench_cli.choose_port(tmp_path / "app-support", root, 8781)
+
+    assert selected == 8782
+
+
+def test_schedules_panel_prefers_live_query_data_over_a_stale_dock_snapshot() -> None:
+    source = (
+        REPO_ROOT
+        / "viventium_v0_4"
+        / "prompt-workbench"
+        / "src"
+        / "components"
+        / "ScheduledPromptsPanel.tsx"
+    ).read_text(encoding="utf-8")
+
+    live_query = "schedulesQuery.data?.scheduledPrompts ??"
+    dock_snapshot = "scheduledPrompts ??"
+    assert 'queryKey: ["scheduledPrompts", "panel"]' in source
+    assert source.index(live_query) < source.index(dock_snapshot)
+
+
+def test_schedules_panel_only_sends_schedule_for_new_or_touched_drafts() -> None:
+    source = (
+        REPO_ROOT
+        / "viventium_v0_4"
+        / "prompt-workbench"
+        / "src"
+        / "components"
+        / "ScheduledPromptsPanel.tsx"
+    ).read_text(encoding="utf-8")
+
+    assert "includeSchedule: !draft.id || scheduleTouched" in source
+    assert "includeSchedule: !isUserLevelSchedule || scheduleTouched" not in source
+
+
+def test_prompt_workbench_dev_server_ports_are_consistent() -> None:
+    lifecycle_script = (REPO_ROOT / "scripts" / "viventium" / "prompt_workbench.py").read_text(encoding="utf-8")
+    package_json = json.loads((REPO_ROOT / "viventium_v0_4" / "prompt-workbench" / "package.json").read_text(encoding="utf-8"))
+    vite_config = (REPO_ROOT / "viventium_v0_4" / "prompt-workbench" / "vite.config.ts").read_text(encoding="utf-8")
+    app_source = (
+        REPO_ROOT / "viventium_v0_4" / "prompt-workbench" / "backend" / "prompt_workbench" / "app.py"
+    ).read_text(encoding="utf-8")
+
+    assert "DEFAULT_PORT = 8781" in lifecycle_script
+    assert "--port 8781" in package_json["scripts"]["serve"]
+    assert "--port 8781" in package_json["scripts"]["dev:api"]
+    assert "'/api': 'http://127.0.0.1:8781'" in vite_config
+    assert "127.0.0.1:8765" not in app_source
+
+
+def test_prompt_workbench_route_receipts_bind_effort_and_typed_fallback_lineage() -> None:
+    telemetry_source = (
+        REPO_ROOT
+        / "viventium_v0_4"
+        / "LibreChat"
+        / "api"
+        / "server"
+        / "services"
+        / "viventium"
+        / "promptFrameTelemetry.js"
+    ).read_text(encoding="utf-8")
+    acceptance_source = (
+        REPO_ROOT
+        / "qa"
+        / "prompt-workbench"
+        / "scripts"
+        / "run_pw_047_installed_full_bank.cjs"
+    ).read_text(encoding="utf-8")
+    panel_source = (
+        REPO_ROOT
+        / "viventium_v0_4"
+        / "prompt-workbench"
+        / "src"
+        / "components"
+        / "EvalPanel.tsx"
+    ).read_text(encoding="utf-8")
+
+    for field in (
+        "requestedProvider",
+        "requestedModel",
+        "requestedEffort",
+        "effectiveProvider",
+        "effectiveModel",
+        "effectiveEffort",
+        "fallbackUsed",
+        "fallbackAuthorized",
+        "fallbackReason",
+    ):
+        assert field in acceptance_source
+        assert field in panel_source
+    for field in (
+        "requested_provider",
+        "requested_model",
+        "requested_effort",
+        "effective_provider",
+        "effective_model",
+        "effective_effort",
+        "fallback_used",
+        "fallback_reason",
+    ):
+        assert field in telemetry_source
+    assert "PROMPT_FRAME_FALLBACK_REASONS" in telemetry_source
+    assert "TYPED_FALLBACK_REASONS" in acceptance_source
+    assert "eval_history_readback_mismatch" in acceptance_source
+
+
+def test_pw047_inventory_enumerates_complete_route_lineage_without_provider_execution() -> None:
+    bank = evals.load_eval_bank()
+    families = bank["families"]
+    case_count = sum(len(family["cases"]) for family in families)
+    plan_count = sum(
+        len({case.get("surface") or "web" for case in family["cases"]})
+        for family in families
+    )
+
+    assert len(families) == 21
+    assert case_count == 177
+    assert plan_count == 29
+    for family in families:
+        runner = family.get("runner") or "main"
+        route = evals._configured_family_execution_route(family["id"])
+        assert route is not None
+        assert route["kind"] == runner
+        assert route["family"] == family["id"]
+        variants = route["targets"] if runner == "background_activation" else [route]
+        if runner == "background_activation":
+            assert {variant["targetKey"] for variant in variants} == {
+                target["key"] for target in family["activationTargets"]
+            }
+        for variant in variants:
+            assert variant["provider"]
+            assert variant["model"]
+            assert variant["effort"]
+            assert isinstance(variant["fallbacks"], list)
+            triples = {
+                (variant["provider"], variant["model"], variant["effort"]),
+                *{
+                    (fallback["provider"], fallback["model"], fallback["effort"])
+                    for fallback in variant["fallbacks"]
+                },
+            }
+            assert len(triples) == len(variant["fallbacks"]) + 1
+
+
+def test_prompt_workbench_redacts_custom_private_roots_and_ledger_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    private_root = tmp_path / "custom-private-root"
+    private_artifact = private_root / "runs" / "result.json"
+    command = ["node", "runner.js", f"--output={private_artifact}"]
+
+    assert str(private_root) not in json.dumps(
+        evals._safe_command(command, private_paths=(private_root,))
+    )
+    assert str(private_root) not in evals._sanitize_output(
+        f"wrote {private_artifact}", private_paths=(private_root,)
+    )
+    assert str(private_root) not in json.dumps(
+        sync_engine._safe_command(command, private_paths=(private_root,))
+    )
+    assert str(private_root) not in sync_engine._sanitize_output(
+        f"wrote {private_artifact}", private_paths=(private_root,)
+    )
+
+    monkeypatch.setattr(sync_engine, "get_status", lambda private_root=None: {"agents": []})
+    result = sync_engine.refresh_ledger_after_reconcile(private_root=private_root)
+
+    assert result == {
+        "status": "updated",
+        "recordCount": 0,
+        "ledgerAvailable": True,
+        "ledgerName": "sync-ledger.json",
+    }
+    assert str(private_root) not in json.dumps(result)
+    assert (private_root / "sync-ledger.json").is_file()

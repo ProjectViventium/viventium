@@ -13,7 +13,7 @@ complete user journey has actually been proven.
 
 ## Requirement Links
 
-- [User control plane and persistent workspaces](../../docs/requirements_and_learnings/55_GlassHive_User_Control_Plane_and_Persistent_Workspaces.md)
+- [User control plane and persistent workspaces](../../docs/requirements_and_learnings/57_GlassHive_User_Control_Plane_and_Persistent_Workspaces.md)
 - [Key principles](../../docs/requirements_and_learnings/01_Key_Principles.md)
 - [GlassHive workstation runtime](../../docs/requirements_and_learnings/48_GlassHive_Workstation_Sandbox_Runtime.md)
 - [MCPs](../../docs/requirements_and_learnings/07_MCPs.md)
@@ -58,7 +58,7 @@ provider, MCP client, scheduler, or installed-runtime path.
 - `PARTIAL`: useful supporting evidence exists, but one or more required layers were not proven or a
   focused check failed.
 - `BLOCKED`: the user-grade path could not run because a named prerequisite was unavailable.
-- `PENDING`: the case has not yet been run for the candidate.
+- `NOT RUN`: the case has not yet been run for the candidate.
 
 ## Current Status
 
@@ -80,7 +80,7 @@ signer isolation, and the full organization-IdP denial matrix.
 
 - [completion-ledger.md](completion-ledger.md): exact final outcome, current snapshot, ordered
   workstreams, blockers, and completion gates; this is the execution/status layer and does not
-  replace Requirement 55 or the durable case catalog
+  replace Requirement 57 or the durable case catalog
 - [cases.md](cases.md): canonical happy and unhappy path checklist
 - [coverage.md](coverage.md): requirement and acceptance-item traceability
 - [reports/2026-08-05-source-and-unit-baseline.md](reports/2026-08-05-source-and-unit-baseline.md):

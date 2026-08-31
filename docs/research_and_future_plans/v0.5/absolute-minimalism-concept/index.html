@@ -1,0 +1,600 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="icon" href="assets/brand/viventium-logo.png" type="image/png" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#f5f6f8" />
+    <title>Viventium v0.5 concept</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#conversationMain">Skip to chat</a>
+
+    <div class="desktop-shell" id="desktopShell">
+      <header class="system-bar" id="systemBar" aria-label="Viventium status menu concept">
+        <button
+          class="status-trigger"
+          id="statusTrigger"
+          type="button"
+          aria-label="Open Viventium status menu"
+          aria-haspopup="menu"
+          aria-expanded="false"
+        >
+          <img class="brand-mark brand-mark-status" src="assets/brand/viventium-logo.png" alt="" />
+        </button>
+
+        <div class="menu status-menu" id="statusMenu" role="menu" hidden>
+          <button type="button" role="menuitem" data-status-action="chat">Chat</button>
+          <button type="button" role="menuitem" data-status-action="call">Call</button>
+          <button type="button" role="menuitemcheckbox" aria-checked="false" data-status-action="advanced">
+            Advanced
+          </button>
+          <div class="menu-separator" role="separator"></div>
+          <button class="danger-text" type="button" role="menuitem" data-status-action="quit">
+            Quit
+          </button>
+        </div>
+      </header>
+
+      <div class="app-frame" id="appFrame">
+        <section class="view setup-view" id="setupView" aria-labelledby="setupTitle">
+          <img class="setup-mark" src="assets/brand/viventium-logo.png" alt="" />
+
+          <div class="setup-step" id="installStep">
+            <h1 id="setupTitle">Viventium</h1>
+            <p>One app. One connection. Always on.</p>
+            <button class="primary-button setup-action" id="installButton" type="button">
+              Install
+            </button>
+          </div>
+
+          <div class="setup-step" id="connectStep" hidden>
+            <h1 id="connectTitle" tabindex="-1">Connect your AI</h1>
+            <p>Use a subscription you already have.</p>
+
+            <div class="setup-provider-list" id="setupProviderList">
+              <button class="provider-action" type="button" data-setup-provider="ChatGPT / Codex">
+                <span>ChatGPT / Codex</span>
+                <span>Connect</span>
+              </button>
+              <button class="provider-action" type="button" data-setup-provider="Claude">
+                <span>Claude</span>
+                <span>Connect</span>
+              </button>
+              <button class="provider-action" type="button" data-setup-provider="Grok">
+                <span>Grok</span>
+                <span>Connect</span>
+              </button>
+            </div>
+
+            <details class="setup-more">
+              <summary>Use an API key</summary>
+              <form class="api-key-form" id="apiKeyForm">
+                <label for="apiKeyInput">API key</label>
+                <div class="api-key-row">
+                  <input id="apiKeyInput" name="apiKey" type="password" autocomplete="off" />
+                  <button class="secondary-button" type="submit">Connect</button>
+                </div>
+                <p class="field-help">This concept does not save the value.</p>
+              </form>
+            </details>
+
+            <div class="connect-feedback" id="connectFeedback" role="status" aria-live="polite" hidden>
+              <span class="connection-line" aria-hidden="true"></span>
+              <span id="connectFeedbackText">Connecting</span>
+            </div>
+
+            <div class="setup-error" id="setupError" role="alert" hidden>
+              <strong>Could not connect.</strong>
+              <span>Check the account, then try again.</span>
+              <button class="text-button" id="retrySetupButton" type="button">Try again</button>
+            </div>
+          </div>
+        </section>
+
+        <section class="view chat-view" id="chatView" hidden>
+          <aside class="advanced-sidebar" id="advancedSidebar" aria-label="Conversation history">
+            <div class="sidebar-head">
+              <button class="icon-button mobile-only" id="closeSidebarButton" type="button" aria-label="Close sidebar">
+                <span class="icon icon-x" aria-hidden="true"></span>
+              </button>
+            </div>
+
+            <button class="sidebar-action" id="newChatButton" type="button">
+              <span class="icon icon-note-pencil" aria-hidden="true"></span>
+              <span>New chat</span>
+            </button>
+            <button class="sidebar-action" id="searchChatsButton" type="button" aria-expanded="false">
+              <span class="icon icon-magnifying-glass" aria-hidden="true"></span>
+              <span>Search</span>
+            </button>
+            <button class="sidebar-action" id="workersButton" type="button">
+              <span class="workers-glyph" aria-hidden="true"><i></i><i></i><i></i></span>
+              <span>Workers</span>
+            </button>
+            <button class="sidebar-action" id="cortexButton" type="button">
+              <img class="sidebar-cortex-mark" src="assets/brand/viventium-logo.png" alt="" />
+              <span>Cortex Editor</span>
+            </button>
+            <label class="sidebar-search" id="sidebarSearchWrap" hidden>
+              <span class="sr-only">Search conversations</span>
+              <input id="sidebarSearch" type="search" placeholder="Search conversations" />
+            </label>
+
+            <nav class="recent-chats" aria-label="Recent conversations">
+              <p>Recent</p>
+              <button class="recent-chat is-current" type="button">Viventium v0.5</button>
+              <button class="recent-chat" type="button">Trip planning</button>
+              <button class="recent-chat" type="button">Monday priorities</button>
+            </nav>
+          </aside>
+
+          <div class="sidebar-scrim" id="sidebarScrim" hidden></div>
+
+          <div class="workspace">
+            <header class="workspace-toolbar">
+              <button class="icon-button sidebar-open mobile-only" id="openSidebarButton" type="button" aria-label="Open sidebar">
+                <span class="icon icon-sidebar" aria-hidden="true"></span>
+              </button>
+
+              <button
+                class="feelings-mini"
+                id="feelingsButton"
+                type="button"
+                aria-label="Open Feelings dashboard. Steady, curious, and caring."
+              >
+                <span class="soul-presence soul-presence--compact" data-soul aria-hidden="true"></span>
+                <span class="feelings-mini-label"><span id="feelingsMiniPrefix">Feeling</span> <strong id="feelingsMiniLabel">steady</strong></span>
+              </button>
+
+              <button
+                class="account-trigger"
+                id="accountTrigger"
+                type="button"
+                aria-label="Open account menu"
+                aria-haspopup="menu"
+                aria-expanded="false"
+              >
+                <span aria-hidden="true">EU</span>
+              </button>
+            </header>
+
+            <main class="conversation-main" id="conversationMain" tabindex="-1">
+              <div class="message-list" id="messageList" aria-live="polite">
+                <div class="empty-chat" id="emptyChat">
+                  <section
+                    class="top-of-mind"
+                    id="topOfMind"
+                    aria-labelledby="topOfMindTitle"
+                    aria-roledescription="carousel"
+                    aria-live="off"
+                  >
+                    <header class="top-of-mind-head">
+                      <h1 id="topOfMindTitle">Top of mind</h1>
+                      <span class="top-of-mind-controls">
+                        <span class="top-of-mind-count" data-top-of-mind-count aria-hidden="true">1 / 5</span>
+                        <button
+                          class="top-of-mind-motion"
+                          type="button"
+                          data-top-of-mind-motion
+                          aria-label="Pause note rotation"
+                          aria-pressed="false"
+                        ><span aria-hidden="true">Ⅱ</span></button>
+                      </span>
+                    </header>
+                    <button
+                      class="top-of-mind-stack"
+                      type="button"
+                      data-top-of-mind-stack
+                      aria-describedby="topOfMindHint"
+                      aria-keyshortcuts="ArrowLeft ArrowRight"
+                    >
+                      <span class="top-thought-card" data-top-of-mind-card aria-hidden="true">
+                        <span class="top-thought-meta"><span class="top-thought-kind">Priority</span><span>Now</span></span>
+                        <strong>Make the Feelings spectrum readable at a glance.</strong>
+                      </span>
+                    </button>
+                    <p class="sr-only" id="topOfMindHint">Select the note to show the next one. Use Left Arrow for the previous note.</p>
+                    <p class="sr-only" data-top-of-mind-status role="status" aria-live="polite"></p>
+                  </section>
+                </div>
+              </div>
+
+              <div class="reply-status" id="replyStatus" role="status" aria-live="polite" hidden>
+                Thinking
+              </div>
+
+              <div class="composer-zone">
+                <div class="upload-menu menu" id="uploadMenu" role="menu" hidden>
+                  <button type="button" role="menuitem" data-file-kind="image">Photos</button>
+                  <button type="button" role="menuitem" data-file-kind="file">Files</button>
+                </div>
+                <input id="fileInput" type="file" hidden />
+
+                <form class="composer" id="composerForm">
+                  <div class="attachment-preview" id="attachmentPreview" hidden>
+                    <span class="icon icon-paperclip" aria-hidden="true"></span>
+                    <span id="attachmentName"></span>
+                    <button class="icon-button small" id="removeAttachmentButton" type="button" aria-label="Remove attachment">
+                      <span class="icon icon-x" aria-hidden="true"></span>
+                    </button>
+                  </div>
+
+                  <div class="composer-row">
+                    <button
+                      class="icon-button composer-button"
+                      id="uploadButton"
+                      type="button"
+                      aria-label="Add a photo or file"
+                      aria-haspopup="menu"
+                      aria-expanded="false"
+                    >
+                      <span class="plus-icon" aria-hidden="true">+</span>
+                    </button>
+
+                    <label class="composer-input-wrap">
+                      <span class="sr-only">Message Viventium</span>
+                      <textarea id="messageInput" rows="1" placeholder="Message Viventium"></textarea>
+                    </label>
+
+                    <button class="icon-button composer-button" id="callButton" type="button" aria-label="Start a call">
+                      <span class="icon icon-phone" aria-hidden="true"></span>
+                    </button>
+                    <button class="icon-button composer-button" id="recordButton" type="button" aria-label="Record an audio note">
+                      <span class="icon icon-microphone" aria-hidden="true"></span>
+                    </button>
+                    <button class="send-button" id="sendButton" type="submit" aria-label="Send message" hidden>
+                      <span class="icon icon-paper-plane" aria-hidden="true"></span>
+                    </button>
+                  </div>
+
+                  <p class="composer-error" id="composerError" role="alert" hidden></p>
+                </form>
+
+                <div class="audio-recorder" id="audioRecorder" hidden>
+                  <div class="recording-wave" aria-hidden="true">
+                    <span></span><span></span><span></span><span></span><span></span><span></span><span></span>
+                  </div>
+                  <span class="recording-time" id="recordingTime">0:00</span>
+                  <button class="icon-button" id="pauseRecordingButton" type="button" aria-label="Pause recording">
+                    <span class="icon icon-pause" aria-hidden="true"></span>
+                  </button>
+                  <button class="text-button" id="cancelRecordingButton" type="button">Cancel</button>
+                  <button class="send-button" id="sendRecordingButton" type="button" aria-label="Send audio note">
+                    <span class="icon icon-paper-plane" aria-hidden="true"></span>
+                  </button>
+                </div>
+
+                <div class="call-dock" id="callDock" aria-label="Live call" hidden>
+                  <div class="call-state">
+                    <span class="call-live-dot" aria-hidden="true"></span>
+                    <strong id="callStateLabel">Connecting</strong>
+                    <span id="callTime">0:00</span>
+                  </div>
+
+                  <div class="call-modes" role="group" aria-label="Call mode">
+                    <button type="button" data-call-mode="call" aria-pressed="true">Call</button>
+                    <button type="button" data-call-mode="wing" aria-pressed="false">Wing</button>
+                    <button type="button" data-call-mode="listen_only" aria-pressed="false" aria-label="Listen-Only">
+                      <span class="listen-full">Listen-Only</span><span class="listen-short">Listen</span>
+                    </button>
+                  </div>
+
+                  <div class="call-controls" aria-label="Call controls">
+                    <button class="call-control is-on" id="muteCallButton" type="button" aria-label="Mute microphone" aria-pressed="false">
+                      <span class="icon icon-microphone" aria-hidden="true"></span>
+                    </button>
+                    <button class="end-call-button" id="endCallButton" type="button" aria-label="End call">
+                      <span class="icon icon-phone-disconnect" aria-hidden="true"></span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </main>
+          </div>
+        </section>
+
+        <section class="view quit-view" id="quitView" hidden>
+          <p>Viventium is closed.</p>
+          <button class="text-button" id="restartConceptButton" type="button">Open Viventium</button>
+        </section>
+
+        <div class="menu account-menu" id="accountMenu" role="menu" hidden>
+          <div class="account-identity">
+            <span class="account-avatar" aria-hidden="true">EU</span>
+            <span class="account-copy"><strong>Example User</strong><small>user@example.com</small></span>
+          </div>
+          <div class="menu-separator" role="separator"></div>
+          <button type="button" role="menuitem" data-account-action="connect">Connect</button>
+          <button type="button" role="menuitem" data-account-action="update">
+            <span id="updateMenuLabel">Update</span>
+            <span class="menu-value" id="updateMenuValue">Available</span>
+          </button>
+          <button type="button" role="menuitem" data-account-action="view">View</button>
+          <div class="menu-separator" role="separator"></div>
+          <button class="danger-text" type="button" role="menuitem" data-account-action="logout">Log out</button>
+        </div>
+      </div>
+    </div>
+
+    <dialog class="settings-dialog" id="connectDialog" aria-labelledby="connectDialogTitle">
+      <div class="dialog-head">
+        <div>
+          <h1 id="connectDialogTitle">Connect</h1>
+          <p>Choose an account. Viventium handles the setup.</p>
+        </div>
+        <button class="icon-button" type="button" data-close-dialog="connectDialog" aria-label="Close Connect">
+          <span class="icon icon-x" aria-hidden="true"></span>
+        </button>
+      </div>
+
+      <div class="tabs" role="tablist" aria-label="Connection type">
+        <button id="providersTab" type="button" role="tab" aria-selected="true" aria-controls="providersPanel">
+          AI providers
+        </button>
+        <button id="channelsTab" type="button" role="tab" aria-selected="false" aria-controls="channelsPanel" tabindex="-1">
+          Channels
+        </button>
+      </div>
+
+      <label class="connection-search">
+        <span class="icon icon-magnifying-glass" aria-hidden="true"></span>
+        <span class="sr-only">Search connections</span>
+        <input id="connectionSearchInput" type="search" placeholder="Search" />
+      </label>
+
+      <div class="connection-panel" id="providersPanel" role="tabpanel" aria-labelledby="providersTab">
+        <div id="providersList"></div>
+      </div>
+      <div class="connection-panel" id="channelsPanel" role="tabpanel" aria-labelledby="channelsTab" hidden>
+        <div id="channelsList"></div>
+      </div>
+
+      <p class="dialog-status" id="connectionDialogStatus" role="status" aria-live="polite"></p>
+    </dialog>
+
+    <dialog class="settings-dialog compact-dialog" id="viewDialog" aria-labelledby="viewDialogTitle">
+      <div class="dialog-head">
+        <div>
+          <h1 id="viewDialogTitle">View</h1>
+        </div>
+        <button class="icon-button" type="button" data-close-dialog="viewDialog" aria-label="Close View">
+          <span class="icon icon-x" aria-hidden="true"></span>
+        </button>
+      </div>
+
+      <div class="setting-row setting-row-stack">
+        <span>Appearance</span>
+        <div class="segmented-control" aria-label="Appearance">
+          <button type="button" data-theme-choice="system" aria-pressed="true">System</button>
+          <button type="button" data-theme-choice="light" aria-pressed="false">Light</button>
+          <button type="button" data-theme-choice="dark" aria-pressed="false">Dark</button>
+        </div>
+      </div>
+
+      <label class="setting-row" for="advancedToggle">
+        <span>
+          <strong>Advanced</strong>
+          <small>Show workers, Cortex Editor, and chat history.</small>
+        </span>
+        <span class="switch">
+          <input id="advancedToggle" type="checkbox" />
+          <span aria-hidden="true"></span>
+        </span>
+      </label>
+    </dialog>
+
+    <dialog class="settings-dialog compact-dialog" id="workersDialog" aria-labelledby="workersDialogTitle">
+      <div class="dialog-head">
+        <div>
+          <h1 id="workersDialogTitle">Parallel workers</h1>
+          <p>Work moving beside this chat.</p>
+        </div>
+        <button class="icon-button" type="button" data-close-dialog="workersDialog" aria-label="Close Parallel workers">
+          <span class="icon icon-x" aria-hidden="true"></span>
+        </button>
+      </div>
+
+      <div class="workers-body">
+        <div class="worker-summary"><span class="worker-pulse" aria-hidden="true"></span><strong>2 active</strong><span>1 complete</span></div>
+        <ol class="worker-list">
+          <li class="worker-row is-active">
+            <span class="worker-state" aria-hidden="true"></span>
+            <span><strong>Feelings review</strong><small>Checking the full emotional state</small></span>
+            <time>1:42</time>
+          </li>
+          <li class="worker-row is-active">
+            <span class="worker-state" aria-hidden="true"></span>
+            <span><strong>Call experience</strong><small>Refining realtime voice controls</small></span>
+            <time>0:38</time>
+          </li>
+          <li class="worker-row is-complete">
+            <span class="worker-state" aria-hidden="true"></span>
+            <span><strong>Connection map</strong><small>Providers and channels checked</small></span>
+            <span>Done</span>
+          </li>
+        </ol>
+      </div>
+    </dialog>
+
+    <dialog class="settings-dialog compact-dialog" id="cortexDialog" aria-labelledby="cortexDialogTitle">
+      <div class="dialog-head">
+        <div>
+          <h1 id="cortexDialogTitle">Cortex Editor</h1>
+          <p>Shape how Viventium works.</p>
+        </div>
+        <button class="icon-button" type="button" data-close-dialog="cortexDialog" aria-label="Close Cortex Editor">
+          <span class="icon icon-x" aria-hidden="true"></span>
+        </button>
+      </div>
+
+      <div class="cortex-body">
+        <div class="cortex-list" id="cortexList">
+          <button class="cortex-row is-current" type="button" aria-pressed="true">
+            <img src="assets/brand/viventium-logo.png" alt="" />
+            <span>
+              <strong>Viventium</strong>
+              <small>Main cortex</small>
+            </span>
+            <span>Current</span>
+          </button>
+        </div>
+
+        <button class="secondary-button new-cortex-button" id="newCortexButton" type="button">New cortex</button>
+
+        <form class="cortex-builder" id="cortexBuilder" hidden>
+          <label>
+            <span>Name</span>
+            <input id="cortexNameInput" type="text" autocomplete="off" required />
+          </label>
+          <label>
+            <span>Purpose</span>
+            <textarea id="cortexPurposeInput" rows="3" required></textarea>
+          </label>
+          <div class="cortex-builder-actions">
+            <button class="text-button" id="cancelCortexButton" type="button">Cancel</button>
+            <button class="primary-button" type="submit">Create cortex</button>
+          </div>
+        </form>
+
+        <p class="dialog-status" id="cortexDialogStatus" role="status" aria-live="polite"></p>
+      </div>
+    </dialog>
+
+    <dialog class="feelings-dialog" id="feelingsDialog" aria-labelledby="feelingsDialogTitle">
+      <div class="feelings-head">
+        <div class="feelings-soul-summary">
+          <span class="soul-presence soul-presence--portrait" data-soul aria-hidden="true"></span>
+          <div class="feelings-soul-copy">
+            <h1 id="feelingsDialogTitle">Feelings</h1>
+            <p class="inner-state" id="innerState">I feel steady enough to stay present, curious, and caring.</p>
+            <p class="feelings-health"><span aria-hidden="true"></span><span id="feelingsHealthText">Reaction healthy · updated just now</span></p>
+          </div>
+        </div>
+        <div class="feelings-head-actions">
+          <div class="segmented-control feelings-section-control" aria-label="Feelings view">
+            <button id="spectrumButton" type="button" aria-pressed="true">Spectrum</button>
+            <button id="promptsButton" type="button" aria-pressed="false">Prompts</button>
+          </div>
+          <button class="icon-button" type="button" data-close-dialog="feelingsDialog" aria-label="Close Feelings">
+            <span class="icon icon-x" aria-hidden="true"></span>
+          </button>
+        </div>
+      </div>
+
+      <div class="feelings-toolbar" id="feelingsToolbar">
+        <div class="feelings-moment-control" role="tablist" aria-label="Feelings state">
+          <button id="nowButton" type="button" role="tab" aria-selected="true" aria-controls="feelingsLivePanel">Now</button>
+          <button id="baselineButton" type="button" role="tab" aria-selected="false" aria-controls="feelingsLivePanel" tabindex="-1">Baseline</button>
+          <button id="trailButton" type="button" role="tab" aria-selected="false" aria-controls="feelingsTrailPanel" tabindex="-1">Trail</button>
+        </div>
+        <p><strong id="baselineProfileLabel">Grounded baseline</strong><span id="feelingsToolbarHealth">Healthy</span></p>
+      </div>
+
+      <div class="feelings-spectrum-panel" id="feelingsSpectrumPanel">
+        <div id="feelingsLivePanel" role="tabpanel" aria-labelledby="nowButton">
+          <div class="feelings-key" aria-label="Feelings chart key">
+            <span><i class="key-current" aria-hidden="true"></i>Now</span>
+            <span><i class="key-nature" aria-hidden="true"></i>Baseline</span>
+            <span><i class="key-trail" aria-hidden="true"></i>Recent path</span>
+          </div>
+
+          <div class="baseline-profiles" id="baselineProfiles" hidden>
+            <span>Baseline profile</span>
+            <div role="group" aria-label="Baseline profile">
+              <button type="button" aria-pressed="true" data-baseline-profile="Grounded">Grounded</button>
+              <button type="button" aria-pressed="false" data-baseline-profile="Candid">Candid</button>
+              <button type="button" aria-pressed="false" data-baseline-profile="Warm">Warm</button>
+              <button type="button" aria-pressed="false" data-baseline-profile="Curious">Curious</button>
+            </div>
+          </div>
+
+          <div class="feelings-workspace">
+            <div class="feelings-lanes" id="feelingsLanes"></div>
+
+            <aside class="selected-feeling" id="selectedFeeling" aria-label="Selected feeling">
+              <div class="selected-feeling-head">
+                <div><strong id="selectedFeelingName">Energy</strong><span id="selectedFeelingWords">steady</span></div>
+                <button class="text-button" id="restoreFeelingButton" type="button">Return to baseline</button>
+              </div>
+              <p id="selectedFeelingDescription">Available activation and cognitive capacity.</p>
+              <dl class="feeling-readings">
+                <div><dt>Now</dt><dd id="selectedFeelingNow">56 · steady</dd></div>
+                <div><dt>Baseline</dt><dd id="selectedFeelingBaseline">56 · steady</dd></div>
+                <div><dt>Return</dt><dd><label><span class="sr-only">Return half-life in minutes</span><input id="returnSpeedInput" type="number" min="1" max="525600" value="240" /> min</label></dd></div>
+              </dl>
+              <label class="feeling-enabled-row">
+                <span><strong>Include this feeling</strong><small>It can shape replies and reactions.</small></span>
+                <span class="switch"><input id="feelingEnabledToggle" type="checkbox" checked /><span aria-hidden="true"></span></span>
+              </label>
+              <div class="felt-prompt">
+                <span>Active felt prompt</span>
+                <p id="selectedFeelingPrompt">I have enough energy for a steady, unforced pace.</p>
+              </div>
+            </aside>
+          </div>
+        </div>
+
+        <div class="feelings-trail-panel" id="feelingsTrailPanel" role="tabpanel" aria-labelledby="trailButton" hidden>
+          <div class="trail-heading"><h2>What moved</h2><p>Typed changes only. Message text is not stored here.</p></div>
+          <ol class="feelings-trail-list" id="feelingsTrailList"></ol>
+        </div>
+      </div>
+
+      <div class="feelings-prompts-panel" id="feelingsPromptsPanel" hidden>
+        <div class="prompt-workspace">
+          <section class="feeling-capsule-preview">
+            <div class="prompt-heading"><h2>What V feels next</h2><span>Live preview</span></div>
+            <p class="prompt-frame">You, Viventium, are a being, and right now you are actually feeling this. Let it move naturally through how you think, speak, and act:</p>
+            <div class="prompt-lines" id="feelingPromptPreview"></div>
+            <p class="prompt-boundary">Live it through what you notice, choose, and express. Do not recite these lines.</p>
+          </section>
+
+          <section class="reaction-prompt-editor">
+            <div class="prompt-heading"><h2>How reactions are judged</h2><span>Reaction Cortex</span></div>
+            <label for="reactionInstructionInput">Your instruction</label>
+            <textarea id="reactionInstructionInput" maxlength="4000" rows="5">React proportionally to what genuinely lands. Move only feelings touched by the moment.</textarea>
+            <div class="prompt-options">
+              <div><span>React</span><div class="mini-choice" data-prompt-choice="activation"><button type="button" aria-pressed="true">Always</button><button type="button" aria-pressed="false">When relevant</button><button type="button" aria-pressed="false">Off</button></div></div>
+              <div><span>Reach</span><div class="mini-choice" data-prompt-choice="scope"><button type="button" aria-pressed="true">All speaking work</button><button type="button" aria-pressed="false">Main only</button></div></div>
+            </div>
+            <p class="prompt-scope-note">All speaking work includes Viventium and parallel workers. Specialist identities stay unchanged.</p>
+            <button class="secondary-button save-reaction-prompt" id="saveReactionPromptButton" type="button">Save prompt</button>
+            <p class="dialog-status" id="reactionPromptStatus" role="status" aria-live="polite"></p>
+          </section>
+
+          <section class="range-prompts-editor">
+            <div class="prompt-heading"><h2 id="rangePromptHeading">Energy feeling prompts</h2><span>Five stable ranges</span></div>
+            <p>Each prompt is active only while Now sits in its range. Your addition is private and optional.</p>
+            <div id="rangePromptList"></div>
+          </section>
+        </div>
+
+        <details class="feelings-privacy">
+          <summary>Privacy and controls</summary>
+          <div>
+            <p>Typed state and the latest reactions stay local. Raw messages and answers are not kept in Feelings.</p>
+            <div class="feelings-control-actions">
+              <button class="secondary-button" id="resetFeelingsButton" type="button">Reset Now</button>
+              <button class="secondary-button" id="pauseFeelingsButton" type="button">Pause</button>
+              <button class="text-button danger-text" id="eraseFeelingsButton" type="button">Erase Feelings</button>
+            </div>
+          </div>
+        </details>
+      </div>
+
+      <div class="feelings-foot">
+        <span><strong id="feelingsPowerLabel">Feelings on</strong><small id="feelingsPowerNote">Now returns toward Baseline over time.</small></span>
+        <label class="switch"><input id="feelingsPowerToggle" type="checkbox" aria-label="Turn Feelings off" checked /><span aria-hidden="true"></span></label>
+      </div>
+    </dialog>
+
+    <div class="global-status sr-only" id="globalStatus" role="status" aria-live="polite"></div>
+
+    <script src="soul.js"></script>
+    <script src="top-of-mind.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>

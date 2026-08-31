@@ -60,8 +60,10 @@ These are single-run user-path observations, not p50 or p95 measurements.
 
 ## Remaining External State
 
-Unrelated connected-account integrations were outside this synthetic GlassHive case and were not
-used. Their status was not collected for this public report.
+The previously connected Anthropic main-agent fallback refreshed successfully and was verified on
+the final Telegram and web turns; no account reconnection was required. Unrelated Google and
+Microsoft connected accounts remain expired; they report explicit reconnect/degraded notices and
+are not silently treated as healthy. They do not own the GlassHive path tested here.
 
 No private logs, credentials, local usernames, hostnames, absolute home paths, or customer data are
 included in this report.
@@ -76,7 +78,7 @@ included in this report.
 - QA case: the applicable continuity, GlassHive, Telegram, and modern-playground cases.
 - Expected result: each surface can discover and complete the capability without duplicated tools or a broken graph.
 - Actual evidence: the three real user journeys, persisted results, runtime logs, and focused regressions above passed.
-- Remaining gap or fix: unrelated connected-account providers were outside this capability path and were not evaluated.
+- Remaining gap or fix: unrelated expired connected accounts remain truthfully degraded and outside this capability path.
 
 ## Full-View Evidence Checklist
 
@@ -92,7 +94,7 @@ included in this report.
 | Generated/shipped artifact | The active generated runtime and selected checkout were aligned; clean-install proof is separate release work. |
 | Real user path | Telegram, LibreChat browser, and Modern Playground voice were used directly. |
 | Visual/UX comparison | Text, cards, artifacts, and delivered audio agreed with the backend state. |
-| Not run / blocked | Unrelated connected-account providers were not evaluated or claimed. |
+| Not run / blocked | Expired unrelated connected-account providers were not repaired or claimed. |
 
 Supporting evidence cannot replace required user-path evidence; the Telegram, browser, and voice paths were run directly.
 
@@ -113,7 +115,7 @@ Supporting evidence cannot replace required user-path evidence; the Telegram, br
 - Defects: six structural cross-surface defects are listed under Root Causes Fixed.
 - Regressions: none remained in the repeated user journeys or focused suites.
 - Flakes: two QA-only result heuristics were corrected and rerun.
-- Environment issues: unrelated integrations were outside the synthetic case and were not inspected.
+- Environment issues: unrelated connected accounts remained explicitly degraded.
 - Residual risks: the timing observations are single runs, not capacity percentiles.
 
 ## Public-Safety Review

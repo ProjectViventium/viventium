@@ -1,3 +1,4 @@
+<!-- qa-evidence-exempt: Historical evidence snapshot retained verbatim; retroactive v2 fields would invent evidence that was not captured during the run. -->
 # Connected-Account Attempt Correlation QA — 2026-08-04
 
 ## Verdict
@@ -39,4 +40,3 @@ public report.
 Rerun `MCPOAUTH-005` whenever popup polling, connected-account status, OAuth callback exchange,
 credential expiry handling, or API restart behavior changes. Source/unit evidence cannot replace
 the real browser popup-lifetime and completion check.
-<!-- qa-evidence-exempt: Historical or specialized supporting artifact retained without retroactively inventing missing evidence; current release acceptance requires a fresh full-view report. -->

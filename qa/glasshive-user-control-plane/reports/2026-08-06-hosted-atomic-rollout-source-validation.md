@@ -19,7 +19,7 @@
 `feature -> requirement -> use case -> QA case -> expected result -> actual evidence -> remaining gap`
 
 - Feature: atomic hosted GlassHive rollout and recovery.
-- Requirement: requirement 55 immutable deployment and rollback.
+- Requirement: requirement 57 immutable deployment and rollback.
 - Use case: an operator stages and validates a candidate before a single ingress switch, then can restore the predecessor.
 - QA case: GHUCP-032 and GHUCP-033.
 - Expected result: exact provenance, three-service health, state-safe migration, atomic ingress, and complete rollback.
@@ -30,9 +30,9 @@
 
 | Evidence surface | Result / sanitized pointer |
 | --- | --- |
-| Requirement and use case | Requirement 55, GHUCP-032, and GHUCP-033. |
+| Requirement and use case | Requirement 57, GHUCP-032, and GHUCP-033. |
 | Code owning path | Immutable staging, backup/clone, service orchestration, ingress adapter, journal, and rollback. |
-| Docs and nested docs/repos | Requirement 55, hosted rollout runbook, and nested GlassHive runtime contract. |
+| Docs and nested docs/repos | Requirement 57, hosted rollout runbook, and nested GlassHive runtime contract. |
 | Scripts or harnesses | macOS and Debian rollout suites plus systemd unit verification. |
 | Local/external prerequisite state | Clean Debian container and local macOS harness; no hosted cloud prerequisites were changed. |
 | Logs | Sanitized pass/failure-injection summaries only; no live service log capture. |

@@ -209,6 +209,10 @@ def test_config_compile_runs_native_continuity_and_release_boundary_suites() -> 
     assert "timeout-minutes: 90" in source
     assert "actions/setup-node@" in source
     assert 'node-version: "24"' in source
+    assert "Record hosted Node toolchain" in source
+    assert "realpathSync(process.execPath)" in source
+    assert "VIVENTIUM_NODE_BINARY=%s" in source
+    assert '>> "$GITHUB_ENV"' in source
     assert 'python-version: "3.12"' in source
     assert 'python-version: "3.12.' not in source
     assert "uv==0.11.28" in source
@@ -226,9 +230,18 @@ def test_config_compile_runs_native_continuity_and_release_boundary_suites() -> 
     assert "modern-playground-selection.yaml" in source
     assert "'  mode: local'" in source
     assert "'  playground_variant: modern'" in source
-    assert "Install LibreChat workspace dependencies" in source
+    assert "Install and verify audio QA tools" in source
+    assert "brew install ffmpeg" in source
+    assert "command -v ffmpeg" in source
+    assert "command -v ffprobe" in source
+    assert "Install and build LibreChat runtime artifacts" in source
     assert "npm ci --ignore-scripts" in source
     assert "npm run build:packages" in source
+    assert "npm run build:client" in source
+    assert "test -s packages/api/dist/index.js" in source
+    assert "test -s packages/data-schemas/dist/index.cjs" in source
+    assert "test -s packages/data-provider/dist/index.js" in source
+    assert "test -s client/dist/index.html" in source
     assert "Install modern playground dependencies" in source
     assert "corepack pnpm install --frozen-lockfile --ignore-scripts" in source
     assert source.index("modern-playground-selection.yaml") < source.index(
@@ -236,6 +249,7 @@ def test_config_compile_runs_native_continuity_and_release_boundary_suites() -> 
     )
     assert source.index("bootstrap_components.py") < source.index("python -m pytest")
     assert source.index("npm run build:packages") < source.index("python -m pytest")
+    assert source.index("npm run build:client") < source.index("python -m pytest")
     assert source.index("pnpm install") < source.index("python -m pytest")
     assert "python -m pytest tests/release/ -q" in source
     assert "Run Telegram smart-delivery regression suite" in source
@@ -244,6 +258,38 @@ def test_config_compile_runs_native_continuity_and_release_boundary_suites() -> 
     assert "uv run --project TelegramVivBot --frozen" in source
     assert "--with pytest==8.4.2 --with pytest-asyncio==1.4.0" in source
     assert "python -m pytest -q tests" in source
+
+
+@pytest.mark.parametrize(
+    ("workflow_name", "job_name", "step_name"),
+    (
+        (
+            "config-compile.yml",
+            "python",
+            "Install and build LibreChat runtime artifacts",
+        ),
+        (
+            "native-payload-candidate.yml",
+            "assemble",
+            "Build and prune the exact LibreChat production runtime",
+        ),
+    ),
+)
+def test_librechat_production_build_steps_provision_sufficient_node_heap(
+    workflow_name: str,
+    job_name: str,
+    step_name: str,
+) -> None:
+    workflow = yaml.safe_load(
+        (WORKFLOW_ROOT / workflow_name).read_text(encoding="utf-8")
+    )
+    step = next(
+        candidate
+        for candidate in workflow["jobs"][job_name]["steps"]
+        if candidate.get("name") == step_name
+    )
+
+    assert step.get("env", {}).get("NODE_OPTIONS") == "--max-old-space-size=4096"
 
 
 def test_hosted_setup_python_uses_available_minor_selector() -> None:

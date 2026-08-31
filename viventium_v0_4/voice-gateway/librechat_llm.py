@@ -196,6 +196,31 @@ def _debug_text_json(text: str) -> str:
 def _summarize_error_for_log(error: str) -> str:
     text = error or ""
     summary: list[str] = []
+    safe_error_categories = {
+        "error",
+        "api_error",
+        "authentication_error",
+        "authorization_error",
+        "connection_error",
+        "context_length_exceeded",
+        "forbidden",
+        "insufficient_quota",
+        "invalid_api_key",
+        "invalid_request_error",
+        "model_not_found",
+        "not_found",
+        "overloaded_error",
+        "permission_error",
+        "provider_error",
+        "rate_limit_error",
+        "rate_limit_exceeded",
+        "request_rejected",
+        "server_error",
+        "service_unavailable",
+        "timeout_error",
+        "unauthorized",
+        "upstream_error",
+    }
     status_match = re.search(r"\b([45]\d{2})\b", text)
     if status_match:
         summary.append(f"status={status_match.group(1)}")
@@ -206,22 +231,22 @@ def _summarize_error_for_log(error: str) -> str:
             payload = json.loads(text[json_start:])
             if isinstance(payload, dict):
                 outer_type = payload.get("type")
-                if isinstance(outer_type, str) and outer_type.strip():
+                if isinstance(outer_type, str) and outer_type.strip() in safe_error_categories:
                     summary.append(f"type={outer_type.strip()}")
                 inner = payload.get("error")
                 if isinstance(inner, dict):
                     inner_type = inner.get("type")
-                    if isinstance(inner_type, str) and inner_type.strip():
+                    if isinstance(inner_type, str) and inner_type.strip() in safe_error_categories:
                         summary.append(f"error_type={inner_type.strip()}")
                     inner_code = inner.get("code")
-                    if isinstance(inner_code, str) and inner_code.strip():
+                    if isinstance(inner_code, str) and inner_code.strip() in safe_error_categories:
                         summary.append(f"error_code={inner_code.strip()}")
         except Exception:
             pass
 
     if summary:
         return " ".join(summary)
-    return _debug_text(text, max_len=120)
+    return "category=upstream_error"
 
 
 class _NoResponseStreamGuard:
@@ -276,6 +301,7 @@ class _NoResponseStreamGuard:
 #   phrase it was meant to punctuate has already been sent to TTS.
 class _VoiceTtsDeltaBuffer:
     _CLOSING_PUNCTUATION = "\"'”’)]}"
+    _NUMBERED_PREFIX_RE = re.compile(r"^(?P<leading>\s*)(?P<marker>\d+[.)])\s+")
 
     def __init__(
         self,
@@ -475,8 +501,19 @@ class _VoiceTtsDeltaBuffer:
 
     def _prepare_output(self, text: str) -> str:
         out = self._drop_leading_orphan_punctuation(text)
+        numbered_prefix = self._NUMBERED_PREFIX_RE.match(out or "")
         if self._sanitize_chunk is not None and out:
             out = self._sanitize_chunk(out)
+            # A phrase buffer starts at arbitrary model-token boundaries. A
+            # mid-sentence value such as ``7. Urgent attention`` can therefore
+            # look like a Markdown numbered-list item to the full-text speech
+            # sanitizer. Preserve that numeric speech content; full follow-up
+            # sanitization still removes genuine list scaffolding before it
+            # reaches this streaming buffer.
+            if numbered_prefix and out:
+                leading = numbered_prefix.group("leading")
+                marker = numbered_prefix.group("marker")
+                out = f"{leading}{marker} {out.lstrip()}"
             out = self._drop_leading_orphan_punctuation(out)
         if not out or self._is_orphan_punctuation(out):
             return ""
@@ -576,6 +613,7 @@ class _VoicePresentation:
     sequence: int
     source_event_id: str
     presentation_ref: str
+    trace_id: str
     logical_turn_id: str = ""
     revision: Optional[int] = None
     provisional_interruptions: int = 0
@@ -627,6 +665,7 @@ class _VoicePresentationCoordinator:
             sequence=self._sequence,
             source_event_id=str(source_event_id or "")[:160],
             presentation_ref=str(presentation_ref or "")[:160],
+            trace_id=str(presentation_ref or "")[:160],
         )
         self._current = presentation
         return presentation
@@ -703,7 +742,7 @@ def _extract_last_user_speaker_context(chat_ctx: ChatContext) -> dict[str, Any]:
             return {}
         segments = context.get("speakerSegments")
         revisions = context.get("speakerSegmentRevisions")
-        return {
+        result = {
             "speakerSegments": segments if isinstance(segments, list) else [],
             "speakerSegmentRevisions": revisions if isinstance(revisions, list) else [],
             "speakerLabel": str(context.get("speakerLabel") or "room"),
@@ -711,6 +750,10 @@ def _extract_last_user_speaker_context(chat_ctx: ChatContext) -> dict[str, Any]:
             "ownerTrackSid": str(context.get("ownerTrackSid") or ""),
             "utteranceEndAtMs": context.get("utteranceEndAtMs"),
         }
+        engagement = context.get("voiceEngagement")
+        if isinstance(engagement, dict):
+            result["voiceEngagement"] = engagement
+        return result
     return {}
 
 
@@ -1301,13 +1344,12 @@ async def _abort_librechat_voice_stream(
             timeout=aiohttp.ClientTimeout(total=_voice_abort_timeout_s()),
         ) as resp:
             if resp.status >= 400:
-                body = await resp.text()
                 logger.warning(
-                    "[LibreChatLLM] Voice abort failed status=%s request_id=%s stream_id=%s body=%s",
+                    "[LibreChatLLM] Voice abort failed status=%s request_id=%s "
+                    "stream_id=%s category=upstream_error",
                     resp.status,
                     request_id,
                     stream_id,
-                    _summarize_error_for_log(body),
                 )
                 return
             if log_latency:
@@ -1393,6 +1435,11 @@ class LibreChatLLM(llm.LLM):
         self._current_trace: Optional[VoiceHopTrace] = None
         self._traces_by_id: dict[str, VoiceHopTrace] = {}
         self._task_id_by_trace_id: dict[str, str] = {}
+        self._stream_id_by_trace_id: dict[str, str] = {}
+        self._presentation_by_trace_id: dict[str, _VoicePresentation] = {}
+        self._pending_production_trace_stages: set[tuple[str, str]] = set()
+        self._sent_production_trace_stages: dict[tuple[str, str], None] = {}
+        self._production_trace_tasks: set[asyncio.Task[bool]] = set()
         self._summarized_trace_ids: dict[str, None] = {}
         self._trace_finalizers: dict[str, asyncio.TimerHandle] = {}
         self._background_continuations: set[asyncio.Task[None]] = set()
@@ -1417,8 +1464,31 @@ class LibreChatLLM(llm.LLM):
         self._pending_speech_handles: list[Any] = []
         self._delivery_ack_tasks: set[asyncio.Task[bool]] = set()
 
+    def is_participant_connected(self) -> bool:
+        if self._is_participant_connected is None:
+            return True
+        try:
+            return bool(self._is_participant_connected())
+        except Exception:
+            logger.warning(
+                "[LibreChatLLM] Participant-state check failed; preserving interruption cancellation"
+            )
+            return True
+
+    async def wait_for_participant_reconnect(self) -> bool:
+        if self.is_participant_connected():
+            return True
+        deadline = time.monotonic() + self._participant_reconnect_grace_s
+        while time.monotonic() < deadline:
+            await asyncio.sleep(
+                min(0.05, max(0.0, deadline - time.monotonic()))
+            )
+            if self.is_participant_connected():
+                return True
+        return self.is_participant_connected()
+
     def register_speech_handle(self, speech_handle: Any) -> None:
-        """Queue the next generated-reply handle for playback-complete acknowledgement."""
+        """Queue the next LiveKit generated-reply handle for playback-complete acknowledgement."""
         if speech_handle is None:
             return
         self._pending_speech_handles.append(speech_handle)
@@ -1456,7 +1526,9 @@ class LibreChatLLM(llm.LLM):
             role = item.get("role") if isinstance(item, dict) else getattr(item, "role", None)
             if role != "assistant":
                 continue
-            metrics = item.get("metrics") if isinstance(item, dict) else getattr(item, "metrics", None)
+            metrics = (
+                item.get("metrics") if isinstance(item, dict) else getattr(item, "metrics", None)
+            )
             if not isinstance(metrics, dict):
                 continue
             started_speaking_at = metrics.get("started_speaking_at")
@@ -1481,13 +1553,18 @@ class LibreChatLLM(llm.LLM):
         elif self._speech_handle_has_audible_playout(speech_handle):
             state = "committed"
         else:
+            # A completed handle can still represent terminal TTS/playout failure.
+            # Absence of first-audio evidence must never be reported as delivered.
             state = "failed"
-        return await self.ack_delivery(
+        accepted = await self.ack_delivery(
             logical_turn_id=presentation.logical_turn_id,
             revision=presentation.revision,
             state=state,
             presentation_ref=presentation.presentation_ref,
         )
+        if state == "committed" and accepted:
+            self.record_completed_trace_stage(presentation.trace_id, "audio.completed")
+        return accepted
 
     async def ack_delivery(
         self,
@@ -1497,7 +1574,7 @@ class LibreChatLLM(llm.LLM):
         state: str,
         presentation_ref: str = "",
     ) -> bool:
-        """Best-effort generic lifecycle acknowledgement when the contract is configured."""
+        """Best-effort generic lifecycle acknowledgement when the core contract is configured."""
         endpoint = str(os.getenv("VIVENTIUM_DELIVERY_ACK_ENDPOINT") or "").strip()
         adapter_secret = str(
             os.getenv("VIVENTIUM_VOICE_INTERACTION_ADAPTER_SECRET") or ""
@@ -1524,7 +1601,8 @@ class LibreChatLLM(llm.LLM):
         presentation_id = str(presentation_ref or "").strip()[:160]
         if presentation_id:
             payload["presentation_ref"] = presentation_id
-        for attempt in range(3):
+        max_attempts = 3
+        for attempt in range(max_attempts):
             try:
                 async with aiohttp.ClientSession(
                     timeout=aiohttp.ClientTimeout(total=min(self._timeout_s, 10.0))
@@ -1536,39 +1614,17 @@ class LibreChatLLM(llm.LLM):
                     ) as response:
                         status_code = int(response.status)
             except (aiohttp.ClientError, asyncio.TimeoutError, ValueError, TypeError):
-                if attempt >= 2:
+                if attempt + 1 >= max_attempts:
                     return False
                 await asyncio.sleep(0.2 * (attempt + 1))
                 continue
             if 200 <= status_code < 300:
                 return True
-            if not (status_code in {408, 425, 429} or status_code >= 500) or attempt >= 2:
+            retryable = status_code in {408, 425, 429} or status_code >= 500
+            if not retryable or attempt + 1 >= max_attempts:
                 return False
             await asyncio.sleep(0.2 * (attempt + 1))
         return False
-
-    def is_participant_connected(self) -> bool:
-        """Report whether the backend-claimed owner identity is currently in the room."""
-        if self._is_participant_connected is None:
-            return True
-        try:
-            return bool(self._is_participant_connected())
-        except Exception:
-            logger.warning(
-                "[LibreChatLLM] Participant-state check failed; suppressing unaddressed speech",
-                exc_info=True,
-            )
-            return False
-
-    async def wait_for_participant_reconnect(self) -> bool:
-        if self.is_participant_connected():
-            return True
-        deadline = time.monotonic() + self._participant_reconnect_grace_s
-        while time.monotonic() < deadline:
-            await asyncio.sleep(min(0.05, max(0.0, deadline - time.monotonic())))
-            if self.is_participant_connected():
-                return True
-        return self.is_participant_connected()
 
     @property
     def current_trace_id(self) -> str:
@@ -1601,10 +1657,124 @@ class LibreChatLLM(llm.LLM):
             expired_id = next(iter(self._traces_by_id))
             self._traces_by_id.pop(expired_id)
             self._task_id_by_trace_id.pop(expired_id, None)
+            self._stream_id_by_trace_id.pop(expired_id, None)
+            self._presentation_by_trace_id.pop(expired_id, None)
 
     def bind_trace_task(self, correlation_id: str, task_id: str) -> None:
         if correlation_id in self._traces_by_id and (task_id or "").strip():
             self._task_id_by_trace_id[correlation_id] = task_id.strip()
+
+    def bind_trace_core_context(
+        self,
+        correlation_id: str,
+        *,
+        stream_id: str,
+        task_id: str,
+        presentation: _VoicePresentation,
+    ) -> None:
+        trace_id = str(correlation_id or "").strip()[:160]
+        stream_ref = str(stream_id or "").strip()[:160]
+        task_ref = str(task_id or "").strip()[:160]
+        if (
+            trace_id not in self._traces_by_id
+            or not stream_ref
+            or not task_ref
+            or presentation.trace_id != trace_id
+        ):
+            return
+        self._stream_id_by_trace_id[trace_id] = stream_ref
+        self._task_id_by_trace_id[trace_id] = task_ref
+        self._presentation_by_trace_id[trace_id] = presentation
+
+    async def _post_production_trace(self, correlation_id: str, stage: str) -> bool:
+        trace_id = str(correlation_id or "").strip()[:160]
+        normalized_stage = str(stage or "").strip()
+        presentation = self._presentation_by_trace_id.get(trace_id)
+        stream_id = self._stream_id_by_trace_id.get(trace_id, "")
+        task_id = self._task_id_by_trace_id.get(trace_id, "")
+        if (
+            normalized_stage not in {"tts.completed", "audio.completed"}
+            or trace_id not in self._traces_by_id
+            or presentation is None
+            or presentation.trace_id != trace_id
+            or not presentation.logical_turn_id
+            or presentation.revision is None
+            or not presentation.presentation_ref
+            or not stream_id
+            or not task_id
+            or not self._auth.job_id
+            or not self._auth.worker_id
+        ):
+            return False
+        headers = {
+            "Content-Type": "application/json",
+            "X-VIVENTIUM-CALL-SESSION": self._auth.call_session_id,
+            "X-VIVENTIUM-CALL-SECRET": self._auth.call_secret,
+            "X-VIVENTIUM-JOB-ID": self._auth.job_id,
+            "X-VIVENTIUM-WORKER-ID": self._auth.worker_id,
+        }
+        body = {
+            "version": 1,
+            "callSessionId": self._auth.call_session_id,
+            "turnId": presentation.logical_turn_id,
+            "streamId": stream_id,
+            "taskId": task_id,
+            "presentationRef": presentation.presentation_ref,
+            "stage": normalized_stage,
+        }
+        url = f"{self._origin}/api/viventium/voice/trace/stages"
+        for attempt in range(3):
+            try:
+                async with aiohttp.ClientSession(
+                    timeout=aiohttp.ClientTimeout(total=min(self._timeout_s, 5.0))
+                ) as session:
+                    async with session.post(url, headers=headers, json=body) as response:
+                        status_code = int(response.status)
+            except (aiohttp.ClientError, asyncio.TimeoutError, ValueError, TypeError):
+                if attempt + 1 >= 3:
+                    return False
+                await asyncio.sleep(0.1 * (attempt + 1))
+                continue
+            if 200 <= status_code < 300:
+                return True
+            retryable = status_code in {408, 425, 429} or status_code >= 500
+            if not retryable or attempt + 1 >= 3:
+                return False
+            await asyncio.sleep(0.1 * (attempt + 1))
+        return False
+
+    def record_completed_trace_stage(self, correlation_id: str, stage: str) -> bool:
+        key = (str(correlation_id or "").strip()[:160], str(stage or "").strip())
+        if (
+            not key[0]
+            or key[1] not in {"tts.completed", "audio.completed"}
+            or key in self._pending_production_trace_stages
+            or key in self._sent_production_trace_stages
+        ):
+            return False
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return False
+        self._pending_production_trace_stages.add(key)
+
+        async def _record() -> bool:
+            try:
+                accepted = await self._post_production_trace(*key)
+                if accepted:
+                    self._sent_production_trace_stages[key] = None
+                    while len(self._sent_production_trace_stages) > 512:
+                        self._sent_production_trace_stages.pop(
+                            next(iter(self._sent_production_trace_stages))
+                        )
+                return accepted
+            finally:
+                self._pending_production_trace_stages.discard(key)
+
+        task = loop.create_task(_record())
+        self._production_trace_tasks.add(task)
+        task.add_done_callback(self._production_trace_tasks.discard)
+        return True
 
     def task_id_for_trace(self, correlation_id: str) -> str:
         return self._task_id_by_trace_id.get((correlation_id or "").strip(), "")
@@ -2084,6 +2254,7 @@ class LibreChatLLM(llm.LLM):
         saw_glasshive_tool_call: bool,
         cortex_message_id: str,
         hop_trace: VoiceHopTrace,
+        presentation: Optional[_VoicePresentation] = None,
     ) -> None:
         task = asyncio.create_task(
             self._continue_task_stream(
@@ -2096,6 +2267,7 @@ class LibreChatLLM(llm.LLM):
                 saw_glasshive_tool_call=saw_glasshive_tool_call,
                 cortex_message_id=cortex_message_id,
                 hop_trace=hop_trace,
+                presentation=presentation,
             )
         )
         self._background_continuations.add(task)
@@ -2123,6 +2295,7 @@ class LibreChatLLM(llm.LLM):
         saw_glasshive_tool_call: bool,
         cortex_message_id: str,
         hop_trace: VoiceHopTrace,
+        presentation: Optional[_VoicePresentation] = None,
     ) -> None:
         final_event: Optional[dict[str, Any]] = None
         suppress_task_output = False
@@ -2143,6 +2316,11 @@ class LibreChatLLM(llm.LLM):
                             if response.status >= 400:
                                 break
                             async for event in iter_sse_json_events(content=response.content):
+                                if presentation is not None:
+                                    self._presentation_coordinator.bind_core_context(
+                                        presentation,
+                                        event,
+                                    )
                                 self._record_tool_hops_from_event(
                                     hop_trace,
                                     event,
@@ -2198,6 +2376,10 @@ class LibreChatLLM(llm.LLM):
                 and self._followup_handler
                 and not suppress_task_output
                 and not self.is_task_output_suppressed(task_id)
+                and (
+                    presentation is None
+                    or self._presentation_coordinator.is_current(presentation)
+                )
             ):
                 self._followup_handler(
                     message_id,
@@ -2205,6 +2387,11 @@ class LibreChatLLM(llm.LLM):
                     "",
                     cortex_expected=saw_cortex_event,
                     glasshive_expected=saw_glasshive_tool_call,
+                    presentation_is_current=(
+                        None
+                        if presentation is None
+                        else lambda: self._presentation_coordinator.is_current(presentation)
+                    ),
                 )
             logger.info(
                 "[VoiceTask] detached_continuation_finished callSessionId=%s requestId=%s streamId=%s taskId=%s final=%s attempts=%s",
@@ -2252,6 +2439,20 @@ class LibreChatLLM(llm.LLM):
             task.cancel()
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
+        ack_tasks = list(self._delivery_ack_tasks)
+        if ack_tasks:
+            _done, pending = await asyncio.wait(ack_tasks, timeout=0.5)
+            for task in pending:
+                task.cancel()
+            if pending:
+                await asyncio.gather(*pending, return_exceptions=True)
+        trace_tasks = list(self._production_trace_tasks)
+        if trace_tasks:
+            _done, pending = await asyncio.wait(trace_tasks, timeout=0.5)
+            for task in pending:
+                task.cancel()
+            if pending:
+                await asyncio.gather(*pending, return_exceptions=True)
 
         call_state_session = self._call_state_session
         self._call_state_session = None
@@ -2276,9 +2477,13 @@ class LibreChatLLM(llm.LLM):
         try:
             session = self._call_state_session
             if session is None or getattr(session, "closed", False):
+                # === VIVENTIUM START ===
+                # Keep cancellation/mode authority fail-closed, but allow a bounded local API
+                # latency spike instead of discarding an otherwise healthy voice turn.
                 session = aiohttp.ClientSession(
-                    timeout=aiohttp.ClientTimeout(total=min(self._timeout_s, 0.2))
+                    timeout=aiohttp.ClientTimeout(total=min(self._timeout_s, 1.0))
                 )
+                # === VIVENTIUM END ===
                 self._call_state_session = session
             async with session.get(url, headers=headers) as resp:
                 if resp.status >= 400:
@@ -2348,12 +2553,179 @@ class LibreChatLLM(llm.LLM):
             }
         return None
 
+    async def get_turn_authority(self, turn_id: str) -> Optional[dict[str, Any]]:
+        """Read the latest exact owner-scoped call mode and persisted turn revisions."""
+        normalized_turn_id = turn_id.strip() if isinstance(turn_id, str) else ""
+        if not normalized_turn_id or len(normalized_turn_id) > 160:
+            return None
+        headers = {
+            "X-VIVENTIUM-CALL-SESSION": self._auth.call_session_id,
+            "X-VIVENTIUM-CALL-SECRET": self._auth.call_secret,
+        }
+        if self._auth.job_id:
+            headers["X-VIVENTIUM-JOB-ID"] = self._auth.job_id
+        if self._auth.worker_id:
+            headers["X-VIVENTIUM-WORKER-ID"] = self._auth.worker_id
+        url = (
+            f"{self._origin}/api/viventium/voice/speaker-segments/authority/"
+            f"{quote(normalized_turn_id, safe='')}"
+        )
+        try:
+            session = self._call_state_session
+            if session is None or getattr(session, "closed", False):
+                session = aiohttp.ClientSession(
+                    timeout=aiohttp.ClientTimeout(total=min(self._timeout_s, 1.0))
+                )
+                self._call_state_session = session
+            async with session.get(url, headers=headers) as response:
+                if response.status >= 400:
+                    logger.warning(
+                        "[VoiceMode] turn_authority_unavailable callSessionId=%s status=%s",
+                        self._auth.call_session_id,
+                        response.status,
+                    )
+                    return None
+                payload = await response.json()
+        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError, TypeError) as error:
+            logger.warning(
+                "[VoiceMode] turn_authority_lookup_failed callSessionId=%s error=%s",
+                self._auth.call_session_id,
+                type(error).__name__,
+            )
+            return None
+
+        if not isinstance(payload, dict):
+            return None
+        revision = payload.get("revision")
+        updated_at = payload.get("updatedAt")
+        try:
+            parsed_updated_at = datetime.fromisoformat(
+                str(updated_at).replace("Z", "+00:00")
+            )
+        except (TypeError, ValueError):
+            parsed_updated_at = None
+        segments = payload.get("speakerSegments")
+        if (
+            payload.get("version") != 1
+            or payload.get("callSessionId") != self._auth.call_session_id
+            or payload.get("turnId") != normalized_turn_id
+            or payload.get("mode") not in {"call", "wing", "listen_only"}
+            or payload.get("status")
+            not in {
+                "created",
+                "connecting",
+                "listening",
+                "speaking",
+                "working",
+                "needs_input",
+                "degraded",
+            }
+            or not isinstance(revision, int)
+            or isinstance(revision, bool)
+            or revision < 0
+            or parsed_updated_at is None
+            or parsed_updated_at.tzinfo is None
+            or not isinstance(segments, list)
+            or not 1 <= len(segments) <= 32
+            or any(
+                not isinstance(segment, dict)
+                or segment.get("version") != 1
+                or segment.get("callSessionId") != self._auth.call_session_id
+                or segment.get("turnId") != normalized_turn_id
+                or not isinstance(segment.get("segmentId"), str)
+                or not segment.get("segmentId")
+                or len(segment["segmentId"]) > 160
+                or not isinstance(segment.get("revision"), int)
+                or isinstance(segment.get("revision"), bool)
+                or segment["revision"] < 0
+                for segment in segments
+            )
+        ):
+            logger.warning(
+                "[VoiceMode] turn_authority_rejected callSessionId=%s reason=invalid_contract",
+                self._auth.call_session_id,
+            )
+            return None
+        return {
+            "version": 1,
+            "callSessionId": self._auth.call_session_id,
+            "turnId": normalized_turn_id,
+            "mode": payload["mode"],
+            "status": payload["status"],
+            "revision": revision,
+            "updatedAt": updated_at,
+            "speakerSegments": segments,
+            **(
+                {"speakerAttributionState": payload["speakerAttributionState"]}
+                if payload.get("speakerAttributionState")
+                in {"single_speaker", "shared_mic_unverified"}
+                else {}
+            ),
+        }
+
     async def get_call_mode(self) -> Optional[str]:
         """Compatibility projection for callers that only need the active mode."""
         state = await self.get_call_state()
         if state is None or state.get("status") in {"ended", "failed"}:
             return None
         return str(state["mode"])
+
+    async def verify_voice_engagement(self, receipt: dict[str, Any]) -> bool:
+        """Ask Core to verify owner speech without exposing its private signing key."""
+        if not isinstance(receipt, dict):
+            return False
+        turn_id = receipt.get("turnId")
+        if (
+            receipt.get("callSessionId") != self._auth.call_session_id
+            or not isinstance(turn_id, str)
+            or not turn_id
+            or len(turn_id) > 160
+        ):
+            return False
+        headers = {
+            "X-VIVENTIUM-CALL-SESSION": self._auth.call_session_id,
+            "X-VIVENTIUM-CALL-SECRET": self._auth.call_secret,
+        }
+        if self._auth.job_id:
+            headers["X-VIVENTIUM-JOB-ID"] = self._auth.job_id
+        if self._auth.worker_id:
+            headers["X-VIVENTIUM-WORKER-ID"] = self._auth.worker_id
+        url = f"{self._origin}/api/viventium/voice/engagement/verify"
+        try:
+            session = self._call_state_session
+            if session is None or getattr(session, "closed", False):
+                session = aiohttp.ClientSession(
+                    timeout=aiohttp.ClientTimeout(total=min(self._timeout_s, 1.0))
+                )
+                self._call_state_session = session
+            async with session.post(
+                url,
+                headers=headers,
+                json={"version": 1, "engagement": receipt},
+            ) as response:
+                if response.status >= 400:
+                    logger.warning(
+                        "[VoiceWing] engagement_verification_rejected callSessionId=%s status=%s",
+                        self._auth.call_session_id,
+                        response.status,
+                    )
+                    return False
+                verdict = await response.json()
+        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError, TypeError) as error:
+            logger.warning(
+                "[VoiceWing] engagement_verification_unavailable callSessionId=%s error=%s",
+                self._auth.call_session_id,
+                type(error).__name__,
+            )
+            return False
+        return bool(
+            isinstance(verdict, dict)
+            and verdict.get("version") == 1
+            and not isinstance(verdict.get("version"), bool)
+            and verdict.get("callSessionId") == self._auth.call_session_id
+            and verdict.get("turnId") == turn_id
+            and verdict.get("verified") is True
+        )
 
     async def cancel_task(self, task_id: str, *, reason: str = "user_requested") -> dict[str, Any]:
         """Explicitly cancel one authoritative backend task, idempotently.
@@ -2473,23 +2845,8 @@ class LibreChatLLM(llm.LLM):
                         "+00:00", "Z"
                     ),
                     **(
-                        {
-                            "sourceTrackSid": str(first_speaker.get("trackSid")),
-                            "sharedTrackSids": [str(first_speaker.get("trackSid"))],
-                        }
+                        {"sourceTrackSid": str(first_speaker.get("trackSid"))}
                         if first_speaker.get("trackSid")
-                        else {}
-                    ),
-                    **(
-                        {
-                            "sourceParticipantIdentity": str(
-                                first_speaker.get("participantIdentity")
-                            ),
-                            "sharedParticipantIdentities": [
-                                str(first_speaker.get("participantIdentity"))
-                            ],
-                        }
-                        if first_speaker.get("participantIdentity")
                         else {}
                     ),
                 }
@@ -2969,11 +3326,13 @@ class _LibreChatLLMStream(llm.LLMStream):
                         "viventiumInputMode": "voice_call",
                         "viventiumSurface": "voice",
                         **speaker_post_context,
+                        "sourceEventId": self._presentation.source_event_id,
                     },
                 ) as resp:
                     if resp.status >= 400:
-                        body = await resp.text()
-                        raise RuntimeError(f"LibreChat voice chat failed: {resp.status} {body}")
+                        raise RuntimeError(
+                            f"LibreChat voice chat failed: status {resp.status}"
+                        )
                     payload = await resp.json()
                     self._llm_impl._presentation_coordinator.bind_core_context(
                         self._presentation,
@@ -2983,7 +3342,10 @@ class _LibreChatLLMStream(llm.LLMStream):
                     # Feature: Listen-Only Mode
                     # Purpose: The voice route can save the transcript and intentionally return no
                     # stream; LiveKit should emit no assistant tokens or TTS.
-                    if payload.get("listenOnly") is True or payload.get("status") == "listen_only":
+                    if (
+                        payload.get("listenOnly") is True
+                        or payload.get("status") in {"listen_only", "wing_passive"}
+                    ):
                         if log_latency:
                             logger.info(
                                 "[VoiceLatency] listen_only_saved_ms=%s request_id=%s stream_id=%s",
@@ -2998,6 +3360,13 @@ class _LibreChatLLMStream(llm.LLMStream):
                     if isinstance(task_id_value, str) and task_id_value.strip():
                         task_id = task_id_value.strip()
                         self._llm_impl.bind_trace_task(self._request_id, task_id)
+                    if isinstance(stream_id, str) and stream_id.strip() and task_id:
+                        self._llm_impl.bind_trace_core_context(
+                            self._request_id,
+                            stream_id=stream_id,
+                            task_id=task_id,
+                            presentation=self._presentation,
+                        )
                     hop_trace.record("agent_start", time.time() * 1000.0)
                     logger.info("[VoiceHop] %s", hop_trace.log_payload("agent_start"))
                     post_sent_at = time.time()
@@ -3028,6 +3397,9 @@ class _LibreChatLLMStream(llm.LLMStream):
                     return bool(
                         suppress_task_output
                         or (task_id and self._llm_impl.is_task_output_suppressed(task_id))
+                        or not self._llm_impl._presentation_coordinator.is_current(
+                            self._presentation
+                        )
                     )
                 collected_response: list[str] = []
                 collected_raw_response: list[str] = []
@@ -3161,8 +3533,9 @@ class _LibreChatLLMStream(llm.LLMStream):
                             params={"resume": "true"},
                         ) as sse_resp:
                             if sse_resp.status >= 400:
-                                body = await sse_resp.text()
-                                stream_error = f"LibreChat voice stream failed: {sse_resp.status} {body}"
+                                stream_error = (
+                                    f"LibreChat voice stream failed: status {sse_resp.status}"
+                                )
                                 logger.warning(
                                     "[LibreChatLLM] Voice stream HTTP error status=%s request_id=%s stream_id=%s attempt=%s",
                                     sse_resp.status,
@@ -3173,6 +3546,10 @@ class _LibreChatLLMStream(llm.LLMStream):
                                 break
 
                             async for event in iter_sse_json_events(content=sse_resp.content):
+                                self._llm_impl._presentation_coordinator.bind_core_context(
+                                    self._presentation,
+                                    event,
+                                )
                                 self._llm_impl._record_tool_hops_from_event(
                                     hop_trace,
                                     event,
@@ -3203,30 +3580,12 @@ class _LibreChatLLMStream(llm.LLMStream):
                                     event_task_id = task_event["taskId"].strip()
                                     if task_id is None:
                                         task_id = event_task_id
-                                    await self._llm_impl._relay_task_event_once(task_event)
-                                    if (
-                                        event_task_id == task_id
-                                        and task_event["state"] in _VOICE_TASK_SUPPRESSING_STATES
-                                    ):
-                                        suppress_task_output = True
-                                        logger.info(
-                                            "[VoiceTask] output_suppression_enabled callSessionId=%s requestId=%s streamId=%s taskId=%s state=%s",
-                                            self._auth.call_session_id,
+                                        self._llm_impl.bind_trace_core_context(
                                             self._request_id,
-                                            stream_id,
-                                            task_id,
-                                            task_event["state"],
+                                            stream_id=stream_id,
+                                            task_id=task_id,
+                                            presentation=self._presentation,
                                         )
-                                    continue
-
-                                task_event = _extract_voice_task_event(
-                                    event,
-                                    expected_call_session_id=self._auth.call_session_id,
-                                )
-                                if task_event is not None:
-                                    event_task_id = task_event["taskId"].strip()
-                                    if task_id is None:
-                                        task_id = event_task_id
                                     await self._llm_impl._relay_task_event_once(task_event)
                                     if (
                                         event_task_id == task_id
@@ -3301,7 +3660,7 @@ class _LibreChatLLMStream(llm.LLMStream):
                     except (aiohttp.ClientError, asyncio.TimeoutError) as e:
                         attempts += 1
                         if attempts > max_retries:
-                            stream_error = str(e)
+                            stream_error = f"category={type(e).__name__}"
                             break
                         await asyncio.sleep(retry_delay_s)
                 # === VIVENTIUM END ===
@@ -3318,7 +3677,7 @@ class _LibreChatLLMStream(llm.LLMStream):
                         "[LibreChatLLM] Voice stream error request_id=%s stream_id=%s error=%s",
                         self._request_id,
                         stream_id,
-                        stream_error,
+                        _summarize_error_for_log(stream_error),
                     )
                     fallback = _select_stream_error_message(stream_error)
                     fallback = sanitize_voice_followup_text(fallback)
@@ -3406,7 +3765,10 @@ class _LibreChatLLMStream(llm.LLMStream):
                             ),
                         )
                     except Exception as e:
-                        logger.warning("[LibreChatLLM] follow-up handler failed: %s", e)
+                        logger.warning(
+                            "[LibreChatLLM] follow-up handler failed: %s",
+                            type(e).__name__,
+                        )
                 # === VIVENTIUM END ===
             except asyncio.CancelledError:
                 if stream_id and task_id and final_event is None:
@@ -3420,6 +3782,7 @@ class _LibreChatLLMStream(llm.LLMStream):
                         saw_glasshive_tool_call=saw_glasshive_tool_call,
                         cortex_message_id=cortex_message_id,
                         hop_trace=hop_trace,
+                        presentation=self._presentation,
                     )
                 logger.info(
                     "[VoiceTask] stream_consumer_interrupted callSessionId=%s requestId=%s streamId=%s backendTaskPreserved=true",

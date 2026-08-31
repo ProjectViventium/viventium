@@ -26,7 +26,7 @@ Use stable `REMOTE-NNN` IDs for remote access cases.
 - Forbidden result: backend logs, mocks, source inspection, or model completions are treated as full acceptance when a user-visible surface exists.
 - Evidence to capture: sanitized visible result, supporting command/test result, generated/runtime state summary, and docs/case links.
 - Automation: `tests/release/test_remote_call_tunnel.py` plus any narrower feature tests discovered during implementation.
-- Last run: PASS-AUTOMATED/PARTIAL 2026-07-15; CLI/config/edge contract tests pass. Isolated lab
+- Last run: PARTIAL 2026-07-15; automated checks passed; CLI/config/edge contract tests pass. Isolated lab
   browser and media proof is NOT RUN.
 
 ## `REMOTE-002` - Public-Safe Evidence Record
@@ -42,7 +42,7 @@ Use stable `REMOTE-NNN` IDs for remote access cases.
 - Forbidden result: a report includes private transcripts, account identifiers, raw runtime dumps, local home paths, tokens, or secret-bearing command lines.
 - Evidence to capture: public-safety scan result and link to the sanitized report.
 - Automation: public-safety pattern scan plus relevant release tests.
-- Last run: PASS-AUTOMATED/PARTIAL 2026-07-15; public-safety contract checks pass. A synthetic lab
+- Last run: PARTIAL 2026-07-15; automated checks passed; public-safety contract checks pass. A synthetic lab
   user-path report remains NOT RUN.
 
 ## `REMOTE-003` - Public Call And GlassHive Link Boundary
@@ -63,7 +63,7 @@ Use stable `REMOTE-NNN` IDs for remote access cases.
   `tests/release/test_install_summary.py`, `tests/release/test_voice_playground_dispatch_contract.py`,
   `qa/modern-playground-voice/scripts/livekit_synthetic_audio_qa.js`, and
   `frontends/glass-drive-ui/tests/test_server.py`.
-- Last run: PASS-AUTOMATED/PARTIAL 2026-07-15. Link generation, route denial, compiler, and helper
+- Last run: PARTIAL 2026-07-15; automated checks passed. Link generation, route denial, compiler, and helper
   regressions pass. The isolated lab off-LAN browser/media path and lab hairpin classification are
   NOT RUN.
 
@@ -93,7 +93,7 @@ Use stable `REMOTE-NNN` IDs for remote access cases.
   server candidates, or a TURN/TLS allocation with no selected relay pair as proof of a call.
 - Evidence to capture: sanitized selected-pair protocol/candidate types, worker/session presence,
   transcript match/count, cleanup counts, public runtime config alignment, and same-Wi-Fi result.
-- Last run: NOT RUN for this public candidate. Acceptance requires an isolated lab edge/router,
+- Last run: NOT RUN (cataloged 2026-07-22) for this public candidate. Acceptance requires an isolated lab edge/router,
   synthetic account, selected public media pair, fixture transcript, and exact cleanup evidence.
 
 ## `REMOTE-005` - Public-Edge Degradation Does Not Break Local Upgrade
@@ -106,7 +106,7 @@ Use stable `REMOTE-NNN` IDs for remote access cases.
   remote access with the exact `public-network.json` error, and no config is silently changed.
 - Forbidden result: false remote success, hidden error, local rollback/restart loop, or automatic
   takeover of a foreign router mapping.
-- Last run: PASS-AUTOMATED/PARTIAL-LIVE 2026-08-13. Launcher warnings are classified through their
+- Last run: PARTIAL 2026-08-13; automated checks passed. Launcher warnings are classified through their
   non-terminal severity channel, including all three remote-degradation forms, while a later real
   fatal still wins. A real existing-user activation reproduced the verification-warning rollback
   and the supported transaction restored the prior healthy runtime; post-fix activation is the

@@ -387,11 +387,11 @@ into the low-risk latency fix.
   `VIVENTIUM_VOICE_BACKGROUND_AGENT_DETECTION_ASYNC=true`,
   `VIVENTIUM_VOICE_PHASE_A_AWAIT_MS=690`, and
   `VIVENTIUM_VOICE_PHASE_A_ASYNC_ALLOW_TOOL_HOLD=true`.
-- Fully async voice background detection is now the shipped default; text async remains an explicit
-  opt-in via its independent text flag.
-- Fully async opt-in detection explicitly keeps `all_within_budget` detection semantics in the
-  background so Phase B receives the complete activated set. The `any_activated_on_voice`
-  early-notice behavior belongs to the shipped sync Phase A path.
+- Fully async voice and text background detection are the shipped defaults through independent
+  flags. Current compiled waits are 690 ms for voice and 1,300 ms for text.
+- Async detection keeps `all_within_budget` semantics in the background so Phase B receives the
+  complete activated set. `any_activated_on_voice` is an early Phase A timing signal, not the full
+  activated set and not a reason to stop later detection.
 - The config compiler also emits `VIVENTIUM_VOICE_LOG_LATENCY=1` so the real local runtime captures
   sub-second route, init, Phase A, provider, stream, and TTS timing without hand-editing generated
   App Support files.
@@ -412,7 +412,7 @@ into the low-risk latency fix.
 - The voice gateway now supplies a per-turn stream id to LibreChat, so sequential voice turns can be
   correlated and do not depend on conversation id as an implicit stream identifier.
 - The current local source-of-truth main-agent voice route remains the dedicated
-  `xai / grok-4.3` profile with `voice_llm_model_parameters.reasoning_effort: "none"`, no Responses
+  `xai / grok-4.5` profile with `voice_llm_model_parameters.reasoning_effort: "low"`, no Responses
   flag, and an explicit `openAI / gpt-5.6-terra / none` Responses fallback. July 2026 incident QA
   found that switching the optional voice provider in Agent Builder could retain the prior
   provider's parameter bag, allowing OpenAI's Responses flag to contaminate xAI. The shared

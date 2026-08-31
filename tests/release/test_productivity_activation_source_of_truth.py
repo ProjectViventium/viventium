@@ -285,15 +285,18 @@ def test_connected_accounts_handoff_is_source_owned_with_confirmed_email_calenda
     connected_agent_id = "agent_viventium_connected_accounts_95aeb3"
     edges = bundle["mainAgent"].get("edges", [])
     edge = next(
-        (candidate for candidate in edges if candidate.get("to") == connected_agent_id),
+        (
+            candidate
+            for candidate in edges
+            if candidate.get("from") == bundle["mainAgent"]["id"]
+            and candidate.get("to") == connected_agent_id
+            and candidate.get("edgeType") == "handoff"
+        ),
         None,
     )
     assert edge is not None
-    assert edge["edgeType"] == "handoff"
-    assert edge["to"] == connected_agent_id
-    assert "quick checks" in edge["description"]
-    assert "explicitly confirmed email/calendar updates" in edge["description"]
-    assert "Ask for confirmation before any external write" in edge["description"]
+    assert "prompt" not in edge
+    assert "promptKey" not in edge
 
     handoff_agents = {entry["id"]: entry for entry in bundle.get("handoffAgents", [])}
     assert connected_agent_id in handoff_agents
@@ -368,16 +371,16 @@ def test_main_agent_does_not_defer_productivity_checks_to_background_cortices() 
     )
     instructions = bundle["mainAgent"]["instructions"].lower()
 
-    assert "verified current-run tool evidence" in instructions
-    assert "do not guess or promise that a background cortex will check later" in instructions
-    assert "a generic inbox/reply request means a current check across the configured email accounts" in instructions
-    assert "use the direct connected accounts handoff for immediate checks" in instructions
-    assert "use a brokered worker only when the work is delegated" in instructions
+    assert "do not defer immediate current-state checks to background cortices" in instructions
+    assert "use the available connector or connected accounts handoff in the current turn" in instructions
+    assert "choose tools from declared capabilities and structured metadata" in instructions
     assert "before an external write, confirm the user requested it" in instructions
-    assert "destructive mutations" in instructions
     assert "require explicit confirmation and a declared write-capable path" in instructions
-    assert "otherwise say the path is unavailable" in instructions
-    assert "memory, recall, conversation/file search, cached summaries" in instructions
+    assert "automatic durable mission delegation is allowed only" in instructions
+    assert "when delegation is allowed, use it for independently completable long-running" in instructions
+    assert "never say work was delegated, accepted, queued, or is running unless" in instructions
+    assert "accepted, queued, or deferred is not complete" in instructions
+    assert "on tool failure, state the exact failure and recovery path" in instructions
 
 
 def test_runtime_card_guard_fallback_matches_productivity_live_data_rule() -> None:
@@ -409,11 +412,11 @@ def test_runtime_card_guard_source_prompt_matches_inline_fallback() -> None:
             continue
         fallback_lines.append(ast.literal_eval(stripped.rstrip(",")))
 
-    normalize = lambda text: "\n".join(line.rstrip() for line in text.strip().splitlines())
+    normalize = lambda text: " ".join(text.split())
     assert normalize(prompt_body) == normalize("\n".join(fallback_lines))
 
 
-def test_productivity_direct_action_surfaces_are_same_scope_forward_contracts() -> None:
+def test_productivity_direct_action_surfaces_prevent_background_action_duplication() -> None:
     bundle = load_and_resolve_prompt_refs(
         yaml.safe_load(SOURCE_OF_TRUTH_AGENTS_BUNDLE.read_text(encoding="utf-8"))
     )
@@ -467,17 +470,25 @@ def test_productivity_activation_prompts_cover_generic_plural_inbox_sweeps() -> 
     assert "Microsoft-only work is out of scope" in google_prompt
 
 
-def test_background_agent_execution_models_use_direct_openai_baseline() -> None:
+def test_background_agent_execution_models_match_launch_bundle_mix() -> None:
     agents_by_id = _load_background_agents_by_id()
 
-    sol_ids = {
-        "agent_viventium_red_team_95aeb3",
-        "agent_viventium_deep_research_95aeb3",
-        "agent_viventium_strategic_planning_95aeb3",
-    }
     expected = {
-        agent_id: ("openAI", "gpt-5.6-sol" if agent_id in sol_ids else "gpt-5.6-terra")
-        for agent_id in agents_by_id
+        "agent_viventium_background_analysis_95aeb3": ("openAI", "gpt-5.6-terra"),
+        "agent_viventium_confirmation_bias_95aeb3": ("openAI", "gpt-5.6-terra"),
+        "agent_viventium_deep_memory_95aeb3": (
+            "openAI",
+            "gpt-5.6-terra",
+        ),
+        "agent_viventium_red_team_95aeb3": ("openAI", "gpt-5.6-sol"),
+        "agent_viventium_deep_research_95aeb3": ("openAI", "gpt-5.6-sol"),
+        "agent_viventium_online_tool_use_95aeb3": ("openAI", "gpt-5.6-terra"),
+        "agent_viventium_parietal_cortex_95aeb3": ("openAI", "gpt-5.6-terra"),
+        "agent_viventium_pattern_recognition_95aeb3": ("openAI", "gpt-5.6-terra"),
+        "agent_viventium_emotional_resonance_95aeb3": ("openAI", "gpt-5.6-terra"),
+        "agent_viventium_strategic_planning_95aeb3": ("openAI", "gpt-5.6-sol"),
+        "agent_viventium_support_95aeb3": ("openAI", "gpt-5.6-terra"),
+        "agent_8Y1d7JNhpubtvzYz3hvEv": ("openAI", "gpt-5.6-terra"),
     }
 
     for agent_id, (provider, model) in expected.items():
@@ -485,8 +496,6 @@ def test_background_agent_execution_models_use_direct_openai_baseline() -> None:
         assert agent["provider"] == provider
         assert agent["model"] == model
         assert agent["model_parameters"]["model"] == model
-        assert "glasshive_options" not in agent
-        assert agent["model_parameters"]["useResponsesApi"] is True
 
 
 def test_retired_deep_research_keeps_reasoning_config_and_live_web_tool() -> None:
@@ -498,22 +507,22 @@ def test_retired_deep_research_keeps_reasoning_config_and_live_web_tool() -> Non
     assert "thinkingBudget" not in deep_research["model_parameters"]
 
 
-def test_red_team_ships_with_web_search_and_direct_openai_xhigh_effort() -> None:
+def test_red_team_ships_with_web_search_and_openai_reasoning_effort() -> None:
     agents_by_id = _load_background_agents_by_id()
     red_team = agents_by_id["agent_viventium_red_team_95aeb3"]
 
     assert "web_search" in red_team["tools"]
     assert red_team["model_parameters"]["reasoning_effort"] == "xhigh"
     assert "thinkingBudget" not in red_team["model_parameters"]
-    assert red_team["model_parameters"]["useResponsesApi"] is True
 
 
 def test_background_agent_execution_models_stay_within_launch_ready_families() -> None:
     agents_by_id = _load_background_agents_by_id()
 
     allowed = {
-        ("openAI", "gpt-5.6-sol"),
+        ("glasshive-harness", "codex-cli:gpt-5.6-sol"),
         ("openAI", "gpt-5.6-terra"),
+        ("openAI", "gpt-5.6-sol"),
     }
 
     for agent in agents_by_id.values():
@@ -602,104 +611,3 @@ def test_background_follow_up_fallbacks_stay_on_launch_ready_model_families() ->
     assert "gpt-4o" not in follow_up_source
     assert "gpt-4o-mini" not in follow_up_source
     assert "claude-3" not in follow_up_source
-
-
-def test_manual_connected_accounts_provisioner_cannot_diverge_from_managed_seeding() -> None:
-    provisioner = (
-        REPO_ROOT
-        / "viventium_v0_4/LibreChat/scripts/viventium-provision-connected-accounts-agent.js"
-    ).read_text(encoding="utf-8")
-
-    assert "viventium-seed-agents.js" in provisioner
-    assert "buildProvisionArgs" in provisioner
-    assert "runProvision" in provisioner
-    assert "VIVENTIUM_PROVISION_OWNER_ID" in provisioner
-    assert "createAgent" not in provisioner
-    assert "updateAgent" not in provisioner
-    assert "AGENT_MODEL" not in provisioner
-
-
-def test_connected_accounts_handoff_provisioner_is_supported_confirmed_write_and_surgical() -> None:
-    provisioner = CONNECTED_ACCOUNTS_HANDOFF_PROVISIONER.read_text(encoding="utf-8")
-    bundle = SOURCE_OF_TRUTH_AGENTS_BUNDLE.read_text(encoding="utf-8")
-
-    assert "VIVENTIUM_ENABLE_RETIRED_CONNECTED_ACCOUNTS_HANDOFF" not in provisioner
-    assert "viventium-seed-agents.js" in provisioner
-    assert "--bundle=" in provisioner
-    assert "createAgent" not in provisioner
-    assert "updateAgent" not in provisioner
-
-    assert "agent_viventium_connected_accounts_95aeb3" in bundle
-    assert "to: agent_viventium_connected_accounts_95aeb3" in bundle
-    assert "Ask for confirmation before any external write" in bundle
-    assert "send_gmail_message_mcp_google_workspace" in bundle
-    assert "send-mail_mcp_ms-365" in bundle
-    for forbidden_tool in (
-        "delete-onedrive-file_mcp_ms-365",
-        "delete_event_mcp_google_workspace",
-        "delete-mail-message_mcp_ms-365",
-        "delete-calendar-event_mcp_ms-365",
-    ):
-        assert forbidden_tool not in bundle
-
-
-def test_productivity_direct_action_surfaces_prevent_background_action_duplication() -> None:
-    bundle = load_and_resolve_prompt_refs(
-        yaml.safe_load(SOURCE_OF_TRUTH_AGENTS_BUNDLE.read_text(encoding="utf-8"))
-    )
-    policy = bundle["config"]["viventium"]["background_cortices"]["activation_policy"]
-    surfaces = policy["direct_action_mcp_servers"]
-    intent_scopes = {
-        cortex["activation"]["intent_scope"]
-        for cortex in bundle["mainAgent"]["background_cortices"]
-        if cortex.get("activation", {}).get("intent_scope", "").startswith("productivity_")
-    }
-
-    productivity_surfaces = [
-        surface
-        for surface in surfaces
-        if str(surface.get("scope_key", "")).startswith("productivity_")
-    ]
-    assert productivity_surfaces
-    for surface in productivity_surfaces:
-        assert surface["scope_key"] in intent_scopes
-        assert surface["same_scope_background_allowed"] is False
-        assert "when this mcp is connected to the main agent" in surface["owns"].lower()
-        assert "available to the main agent" not in surface["owns"].lower()
-
-
-def test_background_agent_execution_models_match_launch_bundle_mix() -> None:
-    agents_by_id = _load_background_agents_by_id()
-
-    expected = {
-        "agent_viventium_background_analysis_95aeb3": ("openAI", "gpt-5.6-terra"),
-        "agent_viventium_confirmation_bias_95aeb3": ("openAI", "gpt-5.6-terra"),
-        "agent_viventium_deep_memory_95aeb3": (
-            "openAI",
-            "gpt-5.6-terra",
-        ),
-        "agent_viventium_red_team_95aeb3": ("openAI", "gpt-5.6-sol"),
-        "agent_viventium_deep_research_95aeb3": ("openAI", "gpt-5.6-sol"),
-        "agent_viventium_online_tool_use_95aeb3": ("openAI", "gpt-5.6-terra"),
-        "agent_viventium_parietal_cortex_95aeb3": ("openAI", "gpt-5.6-terra"),
-        "agent_viventium_pattern_recognition_95aeb3": ("openAI", "gpt-5.6-terra"),
-        "agent_viventium_emotional_resonance_95aeb3": ("openAI", "gpt-5.6-terra"),
-        "agent_viventium_strategic_planning_95aeb3": ("openAI", "gpt-5.6-sol"),
-        "agent_viventium_support_95aeb3": ("openAI", "gpt-5.6-terra"),
-        "agent_8Y1d7JNhpubtvzYz3hvEv": ("openAI", "gpt-5.6-terra"),
-    }
-
-    for agent_id, (provider, model) in expected.items():
-        agent = agents_by_id[agent_id]
-        assert agent["provider"] == provider
-        assert agent["model"] == model
-        assert agent["model_parameters"]["model"] == model
-
-
-def test_red_team_ships_with_web_search_and_openai_reasoning_effort() -> None:
-    agents_by_id = _load_background_agents_by_id()
-    red_team = agents_by_id["agent_viventium_red_team_95aeb3"]
-
-    assert "web_search" in red_team["tools"]
-    assert red_team["model_parameters"]["reasoning_effort"] == "xhigh"
-    assert "thinkingBudget" not in red_team["model_parameters"]

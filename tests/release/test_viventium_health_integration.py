@@ -105,6 +105,17 @@ def test_main_agent_binds_only_the_health_servers_read_tools() -> None:
         if entry["server"] == HEALTH_SERVER_NAME
     )
 
+    app_payload = yaml.safe_load((LIBRECHAT_SOURCE / "local.librechat.yaml").read_text(encoding="utf-8"))
+    app_health_policy = next(
+        entry
+        for entry in app_payload["viventium"]["background_cortices"]["activation_policy"][
+            "direct_action_mcp_servers"
+        ]
+        if entry["server"] == HEALTH_SERVER_NAME
+    )
+
     assert HEALTH_TOOL_IDS <= main_tools
     assert set(health_policy["tool_names"]) == HEALTH_TOOL_IDS
+    assert set(app_health_policy["tool_names"]) == HEALTH_TOOL_IDS
+    assert app_health_policy["owns"] == health_policy["owns"]
     assert "read-only" in health_policy["owns"]

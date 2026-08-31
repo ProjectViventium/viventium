@@ -10,6 +10,7 @@
 
 const fs = require("fs");
 const crypto = require("crypto");
+const { execFileSync } = require("child_process");
 const path = require("path");
 const { createRequire } = require("module");
 
@@ -21,6 +22,7 @@ const librechatRequire = createRequire(
 );
 const { chromium } = librechatRequire("playwright");
 const { MongoClient, ObjectId } = librechatRequire("mongodb");
+const bcrypt = librechatRequire("bcryptjs");
 
 const CALL_CAPABILITY_HEADER = "X-VIVENTIUM-CALL-CAPABILITY";
 const CALL_CAPABILITY_STORAGE_PREFIX = "viventium.call.capability.v1:";
@@ -47,7 +49,11 @@ function browserCapabilityHeaders(browserCapability) {
   return { [CALL_CAPABILITY_HEADER]: browserCapability };
 }
 
-function buildCallBootstrapUrl(playgroundUrl, callSessionId, browserCapability) {
+function buildCallBootstrapUrl(
+  playgroundUrl,
+  callSessionId,
+  browserCapability,
+) {
   if (!SAFE_CALL_ID.test(String(callSessionId || ""))) {
     throw new Error("A valid call session id is required");
   }
@@ -55,21 +61,29 @@ function buildCallBootstrapUrl(playgroundUrl, callSessionId, browserCapability) 
   const url = new URL("/call-bootstrap", playgroundUrl);
   url.searchParams.set("callSessionId", callSessionId);
   url.searchParams.set("autoConnect", "1");
-  url.hash = new URLSearchParams({ viventiumCallCapability: browserCapability }).toString();
+  url.hash = new URLSearchParams({
+    viventiumCallCapability: browserCapability,
+  }).toString();
   return url;
 }
 
 async function assertCallBootstrapStripped(page, callSessionId) {
   await page.waitForFunction(
     ({ expectedCallSessionId, storagePrefix }) => {
-      const stored = window.sessionStorage.getItem(`${storagePrefix}${expectedCallSessionId}`) || "";
+      const stored =
+        window.sessionStorage.getItem(
+          `${storagePrefix}${expectedCallSessionId}`,
+        ) || "";
       return (
         window.location.hash === "" &&
         !window.location.pathname.endsWith("/call-bootstrap") &&
         /^[A-Za-z0-9_-]{43}$/.test(stored)
       );
     },
-    { expectedCallSessionId: callSessionId, storagePrefix: CALL_CAPABILITY_STORAGE_PREFIX },
+    {
+      expectedCallSessionId: callSessionId,
+      storagePrefix: CALL_CAPABILITY_STORAGE_PREFIX,
+    },
     { timeout: 10_000 },
   );
   const safeState = await page.evaluate(
@@ -77,12 +91,21 @@ async function assertCallBootstrapStripped(page, callSessionId) {
       fragmentStripped: window.location.hash === "",
       bootstrapExited: !window.location.pathname.endsWith("/call-bootstrap"),
       capabilityStored: /^[A-Za-z0-9_-]{43}$/.test(
-        window.sessionStorage.getItem(`${storagePrefix}${expectedCallSessionId}`) || "",
+        window.sessionStorage.getItem(
+          `${storagePrefix}${expectedCallSessionId}`,
+        ) || "",
       ),
     }),
-    { expectedCallSessionId: callSessionId, storagePrefix: CALL_CAPABILITY_STORAGE_PREFIX },
+    {
+      expectedCallSessionId: callSessionId,
+      storagePrefix: CALL_CAPABILITY_STORAGE_PREFIX,
+    },
   );
-  if (!safeState.fragmentStripped || !safeState.bootstrapExited || !safeState.capabilityStored) {
+  if (
+    !safeState.fragmentStripped ||
+    !safeState.bootstrapExited ||
+    !safeState.capabilityStored
+  ) {
     throw new Error("call_capability_bootstrap_failed");
   }
 }
@@ -107,15 +130,29 @@ function resolveOutputPath(value, label, outputRoot) {
 }
 
 function safeCaseSlug(value) {
-  return String(value || "synthetic-audio")
-    .toLowerCase()
-    .replace(/[^a-z0-9_-]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 80) || "synthetic-audio";
+  return (
+    String(value || "synthetic-audio")
+      .toLowerCase()
+      .replace(/[^a-z0-9_-]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 80) || "synthetic-audio"
+  );
 }
 
 function safeErrorCode(error) {
   const name = String(error?.name || "").toLowerCase();
+  const message = String(error?.message || "");
+  if (
+    [
+      "microphone_not_published",
+      "remote_audio_recording_failed",
+      "remote_audio_recording_unavailable",
+      "remote_audio_recording_missing",
+      "remote_audio_recording_silent",
+    ].includes(message)
+  ) {
+    return message;
+  }
   if (name === "timeouterror") {
     return "timeout";
   }
@@ -125,8 +162,56 @@ function safeErrorCode(error) {
   return "synthetic_audio_qa_failed";
 }
 
+async function ensurePublishedMicrophone(page, timeoutMs = 10_000) {
+  const microphoneButton = page
+    .locator(
+      'button[data-lk-source="microphone"], button[aria-label="Toggle microphone" i], button[title*="microphone" i]',
+    )
+    .first();
+  await microphoneButton.waitFor({ state: "visible", timeout: timeoutMs });
+
+  let toggleClicked = false;
+  if ((await microphoneButton.getAttribute("aria-pressed")) !== "true") {
+    await microphoneButton.click({ timeout: timeoutMs });
+    toggleClicked = true;
+  }
+
+  const published = await page
+    .waitForFunction(
+      () => {
+        const button = [...document.querySelectorAll("button")].find(
+          (item) =>
+            item.getAttribute("aria-label")?.toLowerCase() ===
+            "toggle microphone",
+        );
+        const peerConnections = globalThis.__viventiumQaPeerConnections || [];
+        const hasLiveSender = peerConnections.some((entry) =>
+          entry.peerConnection
+            .getSenders()
+            .some(
+              (sender) =>
+                sender.track?.kind === "audio" &&
+                sender.track.enabled &&
+                sender.track.readyState === "live",
+            ),
+        );
+        return button?.getAttribute("aria-pressed") === "true" && hasLiveSender;
+      },
+      undefined,
+      { timeout: timeoutMs },
+    )
+    .then(() => true)
+    .catch(() => false);
+  if (!published) {
+    throw new Error("microphone_not_published");
+  }
+  return { toggleClicked };
+}
+
 function envFlag(name, fallback = false) {
-  const value = String(process.env[name] || "").trim().toLowerCase();
+  const value = String(process.env[name] || "")
+    .trim()
+    .toLowerCase();
   if (!value) {
     return fallback;
   }
@@ -143,34 +228,46 @@ function commaSeparatedEnv(name) {
 function parseArgs(argv) {
   const defaultPlaygroundUrl =
     process.env.PLAYGROUND_URL || "http://localhost:3300";
+  const configuredSttProvider =
+    process.env.VIVENTIUM_QA_STT_PROVIDER ||
+    process.env.VIVENTIUM_STT_PROVIDER ||
+    "pywhispercpp";
+  const configuredTtsProvider =
+    process.env.VIVENTIUM_QA_TTS_PROVIDER ||
+    process.env.VIVENTIUM_TTS_PROVIDER ||
+    "local_chatterbox_turbo_mlx_8bit";
+  const configuredTtsVariant =
+    process.env.VIVENTIUM_QA_TTS_VARIANT ||
+    (configuredTtsProvider === "xai"
+      ? process.env.VIVENTIUM_XAI_VOICE || ""
+      : configuredTtsProvider === "local_chatterbox_turbo_mlx_8bit"
+        ? process.env.VIVENTIUM_MLX_AUDIO_MODEL_ID ||
+          "mlx-community/chatterbox-turbo-8bit"
+        : "");
   const args = {
     audio: "",
     expect: "",
     caseId: "synthetic-audio",
     playgroundUrl: defaultPlaygroundUrl,
     browserPlaygroundUrl:
-      process.env.VIVENTIUM_QA_BROWSER_PLAYGROUND_URL ||
-      defaultPlaygroundUrl,
-    browserProxy: String(
-      process.env.VIVENTIUM_QA_BROWSER_PROXY || "",
-    ).trim(),
-    disableNonProxiedUdp: envFlag(
-      "VIVENTIUM_QA_DISABLE_NON_PROXIED_UDP",
-    ),
+      process.env.VIVENTIUM_QA_BROWSER_PLAYGROUND_URL || defaultPlaygroundUrl,
+    coreUrl: process.env.VIVENTIUM_QA_CORE_URL || "http://127.0.0.1:3190",
+    verifyCoreBrowser: false,
+    browserProxy: String(process.env.VIVENTIUM_QA_BROWSER_PROXY || "").trim(),
+    disableNonProxiedUdp: envFlag("VIVENTIUM_QA_DISABLE_NON_PROXIED_UDP"),
     agentName: process.env.LIVEKIT_AGENT_NAME || "librechat-voice-gateway",
-    agentId:
-      process.env.VIVENTIUM_QA_AGENT_ID || "agent_viventium_main_95aeb3",
+    agentId: process.env.VIVENTIUM_QA_AGENT_ID || "agent_viventium_main_95aeb3",
     mode: process.env.VIVENTIUM_QA_CALL_MODE || "",
-    sttProvider: process.env.VIVENTIUM_QA_STT_PROVIDER || "pywhispercpp",
+    sttProvider: configuredSttProvider,
     sttVariant:
-      process.env.VIVENTIUM_QA_STT_VARIANT || "large-v3-turbo",
-    ttsProvider:
-      process.env.VIVENTIUM_QA_TTS_PROVIDER ||
-      "local_chatterbox_turbo_mlx_8bit",
-    ttsVariant:
-      process.env.VIVENTIUM_QA_TTS_VARIANT ||
-      "mlx-community/chatterbox-turbo-8bit",
+      process.env.VIVENTIUM_QA_STT_VARIANT ||
+      process.env.VIVENTIUM_STT_MODEL ||
+      "large-v3-turbo",
+    ttsProvider: configuredTtsProvider,
+    ttsVariant: configuredTtsVariant,
     interactive: false,
+    expectSilence: false,
+    requireOwnerTrust: false,
     waitMs: Number(process.env.VIVENTIUM_SYNTHETIC_AUDIO_QA_WAIT_MS || 90000),
     minTokenRatio: Number(
       process.env.VIVENTIUM_SYNTHETIC_AUDIO_QA_MIN_TOKEN_RATIO || 0.6,
@@ -184,6 +281,7 @@ function parseArgs(argv) {
     outputRoot: String(process.env.VIVENTIUM_QA_OUTPUT_ROOT || "").trim(),
     result: "",
     screenshot: "",
+    outputAudio: "",
     externalTurnUrls: commaSeparatedEnv("VIVENTIUM_QA_EXTERNAL_TURN_URLS"),
     externalTurnUsername: String(
       process.env.VIVENTIUM_QA_EXTERNAL_TURN_USERNAME || "",
@@ -198,9 +296,7 @@ function parseArgs(argv) {
     publicMediaProxy: String(
       process.env.VIVENTIUM_QA_PUBLIC_MEDIA_PROXY || "",
     ).trim(),
-    turnProxyUrl: String(
-      process.env.VIVENTIUM_QA_TURN_PROXY_URL || "",
-    ).trim(),
+    turnProxyUrl: String(process.env.VIVENTIUM_QA_TURN_PROXY_URL || "").trim(),
     turnProxyHostRule: String(
       process.env.VIVENTIUM_QA_TURN_PROXY_HOST_RULE || "",
     ).trim(),
@@ -220,6 +316,9 @@ function parseArgs(argv) {
       i += 1;
     } else if (item === "--playground-url") {
       args.playgroundUrl = next || args.playgroundUrl;
+      i += 1;
+    } else if (item === "--core-url") {
+      args.coreUrl = next || args.coreUrl;
       i += 1;
     } else if (item === "--agent-name") {
       args.agentName = next || args.agentName;
@@ -257,6 +356,9 @@ function parseArgs(argv) {
     } else if (item === "--screenshot") {
       args.screenshot = next || "";
       i += 1;
+    } else if (item === "--output-audio") {
+      args.outputAudio = next || "";
+      i += 1;
     } else if (item === "--output-root") {
       args.outputRoot = next || "";
       i += 1;
@@ -264,6 +366,13 @@ function parseArgs(argv) {
       args.headed = true;
     } else if (item === "--interactive") {
       args.interactive = true;
+    } else if (item === "--expect-silence") {
+      args.expectSilence = true;
+      args.interactive = true;
+    } else if (item === "--require-owner-trust") {
+      args.requireOwnerTrust = true;
+    } else if (item === "--verify-core-browser") {
+      args.verifyCoreBrowser = true;
     } else if (item === "--no-cleanup") {
       args.cleanup = false;
     } else if (item === "--allow-non-local-mongo") {
@@ -275,15 +384,51 @@ function parseArgs(argv) {
     throw new Error("--audio is required");
   }
   if (!args.outputRoot) {
-    throw new Error(
-      "--output-root or VIVENTIUM_QA_OUTPUT_ROOT is required",
-    );
+    throw new Error("--output-root or VIVENTIUM_QA_OUTPUT_ROOT is required");
   }
   args.outputRoot = path.resolve(args.outputRoot);
   assertPrivateOutputRoot(args.outputRoot);
   args.mode = args.mode || (args.interactive ? "call" : "listen_only");
   if (!["call", "wing", "listen_only"].includes(args.mode)) {
     throw new Error("--mode must be call, wing, or listen_only");
+  }
+  if (args.expectSilence && args.mode !== "wing") {
+    throw new Error("--expect-silence is valid only with --mode wing");
+  }
+  if (
+    args.requireOwnerTrust &&
+    (!args.interactive || args.mode === "listen_only")
+  ) {
+    throw new Error(
+      "--require-owner-trust requires an interactive Call or Wing session",
+    );
+  }
+  if (args.verifyCoreBrowser) {
+    let core;
+    try {
+      core = new URL(args.coreUrl);
+    } catch {
+      throw new Error("--core-url must be a valid local HTTP origin");
+    }
+    const host = core.hostname.replace(/^\[|\]$/g, "").toLowerCase();
+    if (
+      core.protocol !== "http:" ||
+      !["localhost", "127.0.0.1", "::1"].includes(host) ||
+      core.username ||
+      core.password ||
+      core.search ||
+      core.hash
+    ) {
+      throw new Error(
+        "--core-url must be a local HTTP origin without credentials",
+      );
+    }
+    args.coreUrl = core.origin;
+  }
+  if (args.outputAudio && (!args.interactive || args.expectSilence)) {
+    throw new Error(
+      "--output-audio requires an audible interactive Call or Wing session",
+    );
   }
   args.audio = path.resolve(args.audio);
   if (!fs.existsSync(args.audio)) {
@@ -299,11 +444,7 @@ function parseArgs(argv) {
       "External TURN QA requires URLs, username, and credential together",
     );
   }
-  if (
-    args.forceRelay &&
-    externalTurnFieldCount !== 3 &&
-    !args.turnProxyUrl
-  ) {
+  if (args.forceRelay && externalTurnFieldCount !== 3 && !args.turnProxyUrl) {
     throw new Error(
       "VIVENTIUM_QA_FORCE_RELAY requires external TURN credentials or a TURN proxy",
     );
@@ -330,6 +471,13 @@ function parseArgs(argv) {
     "--screenshot",
     args.outputRoot,
   );
+  if (args.outputAudio) {
+    args.outputAudio = resolveOutputPath(
+      args.outputAudio,
+      "--output-audio",
+      args.outputRoot,
+    );
+  }
   return args;
 }
 
@@ -410,6 +558,7 @@ async function seedCallSession(
     sttVariant,
     ttsProvider,
     ttsVariant,
+    verifyCoreBrowser,
   },
 ) {
   const now = new Date();
@@ -424,6 +573,9 @@ async function seedCallSession(
   const roomName = createRoomName(callSessionId);
   const ownerParticipantIdentity = `owner-${crypto.randomUUID()}`;
   const browserCapability = createBrowserCallCapability(now);
+  const syntheticPassword = verifyCoreBrowser
+    ? crypto.randomBytes(24).toString("base64url")
+    : "";
   const expiresAt = browserCapability.expiresAt;
   const requestedVoiceRoute = {
     stt: {
@@ -443,6 +595,9 @@ async function seedCallSession(
     email,
     emailVerified: true,
     provider: "local",
+    ...(syntheticPassword
+      ? { password: bcrypt.hashSync(syntheticPassword, 10) }
+      : {}),
     role: "USER",
     termsAccepted: true,
     createdAt: now,
@@ -489,12 +644,90 @@ async function seedCallSession(
     value: browserCapability.capability,
     enumerable: false,
   });
+  Object.defineProperty(seeded, "syntheticPassword", {
+    value: syntheticPassword,
+    enumerable: false,
+  });
   return seeded;
+}
+
+async function verifySyntheticCoreBrowser(
+  page,
+  db,
+  seeded,
+  coreUrl,
+  screenshotPath,
+) {
+  syntheticScheduleLocation(seeded);
+  if (!seeded.syntheticPassword) {
+    throw new Error("synthetic_core_browser_credentials_missing");
+  }
+
+  const loginUrl = new URL("/login", coreUrl);
+  await page.goto(loginUrl.toString(), {
+    waitUntil: "domcontentloaded",
+    timeout: 30_000,
+  });
+  await page.locator("#email").fill(seeded.email);
+  await page.locator("#password").fill(seeded.syntheticPassword);
+  const responsePromise = page.waitForResponse(
+    (response) => {
+      const responseUrl = new URL(response.url());
+      return (
+        responseUrl.pathname.endsWith("/api/auth/login") &&
+        response.request().method() === "POST"
+      );
+    },
+    { timeout: 20_000 },
+  );
+  await page.getByTestId("login-button").click();
+  const loginResponse = await responsePromise;
+  if (!loginResponse.ok()) {
+    throw new Error(
+      `synthetic_core_browser_login_http_${loginResponse.status()}`,
+    );
+  }
+  const payload = await loginResponse.json();
+  const actualOwner = String(payload?.user?.id || payload?.user?._id || "");
+  if (actualOwner !== seeded.userId) {
+    throw new Error("synthetic_core_browser_owner_mismatch");
+  }
+  await page.waitForURL(
+    (url) => url.origin === loginUrl.origin && !url.pathname.endsWith("/login"),
+    { timeout: 30_000 },
+  );
+  await page.getByTestId("text-input").waitFor({
+    state: "visible",
+    timeout: 30_000,
+  });
+  const attachmentActionPresent = await page
+    .getByRole("button", { name: /attach file options/i })
+    .isVisible()
+    .catch(() => false);
+  const syntheticSessions = await db.collection("sessions").countDocuments({
+    user: new ObjectId(seeded.userId),
+  });
+  if (syntheticSessions < 1) {
+    throw new Error("synthetic_core_browser_session_missing");
+  }
+  await page.screenshot({ path: screenshotPath, fullPage: true });
+  fs.chmodSync(screenshotPath, 0o600);
+  return {
+    authenticated: true,
+    ownerMatched: true,
+    composerReady: true,
+    attachmentActionPresent,
+    sessionCount: syntheticSessions,
+    path: new URL(page.url()).pathname,
+  };
 }
 
 async function fetchJsonStatus(url, headers = {}) {
   try {
-    const response = await fetch(url.toString(), { cache: "no-store", headers });
+    const response = await fetch(url.toString(), {
+      cache: "no-store",
+      headers,
+    });
     const text = await response.text();
     let payload = null;
     if (text) {
@@ -514,7 +747,11 @@ async function fetchJsonStatus(url, headers = {}) {
   }
 }
 
-async function preflightPlaygroundProxies(playgroundUrl, callSessionId, browserCapability) {
+async function preflightPlaygroundProxies(
+  playgroundUrl,
+  callSessionId,
+  browserCapability,
+) {
   const stateUrl = new URL("/api/call-session-state", playgroundUrl);
   stateUrl.searchParams.set("callSessionId", callSessionId);
   const settingsUrl = new URL(
@@ -530,6 +767,150 @@ async function preflightPlaygroundProxies(playgroundUrl, callSessionId, browserC
   return { state, voiceSettings };
 }
 
+function syntheticScheduleLocation(seeded, databasePath) {
+  const userId = String(seeded?.userId || "");
+  const email = String(seeded?.email || "");
+  if (
+    !/^[a-f0-9]{24}$/i.test(userId) ||
+    !/^viventium-voice-qa-[a-z0-9-]+@example\.com$/i.test(email)
+  ) {
+    throw new Error("synthetic_schedule_cleanup_scope_invalid");
+  }
+
+  const runtimeDatabase = String(process.env.WPR_DB_PATH || "").trim();
+  const resolvedPath =
+    databasePath ||
+    String(process.env.SCHEDULING_DB_PATH || "").trim() ||
+    (runtimeDatabase
+      ? path.join(
+          path.dirname(path.dirname(runtimeDatabase)),
+          "scheduling",
+          "schedules.db",
+        )
+      : "");
+  return { userId, resolvedPath };
+}
+
+function inspectSyntheticSchedules(seeded, databasePath) {
+  const { userId, resolvedPath } = syntheticScheduleLocation(
+    seeded,
+    databasePath,
+  );
+  if (!resolvedPath || !fs.existsSync(resolvedPath)) {
+    return { total: 0, bootstrap: 0, unsafe: 0 };
+  }
+  const output = execFileSync(
+    "sqlite3",
+    [
+      "-json",
+      "-cmd",
+      ".timeout 5000",
+      resolvedPath,
+      `SELECT created_source, metadata_json FROM scheduled_tasks WHERE user_id = '${userId}'`,
+    ],
+    { encoding: "utf8", timeout: 7000, maxBuffer: 128 * 1024 },
+  );
+  const rows = JSON.parse(output || "[]");
+  if (!Array.isArray(rows)) {
+    throw new Error("synthetic_schedule_inventory_unverified");
+  }
+  const bootstrap = rows.filter((schedule) => {
+    if (schedule.created_source !== "agent") {
+      return false;
+    }
+    try {
+      const metadata = JSON.parse(String(schedule.metadata_json || "{}"));
+      return ["template_id", "bootstrap_source", "bootstrap_surface"].every(
+        (field) =>
+          typeof metadata[field] === "string" && metadata[field].trim(),
+      );
+    } catch {
+      return false;
+    }
+  }).length;
+  return { total: rows.length, bootstrap, unsafe: rows.length - bootstrap };
+}
+
+function cleanupSyntheticSchedules(seeded, databasePath) {
+  const { userId, resolvedPath } = syntheticScheduleLocation(
+    seeded,
+    databasePath,
+  );
+  if (!resolvedPath || !fs.existsSync(resolvedPath)) {
+    return 0;
+  }
+
+  const output = execFileSync(
+    "sqlite3",
+    [
+      "-json",
+      "-cmd",
+      ".timeout 5000",
+      resolvedPath,
+      `BEGIN IMMEDIATE; DELETE FROM scheduled_tasks WHERE user_id = '${userId}'; ` +
+        "SELECT changes() AS removed; COMMIT;",
+    ],
+    { encoding: "utf8", timeout: 7000, maxBuffer: 32 * 1024 },
+  );
+  const rows = JSON.parse(output);
+  if (
+    !Array.isArray(rows) ||
+    rows.length !== 1 ||
+    !Number.isSafeInteger(rows[0]?.removed)
+  ) {
+    throw new Error("synthetic_schedule_cleanup_unverified");
+  }
+  return rows[0].removed;
+}
+
+async function cancelSyntheticActiveVoiceTasks(db, seeded, playgroundUrl) {
+  syntheticScheduleLocation(seeded);
+  if (!SAFE_CALL_ID.test(String(seeded?.callSessionId || ""))) {
+    throw new Error("synthetic_voice_task_cleanup_scope_invalid");
+  }
+  const tasks = await db
+    .collection("viventiumvoicetasks")
+    .find({
+      callSessionId: seeded.callSessionId,
+      userId: seeded.userId,
+      "payload.state": {
+        $nin: [
+          "completed",
+          "failed",
+          "cancelled",
+          "cancelled_confirmed",
+          "cancelled_unenforceable",
+        ],
+      },
+    })
+    .toArray();
+  let cancelled = 0;
+  for (const task of tasks) {
+    const taskId = String(task?.payload?.taskId || "");
+    if (!SAFE_CALL_ID.test(taskId)) {
+      throw new Error("synthetic_voice_task_cleanup_scope_invalid");
+    }
+    const target = new URL(
+      `/api/call-tasks/${encodeURIComponent(taskId)}/cancel`,
+      playgroundUrl,
+    );
+    const response = await fetch(target, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...browserCapabilityHeaders(seeded.browserCapability),
+      },
+      body: JSON.stringify({ callSessionId: seeded.callSessionId }),
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!response.ok && response.status !== 409) {
+      throw new Error("synthetic_voice_task_cancellation_failed");
+    }
+    cancelled += 1;
+  }
+  return cancelled;
+}
+
 async function cleanupSyntheticRecords(db, seeded) {
   const syntheticUser = await db.collection("users").findOne({
     _id: new ObjectId(seeded.userId),
@@ -540,7 +921,14 @@ async function cleanupSyntheticRecords(db, seeded) {
     !String(seeded.email || "").startsWith("viventium-voice-qa-") ||
     !String(seeded.email || "").endsWith("@example.com")
   ) {
-    throw new Error("Refusing cleanup because the synthetic QA user guard did not match");
+    throw new Error(
+      "Refusing cleanup because the synthetic QA user guard did not match",
+    );
+  }
+  const scheduleInventory = inspectSyntheticSchedules(seeded);
+  const scheduledTasks = cleanupSyntheticSchedules(seeded);
+  if (scheduledTasks !== scheduleInventory.total) {
+    throw new Error("synthetic_schedule_cleanup_count_mismatch");
   }
   const messageFilter = { user: seeded.userId };
   const messages = await db
@@ -556,8 +944,10 @@ async function cleanupSyntheticRecords(db, seeded) {
     messageDelete,
     conversationDelete,
     ingressDelete,
+    taskDelete,
     speakerDelete,
     sessionDelete,
+    loginSessionDelete,
     userDelete,
   ] = await Promise.all([
     db.collection("messages").deleteMany(messageFilter),
@@ -565,12 +955,17 @@ async function cleanupSyntheticRecords(db, seeded) {
     db
       .collection("viventiumvoiceingressevents")
       .deleteMany({ callSessionId: seeded.callSessionId }),
+    db.collection("viventiumvoicetasks").deleteMany({
+      callSessionId: seeded.callSessionId,
+      userId: seeded.userId,
+    }),
     db
       .collection("viventiumvoicespeakersegments")
       .deleteMany({ callSessionId: seeded.callSessionId }),
     db
       .collection("viventiumcallsessions")
       .deleteOne({ callSessionId: seeded.callSessionId }),
+    db.collection("sessions").deleteMany({ user: new ObjectId(seeded.userId) }),
     db
       .collection("users")
       .deleteOne({ _id: new ObjectId(seeded.userId), email: seeded.email }),
@@ -581,9 +976,14 @@ async function cleanupSyntheticRecords(db, seeded) {
     messageIds: messageIds.length,
     conversations: conversationDelete.deletedCount || 0,
     ingressEvents: ingressDelete.deletedCount,
+    voiceTasks: taskDelete.deletedCount,
     speakerSegments: speakerDelete.deletedCount,
     callSessions: sessionDelete.deletedCount,
+    loginSessions: loginSessionDelete.deletedCount,
     users: userDelete.deletedCount,
+    scheduledTasks,
+    bootstrapScheduledTasks: scheduleInventory.bootstrap,
+    unsafeScheduledTasks: scheduleInventory.unsafe,
   };
 }
 
@@ -642,7 +1042,17 @@ function messageText(message) {
     .join("\n");
 }
 
-async function waitForInteractiveTurn(db, seeded, expected, waitMs, minTokenRatio) {
+function isNoResponseOnly(text) {
+  return /^\s*\{\s*NTA\s*\}\s*$/i.test(String(text || ""));
+}
+
+async function waitForInteractiveTurn(
+  db,
+  seeded,
+  expected,
+  waitMs,
+  minTokenRatio,
+) {
   const started = Date.now();
   let latest = [];
   while (Date.now() - started < waitMs) {
@@ -659,7 +1069,8 @@ async function waitForInteractiveTurn(db, seeded, expected, waitMs, minTokenRati
       (message) =>
         message.isCreatedByUser !== true &&
         message.metadata?.viventium?.type !== "listen_only_transcript" &&
-        messageText(message).trim(),
+        messageText(message).trim() &&
+        !isNoResponseOnly(messageText(message)),
     );
     if (
       tokenMatch(userText, expected, minTokenRatio) &&
@@ -683,6 +1094,40 @@ async function waitForInteractiveTurn(db, seeded, expected, waitMs, minTokenRati
       .join(" "),
     assistantMessages: [],
     assistantText: "",
+    messages: latest,
+  };
+}
+
+async function waitForInteractiveUserTranscript(
+  db,
+  seeded,
+  expected,
+  waitMs,
+  minTokenRatio,
+) {
+  const started = Date.now();
+  let latest = [];
+  while (Date.now() - started < waitMs) {
+    latest = await db
+      .collection("messages")
+      .find({ user: seeded.userId })
+      .sort({ createdAt: 1, _id: 1 })
+      .toArray();
+    const userText = latest
+      .filter((message) => message.isCreatedByUser === true)
+      .map(messageText)
+      .join(" ");
+    if (tokenMatch(userText, expected, minTokenRatio)) {
+      return { ok: true, userText, messages: latest };
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
+  return {
+    ok: false,
+    userText: latest
+      .filter((message) => message.isCreatedByUser === true)
+      .map(messageText)
+      .join(" "),
     messages: latest,
   };
 }
@@ -717,6 +1162,101 @@ async function waitForCompletedInteractiveTask(db, seeded, waitMs) {
   };
 }
 
+function audioDelta(totals, baseline) {
+  return {
+    bytes: totals.bytes - baseline.bytes,
+    packets: totals.packets - baseline.packets,
+    energy: totals.energy - baseline.energy,
+    durationSeconds: totals.durationSeconds - baseline.durationSeconds,
+  };
+}
+
+async function waitForIntentionalSilence(page, db, seeded, waitMs, baseline) {
+  const started = Date.now();
+  let terminalAt = 0;
+  let latestTask = null;
+  let latestMessages = [];
+  let rtcPeerConnections = [];
+  let totals = baseline;
+  let assistantTextObserved = false;
+  let speakingObserved = false;
+  while (Date.now() - started < waitMs) {
+    [latestTask, latestMessages, rtcPeerConnections] = await Promise.all([
+      db
+        .collection("viventiumvoicetasks")
+        .findOne(
+          { callSessionId: seeded.callSessionId, userId: seeded.userId },
+          { sort: { createdAt: -1, _id: -1 } },
+        ),
+      db.collection("messages").find({ user: seeded.userId }).toArray(),
+      collectRtcEvidence(page),
+    ]);
+    totals = sumRtcAudioEvidence(rtcPeerConnections);
+    const delta = audioDelta(totals, baseline);
+    const states = await page.evaluate(
+      () => globalThis.__viventiumQaCallStates || [],
+    );
+    speakingObserved ||= states.some(
+      (state) => state.atMs >= started && state.text.includes("speaking"),
+    );
+    const assistantText = latestMessages
+      .filter(
+        (message) =>
+          message.isCreatedByUser !== true &&
+          message.metadata?.viventium?.type !== "listen_only_transcript",
+      )
+      .map(messageText)
+      .filter((text) => text.trim() && !isNoResponseOnly(text))
+      .join("\n\n");
+    // The durable message can contain a partial "{" while the NTA guard is still buffering.
+    // Judge authoring only from the terminal projection; actual speech remains cumulative.
+    assistantTextObserved = Boolean(assistantText.trim());
+    const state = String(latestTask?.payload?.state || "");
+    if (["failed", "cancelled"].includes(state)) {
+      return {
+        ok: false,
+        state,
+        task: latestTask,
+        messages: latestMessages,
+        rtcPeerConnections,
+        totals,
+        delta,
+        states,
+      };
+    }
+    if (state === "completed") {
+      terminalAt ||= Date.now();
+      if (Date.now() - terminalAt >= 2000) {
+        return {
+          ok: !assistantTextObserved && !speakingObserved,
+          state,
+          task: latestTask,
+          messages: latestMessages,
+          rtcPeerConnections,
+          totals,
+          delta,
+          states,
+          assistantTextObserved,
+          speakingObserved,
+        };
+      }
+    }
+    await page.waitForTimeout(250);
+  }
+  return {
+    ok: false,
+    state: String(latestTask?.payload?.state || ""),
+    task: latestTask,
+    messages: latestMessages,
+    rtcPeerConnections,
+    totals,
+    delta: audioDelta(totals, baseline),
+    states: await page.evaluate(() => globalThis.__viventiumQaCallStates || []),
+    assistantTextObserved,
+    speakingObserved,
+  };
+}
+
 async function installExternalTurnProbeAndPublicMediaProxy(page, args) {
   await page.addInitScript(
     ({
@@ -727,6 +1267,7 @@ async function installExternalTurnProbeAndPublicMediaProxy(page, args) {
       publicMediaCandidate,
       publicMediaProxy,
       turnProxyUrl,
+      captureOutputAudio,
     }) => {
       const callStates = [];
       Object.defineProperty(globalThis, "__viventiumQaCallStates", {
@@ -837,6 +1378,11 @@ async function installExternalTurnProbeAndPublicMediaProxy(page, args) {
         value: peerConnections,
         configurable: true,
       });
+      const remoteOutputAudio = { recorder: null, chunks: [], error: "" };
+      Object.defineProperty(globalThis, "__viventiumQaRemoteOutputAudio", {
+        value: remoteOutputAudio,
+        configurable: true,
+      });
 
       function QaRTCPeerConnection(configuration, constraints) {
         const nextConfiguration = { ...(configuration || {}) };
@@ -844,7 +1390,9 @@ async function installExternalTurnProbeAndPublicMediaProxy(page, args) {
         if (turnUrls.length) {
           Object.assign(nextConfiguration, {
             iceServers: [{ urls: turnUrls, username, credential }],
-            iceTransportPolicy: forceRelay ? "relay" : configuration?.iceTransportPolicy,
+            iceTransportPolicy: forceRelay
+              ? "relay"
+              : configuration?.iceTransportPolicy,
           });
         }
         if (turnProxyUrl) {
@@ -859,7 +1407,9 @@ async function installExternalTurnProbeAndPublicMediaProxy(page, args) {
                 urls: turnProxyUrl,
               },
             ],
-            iceTransportPolicy: forceRelay ? "relay" : configuration?.iceTransportPolicy,
+            iceTransportPolicy: forceRelay
+              ? "relay"
+              : configuration?.iceTransportPolicy,
           });
         }
         const peerConnection = new OriginalRTCPeerConnection(
@@ -911,7 +1461,36 @@ async function installExternalTurnProbeAndPublicMediaProxy(page, args) {
           });
         };
         peerConnection.addEventListener("connectionstatechange", recordState);
-        peerConnection.addEventListener("iceconnectionstatechange", recordState);
+        peerConnection.addEventListener(
+          "iceconnectionstatechange",
+          recordState,
+        );
+        peerConnection.addEventListener("track", (event) => {
+          if (
+            !captureOutputAudio ||
+            event.track?.kind !== "audio" ||
+            remoteOutputAudio.recorder
+          ) {
+            return;
+          }
+          try {
+            const recorder = new MediaRecorder(new MediaStream([event.track]), {
+              mimeType: "audio/webm;codecs=opus",
+            });
+            recorder.addEventListener("dataavailable", (chunk) => {
+              if (chunk.data?.size > 0) {
+                remoteOutputAudio.chunks.push(chunk.data);
+              }
+            });
+            recorder.addEventListener("error", () => {
+              remoteOutputAudio.error = "remote_audio_recording_failed";
+            });
+            recorder.start(250);
+            remoteOutputAudio.recorder = recorder;
+          } catch {
+            remoteOutputAudio.error = "remote_audio_recording_unavailable";
+          }
+        });
         peerConnection.addEventListener("icecandidate", (event) => {
           const match = event.candidate?.candidate?.match(/\btyp\s+([a-z]+)/i);
           if (match) {
@@ -938,71 +1517,10 @@ async function installExternalTurnProbeAndPublicMediaProxy(page, args) {
       publicMediaCandidate: args.publicMediaCandidate,
       publicMediaProxy: args.publicMediaProxy,
       turnProxyUrl: args.turnProxyUrl,
+      captureOutputAudio: Boolean(args.outputAudio),
     },
   );
   return true;
-}
-
-function normalizeCallReadinessEvidence(value = {}) {
-  const statusText = String(value.statusText || "").toLowerCase();
-  const peerStates = (Array.isArray(value.peers) ? value.peers : [])
-    .slice(0, 4)
-    .map((peer) => ({
-      connectionState: String(peer?.connectionState || "").slice(0, 32),
-      iceConnectionState: String(peer?.iceConnectionState || "").slice(0, 32),
-    }));
-  return {
-    controlReady: value.endButtonReady === true,
-    settledVisibleState: ["listening", "speaking", "working", "needs input"].some(
-      (state) => statusText.includes(state),
-    ),
-    peerConnected: peerStates.some(
-      (peer) =>
-        peer.connectionState === "connected" &&
-        ["connected", "completed"].includes(peer.iceConnectionState),
-    ),
-    peerCount: peerStates.length,
-    peerStates,
-  };
-}
-
-async function collectCallReadinessEvidence(page) {
-  const raw = await page.evaluate(() => {
-    const endButton = [...document.querySelectorAll("button")].find(
-      (button) => button.getAttribute("aria-label")?.toLowerCase() === "end call",
-    );
-    const callStatus = [...document.querySelectorAll('[role="status"][aria-label]')].find(
-      (item) =>
-        (item.getAttribute("aria-label") || "")
-          .toLowerCase()
-          .startsWith("call status:"),
-    );
-    const peers = (globalThis.__viventiumQaPeerConnections || []).map((entry) => ({
-      connectionState: entry.peerConnection.connectionState,
-      iceConnectionState: entry.peerConnection.iceConnectionState,
-    }));
-    return {
-      endButtonReady: Boolean(endButton && !endButton.disabled),
-      statusText: callStatus?.textContent || "",
-      peers,
-    };
-  });
-  return normalizeCallReadinessEvidence(raw);
-}
-
-async function waitForCallReadiness(page, timeoutMs = 45000) {
-  const deadlineMs = Date.now() + timeoutMs;
-  let latest = normalizeCallReadinessEvidence();
-  while (Date.now() < deadlineMs) {
-    latest = await collectCallReadinessEvidence(page);
-    if (latest.controlReady && latest.settledVisibleState && latest.peerConnected) {
-      return latest;
-    }
-    await page.waitForTimeout(100);
-  }
-  const error = new Error("Call connection readiness timed out");
-  error.connectionReadiness = latest;
-  throw error;
 }
 
 async function collectRtcEvidence(page) {
@@ -1089,7 +1607,8 @@ function sumRtcAudioEvidence(rtcPeerConnections) {
       packets: current.packets + Number(peer.inboundAudioPacketsReceived || 0),
       energy: current.energy + Number(peer.receivedAudioEnergy || 0),
       durationSeconds:
-        current.durationSeconds + Number(peer.receivedAudioDurationSeconds || 0),
+        current.durationSeconds +
+        Number(peer.receivedAudioDurationSeconds || 0),
     }),
     { bytes: 0, packets: 0, energy: 0, durationSeconds: 0 },
   );
@@ -1150,6 +1669,331 @@ async function waitForCompletedPlayback(page, sinceMs, waitMs) {
   return { ok: false, states };
 }
 
+function normalizeCallReadinessEvidence(value = {}) {
+  const statusText = String(value.statusText || "").toLowerCase();
+  const peerStates = (Array.isArray(value.peers) ? value.peers : [])
+    .slice(0, 4)
+    .map((peer) => ({
+      connectionState: String(peer?.connectionState || "").slice(0, 32),
+      iceConnectionState: String(peer?.iceConnectionState || "").slice(0, 32),
+    }));
+  return {
+    controlReady: value.endButtonReady === true,
+    settledVisibleState: ["listening", "speaking", "working", "needs input"].some(
+      (state) => statusText.includes(state),
+    ),
+    peerConnected: peerStates.some(
+      (peer) =>
+        peer.connectionState === "connected" &&
+        ["connected", "completed"].includes(peer.iceConnectionState),
+    ),
+    peerCount: peerStates.length,
+    peerStates,
+  };
+}
+
+async function collectCallReadinessEvidence(page) {
+  const raw = await page.evaluate(() => {
+    const endButton = [...document.querySelectorAll("button")].find(
+      (button) => button.getAttribute("aria-label")?.toLowerCase() === "end call",
+    );
+    const callStatus = [...document.querySelectorAll('[role="status"][aria-label]')].find(
+      (item) =>
+        (item.getAttribute("aria-label") || "")
+          .toLowerCase()
+          .startsWith("call status:"),
+    );
+    const peers = (globalThis.__viventiumQaPeerConnections || []).map((entry) => ({
+      connectionState: entry.peerConnection.connectionState,
+      iceConnectionState: entry.peerConnection.iceConnectionState,
+    }));
+    return {
+      endButtonReady: Boolean(endButton && !endButton.disabled),
+      statusText: callStatus?.textContent || "",
+      peers,
+    };
+  });
+  return normalizeCallReadinessEvidence(raw);
+}
+
+async function waitForCallReadiness(page, timeoutMs = 45000) {
+  const deadlineMs = Date.now() + timeoutMs;
+  let latest = normalizeCallReadinessEvidence();
+  while (Date.now() < deadlineMs) {
+    latest = await collectCallReadinessEvidence(page);
+    if (latest.controlReady && latest.settledVisibleState && latest.peerConnected) {
+      return latest;
+    }
+    await page.waitForTimeout(100);
+  }
+  const error = new Error("Call connection readiness timed out");
+  error.connectionReadiness = latest;
+  throw error;
+}
+
+async function missedInteractiveObservation(page, baseline) {
+  const rtcPeerConnections = await collectRtcEvidence(page);
+  const totals = sumRtcAudioEvidence(rtcPeerConnections);
+  return {
+    ok: false,
+    state: "expected_transcript_missing",
+    task: null,
+    rtcPeerConnections,
+    totals,
+    delta: audioDelta(totals, baseline),
+    states: await page.evaluate(() => globalThis.__viventiumQaCallStates || []),
+  };
+}
+
+function inspectAudiblePcmWav(bytes) {
+  if (
+    bytes.length < 44 ||
+    bytes.toString("ascii", 0, 4) !== "RIFF" ||
+    bytes.toString("ascii", 8, 12) !== "WAVE"
+  ) {
+    return null;
+  }
+  let format;
+  let audio;
+  for (let offset = 12; offset + 8 <= bytes.length;) {
+    const kind = bytes.toString("ascii", offset, offset + 4);
+    const size = bytes.readUInt32LE(offset + 4);
+    const start = offset + 8;
+    const end = start + size;
+    if (end > bytes.length) {
+      return null;
+    }
+    if (kind === "fmt " && size >= 16) {
+      format = {
+        codec: bytes.readUInt16LE(start),
+        channels: bytes.readUInt16LE(start + 2),
+        sampleRate: bytes.readUInt32LE(start + 4),
+        bits: bytes.readUInt16LE(start + 14),
+      };
+    } else if (kind === "data") {
+      audio = bytes.subarray(start, end);
+    }
+    offset = end + (size % 2);
+  }
+  if (
+    !format ||
+    !audio ||
+    format.codec !== 1 ||
+    format.channels !== 1 ||
+    format.bits !== 16 ||
+    audio.length < format.sampleRate / 5
+  ) {
+    return null;
+  }
+  let peak = 0;
+  for (let index = 0; index + 1 < audio.length; index += 2) {
+    peak = Math.max(peak, Math.abs(audio.readInt16LE(index)));
+  }
+  if (peak < 32) {
+    return null;
+  }
+  return {
+    sampleRate: format.sampleRate,
+    channels: format.channels,
+    durationSeconds: audio.length / (format.sampleRate * 2),
+    peak,
+  };
+}
+
+async function persistCapturedOutputAudio(page, outputPath) {
+  const capture = await page.evaluate(async () => {
+    const state = globalThis.__viventiumQaRemoteOutputAudio;
+    if (!state || state.error || !state.recorder) {
+      return { error: state?.error || "remote_audio_recording_missing" };
+    }
+    if (state.recorder.state !== "inactive") {
+      await new Promise((resolve) => {
+        state.recorder.addEventListener("stop", resolve, { once: true });
+        state.recorder.stop();
+      });
+    }
+    if (state.error || state.chunks.length === 0) {
+      return { error: state.error || "remote_audio_recording_missing" };
+    }
+    const recording = new Blob(state.chunks, { type: "audio/webm" });
+    return { bytes: Array.from(new Uint8Array(await recording.arrayBuffer())) };
+  });
+  if (
+    capture.error ||
+    !Array.isArray(capture.bytes) ||
+    capture.bytes.length === 0
+  ) {
+    throw new Error(capture.error || "remote_audio_recording_missing");
+  }
+  fs.mkdirSync(path.dirname(outputPath), { recursive: true, mode: 0o700 });
+  execFileSync(
+    "ffmpeg",
+    [
+      "-hide_banner",
+      "-loglevel",
+      "error",
+      "-n",
+      "-f",
+      "webm",
+      "-i",
+      "pipe:0",
+      "-ar",
+      "48000",
+      "-ac",
+      "1",
+      "-c:a",
+      "pcm_s16le",
+      outputPath,
+    ],
+    {
+      input: Buffer.from(capture.bytes),
+      timeout: 20_000,
+      maxBuffer: 32 * 1024,
+    },
+  );
+  fs.chmodSync(outputPath, 0o600);
+  const bytes = fs.readFileSync(outputPath);
+  const audio = inspectAudiblePcmWav(bytes);
+  if (!audio) {
+    throw new Error("remote_audio_recording_silent");
+  }
+  return {
+    path: outputPath,
+    format: "wav",
+    sha256: crypto.createHash("sha256").update(bytes).digest("hex"),
+    sizeBytes: bytes.length,
+    ...audio,
+  };
+}
+
+function finalizeSyntheticQaResult(result, pageErrors, cleanupExpected) {
+  result.pageErrorCount = pageErrors.length;
+  const authoritativeTrust =
+    Array.isArray(result.authoritativeSpeakerActorTrust) &&
+    result.authoritativeSpeakerActorTrust.length > 0
+      ? result.authoritativeSpeakerActorTrust
+      : result.speakerActorTrust;
+  result.ownerTrustVerified =
+    Array.isArray(authoritativeTrust) &&
+    authoritativeTrust.length === 1 &&
+    authoritativeTrust[0] === "owner_participant" &&
+    result.currentTurnAllVerified !== false &&
+    result.speakerAttributionState !== "shared_mic_unverified";
+  result.ownerTrustFailureReason = "";
+  if (!result.ownerTrustVerified) {
+    if (result.speakerAttributionState === "shared_mic_unverified") {
+      result.ownerTrustFailureReason = "shared_microphone_unverified";
+    } else if (
+      Number(result.currentTurnVerifiedFinalSpeakerCount || 0) > 0 &&
+      Number(result.currentTurnUnverifiedInterimCount || 0) > 0
+    ) {
+      result.ownerTrustFailureReason =
+        "unverified_interim_segment_blocks_owner";
+    } else if (
+      Number(result.currentTurnSpeakerCount || 0) > 0 &&
+      result.currentTurnProviderSpeakerIdCount === 0
+    ) {
+      result.ownerTrustFailureReason = "provider_speaker_identity_missing";
+    } else if (result.currentTurnSpeakerCount === 0) {
+      result.ownerTrustFailureReason = "current_turn_speaker_evidence_missing";
+    } else if (result.currentTurnAllVerified === false) {
+      result.ownerTrustFailureReason =
+        "current_turn_contains_unverified_speaker";
+    } else {
+      result.ownerTrustFailureReason = "owner_participant_not_verified";
+    }
+  }
+  const reject = (code) => {
+    if (!result.errorCodes.includes(code)) {
+      result.errorCodes.push(code);
+    }
+  };
+
+  if (result.pageErrorCount > 0) {
+    reject("browser_page_error");
+  }
+  if (result.rawParticipantIdentityExposed) {
+    reject("participant_identity_exposed");
+  }
+  if (
+    result.coreBrowserRequested &&
+    (!result.coreBrowserAuthenticated ||
+      !result.coreBrowserOwnerMatched ||
+      !result.coreBrowserComposerReady)
+  ) {
+    reject("synthetic_core_browser_not_authenticated");
+  }
+  if (
+    result.coreBrowserAuthenticated &&
+    Number(result.cleanup?.loginSessions || 0) < 1
+  ) {
+    reject("synthetic_core_browser_session_cleanup_incomplete");
+  }
+  if (result.transcriptCountWithinLimit === false) {
+    reject("unexpected_transcript_count");
+  }
+  if (result.autoConnected && !result.transcriptMatchedExpected) {
+    reject("expected_transcript_not_observed");
+  }
+  if (result.silenceExpected && result.assistantResponsePresent) {
+    reject("passive_wing_response_observed");
+  }
+  if (
+    result.interactive &&
+    result.transcriptMatchedExpected &&
+    result.voiceTaskCount > 0 &&
+    ![
+      "completed",
+      "failed",
+      "cancelled",
+      "cancelled_confirmed",
+      "cancelled_unenforceable",
+    ].includes(String(result.completedVoiceTaskState || ""))
+  ) {
+    reject("voice_task_not_terminal");
+  }
+  if (
+    result.interactive &&
+    !result.silenceExpected &&
+    result.completedVoiceTask &&
+    !result.playbackCompleted
+  ) {
+    reject("audible_playback_not_observed");
+  }
+  if (result.ownerTrustRequired && !result.ownerTrustVerified) {
+    reject("owner_speaker_not_verified");
+  }
+  if (result.outputAudioRequested && !result.outputAudioEvidence?.sha256) {
+    reject("output_audio_missing");
+  }
+  if (
+    Number(
+      result.cleanup?.unsafeScheduledTasks ??
+        result.cleanup?.scheduledTasks ??
+        0,
+    ) > 0 &&
+    (result.mode === "listen_only" ||
+      result.silenceExpected ||
+      !result.ownerTrustVerified)
+  ) {
+    reject("unauthorized_schedule_side_effect");
+  }
+  if (result.seeded && !cleanupExpected) {
+    reject("synthetic_cleanup_required");
+  } else if (
+    result.seeded &&
+    (result.cleanup?.users !== 1 || result.cleanup?.callSessions !== 1)
+  ) {
+    reject("synthetic_cleanup_incomplete");
+  }
+
+  result.transportOk = Boolean(
+    result.transportOk && result.errorCodes.length === 0,
+  );
+  result.ok = result.transportOk;
+  return result;
+}
+
 async function run() {
   const args = parseArgs(process.argv.slice(2));
   const mongoUri = process.env.MONGO_URI;
@@ -1162,7 +2006,6 @@ async function run() {
   await client.connect();
   const db = client.db();
   let browser;
-  let page;
   let seeded;
   let cleanup = null;
   const consoleMessages = [];
@@ -1174,23 +2017,41 @@ async function run() {
     semanticEvaluationStatus: "not_evaluated",
     seeded: false,
     proxyPreflight: null,
+    coreBrowserRequested: args.verifyCoreBrowser,
+    coreBrowserAuthenticated: false,
+    coreBrowserOwnerMatched: false,
+    coreBrowserComposerReady: false,
+    coreBrowserAttachmentActionPresent: false,
+    coreBrowserSessionCount: 0,
+    coreBrowserPath: "",
     pageMatchedExpected: false,
     transcriptMatchedExpected: false,
     transcriptUnorderedMatchedExpected: false,
     transcriptCount: 0,
     transcriptCountWithinLimit: true,
     mode: args.mode,
+    requestedVoiceRoute: {
+      stt: { provider: args.sttProvider, variant: args.sttVariant || null },
+      tts: { provider: args.ttsProvider, variant: args.ttsVariant || null },
+    },
     zeroSetupStartActions: 0,
     autoConnected: false,
     connectionReadiness: normalizeCallReadinessEvidence(),
     connectionReadinessAfterFailure: null,
     interactive: args.interactive,
+    silenceExpected: args.expectSilence,
     interactiveTurnCompleted: false,
+    intentionalSilenceObserved: false,
+    listenOnlyIsolationObserved: false,
     completedVoiceTask: false,
     completedVoiceTaskState: "",
+    voiceTaskCount: 0,
     assistantResponsePresent: false,
+    noResponseMarkerCount: 0,
     deliveredAudioPresent: false,
     playbackCompleted: false,
+    outputAudioRequested: Boolean(args.outputAudio),
+    outputAudioEvidence: null,
     callStateTransitions: [],
     inboundAudioBytesReceived: 0,
     inboundAudioPacketsReceived: 0,
@@ -1206,9 +2067,22 @@ async function run() {
     speakerSegmentCount: 0,
     speakerLabelCount: 0,
     speakerActorTrust: [],
+    authoritativeSpeakerActorTrust: [],
+    currentTurnSpeakerCount: 0,
+    currentTurnFinalSpeakerCount: 0,
+    currentTurnVerifiedFinalSpeakerCount: 0,
+    currentTurnUnverifiedInterimCount: 0,
+    currentTurnProviderSpeakerIdCount: 0,
+    currentTurnAllVerified: false,
+    speakerAttributionState: "",
+    ownerTrustRequired: args.requireOwnerTrust,
+    ownerTrustVerified: false,
+    ownerTrustFailureReason: "",
+    rawParticipantIdentityExposed: false,
     sessionStatus: "",
     sessionRevision: 0,
     micToggleClicked: false,
+    microphonePublished: false,
     externalTurnConfigured: args.externalTurnUrls.length > 0,
     forceRelay: args.forceRelay,
     externalRelaySelected: false,
@@ -1266,9 +2140,7 @@ async function run() {
       `--use-file-for-fake-audio-capture=${args.audio}`,
     ];
     if (args.turnProxyHostRule) {
-      chromiumArgs.push(
-        `--host-resolver-rules=${args.turnProxyHostRule}`,
-      );
+      chromiumArgs.push(`--host-resolver-rules=${args.turnProxyHostRule}`);
     }
     if (args.disableNonProxiedUdp) {
       chromiumArgs.push(
@@ -1290,7 +2162,7 @@ async function run() {
     await context.grantPermissions(["microphone"], {
       origin: args.browserPlaygroundUrl,
     });
-    page = await context.newPage();
+    const page = await context.newPage();
     page.on("console", (message) => {
       const type = message.type();
       const text = message.text();
@@ -1299,6 +2171,22 @@ async function run() {
     page.on("pageerror", (error) => {
       pageErrors.push(String(error?.message || error));
     });
+    if (args.verifyCoreBrowser) {
+      const coreEvidence = await verifySyntheticCoreBrowser(
+        page,
+        db,
+        seeded,
+        args.coreUrl,
+        path.join(args.outputRoot, `${args.caseId}-core-browser.png`),
+      );
+      result.coreBrowserAuthenticated = coreEvidence.authenticated;
+      result.coreBrowserOwnerMatched = coreEvidence.ownerMatched;
+      result.coreBrowserComposerReady = coreEvidence.composerReady;
+      result.coreBrowserAttachmentActionPresent =
+        coreEvidence.attachmentActionPresent;
+      result.coreBrowserSessionCount = coreEvidence.sessionCount;
+      result.coreBrowserPath = coreEvidence.path;
+    }
     await installExternalTurnProbeAndPublicMediaProxy(page, args);
 
     await page.goto(url.toString(), {
@@ -1307,60 +2195,119 @@ async function run() {
     });
     await assertCallBootstrapStripped(page, seeded.callSessionId);
     result.connectionReadiness = await waitForCallReadiness(page);
+    await page.waitForFunction(
+      () => {
+        const endButton = [...document.querySelectorAll("button")].find(
+          (button) =>
+            button.getAttribute("aria-label")?.toLowerCase() === "end call",
+        );
+        const status = [...document.querySelectorAll('[role="status"]')]
+          .map((item) => item.textContent || "")
+          .join(" ")
+          .toLowerCase();
+        const settledVisibleState = [
+          "listening",
+          "speaking",
+          "working",
+          "needs input",
+        ].some((state) => status.includes(state));
+        const peerConnected = (
+          globalThis.__viventiumQaPeerConnections || []
+        ).some(
+          (entry) =>
+            entry.peerConnection.connectionState === "connected" &&
+            ["connected", "completed"].includes(
+              entry.peerConnection.iceConnectionState,
+            ),
+        );
+        return Boolean(
+          endButton &&
+          !endButton.disabled &&
+          settledVisibleState &&
+          peerConnected,
+        );
+      },
+      undefined,
+      { timeout: 45000 },
+    );
     result.autoConnected = true;
     await page.waitForTimeout(1500);
-    const micPromptVisible = await page
-      .getByText(/turn on your microphone/i)
-      .isVisible({ timeout: 1000 })
-      .catch(() => false);
-    if (micPromptVisible) {
-      const micToggle = page
-        .locator(
-          'button[data-lk-source="microphone"], button[aria-label*="microphone" i], button[title*="microphone" i]',
-        )
-        .first();
-      if ((await micToggle.count().catch(() => 0)) > 0) {
-        await micToggle.click({ timeout: 10000 }).catch(() => {});
-        result.micToggleClicked = true;
-        await page.waitForTimeout(1500);
-      }
-    }
+    const microphone = await ensurePublishedMicrophone(page);
+    result.micToggleClicked = microphone.toggleClicked;
+    result.zeroSetupStartActions = microphone.toggleClicked ? 1 : 0;
+    result.microphonePublished = true;
 
-    const transcript = args.interactive
-      ? await waitForInteractiveTurn(
-          db,
-          seeded,
-          args.expect,
-          args.waitMs,
-          args.minTokenRatio,
-        )
-      : await waitForTranscript(
-          db,
-          seeded,
-          args.expect,
-          args.waitMs,
-          args.minTokenRatio,
-        );
     const audioBaselineAtMs = Date.now();
     const audioBaseline = sumRtcAudioEvidence(await collectRtcEvidence(page));
-    const completedVoiceTask = args.interactive
-      ? await waitForCompletedInteractiveTask(
+    const nonInteractiveAudioBaseline = args.interactive ? null : audioBaseline;
+    const transcript = args.expectSilence
+      ? await waitForInteractiveUserTranscript(
           db,
           seeded,
+          args.expect,
           args.waitMs,
+          args.minTokenRatio,
         )
-      : { ok: true, state: "not_applicable", task: null };
-    const deliveredAudio = args.interactive
-      ? await waitForDeliveredAudio(page, args.waitMs, audioBaseline)
-      : {
-          ok: true,
-          rtcPeerConnections: await collectRtcEvidence(page),
-          totals: audioBaseline,
-          delta: { bytes: 0, packets: 0, energy: 0, durationSeconds: 0 },
-        };
-    const completedPlayback = args.interactive
-      ? await waitForCompletedPlayback(page, audioBaselineAtMs, args.waitMs)
-      : { ok: true, states: [] };
+      : args.interactive
+        ? await waitForInteractiveTurn(
+            db,
+            seeded,
+            args.expect,
+            args.waitMs,
+            args.minTokenRatio,
+          )
+        : await waitForTranscript(
+            db,
+            seeded,
+            args.expect,
+            args.waitMs,
+            args.minTokenRatio,
+          );
+    const completedVoiceTask = !args.interactive
+      ? { ok: false, state: "not_applicable", task: null }
+      : !transcript.ok
+        ? await missedInteractiveObservation(page, audioBaseline)
+        : args.expectSilence
+          ? await waitForIntentionalSilence(
+              page,
+              db,
+              seeded,
+              args.waitMs,
+              audioBaseline,
+            )
+          : await waitForCompletedInteractiveTask(db, seeded, args.waitMs);
+    if (!args.interactive) {
+      await page.waitForTimeout(3000);
+    }
+    const deliveredAudio = args.expectSilence
+      ? completedVoiceTask
+      : args.interactive && completedVoiceTask.ok
+        ? await waitForDeliveredAudio(page, args.waitMs, audioBaseline)
+        : {
+            ok: false,
+            rtcPeerConnections: await collectRtcEvidence(page),
+            totals: sumRtcAudioEvidence(await collectRtcEvidence(page)),
+            delta: { bytes: 0, packets: 0, energy: 0, durationSeconds: 0 },
+          };
+    if (!args.interactive) {
+      deliveredAudio.delta = audioDelta(
+        deliveredAudio.totals,
+        nonInteractiveAudioBaseline,
+      );
+    }
+    const completedPlayback = args.expectSilence
+      ? {
+          ok: false,
+          states: completedVoiceTask.states || [],
+        }
+      : args.interactive && completedVoiceTask.ok
+        ? await waitForCompletedPlayback(page, audioBaselineAtMs, args.waitMs)
+        : {
+            ok: false,
+            states: await page.evaluate(
+              () => globalThis.__viventiumQaCallStates || [],
+            ),
+          };
     const finalInteractiveMessages = args.interactive
       ? await db
           .collection("messages")
@@ -1379,7 +2326,7 @@ async function run() {
           message.metadata?.viventium?.type !== "listen_only_transcript",
       )
       .map(messageText)
-      .filter(Boolean)
+      .filter((text) => text.trim() && !isNoResponseOnly(text))
       .join("\n\n");
     const bodyText = await page
       .locator("body")
@@ -1396,20 +2343,50 @@ async function run() {
     result.transcriptUnorderedMatchedExpected = args.interactive
       ? result.transcriptMatchedExpected
       : transcript.unorderedOk;
-    result.completedVoiceTask = Boolean(completedVoiceTask.ok);
+    result.completedVoiceTask = Boolean(
+      args.interactive && completedVoiceTask.ok,
+    );
     result.completedVoiceTaskState = completedVoiceTask.state;
     result.interactiveTurnCompleted =
-      args.interactive && result.transcriptMatchedExpected && completedVoiceTask.ok;
-    result.assistantResponsePresent =
-      args.interactive && Boolean(finalAssistantText.trim());
+      args.interactive &&
+      result.transcriptMatchedExpected &&
+      completedVoiceTask.ok;
+    result.assistantResponsePresent = Boolean(finalAssistantText.trim());
+    result.noResponseMarkerCount = finalInteractiveMessages.filter(
+      (message) =>
+        message.isCreatedByUser !== true &&
+        isNoResponseOnly(messageText(message)),
+    ).length;
     result.transcriptCount = args.interactive
-      ? finalInteractiveMessages.filter((message) => message.isCreatedByUser === true)
-          .length
+      ? finalInteractiveMessages.filter(
+          (message) => message.isCreatedByUser === true,
+        ).length
       : transcript.messages.length;
     result.transcriptCountWithinLimit =
       !Number.isFinite(args.maxTranscriptCount) ||
       args.maxTranscriptCount <= 0 ||
       result.transcriptCount <= args.maxTranscriptCount;
+    result.voiceTaskCount = await db
+      .collection("viventiumvoicetasks")
+      .countDocuments({
+        callSessionId: seeded.callSessionId,
+        userId: seeded.userId,
+      });
+    result.intentionalSilenceObserved =
+      args.expectSilence &&
+      completedVoiceTask.ok &&
+      result.assistantResponsePresent === false &&
+      !completedPlayback.states.some((state) =>
+        state.text.includes("speaking"),
+      );
+    result.listenOnlyIsolationObserved =
+      !args.interactive &&
+      args.mode === "listen_only" &&
+      result.assistantResponsePresent === false &&
+      result.voiceTaskCount === 0 &&
+      !completedPlayback.states.some((state) =>
+        state.text.includes("speaking"),
+      );
 
     const sessionAfter = await db
       .collection("viventiumcallsessions")
@@ -1432,6 +2409,53 @@ async function run() {
           .filter(Boolean),
       ),
     ];
+    const voiceTaskTurnId = String(
+      completedVoiceTask.task?.payload?.turnId || "",
+    );
+    const currentTurnSegments = voiceTaskTurnId
+      ? speakerSegments.filter(
+          (segment) =>
+            String(segment?.payload?.turnId || "") === voiceTaskTurnId,
+        )
+      : [];
+    result.authoritativeSpeakerActorTrust = [
+      ...new Set(
+        currentTurnSegments
+          .map((segment) => segment?.payload?.speaker?.actorTrust)
+          .filter(Boolean),
+      ),
+    ];
+    result.currentTurnSpeakerCount = currentTurnSegments.length;
+    result.currentTurnFinalSpeakerCount = currentTurnSegments.filter(
+      (segment) => segment?.payload?.isFinal === true,
+    ).length;
+    result.currentTurnVerifiedFinalSpeakerCount = currentTurnSegments.filter(
+      (segment) =>
+        segment?.payload?.isFinal === true &&
+        segment?.payload?.speaker?.attribution === "verified" &&
+        segment?.payload?.speaker?.actorTrust === "owner_participant" &&
+        segment?.payload?.overlap !== true &&
+        segment?.payload?.uncertain !== true,
+    ).length;
+    result.currentTurnUnverifiedInterimCount = currentTurnSegments.filter(
+      (segment) =>
+        segment?.payload?.isFinal !== true &&
+        segment?.payload?.speaker?.attribution !== "verified",
+    ).length;
+    result.currentTurnProviderSpeakerIdCount = currentTurnSegments.filter(
+      (segment) => Boolean(segment?.payload?.speaker?.providerSpeakerId),
+    ).length;
+    result.currentTurnAllVerified =
+      currentTurnSegments.length > 0 &&
+      currentTurnSegments.every(
+        (segment) =>
+          segment?.payload?.speaker?.attribution === "verified" &&
+          segment?.payload?.overlap !== true &&
+          segment?.payload?.uncertain !== true,
+      );
+    result.speakerAttributionState = String(
+      sessionAfter?.speakerAttributionState || "",
+    );
     result.sessionStatus = String(sessionAfter?.callStatus || "");
     result.sessionRevision = Number(sessionAfter?.callModeRevision || 0);
     const resolvedAssistantRoute =
@@ -1452,9 +2476,21 @@ async function run() {
     result.activeJobPresent = Boolean(
       sessionAfter?.activeJobId || sessionAfter?.activeWorkerId,
     );
-    result.deliveredAudioPresent = args.interactive && deliveredAudio.ok;
-    result.playbackCompleted = args.interactive && completedPlayback.ok;
+    result.deliveredAudioPresent = Boolean(
+      args.interactive && !args.expectSilence && deliveredAudio.ok,
+    );
+    result.playbackCompleted = Boolean(
+      args.interactive && !args.expectSilence && completedPlayback.ok,
+    );
     result.callStateTransitions = completedPlayback.states;
+    result.rawParticipantIdentityExposed = completedPlayback.states.some(
+      (state) =>
+        String(state.text || "")
+          .toLowerCase()
+          .includes(
+            String(seeded.ownerParticipantIdentity || "").toLowerCase(),
+          ),
+    );
     result.inboundAudioBytesReceived = deliveredAudio.totals.bytes;
     result.inboundAudioPacketsReceived = deliveredAudio.totals.packets;
     result.receivedAudioEnergy = deliveredAudio.totals.energy;
@@ -1462,7 +2498,8 @@ async function run() {
     result.deliveredAudioBytesDelta = deliveredAudio.delta.bytes;
     result.deliveredAudioPacketsDelta = deliveredAudio.delta.packets;
     result.deliveredAudioEnergyDelta = deliveredAudio.delta.energy;
-    result.deliveredAudioDurationSecondsDelta = deliveredAudio.delta.durationSeconds;
+    result.deliveredAudioDurationSecondsDelta =
+      deliveredAudio.delta.durationSeconds;
     result.rtcPeerConnections = deliveredAudio.rtcPeerConnections;
     result.rtcConnected = result.rtcPeerConnections.some(
       (peer) =>
@@ -1507,6 +2544,13 @@ async function run() {
         ),
     );
 
+    if (args.outputAudio) {
+      result.outputAudioEvidence = await persistCapturedOutputAudio(
+        page,
+        args.outputAudio,
+      );
+    }
+
     if (args.screenshot) {
       fs.mkdirSync(path.dirname(args.screenshot), {
         recursive: true,
@@ -1530,18 +2574,23 @@ async function run() {
     result.transportOk =
       result.seeded &&
       result.autoConnected &&
+      result.microphonePublished &&
       result.rtcConnected &&
       result.zeroSetupStartActions === 0 &&
       result.activeJobPresent &&
       result.transcriptCount > 0 &&
       result.transcriptCountWithinLimit &&
       result.transcriptMatchedExpected &&
-      (!args.interactive ||
-        (result.interactiveTurnCompleted &&
-          result.assistantResponsePresent &&
-          result.deliveredAudioPresent &&
-          result.playbackCompleted &&
-          result.voiceLlmProviderIsIndependent)) &&
+      (!args.interactive
+        ? result.listenOnlyIsolationObserved
+        : args.expectSilence
+          ? result.intentionalSilenceObserved &&
+            result.voiceLlmProviderIsIndependent
+          : result.interactiveTurnCompleted &&
+            result.assistantResponsePresent &&
+            result.deliveredAudioPresent &&
+            result.playbackCompleted &&
+            result.voiceLlmProviderIsIndependent) &&
       (!result.externalTurnConfigured || result.externalRelaySelected) &&
       (!result.publicMediaProxyConfigured || result.externalTcpMediaSelected) &&
       (!result.turnProxyConfigured || result.turnTlsRelaySelected) &&
@@ -1556,19 +2605,23 @@ async function run() {
         () => null,
       );
     }
-    if (page && args.screenshot) {
-      fs.mkdirSync(path.dirname(args.screenshot), { recursive: true });
-      await page.screenshot({ path: args.screenshot, fullPage: true }).catch(() => {});
-    }
     result.errorCodes.push(safeErrorCode(error));
   } finally {
     if (browser) {
       await browser.close().catch(() => {});
     }
     if (seeded && args.cleanup) {
-      cleanup = await cleanupSyntheticRecords(db, seeded).catch(() => ({
-        errorCode: "cleanup_failed",
-      }));
+      cleanup = await (async () => {
+        const cancelledActiveVoiceTasks = await cancelSyntheticActiveVoiceTasks(
+          db,
+          seeded,
+          args.playgroundUrl,
+        );
+        return {
+          ...(await cleanupSyntheticRecords(db, seeded)),
+          cancelledActiveVoiceTasks,
+        };
+      })().catch(() => ({ errorCode: "cleanup_failed" }));
       result.cleanup = cleanup;
     }
     result.consoleErrorCounts = consoleMessages
@@ -1577,10 +2630,10 @@ async function run() {
         counts[message.type] = (counts[message.type] || 0) + 1;
         return counts;
       }, {});
-    result.pageErrorCount = pageErrors.length;
     await client.close();
   }
 
+  finalizeSyntheticQaResult(result, pageErrors, args.cleanup);
   fs.mkdirSync(path.dirname(args.result), { recursive: true, mode: 0o700 });
   fs.writeFileSync(args.result, JSON.stringify(result, null, 2) + "\n", {
     mode: 0o600,
@@ -1608,7 +2661,16 @@ module.exports = {
   assertCallBootstrapStripped,
   browserCapabilityHeaders,
   buildCallBootstrapUrl,
+  cancelSyntheticActiveVoiceTasks,
+  cleanupSyntheticSchedules,
   createBrowserCallCapability,
+  finalizeSyntheticQaResult,
+  inspectAudiblePcmWav,
+  inspectSyntheticSchedules,
   normalizeCallReadinessEvidence,
+  parseArgs,
+  persistCapturedOutputAudio,
   preflightPlaygroundProxies,
+  seedCallSession,
+  verifySyntheticCoreBrowser,
 };

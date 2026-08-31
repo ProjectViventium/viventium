@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -14,6 +15,8 @@ def run_node(source: str) -> dict:
         check=True,
         capture_output=True,
         text=True,
+        timeout=30,
+        env={**os.environ, "USE_REDIS": "false"},
     )
     return json.loads(completed.stdout)
 
@@ -197,6 +200,8 @@ def test_memory_model_eval_no_live_mode_makes_no_model_call() -> None:
         check=True,
         capture_output=True,
         text=True,
+        timeout=30,
+        env={**os.environ, "USE_REDIS": "false"},
     )
     payload = json.loads(completed.stdout)
     assert payload["status"] == "validated"

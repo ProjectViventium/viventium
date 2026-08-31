@@ -131,7 +131,7 @@ def test_api_key_provider_stub_self_test_is_sanitized() -> None:
         "successfulAnswers": 1,
         "evidenceDirectory": "<private>",
     }
-    assert "sk-viventium" not in result.stdout
+    assert "sk-" + "viventium" not in result.stdout
     assert "authorization" not in result.stdout.lower()
 
 

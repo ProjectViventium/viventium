@@ -232,6 +232,10 @@ def _make_fake_runtime_repo_root(path: Path) -> None:
         "version: synthetic\n",
         encoding="utf-8",
     )
+    (source_of_truth / "scheduled_failure_contract.v1.json").write_text(
+        '{"version": 1, "classes": {}}\n',
+        encoding="utf-8",
+    )
     (source_of_truth / "prompts" / "registry.yaml").write_text(
         "version: 1\nprompts: {}\n",
         encoding="utf-8",
@@ -1622,6 +1626,16 @@ def test_install_honors_explicit_active_developer_checkout_in_documents(tmp_path
         / "prompts"
         / "registry.yaml"
     ).is_file()
+    assert json.loads(
+        (
+            installed_scheduler_root
+            / "viventium_v0_4"
+            / "LibreChat"
+            / "viventium"
+            / "source_of_truth"
+            / "scheduled_failure_contract.v1.json"
+        ).read_text(encoding="utf-8")
+    ) == {"version": 1, "classes": {}}
     assert not (installed_scheduler_root / ".venv").exists()
     assert not (installed_scheduler_root / "schedules.db").exists()
     assert schedule_db.read_text(encoding="utf-8") == "preserved schedule state\n"
@@ -2273,6 +2287,9 @@ def test_helper_package_stays_compatible_with_clean_intel_command_line_tools() -
     package_source = HELPER_PACKAGE.read_text(encoding="utf-8")
     install_script = SCRIPT.read_text(encoding="utf-8")
     cli_source = BIN_VIVENTIUM.read_text(encoding="utf-8")
+    launcher_source = (REPO_ROOT / "viventium_v0_4" / "viventium-librechat-start.sh").read_text(
+        encoding="utf-8"
+    )
     register_section = install_script.split("register_login_item() {", 1)[1].split(
         "unregister_login_item() {",
         1,
@@ -2382,13 +2399,31 @@ def test_helper_package_stays_compatible_with_clean_intel_command_line_tools() -
     assert 'unset VIVENTIUM_CLI_LOCK_DIR' in cli_source
     command_dispatch = cli_source.split('case "$COMMAND" in', 1)[1]
     start_section = command_dispatch.split('  start)', 1)[1].split('  stop)', 1)[0]
-    assert 'The CLI lock protects start preparation, config compilation, and runtime' in start_section
-    assert start_section.index("cleanup_cli_lock") < start_section.index(
-        'VIVENTIUM_LAUNCHER_INTERNAL=1 "${START_CMD[@]}"'
+    assert start_section.index("runtime_start_claim_active") < start_section.index(
+        "bootstrap_components"
     )
-    assert 'VIVENTIUM_LAUNCHER_INTERNAL=1 "${START_CMD[@]}" || start_status=$?' in start_section
-    assert start_section.index('VIVENTIUM_LAUNCHER_INTERNAL=1 "${START_CMD[@]}"') < (
-        start_section.index("clear_runtime_start_claim")
+    assert 'The CLI lock protects start preparation, config compilation, and runtime' in start_section
+    assert 'if ! write_runtime_start_claim; then' in start_section
+    assert start_section.index('if ! write_runtime_start_claim; then') < start_section.index(
+        "cleanup_cli_lock"
+    )
+    cleanup_lock_offset = start_section.index("cleanup_cli_lock")
+    normal_start_offset = start_section.index('"${START_CMD[@]}"', cleanup_lock_offset)
+    assert cleanup_lock_offset < normal_start_offset
+    detached_health_section = launcher_source.split(
+        "if detached_start_requested; then\n  start_detached_librechat_api_watchdog", 1
+    )[1].split('elif [[ "$SKIP_HEALTH_CHECKS" != "true" ]]', 1)[0]
+    assert (
+        "Waiting for user-facing surfaces before releasing the detached startup claim"
+        in detached_health_section
+    )
+    assert 'wait_for_http "${LC_API_URL}/health"' in detached_health_section
+    assert 'wait_for_http "${LC_FRONTEND_URL}"' in detached_health_section
+    detached_health_offset = launcher_source.index(
+        "Waiting for user-facing surfaces before releasing the detached startup claim"
+    )
+    assert detached_health_offset < launcher_source.index(
+        "\nclear_runtime_start_claim_after_handoff\n", detached_health_offset
     )
     assert 'VIVENTIUM_HELPER_SKIP_LOGIN_ITEM=1 run_macos_helper_installer install "$@"' in cli_source
     assert 'run_macos_helper_installer install' in cli_source
@@ -2405,7 +2440,15 @@ def test_helper_package_stays_compatible_with_clean_intel_command_line_tools() -
     assert 'stack_owner_state_file() {' in cli_source
     assert 'write_stack_owner_state() {' in cli_source
     assert 'printf \'%s\\n\' "$APP_SUPPORT_DIR/state/runtime/${runtime_profile}/stack-owner.json"' in cli_source
-    assert '"repoRoot": repo_root,' in cli_source
+    assert '"repoRoot": str(Path(repo_root).resolve(strict=True)),' in cli_source
+    assert '"configFile": str(Path(config_file).resolve(strict=True)),' in cli_source
+    assert '"runtimeDir": str(Path(runtime_dir).resolve(strict=True)),' in cli_source
+    assert '"componentsLockFile": str(Path(components_lock_file).resolve(strict=True)),' in cli_source
+    assert '"ownerLaunchMode": owner_launch_mode,' in cli_source
+    assert '"ownerPid": owner_pid,' in cli_source
+    assert '"ownerProcessStartedAt": " ".join(owner_process_started_at.split()),' in cli_source
+    assert '"ownerProcessCommand": " ".join(owner_process_command.split()),' in cli_source
+    assert 'payload["ownerBindingSha256"] = hashlib.sha256(' in cli_source
     assert 'write_stack_owner_state "$COMMAND"' in cli_source
 
     shipped_prebuilt_offset = install_script.index('use_prebuilt_helper "Using shipped prebuilt helper"')
@@ -2635,10 +2678,13 @@ def test_helper_registers_and_privately_forwards_only_the_whoop_callback_scheme(
             "CFBundleURLSchemes": ["viventium"],
         }
     ]
+    assert plist["LSMultipleInstancesProhibited"] is True
     assert 'url.scheme?.lowercased() == "viventium"' in source
     assert 'url.host?.lowercased() == "oauth"' in source
     assert 'url.path == "/whoop"' in source
-    assert 'arguments: ["health", "whoop", "onboard", "--callback-stdin"]' in source
+    assert 'appendingPathComponent("health/runtime/bin/viventium-health")' in source
+    assert '"--root", "\\(appSupportDir)/health", "whoop", "onboard", "--callback-stdin"' in source
+    assert 'arguments: ["health", "whoop", "onboard", "--callback-stdin"]' not in source
     assert 'stdinPipe.fileHandleForWriting.write(callbackData)' in source
     assert 'arguments: ["health", "whoop", "onboard", "--callback-stdin", callback' not in source
     assert 'URLQueryItem(name: "setup", value: "whoop")' in source

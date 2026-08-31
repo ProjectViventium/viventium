@@ -1,3 +1,4 @@
+<!-- qa-evidence-exempt: Historical evidence snapshot retained verbatim; retroactive v2 fields would invent evidence that was not captured during the run. -->
 # Wearable Data Integration Spike
 
 Date: 2026-07-26
@@ -377,4 +378,3 @@ must be rechecked immediately before implementation.
 - `viventium_v0_4/docs/ARCHITECTURE.md`
 - `qa/README.md`
 - `qa/feature-user-use-case-checklist.md`
-<!-- qa-evidence-exempt: Historical or specialized supporting artifact retained without retroactively inventing missing evidence; current release acceptance requires a fresh full-view report. -->

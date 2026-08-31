@@ -24,4 +24,5 @@
 
 - Case catalog: `cases.md`.
 - Reports: `reports/` for new dated public-safe runs.
-- Last catalog update: 2026-05-17.
+- Last catalog reconciliation: 2026-08-29. The current natural continuity path is `FAIL`; other
+  cases keep their own dated `PASS`, `PARTIAL`, `BLOCKED`, or `NOT RUN` status in `cases.md`.

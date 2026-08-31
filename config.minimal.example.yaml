@@ -53,13 +53,13 @@ runtime:
     enabled: false
     defaults_version: 1
     auto_worker_profile: true
-  scheduled_agent:
-    provider: openai
-    model: gpt-5.6-sol
-    reasoning_effort: xhigh
   prompt_workbench:
     enabled: false
     seed_nightly:
+      enabled: false
+      active: false
+      executor: glasshive_host
+    seed_health_context:
       enabled: false
       active: false
       executor: glasshive_host
@@ -137,12 +137,10 @@ agents:
 llm:
   activation:
     provider: groq
-    auth_mode: user_provided
+    auth_mode: api_key
   primary:
     provider: openai
-    # Easy Install collects this in the browser and stores it as an encrypted user key.
-    # Direct reuse of vendor CLI subscription OAuth is an explicit experimental custom option.
-    auth_mode: user_provided
+    auth_mode: connected_account
   secondary:
     provider: none
     auth_mode: disabled
@@ -153,26 +151,29 @@ voice:
   tts:
     voice: coral
     speed: 1.12
+  wing_mode:
+    default_enabled: false
 integrations:
   health:
     enabled: false
     life_projection_dir: ""
   glasshive:
-    # The immutable Native payload does not package GlassHive. Source/Docker users
-    # can enable the provider from Custom Settings after the component is present.
-    enabled: false
+    # Core provider and canonical LIFE runtime. Worker setup can complete later.
+    enabled: true
     provider:
-      # Provider activation is explicit: both this flag and the parent flag above
-      # must be true. A mismatch fails compilation instead of downgrading silently.
-      enabled: false
+      enabled: true
       # Optional GlassHive working-folder override. The canonical LIFE bootstrap
       # remains additive and independent of whether this provider is enabled.
       # life_dir: ~/Documents/Viventium/Life
       # Full is the trusted-local default; workspace is the restricted option.
       default_access: full
       allow_full_access: true
+    orchestration:
+      # Parallel work ships dark and still requires GlassHive isolation readiness.
+      available: false
+      default_mode: focused
     host_worker:
-      enabled: false
+      enabled: true
       workspace_root: ~/viventium
       # Worker runtime profile: codex-cli, claude-code, or openclaw-general.
       # Separate from the integrations.openclaw lab toggle below.
@@ -181,6 +182,7 @@ integrations:
       plugin_denylist: ["viventium-feelings@project-viventium"]
       codex_personality: none
       codex_conversation_project_instructions: inherit
+      codex_app_server_qa_enabled: false
       codex_model: gpt-5.6-sol
       codex_reasoning_effort: xhigh
       codex_xhigh_route_proven: true

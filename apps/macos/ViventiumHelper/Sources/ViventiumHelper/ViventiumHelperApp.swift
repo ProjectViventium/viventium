@@ -3164,18 +3164,17 @@ final class HelperController: ObservableObject {
     }
 
     private nonisolated static func runWhoopOAuthCallback(
-        repoRoot: String,
         appSupportDir: String,
         callback: String
     ) -> Int32 {
         guard let callbackData = "\(callback)\n".data(using: .utf8) else {
             return 1
         }
-        let process = self.makeCLIProcess(
-            repoRoot: repoRoot,
-            appSupportDir: appSupportDir,
-            arguments: ["health", "whoop", "onboard", "--callback-stdin"]
-        )
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: appSupportDir, isDirectory: true)
+            .appendingPathComponent("health/runtime/bin/viventium-health")
+        process.arguments = ["--root", "\(appSupportDir)/health", "whoop", "onboard", "--callback-stdin"]
+        process.currentDirectoryURL = URL(fileURLWithPath: appSupportDir, isDirectory: true)
         let stdinPipe = Pipe()
         process.standardInput = stdinPipe
         process.standardOutput = FileHandle.nullDevice
@@ -3197,13 +3196,11 @@ final class HelperController: ObservableObject {
             return
         }
         let callback = url.absoluteString
-        let repoRoot = config.repoRoot
         let appSupportDir = config.appSupportDir
         self.openWhoopSetup()
         Task { [weak self] in
             let status = await Task.detached(priority: .utility) {
                 Self.runWhoopOAuthCallback(
-                    repoRoot: repoRoot,
                     appSupportDir: appSupportDir,
                     callback: callback
                 )

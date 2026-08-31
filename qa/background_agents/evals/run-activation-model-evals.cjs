@@ -410,6 +410,14 @@ async function runOneClassifier({
     durationMs: Date.now() - startedAt,
     providerUsed: outcome?.providerUsed || activation.provider,
     modelUsed: outcome?.modelUsed || activation.model,
+    effortUsed: outcome?.effortUsed || '',
+    requestedProvider: outcome?.requestedProvider || '',
+    requestedModel: outcome?.requestedModel || '',
+    requestedEffort: outcome?.requestedEffort || '',
+    effectiveProvider: outcome?.effectiveProvider || outcome?.providerUsed || '',
+    effectiveModel: outcome?.effectiveModel || outcome?.modelUsed || '',
+    effectiveEffort: outcome?.effectiveEffort || outcome?.effortUsed || '',
+    fallbackReason: outcome?.fallbackReason || '',
     providerAttempts: summarizeProviderAttempts(outcome?.providerAttempts),
     error: error || classified.error,
   };
@@ -468,6 +476,14 @@ function failedResult({ target, testCase, repetition, error }) {
     durationMs: 0,
     providerUsed: '',
     modelUsed: '',
+    effortUsed: '',
+    requestedProvider: '',
+    requestedModel: '',
+    requestedEffort: '',
+    effectiveProvider: '',
+    effectiveModel: '',
+    effectiveEffort: '',
+    fallbackReason: '',
     providerAttempts: [],
     error,
   };
@@ -477,8 +493,10 @@ function summarizeProviderAttempts(attempts) {
   return (Array.isArray(attempts) ? attempts : []).map((attempt) => ({
     provider: String(attempt?.provider || ''),
     model: String(attempt?.model || ''),
+    effort: String(attempt?.effort || ''),
     source: String(attempt?.source || ''),
     status: String(attempt?.status || ''),
+    fallbackReason: String(attempt?.fallbackReason || ''),
     shouldActivate:
       typeof attempt?.shouldActivate === 'boolean'
         ? attempt.shouldActivate

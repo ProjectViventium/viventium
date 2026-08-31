@@ -503,6 +503,7 @@ for candidate, label in (
     (prompt_registry_source, "prompt registry compiler"),
     (source_of_truth / "local.viventium-agents.yaml", "agent source of truth"),
     (source_of_truth / "local.librechat.yaml", "LibreChat source of truth"),
+    (source_of_truth / "scheduled_failure_contract.v1.json", "scheduled failure contract"),
 ):
     if candidate.is_symlink() or not candidate.is_file():
         raise SystemExit(f"[viventium] Missing safe Scheduling Cortex {label}")
@@ -570,7 +571,11 @@ try:
         stage / "viventium_v0_4" / "LibreChat" / "viventium" / "source_of_truth"
     )
     installed_source_of_truth.mkdir(parents=True, exist_ok=True)
-    for filename in ("local.viventium-agents.yaml", "local.librechat.yaml"):
+    for filename in (
+        "local.viventium-agents.yaml",
+        "local.librechat.yaml",
+        "scheduled_failure_contract.v1.json",
+    ):
         shutil.copy2(source_of_truth / filename, installed_source_of_truth / filename)
     copy_selected_tree(
         prompts_source,

@@ -8,9 +8,9 @@ Use stable `MCP-NNN` IDs for mcp tooling cases.
 
 | Case ID | Requirement | Surfaces | Automation | Last Run |
 | --- | --- | --- | --- | --- |
-| `MCP-001` | Server/tool instructions reach the model | Prompt assembly, MCP metadata, model-visible tool context | test_prompt_registry.py and MCP service tests | NOT YET RUN (cataloged 2026-05-17; run when feature changes) |
-| `MCP-002` | OAuth unavailable or stale grant is honest | Connected Accounts, MCP auth state, final model response | test_ms365_launcher_contract.py plus browser QA when visible | NOT YET RUN (cataloged 2026-05-17; run when feature changes) |
-| `MCP-003` | Tool result grounding | MCP tool call, chat answer, logs/state summary | feature-specific MCP harness | NOT YET RUN (cataloged 2026-05-17; run when feature changes) |
+| `MCP-001` | Server/tool instructions reach the model | Prompt assembly, MCP metadata, model-visible tool context | test_prompt_registry.py and MCP service tests | NOT RUN (cataloged 2026-05-17; run when feature changes) |
+| `MCP-002` | OAuth unavailable or stale grant is honest | Connected Accounts, MCP auth state, final model response | test_ms365_launcher_contract.py plus browser QA when visible | NOT RUN (cataloged 2026-05-17; run when feature changes) |
+| `MCP-003` | Tool result grounding | MCP tool call, chat answer, logs/state summary | feature-specific MCP harness | NOT RUN (cataloged 2026-05-17; run when feature changes) |
 
 ## `MCP-001` - Server/tool instructions reach the model
 
@@ -25,7 +25,7 @@ Use stable `MCP-NNN` IDs for mcp tooling cases.
 - Forbidden result: mocks, backend logs, source inspection, or model output are treated as full acceptance when a user-visible surface exists.
 - Evidence to capture: sanitized visible result, supporting command/test result, state/log summary, and public-safety review.
 - Automation: test_prompt_registry.py and MCP service tests.
-- Last run: NOT YET RUN (cataloged 2026-05-17; not a substitute for the next real feature run).
+- Last run: NOT RUN (cataloged 2026-05-17; not a substitute for the next real feature run).
 
 ## `MCP-002` - OAuth unavailable or stale grant is honest
 
@@ -40,7 +40,7 @@ Use stable `MCP-NNN` IDs for mcp tooling cases.
 - Forbidden result: mocks, backend logs, source inspection, or model output are treated as full acceptance when a user-visible surface exists.
 - Evidence to capture: sanitized visible result, supporting command/test result, state/log summary, and public-safety review.
 - Automation: test_ms365_launcher_contract.py plus browser QA when visible.
-- Last run: NOT YET RUN (cataloged 2026-05-17; not a substitute for the next real feature run).
+- Last run: NOT RUN (cataloged 2026-05-17; not a substitute for the next real feature run).
 
 ## `MCP-003` - Tool result grounding
 
@@ -55,7 +55,7 @@ Use stable `MCP-NNN` IDs for mcp tooling cases.
 - Forbidden result: mocks, backend logs, source inspection, or model output are treated as full acceptance when a user-visible surface exists.
 - Evidence to capture: sanitized visible result, supporting command/test result, state/log summary, and public-safety review.
 - Automation: feature-specific MCP harness.
-- Last run: NOT YET RUN (cataloged 2026-05-17; not a substitute for the next real feature run).
+- Last run: NOT RUN (cataloged 2026-05-17; not a substitute for the next real feature run).
 
 ## Natural User Use Case Checklist
 
@@ -64,6 +64,6 @@ rows before claiming a pass when the feature behavior changes.
 
 | Use Case ID | Natural user action | Requirement / case link | Real surface to use | Supporting evidence to compare | Expected visible result | Last run |
 | --- | --- | --- | --- | --- | --- | --- |
-| `MCP-UC-001` | On Prompt assembly, MCP metadata, model-visible tool context, verify that server/tool instructions reach the model. | owning requirement for `MCP-001` / `MCP-001` | Prompt assembly, MCP metadata, model-visible tool context | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to MCP-001. | The visible result for MCP-001 matches the documented requirement. | NOT YET RUN (cataloged 2026-05-18; next feature run required) |
-| `MCP-UC-002` | On Connected Accounts, MCP auth state, final model response, try oAuth unavailable or stale grant is honest with missing setup, missing auth/config, empty state, or a degraded dependency. | owning requirement for `MCP-002` / `MCP-002` | Connected Accounts, MCP auth state, final model response | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to MCP-002. | The user sees an honest setup, retry, or degraded-state result for MCP-002; no fake success is accepted. | NOT YET RUN (cataloged 2026-05-18; next feature run required) |
-| `MCP-UC-003` | After tool result grounding, refresh, restart, retry, or switch linked surfaces and verify persistence/parity. | owning requirement for `MCP-003` / `MCP-003` | MCP tool call, chat answer, logs/state summary | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to MCP-003. | MCP-003 remains correct after the persistence or parity step and final wording matches evidence. | NOT YET RUN (cataloged 2026-05-18; next feature run required) |
+| `MCP-UC-001` | On Prompt assembly, MCP metadata, model-visible tool context, verify that server/tool instructions reach the model. | owning requirement for `MCP-001` / `MCP-001` | Prompt assembly, MCP metadata, model-visible tool context | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to MCP-001. | The visible result for MCP-001 matches the documented requirement. | NOT RUN (cataloged 2026-05-18; next feature run required) |
+| `MCP-UC-002` | On Connected Accounts, MCP auth state, final model response, try oAuth unavailable or stale grant is honest with missing setup, missing auth/config, empty state, or a degraded dependency. | owning requirement for `MCP-002` / `MCP-002` | Connected Accounts, MCP auth state, final model response | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to MCP-002. | The user sees an honest setup, retry, or degraded-state result for MCP-002; no fake success is accepted. | NOT RUN (cataloged 2026-05-18; next feature run required) |
+| `MCP-UC-003` | After tool result grounding, refresh, restart, retry, or switch linked surfaces and verify persistence/parity. | owning requirement for `MCP-003` / `MCP-003` | MCP tool call, chat answer, logs/state summary | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to MCP-003. | MCP-003 remains correct after the persistence or parity step and final wording matches evidence. | NOT RUN (cataloged 2026-05-18; next feature run required) |

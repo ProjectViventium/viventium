@@ -600,7 +600,8 @@ For example:
 
 - Historical setup and implementation notes were moved to the private research archive on
   `2026-03-31`.
-- [Prompt Design](../prompt_design/power_agent.md) - Agent operating instructions
+- Root `AGENTS.md` - current agent operating contract
+- [GlassHive Workstation / Sandbox Runtime](48_GlassHive_Workstation_Sandbox_Runtime.md) - worker/runtime behavior
 - [MCP Integration](./07_MCPs.md) - General MCP documentation
 
 ---

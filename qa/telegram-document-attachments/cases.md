@@ -1,5 +1,7 @@
 # Telegram Document Attachments QA Cases
 
+Installed Worker file-parity contract: `tests/release/test_telegram_worker_file_parity_qa.py`.
+
 ## Case ID Convention
 
 Use stable `TGDOC-NNN` IDs for telegram document attachments cases.
@@ -15,6 +17,9 @@ Use stable `TGDOC-NNN` IDs for telegram document attachments cases.
 | `TGDOC-005` | Telegram grouped media/files are one user turn. | An album/grouped message is coalesced and forwarded once with all files in Telegram order, using the caption-bearing item as primary. | Telegram media group, bot handler, LibreChat bridge call | `tests/test_bot_stream_preview.py::test_media_group_coalesces_files_into_one_viventium_call` | PASS 2026-07-09; synthetic album and two-file group each bridged once with two files |
 | `TGDOC-006` | Authorization/API-key decorators must not download, parse, or transcribe attachments. | Each Telegram attachment is captured once by the real handler, avoiding duplicate downloads and split album turns. | Telegram auth decorators, bot logs, media download path | Source inspection plus full Telegram pytest suite | PASS 2026-07-09; post-restart grouped logs show one coalesced handler bridge call |
 | `TGDOC-007` | Audio and regular video uploads are attachments; voice notes and video notes are STT inputs. | Uploaded audio/video files do not produce empty turns or accidental transcription errors; they follow the file contract. | Telegram audio/video upload, bot parser, LibreChat bridge call | `tests/test_bot_stream_preview.py::test_telegram_attachment_filters_accept_broad_documents_and_audio`, `tests/test_voice_preferences.py::test_get_message_treats_regular_video_as_file_attachment` | PASS 2026-07-09; synthetic WAV/MP4 produced file-contract errors and zero voice-ingress records |
+| `TGDOC-008` | Telegram photos must reach the configured model or worker as exact owner-scoped bytes. | A single photo and a same-name album are readable without OCR/parser configuration, placeholders, or dropped files. | Telegram Desktop, LibreChat upload, GlassHive upload projection, provider workspace | LibreChat process/route tests plus GlassHive projection/materialization tests | PASS 2026-08-21; one post-restart uncaptioned photo and one three-photo album produced content-aware answers on the installed runtime |
+| `TGDOC-009` | One logical attachment turn must produce one visible assistant result. | The user gets one answer bubble even when Main and a background cortex both complete. | Telegram delivery, Mongo presentation, cortex follow-up | `BackgroundCortexFollowUpService.spec.js` and affected Telegram/Core suites | PASS 2026-08-21; final album produced one assistant row and one Telegram bubble |
+| `TGDOC-010` | Delegating a file/media task to a Worker Bee must preserve the complete supported input and output contract. | Every supported attachment family reaches the intended Bee with exact owner scope, identity, bytes, and order; generated files/media return once with a usable open/download action through Telegram or linked Active Work. | Telegram Desktop, LibreChat upload, GlassHive workspace, linked Web/Active Work, artifact delivery | Existing upload/projection/materialization suites plus Parallel Work artifact/delivery contracts; real installed matrix required | NOT RUN — cataloged 2026-08-24; narrower photo ingress and one-result delivery passes are supporting evidence only |
 
 ## `TGDOC-001` - Core User Flow
 
@@ -116,8 +121,9 @@ Use stable `TGDOC-NNN` IDs for telegram document attachments cases.
 - Evidence to capture: visible Telegram result summary, sanitized coalescing log count, and
   automated regression output.
 - Automation: `tests/test_bot_stream_preview.py::test_media_group_coalesces_files_into_one_viventium_call`.
-- Last run: PASS 2026-07-09; synthetic Telegram album and grouped docs each produced one
-  coalesced two-file bridge call. See `reports/2026-07-09-telegram-file-ingress-parity.md`.
+- Last run: PASS 2026-08-21; a three-photo same-name album produced one coalesced turn, all
+  three ordered worker files, and one answer. See
+  `reports/2026-08-21-telegram-photo-worker-handoff.md`.
 
 ## `TGDOC-006` - Lightweight Auth Before Attachment Capture
 
@@ -160,6 +166,90 @@ Use stable `TGDOC-NNN` IDs for telegram document attachments cases.
 - Last run: PASS 2026-07-09; synthetic Telegram WAV and MP4 followed the attachment contract and
   did not create voice-ingress records. See `reports/2026-07-09-telegram-file-ingress-parity.md`.
 
+## `TGDOC-008` - Exact Photo Bytes Reach The Worker
+
+- Requirement: a trusted Telegram image is valid visual input, not a text document that must pass a
+  document parser.
+- Risk covered: JPEG/PNG uploads fail with an unsupported-parser error, become placeholders, or map
+  repeated `photo.jpg` names to the wrong bytes.
+- Preconditions: installed local runtime, synthetic non-personal images, and a Telegram chat linked
+  to the configured Main agent.
+- Steps:
+  1. Send one synthetic photo without a caption.
+  2. Send three distinct synthetic photos as one album, with the same Telegram transport filename.
+  3. Ask for exact visible facts from each image in order.
+  4. Compare the visible answer with the upload rows, ordered upload projection, worker bundle,
+     materialized files, provider request, and persisted turn.
+- Expected result: the single image and all three album images are readable; album order is stable;
+  each durable file ID resolves to its own owner-scoped bytes; the worker receives real files.
+- Forbidden result: document-parser JPEG error, placeholder-only worker input, newest-file aliasing,
+  filename dedupe, cross-owner lookup, or a claim that missing bytes were read.
+- Evidence to capture: visible Telegram result, file count/order/byte hashes, one provider request,
+  worker materialization, and Mongo turn counts.
+- Automation: LibreChat Telegram upload/route tests, GlassHive upload projection tests, and host
+  conversation materialization tests.
+- Last run: PASS 2026-08-21. The post-restart blank-caption rerun also exercised a classified
+  quota recovery and still delivered one correct answer. See
+  `reports/2026-08-21-telegram-photo-worker-handoff.md`.
+
+## `TGDOC-009` - One Attachment Turn, One Visible Answer
+
+- Requirement: one completed logical attachment turn must be presented once.
+- Risk covered: Main answers correctly, then a background cortex emits the same answer again with
+  punctuation or spacing changes.
+- Steps:
+  1. Complete a natural multi-photo request through Telegram.
+  2. Wait through the background follow-up window.
+  3. Inspect Telegram, Mongo, delivery receipts, and follow-up decision logs.
+- Expected result: one assistant row and one Telegram bubble contain the complete answer; an exact
+  canonical duplicate is suppressed before persistence and delivery.
+- Forbidden result: two bubbles for the same answer, Telegram-side filtering, or semantic suppression
+  of a genuinely additive follow-up.
+- Automation: `BackgroundCortexFollowUpService.spec.js`, including punctuation/whitespace-only
+  duplicate suppression and distinct-result preservation.
+- Last run: PASS 2026-08-21. See
+  `reports/2026-08-21-telegram-photo-worker-handoff.md`.
+
+## `TGDOC-010` - Worker Bee File Input And Output Parity
+
+- Requirement: `01_Key_Principles.md` full capability parity and
+  `55_Parallel_Work_Orchestration.md` Worker Bee input/output parity.
+- Risk covered: delegation silently drops or alters an upload, gives the worker a placeholder or
+  wrong same-name file, supports ingestion but not generated-file delivery, or works only on the
+  primary provider before fallback/control/restart.
+- Preconditions: installed current candidate; synthetic public-safe fixtures for every supported
+  attachment family; Parallel Work enabled only through the local QA gate; one output-producing
+  mission; headed linked Web/Active Work surface.
+- Steps:
+  1. Send representative single and grouped documents, images, audio, video, and prior artifacts
+     through Telegram, including distinct same-name files and one captioned group.
+  2. Explicitly delegate the exact file task to one Worker Bee and inspect its owner-scoped upload
+     projection and materialized workspace.
+  3. Message or Steer the same Bee, exercise provider fallback and runtime restart, and require it
+     to generate a synthetic file or media artifact.
+  4. Verify Telegram presents one Queen-authored completion and one usable artifact delivery; open
+     the same result from linked chat or Active Work and compare identity/hash.
+  5. Repeat missing parser, missing bytes, expired link, unavailable delivery, and cross-owner
+     attempts, then recover the same mission where recovery is supported.
+- Expected result: each supported input retains exact identity, bytes, order, caption grouping, and
+  owner scope; unsupported input fails once and truthfully before caption-only work. The intended
+  Bee alone can read the files. Its generated output is delivered once, opens successfully, and
+  remains the same artifact through control, fallback, restart, and cross-surface viewing.
+- Forbidden result: dropped/reordered/aliased files, caption-only execution after failed ingestion,
+  parser fiction, placeholder-only worker input, cross-owner access, fallback without a required
+  file ability, output described but not attached, dead/expired link reported as delivered,
+  duplicate assistant bubbles, duplicate artifacts, or lost work after restart.
+- Evidence to capture: visible Telegram and linked-Web outcomes; upload IDs and sanitized hashes;
+  group order; worker projection/materialization; provider/tool receipt; action and attempt rows;
+  output artifact ledger/hash; delivery receipt; opened result; restart/fallback correlation; and
+  public-safe report.
+- Automation: Telegram upload/parser/album tests, LibreChat upload/route tests, GlassHive
+  projection/materialization tests, and Parallel Work artifact/delivery tests. Automation supports
+  but does not replace the real installed matrix.
+- Installed PRE-GATE only: `qa/telegram-document-attachments/scripts/run_tgdoc_010_installed_journey.cjs --local-qa --allow-telegram-mutation --allow-runtime-restart --scenario=<private-0600> --evidence-root=<private-0700>` requires a parent-injected authenticated Computer `@oai/sky` bridge plus separate diagnostic, desktop, Telegram, local JWT, and restart consent; standalone execution blocks.
+- Last run: NOT RUN — cataloged 2026-08-24. `TGDOC-003`, `TGDOC-005`, `TGDOC-008`, and `TGDOC-009` prove narrower
+  ingress/grouping/photo/one-result behavior only.
+
 ## Natural User Use Case Checklist
 
 These rows are the minimum natural-user checklist gate for Telegram Document Attachments. Add narrower feature-specific
@@ -174,3 +264,6 @@ rows before claiming a pass when the feature behavior changes.
 | `TGDOC-UC-005` | Send a grouped Telegram album/file set with one caption. | `03_Telegram_Bridge.md` Telegram Attachments / `TGDOC-005` | Telegram desktop/mobile bot chat | Coalescing log count, one LibreChat bridge call, stored assistant turn, automated test. | One assistant response for the group with all files forwarded in order. | PASS 2026-07-09; album and grouped docs coalesced |
 | `TGDOC-UC-006` | Send an unsupported synthetic archive with a caption. | `03_Telegram_Bridge.md` Telegram Attachments / `TGDOC-004` | Telegram desktop/mobile bot chat | LibreChat 422 route response, Python bridge error text, no generated caption-only answer. | One clear failure message and no silent turn. | PASS 2026-07-09; synthetic ZIP fail-loud |
 | `TGDOC-UC-007` | Send synthetic audio and regular video file uploads. | `03_Telegram_Bridge.md` Telegram Attachments / `TGDOC-007` | Telegram desktop/mobile bot chat | Bot handler selection, file capture logs, automated parser/filter tests. | Files follow attachment contract; only voice-note/video-note inputs use STT. | PASS 2026-07-09; WAV/MP4 file-contract errors and no voice ingress |
+| `TGDOC-UC-008` | Send one photo without a caption, then send three different photos as one album and ask about every image. | `03_Telegram_Bridge.md` Telegram Attachments / `TGDOC-008` | Telegram Desktop and configured GlassHive-backed Main | Visible reply, upload rows, ordered file IDs, worker bundle/files, provider run, Mongo | Every exact image is readable in order; no parser error, placeholder, alias, or dropped attachment. | PASS 2026-08-21; post-restart single-photo and installed-runtime three-photo album passed |
+| `TGDOC-UC-009` | Wait after the album answer and confirm no duplicate result appears. | `03_Telegram_Bridge.md` Telegram Attachments / `TGDOC-009` | Telegram Desktop, follow-up cortex, delivery store | Visible bubble count, assistant-row count, follow-up decision, delivery acknowledgement | One logical result is shown once; a distinct additive follow-up remains allowed. | PASS 2026-08-21; one assistant row and one bubble after the full follow-up window |
+| `TGDOC-UC-010` | Send the supported synthetic file/media matrix, delegate it to one Bee, guide that Bee, restart/fallback, and open its generated file from Telegram and linked Active Work. | `01_Key_Principles.md`, `55_Parallel_Work_Orchestration.md` / `TGDOC-010`, `PWK-011`, `PWK-UC-019` | Installed Telegram Desktop, GlassHive worker, linked Web/Active Work, artifact viewer | Exact upload IDs/hashes/order, worker files, control/fallback/restart receipts, output hash, one delivery receipt, opened artifact | Exact authorized inputs reach only the intended Bee; one correct output returns once and opens on both surfaces; every unsupported or unavailable class is truthful and recoverable where supported. | NOT RUN — cataloged 2026-08-24; existing narrower attachment passes do not close Worker input/output parity |

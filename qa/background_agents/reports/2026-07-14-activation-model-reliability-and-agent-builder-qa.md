@@ -2,13 +2,14 @@
 
 ## Summary
 
-- Result: **PASS** for the exact-runtime classifier gate, Prompt Workbench path, Agent Builder
-  selector truthfulness, reload persistence, and deterministic fallback recovery; **PARTIAL** for
-  external-channel delivery, which was not run with an isolated synthetic channel account.
+- Result: **PASS** for the current local source/live activation configuration, exact-runtime
+  classifier gate, Prompt Workbench path, Agent Builder selector truthfulness, reload persistence,
+  and observed fallback recovery.
 - Build/source under test: current public source working tree and nested LibreChat working tree.
 - Runtime/artifact under test: active local Viventium runtime launched from the current checkout.
-- Environment: isolated local browser QA, Prompt Workbench, and exact-runtime evals.
-- Tester: Codex through browser user paths and exact-runtime evals.
+- Environment: local macOS development runtime, authenticated browser, Prompt Workbench, and the
+  configured Telegram bot path.
+- Tester: Codex through real browser and Telegram user paths plus exact-runtime evals.
 - Related change: complete built-in activation routes, dynamic Agent Builder model choices, bounded
   provider fallback, and detached late recovery.
 
@@ -20,7 +21,7 @@ claim.
 | Case ID | Result | Evidence | Notes |
 | --- | --- | --- | --- |
 | `ACT-36` | PASS | 693/693 exact-runtime decisions | Zero unavailable, false-positive, or false-negative decisions |
-| `ACT-38` | PASS | 201 recovered attempt errors in the deterministic exact-runtime eval | Attempt and late bounds did not extend the simulated conscious reply wait |
+| `ACT-38` | PASS | 201 recovered attempt errors plus real Telegram fallback | Attempt and late bounds did not extend the conscious reply wait |
 | `ACT-42` | PASS | 11/11 Agent Builder selectors before/after reload | Three saved fallbacks per agent; zero mutation |
 | `ACT-43` | PASS | Typed malformed/schema regression | Invalid output retries fallback and cannot become a coerced decision |
 | `PW-034` | PASS | Browser preview and 11/11 live subset | History survived reload; zero browser errors |
@@ -31,7 +32,7 @@ claim.
 | --- | --- | --- | --- | --- | --- | --- |
 | `BACKGROUND-UC-010` | Expand every built-in Activation Detection selector and reload | Real Agent Builder browser UI | PASS | All 11 saved Qwen routes remained visible and selected | Persisted routes, three fallbacks each, before/after hashes, source/live diff zero | None for this path |
 | `PW-UC-010` | Preview and run activation evals, then reload history | Real Prompt Workbench browser UI | PASS | Preview code 0, 11/11 selected decisions, saved run after reload | Workbench ledger, guarded QA context, runtime fallbacks | None for this path |
-| Fallback recovery | Submit synthetic input while primary classifiers encounter tail latency | Deterministic exact-runtime harness | PASS | The simulated conscious result completed without waiting for late detection | Bounded primary attempts, fallback recovery, and complete detector results | External-channel delivery NOT RUN |
+| Live fallback recovery | Send a natural message while primary classifiers encounter tail latency | Real Telegram bot path | PASS | Conscious text/audio response delivered without waiting for late detection | Two primary attempt deadlines, xAI recovery, 11/11 detector completion | Other fallback providers not deliberately forced live |
 
 ## Traceability
 
@@ -46,7 +47,7 @@ claim.
 - Expected result: all classifiers are configured, selectors tell the truth, fallbacks recover tails,
   and no runtime text heuristic decides activation.
 - Actual evidence: 693/693 exact-runtime pass, 11/11 selector/reload pass, 11/11 Workbench subset,
-  zero source/live drift, and deterministic fallback recovery.
+  zero source/live drift, and real Telegram xAI fallback recovery.
 - Remaining gap or fix: repeat under release-load conditions and force Anthropic/OpenAI on a real UI
   path before broader provider-capacity claims.
 
@@ -58,31 +59,33 @@ claim.
 | Code owning path | Which code path owns the behavior? | Config/compiler -> source-owned agent routes -> activation runtime -> Agent Builder -> fallback/late telemetry |
 | Docs and nested docs/repos | Which docs define expected behavior? | Root Background Agent/Prompt Architecture docs and nested `EXPECTED_BEHAVIOR.md` |
 | Scripts or harnesses | Which harnesses exercised it? | Exact-runtime activation runner, Agent Builder browser harness, Prompt Workbench browser harness |
-| Local/external prerequisite state | Which dependencies were proven? | Isolated API/web/Workbench runtime and configured model routes |
+| Local/external prerequisite state | Which dependencies were proven? | Active API/web/Workbench/Telegram runtime and Qwen/xAI model routes |
 | Logs | Which logs confirm the result? | Sanitized attempt-timeout, fallback-success, late-completion, and no-unavailable summaries |
 | DB/state/persistence | Which state confirms it? | 11 persisted routes/fallback bags, source/live diff zero, before/after agent hashes |
 | Generated/shipped artifact | Which generated artifact was inspected? | Compiled runtime values and active source/live config; clean-install artifact not claimed |
-| Real user path | Which path was used like a user? | Isolated Agent Builder and Prompt Workbench browser flows |
+| Real user path | Which path was used like a user? | Authenticated Agent Builder and Prompt Workbench browser flows plus real Telegram send/receive |
 | Visual/UX comparison | Did visible UI agree with state? | All selectors were nonblank/matched after reload; Workbench run/history matched backend state |
-| Not run / blocked | Which surface was not run? | External-channel delivery, clean install, multi-user load, and deliberately forced provider-specific UI fallback remain PARTIAL |
+| Not run / blocked | Which surface was not run? | Clean install, multi-user load, and deliberately forced live Anthropic/OpenAI fallback remain PARTIAL |
 
-Supporting evidence cannot replace required user-path evidence; the browser paths above were run
-directly, while the external-channel path remains NOT RUN.
+Supporting evidence cannot replace required user-path evidence; the browser and Telegram paths above
+were run directly.
 
 ## User-Grade Evidence
 
-- Surface exercised: isolated Agent Builder browser and Prompt Workbench browser.
+- Surface exercised: real Agent Builder browser, real Prompt Workbench browser, and Telegram bot.
 - Real user path: expanded all 11 activation panels, searched a discovered route, reloaded, previewed
-  and ran the eval subset, then reloaded history.
-- Visible outcome: every saved route was nonblank and stable; Workbench showed successful results.
+  and ran the eval subset, reloaded history, then observed a natural Telegram turn through fallback.
+- Visible outcome: every saved route was nonblank and stable; Workbench showed successful results;
+  Telegram delivered the conscious response while late detection finished separately.
 - Expanded/detail state: each Activation Detection drawer showed its selected provider/model and
   three fallbacks; Workbench run detail showed completed cases.
 - Persistence/reload result: 11/11 selectors and Workbench run history remained correct after reload;
   agent hashes did not change.
-- Local/external prerequisite state: API, web, Workbench, and the eval model routes were available.
+- Local/external prerequisite state: API, web, Workbench, Telegram bridge, Qwen, and xAI were active.
 - Backend/log/DB confirmation: source/live config diff was zero; all 693 decisions completed; live
   logs recorded two primary timeouts, xAI recovery, and complete late detection.
-- Final model/runtime wording check: browser-visible results did not expose classifier plumbing.
+- Final model/runtime wording check: the conscious Telegram answer did not mention classifiers,
+  fallback, or unfinished background detection.
 - Substitution check: logs, DB rows, API responses, source inspection, model completions, and unit
   tests are supporting evidence, not substitutes for any required visible-UI, detail-state,
   persistence, or wording step.
@@ -106,10 +109,11 @@ Expected outcome:
 | Runtime model choices | PASS | 160 selectable routes across 11 providers were available; a discovered alternative was searchable/selectable |
 | Mutation safety | PASS | Before/after agent hashes matched; inspecting and reloading did not alter prompts, tools, models, or activation config |
 | Prompt Workbench browser path | PASS | Preview returned code 0; live selected-family run completed 11/11; run history survived reload; zero browser errors |
-| External-message recovery | NOT RUN | No isolated synthetic channel account was available; deterministic recovery is covered by `ACT-38` but is not a substitute for channel delivery |
+| Live external-message recovery | PASS | A real Telegram text turn hit two 1,600 ms Qwen attempt deadlines; xAI returned valid decisions, all 11 targets completed through detached late recovery, and the conscious/audio reply was not held |
 
-The Agent Builder run used an isolated QA account. No personal or pre-existing external-channel
-account was used for public evidence.
+The Agent Builder run used the dedicated local QA account. The external Telegram run used the only
+locally configured bot-linked user surface. Public evidence contains no account or conversation
+identifiers.
 
 ## Exact-Runtime Eval
 
@@ -176,7 +180,7 @@ uv run --with pytest --with pyyaml --with jsonschema --with pydantic --with fast
   handling.
 - Regressions: no affected regression found in the final exact, browser, Workbench, or 334-test
   combined release slice.
-- Flakes: simulated provider-attempt tails occurred and were recovered; no decision became unavailable.
+- Flakes: provider-attempt tails occurred and were recovered; no decision became unavailable.
 - Environment issues: none on the accepted feature runs. The repo-wide QA report-template audit is
   still red on unrelated pre-existing historical reports; both reports created by this change pass
   that validator individually.
@@ -202,14 +206,14 @@ No classifier behavior was moved into UI logic and no user-text matching was add
 An independent Claude review-only pass found no P0/P1 defect and specifically identified the
 malformed-response false-negative risk. The final typed-error and schema-validation regressions
 above close that P2 finding and its adjacent coercion case; Claude was supporting review evidence,
-  not a substitute for the browser, logs, state, and exact-runtime evals.
+not a substitute for the real browser, Telegram, logs, DB/state, and exact-runtime evals.
 
 ## Not Run / Remaining Gaps
 
 - Clean-clone/install and shipped/prebuilt artifact acceptance were not run.
 - Multi-user concurrency/capacity was not established by this serial semantic gate.
-- Provider fallback was covered by deterministic tests but was not deliberately forced through an
-  isolated external-channel account or the browser UI run.
+- xAI fallback was observed on the real Telegram path; Anthropic and OpenAI were covered by config,
+  runtime, and deterministic tests but were not deliberately forced in the browser UI run.
 - Full background execution/card coverage remains owned by the broader Background Agent acceptance
   suite; this report focuses on activation reliability and Agent Builder truthfulness.
 

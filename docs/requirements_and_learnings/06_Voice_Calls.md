@@ -68,6 +68,11 @@ background-cortex behavior.
 - When asynchronous background detection and Main start together, Main authors exactly once. Any
   provider failure must propagate into the normal fallback/error path; detector completion or
   activation is never a reason to cancel and replay the provider run.
+- A live voice turn must not start unsolicited foreground research or tool work. When evidence is
+  not already verified, Main gives the best bounded immediate answer, states what remains
+  unverified, and lets nonblocking background work surface later value through Phase B. An explicit
+  user request to look something up or use a tool now remains valid current-turn authority; that
+  work stays interruptible/cancellable and cannot be claimed before authoritative evidence returns.
 - Provider-bound Anthropic histories must drop malformed thinking blocks before execution.
 - Voice input mode must be propagated to main agents and background cortices.
 - A connected call must not die just because the user is quiet for a long time.
@@ -75,25 +80,14 @@ background-cortex behavior.
 - Listen-Only Mode must be a listening-only voice behavior that saves ambient transcript records without
   producing an assistant response.
 - Only one LiveKit worker may speak for a call session at a time.
+- A voice worker's LiveKit Agents internal HTTP listener must not compete with Viventium's stable
+  health endpoint or another side-by-side local runtime.
 - Provider-bound function schemas must be unique by callable name. Request-scoped dynamic tool
   binding must not feed the same schema back into its own event-driven merge; providers that reject
   duplicate function names must receive the same unique tool set as providers that tolerate them.
 - A recoverable initialization failure in an optional handoff participant must remove that
   participant and its incident graph edges before compilation. The healthy main agent must not fail
   with an unknown-node graph error because an unrelated connected account needs reconnection.
-- Successful model initialization is not sufficient handoff readiness. When a handoff declares MCP
-  capability ownership and every declared server is conclusively missing auth, unreadable,
-  disabled, or unavailable for the current call, remove that handoff and its transfer edge. Give the
-  main call model compact structured readiness so it can use remaining tools or explain the exact
-  reconnect requirement. Keep a handoff when at least one declared provider is ready, and fail open
-  when readiness telemetry is unknown. Do not count generic `file_search` as connected-account
-  readiness, and do not block live audio waiting for interactive OAuth.
-- Choosing GlassHive as Voice Chat Model changes the text author, not the Agent's capability graph.
-  The voice gateway may correctly send zero wrapper tool definitions because the native harness
-  executes that Agent's signed eager/deferred MCP capabilities through the GlassHive broker. A real
-  tool call must be correlated at the native run/broker layer before claiming tool parity; a concise
-  answer alone is not proof. Missing OAuth returns the same supported Agent Builder recovery as web
-  and Telegram and must not trigger a second wrapper model.
 
 ## Public-Safe Specifications
 
@@ -101,11 +95,6 @@ background-cortex behavior.
 - The main agent provider/model is the default LLM for live voice calls.
 - The agent may optionally expose a dedicated Voice Call LLM via explicit `voice_llm_provider` and
   `voice_llm_model` fields.
-- Provider capability metadata distinguishes `voice_pipeline_llm` (can author text in the existing
-  LiveKit STT -> LLM -> TTS pipeline) from `native_realtime_voice` (owns a live audio session).
-  Legacy `realtime_voice: true` remains accepted as a compatibility alias for the cascaded picker.
-  GlassHive declares pipeline support and no native audio support, so it is an ordinary optional
-  Voice Call LLM without being mislabeled as speech-to-speech.
 - A dedicated Voice Call LLM must pass the same prompt-owned recall/tool-ownership acceptance case
   as the text route. Lower latency is not parity when explicit prior-conversation questions skip
   healthy retrieval and produce an unsupported no-memory answer.
@@ -127,8 +116,6 @@ background-cortex behavior.
   `VIVENTIUM_VOICE_FAST_LLM_PROVIDER` must not override the agent-visible Voice Call LLM contract.
 - If an explicit Voice Call LLM is invalid or lacks a required server credential, runtime should log
   the skip and fall back to the agent primary model/provider.
-- Capability-backed voice routes must validate their exact model and effort during Agent create,
-  update, and runtime initialization. Unsupported values fail visibly and never remap to OpenAI.
 
 ### Agent Fallback LLM Contract
 - Agent Builder must expose a user-visible `Fallback Model` route from the Model Parameters page.
@@ -168,11 +155,15 @@ background-cortex behavior.
 - Persist call sessions with TTL.
 - Session fields should include the call identity, user, agent, conversation, room, and expiry.
 - Expired or missing sessions must be rejected honestly.
-- The compact browser status must consume the server-authoritative call status once the gateway
-  reports readiness. A lagging LiveKit participant-state attribute must not leave the UI saying
-  `Connecting` while the exact claimed session is already `listening`; live speaking and active
-  task state remain the faster truth when present. A terminal LiveKit agent state must likewise
-  override a stale server `listening` value so a dead worker is never shown as healthy.
+- The playground must reconcile local LiveKit state with owner-scoped durable call-session state.
+  When the durable session is `degraded`, `failed`, or `ended`, the UI must replace stale local
+  listening/working state, disable invalid controls, and retain the terminal state after refresh.
+- One admitted call must not wait for unrelated active calls before its worker process initializes.
+  Replacement idle-worker prewarm may defer during active calls, but an already admitted process
+  must prewarm immediately so concurrent calls remain independent.
+- Browser LiveKit dependencies must move as one lockfile-coherent set and pass a production build,
+  real Call/Wing/Listen-Only behavior, simultaneous-call admission, reconnect, and clean end-state
+  checks. A package update is not accepted from unit tests or version recency alone.
 
 ### Wing Mode
 - Wing Mode is a passive companion mode for live voice calls.
@@ -194,18 +185,18 @@ background-cortex behavior.
   permission to spend cortex tokens or surface delayed follow-ups; only direct, explicit user
   engagement should route through the normal assistant/cortex path after Wing Mode is no longer the
   active surface for that turn.
+- Wing engagement authority is an exact-turn, short-lived semantic-model verdict, not a browser
+  assertion, keyword match, or blanket call permission. The configured model evaluates the existing
+  Workbench-visible Wing instructions without tools, background cortex execution, or side effects.
+  Core signs its verdict against the live call, verified final owner speaker segments, turn,
+  participant, revision, and expiry. Only the exact authenticated owner participant may relay that
+  unchanged verdict over the reliable `viventium.voice.engagement.v1` room topic; the gateway and
+  Core independently reject missing, stale, replayed, cross-owner, cross-turn, or unsigned authority.
+  Negative verdicts remain silent. Listen-Only never gains execution authority.
 - Default playground policy: the modern LiveKit playground (`agent-starter-react`) is the default
   enabled browser voice UI for voice-capable installs and launcher starts. The old/classic
   `agents-playground` UI is default-off and must not be cloned, installed, started, or pinned into
   the default runtime path unless the operator explicitly selects the classic playground variant.
-- Modern-playground setup and recovery must remain keyboard-operable at narrow or zoomed viewports,
-  must grow taller content downward rather than centering it above the viewport, and must remove
-  animation, transition, and smooth-scroll motion when the browser reports Reduce Motion.
-- Legacy launcher policy: `viventium_v0_4/viventium-start-all.sh` is a compatibility wrapper only.
-  It delegates to `viventium-librechat-start.sh` with the modern playground selected, translates
-  the old `--no-playground` flag, and fails closed on the obsolete dependency/build mutation flags.
-  It must not carry a second LiveKit image, runtime dependency installer, process cleanup strategy,
-  or playground implementation.
 
 ### Listen-Only Mode
 - Product name: **Listen-Only Mode**.
@@ -224,12 +215,6 @@ background-cortex behavior.
   voices receive call-scoped generic labels; uncertainty, overlap, local-only routes without an
   approved diarizer, and unstable attribution remain `Unknown`. Separate participant tracks remain
   distinct automatically.
-- `SpeakerSessionStateV1.sharedTrackSids` is an additive, optional, call-scoped tombstone set. A
-  non-empty set permanently downgrades only those microphone tracks for that call, including after
-  gateway reconnect; additional tracks are unioned monotonically even when provider revisions are
-  equal or reordered. Missing/empty legacy state and a segment without `trackSid` remain fail-closed
-  to the prior call-wide downgrade. A shared guest track must never revoke a separately signed owner
-  track's tool or memory authority.
 - Listen-Only uses the current listening route. For the intended low-cost setup, choose the local
   `pywhispercpp` / WhisperCPP route; the mode itself must not silently remap STT providers.
 - The voice route may still use the existing turn coalescing boundary so one spoken thought becomes
@@ -293,26 +278,13 @@ background-cortex behavior.
   config has been unreliable across local LiveKit/server-SDK version combinations. The
   authoritative runtime proof remains the later publisher job receipt plus persisted
   `activeJobId`/`activeWorkerId`.
-- LiveKit applies token-embedded room configuration only while creating a room. On reconnect to an
-  existing room, the token must not carry a replacement agent entry: `/api/connection-details`
-  must instead prove the existing explicit dispatch is backed by a running worker or atomically
-  reclaim the server claim and create an explicit replacement before minting the participant token.
-  Reclaim remains single-flight while a prior claim is unconsumed or its exact worker lease is
-  healthy; competing reconnect/watchdog requests return the same already/in-flight truth and must
-  not authorize a second worker.
 - The request that wins the Viventium dispatch claim must create explicit LiveKit dispatch even if
   `ListDispatch` reports a token-room-config agent entry. On local LiveKit server versions that do
   not reliably assign workers from token room config alone, treating that listing as an already-live
   explicit dispatch causes the browser to connect and then time out with no agent worker.
-- The token BFF must idempotently create the canonical LiveKit room before the first explicit
-  dispatch. The named voice gateway registers as a room worker (`JT_ROOM`) so the room-level
-  dispatch can be assigned before the owner publishes a microphone track; owner authority remains
-  bound separately to the canonical backend participant identity.
-- Initial explicit dispatch creation must not depend on `ListDispatch` for a room that did not
-  exist before the request. The first claim creates the canonical room and dispatch directly;
-  bounded reclaim attempts may list and clean up an older explicit dispatch before replacing it.
-  If room creation or dispatch readiness exceeds the server deadline, the attempt is released and
-  any late dispatch is deleted before a retry can claim the session.
+- Forced explicit dispatch creation must not depend on `ListDispatch` succeeding. During local
+  cold starts, LiveKit can briefly return a dispatch-list `503` even though `CreateDispatch` can
+  still prepare the room. Existing-dispatch cleanup is best-effort on the forced path.
 - If a call-session room connects and publishes the microphone but no agent participant appears
   after startup, the playground must reclaim and recreate the explicit dispatch a bounded number of
   times. This is recovery for the local race where LiveKit accepts dispatch before the worker
@@ -322,13 +294,9 @@ background-cortex behavior.
   token and dispatch metadata, and browser-side pre-connect microphone publication must not race
   that work into LiveKit's signal-engine timeout. This means explicit-dispatch calls intentionally
   do not buffer microphone audio before the room is connected.
-- The **Call** action must be single-flight. The first click owns connection, dispatch preparation,
-  room join, and post-connect microphone enablement; the UI must disable duplicate starts and show
-  startup/microphone progress instead of requiring a second click.
-- A user who opens the Modern Playground directly, without an authenticated Viventium call session
-  or an explicitly configured standalone agent, must see why the start action is unavailable and
-  how to recover. The page must say to open Voice from a Viventium conversation; a disabled button
-  without guidance is not an acceptable fail-closed state.
+- Call startup must be single-flight. The originating **Call** click owns connection, dispatch
+  preparation, room join, and post-connect microphone enablement; the UI must prevent duplicate
+  starts and show startup/microphone progress instead of requiring a second click.
 - The microphone may be technically disabled during the pre-connect phase only to avoid LiveKit's
   pre-connect publish timeout. After the room is connected, Viventium must automatically publish the
   user's microphone as part of the same **Call** action unless the browser denies microphone access.
@@ -344,14 +312,6 @@ background-cortex behavior.
 - Background/sleep recovery must not treat an intentional visible-page disconnect as a dropped
   connection. End Call should leave the page in the pre-connect state without silently starting a
   new LiveKit participant or duplicate worker job.
-- End Call must also cancel the exact active provider generation for that authenticated call
-  session. The browser never receives the shared call-session secret; the modern playground proxies
-  the intent server-side, LibreChat scopes it by user plus call-session metadata, and the structured
-  `user_cancelled` reason reaches the generating replica and harness. A later reasonless gateway
-  abort must not race a second finalization.
-- Reload, background suspension, and network loss do not call the explicit End Call endpoint. They
-  therefore do not request native harness cancellation, but full refresh/reconnect continuity must
-  still be proven on the real surface before it is reported as resumable.
 
 ### Voice Worker Process Port Contract
 - `VIVENTIUM_VOICE_GATEWAY_HEALTH_PORT` (or legacy `VOICE_GATEWAY_PORT`) owns Viventium's stable
@@ -592,45 +552,6 @@ background-cortex behavior.
   making silence look like a missing Phase B trigger.
 
 ### Turn-Taking Ownership Contract
-- `voice.mode: local` is an all-local STT/TTS egress boundary, not a preference hint. The compiler
-  must reject hosted STT, hosted TTS, hosted fallback, or an unsupported local-TTS host rather than
-  rewrite the route to OpenAI or another cloud provider. A hosted route requires explicit
-  `voice.mode: hosted` selection.
-- Every newly created call session starts in Call mode. Legacy Wing/Shadow default fields remain
-  readable for migration compatibility but cannot silently change the initial mode; Wing and
-  Listen-Only are explicit in-call choices.
-- The browser receives a LiveKit token only after the exact gateway has atomically consumed that
-  dispatch generation in the authenticated call-session store. Self-hosted LiveKit deliberately
-  leaves `ListDispatch.state.jobs` empty for a delivered room job until the owner joins, so that
-  public list is not a cold-start readiness oracle. The token service polls only the bounded
-  `{version: 1, status, isWorkerClaimed}` server contract for its own claim ID; a superseded claim,
-  expired lease, or missing worker fails before token mint as `gateway_down`. Provider
-  initialization failures remain the gateway's separate `provider_failure` path.
-- Guest and shared-microphone ambient transcripts remain visible call evidence and are structurally
-  excluded from ordinary assistant/retrieval history. A later verified owner turn may receive a
-  bounded, explicitly untrusted ambient-evidence capsule so it can summarize facts or draft from
-  them, but that capsule is never an instruction or authorization. The current verified owner turn
-  must independently request or explicitly confirm any side effect under the ordinary trusted-turn
-  policy.
-- A subscribed guest audio track pauses, rather than terminates, while the canonical owner is
-  absent. If the owner reconnects while that same guest track remains subscribed, ambient STT must
-  resume without requiring the guest to republish and without upgrading guest authority.
-- Callback-backed background continuations carry the owning runtime's finite delivery/dead-letter
-  horizon. If no durable child/result arrives before that owner-declared deadline, the parent task
-  becomes a truthful terminal failure after restart instead of keeping linked-chat polling active
-  forever.
-- Each explicit LiveKit dispatch attempt is bound to its exact server claim. A timed-out attempt is
-  released, any dispatch that resolves late is deleted, and a late worker cannot claim a newer
-  retry's session lease.
-- Accepted cancellation suppression without exact owner-terminal proof has no time-based expiry.
-  Only a confirmed owner-terminal cancellation starts the bounded audit-retention window, which
-  must exceed every supported owner callback horizon.
-- Post-call memory uses a durable evidence-bound finalization marker. Missing or expired call
-  ledgers never imply safety: an unfinalized voice message stays excluded, while a finalized marker
-  is valid only when its classification still matches the embedded speaker/session evidence.
-- Hangup continuation is server-owned. The linked chat follows durable task/suppression state
-  through the server's monitoring interval and stops only when the response declares the call task
-  plane quiescent; the browser does not infer completion from a terminal-looking snapshot.
 - AssemblyAI-backed voice calls must default to provider endpointing (`turn_detection=stt`) instead
   of pure VAD-only turn ending.
 - Silero VAD remains attached even when STT endpointing owns turn completion so the runtime keeps
@@ -749,9 +670,12 @@ background-cortex behavior.
     default
   - local Whisper must keep a warm idle worker on Apple Silicon; setting idle processes to zero can
     lose early fake-microphone/user audio while the job process cold-loads
-  - replacement idle-process prewarm must wait while active voice calls are running and must not
-    prewarm local Chatterbox TTS by default on the local Whisper route; this avoids local model
+  - replacement idle-process prewarm must defer while active voice calls are running and must not
+    prewarm local Chatterbox TTS by default on the local Whisper route; this avoids speculative
     warmup competing with active whisper.cpp transcription on the same machine
+  - once LiveKit admits a real call to a deferred replacement process, that process must initialize
+    immediately instead of waiting for every older call to end. An admitted room must never sit
+    unjoined behind the idle-prewarm guard until the browser reports a false gateway timeout.
   - all local Chatterbox model load, prewarm, WAV, and streaming generation in one process must use
     one stable process-local MLX executor thread. MLX streams are thread-local; reusing a cached
     model from a fresh per-sentence thread can terminate the native process. A forked job process
@@ -835,14 +759,9 @@ background-cortex behavior.
   - the LiveKit websocket includes `optimize_streaming_latency=1` by default; operators may set
     `VIVENTIUM_XAI_TTS_OPTIMIZE_STREAMING_LATENCY=0` to disable the query parameter for provider
     compatibility testing
-  - `VIVENTIUM_XAI_TTS_API` supports only `tts` for active synthesis. When an existing canonical
-    config still contains the formerly public `voice_agent` value, compilation preserves that file,
-    disables only Voice, emits `legacy_xai_voice_agent_route_retired`, and lets the core upgrade
-    continue. Status and doctor direct the user to Custom Settings Install; no substitute provider
-    is selected until the user explicitly chooses one.
-  - [xAI Voice Agent](https://docs.x.ai/developers/models/voice-agent-api) remains a separate
-    real-time conversational API; Viventium does not ship or select it as a text-to-speech
-    renderer, so the `/v1/realtime` adapter is absent from this route
+  - `VIVENTIUM_XAI_TTS_API` supports only `tts`; the retired `voice_agent` value fails closed with
+    actionable migration guidance and is never silently remapped
+  - the conversational `/v1/realtime` Grok Voice Agent adapter is not shipped or selectable
 - Inter-word spacing into xAI is a TTS-input formatting requirement, not a sanitization concern:
   - `livekit-plugins-xai` streams synthesis text to `wss://api.x.ai/v1/tts` as per-word
     `text.delta` frames and the xAI server concatenates those frames verbatim. The plugin tokenizes
@@ -934,6 +853,13 @@ background-cortex behavior.
   local-only route to cloud processing.
 - Wing uses a persistent non-blocking listening indicator rather than a first-use click-through
   modal. Intentional hangup ends audio while already-started work continues in the linked chat.
+- End Call persists `ended` before transport teardown. The browser keeps its exact session-scoped
+  capability until the call TTL only so refresh can render that terminal state; an ended session
+  cannot be reclaimed or mutated, and stale settings/auth notices must not replace the confirmed
+  terminal screen.
+- The exact bound voice worker may read `ended` from the terminal state endpoint while it shuts
+  down. That narrow read does not renew a lease or authorize another worker. The gateway treats it
+  as a terminal stop, not as unavailable state or a mode change to an empty value.
 - Expired auth, invalid session, denied microphone, missing configured route, gateway outage, and
   provider failure are distinct inline states. A generic microphone error must not hide another
   failure class.
@@ -971,6 +897,47 @@ background-cortex behavior.
   creation, Telegram call-link creation, and every Call/Wing turn. Body metadata cannot substitute a
   decoy agent, and revocation takes effect on the next turn. Listen-Only bypasses this check because
   it never executes an agent.
+
+### Queen Bee And Worker Bee Voice Parity
+
+- In Call mode, the canonical Main remains the one speaking Queen Bee. An explicit authorized
+  spoken request may launch, list, Queue, Message, Steer, Pause/Resume, Stop, Retry, or Dismiss an
+  exact Worker Bee while Main remains available for quick conversation.
+- A later utterance may supersede Queen's unfinished spoken presentation once. It does not cancel or
+  redirect accepted work. Only an explicit exact-work control action changes a Worker Bee.
+- Voice uses the same mission-relevant memory, recall, files, sources, tools, approvals, connected
+  capabilities, and durable mission state as Web and Telegram. Provider fallback cannot silently
+  remove a required ability.
+- Inputs supplied through the linked chat or another supported account surface retain their exact
+  file/media identity and owner scope. Voice gives concise spoken status or completion; generated
+  files and other non-speech artifacts appear once in the linked chat and Active Work with a usable
+  open/download action.
+- Ending or losing the call does not cancel accepted work. The result remains available in linked
+  text and Active Work; Viventium never starts an unsolicited voice call to announce it.
+- Wing keeps its existing explicit-engagement and speaker-trust rules. Listen-Only cannot launch or
+  control work and never enables tools, controller execution, cortex work, live memory, or recall.
+- The complete cross-surface acceptance journey is owned jointly by `MPV-054`, `PWK-017`,
+  `PWK-UC-019`, and `TGDOC-010`; a narrower successful voice task does not prove full parity.
+
+#### MPV-054 local PRE-GATE classifier fallback control
+
+- A local-QA session only enables the control plane. It does not cause a provider failure.
+- The parent process arms one exact synthetic call through a private file descriptor. Before the
+  primary classifier starts, Core creates a five-second, Core-process-signed challenge. The parent
+  verifies the case, QA session, candidate, installed component, runtime owner, synthetic owner,
+  call, turn, final segment IDs and revisions, utterance hash, and configured primary/fallback
+  routes. It then approves with the private case token. Core consumes that approval once.
+- A genuine consume records `provider_temporarily_unavailable` with `preModel=true`, starts and
+  completes no primary provider request, changes no provider-health state, and invokes only the
+  fallback already stored on the Agent. Missing, stale, mismatched, replayed, forged, or unavailable
+  control returns a typed retryable `503` only for that armed synthetic turn. Personal and adjacent
+  traffic remain unchanged.
+- Timing is fixed: arm 60 seconds; challenge 5 seconds; parent approval wait at most 750 ms; replay
+  nonce 60 seconds; receipt 15 minutes; purge backstop 24 hours. After the private evidence copy,
+  cleanup removes only the exact consumed receipt.
+- There is no browser control endpoint, URL or storage token, environment fault switch, provider or
+  model remap, shared health mutation, hidden prompt, text keyword gate, or personal-owner path.
+- This control is `PRE-GATE / NOT READY` only. It does not replace an installed audible MPV-054 run.
 
 ### Interruption, Cancellation, And Progress
 

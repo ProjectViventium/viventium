@@ -8,7 +8,7 @@ Use stable `CCXAI-NNN` IDs for config compiler xai models cases.
 
 | Case ID | Requirement | User Outcome | Surfaces | Automation | Last Run |
 | --- | --- | --- | --- | --- | --- |
-| `CCXAI-001` | xAI and related model routes compile to supported launch-ready model specs and runtime env. | User-visible behavior matches source, docs, persisted state, and logs | compiler output, model picker, runtime env | `tests/release/test_config_compiler.py` plus user-grade QA when visible | PASS-LIVE 2026-07-31; compiler/runtime and real Playground LLM + TTS passed; signed-in main-chat picker not run |
+| `CCXAI-001` | xAI and related model routes compile to supported launch-ready model specs and runtime env. | User-visible behavior matches source, docs, persisted state, and logs | compiler output, model picker, runtime env | `tests/release/test_config_compiler.py` plus user-grade QA when visible | PARTIAL 2026-07-31; compiler/runtime and real Playground LLM + TTS passed; signed-in main-chat picker not run |
 | `CCXAI-002` | Public QA evidence is sanitized and reproducible | A PR reviewer can verify the behavior without private/local data | QA report, git diff, logs summary, generated artifacts | Public-safety scan plus relevant release tests | PASS 2026-07-31; dated sanitized report and final pattern scan |
 
 ## `CCXAI-001` - Core User Flow
@@ -24,7 +24,7 @@ Use stable `CCXAI-NNN` IDs for config compiler xai models cases.
 - Forbidden result: backend logs, mocks, source inspection, or model completions are treated as full acceptance when a user-visible surface exists.
 - Evidence to capture: sanitized visible result, supporting command/test result, generated/runtime state summary, and docs/case links.
 - Automation: `tests/release/test_config_compiler.py` plus any narrower feature tests discovered during implementation.
-- Last run: PASS-LIVE 2026-07-31. Grok 4.5 chat, xAI TTS, generated runtime parity,
+- Last run: PARTIAL 2026-07-31. Grok 4.5 chat, xAI TTS, generated runtime parity,
   persistence, logs, and the real Playground path passed. The signed-in main-chat model picker was
   not run because the available browser profile was not signed into Viventium.
 

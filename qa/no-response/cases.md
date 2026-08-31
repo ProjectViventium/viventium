@@ -8,10 +8,10 @@ Use stable `NTA-NNN` IDs for no response cases.
 
 | Case ID | Requirement | Surfaces | Automation | Last Run |
 | --- | --- | --- | --- | --- |
-| `NTA-001` | Web silent turn suppression | Web chat, persisted message state | prompt/eval no-response checks plus browser QA | NOT YET RUN (cataloged 2026-05-17; run when feature changes) |
-| `NTA-002` | Voice/listen-only silence | Voice/listen-only transcript and final output | prompt architecture eval harness plus voice QA | NOT YET RUN (cataloged 2026-05-17; run when feature changes) |
-| `NTA-003` | Errors are never hidden | Web/Telegram/voice final output and logs summary | test_prompt_architecture_eval_harness.py | NOT YET RUN (cataloged 2026-05-17; run when feature changes) |
-| `NTA-004` | Background cortex turns never leave an indefinite visible spinner or blank assistant answer | Web chat, Mongo message state, backend logs | `staleCortexMessageRecovery.spec.js`, `ProgressText.cortex.test.tsx`, live browser QA | 2026-05-17 live runtime sanity - passed with residual optional-service actions |
+| `NTA-001` | Web silent turn suppression | Web chat, persisted message state | prompt/eval no-response checks plus browser QA | NOT RUN (cataloged 2026-05-17; run when feature changes) |
+| `NTA-002` | Voice/listen-only silence | Voice/listen-only transcript and final output | prompt architecture eval harness plus voice QA | NOT RUN (cataloged 2026-05-17; run when feature changes) |
+| `NTA-003` | Errors are never hidden | Web/Telegram/voice final output and logs summary | test_prompt_architecture_eval_harness.py | NOT RUN (cataloged 2026-05-17; run when feature changes) |
+| `NTA-004` | Background cortex turns never leave an indefinite visible spinner or blank assistant answer | Web chat, Mongo message state, backend logs | `staleCortexMessageRecovery.spec.js`, `ProgressText.cortex.test.tsx`, live browser QA | PASS 2026-05-17 live runtime sanity; residual optional-service actions remained |
 
 ## `NTA-001` - Web silent turn suppression
 
@@ -26,7 +26,7 @@ Use stable `NTA-NNN` IDs for no response cases.
 - Forbidden result: mocks, backend logs, source inspection, or model output are treated as full acceptance when a user-visible surface exists.
 - Evidence to capture: sanitized visible result, supporting command/test result, state/log summary, and public-safety review.
 - Automation: prompt/eval no-response checks plus browser QA.
-- Last run: NOT YET RUN (cataloged 2026-05-17; not a substitute for the next real feature run).
+- Last run: NOT RUN (cataloged 2026-05-17; not a substitute for the next real feature run).
 
 ## `NTA-002` - Voice/listen-only silence
 
@@ -41,7 +41,7 @@ Use stable `NTA-NNN` IDs for no response cases.
 - Forbidden result: mocks, backend logs, source inspection, or model output are treated as full acceptance when a user-visible surface exists.
 - Evidence to capture: sanitized visible result, supporting command/test result, state/log summary, and public-safety review.
 - Automation: prompt architecture eval harness plus voice QA.
-- Last run: NOT YET RUN (cataloged 2026-05-17; not a substitute for the next real feature run).
+- Last run: NOT RUN (cataloged 2026-05-17; not a substitute for the next real feature run).
 
 ## `NTA-003` - Errors are never hidden
 
@@ -56,7 +56,7 @@ Use stable `NTA-NNN` IDs for no response cases.
 - Forbidden result: mocks, backend logs, source inspection, or model output are treated as full acceptance when a user-visible surface exists.
 - Evidence to capture: sanitized visible result, supporting command/test result, state/log summary, and public-safety review.
 - Automation: test_prompt_architecture_eval_harness.py.
-- Last run: NOT YET RUN (cataloged 2026-05-17; not a substitute for the next real feature run).
+- Last run: NOT RUN (cataloged 2026-05-17; not a substitute for the next real feature run).
 
 ## `NTA-004` - Background Cortex Turn Completes Or Fails Visibly
 
@@ -73,7 +73,7 @@ Use stable `NTA-NNN` IDs for no response cases.
 - Forbidden result: a finished assistant message has only `cortex_brewing` active parts, empty visible text, or a follow-up answer that says only meta-instructions were available.
 - Evidence to capture: sanitized browser screenshot/summary, Mongo shape summary without raw IDs, backend log summary, and automated test output.
 - Automation: `api/server/services/viventium/__tests__/staleCortexMessageRecovery.spec.js`, `client/src/components/Chat/Messages/Content/__tests__/ProgressText.cortex.test.tsx`, and `api/server/services/viventium/__tests__/BackgroundCortexFollowUpService.spec.js`.
-- Last run: 2026-05-17 live runtime sanity - passed for new turns; legacy bad message remains in history as past evidence, not current behavior.
+- Last run: PASS 2026-05-17 live runtime sanity for new turns; the legacy bad message remains in history as past evidence, not current behavior.
 
 ## Natural User Use Case Checklist
 
@@ -82,6 +82,6 @@ rows before claiming a pass when the feature behavior changes.
 
 | Use Case ID | Natural user action | Requirement / case link | Real surface to use | Supporting evidence to compare | Expected visible result | Last run |
 | --- | --- | --- | --- | --- | --- | --- |
-| `NTA-UC-001` | On Web chat, persisted message state, verify that web silent turn suppression. | owning requirement for `NTA-001` / `NTA-001` | Web chat, persisted message state | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to NTA-001. | The visible result for NTA-001 matches the documented requirement. | NOT YET RUN (cataloged 2026-05-18; next feature run required) |
-| `NTA-UC-002` | On Voice/listen-only transcript and final output, try voice/listen-only silence with missing setup, missing auth/config, empty state, or a degraded dependency. | owning requirement for `NTA-002` / `NTA-002` | Voice/listen-only transcript and final output | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to NTA-002. | The user sees an honest setup, retry, or degraded-state result for NTA-002; no fake success is accepted. | NOT YET RUN (cataloged 2026-05-18; next feature run required) |
-| `NTA-UC-003` | After errors are never hidden, refresh, restart, retry, or switch linked surfaces and verify persistence/parity. | owning requirement for `NTA-003` / `NTA-003` | Web/Telegram/voice final output and logs summary | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to NTA-003. | NTA-003 remains correct after the persistence or parity step and final wording matches evidence. | NOT YET RUN (cataloged 2026-05-18; next feature run required) |
+| `NTA-UC-001` | On Web chat, persisted message state, verify that web silent turn suppression. | owning requirement for `NTA-001` / `NTA-001` | Web chat, persisted message state | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to NTA-001. | The visible result for NTA-001 matches the documented requirement. | NOT RUN (cataloged 2026-05-18; next feature run required) |
+| `NTA-UC-002` | On Voice/listen-only transcript and final output, try voice/listen-only silence with missing setup, missing auth/config, empty state, or a degraded dependency. | owning requirement for `NTA-002` / `NTA-002` | Voice/listen-only transcript and final output | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to NTA-002. | The user sees an honest setup, retry, or degraded-state result for NTA-002; no fake success is accepted. | NOT RUN (cataloged 2026-05-18; next feature run required) |
+| `NTA-UC-003` | After errors are never hidden, refresh, restart, retry, or switch linked surfaces and verify persistence/parity. | owning requirement for `NTA-003` / `NTA-003` | Web/Telegram/voice final output and logs summary | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to NTA-003. | NTA-003 remains correct after the persistence or parity step and final wording matches evidence. | NOT RUN (cataloged 2026-05-18; next feature run required) |

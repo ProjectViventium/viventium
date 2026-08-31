@@ -1,3 +1,4 @@
+<!-- qa-evidence-exempt: Historical evidence snapshot retained verbatim; retroactive v2 fields would invent evidence that was not captured during the run. -->
 # Worker Plugin Denylist QA — 2026-07-31
 
 ## Result
@@ -25,4 +26,3 @@ worker instruction.
 - Browser QA was not applicable because this change has no browser/UI surface.
 - The installed private runtime checkout was not replaced or restarted; source and canonical config
   are ready for the normal promotion/restart flow.
-<!-- qa-evidence-exempt: Historical or specialized supporting artifact retained without retroactively inventing missing evidence; current release acceptance requires a fresh full-view report. -->

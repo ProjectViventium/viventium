@@ -1,3 +1,4 @@
+<!-- qa-evidence-exempt: Historical evidence snapshot retained verbatim; retroactive v2 fields would invent evidence that was not captured during the run. -->
 # 2026-08-06 Nightly Routines Health Review
 
 Status: **PARTIAL / DEGRADED**.
@@ -132,4 +133,3 @@ These challenges were incorporated into the statuses above.
 5. Correct the automation prompt/cadence wording from `11:15Z` to the observed local-time RRULE, or
    change the RRULE if UTC fire time is truly required.
 6. Keep browser recall/source-card proof visible as a release-signoff gap until it is rerun.
-<!-- qa-evidence-exempt: Historical or specialized supporting artifact retained without retroactively inventing missing evidence; current release acceptance requires a fresh full-view report. -->

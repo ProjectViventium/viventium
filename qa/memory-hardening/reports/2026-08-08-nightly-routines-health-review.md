@@ -1,3 +1,4 @@
+<!-- qa-evidence-exempt: Historical evidence snapshot retained verbatim; retroactive v2 fields would invent evidence that was not captured during the run. -->
 # 2026-08-08 Nightly Routines Health Review
 
 Public-safe read-only audit of the Viventium overnight routines after the 03:00 local maintenance
@@ -153,4 +154,3 @@ terminal classes.
 6. Inspect why Prompt Workbench was stopped at audit end and whether stack supervision should
    restart it without a manual action.
 7. Re-run browser recall/source-card proof before any release-readiness claim involving recall/RAG.
-<!-- qa-evidence-exempt: Historical or specialized supporting artifact retained without retroactively inventing missing evidence; current release acceptance requires a fresh full-view report. -->

@@ -122,11 +122,17 @@ class SpeakerSegmentTracker:
     ) -> None:
         self._call_session_id = call_session_id
         self._participant_identity = participant_identity.strip()
-        self._participant_name = participant_name.strip()
         self._track_sid = track_sid.strip()
         self._owner_signed = bool(owner_signed and self._participant_identity)
         self._participant_authenticated = bool(
             participant_authenticated and self._participant_identity
+        )
+        supplied_participant_name = participant_name.strip()
+        self._participant_name = (
+            ("You" if self._owner_signed else "Participant")
+            if supplied_participant_name == self._participant_identity
+            and self._participant_identity
+            else supplied_participant_name
         )
         self._id_namespace = "".join(
             character for character in id_namespace if character.isalnum() or character == "_"
@@ -237,13 +243,35 @@ class SpeakerSegmentTracker:
                 changes.extend(self._downgrade_existing_segments())
 
         active_segment_id = self._active_segment_ids.get(provider_id)
+        promoting_unattributed_interim = False
+        if active_segment_id is None and provider_id:
+            unattributed_segment_id = self._active_segment_ids.get("")
+            unattributed_segment = self._segments_by_id.get(
+                unattributed_segment_id or ""
+            )
+            if (
+                unattributed_segment is not None
+                and not unattributed_segment.get("isFinal")
+                and unattributed_segment.get("turnId") == self.turn_id
+                and not unattributed_segment.get("speaker", {}).get(
+                    "providerSpeakerId"
+                )
+            ):
+                self._active_segment_ids.pop("", None)
+                self._active_segment_ids[provider_id] = unattributed_segment_id
+                active_segment_id = unattributed_segment_id
+                promoting_unattributed_interim = True
         active = self._segments_by_id.get(active_segment_id or "")
         active_provider = (
             (active or {}).get("speaker", {}).get("providerSpeakerId", "")
             if active
             else ""
         )
-        if active is not None and active_provider == provider_id and not active.get("isFinal"):
+        if (
+            active is not None
+            and (active_provider == provider_id or promoting_unattributed_interim)
+            and not active.get("isFinal")
+        ):
             active["text"] = text
             active["isFinal"] = bool(is_final)
             active["revision"] += 1

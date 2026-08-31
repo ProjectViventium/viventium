@@ -22,6 +22,229 @@ def load_install_summary_module():
     return module
 
 
+def _write_parallel_work_release_snapshot(
+    runtime_dir: Path,
+    *,
+    label: str = "NOT READY",
+    release_ready: bool = False,
+    local_qa_override: bool = False,
+    open_gate: str = "PWK-UC-014",
+    prompt_status: str = "verified",
+    storage_status: str = "healthy",
+) -> None:
+    payload = {
+        "contract_version": 1,
+        "mode": "local-qa" if local_qa_override else "default",
+        "label": label,
+        "release_ready": release_ready,
+        "local_qa_override": local_qa_override,
+        "source_defaults_dark": True,
+        "gate_count": 78,
+        "open_gate_count": 1 if open_gate else 0,
+        "open_gates": (
+            [{"case_id": open_gate, "status": "PARTIAL", "source": "cases.md", "detail": "open"}]
+            if open_gate
+            else []
+        ),
+        "readiness_checks": [
+            {
+                "check_id": "PROMPT-LAYERS",
+                "status": "PASS" if prompt_status == "verified" else "FAIL",
+                "reason": "" if prompt_status == "verified" else "prompt_layers_unknown",
+            },
+            {
+                "check_id": "STORAGE-PRESSURE",
+                "status": "PASS" if storage_status == "healthy" else "FAIL",
+                "reason": "" if storage_status == "healthy" else "storage_pressure",
+            },
+        ],
+        "artifact_checks": [
+            {"check_id": "SOURCE-IDENTITY", "status": "PASS", "reason": ""},
+            {"check_id": "NESTED-PINS", "status": "PASS", "reason": ""},
+            {"check_id": "PREBUILT-IDENTITY", "status": "PASS", "reason": ""},
+            {"check_id": "INSTALLED-ARTIFACT", "status": "PASS", "reason": ""},
+        ],
+    }
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+    (runtime_dir / "parallel-work-release-gate.json").write_text(
+        json.dumps(payload),
+        encoding="utf-8",
+    )
+
+
+def test_parallel_work_release_row_consumes_typed_snapshot_without_qa_prose(
+    tmp_path: Path, monkeypatch
+) -> None:
+    install_summary = load_install_summary_module()
+    monkeypatch.setattr(
+        install_summary, "validate_serialized_release_snapshot", lambda *_args: True
+    )
+    runtime_dir = tmp_path / "runtime"
+    _write_parallel_work_release_snapshot(
+        runtime_dir,
+        prompt_status="unknown",
+        storage_status="critical",
+    )
+
+    row = install_summary.parallel_work_release_row(
+        {"integrations": {"glasshive": {"orchestration": {"available": False}}}},
+        runtime_dir,
+    )
+
+    assert row[0] == "Parallel Work Release"
+    assert row[1] == "NOT READY"
+    assert "PWK-UC-014" in row[2]
+    assert "PROMPT-LAYERS" in row[2]
+    assert "STORAGE-PRESSURE" in row[2]
+
+
+def test_parallel_work_release_row_labels_explicit_local_override_pre_gate(
+    tmp_path: Path, monkeypatch
+) -> None:
+    install_summary = load_install_summary_module()
+    monkeypatch.setattr(
+        install_summary, "validate_serialized_release_snapshot", lambda *_args: True
+    )
+    runtime_dir = tmp_path / "runtime"
+    _write_parallel_work_release_snapshot(runtime_dir, local_qa_override=True)
+
+    row = install_summary.parallel_work_release_row(
+        {"integrations": {"glasshive": {"orchestration": {"available": True}}}},
+        runtime_dir,
+    )
+
+    assert row[1] == "PRE-GATE / NOT READY"
+    assert "Ready" not in row[2]
+
+
+def test_parallel_work_release_row_never_reports_ready_for_local_override(
+    tmp_path: Path, monkeypatch
+) -> None:
+    install_summary = load_install_summary_module()
+    monkeypatch.setattr(
+        install_summary, "validate_serialized_release_snapshot", lambda *_args: True
+    )
+    runtime_dir = tmp_path / "runtime"
+    _write_parallel_work_release_snapshot(
+        runtime_dir,
+        label="PRE-GATE / NOT READY",
+        release_ready=True,
+        local_qa_override=True,
+        open_gate="",
+    )
+
+    row = install_summary.parallel_work_release_row(
+        {"integrations": {"glasshive": {"orchestration": {"available": True}}}},
+        runtime_dir,
+    )
+
+    assert row[1] == "PRE-GATE / NOT READY"
+    assert "Ready" not in row[2]
+
+
+def test_parallel_work_release_row_rejects_forged_incomplete_ready_snapshot(
+    tmp_path: Path,
+) -> None:
+    install_summary = load_install_summary_module()
+    runtime_dir = tmp_path / "runtime"
+    _write_parallel_work_release_snapshot(
+        runtime_dir,
+        label="READY",
+        release_ready=True,
+        local_qa_override=False,
+        open_gate="",
+    )
+
+    row = install_summary.parallel_work_release_row({}, runtime_dir)
+
+    assert row[1] == "NOT READY"
+    assert "snapshot_unavailable" in row[2]
+
+
+def test_parallel_work_release_row_fails_closed_when_snapshot_is_missing_or_invalid(
+    tmp_path: Path,
+) -> None:
+    install_summary = load_install_summary_module()
+    runtime_dir = tmp_path / "runtime"
+    runtime_dir.mkdir()
+
+    missing = install_summary.parallel_work_release_row({}, runtime_dir)
+    (runtime_dir / "parallel-work-release-gate.json").write_text("{}", encoding="utf-8")
+    invalid = install_summary.parallel_work_release_row({}, runtime_dir)
+    (runtime_dir / "parallel-work-release-gate.json").write_text(
+        json.dumps(
+            {
+                "contract_version": 1,
+                "release_ready": True,
+                "source_defaults_dark": True,
+                "open_gates": [],
+                "readiness_checks": [],
+                "artifact_checks": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    missing_checks = install_summary.parallel_work_release_row({}, runtime_dir)
+
+    assert missing[1] == "NOT READY"
+    assert invalid[1] == "NOT READY"
+    assert missing_checks[1] == "NOT READY"
+    assert "snapshot" in missing[2].lower()
+    assert "snapshot" in invalid[2].lower()
+    assert "snapshot" in missing_checks[2].lower()
+
+
+def test_parallel_work_release_row_labels_missing_snapshot_not_ready_even_when_config_requests_local_override(
+    tmp_path: Path,
+) -> None:
+    install_summary = load_install_summary_module()
+    runtime_dir = tmp_path / "runtime"
+    runtime_dir.mkdir()
+
+    row = install_summary.parallel_work_release_row(
+        {"integrations": {"glasshive": {"orchestration": {"available": True}}}},
+        runtime_dir,
+    )
+
+    assert row[1] == "NOT READY"
+    assert "snapshot" in row[2].lower()
+
+
+def test_parallel_work_release_row_preserves_requested_pre_gate_for_invalid_snapshots(
+    tmp_path: Path,
+) -> None:
+    install_summary = load_install_summary_module()
+    runtime_dir = tmp_path / "runtime"
+    runtime_dir.mkdir()
+    (runtime_dir / "parallel-work-local-qa-request.json").write_text(
+        json.dumps({"contractVersion": 1, "mode": "local-qa", "requested": True}),
+        encoding="utf-8",
+    )
+
+    missing = install_summary.parallel_work_release_row({}, runtime_dir)
+    (runtime_dir / "parallel-work-release-gate.json").write_text("{", encoding="utf-8")
+    malformed = install_summary.parallel_work_release_row({}, runtime_dir)
+    (runtime_dir / "parallel-work-release-gate.json").write_text(
+        json.dumps({"contract_version": 1, "mode": "local-qa", "expiresAt": "2000-01-01"}),
+        encoding="utf-8",
+    )
+    expired = install_summary.parallel_work_release_row({}, runtime_dir)
+
+    assert {missing[1], malformed[1], expired[1]} == {"PRE-GATE / NOT READY"}
+
+
+def test_malformed_local_qa_request_fails_closed(tmp_path: Path) -> None:
+    install_summary = load_install_summary_module()
+    runtime_dir = tmp_path / "runtime"
+    runtime_dir.mkdir()
+    (runtime_dir / "parallel-work-local-qa-request.json").write_text(
+        "{", encoding="utf-8"
+    )
+
+    assert install_summary.parallel_work_local_qa_requested(runtime_dir) is False
+    assert install_summary.parallel_work_release_row({}, runtime_dir)[1] == "NOT READY"
+
+
 def test_http_ok_prefers_curl_when_available(monkeypatch) -> None:
     install_summary = load_install_summary_module()
     calls: list[list[str]] = []

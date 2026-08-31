@@ -1,3 +1,4 @@
+<!-- qa-evidence-exempt: Historical evidence snapshot retained verbatim; retroactive v2 fields would invent evidence that was not captured during the run. -->
 # ANTI-008 Voice Truth-Seeking Evaluation Correction — 2026-08-11
 
 ## Result
@@ -65,4 +66,3 @@ was stopped and all selected listeners were down.
 
 Remaining gates: run the 12-case exact-model bank, then the representative paired Web/voice subset;
 rerun explicit lookup, interruption, Cancel, recovery, persistence, and the failed latency targets.
-<!-- qa-evidence-exempt: Historical or specialized supporting artifact retained without retroactively inventing missing evidence; current release acceptance requires a fresh full-view report. -->

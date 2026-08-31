@@ -4,28 +4,29 @@
 
 | Use Case ID | Natural user action | Requirement / case link | Real surface to use | Supporting evidence to compare | Expected visible result | Last run |
 | --- | --- | --- | --- | --- | --- | --- |
-| `MPV-UC-001` | Start a call from an authenticated LibreChat conversation and send a simple typed or spoken prompt. | `docs/requirements_and_learnings/06_Voice_Calls.md` / `MPV-001` | LibreChat browser plus Modern Playground | Voice gateway logs, LiveKit state, persisted chat message, generated voice config | Call connects, agent joins, transcript shows a real assistant answer. | 2026-05-18 PARTIAL PASS for synthetic microphone/worker dispatch; authenticated answer still required |
-| `MPV-UC-002` | Interrupt or send a second turn while prior work or follow-up timing is still active. | `docs/requirements_and_learnings/06_Voice_Calls.md` / `MPV-003` | Modern Playground call | Transcript, stream ids, Mongo message chain, voice gateway timing logs | Turns stay distinct, no stale follow-up is spoken as current conversation state. | 2026-05-15 PARTIAL |
+| `MPV-UC-001` | Start a call from an authenticated LibreChat conversation and send a simple typed or spoken prompt. | `docs/requirements_and_learnings/06_Voice_Calls.md` / `MPV-001` | LibreChat browser plus Modern Playground | Voice gateway logs, LiveKit state, persisted chat message, generated voice config | Call connects, agent joins, transcript shows a real assistant answer. | PARTIAL 2026-05-18; synthetic microphone/worker dispatch passed; authenticated answer still required |
+| `MPV-UC-002` | Interrupt or send a second turn while prior work or follow-up timing is still active. | `docs/requirements_and_learnings/06_Voice_Calls.md` / `MPV-003` | Modern Playground call | Transcript, stream ids, Mongo message chain, voice gateway timing logs | Turns stay distinct, no stale follow-up is spoken as current conversation state. | PARTIAL 2026-05-15 |
 | `MPV-UC-003` | Ask the voice agent to look something up when Web Search appears enabled. | `docs/requirements_and_learnings/06_Voice_Calls.md`, `docs/requirements_and_learnings/10_Open_Source_Web_Search.md` / `MPV-006` | Modern Playground and linked LibreChat browser conversation | Visible transcript/chat, persisted `web_search` tool-call parts, local search backend health, hosted search backend status, request logs, Docker/container state for local providers, browser/local-delegation fallback when available | Voice/search either returns grounded evidence or says the exact degraded provider class without inventing facts; named-entity/current-fact failures use fallback before stopping. | FAIL (escaped 2026-05-18; fix run pending) |
-| `MPV-UC-004` | Reload linked chat after a voice turn that used model/tooling. | `docs/requirements_and_learnings/34_Voice_Chat_LLM_Override.md` / `MPV-005` | LibreChat browser conversation | DB message content parts, logs, transcript, generated no-reasoning config | Visible chat persists audible answer only; no reasoning blocks or raw private transcript leak. | 2026-05-21 PASS for recovered provider-error cleanup and route restoration; full spoken audio not rerun |
-| `MPV-UC-005` | Click Call while advisory voice settings are cold, slow, or temporarily unavailable. | `docs/requirements_and_learnings/06_Voice_Calls.md` / `MPV-032`, `MPV-040` | LibreChat and Modern Playground browser plus launcher/runtime logs | Browser network timing, visible call state, classified recovery copy, route compile logs, call-session DB counts | Advisory settings add no gate; the signed route auto-connects or shows the exact recoverable failure class. | Historical 2026-05-18 Start-chat gate passed; current one-click microphone join/recovery remains PARTIAL |
-| `MPV-UC-006` | Speak a thought, pause for `0.7s` to `1.5s`, then continue speaking in the same LiveKit call. | `docs/requirements_and_learnings/06_Voice_Calls.md` / `MPV-008` | Modern Playground browser with fake microphone WAV, LiveKit, voice worker, Mongo | Voice gateway timing logs, Listen-Only ingress record, Mongo transcript message count, synthetic fixture manifest | Both endpointed STT segments are persisted as one continued transcript turn/message inside the continuation window. | 2026-05-18 PASS with synthetic TTS/fake-mic QA |
-| `MPV-UC-007` | Click Call once and wait for the signed call to auto-connect. | `docs/requirements_and_learnings/06_Voice_Calls.md` / `MPV-032` | LibreChat and Modern Playground browser, LiveKit, voice gateway logs | Button/state timing, browser console/network, microphone permission/publication, publisher job assignment, call-session DB state | Call is the only product action; duplicate starts are prevented and the microphone turns on after room connect. | Historical 2026-05-18 Start-chat UI passed; current Call auto-connect and fresh spoken turn remain PARTIAL |
-| `MPV-UC-008` | Install or bootstrap with the default voice-capable configuration. | `docs/requirements_and_learnings/06_Voice_Calls.md` / `MPV-010` | Installer/bootstrap component selection and launcher help | `bootstrap_components.select_components`, compiled runtime env, launcher flags | Default selection includes `agent-starter-react` and excludes `agents-playground`; classic UI appears only after explicit classic selection. | 2026-05-19 automated release case added |
-| `MPV-UC-011` | Reload a linked chat after provider overload was recovered by visible assistant text. | `docs/requirements_and_learnings/06_Voice_Calls.md` / `MPV-011` | LibreChat browser conversation | DB content parts, recovered error-class metadata, renderer tests, runtime logs | Recovered answer is visible, stale provider error card is not visible, refresh keeps the clean state. | 2026-05-21 PASS in `reports/2026-05-21-recovered-provider-error-card-cleanup.md` |
-| `MPV-UC-012` | Hear a streamed voice answer whose model deltas split punctuation from the phrase. | `docs/requirements_and_learnings/06_Voice_Calls.md` / `MPV-012` | Modern Playground call with xAI/Cartesia/fallback TTS as available | Voice gateway exact TTS debug logs, transcript, provider metrics, buffer unit tests | The assistant speaks naturally, never says a standalone period as "dot", and preserves delayed question/exclamation prosody; transcript remains readable. | 2026-05-25 PASS automated regression; live audible rerun pending after runtime restart |
+| `MPV-UC-004` | Reload linked chat after a voice turn that used model/tooling. | `docs/requirements_and_learnings/34_Voice_Chat_LLM_Override.md` / `MPV-005` | LibreChat browser conversation | DB message content parts, logs, transcript, generated no-reasoning config | Visible chat persists audible answer only; no reasoning blocks or raw private transcript leak. | PARTIAL 2026-05-21; recovered provider-error cleanup and route restoration passed; full spoken audio not rerun |
+| `MPV-UC-005` | Click Call while advisory voice settings are cold, slow, or temporarily unavailable. | `docs/requirements_and_learnings/06_Voice_Calls.md` / `MPV-032`, `MPV-040` | LibreChat and Modern Playground browser plus launcher/runtime logs | Browser network timing, visible call state, classified recovery copy, route compile logs, call-session DB counts | Advisory settings add no gate; the signed route auto-connects or shows the exact recoverable failure class. | PARTIAL 2026-05-18; historical Start-chat gate passed; current one-click microphone join/recovery remains pending |
+| `MPV-UC-006` | Speak a thought, pause for `0.7s` to `1.5s`, then continue speaking in the same LiveKit call. | `docs/requirements_and_learnings/06_Voice_Calls.md` / `MPV-008` | Modern Playground browser with fake microphone WAV, LiveKit, voice worker, Mongo | Voice gateway timing logs, Listen-Only ingress record, Mongo transcript message count, synthetic fixture manifest | Both endpointed STT segments are persisted as one continued transcript turn/message inside the continuation window. | PASS 2026-05-18 with synthetic TTS/fake-mic QA |
+| `MPV-UC-007` | Click Call once and wait for the signed call to auto-connect. | `docs/requirements_and_learnings/06_Voice_Calls.md` / `MPV-032` | LibreChat and Modern Playground browser, LiveKit, voice gateway logs | Button/state timing, browser console/network, microphone permission/publication, publisher job assignment, call-session DB state | Call is the only product action; duplicate starts are prevented and the microphone turns on after room connect. | PARTIAL 2026-05-18; historical Start-chat UI passed; current Call auto-connect and fresh spoken turn remain pending |
+| `MPV-UC-008` | Install or bootstrap with the default voice-capable configuration. | `docs/requirements_and_learnings/06_Voice_Calls.md` / `MPV-010` | Installer/bootstrap component selection and launcher help | `bootstrap_components.select_components`, compiled runtime env, launcher flags | Default selection includes `agent-starter-react` and excludes `agents-playground`; classic UI appears only after explicit classic selection. | PASS 2026-07-21; selector, identity, browser, compiler, and launcher checks passed |
+| `MPV-UC-011` | Reload a linked chat after provider overload was recovered by visible assistant text. | `docs/requirements_and_learnings/06_Voice_Calls.md` / `MPV-011` | LibreChat browser conversation | DB content parts, recovered error-class metadata, renderer tests, runtime logs | Recovered answer is visible, stale provider error card is not visible, refresh keeps the clean state. | PASS 2026-05-21; archived local cleanup report, with the public contract retained below |
+| `MPV-UC-012` | Hear a streamed voice answer whose model deltas split punctuation from the phrase. | `docs/requirements_and_learnings/06_Voice_Calls.md` / `MPV-012` | Modern Playground call with xAI/Cartesia/fallback TTS as available | Voice gateway exact TTS debug logs, transcript, provider metrics, buffer unit tests | The assistant speaks naturally, never says a standalone period as "dot", and preserves delayed question/exclamation prosody; transcript remains readable. | PARTIAL 2026-05-25; automated regression passed; live audible rerun pending after runtime restart |
 | `MPV-UC-013` | Hear a streamed voice answer when model text contains links, emails, references, markdown, or provider markup. | `docs/requirements_and_learnings/06_Voice_Calls.md` / `MPV-013` | Modern Playground call with current TTS route and fallback route | Voice gateway `llm_delta`, `tts_emit`, `[VoiceRendering][voice_gateway]`, provider request logs when available, sanitizer/unit tests | TTS receives speech-safe phrase chunks; plain providers do not receive raw tags; provider-supported controls are preserved only on capable routes. | PARTIAL 2026-07-15: prior live browser/artifact path passed; metadata-only provider/fallback rendering regression passes, but a post-change audible provider-matrix run remains required |
-| `MPV-UC-014` | Verify a voice/TTS fix after adding logs or instrumentation. | `docs/requirements_and_learnings/06_Voice_Calls.md` / `MPV-014` | Modern Playground call, active voice runtime, logs, DB/state | Runtime artifact proof, audible/delivered voice evidence, sanitized transcript evidence, exact TTS/provider-input logs, DB/state, owning code | The changed runtime is proven active and the post-change call demonstrates the intended audible behavior; instrumentation alone is not accepted. | 2026-08-10 PASS in `reports/2026-08-10-anti-sycophancy-audible-playback-and-worker-port.md`: browser playback, RTC audio deltas, terminal task, `Speaking -> Listening`, bounded answer, and zero page errors |
-| `MPV-UC-015` | Interrupt a local Whisper assistant reply while it is speaking. | `docs/requirements_and_learnings/06_Voice_Calls.md` / `MPV-015` | Modern Playground call with local `pywhispercpp` STT | Visible transcript, audible behavior, voice gateway interruption policy/state logs, generated runtime config, DB call-session route | A sustained one-word or short-phrase barge-in pauses/interrupts the agent without waiting for final local Whisper text; AssemblyAI word-guard defaults remain unchanged. | 2026-05-22 PASS in `reports/2026-05-22-local-whisper-bargein-qa.md` |
-| `MPV-UC-016` | In Advanced Listening settings, select `AssemblyAI` → `Universal-3 Pro streaming (u3-rt-pro)`, then click Call and speak. | `docs/requirements_and_learnings/06_Voice_Calls.md` (AssemblyAI Streaming Engine Selection) / `MPV-017` | Advanced settings, Modern Playground browser, voice gateway worker, LiveKit | Advanced option, voice gateway route log, `/capabilities` payload, transcript, worker STT-selection tests | The saved `u3-rt-pro` route remains authoritative and the primary call surface adds no provider-selection step. | 2026-05-29 PARTIAL: Advanced option/plumbing verified; post-change audible call remains required |
-| `MPV-UC-017` | Receive a streamed answer whose server emits growing text snapshots instead of pure incremental token deltas. | `docs/requirements_and_learnings/06_Voice_Calls.md` / `MPV-018` | Modern Playground browser, voice gateway stream, LibreChat voice route, Mongo/chat reload | Gateway chunks, visible transcript, persisted assistant text/content parts, follow-up decision metadata | The assistant text appears once, `{NTA}` remains silent, and the linked LibreChat chat reload never shows malformed control tags or adjacent duplicate words. | 2026-05-30 PARTIAL PASS in `reports/2026-05-30-cumulative-delta-snapshot-rca.md`; artifact fixed and linked chat cleaned on read, but healthy primary-provider stream rerun blocked by local provider failures |
+| `MPV-UC-014` | Verify a voice/TTS fix after adding logs or instrumentation. | `docs/requirements_and_learnings/06_Voice_Calls.md` / `MPV-014` | Modern Playground call, active voice runtime, logs, DB/state | Runtime artifact proof, audible/delivered voice evidence, sanitized transcript evidence, exact TTS/provider-input logs, DB/state, owning code | The changed runtime is proven active and the post-change call demonstrates the intended audible behavior; instrumentation alone is not accepted. | PASS 2026-08-10 in `reports/2026-08-10-anti-sycophancy-audible-playback-and-worker-port.md`: browser playback, RTC audio deltas, terminal task, `Speaking -> Listening`, bounded answer, and zero page errors |
+| `MPV-UC-015` | Interrupt a local Whisper assistant reply while it is speaking. | `docs/requirements_and_learnings/06_Voice_Calls.md` / `MPV-015` | Modern Playground call with local `pywhispercpp` STT | Visible transcript, audible behavior, voice gateway interruption policy/state logs, generated runtime config, DB call-session route | A sustained one-word or short-phrase barge-in pauses/interrupts the agent without waiting for final local Whisper text; AssemblyAI word-guard defaults remain unchanged. | PASS 2026-05-22 in `reports/2026-05-22-local-whisper-bargein-qa.md` |
+| `MPV-UC-016` | In Advanced Listening settings, select `AssemblyAI` → `Universal-3 Pro streaming (u3-rt-pro)`, then click Call and speak. | `docs/requirements_and_learnings/06_Voice_Calls.md` (AssemblyAI Streaming Engine Selection) / `MPV-017` | Advanced settings, Modern Playground browser, voice gateway worker, LiveKit | Advanced option, voice gateway route log, `/capabilities` payload, transcript, worker STT-selection tests | The saved `u3-rt-pro` route remains authoritative and the primary call surface adds no provider-selection step. | PARTIAL 2026-05-29: Advanced option/plumbing verified; post-change audible call remains required |
+| `MPV-UC-017` | Receive a streamed answer whose server emits growing text snapshots instead of pure incremental token deltas. | `docs/requirements_and_learnings/06_Voice_Calls.md` / `MPV-018` | Modern Playground browser, voice gateway stream, LibreChat voice route, Mongo/chat reload | Gateway chunks, visible transcript, persisted assistant text/content parts, follow-up decision metadata | The assistant text appears once, `{NTA}` remains silent, and the linked LibreChat chat reload never shows malformed control tags or adjacent duplicate words. | PARTIAL 2026-05-30; artifact checks passed in `reports/2026-05-30-cumulative-delta-snapshot-rca.md`; artifact fixed and linked chat cleaned on read, but healthy primary-provider stream rerun blocked by local provider failures |
 | `MPV-UC-021` | In a real call, ask the agent to launch a synthetic GlassHive browser task, then speak a terse status/wait request and a deferred artifact request. | `docs/requirements_and_learnings/06_Voice_Calls.md`, `docs/requirements_and_learnings/07_MCPs.md` / `MPV-021`, `AGCFG-005`, `MPV-014` | Authenticated Modern Playground call and linked LibreChat conversation | audible audio, transcript, provider-bound tools, scoped `tool_search`, Mongo tool-call parts, GlassHive run/events, runtime logs, linked-chat reload | Voice uses the same eager launch/status/wait gateway as web and Telegram, discovers deferred artifacts in the same invocation, and speaks a truthful result without a false unavailable claim. | PASS 2026-07-13: real launch/wait/file creation plus a real deferred-discovery call that invoked scoped `tool_search` and `workspace_artifacts` in the same turn; transcript, persistence, and nonzero audio passed |
-| `MPV-UC-022` | Ask the configured voice model to recall a prior browser event while conversation recall and transcript fixtures are both available. | `docs/requirements_and_learnings/32_Conversation_Recall_RAG.md`, `docs/requirements_and_learnings/34_Voice_Chat_LLM_Override.md` / `MPV-022`, `MPV-014` | isolated browser, Modern Playground, linked LibreChat conversation | audible audio, expanded file-search sources, provider/controller logs, fixture DB/search state, runtime config | Voice answers from the strongest prior-chat evidence, does not cite the active prompt or blend an unrelated transcript, persists after reload, and does not crash in final-run telemetry. | PASS-AUTOMATED/PARTIAL 2026-07-14; focused ranking/controller fixtures pass, but isolated-account audible/persistence acceptance is NOT RUN |
-| `MPV-UC-023` | Open a public call from outside a synthetic lab LAN and speak. | `docs/requirements_and_learnings/47_Remote_Access_and_Tunneling.md` / `MPV-023`, `MPV-014`, `REMOTE-004` | Public Playground browser, LiveKit lab media, voice worker | selected ICE pair, generated/runtime node address, LiveKit/worker logs, fixture transcript row, cleanup | The browser selects a public media path, the worker receives audio, and the expected transcript is delivered; a loaded page alone is not accepted. | NOT RUN for this public candidate; requires an isolated lab edge/router and synthetic account |
+| `MPV-UC-022` | Ask the configured voice model to recall a prior browser event while conversation recall and transcript fixtures are both available. | `docs/requirements_and_learnings/32_Conversation_Recall_RAG.md`, `docs/requirements_and_learnings/34_Voice_Chat_LLM_Override.md` / `MPV-022`, `MPV-014` | isolated browser, Modern Playground, linked LibreChat conversation | audible audio, expanded file-search sources, provider/controller logs, fixture DB/search state, runtime config | Voice answers from the strongest prior-chat evidence, does not cite the active prompt or blend an unrelated transcript, persists after reload, and does not crash in final-run telemetry. | PARTIAL 2026-07-14; automated checks passed; focused ranking/controller fixtures pass, but isolated-account audible/persistence acceptance is NOT RUN |
+| `MPV-UC-023` | Open a public call from outside a synthetic lab LAN and speak. | `docs/requirements_and_learnings/47_Remote_Access_and_Tunneling.md` / `MPV-023`, `MPV-014`, `REMOTE-004` | Public Playground browser, LiveKit lab media, voice worker | selected ICE pair, generated/runtime node address, LiveKit/worker logs, fixture transcript row, cleanup | The browser selects a public media path, the worker receives audio, and the expected transcript is delivered; a loaded page alone is not accepted. | NOT RUN (cataloged 2026-07-15; requires an isolated lab edge/router and synthetic account) |
 | `MPV-UC-024` | Upgrade or start with the unsupported legacy xAI `voice_agent` TTS compatibility value configured. | `docs/requirements_and_learnings/06_Voice_Calls.md` / `MPV-024` | Config compiler and voice-gateway startup | Compiler/runtime error, capability contract, source inventory, standalone xAI provider tests | Startup fails closed with an actionable migration to `tts`; it explains that Voice Agent is a separate conversational API and never silently remaps the setting. | PASS automated 2026-07-15; wording corrected against current xAI documentation 2026-07-20; post-change installed-runtime restart intentionally not run in this source-only slice |
 | `MPV-UC-025` | Enable Docker-backed Voice after install, then upgrade from an older Viventium-managed LiveKit container. | `docs/requirements_and_learnings/39_Installer_and_Config_Compiler.md` / `MPV-025` | Full-stack launcher and Docker LiveKit runtime | Optional runtime lock, container image/source labels, health, TURN config, Docker disk usage | Exact multi-arch digest starts; an exact managed container is reused; a stale managed container is replaced; unrelated/external LiveKit is not deleted. | PARTIAL 2026-07-21: real arm64 Docker pull/start/health/restart, stale replacement, external preservation, and cleanup pass; Intel, TURN selected-pair, and microphone/TCC remain |
 | `MPV-UC-026` | Open the Modern Playground URL directly without first opening Voice from a conversation. | `docs/requirements_and_learnings/06_Voice_Calls.md` / `MPV-027` | Modern Playground browser with no call-session parameters or standalone agent | Visible CTA/help text, console, network requests, exact `/api/health` identity | The start action stays disabled and immediately explains that Voice must be opened from a Viventium conversation; the page does not contact personal/provider state. | PASS 2026-07-21: isolated headed Chromium showed the recovery guidance, exact modern identity, zero console warnings/errors, and no non-loopback/backend requests. |
 | `MPV-UC-028` | Open the Modern Playground directly using keyboard navigation, a narrow viewport, forced colors, and Reduce Motion. | `docs/requirements_and_learnings/06_Voice_Calls.md` / `MPV-028` | Modern Playground direct-entry browser page | `qa/modern-playground-voice/scripts/direct-entry-accessibility-browser-qa.cjs`; named focus order, viewport bounds/overflow, computed motion durations, console/network, exact source identity | Recovery guidance and controls remain perceivable and keyboard-operable; tall content scrolls downward without clipping; Reduce Motion removes retained animation/transition durations; requests stay loopback-only. | PASS 2026-07-22 against exact reviewed head: headed Chromium passed ten named keyboard stops, `320 x 760` reflow, forced colors, zero horizontal overflow, zero retained motion durations, and first-graphic `y=40`. VoiceOver, real call/audio, and exact signed installed artifact remain separate blocked rows. |
+| `MPV-061` | During one normal call, explicitly launch two independent Worker Bees, continue a quick conversation, provide exact synthetic files through the linked chat, Steer only one Bee by speech, hang up/reconnect, and open both returned artifacts. Repeat the launch attempt from passive Wing speech and Listen-Only. | `docs/requirements_and_learnings/06_Voice_Calls.md`, `docs/requirements_and_learnings/55_Parallel_Work_Orchestration.md` / `MPV-061`, `PWK-017`, `PWK-UC-019`, `TGDOC-010` | Audible Modern Playground Call, linked LibreChat conversation and Active Work, supported account attachment surface | audio/transcript, logical revision, exact upload IDs/bytes/order, provider-bound tools, memory/recall and broker receipts, mission/action rows, callback/delivery receipts, artifact hashes, hangup/reconnect state | Main remains the one voice and stays responsive; both Bees retain the needed authorized abilities; spoken A-only Steer leaves B unchanged; exact inputs and both outputs arrive once; hangup loses nothing; passive Wing and Listen-Only launch nothing; no unsolicited result call occurs. | FAIL 2026-08-25 — passive Wing created an unauthorized durable reminder. The two-Bee, files, A-only Steer, reconnect, Listen-Only, and returned-artifact matrix remains unrun and cannot dilute that observed failure. |
 
 ## MPV-001 Authenticated Call Launch
 
@@ -50,7 +51,7 @@
   `Session ended / Agent left the room unexpectedly`, or a browser/harness action marking
   `promptSent=true` without a corresponding voice worker/chat route hit.
 - Evidence: `qa/modern-playground-voice/README.md`
-- Last Run: 2026-05-18 partial pass for synthetic microphone/worker dispatch in
+- Last Run: PARTIAL 2026-05-18 for synthetic microphone/worker dispatch in
   `reports/2026-05-18-whispercpp-turn-taking-endpointing.md`; authenticated answer acceptance still
   required.
 
@@ -78,7 +79,7 @@
   Forbidden result: runtime silently changes the selected model to `base.en`, `small`, OpenAI STT,
   or any other route to hide the local Whisper.cpp problem.
 - Evidence: `qa/modern-playground-voice/README.md#2026-05-12-local-whisper-model-route-regression`
-- Last Run: 2026-05-12, updated after exact-model self-heal fix.
+- Last Run: PASS 2026-05-12, updated after exact-model self-heal fix.
 
 ## MPV-003 Sequential Voice Turns During Phase B
 
@@ -108,7 +109,7 @@
   the voice gateway speaks a generic service error; a stale first-turn follow-up is generated with
   moved-on state missing; a later turn subscribes to or completes an older turn's stream.
 - Evidence: `qa/modern-playground-voice/reports/2026-05-15-livekit-parity-latency-followup-qa.md`
-- Last Run: 2026-05-30 PARTIAL. Automated voice follow-up scheduler regression passed and a real
+- Last Run: PARTIAL 2026-05-30. Automated voice follow-up scheduler regression passed and a real
   fake-microphone LiveKit run proved the active playground/worker path. A fresh spoken multi-turn
   Phase B overlap run is still needed for the full MPV-003 stress case.
 
@@ -145,7 +146,7 @@
   missing per-turn stream id; voice-only prompt/context truncation that breaks parity; hidden model
   remap; raw private transcript or call-session identifiers copied into public QA artifacts.
 - Evidence: `qa/modern-playground-voice/reports/2026-05-15-livekit-parity-latency-followup-qa.md`
-- Last Run: 2026-05-19 in `reports/2026-05-19-livekit-tts-misalignment-fixes.md` applied the
+- Last Run: PARTIAL 2026-05-19; in `reports/2026-05-19-livekit-tts-misalignment-fixes.md` applied the
   LiveKit API, latency logging, package-pin, and xAI first-audio optimization fixes while preserving
   async transcript output. Browser first audible-frame capture and current-data/tool-call timing
   remain open.
@@ -176,7 +177,7 @@
 - Forbidden Result: Visible LibreChat `Thoughts` cards from a voice call; persisted voice assistant
   content containing `type: "think"`; raw prompt/message text copied into public QA evidence.
 - Evidence: `qa/modern-playground-voice/reports/2026-05-15-livekit-parity-latency-followup-qa.md`
-- Last Run: 2026-05-15 fresh authenticated LiveKit typed-transcript run, LibreChat reload, and Mongo
+- Last Run: PASS 2026-05-15; fresh authenticated LiveKit typed-transcript run, LibreChat reload, and Mongo
   inspection passed for a new simple voice turn.
 
 ## MPV-006 Voice Web-Search Request Must Not Escape The Checklist
@@ -248,7 +249,7 @@
   stack text is shown to users; public QA artifacts contain real call-session ids, local usernames,
   or secret-bearing URLs.
 - Evidence: `qa/modern-playground-voice/reports/2026-05-18-voice-settings-startup-loading.md`
-- Last Run: 2026-05-18 PASS for the pre-call browser gate and timeout wording; full microphone join
+- Last Run: PASS 2026-05-18 for the pre-call browser gate and timeout wording; full microphone join
   was not rerun because this case targets the pre-call loading gate.
 
 ## MPV-008 Synthetic Audio Pause Continuation
@@ -276,7 +277,7 @@
   thought inside the continuation window; schema/mocks disagree about fields required for
   continuation; public QA artifacts contain raw call IDs or local absolute paths.
 - Evidence: `qa/modern-playground-voice/reports/2026-05-18-synthetic-audio-livekit-continuation.md`
-- Last Run: 2026-05-18 PASS for short, long, `0.7s` pause, and `1.5s` pause with synthetic
+- Last Run: PASS 2026-05-18 for short, long, `0.7s` pause, and `1.5s` pause with synthetic
   TTS/fake-microphone LiveKit QA. The visible playground transcript panel was not proven in this
   harness; persistence/log evidence is the accepted backend proof for this case.
 
@@ -307,7 +308,7 @@
   logs; temp-file STT roundtrips; default reduced audio context on long chunks; local TTS prewarm
   competing with active local Whisper STT; claiming UI delay without LiveKit/backend timing evidence.
 - Evidence: `qa/modern-playground-voice/reports/2026-05-19-whispercpp-large-v3-turbo-local-optimization.md`
-- Last Run: 2026-05-19 PASS for direct benchmarks plus real browser/fake-microphone LiveKit QA.
+- Last Run: PASS 2026-05-19 for direct benchmarks plus real browser/fake-microphone LiveKit QA.
 
 ## MPV-009 Start Chat Is One Click And Mic Auto-Enables
 
@@ -335,7 +336,7 @@
   requests race each other; the call lands connected but muted without a permission error; public QA
   artifacts contain real call-session ids, participant ids, local usernames, or secret-bearing URLs.
 - Evidence: `qa/modern-playground-voice/reports/2026-05-18-start-chat-single-click-mic-auto-on.md`
-- Last Run: 2026-05-18 PASS for real-browser one-click UI state and duplicate-request prevention;
+- Last Run: PASS 2026-05-18 for real-browser one-click UI state and duplicate-request prevention;
   supporting local runtime logs show the mic-publish path, and fresh full spoken-turn QA remains
   covered by `MPV-001`, `MPV-004`, and `MPV-008`.
 
@@ -409,8 +410,8 @@
 - Forbidden Result: visible recovered answer and `Something went wrong` provider error card are both
   shown for the same assistant message; cleanup drops the recovered answer; unstructured tool/MCP
   failures are hidden as if they were provider recovery.
-- Evidence: `qa/modern-playground-voice/reports/2026-05-21-recovered-provider-error-card-cleanup.md`
-- Last Run: 2026-05-21 PASS with local Viventium QA account browser refresh, DB inspection, and
+- Evidence: [Modern Playground Voice QA](README.md), targeted API/client/voice-gateway tests, and the public case contract here.
+- Last Run: PASS 2026-05-21 with local Viventium QA account browser refresh, DB inspection, and
   targeted API/client/voice-gateway tests.
 
 ## MPV-012 Streaming TTS Must Not Speak Orphan Punctuation
@@ -445,7 +446,7 @@
 - Evidence: dated report under `qa/modern-playground-voice/reports/`, targeted
   `tests.test_librechat_llm.TestVoiceTtsDeltaBuffer`, fallback provider-bound logging tests, and
   sanitized voice gateway `[VoiceTTSInput]` lines.
-- Last Run: 2026-05-21 PASS. Local Modern Playground call connected through the live voice worker,
+- Last Run: PASS 2026-05-21. Local Modern Playground call connected through the live voice worker,
   accepted a synthetic text turn, and emitted phrase-sized TTS chunks only; unit and full
   voice-gateway discovery tests passed. 2026-05-22 follow-up PASS for automated provider-input
   boundary tests: no standalone `"."` reaches the fake streaming provider; decimal splits remain
@@ -497,7 +498,7 @@
   `tests.test_sse.TestSSEParser`, `tests.test_librechat_llm.TestVoiceTtsDeltaBuffer`, affected
   voice-gateway suite, sanitized voice gateway debug scan, and browser QA when live runtime is
   restarted.
-- Last Run: 2026-05-21 PASS. Local Modern Playground QA created a call, clicked Start chat, opened
+- Last Run: PASS 2026-05-21. Local Modern Playground QA created a call, clicked Start chat, opened
   transcript/chat, sent a synthetic artifact-heavy prompt, observed a visible response, and confirmed
   the aggregate raw stream contained a URL, email address, source label, markdown link, and split
   punctuation while aggregate `tts_emit` and provider-completed TTS input contained zero forbidden
@@ -597,7 +598,7 @@
 - Evidence: dated public-safe report under `qa/modern-playground-voice/reports/`, targeted
   turn-handling tests, generated config proof, runtime logs, browser/user-path observation, and DB
   route metadata.
-- Last Run: 2026-05-22 PASS. Real Modern Playground browser QA with a synthetic fake microphone WAV
+- Last Run: PASS 2026-05-22. Real Modern Playground browser QA with a synthetic fake microphone WAV
   observed effective local policy `min_interrupt_words=0` and `aec_warmup_duration=1.0`, then saw
   `agent_speaking`, `user_speaking`, and `agent_paused` in the voice gateway state sequence with no
   browser console errors; see `reports/2026-05-22-local-whisper-bargein-qa.md`.
@@ -632,7 +633,7 @@
   `test_default_plugin_tokenizer_would_drop_spacing`,
   `test_xai_tts_constructed_with_space_preserving_tokenizer`), plus a dated public-safe report and
   browser/audio observation when the live runtime is restarted.
-- Last Run: 2026-05-30 PASS. (1) Deterministic reproduction against the pinned
+- Last Run: PASS 2026-05-30. (1) Deterministic reproduction against the pinned
   `livekit-plugins-xai` `WordTokenizer` and the real `_VoiceTtsDeltaBuffer` +
   `_ProviderTextBoundaryNormalizer` chain: default `retain_format=False` produced
   `"Hellothere,Icheckedyourinvoiceanditcleared.What'snext?"` while the injected `retain_format=True`
@@ -689,7 +690,7 @@
   (`VIVENTIUM_ASSEMBLYAI_STT_MODEL` default + override assertions),
   `tests/release/test_voice_playground_dispatch_contract.py`, plus a dated public-safe report and
   live browser/audio observation when the gateway is restarted on this branch.
-- Last Run: 2026-05-29 PARTIAL. Automated end-to-end plumbing proven:
+- Last Run: PARTIAL 2026-05-29. Automated end-to-end plumbing proven:
   `build_stt_selection(...).model == "u3-rt-pro"`, the requested AssemblyAI variant is applied (was
   previously dropped), the catalog drops the invalid `universal-streaming` id, the compiler emits the
   `VIVENTIUM_ASSEMBLYAI_STT_MODEL` default/override, and the full voice-gateway suite (329 tests) plus
@@ -740,7 +741,7 @@
 - Evidence: dated public-safe report under `qa/modern-playground-voice/reports/`, gateway and
   LibreChat regression tests, real-browser run, sanitized DB/log correlation, and any data-repair
   recommendation kept separate from the product-code fix.
-- Last Run: 2026-05-31 PASS for artifact behavior, Redis replay still BLOCKED in
+- Last Run: PARTIAL 2026-05-31; artifact behavior passed, while Redis replay remains BLOCKED in
   `reports/2026-05-31-boundary-delta-normalizer-root-fix.md`. The root-path fix moved cumulative
   snapshot normalization to the LibreChat message-delta boundary before SSE/resumable fan-out,
   aggregation, TTS/display, and persistence; the stale downstream duplicate-repair helper and
@@ -806,7 +807,7 @@
   raw call ids, or local paths.
 - Evidence: `viventium_v0_4/LibreChat/api/server/services/viventium/__tests__/voiceLlmOverride.spec.js`
   and `qa/modern-playground-voice/reports/2026-07-09-grok-4-3-voice-transport-provenance.md`.
-- Last Run: 2026-07-09 PASS. The escaped turn ended after 101.040 seconds with no token events. The
+- Last Run: PASS 2026-07-09. The escaped turn ended after 101.040 seconds with no token events. The
   post-fix real Chrome turn emitted its first token at 7.335 seconds, completed the stream at 7.735
   seconds with token events, displayed the requested synthetic sentence, and delivered 1.61 seconds
   of unmuted xAI audio. Focused voice-override tests passed 13/13; adjacent provider suites,
@@ -844,7 +845,7 @@
   evidence; audio and transcript agree.
 - Forbidden Result: typed-only API proof, fake browser/audio, same-conversation history, a model
   guess without retrieval evidence, or synthetic state left behind.
-- Last Run: PASS-AUTOMATED/PARTIAL 2026-07-14. Synthetic writer, retrieval, prompt-frame,
+- Last Run: PARTIAL 2026-07-14; automated checks passed. Synthetic writer, retrieval, prompt-frame,
   persistence, and cleanup regressions pass. The dedicated isolated channel-to-browser-to-audible-
   voice journey is NOT RUN and no personal profile/channel history is public evidence.
 
@@ -909,7 +910,7 @@
 - Evidence: `fileSearch.test.js`, agent controller/feelings/voice tests, focused Prompt Workbench
   recall eval, isolated browser/audible call when run, linked-chat refresh, provider/TTS logs, and
   fixture DB/search cleanup.
-- Last Run: PASS-AUTOMATED/PARTIAL 2026-07-14. File-search regressions passed 49/49 and adjacent
+- Last Run: PARTIAL 2026-07-14; automated checks passed. File-search regressions passed 49/49 and adjacent
   controller/feelings/voice suites passed 178/178. Isolated-account audible delivery, detail-state
   persistence, and runtime cleanup are NOT RUN.
 
@@ -944,7 +945,7 @@
   the application result; retaining synthetic users, sessions, messages, or ingress rows.
 - Evidence: isolated lab Playwright evidence, sanitized selected-pair summary, synthetic transcript,
   fixture cleanup ledger, and generated-config alignment.
-- Last Run: NOT RUN for this public candidate. A dedicated isolated lab edge/router and synthetic
+- Last Run: NOT RUN (cataloged 2026-07-15). A dedicated isolated lab edge/router and synthetic
   account are required; non-lab network observations are excluded from public evidence.
 
 ## MPV-024 Unsupported Voice-Agent-As-TTS Compatibility Route Fails Closed
@@ -1042,7 +1043,7 @@
 - Evidence: `tests/release/test_optional_runtime_provenance.py`,
   `tests/release/test_native_stack_helpers.py`, both shell syntax checks, and exact Docker/external
   endpoint QA under `MPV-025`.
-- Last Run: 2026-07-21 PASS for source contract and shell syntax. The regression was RED while the
+- Last Run: PASS 2026-07-21 for source contract and shell syntax. The regression was RED while the
   launcher still accepted arbitrary `PATH` binaries and GREEN after removing that fallback. Exact
   Docker behavior remains covered by `MPV-025`; a signed native macOS LiveKit artifact does not
   exist and is not claimed.
@@ -1118,7 +1119,7 @@
 - Evidence: `tests/release/test_playground_identity.py`,
   `tests/release/test_voice_call_startup_guard.py`, LibreChat call route/component tests, and
   `reports/2026-07-21-modern-playground-default-release-regression.md`.
-- Last Run: 2026-07-22 `PARTIAL`. Both clean hosted playground heads built successfully and their
+- Last Run: PARTIAL 2026-07-22. Both clean hosted playground heads built successfully and their
   compiled routes contained only the build-time source refs. Exact modern-playground head
   `fd778562af199f7fb503bd4a0d106e22c282b16b` also passed headed Chromium keyboard, 320 px,
   forced-colors, reduced-motion, loopback-only, and reload checks. Corrected LibreChat review head
@@ -1165,7 +1166,7 @@
   duplicate worker; late speech after cancel; or a native speech-to-speech claim.
 - Evidence: focused schema/API/client/voice tests, compiler diff, real browser save/reload,
   user-grade audible call, linked-chat refresh, Mongo/provider/session/log correlation, and restart.
-- Last Run: 2026-08-01 `PARTIAL`. Real Agent Builder save/reload and audible GlassHive Codex calls
+- Last Run: PARTIAL 2026-08-01. Real Agent Builder save/reload and audible GlassHive Codex calls
   passed with exact Mongo/provider/session correlation. Post-fix End Call cancelled the only native
   request with zero authored output and no late speech. A browser reload during an in-flight turn
   rejoined the same call identity; the original stream completed once and the call lease rejected a
@@ -1191,7 +1192,7 @@
 - Forbidden Result: zero-tool GlassHive harness; wrapper-model tool orchestration; silent provider
   remap; generic connection error; duplicate answer; hidden reasoning spoken aloud; or runtime files
   written into LIFE.
-- Last Run: 2026-08-02 `PASS`. One real call used the selected GlassHive Codex Voice Chat Model and
+- Last Run: PASS 2026-08-02. One real call used the selected GlassHive Codex Voice Chat Model and
   the Agent-selected scheduling capability through the signed broker. A second real call used a
   temporary Agent-selected Microsoft MCP, refreshed the existing OAuth state non-interactively,
   returned a verified unread count in the visible transcript, persisted exactly one answer, emitted
@@ -1219,7 +1220,7 @@
   proxy route suites
 - Telegram call-link creation/exchange and canonical Agent authorization suites
 
-## World-Class Call Acceptance Additions (MPV-032 through MPV-054)
+## World-Class Call Acceptance Additions (MPV-032 through MPV-061)
 
 These cases are the release gate for the automatic, zero-setup Call/Wing/Listen-Only experience.
 Each runtime result must record `PASS`, `FAIL`, `PARTIAL`, or `BLOCKED` and link timestamped,
@@ -1582,7 +1583,7 @@ public-safe browser/audio, log, persistence, and installed-artifact evidence. `P
   D omits C, false interruption creates a committed user turn, or a stale callback is spoken.
 - PASS Evidence: audible capture, playback/interruption logs, logical revision state,
   conversation/task state, MPV-014 latency hops, restart/reopen proof, and public-safe summary.
-- Last Run: `PASS-STABLE / PARTIAL-FALSE` — 2026-08-11 — stable supersession passed in a real
+- Last Run: PARTIAL 2026-08-11 — stable supersession passed; stable supersession passed in a real
   audible run; a detected non-stable interruption and resume remains outstanding. See
   `../scheduling-cortex/reports/2026-08-11-consciousness-continuity-and-turn-coherence.md`.
 
@@ -1600,10 +1601,151 @@ public-safe browser/audio, log, persistence, and installed-artifact evidence. `P
   explicit cancellation is ignored, or late stale prose is voiced as current.
 - PASS Evidence: audible outcomes, task/action receipts, callback and presentation acknowledgements,
   voice/LibreChat logs, persisted task state, and focused regressions.
-- Last Run: `PASS-PRESENTATION / PARTIAL-DURABLE` — 2026-08-11 — ordinary audible commit and
+- Last Run: PARTIAL 2026-08-11 — presentation passed; ordinary audible commit and
   partial stable supersession passed; interruption during a real durable GlassHive/tool effect
   remains outstanding. See
   `../scheduling-cortex/reports/2026-08-11-consciousness-continuity-and-turn-coherence.md`.
+
+### Endurance Gate
+
+- Run 100 atomic mode switches, 50 reconnect cycles, a 65-minute audible call, and a 120-minute synthetic soak
+  from the private configurable output root described in `endurance-runbook.md`.
+- Run each profile with its own fresh signed synthetic session. The audible profile's clean hangup
+  makes that session terminal; it must never be reused to make the subsequent soak appear healthy.
+- The audible call must include lookup/sources, multiple speakers, barge-in, cancellation, network
+  loss, provider degradation, join/leave, refresh, mode changes, and clean hangup.
+- Require no crash, lost result, duplicate event, leaked task, or more than 10% post-warm memory
+  growth.
+- Before and after every reconnect, require exact task and speaker replay: no loss, duplicate result,
+  sequence/revision regression, terminal-state regression, or unversioned payload mutation.
+- Extract one structured latency trace per measured turn from utterance end through gateway dispatch,
+  agent/tool work, first model token, TTS first byte, and audio output. Missing hops fail the gate.
+- Save raw events, logs, call identifiers, process samples, audio, and screenshots only under the
+  private configurable output root. Publish only the content-free
+  `viventium.voice.acceptance.result.v1` schema after its privacy check passes.
+
+### MPV-057 Call, Wing, And Listen-Only In One Room
+
+- Start one real browser call, send a substantive synthetic turn in Call, switch to Wing and address
+  Viventium, then send an ambient turn, switch to Listen-Only, and return to Call.
+- Expected Result: the room and RTC connection stay unchanged. Call presents one useful answer and
+  audio. Addressed Wing may answer; passive Wing stays silent through `{NTA}`. Listen-Only creates no
+  assistant answer, live task, tool call, or TTS. Every visible mode label matches durable state.
+- Forbidden Result: a reconnect per mode, an unsolicited Wing response, Listen-Only tools/TTS, a
+  stale mode label, or duplicate assistant output.
+- PASS Evidence: real Chrome/in-app Browser DOM and audio, mode/state API, call/task persistence,
+  voice-gateway logs, linked-chat result, and refresh/ended-state proof.
+- Last Run: `PASS` — 2026-08-21 — Call produced one visible and audible answer with one terminal
+  task; addressed Wing answered; passive Wing and Listen-Only stayed silent; all mode changes reused
+  the same room and the ended state survived refresh.
+
+### MPV-058 Simultaneous Calls Do Not Wait For An Older Call
+
+- Start one call in Chrome and a second in the in-app Browser while the first remains connected.
+- Expected Result: both admitted calls join independently. Replacement-worker prewarm may defer only
+  while idle; once a call is admitted, initialization starts immediately. Each call can change mode
+  and end without changing the other.
+- Forbidden Result: the second admitted call waits for the first to end, reports a false gateway
+  timeout, reuses the wrong session, or cross-controls the other room.
+- PASS Evidence: two visible browser surfaces, distinct call/room identities, worker admission and
+  prewarm logs, second-call ready latency, independent modes, sustained overlap, and clean end state.
+- Last Run: `PASS` — 2026-08-21 — after the escaped serialization fix, Chrome and the in-app
+  Browser connected concurrently; the second call was ready in about 5.5 seconds, both stayed live
+  beyond the old 90-second failure window, changed modes independently, and ended cleanly.
+
+### MPV-059 Durable Call State Survives Transport Loss
+
+- Disconnect or end the room while the playground still has local LiveKit state, then poll the
+  owner-scoped call-session state and refresh.
+- Expected Result: authoritative degraded, failed, or ended state replaces stale local state. A
+  terminal call cannot present a working microphone or active End action after refresh. The exact
+  bound worker may read the terminal state long enough to stop cleanly, without renewing its lease,
+  reclaiming the call, or admitting a different worker.
+- Forbidden Result: an endless connecting/listening state, active controls for an ended session, or
+  a generic microphone failure when the durable session states another cause. The worker must not
+  reinterpret `ended` as unavailable or as a mode transition to an empty value.
+- PASS Evidence: status API, browser state before/after refresh, session DB row, and focused hook/UI
+  tests for terminal and recoverable state.
+- Last Run: `PASS` — 2026-08-21 — real ended Call, Wing, and Listen-Only tabs rendered the exact
+  durable mode plus `ended`, disabled the call action, and retained that state after refresh. A
+  post-restart call also proved the exact worker received terminal state, stopped normally, and
+  emitted no false unavailable or empty-mode transition.
+
+### MPV-060 Browser LiveKit Client Compatibility Gate
+
+- Upgrade the modern playground's LiveKit browser packages only as one lockfile-coherent set, build
+  the production app, and run real Call/mode/concurrency QA.
+- Expected Result: no native buffer or `memoryview` crash, no lost room state, and no regression in
+  transcript, task, audio, mode, reconnect, or end behavior.
+- Forbidden Result: version-only promotion, mixed dependency graph, build-only acceptance, or a
+  crash hidden by automatic reconnect.
+- PASS Evidence: package/lockfile versions, focused tests, production build, active artifact, real
+  browser calls, logs, and DB state.
+- Last Run: `PASS` — 2026-08-21 — `@livekit/components-react` `2.9.21` and `livekit-client`
+  `2.18.2` built and ran in the installed local playground; the real mode and simultaneous-call
+  matrix completed without the prior native-buffer crash. Clean-install parity remains unrun.
+
+### MPV-061 Full Queen Bee And Worker Bee Voice Parity
+
+- Requirement: `06_Voice_Calls.md` Queen/Worker voice parity,
+  `55_Parallel_Work_Orchestration.md` full capability parity, `PWK-017`, `PWK-UC-019`, and
+  `TGDOC-010`.
+- Steps: in one normal audible call, explicitly launch two independent synthetic missions that use
+  representative saved-memory/recall and connected-tool capabilities. Continue a quick unrelated
+  conversation with Main. Supply an ordered synthetic file group from the linked chat or Telegram,
+  Steer only mission A by speech, end and reconnect the call, then open both returned artifacts.
+  Switch to Wing and have the verified owner directly address Main to launch and control one exact
+  Worker. Repeat ambient/passive Wing, unverified-speaker Wing, and Listen-Only launch attempts.
+- Expected Result: Main is the only speaking personality and sends one current quick reply. Both
+  missions keep exact scoped context, inputs, tools, and output abilities; A-only Steer leaves B
+  unchanged; ending the call cancels neither mission. Spoken status/completion is truthful and
+  emitted once, while each non-speech artifact appears once with a working linked-chat/Active Work
+  open or download action. Passive Wing and Listen-Only launch nothing, and no result causes an
+  unsolicited voice call. Direct Wing authority requires a current signed semantic-model verdict
+  bound to the exact verified owner, final speaker segments, call session, turn, and expiry; passive
+  or unverified Wing has no execution authority.
+- Forbidden Result: voice has a smaller silent capability set than Web/Telegram; a file is dropped,
+  reordered, aliased, or exposed across owners; fallback changes the mission or removes a required
+  tool without a typed state; interruption cancels or redirects work; B changes with A; hangup loses
+  work; a file is only described but not delivered; duplicate speech/message/artifact delivery; or
+  a passive/unverified speaker authorizes work; the browser self-asserts semantic authority; an
+  expired, unsigned, replayed, cross-owner, or cross-turn engagement verdict is accepted; or intent
+  is inferred with runtime keywords instead of the configured semantic model.
+- PASS Evidence: real audible audio and visible transcript; logical turn/revision; exact upload
+  IDs, hashes, and order; memory/recall and broker/tool receipts; two mission/attempt lifecycles;
+  exact A action receipt; callback/delivery ledger; linked-chat and Active Work state before/after
+  reconnect; both artifacts opened; mode/authority logs; installed runtime identity; public-safe
+  report. Each private evidence file must bind to its exact opaque semantic entity references;
+  copied audio or transcript bytes cannot stand in for both call sessions.
+- Semantic Runner: copy `mpv-061-full-journey-evidence.template.v1.json` into the private evidence
+  root, populate it from the exact installed journey, then run
+  `node qa/modern-playground-voice/scripts/mpv_061_full_journey_semantic_qa.js --manifest <private>/full-journey-evidence.v1.json --evidence-root <private> --artifact-identity <installed-runtime>/parallel-work-artifact-identity.json --result <private>/full-journey-result.v1.json`.
+  The focused semantic contract is
+  `tests/release/test_mpv_061_full_journey_semantic_runner.py`; installed scenario preparation and
+  observer ownership are covered by
+  `tests/release/test_mpv_061_installed_scenario_preparation.py`; parent-control ownership is
+  covered by `tests/release/test_mpv_061_qa_parent_control.py`.
+  The only passing scope is `full_journey`. The endurance harness's four-window authority slice is
+  supporting evidence only and cannot close MPV-061.
+- Strict classifier fallback control: the parent runner must arm one exact synthetic call through a
+  private FD before speech. Core must issue a five-second challenge for the exact current owner,
+  call, turn, final segment revisions, canonical utterance hash, candidate/runtime/component, and
+  configured primary/fallback. The parent must approve within 750 ms with the private case token;
+  Core must consume once atomically. The trace must contain exactly one consumed receipt, one
+  primary `attempt.history.complete` pre-model failure, zero primary forwarded/completed events,
+  one fallback forwarded event, one fallback completed attempt, one
+  `provider.fallback.completed`, and zero provider-health mutations. Strict mode blocks if any item
+  is absent or mismatched. Diagnostic mode reports the same facts but stays non-receipt eligible.
+- Adversarial control checks: browser or environment mint, personal/wrong owner, wrong call, turn,
+  segment, revision, utterance, provider, model, candidate, component, runtime, or session; stale or
+  restart-old challenge; forged parent proof; replay or concurrent consume; unavailable DB, parent,
+  or private FD; health mutation; and cleanup residue. Every case must fail closed with bounded,
+  redacted errors and leave adjacent traffic unchanged.
+- Last Run: `FAIL` — 2026-08-25. Installed synthetic-account Voice confirmed Call audio
+  and Listen-Only denial, but passive Wing created an unauthorized synthetic reminder; the reminder
+  was removed. Signed direct-engagement and full Queen/Worker/restart/artifact parity remain unproved.
+  Earlier `MPV-021`, `MPV-057`, memory/recall, and Parallel Work control runs prove narrower
+  components only. Focused semantic contracts do not replace the real installed journey.
 
 ### Endurance Gate
 

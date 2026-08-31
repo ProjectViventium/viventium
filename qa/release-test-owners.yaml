@@ -78,8 +78,6 @@ release_tests:
     qa_owner: qa/viventium-health/cases.md
   tests/release/test_install_experience_labels.py:
     qa_owner: qa/installer-resilience/cases.md
-  tests/release/test_life_bootstrap.py:
-    qa_owner: qa/glasshive-core-provider/cases.md
   tests/release/test_installer_ui.py:
     qa_owner: qa/installer-resilience/cases.md
   tests/release/test_librechat_client_defaults.py:
@@ -172,7 +170,15 @@ release_tests:
     qa_owner: qa/prompt-architecture/cases.md
   tests/release/test_prompt_workbench.py:
     qa_owner: qa/prompt-workbench/cases.md
+  tests/release/test_prompt_workbench_installed_journey_runner.py:
+    qa_owner: qa/prompt-workbench/cases.md
   tests/release/test_public_bootstrap_manifests.py:
+    qa_owner: qa/release-readiness/cases.md
+  tests/release/test_pwk_uc_019_installed_journey_runner.py:
+    qa_owner: qa/parallel-orchestrator/cases.md
+  tests/release/test_qa_control_adversarial_security.py:
+    qa_owner: qa/emotional-cortex/cases.md
+  tests/release/test_qa_release_attestation.py:
     qa_owner: qa/release-readiness/cases.md
   tests/release/test_qa_operating_contract.py:
     qa_owner: qa/qa-system-audit/cases.md
@@ -204,6 +210,8 @@ release_tests:
     qa_owner: qa/stable-dev-runtime/cases.md
   tests/release/test_stack_port_probe_timeouts.py:
     qa_owner: qa/stable-dev-runtime/cases.md
+  tests/release/test_startup_secret_redaction.py:
+    qa_owner: qa/release-readiness/cases.md
   tests/release/test_telegram_codex_runtime_paths.py:
     qa_owner: qa/telegram-runtime/cases.md
   tests/release/test_telegram_lazy_startup_contract.py:
@@ -236,11 +244,69 @@ release_tests:
     qa_owner: qa/modern-playground-voice/cases.md
   tests/release/test_voice_playground_dispatch_contract.py:
     qa_owner: qa/modern-playground-voice/cases.md
-  tests/release/test_viventium_health_integration.py:
-    qa_owner: qa/installer-resilience/cases.md
-  tests/release/test_viventium_health_runtime.py:
-    qa_owner: qa/periphery-nightly-insights/cases.md
   tests/release/test_wizard.py:
     qa_owner: qa/installer-resilience/cases.md
   tests/release/test_express_launcher_summary.py:
     qa_owner: qa/installer-resilience/cases.md
+  tests/release/test_EMO-048_semantic_runner.py:
+    qa_owner: qa/emotional-cortex/cases.md
+  tests/release/test_emo_installed_journey_runner.py:
+    qa_owner: qa/emotional-cortex/cases.md
+  tests/release/test_emo_uc_047_semantic_verifier.py:
+    qa_owner: qa/emotional-cortex/cases.md
+  tests/release/test_emo_uc_048_semantic_runner.py:
+    qa_owner: qa/emotional-cortex/cases.md
+  tests/release/test_feelings_qa_parent_control.py:
+    qa_owner: qa/emotional-cortex/cases.md
+  tests/release/test_glasshive_qa_parent_control.py:
+    qa_owner: qa/parallel-orchestrator/cases.md
+  tests/release/test_librechat_emo_qa_parent_control.py:
+    qa_owner: qa/emotional-cortex/cases.md
+  tests/release/test_local_qa_runtime_control.py:
+    qa_owner: qa/parallel-orchestrator/cases.md
+  tests/release/test_local_qa_service_ack.py:
+    qa_owner: qa/parallel-orchestrator/cases.md
+  tests/release/test_main_continuity_contract.py:
+    qa_owner: qa/main-continuity/cases.md
+  tests/release/test_mpv_061_full_journey_semantic_runner.py:
+    qa_owner: qa/modern-playground-voice/cases.md
+  tests/release/test_mpv_061_installed_scenario_preparation.py:
+    qa_owner: qa/modern-playground-voice/cases.md
+  tests/release/test_mpv_061_qa_parent_control.py:
+    qa_owner: qa/modern-playground-voice/cases.md
+  tests/release/test_native_surface_eval_runner_trust_cleanup.py:
+    qa_owner: qa/prompt-architecture/cases.md
+  tests/release/test_parallel_work_catalog_semantic_verifier.py:
+    qa_owner: qa/parallel-orchestrator/cases.md
+  tests/release/test_parallel_work_contract.py:
+    qa_owner: qa/parallel-orchestrator/cases.md
+  tests/release/test_parallel_work_installed_journey_qa.py:
+    qa_owner: qa/parallel-orchestrator/cases.md
+  tests/release/test_parallel_work_live_journey_runner.py:
+    qa_owner: qa/parallel-orchestrator/cases.md
+  tests/release/test_parallel_work_proxy.py:
+    qa_owner: qa/parallel-orchestrator/cases.md
+  tests/release/test_parallel_work_qa_evidence.py:
+    qa_owner: qa/parallel-orchestrator/cases.md
+  tests/release/test_parallel_work_redis_runtime.py:
+    qa_owner: qa/parallel-orchestrator/cases.md
+  tests/release/test_parallel_work_release_gate.py:
+    qa_owner: qa/parallel-orchestrator/cases.md
+  tests/release/test_personal_account_qa_cleanup_plan.py:
+    qa_owner: qa/release-readiness/cases.md
+  tests/release/test_personal_account_qa_recovery.py:
+    qa_owner: qa/release-readiness/cases.md
+  tests/release/test_rel_uc_004_semantic_verifier.py:
+    qa_owner: qa/release-readiness/cases.md
+  tests/release/test_release_catalog_semantic_verifier.py:
+    qa_owner: qa/release-readiness/cases.md
+  tests/release/test_release_claim_qa_fault.py:
+    qa_owner: qa/parallel-orchestrator/cases.md
+  tests/release/test_telegram_qa_parent_control.py:
+    qa_owner: qa/parallel-orchestrator/cases.md
+  tests/release/test_telegram_worker_file_parity_qa.py:
+    qa_owner: qa/telegram-document-attachments/cases.md
+  tests/release/test_tr026_installed_journey_runner.py:
+    qa_owner: qa/telegram-runtime/cases.md
+  tests/release/test_tr026_installed_journey_semantic_verifier.py:
+    qa_owner: qa/telegram-runtime/cases.md

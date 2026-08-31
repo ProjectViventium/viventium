@@ -174,7 +174,7 @@ No real provider credential or account was used, so the first-answer release gat
 
 ### Unhappy paths and recovery
 
-| Path | Outcome history | Visible/system outcome |
+| Path | Result | Visible/system outcome |
 | --- | --- | --- |
 | Missing Easy Install provider secret | FAIL -> fixed -> PASS | Secret is optional until browser onboarding; generated runtime contains no unresolved secret placeholder |
 | Missing Custom Settings Install secret | PASS | One clear failure, no traceback, canonical config unchanged |
@@ -279,7 +279,7 @@ The final type-check remains nonzero because of broad pre-existing LibreChat dia
 audited feature. After typing the synthetic Feelings trail fixture against the real data contract,
 the type-check emits no `Feelings` diagnostic; its focused 13-test view suite passes.
 
-| Check | Evidence conclusion |
+| Check | Result |
 | --- | --- |
 | Complete parent release suite | PASS — final rerun after upgrade/continuity hardening: 1,072 passed, 7 skipped, 0 failed in 172.45 s with supported Node 24 explicitly first on `PATH` and declared Python dependencies supplied |
 | Focused installer safety gate | PASS — 148 continuity, upgrade, helper, update-check, and install-label tests |
@@ -303,16 +303,16 @@ owner checkout; the canonical test install used a private temporary HOME and npm
 
 | Original requirement | Verdict | Evidence / remaining gap |
 | --- | --- | --- |
-| Inventory the project lifecycle and installer-related history | PASS | Timestamped all-ref parent inventory plus installer/delivery path ledger and nested-repo state map; this is documentation evidence |
-| Explain new-machine setup versus the reliable owner setup | PASS | New-user/owner deltas are mapped across prerequisites, config, provider state, optional services, helper, persistence, and delivery artifacts as audit analysis |
-| Use a secure local sandbox and protect personal data | PARTIAL | No-share VM carried mutations; owner state received a verified private backup; shared personal Mac was read-only and correctly refused for installation because a folder is not isolation; user-path coverage remains incomplete |
-| Make no cloud/push/publish/external-message changes | PASS | No stage, commit, push, PR, release, provider grant, channel action, or external message occurred in this workstream; unrelated same-login activity is excluded from this claim |
+| Inventory the project lifecycle and installer-related history | PASS for documentation | Timestamped all-ref parent inventory plus installer/delivery path ledger and nested-repo state map; see the lifecycle inventory |
+| Explain new-machine setup versus the reliable owner setup | PASS for audit analysis | New-user/owner deltas are mapped across prerequisites, config, provider state, optional services, helper, persistence, and delivery artifacts |
+| Use a secure local sandbox and protect personal data | PARTIAL user-path coverage | No-share VM carried mutations; owner state received a verified private backup; shared personal Mac was read-only and correctly refused for installation because a folder is not isolation |
+| Make no cloud/push/publish/external-message changes | PASS for this workstream | No stage, commit, push, PR, release, provider grant, channel action, or external message; unrelated same-login activity is excluded from this claim |
 | Audit every nested repo/feature with literal 100% coverage | PARTIAL | Broad inventory and 1,072-pass parent suite exist, but exact delivered pins, signed payload, every optional feature, inclusive UX, Docker, Intel, and full fault matrix remain open |
-| Independent Fable 5 Extra review with the original context | PASS | The second-opinion process passed: the visible same-session review found material defects, rejected the superseded package, rechecked every remediation and residual, reproduced the focused gate, reconciled the full collected total, and kept the product verdict PARTIAL |
+| Independent Fable 5 Extra review with the original context | PASS for second-opinion process | The visible same-session review found material defects, rejected the superseded package, rechecked every remediation and residual, reproduced the focused gate, reconciled the full collected total, and kept the product verdict PARTIAL |
 | Cover every installer happy/unhappy path and guarantee reliability | PARTIAL | Core install/rerun/recovery/account-cancel/Feelings paths ran; provider grant, first/second answer, low-resource/network/interruption/reboot/migration and signed-artifact lanes remain open |
 | One command, then connect accounts, then everything works | PARTIAL | Easy Install reaches local core and browser account handoff; completed provider grant, self-test, persistent answers, and owner-parity are not proven |
-| Deep current web research and popular OSS inspiration | PASS | The research package contains evidence-ranked installer/onboarding patterns and a separate inspiration inventory; popularity evidence is not treated as product acceptance |
-| Telegram, WhatsApp, Slack and other channel design | PARTIAL | Design-only evidence specifies Telegram-first and Custom Settings channel journeys; WhatsApp remains unavailable and no end-to-end channel grant/send/receive/revoke lane passed |
+| Deep current web research and popular OSS inspiration | PASS for research package | Evidence-ranked installer/onboarding patterns and separate inspiration inventory are documented; popularity evidence is not treated as product acceptance |
+| Telegram, WhatsApp, Slack and other channel design | PARTIAL / design only | Telegram-first and Custom Settings channel journeys are specified; WhatsApp remains unavailable and no end-to-end channel grant/send/receive/revoke lane passed |
 | Groq key and Grok reliably available in LibreChat | PARTIAL | Configuration and distinct-provider wording are covered; live key validation, answer, quota, expiry, repair and revoke are not proven |
 | Feelings is a discoverable flagship feature | PARTIAL | Real browser discovery, nine bands, toggle persistence, API/DB agreement and lifecycle survival passed; inclusive UX, degraded-provider and signed-delivery lanes remain open |
 | Rename the install choices | PASS | Active user-facing paths use **Easy Install** and **Custom Settings Install**; internal `express`/`custom` values remain solely for backward compatibility |

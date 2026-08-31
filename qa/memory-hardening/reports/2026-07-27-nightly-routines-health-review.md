@@ -1,3 +1,4 @@
+<!-- qa-evidence-exempt: Historical evidence snapshot retained verbatim; retroactive v2 fields would invent evidence that was not captured during the run. -->
 # 2026-07-27 Nightly Routines Health Review
 
 Read-only overnight-routine audit from the public checkout. No model-backed apply, manual
@@ -135,4 +136,3 @@ this remains an explicit review gap.
 4. Retire or reconcile historical GlassHive dead letters and the Jul 16 queued host-worker-busy row.
 5. Retry the Claude review after the local weekly limit resets if a second-opinion gate is required
    for release signoff.
-<!-- qa-evidence-exempt: Historical or specialized supporting artifact retained without retroactively inventing missing evidence; current release acceptance requires a fresh full-view report. -->

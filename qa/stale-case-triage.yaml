@@ -1,0 +1,94 @@
+schema_version: 1
+reviewed_on: 2026-08-29
+max_age_days: 90
+first_cataloged_on_source: inline_cataloged_date_or_machine_readable_catalogedOn
+first_cataloged_on_immutable: true
+disposition: review_before_expiry_or_during_next_owning_change
+deterministic_enforcement:
+  - first_cataloged_on_presence
+  - review_age
+  - marker_count
+  - marker_digest
+process_obligation: next_owning_feature_change_review
+reason: >-
+  These cases remain real acceptance debt. The 2026-08-29 documentation audit did not execute them,
+  so every row stays NOT RUN. The automated gate enforces review age plus exact marker counts and
+  digests. Reviewing the debt during the owning feature's next change remains an explicit process
+  obligation; this manifest does not claim that the test can infer when such a change occurs.
+
+entries:
+  - path: qa/agent-config-continuity/cases.md
+    marker_count: 6
+    marker_sha256: 385f4aa1b6449a68e243185a57b0241faf0588026a8bae7a765588d31933eb2f
+  - path: qa/agent-streaming-usage/cases.md
+    marker_count: 7
+    marker_sha256: 774491ba3dd92b579402025cea107fc16e561dcd4cd97515a7470c80a0eb97ab
+  - path: qa/branding-assets/cases.md
+    marker_count: 3
+    marker_sha256: 6736b5c7fd9279a67aeae9d626b0decc653475f7c9b2007b80fe18213397aac7
+  - path: qa/citation-rendering/cases.md
+    marker_count: 8
+    marker_sha256: 9a669b2d4ad0bd72a5618469b86d8474c0b887eaaf5a53c1807621121c9fda39
+  - path: qa/config-alignment/cases.md
+    marker_count: 6
+    marker_sha256: 8c9a1a4a33f4a715e478c814da94b2b576f4879f5e085bd95922e783a55c0d20
+  - path: qa/config-compiler-memory/cases.md
+    marker_count: 4
+    marker_sha256: 436badaabb3ca085a5f7fde91e90316b629ea4129360ac23e9d5ab635323ca48
+  - path: qa/documentation-implementation-audit/cases.md
+    marker_count: 3
+    marker_sha256: 79ba7b954e442d2fff1a6a3c89424033cc322ee12c4ae5b929d0714501ec4c69
+  - path: qa/installer-wait-taglines/cases.md
+    marker_count: 7
+    marker_sha256: 85488036a4972c3086c683ab9ca6b593ab6b009dcc519207216d3d848ef973e1
+  - path: qa/listen-only-mode/cases.md
+    marker_count: 4
+    marker_sha256: bdc15ca6ae169cb3434e41c211d890e067e44bc75ee9504a1cb8acda35f2f9d3
+  - path: qa/mcp-oauth/cases.md
+    marker_count: 7
+    marker_sha256: feea7be12580bb30e717198c9379872ecff87cf8f2284ad3773ef6a97d65ec8f
+  - path: qa/mcp-tooling/cases.md
+    marker_count: 9
+    marker_sha256: d0ab93aea8c2ff4df5fc04376ddd280df4dddaab4dd6da3b85fa1cace9cff1f6
+  - path: qa/no-response/cases.md
+    marker_count: 9
+    marker_sha256: 501c04dd960a911df200e160d18c0da28e2aa9f8020cc25e72750914110bf305
+  - path: qa/red-team-cortex/cases.md
+    marker_count: 9
+    marker_sha256: c4d325704597ee1e5a7de9171cc22db58852d01556bb941d36e8f353d83d6fc0
+  - path: qa/release-readiness/cases.md
+    marker_count: 3
+    marker_sha256: e0bf983029791be343e6ebf031524fc387860b1944f2937c75d49f510dfbd451
+  - path: qa/scheduling-cortex/cases.md
+    marker_count: 3
+    marker_sha256: c9a445854f7ed6c35b9b46d93929c956656bb75ecaafc860763ef85eadeca32d
+  - path: qa/telegram-detached-api-stability/cases.md
+    marker_count: 13
+    marker_sha256: 814e4c2b090b935e5ecdd2dd436c04c34b114e6d9d34a18ea72156c7e8dbf2fa
+  - path: qa/telegram-local-bot-api/cases.md
+    marker_count: 7
+    marker_sha256: 6ab0cdc4d6dab8ed376f970a216604f67e9a59865a541984b31f32293a946d67
+  - path: qa/telegram-media-downloads/cases.md
+    marker_count: 7
+    marker_sha256: e56075019be2302cccf191dcdf363d34723af6104838a3f356ee80bd52c92f4b
+  - path: qa/telegram-media-prereqs/cases.md
+    marker_count: 7
+    marker_sha256: 96f77a3883992ff3d4312e5dab86cbf149b72c0754a0f35c9d3487867087b260
+  - path: qa/telegram-settings-latency/cases.md
+    marker_count: 7
+    marker_sha256: 8c4cdd6410436971856f853855e3c8a46619b4782a4b0fd057d6f643168533e9
+  - path: qa/voice-call-hardening/cases.md
+    marker_count: 7
+    marker_sha256: 80421629f3382f2856df24d873cd778947b67ddcaab0b7b162d3b70d65d44110
+  - path: qa/voice-streaming-first/cases.md
+    marker_count: 7
+    marker_sha256: 53ed4d02844e2b7574340a22a3f168eb8abc8c7ac96e89a994cf92916ba05bd0
+  - path: qa/voice-turn-taking/cases.md
+    marker_count: 7
+    marker_sha256: 01e1dea0aff9233c0d0a090575c7c17f2af95c928c8caa43b9bd110873e688db
+  - path: qa/web-search/cases.md
+    marker_count: 8
+    marker_sha256: aefcd344dd551f667cdd41c3395f2dd3f71230be627d39e495f042447b8fcf2e
+  - path: qa/web-search-telegram/cases.md
+    marker_count: 6
+    marker_sha256: 7a420fe1578379086a459a519fc0e4206b79782df2e8592c973b61f069ef0b80

@@ -1,7 +1,5 @@
 # GlassHive Host Workers QA Cases
 
-Automated Codex app-server probe owner: `tests/release/test_glasshive_codex_app_server_probe.py`.
-
 ## Case ID Convention
 
 Use stable `GHHOST-NNN` IDs for glasshive host workers cases.
@@ -12,11 +10,11 @@ Use stable `GHHOST-NNN` IDs for glasshive host workers cases.
 | --- | --- | --- | --- | --- | --- |
 | `GHHOST-001` | Host-native workers act on the intended local/browser/file surface and report completion without exposing plumbing. | User-visible behavior matches source, docs, persisted state, and logs | GlassHive MCP/API, host worker, browser/desktop/file surfaces | `tests/release/test_stable_dev_runtime_workflows.py` plus user-grade QA when visible | PASS 2026-06-22 for local approval scope: host Codex xhigh and host Claude max wait/continue smokes passed with run/evidence markers; provider-backed Codex and Claude host browser wait/continue passed. |
 | `GHHOST-002` | Public QA evidence is sanitized and reproducible | A PR reviewer can verify the behavior without private/local data | QA report, git diff, logs summary, generated artifacts | Public-safety scan plus relevant release tests | PASS 2026-06-22 for `qa/glasshive_deep_research/reports/2026-06-22-production-hardening-local-qa.md` plus public QA contract/public-safety scan. |
-| `GHHOST-003` | One-shot delegation preserves instruction precision without forced canned status | Assistant can self-check the delegated instruction and acknowledges in its own voice | MCP tool result, web chat, callback result | GlassHive `test_mcp_server.py` plus browser callback QA | PASS/PARTIAL 2026-06-25: live MCP one-shot delegation created a project/worker/run, preserved diagnostics, completed, and returned artifacts; browser chat callback run remains a separate gate. |
-| `GHHOST-004` | Artifact discovery excludes runtime/browser scratch state and only promotes user-facing deliverables. | Users receive the actual worker output, not Chrome extension capture pages, browser profile data, uploaded-source metadata, or temporary scratch files. | GlassHive API/MCP artifacts, live payload, artifact open/download links, browser preview | GlassHive `test_api.py`, `test_mcp_server.py`, and real-browser artifact-open QA | PASS/PARTIAL 2026-06-25: provider-backed live worker produced, served, downloaded, and browser-previewed the expected Markdown artifact; callback artifact parity remains a separate gate. |
-| `GHHOST-005` | Host and workstation workers preserve native CLI/browser/computer capability while adding broker MCP grants. | A user can ask unknown future work and the selected worker can decide using its full native capability surface plus brokered tools. | Host Codex/Claude launch, worker-local config, workspace Codex path, runtime preflight, logs | `test_profile_runtime.py`, real `codex mcp list` capability probe, Claude help/launch probe, worker config inspection | PASS/PARTIAL (2026-06-14 source/runtime probes and targeted tests; live post-change worker launch still required after runtime rebuild/restart) |
-| `GHHOST-006` | Bootstrapped workspace images include AI-worker browser extensions, native messaging hosts, native skill awareness, and truthful workstation capability context without forcing workflows. | A new user's workspace worker starts with truthful browser/computer/document substrate awareness and diagnostic evidence without warning clutter. | Docker/workstation image, Chromium/Chrome profile, Codex/Claude worker prompts, worker logs | `test_docker_sandbox.py`, `test_profile_runtime.py`, `test_run_evidence.py`, `glasshive-browser-extension-check`, real local Docker smoke, real browser/Computer Use bridge QA | PASS/PARTIAL 2026-06-27: docs7 source/tests and local Docker smoke proved current image contract, worker capability guidance, active-run heartbeat, desktop-prime marker, and artifact/evidence pass; provider-backed browser bridge connectivity remains separate acceptance when configured. |
-| `GHHOST-007` | Callback copy distinguishes a failed evidence gate with available artifacts from a total worker failure. | The user can tell whether a usable partial/delivered file exists and what still failed, without misleading success wording. | Telegram/web callbacks, callback outbox, artifact open/download links, run evidence | LibreChat `glasshive.spec.js`, GlassHive `test_api.py`, and real callback QA | PASS/PARTIAL 2026-06-25: automated coverage, live web callback/browser QA, and live Telegram/voice delivery-ledger claim/mark parity pass; real external Telegram send/audible voice delivery for this exact failed-evidence artifact case remains a side-effectful gate. |
+| `GHHOST-003` | One-shot delegation preserves instruction precision without forced canned status | Assistant can self-check the delegated instruction and acknowledges in its own voice | MCP tool result, web chat, callback result | GlassHive `test_mcp_server.py` plus browser callback QA | PARTIAL 2026-06-25: live MCP one-shot delegation created a project/worker/run, preserved diagnostics, completed, and returned artifacts; browser chat callback run remains a separate gate. |
+| `GHHOST-004` | Artifact discovery excludes runtime/browser scratch state and only promotes user-facing deliverables. | Users receive the actual worker output, not Chrome extension capture pages, browser profile data, uploaded-source metadata, or temporary scratch files. | GlassHive API/MCP artifacts, live payload, artifact open/download links, browser preview | GlassHive `test_api.py`, `test_mcp_server.py`, and real-browser artifact-open QA | PARTIAL 2026-06-25: provider-backed live worker produced, served, downloaded, and browser-previewed the expected Markdown artifact; callback artifact parity remains a separate gate. |
+| `GHHOST-005` | Host and workstation workers preserve native CLI/browser/computer capability while adding broker MCP grants. | A user can ask unknown future work and the selected worker can decide using its full native capability surface plus brokered tools. | Host Codex/Claude launch, worker-local config, workspace Codex path, runtime preflight, logs | `test_profile_runtime.py`, real `codex mcp list` capability probe, Claude help/launch probe, worker config inspection | PARTIAL (2026-06-14 source/runtime probes and targeted tests; live post-change worker launch still required after runtime rebuild/restart) |
+| `GHHOST-006` | Bootstrapped workspace images include AI-worker browser extensions, native messaging hosts, native skill awareness, and truthful workstation capability context without forcing workflows. | A new user's workspace worker starts with truthful browser/computer/document substrate awareness and diagnostic evidence without warning clutter. | Docker/workstation image, Chromium/Chrome profile, Codex/Claude worker prompts, worker logs | `test_docker_sandbox.py`, `test_profile_runtime.py`, `test_run_evidence.py`, `glasshive-browser-extension-check`, real local Docker smoke, real browser/Computer Use bridge QA | PARTIAL 2026-06-27: docs7 source/tests and local Docker smoke proved current image contract, worker capability guidance, active-run heartbeat, desktop-prime marker, and artifact/evidence pass; provider-backed browser bridge connectivity remains separate acceptance when configured. |
+| `GHHOST-007` | Callback copy distinguishes a failed evidence gate with available artifacts from a total worker failure. | The user can tell whether a usable partial/delivered file exists and what still failed, without misleading success wording. | Telegram/web callbacks, callback outbox, artifact open/download links, run evidence | LibreChat `glasshive.spec.js`, GlassHive `test_api.py`, and real callback QA | PARTIAL 2026-06-25: automated coverage, live web callback/browser QA, and live Telegram/voice delivery-ledger claim/mark parity pass; real external Telegram send/audible voice delivery for this exact failed-evidence artifact case remains a side-effectful gate. |
 | `GHHOST-008` | Codex effort values are clamped before launch when a host model supplies an unsupported per-run effort. | A bad `effort=minimal` from voice/chat cannot make the worker fail before it starts acting. | Voice/chat MCP launch, host Codex command, config compiler, run evidence | `tests/test_profile_runtime.py::test_codex_cli_provider_config_clamps_minimal_without_route_allowlist`; `tests/test_mcp_server.py::test_worker_tool_schemas_advertise_host_native_execution`; `tests/release/test_config_compiler.py::test_render_runtime_env_emits_glasshive_launch_env_only_when_enabled`; real local GlassHive launch QA | PASS 2026-06-25: automated tests, live marker smoke, live Yahoo Finance browser smoke, DB/log/evidence checks, and Playwright UI checks passed; see `reports/2026-06-25-codex-minimal-effort-clamp-qa.md`. Full doctor validation remains blocked by local disk-space prerequisite. |
 | `GHHOST-009` | Browser/computer evidence, worker steering, and chat callbacks stay truthful after host-worker completion. | A successful browser task is not mislabeled as provider failure, blank steering fails before HTTP, own finished callbacks replace pending chat placeholders, and unrelated in-progress replies are not clobbered. | GlassHive run evidence, MCP `worker_message`, LibreChat callback receiver, real Chrome/LibreChat UI | `test_run_evidence.py`, `test_mcp_server.py`, LibreChat `glasshive.spec.js`, live MCP/callback/Chrome QA | PASS 2026-06-25: targeted and broader affected tests passed, live runtime rejected blank `worker_message`, synthetic signed callback updated its own unfinished placeholder, unrelated active placeholder returned retryable `425`, and real Chrome showed the completed callback without the placeholder. |
 | `GHHOST-010` | Host workers can suppress selected plugins by canonical plugin ID without stripping unrelated capabilities, retaining a contaminated native session, or adding prompt policy. | Viventium workers do not load the conflicting Feelings plugin, while other plugins and global user plugin settings remain available; a policy change replaces the old native session only after terminating it and carries visible history forward. | Config compiler, worker-local Codex config, Claude launch settings, provider session binding, worker instruction | Compiler/wizard tests; `test_profile_runtime.py` denylist/fail-closed cases; `test_conversation_provider.py::test_native_policy_change_supersedes_contaminated_session_and_seeds_visible_history`; installed config/DB/browser QA | PASS 2026-08-02: compiled and installed runtime denies only `viventium-feelings@project-viventium`; live worker config proved that plugin disabled and unrelated plugins retained; provider, DB, log, and browser QA passed. See `reports/2026-08-02-codex-worker-native-policy-qa.md`. |
@@ -24,6 +22,16 @@ Use stable `GHHOST-NNN` IDs for glasshive host workers cases.
 | `GHHOST-012` | Dynamic application authority is pinned at the actual provider/native boundary and separately graded for causal effect. | Structural broker text precedes one exact declared tail; off has none; changed authority replaces safely; behavior is not accepted from markers or config alone. | LibreChat provider headers, GlassHive request hydration/session bundle, worker-local Codex config, exact-model contrast | LibreChat/GlassHive provider tests, release contract, installed DB/config correlation, four-way semantic contrast | PARTIAL 2026-08-02: transport/order passed; behavioral potency failed `1/4` and remains open. See `../emotional-cortex/reports/2026-08-02-glasshive-feeling-authority-and-contrast.md`. |
 | `GHHOST-013` | Automatic conversation fallback preserves the logical agent's complete endpoint-owned capability bundle and safe diagnostics. | A real fallback keeps broker/tool capability, project instructions, visible history, and one current Feeling tail instead of becoming a stripped worker. | LibreChat primary/fallback materialization, signed capability headers, GlassHive request/run/worker state, safe logs | forced lazy and initialization fallback tests plus request/run/worker audit | PASS 2026-08-04: forced fallback tests passed in canonical and active components; request/run/worker evidence linked the historical failure to a missing fallback bundle, not provider misrouting or Feeling delivery. |
 | `GHHOST-015` | Future capacity retries use one persisted, due-aware scheduler path with bounded threads and exact recovery. | Temporary host contention waits safely and resumes once without destabilizing the computer, duplicating work, or starving eligible workers. | GlassHive service scheduler, SQLite run queue, bounded executor, process/thread lifecycle | 12 focused `test_api.py` capacity/scheduler cases plus isolated 200-retry thread-count stress and post-fix full runtime QA | PARTIAL 2026-08-10: 12 focused tests, the 175-case API file, a 200-retry constant-thread stress, and the 791-case full runtime suite passed; installed/running capacity recovery remains pending. See `reports/2026-08-10-capacity-retry-scheduler-thread-safety.md`. |
+| `GHHOST-016` | Parallel host missions use persisted bounded leases, trustworthy resource probes, isolated native state, exact mission controls, and owner-scoped APIs in every deployment mode. | Independent missions run concurrently without corrupting shared work, while capacity overflow waits durably and one mission can never control or inspect another user or sibling run. | GlassHive account and legacy APIs, MCP, host executor, SQLite leases/action ledger, native process tree | Cross-owner API/MCP matrix; probe-failure/recovery; multi-run Pause/Resume/Stop; crash-after-effect action replay; live three-running-plus-one-queued exercise | NOT RUN — cataloged 2026-08-29: automated implementation is in progress; installed concurrency, restart, and exact-process evidence remain release gates. |
+| `GHHOST-017` | Same-UID host workers are never treated as a security boundary for Parallel Work. | Automatic missions cannot read service/peer environments or protected state, steal orchestration authority, or opt themselves into unsafe host execution. | GlassHive execution admission, Docker/workstation boundary, host process probe, worker capability projection | Synthetic cross-process marker; mount/PID/socket inspection; forged host-mode request; isolated provider/broker smoke | NOT RUN — cataloged 2026-08-13: a same-UID host probe reproduced environment visibility; isolated execution repair and installed proof are mandatory. |
+| `GHHOST-018` | Provider-route success clears only the exact failure timestamp observed by that attempt. | An older concurrent success cannot erase a newer quota or rate-limit cooldown, including after service restart. | GlassHive service, SQLite provider health and run attempts | Exact success-clear and older-success/newer-failure restart regressions in `test_host_run_leases.py` | PARTIAL 2026-08-22; source tests only, installed runtime not run. |
+| `GHHOST-019` | Admission and invocation require an unexpired active lease; the first run start and each attempt invocation remain immutable. | Expired ownership cannot launch work, reconciliation safely requeues pre-dispatch claims, and retry history keeps its original timestamps. | GlassHive store lifecycle, host lease reconciliation, attempt history | Exact-expiry, reconciliation, and second-attempt regressions in `test_host_run_leases.py` | PARTIAL 2026-08-22; source tests only, installed runtime not run. |
+| `GHHOST-020` | `runtime_invoked_at` is committed only at the confirmed dispatch boundary, and `running` cannot exist without it. | Observer or confirmation validation failure cannot claim that provider execution started. | GlassHive service startup observer, store startup CAS, run/attempt lifecycle | Startup-boundary, missing-observer, confirmation-failure, and rejection regressions in `test_api.py` | PARTIAL 2026-08-22; source tests only, installed runtime not run. |
+| `GHHOST-021` | Retry requeue is fenced by expected attempt, lease, executor, and startup-token generation. | A stale processor from attempt 1 cannot release, close, or requeue attempt 2. | GlassHive store retry transaction, two-store processor race | `test_stale_processor_requeue_cannot_mutate_or_release_newer_attempt` | PARTIAL 2026-08-22; source tests only, installed runtime not run. |
+| `GHHOST-022` | Queue age closes at exact invocation and stays frozen after terminal state and API reload. | A user never sees completed work continue aging in the queue as wall time advances. | Owner-scoped work-detail API, persisted queue episode | `test_work_detail_freezes_queue_age_after_invocation_terminal_and_reload` | PARTIAL 2026-08-22; source TestClient/reload only, installed API not run. |
+| `GHHOST-023` | The delegation prompt envelope contains the exact typed task context, without private chat, host identity, or invented provider/tool gates. | A delegated worker receives the user brief and explicit constraints without hidden conversation or host IDs. | GlassHive MCP delegation projection and tool contract | Exact projection/privacy and minimal-envelope tests in `test_mcp_server.py` | PARTIAL 2026-08-22; source tests only, installed MCP not run. |
+| `GHHOST-024` | Every persisted `running` row has the exact invocation marker, live unexpired lease, and matching open attempt. | Direct creation, legacy updates, confirmation, startup, and reconciliation cannot invent execution. | GlassHive store and startup reconciliation | Exact direct-create, generic-mutation, legacy-confirmation, admitted-restart, and startup/reconcile cases in `test_host_run_leases.py`; observer/confirmation cases in `test_api.py`; exact control lifecycle in `test_phase3_controls.py` | PARTIAL 2026-08-22; source tests only, installed restart not run. |
+| `GHHOST-025` | The owner-scoped callback/detail producer preserves exact attempt identity and emits only strict redacted trace and safe artifact fields. | Core can reject malformed/replayed work evidence without treating transport acceptance as user delivery. | GlassHive callback outbox and owner-scoped work-detail API | Exact missing/wrong-attempt, stable replay, callback identity, detail shape, overflow, lifecycle-effect, and artifact cases in `test_account_api.py`, `test_queue_truth_and_trace.py`, `test_phase4_lifecycle_effects.py`, and callback-focused `test_api.py` | PARTIAL 2026-08-22; source tests only, installed Core callback/detail path not run. |
 
 ## `GHHOST-001` - Core User Flow
 
@@ -88,7 +96,7 @@ Use stable `GHHOST-NNN` IDs for glasshive host workers cases.
   summary, and public-safety review.
 - Automation: `viventium_v0_4/GlassHive/runtime_phase1/tests/test_mcp_server.py` plus browser
   callback QA when visible.
-- Last run: PASS/PARTIAL 2026-06-25. A live MCP one-shot delegation with synthetic public-safe
+- Last run: PARTIAL 2026-06-25. A live MCP one-shot delegation with synthetic public-safe
   content created a fresh project/worker/run, exposed diagnostics only when requested, completed
   successfully, and returned a user-facing artifact. Browser chat callback acceptance for this exact
   one-shot path remains open.
@@ -116,7 +124,7 @@ Use stable `GHHOST-NNN` IDs for glasshive host workers cases.
   and confirmation that no private paths or raw browser state were copied into public QA.
 - Automation: `viventium_v0_4/GlassHive/runtime_phase1/tests/test_api.py` and
   `viventium_v0_4/GlassHive/runtime_phase1/tests/test_mcp_server.py`.
-- Last run: PASS/PARTIAL 2026-06-25. Local deterministic browser QA and artifact regressions
+- Last run: PARTIAL 2026-06-25. Local deterministic browser QA and artifact regressions
   covered scratch exclusion, preview/download, and generated Markdown/CSV/HTML/PDF/XLSX/DOCX/PPTX
   files; a provider-backed live worker also produced and served the expected Markdown artifact via
   GlassHive artifact APIs, and real Playwright browser preview showed the expected file page and
@@ -154,7 +162,7 @@ Use stable `GHHOST-NNN` IDs for glasshive host workers cases.
   summary without secrets, logs/DB run status, and visible user result or explicit blocker.
 - Automation: `viventium_v0_4/GlassHive/runtime_phase1/tests/test_profile_runtime.py` plus a
   real user-path GlassHive host/workstation run when the active runtime has the change loaded.
-- Last run: PASS/PARTIAL (2026-06-14 targeted source/runtime probes and unit tests; live
+- Last run: PARTIAL (2026-06-14 targeted source/runtime probes and unit tests; live
   post-change worker launch remains required after local runtime rebuild/restart).
 
 ## `GHHOST-006` - Workspace Image Extension And Skill Readiness
@@ -168,8 +176,7 @@ Use stable `GHHOST-NNN` IDs for glasshive host workers cases.
   image is present; use only synthetic public-safe browser/computer tasks.
 - Steps:
   1. Inspect/generated-build the workstation Dockerfile and verify the default image tag is
-     `workers-projects-runtime-workstation:phase1-node22-docs8-openclaw2026.7.1-5`, its base image
-     matches the reviewed digest, and its provenance attests Ubuntu snapshot `20260801T000000Z`.
+     `workers-projects-runtime-workstation:phase1-node22-docs7`.
   2. Verify Codex and Claude Code package specs are pinned to dated, QA-checked stable versions, or
      that any override has matching version and capability evidence.
   3. Verify managed policy exists for both Chromium and Google Chrome locations. By default it must
@@ -199,7 +206,7 @@ Use stable `GHHOST-NNN` IDs for glasshive host workers cases.
 - Automation: `viventium_v0_4/GlassHive/runtime_phase1/tests/test_docker_sandbox.py`,
   `viventium_v0_4/GlassHive/runtime_phase1/tests/test_bootstrap.py`, and
   `viventium_v0_4/GlassHive/runtime_phase1/tests/test_profile_runtime.py`.
-- Last run: PASS/PARTIAL 2026-06-27. The docs7 source/tests and local Docker smoke proved the
+- Last run: PARTIAL 2026-06-27. The docs7 source/tests and local Docker smoke proved the
   current image contract, worker capability guidance, active-run heartbeat, desktop-prime marker,
   artifact/evidence pass, and compute cleanup. The 2026-06-23 managed-worker QA remains the browser
   extension bridge reference: Claude native-host installation was proven, while Codex remains
@@ -236,7 +243,7 @@ Use stable `GHHOST-NNN` IDs for glasshive host workers cases.
   wording, artifact-link presence, run evidence status, and public-safety review.
 - Automation: `viventium_v0_4/GlassHive/runtime_phase1/tests/test_api.py` and
   `viventium_v0_4/LibreChat/api/server/routes/viventium/__tests__/glasshive.spec.js`.
-- Last run: PASS/PARTIAL 2026-06-25. Deterministic GlassHive and LibreChat callback regressions
+- Last run: PARTIAL 2026-06-25. Deterministic GlassHive and LibreChat callback regressions
   passed, a live signed callback updated a synthetic web conversation placeholder with the
   partial-delivery wording visible in Chrome, and live Telegram/voice delivery-ledger claim/mark
   parity passed with the same wording. Real external Telegram send/audible voice delivery for this
@@ -426,7 +433,7 @@ Use stable `GHHOST-NNN` IDs for glasshive host workers cases.
   them.
 - Forbidden result: transcript content in the bearer token, unbounded cache growth, unverified
   rehydration, universal native-tool stripping, or a tool catalog without a completed call.
-- Last run: PASS-AUTOMATED/LIVE 2026-08-08. A representative grant fell from 20,411 to 942
+- Last run: PASS 2026-08-08. A representative grant fell from 20,411 to 942
   characters; 46 broker/provider/route tests passed and a live worker completed brokered
   `file_search` with zero native command executions.
 
@@ -487,6 +494,105 @@ Use stable `GHHOST-NNN` IDs for glasshive host workers cases.
   yet a runtime-completion claim. See
   `reports/2026-08-10-capacity-retry-scheduler-thread-safety.md`.
 
+## `GHHOST-018` - Provider Health Success Generation CAS
+
+- Requirement: a successful attempt may clear only the exact `last_failed_at` generation it
+  observed before dispatch.
+- Steps: persist the attempt observation, write a newer structured quota failure from another
+  processor, reopen the SQLite store, then apply the older success.
+- Expected result: the conditional delete changes zero rows and the newer cooldown survives restart.
+- Forbidden result: route-only deletion or process-memory observation state.
+- Automation: `test_success_clears_provider_route_health` and
+  `test_older_success_cannot_clear_newer_provider_failure_after_restart`.
+
+## `GHHOST-019` - Exact Lease Expiry And Immutable Lifecycle Times
+
+- Requirement: `expires_at <= now` is not active ownership; `runs.started_at` is the first start
+  forever; each attempt's `runtime_invoked_at` is write-once.
+- Steps: test equality at admission and invocation, reconcile an expired claimed lease, then run a
+  second attempt after retry and reopen the database.
+- Expected result: expired transactions are rejected, the pre-dispatch claim is safely requeued,
+  first start is unchanged, and attempts retain distinct immutable invocation times.
+- Forbidden result: renewing an expired lease during admission, clearing first start, or rewriting
+  attempt 1 while attempt 2 starts.
+- Automation: exact-expiry and append-only lifecycle cases in `test_host_run_leases.py`.
+
+## `GHHOST-020` - Truthful Confirmed Dispatch Marker
+
+- Requirement: the durable invocation marker and `running` transition occur only at the exact
+  validated dispatch boundary and remain only after exact startup confirmation.
+- Steps: inspect state before and after the runtime observer; repeat with missing observer support,
+  startup rejection, and a failed confirmation CAS.
+- Expected result: pre-dispatch state is `admitted` with no marker; the external-runtime observer or
+  in-process dispatch boundary creates matching run/attempt markers; failed confirmation removes
+  the marker and `running` state.
+- Forbidden result: marking before observer support or pre-dispatch validation, retaining a marker
+  after confirmation failure, or calling a run `running` without the exact dispatch generation.
+- Automation: focused startup cases in `runtime_phase1/tests/test_api.py`.
+
+## `GHHOST-021` - Attempt And Lease Generation Retry Fence
+
+- Requirement: active-attempt requeue requires the expected attempt ID plus exact lease ID,
+  executor ID, and startup token.
+- Steps: processor 1 captures its fence and requeues; processor 2 claims a new attempt and lease
+  generation; processor 1 retries with its stale fence.
+- Expected result: stale requeue returns no mutation and attempt 2 plus its active lease remain open.
+- Forbidden result: run-only retry update or releasing every active lease for the run.
+- Automation: `test_stale_processor_requeue_cannot_mutate_or_release_newer_attempt`.
+
+## `GHHOST-022` - Frozen Queue History Across Terminal Reload
+
+- Requirement: queue duration closes at exact runtime invocation and is thereafter persisted history.
+- Steps: read work detail after invocation, advance wall time, finalize the run, reopen the app on
+  the same database, and read the owner-scoped API again.
+- Expected result: all queue fields remain identical; `ageSeconds`, retry time, and timeout are absent.
+- Forbidden result: recomputing age from wall time after invocation or terminal reload.
+- Automation: `test_work_detail_freezes_queue_age_after_invocation_terminal_and_reload`.
+
+## `GHHOST-023` - Exact Public-Safe Prompt Envelope
+
+- Requirement: the host is a faithful courier for typed user task context and explicit constraints.
+- Steps: project a typed delegation packet containing synthetic private-chat and host-ID decoys;
+  inspect the instruction, project definition, and serialized API payload; repeat the minimal case.
+- Expected result: source segments, order, duplicates, files, explicit constraints, and authorized
+  capabilities remain exact; private chat, run/worker/host IDs, and invented gates are absent.
+- Forbidden result: recent conversation, hostname, raw host IDs, provider lists, forced artifacts,
+  or host-only UI duties becoming worker acceptance criteria.
+- Automation: `test_atomic_delegate_projects_only_typed_delegation_packet_without_chat_or_identity_leak`,
+  `test_workspace_launch_uses_documented_ui_fields_without_low_level_chain`, and
+  `test_tool_descriptions_advertise_mcp_owned_usage_contract`.
+
+## `GHHOST-024` - No Unproven Running State
+
+- Requirement: `running` always has one matching open attempt, immutable invocation timestamp, and
+  live unexpired exact lease.
+- Steps: request direct running creation, exercise the legacy update/confirmation path, persist an
+  invalid running row, reopen/reconcile, and inspect run, attempt, and lease state.
+- Expected result: every unproven row fails closed to an earlier non-running state without
+  synthesizing invocation; the first historical start remains unchanged.
+- Forbidden result: accepting a caller-supplied running row, retaining running after lease expiry,
+  or manufacturing `runtime_invoked_at` during restart repair.
+- Automation: `test_direct_run_creation_downgrades_unproven_running_state`,
+  `test_generic_mutations_cannot_corrupt_an_exact_running_generation`,
+  `test_legacy_running_confirmation_fails_closed_without_exact_attempt`,
+  `test_startup_reconcile_downgrades_running_without_invocation_or_lease`,
+  `test_reserved_restart_cannot_synthesize_invocation_for_admitted_run`, and the observer and
+  confirmation regressions in `test_api.py`.
+
+## `GHHOST-025` - Strict Callback And Trace Producer
+
+- Requirement: trusted transport uses raw callback identity with positive attempt number, stable
+  timestamp, and exact origin/work/worker/run binding; public detail uses canonical hashes.
+- Steps: omit and alter attempt identity, replay one callback, accept it over HTTP, reopen detail,
+  inspect every lifecycle/capacity/callback/artifact field, then force required-history overflow.
+- Expected result: malformed identity is rejected; replay is immutable; callback history matches the
+  exact attempt and timestamps; `http_accepted` remains transport-only; strict overflow fails closed.
+- Forbidden result: raw callback IDs in detail, changing callback timestamps on retry, partial strict
+  history, unsafe artifact paths, or calling HTTP acceptance user delivery.
+- Automation: strict producer cases in `test_account_api.py` and `test_queue_truth_and_trace.py`,
+  the durable callback-effect cases in `test_phase4_lifecycle_effects.py`, and callback-focused
+  `test_api.py`.
+
 ## Natural User Use Case Checklist
 
 These rows are the minimum natural-user checklist gate for Glasshive Host Workers. Add narrower feature-specific
@@ -497,11 +603,11 @@ rows before claiming a pass when the feature behavior changes.
 | `GHHOST-UC-001` | On GlassHive MCP/API, host worker, browser/desktop/file surfaces, verify that host-native workers act on the intended local/browser/file surface and report completion without exposing plumbing. | owning requirement for `GHHOST-001` / `GHHOST-001` | GlassHive MCP/API, host worker, browser/desktop/file surfaces | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to GHHOST-001. | User-visible behavior matches source, docs, persisted state, and logs | PASS 2026-06-22 for local approval scope: host Codex/Claude wait/continue and provider-backed Codex/Claude browser wait/continue passed. |
 | `GHHOST-UC-002` | On QA report, git diff, logs summary, generated artifacts, create or review the public QA evidence record with setup/auth/config, empty-state, degraded-dependency, and privacy checks. | owning requirement for `GHHOST-002` / `GHHOST-002` | QA report, git diff, logs summary, generated artifacts | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to GHHOST-002. | The user sees an honest setup, retry, or degraded-state result for GHHOST-002; no fake success is accepted. | PASS 2026-06-22: hardening report and public-safety scan passed. |
 | `GHHOST-UC-003` | After creating the public QA evidence record, rerun the scan after any retry, report update, or linked artifact change. | owning requirement for `GHHOST-002` / `GHHOST-002` | QA report, git diff, logs summary, generated artifacts | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to GHHOST-002. | GHHOST-002 remains correct after the persistence or parity step and final wording matches evidence. | PASS 2026-06-22: rerun after report/template update passed. |
-| `GHHOST-UC-004` | Delegate a precise one-shot lookup/action and inspect the returned audit before the callback arrives. | `docs/requirements_and_learnings/48_GlassHive_Workstation_Sandbox_Runtime.md` / `GHHOST-003` | Web chat or MCP harness with `worker_delegate_once` | Tool result `acknowledgement_guidance`, sanitized `delegation_audit`, diagnostics-only `submitted_instruction`, callback final result, logs/state | Assistant writes its own short acknowledgement, does not quote a canned template, and the audit preserves the specific target/success condition enough to catch wrong-worker/wrong-scope dispatch. | PASS/PARTIAL 2026-06-25: live MCP one-shot delegation and artifact result passed; browser chat callback run pending. |
-| `GHHOST-UC-005` | Open a generated artifact after browser automation created local Chrome profile/capture files. | `docs/requirements_and_learnings/48_GlassHive_Workstation_Sandbox_Runtime.md` / `GHHOST-004` | GlassHive artifact API/MCP plus browser artifact preview | Live payload, artifact list, open/download status, MCP signed-link payload, browser preview, logs/events | The preview opens the legitimate worker deliverable; runtime/browser scratch paths are rejected and never surfaced as artifact links. | PASS/PARTIAL 2026-06-25: local browser fixture/artifact regressions plus provider-backed live Markdown artifact download and Playwright browser preview passed; callback artifact path pending. |
-| `GHHOST-UC-006` | Ask a host/workstation worker to perform an open-ended task that may need browser/computer/file capabilities. | `docs/requirements_and_learnings/01_Key_Principles.md` / `GHHOST-005` | LibreChat/GlassHive MCP, host Codex/Claude or workstation Codex, logs, worker-local config | CLI capability probes, worker config, launch argv summary, run DB status, visible final result, public-safety scan. | The worker decides the path using native capability plus broker access; no launch-time stripping or raw plumbing appears as the user result. | PASS/PARTIAL (2026-06-14 source/runtime probes and targeted tests; live post-change worker launch pending) |
-| `GHHOST-UC-007` | Start a fresh workstation worker image and verify Claude/Codex browser extensions plus skill awareness before a browser-capable task. | `docs/requirements_and_learnings/48_GlassHive_Workstation_Sandbox_Runtime.md` / `GHHOST-006` | Docker/workstation image, noVNC browser, worker prompt files, CLI capability probes | Dockerfile policy, extension-check output, browser profile install, bridge connection, AGENTS/CLAUDE/CODEX prompt files, targeted tests | New workspace workers have the expected native extension substrate and know their skill families, while choosing tools themselves based on the user request. | PASS/PARTIAL 2026-06-23: `docs6` image/worker/browser QA passed for profile install and Claude bridge; Codex bridge awaits first-party Linux native-host bundle plus node-repl provisioning. |
-| `GHHOST-UC-007B` | Receive a callback where the worker produced an artifact/report but final evidence verification failed. | `docs/requirements_and_learnings/48_GlassHive_Workstation_Sandbox_Runtime.md` / `GHHOST-007` | LibreChat web callback route, Telegram/voice callback parity path, GlassHive run evidence/outbox | Callback payload failure metadata, visible callback text, artifact refs, run status, targeted tests, public-safety scan | The user sees that output exists and final verification failed, while the run remains failed and total failures still use clear failure wording. | PASS/PARTIAL 2026-06-25: deterministic tests, live Chrome web callback, and Telegram/voice delivery-ledger parity passed; real external Telegram send/audible voice delivery for the exact case remains a side-effectful gate. |
+| `GHHOST-UC-004` | Delegate a precise one-shot lookup/action and inspect the returned audit before the callback arrives. | `docs/requirements_and_learnings/48_GlassHive_Workstation_Sandbox_Runtime.md` / `GHHOST-003` | Web chat or MCP harness with `worker_delegate_once` | Tool result `acknowledgement_guidance`, sanitized `delegation_audit`, diagnostics-only `submitted_instruction`, callback final result, logs/state | Assistant writes its own short acknowledgement, does not quote a canned template, and the audit preserves the specific target/success condition enough to catch wrong-worker/wrong-scope dispatch. | PARTIAL 2026-06-25: live MCP one-shot delegation and artifact result passed; browser chat callback run pending. |
+| `GHHOST-UC-005` | Open a generated artifact after browser automation created local Chrome profile/capture files. | `docs/requirements_and_learnings/48_GlassHive_Workstation_Sandbox_Runtime.md` / `GHHOST-004` | GlassHive artifact API/MCP plus browser artifact preview | Live payload, artifact list, open/download status, MCP signed-link payload, browser preview, logs/events | The preview opens the legitimate worker deliverable; runtime/browser scratch paths are rejected and never surfaced as artifact links. | PARTIAL 2026-06-25: local browser fixture/artifact regressions plus provider-backed live Markdown artifact download and Playwright browser preview passed; callback artifact path pending. |
+| `GHHOST-UC-006` | Ask a host/workstation worker to perform an open-ended task that may need browser/computer/file capabilities. | `docs/requirements_and_learnings/01_Key_Principles.md` / `GHHOST-005` | LibreChat/GlassHive MCP, host Codex/Claude or workstation Codex, logs, worker-local config | CLI capability probes, worker config, launch argv summary, run DB status, visible final result, public-safety scan. | The worker decides the path using native capability plus broker access; no launch-time stripping or raw plumbing appears as the user result. | PARTIAL (2026-06-14 source/runtime probes and targeted tests; live post-change worker launch pending) |
+| `GHHOST-UC-007` | Start a fresh workstation worker image and verify Claude/Codex browser extensions plus skill awareness before a browser-capable task. | `docs/requirements_and_learnings/48_GlassHive_Workstation_Sandbox_Runtime.md` / `GHHOST-006` | Docker/workstation image, noVNC browser, worker prompt files, CLI capability probes | Dockerfile policy, extension-check output, browser profile install, bridge connection, AGENTS/CLAUDE/CODEX prompt files, targeted tests | New workspace workers have the expected native extension substrate and know their skill families, while choosing tools themselves based on the user request. | PARTIAL 2026-06-23: `docs6` image/worker/browser QA passed for profile install and Claude bridge; Codex bridge awaits first-party Linux native-host bundle plus node-repl provisioning. |
+| `GHHOST-UC-007B` | Receive a callback where the worker produced an artifact/report but final evidence verification failed. | `docs/requirements_and_learnings/48_GlassHive_Workstation_Sandbox_Runtime.md` / `GHHOST-007` | LibreChat web callback route, Telegram/voice callback parity path, GlassHive run evidence/outbox | Callback payload failure metadata, visible callback text, artifact refs, run status, targeted tests, public-safety scan | The user sees that output exists and final verification failed, while the run remains failed and total failures still use clear failure wording. | PARTIAL 2026-06-25: deterministic tests, live Chrome web callback, and Telegram/voice delivery-ledger parity passed; real external Telegram send/audible voice delivery for the exact case remains a side-effectful gate. |
 | `GHHOST-UC-008` | From chat or voice, ask GlassHive to open a public website through a host Codex worker after a host model supplies or could supply a low-effort override. | `docs/requirements_and_learnings/48_GlassHive_Workstation_Sandbox_Runtime.md` / `GHHOST-008` | LibreChat/voice MCP launch, host Codex command/evidence, GlassHive API, browser/computer surface | MCP schema, generated runtime env, command evidence, run DB/state, callback text, visible browser result or exact blocker | The worker starts with a supported effort value, uses the configured fallback when needed, and does not fail before action due to unsupported `reasoning.effort`. | PASS 2026-06-25: live host Codex worker opened Yahoo Finance in Chrome while requested `minimal` clamped to `medium`; Playwright UI and Chrome state verified completion. |
 | `GHHOST-UC-009` | Let a host-worker callback arrive after the chat has an unfinished assistant placeholder, and try steering without a known worker id. | `docs/requirements_and_learnings/48_GlassHive_Workstation_Sandbox_Runtime.md` / `GHHOST-009` | LibreChat web callback route, real Chrome conversation view, GlassHive MCP, run evidence | Targeted tests, live callback DB fields, live MCP validation result, visible browser state, cleanup result, sanitized logs | The final callback replaces its own pending placeholder with `unfinished=false`, unrelated active placeholders are retried instead of overwritten, blank steering is rejected before HTTP, and browser node ids do not become provider failures. | PASS 2026-06-25: synthetic live callback and real Chrome QA passed; blank worker id rejected by live MCP; unrelated active placeholder returned live `425`; affected automated suites passed. |
 | `GHHOST-UC-010` | Start or resume a Viventium host worker while one installed plugin is denied by exact ID. | `docs/requirements_and_learnings/48_GlassHive_Workstation_Sandbox_Runtime.md` / `GHHOST-010` | Generated runtime env, host Codex/Claude launch config, provider session binding, worker instruction | Compiler output, worker-local TOML, Claude settings JSON, session/worker state, source config, targeted tests, real browser path | The denied plugin is unavailable only inside that worker; contaminated sessions are superseded serially with visible history preserved; other plugins stay available and no suppression policy consumes prompt context. | PASS 2026-08-02: source, installed config/runtime, API, DB/log, and browser QA passed. |
@@ -509,3 +615,11 @@ rows before claiming a pass when the feature behavior changes.
 | `GHHOST-UC-012` | Send the same ordinary prompt with Feelings off and three contrasting enabled states through the real GlassHive-backed Main. | `docs/requirements_and_learnings/48_GlassHive_Workstation_Sandbox_Runtime.md` / `GHHOST-012` | Authenticated local chat API, GlassHive provider, Codex worker config, semantic judge | Exact restored fixtures, native suffix/count/order, outputs, semantic scores, request latency, cleanup | Correct native authority and materially different state-shaped choices both pass; no base replacement or prompt-specific branch | PARTIAL 2026-08-02: placement passed; semantic potency failed `1/4`. |
 | `GHHOST-UC-013` | Let a primary model fail before visible text and inspect the configured fallback result. | `docs/requirements_and_learnings/51_GlassHive_Workflows_Self_Healing_and_Feature_Requests.md` / `GHHOST-013` | authenticated chat, LibreChat fallback, GlassHive request/run/worker audit | forced tests, signed bundle keys, history, Feeling count, sanitized primary diagnostic | The fallback remains a complete Viventium agent and its real declared route is auditable without exposing the error. | PASS 2026-08-04: forced tests and request/run/worker forensic audit passed. |
 | `GHHOST-UC-015` | Let many host-capacity waits remain queued, restart the service, then release capacity. | `docs/requirements_and_learnings/48_GlassHive_Workstation_Sandbox_Runtime.md` / `GHHOST-015` | isolated GlassHive API/service, SQLite state, worker callbacks/status, OS thread monitor | due/future run counts, run/event uniqueness, scheduler logs, service thread baseline/peak, source and active artifact identity | The service stays responsive with one shared scheduler; future work sleeps, persists, and each eligible run resumes once when due. | PARTIAL 2026-08-10: 12 focused cases, 200-retry bounded-thread stress, the 175-case API file, and the 791-case runtime suite passed; installed real capacity recovery remains. |
+| `GHHOST-UC-018` | Let one attempt finish while another processor records a newer provider quota failure, then restart the service. | `GHHOST-018` | installed GlassHive service/store | attempt observation, provider-health timestamp, restart read | The newer cooldown remains active; the older success clears nothing. | NOT RUN — cataloged 2026-08-22; source automation passed; installed runtime remains open. |
+| `GHHOST-UC-019` | Retry work after an exact-expiry admission race and inspect both attempts after reload. | `GHHOST-019` | installed lifecycle service | lease state, run first start, attempt timestamps | Expired ownership does not launch; retry preserves first start and immutable attempt history. | NOT RUN — cataloged 2026-08-22; source automation passed; installed runtime remains open. |
+| `GHHOST-UC-020` | Start work with an observer-capable runtime, then repeat with observer and confirmation failures. | `GHHOST-020` | installed GlassHive startup service | state at dispatch boundary, run/attempt markers, start event | Only confirmed dispatch becomes running and receives invocation markers. | NOT RUN — cataloged 2026-08-22; source automation passed; installed runtime remains open. |
+| `GHHOST-UC-021` | Race two processors so the first tries to requeue after the second owns a new attempt. | `GHHOST-021` | installed two-processor runtime | attempt IDs and exact lease-generation fields | The stale caller is a no-op and the newer attempt remains untouched. | NOT RUN — cataloged 2026-08-22; source automation passed; installed two-processor path remains open. |
+| `GHHOST-UC-022` | Open work detail after invocation, advance time, complete work, and reload the API. | `GHHOST-022` | installed owner-scoped work-detail API | queue projection before/after time, terminal state, reload | Queue duration is frozen and identical on every read. | NOT RUN — cataloged 2026-08-22; source automation passed; installed API remains open. |
+| `GHHOST-UC-023` | Delegate a typed brief that includes files and explicit constraints while private-chat/host-ID decoys exist. | `GHHOST-023` | installed GlassHive MCP path | projected instruction, project definition, serialized payload | Exact public-safe task context arrives; decoys and invented gates do not. | NOT RUN — cataloged 2026-08-22; source automation passed; installed MCP remains open. |
+| `GHHOST-UC-024` | Restart with a legacy or corrupted running row, then inspect the exact run before any retry starts. | `GHHOST-024` | installed GlassHive restart | run, attempt, lease, and first-start fields | The row is non-running with no synthesized invocation; first-start history is preserved. | NOT RUN — cataloged 2026-08-22; source automation passed; installed restart remains open. |
+| `GHHOST-UC-025` | Complete delegated work, interrupt and replay callback transport, reload work detail, and inspect its artifact. | `GHHOST-025` | installed Core callback and work-detail surfaces | callback ingress/outbox, work detail, artifact response, delivery ledger | Attempt identity and hashes match; HTTP acceptance is not user delivery; malformed or overflowed detail fails closed. | NOT RUN — cataloged 2026-08-22; source automation passed; installed Core callback/detail path remains open. |

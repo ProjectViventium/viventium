@@ -22,7 +22,7 @@ Last source-verification run: `2026-08-06 10:20 EDT (UTC-04:00, America/Toronto)
 `feature -> requirement -> use case -> QA case -> expected result -> actual evidence -> remaining gap`
 
 - Feature: direct user-scoped connected capabilities for Glass Drive and MCP work.
-- Requirement: requirement 55 connection ownership and least-privilege bridge.
+- Requirement: requirement 57 connection ownership and least-privilege bridge.
 - Use case: a user starts work and the worker receives a fresh, narrow capability grant without copying provider credentials.
 - QA case: GHUCP-014 through GHUCP-018 and GHUCP-026.
 - Expected result: readiness is owner scoped, grants remain memory-only, and terminal boundaries revoke them.
@@ -33,9 +33,9 @@ Last source-verification run: `2026-08-06 10:20 EDT (UTC-04:00, America/Toronto)
 
 | Evidence surface | Result / sanitized pointer |
 | --- | --- |
-| Requirement and use case | Requirement 55 and connected-capability GHUCP cases. |
+| Requirement and use case | Requirement 57 and connected-capability GHUCP cases. |
 | Code owning path | GlassHive capability broker/runtime wrapper and LibreChat user-scoped capability issuer. |
-| Docs and nested docs/repos | Requirement 55 plus nested GlassHive and LibreChat integration source. |
+| Docs and nested docs/repos | Requirement 57 plus nested GlassHive and LibreChat integration source. |
 | Scripts or harnesses | Focused suites and compile/syntax checks listed below. |
 | Local/external prerequisite state | Synthetic identity and provider readiness only; external consent was absent. |
 | Logs | Sanitized test summaries; no live provider logs. |

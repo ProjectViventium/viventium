@@ -9,7 +9,7 @@ Use stable `BRAND-NNN` IDs for branding assets cases.
 | Case ID | Requirement | Surfaces | Automation | Last Run |
 | --- | --- | --- | --- | --- |
 | `BRAND-001` | Web assets render from portable paths | Web UI and playground | Playwright browser QA plus config compiler tests | PARTIAL 2026-05-18 (`reports/2026-05-18-librechat-model-selector-icons.md`; LibreChat model selector only) |
-| `BRAND-002` | Helper/app assets match shipped artifacts | macOS helper, installer, generated manifests | test_macos_helper_install.py and release-readiness scan | NOT YET RUN (cataloged 2026-05-17; run when feature changes) |
+| `BRAND-002` | Helper/app assets match shipped artifacts | macOS helper, installer, generated manifests | test_macos_helper_install.py and release-readiness scan | NOT RUN (cataloged 2026-05-17; run when feature changes) |
 | `BRAND-003` | Missing asset fallback stays branded | Agent/avatar UI, generated config | test_config_compiler.py | PARTIAL 2026-05-18 (`reports/2026-05-18-librechat-model-selector-icons.md`; focused automated fallback coverage only) |
 | `BRAND-004` | Model selector uses the Viventium logo for configured local model-spec icons | LibreChat model selector | Playwright browser QA plus focused Jest | PASS 2026-05-18 (`reports/2026-05-18-librechat-model-selector-icons.md`) |
 
@@ -42,7 +42,7 @@ Use stable `BRAND-NNN` IDs for branding assets cases.
 - Forbidden result: mocks, backend logs, source inspection, or model output are treated as full acceptance when a user-visible surface exists.
 - Evidence to capture: sanitized visible result, supporting command/test result, state/log summary, and public-safety review.
 - Automation: test_macos_helper_install.py and release-readiness scan.
-- Last run: NOT YET RUN (cataloged 2026-05-17; not a substitute for the next real feature run).
+- Last run: NOT RUN (cataloged 2026-05-17; not a substitute for the next real feature run).
 
 ## `BRAND-003` - Missing asset fallback stays branded
 
@@ -93,6 +93,6 @@ rows before claiming a pass when the feature behavior changes.
 | Use Case ID | Natural user action | Requirement / case link | Real surface to use | Supporting evidence to compare | Expected visible result | Last run |
 | --- | --- | --- | --- | --- | --- | --- |
 | `BRAND-UC-001` | On Web UI and playground, verify that web assets render from portable paths. | owning requirement for `BRAND-001` / `BRAND-001` | Web UI and playground | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to BRAND-001. | The visible result for BRAND-001 matches the documented requirement. | PARTIAL 2026-05-18 (`reports/2026-05-18-librechat-model-selector-icons.md`; LibreChat model selector only) |
-| `BRAND-UC-002` | On macOS helper, installer, generated manifests, try helper/app assets match shipped artifacts with missing setup, missing auth/config, empty state, or a degraded dependency. | owning requirement for `BRAND-002` / `BRAND-002` | macOS helper, installer, generated manifests | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to BRAND-002. | The user sees an honest setup, retry, or degraded-state result for BRAND-002; no fake success is accepted. | NOT YET RUN (cataloged 2026-05-18; next feature run required) |
+| `BRAND-UC-002` | On macOS helper, installer, generated manifests, try helper/app assets match shipped artifacts with missing setup, missing auth/config, empty state, or a degraded dependency. | owning requirement for `BRAND-002` / `BRAND-002` | macOS helper, installer, generated manifests | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to BRAND-002. | The user sees an honest setup, retry, or degraded-state result for BRAND-002; no fake success is accepted. | NOT RUN (cataloged 2026-05-18; next feature run required) |
 | `BRAND-UC-003` | After missing asset fallback stays branded, refresh, restart, retry, or switch linked surfaces and verify persistence/parity. | owning requirement for `BRAND-003` / `BRAND-003` | Agent/avatar UI, generated config | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to BRAND-003. | BRAND-003 remains correct after the persistence or parity step and final wording matches evidence. | PARTIAL 2026-05-18 (`reports/2026-05-18-librechat-model-selector-icons.md`; focused fallback tests only) |
 | `BRAND-UC-004` | Open the model selector in light and dark mode and verify all visible Viventium model icons are the V logo, not the LibreChat feather. | owning requirement for `BRAND-004` / `BRAND-004` | LibreChat model selector | Source, owning requirement doc, runtime config, focused tests, Playwright DOM evidence, console summary, and screenshots. | Visible Viventium model rows and selected model button show `/assets/logo.svg`, carry the app theme `color-scheme`, and expose no `.lucide-feather` node. | PASS 2026-05-18 (`reports/2026-05-18-librechat-model-selector-icons.md`) |

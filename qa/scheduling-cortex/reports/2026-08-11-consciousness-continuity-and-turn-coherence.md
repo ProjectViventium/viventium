@@ -1,3 +1,4 @@
+<!-- qa-evidence-exempt: Historical evidence snapshot retained verbatim; retroactive v2 fields would invent evidence that was not captured during the run. -->
 # Consciousness Continuity And Turn Coherence — 2026-08-11
 
 ## Outcome
@@ -124,4 +125,3 @@ and conversations after every completed run. Final cleanup removed the browser t
 its exact dependent messages, transactions, conversations, and sessions with zero residue; closed
 the synthetic browser tabs; removed the isolated Redis container; and moved temporary voice
 evidence to the system Trash so it remains recoverable until the owner empties it.
-<!-- qa-evidence-exempt: Historical or specialized supporting artifact retained without retroactively inventing missing evidence; current release acceptance requires a fresh full-view report. -->

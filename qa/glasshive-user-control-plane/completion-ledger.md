@@ -8,14 +8,14 @@ a completed user journey.
 
 It does **not** create a second product specification:
 
-- [Requirement 55](../../docs/requirements_and_learnings/55_GlassHive_User_Control_Plane_and_Persistent_Workspaces.md)
+- [Requirement 57](../../docs/requirements_and_learnings/57_GlassHive_User_Control_Plane_and_Persistent_Workspaces.md)
   is the product-truth owner.
 - [cases.md](cases.md) is the durable happy/unhappy-path acceptance catalog.
 - [coverage.md](coverage.md) is the requirement-to-evidence matrix.
 - This ledger records the exact final outcome, current snapshot, smallest remaining work, execution
   order, blockers, and completion gates.
 
-When implementation changes product truth, update Requirement 55 and the relevant case before or
+When implementation changes product truth, update Requirement 57 and the relevant case before or
 with the code. When evidence changes status, update `coverage.md`, the applicable case, and a dated
 report. This ledger then summarizes that evidence; it never upgrades a status on its own.
 
@@ -119,7 +119,7 @@ read a tool inventory, construct OAuth URLs, manage callbacks, or understand int
 9. **No invented Claude consumer OAuth.** Enable only provider-supported native/headless routes on
    platforms where isolation, refresh writeback, terms, and policy are proven. Otherwise show
    `unsupported` truthfully.
-10. **Renewable auth is product truth.** Requirement 55 `GH-UCP-004` owns expiry, refresh, client
+10. **Renewable auth is product truth.** Requirement 57 `GH-UCP-004` owns expiry, refresh, client
     restart, ordinary reconnect, revocation, and recovery as installation acceptance gates.
 11. **Provider-specific scopes remain provider-specific.** Entra needs `offline_access` for refresh,
     but generic OIDC configuration must derive or explicitly configure renewable scopes rather than
@@ -171,8 +171,10 @@ read a tool inventory, construct OAuth URLs, manage callbacks, or understand int
   lacked a native GlassHive tool in that task, fell back through a nested `codex exec`, guessed
   aliases/config, and repeated status checks while authentication was expired. The raw 60-tool
   inventory was not the cause, and removing compatible tools would be an overfit. The one-direct-call
-  target now passes in both clients; one real asynchronous launch/result trace without a user-driven
-  polling loop remains open.
+  target now passes in both clients. Fresh Codex and Claude runs also each launched one workspace,
+  used one bounded wait, and received a distinct delivered file without a user-driven polling loop.
+  Clean public install/update/remove, wider ordinary-operation parity, and two-owner proof remain
+  open.
 - Thin native Codex and Claude plugin packages wrap the one canonical skill without embedding a
   second MCP server. Both official manifests validate; Codex marketplace/plugin and Claude package
   installs expose the same concise MCP-first guide.
@@ -198,9 +200,9 @@ read a tool inventory, construct OAuth URLs, manage callbacks, or understand int
 | Library skill/plugin lifecycle | PARTIAL | Local add/remove and the repaired 10/10 Library/template baseline pass; real package/worker use, upgrade, and rollback remain open |
 | Recurring schedules | PARTIAL | Exact installed Run now completed visibly with backend correlation; automatic fire/renewal/restart remains |
 | Human naming/discovery | PARTIAL | Provider names are prefilled/editable and the real Claude workspace was rediscovered and favorited after refresh; scale and performance remain |
-| Fresh install/upgrade/restore | PENDING | Accepted canary is not a clean public install/upgrade/restore proof |
+| Fresh install/upgrade/restore | NOT RUN | Accepted canary is not a clean public install/upgrade/restore proof |
 | Installed two-user isolation | PARTIAL | Automated denial evidence exists; no complete two-user browser/MCP/provider/connection run |
-| Viventium direct GlassHive conversation | PENDING | Architecture/tests are additive; installed candidate cross-surface regression remains |
+| Viventium direct GlassHive conversation | NOT RUN | Architecture/tests are additive; installed candidate cross-surface regression remains |
 
 ## Completion workstreams
 
@@ -216,8 +218,9 @@ Connections UI now presents one concise Automatic instruction plus Manual fallba
 skill tells a client to act immediately when GlassHive tools are present. Fresh Codex and Claude Code
 processes each completed one `workspace_list` call with no extra attempted/denied calls in the
 transcripts. Claude's successful headless run preapproved only that tool, so broader-preapproval
-behavior is not inferred. OAuth persisted. Clean public install/update/remove, two-owner parity, and
-one real asynchronous launch/result trace remain open.
+behavior is not inferred. OAuth persisted. Fresh Codex and Claude runs also each completed one
+asynchronous workspace launch, one bounded wait, and one distinct delivered file. Clean public
+install/update/remove, wider ordinary-operation parity, and two-owner proof remain open.
 
 **Smallest plan:**
 
@@ -314,9 +317,11 @@ stable principal, no sensitive callback/error echo, and no worker/runtime exposu
 personal account, choose personal-only or preferred policy, and run without exposing or sharing the
 credential.
 
-**Current:** Personal Codex has real mission evidence. Account metadata, isolated homes, leases,
-API-key references, route readiness, and deployment fallback exist. Complete lifecycle and supported
-Claude proof are open.
+**Current:** Personal Codex has real mission evidence. The installed supported Claude route has real
+login, reconnect, persistence, mission, same-workspace continuation, Favorite retention, and honest
+contention-fence evidence. Account metadata, isolated homes, leases, API-key references, route
+readiness, and deployment fallback exist. Full rotate/disconnect/forget and failure/recovery paths,
+a second account, and two-user isolation remain open.
 
 **Smallest plan:**
 
@@ -593,7 +598,7 @@ The order is deliberate. Do not start a later phase merely because its code is e
    prove a fresh native login, restart, and tool call in the intended signed-in browser profile.
 4. Preserve the captured escaped-task trace and compare it with the post-install direct-call trace;
    classify action, discovery, invalid-input retry, status, wait/poll, and result-retrieval calls.
-5. Record the approved package direction and call-trace/defer/polling acceptance in Requirement 55,
+5. Record the approved package direction and call-trace/defer/polling acceptance in Requirement 57,
    `cases.md`, and `coverage.md` before changing a public client contract.
 
 Exit gate: affected source baseline is green, the renewable hosted setup works from clean client
@@ -638,7 +643,7 @@ pass on the same installed candidate.
 Complete `W11`, `W12`, and `W13`. Repeat every high-value real browser/MCP/provider/schedule journey
 on the exact clean-installed/upgraded artifact after all changes are present.
 
-Exit gate: every applicable `GHUCP-001`–`033` item is `PASS` for the claimed scope, or an explicitly
+Exit gate: every applicable `GHUCP-001`–`034` item is `PASS` for the claimed scope, or an explicitly
 approved platform/legal item remains `BLOCKED` and is not advertised as supported.
 
 ## Full user-level acceptance matrix
@@ -675,7 +680,7 @@ from a different profile is inadmissible for that run.
 
 ## Anti-drift operating rules
 
-1. Begin every implementation turn by reading this ledger, Requirement 55, the affected cases, and
+1. Begin every implementation turn by reading this ledger, Requirement 57, the affected cases, and
    the latest report. Select one next incomplete workstream and name its exit gate.
 2. Trace `user action → UI/MCP → gateway → service/store → worker/broker → visible result` before
    editing. Fix the owning boundary, not the complaint wording.
@@ -699,7 +704,7 @@ from a different profile is inadmissible for that run.
 11. If a real user path fails after a prior fix, reopen the incident. Do not explain it away from old
     evidence.
 12. Keep this ledger concise enough to operate: completed detail belongs in dated reports; enduring
-    behavior belongs in Requirement 55/cases; this file retains only current status and next work.
+    behavior belongs in Requirement 57/cases; this file retains only current status and next work.
 13. Do not let rollout, backup, recovery, pruning, or release-helper work become the product task.
     Reuse the supported delivery path and change it only when a blocker prevents the exact user
     acceptance journey from running safely.

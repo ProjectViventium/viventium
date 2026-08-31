@@ -1,5 +1,7 @@
 import json
 import os
+import re
+import sqlite3
 import subprocess
 import textwrap
 from pathlib import Path
@@ -31,6 +33,8 @@ AGENT_STARTER_REACT_ROOT = (
 # This contract reads the checked-out component for fast local review. Release readiness still
 # requires components.lock.json to pin the merged component commit that clean installs will fetch.
 APP_FILE = AGENT_STARTER_REACT_ROOT / "components" / "app" / "app.tsx"
+AGENT_STARTER_PACKAGE = AGENT_STARTER_REACT_ROOT / "package.json"
+AGENT_STARTER_LOCK = AGENT_STARTER_REACT_ROOT / "pnpm-lock.yaml"
 CONNECTION_RECOVERY_HOOK_FILE = (
     AGENT_STARTER_REACT_ROOT / "hooks" / "useConnectionRecovery.ts"
 )
@@ -60,6 +64,19 @@ TTS_PROVIDER_CAPABILITIES = (
 )
 SYNTHETIC_AUDIO_QA_SCRIPT = (
     ROOT / "qa" / "modern-playground-voice" / "scripts" / "livekit_synthetic_audio_qa.js"
+)
+SYNTHETIC_AUDIO_FIXTURE_GENERATOR = (
+    ROOT / "qa" / "modern-playground-voice" / "scripts" / "generate_synthetic_speech_fixtures.py"
+)
+CHROME_VOICE_SETUP_SCRIPT = (
+    ROOT
+    / "qa"
+    / "modern-playground-voice"
+    / "scripts"
+    / "chrome_voice_artifact_qa_setup.cjs"
+)
+TTS_ARTIFACT_BROWSER_QA_SCRIPT = (
+    ROOT / "qa" / "modern-playground-voice" / "scripts" / "tts_artifact_browser_qa.cjs"
 )
 TYPESCRIPT_FILE = AGENT_STARTER_REACT_ROOT / "node_modules" / "typescript" / "lib" / "typescript.js"
 
@@ -498,7 +515,11 @@ def test_playground_client_merges_deeplink_token_options_into_connection_details
     content = APP_FILE.read_text()
 
     assert "const CONNECTION_DETAILS_CACHE_MS = 2_000;" in content
-    assert "function getConnectionDetailsTokenSource(fallbackOptions?: AgentTokenOptions)" in content
+    assert re.search(
+        r"function\s+getConnectionDetailsTokenSource\s*\(\s*"
+        r"fallbackOptions\?:\s*AgentTokenOptions\s*\)",
+        content,
+    )
     assert "type ConnectionDetailsCacheEntry = {" in content
     assert "const connectionDetailsCache = new Map<string, ConnectionDetailsCacheEntry>();" in content
     assert "function stableCacheStringify(value: unknown): string {" in content
@@ -661,7 +682,9 @@ def test_synthetic_audio_qa_can_force_an_external_relay_media_path() -> None:
     assert "VIVENTIUM_QA_FORCE_RELAY" in content
     assert "installExternalTurnProbe" in content
     assert "collectRtcEvidence" in content
-    assert 'iceTransportPolicy: forceRelay ? "relay"' in content
+    assert re.search(
+        r'''iceTransportPolicy:\s*forceRelay\s*\?\s*["']relay["']''', content
+    )
     assert "selectedCandidatePairs" in content
     assert "externalTurnConfigured" in content
     assert "openrelayprojectsecret" not in content
@@ -695,6 +718,716 @@ def test_synthetic_audio_qa_can_run_the_entire_browser_from_an_off_lan_proxy() -
     assert "VIVENTIUM_QA_DISABLE_NON_PROXIED_UDP" in content
     assert "browserProxyConfigured" in content
     assert "browserProxyMediaSelected" in content
+
+
+def test_synthetic_audio_qa_requires_received_audio_not_only_an_attached_element() -> None:
+    content = SYNTHETIC_AUDIO_QA_SCRIPT.read_text()
+
+    assert '"inbound-rtp"' in content
+    assert 'stat.kind !== "audio"' in content
+    assert "inboundAudioBytesReceived" in content
+    assert "receivedAudioEnergy" in content
+    assert "deliveredAudioBytesDelta" in content
+    assert "finalInteractiveMessages" in content
+    assert "waitForDeliveredAudio" in content
+    assert "waitForCompletedPlayback" in content
+    assert "playbackCompleted" in content
+    assert "waitForCompletedInteractiveTask" in content
+    assert "audioState.delivered" not in content
+
+
+def test_synthetic_audio_qa_requires_a_live_published_microphone_before_waiting() -> None:
+    content = SYNTHETIC_AUDIO_QA_SCRIPT.read_text()
+
+    assert "async function ensurePublishedMicrophone" in content
+    assert 'throw new Error("microphone_not_published")' in content
+    assert "result.microphonePublished = true" in content
+    assert "result.microphonePublished &&" in content
+
+
+def test_synthetic_audio_fixture_waits_for_deferred_microphone_publication() -> None:
+    content = SYNTHETIC_AUDIO_FIXTURE_GENERATOR.read_text()
+
+    assert '"--lead-silence-s"' in content
+    assert "default=15.0" in content
+    assert '"leadSilenceSeconds": lead_silence_s' in content
+
+
+def test_synthetic_audio_qa_proves_listen_only_has_no_response_plane() -> None:
+    content = SYNTHETIC_AUDIO_QA_SCRIPT.read_text()
+
+    assert "voiceTaskCount" in content
+    assert "listenOnlyIsolationObserved" in content
+    assert "result.assistantResponsePresent === false" in content
+    assert 'state.text.includes("speaking")' in content
+    assert "result.voiceTaskCount === 0" in content
+
+
+def test_synthetic_audio_qa_can_prove_intentional_wing_silence() -> None:
+    content = SYNTHETIC_AUDIO_QA_SCRIPT.read_text()
+
+    assert 'item === "--expect-silence"' in content
+    assert "waitForInteractiveUserTranscript" in content
+    assert "waitForIntentionalSilence" in content
+    assert "isNoResponseOnly" in content
+    assert "intentionalSilenceObserved" in content
+    assert "args.expectSilence && args.mode !== \"wing\"" in content
+
+
+def test_synthetic_audio_qa_rejects_late_browser_errors_and_incomplete_cleanup() -> None:
+    script = textwrap.dedent(
+        f"""
+        const {{ finalizeSyntheticQaResult }} = require({json.dumps(str(SYNTHETIC_AUDIO_QA_SCRIPT))});
+
+        function result(cleanup = {{ users: 1, callSessions: 1 }}) {{
+          return {{ seeded: true, transportOk: true, ok: true, errorCodes: [], cleanup }};
+        }}
+
+        process.stdout.write(JSON.stringify({{
+          healthy: finalizeSyntheticQaResult(result(), [], true),
+          lateBrowserError: finalizeSyntheticQaResult(result(), [new Error("private browser details")], true),
+          failedCleanup: finalizeSyntheticQaResult(result({{ errorCode: "cleanup_failed" }}), [], true),
+          disabledCleanup: finalizeSyntheticQaResult(result(null), [], false),
+          repeatedSpeech: finalizeSyntheticQaResult({{
+            ...result(), transcriptCountWithinLimit: false,
+          }}, [], true),
+          exposedIdentity: finalizeSyntheticQaResult({{
+            ...result(), rawParticipantIdentityExposed: true,
+          }}, [], true),
+          unauthenticatedCoreBrowser: finalizeSyntheticQaResult({{
+            ...result(), coreBrowserRequested: true,
+            coreBrowserAuthenticated: false, coreBrowserOwnerMatched: false,
+          }}, [], true),
+          authenticatedCoreBrowser: finalizeSyntheticQaResult({{
+            ...result({{ users: 1, callSessions: 1, loginSessions: 1 }}),
+            coreBrowserRequested: true, coreBrowserAuthenticated: true,
+            coreBrowserOwnerMatched: true, coreBrowserComposerReady: true,
+          }}, [], true),
+          leakedCoreBrowserSession: finalizeSyntheticQaResult({{
+            ...result({{ users: 1, callSessions: 1, loginSessions: 0 }}),
+            coreBrowserRequested: true, coreBrowserAuthenticated: true,
+            coreBrowserOwnerMatched: true, coreBrowserComposerReady: true,
+          }}, [], true),
+          missingTranscript: finalizeSyntheticQaResult({{
+            ...result(), autoConnected: true, transcriptMatchedExpected: false,
+          }}, [], true),
+          missingPlayback: finalizeSyntheticQaResult({{
+            ...result(), interactive: true, completedVoiceTask: true,
+            playbackCompleted: false,
+          }}, [], true),
+          passiveWingResponse: finalizeSyntheticQaResult({{
+            ...result(), silenceExpected: true, assistantResponsePresent: true,
+          }}, [], true),
+          runningTask: finalizeSyntheticQaResult({{
+            ...result(), interactive: true, transcriptMatchedExpected: true,
+            voiceTaskCount: 1, completedVoiceTask: false, completedVoiceTaskState: "running",
+          }}, [], true),
+          unknownOwner: finalizeSyntheticQaResult({{
+            ...result(), ownerTrustRequired: true, speakerActorTrust: ["unknown"],
+          }}, [], true),
+          trustedOwner: finalizeSyntheticQaResult({{
+            ...result(), ownerTrustRequired: true, speakerActorTrust: ["owner_participant"],
+          }}, [], true),
+          verifiedFinalTurn: finalizeSyntheticQaResult({{
+            ...result(), ownerTrustRequired: true,
+            speakerActorTrust: ["unknown", "owner_participant"],
+            authoritativeSpeakerActorTrust: ["owner_participant"],
+            currentTurnAllVerified: true,
+          }}, [], true),
+          verifiedOwnerBlockedByInterim: finalizeSyntheticQaResult({{
+            ...result(), ownerTrustRequired: true,
+            speakerActorTrust: ["unknown", "owner_participant"],
+            authoritativeSpeakerActorTrust: ["unknown", "owner_participant"],
+            currentTurnSpeakerCount: 2,
+            currentTurnFinalSpeakerCount: 1,
+            currentTurnVerifiedFinalSpeakerCount: 1,
+            currentTurnUnverifiedInterimCount: 1,
+            currentTurnProviderSpeakerIdCount: 1,
+            currentTurnAllVerified: false,
+          }}, [], true),
+          providerSpeakerIdentityMissing: finalizeSyntheticQaResult({{
+            ...result(), ownerTrustRequired: true,
+            speakerActorTrust: ["unknown"],
+            authoritativeSpeakerActorTrust: ["unknown"],
+            currentTurnSpeakerCount: 1,
+            currentTurnProviderSpeakerIdCount: 0,
+            currentTurnAllVerified: false,
+          }}, [], true),
+          sharedMicrophoneTurn: finalizeSyntheticQaResult({{
+            ...result(), ownerTrustRequired: true,
+            speakerActorTrust: ["owner_participant"],
+            authoritativeSpeakerActorTrust: ["owner_participant"],
+            currentTurnAllVerified: true,
+            speakerAttributionState: "shared_mic_unverified",
+          }}, [], true),
+          untrustedSideEffect: finalizeSyntheticQaResult({{
+            ...result({{ users: 1, callSessions: 1, scheduledTasks: 1 }}),
+            mode: "call", speakerActorTrust: ["unknown"],
+          }}, [], true),
+          passiveWingSideEffect: finalizeSyntheticQaResult({{
+            ...result({{ users: 1, callSessions: 1, scheduledTasks: 1 }}),
+            mode: "wing", silenceExpected: true, speakerActorTrust: ["owner_participant"],
+          }}, [], true),
+          listenOnlySideEffect: finalizeSyntheticQaResult({{
+            ...result({{ users: 1, callSessions: 1, scheduledTasks: 1 }}),
+            mode: "listen_only", speakerActorTrust: ["owner_participant"],
+          }}, [], true),
+          trustedSideEffect: finalizeSyntheticQaResult({{
+            ...result({{ users: 1, callSessions: 1, scheduledTasks: 1 }}),
+            mode: "call", speakerActorTrust: ["owner_participant"],
+          }}, [], true),
+          bootstrapSchedule: finalizeSyntheticQaResult({{
+            ...result({{
+              users: 1, callSessions: 1, scheduledTasks: 1,
+              bootstrapScheduledTasks: 1, unsafeScheduledTasks: 0,
+            }}),
+            mode: "call", speakerActorTrust: ["unknown"],
+          }}, [], true),
+          missingAudio: finalizeSyntheticQaResult({{
+            ...result(), outputAudioRequested: true, outputAudioEvidence: null,
+          }}, [], true),
+        }}));
+        """
+    )
+    completed = subprocess.run(
+        ["node", "-e", script],
+        cwd=ROOT,
+        capture_output=True,
+        check=True,
+        text=True,
+    )
+    actual = json.loads(completed.stdout)
+
+    assert actual["healthy"]["ok"] is True
+    assert actual["healthy"]["pageErrorCount"] == 0
+    assert actual["lateBrowserError"]["ok"] is False
+    assert actual["lateBrowserError"]["transportOk"] is False
+    assert actual["lateBrowserError"]["pageErrorCount"] == 1
+    assert actual["lateBrowserError"]["errorCodes"] == ["browser_page_error"]
+    assert "private browser details" not in completed.stdout
+    assert actual["failedCleanup"]["ok"] is False
+    assert actual["failedCleanup"]["errorCodes"] == ["synthetic_cleanup_incomplete"]
+    assert actual["disabledCleanup"]["ok"] is False
+    assert actual["disabledCleanup"]["errorCodes"] == ["synthetic_cleanup_required"]
+    assert actual["repeatedSpeech"]["errorCodes"] == ["unexpected_transcript_count"]
+    assert actual["exposedIdentity"]["errorCodes"] == ["participant_identity_exposed"]
+    assert actual["unauthenticatedCoreBrowser"]["errorCodes"] == [
+        "synthetic_core_browser_not_authenticated"
+    ]
+    assert actual["authenticatedCoreBrowser"]["ok"] is True
+    assert actual["leakedCoreBrowserSession"]["errorCodes"] == [
+        "synthetic_core_browser_session_cleanup_incomplete"
+    ]
+    assert actual["missingTranscript"]["errorCodes"] == ["expected_transcript_not_observed"]
+    assert actual["missingPlayback"]["errorCodes"] == ["audible_playback_not_observed"]
+    assert actual["passiveWingResponse"]["errorCodes"] == ["passive_wing_response_observed"]
+    assert actual["runningTask"]["errorCodes"] == ["voice_task_not_terminal"]
+    assert actual["unknownOwner"]["ownerTrustVerified"] is False
+    assert actual["unknownOwner"]["errorCodes"] == ["owner_speaker_not_verified"]
+    assert actual["trustedOwner"]["ownerTrustVerified"] is True
+    assert actual["trustedOwner"]["ok"] is True
+    assert actual["verifiedFinalTurn"]["ownerTrustVerified"] is True
+    assert actual["verifiedFinalTurn"]["ok"] is True
+    assert actual["verifiedOwnerBlockedByInterim"]["ownerTrustVerified"] is False
+    assert (
+        actual["verifiedOwnerBlockedByInterim"]["ownerTrustFailureReason"]
+        == "unverified_interim_segment_blocks_owner"
+    )
+    assert actual["verifiedOwnerBlockedByInterim"]["errorCodes"] == [
+        "owner_speaker_not_verified"
+    ]
+    assert (
+        actual["providerSpeakerIdentityMissing"]["ownerTrustFailureReason"]
+        == "provider_speaker_identity_missing"
+    )
+    assert actual["sharedMicrophoneTurn"]["ownerTrustVerified"] is False
+    assert (
+        actual["sharedMicrophoneTurn"]["ownerTrustFailureReason"]
+        == "shared_microphone_unverified"
+    )
+    assert actual["sharedMicrophoneTurn"]["errorCodes"] == ["owner_speaker_not_verified"]
+    assert actual["untrustedSideEffect"]["errorCodes"] == ["unauthorized_schedule_side_effect"]
+    assert actual["passiveWingSideEffect"]["errorCodes"] == ["unauthorized_schedule_side_effect"]
+    assert actual["listenOnlySideEffect"]["errorCodes"] == ["unauthorized_schedule_side_effect"]
+    assert actual["trustedSideEffect"]["ok"] is True
+    assert actual["bootstrapSchedule"]["ok"] is True
+    assert actual["missingAudio"]["errorCodes"] == ["output_audio_missing"]
+
+
+def test_synthetic_audio_qa_cleans_only_exact_disposable_owner_schedules(tmp_path: Path) -> None:
+    database = tmp_path / "schedules.db"
+    synthetic_owner = "a" * 24
+    protected_owner = "b" * 24
+    with sqlite3.connect(database) as connection:
+        connection.execute("CREATE TABLE scheduled_tasks (id TEXT, user_id TEXT)")
+        connection.executemany(
+            "INSERT INTO scheduled_tasks VALUES (?, ?)",
+            [("fixture-schedule", synthetic_owner), ("protected-schedule", protected_owner)],
+        )
+
+    script = textwrap.dedent(
+        f"""
+        const {{ cleanupSyntheticSchedules }} = require({json.dumps(str(SYNTHETIC_AUDIO_QA_SCRIPT))});
+        const database = {json.dumps(str(database))};
+        let invalidRejected = false;
+        try {{
+          cleanupSyntheticSchedules({{
+            userId: "unsafe' OR 1=1 --",
+            email: "viventium-voice-qa-safe@example.com",
+          }}, database);
+        }} catch {{
+          invalidRejected = true;
+        }}
+        const removed = cleanupSyntheticSchedules({{
+          userId: {json.dumps(synthetic_owner)},
+          email: "viventium-voice-qa-safe@example.com",
+        }}, database);
+        process.stdout.write(JSON.stringify({{ invalidRejected, removed }}));
+        """
+    )
+    completed = subprocess.run(
+        ["node", "-e", script],
+        cwd=ROOT,
+        capture_output=True,
+        check=True,
+        text=True,
+    )
+
+    assert json.loads(completed.stdout) == {"invalidRejected": True, "removed": 1}
+    with sqlite3.connect(database) as connection:
+        assert connection.execute("SELECT id, user_id FROM scheduled_tasks").fetchall() == [
+            ("protected-schedule", protected_owner)
+        ]
+
+
+def test_synthetic_audio_qa_distinguishes_default_bootstrap_from_unauthorized_schedules(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "schedules.db"
+    synthetic_owner = "a" * 24
+    protected_owner = "b" * 24
+    bootstrap = json.dumps(
+        {
+            "template_id": "synthetic-template",
+            "bootstrap_source": "synthetic-bootstrap",
+            "bootstrap_surface": "voice",
+        }
+    )
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "CREATE TABLE scheduled_tasks "
+            "(id TEXT, user_id TEXT, created_source TEXT, metadata_json TEXT)"
+        )
+        connection.executemany(
+            "INSERT INTO scheduled_tasks VALUES (?, ?, ?, ?)",
+            [
+                ("default-bootstrap", synthetic_owner, "agent", bootstrap),
+                ("unauthorized-reminder", synthetic_owner, "user", "{}"),
+                ("protected-reminder", protected_owner, "user", "{}"),
+            ],
+        )
+
+    script = textwrap.dedent(
+        f"""
+        const {{ inspectSyntheticSchedules }} =
+          require({json.dumps(str(SYNTHETIC_AUDIO_QA_SCRIPT))});
+        const inventory = inspectSyntheticSchedules({{
+          userId: {json.dumps(synthetic_owner)},
+          email: "viventium-voice-qa-safe@example.com",
+        }}, {json.dumps(str(database))});
+        process.stdout.write(JSON.stringify(inventory));
+        """
+    )
+    completed = subprocess.run(
+        ["node", "-e", script],
+        cwd=ROOT,
+        capture_output=True,
+        check=True,
+        text=True,
+    )
+
+    assert json.loads(completed.stdout) == {"total": 2, "bootstrap": 1, "unsafe": 1}
+
+
+def test_synthetic_audio_qa_cancels_only_its_own_active_voice_tasks() -> None:
+    script = textwrap.dedent(
+        f"""
+        const {{
+          cancelSyntheticActiveVoiceTasks,
+          createBrowserCallCapability,
+        }} = require({json.dumps(str(SYNTHETIC_AUDIO_QA_SCRIPT))});
+        const capability = createBrowserCallCapability().capability;
+        const seeded = {{
+          userId: "aaaaaaaaaaaaaaaaaaaaaaaa",
+          email: "viventium-voice-qa-safe@example.com",
+          callSessionId: "call-fixture-001",
+          browserCapability: capability,
+        }};
+        let observedFilter;
+        let observedRequest;
+        const db = {{
+          collection(name) {{
+            if (name !== "viventiumvoicetasks") throw new Error("wrong collection");
+            return {{
+              find(filter) {{
+                observedFilter = filter;
+                return {{
+                  toArray: async () => [{{ payload: {{ taskId: "task-fixture-001" }} }}],
+                }};
+              }},
+            }};
+          }},
+        }};
+        global.fetch = async (url, options) => {{
+          observedRequest = {{ url: String(url), options }};
+          return {{ ok: true, status: 200 }};
+        }};
+        (async () => {{
+          const cancelled = await cancelSyntheticActiveVoiceTasks(
+            db,
+            seeded,
+            "http://127.0.0.1:3300",
+          );
+          let invalidOwnerRejected = false;
+          try {{
+            await cancelSyntheticActiveVoiceTasks(
+              db,
+              {{ ...seeded, email: "protected-owner@example.com" }},
+              "http://127.0.0.1:3300",
+            );
+          }} catch {{ invalidOwnerRejected = true; }}
+          process.stdout.write(JSON.stringify({{
+            cancelled,
+            scopedUser: observedFilter.userId,
+            scopedSession: observedFilter.callSessionId,
+            url: observedRequest.url,
+            method: observedRequest.options.method,
+            capabilityMatched:
+              observedRequest.options.headers["X-VIVENTIUM-CALL-CAPABILITY"] === capability,
+            sessionBound:
+              JSON.parse(observedRequest.options.body).callSessionId === seeded.callSessionId,
+            invalidOwnerRejected,
+          }}));
+        }})().catch(error => {{ process.stderr.write(error.message); process.exitCode = 1; }});
+        """
+    )
+    completed = subprocess.run(
+        ["node", "-e", script],
+        cwd=ROOT,
+        capture_output=True,
+        check=True,
+        text=True,
+    )
+
+    assert json.loads(completed.stdout) == {
+        "cancelled": 1,
+        "scopedUser": "aaaaaaaaaaaaaaaaaaaaaaaa",
+        "scopedSession": "call-fixture-001",
+        "url": "http://127.0.0.1:3300/api/call-tasks/task-fixture-001/cancel",
+        "method": "POST",
+        "capabilityMatched": True,
+        "sessionBound": True,
+        "invalidOwnerRejected": True,
+    }
+
+
+def test_synthetic_audio_qa_uses_the_installed_speech_routes_by_default(tmp_path: Path) -> None:
+    fixture = tmp_path / "synthetic.wav"
+    fixture.write_bytes(b"synthetic-audio")
+    script = textwrap.dedent(
+        f"""
+        delete process.env.VIVENTIUM_QA_STT_PROVIDER;
+        delete process.env.VIVENTIUM_QA_STT_VARIANT;
+        delete process.env.VIVENTIUM_QA_TTS_PROVIDER;
+        delete process.env.VIVENTIUM_QA_TTS_VARIANT;
+        process.env.VIVENTIUM_STT_PROVIDER = "whisper_local";
+        process.env.VIVENTIUM_STT_MODEL = "large-v3-turbo";
+        process.env.VIVENTIUM_TTS_PROVIDER = "xai";
+        process.env.VIVENTIUM_XAI_VOICE = "Sal";
+        const {{ parseArgs }} = require({json.dumps(str(SYNTHETIC_AUDIO_QA_SCRIPT))});
+        const args = parseArgs([
+          "--audio", {json.dumps(str(fixture))},
+          "--output-root", {json.dumps(str(tmp_path))},
+        ]);
+        process.stdout.write(JSON.stringify({{
+          sttProvider: args.sttProvider,
+          sttVariant: args.sttVariant,
+          ttsProvider: args.ttsProvider,
+          ttsVariant: args.ttsVariant,
+        }}));
+        """
+    )
+    completed = subprocess.run(
+        ["node", "-e", script],
+        cwd=ROOT,
+        capture_output=True,
+        check=True,
+        text=True,
+    )
+
+    assert json.loads(completed.stdout) == {
+        "sttProvider": "whisper_local",
+        "sttVariant": "large-v3-turbo",
+        "ttsProvider": "xai",
+        "ttsVariant": "Sal",
+    }
+
+
+def test_synthetic_audio_qa_restricts_core_browser_login_to_local_origins(tmp_path: Path) -> None:
+    fixture = tmp_path / "synthetic.wav"
+    fixture.write_bytes(b"synthetic-audio")
+    script = textwrap.dedent(
+        f"""
+        const {{ parseArgs }} = require({json.dumps(str(SYNTHETIC_AUDIO_QA_SCRIPT))});
+        const base = [
+          "--audio", {json.dumps(str(fixture))},
+          "--output-root", {json.dumps(str(tmp_path))},
+          "--verify-core-browser",
+        ];
+        function rejected(url) {{
+          try {{ parseArgs([...base, "--core-url", url]); return false; }}
+          catch {{ return true; }}
+        }}
+        const valid = parseArgs([...base, "--core-url", "http://127.0.0.1:3190"]);
+        process.stdout.write(JSON.stringify({{
+          enabled: valid.verifyCoreBrowser,
+          coreUrl: valid.coreUrl,
+          externalRejected: rejected("https://example.com"),
+          embeddedCredentialsRejected: rejected("http://user:pass@127.0.0.1:3190"),
+          queryRejected: rejected("http://127.0.0.1:3190/?unsafe=1"),
+        }}));
+        """
+    )
+    completed = subprocess.run(
+        ["node", "-e", script],
+        cwd=ROOT,
+        capture_output=True,
+        check=True,
+        text=True,
+    )
+
+    assert json.loads(completed.stdout) == {
+        "enabled": True,
+        "coreUrl": "http://127.0.0.1:3190",
+        "externalRejected": True,
+        "embeddedCredentialsRejected": True,
+        "queryRejected": True,
+    }
+
+
+def test_synthetic_audio_qa_core_login_uses_disposable_private_credentials() -> None:
+    script = textwrap.dedent(
+        f"""
+        const path = require("path");
+        const {{ createRequire }} = require("module");
+        const source = {json.dumps(str(SYNTHETIC_AUDIO_QA_SCRIPT))};
+        const librechatRequire = createRequire(path.join(
+          {json.dumps(str(ROOT))}, "viventium_v0_4", "LibreChat", "package.json",
+        ));
+        const bcrypt = librechatRequire("bcryptjs");
+        const {{ seedCallSession }} = require(source);
+        const records = {{}};
+        const db = {{
+          collection: name => ({{ insertOne: async record => {{ records[name] = record; }} }}),
+        }};
+        (async () => {{
+          const seeded = await seedCallSession(db, {{
+            caseId: "safe-login", agentName: "synthetic-gateway", agentId: "synthetic-main",
+            interactive: true, mode: "call", sttProvider: "whisper_local",
+            sttVariant: "large-v3-turbo", ttsProvider: "xai", ttsVariant: "Sal",
+            verifyCoreBrowser: true,
+          }});
+          const serialized = JSON.stringify(seeded);
+          process.stdout.write(JSON.stringify({{
+            syntheticEmail: /^viventium-voice-qa-[a-z0-9-]+@example\\.com$/i.test(seeded.email),
+            approved: records.users.viventiumApprovalStatus === "approved",
+            passwordHashed: bcrypt.compareSync(seeded.syntheticPassword, records.users.password),
+            privatePassword: !serialized.includes(seeded.syntheticPassword),
+            passwordStrong: seeded.syntheticPassword.length >= 32,
+            signedCallOwnerBound: records.viventiumcallsessions.userId === seeded.userId,
+          }}));
+        }})().catch(error => {{ process.stderr.write(error.message); process.exitCode = 1; }});
+        """
+    )
+    completed = subprocess.run(
+        ["node", "-e", script],
+        cwd=ROOT,
+        capture_output=True,
+        check=True,
+        text=True,
+    )
+
+    assert json.loads(completed.stdout) == {
+        "syntheticEmail": True,
+        "approved": True,
+        "passwordHashed": True,
+        "privatePassword": True,
+        "passwordStrong": True,
+        "signedCallOwnerBound": True,
+    }
+
+
+def test_synthetic_audio_qa_captures_actual_remote_audio_as_private_audible_wav(
+    tmp_path: Path,
+) -> None:
+    webm = tmp_path / "remote.webm"
+    output = tmp_path / "private-output.wav"
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:duration=0.35",
+            "-c:a",
+            "libopus",
+            str(webm),
+        ],
+        capture_output=True,
+        check=True,
+    )
+    script = textwrap.dedent(
+        f"""
+        const fs = require("fs");
+        const {{ inspectAudiblePcmWav, persistCapturedOutputAudio }} =
+          require({json.dumps(str(SYNTHETIC_AUDIO_QA_SCRIPT))});
+        (async () => {{
+          const page = {{
+            evaluate: async () => ({{
+              bytes: Array.from(fs.readFileSync({json.dumps(str(webm))})),
+            }}),
+          }};
+          const evidence = await persistCapturedOutputAudio(
+            page,
+            {json.dumps(str(output))},
+          );
+          const silent = Buffer.from(fs.readFileSync({json.dumps(str(output))}));
+          const data = silent.indexOf(Buffer.from("data"));
+          silent.fill(0, data + 8);
+          process.stdout.write(JSON.stringify({{
+            evidence,
+            privateMode: fs.statSync({json.dumps(str(output))}).mode & 0o777,
+            silenceRejected: inspectAudiblePcmWav(silent) === null,
+            malformedRejected: inspectAudiblePcmWav(Buffer.from("not audio")) === null,
+          }}));
+        }})().catch(error => {{ process.stderr.write(error.message); process.exitCode = 1; }});
+        """
+    )
+    completed = subprocess.run(
+        ["node", "-e", script],
+        cwd=ROOT,
+        capture_output=True,
+        check=True,
+        text=True,
+    )
+    actual = json.loads(completed.stdout)
+
+    assert actual["evidence"]["format"] == "wav"
+    assert actual["evidence"]["sampleRate"] == 48000
+    assert actual["evidence"]["channels"] == 1
+    assert actual["evidence"]["peak"] > 32
+    assert actual["evidence"]["durationSeconds"] >= 0.3
+    assert len(actual["evidence"]["sha256"]) == 64
+    assert actual["privateMode"] == 0o600
+    assert actual["silenceRejected"] is True
+    assert actual["malformedRejected"] is True
+
+
+def test_synthetic_audio_qa_rejects_unsafe_or_silent_output_capture(tmp_path: Path) -> None:
+    fixture = tmp_path / "synthetic.wav"
+    fixture.write_bytes(b"synthetic-audio")
+    output = tmp_path / "private-output.wav"
+    script = textwrap.dedent(
+        f"""
+        const {{ parseArgs }} = require({json.dumps(str(SYNTHETIC_AUDIO_QA_SCRIPT))});
+        const base = [
+          "--audio", {json.dumps(str(fixture))},
+          "--output-root", {json.dumps(str(tmp_path))},
+        ];
+        function rejected(argv) {{
+          try {{ parseArgs(argv); return false; }} catch {{ return true; }}
+        }}
+        const valid = parseArgs([
+          ...base, "--interactive", "--output-audio", {json.dumps(str(output))},
+        ]);
+        process.stdout.write(JSON.stringify({{
+          outputAudio: valid.outputAudio,
+          listenOnlyRejected: rejected([
+            ...base, "--mode", "listen_only", "--output-audio", {json.dumps(str(output))},
+          ]),
+          passiveWingRejected: rejected([
+            ...base, "--mode", "wing", "--expect-silence", "--output-audio", {json.dumps(str(output))},
+          ]),
+          outsideRootRejected: rejected([
+            ...base, "--interactive", "--output-audio", {json.dumps(str(tmp_path.parent / "outside.wav"))},
+          ]),
+        }}));
+        """
+    )
+    completed = subprocess.run(
+        ["node", "-e", script],
+        cwd=ROOT,
+        capture_output=True,
+        check=True,
+        text=True,
+    )
+
+    assert json.loads(completed.stdout) == {
+        "outputAudio": str(output),
+        "listenOnlyRejected": True,
+        "passiveWingRejected": True,
+        "outsideRootRejected": True,
+    }
+
+
+def test_synthetic_audio_qa_starts_audio_evidence_before_the_assistant_can_reply() -> None:
+    content = SYNTHETIC_AUDIO_QA_SCRIPT.read_text()
+
+    assert content.index("const audioBaselineAtMs = Date.now();") < content.index(
+        "const transcript = args.expectSilence"
+    )
+    assert "async function missedInteractiveObservation" in content
+    assert "expected_transcript_not_observed" in content
+    assert "audible_playback_not_observed" in content
+
+
+def test_chrome_call_setup_keeps_browser_capability_out_of_public_tree() -> None:
+    content = CHROME_VOICE_SETUP_SCRIPT.read_text()
+
+    assert "VIVENTIUM_QA_OUTPUT_ROOT" in content
+    assert "assertPrivateOutputRoot" in content
+    assert "mode: 0o700" in content
+    assert "mode: 0o600" in content
+
+
+def test_voice_browser_qa_cleanup_removes_every_call_owned_runtime_record() -> None:
+    setup_content = CHROME_VOICE_SETUP_SCRIPT.read_text()
+    artifact_content = TTS_ARTIFACT_BROWSER_QA_SCRIPT.read_text()
+    synthetic_content = SYNTHETIC_AUDIO_QA_SCRIPT.read_text()
+
+    for content in (artifact_content, synthetic_content):
+        assert "viventiumvoicetasks" in content
+        assert "viventiumvoicespeakersegments" in content
+        assert "voiceTasks:" in content
+        assert "speakerSegments:" in content
+
+    assert "cleanupCallArtifacts" in setup_content
+
+
+def test_call_ui_uses_livekit_release_that_seeds_existing_agent_state() -> None:
+    package = json.loads(AGENT_STARTER_PACKAGE.read_text())
+    lock = AGENT_STARTER_LOCK.read_text()
+
+    assert package["dependencies"]["@livekit/components-react"] == "2.9.21"
+    assert package["dependencies"]["@livekit/protocol"] == "1.41.0"
+    assert package["dependencies"]["livekit-client"] == "2.18.2"
+    assert package["dependencies"]["livekit-server-sdk"] == "2.13.3"
+    assert "'@livekit/components-react@2.9.21':" in lock
+    assert "specifier: 1.41.0" in lock
+    assert "specifier: 2.18.2" in lock
 
 
 def test_call_session_hooks_normalize_transient_fetch_failures_and_retry_initial_loads() -> None:
@@ -1520,19 +2253,3 @@ def test_connection_details_route_uses_public_livekit_only_for_configured_public
     assert "return NEXT_PUBLIC_LIVEKIT_URL ?? LIVEKIT_URL;" in content
     assert "const browserLiveKitUrl = resolveBrowserLiveKitUrl(req);" in content
     assert "serverUrl: browserLiveKitUrl," in content
-
-
-def test_synthetic_audio_qa_requires_received_audio_not_only_an_attached_element() -> None:
-    content = SYNTHETIC_AUDIO_QA_SCRIPT.read_text()
-
-    assert '"inbound-rtp"' in content
-    assert 'stat.kind !== "audio"' in content
-    assert "inboundAudioBytesReceived" in content
-    assert "receivedAudioEnergy" in content
-    assert "deliveredAudioBytesDelta" in content
-    assert "finalInteractiveMessages" in content
-    assert "waitForDeliveredAudio" in content
-    assert "waitForCompletedPlayback" in content
-    assert "playbackCompleted" in content
-    assert "waitForCompletedInteractiveTask" in content
-    assert "audioState.delivered" not in content
