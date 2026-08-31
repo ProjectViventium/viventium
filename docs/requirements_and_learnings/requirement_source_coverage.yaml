@@ -232,8 +232,8 @@ stale_case_catalog_audit:
   markers_in_current_files_absent_from_head: 75
   markers_in_untracked_current_files: 11
   existing_case_catalog_date_resets: 0
-  current_recent_marker_total: 270
-  post_initial_audit_recent_marker_delta: 184
+  current_recent_marker_total: 267
+  post_initial_audit_recent_marker_delta: 181
   current_stale_triage_marker_total: 164
   current_total_stale_marker_delta_after_initial_audit: 0
   method: read_only_current_marker_comparison_against_head

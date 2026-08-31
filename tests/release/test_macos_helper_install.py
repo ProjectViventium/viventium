@@ -232,6 +232,10 @@ def _make_fake_runtime_repo_root(path: Path) -> None:
         "version: synthetic\n",
         encoding="utf-8",
     )
+    (source_of_truth / "scheduled_failure_contract.v1.json").write_text(
+        '{"version": 1, "classes": {}}\n',
+        encoding="utf-8",
+    )
     (source_of_truth / "prompts" / "registry.yaml").write_text(
         "version: 1\nprompts: {}\n",
         encoding="utf-8",
@@ -1622,6 +1626,16 @@ def test_install_honors_explicit_active_developer_checkout_in_documents(tmp_path
         / "prompts"
         / "registry.yaml"
     ).is_file()
+    assert json.loads(
+        (
+            installed_scheduler_root
+            / "viventium_v0_4"
+            / "LibreChat"
+            / "viventium"
+            / "source_of_truth"
+            / "scheduled_failure_contract.v1.json"
+        ).read_text(encoding="utf-8")
+    ) == {"version": 1, "classes": {}}
     assert not (installed_scheduler_root / ".venv").exists()
     assert not (installed_scheduler_root / "schedules.db").exists()
     assert schedule_db.read_text(encoding="utf-8") == "preserved schedule state\n"

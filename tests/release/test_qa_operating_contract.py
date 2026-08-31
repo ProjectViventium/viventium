@@ -317,9 +317,34 @@ def _release_test_files() -> list[str]:
     return [_relative(path) for path in sorted(RELEASE_TEST_ROOT.glob("test_*.py"))]
 
 
+class _UniqueKeyLoader(yaml.SafeLoader):
+    pass
+
+
+def _construct_unique_mapping(
+    loader: _UniqueKeyLoader,
+    node: yaml.MappingNode,
+    deep: bool = False,
+) -> dict[object, object]:
+    mapping: dict[object, object] = {}
+    for key_node, value_node in node.value:
+        key = loader.construct_object(key_node, deep=deep)
+        assert key not in mapping, (
+            f"Duplicate YAML key {key!r} at line {key_node.start_mark.line + 1}"
+        )
+        mapping[key] = loader.construct_object(value_node, deep=deep)
+    return mapping
+
+
+_UniqueKeyLoader.add_constructor(
+    yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG,
+    _construct_unique_mapping,
+)
+
+
 def _load_release_test_owners() -> dict[str, dict[str, str]]:
     mapping_path = QA_ROOT / "release-test-owners.yaml"
-    payload = yaml.safe_load(_read(mapping_path))
+    payload = yaml.load(_read(mapping_path), Loader=_UniqueKeyLoader)
     assert isinstance(payload, dict), f"Expected YAML mapping in {mapping_path}"
     release_tests = payload.get("release_tests")
     assert isinstance(release_tests, dict), f"Expected release_tests mapping in {mapping_path}"
@@ -1429,10 +1454,10 @@ def test_requirement_source_coverage_ledger_is_private_safe_and_resolves() -> No
         "markers_in_current_files_absent_from_head": 75,
         "markers_in_untracked_current_files": 11,
         "existing_case_catalog_date_resets": 0,
-        "current_recent_marker_total": 270,
-        "post_initial_audit_recent_marker_delta": 184,
-            "current_stale_triage_marker_total": 164,
-            "current_total_stale_marker_delta_after_initial_audit": 0,
+        "current_recent_marker_total": 267,
+        "post_initial_audit_recent_marker_delta": 181,
+        "current_stale_triage_marker_total": 164,
+        "current_total_stale_marker_delta_after_initial_audit": 0,
         "method": "read_only_current_marker_comparison_against_head",
         "durability": "working_tree_only_until_authorized_commit",
         "limitation": (

@@ -292,7 +292,6 @@ def test_conscious_main_uses_glasshive_and_subconscious_agents_keep_gpt56_worklo
     assert main_agent.get("model") == "codex-cli:gpt-5.6-sol"
     assert main_agent.get("model_parameters") == {
         "model": "codex-cli:gpt-5.6-sol",
-        "modelLabel": "GPT-5.6 Sol",
         "reasoning_effort": "medium",
     }
     assert main_agent.get("glasshive_options") == {
@@ -840,11 +839,23 @@ def test_conscious_and_subconscious_agents_use_approved_routes_with_managed_fall
             assert agent.get("glasshive_options") == {
                 "workspace": {"mode": "life"},
                 "access": "full",
+                "orchestration": {
+                    "parallel_available": True,
+                    "default_mode": "focused",
+                    "worker_profile": "codex-cli",
+                    "fallback_worker_profile": "claude-code",
+                },
             }
 
     assert bundle["mainAgent"].get("glasshive_options") == {
         "workspace": {"mode": "life"},
         "access": "full",
+        "orchestration": {
+            "parallel_available": True,
+            "default_mode": "focused",
+            "worker_profile": "codex-cli",
+            "fallback_worker_profile": "claude-code",
+        },
     }
 
     main_agent = bundle["mainAgent"]
