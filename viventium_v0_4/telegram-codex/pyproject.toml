@@ -5,7 +5,7 @@ description = "Telegram sidecar for local Codex workflows with localhost pairing
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "aiohttp>=3.12.15",
+    "aiohttp>=3.14.1",
     "pywhispercpp>=1.0.0",
     "python-telegram-bot>=22.6",
     "PyYAML>=6.0.2",
