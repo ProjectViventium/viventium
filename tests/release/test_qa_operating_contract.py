@@ -1459,11 +1459,11 @@ def test_requirement_source_coverage_ledger_is_private_safe_and_resolves() -> No
         "current_stale_triage_marker_total": 164,
         "current_total_stale_marker_delta_after_initial_audit": 0,
         "method": "read_only_current_marker_comparison_against_head",
-        "durability": "working_tree_only_until_authorized_commit",
+        "durability": "committed_public_source_and_tracked_triage_manifest",
         "limitation": (
             "These markers preserve NOT RUN debt; they are not execution results. The separate "
             "stale-case triage manifest keeps its own 2026-08-29 review boundary and remains "
-            "non-durable while untracked."
+            "tracked separately."
         ),
     }
     stale_triage = yaml.safe_load(_read(STALE_CASE_TRIAGE))

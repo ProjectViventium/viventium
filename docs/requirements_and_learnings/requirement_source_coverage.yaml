@@ -237,10 +237,10 @@ stale_case_catalog_audit:
   current_stale_triage_marker_total: 164
   current_total_stale_marker_delta_after_initial_audit: 0
   method: read_only_current_marker_comparison_against_head
-  durability: working_tree_only_until_authorized_commit
+  durability: committed_public_source_and_tracked_triage_manifest
   limitation: >-
     These markers preserve NOT RUN debt; they are not execution results. The separate stale-case
-    triage manifest keeps its own 2026-08-29 review boundary and remains non-durable while untracked.
+    triage manifest keeps its own 2026-08-29 review boundary and is tracked separately.
 
 # Each source family below is backed by the private canonical alias-to-task manifest. Requirement
 # anchors or ids belong to requirement owners. QA case and natural-use-case ids are separate and
