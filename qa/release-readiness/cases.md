@@ -163,7 +163,7 @@ rows before claiming a pass when the feature behavior changes.
 - `tests/release/test_local_web_search_compose.py`
 - `tests/release/test_ms365_launcher_contract.py`
 - `tests/release/test_no_runtime_nlu.py`
-- `tests/release/test_parallel_work_release_gate.py`
+- `tests/release/test_openclaw_bridge_release_truth.py`
 - `tests/release/test_personal_account_qa_cleanup_plan.py`
 - `tests/release/test_personal_account_qa_recovery.py`
 - `tests/release/test_private_repo_resolution_contract.py`

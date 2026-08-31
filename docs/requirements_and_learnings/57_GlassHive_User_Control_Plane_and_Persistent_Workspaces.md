@@ -858,3 +858,51 @@ instead of copying their reports.
 The ordered completion plan and current snapshot are maintained in
 [`qa/glasshive-user-control-plane/completion-ledger.md`](../../qa/glasshive-user-control-plane/completion-ledger.md).
 That ledger is the execution/status layer; this document remains the product-truth owner.
+
+## Complete Two-Owner Cross-Client Acceptance
+
+`GHU-012` requires one fresh deployed journey with two disposable synthetic owners across the Web
+control plane and fresh Codex and Claude clients. The journey covers sign-in/out, workspace create,
+keep, reconnect and reuse, provider and connection setup, wrong-owner denial, denied/revoked/expired
+identity, dependency failure, recovery, reload/restart persistence, and exact cleanup. Each branch
+needs its own visible client result plus API/log/database/state evidence; a composite case, mock, or
+aggregate pass cannot stand in for an unrun branch. `GHUCP-035` / `GHUCP-UC-013` owns acceptance.
+
+## Exact Login-Policy And Workspace-Link Boundaries
+
+`GHU-001` uses standards-based OIDC as the identity and authorization boundary. An operator may
+advertise provider-hosted email/password only when that is a real entry method for the configured
+OIDC provider; this is an email login method, not email-owned identity, a GlassHive password form,
+or public email signup. Email remains mutable profile or credential-locator data, while issuer plus
+subject owns the principal. When enrollment is closed, public signup and reset stay absent and only
+an administrator-preapproved exact provider subject may enter. `GHUCP-002`, `GHUCP-003`, and
+`GHUCP-UC-001` own acceptance.
+
+`GHU-006` requires every workspace to expose one stable owner-scoped canonical URL derived from its
+immutable routing identity. Rename, Favorite, search, refresh, restart, and reuse preserve that URL.
+Workspace cards and results may expose copy or open links only to that canonical owner-scoped target;
+links never contain a secret, mutable display name as authority, raw filesystem path, or another
+owner's identifier, and wrong-owner access remains indistinguishable from not found. `GHUCP-011`,
+`GHUCP-012`, `GHUCP-019`, `GHUCP-020`, and `GHUCP-UC-003` own acceptance.
+
+<!-- VIVENTIUM-STABLE-REQUIREMENT-DECLARATIONS:START -->
+## Stable requirement declarations
+
+Each line is the canonical public owner declaration for one stable requirement ID. Detailed sections supply implementation context; they must not narrow or contradict these declared outcomes.
+
+GHU-001: Standards-based easy sign-in, with OpenID/OIDC and email-only login policy; email signup is disabled where the owner requires it.
+GHU-002: Every hosted user gets private, persistent, resumable, isolated workspaces with strict owner/tenant boundaries.
+GHU-003: Users can attach personal Codex or Claude subscriptions/provider homes without changing another user or the deployment default.
+GHU-004: Connection lifecycle supports connect, reconnect, test, renew, remove, contention, quota, and expiry with one clear truthful action.
+GHU-005: Codex/Claude use native skills, plugins, MCPs, browser, and connected-service setup inside the isolated workspace. Do not add connector-specific host code or copy user tokens to imitate the harness.
+GHU-006: Workspace names are auto-filled, human-readable, editable; rename, Favorite, search, links, reuse, and canonical workspace URL are obvious.
+GHU-007: The same workspace is usable from Glass Drive and fresh Codex/Claude MCP clients; reuse saved files, browser state, worker context, accounts, and grants rather than duplicate/re-authorize without cause.
+GHU-008: A short user request should use one goal-relevant immediate call, or one launch plus bounded wait for asynchronous work; do not narrate catalogs, IDs, or plumbing.
+GHU-009: UI is sparse, obvious, accessible, responsive, and honest. Raw terminal output is not the primary path.
+GHU-010: Recurring work has editable definitions, immutable fire-time occurrences, idempotent dispatch, overlap/recovery safety, and fire-time authorization.
+GHU-011: Hosted edge, signer/runtime keys, migrations, three-service cutover, clean install, upgrade, restore, rollback, and exact source-to-installed chain are release gates.
+GHU-012: Prove a fresh two-user deployed browser/client journey, wrong-owner denials, refresh/reuse, provider/connection failures, and public-safe evidence.
+GHU-013: Brand/Home navigation opens the canonical modern dashboard; legacy routes are not the primary journey. Opening a workspace result opens the exact scoped artifact without resuming compute, while Watch and Continue remain explicit actions.
+GHU-014: The Workspaces surface is one bounded multi-worker control room: users can view, steer, and control parallel workers, with at most three live view-only previews; all other cards remain truthful without unbounded terminal streams.
+GHU-015: External-AI setup separates keyboard-accessible Automatic and Manual paths. Automatic provides one deployment-specific, self-contained copyable instruction with the supported client add/auth flow, canonical HTTPS origin, and collision-safe server name; Manual exposes the server and commands. Native authentication, reconnect, and recovery must work.
+<!-- VIVENTIUM-STABLE-REQUIREMENT-DECLARATIONS:END -->

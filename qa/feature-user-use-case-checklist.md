@@ -109,7 +109,7 @@ The following public QA owners are part of the product checklist. Do not create 
 area or an unlinked report.
 
 `qa/agent-config-continuity/`, `qa/agent-streaming-usage/`, `qa/anti-sycophancy/`, `qa/background_agents/`,
-`qa/branding-assets/`, `qa/bug-report/`, `qa/citation-rendering/`, `qa/config-alignment/`,
+`qa/branding-assets/`, `qa/bug-report/`, `qa/channel-connections/`, `qa/citation-rendering/`, `qa/config-alignment/`,
 `qa/config-compiler-memory/`, `qa/config-compiler-xai-models/`, `qa/continuity-ops/`,
 `qa/conversation-recall-rag/`, `qa/cognitive-architecture/`, `qa/documentation-implementation-audit/`, `qa/emotional-cortex/`, `qa/feature-request/`,
 `qa/glasshive-core-provider/`, `qa/glasshive-user-control-plane/`, `qa/glasshive_azure_enterprise/`, `qa/glasshive_deep_research/`, `qa/glasshive_standard_qa/`, `qa/glasshive-mcp-capability-broker/`,
@@ -125,7 +125,7 @@ area or an unlinked report.
 `qa/telegram-document-attachments/`, `qa/telegram-local-bot-api/`, `qa/telegram-media-downloads/`,
 `qa/telegram-media-prereqs/`, `qa/telegram-runtime/`, `qa/telegram-settings-latency/`,
 `qa/telegram-voice-replies/`, `qa/voice-call-hardening/`, `qa/voice-streaming-first/`,
-`qa/v0.5-product-design/`, `qa/voice-stt-local/`, `qa/voice-turn-taking/`, `qa/web-search-telegram/`, and `qa/web-search/`.
+`qa/v0.5-product-design/`, `qa/viventium-health/`, `qa/voice-stt-local/`, `qa/voice-turn-taking/`, `qa/web-search-telegram/`, and `qa/web-search/`.
 
 Connected-account handoff acceptance lives under `qa/connected-accounts-handoff/`; GlassHive brokered
 worker acceptance lives under `qa/glasshive-mcp-capability-broker/`. Both remain active, separate QA

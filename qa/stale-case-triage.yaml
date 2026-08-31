@@ -19,7 +19,7 @@ reason: >-
 entries:
   - path: qa/agent-config-continuity/cases.md
     marker_count: 6
-    marker_sha256: 2383250b91dab3ca2ec0acced0d17c087f8a10795ed0a2aadd6849460614fd3c
+    marker_sha256: 385f4aa1b6449a68e243185a57b0241faf0588026a8bae7a765588d31933eb2f
   - path: qa/agent-streaming-usage/cases.md
     marker_count: 7
     marker_sha256: 774491ba3dd92b579402025cea107fc16e561dcd4cd97515a7470c80a0eb97ab
@@ -38,9 +38,6 @@ entries:
   - path: qa/documentation-implementation-audit/cases.md
     marker_count: 3
     marker_sha256: 79ba7b954e442d2fff1a6a3c89424033cc322ee12c4ae5b929d0714501ec4c69
-  - path: qa/installer-piped-bootstrap/cases.md
-    marker_count: 4
-    marker_sha256: 04631057bcc05fd9f62504360be52a9cbd67df9aa69cff45eb9dae730c5e3ef1
   - path: qa/installer-wait-taglines/cases.md
     marker_count: 7
     marker_sha256: 85488036a4972c3086c683ab9ca6b593ab6b009dcc519207216d3d848ef973e1
@@ -53,9 +50,6 @@ entries:
   - path: qa/mcp-tooling/cases.md
     marker_count: 9
     marker_sha256: d0ab93aea8c2ff4df5fc04376ddd280df4dddaab4dd6da3b85fa1cace9cff1f6
-  - path: qa/modern-playground-voice/cases.md
-    marker_count: 2
-    marker_sha256: 292612eac0aebbd5f34143e333d6d4d1ee5e1c5f746e5d93f124d302e58fbafc
   - path: qa/no-response/cases.md
     marker_count: 9
     marker_sha256: 501c04dd960a911df200e160d18c0da28e2aa9f8020cc25e72750914110bf305

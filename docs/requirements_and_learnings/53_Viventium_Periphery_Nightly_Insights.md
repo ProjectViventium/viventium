@@ -695,3 +695,27 @@ These lanes must never infer one another's health from a shared timestamp or out
 integrity report is the canonical cross-lane map; it does not become a fourth scheduler or a repair
 mechanism. A nightly run is not healthy merely because another lane ran, and an observer firing
 before a product routine's due time plus grace is `NOT DUE`, not a product failure.
+
+## Failed WHOOP-Prompt Forensic Acceptance
+
+`DATA-010` requires one end-to-end investigation when a WHOOP-backed prompt fails, disappears, or
+returns misleading output. Trace the same sanitized occurrence through its trigger, conversation
+and reply, scheduler and callback, logs, database/state, and owning code boundary; classify the exact
+failure instead of inferring health from a nearby successful acquisition or manual run. Then run the
+happy, degraded, recovery, reload/restart, and duplicate-suppression branches on the current
+candidate. Historical artifacts and aggregate subsystem health cannot replace any branch.
+`PERI-023` / `PERI-UC-007` owns acceptance.
+
+<!-- VIVENTIUM-STABLE-REQUIREMENT-DECLARATIONS:START -->
+## Stable requirement declarations
+
+Each line is the canonical public owner declaration for one stable requirement ID. Detailed sections supply implementation context; they must not narrow or contradict these declared outcomes.
+
+DATA-001: WHOOP access is owner-only and, when the user authorizes the complete integration, covers all six official families—body measurement, cycle, profile, recovery, sleep, workout—with full pagination and preserved relationships/units.
+DATA-002: Official ZIP/manual import boundaries are explicit. Metadata-only LIFE projection avoids copying raw private health data into broad context.
+DATA-004: WHOOP onboarding and recurring use are automatic, durable, recoverable, and easy; degraded access has a clear recovery path.
+DATA-007: WHOOP is an ongoing product integration owned through Scheduling Cortex, Prompt Workbench, and health-context docs—not a one-time screenshot/photo import.
+DATA-008: Other users can connect WHOOP with minimal clicks through a generic, non-hardcoded flow. Use the available official/API/export/manual mechanisms intelligently rather than giving up at one blocked path.
+DATA-009: Imported health history must be complete, paginated, easy for Viventium to read, and usable for correlation with other authorized Life context.
+DATA-010: A failed WHOOP prompt requires trigger→logs/DB/code/conversation root-cause analysis plus happy, unhappy, recovery, persistence, and no-duplicate coverage across the blast radius.
+<!-- VIVENTIUM-STABLE-REQUIREMENT-DECLARATIONS:END -->

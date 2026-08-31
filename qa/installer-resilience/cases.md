@@ -790,6 +790,7 @@ rows before claiming a pass when the feature behavior changes.
 
 ## Release Test Traceability
 
+- `tests/release/test_ci_release_workflows.py`
 - `tests/release/test_config_compiler.py`
 - `tests/release/test_config_transaction.py`
 - `tests/release/test_connected_accounts_onboarding_contract.py`
@@ -809,12 +810,25 @@ rows before claiming a pass when the feature behavior changes.
 - `tests/release/test_feelings_navigation_contract.py`
 - `tests/release/test_macos_helper_install.py`
 - `tests/release/test_native_stack_helpers.py`
+- `tests/release/test_native_bootstrap_ui.py`
+- `tests/release/test_native_candidate_transport.py`
+- `tests/release/test_native_component_manifest.py`
+- `tests/release/test_native_component_staging.py`
+- `tests/release/test_native_macos_compatibility.py`
+- `tests/release/test_native_release_sequence.py`
+- `tests/release/test_native_payload_assembler.py`
+- `tests/release/test_native_payload_builder.py`
+- `tests/release/test_native_public_safety.py`
 - `tests/release/test_native_payload.py`
+- `tests/release/test_openai_api_key_lifecycle_qa.py`
+- `tests/release/test_openai_connected_account_lifecycle_qa.py`
 - `tests/release/test_prompt_workbench.py`
 - `tests/release/test_public_bootstrap_manifests.py`
 - `tests/release/test_playground_loopback_contract.py`
 - `tests/release/test_qa_operating_contract.py`
 - `tests/release/test_qa_results_public_safety.py`
+- `tests/release/test_qa_storage_guard.py`
+- `tests/release/test_sandpack_runtime_contract.py`
 - `tests/release/test_shell_init.py`
 - `tests/release/test_viventium_health_integration.py`
 - `tests/release/test_wizard.py`

@@ -19,7 +19,7 @@
   backup after all ownership checks pass; pinned Meilisearch starts and search rebuilds from Mongo.
 - Forbidden result: custom/canonical data movement, foreign signal/container removal, archive after
   stop failure, backup escape, or preference/conversation mutation.
-- Last run: PASS-AUTOMATED/PARTIAL-LIVE 2026-07-25. Archive, symlink, ownership, mixed-target, and
+- Last run: PARTIAL 2026-07-25; automated checks passed. Archive, symlink, ownership, mixed-target, and
   stop-failure regressions pass; one local derived index was recoverably archived and rebuilt.
 
 ## Natural User Use Case Checklist

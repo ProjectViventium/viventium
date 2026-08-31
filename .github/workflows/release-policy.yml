@@ -26,6 +26,19 @@ jobs:
         with:
           python-version: "3.11"
       - run: python -m pip install pytest pyyaml
+      - name: Bootstrap pinned policy components
+        run: |
+          printf '%s\n' \
+            'voice:' \
+            '  mode: disabled' \
+            'integrations:' \
+            '  glasshive:' \
+            '    enabled: true' \
+            > "$RUNNER_TEMP/release-policy-components.yaml"
+          python scripts/viventium/bootstrap_components.py \
+            --repo-root . \
+            --config "$RUNNER_TEMP/release-policy-components.yaml" \
+            --jobs 3
       - run: >-
           python -m pytest
           tests/release/test_public_bootstrap_manifests.py

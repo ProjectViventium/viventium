@@ -395,3 +395,39 @@ If private source retention is incomplete, the coverage ledger must say
       threads. Kernel panic evidence does not attribute this defect to Red Team.
 - [ ] Every applicable case in `qa/anti-sycophancy/cases.md` has current real-user evidence.
 - [ ] Source/live Agent Builder drift is reviewed before any non-dry-run sync.
+
+## Complete-Candidate And Disposable-Identity Acceptance
+
+`AS-008` requires one current-candidate journey that separately proves balanced semantic behavior,
+Web, Telegram, and audible Voice results, each typed failure state, Deep Memory plus the governed
+memory-writer/Dreaming boundary, restart, Stop, refresh/persistence, and final cleanup. Each branch
+keeps its own visible or audible result, supporting state, and status; a passing surface, old
+candidate, or aggregate report cannot replace another branch. `ANTI-016` / `ANTI-UC-015` owns this
+journey.
+
+`AS-012` requires a disposable isolated QA identity with the same governed capabilities needed by
+the tested path. The run proves protected personal state is unchanged, captures public-safe
+candidate-bound evidence without copying private values, then removes only the synthetic identity's
+sessions, grants, caches, files, and records and proves zero residue. Missing capability parity,
+cross-owner visibility, cleanup before evidence capture, or a private value in public evidence
+fails `ANTI-013` / `ANTI-UC-012`.
+
+<!-- VIVENTIUM-STABLE-REQUIREMENT-DECLARATIONS:START -->
+## Stable requirement declarations
+
+Each line is the canonical public owner declaration for one stable requirement ID. Detailed sections supply implementation context; they must not narrow or contradict these declared outcomes.
+
+AS-001: Target calibrated evidence-based truth-seeking, not reflexive agreement, disagreement, pessimism, or a naysayer persona.
+AS-002: Immediate Access memory/context and ordinary background detection start in parallel with Main; do not hold the answer for generic detection.
+AS-003: Deep Memory continues regardless. Later useful evidence may surface through Phase B; Main decides whether it is new and valuable.
+AS-004: Main may intelligently consult a Reality Check and then optionally Red Team when evidence needs pressure-testing. No hardcoded “which request” rubric.
+AS-005: Consultants return evidence inside the conscious turn. Main remains final speaker and owns confidence/uncertainty.
+AS-006: One participant cannot loop repeatedly on the same matter; history-scoped idempotency and cancellation families enforce bounded returns.
+AS-007: Phase B may add valuable later evidence but never rewrites the original answer. Silence is valid.
+AS-008: Prove balanced semantic behavior, Web/Telegram/Voice, failure states, memory writer/Dreaming, restart, Stop, refresh, and cleanup.
+AS-009: Foreground handoff uses shared conversation/context/tool state; Main does not manually rewrite a lossy recap. Immediate memory/background detection runs in parallel with Main and its detection budget must not become answer latency.
+AS-010: Do not use an arbitrary hardcoded 180-second deadline that cuts off useful Reality/Red work. Time bounds must be typed, justified, recoverable, and compatible with provider authorization and Stop.
+AS-011: Deep Memory/RAG must actually be enabled, healthy, scoped, and evidenced when the flow claims it searched; a matching answer without the real retrieval path is not proof.
+AS-012: Real QA uses an isolated test account with equivalent governed capabilities and proves final state; it must not contaminate the personal account or copy private data into public evidence.
+GOV-017: The anti-sycophancy philosophy needs one clean, beautiful, top-to-bottom diagram that preserves the user’s A–F flow and is obvious to new developers/agents; avoid multiple confusing charts or creative reinterpretation.
+<!-- VIVENTIUM-STABLE-REQUIREMENT-DECLARATIONS:END -->

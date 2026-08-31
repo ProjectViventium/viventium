@@ -181,3 +181,5 @@ rows before claiming a pass when the feature behavior changes.
 - `tests/release/test_ollama_embeddings_prereqs.py`
 - `tests/release/test_rag_api_override_contract.py`
 - `tests/release/test_rag_compose_resource_guardrails.py`
+- `tests/release/test_rag_postgres_migration.py`
+- `tests/release/test_rag_postgres_migration_docker.py`

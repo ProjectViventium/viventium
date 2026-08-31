@@ -527,6 +527,18 @@ artifact, release manifest, installed artifact, and runtime-reported version. Pa
 components such as Prompt Workbench use the parent commit plus an exact source/build manifest stamp;
 they must not be falsely required to appear as a nested `components.lock.json` entry.
 
+When a delivery requires the latest local Viventium to be running, source changes are not delivery.
+Start the candidate through the supported lifecycle path and prove that the active process,
+configuration, build manifest, component pins, and visible version all identify that exact
+candidate. This is the public owner for `GOV-014`; `INST-029` / `INST-UC-021` owns acceptance.
+
+One machine-readable product/service registry must generate coverage and status; do not add another
+hand-maintained master ledger. CI must compare source, component pins, built artifacts, installed
+identity, and QA state. Split the launcher, public CLI, and compiler incrementally into a typed
+supervisor and small service modules only when measured coordination or failure risk justifies the
+split; never use this requirement to authorize a wholesale rewrite. This is the public owner for
+`ONB-011`; `INST-033` / `INST-UC-025` owns acceptance.
+
 ### 9.3 State and upgrades
 
 - Immutable code: versioned release directories.
@@ -1283,3 +1295,52 @@ The bounded Hermes activation donor lane in section 12.1 is required inside thes
 10. Run the exact downloaded, signed/notarized artifact through clean physical Apple Silicon Mac,
     migration, failure, security, performance, accessibility and full-product QA; release only from
     that evidence ledger and publish only its tested digest.
+
+## Exact Onboarding And Reconciliation Acceptance
+
+`ONB-003` keeps first-owner setup sparse, premium, dismissible, jargon-free, and conditional on a
+real unmet setup need. It reuses the branded LibreChat `setup=accounts` and Connected Accounts
+components, preserves a drafted prompt through sign-in, denial, retry, reload, and completion, and
+returns the user to that draft. A second native, WebKit, or chat-client setup surface is forbidden.
+`INST-017`, `INST-023`, `INST-UC-013`, and `INST-UC-017` own acceptance.
+
+`ONB-005` requires one provider/channel lifecycle contract: connect, cancel or deny, test, wrong
+account, expired or revoked authorization, quota/rate/network failure, retry, reauthorize, repair,
+disconnect, upstream revoke, local-secret deletion, restart, and a first plus second persistent
+answer. Every state preserves unrelated accounts and user state and presents one specific truthful
+action. `INST-009`, `INST-010`, `INST-017`, `INST-UC-010`, and `INST-UC-011` own acceptance.
+
+`ONB-009` requires release QA to use disposable synthetic identities or explicitly isolated,
+authorized state without contaminating a personal account or public evidence. The branch matrix is
+explicit: new and existing user; desktop and mobile browser; keyboard, screen reader, reduced motion,
+and supported contrast or zoom; provider lifecycle; Life setup and failure edges; Telegram text,
+media, and voice; Call, Wing, and Listen-Only; memory, recall, Scheduling Cortex, Prompt Workbench,
+GlassHive, and worker paths; restart, upgrade, backup/restore, and rollback; LAN and off-LAN; exact
+source/build/install artifacts; cleanup; public safety; and every supported platform. Each branch
+has direct candidate-bound evidence and its own status. `INST-031` / `INST-UC-023` owns acceptance.
+
+`ONB-010` begins with verified recoverable backups of every relevant branch, worktree, commit, and
+private-state domain. It classifies every delta, replays only owner-accepted changes onto fresh
+current component and parent main branches, and avoids blanket merges, resets, or treating dirty
+working bytes as shipped. Completion requires source commit, component publication, parent pin,
+compiled or prebuilt artifact, installed runtime identity, and fresh QA to agree, with a restore
+drill proving the backup before cleanup. `INST-032` / `INST-UC-024` owns acceptance.
+
+<!-- VIVENTIUM-STABLE-REQUIREMENT-DECLARATIONS:START -->
+## Stable requirement declarations
+
+Each line is the canonical public owner declaration for one stable requirement ID. Detailed sections supply implementation context; they must not narrow or contradict these declared outcomes.
+
+CC-060: Activation order: foundations/tests → side-by-side runtime → real QA → independent review → leak scan → component commit/pin/artifacts → installed runtime → drift check → private schedule activation → observe silent/delivered/interrupted/restart. Rollback disables the private schedule and keeps shared reliability fixes.
+CORE-016: The public install and activation experience has one obvious, trustworthy, minimal path. Reuse proven upstream/native mechanisms and isolate Viventium-specific value; Native/Docker profiles may remain internal execution or recovery paths, not competing public choices.
+GOV-014: When implementation delivery asks for the latest local Viventium to be running, start it and prove the active process/config/build are the exact candidate; “source changed” alone is not delivery.
+ONB-001: A nontechnical Apple Silicon Mac user gets one signed/notarized Viventium app and immutable payload, connects one approved AI account, receives a real persistent first answer, and leaves Viventium running without Terminal, Git, Homebrew, developer tools, package managers, system Node/Python, source compilation, or Docker before that answer.
+ONB-002: Activation preserves the complete Viventium product and existing user state. Optional voice, channel, search, sandbox, and worker capabilities can activate later and fail independently; they cannot block the first useful chat or erase/downgrade existing behavior.
+ONB-003: First-owner setup is sparse, premium, dismissible, jargon-free, and only appears when needed. Reuse the existing branded LibreChat `setup=accounts` flow and its Connected Accounts components; do not create a second native/WebKit/chat client. Preserve a drafted prompt across account setup.
+ONB-004: Recommend OpenAI/ChatGPT/Codex or Anthropic/Claude subscription connection only where the provider officially permits that route. Keep API keys and Groq/other providers under Advanced. A connection becomes Ready only after a bounded live probe; fallback uses the configured typed chain and Ready authorized routes, never an invented “fastest” provider or silent paid-account switch.
+ONB-005: Provider/channel lifecycle covers connect, cancel/deny, test, wrong/expired/revoked account, rate/quota/network failure, retry, reauth, repair, disconnect, upstream revoke, local-secret deletion, restart, and a first plus second persistent answer. Every state has one specific truthful action and preserves unrelated state.
+ONB-006: After first answer, the same Main, continuity, memory, calls, Wing, Listen-Only, Telegram, workers, and local-phone/remote-use paths remain first-class and reliable. Packaging may lazy-start them but may not replace, silently narrow, or fake their readiness.
+ONB-009: Release QA uses disposable/synthetic or properly isolated authorized state, never contaminates the personal account or public evidence. It covers new/existing user, desktop/mobile browser, keyboard/screen reader/reduced motion, provider lifecycle, Life edge cases, Telegram text/media/voice, Call/Wing/Listen-Only, memory/recall/scheduling/Workbench/GlassHive, restart, upgrade, backup/restore/rollback, LAN/off-LAN, exact artifacts, and the supported platform.
+ONB-010: Preserve all relevant branches/worktrees/commits/private state with verified recoverable backups, classify every delta, reconcile surgically onto fresh current component and parent mains, then require source commit→component publication→parent pin→compiled/prebuilt artifact→installed runtime→fresh QA agreement. Never use risky wholesale merges or treat dirty working state as shipped.
+ONB-011: One machine-readable product/service registry generates coverage and status instead of adding another hand-maintained master ledger. CI enforces source→pin→artifact→installed→QA consistency. Incrementally split the launcher, CLI, and compiler into a typed supervisor and small service modules only where that removes measured coordination/failure risk; do not launch a wholesale rewrite.
+<!-- VIVENTIUM-STABLE-REQUIREMENT-DECLARATIONS:END -->

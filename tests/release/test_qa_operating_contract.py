@@ -1261,7 +1261,7 @@ def test_requirement_source_coverage_ledger_is_private_safe_and_resolves() -> No
     assert atomic["stable_requirement_ids_with_any_direct_message_mapping"] == 312
     assert atomic["required_owner_declaration_rows"] == 288
     assert atomic["required_owner_declaration_sha256"] == (
-        "04aee5a22fd29037c7c1fc734c1129d0ca77f2616fedaa0f40277dd23a26a44c"
+        "2c389b9861e73de660bb84a2d65b5e56bc374264729d5f5da26fe246b9040671"
     )
     assert atomic["required_owner_declaration_canonicalization"].startswith(
         "sha256 of lexicographically sorted unique tab-separated requirement ID"
@@ -1429,10 +1429,10 @@ def test_requirement_source_coverage_ledger_is_private_safe_and_resolves() -> No
         "markers_in_current_files_absent_from_head": 75,
         "markers_in_untracked_current_files": 11,
         "existing_case_catalog_date_resets": 0,
-        "current_recent_marker_total": 271,
-        "post_initial_audit_recent_marker_delta": 185,
-        "current_stale_triage_marker_total": 170,
-        "current_total_stale_marker_delta_after_initial_audit": 6,
+        "current_recent_marker_total": 270,
+        "post_initial_audit_recent_marker_delta": 184,
+            "current_stale_triage_marker_total": 164,
+            "current_total_stale_marker_delta_after_initial_audit": 0,
         "method": "read_only_current_marker_comparison_against_head",
         "durability": "working_tree_only_until_authorized_commit",
         "limitation": (
@@ -1845,7 +1845,7 @@ def test_current_alignment_regressions_stay_reconciled() -> None:
         claude_npm.group(1),
     ]:
         assert term in runtime_doc
-    assert "2.1.233" not in runtime_doc
+    assert "2.1.229" not in runtime_doc
     assert "signed `Viventium.app` contract" in installer_doc
     assert "all nine default Nature/half-life/enabled values" in installer_doc
     assert "NOT YET RUN" not in all_cases

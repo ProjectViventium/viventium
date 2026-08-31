@@ -233,9 +233,12 @@ rows before claiming a pass when the feature behavior changes.
 - `tests/release/test_cli_upgrade.py`
 - `tests/release/test_config_compiler.py`
 - `tests/release/test_detached_librechat_api_watchdog.py`
+- `tests/release/test_dev_runtime_activation.py`
 - `tests/release/test_detached_librechat_supervision.py`
+- `tests/release/test_helper_runtime_intent.py`
 - `tests/release/test_librechat_client_defaults.py`
 - `tests/release/test_librechat_dev_start_config_sync.py`
+- `tests/release/test_librechat_owner_env.py`
 - `tests/release/test_macos_helper_install.py`
 - `tests/release/test_macos_helper_supervision.py`
 - `tests/release/test_native_stack_helpers.py`
