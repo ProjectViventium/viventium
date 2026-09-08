@@ -1225,7 +1225,7 @@ def install_helper(source: Path, support: Path) -> Path | None:
             quiesce_helper(target)
             move_helper_bundle(target, backup)
             moved_prior = True
-        os.replace(staged, target)
+        move_helper_bundle(staged, target)
         if helper_owner(target) is None:
             raise RuntimeError_("Activated helper ownership verification failed")
         return backup if moved_prior else None

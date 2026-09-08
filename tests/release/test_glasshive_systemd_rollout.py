@@ -535,6 +535,7 @@ def test_live_edge_contract_names_every_public_route_and_header_family() -> None
             "/api/",
             "/r/",
             "/watch/",
+            "/w/",
             "/desktop/",
             "/novnc/",
             "/ui/",

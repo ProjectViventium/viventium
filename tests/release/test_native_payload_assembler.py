@@ -1893,29 +1893,42 @@ def test_sealed_helper_cleanup_preserves_prior_app_and_original_failure(
             Path(current).chmod(0o555)
     source_before = {str(p.relative_to(source)): (p.stat().st_mode, p.read_bytes())
                      for p in source.rglob("*") if p.is_file()}
+    source_directory_modes = {
+        str(path.relative_to(source)): path.stat().st_mode
+        for path in [source, *source.rglob("*")] if path.is_dir()
+    }
     support = tmp_path / "support"
     monkeypatch.setattr(runtime, "user_home", lambda: home)
     monkeypatch.setattr(runtime, "quiesce_helper", lambda _app: None)
+    real_replace = runtime.os.replace
+    def replace_bundle(source_path, destination_path):
+        # Exercise Darwin's sealed-directory rename constraint on every test host.
+        if Path(source_path).is_dir() and not Path(source_path).stat().st_mode & 0o200:
+            raise PermissionError("sealed directory requires owner write for rename")
+        if ((phase == "activate" and Path(source_path).name.startswith(".Viventium.app.installing"))
+                or (phase == "backup" and Path(source_path) == target)):
+            raise OSError("synthetic activation failure")
+        return real_replace(source_path, destination_path)
+    monkeypatch.setattr(runtime.os, "replace", replace_bundle)
     try:
         if phase in ("activate", "backup"):
-            real_replace = runtime.os.replace
-            def fail_activation(source_path, destination_path):
-                if ((phase == "activate" and Path(source_path).name.startswith(".Viventium.app.installing"))
-                        or (phase == "backup" and Path(source_path) == target)):
-                    raise OSError("synthetic activation failure")
-                return real_replace(source_path, destination_path)
-            monkeypatch.setattr(runtime.os, "replace", fail_activation)
             with pytest.raises(OSError, match="synthetic activation failure"):
                 runtime.install_helper(source, support)
         else:
             backup = runtime.install_helper(source, support)
             assert backup is not None
+            assert target.stat().st_mode & 0o777 == 0o555
+            assert backup.stat().st_mode & 0o777 == 0o555
             runtime.rollback_helper(target, backup)
         assert (target / "prior.txt").read_text() == "prior\n"
         assert target.stat().st_mode & 0o777 == 0o555
         assert not list(target.parent.glob(".Viventium.app.installing.*"))
         assert {str(p.relative_to(source)): (p.stat().st_mode, p.read_bytes())
                 for p in source.rglob("*") if p.is_file()} == source_before
+        assert {
+            str(path.relative_to(source)): path.stat().st_mode
+            for path in [source, *source.rglob("*")] if path.is_dir()
+        } == source_directory_modes
     finally:
         for app in [source, target, *target.parent.glob(".Viventium.app.installing.*")]:
             if app.exists():
