@@ -77,10 +77,7 @@ truthful Main presentation without losing or repeating durable work.
   application wait, retry/replay, or delayed forwarding. Correlate admission, queue, native startup,
   provider/CLI work, first public output, forwarding and channel acknowledgment. Mark unobserved
   intervals unknown; provider work is not evidence of hidden reasoning or client rendering.
-  The quick-answer acceptance target remains at most ten seconds from Send to visible output
-  under the configured healthy-route conditions while background work runs. Provider working time
-  is measured separately; an acknowledgement, queued result or unobserved render cannot pass that
-  target. Outside those conditions, report the measured delay and cause without claiming the target.
+  Provider working time may exceed ten seconds; this journey has no fixed end-to-end deadline.
   A completed native commentary item is not a validated graph/delivery response envelope. Keep
   the existing output-contract guard; measure that format-contract wait separately from forwarding
   a valid envelope, and never describe public commentary as hidden reasoning.
