@@ -1463,6 +1463,13 @@ def test_retained_vm_share_accepts_only_sealed_verified_qa_artifacts(tmp_path, m
     shared = tmp_path / "artifacts"
     shared.mkdir()
     manifest, archive, payload = helpers.write_candidate(shared)
+    import native_payload
+    # This synthetic macOS archive is verified on Linux CI too. Keep real payload
+    # verification, but declare its test host version instead of probing sw_vers.
+    monkeypatch.setattr(
+        native_payload.platform, "mac_ver",
+        lambda: (payload["platform"]["minimum_version"], ("", "", ""), ""),
+    )
     if failure == "extra": (shared / "private.txt").write_text("not an artifact")
     if failure == "symlink":
         original = tmp_path / "original.zip"
