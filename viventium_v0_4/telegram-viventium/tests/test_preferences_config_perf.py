@@ -285,6 +285,9 @@ def test_get_telegram_call_url_uses_convo_key_but_sends_real_telegram_user_id(mo
         telegram_config.Users,
         "get_config",
         lambda convo_id, key: {
+            ("123456789:123456789", "LIBRECHAT_CONVERSATION_STATE"): {
+                "conversation_id": "conv-1", "generation": "a" * 64,
+            },
             ("123456789:123456789", "LIBRECHAT_CONVERSATION_ID"): "conv-1",
             ("123456789:123456789", "LIBRECHAT_AGENT_ID"): "agent-1",
         }.get((convo_id, key), ""),

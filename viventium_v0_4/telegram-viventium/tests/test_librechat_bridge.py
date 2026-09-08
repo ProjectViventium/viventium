@@ -2738,11 +2738,13 @@ async def test_ask_stream_async_serializes_per_chat(monkeypatch):
     monkeypatch.setenv("VIVENTIUM_TELEGRAM_SERIALIZE_PER_CHAT", "1")
     bridge = _make_bridge()
     start_times = []
+    expected_generation = bridge.capture_conversation_state("chat-1")["generation"]
 
     async def fake_start_chat(
         *,
         text,
         conversation_id,
+        conversation_generation,
         agent_id,
         telegram_chat_id,
         telegram_user_id,
@@ -2778,6 +2780,7 @@ async def test_ask_stream_async_serializes_per_chat(monkeypatch):
         # === VIVENTIUM START ===
         # Feature: Ensure Telegram bridge forwards clientTimezone to LibreChat.
         assert client_timezone == "America/Toronto"
+        assert conversation_generation == expected_generation
         # === VIVENTIUM END ===
         start_times.append(asyncio.get_running_loop().time())
         return LibreChatSession(stream_id=f"stream-{len(start_times)}", conversation_id="conv")
