@@ -4,6 +4,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 VERIFIER = REPO_ROOT / "scripts" / "viventium" / "verify_native_public_safety.py"
@@ -71,6 +73,8 @@ def test_native_public_safety_rejects_forbidden_artifacts(tmp_path: Path) -> Non
     write(candidate / "payload" / "runtime" / "librechat" / "logs" / ".request-audit.json")
     write(candidate / "payload" / "runtime" / "librechat" / "node_modules" / "example" / ".cache" / "compiler.json")
     write(candidate / "payload" / "runtime" / "python" / "lib" / "__pycache__" / "module.pyc")
+    write(candidate / "payload" / "runtime" / "scripts" / "owner.py.orig")
+    write(candidate / "payload" / "runtime" / "scripts" / "owner.py.rej")
 
     completed = run_verifier(candidate)
 
@@ -79,6 +83,8 @@ def test_native_public_safety_rejects_forbidden_artifacts(tmp_path: Path) -> Non
     assert "logs/.request-audit.json" in completed.stderr
     assert ".cache/compiler.json" in completed.stderr
     assert "__pycache__/module.pyc" in completed.stderr
+    assert "owner.py.orig" in completed.stderr
+    assert "owner.py.rej" in completed.stderr
 
 
 def test_native_public_safety_rejects_generated_owner_environment_paths(
@@ -162,3 +168,30 @@ def test_native_public_safety_scans_customized_librechat_outside_dependencies(tm
     assert "private absolute path" in completed.stderr
     assert "high-confidence secret" in completed.stderr
     assert "payload/runtime/librechat/api/server.js" in completed.stderr
+
+
+def test_vendored_browser_paths_keep_secret_and_producer_checks(tmp_path: Path) -> None:
+    candidate = candidate_fixture(tmp_path)
+    vendor = candidate / "payload/runtime/librechat/client/dist/sandpack-bundler/vendor.js"
+    write(vendor, "/home/sandbox/example is a virtual filesystem example\n")
+    assert run_verifier(candidate).returncode == 0
+    write(vendor, "/private/synthetic-producer/example\n")
+    producer = run_verifier(candidate, "--forbid-prefix", "/private/synthetic-producer")
+    assert producer.returncode != 0
+    assert "forbidden producer prefix" in producer.stderr
+    write(vendor, "sk-" + "x" * 32)
+    secret = run_verifier(candidate)
+    assert secret.returncode != 0
+    assert "high-confidence secret" in secret.stderr
+
+
+@pytest.mark.parametrize("private_path", [
+    "/home/synthetic-owner/project/", "/home/sandbox-adjacent/project/",
+    "/Users/synthetic-owner/project/", "/private/var/folders/synthetic/",
+])
+def test_vendored_browser_rejects_nonvirtual_private_paths(tmp_path: Path, private_path: str) -> None:
+    candidate = candidate_fixture(tmp_path)
+    write(candidate / "payload/runtime/librechat/client/dist/sandpack-bundler/vendor.js", private_path)
+    completed = run_verifier(candidate)
+    assert completed.returncode != 0
+    assert "private" in completed.stderr

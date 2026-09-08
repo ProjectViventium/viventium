@@ -13,13 +13,14 @@ trap 'rm -rf "$TEMP_DIR"' EXIT
 
 SDK_PATH="$(xcrun --show-sdk-path)"
 SOURCE_PATH="$HELPER_PACKAGE_DIR/Sources/ViventiumHelper/ViventiumHelperApp.swift"
+LIFE_SOURCE_PATH="$HELPER_PACKAGE_DIR/Sources/ViventiumHelper/LifeSetup.swift"
 ARM64_OUT="$TEMP_DIR/ViventiumHelper-arm64"
 X86_64_OUT="$TEMP_DIR/ViventiumHelper-x86_64"
 
 mkdir -p "$PREBUILT_DIR"
 
-xcrun swiftc -parse-as-library -sdk "$SDK_PATH" -target arm64-apple-macosx13.0 "$SOURCE_PATH" -o "$ARM64_OUT"
-xcrun swiftc -parse-as-library -sdk "$SDK_PATH" -target x86_64-apple-macosx13.0 "$SOURCE_PATH" -o "$X86_64_OUT"
+xcrun swiftc -parse-as-library -sdk "$SDK_PATH" -target arm64-apple-macosx13.0 "$SOURCE_PATH" "$LIFE_SOURCE_PATH" -o "$ARM64_OUT"
+xcrun swiftc -parse-as-library -sdk "$SDK_PATH" -target x86_64-apple-macosx13.0 "$SOURCE_PATH" "$LIFE_SOURCE_PATH" -o "$X86_64_OUT"
 lipo -create -output "$UNIVERSAL_OUT" "$ARM64_OUT" "$X86_64_OUT"
 chmod +x "$UNIVERSAL_OUT"
 shasum -a 256 "$UNIVERSAL_OUT" | awk '{print $1}' >"$BINARY_HASH_FILE"
@@ -35,6 +36,7 @@ out_path = Path(sys.argv[2])
 paths = [
     helper_dir / "Package.swift",
     helper_dir / "Sources" / "ViventiumHelper" / "ViventiumHelperApp.swift",
+    helper_dir / "Sources" / "ViventiumHelper" / "LifeSetup.swift",
     helper_dir / "Sources" / "ViventiumHelper" / "Resources" / "Info.plist",
 ]
 

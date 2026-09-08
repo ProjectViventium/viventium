@@ -22,7 +22,7 @@ from pathlib import Path
 import native_payload
 
 
-MAX_MANIFEST_BYTES = 64 * 1024 * 1024
+MAX_MANIFEST_BYTES = native_payload.MAX_MANIFEST_BYTES
 MAX_SIGNATURE_BYTES = 64 * 1024
 MAX_PAYLOAD_BYTES = 8 * 1024 * 1024 * 1024
 NATIVE_INSTALL_RESERVE_BYTES = 10 * 1024 * 1024 * 1024
@@ -113,7 +113,10 @@ def run_release(release: Path, command: str, support: Path, *arguments: str) -> 
                 "--app-support-dir",
                 str(support),
                 *arguments,
-            ]
+            ],
+            # Preserve the Bootstrap caller's diagnostic stream. Finder keeps it
+            # private; headless support runs must retain the actual startup error.
+            stderr=None,
         )
     except OSError:
         return False

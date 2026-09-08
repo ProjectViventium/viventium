@@ -49,6 +49,9 @@ background-cortex behavior.
   acceptable primary fix. `{NTA}` must remain exact and silent; malformed recombinations such as
   doubled control tags or adjacent duplicate words are forbidden in audio, playground transcript,
   linked LibreChat chat, stream replay, and saved assistant rows.
+- Streaming cleanup must preserve the SDK's run-step indexes, including empty slots for suppressed
+  reasoning. Compact malformed/empty parts only after streaming ends. Otherwise later chunks can
+  split from the first word and final-output selection can save an incomplete answer.
 - Duplicate-artifact cleanup must preserve meaningful quoted, blockquoted, and code-formatted text.
   Repetition inside `"..."`, curly quotes, markdown blockquotes, inline code, or fenced code can be
   intentional user/source content and must not be collapsed merely because it repeats words. Only
@@ -155,6 +158,8 @@ background-cortex behavior.
 - Persist call sessions with TTL.
 - Session fields should include the call identity, user, agent, conversation, room, and expiry.
 - Expired or missing sessions must be rejected honestly.
+- The current-turn speaker authority lookup must read the existing segment owner's declared page
+  shape; persisted evidence must not become an empty turn because the caller requested an array.
 - The playground must reconcile local LiveKit state with owner-scoped durable call-session state.
   When the durable session is `degraded`, `failed`, or `ended`, the UI must replace stale local
   listening/working state, disable invalid controls, and retain the terminal state after refresh.
@@ -164,6 +169,27 @@ background-cortex behavior.
 - Browser LiveKit dependencies must move as one lockfile-coherent set and pass a production build,
   real Call/Wing/Listen-Only behavior, simultaneous-call admission, reconnect, and clean end-state
   checks. A package update is not accepted from unit tests or version recency alone.
+
+### Typed Call input
+
+- LiveKit room text is authenticated participant input, not microphone or speaker evidence. The
+  gateway binds its actual `TextInputEvent.participant.identity` and stable stream identity to the
+  current call owner, original source event and exact text digest. It uses the supported text-input
+  callback and `ChatMessage.extra`; it does not fabricate `SpeakerSegmentV1` records or change the
+  shared-microphone attribution state.
+- In Call mode, this owner-bound input retains the selected agent's existing tools and permissions.
+  Core accepts the typed provenance only behind the current authenticated gateway job lease. It
+  rechecks the exact call, owner, source and text at initial admission, after coalescing and before
+  execution. Ended or replaced sessions fail closed. Typed and audio ingress use separate identities,
+  and typed text retains its formatting rather than entering audio continuation merging.
+- Typed input still reaches the existing restricted Wing or Listen-Only route. Its provenance does
+  not grant Wing engagement or Listen-Only execution authority. Audio still
+  requires finalized, verified owner evidence; mixed typed/audio authority is rejected. Normal
+  persisted message metadata records typed provenance separately from speaker segments.
+- Deterministic acceptance covers wrong owner/call/source/text, stale gateway ownership, mode
+  changes, shared-mic audio, exact text preservation and source replay identity. Delivered acceptance
+  must also prove that a natural typed reminder creates a real retained schedule and reaches the
+  linked chat after the call ends. A promise with no accepted schedule is a failure.
 
 ### Wing Mode
 - Wing Mode is a passive companion mode for live voice calls.
@@ -223,6 +249,13 @@ background-cortex behavior.
   resumed ambient segment inside the configured continuation window must update the same saved
   transcript row; a later or different ambient turn after that window must save as a new transcript
   row.
+- Authenticated owner-track ambient ingress uses that same continuation owner. A saved row retains
+  all typed speaker segments and revisions; segment replay cannot create another transcript row or
+  change its parent. A different speaker or track starts a separate row; every segment retains its
+  own turn identity and uncertainty. Participant-track ambient ingress remains separate.
+  Ambient saves and late speaker revisions compare the stored segment array before replacing it;
+  a concurrent change is reloaded and merged so neither writer can discard the other source or trust
+  revision.
 - Listen-Only continuation is keyed by call session, not by the latest transcript parent id. This is
   intentional: the first endpointed segment may materialize the conversation and become the parent
   before the user continues speaking, but a resumed phrase inside the continuation window still
@@ -238,6 +271,8 @@ background-cortex behavior.
   - `_meiliIndex=false`
   - `metadata.viventium.type="listen_only_transcript"`
   - `metadata.viventium.mode="listen_only"`
+- Linked-chat headers identify ambient call transcripts and retain the saved speaker label, including
+  `Unknown`; the active agent name must not replace that provenance.
 - Saved entries may remain visible in conversation history, but the live agent history loader and
   voice-thread parent resolver must skip them. Turning Listen-Only off must not cause ambient
   transcripts to be sent to the next live LLM call as prior assistant context.
@@ -342,6 +377,10 @@ background-cortex behavior.
   saved call assistant text/content used for history and reloads must not retain raw voice-control
   tags. Telegram audio delivery has its separately documented raw-record/display-sanitizer contract
   in `03_Telegram_Bridge.md`.
+- Saved call assistant text and content must preserve authored line breaks, paragraph boundaries,
+  indentation, and Markdown hard-break spacing. Whitespace cleanup must not flatten linked-chat
+  headings or list items into one paragraph; existing control/artifact removal remains separate
+  from the gateway's speech-safe TTS projection.
 - The live TTS boundary must receive speech-safe phrase chunks, not raw model scaffolding. After
   phrase buffering and before forwarding text to LiveKit TTS, the gateway must deterministically
   strip or convert non-speech artifacts such as source/reference labels, citation remnants,
@@ -590,6 +629,10 @@ background-cortex behavior.
 	    STT route
 	  - local Whisper prewarm must include a small in-process inference warmup, not only model load,
 	    because whisper.cpp/Metal can otherwise charge the first user transcript for graph/setup work
+	  - local Whisper inference must leave the call event loop available for mode and interruption
+	    controls. Warmup and recognition serialize access to each process-owned native model. Cancelling
+	    a queued recognition prevents that inference; an already running native call keeps exclusive
+	    model access until it finishes, without returning its abandoned transcript.
 	  - local Whisper recognition should feed pywhispercpp in-memory 16 kHz mono float32 PCM instead
 	    of writing temporary WAV files; stage timing logs must stay sanitized and must not include raw
 	    transcript text
@@ -912,8 +955,26 @@ background-cortex behavior.
   file/media identity and owner scope. Voice gives concise spoken status or completion; generated
   files and other non-speech artifacts appear once in the linked chat and Active Work with a usable
   open/download action.
+- Generation owners record Voice task completion or failure even when the gateway never subscribes
+  or disconnects. Superseding a spoken presentation is not proof that its generation or linked child
+  work has finished. Owner completion retains child-result and explicit-cancellation barriers.
+  Task status uses the existing asynchronous durable queue; an unrelated failed database batch must
+  not hold generation cleanup or request accounting open.
+- The controller ready receipt binds a first-use Voice task to its canonical conversation once,
+  under the same call and user. A retained unbound parent placeholder is compatible with a signed
+  worker callback only after the current call session proves the exact user and conversation;
+  a different concrete conversation remains a conflict.
+- If receiver rejection exhausted a confirmed Stop notification, existing work reconciliation may
+  recover that same retained callback through its verified delivery trace. Recovery preserves the
+  callback payload and attempt history, and requires the same owner, origin, run, settled Stop
+  operation, payload hash, and authority hash. It does not run the mission again or revive an older
+  control operation.
 - Ending or losing the call does not cancel accepted work. The result remains available in linked
   text and Active Work; Viventium never starts an unsolicited voice call to announce it.
+  Completion delivery looks up the exact owner/chat with a live Call lease. Ended, expired, Wing,
+  or Listen-Only sessions cannot receive unsolicited worker speech. With no eligible Call, the
+  already authored linked-chat result receives its committed Web presentation receipt; other
+  configured destinations remain intact. This receipt does not claim that the user read it.
 - Wing keeps its existing explicit-engagement and speaker-trust rules. Listen-Only cannot launch or
   control work and never enables tools, controller execution, cortex work, live memory, or recall.
 - The complete cross-surface acceptance journey is owned jointly by `MPV-054`, `PWK-017`,
@@ -991,3 +1052,12 @@ background-cortex behavior.
 - Owner-trusted single-speaker Call content may enter the existing writer after the call. Wing,
   Listen-Only, mixed/shared-mic, guest, and unverified content remains soft evidence. One call
   session is one evidence source regardless of how many diarized speakers it contains.
+
+## 2026-09-04 candidate closeout: owner-wait seam
+
+- The gateway binds the exact owner participant after its job starts, but the owner's browser
+  still has to open the call page, exchange the launch capability, and join LiveKit. The former
+  fixed 8 s wait abandoned the claim (`owner_timeout`, surfaced as a provider failure) on a loaded
+  host before the owner arrived. The compiled default is now 45 s, bounded to 180 s, emitted as
+  `VIVENTIUM_VOICE_OWNER_WAIT_S` from `voice.worker.owner_wait_s`; the worker keeps the same
+  default when the seam is absent.

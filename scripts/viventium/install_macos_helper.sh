@@ -395,10 +395,12 @@ from pathlib import Path
 import stat
 import sys
 
-path = Path(os.path.abspath(os.path.expanduser(sys.argv[1])))
-expected_repo = Path(os.path.abspath(os.path.expanduser(sys.argv[2])))
-expected_support = Path(os.path.abspath(os.path.expanduser(sys.argv[3])))
-metadata = os.lstat(path)
+# Reject a symlinked config before resolving it: realpath would hide the link from lstat.
+raw_path = Path(os.path.expanduser(sys.argv[1]))
+path = Path(os.path.realpath(raw_path))
+expected_repo = Path(os.path.realpath(os.path.expanduser(sys.argv[2])))
+expected_support = Path(os.path.realpath(os.path.expanduser(sys.argv[3])))
+metadata = os.lstat(raw_path)
 if (
     stat.S_ISLNK(metadata.st_mode)
     or not stat.S_ISREG(metadata.st_mode)
@@ -408,10 +410,10 @@ if (
     raise SystemExit("[viventium] Preserved helper config is unsafe")
 payload = json.loads(path.read_text(encoding="utf-8"))
 configured_repo = Path(
-    os.path.abspath(os.path.expanduser(str(payload.get("repoRoot") or "")))
+    os.path.realpath(os.path.expanduser(str(payload.get("repoRoot") or "")))
 )
 configured_support = Path(
-    os.path.abspath(os.path.expanduser(str(payload.get("appSupportDir") or "")))
+    os.path.realpath(os.path.expanduser(str(payload.get("appSupportDir") or "")))
 )
 if configured_repo != expected_repo or configured_support != expected_support:
     raise SystemExit(
@@ -756,6 +758,7 @@ from pathlib import Path
 ) = sys.argv[1:]
 payload = {
     "Label": "ai.viventium.helper",
+    "AssociatedBundleIdentifiers": ["ai.viventium.helper"],
     "ProgramArguments": [str(Path(helper_bundle) / "Contents" / "MacOS" / executable_name)],
     "WorkingDirectory": home,
     "RunAtLoad": True,
@@ -790,6 +793,7 @@ register_login_item() {
   "$python_bin" - "$OSASCRIPT_TIMEOUT_SECONDS" "$HELPER_APP_BUNDLE" <<'PY'
 import subprocess
 import sys
+from pathlib import Path
 
 timeout = float(sys.argv[1])
 bundle_path = sys.argv[2].replace("\\", "\\\\").replace('"', '\\"')
@@ -901,6 +905,7 @@ helper_dir = Path(sys.argv[1])
 paths = [
     helper_dir / "Package.swift",
     helper_dir / "Sources" / "ViventiumHelper" / "ViventiumHelperApp.swift",
+    helper_dir / "Sources" / "ViventiumHelper" / "LifeSetup.swift",
     helper_dir / "Sources" / "ViventiumHelper" / "Resources" / "Info.plist",
 ]
 
@@ -1017,6 +1022,7 @@ command = [
     "-target",
     target_triple,
     source_path,
+    str(Path(source_path).with_name("LifeSetup.swift")),
     "-o",
     output_path,
 ]
@@ -1119,7 +1125,8 @@ sign_installed_bundle() {
   [[ "$SKIP_CODESIGN" == "1" ]] && return 0
   [[ -x /usr/bin/codesign ]] || return 0
 
-  if ! /usr/bin/codesign --force --sign - --identifier "$HELPER_BUNDLE_IDENTIFIER" "$bundle" >/dev/null 2>&1; then
+  if ! /usr/bin/codesign --force --sign - --identifier "$HELPER_BUNDLE_IDENTIFIER" \
+    --entitlements "$HELPER_PACKAGE_DIR/ViventiumHelper.entitlements" "$bundle" >/dev/null 2>&1; then
     echo "[viventium] Warning: Viventium helper installed but could not be code signed locally." >&2
   fi
 }

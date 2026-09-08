@@ -128,7 +128,10 @@ except ImportError:
     HAS_ELEVENLABS = False
     elevenlabs = None
 
-from librechat_llm import LibreChatAuth, LibreChatLLM
+from librechat_llm import (
+    LibreChatAuth, LibreChatLLM, TYPED_INPUT_EXTRA_KEY, _voice_source_event_id,
+)
+from livekit.agents.llm import ChatContext, ChatMessage
 from sse import VoiceControlDisplayFilter, sanitize_voice_followup_text
 from cartesia_tts import (
     CARTESIA_VOICE_PRESETS,
@@ -456,6 +459,24 @@ class Env:
 
 # === VIVENTIUM START ===
 # Feature: Shared float env parsing for voice follow-ups
+# The owner's browser still has to open the call page, exchange the launch capability, and join
+# LiveKit after this job starts; on a loaded host that took longer than the former 8 s guess, and
+# the worker abandoned its claim (`owner_timeout`) before the owner arrived. The compiled default
+# covers the join budget; `voice.worker.owner_wait_s` owns any override.
+DEFAULT_VOICE_OWNER_WAIT_S = 45.0
+MIN_VOICE_OWNER_WAIT_S = 0.25
+MAX_VOICE_OWNER_WAIT_S = 180.0
+
+
+def _owner_wait_seconds() -> float:
+    """Seconds to wait for the exact owner participant before releasing the call claim."""
+
+    return min(
+        max(_parse_float_env("VIVENTIUM_VOICE_OWNER_WAIT_S", DEFAULT_VOICE_OWNER_WAIT_S), MIN_VOICE_OWNER_WAIT_S),
+        MAX_VOICE_OWNER_WAIT_S,
+    )
+
+
 def _parse_float_env(name: str, fallback: float) -> float:
     raw = (os.getenv(name, "") or "").strip()
     if not raw:
@@ -3164,7 +3185,7 @@ def _voice_sync_transcription_enabled() -> bool:
 
 
 def _build_room_options(
-    *, sync_transcription: bool, participant_identity: str = ""
+    *, sync_transcription: bool, participant_identity: str = "", text_input_cb: Optional[Any] = None
 ) -> Any:
     options: dict[str, Any] = {
         "text_output": room_io.TextOutputOptions(
@@ -3174,7 +3195,37 @@ def _build_room_options(
     }
     if participant_identity:
         options["participant_identity"] = participant_identity
+    if text_input_cb is not None:
+        options["text_input"] = room_io.TextInputOptions(text_input_cb=text_input_cb)
     return room_io.RoomOptions(**options)
+
+
+async def _handle_owner_text_input(
+    session: Any, event: Any, *, call_session_id: str,
+    owner_participant_identity: str,
+) -> None:
+    """Preserve the actual room sender without inventing a spoken segment."""
+    participant = getattr(event, "participant", None)
+    source_identity = str(getattr(participant, "identity", "") or "")
+    stream_id = getattr(getattr(event, "info", None), "stream_id", None)
+    text = getattr(event, "text", None)
+    if (not owner_participant_identity or source_identity != owner_participant_identity
+            or not isinstance(stream_id, str) or not 0 < len(stream_id) <= 256
+            or not isinstance(text, str) or not text.strip()):
+        return
+    text = text.strip()
+    message = ChatMessage(
+        id="text_" + hashlib.sha256(stream_id.encode("utf-8")).hexdigest()[:32],
+        role="user", content=[text],
+    )
+    message.extra[TYPED_INPUT_EXTRA_KEY] = {
+        "version": 1, "kind": "participant_text", "callSessionId": call_session_id,
+        "participantIdentity": source_identity,
+        "sourceEventId": _voice_source_event_id(ChatContext(items=[message]), call_session_id),
+        "textSha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+    }
+    await session.interrupt()
+    session.generate_reply(user_input=message, input_modality="text")
 
 
 def _metric_value(metrics: Any, key: str) -> Optional[float]:
@@ -5644,10 +5695,7 @@ async def entrypoint(ctx: JobContext) -> None:
             if inspect.isawaitable(result):
                 await result
     owner_participant_identity = claimed["ownerParticipantIdentity"]
-    owner_wait_s = min(
-        max(_parse_float_env("VIVENTIUM_VOICE_OWNER_WAIT_S", 8.0), 0.25),
-        30.0,
-    )
+    owner_wait_s = _owner_wait_seconds()
     try:
         await _resolve_canonical_owner_participant(
             ctx,
@@ -7067,6 +7115,12 @@ async def entrypoint(ctx: JobContext) -> None:
         call_session_id,
         sync_transcription,
     )
+    async def _owner_text_input_cb(text_session: Any, event: Any) -> None:
+        await _handle_owner_text_input(
+            text_session, event, call_session_id=call_session_id,
+            owner_participant_identity=owner_participant_identity,
+        )
+
     try:
         await session.start(
             agent=agent,
@@ -7076,6 +7130,7 @@ async def entrypoint(ctx: JobContext) -> None:
                 participant_identity=(
                     owner_participant_identity or "__viventium_unbound_owner__"
                 ),
+                text_input_cb=_owner_text_input_cb,
             ),
         )
         task_stream_audio_gate.bind_current_output()
@@ -7187,6 +7242,12 @@ def _resolve_voice_worker_http_port() -> int:
 # === VIVENTIUM END ===
 
 
+def _disabled_voice_worker_load() -> float:
+    """Keep an explicitly ungated worker selectable by the LiveKit scheduler."""
+
+    return 0.0
+
+
 def run() -> None:
     start_health_server()
     os.environ["VIVENTIUM_VOICE_WORKER_RUN_ID"] = f"{os.getpid()}-{int(time.time() * 1000)}"
@@ -7213,20 +7274,30 @@ def run() -> None:
     )
     idle_processes = max(0, int(getattr(env, "voice_idle_processes", 0)))
     load_threshold = float(getattr(env, "voice_worker_load_threshold", 0.7))
-    worker_opts = WorkerOptions(
-        entrypoint_fnc=entrypoint,
-        prewarm_fnc=prewarm_process,
-        agent_name=env.livekit_agent_name,
-        worker_type=WorkerType.ROOM,
-        initialize_process_timeout=initialize_process_timeout_s,
-        num_idle_processes=idle_processes,
-        load_threshold=load_threshold,
-        job_memory_warn_mb=float(getattr(env, "voice_job_memory_warn_mb", 500.0)),
-        job_memory_limit_mb=float(getattr(env, "voice_job_memory_limit_mb", 0.0)),
+    worker_options = {
+        "entrypoint_fnc": entrypoint,
+        "prewarm_fnc": prewarm_process,
+        "agent_name": env.livekit_agent_name,
+        "worker_type": WorkerType.ROOM,
+        "initialize_process_timeout": initialize_process_timeout_s,
+        "num_idle_processes": idle_processes,
+        "load_threshold": load_threshold,
+        "job_memory_warn_mb": float(getattr(env, "voice_job_memory_warn_mb", 500.0)),
+        "job_memory_limit_mb": float(getattr(env, "voice_job_memory_limit_mb", 0.0)),
         # === VIVENTIUM START ===
         # Feature: side-by-side voice-worker port isolation.
-        port=_resolve_voice_worker_http_port(),
+        "port": _resolve_voice_worker_http_port(),
         # === VIVENTIUM END ===
+    }
+    if math.isinf(load_threshold):
+        # LiveKit Server 1.13 weights workers by `1 - reported_load` even when the SDK's CPU
+        # threshold is disabled. A sole local worker reporting 100% during model startup is then
+        # rejected before it receives the call. An infinite threshold explicitly disables this
+        # gate, so report the matching zero scheduler load and keep finite-threshold deployments
+        # on the SDK's real CPU calculation.
+        worker_options["load_fnc"] = _disabled_voice_worker_load
+    worker_opts = WorkerOptions(
+        **worker_options,
     )
     cli.run_app(worker_opts)
 

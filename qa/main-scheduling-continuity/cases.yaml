@@ -1,0 +1,25 @@
+schemaVersion: 1
+capability: main-scheduling-continuity
+requirementOwner: docs/requirements_and_learnings/capabilities/main-scheduling-continuity.md
+statusPolicy: Run results belong in dated, candidate-bound reports.
+sourceInventories:
+  - qa/continuity-ops/cases.md
+  - qa/main-continuity/cases.md
+  - qa/scheduling-cortex/cases.md
+journeys:
+  - id: natural-continuity
+    requirements: [CC-001, CC-053]
+    userAction: Enable a synthetic schedule and let Main receive natural opportunities across separate and mixed Feeling states.
+    surfaces: [Workbench, Scheduler, Web, Telegram]
+    expectedResult: The same Main may act, plan, ask, communicate, or remain silent; useful output is delivered once through Main.
+    degradedAndRecovery: Auth, confirmation, provider, timeout, unsupported configuration, and intentional silence remain distinct.
+    persistenceAndCleanup: Restart and schedule edits preserve one occurrence history; disabling the synthetic schedule leaves no due work.
+    evidence: [visible output or silence disposition, occurrence ledger, Feeling version, prompt lineage, delivery receipt]
+  - id: occurrence-recovery
+    requirements: [CC-054, CC-055, POST-SCHED-001, POST-SCHED-002]
+    userAction: Exercise timezone and DST edges, sleep, clock change, concurrency, crash points, legacy schedules, and restart.
+    surfaces: [Scheduler, Workbench, delivery channel]
+    expectedResult: One executor owns each occurrence, expired leases recover, and no durable effect is replayed. A due occurrence missed during shutdown derives from the schedule and durable occurrence state, never receipt age; restart delivers its catch-up once and a second restart creates no duplicate.
+    degradedAndRecovery: A retryable capacity failure retains its immutable capacity snapshot and attempt provenance. Bounded same-occurrence retry or an authorized fallback ends in one terminal delivery or typed terminal drop, without silent deferral; forgery and unauthorized effects fail closed.
+    persistenceAndCleanup: Catch-up selects only the latest eligible occurrence and cleanup preserves audit history.
+    evidence: [lease and attempt state, execution snapshot, effect receipts, channel outcomes, installed runtime identity]

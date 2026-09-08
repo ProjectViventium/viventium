@@ -208,6 +208,30 @@ def create_env(args: argparse.Namespace) -> int:
     if not isinstance(ports, dict):
         raise SystemExit("runtime.ports must be a mapping in config.yaml")
 
+    # A new development instance must not claim the installed instance's network or bot.
+    network = runtime.setdefault("network", {})
+    if not isinstance(network, dict):
+        raise SystemExit("runtime.network must be a mapping in config.yaml")
+    network["remote_call_mode"] = "disabled"
+    for key in (
+        "public_client_origin", "public_api_origin", "public_playground_origin",
+        "public_livekit_url", "public_glasshive_origin", "livekit_node_ip",
+    ):
+        network.pop(key, None)
+    auth = runtime.get("auth")
+    if isinstance(auth, dict):
+        auth.pop("connected_accounts_return_origin", None)
+    for integration in ("telegram", "telegram_codex"):
+        settings = (config.get("integrations") or {}).get(integration)
+        if isinstance(settings, dict):
+            settings["enabled"] = False
+
+    # A copied provider route does not mean this instance chose the owner's personal folders.
+    provider = ((config.get("integrations") or {}).get("glasshive") or {}).get("provider")
+    if isinstance(provider, dict):
+        provider.pop("life_dir", None)
+        provider.pop("allowed_workspace_roots", None)
+
     offset = int(args.port_offset)
     runtime_profile = str(runtime.get("profile") or "isolated").strip().lower()
     app_facing_defaults = APP_FACING_PORT_DEFAULTS.get(
@@ -241,6 +265,10 @@ def create_env(args: argparse.Namespace) -> int:
         }
     )
 
+    # A new instance owns its keys before any checkout can launch against its database.
+    # Replacing an existing config preserves the existing owner or requires legacy adoption.
+    from native_runtime import source_secrets
+    source_secrets(argparse.Namespace(app_support_dir=target_dir, initialize=True, adopt_env=None))
     write_yaml(target_config, config)
     (target_dir / "runtime").mkdir(parents=True, exist_ok=True)
     (target_dir / "state").mkdir(parents=True, exist_ok=True)

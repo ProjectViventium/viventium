@@ -1,0 +1,24 @@
+schemaVersion: 1
+capability: glasshive
+requirementOwner: docs/requirements_and_learnings/capabilities/glasshive.md
+statusPolicy: Run results belong in dated, candidate-bound reports.
+sourceInventories:
+  - qa/glasshive-core-provider/cases.md
+  - qa/glasshive-mcp-capability-broker/cases.md
+  - qa/glasshive-user-control-plane/cases.md
+  - qa/glasshive_azure_enterprise/cases.md
+  - qa/glasshive_deep_research/cases.md
+  - qa/glasshive_host_workers/cases.md
+  - qa/glasshive_standard_qa/cases.md
+  - qa/glasshive_steer/cases.md
+  - qa/glasshive_watch_desktop/cases.md
+  - qa/glasshive_workspaces/cases.md
+journeys:
+  - id: provider-and-durable-workspace
+    requirements: [GHM-001, GHM-002, GHU-001, GHU-002, GHU-011, PW-054, PW-062]
+    userAction: Sign in, connect one personal provider, complete a direct Main turn and a delegated artifact mission, then reopen the workspace.
+    surfaces: [Web, MCP, worker workspace, Viventium]
+    expectedResult: One authoring intelligence receives the complete authorized task, the owner sees progress and exact artifacts, and reuse needs no needless reauthorization.
+    degradedAndRecovery: Wrong owner, missing capability, provider loss, quota, reconnect, fallback, and unavailable result remain distinct and fail closed.
+    persistenceAndCleanup: Restart and refresh preserve workspace and result identity; removing the synthetic connection releases grants, leases, and private state.
+    evidence: [visible result, mission envelope, owner and grant scope, run and callback state, artifact hashes, installed lineage]

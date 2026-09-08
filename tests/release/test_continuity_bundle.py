@@ -38,6 +38,7 @@ def artifact_row(root: Path, relative: str, domain: str, role: str) -> dict:
         "user_files_archive": ("application/gzip", "archive"),
         "schedules_database": ("application/vnd.sqlite3", "sqlite_backup"),
         "channel_state_archive": ("application/gzip", "archive"),
+        "glasshive_state_archive": ("application/gzip", "archive"),
     }
     path = root / relative
     media_type, method = contracts[role]
@@ -239,6 +240,30 @@ def make_restore_ready_bundle(root: Path, *, include_files: bool = True) -> Path
     return root
 
 
+def test_native_glasshive_archive_is_owned_bounded_and_optional_for_older_bundles(tmp_path):
+    module = load_bundle_module()
+    root = make_restore_ready_bundle(tmp_path / "bundle")
+    assert module.validate_bundle(root)["recoverable"] is True
+    database = tmp_path / "runtime.sqlite"
+    with sqlite3.connect(database) as connection:
+        connection.execute("CREATE TABLE work (id TEXT PRIMARY KEY)")
+        connection.execute("INSERT INTO work VALUES ('durable-work')")
+    body = {"runtime.sqlite": database.read_bytes(), "workspaces/worker/report.txt": b"result"}
+    archive = root / "glasshive" / "state.tar.gz"
+    archive.parent.mkdir()
+    write_tar_gz(archive, body)
+    def add_domain(manifest):
+        manifest["runtimeSelection"].update(profile="native", sourceDatabase="LibreChat", dataSchema=1, sourceReleaseIdentity="a" * 40)
+        manifest["domains"].append({"name":"glasshive", "status":"captured", "policy":"restore", "artifacts":["glasshive/state.tar.gz"]})
+        manifest["artifacts"].append(artifact_row(root, "glasshive/state.tar.gz", "glasshive", "glasshive_state_archive"))
+        manifest["inventory"]["glasshive"] = {"count":len(body), "bytes":sum(map(len, body.values()))}
+    rewrite_manifest(root, add_domain)
+    assert module.validate_bundle(root)["recoverable"] is True
+    rewrite_manifest(root, lambda manifest: manifest["inventory"]["glasshive"].update(count=3))
+    with pytest.raises(module.BundleValidationError, match="GlassHive"):
+        module.validate_bundle(root)
+
+
 def rewrite_manifest(root: Path, mutator) -> None:
     path = root / "recoverable-manifest.json"
     payload = json.loads(path.read_text(encoding="utf-8"))
@@ -258,7 +283,7 @@ def test_complete_bundle_validates_structure_without_claiming_restore_proof(tmp_
     assert result["semanticValidation"] == "not_performed"
     assert result["bundleKind"] == "complete"
     assert result["artifactCount"] == 3
-    assert [domain["name"] for domain in result["domains"]] == list(bundle.DOMAIN_CONTRACTS)
+    assert [domain["name"] for domain in result["domains"]] == [name for name in bundle.DOMAIN_CONTRACTS if name != "glasshive"]
 
 
 def test_canonical_config_version_is_independent_from_bundle_schema_version(tmp_path: Path) -> None:

@@ -82,30 +82,9 @@ def test_openclaw_is_manifested_as_lab_only_and_unapproved() -> None:
     assert openclaw["release_approved"] is False
 
 
-def test_installer_lifecycle_inventory_current_refs_match_components_lock() -> None:
-    lock_payload = load_json(REPO_ROOT / "components.lock.json")
-    inventory = (
-        REPO_ROOT
-        / "qa"
-        / "installer-resilience"
-        / "installer-lifecycle-inventory-2026-07-18.md"
-    ).read_text(encoding="utf-8")
-    current_section = inventory.split(
-        "### Current Isolated Candidate Reconciliation",
-        maxsplit=1,
-    )[1].split("## Nested Feature Evolution", maxsplit=1)[0]
-
-    for entry in lock_payload["components"]:
-        assert f"| {entry['name']} | `{entry['ref']}` |" in current_section
-
-    librechat_ref = next(
-        entry["ref"] for entry in lock_payload["components"] if entry["name"] == "LibreChat"
-    )
-    for source_of_truth in (
-        REPO_ROOT / "docs" / "requirements_and_learnings" / "39_Installer_and_Config_Compiler.md",
-        REPO_ROOT / "qa" / "release-readiness" / "cases.md",
-    ):
-        assert librechat_ref in source_of_truth.read_text(encoding="utf-8")
+# Dated lifecycle inventories retain the component identities they actually tested.
+# Current build selection and immutable artifact identity are exercised by
+# test_native_payload_assembler.py and test_native_component_manifest.py.
 
 
 def test_components_lock_covers_all_public_v0_4_manifest_components() -> None:

@@ -53,6 +53,15 @@ For the manager-readable handbook, start with:
   write-capable path is available, the user-visible answer must say so plainly.
 - Background agents must receive the same user memory context as the main agent when memories are
   enabled, so insights do not regress to fresh-chat behavior.
+- Productivity scope comes only from typed activation/runtime configuration. Instruction prose,
+  names and tool labels do not select runtime scope. Existing deployments must count and migrate
+  any remaining legacy header consumers before retiring that compatibility path.
+- Contextual drafts, clarification and intentional silence do not require a tool call. Runtime
+  preserves authorized memory and conversation context; owned specialist prompts distinguish those
+  sources from current external evidence. Tool availability alone must not force execution.
+- Explicit `result_evidence` policies still gate visible insights on their declared receipts.
+  Current external facts and completed actions require actual successful evidence; missing access
+  is not an empty result. Provider/transport failure and intentional no-response remain distinct.
 - Background agents are specialist evidence/insight producers, not alternate Viventium personas.
   They do not receive or embody `<viventium_feeling_state>` under either Feelings agent scope. Their
   observations stay epistemically independent; the conscious main/Phase-B speaking path decides how
@@ -104,6 +113,10 @@ It adds one use of the existing cortex machinery without changing the two-phase 
   `file_search` receipt with at least one authorized source from that exact run. Model text, a tool
   declaration, a started call, an empty result, or a failed/unauthorized retrieval is not evidence
   and remains silent before any delivery-ledger write.
+  Direct tool callbacks and authenticated host-tool results use the same invocation-scoped receipt
+  collector. Only that invocation's signed grants can contribute, and its observers are removed on
+  completion or cancellation. A missing required receipt is `missing_required_evidence`, distinct
+  from `no_live_tool_execution`; it does not trigger provider fallback. Models still judge relevance.
 - `activation.mode: always` is generic Agent Builder/runtime metadata. No cortex-name branch or
   prompt-text heuristic may implement it.
 - The same Red Team agent may remain attached here as an automatic background cortex and also be
@@ -244,6 +257,10 @@ Canonical model-parameter rule:
   happened unless that same cortex received a verified tool result for it during the current run.
   When the main agent is handling a direct execution request and a cortex has no independent
   verified result, the cortex should emit no visible insight.
+- Full-context cortex execution retains the conversation as evidence and uses the registered
+  `cortex.execution_subject` assignment as its current input. The user's request does not replace
+  the specialist's configured role. Main and compact internal tasks keep their existing inputs;
+  tools, source metadata, and tool-result links remain available to the specialist.
 - The shared activation policy lives in
   `config.viventium.background_cortices.activation_policy`. It is a source-of-truth prompt/config
   contract, not runtime NLU. It declares direct-action MCP surfaces by exact tool names, such as
@@ -634,10 +651,11 @@ Use this order so the fix stays surgical:
     before any tool call or insight, the error must preserve activation/tool metadata and attempt
     the configured execution fallback. Tool, MCP, OAuth, and auth failures remain non-retryable by
     LLM fallback and must be surfaced as their real failure class.
-  - a productivity cortex that reaches a terminal Phase B result without any current-run live tool
-    call is not a successful inbox/workspace check. Runtime must surface a sanitized
-    `no_live_tool_execution` limitation instead of treating empty output as a normal silent
-    completion or allowing the follow-up to claim the provider was outside scope.
+  - a productivity cortex without current-run evidence cannot claim a successful live inbox/workspace
+    check. The original blanket `no_live_tool_execution` guard also rejected valid clarifications,
+    contextual drafts and intentional silence; the current contract above replaces that blanket
+    rule with model-owned relevance/truthfulness and explicit typed evidence policies. Retained
+    historical errors remain diagnosable; they are not proof that every tool-free turn failed.
   - Google/MS365 source direct-action declarations describe same-scope behavior only when those MCPs
     are actually connected to the main agent. In the shipped local default, Viv main remains
     background-only for Google/MS365 and must not gain those MCP tools just to fix activation.
@@ -916,3 +934,11 @@ preserve streaming. Two viable shapes, with a real trade-off:
   selected separately and does not determine the Voice LLM.
 - See `qa/modern-playground-voice/reports/2026-05-29-voice-chat-latency-rca-and-fixes.md` for the
   full evidence-based RCA (memory/recall/tool-mass/model-swap disproven as latency causes).
+
+### Follow-up text fidelity
+
+The model owns whether a follow-up asks a useful question. Runtime suppression uses the existing
+no-response marker and visibility controls; it must not infer intent from question marks or delete
+sentences. Follow-up transport cleanup preserves Markdown structure, code spacing, ordinary
+numeric references, and source URLs with query parameters. Only known internal transport
+artifacts are removed. This contract applies before persistence and across web and messaging.

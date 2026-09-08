@@ -19,7 +19,7 @@ def test_telegram_codex_restart_cleans_scoped_sidecar_orphans() -> None:
     launcher_text = START_SCRIPT.read_text(encoding="utf-8")
     start_telegram_codex = launcher_text[
         launcher_text.index("start_telegram_codex() {") :
-        launcher_text.index("\ngoogle_mcp_can_start_in_parallel_with_librechat() {")
+        launcher_text.index("\n}\n", launcher_text.index("start_telegram_codex() {")) + 3
     ]
 
     assert 'kill_by_pattern_scoped "telegram-codex" "$telegram_codex_dir"' in start_telegram_codex

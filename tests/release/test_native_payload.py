@@ -1246,3 +1246,178 @@ def test_retention_never_follows_an_unowned_release_symlink(tmp_path: Path) -> N
 
     assert sentinel.read_text(encoding="utf-8") == "keep\n"
     assert external.is_dir()
+
+
+def test_dependency_rich_manifest_exceeds_two_mib_and_verifies(tmp_path: Path) -> None:
+    module = load_module()
+    manifest, _artifact, payload = write_candidate(tmp_path)
+    payload["files"] = [
+        {"path": f"app/node_modules/package-{index:05d}/runtime.js", "sha256": "0" * 64,
+         "size": 1, "mode": 0o644}
+        for index in range(16000)
+    ]
+    payload["artifact"]["uncompressed_size"] = len(payload["files"])
+    manifest.write_bytes(module.canonical_manifest_bytes(payload))
+    assert manifest.stat().st_size > 2 * 1024 * 1024
+    verified = module.verify_manifest(manifest, allow_unsigned_local_qa=True)
+    assert len(verified.payload["files"]) == 16000
+
+
+def test_manifest_byte_limit_rejects_before_parsing(tmp_path: Path) -> None:
+    module = load_module()
+    manifest = tmp_path / "oversized.manifest.json"
+    with manifest.open("wb") as handle:
+        handle.truncate(module.MAX_MANIFEST_BYTES + 1)
+    with pytest.raises(module.PayloadError, match="manifest exceeds the size limit"):
+        module.verify_manifest(manifest, allow_unsigned_local_qa=True)
+
+
+def test_bootstrap_download_reuses_manifest_verifier_byte_limit() -> None:
+    module = load_module()
+    import sys
+    previous = sys.modules.get("native_payload")
+    sys.modules["native_payload"] = module
+    try:
+        spec = importlib.util.spec_from_file_location(
+            "native_bootstrap_manifest_cap", MODULE_PATH.with_name("install_native_payload.py")
+        )
+        assert spec and spec.loader
+        bootstrap = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(bootstrap)
+        assert bootstrap.MAX_MANIFEST_BYTES == module.MAX_MANIFEST_BYTES
+    finally:
+        if previous is None:
+            sys.modules.pop("native_payload", None)
+        else:
+            sys.modules["native_payload"] = previous
+
+
+def _interrupt_extraction_process(module, tmp_path: Path):
+    import sys
+
+    manifest, artifact, _ = write_candidate(
+        tmp_path,
+        files={
+            'runtime/a.txt': b'first complete file\n',
+            'runtime/deep/b.txt': b'second complete file\n',
+            'runtime/deep/c.txt': b'file interrupted at creation\n',
+            'runtime/last.txt': b'not created before interruption\n',
+        },
+    )
+    install = tmp_path / 'install'
+    code = '''
+import importlib.util, os, pathlib, sys
+spec = importlib.util.spec_from_file_location('native_payload', sys.argv[1])
+m = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(m)
+candidate = m.verify_candidate(pathlib.Path(sys.argv[2]), pathlib.Path(sys.argv[3]), allow_unsigned_local_qa=True)
+original = os.open
+
+def interrupted_open(path, flags, *args, **kwargs):
+    fd = original(path, flags, *args, **kwargs)
+    if pathlib.Path(path).name == 'c.txt' and flags & os.O_CREAT:
+        os.fsync(fd)
+        os._exit(23)
+    return fd
+
+os.open = interrupted_open
+m.stage_candidate(candidate, pathlib.Path(sys.argv[3]), pathlib.Path(sys.argv[4]))
+'''
+    result = subprocess.run(
+        [sys.executable, '-c', code, str(MODULE_PATH), str(manifest), str(artifact), str(install)],
+        capture_output=True, text=True,
+    )
+    assert result.returncode == 23, result.stderr
+    candidate = module.verify_candidate(manifest, artifact, allow_unsigned_local_qa=True)
+    pending = module._read_pending_stage(install)
+    attempt = install / 'staging' / pending['attemptName']
+    assert (attempt / 'runtime/deep/c.txt').stat().st_size == 0
+    return candidate, artifact, install, attempt
+
+
+def test_stage_retry_reuses_verified_files_after_process_exit(tmp_path: Path) -> None:
+    module = load_module()
+    candidate, artifact, install, attempt = _interrupt_extraction_process(module, tmp_path)
+    old_inode = (attempt / 'runtime/a.txt').stat().st_ino
+    prior_journal = (module._state_root(install) / 'journal.ndjson').read_bytes()
+    release = module.stage_candidate(candidate, artifact, install)
+
+    assert (release / 'runtime/a.txt').stat().st_ino == old_inode
+    assert (release / 'runtime/deep/c.txt').read_bytes() == b'file interrupted at creation\n'
+    assert list((install / 'staging').iterdir()) == []
+    assert module._read_pending_stage(install) is None
+    module._verify_staged_release(candidate, release)
+    journal = (module._state_root(install) / 'journal.ndjson').read_bytes()
+    assert journal.startswith(prior_journal)
+    assert b'"event":"stage_resumed"' in journal
+
+
+@pytest.mark.parametrize('mutation', ['digest', 'mode', 'hardlink', 'symlink', 'unexpected', 'directory', 'out_of_order', 'partial_nonempty'])
+def test_stage_retry_quarantines_unverified_extraction_without_reusing_files(tmp_path: Path, mutation: str) -> None:
+    module = load_module()
+    candidate, artifact, install, attempt = _interrupt_extraction_process(module, tmp_path)
+    first = attempt / 'runtime/a.txt'
+    old_inode = first.stat().st_ino
+    outside = tmp_path / 'outside.txt'
+    outside.write_bytes(b'untouched external file\n')
+    if mutation == 'digest':
+        first.write_bytes(b'x' * first.stat().st_size)
+    elif mutation == 'mode':
+        first.chmod(0o666)
+    elif mutation == 'hardlink':
+        first.unlink()
+        os.link(outside, first)
+    elif mutation == 'symlink':
+        first.unlink()
+        first.symlink_to(outside)
+    elif mutation == 'unexpected':
+        (attempt / 'unexpected.txt').write_bytes(b'unexpected')
+    elif mutation == 'directory':
+        (attempt / 'foreign').symlink_to(tmp_path, target_is_directory=True)
+    elif mutation == 'out_of_order':
+        first.unlink()
+    else:
+        (attempt / 'runtime/deep/c.txt').write_bytes(b'partial')
+    release = module.stage_candidate(candidate, artifact, install)
+    assert (release / 'runtime/a.txt').stat().st_ino != old_inode
+    assert (release / 'runtime/a.txt').read_bytes() == b'first complete file\n'
+    assert outside.read_bytes() == b'untouched external file\n'
+    quarantines = list((install / 'staging').glob('quarantine-*'))
+    assert len(quarantines) == 1
+    assert not attempt.exists()
+    module._verify_staged_release(candidate, release)
+
+
+def test_interrupted_stage_rejects_other_candidate_without_changing_attempt(tmp_path: Path) -> None:
+    module = load_module()
+    candidate, artifact, install, attempt = _interrupt_extraction_process(module, tmp_path)
+    pending = module._read_pending_stage(install)
+    other_root = tmp_path / 'other'
+    other_root.mkdir()
+    manifest, other_artifact, _ = write_candidate(other_root, release_id='0.4.0-qa.2', sequence=2)
+    other = module.verify_candidate(manifest, other_artifact, allow_unsigned_local_qa=True)
+    with pytest.raises(module.PayloadError, match='different candidate'):
+        module.stage_candidate(other, other_artifact, install)
+    assert module._read_pending_stage(install) == pending
+    assert (attempt / 'runtime/deep/c.txt').stat().st_size == 0
+    assert not list((install / 'staging').glob('quarantine-*'))
+
+
+def test_interrupted_stage_rechecks_identity_before_reusing_verified_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    module = load_module()
+    candidate, artifact, install, attempt = _interrupt_extraction_process(module, tmp_path)
+    validate_zip = module._validate_zip
+
+    def replace_after_verification(candidate, archive):
+        infos = validate_zip(candidate, archive)
+        target = attempt / 'runtime/a.txt'
+        replacement = attempt / 'replacement.txt'
+        replacement.write_bytes(target.read_bytes())
+        replacement.chmod(0o600)
+        os.replace(replacement, target)
+        return infos
+
+    monkeypatch.setattr(module, '_validate_zip', replace_after_verification)
+    with pytest.raises(module.PayloadError, match='changed before reuse'):
+        module.stage_candidate(candidate, artifact, install)
+    assert not (install / 'releases' / candidate.release_key).exists()

@@ -289,6 +289,12 @@ def _feature_dirs() -> list[Path]:
     )
 
 
+def _is_consolidated_capability_dir(path: Path) -> bool:
+    """A journey route does not require a duplicate detailed case bank."""
+
+    return (path / "cases.yaml").is_file() and not (path / "cases.md").is_file()
+
+
 def _migration_features() -> set[str]:
     text = _read(QA_ROOT / "_migration.md")
     features: set[str] = set()
@@ -745,6 +751,8 @@ def test_feature_use_case_checklist_mentions_all_requirement_docs_and_qa_owners(
 
     missing_owners: list[str] = []
     for feature_dir in _feature_dirs():
+        if _is_consolidated_capability_dir(feature_dir):
+            continue  # The consolidated catalog below validates these routes.
         owner_ref = f"qa/{feature_dir.name}/"
         if owner_ref not in checklist_text:
             missing_owners.append(owner_ref)
@@ -752,6 +760,53 @@ def test_feature_use_case_checklist_mentions_all_requirement_docs_and_qa_owners(
         "Product-wide feature user-use-case checklist must mention every QA owner:\n"
         + "\n".join(missing_owners)
     )
+
+
+def test_consolidated_capability_catalog_routes_complete_journeys() -> None:
+    catalog = yaml.safe_load(_read(QA_ROOT / "catalog.yaml"))
+    assert catalog["schemaVersion"] == 1
+    routed: set[Path] = set()
+    journeys_by_capability: dict[str, set[str]] = {}
+    related: list[dict[str, str]] = []
+    for capability in catalog["capabilities"]:
+        capability_id = capability["id"]
+        assert capability_id not in journeys_by_capability
+        assert capability["requirements"]
+        assert len(capability["cases"]) == 1
+        for reference in capability["requirements"] + capability["cases"]:
+            target = (ROOT / reference).resolve()
+            assert target.is_relative_to(ROOT) and target.is_file(), reference
+
+        cases_path = ROOT / capability["cases"][0]
+        routed.add(cases_path)
+        data = yaml.safe_load(_read(cases_path))
+        assert data["schemaVersion"] == 1
+        assert data["capability"] == capability_id
+        declared_owners = data["requirementOwner"]
+        if isinstance(declared_owners, str):
+            declared_owners = [declared_owners]
+        assert set(declared_owners) == set(capability["requirements"])
+        assert data["sourceInventories"] and data["journeys"]
+        for source in data["sourceInventories"]:
+            target = (ROOT / source).resolve()
+            assert target.is_relative_to(QA_ROOT) and target.is_file(), source
+            assert target.name == "cases.md", source
+
+        journey_ids: set[str] = set()
+        for journey in data["journeys"]:
+            assert journey["id"] not in journey_ids
+            journey_ids.add(journey["id"])
+            for key in (
+                "requirements", "userAction", "surfaces", "expectedResult",
+                "degradedAndRecovery", "persistenceAndCleanup", "evidence",
+            ):
+                assert journey[key], f"{_relative(cases_path)} {journey['id']} missing {key}"
+        journeys_by_capability[capability_id] = journey_ids
+        related.extend(data.get("relatedJourneys", []))
+
+    assert routed == set(QA_ROOT.glob("*/cases.yaml"))
+    for reference in related:
+        assert reference["journey"] in journeys_by_capability[reference["capability"]]
 
 
 def test_feature_case_catalogs_have_natural_user_use_case_checklists() -> None:
@@ -1024,6 +1079,7 @@ def test_legacy_qa_folder_gaps_are_tracked() -> None:
     missing_readme_or_cases = {
         path.name
         for path in _feature_dirs()
+        if not _is_consolidated_capability_dir(path)
         if not (path / "README.md").exists() or not (path / "cases.md").exists()
     }
     assert missing_readme_or_cases <= migration_features
@@ -1032,6 +1088,13 @@ def test_legacy_qa_folder_gaps_are_tracked() -> None:
 def test_standard_feature_qa_folders_have_case_catalogs_and_report_home() -> None:
     missing: list[str] = []
     for path in _feature_dirs():
+        if _is_consolidated_capability_dir(path):
+            cases_path = path / "cases.yaml"
+            if _is_git_ignored(cases_path):
+                missing.append(f"{_relative(cases_path)} is ignored")
+            elif not _is_git_tracked(cases_path):
+                missing.append(f"{_relative(cases_path)} is not tracked")
+            continue
         for required_name in ("README.md", "cases.md", "reports"):
             required_path = path / required_name
             if not required_path.exists():
@@ -1286,7 +1349,7 @@ def test_requirement_source_coverage_ledger_is_private_safe_and_resolves() -> No
     assert atomic["stable_requirement_ids_with_any_direct_message_mapping"] == 312
     assert atomic["required_owner_declaration_rows"] == 288
     assert atomic["required_owner_declaration_sha256"] == (
-        "2c389b9861e73de660bb84a2d65b5e56bc374264729d5f5da26fe246b9040671"
+        "60a5dcb807e9e5c4c1d6ad9c681e1054eabf333604226373c7982d69572b6ff7"
     )
     assert atomic["required_owner_declaration_canonicalization"].startswith(
         "sha256 of lexicographically sorted unique tab-separated requirement ID"
@@ -1454,8 +1517,9 @@ def test_requirement_source_coverage_ledger_is_private_safe_and_resolves() -> No
         "markers_in_current_files_absent_from_head": 75,
         "markers_in_untracked_current_files": 11,
         "existing_case_catalog_date_resets": 0,
-        "current_recent_marker_total": 267,
-        "post_initial_audit_recent_marker_delta": 181,
+        "current_marker_as_of": date(2026, 9, 7),
+        "current_recent_marker_total": 264,
+        "post_initial_audit_recent_marker_delta": 178,
         "current_stale_triage_marker_total": 164,
         "current_total_stale_marker_delta_after_initial_audit": 0,
         "method": "read_only_current_marker_comparison_against_head",
@@ -1735,7 +1799,10 @@ def test_requirement_source_coverage_ledger_and_owners_are_durable() -> None:
 
 
 def test_current_requirement_and_qa_local_markdown_evidence_links_resolve() -> None:
-    paths = sorted((ROOT / "docs" / "requirements_and_learnings").glob("*.md"))
+    paths = sorted((ROOT / "docs" / "requirements_and_learnings").rglob("*.md"))
+    paths += sorted((ROOT / "docs" / "architecture").glob("*.md"))
+    paths += sorted((ROOT / "docs" / "how-to").glob("*.md"))
+    paths += [ROOT / "docs" / "README.md"]
     paths += sorted((ROOT / "viventium_v0_4" / "docs").glob("*.md"))
     paths += sorted(QA_ROOT.rglob("*.md"))
     violations: list[str] = []

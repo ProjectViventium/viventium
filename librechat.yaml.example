@@ -78,6 +78,7 @@ mcpServers:
     headers:
       X-Viventium-User-Id: '{{LIBRECHAT_USER_ID}}'
       X-Viventium-Agent-Id: agent_viventium_main_95aeb3
+      X-Viventium-Conversation-Id: '{{LIBRECHAT_BODY_CONVERSATIONID}}'
     startup: false
     chatMenu: true
     timeout: 120000

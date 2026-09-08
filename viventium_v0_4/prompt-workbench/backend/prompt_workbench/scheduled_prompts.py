@@ -33,7 +33,10 @@ from scheduling_cortex.dispatch import (
     _get_json,
     _glasshive_base_url,
     _glasshive_headers,
+    _scheduled_generation_failure_notice,
     dispatch_task,
+    normalized_scheduled_generation_failure_class,
+    resolve_scheduled_failure_transition,
 )
 from scheduling_cortex.scheduler import (
     DEFAULT_OCCURRENCE_LEASE_SECONDS,
@@ -1081,13 +1084,58 @@ def _reconcile_stalled_glasshive_run(
     ):
         return run, task
     terminal_state = str(snapshot.get("state") or "").strip().lower()
-    if terminal_state not in {"completed", "failed", "cancelled", "interrupted"}:
+    needs_input = terminal_state == "needs_input"
+    if not needs_input and terminal_state not in {
+        "completed",
+        "failed",
+        "cancelled",
+        "interrupted",
+    }:
         return run, task
+    now_iso = _utc_now()
+    callback_payload = (
+        dict(run.get("callback_payload"))
+        if isinstance(run.get("callback_payload"), dict)
+        else {}
+    )
     completed_at = str(snapshot.get("ended_at") or "").strip()
+    if needs_input:
+        callback_was_received = callback_payload.get("event") == "run.needs_input"
+        completed_at = (
+            str(run.get("updated_at") or "").strip()
+            if callback_was_received
+            else now_iso
+        )
     if not completed_at:
         return run, task
 
-    if terminal_state == "completed":
+    if needs_input:
+        error_class = normalized_scheduled_generation_failure_class(
+            snapshot.get("failure_class")
+        )
+        retryable = snapshot.get("failure_retryable")
+        transition = resolve_scheduled_failure_transition(
+            task,
+            error_class,
+            retryable if isinstance(retryable, bool) else None,
+        )
+        result_summary = _scheduled_generation_failure_notice(
+            transition["error_class"],
+            transition["retryable"],
+            "next_occurrence_only" if (task.get("schedule") or {}).get("type") != "once"
+                else "terminal_action_required",
+            transition.get("next_attempt_at"),
+        )
+        callback_payload.update(
+            {
+                "event": "run.needs_input",
+                "status": "failed",
+                "failure_class": error_class,
+                "failure_retryable": transition["retryable"],
+                "reconciled_from_owner_snapshot": True,
+            }
+        )
+    elif terminal_state == "completed":
         error_class = "stale_run_reconciled"
         result_summary = (
             "GlassHive completed, but its verified terminal callback was not received."
@@ -1098,7 +1146,6 @@ def _reconcile_stalled_glasshive_run(
             limit=96,
         )
         result_summary = "GlassHive worker failed before its terminal callback was received."
-    now_iso = _utc_now()
     execution_snapshot = (
         dict(run.get("execution_snapshot"))
         if isinstance(run.get("execution_snapshot"), dict)
@@ -1119,6 +1166,8 @@ def _reconcile_stalled_glasshive_run(
         "execution_snapshot": execution_snapshot,
         "updated_at": now_iso,
     }
+    if needs_input:
+        run_updates["callback_payload_json"] = json.dumps(callback_payload)
     task_updates = {
         "last_status": "error",
         "last_error": result_summary,
@@ -1150,6 +1199,8 @@ def _reconcile_stalled_glasshive_run(
         run_updates,
         expected_status=str(run.get("status") or ""),
         expected_error_class=run.get("error_class"),
+        expected_attempt=int(run.get("attempt") or 0),
+        expected_glasshive_run_id=str(run.get("glasshive_run_id") or ""),
     )
     persisted = claimed.get("run") if isinstance(claimed.get("run"), dict) else run
     if not claimed.get("updated"):
@@ -1165,6 +1216,7 @@ def _reconcile_stalled_glasshive_run(
             str(task.get("user_id") or ""),
             str(task.get("id") or ""),
             task_updates,
+            expected_latest_scheduled_run_id=str(run.get("run_id") or ""),
         ) or current_task
     return persisted, current_task
 

@@ -1098,12 +1098,26 @@ has. Do **not** extract or persist the Keychain token.
 The host projection boundary is **access-only**. A valid `CLAUDE_CODE_OAUTH_TOKEN` already present in
 the signed worker bootstrap is authoritative and must survive unchanged for both initial and resumed
 runs. Otherwise the runtime may project a still-future Keychain access token, but it must never project,
-export, or persist the Keychain refresh token. When the Keychain access token is expired or malformed,
+export, or persist the Keychain refresh token. Its valid granted scope list travels alongside that
+access token through native `CLAUDE_CODE_OAUTH_SCOPES`, so explicit native capabilities can evaluate the
+selected credential correctly. Never invent scopes or borrow them from another credential; omit
+malformed metadata and clear unselected scope metadata when changing authentication sources. Strict
+declared MCP scope and auto-memory settings remain in force. When the Keychain access token is expired
+or malformed,
 `claude auth status` must run under the exact prospective isolated child environment, including its
 `CLAUDE_CONFIG_DIR` and sanitized bootstrap projection. A positive ambient-shell status is not proof
-that the isolated worker can authenticate. If that exact check is not logged in, fail before the model
-run with sanitized `claude auth login` / `claude setup-token` guidance; do not refresh OAuth, consume a
-LibreChat user's connected-account token, or silently change provider/model.
+that the isolated worker can authenticate. For a local conversation without a selected personal
+account, the existing native owner-managed login may be used only after checking that separate
+boundary: select the owner's actual home, remove the isolated Claude config selector, and pass
+`--setting-sources ""` alongside the explicit session settings and strict MCP projection. Claude
+owns any renewal inside its native request; GlassHive does not run `auth login` or transport a refresh
+token. A validated bound account takes precedence over host auth discovery. Enterprise conversations
+use only their projected server authority and never discover the workstation owner's login.
+If neither applicable native boundary is logged in, fail before the model run with the typed
+`provider_auth_missing` result and sanitized `claude auth login` / `claude setup-token` guidance. Do not
+consume a LibreChat user's connected-account token or silently change provider/model. These boundaries
+follow the native [authentication storage](https://code.claude.com/docs/en/iam#credential-management)
+and [environment contract](https://code.claude.com/docs/en/env-vars).
 
 **Enterprise/headless compatibility of these two fixes.** Enterprise GlassHive runs **docker**
 workers with **provider-route auth** (Codex→Azure OpenAI Responses, OpenClaw→Portkey, Claude→Anthropic/Portkey
@@ -1379,6 +1393,18 @@ LibreChat internals.
 - `POST /v1/chat/completions` accepts structured authenticated owner/conversation/agent/message/
   stream/surface/input metadata plus workspace/access binding. It emits OpenAI-compatible streaming
   chunks; harness-native and brokered tools stay inside GlassHive.
+- Native conversation sessions also bind the trusted interaction `actor_kind` and `origin`.
+  Interactive and scheduled authoring keep the real tenant, owner, conversation, and agent IDs,
+  but cannot replace each other's active native worker or history. The shared provider adapter
+  projects this existing context from authenticated request state for Main, graph participants,
+  fallbacks, background agents, and Phase B, including runs without a broker bundle. Configured or
+  client-supplied headers cannot replace that state. The existing worker/callback scope is also
+  accepted without remapping; non-interactive scope requires the trusted provider transport, and
+  conflicting body/header scope fails before admission. Same-scope turns
+  retain native continuity and the existing changed-authority conflict guard. Fallback and context
+  recovery preserve that scope. Runtime-store schema 8 retains legacy session IDs, history, source
+  admissions, and request links under the prior default scope; an older runtime refuses this schema.
+  Accepted scheduler dispatches are never cleared or restarted to resolve an overlap.
 - Brokered ordinary-tool execution remains observable without pretending LibreChat executed the
   tool directly. Native tool completion events become a persisted `harness_activity` row carrying
   only a bounded product-language operation and terminal status. Raw provider/server/tool plumbing,
@@ -2330,6 +2356,15 @@ envelopes; and never permits bundle env to replace `PATH`, `HOME`, or other rese
 identity variables. The static service bearer remains a separate outer gate. A sender that declares
 host capabilities but cannot build the bundle fails the provider attempt instead of silently
 continuing with tool-named/tool-unavailable instructions.
+
+Host-native Claude conversation-provider runs use the calling application's saved-memory owner.
+The launcher disables Claude auto memory with its native session setting and always uses the
+explicit MCP projection, including an empty projection when no host tools are declared. Native
+Chrome and local tools retain their configured availability. Mission workers keep their existing
+memory and capability configuration. Existing worker memory files are preserved; disabling their
+automatic use is not deletion or migration into Saved memory. These native controls follow the
+[Claude settings](https://code.claude.com/docs/en/settings) and
+[CLI reference](https://code.claude.com/docs/en/cli-reference).
 
 An honestly empty capability projection is different from a bundle-construction failure. When the
 current turn has no policy-authorized host capability after resolution, the provider continues with

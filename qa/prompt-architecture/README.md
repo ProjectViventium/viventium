@@ -57,3 +57,37 @@ belongs only in the private prompt-observability directory.
 The canonical synthetic prompt bank lives in [evals/prompt-bank.json](evals/prompt-bank.json).
 Private eval runners may enrich those cases with QA-account live context, but public reports must
 only store redacted examples and aggregate metrics.
+
+The exact-model runner measures the first received authored reply, including replaceable native
+previews, separately from final completion. Tool activity and empty previews do not start that
+clock. Stream receipt is supporting timing evidence; actual client-visible timing still requires
+the delivered browser or native-app path.
+
+The `main_compaction_fidelity` family uses
+[evals/run-main-compaction-evals.cjs](evals/run-main-compaction-evals.cjs) to exercise the actual
+compactor assembly. Select `--variant=proposed` for current compiled/source artifacts or
+`--variant=baseline --snapshot=<private-captured-directory>` for a preserved pre-change snapshot.
+The baseline snapshot must include a hash manifest, compactor/continuity/registry source, API and
+data-schema compiled bundles, and the compiled prompt bundle. Changed or unrecorded snapshot
+artifacts fail before database or model work. Git HEAD is not an incremental-change baseline.
+
+Use the same frozen cases and exact configured route for separate baseline/proposed runs. A case's
+fixture mode selects generation, review, or persisted compaction; the explicit variant selects its
+artifact version. Prior-summary fixtures are seeded as declared synthetic evidence and recorded;
+they do not prove how a real conversation created that summary. Results record selected artifact
+hashes and identify the shared current execution/configuration/dependency/schema boundary. The
+runner keeps call, capacity-failure and timing evidence; model agreement, human calibration and
+normal Main continuation remain separate acceptance gates.
+
+The `worker_host_authority` family uses the existing exact-model runner's `worker_source`
+execution target. It replays the composed host/project/profile source through production
+`executeCortex` and the native provider, using each case's configured primary or fallback worker
+model and effort. Native tools remain available. Workbench requires exact observed instruction
+bytes, owner/session/message-bound native evidence, a native-call audit, and semantic judgment.
+This is source replay; it does not prove mission workspace setup or actual app/file operations.
+
+A private old/proposed bank may declare `executionTarget.sourceSnapshot` with a private path and
+SHA-256. The snapshot retains the exact source text, its hashes, and composed frames; mismatched
+snapshot or source bytes stop before model execution. Reuse the same case inputs on both versions.
+Keep a failed invocation distinct from a semantic failure and retain completed subjects when a
+later route is unavailable. After the comparison, exercise the real authorized host action.

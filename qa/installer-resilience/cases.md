@@ -40,7 +40,7 @@ Use stable `INST-NNN` IDs for installer resilience cases.
 | `INST-030` | `ONB-006`: after the first persistent answer, Main, continuity, memory, calls, Wing, Listen-Only, Telegram, workers, and local-phone/remote-use paths retain first-class truthful ability. | Packaging/lazy start never replaces, narrows, or fakes a product path. | Installed browser, calls, Wing, Listen-Only, Telegram, worker, remote/local-phone paths | One complete post-first-answer parity journey | NOT RUN — cataloged 2026-08-30 |
 | `INST-031` | `ONB-009`: one exact isolated release matrix covers new/existing users; desktop/mobile browser; keyboard/screen reader/reduced motion/contrast/zoom; full provider and Life lifecycle; Telegram text/media/voice; Call/Wing/Listen-Only; memory/recall/scheduling/Workbench/GlassHive/workers; restart/upgrade/backup/restore/rollback; LAN/off-LAN; exact artifacts; platform; cleanup; and public safety. | Every required branch has direct candidate-bound evidence and status; personal state, public private data, or an aggregate result cannot substitute for a branch. | Exact installed release candidate on every declared surface/platform | Enumerated branch receipt, isolation, cleanup, and public-safety matrix | NOT RUN — cataloged 2026-08-30 |
 | `INST-032` | `ONB-010`: preserve every relevant branch, worktree, commit, and private state in a restore-tested backup; classify each delta; reconcile only accepted changes onto fresh current component/parent mains; publish the component; then prove source commit, parent pin, compiled/prebuilt artifact, installed runtime, and fresh QA agreement. | Valuable work is recoverable and shipped state is clean, exact, and surgically reconciled. | Parent/nested repos, private state boundary, component publication, artifacts, installed runtime | Backup/restore drill, delta ledger, clean-base replay, publication/pin/build/install chain, fresh QA | PARTIAL 2026-08-30; verified Git backups and exact reconstruction, delta ledgers, clean-base component publication, exact public pins, builds, privacy review, and fresh automated QA support the candidate; parent merge, post-merge main identity, exact installed-runtime identity, and candidate-bound fresh user QA remain open |
-| `INST-033` | `ONB-011`: one machine-readable registry generates coverage/status and CI compares source/pin/artifact/install/QA; launcher/CLI/compiler split only when measured risk justifies an incremental typed module. | No new hand-maintained master ledger or wholesale rewrite is introduced. | Registry, generated coverage/status, CI inputs, launcher, CLI, compiler | Generation/staleness and measured-decomposition review | NOT RUN — cataloged 2026-08-30 |
+| `INST-033` | `ONB-011`: existing manifests and checks compare source, pin, artifact, installed identity, and QA; an added registry or launcher/CLI/compiler split needs measured drift or isolation evidence. | No new hand-maintained master ledger or wholesale rewrite is introduced. | Component pins, artifact manifests, CI checks, launcher, CLI, compiler | Identity/drift checks and measured-decomposition review | NOT RUN — cataloged 2026-08-30 |
 
 These are umbrella installer cases. Feature owners retain detailed authority: `INST-005` links to
 `qa/continuity-ops/`; `INST-007` incorporates rather than replaces `PIPE-001` under
@@ -801,17 +801,17 @@ Google/Microsoft OAuth detail remains in `qa/mcp-oauth/`.
   automated QA support the candidate. Parent merge, post-merge main identity, exact installed-runtime
   identity, and candidate-bound fresh user QA remain open.
 
-## `INST-033` - Generated Registry And Measured Modularization
+## `INST-033` - Existing Manifest Checks And Measured Modularization
 
-- Requirement: `ONB-011` in the public productization owner.
-- Steps: change one synthetic registry entry and prove generated coverage/status changes once and
-  stale output fails; compare source, pin, artifact, installed identity, and QA; then review one
-  measured coordination/failure risk and either make the smallest typed launcher/CLI/compiler split
-  or record why no split is justified.
-- Expected result: the registry is the sole machine-readable generator input, CI fails on drift, and
-  modularization follows measured risk incrementally.
-- Forbidden result: second hand-maintained master ledger, generator/output disagreement, ceremonial
-  refactor, or wholesale rewrite.
+- Requirement: `ONB-011` in [candidate identity](../../docs/requirements_and_learnings/capabilities/runtime-install-release.md#candidate-identity).
+- Steps: change one synthetic component pin or artifact-manifest input and prove the existing
+  identity check detects stale or mismatched output; compare source, pin, artifact, installed
+  identity, and QA. Review one measured coordination or isolation risk and either make the smallest
+  justified typed launcher/CLI/compiler split or record why no split is needed.
+- Expected result: existing manifests and checks reject drift. Add another registry or launcher
+  only when the measured need cannot be met by the current owner; modularization stays incremental.
+- Forbidden result: a second master ledger, stale artifact accepted as current, ceremonial refactor,
+  or wholesale rewrite.
 - Last run: NOT RUN — cataloged 2026-08-30.
 
 ## Natural User Use Case Checklist
@@ -845,7 +845,7 @@ rows before claiming a pass when the feature behavior changes.
 | `INST-UC-022` | Complete the first persistent answer, then naturally use Main, continuity, memory, Call, Wing, Listen-Only, Telegram, workers, and local-phone/remote access through degradation and restart. | `ONB-006` / `INST-030` | Exact installed product and every named surface | per-path capability/result, lazy-start state, errors/recovery, persistence, logs/state, and artifact identity | Every path remains first-class and truthful; packaging does not replace, narrow, or fake readiness. | NOT RUN — cataloged 2026-08-30 |
 | `INST-UC-023` | Run the complete isolated release matrix for new and existing users across every declared UI, channel, cognition, worker, lifecycle, network, artifact, accessibility, and platform branch. | `ONB-009` / `INST-031` | Exact installed candidate on declared platforms/surfaces | direct branch receipts, candidate identities, cleanup, public-safety scan, and remaining-gap list | Every branch has an explicit status and evidence; no personal state or aggregate/meta result substitutes for a branch. | NOT RUN — cataloged 2026-08-30 |
 | `INST-UC-024` | Preserve and back up all relevant work, classify every delta, replay accepted changes onto fresh current component/parent mains, then build, install, and rerun QA. | `ONB-010` / `INST-032` | parent/nested repos, backup boundary, build/install/runtime | backup restore check, delta dispositions, clean-base diffs, commits/pins, artifact/runtime identities, fresh QA | All valuable state is recoverable and the installed candidate is a clean exact surgical reconciliation, not dirty or wholesale-merged state. | PARTIAL 2026-08-30; verified Git backups and exact reconstruction, delta ledgers, clean-base component publication, exact public pins, builds, privacy review, and fresh automated QA support the candidate; parent merge, post-merge main identity, exact installed-runtime identity, and candidate-bound fresh user QA remain open |
-| `INST-UC-025` | Change one registry entry, regenerate coverage/status, inject stale output, and review one measured launcher/CLI/compiler decomposition candidate. | `ONB-011` / `INST-033` | machine-readable registry, generated outputs, CI check, launcher/CLI/compiler owners | input/output diff, stale failure, source-pin-artifact-install-QA comparison, measured risk, and scoped design | One registry generates truth, drift fails closed, and only justified incremental typed modularization proceeds; no second ledger or rewrite appears. | NOT RUN — cataloged 2026-08-30 |
+| `INST-UC-025` | Change one synthetic component pin or artifact-manifest input, inject stale output, and review one measured launcher/CLI/compiler decomposition candidate. | `ONB-011` / `INST-033` | existing component and artifact manifests, identity checks, launcher/CLI/compiler owners | input/output diff, stale failure, source-pin-artifact-install-QA comparison, measured risk, and scoped design | Existing checks reject drift; another registry, launcher, or typed module requires a measured need. No second ledger or rewrite appears. | NOT RUN — cataloged 2026-08-30 |
 
 ## Release Test Traceability
 
@@ -891,3 +891,10 @@ rows before claiming a pass when the feature behavior changes.
 - `tests/release/test_shell_init.py`
 - `tests/release/test_viventium_health_integration.py`
 - `tests/release/test_wizard.py`
+- `tests/release/test_cli_meilisearch_container_adoption.py`
+- `tests/release/test_launcher_glasshive_watchdog.py`
+- `tests/release/test_launcher_trusted_root_paths.py`
+- `tests/release/test_life_setup.py`
+- `tests/release/test_macos_helper_config_ownership.py`
+
+Supporting release regressions: `tests/release/test_instance_secrets.py`, `tests/release/test_native_helper_signing.py`, `tests/release/test_native_installer_diagnostics.py`, `tests/release/test_native_mongodb_replica.py`. These automated checks do not replace the user-path acceptance above.

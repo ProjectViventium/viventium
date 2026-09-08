@@ -321,7 +321,41 @@ def source_agents_bundle() -> dict[str, Any]:
     from scripts.viventium.prompt_registry import load_and_resolve_prompt_refs
 
     source = yaml.safe_load(AGENTS_SOURCE_PATH.read_text(encoding="utf-8"))
-    return load_and_resolve_prompt_refs(source, DEFAULT_PROMPT_ROOT)
+    resolved = load_and_resolve_prompt_refs(source, DEFAULT_PROMPT_ROOT)
+    registry = load_prompt_registry(PROMPTS_ROOT)
+
+    # A live pull materializes prompt text in local.viventium-agents.yaml. The
+    # Workbench still owns prompt authoring in the markdown registry, so always
+    # overlay the applied registry text before comparing or publishing.
+    main = resolved.get("mainAgent")
+    if isinstance(main, dict) and "main.conscious_agent" in registry:
+        main["instructions"] = render_prompt(
+            "main.conscious_agent", registry
+        ).strip()
+
+    managed_collections = {
+        "backgroundAgents": resolved.get("backgroundAgents") or [],
+        "agents": resolved.get("agents") or [],
+        "handoffAgents": resolved.get("handoffAgents") or [],
+    }
+    for prompt_id, entry in registry.items():
+        target = str(entry.metadata.get("target") or "")
+        match = re.fullmatch(
+            r"(backgroundAgents|agents|handoffAgents)\.([^.]+)\.instructions",
+            target,
+        )
+        if not match:
+            continue
+        collection_name, agent_id = match.groups()
+        for agent in managed_collections[collection_name]:
+            if not isinstance(agent, dict):
+                continue
+            if str(agent.get("id") or agent.get("agent_id") or "") != agent_id:
+                continue
+            agent["instructions"] = render_prompt(prompt_id, registry).strip()
+            break
+
+    return resolved
 
 
 def flow_graph() -> dict[str, list[dict[str, Any]]]:
@@ -646,7 +680,11 @@ def _related_config_row(ref_id: str, ref: dict[str, Any]) -> dict[str, Any] | No
         ]
     elif source_kind in {
         "scheduler.shared_prompt_contract",
+        "worker.compiled_prompt_contract",
         "scheduler.canonical_output_contract",
+        "feelings.kernel",
+        "feelings.owner_settings",
+        "feelings.final_instruction_layer",
     }:
         try:
             source_text = source_path.read_text(encoding="utf-8")
@@ -656,11 +694,14 @@ def _related_config_row(ref_id: str, ref: dict[str, Any]) -> dict[str, Any] | No
         if not selector or selector not in source_text:
             return None
         items = [
-            (
-                "shared scheduler prompt contract"
-                if source_kind == "scheduler.shared_prompt_contract"
-                else "trusted scheduler canonical-output contract"
-            ),
+            {
+                "scheduler.shared_prompt_contract": "shared scheduler prompt contract",
+                "worker.compiled_prompt_contract": "compiled worker prompt composition and standalone compatibility",
+                "scheduler.canonical_output_contract": "trusted scheduler canonical-output contract",
+                "feelings.kernel": "Feeling numeric state and capsule structure",
+                "feelings.owner_settings": "authenticated owner Feeling range additions",
+                "feelings.final_instruction_layer": "compiled fact guard and pinned Feeling capsule",
+            }[source_kind],
             f"accessor: {selector}",
             "public source; runtime state and private prompt text are not included",
         ]
@@ -689,11 +730,22 @@ def _config_source_path(path_name: str) -> Path | None:
     candidate = (REPO_ROOT / path_name).resolve()
     shared_root = (REPO_ROOT / "viventium_v0_4" / "shared").resolve()
     prompt_runtime_root = (LIBRECHAT_ROOT / "api" / "server" / "services" / "viventium").resolve()
+    feeling_owners = {
+        (LIBRECHAT_ROOT / "packages/api/src/feelings/kernel.ts").resolve(),
+        (LIBRECHAT_ROOT / "api/server/routes/viventium/feelings.js").resolve(),
+    }
+    worker_root = (REPO_ROOT / "viventium_v0_4/GlassHive/runtime_phase1/src/workers_projects_runtime").resolve()
+    worker_owners = {
+        worker_root / name
+        for name in ("bootstrap.py", "profile_runtime.py")
+    }
     if (
         candidate.is_file()
         and (
             candidate.is_relative_to(shared_root)
             or candidate.is_relative_to(prompt_runtime_root)
+            or candidate in feeling_owners
+            or candidate in worker_owners
         )
     ):
         return candidate

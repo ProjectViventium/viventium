@@ -1234,21 +1234,31 @@ Each line is the canonical public owner declaration for one stable requirement I
 
 CC-057: Workbench needs headed browser/accessibility QA; Telegram needs real preview/voice-note/degraded wording; Voice needs audible QA.
 CC-058: Correlate UI with logs, SQLite, Mongo, job state, callback outbox, Feeling version, generated config, source, component pin, prompt artifact, builds, and installed runtime.
+<a id="public-private"></a>
 CC-059: Public docs are sanitized. Exact prompts, personal schedules, chats, IDs, and machine paths remain private.
+<a id="outcome-metric"></a>
 CORE-001: Optimize **Quality (Intelligence, Relevance, Usefulness, Alignment) + Performance (Fast, Smooth, Reliable)**. A faster but less useful path is a regression.
+<a id="one-main"></a>
 CORE-002: One Main owns the relationship, judgment, management, and final answer. Helpers inform or execute; they do not become competing speakers.
+<a id="ai-runtime-boundary"></a>
 CORE-003: Let the configured model make semantic decisions. Runtime owns typed identity, authorization, state, durability, and transport.
 CORE-004: Do not use regex or keyword matching to detect routing, provider selection, scheduling intent, email phrasing, or productivity scope.
 CORE-005: Prefer the smallest proven native mechanism and reuse existing Viventium, LibreChat, GlassHive, Codex, and Claude primitives.
+<a id="courier-boundary"></a>
 CORE-006: The host is a faithful courier: pass the goal, exact constraints, files, relevant factual context, verified capabilities, and results. Do not invent a plan, provider/tool list, artifact, or success rubric for the worker.
+<a id="parity"></a>
 CORE-007: Parity means the same authorized outcome capability across direct Main, GlassHive/Codex, GlassHive/Claude, Web, Telegram, Voice, scheduler, callback, and future adapters. Presentation may differ; ability may not silently narrow.
+<a id="truthful-states"></a>
 CORE-008: Distinguish healthy empty results from unavailable, stale, timeout, rate limit, missing auth/config, rejected, unsupported, and missing local prerequisites.
 CORE-009: Never claim acceptance, running, completion, delivery, fallback, memory, tools, route, model, Feeling, or readiness without exact evidence.
+<a id="security"></a>
 CORE-010: Preserve owner isolation, least authority, public/private separation, and secret-safe evidence.
+<a id="one-owner"></a>
 CORE-011: Product truth belongs in one owning requirements document; repeatable QA belongs in one owning QA inventory; related docs point to the owner.
 CORE-012: A user-visible feature is not complete from unit tests, logs, DB rows, API output, mocks, or model review alone. Exercise the real installed surface.
 CORE-013: Completion is an artifact-chain claim: source, nested component commit, parent pin, compiled/prebuilt artifact, installed runtime identity, visible behavior, and durable state must agree. Before agent sync, compare source/live A/B/C drift and prove the dry-run plan.
 CORE-014: Preserve unrelated work. Make the smallest evidence-backed change. Separate diagnosis/proposal from implementation authority.
+<a id="operator-communication-rule"></a>
 CORE-015: Final reports must be short, plain, evidence-based, and honest about open gates.
 GOV-004: Maintain a private source/thread ledger and public-safe requirement/QA/evidence/gap coverage. Raw prompts/screenshots remain private.
 GOV-005: Each requirement maps to one current owner, natural use case, expected result, actual evidence, and remaining gap.
@@ -1258,9 +1268,10 @@ GOV-008: A future developer must understand background, goals, expected behavior
 GOV-009: “Fully aligned” means no recoverable requirement is missing, contradicted, assigned to the wrong owner, supported only by stale evidence, or represented by an overclaimed status.
 GOV-010: Use the path of least resistance: surgical structural fixes, native/proven primitives, sparse obvious UI, no prompt-specific branch or provider wiring.
 GOV-011: Prove real Browser/Desktop/Telegram/Voice behavior with logs, DB, docs, generated and installed artifacts; report briefly and truthfully.
-GOV-012: Run at least two fresh-context review cycles and revise between them. Continue toward the 8/10 gate for at most four loops; never inflate the score or claim completion only to cross the gate. Then run the separately requested Claude review-only pass.
+GOV-012: Use independent review cycles when requested, focused on consequential unresolved decisions and the completed affected batch. Do not require per-edit reviews or inflate a score to claim completion. Run a separate Claude review only when requested.
 GOV-013: Persist through routine local blockers and use already authorized local setup/browser/computer paths instead of repeatedly asking the user to perform ordinary in-scope setup. Do not broaden authority or bypass real approval/security boundaries.
 GOV-015: User-facing placement/design changes require product-specific visual thinking and real responsive, light/dark, interaction, and accessibility QA. Independent design review supports but does not replace user-path proof.
+<a id="minimal-truth"></a>
 GOV-021: Keep only requirements and QA that close a sourced behavior, safety, compatibility, or user-experience gap. Do not add ceremonial gates, date-bump stale cases, recreate historical reports, or broaden architecture merely to make the inventory look complete.
 GOV-022: “Complete” means complete for the owning trigger→runtime→visible-result flow and its real blast radius. Older blanket “review EVERYTHING / leave no stone unturned” wording must not force whole-project ceremony for a narrow fix.
 <!-- VIVENTIUM-STABLE-REQUIREMENT-DECLARATIONS:END -->

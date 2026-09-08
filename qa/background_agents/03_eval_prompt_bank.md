@@ -478,6 +478,18 @@ shipped background-agent roster.
     snapshot's authority, so a trailing user transcript cannot win through recency alone.
   - Universal safety/permission constraints and any instruction explicitly addressed to the
     background agents remain binding.
+- Full-context invocation regression:
+  - Use the existing Workbench `cortex_assignment_role_boundary` family for paired authorized
+    recall, generic inline HTML, and supplied-number cases. Setup facts must come from a normal
+    saved synthetic conversation; temporary QA turns are not recall sources.
+  - Verify the actual specialist input ends with registered `cortex.execution_subject`, while
+    Main keeps its normal task and compact internal workers keep their explicit assignment.
+  - Deep Memory returns verified recall or silent `{NTA}` without taking over Main's work.
+    Inspect actual native input, tool results, provider attempts, and terminal background state.
+  - Also exercise a real request to create two distinct deliveries in parallel and open both.
+    Main and its authorized workers own that work; a retrieval specialist must not build it or
+    spawn substitute workers. Inline-only cases do not satisfy this user-path gate.
+  - Current evidence: [partial invocation correction](reports/2026-09-05-cortex-specialist-assignment.md).
 
 ### ACT-47 GlassHive runtime-lane capacity release
 

@@ -3319,6 +3319,33 @@ def validate_helper_process_quiescence(payload: dict[str, Any]) -> None:
         raise ActivationError("Viventium helper process resumed after quiescence")
 
 
+def stop_helper_processes(executables: list[Path], timeout_seconds: float) -> None:
+    identities = running_helper_processes(executables)
+    for identity in identities:
+        pid = int(identity["pid"])
+        # Revalidate both executable and start time immediately before the
+        # signal. A vanished or PID-reused process is not transaction-owned.
+        if process_identity(pid) != identity:
+            continue
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except ProcessLookupError:
+            continue
+        except PermissionError as error:
+            raise ActivationError(
+                "Viventium helper process could not be stopped safely"
+            ) from error
+    deadline = time.monotonic() + timeout_seconds
+    remaining = running_helper_processes(executables)
+    while remaining and time.monotonic() < deadline:
+        time.sleep(0.05)
+        remaining = running_helper_processes(executables)
+    if remaining:
+        raise ActivationError(
+            "Viventium helper process did not stop before the quiescence timeout"
+        )
+
+
 def quiesce_helper_process(args: argparse.Namespace) -> dict[str, Any]:
     transaction, payload = load_manifest(args.transaction_dir, args.app_support_dir)
     if payload.get("schemaVersion") != SCHEMA_VERSION:
@@ -3373,30 +3400,7 @@ def quiesce_helper_process(args: argparse.Namespace) -> dict[str, Any]:
         }
         write_json(transaction / MANIFEST_NAME, payload, transaction)
 
-    identities = running_helper_processes(executables)
-    for identity in identities:
-        pid = int(identity["pid"])
-        # Revalidate both executable and start time immediately before the
-        # signal. A vanished or PID-reused process is not transaction-owned.
-        if process_identity(pid) != identity:
-            continue
-        try:
-            os.kill(pid, signal.SIGTERM)
-        except ProcessLookupError:
-            continue
-        except PermissionError as error:
-            raise ActivationError(
-                "Viventium helper process could not be stopped safely"
-            ) from error
-    deadline = time.monotonic() + args.timeout_seconds
-    remaining = running_helper_processes(executables)
-    while remaining and time.monotonic() < deadline:
-        time.sleep(0.05)
-        remaining = running_helper_processes(executables)
-    if remaining:
-        raise ActivationError(
-            "Viventium helper process did not stop before the quiescence timeout"
-        )
+    stop_helper_processes(executables, args.timeout_seconds)
     payload["helperProcessQuiescence"] = {
         "executablePaths": normalized_paths,
         "runningExecutablePaths": running_paths,
@@ -3483,24 +3487,55 @@ def restore_helper_process(args: argparse.Namespace) -> dict[str, Any]:
             for identity in running_helper_processes(expected)
         }
 
-    missing = expected_paths - current_paths()
-    if missing:
-        if sys.platform != "darwin":
+    # A helper may have returned during failed candidate startup. Its executable
+    # identity alone does not prove it loaded the restored checkout. Refresh only
+    # the helper paths recorded by this transaction, retaining current Stop intent.
+    app_support = lexical(args.app_support_dir)
+    helper_path = contained(
+        Path(str(payload.get("helperConfigFile") or "")), app_support, "helper config"
+    )
+    record = helper_state_record(payload)
+    validate_state_file_snapshot(record, transaction, app_support)
+    before_stop = None
+    restored_binding = None
+    if record.get("existed"):
+        before_stop = read_helper_config(helper_path)
+        restored_binding = rollback_helper_binding(
+            payload, transaction, app_support, before_stop
+        )
+    elif helper_path.exists() or helper_path.is_symlink():
+        raise ActivationError("Helper config appeared after rollback")
+    stop_helper_processes(expected, args.timeout_seconds)
+    if before_stop is not None and restored_binding is not None:
+        after_stop = read_helper_config(helper_path)
+        merge_helper_intent(after_stop, before_stop)
+        for field in ("repoRoot", "allowProtectedRepoRoot"):
+            if field in restored_binding:
+                after_stop[field] = restored_binding[field]
+            else:
+                after_stop.pop(field, None)
+        if after_stop != read_helper_config(helper_path):
+            write_json(helper_path, after_stop, app_support)
+            helper_path.chmod(0o600)
+
+    if current_paths():
+        raise ActivationError("Helper process resumed before its rollback refresh")
+    if sys.platform != "darwin":
+        raise ActivationError(
+            "Viventium helper process must be relaunched on this platform"
+        )
+    for executable_path in sorted(expected_paths):
+        bundle = Path(executable_path).parent.parent.parent
+        completed = subprocess.run(
+            ["/usr/bin/open", "-g", str(bundle)],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if completed.returncode != 0:
             raise ActivationError(
-                "Viventium helper process must be relaunched on this platform"
+                "Viventium helper process could not be relaunched"
             )
-        for executable_path in sorted(missing):
-            bundle = Path(executable_path).parent.parent.parent
-            completed = subprocess.run(
-                ["/usr/bin/open", "-g", str(bundle)],
-                check=False,
-                capture_output=True,
-                text=True,
-            )
-            if completed.returncode != 0:
-                raise ActivationError(
-                    "Viventium helper process could not be relaunched"
-                )
     deadline = time.monotonic() + args.timeout_seconds
     while not expected_paths.issubset(current_paths()):
         if time.monotonic() >= deadline:
@@ -3614,6 +3649,71 @@ def quiesce_helper(args: argparse.Namespace) -> dict[str, Any]:
     return payload
 
 
+def merge_helper_intent(current: dict[str, Any], original: dict[str, Any]) -> None:
+    original_supervision = original.get("runtimeSupervision")
+    current_supervision = current.get("runtimeSupervision")
+    if isinstance(original_supervision, dict):
+        if not isinstance(current_supervision, dict):
+            raise ActivationError("Helper runtime supervision changed shape during activation")
+        merged_supervision = dict(current_supervision)
+        for field in HELPER_INTENT_MUTATED_FIELDS:
+            if field in original_supervision:
+                merged_supervision[field] = original_supervision[field]
+            else:
+                merged_supervision.pop(field, None)
+        current["runtimeSupervision"] = merged_supervision
+    elif "runtimeSupervision" in original:
+        current["runtimeSupervision"] = original_supervision
+    elif isinstance(current_supervision, dict):
+        merged_supervision = {
+            key: value
+            for key, value in current_supervision.items()
+            if key not in HELPER_INTENT_MUTATED_FIELDS
+        }
+        if merged_supervision:
+            current["runtimeSupervision"] = merged_supervision
+        else:
+            current.pop("runtimeSupervision", None)
+    else:
+        current.pop("runtimeSupervision", None)
+
+
+def rollback_helper_binding(
+    payload: dict[str, Any],
+    transaction: Path,
+    app_support: Path,
+    current: dict[str, Any],
+) -> dict[str, Any]:
+    if payload.get("schemaVersion") != SCHEMA_VERSION:
+        return current
+    record = helper_state_record(payload)
+    validate_state_file_snapshot(record, transaction, app_support)
+    if not record.get("existed"):
+        return current
+    original = read_helper_config(Path(str(record["snapshot"])))
+    current_root = current.get("repoRoot")
+    original_root = original.get("repoRoot")
+    if current_root == original_root or (
+        isinstance(current_root, str)
+        and isinstance(original_root, str)
+        and os.path.realpath(current_root) == os.path.realpath(original_root)
+    ):
+        return current
+    candidate = payload.get("candidateEnv")
+    candidate_root = candidate.get("repoRoot") if isinstance(candidate, dict) else None
+    if not isinstance(current_root, str) or not isinstance(candidate_root, str) or (
+        os.path.realpath(current_root) != os.path.realpath(candidate_root)
+    ):
+        raise ActivationError("Helper checkout changed outside this activation")
+    restored = dict(current)
+    for field in ("repoRoot", "allowProtectedRepoRoot"):
+        if field in original:
+            restored[field] = original[field]
+        else:
+            restored.pop(field, None)
+    return restored
+
+
 def restore_helper_supervision(
     payload: dict[str, Any],
     transaction: Path,
@@ -3661,7 +3761,6 @@ def restore_helper_supervision(
     if not isinstance(original, dict) or not isinstance(current, dict):
         raise ActivationError("Helper config supervision restore requires JSON objects")
 
-    original_supervision = original.get("runtimeSupervision")
     current_supervision = current.get("runtimeSupervision")
     if payload.get("schemaVersion") == SCHEMA_VERSION:
         token = str(quiescence.get("token") or "")
@@ -3718,30 +3817,7 @@ def restore_helper_supervision(
             raise ActivationError(
                 "Helper runtime supervision changed after quiescence"
             )
-    if isinstance(original_supervision, dict):
-        if not isinstance(current_supervision, dict):
-            raise ActivationError("Helper runtime supervision changed shape during activation")
-        merged_supervision = dict(current_supervision)
-        for field in HELPER_INTENT_MUTATED_FIELDS:
-            if field in original_supervision:
-                merged_supervision[field] = original_supervision[field]
-            else:
-                merged_supervision.pop(field, None)
-        current["runtimeSupervision"] = merged_supervision
-    elif "runtimeSupervision" in original:
-        current["runtimeSupervision"] = original_supervision
-    elif isinstance(current_supervision, dict):
-        merged_supervision = {
-            key: value
-            for key, value in current_supervision.items()
-            if key not in HELPER_INTENT_MUTATED_FIELDS
-        }
-        if merged_supervision:
-            current["runtimeSupervision"] = merged_supervision
-        else:
-            current.pop("runtimeSupervision", None)
-    else:
-        current.pop("runtimeSupervision", None)
+    merge_helper_intent(current, original)
 
     if current == original:
         restore_state_file(helper_record, transaction, app_support_dir)
@@ -3772,6 +3848,14 @@ def restore_activation_state_files(
             if helper_restored:
                 raise ActivationError("Activation helper snapshot is duplicated")
             restore_helper_supervision(payload, transaction, app_support_dir)
+            if helper_path.exists():
+                current = read_helper_config(helper_path)
+                restored = rollback_helper_binding(
+                    payload, transaction, app_support_dir, current
+                )
+                if restored != current:
+                    write_json(helper_path, restored, app_support_dir)
+                    helper_path.chmod(0o600)
             helper_restored = True
         else:
             restore_state_file(record, transaction, app_support_dir)

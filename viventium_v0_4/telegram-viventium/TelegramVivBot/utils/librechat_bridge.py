@@ -81,6 +81,9 @@ class LibreChatSession:
     revision: Optional[int] = None
     superseded: bool = False
     delivery_disposition_required: bool = False
+    input_pending: bool = False
+    input_claim: Optional[dict[str, Any]] = None
+    input_presentation: Optional[dict[str, Any]] = None
 
 
 # === VIVENTIUM START ===
@@ -154,6 +157,9 @@ class _CortexTelegramAckStore:
             "CREATE INDEX IF NOT EXISTS cortex_telegram_ack_due_idx "
             "ON cortex_telegram_ack_outbox(next_attempt_at, expires_at)"
         )
+        connection.execute("CREATE TABLE IF NOT EXISTS telegram_memory_poll_cursor "
+                           "(scope TEXT NOT NULL, stream_id TEXT NOT NULL, payload_json TEXT NOT NULL, "
+                           "PRIMARY KEY(scope, stream_id))")
         connection.commit()
         for suffix in ("-wal", "-shm"):
             sidecar = Path(f"{self.path}{suffix}")
@@ -224,6 +230,22 @@ class _CortexTelegramAckStore:
             return int(
                 connection.execute("SELECT COUNT(*) FROM cortex_telegram_ack_outbox").fetchone()[0]
             )
+
+    def save_memory_poll(self, scope: str, stream_id: str, payload: dict[str, Any]) -> None:
+        with self._connect() as connection:
+            connection.execute("INSERT INTO telegram_memory_poll_cursor VALUES (?, ?, ?) "
+                               "ON CONFLICT(scope, stream_id) DO UPDATE SET payload_json=excluded.payload_json",
+                               (scope, stream_id, json.dumps(payload, separators=(",", ":"))))
+
+    def pending_memory_polls(self, scope: str) -> list[tuple[str, dict[str, Any]]]:
+        with self._connect() as connection:
+            rows = connection.execute("SELECT stream_id, payload_json FROM telegram_memory_poll_cursor "
+                                      "WHERE scope=? ORDER BY stream_id", (scope,)).fetchall()
+        return [(row["stream_id"], json.loads(row["payload_json"])) for row in rows]
+
+    def finish_memory_poll(self, scope: str, stream_id: str) -> None:
+        with self._connect() as connection:
+            connection.execute("DELETE FROM telegram_memory_poll_cursor WHERE scope=? AND stream_id=?", (scope, stream_id))
 
 
 # === VIVENTIUM START ===
@@ -368,6 +390,10 @@ _TERMINAL_GLASSHIVE_CALLBACK_EVENTS = {
     "checkpoint.ready",
     "takeover.requested",
     "artifact.created",
+}
+_CLAIM_AUTHORIZED_GLASSHIVE_ATTENTION_EVENTS = {
+    "run.needs_input",
+    "run.blocked",
 }
 # === VIVENTIUM END ===
 
@@ -792,6 +818,77 @@ def _is_file_attachment_payload(value: Any) -> bool:
     if isinstance(filepath, str) and filepath.strip():
         return True
     return False
+
+
+# === VIVENTIUM START ===
+# Feature: Durable saved-memory receipt for Telegram.
+# Purpose: Main's prose never proves a save. The detached memory writer persists a structured
+# receipt on the response message, the follow-up poll projects it as `memoryReceipt`, and this
+# renders exactly that truth once per turn: saved keys, a typed failure, or a partial apply.
+# === VIVENTIUM END ===
+_MEMORY_RECEIPT_FAILURE_TEXT = {
+    **dict.fromkeys(
+        ("usage_limit_reached", "insufficient_quota", "billing_hard_limit_reached", "provider_quota_exhausted"),
+        "{provider} usage limit reached. Check usage or wait for the limit to reset.",
+    ),
+    **dict.fromkeys(
+        ("provider_auth", "provider_auth_missing", "provider_unauthorized", "authentication_error"),
+        "{provider} needs sign-in. Reconnect it in Connected Accounts.",
+    ),
+    **dict.fromkeys(
+        ("provider_rate_limited", "rate_limit_exceeded", "rate_limit_error",
+         "provider_temporarily_unavailable", "server_is_overloaded"),
+        "{provider} is temporarily unavailable. Try again shortly.",
+    ),
+    "provider_access_denied": "{provider} denied access. Check the account's access.",
+    "provider_unavailable": "{provider} could not save memory. Try again later.",
+    "writer_unavailable": "No memory writer was available.",
+    "writer_exception": "The memory writer failed.",
+    "writer_interrupted": "The save did not finish.",
+    "writer_recovery_not_safe": "The source, settings, access, or memory changed before the save could resume.",
+    "memory_error": "The memory update could not be saved.",
+}
+
+
+def format_memory_receipt_text(receipt: Any) -> str:
+    """Render public fields from LibreChat's receipt projection, never raw error payloads."""
+
+    if not isinstance(receipt, dict):
+        return ""
+    status = str(receipt.get("status") or "").strip().lower()
+    raw_keys = receipt.get("keys")
+    keys = [
+        str(key).strip()
+        for key in (raw_keys if isinstance(raw_keys, list) else [])
+        if str(key).strip()
+    ]
+    if status == "saved":
+        return "🧠 Saved to memory: " + ", ".join(keys[:12]) if keys else ""
+    if status not in {"failed", "partial", "uncertain"}:
+        return ""
+
+    raw_failures = receipt.get("failures")
+    failures = [item for item in raw_failures if isinstance(item, dict)] if isinstance(raw_failures, list) else []
+    if not failures:
+        failures = [{"errorType": receipt.get("errorType")}]
+    reasons = []
+    for failure in failures:
+        error_type = str(failure.get("errorType") or "").strip().lower()
+        template = _MEMORY_RECEIPT_FAILURE_TEXT.get(error_type) or "Memory could not be saved. Try again."
+        # The host derives this label from its provider registry; it never forwards a raw error label.
+        provider = failure.get("providerLabel")
+        provider = provider if isinstance(provider, str) and failure.get("provider") else "Provider"
+        reasons.append(template.format(provider=provider))
+
+    heading = "⚠️ Not saved to memory."
+    if status == "partial":
+        saved = f" (saved: {', '.join(keys[:12])})" if keys else ""
+        heading = f"⚠️ Memory only partially saved{saved}."
+    elif status == "uncertain":
+        heading = "⚠️ Memory saving was interrupted."
+    if status in {"partial", "uncertain"}:
+        reasons.append("Some changes may already be saved. Check Memories before retrying.")
+    return "\n".join([heading, *reasons])
 
 
 def extract_attachments(payload: dict[str, Any]) -> list[dict[str, Any]]:
@@ -1273,6 +1370,9 @@ _STRUCTURED_STREAM_ERROR_MESSAGES = {
     "recoverable_provider_error": (
         "The model provider hit a recoverable issue before returning a result."
     ),
+    "source_context_unavailable": (
+        "The conversation context could not be preserved. Please retry this turn."
+    ),
     "completion_error": "The model provider could not complete this request.",
 }
 
@@ -1678,6 +1778,7 @@ class LibreChatBridge:
         *,
         get_conversation_id: Callable[[str], str],
         set_conversation_id: Callable[[str, str], None],
+        get_conversation_state: Optional[Callable[[str], dict[str, str]]] = None,
         get_agent_id: Optional[Callable[[str], str]] = None,
         set_agent_id: Optional[Callable[[str, str], None]] = None,
     ) -> None:
@@ -1823,6 +1924,8 @@ class LibreChatBridge:
         # === VIVENTIUM END ===
         self._get_conversation_id = get_conversation_id
         self._set_conversation_id = set_conversation_id
+        self._get_conversation_state = get_conversation_state
+        self._conversation_generations: dict[str, str] = {}
         self._get_agent_id = get_agent_id
         self._set_agent_id = set_agent_id
         self.on_message_callback: Optional[Callable[..., Awaitable[None]]] = None
@@ -1843,6 +1946,13 @@ class LibreChatBridge:
         self._conversation_by_stream: dict[str, str] = {}
         self._followup_task_by_stream: dict[str, asyncio.Task] = {}
         self._followup_sent: set[str] = set()
+        # Durable saved-memory receipts already surfaced for a stream (one receipt per turn).
+        self._memory_receipt_sent: set[str] = set()
+        self._memory_receipt_pending: set[str] = set()
+        self._memory_poll_cursors: set[str] = set()
+        self._memory_poll_chat: dict[str, str] = {}
+        self._memory_delivery_state: dict[str, str] = {}
+        self._stream_text_hash_by_stream: dict[str, str] = {}
         self._followup_send_lock_by_stream: dict[str, asyncio.Lock] = {}
         self._stream_identity: dict[str, dict[str, Any]] = {}
         self._cortex_seen_by_stream: dict[str, bool] = {}
@@ -2307,6 +2417,7 @@ class LibreChatBridge:
                 self._stream_identity[stream_id] = previous_identity_copy
 
     async def _dispatch_cortex_delivery_cycle(self) -> int:
+        self._resume_memory_polls()
         await self._drain_cortex_acknowledgements()
         deliveries = await self._claim_cortex_deliveries(limit=10)
         for delivery in deliveries:
@@ -2349,7 +2460,9 @@ class LibreChatBridge:
                 timeout=self._glasshive_delivery_attempt_timeout_s(),
             )
         except asyncio.TimeoutError:
-            transport_authorized = isinstance(delivery.get("dispatchPermit"), dict)
+            transport_authorized = isinstance(delivery.get("dispatchPermit"), dict) or bool(
+                delivery.get("claimAuthorizedTransportStarted")
+            )
             status = "delivery_unknown" if transport_authorized else "failed"
             detail = (
                 "GlassHive callback delivery timed out after Telegram transport authorization"
@@ -2742,6 +2855,68 @@ class LibreChatBridge:
         claimed = await self._claim_glasshive_deliveries(limit=1, callback_id=callback_id)
         return claimed[0] if claimed else None
 
+    @staticmethod
+    def _glasshive_attention_delivery_uses_claim(delivery: dict[str, Any]) -> bool:
+        event = delivery.get("event")
+        delivery_id = delivery.get("deliveryId")
+        claim_id = delivery.get("claimId")
+        terminal_result_key = delivery.get("terminalCallbackResultKey")
+        return (
+            isinstance(event, str)
+            and event in _CLAIM_AUTHORIZED_GLASSHIVE_ATTENTION_EVENTS
+            and isinstance(delivery_id, str)
+            and bool(delivery_id.strip())
+            and isinstance(claim_id, str)
+            and bool(claim_id.strip())
+            and terminal_result_key == ""
+            and "workerCompletionPresentation" in delivery
+            and delivery.get("workerCompletionPresentation") is None
+        )
+
+    async def _deliver_claim_authorized_glasshive_attention(
+        self,
+        delivery: dict[str, Any],
+        chat_id: str,
+        text: str,
+    ) -> bool:
+        delivery["claimAuthorizedTransportStarted"] = True
+        try:
+            result = await self._send_followup_text(
+                chat_id,
+                text,
+                return_receipt=True,
+            )
+            sent = bool(result.get("sent")) if isinstance(result, dict) else bool(result)
+            message_ids = (
+                extract_telegram_delivery_message_ids(result)
+                if isinstance(result, dict)
+                else []
+            )
+            if sent and message_ids:
+                delivery["telegramSentMessageIds"] = message_ids
+                settled = await self._mark_glasshive_delivery_status(delivery, "sent")
+                return settled is not False
+            if sent:
+                await self._mark_glasshive_delivery_status(
+                    delivery,
+                    "delivery_unknown",
+                    reason="telegram_receipt_missing_after_send",
+                )
+                return False
+            await self._mark_glasshive_delivery_status(
+                delivery,
+                "failed",
+                error="Telegram send returned false",
+            )
+            return False
+        except Exception as exc:
+            await self._mark_glasshive_delivery_status(
+                delivery,
+                "delivery_unknown",
+                reason=f"telegram_send_outcome_unknown:{str(exc)[:200]}",
+            )
+            return False
+
     async def _deliver_glasshive_delivery(self, delivery: dict[str, Any]) -> bool:
         chat_id = str(delivery.get("telegramChatId") or "").strip()
         text = str(delivery.get("fullText") or delivery.get("text") or "").strip()
@@ -2755,6 +2930,12 @@ class LibreChatBridge:
         if is_no_response_only(text):
             await self._mark_glasshive_delivery_status(delivery, "suppressed", reason="{NTA}")
             return True
+        if self._glasshive_attention_delivery_uses_claim(delivery):
+            return await self._deliver_claim_authorized_glasshive_attention(
+                delivery,
+                chat_id,
+                text,
+            )
         try:
             permit = await self._authorize_glasshive_delivery(delivery)
         except Exception as exc:
@@ -2902,6 +3083,8 @@ class LibreChatBridge:
 
     def _mark_followup_sent(self, stream_id: str) -> None:
         self._followup_sent.add(stream_id)
+        if stream_id in self._memory_poll_cursors:
+            self._save_memory_poll(stream_id)
 
     def _has_followup_sent(self, stream_id: str) -> bool:
         return stream_id in self._followup_sent
@@ -2910,8 +3093,10 @@ class LibreChatBridge:
         normalized = _normalize_stream_delivery_compare_text(text)
         if normalized:
             self._stream_text_by_stream[stream_id] = normalized
+            self._stream_text_hash_by_stream[stream_id] = hashlib.sha256(normalized.encode()).hexdigest()
         else:
             self._stream_text_by_stream.pop(stream_id, None)
+            self._stream_text_hash_by_stream.pop(stream_id, None)
         if brief_main_reply:
             self._brief_main_reply_by_stream[stream_id] = True
         else:
@@ -2923,10 +3108,10 @@ class LibreChatBridge:
             return False
 
         streamed = self._stream_text_by_stream.get(stream_id, "")
-        if canonical == streamed:
+        if canonical == streamed or hashlib.sha256(canonical.encode()).hexdigest() == self._stream_text_hash_by_stream.get(stream_id):
             return False
 
-        if not streamed:
+        if not streamed and stream_id not in self._stream_text_hash_by_stream:
             return True
 
         return self._brief_main_reply_by_stream.get(stream_id, False)
@@ -2935,7 +3120,8 @@ class LibreChatBridge:
         candidate = _normalize_stream_delivery_compare_text(text)
         if not candidate:
             return False
-        return candidate == self._stream_text_by_stream.get(stream_id, "")
+        return (candidate == self._stream_text_by_stream.get(stream_id, "")
+                or hashlib.sha256(candidate.encode()).hexdigest() == self._stream_text_hash_by_stream.get(stream_id))
 
     async def _emit_followup_once(
         self,
@@ -2981,7 +3167,7 @@ class LibreChatBridge:
             logical_turn_id = delivery_turn_id
             raw_revision = delivery_revision
         try:
-            source_sequence = int(identity.get("telegram_message_id"))
+            source_sequence = int(identity.get("presentation_source_sequence") or identity.get("telegram_message_id"))
             logical_turn_revision = int(raw_revision)
         except (TypeError, ValueError):
             return None
@@ -3247,6 +3433,7 @@ class LibreChatBridge:
         telegram_message_thread_id: Any = "",
         logical_turn_id: str = "",
         logical_turn_revision: Optional[int] = None,
+        input_presentation: Optional[dict[str, Any]] = None,
     ) -> None:
         self._stream_identity[stream_id] = {
             "telegram_chat_id": telegram_chat_id,
@@ -3259,6 +3446,7 @@ class LibreChatBridge:
             "telegram_message_thread_id": str(telegram_message_thread_id or ""),
             "logical_turn_id": str(logical_turn_id or ""),
             "logical_turn_revision": logical_turn_revision,
+            "presentation_source_sequence": (input_presentation or {}).get("presentationSourceSequence"),
         }
 
     def _get_identity_params(self, stream_id: str) -> dict[str, str]:
@@ -3513,6 +3701,10 @@ class LibreChatBridge:
                     payload_parse_mode=payload_parse_mode,
                     payload_voice_audio=voice_audio if index == last_index else None,
                 )
+                if callback_result is False:
+                    if return_receipt:
+                        return {"sent": False, "message_ids": list(dict.fromkeys(delivered_message_ids))[:32]}
+                    return False
                 delivered_message_ids.extend(
                     extract_telegram_delivery_message_ids(callback_result)
                 )
@@ -3573,12 +3765,26 @@ class LibreChatBridge:
         return False
     # === VIVENTIUM END ===
 
+    def capture_conversation_state(self, convo_id: str) -> dict[str, str]:
+        """Capture once before preparation so reset cannot move an older source into a new chat."""
+        chat_id = str(convo_id)
+        if self._get_conversation_state:
+            state = self._get_conversation_state(chat_id)
+            if (not isinstance(state, dict)
+                    or not isinstance(state.get("conversation_id"), str)
+                    or not re.fullmatch(r"[a-f0-9]{64}", str(state.get("generation") or ""))):
+                raise RuntimeError("Invalid Telegram conversation state")
+            return dict(state)
+        return {
+            "conversation_id": self._get_conversation_id(chat_id) or "",
+            "generation": self._conversation_generations.setdefault(chat_id, uuid.uuid4().hex + uuid.uuid4().hex),
+        }
+
     def reset(self, convo_id: str, system_prompt: Optional[str] = None) -> None:
         _ = system_prompt
-        try:
-            self._set_conversation_id(str(convo_id), "")
-        except Exception:
-            logger.debug("Failed to reset LibreChat conversation id for %s", convo_id)
+        chat_id = str(convo_id)
+        self._set_conversation_id(chat_id, "")
+        self._conversation_generations[chat_id] = uuid.uuid4().hex + uuid.uuid4().hex
 
     def _track_task(self, task: asyncio.Task) -> None:
         self._insight_tasks.add(task)
@@ -3662,6 +3868,11 @@ class LibreChatBridge:
 
     async def ask_stream_async(self, text: str, convo_id: str, **kwargs) -> AsyncIterator[Any]:
         chat_id = str(convo_id)
+        conversation_state = kwargs.get("conversation_state") or self.capture_conversation_state(chat_id)
+        if (not isinstance(conversation_state, dict)
+                or not isinstance(conversation_state.get("conversation_id"), str)
+                or not re.fullmatch(r"[a-f0-9]{64}", str(conversation_state.get("generation") or ""))):
+            raise ValueError("Invalid Telegram source conversation state")
         # === VIVENTIUM START ===
         # Feature: Pass Telegram identity for per-user linking and auth.
         # === VIVENTIUM END ===
@@ -3700,6 +3911,9 @@ class LibreChatBridge:
         # Feature: Optional trace id for timing/log correlation.
         trace_id = kwargs.get("trace_id") or kwargs.get("traceId") or ""
         reply_context = kwargs.get("reply_context") or kwargs.get("replyContextV1") or None
+        input_claim = kwargs.get("input_claim")
+        input_claims = kwargs.get("input_claims")
+        input_recovery = kwargs.get("input_recovery")
         # === VIVENTIUM END ===
         source_surface = str(kwargs.get("surface") or "telegram").strip().lower()
         if source_surface not in {"telegram", "web", "voice", "workbench"}:
@@ -3790,8 +4004,11 @@ class LibreChatBridge:
             self._trace("LibreChatBridge waiting for prior run: chat_id=%s", chat_id)
         run_guard = lock if lock is not None else _noop_async_context()
         async with run_guard:
+            if self.capture_conversation_state(chat_id)["generation"] != conversation_state["generation"]:
+                yield {"type": "superseded", "reason": "conversation_reset"}
+                return
             session = None
-            conversation_id = self._get_conversation_id(chat_id) or "new"
+            conversation_id = conversation_state["conversation_id"] or "new"
             agent_id = self.default_agent_id
             if self._get_agent_id:
                 stored_agent_id = self._get_agent_id(chat_id)
@@ -3809,6 +4026,7 @@ class LibreChatBridge:
                 start_kwargs = {
                     "text": text,
                     "conversation_id": conversation_id,
+                    "conversation_generation": conversation_state["generation"],
                     "agent_id": agent_id,
                     "telegram_chat_id": str(telegram_chat_id),
                     "telegram_user_id": str(telegram_user_id),
@@ -3835,7 +4053,15 @@ class LibreChatBridge:
                     )
                 if reply_context:
                     start_kwargs["reply_context"] = reply_context
-                session = await self._start_chat_with_connect_retry(**start_kwargs)
+                if input_claim:
+                    start_kwargs["input_claim"] = input_claim
+                if input_claims:
+                    start_kwargs["input_claims"] = input_claims
+                if input_recovery:
+                    data = await self.continue_input(input_recovery)
+                    session = self._session_from_chat_response(data, conversation_id, resume_retained=True)
+                else:
+                    session = await self._start_chat_with_connect_retry(**start_kwargs)
                 if trace_id:
                     self._timing_log(trace_id, "lc_chat_http", chat_start_ts)
                 # === VIVENTIUM END ===
@@ -3852,6 +4078,11 @@ class LibreChatBridge:
             if not session:
                 return
 
+            if session.input_pending:
+                yield {"type": "input_pending", "input_claim": session.input_claim}
+                return
+            if session.input_presentation:
+                yield {"type": "input_presentation", "input_presentation": session.input_presentation}
             if session.superseded:
                 yield {"type": "superseded", "reason": "stale_source_order"}
                 return
@@ -3886,6 +4117,7 @@ class LibreChatBridge:
                 telegram_message_thread_id=telegram_message_thread_id,
                 logical_turn_id=session.logical_turn_id,
                 logical_turn_revision=session.revision,
+                input_presentation=session.input_presentation,
             )
             self._set_active_stream(chat_id, session.stream_id)
             if session.conversation_id:
@@ -3913,7 +4145,8 @@ class LibreChatBridge:
                 self._insight_task_by_stream[session.stream_id] = insight_task
                 self._track_task(insight_task)
 
-            if session.conversation_id and session.conversation_id != conversation_id:
+            if (session.conversation_id and session.conversation_id != conversation_id
+                    and self.capture_conversation_state(chat_id)["generation"] == conversation_state["generation"]):
                 self._set_conversation_id(chat_id, session.conversation_id)
                 if agent_id and self._set_agent_id:
                     self._set_agent_id(chat_id, agent_id)
@@ -3981,12 +4214,15 @@ class LibreChatBridge:
         telegram_message_thread_id: str = "",
         source_event_id: str = "",
         source_order_scope: str = "",
+        conversation_generation: str = "",
         audio_requested: Optional[bool] = None,
         files: Optional[list] = None,  # === VIVENTIUM: File upload support ===
         message_timestamp: Optional[str] = None,  # === VIVENTIUM: Time context support ===
         client_timezone: Optional[str] = None,  # === VIVENTIUM: Timezone context support ===
         trace_id: Optional[str] = None,  # === VIVENTIUM: Timing/log correlation ===
         reply_context: Optional[dict[str, Any]] = None,
+        input_claim: Optional[dict[str, Any]] = None,
+        input_claims: Optional[list[dict[str, Any]]] = None,
     ) -> Optional[LibreChatSession]:
         payload: Dict[str, Any] = {
             "text": text,
@@ -4012,8 +4248,14 @@ class LibreChatBridge:
             payload["sourceEventId"] = source_event_id
         if source_order_scope:
             payload["sourceOrderScope"] = source_order_scope
+        if conversation_generation:
+            payload["conversationGeneration"] = conversation_generation
         if reply_context:
             payload["replyContextV1"] = reply_context
+        if input_claim:
+            payload["inputClaim"] = self._input_identity(input_claim)["inputClaim"]
+        if input_claims:
+            payload["inputClaims"] = [self._input_identity(claim)["inputClaim"] for claim in input_claims]
         # === VIVENTIUM START ===
         # Feature: Opportunistic voice preference sync for scheduler parity.
         pref_convo_id = preference_convo_id or telegram_chat_id
@@ -4083,9 +4325,15 @@ class LibreChatBridge:
                 )
             data = resp.json()
 
+        return self._session_from_chat_response(data, conversation_id, resume_retained=bool(input_claim))
+
+    def _session_from_chat_response(self, data, conversation_id, *, resume_retained=False):
+        if (isinstance(data, dict) and data.get("code") == "source_input_pending"
+                and data.get("pending") is True):
+            return LibreChatSession(stream_id="", conversation_id=data.get("conversationId") or conversation_id,
+                                    input_pending=True, input_claim=data.get("inputClaim"))
         if (
-            resp.status_code == 202
-            and isinstance(data, dict)
+            isinstance(data, dict)
             and data.get("code") == "source_order_superseded"
             and data.get("superseded") is True
         ):
@@ -4095,10 +4343,9 @@ class LibreChatBridge:
                 superseded=True,
             )
 
-        if isinstance(data, dict) and data.get("duplicate") is True:
+        if isinstance(data, dict) and data.get("duplicate") is True and not resume_retained:
             self._trace(
-                "LibreChatBridge duplicate ingress acknowledged: chat_id=%s conversation_id=%s",
-                telegram_chat_id,
+                "LibreChatBridge duplicate ingress acknowledged: conversation_id=%s",
                 data.get("conversationId") or conversation_id,
             )
             return None
@@ -4141,6 +4388,8 @@ class LibreChatBridge:
             logical_turn_id=logical_turn_id,
             revision=revision,
             delivery_disposition_required=delivery_disposition_required,
+            input_claim=data.get("inputClaim"),
+            input_presentation=data.get("inputPresentation"),
         )
 
     async def ack_delivery(
@@ -4150,6 +4399,8 @@ class LibreChatBridge:
         state: str,
         presentation_ref: str = "",
         presentation_refs: Optional[list[str]] = None,
+        *,
+        effect_ref: str = "",
     ) -> bool:
         """Best-effort acknowledgement to an optional generic core lifecycle endpoint."""
 
@@ -4160,6 +4411,7 @@ class LibreChatBridge:
                 state,
                 presentation_ref,
                 presentation_refs,
+                effect_ref=effect_ref,
             )
             == "recorded"
         )
@@ -4171,6 +4423,7 @@ class LibreChatBridge:
         telegram_chat_id: Any,
         telegram_message_thread_id: Any,
         source_sequence: Any,
+        input: Optional[dict[str, Any]] = None,
     ) -> dict[str, Any]:
         """Advance Core's authenticated Telegram source watermark before other awaits."""
 
@@ -4186,6 +4439,8 @@ class LibreChatBridge:
             "telegramMessageThreadId": str(telegram_message_thread_id or ""),
             "sourceSequence": normalized_sequence,
         }
+        if input is not None:
+            payload["input"] = input
         headers = {"X-VIVENTIUM-TELEGRAM-SECRET": self.secret}
         url = f"{self.base_url}/api/viventium/telegram/source-order"
         timeout = httpx.Timeout(10.0, connect=5.0, read=10.0, write=5.0, pool=5.0)
@@ -4232,7 +4487,46 @@ class LibreChatBridge:
             "replica_safe": replica_safe,
             "source_order_scope": source_order_scope,
             "source_event_id": source_event_id,
+            "input": body.get("input"),
         }
+
+    async def _input_request(self, operation, payload):
+        url = f"{self.base_url}/api/viventium/telegram/inputs/{operation}"
+        timeout_s = 120.0 if operation == "continue" else 10.0
+        async with httpx.AsyncClient(timeout=httpx.Timeout(timeout_s, connect=5.0),
+                                     **_async_client_options_for_url(url)) as client:
+            response = await client.post(url, json=payload,
+                                        headers={"X-VIVENTIUM-TELEGRAM-SECRET": self.secret})
+        response.raise_for_status()
+        body = response.json()
+        if not isinstance(body, dict):
+            raise RuntimeError("Invalid Telegram input receipt")
+        return body
+
+    @staticmethod
+    def _input_identity(claim):
+        return {key: claim[key] for key in (
+            "telegramUserId", "telegramChatId", "telegramMessageThreadId",
+            "sourceSequence", "conversationId", "conversationGeneration",
+        ) if key in claim} | {"inputClaim": {
+            "sourceEventId": claim["sourceEventId"], "claimToken": claim["claimToken"],
+        }}
+
+    async def claim_inputs(self, *, limit=1):
+        result = await self._input_request("claim", {"limit": limit})
+        inputs = result.get("inputs")
+        if not isinstance(inputs, list):
+            raise RuntimeError("Telegram input recovery omitted its claims")
+        return inputs
+
+    async def continue_input(self, claim):
+        return await self._input_request("continue", self._input_identity(claim))
+
+    async def input_status(self, claim, state, *, failure_code=""):
+        payload = self._input_identity(claim) | {"state": state}
+        if failure_code:
+            payload["failureCode"] = failure_code
+        return await self._input_request("status", payload)
 
     async def source_order_is_current(self, **kwargs) -> bool:
         observation = await self.observe_source_order(**kwargs)
@@ -4246,6 +4540,7 @@ class LibreChatBridge:
         presentation_ref: str = "",
         presentation_refs: Optional[list[str]] = None,
         *,
+        effect_ref: str = "",
         cortex_presentation: Optional[dict[str, Any]] = None,
     ) -> str:
         """Return enough lifecycle truth to retract a final that became stale in transit."""
@@ -4274,6 +4569,9 @@ class LibreChatBridge:
             payload["presentation_ref"] = str(presentation_ref)
         if presentation_refs:
             payload["presentation_refs"] = [str(value) for value in presentation_refs if value]
+        effect_id = str(effect_ref or "").strip()[:160]
+        if state == "committed" and effect_id:
+            payload["effect_ref"] = effect_id
         if cortex_presentation:
             payload["cortex_presentation"] = cortex_presentation
         headers = {"x-viventium-adapter-secret": adapter_secret}
@@ -4453,6 +4751,15 @@ class LibreChatBridge:
                                 if response_message_id:
                                     self._response_message_ids[stream_id] = response_message_id
 
+                                durable_receipt = payload.get("durableEffectReceipt")
+                                effect_ref = (
+                                    str(durable_receipt.get("effect_ref") or "").strip()[:160]
+                                    if isinstance(durable_receipt, dict)
+                                    else ""
+                                )
+                                if effect_ref:
+                                    yield {"type": "durable_effect", "effect_ref": effect_ref}
+
                                 final_error = extract_final_error(payload)
                                 final_error_class = extract_final_error_class(payload)
                                 final_text = extract_final_response_text(payload)
@@ -4512,10 +4819,19 @@ class LibreChatBridge:
                                     return
                                 # === VIVENTIUM END ===
 
+                                # A saved-memory write scheduled for this turn finishes after the
+                                # stream closed; the typed anchor arms the same bounded poll so its
+                                # durable receipt can surface (never Main's prose).
+                                memory_writer_scheduled = payload.get("memoryWriterScheduled") is True
+                                if memory_writer_scheduled:
+                                    self._memory_receipt_pending.add(stream_id)
+                                    self._memory_poll_cursors.add(stream_id)
+                                    self._save_memory_poll(stream_id, chat_id)
                                 if response_message_id and (
                                     self._has_cortex_seen(stream_id)
                                     or self._has_glasshive_seen(stream_id)
                                     or deferred_internal_final
+                                    or memory_writer_scheduled
                                 ):
                                     self._schedule_followup_poll(stream_id, chat_id)
                                 if deferred_internal_final:
@@ -4591,11 +4907,25 @@ class LibreChatBridge:
                                     yield disposition_event
                                 # === VIVENTIUM START ===
                                 # Feature: Emit any final attachments after the main text.
+                                final_memory_notice = format_memory_receipt_text(payload.get("memoryReceipt"))
+                                if final_memory_notice and stream_id not in self._memory_receipt_sent:
+                                    yield "\n\n" + final_memory_notice
+                                    self._memory_receipt_sent.add(stream_id)
                                 for attachment in final_attachments:
                                     emitted_attachments = True
                                     yield {"type": "attachment", "attachment": attachment}
                                 # === VIVENTIUM END ===
                                 return
+
+                            # Authored snapshots are replaceable presentation, never final text
+                            # or delivery ACK evidence. The authenticated Core stream owns identity.
+                            if payload.get("preview") is True:
+                                if (payload.get("type") == "text"
+                                        and isinstance(payload.get("text"), str)
+                                        and payload.get("messageId")):
+                                    yield {"type": "assistant_preview", "text": sanitize_telegram_text(
+                                        payload["text"], preserve_delivery_controls=False)}
+                                continue
 
                             deltas = extract_text_deltas(payload)
                             for delta in deltas:
@@ -4625,9 +4955,9 @@ class LibreChatBridge:
     def _schedule_followup_poll(self, stream_id: str, chat_id: str) -> bool:
         if not self.on_message_callback:
             return False
-        if self.followup_timeout_s <= 0 and not self._has_glasshive_seen(stream_id):
+        if self.followup_timeout_s <= 0 and not self._has_glasshive_seen(stream_id) and stream_id not in self._memory_receipt_pending:
             return False
-        if self._has_followup_sent(stream_id):
+        if self._has_followup_sent(stream_id) and stream_id not in self._memory_receipt_pending:
             return False
         existing = self._followup_task_by_stream.get(stream_id)
         if existing and not existing.done():
@@ -4735,6 +5065,112 @@ class LibreChatBridge:
             logger.warning("LibreChatBridge GlassHive poll error: %s", exc)
         return None
 
+    def _memory_poll_scope(self) -> str:
+        # Bind private cursors to the exact Core/bot connection without persisting its secret.
+        return hashlib.sha256((self.base_url + "\0" + self.secret).encode()).hexdigest()
+
+    def _save_memory_poll(self, stream_id: str, chat_id: Optional[str] = None) -> None:
+        if chat_id:
+            self._memory_poll_chat[stream_id] = chat_id
+        identity = self._stream_identity.get(stream_id, {})
+        if not identity.get("telegram_user_id") or not identity.get("telegram_chat_id"):
+            return
+        self._cortex_ack_store.save_memory_poll(self._memory_poll_scope(), stream_id, {
+            "chat_id": self._memory_poll_chat.get(stream_id, identity["telegram_chat_id"]),
+            "message_id": self._response_message_ids.get(stream_id, ""),
+            "conversation_id": self._conversation_by_stream.get(stream_id, ""),
+            "identity": {key: identity.get(key) for key in (
+                "telegram_chat_id", "telegram_user_id", "telegram_message_id",
+                "telegram_message_thread_id", "logical_turn_id", "logical_turn_revision",
+                "presentation_source_sequence")},
+            "followup_sent": self._has_followup_sent(stream_id),
+            "memory_sent": stream_id in self._memory_receipt_sent,
+            "delivery_state": self._memory_delivery_state.get(stream_id, "pending"),
+            "stream_text_hash": self._stream_text_hash_by_stream.get(stream_id, ""),
+            "brief_main_reply": self._brief_main_reply_by_stream.get(stream_id, False),
+            "glasshive_seen": self._has_glasshive_seen(stream_id),
+        })
+
+    def _resume_memory_polls(self) -> None:
+        if not self.on_message_callback:
+            return
+        for stream_id, cursor in self._cortex_ack_store.pending_memory_polls(self._memory_poll_scope()):
+            task = self._followup_task_by_stream.get(stream_id)
+            if task and not task.done():
+                continue
+            if cursor.get("delivery_state") in {"sending", "delivery_unknown"}:
+                # A process can die after Telegram accepted the send. There is no Telegram
+                # idempotency token: retain uncertainty instead of blindly sending it twice.
+                if cursor.get("delivery_state") == "sending":
+                    cursor["delivery_state"] = "delivery_unknown"
+                    self._cortex_ack_store.save_memory_poll(self._memory_poll_scope(), stream_id, cursor)
+                    logger.warning("Saved-memory receipt delivery acknowledgement is unknown: stream_id=%s", stream_id)
+                continue
+            identity = cursor.get("identity")
+            if not isinstance(identity, dict) or not cursor.get("message_id"):
+                continue
+            self._stream_identity[stream_id] = identity
+            self._response_message_ids[stream_id] = cursor["message_id"]
+            self._conversation_by_stream[stream_id] = cursor.get("conversation_id")
+            self._memory_poll_cursors.add(stream_id)
+            self._memory_poll_chat[stream_id] = cursor["chat_id"]
+            self._memory_delivery_state[stream_id] = cursor.get("delivery_state", "pending")
+            if cursor.get("memory_sent"):
+                self._memory_receipt_sent.add(stream_id)
+            else:
+                self._memory_receipt_pending.add(stream_id)
+            if cursor.get("followup_sent"):
+                self._followup_sent.add(stream_id)
+            if cursor.get("stream_text_hash"):
+                self._stream_text_hash_by_stream[stream_id] = cursor["stream_text_hash"]
+            if cursor.get("brief_main_reply"):
+                self._brief_main_reply_by_stream[stream_id] = True
+            if cursor.get("glasshive_seen"):
+                self._mark_glasshive_seen(stream_id)
+            self._schedule_followup_poll(stream_id=stream_id, chat_id=cursor["chat_id"])
+
+    async def _poll_memory_receipt(self, stream_id: str, chat_id: str, state: Any) -> None:
+        receipt = state.get("memoryReceipt") if isinstance(state, dict) else None
+        if not isinstance(receipt, dict) or stream_id in self._memory_receipt_sent:
+            return
+        status = receipt.get("status")
+        if status == "pending":
+            self._memory_receipt_pending.add(stream_id)
+            self._memory_poll_cursors.add(stream_id)
+            self._save_memory_poll(stream_id, chat_id)
+            return
+        if status == "unchanged":
+            self._memory_receipt_sent.add(stream_id)
+            self._memory_receipt_pending.discard(stream_id)
+            self._memory_delivery_state[stream_id] = "sent"
+            self._save_memory_poll(stream_id, chat_id)
+            return
+        text = format_memory_receipt_text(receipt)
+        if not text or self._memory_delivery_state.get(stream_id) == "delivery_unknown":
+            return
+        self._memory_receipt_pending.add(stream_id)
+        self._memory_poll_cursors.add(stream_id)
+        self._memory_delivery_state[stream_id] = "sending"
+        self._save_memory_poll(stream_id, chat_id)
+        try:
+            result = await self._send_followup_text(chat_id, text, stream_id=stream_id, return_receipt=True)
+            sent = (isinstance(result, dict) and result.get("sent") is True
+                    and bool(result.get("message_ids")))
+            refused = result is False or (isinstance(result, dict) and result.get("sent") is False and not result.get("message_ids"))
+        except Exception:
+            sent, refused = False, False
+        if sent:
+            self._memory_receipt_sent.add(stream_id)
+            self._memory_receipt_pending.discard(stream_id)
+            self._memory_delivery_state[stream_id] = "sent"
+        elif refused:
+            self._memory_delivery_state[stream_id] = "pending"
+        else:
+            self._memory_delivery_state[stream_id] = "delivery_unknown"
+            self._memory_receipt_pending.discard(stream_id)
+            logger.warning("Saved-memory receipt delivery acknowledgement is unknown: stream_id=%s", stream_id)
+        self._save_memory_poll(stream_id, chat_id)
+
     async def _poll_for_followup(self, *, stream_id: str, chat_id: str) -> None:
         message_id = self._response_message_ids.get(stream_id, "")
         conversation_id = self._conversation_by_stream.get(stream_id)
@@ -4760,7 +5196,14 @@ class LibreChatBridge:
             if not message_id:
                 return
             while time.monotonic() - started_at < timeout_s:
+                state = await self._fetch_followup_state(
+                    message_id=message_id, conversation_id=conversation_id, stream_id=stream_id,
+                )
+                await self._poll_memory_receipt(stream_id, chat_id, state)
                 if self._has_followup_sent(stream_id):
+                    if stream_id in self._memory_receipt_pending:
+                        await asyncio.sleep(interval_s)
+                        continue
                     return
 
                 if poll_glasshive:
@@ -4787,6 +5230,9 @@ class LibreChatBridge:
                                         )
                                         self._mark_followup_sent(stream_id)
                                         self._cancel_insight_task(stream_id)
+                                        if stream_id in self._memory_receipt_pending:
+                                            await asyncio.sleep(interval_s)
+                                            continue
                                         return
                                     if callback_id:
                                         pending_glasshive_callback = latest
@@ -4801,6 +5247,9 @@ class LibreChatBridge:
                                     )
                                     self._mark_followup_sent(stream_id)
                                     self._cancel_insight_task(stream_id)
+                                    if stream_id in self._memory_receipt_pending:
+                                        await asyncio.sleep(interval_s)
+                                        continue
                                     return
                                 delivery = await self._claim_glasshive_delivery_for_callback(latest)
                                 if delivery:
@@ -4820,6 +5269,9 @@ class LibreChatBridge:
                                     if is_no_response_only(text):
                                         self._mark_followup_sent(stream_id)
                                         self._cancel_insight_task(stream_id)
+                                        if stream_id in self._memory_receipt_pending:
+                                            await asyncio.sleep(interval_s)
+                                            continue
                                         return
                                     sent = await self._send_followup_text_once(
                                         chat_id,
@@ -4830,13 +5282,11 @@ class LibreChatBridge:
                                 if sent:
                                     self._mark_followup_sent(stream_id)
                                     self._cancel_insight_task(stream_id)
+                                if stream_id in self._memory_receipt_pending:
+                                    await asyncio.sleep(interval_s)
+                                    continue
                                 return
 
-                state = await self._fetch_followup_state(
-                    message_id=message_id,
-                    conversation_id=conversation_id,
-                    stream_id=stream_id,
-                )
                 parts: list[dict[str, Any]] = []
                 if isinstance(state, dict):
                     parts = extract_cortex_parts(state.get("cortexParts"))
@@ -4861,6 +5311,9 @@ class LibreChatBridge:
                                 )
                                 self._mark_followup_sent(stream_id)
                                 self._cancel_insight_task(stream_id)
+                                if stream_id in self._memory_receipt_pending:
+                                    await asyncio.sleep(interval_s)
+                                    continue
                                 return
                             # === VIVENTIUM END ===
                             sent = await self._send_followup_text_once(
@@ -4872,6 +5325,9 @@ class LibreChatBridge:
                             # Prevent insight fallback after a merged follow-up is finalized.
                             if sent:
                                 self._cancel_insight_task(stream_id)
+                            if stream_id in self._memory_receipt_pending:
+                                await asyncio.sleep(interval_s)
+                                continue
                             return
 
                     canonical_text = state.get("canonicalText")
@@ -4884,6 +5340,9 @@ class LibreChatBridge:
                         )
                         if sent:
                             self._cancel_insight_task(stream_id)
+                        if stream_id in self._memory_receipt_pending:
+                            await asyncio.sleep(interval_s)
+                            continue
                         return
 
                     followup_decision = terminal_cortex_followup_decision(
@@ -4901,6 +5360,9 @@ class LibreChatBridge:
                         )
                         self._mark_followup_sent(stream_id)
                         self._cancel_insight_task(stream_id)
+                        if stream_id in self._memory_receipt_pending:
+                            await asyncio.sleep(interval_s)
+                            continue
                         return
 
                     # A GlassHive worker callback can arrive without any cortex parts. Keep polling
@@ -4928,6 +5390,9 @@ class LibreChatBridge:
                                     )
                             if not sent_insight:
                                 await self._send_pending_stream_error_once(stream_id, chat_id)
+                            if stream_id in self._memory_receipt_pending:
+                                await asyncio.sleep(interval_s)
+                                continue
                             return
 
                 await asyncio.sleep(interval_s)
@@ -4979,13 +5444,21 @@ class LibreChatBridge:
         finally:
             self._followup_task_by_stream.pop(stream_id, None)
             insight_task = self._insight_task_by_stream.get(stream_id)
-            if not insight_task or insight_task.done():
+            if stream_id in self._memory_receipt_pending or self._memory_delivery_state.get(stream_id) == "delivery_unknown":
+                self._save_memory_poll(stream_id, chat_id)
+            elif not insight_task or insight_task.done():
+                self._cortex_ack_store.finish_memory_poll(self._memory_poll_scope(), stream_id)
+                self._memory_poll_cursors.discard(stream_id)
+                self._memory_poll_chat.pop(stream_id, None)
+                self._memory_delivery_state.pop(stream_id, None)
+                self._stream_text_hash_by_stream.pop(stream_id, None)
                 self._pending_followups.pop(stream_id, None)
                 self._pending_stream_errors.pop(stream_id, None)
                 self._stream_final_events.pop(stream_id, None)
                 self._response_message_ids.pop(stream_id, None)
                 self._conversation_by_stream.pop(stream_id, None)
                 self._followup_sent.discard(stream_id)
+                self._memory_receipt_sent.discard(stream_id)
                 self._followup_send_lock_by_stream.pop(stream_id, None)
                 self._cortex_seen_by_stream.pop(stream_id, None)
                 self._glasshive_seen_by_stream.discard(stream_id)
@@ -5188,11 +5661,12 @@ class LibreChatBridge:
             self._insight_task_by_stream.pop(stream_id, None)
             self._pending_followups.pop(stream_id, None)
             followup_task = self._followup_task_by_stream.get(stream_id)
-            if not followup_task or followup_task.done():
+            if (not followup_task or followup_task.done()) and stream_id not in self._memory_poll_cursors:
                 self._stream_final_events.pop(stream_id, None)
                 self._response_message_ids.pop(stream_id, None)
                 self._conversation_by_stream.pop(stream_id, None)
                 self._followup_sent.discard(stream_id)
+                self._memory_receipt_sent.discard(stream_id)
                 self._followup_send_lock_by_stream.pop(stream_id, None)
                 self._cortex_seen_by_stream.pop(stream_id, None)
                 self._glasshive_seen_by_stream.discard(stream_id)

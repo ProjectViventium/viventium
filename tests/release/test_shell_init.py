@@ -6,6 +6,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SHELL_INIT_PATH = REPO_ROOT / "scripts" / "viventium" / "shell_init.py"
@@ -88,9 +90,12 @@ def test_cli_help_runs_from_symlinked_viv_path(tmp_path: Path) -> None:
     assert "shell-init" in result.stdout
 
 
-def test_shell_init_print_command_cli_uses_requested_profile(tmp_path: Path) -> None:
+@pytest.mark.parametrize("profile_in_home", [True, False])
+def test_shell_init_print_command_cli_uses_requested_profile(tmp_path: Path, profile_in_home: bool) -> None:
     target_path = REPO_ROOT / "bin" / "viventium"
-    custom_profile = tmp_path / ".custom-shell-profile"
+    home = tmp_path / "home"
+    home.mkdir()
+    custom_profile = (home if profile_in_home else tmp_path) / ".custom-shell-profile"
     result = subprocess.run(
         [
             sys.executable,
@@ -101,12 +106,15 @@ def test_shell_init_print_command_cli_uses_requested_profile(tmp_path: Path) -> 
             str(custom_profile),
             "--print-command",
         ],
+        env={**os.environ, "HOME": str(home)},
         capture_output=True,
         text=True,
         check=False,
     )
 
     assert result.returncode == 0, result.stderr
-    assert str(custom_profile) in result.stdout
+    expected_profile = "$HOME/.custom-shell-profile" if profile_in_home else str(custom_profile)
+    assert expected_profile in result.stdout
+    assert str(home) not in result.stdout
     assert '"$HOME/.local/bin/viv"' in result.stdout
     assert '"$HOME/.local/bin/viventium"' in result.stdout

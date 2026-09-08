@@ -31,7 +31,9 @@ def main() -> int:
     for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
         signal.signal(signum, forward)
     global child
-    child = subprocess.Popen(command, env=os.environ, close_fds=True)
+    # Native mutable files must satisfy the same private-tree contract used by
+    # snapshot/restore, regardless of Terminal or Finder launch defaults.
+    child = subprocess.Popen(command, env=os.environ, close_fds=True, umask=0o077)
     try:
         return child.wait()
     finally:

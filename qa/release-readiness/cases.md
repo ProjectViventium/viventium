@@ -175,3 +175,5 @@ rows before claiming a pass when the feature behavior changes.
 - `tests/release/test_rel_uc_004_semantic_verifier.py`
 - `tests/release/test_release_catalog_semantic_verifier.py`
 - `tests/release/test_startup_secret_redaction.py`
+
+Supporting release regressions: `tests/release/test_librechat_candidate_preparation.py`, `tests/release/test_native_browser_compliance.py`, `tests/release/test_native_local_compliance.py`, `tests/release/test_native_release_metadata.py`. These automated checks do not replace the user-path acceptance above.

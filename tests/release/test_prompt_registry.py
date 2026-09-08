@@ -189,8 +189,9 @@ def test_source_yaml_prompt_refs_resolve_to_runtime_strings() -> None:
     assert "Before an external write" in agents["mainAgent"]["instructions"]
     assert "Destructive mutations—deleting, moving, archiving" in agents["mainAgent"]["instructions"]
     assert "Current Date & Time:" not in agents["mainAgent"]["instructions"]
-    assert "Automatic durable mission delegation is allowed only" in agents["mainAgent"]["instructions"]
-    assert "When delegation is allowed, use it for independently completable" in agents["mainAgent"]["instructions"]
+    assert "This is automatic when the current Parallel work capsule says `Mode: parallel`" in agents["mainAgent"]["instructions"]
+    assert "An explicit focused preference limits new automatic delegation" in agents["mainAgent"]["instructions"]
+    assert "send independently completable substantial work to the declared durable delegation tool" in agents["mainAgent"]["instructions"]
     assert "Never say work was delegated, accepted, queued, or is running unless" in agents["mainAgent"]["instructions"]
     assert isinstance(librechat["memory"]["agent"]["instructions"], str)
     assert isinstance(librechat["mcpServers"]["ms-365"]["serverInstructions"], str)

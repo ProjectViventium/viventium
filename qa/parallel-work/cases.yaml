@@ -1,0 +1,63 @@
+schemaVersion: 1
+capability: parallel-work
+requirementOwner: docs/requirements_and_learnings/capabilities/parallel-work.md
+statusPolicy: Run results belong in dated, candidate-bound reports.
+sourceInventories:
+  - qa/parallel-orchestrator/cases.md
+journeys:
+  - id: PAR-QA-RESPONSIVE-001
+    requirements: [PW-022, PW-068, PW-069, PWK-038]
+    userAction: Give Main independent substantial goals in ordinary language, including a native app/computer task and a non-file outcome; ask a quick question while they run and steer only the relevant goal. Do not tell Main when to use workers. Two goals are a minimum overlap case, not a capacity limit.
+    surfaces: [Telegram, Web, Active Work]
+    expectedResult: Main delegates through model judgment, answers promptly, and preserves unrelated work. Distinct tool-scoped effectOccurrenceRefs admit each objective once, with overlap when capacity permits. Each worker can use the native harness capabilities authorized for its goal; useful results appear once without a new message or reload. File creation is optional unless requested.
+    degradedAndRecovery: Exact replay returns the same receipt; changed payload under the same reference fails closed; capacity shortage stays queued truthfully.
+    persistenceAndCleanup: Restart preserves both missions and one result each; synthetic work and artifacts are removed exactly.
+    evidence: [source order, effect receipts, mission rows, overlap timing, visible useful reply with correlated admission/queue/native work/forwarding/channel timing and no demonstrated avoidable application delay, actual native tool calls and permissions, useful live results, cleanup proof]
+  - id: PAR-QA-PERF-001
+    requirements: [PW-092]
+    userAction: Change focused or parallel mode and send focused-mode control requests under representative load.
+    surfaces: [Web, Telegram, settings API]
+    expectedResult: Mode-write server latency is below 100 ms and focused-mode overhead is below 25 ms p95 with no extra model or network request.
+    degradedAndRecovery: Unavailable preference state falls back truthfully without delaying the turn.
+    persistenceAndCleanup: The account-wide setting persists and the synthetic account is restored.
+    evidence: [server timing, model-call count, network trace, persisted preference]
+  - id: PAR-QA-PERF-002
+    requirements: [PW-093]
+    userAction: Open and refresh Active Work with warm, cold, stale, and unavailable roster state.
+    surfaces: [Web, Active Work API]
+    expectedResult: Local snapshot is below 50 ms p95, cold ceiling is 100 ms, and stale behavior follows the current two-second configurable default.
+    degradedAndRecovery: Stale and unavailable are never rendered as empty; refresh recovers when authority returns.
+    persistenceAndCleanup: Snapshot state never becomes a second authority or persisted chat content.
+    evidence: [latency distribution, cache age, roster authority, visible state]
+  - id: PAR-QA-PERF-003
+    requirements: [PW-094]
+    userAction: Invoke an authorized delegation with warm and cold harness conditions measured separately.
+    surfaces: [Core tool boundary, GlassHive]
+    expectedResult: Dispatch after tool invocation is below 150 ms p95 and the 250 ms release ceiling, excluding measured harness startup.
+    degradedAndRecovery: Admission failure, provider start delay, and harness startup remain distinct.
+    persistenceAndCleanup: A timed-out attempt cannot create a late duplicate mission.
+    evidence: [tool timestamp, admission timestamp, dispatch timestamp, harness-start measurement, mission count]
+  - id: PAR-QA-E2E-001
+    requirements: [PW-098]
+    userAction: Run two overlapping artifact missions, ask a quick question, revise one late input, Steer only A, and open both outputs.
+    surfaces: [installed Telegram, headed Web, Active Work]
+    expectedResult: Main remains responsive, B is unchanged, and two distinct valid files are delivered exactly once.
+    degradedAndRecovery: A stale or late result cannot replace the current answer or affect the other mission.
+    persistenceAndCleanup: Reload and restart preserve both work records and artifacts before exact cleanup.
+    evidence: [visible transcript, action receipt, attempt and lease state, artifact hashes, callback and delivery rows]
+  - id: PAR-QA-E2E-002
+    requirements: [PW-099]
+    userAction: Exercise duplicate and out-of-order input, failure, recovery, restart, owner isolation, fallback, callbacks, scheduler, and applicable Voice or media paths.
+    surfaces: [all affected installed surfaces]
+    expectedResult: Each path keeps the same authorized outcome, one owner, exact controls, and truthful lifecycle state.
+    degradedAndRecovery: Capacity, provider, auth, native-child, delivery, and rollback failures stay distinct and recover safely.
+    persistenceAndCleanup: Restart and rollback lose no accepted work and leak no cross-owner state.
+    evidence: [real user output, authority and isolation proof, lifecycle state, callbacks, artifacts, installed identity]
+  - id: PAR-QA-EVIDENCE-001
+    requirements: [PW-100]
+    userAction: Correlate the changed user journey with only the supporting system evidence needed for that seam.
+    surfaces: [Telegram Desktop, headed Web, audible Voice when applicable]
+    expectedResult: Visible or audible behavior agrees with source, state, attempts, leases, callbacks, delivery, artifacts, generated config, pins, builds, and installed process.
+    degradedAndRecovery: Missing required real-surface or artifact evidence makes the result PARTIAL or BLOCKED, never PASS.
+    persistenceAndCleanup: Agent-sync drift and dry-run checks run only when that seam changes; public evidence is sanitized and synthetic state is removed.
+    evidence: [candidate-bound report, hashes, redacted trace, cleanup proof, remaining gaps]

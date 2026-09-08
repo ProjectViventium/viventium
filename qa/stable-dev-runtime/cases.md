@@ -7,7 +7,11 @@
 - Preconditions: canonical config exists
 - Steps: run `bin/viventium dev-env create dev --port-offset 1000`, then inspect the dev config
 - Expected Result: LibreChat API, frontend, playground, and voice health ports are offset
-- Forbidden Result: heavy singleton service ports are unnecessarily offset or duplicated
+- Expected Result: a new environment disables remote access and both Telegram pollers, clears
+  copied public origins and node address, and preserves the source configuration unchanged. A
+  developer may explicitly configure a separate test bot or remote-access route afterward.
+- Forbidden Result: heavy singleton service ports are unnecessarily offset or duplicated; starting
+  a new development environment claims the installed runtime's bot or changes its remote routing
 - Evidence: dated report under `reports/`
 - Last Run: PASS 2026-05-14: local implementation QA - passed
 
@@ -18,6 +22,8 @@
 - Preconditions: dev env exists with default shared singleton policy
 - Steps: compile the dev env and inspect generated runtime env
 - Expected Result: shared singleton markers are present and start flags for shared services are false
+- Expected Result: `start --skip-telegram` suppresses both the Telegram bridge and Telegram Codex
+  sidecar, including when either is enabled in the selected configuration
 - Forbidden Result: dev start launches duplicate recall/RAG, SearXNG, Firecrawl, Google MCP, or MS365 MCP by default
 - Evidence: dated report under `reports/`
 - Last Run: PASS 2026-05-14: local implementation QA - passed
@@ -211,6 +217,27 @@
   exact-listener adoption event, so a fresh supported start -> adopt -> stop -> start run with a
   sanitized durable ledger is still required before this case can be called PASS.
 
+## SDR-014: Same-Host Browser Sessions Stay Separate
+
+- Requirement: `50_Stable_Dev_Runtime.md`
+- Surfaces: actual browser, normal sign-in/logout, refresh endpoint, session persistence
+- Preconditions: daily and named development runtimes use the same host at different ports;
+  separate synthetic QA accounts exist in their respective databases
+- Steps: sign in to daily use; sign in to development in the same browser profile; reload daily
+  and reopen saved history; reload development; sign out of development; reload daily again
+- Expected Result: each runtime keeps its own account and history; development sign-in, expiry and
+  logout never replace or clear daily cookies. Normal prod cookie names and cookie security flags
+  stay compatible. OAuth/OpenID/social session cookies use the same development namespace.
+- Forbidden Result: using different hostnames to hide a cookie collision; copying browser tokens;
+  reading unscoped daily cookies as a development fallback; treating same-host separation as a
+  security boundary against a malicious service
+- Evidence: actual same-host browser journey and the real MongoDB/HTTP refresh/logout cookie-jar
+  regression in `AuthController.transport.spec.js`; namespace/OAuth and affected auth checks
+- Last Run: PASS 2026-09-06. Same-host, same-profile development logout and normal login each
+  left daily use signed in with its saved conversation after reload. The running development
+  artifact contains the namespace fix; daily cookie names remain unchanged. The real HTTP/MongoDB
+  regression and affected auth checks pass. External OAuth provider roundtrips remain separate.
+
 ## Natural User Use Case Checklist
 
 These rows are the minimum natural-user checklist gate for Stable Dev Runtime. Add narrower feature-specific
@@ -244,3 +271,9 @@ rows before claiming a pass when the feature behavior changes.
 - `tests/release/test_native_stack_helpers.py`
 - `tests/release/test_stable_dev_runtime_workflows.py`
 - `tests/release/test_stack_port_probe_timeouts.py`
+- `tests/release/test_cli_stop_owner_record_transient.py`
+- `tests/release/test_launcher_telegram_launchd_scope.py`
+
+Supporting release regressions: `tests/release/test_helper_hash_consumers.py`, `tests/release/test_launcher_reconciled_startup.py`. These automated checks do not replace the user-path acceptance above.
+
+`tests/release/test_macos_worker_access.py` verifies the shared macOS worker-access settings and runtime bindings; real OS permission and worker interaction remain separate acceptance.

@@ -69,7 +69,7 @@ function loadFileSearchWithMocks({ axiosPost }) {
   };
   const mocks = {
     axios: { post: axiosPost },
-    '@langchain/core/tools': {
+    '@librechat/agents/langchain/tools': {
       tool: (func, definition) => ({ ...definition, func }),
     },
     '@librechat/api': {
@@ -83,6 +83,9 @@ function loadFileSearchWithMocks({ axiosPost }) {
     '~/models': {
       getFiles: async () => [],
     },
+    // Transcript retrieval does not authorize source-only conversation recovery.
+    '~/models/Agent': { getAgent: async () => null },
+    '~/server/services/PermissionService': { checkPermission: async () => false },
     '~/db/models': {
       Message: { find: () => queryResult([]) },
       Conversation: { find: () => queryResult([]) },

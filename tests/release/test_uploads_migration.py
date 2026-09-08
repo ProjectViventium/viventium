@@ -585,3 +585,59 @@ def test_executable_cli_migrates_an_isolated_source_fixture(tmp_path: Path) -> N
     assert (canonical / "synthetic-user" / "conversation" / "artifact.txt").is_file()
     assert "synthetic-user" not in completed.stdout
     assert "synthetic upload payload" not in completed.stdout
+
+
+@pytest.mark.parametrize("invalid_receipt", [False, True])
+def test_existing_migrated_runtime_can_select_shared_checkout_without_changing_storage(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, invalid_receipt: bool,
+) -> None:
+    migration = load_migration_module()
+    canonical_support, old_checkout, old_link, canonical = make_layout(tmp_path)
+    write_synthetic_uploads(old_link)
+    migration.migrate_uploads(app_support_dir=canonical_support, librechat_dir=old_checkout)
+    shared_checkout = tmp_path / "shared-checkout" / "LibreChat"
+    shared_checkout.mkdir(parents=True)
+    other_support = tmp_path / "other-runtime"
+    other_support.mkdir(mode=0o700)
+    migration.migrate_uploads(app_support_dir=other_support, librechat_dir=shared_checkout)
+    other_canonical = other_support / "data" / "uploads"
+    (other_canonical / "other-only.txt").write_text("other runtime evidence")
+    receipt = canonical_support / "state/continuity/uploads-migration/receipt.json"
+    other_receipt = other_support / "state/continuity/uploads-migration/receipt.json"
+    if invalid_receipt:
+        payload = json.loads(receipt.read_text())
+        payload["transactionId"] = "invalid"
+        receipt.write_text(json.dumps(payload))
+    before_receipt = receipt.read_bytes()
+    before_other_receipt = other_receipt.read_bytes()
+    before_canonical = migration.fingerprint_tree(canonical)
+    before_other = migration.fingerprint_tree(other_canonical)
+    fingerprint = migration.fingerprint_tree
+
+    def deny_other_upload_enumeration(root: Path) -> dict:
+        assert migration.lexical(root) != migration.lexical(other_canonical)
+        return fingerprint(root)
+
+    monkeypatch.setattr(migration, "fingerprint_tree", deny_other_upload_enumeration)
+    for _ in range(2):
+        if invalid_receipt:
+            with pytest.raises(migration.MigrationError, match="receipt conflicts"):
+                migration.migrate_uploads(
+                    app_support_dir=canonical_support, librechat_dir=shared_checkout,
+                )
+        else:
+            result = migration.migrate_uploads(
+                app_support_dir=canonical_support, librechat_dir=shared_checkout,
+            )
+            assert result["status"] == "other_runtime_compatibility_preserved"
+            assert result["fingerprint"] == before_canonical
+    assert receipt.read_bytes() == before_receipt
+    assert other_receipt.read_bytes() == before_other_receipt
+    assert old_link.readlink() == canonical
+    assert (shared_checkout / "uploads").readlink() == other_canonical
+    assert fingerprint(canonical) == before_canonical
+    assert fingerprint(other_canonical) == before_other
+    if not invalid_receipt:
+        assert migration.migrate_uploads(
+            app_support_dir=canonical_support, librechat_dir=old_checkout,
+        )["status"] == "already_migrated"

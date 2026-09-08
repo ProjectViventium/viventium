@@ -93,6 +93,8 @@ The intended mental model is:
     included in the snapshot hash, and injected only for the active range.
 14. “What Viv feels” and the Reaction trail belong in the main workspace. The selected-band sidebar
     owns Current, Nature, return speed, Felt, and the five-range editor.
+    The exact capsule is available under a collapsed, keyboard-accessible “Prompt details” control;
+    internal instructions do not fill the default view. Expanding it does not change state or prompts.
 
 ## Nine active bands
 
@@ -149,8 +151,13 @@ contract for each dimension is:
 | Openness   | inner feeling wants to remain unreadable             | concealment feels impossible and feeling bursts into expression     |
 | Play       | seek a literal, orderly, game-free moment            | ridiculous turns keep escaping; staying straight-faced takes effort |
 
-The exact five defaults live in the package-owned kernel and are returned by the authenticated API
-for the UI. Contract tests lock IDs, bounds, causal shape, active selection, and serialization. A
+The exact five default instructions per band and the capsule paragraphs live in the registered
+`feelings.capsule_policy` source. The existing compiled prompt loader supplies them to the typed
+kernel and authenticated UI projection. IDs, words, numeric defaults, range selection, required-row
+selection, and structural interpolation remain in the kernel. `main.user_fact_guard` owns the final
+fact guard before the exact pinned capsule. Neither owner has an inline prompt fallback. A compiled
+policy edit applies to the next state read without changing an already pinned request snapshot.
+Contract tests lock default emitted bytes, IDs, bounds, causal shape, active selection, and serialization. A
 range addition is deliberately free-form because the conscious model can understand an
 idiosyncratic felt pull; runtime validates its structure and never interprets it.
 

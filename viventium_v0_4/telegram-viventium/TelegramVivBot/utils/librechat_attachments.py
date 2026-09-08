@@ -126,6 +126,10 @@ async def send_librechat_attachments(
     seen: set[str] = set()
     images: list[bytes] = []
     documents: list[tuple[bytes, str]] = []
+    unavailable = 0
+    retrieval_failed = 0
+    oversized = 0
+    unconfirmed = 0
 
     for att in attachments:
         if not isinstance(att, dict):
@@ -143,13 +147,7 @@ async def send_librechat_attachments(
         seen.add(dedupe_key)
 
         if size_hint is not None and size_hint > max_bytes:
-            if text_fallback:
-                await bot.send_message(
-                    chat_id=telegram_chat_id,
-                    message_thread_id=message_thread_id,
-                    text=f"File too large to send via Telegram ({size_hint} bytes): {filename or file_id or filepath}",
-                    reply_to_message_id=reply_to_message_id,
-                )
+            oversized += 1
             continue
 
         download_url = _attachment_download_url(
@@ -158,6 +156,7 @@ async def send_librechat_attachments(
             filepath=str(filepath),
         )
         if not download_url:
+            retrieval_failed += 1
             continue
 
         try:
@@ -169,8 +168,14 @@ async def send_librechat_attachments(
                 telegram_username=telegram_username,
                 telegram_chat_id=telegram_chat_id,
             )
+        except httpx.HTTPStatusError as error:
+            if error.response.status_code in {404, 410}:
+                unavailable += 1
+            else:
+                retrieval_failed += 1
+            continue
         except Exception:
-            # Caller logs (bot.py) should capture failures; skip delivery here.
+            retrieval_failed += 1
             continue
 
         final_mime = (content_type or mime_type or "").split(";")[0].strip().lower()
@@ -193,7 +198,7 @@ async def send_librechat_attachments(
                 reply_to_message_id=reply_to_message_id,
             )
         except Exception:
-            # Best-effort: don't fail the whole response if Telegram rejects media.
+            unconfirmed += len(batch)
             continue
 
     for blob, safe_name in documents:
@@ -209,4 +214,29 @@ async def send_librechat_attachments(
                 reply_to_message_id=reply_to_message_id,
             )
         except Exception:
+            unconfirmed += 1
             continue
+
+    notices = []
+    for count, detail in (
+        (unavailable, "is unavailable" if unavailable == 1 else "are unavailable"),
+        (retrieval_failed, "could not be retrieved"),
+        (
+            oversized,
+            ("is too large to send" if oversized == 1 else "are too large to send")
+            if text_fallback else "could not be sent",
+        ),
+    ):
+        if count:
+            notices.append(f"{count} {'file' if count == 1 else 'files'} {detail}.")
+    if unconfirmed:
+        notices.append(
+            f"Delivery of {unconfirmed} {'file' if unconfirmed == 1 else 'files'} could not be confirmed."
+        )
+    if notices:
+        await bot.send_message(
+            chat_id=telegram_chat_id,
+            message_thread_id=message_thread_id,
+            text="\n".join(notices),
+            reply_to_message_id=reply_to_message_id,
+        )

@@ -870,7 +870,11 @@ def apply_draft(
     _: auth.AuthContext = Depends(auth.require_admin),
 ) -> dict[str, Any]:
     try:
-        return drafts.apply_draft(draft_id, request.idempotencyToken)
+        draft = drafts.get_draft(draft_id)
+        result = drafts.apply_draft(draft_id, request.idempotencyToken)
+        if draft.get("kind") == "live-import":
+            sync_engine.advance_matching_reconciled_rows()
+        return result
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

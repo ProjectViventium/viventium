@@ -684,8 +684,9 @@ launch_stack_detached
     assert not marker.exists()
 
 
+@pytest.mark.parametrize("legacy_attached_contract", [False, True])
 def test_detached_launcher_accepts_the_current_complete_shared_command_contract(
-    tmp_path: Path,
+    tmp_path: Path, legacy_attached_contract: bool,
 ) -> None:
     cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
     function_def = extract_shell_function(cli_source, "launch_stack_detached")
@@ -698,6 +699,12 @@ def test_detached_launcher_accepts_the_current_complete_shared_command_contract(
     contract_path = repo / "scripts/viventium/runtime_owner_command_contract.json"
     contract_path.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(DETACHED_COMMAND_CONTRACT, contract_path)
+    if legacy_attached_contract:
+        contract = json.loads(contract_path.read_text(encoding="utf-8"))
+        contract["attached"].pop("flagOptions")
+        contract["attached"].pop("enumOptions")
+        contract["attached"]["argvTemplates"] = contract["attached"]["argvTemplates"][:4]
+        contract_path.write_text(json.dumps(contract), encoding="utf-8")
     runtime.mkdir(parents=True)
     config = app_support / "config.yaml"
     config.write_text("version: 1\n", encoding="utf-8")
@@ -4044,6 +4051,7 @@ def test_install_restores_terminal_input_for_wizard_and_preflight_when_stdin_is_
     (repo_root / "bin").mkdir(parents=True, exist_ok=True)
 
     copy_cli_fixture(repo_root)
+    shutil.copy2(REPO_ROOT / "scripts/viventium/native_runtime.py", repo_root / "scripts/viventium/native_runtime.py")
 
     common_sh = """#!/usr/bin/env bash
 set -euo pipefail
@@ -4134,6 +4142,7 @@ def test_install_exit_paths_always_release_cli_operation_lock(tmp_path: Path) ->
     (repo_root / "bin").mkdir(parents=True, exist_ok=True)
 
     copy_cli_fixture(repo_root)
+    shutil.copy2(REPO_ROOT / "scripts/viventium/native_runtime.py", repo_root / "scripts/viventium/native_runtime.py")
     write_executable(
         repo_root / "scripts" / "viventium" / "common.sh",
         """#!/usr/bin/env bash

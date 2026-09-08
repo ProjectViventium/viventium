@@ -700,6 +700,7 @@ def _helper_source_hash(helper_root: Path) -> str:
     for relative in (
         "Package.swift",
         "Sources/ViventiumHelper/ViventiumHelperApp.swift",
+        "Sources/ViventiumHelper/LifeSetup.swift",
         "Sources/ViventiumHelper/Resources/Info.plist",
     ):
         path = helper_root / relative
@@ -795,6 +796,7 @@ def _write_release_identity_fixture(
     for relative in (
         "Package.swift",
         "Sources/ViventiumHelper/ViventiumHelperApp.swift",
+        "Sources/ViventiumHelper/LifeSetup.swift",
         "Sources/ViventiumHelper/Resources/Info.plist",
     ):
         path = helper / relative
@@ -1267,6 +1269,15 @@ def test_detached_owner_command_matches_shared_cross_language_contract(
     launcher_source = (ROOT / "bin/viventium").read_text(encoding="utf-8")
     assert "runtime_owner_command_contract.json" in launcher_source
     assert 'contract["detached"]["argvTemplate"]' in launcher_source
+    # Exercise the CLI's contract validation without launching a runtime.
+    validation = launcher_source.split("canonical_detached = [", 1)[1].split(
+        "compat_launcher =", 1
+    )[0]
+    validation = "canonical_detached = [" + validation
+    exec(compile(validation, "bin/viventium contract validation", "exec"), {"contract": contract})
+    contract["attached"]["flagOptions"].append("--forged-flag")
+    with pytest.raises(SystemExit, match="Unsupported runtime owner command contract"):
+        exec(compile(validation, "bin/viventium contract validation", "exec"), {"contract": contract})
 
 
 def test_process_cwd_prefers_macos_kernel_reader(
@@ -1385,6 +1396,114 @@ def test_attached_owner_accepts_exact_documented_restart_and_rejects_unknown_arg
             components_lock_file=lock.resolve(),
             launch_mode="attached",
         )
+
+
+
+@pytest.mark.parametrize("with_lock", [False, True])
+@pytest.mark.parametrize("runtime_profile", ["isolated", "compat"])
+def test_attached_dev_owner_accepts_supported_launch_options_and_rejects_injection(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    with_lock: bool,
+    runtime_profile: str,
+) -> None:
+    gate = _load_module()
+    repo = tmp_path / "Installed Viventium"
+    app_support = tmp_path / "Application Support" / "Viventium"
+    runtime = app_support / "runtime"
+    executable = repo / "bin/viventium"
+    config = app_support / "config.yaml"
+    lock = repo / "components.lock.json"
+    runtime.mkdir(parents=True)
+    executable.parent.mkdir(parents=True)
+    executable.write_text("#!/bin/bash\nwhile :; do sleep 1; done\n", encoding="utf-8")
+    executable.chmod(0o755)
+    config.write_text("version: 1\n", encoding="utf-8")
+    lock.write_text('{"version": 1}\n', encoding="utf-8")
+    contract_path = repo / "scripts/viventium/runtime_owner_command_contract.json"
+    contract_path.parent.mkdir(parents=True)
+    shutil.copy2(DETACHED_COMMAND_CONTRACT, contract_path)
+    preamble = [
+        str(executable.resolve()),
+        "--app-support-dir", str(app_support.resolve()),
+        "--config-file", str(config.resolve()),
+        "--runtime-dir", str(runtime.resolve()),
+    ]
+    if with_lock:
+        preamble += ["--lock-file", str(lock.resolve())]
+    options = [
+        "--restart", "--skip-telegram", "--skip-v1-agent", "--skip-livekit",
+        "--skip-playground", "--skip-voice-gateway", "--no-bootstrap",
+        "--profile=" + runtime_profile,
+    ]
+    argv = [*preamble, "start", *options]
+    process = subprocess.Popen(argv, cwd=repo, start_new_session=True)
+    OWNER_PROCESSES.append(process)
+    state = app_support / "state/runtime" / runtime_profile / "stack-owner.json"
+    state.parent.mkdir(parents=True)
+    payload = _runtime_owner_payload(
+        gate, process=process, installed_root=repo, app_support=app_support,
+        runtime_dir=runtime, process_cwd=repo, config_file=config,
+        components_lock_file=lock, launch_mode="attached",
+    )
+    payload["runtimeProfile"] = runtime_profile
+    payload["ownerBindingSha256"] = gate._owner_binding_sha256(payload)
+    state.write_text(json.dumps(payload), encoding="utf-8")
+    state.chmod(0o600)
+    assert gate._runtime_owner_state_proves_active(repo, state)
+    # A correctly rehashed receipt cannot relabel a live profile selector.
+    other_profile = "compat" if runtime_profile == "isolated" else "isolated"
+    other_state = app_support / "state/runtime" / other_profile / "stack-owner.json"
+    other_state.parent.mkdir(parents=True)
+    forged = {**payload, "runtimeProfile": other_profile}
+    forged["ownerBindingSha256"] = gate._owner_binding_sha256(forged)
+    other_state.write_text(json.dumps(forged), encoding="utf-8")
+    other_state.chmod(0o600)
+    assert not gate._runtime_owner_state_proves_active(repo, other_state)
+
+    kwargs = dict(
+        app_support=app_support.resolve(), config_file=config.resolve(),
+        runtime_dir=runtime.resolve(), components_lock_file=lock.resolve(),
+        launch_mode="attached", runtime_profile=runtime_profile,
+    )
+    live_image = Path("/bin/bash").resolve()
+    # Both representations must enforce every token, including spaces inside paths.
+    candidates = [
+        ([*preamble, "start"], True),
+        ([*preamble, "start", "--fast", "--modern-playground"], True),
+        ([*preamble, "start", "--profile", runtime_profile], True),
+        ([*preamble, "start", "--profile=" + runtime_profile], True),
+        ([*preamble, "start", "--runtime-profile", runtime_profile], True),
+        ([*preamble, "start", "--profile", "compat" if runtime_profile == "isolated" else "isolated"], False),
+        ([*preamble, "start", "--profile=compat" if runtime_profile == "isolated" else "--profile=isolated"], False),
+        ([*preamble, "start", "--runtime-profile", "compat" if runtime_profile == "isolated" else "isolated"], False),
+        ([*argv, "--unknown-flag"], False),
+        ([*argv, ";", "touch", "unexpected"], False),
+        ([*argv, "$(touch unexpected)"], False),
+        ([*argv, "--config-file", str(tmp_path / "other.yaml")], False),
+        ([*argv, "--lock-file", str(tmp_path / "other.lock")], False),
+        ([*argv, "--profile=unknown"], False),
+        ([*argv, "--profile"], False),
+        ([*argv, "--runtime-profile=" + runtime_profile], False),
+        ([*argv, "--skip-telegram=anything"], False),
+        ([*argv, "--stop"], False),
+        ([*argv, "--help"], False),
+        ([*argv, "launch"], False),
+        ([str(executable.resolve()) + "-lookalike", *argv[1:]], False),
+        ([*argv[:4], str(tmp_path / "other.yaml"), *argv[5:]], False),
+    ]
+    for candidate, expected in candidates:
+        monkeypatch.setattr(
+            gate, "_live_process_image_and_argv",
+            lambda _pid, candidate=candidate: (live_image, ("bash", *candidate)),
+        )
+        assert gate._owner_command_executes(
+            "bash " + " ".join(candidate), executable.resolve(), repo.resolve(),
+            "start", **kwargs,
+        ) is expected, candidate
+        assert gate._owner_process_image_executes(
+            process.pid, executable.resolve(), repo.resolve(), "start", **kwargs,
+        ) is expected, candidate
 
 
 def test_attached_owner_typed_argv_accepts_only_verified_repo_relative_cli(
@@ -4954,13 +5073,13 @@ def test_local_qa_override_is_explicit_and_never_reports_ready(tmp_path: Path) -
     assert result.label == "PRE-GATE / NOT READY"
 
 
-def test_local_qa_override_cannot_change_dark_source_defaults(tmp_path: Path) -> None:
+def test_local_qa_override_cannot_accept_invalid_source_defaults(tmp_path: Path) -> None:
     gate = _load_module()
     _write_fixture_root(
         tmp_path,
         pwk_status="PARTIAL",
-        available_default="true",
-        mode_default="parallel",
+        available_default="enabled",
+        mode_default="automatic",
     )
 
     result = gate.evaluate_release_gate(
@@ -4969,7 +5088,7 @@ def test_local_qa_override_cannot_change_dark_source_defaults(tmp_path: Path) ->
         allow_local_qa_override=True,
     )
 
-    assert result.source_defaults_dark is False
+    assert result.source_defaults_valid is False
     assert result.exposure_allowed is False
     assert {item.case_id for item in result.open_gates} >= {
         "SOURCE-DEFAULT-AVAILABLE",
@@ -5328,7 +5447,7 @@ def test_repository_inventory_contains_original_sequence_and_release_claim_gate(
         "MPV-061",
         "TGDOC-010",
     } <= case_ids
-    assert result.source_defaults_dark is True
+    assert result.source_defaults_valid is True
     # Preserve every shared-tree QA row. Full capability parity in PWK-UC-019 is
     # release-blocking and may not be omitted to retain an earlier count.
     expected_case_ids = {
@@ -5622,3 +5741,12 @@ def test_cli_rejects_unowned_snapshot_output_even_when_gate_is_open(
     assert completed.returncode == 2
     assert "requires the exact active runtime owner" in completed.stderr
     assert output_path.exists() is False
+
+
+def test_source_defaults_accept_automatic_mode_without_waiving_release_gates(tmp_path: Path) -> None:
+    gate = _load_module()
+    _write_fixture_root(tmp_path, pwk_status="PARTIAL", available_default="true", mode_default="parallel")
+    result = gate.evaluate_release_gate(tmp_path)
+    assert result.source_defaults_valid is True
+    assert result.release_ready is False
+    assert result.exposure_allowed is False

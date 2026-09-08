@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 import subprocess
+import time
 
 import pytest
 
@@ -206,17 +207,128 @@ def test_parallel_work_redis_rejects_owned_container_runtime_drift(
     assert "DOCKER_CALL run" not in result.stderr
 
 
-def test_parallel_work_redis_is_verified_before_librechat_and_failure_stops_startup() -> None:
+def test_parallel_work_redis_failure_disables_parallel_without_stopping_librechat() -> None:
     source = launcher_source()
-    call = 'if ! ensure_parallel_work_redis_ready; then'
+    call = 'parallel_work_redis_ready_now; then'
     call_index = source.index(call)
     librechat_index = source.index("# LibreChat\n# ----------------------------", call_index)
 
-    assert source.index('VIVENTIUM_PARALLEL_WORK_AVAILABLE:-false', call_index - 500) < call_index
     assert call_index < librechat_index
     failure_block = source[call_index : source.index("fi", call_index) + 2]
-    assert 'log_error "Parallel Work Redis is required for LibreChat startup"' in failure_block
-    assert "exit 1" in failure_block
+    assert "VIVENTIUM_PARALLEL_WORK_AVAILABLE=false" in failure_block
+    assert "USE_REDIS=false" in failure_block
+    assert "USE_REDIS_STREAMS=false" in failure_block
+    assert 'REDIS_URI="$PARALLEL_WORK_REQUESTED_REDIS_URI"' in failure_block
+    assert "PARALLEL_WORK_REDIS_START_DEFERRED=true" in failure_block
+    assert "exit 1" not in failure_block
+
+    queue_start = source.index("queue_optional_services_parallel_with_librechat()")
+    queue_end = source.index('\necho ""', queue_start)
+    queue_block = source[queue_start:queue_end]
+    assert "start_deferred_parallel_work_redis" in queue_block
+
+
+def test_deferred_parallel_work_redis_restores_requested_flags_before_librechat() -> None:
+    source = launcher_source()
+    recovery = shell_function(
+        source,
+        "restore_parallel_work_after_deferred_redis",
+        "start_local_mongodb_container",
+    )
+
+    assert '[[ "$PARALLEL_WORK_REDIS_START_DEFERRED" == "true" ]]' in recovery
+    assert 'VIVENTIUM_PARALLEL_WORK_AVAILABLE="$PARALLEL_WORK_REQUESTED_AVAILABLE"' in recovery
+    assert 'USE_REDIS="$PARALLEL_WORK_REQUESTED_USE_REDIS"' in recovery
+    assert 'USE_REDIS_STREAMS="$PARALLEL_WORK_REQUESTED_USE_REDIS_STREAMS"' in recovery
+    assert 'REDIS_URI="$PARALLEL_WORK_REQUESTED_REDIS_URI"' in recovery
+    assert "parallel_work_redis_ready_now" in recovery
+    assert 'export VIVENTIUM_PARALLEL_WORK_AVAILABLE="$PARALLEL_WORK_REQUESTED_AVAILABLE"' in recovery
+    assert 'export USE_REDIS="$PARALLEL_WORK_REQUESTED_USE_REDIS"' in recovery
+    assert 'export USE_REDIS_STREAMS="$PARALLEL_WORK_REQUESTED_USE_REDIS_STREAMS"' in recovery
+    assert 'export REDIS_URI="$PARALLEL_WORK_REQUESTED_REDIS_URI"' in recovery
+    assert "PARALLEL_WORK_REDIS_START_PID" in recovery
+    assert "VIVENTIUM_PARALLEL_REDIS_HANDOFF_SECONDS" in recovery
+
+    librechat_start = source.index("# LibreChat\n# ----------------------------")
+    recovery_call = source.index(
+        "restore_parallel_work_after_deferred_redis", librechat_start
+    )
+    runtime_render = source.index("refresh_parallel_runtime_endpoint_overrides", recovery_call)
+    assert recovery_call < runtime_render
+
+
+def run_deferred_redis_handoff(
+    *, ready_after: int, handoff_seconds: str
+) -> tuple[subprocess.CompletedProcess[str], float]:
+    source = launcher_source()
+    recovery = shell_function(
+        source,
+        "restore_parallel_work_after_deferred_redis",
+        "start_local_mongodb_container",
+    )
+    harness = f'''\nset -u\nlog_success() {{ :; }}\nparallel_work_redis_ready_now() {{\n  PROBE_COUNT=$((PROBE_COUNT + 1))\n  [[ "$PROBE_COUNT" -ge "$READY_AFTER" ]]\n}}\nPYTHON_BIN={subprocess.list2cmdline([os.environ.get("PYTHON", "python3")])}\nPARALLEL_WORK_REDIS_START_DEFERRED=true\nPARALLEL_WORK_REQUESTED_AVAILABLE=true\nPARALLEL_WORK_REQUESTED_USE_REDIS=true\nPARALLEL_WORK_REQUESTED_USE_REDIS_STREAMS=true\nPARALLEL_WORK_REQUESTED_REDIS_URI=redis://127.0.0.1:46379\nPARALLEL_WORK_REDIS_START_PID=""\nVIVENTIUM_PARALLEL_REDIS_HANDOFF_SECONDS={subprocess.list2cmdline([handoff_seconds])}\nVIVENTIUM_PARALLEL_REDIS_HANDOFF_POLL_SECONDS=0.02\nVIVENTIUM_PARALLEL_REDIS_HANDOFF_PROBE_TIMEOUT_SECONDS=0.01\nPROBE_COUNT=0\nREADY_AFTER={ready_after}\n{recovery}\nif restore_parallel_work_after_deferred_redis; then\n  printf 'RESTORED:%s:%s:%s:%s:%s\\n' \\\n    "$VIVENTIUM_PARALLEL_WORK_AVAILABLE" "$USE_REDIS" \\\n    "$USE_REDIS_STREAMS" "$REDIS_URI" "$PROBE_COUNT"\nelse\n  printf 'DEGRADED:%s:%s\\n' "$PARALLEL_WORK_REDIS_START_DEFERRED" "$PROBE_COUNT"\nfi\n'''
+    started_at = time.monotonic()
+    result = subprocess.run(
+        ["bash", "-c", harness],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=2,
+    )
+    return result, time.monotonic() - started_at
+
+
+def test_deferred_parallel_work_redis_waits_for_delayed_success_within_budget() -> None:
+    result, elapsed = run_deferred_redis_handoff(
+        ready_after=4, handoff_seconds="0.5"
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "RESTORED:true:true:true:redis://127.0.0.1:46379:4\n"
+    assert elapsed < 1
+
+
+def test_deferred_parallel_work_redis_handoff_timeout_stays_degraded_and_bounded() -> None:
+    result, elapsed = run_deferred_redis_handoff(
+        ready_after=999, handoff_seconds="0.12"
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.startswith("DEGRADED:true:")
+    assert 0.08 <= elapsed < 0.8
+
+
+def test_hanging_parallel_work_redis_probe_is_bounded_before_main(tmp_path: Path) -> None:
+    source = launcher_source()
+    docker_wrapper = shell_function(source, "docker", "docker_daemon_ready")
+    ready_now = shell_function(
+        source,
+        "parallel_work_redis_ready_now",
+        "ensure_parallel_work_redis_ready",
+    )
+    fake_docker = tmp_path / "docker"
+    probe_receipt = tmp_path / "probe-called"
+    fake_docker.write_text(
+        f"#!/usr/bin/env bash\nprintf called > '{probe_receipt}'\nexec sleep 5\n",
+        encoding="utf-8",
+    )
+    fake_docker.chmod(0o755)
+    harness = f'''\nset -u\n{docker_wrapper}\n{ready_now}\nis_truthy() {{ [[ \"$1\" == true ]]; }}\nPYTHON_BIN={subprocess.list2cmdline([os.environ.get("PYTHON", "python3")])}\nDOCKER_BIN={subprocess.list2cmdline([str(fake_docker)])}\nVIVENTIUM_PARALLEL_WORK_AVAILABLE=true\nUSE_REDIS=true\nUSE_REDIS_STREAMS=true\nREDIS_URI=redis://127.0.0.1:46379\nPARALLEL_REDIS_CONTAINER_NAME=viventium-parallel-redis-isolated\nPARALLEL_REDIS_VOLUME_NAME=viventium-parallel-redis-isolated-data\nPARALLEL_REDIS_IMAGE=redis:7-alpine\nVIVENTIUM_RUNTIME_PROFILE=isolated\nVIVENTIUM_PARALLEL_REDIS_READY_NOW_TIMEOUT_SECONDS=1\nparallel_work_redis_ready_now || true\nprintf 'MAIN_CONTINUES\\n'\n'''
+
+    started_at = time.monotonic()
+    result = subprocess.run(
+        ["bash", "-c", harness],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=3,
+    )
+    elapsed = time.monotonic() - started_at
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "MAIN_CONTINUES\n"
+    assert probe_receipt.read_text() == "called"
+    assert elapsed < 2.5
 
 
 def test_parallel_work_redis_flags_and_container_are_not_shared_with_other_services() -> None:

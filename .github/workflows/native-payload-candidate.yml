@@ -55,11 +55,10 @@ jobs:
           policy_state = policy.get("publication_state")
           if lock_state != "merged" or policy_state != "merged":
               raise SystemExit("Native candidate pins are not merged release commits")
-          pinned = next(component["ref"] for component in lock["components"] if component["name"] == "LibreChat")
-          if policy["librechat"]["commit"] != pinned:
-              raise SystemExit("Native LibreChat policy and parent component pin disagree")
+          if "librechat" in policy:
+              raise SystemExit("Native source pins belong only in components.lock.json")
           PY
-      - name: Fetch the exact pinned LibreChat component
+      - name: Fetch the exact pinned LibreChat and GlassHive components
         run: |
           set -euo pipefail
           cat > "${RUNNER_TEMP}/native-selection.yaml" <<'YAML'
@@ -69,7 +68,7 @@ jobs:
             playground_variant: modern
           integrations:
             glasshive:
-              enabled: false
+              enabled: true
             google_workspace:
               enabled: false
             ms365:
@@ -170,10 +169,32 @@ jobs:
           test -s client/dist/index.html
           test -d packages/api/dist
           test -d node_modules
+      - name: Fetch the complete pinned provider body archives
+        run: |
+          python - "$EXPECTED_ARCH" <<'PY'
+          import hashlib
+          import json
+          import os
+          import sys
+          import urllib.request
+          from pathlib import Path
+
+          policy = json.loads(Path("release/native-payload/components.json").read_text())
+          for profile in ("codex-cli", "claude-code", "redis"):
+              record = policy["redis"]["source"] if profile == "redis" else policy["native_bodies"][profile]["architectures"][sys.argv[1]]
+              target = Path(os.environ["RUNNER_TEMP"], "downloads", profile + ".tar.gz")
+              with urllib.request.urlopen(record["url"], timeout=60) as source, target.open("xb") as output:
+                  while chunk := source.read(1024 * 1024):
+                      output.write(chunk)
+              with target.open("rb") as source:
+                  if hashlib.file_digest(source, "sha256").hexdigest() != record["sha256"]:
+                      raise SystemExit("Native provider archive differs from the exact publisher policy")
+          PY
       - name: Compile canonical Native defaults in the trusted build environment
         run: |
           set -euo pipefail
           python -m pip install --disable-pip-version-check --requirement scripts/viventium/requirements.txt
+          python -m pip install --disable-pip-version-check --requirement scripts/viventium/requirements-tests.txt
           mkdir -p "${RUNNER_TEMP}/compiled-defaults"
           python - <<'PY'
           import os
@@ -181,12 +202,8 @@ jobs:
           import yaml
 
           source = yaml.safe_load(Path("config.minimal.example.yaml").read_text(encoding="utf-8"))
-          source.setdefault("integrations", {}).setdefault("sequential_thinking", {})["enabled"] = False
-          source.setdefault("integrations", {}).setdefault("scheduling_cortex", {})["enabled"] = False
-          native_glasshive = source.setdefault("integrations", {}).setdefault("glasshive", {})
-          native_glasshive["enabled"] = False
-          native_glasshive.setdefault("provider", {})["enabled"] = False
-          native_glasshive.setdefault("host_worker", {})["enabled"] = False
+          source.setdefault("integrations", {}).setdefault("sequential_thinking", {})["enabled"] = True
+          source.setdefault("integrations", {}).setdefault("scheduling_cortex", {})["enabled"] = True
           rendered = yaml.safe_dump(source, sort_keys=False)
           Path(os.environ["RUNNER_TEMP"], "native-config.yaml").write_text(rendered, encoding="utf-8")
           Path(os.environ["RUNNER_TEMP"], "compiled-defaults", "config.yaml").write_text(
@@ -217,14 +234,18 @@ jobs:
           module.load_native_runtime_env(compiled / "native-runtime.env")
           librechat = yaml.safe_load((compiled / "librechat.yaml").read_text(encoding="utf-8"))
           servers = librechat.get("mcpServers") or {}
-          assert "sequential-thinking" not in servers
-          assert "scheduling-cortex" not in servers
+          assert set(servers) == {
+              "sequential-thinking", "scheduling-cortex", "glasshive-workers-projects"
+          }
           agents = yaml.safe_load(
               (compiled / "viventium-agents.yaml").read_text(encoding="utf-8")
           )
-          agent_records = [agents["mainAgent"], *(agents.get("backgroundAgents") or [])]
+          agent_records = [
+              agents["mainAgent"], *(agents.get("backgroundAgents") or []),
+              *(agents.get("handoffAgents") or [])
+          ]
           assert all(
-              "_mcp_" not in tool
+              "_mcp_" not in tool or tool.rsplit("_mcp_", 1)[1] in servers
               for agent in agent_records
               for tool in (agent.get("tools") or [])
           )
@@ -232,7 +253,6 @@ jobs:
               "web_search" not in (agent.get("tools") or [])
               for agent in agent_records
           )
-          assert not (agents.get("handoffAgents") or [])
           PY
       - name: Build architecture-specific helper and signed-bootstrap candidate bundles
         run: |
@@ -271,6 +291,11 @@ jobs:
           python scripts/viventium/assemble_native_payload.py \
             --repo-root "$GITHUB_WORKSPACE" \
             --librechat-root "$GITHUB_WORKSPACE/viventium_v0_4/LibreChat" \
+            --glasshive-root "$GITHUB_WORKSPACE/viventium_v0_4/GlassHive" \
+            --uv "$(command -v uv)" \
+            --codex-archive "${RUNNER_TEMP}/downloads/codex-cli.tar.gz" \
+            --claude-code-archive "${RUNNER_TEMP}/downloads/claude-code.tar.gz" \
+            --redis-archive "${RUNNER_TEMP}/downloads/redis.tar.gz" \
             --node-root "${RUNNER_TEMP}/components/node" \
             --python-root "${RUNNER_TEMP}/components/python" \
             --mongodb-root "${RUNNER_TEMP}/components/mongodb" \
@@ -306,7 +331,7 @@ jobs:
           env PYTHONDONTWRITEBYTECODE=1 \
             "$candidate_root/bootstrap/ViventiumBootstrap.app/Contents/MacOS/ViventiumBootstrap" \
             --self-check --candidate
-          /usr/bin/codesign --force --sign - "$candidate_root/payload/apps/Viventium.app"
+          /usr/bin/codesign --force --sign - --entitlements apps/macos/ViventiumHelper/ViventiumHelper.entitlements "$candidate_root/payload/apps/Viventium.app"
           /usr/bin/codesign --force --sign - "$candidate_root/bootstrap/ViventiumBootstrap.app"
           /usr/bin/codesign --verify --strict --verbose=2 "$candidate_root/payload/apps/Viventium.app"
           /usr/bin/codesign --verify --strict --verbose=2 "$candidate_root/bootstrap/ViventiumBootstrap.app"

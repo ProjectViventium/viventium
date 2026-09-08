@@ -281,11 +281,8 @@ integrations:
       default_access: full
       allow_full_access: true
     orchestration:
-      # Expose Parallel work only after its isolated-runtime acceptance gates pass.
-      # This remains a request: GlassHive must also report isolation-ready with no
-      # active legacy host mission.
-      available: false
-      default_mode: focused
+      available: true
+      default_mode: parallel
       conversation_slots_per_cli: 4
       mission_slots_per_cli: 3
       account_active_limit: 4

@@ -230,7 +230,52 @@ CANONICAL_ATTACHED_OWNER_ARGV = [
         "{command}",
         "--restart",
     ],
+    [
+        "{ownerExecutablePath}",
+        "--app-support-dir",
+        "{appSupportDir}",
+        "--config-file",
+        "{configFile}",
+        "--runtime-dir",
+        "{runtimeDir}",
+        "{command}",
+    ],
 ]
+CANONICAL_ATTACHED_FLAG_OPTIONS = [
+    "--start",
+    "--restart",
+    "--skip-livekit",
+    "--skip-librechat",
+    "--skip-playground",
+    "--modern-playground",
+    "--classic-playground",
+    "--skip-voice-gateway",
+    "--skip-google-mcp",
+    "--skip-ms365-mcp",
+    "--skip-scheduling-mcp",
+    "--skip-glasshive",
+    "--skip-rag-api",
+    "--skip-skyvern",
+    "--skip-code-interpreter",
+    "--skip-firecrawl",
+    "--skip-prompt-workbench",
+    "--skip-telegram",
+    "--skip-v1-agent",
+    "--skip-docker",
+    "--skip-health-checks",
+    "--skip-v1-sync",
+    "--skip-voice-deps",
+    "--skip-mcp-verify",
+    "--no-bootstrap",
+    "--private-overlay",
+    "--fast",
+    "--profile=isolated",
+    "--profile=compat",
+]
+CANONICAL_ATTACHED_ENUM_OPTIONS = {
+    "--profile": ["isolated", "compat"],
+    "--runtime-profile": ["isolated", "compat"],
+}
 CANONICAL_PROCESS_WRAPPERS = [
     "",
     "/bin/bash ",
@@ -326,7 +371,7 @@ class GateEvaluation:
     release_ready: bool
     exposure_allowed: bool
     local_qa_override: bool
-    source_defaults_dark: bool
+    source_defaults_valid: bool
     gates: tuple[GateRecord, ...]
     open_gates: tuple[GateRecord, ...]
     readiness_checks: tuple[ReadinessCheck, ...]
@@ -354,7 +399,7 @@ class GateEvaluation:
             "release_ready": self.release_ready,
             "exposure_allowed": self.exposure_allowed,
             "local_qa_override": self.local_qa_override,
-            "source_defaults_dark": self.source_defaults_dark,
+            "source_defaults_valid": self.source_defaults_valid,
             "gate_count": len(self.gates),
             "open_gate_count": len(self.open_gates),
             "gates": [public_gate(gate) for gate in self.gates],
@@ -570,22 +615,22 @@ def _source_default_records(root: Path) -> tuple[bool, list[GateRecord]]:
     available = _yaml_scalar(text, base + ("available", "default"))
     mode = _yaml_scalar(text, base + ("default_mode", "default"))
     failures: list[GateRecord] = []
-    if available != "false":
+    if available not in {"false", "true"}:
         failures.append(
             GateRecord(
                 "SOURCE-DEFAULT-AVAILABLE",
                 "FAIL",
                 "config.schema.yaml",
-                f"expected false, found {available or 'missing'}",
+                f"expected a boolean, found {available or 'missing'}",
             )
         )
-    if mode != "focused":
+    if mode not in {"focused", "parallel"}:
         failures.append(
             GateRecord(
                 "SOURCE-DEFAULT-MODE",
                 "FAIL",
                 "config.schema.yaml",
-                f"expected focused, found {mode or 'missing'}",
+                f"expected focused or parallel, found {mode or 'missing'}",
             )
         )
     return not failures, failures
@@ -1462,6 +1507,8 @@ def _runtime_owner_command_contract(executable: Path) -> dict[str, object] | Non
         or len(set(wrappers)) != len(wrappers)
         or detached.get("argvTemplate") != CANONICAL_DETACHED_OWNER_ARGV
         or attached.get("argvTemplates") != CANONICAL_ATTACHED_OWNER_ARGV
+        or attached.get("flagOptions") != CANONICAL_ATTACHED_FLAG_OPTIONS
+        or attached.get("enumOptions") != CANONICAL_ATTACHED_ENUM_OPTIONS
         or wrappers != CANONICAL_PROCESS_WRAPPERS
     ):
         return None
@@ -1520,6 +1567,7 @@ def _owner_process_image_executes(
     runtime_dir: Path,
     components_lock_file: Path,
     launch_mode: str,
+    runtime_profile: str | None = None,
 ) -> bool:
     live = _live_process_image_and_argv(pid)
     contract = _runtime_owner_command_contract(executable)
@@ -1576,7 +1624,13 @@ def _owner_process_image_executes(
                 return False
 
     def matches(actual: tuple[str, ...], expected: tuple[str, ...]) -> bool:
-        return actual == expected
+        return actual == expected or (
+            launch_mode == "attached"
+            and actual[:len(expected)] == expected
+            and _attached_owner_options_match(
+                actual[len(expected):], contract["attached"], runtime_profile,
+            )
+        )
 
     try:
         live_image = live_image.resolve(strict=True)
@@ -1602,6 +1656,28 @@ def _owner_process_image_executes(
     )
 
 
+def _attached_owner_options_match(
+    tokens: tuple[str, ...], attached: dict[str, object], runtime_profile: str | None,
+) -> bool:
+    """Accept only typed launcher flags; never paths, shell syntax, or arbitrary tails."""
+    flags = attached["flagOptions"]
+    enums = attached["enumOptions"]
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        if token in flags:
+            if token.startswith("--profile=") and token.partition("=")[2] != runtime_profile:
+                return False
+            index += 1
+        elif token in enums and index + 1 < len(tokens) and tokens[index + 1] in enums[token]:
+            if tokens[index + 1] != runtime_profile:
+                return False
+            index += 2
+        else:
+            return False
+    return True
+
+
 def _owner_command_executes(
     command: str,
     executable: Path,
@@ -1613,6 +1689,7 @@ def _owner_command_executes(
     runtime_dir: Path,
     components_lock_file: Path,
     launch_mode: str,
+    runtime_profile: str | None = None,
 ) -> bool:
     """Match only a canonical attached or detached Viventium owner command."""
 
@@ -1654,7 +1731,14 @@ def _owner_command_executes(
     wrappers = contract["processWrappers"]
     assert isinstance(wrappers, list)
     return any(
-        normalized == f"{wrapper}{base}"
+        normalized == f"{wrapper}{base}" or (
+            launch_mode == "attached"
+            and normalized.startswith(f"{wrapper}{base} ")
+            and _attached_owner_options_match(
+                tuple(normalized[len(f"{wrapper}{base} "):].split()),
+                contract["attached"], runtime_profile,
+            )
+        )
         for wrapper in wrappers
         for base in bases
     )
@@ -1801,6 +1885,7 @@ def _runtime_owner_state_proves_active(
             runtime_dir=runtime_dir,
             components_lock_file=components_lock_file,
             launch_mode=owner_launch_mode,
+            runtime_profile=runtime_profile,
         )
         and _owner_process_image_executes(
             owner_pid,
@@ -1812,6 +1897,7 @@ def _runtime_owner_state_proves_active(
             runtime_dir=runtime_dir,
             components_lock_file=components_lock_file,
             launch_mode=owner_launch_mode,
+            runtime_profile=runtime_profile,
         )
     )
 
@@ -2067,22 +2153,18 @@ def _load_component_lock(root: Path) -> tuple[list[dict[str, object]], str]:
 
 
 def _helper_source_hash(helper_root: Path) -> str:
-    digest = hashlib.sha256()
-    for relative in (
-        "Package.swift",
-        "Sources/ViventiumHelper/ViventiumHelperApp.swift",
-        "Sources/ViventiumHelper/Resources/Info.plist",
-    ):
-        path = helper_root / relative
-        try:
-            content = path.read_bytes()
-        except OSError:
-            return ""
-        digest.update(relative.encode("utf-8"))
-        digest.update(b"\0")
-        digest.update(content)
-        digest.update(b"\0")
-    return digest.hexdigest()
+    # Load the sibling verifier so standalone release-gate callers share its contract.
+    spec = importlib.util.spec_from_file_location(
+        "viventium_helper_artifact_verify", Path(__file__).with_name("helper_artifact_verify.py")
+    )
+    if spec is None or spec.loader is None:
+        return ""
+    verifier = importlib.util.module_from_spec(spec)
+    try:
+        spec.loader.exec_module(verifier)
+        return verifier.helper_source_hash(helper_root)
+    except (OSError, RuntimeError):
+        return ""
 
 
 def _declared_hash(path: Path) -> str:
@@ -4412,7 +4494,7 @@ def evaluate_release_gate(
     if mode != "local-qa" and allow_local_qa_override:
         raise ValueError("local QA override is valid only in local-qa mode")
 
-    source_defaults_dark, source_failures = _source_default_records(
+    source_defaults_valid, source_failures = _source_default_records(
         Path(root).resolve()
     )
     catalog_gates, qa_receipt_summary = _bind_catalog_gates_to_qa_receipts(
@@ -4449,7 +4531,7 @@ def evaluate_release_gate(
     integrity_ready = not blocking_checks and not blocking_artifact_checks
     candidate_ready = (
         not open_gates
-        and source_defaults_dark
+        and source_defaults_valid
         and integrity_ready
         and qa_receipt_summary["status"] == "verified"
         and bool(owner_binding)
@@ -4462,7 +4544,7 @@ def evaluate_release_gate(
     release_ready = candidate_ready and mode != "local-qa"
 
     if mode == "local-qa":
-        exposure_allowed = source_defaults_dark and local_qa_shape_valid
+        exposure_allowed = source_defaults_valid and local_qa_shape_valid
         label = "PRE-GATE / NOT READY"
     else:
         exposure_allowed = release_ready
@@ -4474,7 +4556,7 @@ def evaluate_release_gate(
         release_ready=release_ready,
         exposure_allowed=exposure_allowed,
         local_qa_override=mode == "local-qa",
-        source_defaults_dark=source_defaults_dark,
+        source_defaults_valid=source_defaults_valid,
         gates=gates,
         open_gates=open_gates,
         readiness_checks=readiness_checks,
@@ -4653,7 +4735,7 @@ def _live_qa_receipt_contract_matches(
         owner = json.loads(owner_state.read_text(encoding="utf-8"))
         installed_root = Path(str(owner["repoRoot"])).expanduser().resolve(strict=True)
         owner_runtime = Path(str(owner["runtimeDir"])).expanduser().resolve(strict=True)
-        source_defaults_dark, source_failures = _source_default_records(installed_root)
+        source_defaults_valid, source_failures = _source_default_records(installed_root)
         trusted_records = load_required_gates(installed_root) + tuple(source_failures)
         live_readiness = json.loads(
             (runtime_dir / "parallel-work-readiness-facts.json").read_text(
@@ -4662,8 +4744,8 @@ def _live_qa_receipt_contract_matches(
         )
     except (OSError, RuntimeError, KeyError, TypeError, ValueError, json.JSONDecodeError):
         return False
-    if owner_runtime != runtime_dir or source_defaults_dark is not payload.get(
-        "source_defaults_dark"
+    if owner_runtime != runtime_dir or source_defaults_valid is not payload.get(
+        "source_defaults_valid"
     ):
         return False
 
@@ -4896,10 +4978,10 @@ def _live_runtime_claim_inputs_match(
     if measured_identity != payload.get("artifact_identity"):
         return False
     try:
-        source_defaults_dark, _source_failures = _source_default_records(installed_root)
+        source_defaults_valid, _source_failures = _source_default_records(installed_root)
     except (OSError, RuntimeError, ValueError):
         return False
-    return source_defaults_dark is payload.get("source_defaults_dark")
+    return source_defaults_valid is payload.get("source_defaults_valid")
 
 
 def _stable_readiness_claim_inputs(value: object) -> dict[str, object]:
@@ -4999,7 +5081,7 @@ def validate_serialized_release_snapshot(
         "release_ready",
         "exposure_allowed",
         "local_qa_override",
-        "source_defaults_dark",
+        "source_defaults_valid",
     )
     if any(not isinstance(payload.get(key), bool) for key in booleans):
         return False
@@ -5121,7 +5203,7 @@ def validate_serialized_release_snapshot(
         return False
 
     all_release_checks_pass = (
-        payload["source_defaults_dark"] is True
+        payload["source_defaults_valid"] is True
         and not expected_open
         and all(check["status"] == PASS for check in readiness.values())
         and all(check["status"] == PASS for check in artifacts.values())
@@ -5130,7 +5212,7 @@ def validate_serialized_release_snapshot(
     )
     expected_release_ready = all_release_checks_pass and not local_qa
     expected_exposure = (
-        payload["source_defaults_dark"] is True
+        payload["source_defaults_valid"] is True
         if local_qa
         else expected_release_ready
     )

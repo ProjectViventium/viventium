@@ -925,6 +925,47 @@ ensure_python_requirements_file() {
   fi
 }
 
+viventium_glasshive_health_payload_valid() {
+  local python_bin="${PYTHON_BIN:-${VIVENTIUM_PYTHON_BIN:-}}"
+  if [[ -z "$python_bin" ]]; then
+    python_bin="$(resolve_repo_python 2>/dev/null || command -v python3 2>/dev/null || true)"
+  fi
+  [[ -n "$python_bin" ]] || return 1
+
+  "$python_bin" -c '
+import json
+import sys
+
+try:
+    payload = json.load(sys.stdin)
+except Exception:
+    raise SystemExit(1)
+
+if not isinstance(payload, dict) or payload.get("status") != "ok":
+    raise SystemExit(1)
+for key in ("version", "runtime_backend", "default_worker_profile"):
+    value = payload.get(key)
+    if not isinstance(value, str) or not value.strip():
+        raise SystemExit(1)
+allowed = payload.get("allowed_worker_profiles")
+if not isinstance(allowed, list) or any(not isinstance(item, str) for item in allowed):
+    raise SystemExit(1)
+if allowed and payload["default_worker_profile"] not in allowed:
+    raise SystemExit(1)
+' >/dev/null 2>&1
+}
+
+viventium_glasshive_runtime_healthy() {
+  local base_url="${1:-}"
+  local timeout_seconds="${2:-3}"
+  local payload=""
+  [[ -n "$base_url" ]] || return 1
+  base_url="${base_url%/}"
+
+  payload="$(curl -fsS --max-time "$timeout_seconds" "${base_url}/health" 2>/dev/null)" || return 1
+  printf '%s' "$payload" | viventium_glasshive_health_payload_valid
+}
+
 viventium_port_listener_active() {
   local port="$1"
   [[ -n "$port" ]] || return 1

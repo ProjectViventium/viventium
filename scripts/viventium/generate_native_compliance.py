@@ -9,6 +9,7 @@ import json
 import os
 import re
 import tempfile
+from email.parser import BytesParser
 from pathlib import Path, PurePosixPath
 
 from stage_native_component import PYTHON_STANDALONE_LICENSE_FILES
@@ -168,14 +169,14 @@ def browser_inventory(payload: Path) -> list[dict[str, object]]:
             not isinstance(source, dict)
             or not isinstance(source.get("id"), str)
             or not re.fullmatch(r"[a-z0-9][a-z0-9.-]*", str(source["id"]))
-            or source.get("provenance") != "exact-package-revision"
+            or source.get("provenance") not in {"exact-package-revision", "exact-upstream-revision"}
             or not isinstance(source.get("repository"), str)
             or not str(source["repository"]).startswith("https://github.com/")
             or not isinstance(source.get("revision"), str)
             or not re.fullmatch(r"[0-9a-f]{40}", str(source["revision"]))
             or not isinstance(source.get("sourcePath"), str)
             or not source.get("sourcePath")
-            or source.get("contentRole") not in {"license", "license-text-in-readme", "notice"}
+            or source.get("contentRole") not in {"license", "license-declaration", "license-text-in-readme", "notice"}
             or not isinstance(source.get("sha256"), str)
             or not re.fullmatch(r"[0-9a-f]{64}", str(source["sha256"]))
             or source["id"] in sources
@@ -197,6 +198,7 @@ def browser_inventory(payload: Path) -> list[dict[str, object]]:
             or not isinstance(record.get("license"), str)
             or record.get("legalSourceId") not in sources
             or sources[str(record["legalSourceId"])]["contentRole"] == "notice"
+            or sources[str(record["legalSourceId"])]["provenance"] != "exact-package-revision"
         ):
             raise ComplianceError("browser curated package override is stale or invalid")
         package_overrides[lock_path] = record
@@ -226,9 +228,7 @@ def browser_inventory(payload: Path) -> list[dict[str, object]]:
     referenced_files: set[str] = {"module-closure.json", "manifest.json"}
     for lock_path, package_record in zip(normalized_paths, manifest_packages, strict=True):
         lock_entry = lock_packages.get(lock_path)
-        package_root = librechat.joinpath(*PurePosixPath(lock_path).parts)
         metadata = exact_file_record(compliance, package_record.get("packageMetadata"), "package metadata")
-        installed_metadata = package_json(package_root / "package.json")
         copied_metadata = package_json(metadata)
         if (
             not locked_identity_matches(
@@ -237,9 +237,7 @@ def browser_inventory(payload: Path) -> list[dict[str, object]]:
                 lock_entry,
                 expected_name=str(copied_metadata.get("name")),
             )
-            or copied_metadata.get("name") != installed_metadata.get("name")
-            or copied_metadata.get("version") != installed_metadata.get("version")
-            or sha256_file(metadata) != sha256_file(package_root / "package.json")
+            or copied_metadata.get("version") != package_record.get("version")
             or not isinstance(package_record.get("license"), str)
             or not isinstance(package_record.get("licenseSource"), str)
             or not isinstance(package_record.get("legalFiles"), list)
@@ -337,6 +335,13 @@ def browser_inventory(payload: Path) -> list[dict[str, object]]:
     vendored = manifest.get("vendoredComponents")
     if not isinstance(vendored, list):
         raise ComplianceError("browser vendored-component inventory is invalid")
+    adapters = overrides.get("vendoredAdapters", [])
+    if not isinstance(adapters, list) or any(not isinstance(item, dict) for item in adapters):
+        raise ComplianceError("browser curated adapters are invalid")
+    adapter_ids = [item.get("id") for item in adapters]
+    if any(not isinstance(value, str) for value in adapter_ids) or len(set(adapter_ids)) != len(adapter_ids):
+        raise ComplianceError("browser curated adapter identities are invalid")
+    seen_adapters: set[str] = set()
     for component in vendored:
         if (
             not isinstance(component, dict)
@@ -359,13 +364,67 @@ def browser_inventory(payload: Path) -> list[dict[str, object]]:
         ]
         if len(matching_locks) != 1:
             raise ComplianceError("browser vendored component does not match one locked upstream")
+        if "packageMetadata" in component:
+            record = component["packageMetadata"]
+            if not isinstance(record, dict) or record.get("path") != f"vendored/{component.get('id')}/package.json":
+                raise ComplianceError("browser vendored package metadata path is invalid")
+            package_path = exact_file_record(compliance, record, "vendored package metadata")
+            package = package_json(package_path)
+            if package.get("name") != component["upstreamPackage"] or package.get("version") != component["upstreamVersion"]:
+                raise ComplianceError("browser vendored package metadata identity differs from locked upstream")
+            relative = package_path.relative_to(compliance).as_posix()
+            if relative in referenced_files:
+                raise ComplianceError("browser compliance duplicates vendored package metadata")
+            referenced_files.add(relative)
+        adapter = next((item for item in adapters if item["id"] == component.get("id")), None)
+        if adapter is not None:
+            lock_path = browser_lock_path(adapter.get("lockPath"))
+            locked = lock_packages.get(lock_path, {})
+            source_ids = adapter.get("legalSourceIds")
+            expected_directory = f"vendored/{adapter['id']}"
+            if (
+                any(component.get(key) != adapter.get(key) for key in
+                    ("name", "upstreamPackage", "upstreamVersion", "license", "modified"))
+                or component.get("upstreamResolved") != adapter.get("resolved")
+                or component["upstreamIntegrity"] != adapter.get("integrity")
+                or locked.get("version") != adapter.get("upstreamVersion")
+                or locked.get("resolved") != adapter.get("resolved")
+                or locked.get("integrity") != adapter.get("integrity")
+                or component.get("sourceIdentity") != {"path": adapter.get("sourceFile"), "sha256": adapter.get("sourceSha256")}
+                or component.get("notice") != {"path": f"{expected_directory}/NOTICE.md", "sha256": adapter.get("noticeSha256")}
+                or not isinstance(source_ids, list) or not source_ids
+                or len(set(source_ids)) != len(source_ids)
+                or any(source_id not in sources for source_id in source_ids)
+                or len(component["legalFiles"]) != len(source_ids)
+            ):
+                raise ComplianceError("browser curated adapter differs from its exact source")
+            actual_ids = []
+            for record in component["legalFiles"]:
+                provenance = record.get("provenance", {})
+                source = sources.get(provenance.get("sourceId"), {})
+                expected_provenance = {"sourceId": source.get("id"), **{
+                    key: source.get(key) for key in ("repository", "revision", "sourcePath", "contentRole", "provenance")},
+                    "sourceSha256": source.get("sha256")}
+                if (provenance != expected_provenance or record.get("sha256") != source.get("sha256")
+                    or PurePosixPath(record.get("path", "")).parent.as_posix() != expected_directory):
+                    raise ComplianceError("browser curated adapter legal provenance is mismatched")
+                actual_ids.append(source.get("id"))
+            if set(actual_ids) != set(source_ids):
+                raise ComplianceError("browser curated adapter legal source set is mismatched")
+            referenced_sources.update(source_ids)
+            seen_adapters.add(adapter["id"])
         records = [component.get("notice"), *component["legalFiles"]]
+        if "runtimePrivacyNotice" in component:
+            if component["runtimePrivacyNotice"].get("path") != f"vendored/{component.get('id')}/RUNTIME_PRIVACY_NOTICE.md":
+                raise ComplianceError("browser runtime privacy notice path is invalid")
+            records.append(component["runtimePrivacyNotice"])
         notices = [exact_file_record(compliance, record, "vendored legal file") for record in records]
         for notice in notices:
             relative = notice.relative_to(compliance).as_posix()
             if (
                 PurePosixPath(relative).parts[0] != "vendored"
-                or not NOTICE_NAME_PATTERN.fullmatch(PurePosixPath(relative).name)
+                or (not NOTICE_NAME_PATTERN.fullmatch(PurePosixPath(relative).name)
+                    and relative != component.get("runtimePrivacyNotice", {}).get("path"))
                 or relative in referenced_files
             ):
                 raise ComplianceError("browser compliance duplicates a vendored legal file")
@@ -381,6 +440,8 @@ def browser_inventory(payload: Path) -> list[dict[str, object]]:
             "lock_path": f"vendored:{component['upstreamPackage']}",
         })
 
+    if seen_adapters != set(adapter_ids):
+        raise ComplianceError("browser curated adapter inventory contains stale entries")
     if referenced_sources != set(sources):
         raise ComplianceError("browser curated legal-source inventory contains stale entries")
     shipped_files = {
@@ -564,6 +625,83 @@ def component_version(components: object, key: str) -> str:
     return value.strip()
 
 
+def glasshive_inventory(payload: Path, components: dict[str, object]) -> list[dict[str, object]]:
+    root = payload / "runtime" / "glasshive"
+    if "glasshive" not in components and not root.exists():
+        return []
+    packages: list[dict[str, object]] = [{
+        "name": "GlassHive", "version": component_version(components, "glasshive"),
+        "license": "LicenseRef-FSL-1.1-ALv2", "root": root,
+        "path": root.relative_to(payload).as_posix(),
+        "notices": [required_notice(root, "LICENSE", "GlassHive")],
+        "inventory_scope": "physical-runtime",
+    }]
+    return packages + python_dependency_inventory(payload, root)
+
+
+def python_dependency_inventory(payload: Path, root: Path) -> list[dict[str, object]]:
+    packages: list[dict[str, object]] = []
+    dependencies = root / "site-packages"
+    metadata_roots = sorted(dependencies.glob("*.dist-info"))
+    if not metadata_roots:
+        raise ComplianceError("Python production dependency metadata is unavailable")
+    for metadata_root in metadata_roots:
+        metadata_path = safe_owned_file(metadata_root, "METADATA", "Python dependency metadata")
+        metadata = BytesParser().parsebytes(metadata_path.read_bytes())
+        name, version = metadata.get("Name"), metadata.get("Version")
+        if not name or not version:
+            raise ComplianceError("Python dependency identity is unavailable")
+        notices = notice_files(metadata_root) + notice_files(metadata_root / "licenses")
+        for relative in metadata.get_all("License-File", []):
+            # Core metadata 2.4 puts license files below .dist-info/licenses;
+            # older wheels put them directly below .dist-info.
+            nested = metadata_root / "licenses" / relative
+            candidate = f"licenses/{relative}" if nested.is_file() else relative
+            notices.append(safe_owned_file(metadata_root, candidate, "Python dependency license"))
+        license_value = str(metadata.get("License-Expression") or metadata.get("License") or "NOASSERTION")
+        if "\n" in license_value:
+            license_value = "NOASSERTION"
+        packages.append({
+            "name": name, "version": version, "license": license_value,
+            "root": metadata_root, "path": metadata_root.relative_to(payload).as_posix(),
+            "notices": sorted(set(notices)), "inventory_scope": "physical-runtime",
+        })
+    return packages
+
+
+def native_body_inventory(payload: Path, components: dict[str, object]) -> list[dict[str, object]]:
+    root = payload / "runtime" / "native-bodies"
+    glasshive = components.get("glasshive")
+    bodies = glasshive.get("native_bodies") if isinstance(glasshive, dict) else None
+    if bodies is None and not root.exists():
+        return []
+    if not isinstance(bodies, dict) or set(bodies) != {"codex-cli", "claude-code"}:
+        raise ComplianceError("Native body component inventory is incomplete")
+    if root.is_symlink() or not root.is_dir() or {path.name for path in root.iterdir()} != set(bodies):
+        raise ComplianceError("Native body physical inventory differs from component metadata")
+    packages = []
+    for profile, body in sorted(bodies.items()):
+        if not isinstance(body, dict) or not isinstance(body.get("license"), str):
+            raise ComplianceError("Native body component metadata is invalid")
+        body_root = root / profile
+        metadata = package_json(safe_owned_file(body_root, "package.json", "Native body metadata"))
+        if metadata.get("name") != body.get("package_name") or metadata.get("version") != body.get("package_version"):
+            raise ComplianceError("Native body package identity differs from component metadata")
+        notices = body.get("license_files")
+        if not isinstance(notices, list) or not notices:
+            raise ComplianceError("Native body license inventory is unavailable")
+        executable = safe_owned_file(body_root, body.get("executable"), "Native body executable")
+        if sha256_file(executable) != body.get("executable_sha256"):
+            raise ComplianceError("Native body executable differs from component metadata")
+        packages.append({
+            "name": metadata["name"], "version": metadata["version"], "license": body["license"],
+            "root": body_root, "path": body_root.relative_to(payload).as_posix(),
+            "notices": [safe_owned_file(body_root, path, "Native body notice") for path in notices],
+            "inventory_scope": "physical-runtime",
+        })
+    return packages
+
+
 def inventory(payload: Path) -> list[dict[str, object]]:
     librechat = payload / "runtime" / "librechat"
     packages: list[dict[str, object]] = []
@@ -638,6 +776,35 @@ def inventory(payload: Path) -> list[dict[str, object]]:
             "notices": notices,
             "inventory_scope": "physical-runtime",
         })
+    packages.extend(glasshive_inventory(payload, versions))
+    if "sequential-thinking" in versions:
+        for relative, root in locked_package_roots(payload / "runtime/sequential-thinking"):
+            package = package_json(root / "package.json")
+            packages.append({"name": package["name"], "version": package["version"],
+                             "license": declared_license(package.get("license")), "root": root,
+                             "path": f"runtime/sequential-thinking/{relative}", "notices": notice_files(root),
+                             "inventory_scope": "physical-runtime"})
+    if "redis" in versions:
+        redis_root = payload / "runtime/redis"
+        packages.append({"name": "Redis", "version": component_version(versions, "redis"),
+                         "license": "BSD-3-Clause AND MIT AND BSD-2-Clause AND BSL-1.0",
+                         "root": redis_root, "path": "runtime/redis", "inventory_scope": "physical-runtime",
+                         "notices": [required_notice(redis_root, relative, "Redis") for relative in (
+                             "licenses/COPYING", "licenses/deps/hiredis/COPYING", "licenses/deps/lua/COPYRIGHT",
+                             "licenses/deps/linenoise/linenoise.h", "licenses/deps/hdr_histogram/LICENSE.txt",
+                             "licenses/deps/hdr_histogram/COPYING.txt", "licenses/deps/fpconv/LICENSE.txt")]})
+    if "scheduling" in versions:
+        scheduler_root = payload / "runtime/scheduling"
+        packages.append({"name": "Scheduling Cortex", "version": component_version(versions, "scheduling"),
+                         "license": "MIT", "root": scheduler_root,
+                         "path": "runtime/scheduling", "inventory_scope": "physical-runtime",
+                         "notices": [required_notice(scheduler_root, "LICENSE", "Scheduling Cortex")]})
+        packages.append({"name": "Viventium Scheduling Support", "version": component_version(versions, "scheduling"),
+                         "license": "LicenseRef-FSL-1.1-ALv2", "root": scheduler_root,
+                         "path": "runtime/scheduling", "inventory_scope": "physical-runtime",
+                         "notices": [required_notice(scheduler_root, "LICENSE-VIVENTIUM", "Viventium Scheduling Support")]})
+        packages.extend(python_dependency_inventory(payload, scheduler_root))
+    packages.extend(native_body_inventory(payload, versions))
     packages.extend(browser_inventory(payload))
     return packages
 
@@ -689,9 +856,11 @@ def generate(args: argparse.Namespace) -> None:
     output = args.output_dir.resolve()
     if output != payload / "release-metadata":
         raise ComplianceError("compliance output must be the payload release-metadata directory")
-    if not args.mongodb_redistribution_approved.is_file():
-        raise ComplianceError("MongoDB redistribution approval is not recorded")
     metadata = json.loads((output / "build.json").read_text(encoding="utf-8"))
+    approval = args.mongodb_redistribution_approved
+    redistribution_approved = approval is not None and approval.is_file()
+    if not redistribution_approved and metadata.get("mode") != "local-qa":
+        raise ComplianceError("MongoDB redistribution approval is not recorded")
     packages = inventory(payload)
     created = __import__("datetime").datetime.fromtimestamp(
         int(metadata["source_date_epoch"]), tz=__import__("datetime").timezone.utc
@@ -725,6 +894,7 @@ def generate(args: argparse.Namespace) -> None:
     scan = {
         "schema_version": 1,
         "status": "pass" if not failures else "review_required",
+        "redistribution_approval": "recorded" if redistribution_approved else "not_recorded_local_qa",
         "notices_sha256": hashlib.sha256(notices_text.encode("utf-8")).hexdigest(),
         "packages": scan_packages,
     }
@@ -746,7 +916,7 @@ def parser() -> argparse.ArgumentParser:
     value = argparse.ArgumentParser(description=__doc__)
     value.add_argument("--payload-root", type=Path, required=True)
     value.add_argument("--output-dir", type=Path, required=True)
-    value.add_argument("--mongodb-redistribution-approved", type=Path, required=True)
+    value.add_argument("--mongodb-redistribution-approved", type=Path)
     return value
 
 

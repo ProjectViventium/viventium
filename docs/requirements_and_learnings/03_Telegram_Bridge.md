@@ -9,7 +9,8 @@ stream back to Telegram through the existing bridge.
 
 - Telegram users receive complete responses or a clear error if the agent or voice stack disconnects.
 - Connection loss mid-response must not leave users hanging on a partial holding message.
-- Retry should be user-initiated to avoid duplicate tool actions.
+- Transport recovery resumes the existing accepted work and saved reply automatically; it must not
+  rerun tool actions. Starting execution again remains a distinct, authorized Retry action.
 - Telegram bot-token setup must stay truthful and reject malformed tokens.
 - Telegram must differentiate voice-note input vs text input and forward that mode to LibreChat.
 - Telegram media transcription failures must surface as explicit media errors, not as transcript text,
@@ -49,6 +50,11 @@ stream back to Telegram through the existing bridge.
   results must still be claimed from the delivery ledger and sent automatically in the same
   Telegram chat after the original poll window ends or after a bot restart.
 - Telegram must deliver LibreChat message attachments back to the Telegram user.
+- Native conversation requests must carry the verified current upload ledger in their signed
+  bootstrap, including an attachment-only turn. GlassHive resolves the original bytes under the
+  authenticated owner's storage root and includes the workspace attachment paths in the current
+  accepted turn. Missing or foreign bytes remain an explicit unavailable source, never an empty
+  successful handoff or a path supplied by the user.
 - Detached/local launches must not leave Telegram pointed at a dead LibreChat localhost origin after
   frontend dev-server exits or launcher-side supervision gaps.
 - Detached/local launches must recover the LibreChat API when the real API child dies even if an
@@ -57,6 +63,11 @@ stream back to Telegram through the existing bridge.
   (`127.0.0.1`) to avoid localhost address-family ambiguity during restart windows. Status must
   treat Telegram as degraded when the bot process is alive but the configured LibreChat API origin
   cannot be reached.
+- A saved native FINAL remains recoverable under the existing bounded recovery deadline until the
+  exact Telegram logical-turn/revision delivery acknowledgement is committed. Provider completion,
+  SSE publication, and replay storage are not delivery acknowledgements. Ordinary completion TTL,
+  cleanup, and terminal bookkeeping must preserve an unacknowledged adapter-owned FINAL. An exact
+  committed acknowledgement permits normal expiry; explicit retirement still fences stale output.
 - Successful LibreChat stream jobs must remain available briefly after completion so Telegram retry
   or resume can recover the final event. A late reconnect after a completed response must not become
   a synthetic generic connection error just because the generation job was deleted immediately.
@@ -440,10 +451,45 @@ Prompt-layer ownership and the runtime-vs-prompt boundary are also recorded in
 Any file generated in LibreChat must be sent to the Telegram user as a Telegram photo/document,
 not silently dropped.
 
+When private host paths are redacted from a worker response, local Markdown citations keep their
+readable label as plain text. Redaction must not leave broken link syntax or expose a private path.
+A readable label is not a downloadable file; usable attachments still require the existing authorized
+file delivery contract. Public source links remain intact.
+
+Attachment delivery keeps each successful file and emits one concise notice for unavailable or
+unconfirmed files. A missing or expired download response means that source is unavailable; it
+does not prove why it disappeared. An interrupted Telegram send can leave delivery unconfirmed,
+so the bridge must not claim the file was absent or resend it automatically. Failure notices must
+not expose raw errors, private download addresses or credentials.
+
 Inbound Telegram message attachments must follow the same shared message-file contract as the web
 UI. If the active model/provider supports a file through LibreChat's native "Upload to Provider"
 path, the bridge must preserve the normal raw message attachment so downstream client code can send
-it provider-natively. If the file is parseable but not valid for provider-native upload on that
+it provider-natively. Providers that declare both native tools and workspace binding receive admitted
+files through the existing signed, owner-scoped workspace source bundle. The upload owner preserves
+the exact bytes; the model decides how to inspect them. This includes regular audio/video attachments
+and does not force a separate speech provider or replace the file with a transcript.
+The model chooses whether to use the declared native host capability `transcribe_audio`. Its
+catalog lists signed attachment IDs from the current input and the selected conversation branch.
+Historical IDs come from the existing parent-chain traversal over owner-scoped Message rows, then
+current owner-scoped File records; deleted, revoked, sibling-branch, and malformed references are
+excluded. Current input source identities remain unchanged. The same selected IDs reach native
+workspace delivery and tool grants, with current uploads retained before bounded history. Invocation
+rechecks File ownership and reads original bytes through the existing storage strategy. Main and delegated workers
+receive the same scoped capability. It calls the verified selected Telegram transcription runtime
+and configured engine, preserving the original attachment and returning typed empty, unavailable,
+auth, quota, timeout, and rejected-file outcomes. It does not download or choose another model,
+create a transcript store, or decide from the user’s wording whether transcription is needed.
+Transcription imports must not write Python bytecode into the sealed runtime component.
+Repeated calls must pass the same code-integrity check; keep generated caches outside verified code.
+Concurrent tool calls report capacity rather than loading more local models at once.
+
+The shared web/bridge source message includes its authorized attachment snapshot before native
+source capture. Later provider preparation must not add or replace that authored file list. Normal
+attachment persistence must pass the source fence; real file replacement and text edits must still
+reject admission through the existing digest and transaction checks.
+
+If the file is parseable but not valid for provider-native upload on that
 surface, the runtime must promote it into the context-extraction pipeline instead of storing it as
 an opaque upload the agent cannot read. If neither provider-native upload nor readable
 context-extraction can handle the file on that surface, Telegram must fail the turn with a clear
@@ -480,7 +526,10 @@ failures, size-limit failures, unsupported binaries, and document-parser/provide
 must send one clear Telegram error and stop the turn before caption-only submission. The LibreChat
 Telegram route returns a typed attachment-processing failure (`422` with
 `attachmentProcessingError`) so the Python bridge can show the actual reason instead of a generic
-server error.
+server error. A declared permanent MIME rejection returns `415`, `unsupported_file_type`, and
+`retryable:false`; a retained preparation records that failure and stops automatic retry. Unknown
+storage/transport failures remain recoverable. Config must be rendered and the API must load it before
+retrying an input rejected under an older MIME policy.
 
 `.pptx` uploads are handled by the shared built-in `document_parser`, which extracts slide text and
 speaker notes into message context for the active agent. The same parser also extracts embedded PPTX
@@ -563,6 +612,12 @@ contract; it does not own a Telegram-only coordinator.
   dispatch a duplicate. Its result is delivered exactly once as current-turn context or a truthful
   completion follow-up, never as stale prose.
 - The successful final send/edit is Telegram's presentation commit. Streaming previews are not.
+- A pending saved-memory receipt keeps both the original source message ID and Core's current
+  presentation sequence in its durable cursor. Receiver restart must preserve both, so an older
+  retained input can deliver under its authorized current presentation without changing source
+  identity. An uncertain Telegram send remains uncertain and is never replayed automatically.
+  `test_memory_receipt_restart_retains_identity_and_worker_completion` checks this restart contract;
+  the real Telegram delivery journey remains a separate acceptance gate.
 
 ## Parallel Work control surface
 

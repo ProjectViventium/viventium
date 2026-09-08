@@ -1,0 +1,15 @@
+schemaVersion: 1
+capability: periphery-insights
+requirementOwner: docs/requirements_and_learnings/53_Viventium_Periphery_Nightly_Insights.md
+statusPolicy: Run results belong in dated, candidate-bound reports.
+sourceInventories:
+  - qa/periphery-nightly-insights/cases.md
+journeys:
+  - id: useful-nightly-insight
+    requirements: [CORE-001, CORE-009]
+    userAction: Let one synthetic nightly routine evaluate current authorized evidence and inspect its next-day result.
+    surfaces: [Scheduler, Workbench, configured delivery channel]
+    expectedResult: One useful evidence-backed insight is delivered, or the run is durably silent; raw private inputs do not appear.
+    degradedAndRecovery: Missing data, auth, provider failure, and healthy no-insight remain distinct and recoverable.
+    persistenceAndCleanup: Restart preserves occurrence truth; synthetic source and output state are removed exactly after evidence capture.
+    evidence: [prompt lineage, occurrence and callback state, visible output or silence, source scope, cleanup proof]

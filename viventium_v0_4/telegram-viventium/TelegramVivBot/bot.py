@@ -55,6 +55,7 @@ from config import (
 
 # REMOVED: i18n - Using hardcoded English strings for simplicity
 from utils.scripts import GetMesageInfo, safe_get, is_emoji
+from utils.telegram_preparation import capture_telegram_preparation, restore_telegram_preparation
 from utils.tts import resolve_tts_selection, summarize_voice_markup, synthesize_speech
 from utils.livekit_bridge import LiveKitBridge
 from utils.env import coerce_bool
@@ -1416,10 +1417,15 @@ class _TelegramSourceOrderGuard:
         self.chat_id = chat_id
         self.thread_id = thread_id
         self.source_sequence = source_sequence
+        self.presentation_source_sequence = source_sequence
+        self.input_claim = None
+        self.input_claims = []
+        self.input_submitted = False
         self.live_refs: list[tuple[Any, Any]] = []
         self._live_ref_set: set[tuple[str, str]] = set()
         self.logical_turn_id = ""
         self.revision = None
+        self.effect_ref = ""
         self.source_order_scope = ""
         self.source_event_id = ""
         self.stale = False
@@ -1432,9 +1438,26 @@ class _TelegramSourceOrderGuard:
         self.logical_turn_id = str(logical_turn_id or "")
         self.revision = revision
 
+    def bind_input_presentation(self, binding) -> None:
+        if (not isinstance(binding, dict)
+                or binding.get("sourceEventId") != self.source_event_id
+                or binding.get("sourceOrderScope") != self.source_order_scope
+                or str(binding.get("sourceSequence")) != str(self.source_sequence)
+                or not self.input_claim
+                or binding.get("sourceMessageId") != self.input_claim.get("sourceMessageId")):
+            raise ValueError("Telegram input presentation scope mismatch")
+        sequence = binding.get("presentationSourceSequence")
+        if type(sequence) is not int or sequence < int(self.source_sequence):
+            raise ValueError("Invalid Telegram input presentation sequence")
+        self.presentation_source_sequence = sequence
+        self.stale = False
+
+    def bind_durable_effect(self, effect_ref) -> None:
+        self.effect_ref = str(effect_ref or "").strip()[:160]
+
     async def is_current(self) -> bool:
         if not _is_newest_telegram_source_message(
-            self.chat_id, self.thread_id, self.source_sequence, self.telegram_user_id
+            self.chat_id, self.thread_id, self.presentation_source_sequence, self.telegram_user_id
         ):
             return False
         if not hasattr(self.robot, "source_order_is_current"):
@@ -1445,7 +1468,7 @@ class _TelegramSourceOrderGuard:
                     telegram_user_id=self.telegram_user_id,
                     telegram_chat_id=self.chat_id,
                     telegram_message_thread_id=self.thread_id,
-                    source_sequence=self.source_sequence,
+                    source_sequence=self.presentation_source_sequence,
                 )
             )
         except TelegramLinkRequired:
@@ -1908,7 +1931,8 @@ async def _retry_pending_source_order_terminals(bot, robot, store=None, *, limit
 
 
 async def _observe_ingress_source_guard(
-    *, bot, robot, update_message, chat_id, thread_id, source_sequence
+    *, bot, robot, update_message, chat_id, thread_id, source_sequence, preparation=None,
+    input_recovery=None,
 ):
     telegram_user_id = getattr(getattr(update_message, "from_user", None), "id", "")
     _note_telegram_source_message(
@@ -1922,16 +1946,39 @@ async def _observe_ingress_source_guard(
         thread_id=thread_id,
         source_sequence=source_sequence,
     )
+    if robot is not None and hasattr(robot, "capture_conversation_state"):
+        preference_key = (f"{chat_id}:{thread_id}:{telegram_user_id}" if thread_id
+                          else f"{chat_id}:{telegram_user_id}")
+        guard.conversation_state = robot.capture_conversation_state(preference_key)
     if robot is None or not hasattr(robot, "observe_source_order"):
         logger.error("Core source-order authority is unavailable at Telegram ingress")
         return None
+    if input_recovery:
+        guard.conversation_state = {
+            "conversation_id": input_recovery["conversationId"],
+            "generation": input_recovery["conversationGeneration"],
+        }
+        guard.input_claim = input_recovery
+        guard.source_order_scope = input_recovery["sourceOrderScope"]
+        guard.source_event_id = input_recovery["sourceEventId"]
+        return guard
     try:
-        observation = await robot.observe_source_order(
+        observation_args = dict(
             telegram_user_id=telegram_user_id,
             telegram_chat_id=chat_id,
             telegram_message_thread_id=thread_id,
             source_sequence=source_sequence,
         )
+        if preparation is not None:
+            state = guard.conversation_state
+            observation_args["input"] = {
+                "conversationId": state["conversation_id"] or "new",
+                "conversationGeneration": state["generation"],
+                "text": str(getattr(update_message, "text", None) or getattr(update_message, "caption", None) or ""),
+                "preparation": preparation,
+                "preparationId": str(uuid.uuid4()),
+            }
+        observation = await robot.observe_source_order(**observation_args)
     except TelegramLinkRequired:
         return guard
     except Exception as exc:
@@ -1940,7 +1987,21 @@ async def _observe_ingress_source_guard(
             type(exc).__name__,
         )
         return None
-    if observation.get("stale"):
+    registered_input = observation.get("input")
+    if preparation is not None:
+        if not isinstance(registered_input, dict) or registered_input.get("claimed") is not True:
+            return None
+        if (registered_input.get("sourceEventId") != observation.get("source_event_id")
+                or not registered_input.get("sourceMessageId") or not registered_input.get("claimToken")):
+            logger.error("Core input registration omitted its exact source claim")
+            return None
+        guard.input_claim = {
+            **registered_input,
+            "telegramUserId": str(telegram_user_id), "telegramChatId": str(chat_id),
+            "telegramMessageThreadId": str(thread_id or ""), "sourceSequence": int(source_sequence),
+            "sourceOrderScope": observation.get("source_order_scope"),
+        }
+    if observation.get("stale") and not guard.input_claim:
         guard.stale = True
         return None
     source_order_scope = str(observation.get("source_order_scope") or "")
@@ -1955,7 +2016,7 @@ async def _observe_ingress_source_guard(
     return guard
 
 
-async def _observe_telegram_update_ingress(update, context):
+async def _observe_telegram_update_ingress(update, context, *, preparation=None, input_recovery=None):
     update_message = _telegram_update_message(update)
     chat_id = (
         getattr(update_message, "chat_id", "")
@@ -1983,7 +2044,87 @@ async def _observe_telegram_update_ingress(update, context):
         chat_id=chat_id,
         thread_id=thread_id,
         source_sequence=source_sequence,
+        preparation=preparation,
+        input_recovery=input_recovery,
     )
+
+
+async def _run_with_telegram_input_claims(guards, operation):
+    owned = [guard for guard in guards if guard is not None and guard.input_claim]
+    if not owned:
+        return await operation()
+    owner_task = asyncio.current_task()
+    claim_lost = False
+
+    async def renew():
+        nonlocal claim_lost
+        while True:
+            await asyncio.sleep(30)
+            try:
+                for guard in owned:
+                    await guard.robot.input_status(guard.input_claim, "renew")
+            except Exception as exc:
+                logger.warning("Telegram input claim renewal failed: %s", type(exc).__name__)
+                claim_lost = True
+                owner_task.cancel()
+                return
+
+    renewal = asyncio.create_task(renew())
+    try:
+        return await operation()
+    except asyncio.CancelledError:
+        if not claim_lost:
+            raise
+        return None
+    finally:
+        renewal.cancel()
+        try:
+            await renewal
+        except asyncio.CancelledError:
+            pass
+
+
+async def _finish_telegram_preparation(guard, state, failure_code=""):
+    if guard and guard.input_claim and not guard.input_submitted:
+        for claim in guard.input_claims or [guard.input_claim]:
+            await guard.robot.input_status(claim, state, failure_code=failure_code)
+
+
+async def _resolve_prepared_voice_input(context, guard, **kwargs):
+    if kwargs.get("voice_error_text"):
+        await _finish_telegram_preparation(guard, "failed", "transcription_failed")
+    has_presentation = kwargs.get("voice_error_text") or (
+        kwargs.get("message") is None and kwargs.get("voice_text")
+        and kwargs.get("show_transcription", True)
+    )
+    current = await guard.is_current() if has_presentation else True
+    if kwargs.get("voice_error_text") and not current:
+        return None, True
+    kwargs["show_transcription"] = bool(kwargs.get("show_transcription", True) and current)
+    try:
+        return await _with_source_ordered_context_bot(
+            context, guard, lambda guarded: _resolve_voice_input_message(guarded, **kwargs),
+        )
+    except _StaleTelegramSourceOrder:
+        # Presentation may become stale while Telegram sends the transcription. The original
+        # prepared input is still owned and must reach Core under its original source identity.
+        if kwargs.get("voice_error_text"):
+            return None, True
+        return _prepared_voice_text(kwargs.get("message"), kwargs.get("voice_text")), False
+
+
+async def _send_prepared_attachment_error(context, guard, chat_id, thread_id, message_id, errors):
+    await _finish_telegram_preparation(guard, "failed", "attachment_preparation_failed")
+    if not await guard.is_current():
+        return
+    try:
+        await _with_source_ordered_context_bot(
+            context, guard, lambda guarded: _send_telegram_attachment_error(
+                guarded, chat_id, thread_id, message_id, errors,
+            ),
+        )
+    except _StaleTelegramSourceOrder:
+        return
 
 
 async def _with_source_ordered_context_bot(context, guard, operation):
@@ -2191,6 +2332,14 @@ def _acquire_telegram_singleton_or_exit() -> None:
 # === VIVENTIUM END ===
 
 
+def _prepared_voice_text(message, voice_text):
+    if message is None:
+        return voice_text
+    if voice_text:
+        return f"{message}\n\n{voice_text}" if message else voice_text
+    return message
+
+
 async def _resolve_voice_input_message(
     context,
     *,
@@ -2245,9 +2394,7 @@ async def _resolve_voice_input_message(
                 reply_to_message_id=messageid,
             )
 
-    if message is None:
-        return voice_text, False
-    return message, False
+    return _prepared_voice_text(message, voice_text), False
 
 from telegram.constants import ChatAction
 from telegram import BotCommand, ForceReply, InlineKeyboardMarkup, Update, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, InputMediaPhoto, InlineKeyboardButton
@@ -2926,10 +3073,10 @@ def _local_telegram_source_guard(update, context):
     )
 
 
-async def _preflight_captioned_transcription_failure(update, context):
+async def _preflight_captioned_transcription_failure(update, context, ingress_guard=None):
     if not _captioned_transcription_update(update):
         return None, False
-    local_guard = _local_telegram_source_guard(update, context)
+    local_guard = ingress_guard or _local_telegram_source_guard(update, context)
     message_info = _unpack_message_info(await GetMesageInfo(update, context))
     voice_error_text = message_info[12]
     if not voice_error_text:
@@ -2947,9 +3094,17 @@ async def _preflight_captioned_transcription_failure(update, context):
             show_transcription=False,
         )
 
-    if local_guard is None:
+    if ingress_guard is not None:
+        await _resolve_prepared_voice_input(
+            context, ingress_guard,
+            chatid=message_info[3], messageid=message_info[4],
+            message_thread_id=message_info[7], message=message_info[0],
+            voice_text=message_info[11], voice_error_text=voice_error_text,
+            show_transcription=False,
+        )
+    elif local_guard is None:
         await send_error(context)
-    else:
+    elif await local_guard.is_current():
         await _with_source_ordered_context_bot(context, local_guard, send_error)
     return message_info, True
 
@@ -3081,6 +3236,10 @@ async def _process_media_group_entries(key, entries):
     if ingress_guard is None:
         return
     ingress_guard.robot = robot
+    ingress_guard.input_claims = [
+        entry["ingress_guard"].input_claim for entry, _info in parsed
+        if entry.get("ingress_guard") and entry["ingress_guard"].input_claim
+    ]
 
     logger.info(
         "[VIVENTIUM] Coalesced Telegram media group: key=%s messages=%d files=%d errors=%d",
@@ -3091,33 +3250,21 @@ async def _process_media_group_entries(key, entries):
     )
 
     if voice_error_text:
-        await _with_source_ordered_context_bot(
-            primary_entry["context"],
-            ingress_guard,
-            lambda guarded_context: _resolve_voice_input_message(
-                guarded_context,
-                chatid=chatid,
-                messageid=messageid,
-                message_thread_id=message_thread_id,
-                message=message,
-                voice_text=voice_text,
-                voice_error_text=voice_error_text,
-                show_transcription=False,
-            ),
+        await _resolve_prepared_voice_input(
+            primary_entry["context"], ingress_guard,
+            chatid=chatid,
+            messageid=messageid,
+            message_thread_id=message_thread_id,
+            message=message,
+            voice_text=voice_text,
+            voice_error_text=voice_error_text,
+            show_transcription=False,
         )
         return
 
     if all_errors:
-        await _with_source_ordered_context_bot(
-            primary_entry["context"],
-            ingress_guard,
-            lambda guarded_context: _send_telegram_attachment_error(
-                guarded_context,
-                chatid,
-                message_thread_id,
-                messageid,
-                all_errors,
-            ),
+        await _send_prepared_attachment_error(
+            primary_entry["context"], ingress_guard, chatid, message_thread_id, messageid, all_errors,
         )
         return
 
@@ -3159,7 +3306,10 @@ async def _flush_media_group_after_delay(key):
             entries = _MEDIA_GROUP_BUFFERS.pop(key, [])
             _MEDIA_GROUP_TASKS.pop(key, None)
         if entries:
-            await _process_media_group_entries(key, entries)
+            await _run_with_telegram_input_claims(
+                [entry.get("ingress_guard") for entry in entries],
+                lambda: _process_media_group_entries(key, entries),
+            )
     except asyncio.CancelledError:
         raise
     except Exception:
@@ -3198,15 +3348,26 @@ async def _queue_media_group_update(
 @decorators.GroupAuthorization
 @decorators.Authorization
 @decorators.APICheck
-async def command_bot(update, context, title="", has_command=True):
+async def command_bot(update, context, title="", has_command=True, _input_recovery=None):
+    preparation = capture_telegram_preparation(update, title=title, args=context.args, has_command=has_command)
+    preparation["handler"] = "command"
+    ingress_guard = await _observe_telegram_update_ingress(
+        update, context, preparation=preparation, input_recovery=_input_recovery,
+    )
+    if ingress_guard is None:
+        return
+    return await _run_with_telegram_input_claims(
+        [ingress_guard],
+        lambda: _command_bot_prepared(update, context, title, has_command, ingress_guard),
+    )
+
+
+async def _command_bot_prepared(update, context, title, has_command, ingress_guard):
     stop_event.clear()
     preparsed_message_info, transcription_failed = (
-        await _preflight_captioned_transcription_failure(update, context)
+        await _preflight_captioned_transcription_failure(update, context, ingress_guard)
     )
     if transcription_failed:
-        return
-    ingress_guard = await _observe_telegram_update_ingress(update, context)
-    if ingress_guard is None:
         return
     if await _queue_media_group_update(
         update,
@@ -3265,16 +3426,8 @@ async def command_bot(update, context, title="", has_command=True):
     ingress_guard.robot = robot
 
     if file_error_list:
-        await _with_source_ordered_context_bot(
-            context,
-            ingress_guard,
-            lambda guarded_context: _send_telegram_attachment_error(
-                guarded_context,
-                chatid,
-                message_thread_id,
-                messageid,
-                file_error_list,
-            ),
+        await _send_prepared_attachment_error(
+            context, ingress_guard, chatid, message_thread_id, messageid, file_error_list,
         )
         return
 
@@ -3282,23 +3435,19 @@ async def command_bot(update, context, title="", has_command=True):
         if has_command:
             message = ' '.join(context.args)
         # REMOVED: pass_history - Not used by LiveKit Bridge, Viventium handles conversation history
-        message, voice_input_failed = await _with_source_ordered_context_bot(
-            context,
-            ingress_guard,
-            lambda guarded_context: _resolve_voice_input_message(
-                guarded_context,
-                chatid=chatid,
-                messageid=messageid,
-                message_thread_id=message_thread_id,
-                message=message,
-                voice_text=voice_text,
-                voice_error_text=voice_error_text,
-            ),
+        message, voice_input_failed = await _resolve_prepared_voice_input(
+            context, ingress_guard,
+            chatid=chatid,
+            messageid=messageid,
+            message_thread_id=message_thread_id,
+            message=message,
+            voice_text=voice_text,
+            voice_error_text=voice_error_text,
         )
         if voice_input_failed:
             return
             
-        if message and len(message) == 1 and is_emoji(message):
+        if not ingress_guard.input_claim and message and len(message) == 1 and is_emoji(message):
             return
 
         message_has_nick = False
@@ -3306,7 +3455,7 @@ async def command_bot(update, context, title="", has_command=True):
         if rawtext and rawtext.split()[0].lower() == botNick:
             message_has_nick = True
 
-        if message:
+        if message or file_data_list:
             # REMOVED: pass_history check - Not used by LiveKit Bridge, Viventium handles conversation history
             # Always schedule cleanup task
             # Remove existing task (if any)
@@ -3333,7 +3482,9 @@ async def command_bot(update, context, title="", has_command=True):
 
             # REMOVED: engine - Model selection handled by Viventium
 
-            if Users.get_config(convo_id, "LONG_TEXT"):
+            # Core merges retained sources under their original identities. The legacy local
+            # buffer cannot own those same inputs without leaving a second recoverable source.
+            if not ingress_guard.input_claim and Users.get_config(convo_id, "LONG_TEXT"):
                 async with lock:
                     message_cache[convo_id].append(message)
                     time_stamps[convo_id].append(time.time())
@@ -3424,7 +3575,10 @@ async def command_bot(update, context, title="", has_command=True):
             _tg_timing_log(trace_id, "request_complete", request_start_ts)
             _tg_deep_log(trace_id, "request_complete", request_start_ts, base_ts=request_start_ts)
             # === VIVENTIUM END ===
+        else:
+            await _finish_telegram_preparation(ingress_guard, "cancelled")
     else:
+        await _finish_telegram_preparation(ingress_guard, "cancelled")
         message = await _SourceOrderedBotProxy(ingress_guard).send_message(
             chat_id=chatid,
             message_thread_id=message_thread_id,
@@ -3558,6 +3712,7 @@ async def _getViventiumResponse(
     telegram_update_id=None,
     reply_context=None,
     _source_guard=None,
+    _input_recovery=None,
 ):
     # REMOVED: api_key, api_url, engine parameters - Not used with LiveKit Bridge
     # === VIVENTIUM START ===
@@ -3862,6 +4017,7 @@ async def _getViventiumResponse(
     stream_preview_lock = asyncio.Lock()
     stream_preview_last_sent_ts = 0.0
     stream_preview_superseded = False
+    authored_preview_received = False
 
     async def _apply_stream_preview(preview: dict[str, Any]) -> None:
         nonlocal answer_messageid, lastresult, stream_preview_last_sent_ts
@@ -4186,6 +4342,7 @@ async def _getViventiumResponse(
                     "TR-014 local-QA control failed closed before Core ingestion: %s",
                     type(exc).__name__,
                 )
+        source_guard.input_submitted = True
         async for data in robot.ask_stream_async(
             text,
             convo_id=convo_id,
@@ -4197,6 +4354,10 @@ async def _getViventiumResponse(
             telegram_update_id=telegram_update_id,
             source_event_id=source_guard.source_event_id,
             source_order_scope=source_guard.source_order_scope,
+            conversation_state=getattr(source_guard, "conversation_state", None),
+            input_claim=source_guard.input_claim,
+            input_claims=source_guard.input_claims,
+            input_recovery=_input_recovery,
             voice_mode=voice_mode,
             input_mode=input_mode,
             audio_requested=telegram_audio_requested,
@@ -4221,6 +4382,17 @@ async def _getViventiumResponse(
                     if not data:
                         continue
                 else:
+                    if data.get("type") == "assistant_preview":
+                        authored_preview_received = True
+                        if stop_event.is_set() and convo_id == target_convo_id:
+                            await _supersede_stream_preview()
+                            return
+                        preview_text = str(data.get("text") or "")
+                        if preview_text:
+                            await _queue_stream_preview(preview_text)
+                        else:
+                            await _cancel_stream_previews()
+                        continue
                     if data.get("type") == "delivery_disposition":
                         raw_disposition = data.get("delivery_disposition")
                         delivery_disposition = normalize_delivery_disposition(
@@ -4235,10 +4407,18 @@ async def _getViventiumResponse(
                         )
                         delivery_disposition_present = data.get("present") is True
                         continue
+                    if data.get("type") == "input_pending":
+                        return
+                    if data.get("type") == "input_presentation":
+                        source_guard.bind_input_presentation(data.get("input_presentation"))
+                        continue
                     if data.get("type") == "logical_turn":
                         logical_turn_id = str(data.get("logical_turn_id") or "").strip()
                         logical_turn_revision = data.get("revision")
                         source_guard.bind_delivery(logical_turn_id, logical_turn_revision)
+                        continue
+                    if data.get("type") == "durable_effect":
+                        source_guard.bind_durable_effect(data.get("effect_ref"))
                         continue
                     if data.get("type") == "superseded":
                         logical_turn_id = str(
@@ -4499,6 +4679,8 @@ async def _getViventiumResponse(
         ]
     finally:
         await _cancel_stream_previews()
+        if authored_preview_received and not result:
+            await _supersede_stream_preview()
         # === VIVENTIUM START ===
         # Feature: Stop typing indicator once we have a result or exit.
         typing_stop.set()
@@ -4843,8 +5025,22 @@ async def _getViventiumResponse(
                 presentation_refs,
             )
             if hasattr(robot, "ack_delivery_status"):
-                delivery_ack_status = await robot.ack_delivery_status(*ack_args)
-            elif hasattr(robot, "ack_delivery") and await robot.ack_delivery(*ack_args):
+                delivery_ack_status = await robot.ack_delivery_status(
+                    *ack_args,
+                    **(
+                        {"effect_ref": source_guard.effect_ref}
+                        if source_guard.effect_ref
+                        else {}
+                    ),
+                )
+            elif hasattr(robot, "ack_delivery") and await robot.ack_delivery(
+                *ack_args,
+                **(
+                    {"effect_ref": source_guard.effect_ref}
+                    if source_guard.effect_ref
+                    else {}
+                ),
+            ):
                 delivery_ack_status = "recorded"
         except Exception as exc:
             logger.warning(
@@ -4901,6 +5097,7 @@ async def getViventiumResponse(
     telegram_update_id=None,
     reply_context=None,
     _source_guard=None,
+    _input_recovery=None,
 ):
     source_message_id = telegram_message_id if telegram_message_id is not None else messageid
     telegram_user_id = getattr(getattr(update_message, "from_user", None), "id", "")
@@ -4925,6 +5122,7 @@ async def getViventiumResponse(
             telegram_update_id=telegram_update_id,
             reply_context=reply_context,
             _source_guard=_source_guard,
+            _input_recovery=_input_recovery,
         )
     except _StaleTelegramSourceOrder:
         return None
@@ -5290,44 +5488,40 @@ async def button_press(update, context):
 @decorators.GroupAuthorization
 @decorators.Authorization
 @decorators.APICheck
-async def handle_file(update, context):
-    # === VIVENTIUM START ===
-    # Handle file-only messages by sending attachments to LibreChat agent.
-    ingress_guard = await _observe_telegram_update_ingress(update, context)
+async def handle_file(update, context, _input_recovery=None):
+    preparation = capture_telegram_preparation(update)
+    preparation["handler"] = "file"
+    ingress_guard = await _observe_telegram_update_ingress(
+        update, context, preparation=preparation, input_recovery=_input_recovery,
+    )
     if ingress_guard is None:
         return
+    return await _run_with_telegram_input_claims(
+        [ingress_guard], lambda: _handle_file_prepared(update, context, ingress_guard),
+    )
+
+
+async def _handle_file_prepared(update, context, ingress_guard):
     if await _queue_media_group_update(
         update, context, source="file", ingress_guard=ingress_guard
     ):
         return
     message, rawtext, image_url, chatid, messageid, reply_to_message_text, update_message, message_thread_id, convo_id, file_url, reply_to_message_file_content, voice_text, voice_error_text, file_data_list, file_error_list = _unpack_message_info(await GetMesageInfo(update, context))
     if voice_error_text:
-        await _with_source_ordered_context_bot(
-            context,
-            ingress_guard,
-            lambda guarded_context: _resolve_voice_input_message(
-                guarded_context,
-                chatid=chatid,
-                messageid=messageid,
-                message_thread_id=message_thread_id,
-                message=message,
-                voice_text=voice_text,
-                voice_error_text=voice_error_text,
-                show_transcription=False,
-            ),
+        await _resolve_prepared_voice_input(
+            context, ingress_guard,
+            chatid=chatid,
+            messageid=messageid,
+            message_thread_id=message_thread_id,
+            message=message,
+            voice_text=voice_text,
+            voice_error_text=voice_error_text,
+            show_transcription=False,
         )
         return
     if file_error_list:
-        await _with_source_ordered_context_bot(
-            context,
-            ingress_guard,
-            lambda guarded_context: _send_telegram_attachment_error(
-                guarded_context,
-                chatid,
-                message_thread_id,
-                messageid,
-                file_error_list,
-            ),
+        await _send_prepared_attachment_error(
+            context, ingress_guard, chatid, message_thread_id, messageid, file_error_list,
         )
         return
     robot, _, api_key, api_url = get_robot(convo_id)  # api_key/api_url only for document extraction
@@ -5620,11 +5814,59 @@ _SOURCE_ORDER_RECOVERY_TASK_KEY = "viventium_source_order_recovery_task"
 _BOT_METADATA_TASK_KEY = "viventium_bot_metadata_task"
 
 
+async def _resume_telegram_input(application, robot, claim):
+    preparation = claim.get("preparation")
+    try:
+        update = restore_telegram_preparation(preparation, application.bot, claim)
+    except (ValueError, TypeError, KeyError):
+        await robot.input_status(claim, "failed", failure_code="preparation_reference_invalid")
+        return
+    message = _telegram_update_message(update)
+    chat_id = str(claim["telegramChatId"])
+    user_id = str(claim["telegramUserId"])
+    thread_id = str(claim.get("telegramMessageThreadId") or "")
+    preference_key = f"{chat_id}:{thread_id}:{user_id}" if thread_id else f"{chat_id}:{user_id}"
+    if robot.capture_conversation_state(preference_key)["generation"] != claim["conversationGeneration"]:
+        await robot.input_status(claim, "cancelled")
+        return
+    context = application.context_types.context.from_update(update, application)
+    command = preparation.get("command") or {}
+    context.args = list(command.get("args") or [])
+    if claim["state"] == "preparing":
+        if preparation.get("handler") == "file":
+            await handle_file(update, context, _input_recovery=claim)
+        else:
+            await command_bot(update, context, title=command.get("title") or "",
+                              has_command=command.get("hasCommand") is True, _input_recovery=claim)
+        return
+    guard = await _observe_telegram_update_ingress(update, context, input_recovery=claim)
+    if guard is None:
+        return
+    await _run_with_telegram_input_claims([guard], lambda: getViventiumResponse(
+        message, context, command.get("title") or "", robot, claim.get("text") or "",
+        chat_id, message.message_id, preference_key, message.message_thread_id,
+        voice_note_detected=bool(message.voice or message.video_note),
+        telegram_message_id=claim["sourceSequence"], telegram_update_id=update.update_id,
+        _source_guard=guard, _input_recovery=claim,
+    ))
+
+
+async def _retry_telegram_inputs(application, robot):
+    for claim in await robot.claim_inputs(limit=1):
+        schedule_background_task(
+            application.context_types.context(application),
+            _resume_telegram_input(application, robot, claim),
+            name="telegram-input-recovery",
+        )
+
+
 async def _source_order_recovery_loop(application: Application) -> None:
     while True:
         try:
             await _retry_source_order_retractions(application.bot)
             robot = config.ChatGPTbot
+            if robot and hasattr(robot, "claim_inputs"):
+                await _retry_telegram_inputs(application, robot)
             if robot and hasattr(robot, "source_order_is_current"):
                 await _retry_pending_source_order_terminals(
                     application.bot,

@@ -221,8 +221,67 @@ Restore notes:
 
 ## Release Prep
 
-Before any file move or publishing:
+For source development and release checks, prepare the contributor environment below first.
+Then run the release suite from the repository root with that environment's Python:
 
 ```bash
-python3 -m pytest tests/release/ -q
+.venv/bin/python -m pytest tests/release/ -q
 ```
+
+## Contributor Setup
+
+The source-checkout test path uses Python 3.12 and Node 24, matching the
+[macOS validation workflow](../.github/workflows/config-compile.yml). Git is required to fetch the
+[pinned component repositories](../components.lock.json). Full release tests also need FFmpeg and
+ffprobe; component tests can require their own native tools and local services. The source
+installer's [preflight](../scripts/viventium/preflight.py) reports prerequisites selected by the
+runtime config. These developer requirements do not define the finished Easy Install payload.
+
+From the repository root, use a standard local Python environment:
+
+```bash
+python3.12 -m venv .venv
+.venv/bin/python -m pip install -r scripts/viventium/requirements-tests.txt
+```
+
+[requirements-tests.txt](../scripts/viventium/requirements-tests.txt) is shared with CI and includes
+the separate [runtime Python requirements](../scripts/viventium/requirements.txt). The installer
+does not install pytest into every system Python. A `No module named pytest` error means the test
+environment is missing or the wrong interpreter was used; it is not a failed product test.
+
+For a fresh checkout, fetch the components selected by your public config before building or
+running their tests. This example uses the full checked-in example, as the release workflow does:
+
+```bash
+.venv/bin/python scripts/viventium/bootstrap_components.py \
+  --repo-root "$PWD" --config config.full.example.yaml --jobs 1
+.venv/bin/python scripts/viventium/bootstrap_components.py \
+  --repo-root "$PWD" --config config.full.example.yaml --validate-only --strict-pinned
+.venv/bin/python -m pytest tests/release/test_config_compiler.py -q
+```
+
+`--validate-only --strict-pinned` performs no clone or checkout and reports missing, dirty or
+non-pinned selected components. Use the bootstrap mutation only in the fresh checkout; preserve
+existing component work. Bootstrap precedes compiler tests because compilation reads the selected
+component's source-of-truth configuration and prompts. Each nested repository owns its instructions,
+dependencies and tests.
+For LibreChat, continue with its [AGENTS.md](../viventium_v0_4/LibreChat/AGENTS.md); the
+[validation workflow](../.github/workflows/config-compile.yml) shows the package/client build order.
+Voice and other optional selections can require additional components and tools.
+
+Before starting a runtime, follow the existing
+[Contributor Quickstart](requirements_and_learnings/50_Stable_Dev_Runtime.md#contributor-quickstart).
+It first inspects the installed runtime owner, then creates, inspects and starts named `dev-env`
+state. Creation needs an existing canonical config; on a new machine, complete the source install
+above first. A dev environment has separate local state and ports, with the shared-service limits
+listed in that owner. Selecting `dev-runtime activate-current` changes the installed runtime;
+it is not part of setting up tests. Source edits and passing tests do not prove that an installed
+process contains those edits.
+
+To choose a change and its evidence, start from the
+[capability and acceptance map](README.md#capabilities-and-acceptance), read the owning
+requirement and runtime document, then follow its code, tests and QA case. The
+[runtime implementation index](../viventium_v0_4/docs/IMPLEMENTATION_INDEX.md) and
+[release-test ownership map](../qa/release-test-owners.yaml) provide the next links. Follow the
+[QA contract](../qa/README.md) for the real affected surface; record missing prerequisites and
+unrun user paths separately from passing automated checks.

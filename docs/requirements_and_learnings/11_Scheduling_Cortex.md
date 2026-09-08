@@ -166,10 +166,27 @@ Prompt ownership has four visible layers:
 - `scheduler.canonical_output` is the non-interactive, channel-neutral result contract used before
   one generated result fans out through delivery adapters.
 
-The Python scheduler consumes the compiled shared prompt contract; it must not carry a divergent
-hard-coded copy. Release tests compare registry source, compiled artifact, and runtime text. The
-scheduled object body remains editable/versioned in Workbench and does not duplicate Main identity
-or tool policy.
+The Python scheduler reads the generated `VIVENTIUM_PROMPT_BUNDLE_PATH` once for each composition,
+including the registered envelope prefix, live-fact guard, and deterministic-context instructions.
+It resolves the same body/includes contract as the source renderer; it has no literal policy fallback.
+Replacing the compiled bundle at the same path affects the next composition. A missing/unreadable
+bundle produces `prompt_bundle_unavailable`; a missing, invalid, cyclic, or context-losing prompt
+produces `required_prompt_invalid`, before model dispatch.
+
+Custom prefix settings and already-prefixed legacy task bodies retain their authored text.
+Their live-fact guard comes from `scheduler.run_live_fact_contract`; runtime does not append an old
+literal or inspect policy phrases to restore one. Exact registered text deduplicates the guard;
+a legacy paraphrase remains authored context and does not replace the current guard.
+Ordinary default envelopes follow their declared
+includes without silently restoring an include removed in Workbench. The registered
+`scheduler.run_context_contract` supplies date/calendar guidance around the same typed factual
+fields. The extraction preserves policy wording; the existing include separator adds two blank
+lines to the default envelope.
+
+Release tests compare source, compiled, and emitted text after a saved fixture edit, same-path
+replacement, and rollback; they also cover custom/legacy prefixes and missing-bundle failures.
+Installed acceptance requires the actual Workbench edit/save/compile/live/rollback journey. The
+scheduled object body remains editable/versioned and does not duplicate Main identity or tool policy.
 
 Scheduled Main reloads the current persisted Main Agent from Agent Builder at every run, including
 provider, model, parameters, GlassHive options, fallback, identity, instructions, tools, memory,
@@ -231,6 +248,16 @@ conversation with no completed user-visible assistant result remains archived th
 state. Its first deliverable result unarchives it and later silent wakes do not rearchive it.
 User-authored text equal to `{NTA}` stays visible because
 suppression depends on trusted metadata, never text alone.
+
+A useful scheduled answer remains visible beside an overlapping ordinary conversation branch.
+Chat, shared views, and exports use the same branch selection: include adjacent trusted system
+results without showing an unselected ordinary user branch. Existing regeneration controls remain
+available, and only the selected conversation branch owns the next reply's parent. This is a view
+projection; never rewrite persisted parents or native continuation receipts to repair display.
+JSON exports retain empty structural control rows so reimport preserves parent links, but remove
+their internal text, content, attachments, and diagnostic context. Human-readable exports omit
+those controls entirely. Share/import remapping uses actual message conversation IDs, not stale
+diagnostic IDs.
 
 ## Misfire And Catch-Up Contract
 
@@ -298,6 +325,11 @@ delivered 85 minutes late.`
 
 - Scheduler generation is canonical.
 - Runs should flow through the existing scheduler-authenticated internal routes.
+- When that route observes an active response in the same owner's conversation before dispatch
+  reservation, it defers without creating a response or error card. Scheduling Cortex retains the
+  exact due time and occurrence key in its existing queued row, then retries after its normal delay;
+  restart must preserve that identity. This admission wait does not reset accepted dispatches or
+  change the failure policy for work that has already started.
 - Scheduled `viventium_agent` generation sends no provider, model, reasoning-effort, GlassHive, or
   fallback override. The scheduler-authenticated route strips legacy execution fields and loads the
   persisted Main Agent through the same Agent Builder initialization/fallback path as ordinary chat.
@@ -549,6 +581,13 @@ closed if it is lost, so it cannot create a second scheduled-run row. Callback H
 transport truth only; Core delivery rows own actual Telegram/LibreChat delivery. See
 [`55_Parallel_Work_Orchestration.md`](55_Parallel_Work_Orchestration.md) and
 [`qa/parallel-orchestrator/`](../../qa/parallel-orchestrator/).
+
+The scheduler's existing `recurrence_state_v1` carries its bounded prior outcome, result excerpt
+and digest into authenticated Main dispatch. Core admits that data only under trusted scheduler
+context through `buildRecurrenceStateCapsule`. Main uses the existing per-turn context transport
+for native sessions and ordinary context placement for direct providers, with the same capsule
+visible in prompt-frame telemetry. Prior results remain evidence, never new instructions or
+user-memory stimuli; they do not change native session authority.
 
 <!-- VIVENTIUM-STABLE-REQUIREMENT-DECLARATIONS:START -->
 ## Stable requirement declarations

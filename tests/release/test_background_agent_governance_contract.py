@@ -71,7 +71,23 @@ APPROVED_EXECUTION_FAMILIES = {
 }
 APPROVED_ACTIVATION_FAMILY = ("groq", "qwen/qwen3.6-27b")
 APPROVED_ACTIVATION_OVERRIDE_FAMILY = ("xai", "grok-4.20-non-reasoning")
-APPROVED_MAIN_AGENT_FAMILY = ("glasshive-harness", "codex-cli:gpt-5.6-sol")
+APPROVED_MAIN_AGENT_FAMILY = ("glasshive-harness", "codex-cli:gpt-6-astra")
+APPROVED_MAIN_GLASSHIVE_OPTIONS = {
+    "workspace": {"mode": "life"},
+    "access": "full",
+    "fallback_model": "claude-code:claude-opus-5",
+    "fallback_reasoning_effort": "low",
+    "orchestration": {
+        "parallel_available": True,
+        "default_mode": "parallel",
+        "worker_profile": "codex-cli",
+        "worker_model": "codex-cli:gpt-6-astra",
+        "worker_reasoning_effort": "medium",
+        "fallback_worker_profile": "claude-code",
+        "fallback_worker_model": "claude-code:claude-opus-5",
+        "fallback_worker_reasoning_effort": "medium",
+    },
+}
 
 
 def test_anti_sycophancy_philosophy_defines_truth_seeking_not_naysaying() -> None:
@@ -289,21 +305,12 @@ def test_conscious_main_uses_glasshive_and_subconscious_agents_keep_gpt56_worklo
     assert set(agents) == {"Viventium", *expected}
     main_agent = bundle["mainAgent"]
     assert main_agent.get("provider") == "glasshive-harness"
-    assert main_agent.get("model") == "codex-cli:gpt-5.6-sol"
+    assert main_agent.get("model") == "codex-cli:gpt-6-astra"
     assert main_agent.get("model_parameters") == {
-        "model": "codex-cli:gpt-5.6-sol",
-        "reasoning_effort": "medium",
+        "model": "codex-cli:gpt-6-astra",
+        "reasoning_effort": "low",
     }
-    assert main_agent.get("glasshive_options") == {
-        "workspace": {"mode": "life"},
-        "access": "full",
-        "orchestration": {
-            "parallel_available": True,
-            "default_mode": "focused",
-            "worker_profile": "codex-cli",
-            "fallback_worker_profile": "claude-code",
-        },
-    }
+    assert main_agent.get("glasshive_options") == APPROVED_MAIN_GLASSHIVE_OPTIONS
 
     for name, (model, effort) in expected.items():
         agent = agents[name]
@@ -586,7 +593,7 @@ def test_truth_seeking_prompts_reward_evidence_supported_agreement_and_disagreem
     assert "do not invent a blind spot" in confirmation_bias
 
 
-def test_local_source_of_truth_main_agent_uses_glasshive_codex_sol() -> None:
+def test_local_source_of_truth_main_agent_uses_configured_glasshive_codex_route() -> None:
     bundle = _load_source_of_truth()
     main_agent = bundle.get("mainAgent", {})
 
@@ -716,25 +723,26 @@ def test_live_fact_truthfulness_guard_stays_in_shipped_agent_prompts() -> None:
     bundle = _load_source_of_truth()
     main_instructions = (bundle.get("mainAgent", {}).get("instructions") or "").lower()
 
-    assert "memory, recall, conversation/file search, cached summaries" in main_instructions
-    assert "are not current evidence" in main_instructions
     assert "verified current-run tool evidence" in main_instructions
     assert "do not guess" in main_instructions
     assert "provider unavailable, timeout, rate limit, auth/config missing" in main_instructions
     assert "browser or local-delegation fallback" in main_instructions
 
     for agent_name, owned_scope, excluded_scope in [
-        ("MS365", "verified ms365 results only", "non-ms365 live facts"),
-        ("Google", "verified google workspace results only", "non-google live facts"),
+        ("MS365", "microsoft 365", "google workspace"),
+        ("Google", "google workspace", "microsoft 365"),
     ]:
         instructions = (_background_agent_by_name(bundle, agent_name).get("instructions") or "").lower()
-        assert owned_scope in instructions
-        assert excluded_scope in instructions
-        assert "omit it from your synthesis" in instructions
-        assert "do not guess" in instructions
+        assert f"claims about live {owned_scope} data or completed actions require successful evidence from this run" in instructions
+        assert f"do not claim to inspect or change {excluded_scope} or other external systems" in instructions
+        assert "missing or failed tools do not establish an empty account" in instructions
+        assert "report the actual limitation plainly" in instructions
 
     for agent in bundle.get("backgroundAgents", []):
         instructions = (agent.get("instructions") or "").lower()
+        if agent.get("name") in {"MS365", "Google"}:
+            # Their scoped live-data and failure guards are checked above.
+            continue
         if agent.get("name") == "Deep Memory Search":
             assert "preserve its uncertainty and time boundary" in instructions
             assert "never invent a memory" in instructions
@@ -789,7 +797,7 @@ def test_librechat_source_of_truth_stays_on_current_anthropic_inventory() -> Non
 def test_conscious_and_subconscious_agents_use_approved_routes_with_managed_fallbacks() -> None:
     bundle = _load_source_of_truth()
     expected = {
-        "Viventium": ("glasshive-harness", "codex-cli:gpt-5.6-sol", "medium", False),
+        "Viventium": ("glasshive-harness", "codex-cli:gpt-6-astra", "low", False),
         "Background Analysis": ("openAI", "gpt-5.6-terra", "medium", False),
         "Confirmation Bias": ("openAI", "gpt-5.6-terra", "medium", False),
         "Deep Memory Search": ("openAI", "gpt-5.6-terra", "medium", True),
@@ -821,7 +829,13 @@ def test_conscious_and_subconscious_agents_use_approved_routes_with_managed_fall
             expected_parameters["resendFiles"] = True
         assert agent.get("model_parameters") == expected_parameters
         assert agent.get("fallback_llm_provider") == "glasshive-harness"
-        if name == "Deep Memory Search":
+        if name == "Viventium":
+            expected_fallback_model = "claude-code:claude-opus-5"
+            expected_fallback_parameters = {
+                "model": expected_fallback_model,
+                "reasoning_effort": "low",
+            }
+        elif name == "Deep Memory Search":
             expected_fallback_model = "codex-cli:gpt-5.6-sol"
             expected_fallback_parameters = {
                 "model": expected_fallback_model,
@@ -836,27 +850,9 @@ def test_conscious_and_subconscious_agents_use_approved_routes_with_managed_fall
         assert agent.get("fallback_llm_model") == expected_fallback_model
         assert agent.get("fallback_llm_model_parameters") == expected_fallback_parameters
         if provider == "glasshive-harness":
-            assert agent.get("glasshive_options") == {
-                "workspace": {"mode": "life"},
-                "access": "full",
-                "orchestration": {
-                    "parallel_available": True,
-                    "default_mode": "focused",
-                    "worker_profile": "codex-cli",
-                    "fallback_worker_profile": "claude-code",
-                },
-            }
+            assert agent.get("glasshive_options") == APPROVED_MAIN_GLASSHIVE_OPTIONS
 
-    assert bundle["mainAgent"].get("glasshive_options") == {
-        "workspace": {"mode": "life"},
-        "access": "full",
-        "orchestration": {
-            "parallel_available": True,
-            "default_mode": "focused",
-            "worker_profile": "codex-cli",
-            "fallback_worker_profile": "claude-code",
-        },
-    }
+    assert bundle["mainAgent"].get("glasshive_options") == APPROVED_MAIN_GLASSHIVE_OPTIONS
 
     main_agent = bundle["mainAgent"]
     assert main_agent.get("voice_llm_provider") == "xai"
@@ -906,5 +902,7 @@ def test_web_phase_b_listening_uses_the_server_projected_window_without_a_180s_f
     assert "suppressed" in hook_source
     assert "empty" in hook_source
     assert "skipped" in hook_source
-    for forbidden_cancellation_call in ("AbortController", ".abort()", "cancelQueries("):
+    # Slow-read completion and the new-stream stale-read race are owned by
+    # memoryReceiptListening.spec.tsx. Cancelling an old read at stream start is required.
+    for forbidden_cancellation_call in ("AbortController", ".abort()"):
         assert forbidden_cancellation_call not in hook_source

@@ -23,7 +23,7 @@ NATIVE_BOOTSTRAP_TEAM_ID=""
 NATIVE_BOOTSTRAP_MANIFEST_URL="https://github.com/ProjectViventium/viventium/releases/latest/download/viventium-native-bootstrap-manifest.json"
 NATIVE_BOOTSTRAP_SIGNATURE_URL="https://github.com/ProjectViventium/viventium/releases/latest/download/viventium-native-bootstrap-manifest.json.sig"
 NATIVE_BOOTSTRAP_RELEASE_BASE="https://github.com/ProjectViventium/viventium/releases/download"
-NATIVE_BOOTSTRAP_MINIMUM_MACOS="14.0"
+NATIVE_BOOTSTRAP_MINIMUM_MACOS="15.0"
 # Release owners advance this signed-source floor for every Native publication. The
 # protected release workflow requires it to equal that release's sequence.
 NATIVE_BOOTSTRAP_MINIMUM_SEQUENCE="1"

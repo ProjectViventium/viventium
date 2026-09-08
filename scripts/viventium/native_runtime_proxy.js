@@ -29,6 +29,9 @@ const firstAdminState = process.env.VIVENTIUM_NATIVE_FIRST_ADMIN_STATE || '';
 const registrationCloseHook = process.env.VIVENTIUM_NATIVE_REGISTRATION_CLOSE_HOOK || '';
 const appSupportDir = process.env.VIVENTIUM_APP_SUPPORT_DIR || '';
 const targetSocket = process.env.VIVENTIUM_NATIVE_PROXY_TARGET_SOCKET || '';
+const glassHiveSocket = process.env.VIVENTIUM_NATIVE_GLASSHIVE_SOCKET || '';
+const glassHiveMcpSocket = process.env.VIVENTIUM_NATIVE_GLASSHIVE_MCP_SOCKET || '';
+const schedulingSocket = process.env.VIVENTIUM_NATIVE_SCHEDULING_SOCKET || '';
 const allowedOrigin = 'http://127.0.0.1:3190';
 const allowedHost = `127.0.0.1:${listenPort}`;
 const expectedSandpackIndexSha256 = process.env.VIVENTIUM_NATIVE_SANDPACK_INDEX_SHA256 || '';
@@ -45,6 +48,34 @@ if (
   path.resolve(targetSocket) !== path.resolve(expectedTargetSocket)
 ) {
   throw new Error('Native API socket policy is unavailable');
+}
+const glassHiveRoutes = [
+  {
+    prefix: '/__viventium_native_glasshive/',
+    socket: glassHiveSocket,
+    name: 'glasshive.sock',
+    tokens: ['WPR_API_TOKEN', 'GLASSHIVE_PROVIDER_API_KEY', 'GLASSHIVE_MCP_API_KEY'],
+  },
+  {
+    prefix: '/__viventium_native_glasshive_mcp/',
+    socket: glassHiveMcpSocket,
+    name: 'glasshive-mcp.sock',
+    tokens: ['GLASSHIVE_MCP_API_KEY'],
+  },
+];
+if (schedulingSocket) glassHiveRoutes.push({
+  prefix: '/__viventium_native_scheduling/', socket: schedulingSocket, name: 'scheduling.sock',
+  tokens: ['SCHEDULING_MCP_API_KEY'],
+});
+const nativeServicePrefixes = ['/__viventium_native_glasshive', '/__viventium_native_scheduling'];
+const glassHiveEnabled = Boolean(glassHiveSocket || glassHiveMcpSocket);
+if (glassHiveEnabled || schedulingSocket) {
+  for (const route of glassHiveRoutes) {
+    if (
+      route.socket !== path.join(appSupportDir, 'runtime', route.name) ||
+      route.tokens.some(name => !/^[a-f0-9]{64}$/.test(process.env[name] || ''))
+    ) throw new Error('Native GlassHive transport policy is incomplete');
+  }
 }
 const expectedSandpackRoot = path.join(
   releaseRoot,
@@ -109,6 +140,68 @@ function tokenMatches(actual, expected) {
   const one = Buffer.from(actual, 'utf8');
   const two = Buffer.from(expected, 'utf8');
   return one.length === two.length && crypto.timingSafeEqual(one, two);
+}
+
+function proxyGlassHive(request, response, requestURL) {
+  // GlassHive's published completion URL is rooted at the configured scheduler
+  // origin. Preserve that exact endpoint when Native shares the web origin.
+  if (schedulingSocket && requestURL.pathname === '/internal/scheduled-prompts/glasshive-callback') {
+    request.url = '/__viventium_native_scheduling' + request.url;
+    requestURL = new URL(request.url, allowedOrigin);
+  }
+  if (!nativeServicePrefixes.some(prefix => requestURL.pathname.startsWith(prefix))) return false;
+  const route = glassHiveRoutes.find(item => requestURL.pathname.startsWith(item.prefix));
+  if (!route || !route.socket) {
+    response.writeHead(404, {'cache-control': 'no-store'});
+    response.end();
+    return true;
+  }
+  // This prefix is a transport boundary, not a browser login surface. Upstream
+  // continues to validate its exact credential plane and signed owner assertion.
+  const authorization = typeof request.headers.authorization === 'string' ? request.headers.authorization : '';
+  const bearer = authorization.startsWith('Bearer ') ? authorization.slice(7) : '';
+  const headerToken = typeof request.headers['x-wpr-token'] === 'string' ? request.headers['x-wpr-token'] : '';
+  // Signed GlassHive completion authenticates the exact body upstream. Other
+  // scheduler callbacks use their existing shared-secret owner contract.
+  const schedulerCallback = route.name === 'scheduling.sock' &&
+    ((requestURL.pathname === route.prefix + 'internal/scheduled-prompts/glasshive-callback' &&
+      typeof request.headers['x-glasshive-signature'] === 'string') ||
+     (requestURL.pathname.startsWith(route.prefix + 'internal/') &&
+      tokenMatches(request.headers['x-viventium-scheduler-secret'], process.env.SCHEDULER_LIBRECHAT_SECRET)));
+  if (!schedulerCallback && !route.tokens.some(name => tokenMatches(bearer, process.env[name]) || tokenMatches(headerToken, process.env[name]))) {
+    response.writeHead(401, {'cache-control': 'no-store'});
+    response.end();
+    return true;
+  }
+  if (!request.url.startsWith(route.prefix)) {
+    response.writeHead(400, {'cache-control': 'no-store'});
+    response.end();
+    return true;
+  }
+  try {
+    const metadata = fs.lstatSync(route.socket);
+    if (!metadata.isSocket() || metadata.uid !== process.getuid() || (metadata.mode & 0o777) !== 0o600) throw new Error('unsafe socket');
+  } catch (_) {
+    response.writeHead(503, {'cache-control': 'no-store'});
+    response.end();
+    return true;
+  }
+  const headers = {...request.headers, host: allowedHost};
+  for (const name of ['cookie', 'connection', 'proxy-authorization', 'proxy-authenticate', 'upgrade']) delete headers[name];
+  const upstream = http.request({socketPath: route.socket, method: request.method,
+    path: '/' + request.url.slice(route.prefix.length), headers}, upstreamResponse => {
+    response.writeHead(upstreamResponse.statusCode || 502, upstreamResponse.headers);
+    upstreamResponse.pipe(response);
+    upstreamResponse.on('error', () => response.destroy());
+  });
+  upstream.on('error', () => {
+    if (!response.headersSent) response.writeHead(502, {'cache-control': 'no-store'});
+    response.end();
+  });
+  request.on('aborted', () => upstream.destroy());
+  response.on('close', () => { if (!response.writableEnded) upstream.destroy(); });
+  request.pipe(upstream);
+  return true;
 }
 
 function firstAdminCookie(request) {
@@ -189,7 +282,7 @@ function firstAdminPage(request, response, queryToken) {
 <style>body{font:16px system-ui;max-width:32rem;margin:8vh auto;padding:1rem}label{display:block;margin:1rem 0}input{display:block;width:100%;padding:.65rem}button{padding:.7rem 1rem}</style>
 <h1>Create your local admin</h1><p>This one-time page works only on this Mac.</p>
 <form id="f"><label>Name<input name="name" required></label><label>Email<input name="email" type="email" required></label><label>Password<input name="password" type="password" minlength="8" required></label><label>Confirm password<input name="confirm_password" type="password" minlength="8" required></label><button>Create admin</button></form><p id="m" role="status" aria-live="polite"></p>
-<script>f.onsubmit=(e)=>{e.preventDefault();const x=Object.fromEntries(new FormData(f));if(x.password!==x.confirm_password){m.textContent='The passwords do not match.';return}m.textContent='Creating your local admin…';x.username=x.email;fetch('/__viventium_native_first_admin',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(x)}).then(async(r)=>{if(r.ok){m.textContent='Admin created. Continue by signing in and adding your provider API key.';location.href='/login?redirect_to=%2Fc%2Fnew%3Fsetup%3Daccounts'}else{m.textContent=await r.text()}}).catch(() => {m.textContent='Account setup could not reach the local service. Check that Viventium is running, then try again.'})}</script>`);
+<script>f.onsubmit=(e)=>{e.preventDefault();const x=Object.fromEntries(new FormData(f));if(x.password!==x.confirm_password){m.textContent='The passwords do not match.';return}m.textContent='Creating your local admin…';x.username=x.email;fetch('/__viventium_native_first_admin',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(x)}).then(async(r)=>{if(r.ok){f.hidden=true;m.innerHTML='Your account is ready. <a href="viventium://connect-ai">Connect AI</a>, then <a href="/login?redirect_to=%2Fc%2Fnew">open Viventium</a>.'}else{m.textContent=await r.text()}}).catch(() => {m.textContent='Account setup could not reach the local service. Check that Viventium is running, then try again.'})}</script>`);
 }
 
 function createFirstAdmin(request, response) {
@@ -270,7 +363,16 @@ const server = http.createServer((request, response) => {
     response.end('Native proxy host was rejected.\n');
     return;
   }
-  const requestURL = new URL(request.url, allowedOrigin);
+  if (!request.url.startsWith('/') || request.url.startsWith('//')) {
+    response.writeHead(400); response.end(); return;
+  }
+  let requestURL;
+  try { requestURL = new URL(request.url, allowedOrigin); }
+  catch (_) { response.writeHead(400); response.end(); return; }
+  if (nativeServicePrefixes.some(prefix => request.url.startsWith(prefix) && !requestURL.pathname.startsWith(prefix))) {
+    response.writeHead(400); response.end(); return;
+  }
+  if (proxyGlassHive(request, response, requestURL)) return;
   if (requestURL.pathname === '/__viventium_native_health') {
     response.writeHead(200, {'content-type': 'application/json', 'cache-control': 'no-store'});
     response.end(`${JSON.stringify({release: releaseId, status: 'ok'})}\n`);

@@ -390,12 +390,13 @@ function loadLocalEnv() {
     ),
     path.join(LIBRECHAT_ROOT, ".env"),
   ];
-  return candidates.reduce(
+  return {
+    ...candidates.reduce(
     (acc, filePath) => Object.assign(acc, parseEnvFile(filePath)),
-    {
-      ...process.env,
-    },
-  );
+    {},
+    ),
+    ...process.env,
+  };
 }
 
 function expandHome(filePath) {
@@ -463,6 +464,11 @@ function schedulingDbPathCandidates(env) {
 }
 
 function glassHiveRuntimeDbPathCandidates(env) {
+  const explicit = env.WPR_DB_PATH || env.GLASSHIVE_RUNTIME_DB_PATH;
+  if (explicit) return [expandHome(explicit)];
+  if (env.VIVENTIUM_STATE_ROOT) {
+    return [path.join(expandHome(env.VIVENTIUM_STATE_ROOT), 'glasshive', 'runtime_phase1.db')];
+  }
   const profile = env.VIVENTIUM_RUNTIME_PROFILE || "isolated";
   return [
     env.WPR_DB_PATH,
@@ -486,14 +492,20 @@ function glassHiveRuntimeDbPathCandidates(env) {
     );
 }
 
-function queryGlassHiveProviderRun(env, responseMessageId) {
-  if (!responseMessageId) return null;
+function queryGlassHiveProviderRun(env, responseMessageId, { ownerId, conversationId, agentId, nativeAuthority = false } = {}) {
+  if (!responseMessageId || !ownerId || !conversationId || !agentId) return null;
   const sql = [
-    "SELECT pr.run_id, r.state, w.worker_id, w.state_dir",
+    nativeAuthority
+      ? "SELECT pr.run_id, r.state, w.worker_id, w.state_dir, ps.model_id, ps.access_mode, r.provider_route_model, w.bootstrap_bundle_json"
+      : "SELECT pr.run_id, r.state, w.worker_id, w.state_dir",
     "FROM provider_requests pr",
     "JOIN runs r ON r.run_id = pr.run_id",
     "JOIN workers w ON w.worker_id = r.worker_id",
+    "JOIN provider_sessions ps ON ps.session_id = pr.session_id",
     `WHERE pr.message_id = ${sqlQuote(responseMessageId)}`,
+    `AND pr.owner_id = ${sqlQuote(ownerId)}`,
+    `AND ps.conversation_id = ${sqlQuote(conversationId)}`,
+    `AND ps.agent_id = ${sqlQuote(agentId)}`,
     "ORDER BY pr.created_at DESC LIMIT 1;",
   ].join(" ");
   for (const candidate of glassHiveRuntimeDbPathCandidates(env)) {
@@ -634,10 +646,10 @@ function connectedOrchestrationExecution(
       : {};
   return {
     tool: scrubForPublic(tool),
-    outcome: safeConnectedToolEvidenceCode(
-      result?.status,
-      item.error || item.status === "failed" ? "failed" : "completed",
-    ),
+    outcome:
+      item.error || item.status === "failed"
+        ? "failed"
+        : safeConnectedToolEvidenceCode(result?.status, "completed"),
     reason: safeConnectedToolEvidenceCode(result?.reason),
     retryable: result?.retryable === true,
     needsInput: result?.needsInput === true || result?.needs_input === true,
@@ -669,6 +681,66 @@ function connectedOrchestrationExecution(
   };
 }
 
+function nativeToolAuditItems(events) {
+  const items = [];
+  const claudeCalls = new Map();
+  const seenClaudeCalls = new Set();
+  for (const event of events) {
+    if (event?.item && typeof event.item === "object") {
+      items.push({ eventType: event.type, ...event.item });
+      continue;
+    }
+    if (!["assistant", "user"].includes(event?.type)) continue;
+    const contentBlocks = Array.isArray(event.message?.content) ? event.message.content : [];
+    for (const block of contentBlocks) {
+      const id = block?.id || block?.tool_use_id;
+      if (!id) continue;
+      // Pair only native call/result identities in the same run, session and parent.
+      const key = JSON.stringify([event.session_id || "", event.parent_tool_use_id || "", id]);
+      if (event.type === "assistant" && block.type === "tool_use") {
+        if (seenClaudeCalls.has(key)) continue;
+        seenClaudeCalls.add(key);
+        const mcp = /^mcp__(.+?)__(.+)$/.exec(String(block.name || ""));
+        const type = mcp ? "mcp_tool_call" : {
+          Bash: "command_execution", Shell: "command_execution",
+          WebSearch: "web_search", WebFetch: "web_search",
+          Read: "file_change", Glob: "file_change", Grep: "file_change",
+          Edit: "file_change", MultiEdit: "file_change", Write: "file_change",
+          NotebookEdit: "file_change",
+        }[block.name];
+        if (!type) continue;
+        const item = { id, type, server: mcp?.[1], tool: mcp?.[2], arguments: block.input };
+        claudeCalls.set(key, item);
+        items.push({ eventType: "item.started", ...item });
+      } else if (event.type === "user" && block.type === "tool_result") {
+        const item = claudeCalls.get(key);
+        if (!item) continue;
+        claudeCalls.delete(key);
+        const content = block.content;
+        const text = typeof content === "string" ? content :
+          Array.isArray(content) ? content.filter((part) => part?.type === "text")
+            .map((part) => part.text).join("\n") : "";
+        let result = {};
+        try {
+          const parsed = JSON.parse(text);
+          if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+            result = parsed.structured_content || parsed.structuredContent
+              ? parsed : { structured_content: parsed };
+          }
+        } catch {
+          // Unstructured text is observable output, never an accepted-operation receipt.
+        }
+        items.push({
+          ...item, eventType: "item.completed",
+          status: block.is_error === true ? "failed" : "completed",
+          error: block.is_error === true, result, output: text,
+        });
+      }
+    }
+  }
+  return items;
+}
+
 function readGlassHiveRunToolAudit(
   runRecord,
   requiredEvidenceFragments = [],
@@ -697,9 +769,7 @@ function readGlassHiveRunToolAudit(
         return [];
       }
     });
-  const itemEvents = events
-    .filter((event) => event?.item && typeof event.item === "object")
-    .map((event) => ({ eventType: event.type, ...event.item }));
+  const itemEvents = nativeToolAuditItems(events);
   const brokerFileSearchEvents = itemEvents.filter(
     (item) =>
       item.type === "mcp_tool_call" &&
@@ -847,6 +917,9 @@ function auditNativeProviderFileSearch(responseEvents = []) {
 async function auditConversationRecallExecution({
   env,
   responseMessageId,
+  ownerId,
+  conversationId,
+  agentId,
   fixture,
   responseText,
   responseEvents = [],
@@ -855,7 +928,7 @@ async function auditConversationRecallExecution({
   let runRecord = null;
   if (fixture.requireBrokerHostTool) {
     for (let attempt = 0; attempt < 8 && !runRecord; attempt += 1) {
-      runRecord = queryGlassHiveProviderRun(env, responseMessageId);
+      runRecord = queryGlassHiveProviderRun(env, responseMessageId, { ownerId, conversationId, agentId });
       if (!runRecord) {
         await new Promise((resolve) => setTimeout(resolve, 125));
       }
@@ -931,15 +1004,18 @@ async function auditConversationRecallExecution({
 async function auditConnectedOrchestrationExecution({
   env,
   responseMessageId,
+  ownerId,
+  conversationId,
+  agentId,
   responseEvents = [],
   objectiveContracts = [],
   visibleResponseText = "",
 }) {
-  const terminalReceipts = finalConnectedToolReceipts(responseEvents);
-  if (terminalReceipts.length === 0) return null;
+  // Native CLI receipts can be absent from the UI stream. Audit the exact provider
+  // request independently; a visible summary is neither authority nor a prerequisite.
   let runRecord = null;
   for (let attempt = 0; attempt < 8 && !runRecord; attempt += 1) {
-    runRecord = queryGlassHiveProviderRun(env, responseMessageId);
+    runRecord = queryGlassHiveProviderRun(env, responseMessageId, { ownerId, conversationId, agentId });
     if (!runRecord) {
       await new Promise((resolve) => setTimeout(resolve, 125));
     }
@@ -2986,17 +3062,11 @@ function extractFinalStreamError(events) {
   for (const part of content) {
     if (part?.type !== "error") continue;
     const code = String(
-      part.error_class ||
-        part.errorClass ||
-        part.error_code ||
-        part.code ||
-        "",
+      part.error_class || part.errorClass || part.error_code || part.code || "",
     )
       .trim()
       .toLowerCase();
-    return /^[a-z0-9_.:-]{1,120}$/.test(code)
-      ? code
-      : "final_response_error";
+    return /^[a-z0-9_.:-]{1,120}$/.test(code) ? code : "final_response_error";
   }
   return null;
 }
@@ -3373,7 +3443,9 @@ function buildJudgePrompt(
     'Unavailable-condition note: a worker/tool case is not "unavailable" merely because the result is queued, deferred, accepted, or still in progress during the observation window. Only apply "if unavailable" rubric items when the response or evidence shows the tool was unavailable, disconnected, denied, or failed to start.',
     'Memory/context note: natural use of relevant user memory is allowed unless a rubric item explicitly forbids it. Phrases like "hidden prompt or memory keys" mean internal key names, prompt text, source metadata, IDs, or system plumbing, not ordinary personalized context.',
     'Clock note: for a "what time is it" case, allow normal elapsed clock drift during the run unless the prompt supplied an explicit timestamp to compare against.',
-    "Runner scope note: this exact-model runner exercises the main chat endpoint with surface metadata for model behavior and prompt-frame evidence. True voice gateway, Wing Mode, Listen-Only bypass, Telegram, scheduler, and browser UI behavior are evaluated in the native-surface Playwright runner. If this case lists exact-runner exclusions, do not score those native-only rubric items here.",
+    testCase.fixture?.workerSource
+      ? "Runner scope: this is a read-only replay of composed worker source through the normal native provider. The selected model has native tools; inspect the native call audit as well as its answer. This does not prove mission workspace materialization, OS consent, or actual app/file action success. The supplied user request asks for the next step before any changes."
+      : "Runner scope note: this exact-model runner exercises the main chat endpoint with surface metadata for model behavior and prompt-frame evidence. True voice gateway, Wing Mode, Listen-Only bypass, Telegram, scheduler, and browser UI behavior are evaluated in the native-surface Playwright runner. If this case lists exact-runner exclusions, do not score those native-only rubric items here.",
     "Suppression note: when expected_decision is suppress, do not require the visible answer to reveal its private reasoning. If the supplied context contains a recent answer and repeated evidence, then an empty answer, {NTA}, or a short non-repeating acknowledgement can satisfy evidence-aware suppression.",
     'Hold/delayed-work note: for productivity, worker, scheduling, or cortex cases, a short hold such as "Checking now" is acceptable only when stream, prompt-frame, or delayed DB evidence shows a routed read-only/background path and either completed insight/delayed evidence, an explicit pending-callback contract for that case, or an honest limitation. A generic hold with still-pending statuses and no result evidence after the observation window is insufficient.',
     "Scheduling-tool evidence note: when runtime evidence shows schedule search/get/update tool calls, treat timezone and identity handling as satisfied by the tool-owned contract unless the visible response or tool evidence contradicts it. Do not require the assistant to expose timezone, identity, task IDs, metadata, or schedule internals in the user-facing answer.",
@@ -4417,6 +4489,8 @@ async function readSseToFinal({ apiBase, streamId, token, timeoutMs }) {
   let buffer = "";
   const events = [];
   let firstVisibleAtMs = null;
+  let previewConversationId = '';
+  let previewMessageId = '';
 
   try {
     while (Date.now() - startedAt < timeoutMs) {
@@ -4433,11 +4507,22 @@ async function readSseToFinal({ apiBase, streamId, token, timeoutMs }) {
           continue;
         }
         events.push(event);
+        if (event.created === true && event.message?.isCreatedByUser === true) {
+          previewConversationId = String(event.message.conversationId || '');
+          previewMessageId = '';
+        } else if (event.event === 'on_run_step') {
+          previewMessageId = String(event.data?.runId || '');
+        }
         if (
           firstVisibleAtMs == null &&
-          event?.event === "on_message_delta" &&
-          (extractTextFromContent(event?.data?.delta?.content) ||
-            String(event?.data?.delta?.text || "").trim())
+          ((event?.event === "on_message_delta" &&
+            (extractTextFromContent(event?.data?.delta?.content) ||
+              String(event?.data?.delta?.text || "").trim())) ||
+            (event?.type === "text" && event.preview === true &&
+              previewMessageId && previewConversationId &&
+              event.messageId === previewMessageId &&
+              event.conversationId === previewConversationId &&
+              typeof event.text === "string" && event.text.trim()))
         ) {
           firstVisibleAtMs = Date.now();
         }
@@ -4527,7 +4612,12 @@ async function runChatTurn({
     streamId: start.body.streamId,
     token,
     timeoutMs: args.timeoutMs,
-  });
+  }).catch((error) => ({
+    ok: false,
+    events: [],
+    text: "",
+    error: `stream_read_failed:${scrubForPublic(error.message || error.name || "unknown")}`,
+  }));
   return {
     ok: stream.ok,
     start,
@@ -4535,6 +4625,13 @@ async function runChatTurn({
     payload,
     error: stream.error || null,
     finalMeta: extractFinalMeta(stream.events),
+    // An SSE error ends observation, but does not prove native work settled.
+    pendingAcceptedTurn: stream.ok ? null : {
+      streamId: start.body.streamId,
+      conversationId: start.body.conversationId,
+      logicalTurnId: start.body.logical_turn_id,
+      revision: start.body.revision,
+    },
     timing: {
       firstVisibleReplyMs:
         stream.firstVisibleAtMs == null
@@ -4546,6 +4643,9 @@ async function runChatTurn({
 }
 
 function isTransientChatTurnFailure(turn) {
+  // A failed observation does not undo admission or the worker's durable effects.
+  // Keep its receipt and failure; submitting again would create independent work.
+  if (turn?.start?.body?.streamId) return false;
   const error = String(turn?.error || turn?.stream?.error || "");
   const startStatus = Number(turn?.start?.status || 0);
   return (
@@ -4732,11 +4832,11 @@ function buildQaApiLoginResult(args, response) {
   const syntheticIdentity = args.qaEmail.endsWith(".invalid");
   const ok = Boolean(
     response.ok &&
-      response.body?.token &&
-      userEmail === args.qaEmail &&
-      syntheticIdentity &&
-      userRole &&
-      userRole !== "ADMIN",
+    response.body?.token &&
+    userEmail === args.qaEmail &&
+    syntheticIdentity &&
+    userRole &&
+    userRole !== "ADMIN",
   );
   let reason = null;
   if (!syntheticIdentity) {
@@ -4760,7 +4860,11 @@ function buildQaApiLoginResult(args, response) {
       authMode: "api_login",
       userEmailHash: userEmail ? hashValue(userEmail) : "missing",
       expectedEmailHash: hashValue(args.qaEmail),
-      userRoleClass: userRole ? (userRole === "ADMIN" ? "refused_admin" : "non_admin") : "missing",
+      userRoleClass: userRole
+        ? userRole === "ADMIN"
+          ? "refused_admin"
+          : "non_admin"
+        : "missing",
     },
   };
 }
@@ -5108,6 +5212,9 @@ async function cleanupEvalConversations(
   extraConversationIds = [],
 ) {
   if (!db) return { status: "skipped", reason: "db_unavailable" };
+  const pendingConversationIds = new Set(
+    results.map((result) => result.pendingAcceptedTurn?.conversationId).filter(Boolean),
+  );
   const qaRequestMessageIds = [
     ...new Set(
       results
@@ -5122,11 +5229,28 @@ async function cleanupEvalConversations(
         .project({ conversationId: 1 })
         .toArray()
     : [];
-  return cleanupConversationIds(db, [
+  const candidateIds = [...new Set([
     ...extraConversationIds,
     ...results.map((result) => result.finalMeta?.conversationId),
     ...requestRows.map((row) => row.conversationId),
-  ]);
+  ].filter((id) => id && id !== 'new'))];
+  // Core's existing external-work attention contract owns whether later delivery still needs
+  // this conversation. Main FINAL does not settle its independently dispatched missions.
+  const pendingWork = candidateIds.length ? await db.collection('viventium_external_work').find({
+    conversationId: { $in: candidateIds },
+    $or: [
+      { launchState: 'not_dispatched', externalState: 'failed', attentionPending: { $ne: false } },
+      { launchState: { $nin: ['prepared', 'not_dispatched'] }, $or: [
+        { externalState: { $nin: ['completed', 'failed', 'cancelled'] } },
+        { attentionPending: true },
+        { deliveryState: { $in: ['pending', 'enqueued', 'failed', 'unresolved', 'unknown'] } },
+      ] },
+    ],
+  }).project({ conversationId: 1 }).toArray() : [];
+  for (const work of pendingWork) pendingConversationIds.add(work.conversationId);
+  const retainedIds = candidateIds.filter((id) => pendingConversationIds.has(id));
+  const cleanup = await cleanupConversationIds(db, candidateIds.filter((id) => !pendingConversationIds.has(id)));
+  return retainedIds.length ? { ...cleanup, status: 'partial', retainedConversationIds: retainedIds } : cleanup;
 }
 
 async function runLiveCases(args, promptBank, token, db = null, qaAuth = null) {
@@ -5434,6 +5558,7 @@ async function runLiveCases(args, promptBank, token, db = null, qaAuth = null) {
           postCaseEvidenceForJudge: "none",
           eventCount: failedSeed.stream?.events?.length || 0,
           finalMeta: failedSeed.finalMeta || {},
+          pendingAcceptedTurn: failedSeed.pendingAcceptedTurn || null,
           seedEvidence,
           fixtureEvidence,
           privateEvents: failedSeed.stream?.events || [],
@@ -5509,6 +5634,9 @@ async function runLiveCases(args, promptBank, token, db = null, qaAuth = null) {
         await auditConnectedOrchestrationExecution({
           env,
           responseMessageId: turnEvidence.finalMeta?.responseMessageId,
+          ownerId: qaAuth?.userId,
+          conversationId: turnEvidence.finalMeta?.conversationId,
+          agentId: args.agentId,
           responseEvents: stream.events,
           objectiveContracts: testCase?.fixture?.connectedToolObjectives || [],
           visibleResponseText,
@@ -5547,6 +5675,9 @@ async function runLiveCases(args, promptBank, token, db = null, qaAuth = null) {
         await auditConversationRecallExecution({
           env,
           responseMessageId: turnEvidence.finalMeta?.responseMessageId,
+          ownerId: qaAuth?.userId,
+          conversationId: turnEvidence.finalMeta?.conversationId,
+          agentId: args.agentId,
           fixture: conversationRecallFixture,
           responseText: visibleResponseText,
           responseEvents: stream.events,
@@ -5635,6 +5766,7 @@ async function runLiveCases(args, promptBank, token, db = null, qaAuth = null) {
         feelingsDeterministicFailures,
         postCaseEvidence,
         qaRequestMessageIds: turn.qaRequestMessageIds,
+        pendingAcceptedTurn: turn.pendingAcceptedTurn || null,
         turnAttemptCount: turn.attemptCount,
         privateEvents: stream.events,
       });
@@ -5676,6 +5808,9 @@ async function runLiveCases(args, promptBank, token, db = null, qaAuth = null) {
   }
 
   for (const result of results) {
+    result.qaCleanup = qaCleanupError
+      ? { status: "failed", error: qaCleanupError }
+      : qaCleanup;
     if (
       result.familyId === "feelings_embodiment_and_reaction" ||
       resultUsesFeelingsFixture(result)
@@ -5683,9 +5818,6 @@ async function runLiveCases(args, promptBank, token, db = null, qaAuth = null) {
       result.fixtureRestoration = feelingsRestoreError
         ? { status: "failed", error: feelingsRestoreError }
         : { status: "restored", attempts: feelingsRestoreAttempts };
-      result.qaCleanup = qaCleanupError
-        ? { status: "failed", error: qaCleanupError }
-        : qaCleanup;
     }
     if (
       result.fixtureEvidence?.some(
@@ -5695,9 +5827,6 @@ async function runLiveCases(args, promptBank, token, db = null, qaAuth = null) {
       result.fixtureRestoration = conversationRecallRestoreError
         ? { status: "failed", error: conversationRecallRestoreError }
         : conversationRecallRestoreResult;
-      result.qaCleanup = qaCleanupError
-        ? { status: "failed", error: qaCleanupError }
-        : qaCleanup;
     }
   }
   if (feelingsRestoreError) {
@@ -6286,6 +6415,44 @@ async function run() {
       if (!evalLease.acquired) {
         blockedReason = evalLease.reason;
       } else {
+        const workerFamilies = new Set((promptBank.families || [])
+          .filter((family) => family.runner === "worker_source").map((family) => family.id));
+        const workerCases = selectedCasesForJudgePolicy.filter((item) => workerFamilies.has(item.familyId));
+        if (workerCases.length) {
+          try {
+            if (workerCases.length !== selectedCasesForJudgePolicy.length) {
+              throw new Error("worker_source_requires_isolated_selection");
+            }
+            const result = await require("./run-worker-source-evals.cjs").run(args, promptBank, workerCases, login);
+            process.exitCode = result.summary.status === "passed" ? 0 : 1;
+          } finally { evalLease.release(); }
+          // The production module owns long-lived Redis timers; this CLI has settled its runs.
+          process.exit(process.exitCode || 0);
+        }
+        const compactionCases = selectedCasesForJudgePolicy.filter(
+          (testCase) => testCase.familyId === "main_compaction_fidelity",
+        );
+        if (compactionCases.length > 0) {
+          try {
+            if (compactionCases.length !== selectedCasesForJudgePolicy.length) {
+              throw new Error("compaction_family_requires_isolated_selection");
+            }
+            // This family must use the production minimal-context compactor, not chat assembly.
+            await require("./run-main-compaction-evals.cjs").run(
+              {
+                bank: args.promptBank,
+                output: path.join(args.outputDir, "exact-model-eval.json"),
+                api: args.apiBase,
+                agentId: args.agentId,
+                case: compactionCases.map((testCase) => testCase.id).join(","),
+              },
+              login,
+            );
+          } finally {
+            evalLease.release();
+          }
+          return;
+        }
         try {
           dbHandle = await connectLocalEvalDb();
         } catch (error) {
@@ -6358,7 +6525,8 @@ async function run() {
             result.qaCleanup = judgeCleanupError
               ? { status: "failed", error: judgeCleanupError }
               : {
-                  status: "complete",
+                  ...caseCleanup,
+                  status: caseCleanup.status || "complete",
                   conversationCount:
                     Number(caseCleanup.conversationCount || 0) +
                     Number(judgeCleanup?.conversationCount || 0),
@@ -6454,6 +6622,10 @@ async function run() {
 }
 
 module.exports = {
+  loadLocalEnv,
+  queryGlassHiveProviderRun,
+  runChatTurnWithRetry,
+  cleanupEvalConversations,
   acquireExclusiveEvalLease,
   buildChatPayload,
   buildJudgePrompt,
@@ -6474,9 +6646,11 @@ module.exports = {
   completionSurfaceIdentity,
   conversationRecallFixtureFor,
   auditConversationRecallExecution,
+  auditConnectedOrchestrationExecution,
   insertConversationRecallCorpusFixture,
   readConversationRecallCorpusState,
   readGlassHiveRunToolAudit,
+  nativeToolAuditItems,
   waitForConversationRecallCorpusRefresh,
   extractRawStreamedText,
   extractFinalStreamError,

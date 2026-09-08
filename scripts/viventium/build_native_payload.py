@@ -201,6 +201,17 @@ def build_payload(
         raise BuildError("output directory already exists; refusing to replace an artifact set")
 
     files = _inventory_payload(payload_root)
+    helper = payload_root / "apps/Viventium.app"
+    if helper.is_dir():
+        try:
+            verified = subprocess.run(
+                ["/usr/bin/codesign", "--verify", "--deep", "--strict", str(helper)],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False,
+            )
+        except OSError as error:
+            raise BuildError("Native helper signature could not be verified") from error
+        if verified.returncode != 0:
+            raise BuildError("Native helper signature is invalid; sign the completed app before packaging")
     artifact_name = f"viventium-native-{release_id}-{arch}.zip"
     manifest_name = f"{artifact_name}.manifest.json"
     signature_name = f"{manifest_name}.sig"

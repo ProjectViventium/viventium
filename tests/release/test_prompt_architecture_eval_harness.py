@@ -13,6 +13,287 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 EVAL_SCRIPT = REPO_ROOT / "qa" / "prompt-architecture" / "evals" / "run-exact-model-evals.cjs"
+
+
+def test_chat_observation_failure_does_not_submit_accepted_work_again() -> None:
+    node_script = r"""
+const assert = require('assert');
+const harness = require(process.argv[1]);
+const originalSetTimeout = global.setTimeout;
+global.setTimeout = (fn, delay, ...args) => originalSetTimeout(fn, delay === 10000 ? 0 : delay, ...args);
+(async () => {
+  for (const scenario of ['timeout', 'terminated', 'attach_failed', 'sse_error', '429', '503', '400']) {
+    const posted = [];
+    const accepted = [];
+    global.fetch = async (url, options = {}) => {
+      if (options.method === 'POST') {
+        const payload = JSON.parse(options.body);
+        posted.push(payload);
+        if (posted.length === 1 && /^\d+$/.test(scenario)) {
+          return new Response('{}', { status: Number(scenario) });
+        }
+        accepted.push(payload.messageId);
+        return Response.json({ streamId: 'accepted-stream', conversationId: 'accepted-conversation' });
+      }
+      assert(url.endsWith('/accepted-stream'));
+      if (scenario === 'attach_failed') throw new Error('fetch failed');
+      return {
+        ok: true, status: 200,
+        body: { getReader: () => ({
+          read: async () => {
+            if (scenario === 'terminated') throw new Error('terminated');
+            return { done: false, value: new TextEncoder().encode(
+              scenario === 'sse_error' ? 'data: {"error":"fetch failed"}\n\n' :
+              'data: {"final":true,"responseMessage":{"content":[{"type":"text","text":"Done"}]}}\n\n'
+            ) };
+          },
+          cancel: async () => {},
+        }) },
+      };
+    };
+    const result = await harness.runChatTurnWithRetry({
+      args: { apiBase: 'http://synthetic.invalid', agentId: 'synthetic', qaRunId: '11111111-1111-4111-8111-111111111111', timeoutMs: scenario === 'timeout' ? 0 : 1000 },
+      token: 'synthetic', testCase: { id: 'synthetic', surface: 'web' }, text: 'Create a draft.',
+    });
+    const rejectedFirst = scenario === '429' || scenario === '503';
+    assert.strictEqual(posted.length, rejectedFirst ? 2 : 1, scenario + ': duplicate POST');
+    assert.strictEqual(accepted.length, scenario === '400' ? 0 : 1, scenario + ': duplicate durable work');
+    assert.strictEqual(result.attemptCount, posted.length, scenario);
+    assert.strictEqual(result.ok, rejectedFirst, scenario);
+    if (['timeout', 'terminated', 'attach_failed', 'sse_error'].includes(scenario)) {
+      assert.strictEqual(result.pendingAcceptedTurn.conversationId, 'accepted-conversation');
+      assert.strictEqual(result.pendingAcceptedTurn.streamId, 'accepted-stream');
+      assert.deepStrictEqual(result.qaRequestMessageIds, accepted);
+    }
+    if (scenario === 'timeout') assert.strictEqual(result.error, 'stream_timeout');
+  }
+  process.stdout.write('OK');
+})().catch((error) => { console.error(error); process.exit(1); });
+"""
+    result = subprocess.run(
+        ["node", "-e", node_script, str(EVAL_SCRIPT)], cwd=REPO_ROOT,
+        capture_output=True, text=True, check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "OK"
+
+
+def test_eval_cleanup_preserves_only_unresolved_accepted_conversations() -> None:
+    node_script = r"""
+const assert = require('assert');
+const harness = require(process.argv[1]);
+const deleted = [];
+const db = { collection: (name) => ({
+  find: () => ({ project: () => ({ toArray: async () => name === 'viventium_external_work' ? [] : [
+    { conversationId: 'pending' }, { conversationId: 'done' },
+  ] }) }),
+  deleteMany: async (query) => { deleted.push({ name, ids: query.conversationId.$in }); return { deletedCount: query.conversationId.$in.length }; },
+}) };
+(async () => {
+  await harness.cleanupEvalConversations(db, [
+    { qaRequestMessageIds: ['pending-request'], pendingAcceptedTurn: { conversationId: 'pending', streamId: 'pending-stream' } },
+    { qaRequestMessageIds: ['done-request'], finalMeta: { conversationId: 'done' } },
+  ], ['fixture', 'pending']);
+  assert.deepStrictEqual(deleted, [
+    { name: 'messages', ids: ['fixture', 'done'] },
+    { name: 'conversations', ids: ['fixture', 'done'] },
+  ]);
+  process.stdout.write('OK');
+})().catch((error) => { console.error(error); process.exit(1); });
+"""
+    result = subprocess.run(
+        ["node", "-e", node_script, str(EVAL_SCRIPT)], cwd=REPO_ROOT,
+        capture_output=True, text=True, check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "OK"
+
+
+def test_eval_cleanup_retains_missions_until_execution_and_delivery_settle() -> None:
+    node_script = r"""
+const assert = require('assert');
+const runner = require(process.argv[1]);
+const states = [
+  { conversationId: 'queued', launchState: 'callback_confirmed', externalState: 'queued', attentionPending: false },
+  { conversationId: 'failed-pending', launchState: 'callback_confirmed', externalState: 'failed', deliveryState: 'pending', attentionPending: true },
+  { conversationId: 'completed-pending', launchState: 'callback_confirmed', externalState: 'completed', deliveryState: 'enqueued' },
+  { conversationId: 'failed-settled', launchState: 'callback_confirmed', externalState: 'failed', deliveryState: 'acknowledged', attentionPending: false },
+  { conversationId: 'completed-settled', launchState: 'callback_confirmed', externalState: 'completed', deliveryState: 'sent', attentionPending: false },
+];
+function matches(row, filter) {
+  return Object.entries(filter).every(([key, expected]) => {
+    if (key === '$or') return expected.some((part) => matches(row, part));
+    if (expected && typeof expected === 'object') return Object.entries(expected).every(([op, value]) =>
+      op === '$in' ? value.includes(row[key]) : op === '$nin' ? !value.includes(row[key]) : row[key] !== value);
+    return row[key] === expected;
+  });
+}
+const deleted = [];
+const db = { collection: (name) => ({
+  find: (filter) => ({ project: () => ({ toArray: async () => name === 'viventium_external_work' ? states.filter((row) => matches(row, filter)) : [] }) }),
+  deleteMany: async (query) => { deleted.push(query.conversationId.$in); return { deletedCount: query.conversationId.$in.length }; },
+}) };
+(async () => {
+  const result = await runner.cleanupEvalConversations(db, states.map((row) => ({ finalMeta: { conversationId: row.conversationId } })));
+  assert.deepStrictEqual(deleted, [['failed-settled', 'completed-settled'], ['failed-settled', 'completed-settled']]);
+  assert.strictEqual(result.status, 'partial');
+  assert.deepStrictEqual(result.retainedConversationIds, ['queued', 'failed-pending', 'completed-pending']);
+  process.stdout.write('OK');
+})().catch((error) => { console.error(error); process.exit(1); });
+"""
+    result = subprocess.run(["node", "-e", node_script, str(EVAL_SCRIPT)], cwd=REPO_ROOT, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "OK"
+
+
+def test_eval_provider_audit_uses_selected_runtime_and_exact_main_identity(tmp_path: Path) -> None:
+    db_path = tmp_path / "runtime.sqlite"
+    with sqlite3.connect(db_path) as db:
+        db.executescript("""
+CREATE TABLE provider_requests(run_id TEXT, session_id TEXT, message_id TEXT, owner_id TEXT, created_at TEXT);
+CREATE TABLE provider_sessions(session_id TEXT, conversation_id TEXT, agent_id TEXT);
+CREATE TABLE runs(run_id TEXT, state TEXT, worker_id TEXT);
+CREATE TABLE workers(worker_id TEXT, state_dir TEXT);
+INSERT INTO provider_sessions VALUES ('main-session','conversation','main'),('child-session','conversation','child');
+INSERT INTO runs VALUES ('main-run','completed','main-worker'),('child-run','completed','child-worker');
+INSERT INTO workers VALUES ('main-worker','main-state'),('child-worker','child-state');
+INSERT INTO provider_requests VALUES ('main-run','main-session','reply','owner','1'),('child-run','child-session','reply','owner','2');
+""")
+    node_script = r"""
+const assert = require('assert');
+const fs = require('fs');
+const runner = require(process.argv[1]);
+process.env.WPR_DB_PATH = process.argv[2];
+const read = fs.readFileSync;
+const exists = fs.existsSync;
+fs.existsSync = (p) => String(p).endsWith('runtime.env') || exists(p);
+fs.readFileSync = (p, ...args) => String(p).endsWith('runtime.env') ? 'WPR_DB_PATH=wrong-runtime.sqlite\n' : read(p, ...args);
+const env = runner.loadLocalEnv();
+fs.readFileSync = read; fs.existsSync = exists;
+assert.strictEqual(env.WPR_DB_PATH, process.argv[2]);
+const identity = { ownerId: 'owner', conversationId: 'conversation', agentId: 'main' };
+assert.strictEqual(runner.queryGlassHiveProviderRun(env, 'reply', identity).run_id, 'main-run');
+assert.strictEqual(runner.queryGlassHiveProviderRun(env, 'reply', { ...identity, ownerId: 'foreign' }), null);
+assert.strictEqual(runner.queryGlassHiveProviderRun(env, 'reply', { ...identity, conversationId: 'foreign' }), null);
+assert.strictEqual(runner.queryGlassHiveProviderRun(env, 'reply'), null);
+assert.strictEqual(runner.queryGlassHiveProviderRun({ ...env, WPR_DB_PATH: 'missing.sqlite' }, 'reply', identity), null);
+process.stdout.write('OK');
+"""
+    result = subprocess.run(["node", "-e", node_script, str(EVAL_SCRIPT), str(db_path)], cwd=REPO_ROOT, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "OK"
+
+
+def test_connected_execution_audit_reads_native_receipts_without_ui_receipts(tmp_path: Path) -> None:
+    db_path = tmp_path / "runtime.sqlite"
+    state_dir = tmp_path / "worker" / "state"
+    run_root = state_dir.parent / "home" / ".glasshive-runs" / "main-run"
+    run_root.mkdir(parents=True)
+    with sqlite3.connect(db_path) as db:
+        db.executescript("""
+CREATE TABLE provider_requests(run_id TEXT, session_id TEXT, message_id TEXT, owner_id TEXT, created_at TEXT);
+CREATE TABLE provider_sessions(session_id TEXT, conversation_id TEXT, agent_id TEXT);
+CREATE TABLE runs(run_id TEXT, state TEXT, worker_id TEXT);
+CREATE TABLE workers(worker_id TEXT, state_dir TEXT);
+INSERT INTO provider_sessions VALUES ('main-session','conversation','main');
+INSERT INTO runs VALUES ('main-run','completed','main-worker');
+INSERT INTO provider_requests VALUES ('main-run','main-session','reply','owner','1');
+""")
+        db.execute("INSERT INTO workers VALUES (?, ?)", ("main-worker", str(state_dir)))
+    (run_root / "stdout.log").write_text(json.dumps({
+        "type": "item.completed", "item": {
+            "id": "accepted-call", "type": "mcp_tool_call",
+            "server": "glasshive-user-capabilities",
+            "tool": "worker_delegate_once_mcp_glasshive-workers-projects",
+            "status": "completed", "result": {"structured_content": {"status": "ok"}},
+        },
+    }) + "\n")
+    script = r"""
+const assert = require('assert');
+const runner = require(process.argv[1]);
+const params = { env: { WPR_DB_PATH: process.argv[2] }, responseMessageId: 'reply',
+  ownerId: 'owner', conversationId: 'conversation', agentId: 'main', responseEvents: [] };
+(async () => {
+  const actual = await runner.auditConnectedOrchestrationExecution(params);
+  assert.strictEqual(actual.status, 'verified');
+  assert.strictEqual(actual.connectedToolExecutions.length, 1);
+  assert.strictEqual(actual.connectedToolExecutions[0].outcome, 'ok');
+  for (const key of ['responseMessageId', 'ownerId', 'conversationId', 'agentId']) {
+    const foreign = await runner.auditConnectedOrchestrationExecution({ ...params, [key]: 'foreign' });
+    assert.strictEqual(foreign.status, 'unavailable', key);
+    assert.deepStrictEqual(foreign.connectedToolExecutions, [], key);
+  }
+  process.stdout.write('OK');
+})().catch((error) => { console.error(error); process.exit(1); });
+"""
+    result = subprocess.run(["node", "-e", script, str(EVAL_SCRIPT), str(db_path)], cwd=REPO_ROOT, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "OK"
+
+
+def test_native_claude_audit_pairs_exact_tool_results_and_keeps_failure_and_privacy(tmp_path: Path) -> None:
+    state_dir = tmp_path / "worker" / "state"
+    run_root = state_dir.parent / "home" / ".glasshive-runs" / "native-run"
+    run_root.mkdir(parents=True)
+    private_url = "https://private.example.test/w/never-expose"
+    tool = "worker_delegate_once_mcp_glasshive-workers-projects"
+    def call(call_id: str, name: str, **inputs: str) -> dict:
+        return {"type": "assistant", "message": {"content": [{"type": "tool_use", "id": call_id, "name": name, "input": inputs}]}}
+    def result(call_id: str, content: object, **extra: bool) -> dict:
+        return {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": call_id, "content": content, **extra}]}}
+    body = {"status": "ok", "dispatch": {"view_steer_url": private_url}}
+    events = [
+        result("orphan", json.dumps(body)),
+        call("accepted", f"mcp__glasshive-user-capabilities__{tool}", goal="Private objective A"),
+        {**result("accepted", json.dumps(body)), "session_id": "other-session"},
+        {**result("accepted", json.dumps(body)), "parent_tool_use_id": "other-parent"},
+        call("blocked", f"mcp__glasshive-user-capabilities__{tool}", goal="Private objective B"),
+        result("blocked", [{"type": "text", "text": json.dumps({"status": "blocked", "reason": "capacity", "retryable": True})}]),
+        result("accepted", json.dumps(body)),
+        result("accepted", json.dumps(body)),
+        call("unrelated", f"mcp__other-server__{tool}"),
+        result("unrelated", json.dumps(body)),
+        call("lookup", "mcp__glasshive-user-capabilities__active_work_list"),
+        result("lookup", json.dumps({"status": "ok", "result": {"work": []}})),
+        call("pending", f"mcp__glasshive-user-capabilities__{tool}"),
+        call("failed", "mcp__glasshive-user-capabilities__active_work_action"),
+        result("failed", json.dumps({"status": "ok"}), is_error=True),
+        call("shell", "Bash", command="cat private.txt"),
+        result("shell", "Private recalled evidence"),
+    ]
+    (run_root / "stdout.log").write_text("\n".join(json.dumps(event) for event in events) + "\n")
+    script = r"""
+const assert = require('assert');
+const runner = require(process.argv[1]);
+const record = { run_id: 'native-run', state: 'completed', worker_id: 'worker', state_dir: process.argv[2] };
+const audit = runner.readGlassHiveRunToolAudit(record, ['Private recalled evidence'],
+  [{ id: 'objective-a', fragments: ['objective A'] }], process.argv[3]);
+assert.strictEqual(audit.connectedToolExecutions.length, 4);
+const [blocked, accepted, lookup, failed] = audit.connectedToolExecutions;
+assert.strictEqual(blocked.outcome, 'blocked');
+assert.strictEqual(blocked.reason, 'capacity');
+assert.strictEqual(blocked.retryable, true);
+assert.strictEqual(accepted.outcome, 'ok');
+assert.strictEqual(accepted.viewSteerVisibleResponseMatch, true);
+assert.deepStrictEqual(accepted.objectiveScopes, [{ id: 'objective-a', present: true }]);
+assert.notStrictEqual(accepted.executionReceiptHash, blocked.executionReceiptHash);
+assert.strictEqual(lookup.tool, 'active_work_list');
+assert.strictEqual(failed.outcome, 'failed');
+assert.strictEqual(audit.nativeCommandExecutionStartedCount, 1);
+assert.strictEqual(audit.nativeCommandExecutionCompletedCount, 1);
+assert.strictEqual(audit.nativeEvidenceSubstitutionCompletedCount, 1);
+const serialized = JSON.stringify(audit);
+assert.ok(!serialized.includes('never-expose'));
+assert.ok(!serialized.includes('Private objective'));
+assert.ok(!serialized.includes('Private recalled'));
+assert.ok(!serialized.includes('private.txt'));
+process.stdout.write('OK');
+"""
+    result_run = subprocess.run(["node", "-e", script, str(EVAL_SCRIPT), str(state_dir), private_url], cwd=REPO_ROOT, capture_output=True, text=True)
+    assert result_run.returncode == 0, result_run.stderr
+    assert result_run.stdout == "OK"
+
+
 NATIVE_SURFACE_EVAL_SCRIPT = (
     REPO_ROOT / "qa" / "prompt-architecture" / "evals" / "run-native-surface-playwright-qa.cjs"
 )
@@ -1889,15 +2170,22 @@ def test_cross_conversation_recall_eval_requires_broker_provenance_and_no_shell(
               request_id TEXT PRIMARY KEY,
               run_id TEXT,
               message_id TEXT,
-              created_at TEXT
+              created_at TEXT,
+              owner_id TEXT,
+              session_id TEXT
             );
             CREATE TABLE runs (run_id TEXT PRIMARY KEY, worker_id TEXT, state TEXT);
             CREATE TABLE workers (worker_id TEXT PRIMARY KEY, state_dir TEXT);
+            CREATE TABLE provider_sessions (session_id TEXT PRIMARY KEY, conversation_id TEXT, agent_id TEXT);
             """
         )
         connection.execute(
-            "INSERT INTO provider_requests VALUES (?, ?, ?, ?)",
-            ("request-a", "run-a", "response-a", "2026-08-08T00:00:00Z"),
+            "INSERT INTO provider_requests VALUES (?, ?, ?, ?, ?, ?)",
+            ("request-a", "run-a", "response-a", "2026-08-08T00:00:00Z", "owner-a", "session-a"),
+        )
+        connection.execute(
+            "INSERT INTO provider_sessions VALUES (?, ?, ?)",
+            ("session-a", "conversation-a", "agent-a"),
         )
         connection.execute(
             "INSERT INTO runs VALUES (?, ?, ?)",
@@ -1942,6 +2230,7 @@ const runner = require({json.dumps(str(EVAL_SCRIPT))});
   const result = await runner.auditConversationRecallExecution({{
     env: {{ WPR_DB_PATH: {json.dumps(str(runtime_db))} }},
     responseMessageId: 'response-a',
+    ownerId: 'owner-a', conversationId: 'conversation-a', agentId: 'agent-a',
     fixture: {{
       nonceHash: 'nonce-hash',
       requiredResponseFragments: ['Juniper Atrium abc123', 'amber rook abc123'],
@@ -1971,6 +2260,7 @@ const runner = require({json.dumps(str(EVAL_SCRIPT))});
   const rejectedNativeCommand = await runner.auditConversationRecallExecution({{
     env: {{ WPR_DB_PATH: {json.dumps(str(runtime_db))} }},
     responseMessageId: 'response-a',
+    ownerId: 'owner-a', conversationId: 'conversation-a', agentId: 'agent-a',
     fixture: {{
       nonceHash: 'nonce-hash',
       requiredResponseFragments: ['Juniper Atrium abc123', 'amber rook abc123'],
@@ -3499,3 +3789,131 @@ def test_wing_mode_disables_background_cortices_for_silence_and_budget() -> None
         client_text,
         re.S,
     )
+
+
+def test_compaction_family_uses_one_source_bank_and_rejects_unknown_fixtures() -> None:
+    node_script = r"""
+const assert = require('assert');
+const bank = require(process.argv[1]);
+const executor = require(process.argv[2]);
+const family = bank.families.find((item) => item.id === 'main_compaction_fidelity');
+assert.strictEqual(family.runner, 'main_compaction');
+assert.strictEqual(Object.keys(family.sources).length, 11);
+assert.strictEqual(family.cases.length, 40);
+assert.ok(Buffer.byteLength(family.sources.long_tail.sourceTurns[0].userText) > 5 * 1024);
+assert.ok(Buffer.byteLength(family.sources.oversize_source.sourceTurns[0].userText) > 96 * 1024);
+assert.strictEqual(family.sources.tool_correction.sourceTurns.length, 2);
+assert.strictEqual(family.sources.tool_correction.sourceTurns[0].toolPairs[0].callId, 'lookup-j73');
+for (const testCase of family.cases) {
+  const evidence = executor.caseEvidence(testCase, family);
+  assert.ok(evidence.acceptedOlderTurns.length >= 1);
+  assert.strictEqual(typeof evidence.sourceDigest, 'string');
+  if (testCase.fixture.compaction.mode === 'review') assert.ok(evidence.candidate);
+}
+assert.throws(() => executor.caseEvidence({fixture: {compaction: {sourceId: 'missing', mode: 'candidate'}}}, family), /invalid_compaction_fixture/);
+const rejected = '  {"version":1,"summary":"incomplete",  ';
+const priorRejection = {code:'schema_invalid',issue:{path:'',constraint:'shape'},candidate:rejected};
+const retainedFamily = {sources:{retained:{sourceDigest:'a'.repeat(64),sourceTurns:[{userText:'Keep source unchanged.'}],previousSemanticCompaction:null}}};
+const repair = executor.caseEvidence({fixture:{compaction:{sourceId:'retained',mode:'baseline',priorRejection}}}, retainedFamily);
+assert.strictEqual(repair.sourceDigest, retainedFamily.sources.retained.sourceDigest);
+assert.strictEqual(repair.acceptedOlderTurns, retainedFamily.sources.retained.sourceTurns);
+assert.deepStrictEqual(repair.priorRejection, priorRejection);
+assert.strictEqual(repair.priorRejection.candidate, rejected);
+
+"""
+    result = subprocess.run(
+        ["node", "-e", node_script, str(EVAL_SCRIPT.with_name("prompt-bank.json")), str(EVAL_SCRIPT.with_name("run-main-compaction-evals.cjs"))],
+        cwd=REPO_ROOT, capture_output=True, text=True, check=False,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_compaction_snapshot_rejects_changed_artifacts_and_restores_prompt_selection() -> None:
+    node_script = r"""
+const assert = require('assert');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const crypto = require('crypto');
+const executor = require(process.argv[1]);
+const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'compaction-snapshot-contract-'));
+try {
+  const bytes = 'original synthetic artifact';
+  fs.writeFileSync(path.join(directory, 'source.js'), bytes);
+  fs.writeFileSync(path.join(directory, 'manifest.json'), JSON.stringify({
+    'source.js': crypto.createHash('sha256').update(bytes).digest('hex'),
+  }));
+  const snapshot = executor.readSnapshot(directory);
+  assert.strictEqual(snapshot.read('source.js').toString(), bytes);
+  assert.throws(() => snapshot.read('not-recorded.js'), /snapshot_file_unrecorded/);
+  fs.writeFileSync(path.join(directory, 'source.js'), 'changed');
+  assert.throws(() => executor.readSnapshot(directory), /snapshot_hash_mismatch/);
+  const previous = process.env.VIVENTIUM_PROMPT_BUNDLE_PATH;
+  const registry = executor.selectedPromptRegistry({getRequiredPromptText(id) {
+    assert.strictEqual(process.env.VIVENTIUM_PROMPT_BUNDLE_PATH, 'selected-synthetic-bundle');
+    if (id === 'reject') throw new Error('render_failed');
+    return 'selected prompt';
+  }}, 'selected-synthetic-bundle');
+  assert.strictEqual(registry.getRequiredPromptText('ok'), 'selected prompt');
+  assert.strictEqual(process.env.VIVENTIUM_PROMPT_BUNDLE_PATH, previous);
+  assert.throws(() => registry.getRequiredPromptText('reject'), /render_failed/);
+  assert.strictEqual(process.env.VIVENTIUM_PROMPT_BUNDLE_PATH, previous);
+} finally { fs.rmSync(directory, {recursive: true, force: true}); }
+"""
+    result = subprocess.run(
+        ["node", "-e", node_script, str(EVAL_SCRIPT.with_name("run-main-compaction-evals.cjs"))],
+        cwd=REPO_ROOT, capture_output=True, text=True, check=False,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_first_visible_timing_counts_native_preview_before_final() -> None:
+    node_script = r"""
+const assert = require('assert');
+const harness = require(process.argv[1]);
+(async () => {
+  for (const preview of [true, false]) {
+    let now = 1000;
+    Date.now = () => now;
+    const identity = { messageId: 'current-answer', conversationId: 'accepted-conversation' };
+    const events = [
+      { created: true, message: { conversationId: 'accepted-conversation', isCreatedByUser: true } },
+      { event: 'on_run_step', data: { runId: 'current-answer' } },
+      { type: 'text', text: 'Tool activity' },
+      { type: 'text', preview: true, ...identity, text: '   ' },
+      { type: 'text', preview: true, text: 'No presentation identity' },
+      { type: 'text', preview: true, ...identity, messageId: 'stale-answer', text: 'Stale answer' },
+      { type: 'text', preview: true, ...identity, conversationId: 'another-chat', text: 'Other chat' },
+      { type: 'text', preview, edited: true, ...identity, text: 'An early answer.' },
+      { event: 'on_message_delta', data: { delta: { text: 'Final answer.' } } },
+      { final: true, responseMessage: { content: [{ type: 'text', text: 'Final answer.' }] } },
+    ];
+    global.fetch = async (url, options = {}) => {
+      if (options.method === 'POST') {
+        return Response.json({ streamId: 'accepted-stream', conversationId: 'accepted-conversation' });
+      }
+      return { ok: true, status: 200, body: { getReader: () => ({
+        read: async () => {
+          now += 100;
+          return { done: false, value: new TextEncoder().encode('data: ' + JSON.stringify(events.shift()) + '\n\n') };
+        },
+        cancel: async () => {},
+      }) } };
+    };
+    const result = await harness.runChatTurnWithRetry({
+      args: { apiBase: 'http://synthetic.invalid', agentId: 'synthetic', qaRunId: '11111111-1111-4111-8111-111111111111', timeoutMs: 10000 },
+      token: 'synthetic', testCase: { id: 'synthetic', surface: 'web' }, text: 'A question.',
+    });
+    assert.strictEqual(result.ok, true);
+    assert.strictEqual(result.timing.firstVisibleReplyMs, preview ? 800 : 900);
+    assert.strictEqual(result.timing.completedMs, 1000);
+  }
+  process.stdout.write('OK');
+})().catch((error) => { console.error(error); process.exit(1); });
+"""
+    result = subprocess.run(
+        ["node", "-e", node_script, str(EVAL_SCRIPT)], cwd=REPO_ROOT,
+        capture_output=True, text=True, check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "OK"

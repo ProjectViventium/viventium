@@ -1,0 +1,38 @@
+schemaVersion: 1
+capability: voice
+requirementOwner: docs/requirements_and_learnings/capabilities/voice.md
+statusPolicy: Run results belong in dated, candidate-bound reports.
+sourceInventories:
+  - qa/listen-only-mode/cases.md
+  - qa/modern-playground-voice/cases.md
+  - qa/voice-call-hardening/cases.md
+  - qa/voice-streaming-first/cases.md
+  - qa/voice-stt-local/cases.md
+  - qa/voice-turn-taking/cases.md
+  - qa/telegram-runtime/cases.md
+  - qa/remote-access/cases.md
+journeys:
+  - id: audible-main-and-interruption
+    requirements: [CC-019, CC-049, PW-050, PW-051, PW-052, PW-053, VOICE-EFFECT-001]
+    userAction: Start a real call, request one authorized durable effect, interrupt speech, recover, and hear the final result.
+    surfaces: [installed Voice Call, linked chat, Active Work]
+    expectedResult: The same Main speaks; stable barge-in suppresses stale audio; the effect happens once; concise completion is heard once and artifacts remain linked.
+    degradedAndRecovery: Missing media, provider rejection, timeout, false interruption, hangup, and completed playback stay distinct. Denied, replayed, stale, wrong-owner, and wrong-revision bindings cause zero new effects and return durable typed truth.
+    persistenceAndCleanup: Concurrency, crash, restart, reconnect, and candidate-to-predecessor compatibility preserve one accepted reversible provider effect, one immutable effect row, and matching delivery acknowledgement and audible or visible result. Synthetic call state is removed and raw audio retention remains zero.
+    evidence: [audible observation, transcript, effect receipt, playback completion, call logs, installed artifact identity]
+  - id: listen-only-boundary
+    requirements: [VOICE-001]
+    userAction: Enable Listen-Only, speak synthetic content, switch modes, and inspect the transcript.
+    surfaces: [installed Voice, transcript view]
+    expectedResult: Visible ambient transcript appears with no assistant reply, TTS, tool call, mission, title, or normal recall entry.
+    degradedAndRecovery: Uncertain speaker identity stays Unknown and unavailable transcription is truthful.
+    persistenceAndCleanup: Mode change is atomic; removal deletes synthetic transcript state according to policy.
+    evidence: [visible transcript, zero-response and zero-tool proof, mode state, cleanup proof]
+  - id: telegram-call-public-edge
+    requirements: [CC-057, CORE-007, CORE-008, CORE-009, PW-052]
+    userAction: From a linked Telegram account send /call, tap the returned button once on a device on the serving Wi-Fi and once on a genuinely off-network device, talk to Main, and hang up.
+    surfaces: [Telegram Desktop or mobile, public Playground call bootstrap over the custom-domain HTTPS edge, LiveKit media, linked chat]
+    expectedResult: Each fresh link uses the configured public playground origin and carries its single-use launch bearer only in the fragment; the page bootstraps, auto-connects, a worker joins, speech is transcribed, Main answers audibly, hangup completes, the linked chat persists, and replaying a used link returns the honest expired-or-used message.
+    degradedAndRecovery: Same-network failure with off-network success is classified as router NAT loopback or split-DNS work, never as an application regression; missing public URL, expired session, wrong owner, media not established, and worker not joined stay distinct; remote-access status never claims off-network reachability this Mac did not observe.
+    persistenceAndCleanup: The call session ends and is cleaned, raw audio retention stays zero, the linked chat keeps the transcript, and no second Call URL scheme, tunnel, certificate trick, or hosts-file workaround is introduced.
+    evidence: [visible Telegram button and URL origin, bootstrap result per network class, exchange 200 then 410 on replay, worker join and transcript rows, audible reply, hangup and cleanup counts, remote-access status wording, donor cases TR-012 MPV-045 REMOTE-UC-004 REMOTE-UC-005]

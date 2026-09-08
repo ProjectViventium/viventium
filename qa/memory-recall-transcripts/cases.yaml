@@ -1,0 +1,18 @@
+schemaVersion: 1
+capability: memory-recall-transcripts
+requirementOwner: docs/requirements_and_learnings/capabilities/memory-recall-transcripts.md
+statusPolicy: Run results belong in dated, candidate-bound reports.
+sourceInventories:
+  - qa/conversation-recall-rag/cases.md
+  - qa/meeting-transcript-memory/cases.md
+  - qa/memory-continuity/cases.md
+  - qa/memory-hardening/cases.md
+journeys:
+  - id: save-recall-and-transcript
+    requirements: [DATA-005, DATA-006, CORE-008, MEMORY-HEALTH-001]
+    userAction: Save, read, edit, and forget one synthetic fact; recall one eligible prior chat; ingest one changed transcript twice.
+    surfaces: [Web, memory, recall, transcript operator]
+    expectedResult: Each surface keeps its own owner and provenance, recall uses a same-run receipt, and transcript replay creates no duplicate. The existing saved-memory hardener, one scoped LaunchAgent, effective tuple, receipt, transcript index, vector health, and visible recall agree; no duplicate system is introduced.
+    degradedAndRecovery: Healthy empty, unavailable vector service, stale index, blocked transcript, and unsupported scope remain distinct and resumable.
+    persistenceAndCleanup: After induced index failure, rebuild only derived indexes and prove source memory hashes and counts stay unchanged. Refresh and restart preserve recovery; forgetting and synthetic-source cleanup leave no residue. User-global LaunchAgent and login/reboot proof requires a separate supported macOS user or VM.
+    evidence: [visible result, memory revision, retrieval receipt, index health, transcript manifest, cleanup proof]

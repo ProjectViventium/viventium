@@ -1,14 +1,39 @@
 # Parallel Work: One Always-Available Main, Many Durable Missions
 
-Status: implementation in progress behind a dark availability flag. Do not expose or default on
-until every release gate in this document and `qa/parallel-orchestrator/cases.md` passes on the installed
-runtime.
+Status: implementation in progress. Ordinary authorized use automatically delegates substantial
+independent work; no mode toggle or special delegation prompt is required. Public release requires
+the applicable gates in this document and `qa/parallel-orchestrator/cases.md`; authorized local use
+follows the signed-in owner's operational readiness.
 
-Last revised: 2026-08-24.
+Last revised: 2026-09-05.
+
+The current [capability contract](capabilities/parallel-work.md) clarifies the ordinary user journey.
+The earlier focused/off rollout policy is superseded as a user prerequisite. An explicit focused
+preference and real authorization, isolation, capability and capacity checks remain valid. Historical
+source and acceptance findings below retain their original scope; no documentation change is a
+claim that current installed behavior passes.
 
 This document is the product and implementation source of truth for Viventium Parallel Work. It
 preserves the existing logical-turn, continuity, callback, scheduler, and GlassHive contracts while
 adding bounded durable mission concurrency and provider-native worker teams.
+
+### Local readiness and public release
+
+Account controls and Active Work discovery use the existing owner-scoped readiness and preference
+API. A healthy authorized owner can use configured local work while public release gates remain
+open. Loading, failed, disabled or degraded readiness never enables admission; known work stays
+reachable when new admission becomes unavailable. Isolation, authorization, capacity and storage
+checks remain authoritative. Deployment-wide certification is not an owner's readiness result.
+Each open app tab refreshes unavailable readiness every ten seconds while the background probe settles,
+even with Account settings closed, and stops polling once ready or intentionally disabled. Pending
+checks and intentionally disabled configuration use plain language; diagnostic codes
+remain available under expandable details. A failed authenticated request does not keep polling.
+The preference response preserves the saved choice during an outage. Runtime admission separately
+uses the effective mode and withholds new mission authority while Parallel Work is unavailable;
+a disabled switch must not imply that the user's saved choice was changed.
+
+Normal install/status summaries report local service and configuration state. Public certification
+belongs to `bin/viventium release-check`; it must not appear as a claim that local work is disabled.
 
 ## Product outcome
 
@@ -16,6 +41,12 @@ Viventium Main is one continuous user-facing consciousness that stays available 
 independently completable work continues in the background. Main can answer quick follow-ups,
 accept another objective, inspect every mission, and message, steer, pause, resume, stop, retry, or
 dismiss exact work without becoming multiple competing authors.
+
+A complete public interim reply from Main may appear while tools or internal consultants continue.
+It remains attached to the same accepted response through a tool handoff and is replaced by the
+final answer. This presentation must not enter the graph's aggregated answer or saved final text.
+Only the current owner, source, revision, and native producer may update it; Stop, supersession,
+and terminal delivery retain their existing clearing and once-only final rules.
 
 The architecture has two levels and one durable control plane:
 
@@ -54,7 +85,8 @@ this contract but must not weaken it.
 ### 2. Queen behavior
 
 - Quick work stays with Queen.
-- Independent, substantial work becomes Worker Bees.
+- Independent, substantial work becomes Worker Bees automatically in ordinary use, without extra
+  configuration, prompt wording, or user-managed threads.
 - Queen remains responsive while Bees run.
 - Queen always sees and controls all active Bees.
 - Results return through Queen's voice.
@@ -75,7 +107,8 @@ If you send more input before Queen finishes:
 - The unfinished reply is revised or removed.
 - Queen sends one current reply covering every message.
 - You must not receive two competing replies.
-- Existing Bees continue unchanged.
+- Existing Bees continue unchanged. Main uses its existing model judgment to associate relevant
+  guidance with the same track; unrelated new input cannot interrupt that work or lose its result.
 
 ### 5. Controlling a Worker Bee
 
@@ -110,6 +143,12 @@ Steering A must never affect B. If the target is unclear, Queen asks which Bee.
 Two HTML Bees run with overlapping times; Queen answers a quick question; a late message revises
 Queen's reply once; only HTML A is steered; B stays unchanged; both files arrive once and open in
 separate browser windows.
+
+That journey tests artifact delivery, not the full harness. Acceptance also requires ordinary
+non-file goals, actual app/browser/computer operation, connected signed-in sessions, and the
+installed worker process using the granted OS permissions. Do not narrow the worker's native
+tools or execution abilities to make the artifact case pass. One model-owned delegation policy
+serves all goals; no prompt-specific route, task-type allowlist, or special worker wording.
 
 ### 9. Full capability and reliability parity
 
@@ -157,7 +196,7 @@ pass. `SOURCE DONE` means only that focused source tests pass; it is not user-pa
 
 | # | Locked invariant and owning fix | Required acceptance | Current state |
 |---:|---|---|---|
-| 1 | Parallel Work stays dark. The release evaluator fails closed for every open QA gate; an explicit local override is always labelled **PRE-GATE / NOT READY**. Dark or unready Parallel Work never disables Main. | `REL-UC-004`, full release evaluator, installed Telegram restart | SOURCE DONE; installed default restoration and release QA open |
+| 1 | Public release fails closed for every open release gate. Authorized configured local work and its controls use owner-scoped operational readiness, independently of certification; ordinary ready use needs no manual mode setup. Unavailable Parallel Work never disables Main or hides known work. | `REL-UC-004`, `PWK-001`, `PWK-UC-002`, full release evaluator, installed Telegram restart | PARTIAL; ordinary no-setup contract corrected, source/runtime and installed acceptance open |
 | 2 | Main uses one request-pinned Feelings capsule. The winning native provider records exact hash, count, placement, and semantic receipt. Keep the host plug-in denylist; do not mount private state or add a Feelings MCP. | `EMO-UC-047` | SOURCE DONE; installed Telegram receipt proof open |
 | 3 | Every eligible direct worker receives that same pinned capsule exactly once through the shared snapshot resolver; scope-off workers receive none. | `EMO-UC-047`, `PWK-UC-014` | SOURCE DONE; installed two-worker parity proof open |
 | 4 | Main receives typed, model-visible current-turn facts for surface, route, selected model, fallback model, and effective effort. It never infers these from tool names or prose. | `PWK-UC-014` | SOURCE DONE; installed wording proof open |
@@ -251,6 +290,17 @@ B produced the requested restart/callback checklist. The escaped contracts are s
   the constraint ledger. The trusted launch source is a fallback when no current run instruction is
   available. The worker may still use the full context for judgment, but stale assistant prose cannot
   silently become a current deliverable requirement.
+  Direct Queue/Do next carries the same typed prior-task context as Message and Retry, preserving
+  the current correction verbatim and the original user requirements separately. Internal
+  prose-derived ledgers and coverage findings remain internal diagnostics. Completion requirements
+  come only from the existing trusted typed output contract. Prose, a final-report label, seed names,
+  and notes-directory names cannot establish missing work or produce a completion warning for the
+  user. The artifact inventory remains workspace-scoped; it must not scan arbitrary host paths to
+  infer whether an authorized native app action succeeded. Exact run/evidence identity, structured
+  failures, explicit typed output formats, document integrity and actual authority boundaries remain
+  enforced on live completion and restart recovery. The model is not required to author an internal
+  ledger. Evidence writes publish complete JSON atomically, and completion consumers retain the
+  exact per-run path while the latest alias can advance independently to a subsequent run.
 - When an exact Retry replacement is still queued and Message arrives before it begins, Store replaces
   that queued source atomically with one additive continuation in the same work. Once startup has
   begun, Message retains the existing safe-boundary behavior. Neither branch creates a hidden sibling.
@@ -273,29 +323,25 @@ completable objective belongs in Parallel Work. Main must not say work is runnin
 or updated until the matching delegation or action receipt settles. Conversely, matching an
 existing objective does not create a competing mission merely because the user sent another message.
 
-The durable launch/presentation boundary is therefore also explicit:
+The durable launch/presentation boundary is explicit:
 
-- a work-launch acknowledgement is derived only from an exact server-bound durable receipt, never
-  from model prose, a tool intention, a display title, a provider label, or unrelated worker state;
-- every surface records the exact committed launch/action in the append-only receipt list for the
-  originating stream. This list is a replay fence, not presentation authority: Web, Scheduler,
-  Telegram, and Voice all use it to prevent provider fallback from repeating committed work;
-- only an external adapter whose declared supersession scope is `response_only` receives the
-  singular presentation receipt that may close an older response. Web and Scheduler retain normal
-  server-authored presentation. If the exact stream state cannot be read while fallback would
-  otherwise run, fallback fails closed rather than risking a duplicate mission or action;
-- after a durable receipt exists, the originating Main turn is never replayed through another
-  provider. Telegram/Voice may close with their neutral receipt; Web/Scheduler may instead show the
-  provider error while the committed mission remains truthful and controllable in Active Work. The
-  visible error does not mean the background mission was rolled back;
-- a response-only turn superseded by a newer source event waits for either that exact receipt or an
-  authoritative terminal result. Once the receipt exists, later provider prose cannot replace the
-  neutral acknowledgement; if no mission committed, the stale turn still terminates cleanly;
-- a live, non-superseded turn remains open after a receipt so one inference may create several
-  independent missions and may still answer a separate direct part of the user's request; and
-- external delivery may settle as a durable-effect delivery only when the exact receipt is bound.
-  An acknowledgement that races ahead of message insertion is reconciled into the persisted message
-  after insertion rather than remaining only in the transient stream job.
+- Main claims a launch or action only after the exact owner-bound GlassHive operation settles.
+  Accepted work and its results remain in the existing durable work/callback owners, independent
+  of the provisional Main reply. A provider error does not roll that work back.
+- Native harness invocation locks provider replay. Ordinary graph routes also lock replay before
+  any potentially effecting tool starts, including uncertain outcomes. Only server-registered
+  read-only or graph-coordination effect metadata permits replay; names, model arguments and
+  text cannot grant that exemption. This uses the existing invocation fence, not a second
+  stream-local receipt ledger.
+- Native response identity and the current delivery owner determine whether a reply may commit.
+  Accepted background work does not grant stale Main prose a presentation exemption. External
+  adapters receive the current owner's acknowledgement result and retract stale replies normally.
+  Work completion is delivered through its bound callback, not a fabricated fallback answer.
+- A live turn may admit multiple independent missions and answer a direct question. The effect
+  fence prevents provider replay; it does not end the turn or cancel admitted missions.
+- Accepted action traces use the exact operation identity after the account API succeeds.
+  Best-effort tracing cannot turn an accepted action into a tool failure or authorize stale prose.
+  A trace marks action acceptance, not completion of the resulting background work.
 
 The same escaped-bug pass also hardens the non-visual authority boundaries:
 
@@ -368,8 +414,8 @@ restart/reload persistence. Provider-backed fallback missions completed and deli
 candidate. Release remains blocked on provider-connected active-running Steer/Pause and lost-control
 recovery; scheduler delivery/adjudication; three-way capacity, overflow, load, fairness, and latency;
 full Web/Telegram/Voice/artifact parity; two-owner isolation; the final hostile-sandbox and forged-mode
-matrix; rollback; and clean install, nested pins, and shipped-artifact parity. The deployment
-availability flag therefore remains false and the default remains `focused`.
+matrix; rollback; and clean install, nested pins, and shipped-artifact parity. This is historical
+acceptance evidence for that candidate, not a requirement that an authorized ready user enable a mode. The current no-setup journey still needs actual installed proof.
 
 ## Account and surface contract
 
@@ -385,14 +431,16 @@ The canonical deployment declaration is:
 glasshive_options:
   orchestration:
     parallel_available: true
-    default_mode: focused
+    default_mode: parallel
 ```
 
-This is the agent capability declaration. The separate deployment setting
-`integrations.glasshive.orchestration.available` remains `false` until release gates pass; both
-must allow Parallel Work before a surface exposes it.
+This is the intended agent capability declaration for ordinary ready use. The separate deployment
+setting `integrations.glasshive.orchestration.available` and actual owner-scoped capability readiness
+govern admission. Public release certification cannot substitute for operational readiness or impose
+a mode-toggle ritual on the user.
 
-- Existing and new public accounts default to `focused`.
+- An account without an explicit preference uses automatic parallel delegation when ready. Preserve
+  an explicit focused choice; do not treat an inherited default as a user opt-out.
 - The Telegram label is **Parallel work**. It writes the linked LibreChat account preference and
   makes no model call.
 - Every Telegram command, setting/callback, text, captioned attachment, and uncaptioned attachment
@@ -446,6 +494,13 @@ provider, origin surface, compact native-team counts, delivery state, timestamps
 `viewRef`, and the actions valid for that exact item. It must never expose authorization, prompts,
 transcripts, credentials, local paths, tokens, or raw project/worker/run IDs.
 
+The read-only mission View shows the retained current mission result, including answers that do
+not create files. It uses the owner-scoped delegation's current run rather than another run from
+the reusable worker. Pending work must not show an earlier result as current; interrupted output
+is labelled as progress, with the actual failure state retained. Text uses the existing secret/path
+redaction and HTML escaping; artifact actions keep their signed links. An opaque origin reference
+is not a browser URL and must not be guessed into one.
+
 Only `completed`, `failed`, and `cancelled` are terminal. Active state is the pin; GlassHive
 `favorite` is unrelated. Terminal failures remain until retry/dismiss. Completed work remains until
 delivery is acknowledged or intentionally silent.
@@ -490,6 +545,18 @@ worker/run IDs, canonical external state, attention, adjudication, and delivery 
 are never the public WorkSummary and never grant authority. The relation is the durable join for
 lost-response repair, scheduler gating, callback verification, and rollback visibility.
 
+A Main-authored answer commits before external delivery. Recovery verifies the same stored owner,
+conversation, message and text, then retries delivery without another model run. A pointer from a
+rolled-back transaction is not an authored answer. Committed delivery recovery is separate from the
+model-authoring retry budget.
+
+When a call has ended, a committed linked-chat answer uses the existing callback delivery ledger.
+A neutral terminal status may suppress only a never-dispatched destination tied to that exact ended
+call. Other destinations retain their own delivery state. The ledger records chat persistence, not
+playback or reading. Current accepted callback authority and actual Message persistence are required;
+Main's hashed trace reference resolves to that accepted callback identity. The existing bounded
+reconciliation scan advances past unavailable legacy rows so they cannot starve newer results.
+
 Main sees only `active_work_list` and `active_work_action` as the eager control plane. Ordinary fresh
 delegation is one atomic GlassHive call. Low-level `worker_*` controls remain operator diagnostics and
 must not compete in Main's normal tool list. Watch links are read-only; control needs an authenticated
@@ -504,6 +571,77 @@ Parallel Work extends rather than replaces the existing logical-turn revision co
 - Every Telegram/Web/Voice source event remains durable and ordered. Rapid source segments visible
   before Main commits are accounted for exactly once; distinct A, B, and quick C may become two
   missions plus one direct answer, never a silent merge or drop.
+- Retracting an uncommitted reply must preserve the input chain. When the next source event
+  points to that exact superseded response, its persisted job receipt supplies the preceding
+  user-message ID before history is loaded. Only the same conversation, logical turn, and older
+  revision may rebase that link. Unknown missing parents stay rejected. Native direct-parent proof
+  binds the selected authored role, content, owner, conversation, and row identity; consecutive
+  user segments do not require a fabricated assistant message. Historical assistant proofs remain
+  byte compatible. Changing a captured parent role or content still invalidates admission.
+- Resumable requests keep assistant-message persistence in the controller that owns the logical
+  revision. BaseClient still saves original user input and conversation options, but cannot publish
+  an older assistant sibling before that controller rejects a superseded response. Accepted worker
+  execution and effects remain independent of presentation supersession.
+- For a concrete conversation, before asynchronous conversation or agent lookup, authenticated
+  ingress retains the original input in the existing logical-turn owner. Telegram stores its
+  conversation ID and opaque reset generation together in one preference. Authenticated ingress
+  captures that generation before ordinary input preparation. The existing Core conversation
+  factory binds fresh or resolver-reset IDs to the owner, source scope, generation and originally
+  requested conversation, so overlapping starts resolve to one chat. Before the first saved answer
+  creates the Conversation row, reuse requires an earlier live retained input with the exact owner,
+  chat/thread, source scope and reset generation, plus its still-owned original Message. Historical
+  Messages alone cannot restore a missing conversation. Explicit reset rotates the
+  generation; a delayed old response cannot restore the saved conversation. Legacy conversation
+  strings migrate once. Core saves the raw user message and resolves owned uploads before marking that
+  source ready; claim waits for these exact sources rather than admitting partial context. Mongo or
+  attachment lookup failure keeps the source available for the same-source retry. A bounded wait
+  returns a typed retryable `source_input_persistence_pending` condition, never a successful empty
+  turn or a generic transport conflict. Exceeding the existing source count/byte limits returns
+  `source_input_capacity` before retained references can be evicted.
+- Slow Telegram preparation belongs to the existing authenticated ingress event, with original
+  text, the minimal Telegram preparation envelope, and prepared attachments in the existing
+  owned Message/File storage. Preparation holds no Main turn. An expired preparation lease is
+  recoverable; a reported failure is terminal unless its owner explicitly declares it retryable.
+  Reset keeps the old goal and its generation separate instead of rebinding it to the new chat.
+  Albums retain all source claims and recover together, then bind one accepted stream. Typed
+  retained input bypasses the legacy local text buffer and short-text/emoji filter: Core owns
+  source merging, and Main decides what the user means. Caption and speech both survive
+  preparation. A reported preparation error settles once even when a later input owns presentation.
+- A prepared older input uses an explicit ready-input continuation: original event/message IDs,
+  sequence, timestamp and files remain unchanged; the existing source-order owner supplies a
+  separate current presentation fence. It yields while Main is active, then uses the latest
+  owned conversation parent so Main can consider later context and corrections. Models decide
+  whether and how to act. A later observed input still revokes stale native publication and
+  delivery acknowledgement authority. A committed interactive Main presentation also persists
+  compact references to its accepted source inputs on the existing assistant Message, even if
+  that Message was already finished when the adapter acknowledged it. Ingress recovery may settle
+  a covered original after its own stream expires only when owner, conversation, source scope,
+  conversation generation, event, message, sequence, and acknowledged logical revision match.
+  Callback, scheduler, partial/effect-only, failed, or unacknowledged results cannot supply this
+  evidence. Missing historical coverage remains unproved; text such as NTA is not a receipt.
+  Source coverage proves inclusion in the accepted Main input and committed presentation, not
+  semantic completion of every requested goal. Main owns continuation or independent work;
+  delivery acceptance must verify those results separately. The trusted logical revision's source
+  segments also identify every current pending input in the existing digest-bound message carrier.
+  Provider formatting must preserve those exact user IDs, order, content and attachments; native
+  replay places all of them in the current accepted input, including a reused pending source.
+  Historical protected sources remain historical evidence. Current-input markers require the
+  authenticated Core context and never turn quoted history into new authority. The first source may use the fresh
+  request name while later sources use its canonical conversation name; recovery accepts only
+  those two generation aliases for that same exact retained source.
+  Recovery reuses an admitted stream and its committed
+  delivery receipt; a missing accepted response is a truthful failure, never a model/effect rerun.
+  Fresh/reset, delayed voice/file, failure/restart and visible once-only delivery remain real
+  Telegram acceptance gates; deterministic store/route tests alone do not complete them.
+- Provider formatting preserves separately stored authored user text when a content array has no
+  textual content, including attachment-only or empty arrays. Existing explicit text content wins;
+  media parts and source IDs stay intact. Empty assistant error/activity content cannot gain text
+  from this user-only projection. Source preservation guards remain authoritative.
+- Atomic claim carries ordered unresolved source segments into the surviving revision. Source-owned
+  message IDs reconnect only the exact original user-parent edges, through existing source mutation
+  guards, before the normal history loader runs. The worker handoff preserves exact segments and
+  owner-resolved file associations. Model-selected ordinals select from this ledger; request headers,
+  body metadata, and attachment metadata cannot invent authority or mix sibling files.
 - A trusted source sequence is compared atomically with the durable source watermark and current
   revision during admission. A delayed lower sequence cannot replace a higher sequence regardless
   of host arrival order. Core returns typed `source_order_superseded`; the source adapter suppresses
@@ -553,10 +691,11 @@ Parallel Work extends rather than replaces the existing logical-turn revision co
   health snapshot also fail with `source_order_not_durable`; a health surface cannot report ready
   while Telegram must strip launch authority. Runtime code never infers readiness or user intent
   from an open port or prompt wording.
-- Main's stable tool policy permits automatic durable delegation only when the ephemeral account
-  capsule explicitly says `Mode: parallel`. Without that signal, delegation requires an explicit
-  user request. This keeps the focused/off fast path deterministic without a preference lookup or
-  classifier round trip.
+- Main's stable tool policy uses the existing structured effective mode and verified readiness. A
+  ready account normally receives automatic delegation capability without a user setup step. An
+  explicit focused choice disables new automatic delegation but retains explicit requests and all
+  accepted work. Missing or unavailable capability is not invented. No extra routing model or
+  prompt-keyword classifier is required.
 - The compact Active Work capsule begins loading alongside request setup, uses a two-second
   stale-while-revalidate cache, targets local p95 below 50 ms, and has a hard 100 ms cold wait. A
   timeout emits a compact `unavailable` capsule whenever effective Parallel mode or the trusted
@@ -574,9 +713,47 @@ Parallel Work extends rather than replaces the existing logical-turn revision co
 - Status cards use neutral lifecycle language. A worker never speaks as Main. Terminal evidence
   enters the existing Phase-B adjudication path; Main authors any useful continuation in its own
   voice, while redundant/moved-on results may resolve silently with durable status intact.
+- Native tool images are observations, not automatically requested deliverables. The authenticated
+  terminal callback retains their exact run/tool/content identity, raster type, byte count, digest,
+  signed artifact links and explicit omission count in the existing mission evidence row. Core
+  verifies the image bytes from the configured artifact origin without redirects before supplying
+  ordinary image inputs to Main's existing Phase B synthesis. Coalescing respects the shared image
+  budget without dropping accepted evidence. Main selects whether an image helps the current user
+  request; only its authored response is persisted and delivered. Private model image inputs carry
+  `visible_to_user: false`. A model-selected native input image path is resolved through the exact
+  invocation's published owner/run/workspace/hash scope into the existing artifact reference before
+  private-path redaction. Ordinary and structured native provider replies publish only selected,
+  verified input bytes through the existing native-media artifact writer and owner-scoped signed
+  download links; uploads remain private. This transport is enabled only for the provider that owns
+  reference resolution. Core also resolves references selected from current verified mission
+  evidence before display sanitization. Unknown or stale references do not grant image access.
+  Recovery reuses the durable per-run invocation scope, not a later worker configuration or active
+  session. No automatic screenshot gallery,
+  second attachment ledger or extra model is introduced. Missing or changed image bytes remain a
+  synthesis failure eligible for existing recovery, never a successful image delivery. Deterministic
+  projection checks and actual image selection/render/reload are separate acceptance gates.
 - Mission-callback Phase B is exempt from ordinary moved-on presentation suppression and bounded
-  SSE grace when it can still add useful account-level information; empty, `{NTA}`, redundant, or
-  stale synthesis remains silent. Persisted terminal/delivery truth never depends on NTA text.
+  SSE grace when it can still add useful account-level information. Typed terminal evidence uses
+  additive synthesis after a visible acknowledgement; an empty primary keeps the existing recovery
+  mode. Acknowledgements do not fulfill the requested output count. Main delivers pending findings
+  within that count, omits already-delivered results, and does not repeat the original work.
+  Terminal evidence retains the accepted run instruction and its existing ordered continuation
+  context under the same run/revision fence. Main receives this exact source separately from clipped
+  result summaries, including follow-ups entered through work controls. Models decide what to deliver.
+  A settled `silent` predecessor does not block later result adjudication; the last visible result
+  still owns presentation parentage. Unfinished and failed predecessors retain their retry ordering.
+  An explicit successful semantic no-response decision settles the accepted evidence as `silent`
+  within its revision fence. The same transaction retires only its exact neutral completed status,
+  just as after a saved useful Main reply; error and full-text callbacks remain visible.
+  Missing output or provider failure remains retryable; it never counts
+  as intentional silence or useful delivery. Persisted terminal/delivery truth never depends on
+  callback prose.
+  The authored Message and its evidence pointer commit together before presentation/outbox work;
+  both phases retain the accepted callback fence. A delivery failure cannot roll back that answer
+  or consume the model-authoring retry budget. Existing reconciliation retries its committed result
+  with the original attempt history. A pointer without committed text/timestamp is not delivery
+  proof; recovery reuses the original Phase B idempotency key, and any stored answer must match the
+  real owner-scoped Message before it can produce a presentation receipt.
 - A contiguous retry wait episode publishes one `run.waiting_on_capacity` state transition. It also
   publishes bounded, coalesced status refresh intents at the configured visibility interval while
   the wait continues. Each refresh carries measured queue age, structured blocker, next retry, and
@@ -596,13 +773,26 @@ Parallel Work extends rather than replaces the existing logical-turn revision co
   only.
 - Phase B is a presentation adjudicator, not an orchestration lane. Before provider invocation it
   removes `x-glasshive-bootstrap-bundle-b64`, `x-glasshive-bootstrap-timestamp`, and
-  `x-glasshive-bootstrap-signature` by case-insensitive header name and supplies no tools. Mixed
-  header casing must never preserve bearer authority. It uses a distinct native session lane while
+  `x-glasshive-bootstrap-signature` by case-insensitive header name and supplies no host tools.
+  Native built-ins are a separate adapter capability: zero host tools alone does not prove that
+  synthesis did not repeat work. Exact-model acceptance checks the native-call audit as well as the
+  final text. Mixed header casing must never preserve bearer authority. It uses a distinct native session lane while
   retaining the canonical Main continuity identity and the exact request-pinned
   `MainContextSnapshotV1`. A missing or unbindable snapshot fails before provider invocation. Phase B
   must never rotate, replace, interrupt, or terminate Main's active native session. The provider
   rejects any authority-changing session replacement while the old worker owns nonterminal work and
   returns the typed `conversation_session_authority_conflict` class without changing provider health.
+
+The Active work panel shows one localized state and useful issue/result details. Provider and
+transport identifiers do not belong in its primary status line. Delivery failures, unconfirmed
+results and unread results stay visible; a reported failure or stop does not need a second
+acknowledgement sentence. Terminal work keeps its View and Dismiss controls visible and reveals
+its existing Queue/Message controls through one Follow up action. Failed or cancelled work accepts
+an explicit nonempty correction in the same mission/workspace, preserving prior results and native
+session state. This does not make an unknown failure automatically retryable or relax the separate
+Retry policy. Each follow-up still checks current ownership, capabilities, workspace closure, and
+its exact action/run fence. Pending instructions and uncertain exact-operation retries must never
+disappear behind that disclosure; Queue/Message/Steer meanings remain unchanged.
 
 ## Exact action semantics
 
@@ -617,6 +807,11 @@ Parallel Work extends rather than replaces the existing logical-turn revision co
 | Retry | Continue retryable terminal work in the same mission workspace. |
 | Dismiss | Remove an acknowledged terminal card without deleting history. |
 
+Releasing idle compute does not pause the user's objective. Queue and Message wake a released
+worker when no explicit Pause or suspended/attention run blocks it. Startup recovers an already
+accepted queued continuation through the same worker processor, preserving its run and workspace.
+An explicit Pause remains in force until Resume; saving more guidance never overrides it.
+
 Terminate/archive is a separate operator lifecycle action. It is never the ordinary meaning of Stop.
 Every provider-facing action schema, tool description, and compact Voice context must preserve these
 distinctions. If the user names an action, Main uses that exact action and reports the durable action
@@ -626,6 +821,16 @@ All completion/cancellation races use compare-and-set terminality; late output i
 suppressed after Stop wins.
 
 ## Callback, scheduler, and delivery truth
+
+When an authenticated terminal result was accepted but its useful-evidence effect failed, the
+existing Core reconciliation scan requests recovery from GlassHive's callback-association owner.
+The request carries the accepted owner/origin/work/run/callback/revision/digest; the sender retains
+its original payload and total delivery attempts. Recovery claims the existing current-result
+lease for one freshly signed delivery, with a one-minute cooldown. It cannot rerun work, recover a
+foreign or superseded result, change the destination, or reset a retry budget. Core stops requesting
+recovery once the exact mission evidence exists; the existing result CAS, effect fences and Main
+adjudication remain the only owners of useful delivery. Sender HTTP acceptance still does not prove
+that the user received the result.
 
 Core creates an opaque origin/delivery binding before launch. GlassHive echoes only that binding;
 callback-supplied surface IDs are never trusted. At callback time, Core resolves the persisted
@@ -654,6 +859,11 @@ destinations and current account mapping, then creates one idempotent delivery r
   and acknowledgement. A terminal HTTP acceptance with zero resolvable targets alerts.
 - Each terminal card is immediate. Useful terminal prose from the same account is coalesced for at
   most two seconds before Main authors it; callbacks remain individually durable and replayable.
+- Web chat, shared history and selected-branch exports show persisted callback and Main follow-up
+  messages beside overlapping user turns through the existing scheduler branch projection. Their
+  original parents remain unchanged. Additive results appear once, do not select another ordinary
+  conversation branch, and cannot take ownership of the next chat input. An explicitly selected
+  older user continuation remains navigable; unselected user continuations remain hidden.
 - Every mission binding carries the server-owned Main agent identity from the authenticated launch
   request. Legacy bindings that predate that field recover it from the compiled Main-agent setting.
   Background synthesis rebuilds the ordinary authenticated request shape from the persisted user
@@ -671,8 +881,9 @@ destinations and current account mapping, then creates one idempotent delivery r
   attempted provider outranks quota, auth, or capacity evidence from an earlier provider in the same
   native transcript. When native output contains several attempts, final-attempt stdout and the
   durable stderr channel are both retained so an exact final auth-projection rejection remains
-  actionable needs-input. An otherwise generic structured provider `400` remains retryable in the
-  same workspace. Scanning the combined transcript for the oldest or most recognizable error, or
+  actionable needs-input. A structured retryable provider condition retains its declared retry
+  policy in the same workspace even when transported as HTTP `400`. A bare terminal HTTP `400`
+  without such a typed retryable condition remains nonretryable `provider_request_rejected`. Scanning the combined transcript for the oldest or most recognizable error, or
   dropping stderr merely because several starts were recorded, must never relabel the final attempt.
 - Main-provider fallback is also effect-ordered. It is eligible only before visible authorship and
   before any exact durable launch/action receipt exists for that stream. The receipt is authoritative
@@ -690,6 +901,16 @@ destinations and current account mapping, then creates one idempotent delivery r
   before the outer Main route is considered, preserving shared graph state and keeping Main's turn
   available. Every unmarked tool remains fail-closed, and an exact durable receipt always outranks
   request-local coordination metadata.
+- Terminal Active Work entries expose a bounded inventory of the same owner-scoped, signed file
+  links as the mission workspace. The inventory identifies workspace files, not proof that the
+  latest attempt created each file. It reports truncation and retains the workspace link for more
+  files. Missing workspace or mismatched owner binding is unavailable, not an empty successful
+  delivery. Main can present real downloads without internal worker IDs or local filesystem paths.
+- An open conversation shares the existing owner-scoped Active Work query. Its durable execution
+  and delivery transitions refresh the existing message query once after streaming ends, even
+  when a native broker call has no legacy tool-content marker. Unchanged work does not repeatedly
+  refresh messages; stale or unavailable snapshots are not treated as fresh delivery evidence.
+  A new foreground stream cancels in-flight message reads and retains a post-stream catch-up.
 - For terminal callback adjudication, a current durable `run.completed` or `run.failed` event is the
   authoritative lifecycle source. Older conversational claims about a missing artifact, failure, or
   in-progress state are supporting context and cannot override that current terminal truth.
@@ -773,6 +994,13 @@ completed work and workspace remain durable. Reclaim one candidate at a time and
 capacity after each release. Never infer relief from the release call alone, reclaim paused or
 needs-input work, or widen this into unconditional idle cleanup.
 
+A native mission's workspace identity is the exact cwd admitted before its process starts.
+Publish that path through the existing run-start runtime identity fence and retain it in the
+private active-session record. Completion, Stop, recovery, files, and subsequent turns use that
+identity across local calendar changes. Legacy recovery may use only the same worker/run's
+runtime-authored admission joined to its owned transcript and heartbeat; never infer a new
+workspace from today's date for existing work or from a model-authored file path.
+
 Each mission has isolated workspace, `HOME`, `CODEX_HOME`, `CLAUDE_CONFIG_DIR`, temporary/cache
 directories, native session state, logs, and process group. Preserve `USER`/`LOGNAME` when platform
 credential access requires them. Mutating missions against one repository use worktrees/copies or
@@ -796,8 +1024,13 @@ Filesystem and environment-directory separation is not an OS security boundary. 
 host-native worker running as the same Unix user as LibreChat/GlassHive can inspect sibling process
 environments and protected application state, even if its `HOME` is unique. Therefore:
 
-- automatic Parallel Work missions use a Core-owned isolated Docker/workstation execution policy;
-  model/tool arguments cannot select or forge host execution;
+- Core selects the installation's authorized execution mode; model/tool arguments cannot select
+  or forge host execution. An automatic host mission requires the real owner-scoped delegation
+  record and current full-access authority. Revoked authority blocks further execution, including
+  Resume. Separate host workspaces do not provide an OS security boundary.
+
+The following boundary checks apply to isolated Docker/workstation execution:
+
 - the isolated runtime has no host PID namespace, Docker socket, service-state/App Support mount,
   or access to another worker's home/workspace; only the exact run-scoped workspace and capability
   projection are mounted;
@@ -870,7 +1103,7 @@ child, and team-message events.
 - Explicit local host Codex/Claude roots use isolated per-worker homes and may receive only the
   owner-local access baseline needed by the installed CLI; Claude refresh authority is never
   projected. Enterprise host roots require server-owned authorization and cannot discover or copy
-  owner-local login state. Automatic Parallel roots remain Docker clean-room only.
+  owner-local login state. Automatic roots use the same authorized execution-mode contract above.
 
 ## Context, files, tools, and long-running authorization
 
@@ -927,6 +1160,13 @@ those annotations to write policy. A content-read grant alone can never authoriz
 mailbox mutation; reviewed draft-only tools may be explicitly allowed when the user requested an
 unsent review draft, while sending remains host-confirmed and operation-identity bound.
 
+Admission binds access to the actual execution generation: an immutable container generation for
+Docker, or the digest of the acquired startup lease for a host worker. Core accepts one generation
+kind and requires it to match the stored execution mode. Every bearer use and terminal revocation
+checks that same worker, run and generation; a stale cleanup cannot revoke a newer run. Host workers
+retain native provider authentication. Connected-capability admission does not send them through
+the separate Docker provider broker or bypass normal OS consent.
+
 Broker grants are minted at execution admission, not while capacity-queued. GlassHive may
 authenticate back to Core to revalidate the same live mission, owner, connected account, unchanged
 scope, and approval state. Re-mint cannot expand scope. Revocation, missing approval, policy change,
@@ -963,12 +1203,13 @@ It reads the living QA catalogs. Every `PWK-*` and `REL-*` row is required, with
 requires one fresh, unique, structured receipt bound to the exact candidate and installed-artifact
 digests, with the case ID, run time, evidence digest, tested surface, and status. Missing, duplicate,
 stale, mismatched, or malformed receipts keep the case open. Missing or unknown status and every `NOT RUN`,
-`FAIL`, `PARTIAL`, or `BLOCKED` result keep release/default exposure dark, return a nonzero exit,
-and forbid Ready or Complete wording. The source defaults remain
-`integrations.glasshive.orchestration.available: false` and `default_mode: focused`; passing all
-gates permits a later reviewed exposure change but does not silently change those defaults.
+`FAIL`, `PARTIAL`, or `BLOCKED` result keep public release uncertified, return a nonzero exit,
+and forbid Ready or Complete release wording. These certification results do not disable ordinary
+authorized local work that passes operational readiness. The ordinary supported configuration
+automatically delegates independent substantial work; explicit focused preference and real runtime
+readiness still govern admission.
 
-Release/default exposure additionally requires a publisher-pinned asymmetric trust policy, an
+Public release additionally requires a publisher-pinned asymmetric trust policy, an
 independently protected publisher signature, exact producer-signed observation evidence, and exact
 service-signed acknowledgements when a case requires restarted services. Every signature binds the
 case, surface, candidate, installed artifact, owner, semantic verifier, evidence, and unique nonce.
@@ -1032,7 +1273,9 @@ This command uses the exact active owner and canonical runtime inputs, then atom
 local-QA request and `parallel-work-release-gate.json`. The override may exercise current-checkout
 behavior while gates are open. It does not change source,
 compiled, shipped, or account defaults and must be shown in reports and status as **PRE-GATE / NOT
-READY**. The evaluator fails the override too if the source defaults are no longer dark/focused.
+READY**. A legacy evaluator requirement for dark/focused source defaults must be reconciled with
+the current automatic ordinary-use contract; it is not a retained end-user prerequisite. Exact
+candidate, authorization, resource and evidence checks remain required.
 
 Installed fault QA uses one private session at a time through `bin/viventium qa-control`. The
 session is bound to the active installed checkout, expires within one hour, stores its token only
@@ -1175,8 +1418,9 @@ claim path itself fails closed when a QA case, prompt layer, or disk gate is ope
 6. Run `qa/parallel-orchestrator/cases.md` through real Telegram Desktop, Playwright Web, voice, scheduler,
    Workbench, API/MCP, logs, database, callbacks, and delivery ledgers. Keep unavailable surfaces `PARTIAL` or
    `BLOCKED`; mocks and source inspection cannot replace user paths.
-7. Expose Telegram first behind the availability flag, then Web. Keep default `focused` until real
-   multi-user, latency, restart, same-provider concurrency, and clean-install gates pass.
+7. Prove ordinary automatic delegation through Telegram, Web and authorized Voice without a mode
+   change; preserve explicit focused preference. Real multi-user, latency, restart, same-provider
+   concurrency and clean-install gates still govern their acceptance and public release.
 
 Quality is an independent gate for every execution path: a shared public-safe prompt bank must show
 Intelligence, Relevance, Usefulness, and Alignment parity for Direct Main, a GlassHive Codex root,
@@ -1201,12 +1445,66 @@ visible and safely resumable; cleanup cannot erase required proof, hide a failed
 another owner. `ANTI-013`, `EMO-026`, and `EMO-030` own the acceptance cases, with
 `ANTI-UC-012` / `EMO-UC-046` as the natural journeys.
 
+## 2026-09-04 candidate closeout: callback trace, no-duplicate fence, partial artifacts, typed anchor
+
+- **Stale callback trace triggers are reconciled, not patched.** `CREATE TRIGGER IF NOT EXISTS` never
+  replaces a trigger an older runtime installed, so a database created before the callback trace
+  gained its run-id guard kept the pre-guard `callback_outbox_trace_insert/update` bodies and every
+  runless lifecycle callback (`worker.resumed_by_alias` on pre-run alias reuse) failed
+  `callback_trace_events.run_id NOT NULL` from inside the trigger; `POST /workers/find-or-resume`
+  answered 500 on the scheduled Workbench journey. Schema setup now compares only those two
+  installed trigger bodies with the module text (the way `sqlite_master` stores them) and replaces a
+  stale body in the same migration transaction. The lifecycle callback is preserved; generated
+  database state is never edited by hand.
+- **No duplicate execution from a stale lease.** A lease whose executor stopped heartbeating is not
+  proof that the generation it fenced is dead. Before the stale-lease pass releases a lease and
+  requeues its run, it stops the exact recorded generation (immutable container id plus screen
+  session, or exact pid start identity) and requires an absence proof; ambiguity keeps the run fenced
+  for the next pass. Survivor adoption stays off; nothing is collected or revived.
+- **A fresh partial artifact never completes a run.** A user-facing file that appeared before the
+  provider ended the worker is preserved and delivered with the typed failure
+  (`run.partial_artifact_preserved` event, `run.failed` callback carrying the deliverable, wording
+  that names the partial artifact and says the run did not complete). Only the worker's own terminal
+  success evidence completes a run. A bare terminal HTTP 400 is `provider_request_rejected` and not
+  retryable; terminal native diagnostics are always the redacted, length-bounded summary.
+- **Typed deferred-callback anchor.** Connected-tool activity carries
+  `expects_deferred_callback: true` only for GlassHive's own run-dispatching tools
+  (`mcp_tool_registry.DEFERRED_CALLBACK_TOOLS`), through the provider delta, both host whitelists,
+  and the persisted harness-activity part. The web follow-up poll arms extended listening only on
+  that anchor; an ordinary completed connected tool causes no extended polling.
+
+### Completed Cortex acceptance and presentation
+
+`HARD-007` uses the existing typed delivery ledger and Mongo write-ahead outbox. The completed
+provider graph result is authoritative over streamed deltas. Exact result bytes, owner, parent,
+batch membership, source revision and pinned Feelings envelope must be durably accepted before
+completion callbacks or follow-up synthesis expose an insight. If both Mongo writes fail, report
+acceptance unavailable without exposing the result or rerunning inference to repair persistence.
+Internal Reaction and compaction callers opt out through explicit completed-result policy.
+
+Follow-up creation claims the exact accepted batch, renews its lease before persistence, and settles
+only matching saved message receipts. Suppression has a typed disposition. Promoting a new result
+onto an empty parent removes the old delivery acknowledgement and advances its revision. Startup
+and periodic recovery replay the outbox and ledger under the same owner; current native Main
+recovery and its pending/prepared exclusions remain separate.
+
+Web presentation requires an actual subscriber transport acknowledgement with matching job,
+message, delivery digest, claim and presentation lease. Redis chunk persistence alone is not
+presentation: the current resume aggregator does not consume Cortex follow-up events. Keep the
+Mongo delivery recoverable until acknowledgement. Telegram additionally requires its exact
+committed adapter receipt. Transport acceptance does not prove browser rendering.
+
+The preservation batch has focused deterministic coverage for acceptance failure, exact claims,
+quarantine, restart recovery, stale acknowledgement replacement and bound emission. This is not
+installed `EMO-UC-048` acceptance; browser/Telegram visibility and restart evidence remain open in
+[the existing case](../../qa/emotional-cortex/cases.md#emo-uc-048-completed-insight-delivery-procedure).
+
 <!-- VIVENTIUM-STABLE-REQUIREMENT-DECLARATIONS:START -->
 ## Stable requirement declarations
 
 Each line is the canonical public owner declaration for one stable requirement ID. Detailed sections supply implementation context; they must not narrow or contradict these declared outcomes.
 
-HARD-001: Parallel Work remains dark or visibly **PRE-GATE / NOT READY** until every gate is closed.
+HARD-001: Public release remains uncertified or visibly **PRE-GATE / NOT READY** until every applicable release gate is closed. Authorized local use is governed separately by operational readiness and requires no manual mode setup.
 HARD-002: Main uses one request-pinned Feeling capsule; winning provider records exact hash, count, placement, and semantic receipt. Keep the provider plugin denylist; do not mount private state or add a Feelings MCP.
 HARD-003: Every eligible direct worker gets that same capsule exactly once; scope-off workers get none.
 HARD-004: Current surface, route, actual fallback, model, and effective effort use typed model-visible facts.
@@ -1230,12 +1528,12 @@ PW-005: LibreChat/Core stores only account preference, trusted origin/delivery r
 PW-006: Do not introduce a second supervisor, `run_units` planner, top-level native-team registry, Temporal/LangGraph migration, or provider-specific public work API.
 PW-007: Workers do not impersonate Queen, address the user as independent personalities, or receive unrelated sibling work/private chat.
 PW-008: Main remains the completion author. Worker status is neutral evidence; Main decides what useful result to say.
-PW-009: Product label is **Parallel work** with one account-wide preference whose values are `focused` and `parallel`. Effective mode is the user override, else the agent/deployment default; the deployment declares availability and default mode.
-PW-010: Default is focused/off. Unavailable always resolves safely to focused. Telegram and Web may edit the same setting; Voice consumes it. An unlinked Telegram account enters the existing safe account-link flow instead of failing or creating shadow identity.
+PW-009: Product label is **Parallel work** with one optional account-wide preference whose values are `focused` and `parallel`. An explicit user override is honored; a ready account otherwise uses automatic parallel delegation, with truthful declared and verified availability.
+PW-010: Ordinary ready use needs no mode toggle, special delegation wording, extra configuration or manual thread setup. Unavailable readiness withholds new work authority without changing a saved preference or hiding known work. Telegram and Web may edit the optional setting; Voice consumes it. Unlinked Telegram uses the existing safe account-link flow.
 PW-011: Turning it off stops only new automatic delegation. Existing work remains visible, controllable, resumable, and deliverable.
 PW-012: Explicit user-requested delegation remains available in focused mode.
 PW-013: Changing the toggle makes no model call and does not interrupt Main.
-PW-014: Quick/current conversational work stays with Queen. Independent substantial, long, research, browser/computer, artifact, or multi-step work may become a Bee.
+PW-014: Quick/current conversational work stays with Queen. Independent substantial work becomes durable Bees automatically; the model judges the division from goal and context, without a fixed phrase, task-category router or extra inference.
 PW-015: Main decides in the same inference whether to answer, continue/control an exact Bee, create a Bee, queue a follow-up, or ask one focused target question. No extra classifier/model round trip.
 PW-016: “Also do X” normally creates a separate objective or queued follow-up unless it changes the current mission’s objective.
 PW-017: Main may intelligently assign endless work to an existing exact Bee or a new Bee; runtime must not hardcode complaint phrases.
@@ -1260,6 +1558,16 @@ PW-035: **Message** adds noninterrupting guidance. If live injection is unsuppor
 PW-036: **Steer** interrupts only the exact active run, replaces direction, and stays inside the same mission/workspace.
 PW-037: A warm/native resume for Steer is allowed only under the same authority envelope.
 PW-038: **Pause** truly holds the same mission and must not display running; **Resume** continues that mission.
+
+Native MCP input is a distinct pending request on the same live mission. Active work shows the
+server's message and supported form or approval link; a generic Resume never implies consent.
+Only a signed-in owner's explicit response can answer that exact pending request. The existing
+service assertion binds the exact response body, owner and one-time request identity. A model
+work-action call cannot mint this authority. Declines remain declines; a lost HTTP response retries
+the identical operation, and stale, replaced or stopped requests cannot receive new approval.
+The native supervisor keeps its input channel open and preserves process cancellation. This is
+transport for the native harness's own approval flow, not a global permission grant.
+
 PW-039: **Stop** targets only the exact Bee, preserves its workspace/history, and stays `stopping` until process-tree termination is proved. If termination cannot be proved, keep `stopping` and expose `stop_failed` only as a typed action/attention error detail, never as a public WorkState or terminal result.
 PW-040: **Retry/Continue** starts a new run in the same mission/workspace.
 PW-041: **Dismiss** hides an acknowledged terminal card without deleting history. Terminate/archive is a separate operator action.
@@ -1317,8 +1625,8 @@ PW-092: Toggle server-side latency <100 ms. Focused-mode overhead <25 ms p95 wit
 PW-093: Active snapshot <50 ms p95 locally, 100 ms cold ceiling, with a two-second stale cache.
 PW-094: Delegation target 150 ms p95 and hard release ceiling 250 ms after tool invocation, excluding harness startup.
 PW-095: Direct, GlassHive-Codex, and GlassHive-Claude paths must each independently pass Intelligence/Relevance/Usefulness/Alignment.
-PW-096: Roll out in bounded dark stages. Rollback stops new admission but never kills or hides existing work.
-PW-097: Keep default focused and feature dark until every applicable release gate passes. Local override is visibly **PRE-GATE / NOT READY**.
+PW-096: Ordinary ready installations automatically delegate independent substantial work. Bounded rollout or rollback may stop new admission but never kills, hides, or loses the delivery of existing work; explicit focused preference remains optional.
+PW-097: Public release requires every applicable release gate. Authorized ready local work remains usable independently of certification; local QA is visibly **PRE-GATE / NOT READY** without imposing a manual parallel-mode step on ordinary use.
 PW-098: Minimum visible proof: two overlapping HTML Bees, quick Queen reply, one late-message revision, A-only Steer, B unchanged, two distinct files delivered once and opened separately.
 PW-099: Also prove unhappy/recovery, duplicate/out-of-order, restart, owner isolation, capacity/provider/auth states, Voice, file/media, fallback, native children, callbacks, scheduler, and rollback.
 PW-100: Correlate real Telegram Desktop, headed browser, audible Voice, logs, DB, missions, attempts/leases, callbacks/delivery, artifact hashes, generated config, component pins/builds, and installed process. Before agent sync, compare source/live A/B/C drift and validate the dry-run output.
@@ -1331,7 +1639,7 @@ PW-106: The dynamic roster capsule is at most 16 KiB, prioritizes needs-input/st
 PW-107: Dynamic work context is not persisted into conversation text, is excluded from native authority fingerprints, and does not trigger Phase-A activation. Static prompts stay cacheable; dynamic context follows the cached static prefix.
 PW-108: Rollout order is L0 unflagged correctness; L1 dark secure control plane; L2 isolated parallel runtime; L3 product surfaces; L4 capability-gated native-team adapters; L5 full release/artifact proof. Codex production uses streamed `codex exec --json` with immediate `thread.started`; App Server stays QA-only. Claude uses proved worker-local background/Agent View, with process-owned `-p stream-json` rollback; cross-session messaging is capability-gated and Agent Teams remains separate/off. Each stage keeps existing work safe during rollback.
 PW-109: Useful completion after the user moves on or archives the origin arrives once through a governed Main continuation. A deleted origin is never recreated; use one account-level continuation when useful.
-PW-110: Callback-origin completion is not silently lost to short moved-on suppression or stream keepalive windows. Cards update immediately; durable adjudication decides sent versus silent.
+PW-110: Callback-origin completion is not silently lost to short moved-on suppression or stream keepalive windows. Cards update immediately; durable adjudication decides sent versus silent. The existing bounded startup/periodic scan retries pending or due failed adjudications. A current failed Main presentation remains failed even if an earlier result was delivered.
 PW-111: A recoverable structured bridge/provider condition remains pending and schedules durable follow-up even after the original stream closes; it must not flatten into a committed “Connection error.” One eventual recovery produces one final presentation.
 PW-112: Telegram text, callbacks, voice, settings, captioned/uncaptioned attachments, and Active Work handlers remain nonblocking while Core preserves source order and idempotency.
 PW-113: Native lifecycle projection uses actual run/session capability fields and ordered provider events—session started; child started/updated/stopped; team message. Codex streams `exec --json` and persists `thread.started` immediately. Claude exposes child truth only after the worker-local background/Agent View or process-owned stream-json probe passes; otherwise capability is false. Stream root output live, tee it to logs, and parse without inventing child truth.

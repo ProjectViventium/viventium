@@ -5,6 +5,7 @@ import json
 import os
 import re
 import subprocess
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -97,6 +98,7 @@ def push_live_reviewed(*, review_token: str, env: str = "local") -> dict[str, An
         suffix = "..." if len(moved) > 3 else ""
         raise ValueError(f"Source changed since the stored dry-run for {labels}{suffix}; run Push dry-run again")
     result = run_agent_sync(["push", f"--env={env}", "--prompts-only", "--compare-reviewed"])
+    pull_live(env=env)
     refresh_ledger_after_reconcile(private_root=None)
     _mark_dry_run_used(review_token)
     return result
@@ -144,6 +146,48 @@ def refresh_ledger_after_reconcile(*, private_root: Path | None = None) -> dict[
     }
 
 
+def advance_matching_reconciled_rows(*, private_root: Path | None = None) -> dict[str, Any]:
+    """Advance only source/live rows proven equal after a reviewed live import."""
+
+    status = get_status(private_root=private_root)
+    ledger = load_ledger(private_root=private_root)
+    records = dict(ledger.get("records") or {})
+    updated_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    updated_count = 0
+
+    for row in status.get("agents") or []:
+        agent_id = str(row.get("agentId") or "")
+        source_hash = str(row.get("sourceHash") or "")
+        live_hash = str(row.get("liveHash") or "")
+        if not agent_id or not source_hash or source_hash != live_hash:
+            continue
+
+        previous = dict(records.get(agent_id) or {})
+        eval_run_ids = previous.get("evalRunIds")
+        records[agent_id] = {
+            **previous,
+            "agentId": agent_id,
+            "sourcePromptId": row.get("sourcePromptId") or previous.get("sourcePromptId"),
+            "sourceCommit": status.get("sourceCommit"),
+            "sourceHash": source_hash,
+            "renderedHash": source_hash,
+            "liveHash": live_hash,
+            "liveAgentVersion": row.get("liveAgentVersion"),
+            "updatedAt": updated_at,
+            "evalRunIds": eval_run_ids if isinstance(eval_run_ids, list) else [],
+        }
+        updated_count += 1
+
+    if updated_count:
+        path = ledger_path(private_root=private_root)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {**ledger, "version": 1, "records": records}
+        path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        path.chmod(0o600)
+
+    return {"status": "updated", "updatedRecordCount": updated_count}
+
+
 def load_ledger(*, private_root: Path | None = None) -> dict[str, Any]:
     path = ledger_path(private_root=private_root)
     if not path.exists():
@@ -160,24 +204,68 @@ def ledger_path(*, private_root: Path | None = None) -> Path:
 
 
 def run_agent_sync(args: list[str]) -> dict[str, Any]:
-    cmd = ["node", str(AGENT_SYNC_SCRIPT), *args]
-    result = subprocess.run(
-        cmd,
-        cwd=LIBRECHAT_ROOT,
-        text=True,
-        capture_output=True,
-        timeout=180,
-        check=False,
-        env={**os.environ},
-    )
+    effective_args = list(args)
+    if (
+        effective_args
+        and effective_args[0] == "pull"
+        and "--no-source-of-truth" not in effective_args
+        and "--no-sot" not in effective_args
+    ):
+        effective_args.append("--no-source-of-truth")
+    private_input: Path | None = None
+    if (
+        effective_args
+        and effective_args[0] == "push"
+        and "--prompts-only" in effective_args
+        and not any(arg.startswith("--in=") for arg in effective_args)
+    ):
+        private_input = _write_private_push_bundle()
+        effective_args.append(f"--in={private_input}")
+
+    cmd = ["node", str(AGENT_SYNC_SCRIPT), *effective_args]
+    try:
+        result = subprocess.run(
+            cmd,
+            cwd=LIBRECHAT_ROOT,
+            text=True,
+            capture_output=True,
+            timeout=180,
+            check=False,
+            env={**os.environ},
+        )
+    finally:
+        if private_input is not None:
+            private_input.unlink(missing_ok=True)
     parsed = _extract_json(result.stdout)
+    private_paths = (private_input,) if private_input is not None else ()
     return {
-        "command": _safe_command(cmd),
+        "command": _safe_command(cmd, private_paths=private_paths),
         "returnCode": result.returncode,
-        "stdoutTail": _sanitize_output(result.stdout[-6000:]),
-        "stderrTail": _sanitize_output(result.stderr[-6000:]),
+        "stdoutTail": _sanitize_output(result.stdout[-6000:], private_paths=private_paths),
+        "stderrTail": _sanitize_output(result.stderr[-6000:], private_paths=private_paths),
         "parsed": _sanitize_json(parsed),
     }
+
+
+def _write_private_push_bundle() -> Path:
+    output_dir = workbench_private_root() / "sync-inputs"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    descriptor, raw_path = tempfile.mkstemp(
+        prefix="managed-prompts-",
+        suffix=".viventium-agents.yaml",
+        dir=output_dir,
+        text=True,
+    )
+    output_path = Path(raw_path)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+        yaml.safe_dump(
+            source_agents_bundle(),
+            handle,
+            sort_keys=False,
+            allow_unicode=True,
+        )
+    output_path.chmod(0o600)
+    return output_path
 
 
 def load_latest_live_bundle() -> dict[str, Any] | None:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -521,6 +522,20 @@ def test_candidate_component_bootstrap_rejects_internal_agent_bundle_parent_syml
 
 
 def test_headless_configure_preserves_existing_fields_and_compiles_candidate(tmp_path: Path) -> None:
+    # Configure may bootstrap components. Give it an independent complete source fixture;
+    # never let a test reconcile the developer's real nested checkout or its remotes.
+    fixture_repo = tmp_path / "source-fixture"
+    fixture_repo.mkdir()
+    for relative in ("bin", "scripts", "prompts", "docs/requirements_and_learnings",
+                     "viventium_v0_4/LibreChat/viventium/source_of_truth",
+                     "viventium_v0_4/GlassHive/runtime_phase1/src"):
+        source = REPO_ROOT / relative
+        if source.is_dir():
+            shutil.copytree(source, fixture_repo / relative,
+                            ignore=shutil.ignore_patterns("__pycache__", ".venv", "node_modules"))
+    for source in REPO_ROOT.glob("config*.yaml"):
+        shutil.copy2(source, fixture_repo / source.name)
+    (fixture_repo / "components.lock.json").write_text('{"version":1,"components":[]}\n')
     home = tmp_path / "home"
     app_support = home / "Library" / "Application Support" / "Viventium"
     config = app_support / "config.yaml"
@@ -559,8 +574,8 @@ def test_headless_configure_preserves_existing_fields_and_compiles_candidate(tmp
     }
 
     result = subprocess.run(
-        [str(CLI), "configure", "--headless", "--config-input", str(incoming)],
-        cwd=REPO_ROOT,
+        [str(fixture_repo / "bin/viventium"), "configure", "--headless", "--config-input", str(incoming)],
+        cwd=fixture_repo,
         env=env,
         check=False,
         capture_output=True,

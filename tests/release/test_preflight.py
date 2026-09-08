@@ -1448,7 +1448,8 @@ def test_supported_node_runtime_is_consistent_across_install_and_launcher_layers
         "preflight": PREFLIGHT_PATH.read_text(encoding="utf-8"),
         "shared path": COMMON_PATH.read_text(encoding="utf-8"),
         "doctor": DOCTOR_PATH.read_text(encoding="utf-8"),
-        "launcher": LAUNCHER_PATH.read_text(encoding="utf-8"),
+        "launcher": LAUNCHER_PATH.read_text(encoding="utf-8")
+        + (REPO_ROOT / "scripts/viventium/librechat_build.sh").read_text(encoding="utf-8"),
         "Skyvern launcher": SKYVERN_LAUNCHER_PATH.read_text(encoding="utf-8"),
         "macOS helper": HELPER_APP_PATH.read_text(encoding="utf-8"),
     }
@@ -2111,7 +2112,8 @@ def test_supported_node_major_is_consistent_across_install_and_launcher_layers()
         "preflight": PREFLIGHT_PATH.read_text(encoding="utf-8"),
         "shared path": COMMON_PATH.read_text(encoding="utf-8"),
         "doctor": DOCTOR_PATH.read_text(encoding="utf-8"),
-        "launcher": LAUNCHER_PATH.read_text(encoding="utf-8"),
+        "launcher": LAUNCHER_PATH.read_text(encoding="utf-8")
+        + (REPO_ROOT / "scripts/viventium/librechat_build.sh").read_text(encoding="utf-8"),
         "Skyvern launcher": SKYVERN_LAUNCHER_PATH.read_text(encoding="utf-8"),
         "macOS helper": HELPER_APP_PATH.read_text(encoding="utf-8"),
     }

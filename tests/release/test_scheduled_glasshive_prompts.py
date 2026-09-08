@@ -5,7 +5,9 @@ import hmac
 import io
 import json
 import sys
+import threading
 import urllib.error
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -328,7 +330,9 @@ def test_glasshive_executor_branches_before_librechat_generation(tmp_path: Path,
     assert [url.rsplit("/", 1)[-1] for url, _ in calls] == ["projects", "find-or-resume", "assign"]
 
 
+@pytest.mark.parametrize("scheduler_attempt", [False, True])
 def test_glasshive_find_or_resume_409_preserves_runtime_dependency_failure(
+    scheduler_attempt: bool,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -448,18 +452,33 @@ def test_glasshive_find_or_resume_409_preserves_runtime_dependency_failure(
     monkeypatch.setattr(dispatch, "_get_json", fake_get_json)
     monkeypatch.setattr(dispatch, "_post_json", fake_post_json)
 
-    with pytest.raises(dispatch.HttpJsonError) as captured:
-        dispatch.dispatch_task(storage.get_task("user-1", "task-1"))
+    if scheduler_attempt:
+        from datetime import datetime, timezone
+        from scheduling_cortex.scheduler import SchedulerEngine
 
-    assert captured.value.failure_class == "runtime_dependency_missing"
-    assert captured.value.failure_retryable is False
+        engine = SchedulerEngine(storage, poll_interval_s=1, misfire_grace_s=1800, retry_delay_s=60)
+        attempted_at = datetime.now(timezone.utc)
+        storage.update_task("user-1", "task-1", {"next_run_at": attempted_at.isoformat()})
+        engine._process_task(storage.get_task("user-1", "task-1"), attempted_at)
+    else:
+        with pytest.raises(dispatch.HttpJsonError) as captured:
+            dispatch.dispatch_task(storage.get_task("user-1", "task-1"))
+        assert captured.value.failure_class == "runtime_dependency_missing"
+        assert captured.value.failure_retryable is False
     assert any(url.endswith("/workers/find-or-resume") for url in post_calls)
     assert not any(url.endswith("/assign") for url in post_calls)
     run = storage.list_scheduled_prompt_runs(definition_id="def-1")[0]
     assert run["status"] == "failed"
     assert run["error_class"] == "runtime_dependency_missing"
     assert "runtime_dependency_missing" in run["result_summary"]
-    assert "codex" in run["result_summary"]
+    if scheduler_attempt:
+        attempts = storage.list_scheduled_prompt_run_attempts(run["run_id"])
+        assert len(attempts) == 1
+        assert attempts[0]["error_class"] == "runtime_dependency_missing"
+        assert attempts[0]["lease_owner"] == engine._lease_owner
+        assert storage.get_task("user-1", "task-1")["last_status"] == "error"
+    else:
+        assert "codex" in run["result_summary"]
 
 
 def test_glasshive_runtime_dependency_missing_recovers_to_docker_when_safe(
@@ -1137,7 +1156,7 @@ def test_glasshive_dispatch_refreshes_workbench_variables_at_runtime(
     assert "user.memories" in private_detail["variable_snapshot_json"]
 
 
-def test_glasshive_completion_callback_requires_signature_and_updates_history(
+def test_glasshive_needs_input_closes_occurrence_and_late_completion_repairs_child_once(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1242,6 +1261,187 @@ def test_glasshive_completion_callback_requires_signature_and_updates_history(
 
     binding = f"{worker_id}:{glasshive_run_id}".encode("utf-8")
     derived_secret = hmac.new(secret.encode("utf-8"), binding, hashlib.sha256).hexdigest().encode("utf-8")
+
+    def signed_callback(
+        callback_payload: dict[str, object],
+    ) -> tuple[object, bytes, str]:
+        callback_raw = json.dumps(
+            callback_payload, separators=(",", ":")
+        ).encode("utf-8")
+        callback_binding = (
+            f"{callback_payload['worker_id']}:{callback_payload['run_id']}"
+        ).encode("utf-8")
+        callback_secret = hmac.new(
+            secret.encode("utf-8"), callback_binding, hashlib.sha256
+        ).hexdigest().encode("utf-8")
+        callback_signature = "sha256=" + hmac.new(
+            callback_secret, callback_raw, hashlib.sha256
+        ).hexdigest()
+        response = client.post(
+            "/internal/scheduled-prompts/glasshive-callback",
+            content=callback_raw,
+            headers={
+                "content-type": "application/json",
+                "x-glasshive-signature": callback_signature,
+            },
+        )
+        return response, callback_raw, callback_signature
+
+    needs_input_payload = {
+        "event": "run.needs_input",
+        "project_id": "proj_1",
+        "worker_id": worker_id,
+        "run_id": glasshive_run_id,
+        "user_id": "user-1",
+        "conversation_id": "workbench-scheduled-prompt:task-1",
+        "parent_message_id": "scheduled-prompt:task-1",
+        "message_id": "scheduled-run-1",
+        "surface": "workbench",
+        "run_state": "needs_input",
+        "failure_class": "provider_connected_account_reconnect_required",
+        "failure_retryable": False,
+        "message": "Reconnect the configured model provider.",
+    }
+    wrong_identities = (
+        {**needs_input_payload, "worker_id": "wrk_wrong"},
+        {**needs_input_payload, "run_id": "run_wrong"},
+        {**needs_input_payload, "message_id": "scheduled-run-wrong"},
+        {**needs_input_payload, "user_id": "user-wrong"},
+        {**needs_input_payload, "project_id": "project-wrong"},
+        {
+            **needs_input_payload,
+            "conversation_id": "workbench-scheduled-prompt:task-wrong",
+        },
+        {**needs_input_payload, "parent_message_id": "scheduled-prompt:task-wrong"},
+        {**needs_input_payload, "surface": "web"},
+    )
+    for wrong_identity_payload in wrong_identities:
+        rejected, _, _ = signed_callback(wrong_identity_payload)
+        assert rejected.status_code == 409
+        assert storage.get_scheduled_prompt_run("scheduled-run-1")["status"] == "queued"
+
+    original_update = storage.update_scheduled_prompt_run_if_current
+    force_cas_loss = True
+
+    def lose_first_needs_input_cas(*args: object, **kwargs: object) -> dict[str, object]:
+        nonlocal force_cas_loss
+        updates = args[1] if len(args) > 1 and isinstance(args[1], dict) else {}
+        summary = json.loads(str(updates.get("callback_payload_json") or "{}"))
+        if force_cas_loss and summary.get("event") == "run.needs_input":
+            force_cas_loss = False
+            return {
+                "updated": False,
+                "run": storage.get_scheduled_prompt_run("scheduled-run-1"),
+            }
+        return original_update(*args, **kwargs)
+
+    monkeypatch.setattr(
+        storage,
+        "update_scheduled_prompt_run_if_current",
+        lose_first_needs_input_cas,
+    )
+    lost_cas, _, _ = signed_callback(needs_input_payload)
+    assert lost_cas.status_code == 503
+    assert lost_cas.json()["reason"] == "callback_effect_not_persisted"
+    assert storage.get_scheduled_prompt_run("scheduled-run-1")["status"] == "queued"
+    private_after_loss = json.loads(private_detail_path.read_text(encoding="utf-8"))
+    assert private_after_loss.get("callbacks") in (None, [])
+
+    race_barrier = threading.Barrier(2)
+
+    def race_needs_input_cas(*args: object, **kwargs: object) -> dict[str, object]:
+        updates = args[1] if len(args) > 1 and isinstance(args[1], dict) else {}
+        summary = json.loads(str(updates.get("callback_payload_json") or "{}"))
+        if summary.get("event") == "run.needs_input":
+            race_barrier.wait(timeout=5)
+        return original_update(*args, **kwargs)
+
+    monkeypatch.setattr(
+        storage,
+        "update_scheduled_prompt_run_if_current",
+        race_needs_input_cas,
+    )
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        deliveries = list(
+            pool.map(lambda _: signed_callback(needs_input_payload), range(2))
+        )
+    monkeypatch.setattr(
+        storage,
+        "update_scheduled_prompt_run_if_current",
+        original_update,
+    )
+    assert [delivery[0].status_code for delivery in deliveries] == [200, 200]
+    assert sorted(
+        delivery[0].json()["callback_persisted"] for delivery in deliveries
+    ) == [False, True]
+    needs_input = next(
+        delivery[0]
+        for delivery in deliveries
+        if delivery[0].json()["callback_persisted"]
+    )
+    needs_input_raw = deliveries[0][1]
+    needs_input_signature = deliveries[0][2]
+
+    assert needs_input.status_code == 200
+    assert needs_input.json()["callback_persisted"] is True
+    attention_run = storage.get_scheduled_prompt_run("scheduled-run-1")
+    assert attention_run["status"] == "failed"
+    assert attention_run["disposition"] == "failed"
+    assert attention_run["completed_at"]
+    assert attention_run["error_class"] == "provider_connected_account_reconnect_required"
+    assert attention_run["lease_owner"] is None
+    assert attention_run["lease_until"] is None
+    assert "reconnected" in attention_run["result_summary"]
+    callback_summary = json.loads(attention_run["callback_payload_json"])
+    assert callback_summary["event"] == "run.needs_input"
+    assert callback_summary["status"] == "failed"
+    assert callback_summary["failure_class"] == "provider_connected_account_reconnect_required"
+    task = storage.get_task("user-1", "task-1")
+    assert task["last_status"] == "error"
+    assert task["last_delivery_outcome"] == "failed"
+    assert "reconnected" in task["last_error"]
+
+    replay = client.post(
+        "/internal/scheduled-prompts/glasshive-callback",
+        content=needs_input_raw,
+        headers={
+            "content-type": "application/json",
+            "x-glasshive-signature": needs_input_signature,
+        },
+    )
+    assert replay.status_code == 200
+    assert replay.json()["callback_persisted"] is False
+    replayed_run = storage.get_scheduled_prompt_run("scheduled-run-1")
+    assert replayed_run["status"] == "failed"
+    assert replayed_run["callback_payload_json"] == attention_run["callback_payload_json"]
+    private_callbacks = json.loads(private_detail_path.read_text(encoding="utf-8"))["callbacks"]
+    assert len(private_callbacks) == 1
+
+    next_occurrence = storage.claim_scheduled_prompt_occurrence(
+        task_id="task-1",
+        user_id="user-1",
+        executor="glasshive_host",
+        due_at="2026-05-23T10:00:00Z",
+        lease_owner="scheduler:test-next-occurrence",
+        now="2026-05-23T10:00:00Z",
+        lease_seconds=60,
+        definition_id="def-1",
+        version_id="ver-1",
+    )
+    assert next_occurrence["claimed"] is True
+    assert next_occurrence["run"]["trigger_kind"] == "scheduled"
+    assert next_occurrence["run"]["trigger_source"] == "scheduler_loop"
+    next_run_id = str(next_occurrence["run"]["run_id"])
+    prepared = storage.begin_scheduled_prompt_run_dispatch(
+        next_run_id,
+        expected_lease_owner="scheduler:test-next-occurrence",
+        expected_attempt=int(next_occurrence["run"]["attempt"]),
+        now="2026-05-23T10:00:01Z",
+        lease_seconds=60,
+        execution_snapshot={"executor": "glasshive_host"},
+    )
+    assert prepared["prepared"] is True
+
     signature = "sha256=" + hmac.new(derived_secret, raw, hashlib.sha256).hexdigest()
     ok = client.post(
         "/internal/scheduled-prompts/glasshive-callback",
@@ -1263,11 +1463,30 @@ def test_glasshive_completion_callback_requires_signature_and_updates_history(
     assert "FINAL REPORT" not in updated["callback_payload_json"]
     assert "mongodb://" not in updated["callback_payload_json"]
     assert "FINAL REPORT" in private_detail_path.read_text(encoding="utf-8")
+    private_callbacks = json.loads(
+        private_detail_path.read_text(encoding="utf-8")
+    )["callbacks"]
+    assert len(private_callbacks) == 2
     task = storage.get_task("user-1", "task-1")
-    assert task["last_status"] == "success"
+    assert task["last_status"] == "running"
     assert task["last_error"] is None
-    assert task["last_delivery_outcome"] == "sent"
+    assert task["last_delivery_outcome"] == "failed"
     assert task["last_delivery"]["scheduled_prompt_run_id"] == "scheduled-run-1"
+
+    completion_replay = client.post(
+        "/internal/scheduled-prompts/glasshive-callback",
+        content=raw,
+        headers={
+            "content-type": "application/json",
+            "x-glasshive-signature": signature,
+        },
+    )
+    assert completion_replay.status_code == 200
+    assert completion_replay.json()["callback_status"] == "idempotent"
+    assert completion_replay.json()["callback_persisted"] is False
+    assert len(
+        json.loads(private_detail_path.read_text(encoding="utf-8"))["callbacks"]
+    ) == 2
 
     failed_payload = terminal_callback_payload(
         event="run.failed",
@@ -1306,8 +1525,19 @@ def test_glasshive_completion_callback_requires_signature_and_updates_history(
     assert callback_summary["event"] == "run.completed"
     assert callback_summary["effort_projection"] is None
     task = storage.get_task("user-1", "task-1")
-    assert task["last_status"] == "success"
+    assert task["last_status"] == "running"
     assert task["last_error"] is None
+    storage.update_scheduled_prompt_run_if_current(
+        next_run_id,
+        {
+            "status": "cancelled",
+            "disposition": "cancelled",
+            "completed_at": "2026-05-23T10:00:02Z",
+            "updated_at": "2026-05-23T10:00:02Z",
+        },
+        expected_status="dispatching",
+        expected_error_class=None,
+    )
 
 
 def test_glasshive_capacity_callback_keeps_run_queued_and_clears_stale_parent_error(
@@ -1799,3 +2029,60 @@ def test_glasshive_worker_lifecycle_callback_is_signed_noop(
 
     assert response.status_code == 200
     assert response.json() == {"status": "http_accepted", "ignored": "worker.ready"}
+
+
+@pytest.mark.parametrize("read_only", [False, True])
+@pytest.mark.parametrize("owner_matches", [False, True])
+@pytest.mark.parametrize("one_shot", [False, True])
+def test_stalled_needs_input_recovery_requires_owner_and_preserves_read_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, read_only: bool, owner_matches: bool, one_shot: bool
+) -> None:
+    from prompt_workbench import scheduled_prompts
+    from scheduling_cortex.storage import ScheduleStorage, StorageConfig
+
+    store = ScheduleStorage(StorageConfig(db_path=str(tmp_path / "schedules.db")))
+    instant = "2000-01-01T00:00:00Z"
+    task = {
+        "id": "task-recovery", "user_id": "user-1", "agent_id": "prompt-workbench",
+        "prompt": "Synthetic scheduled request", "schedule": {"type": "daily", "time": "03:00", "timezone": "UTC"},
+        "channel": "workbench", "executor": "glasshive_host", "conversation_policy": "new",
+        "conversation_id": None, "last_conversation_id": None, "last_error": None,
+        "active": 1, "created_by": "user-1", "created_source": "user",
+        "created_at": instant, "updated_at": instant, "updated_by": "user-1", "updated_source": "user",
+        "last_run_at": instant, "last_status": "running", "next_run_at": "2000-01-02T03:00:00Z", "metadata": {},
+    }
+    if one_shot:
+        task["schedule"] = {"type": "once", "at": instant, "timezone": "UTC"}
+    store.create_task(task)
+    store.create_scheduled_prompt_run({
+        "run_id": "scheduled-recovery", "task_id": task["id"], "user_id": task["user_id"],
+        "due_at": instant, "started_at": instant, "status": "queued", "executor": "glasshive_host",
+        "glasshive_project_id": "project-recovery", "glasshive_worker_id": "worker-recovery",
+        "glasshive_run_id": "run-recovery", "created_at": instant, "updated_at": instant,
+        "trigger_kind": "scheduled", "trigger_source": "scheduler_loop",
+    })
+    run = store.get_scheduled_prompt_run("scheduled-recovery")
+    persisted_task = store.get_task(task["user_id"], task["id"])
+    monkeypatch.setattr(scheduled_prompts, "_glasshive_run_snapshot", lambda _: {
+        "run_id": "run-recovery", "worker_id": "worker-recovery" if owner_matches else "different-worker",
+        "project_id": "project-recovery", "state": "needs_input", "ended_at": None,
+        "failure_class": "provider_connected_account_reconnect_required", "failure_retryable": True,
+    })
+    projected_run, projected_task = scheduled_prompts._reconcile_stalled_glasshive_run(
+        store, run, persisted_task, read_only=read_only
+    )
+    if not owner_matches:
+        assert projected_run["status"] == "queued"
+        assert projected_task["last_status"] == "running"
+    else:
+        assert projected_run["status"] == "failed"
+        assert projected_run["completed_at"]
+        assert "reconnected" in projected_run["result_summary"]
+        assert projected_task["last_status"] == "error"
+        if one_shot:
+            assert "will retry automatically" not in projected_run["result_summary"]
+            assert "action is required" in projected_run["result_summary"]
+    expected_persisted = "failed" if owner_matches and not read_only else "queued"
+    assert store.get_scheduled_prompt_run("scheduled-recovery")["status"] == expected_persisted
+    expected_parent = "error" if owner_matches and not read_only else "running"
+    assert store.get_task(task["user_id"], task["id"])["last_status"] == expected_parent

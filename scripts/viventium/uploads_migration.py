@@ -455,6 +455,19 @@ def preserved_link_receipt_matches(payload: dict[str, Any], target: Path) -> boo
     ) == hash_path_identity(target)
 
 
+def is_exact_link_receipt(payload: dict[str, Any]) -> bool:
+    transaction_id = payload.get("transactionId")
+    return (
+        payload.get("schemaVersion") == SCHEMA_VERSION
+        and payload.get("legacyCompatibility") == "exact_symlink"
+        and payload.get("canonicalStorage") == "app_support_data_uploads"
+        and payload.get("mode") in {"migrate", "adopt", "create"}
+        and isinstance(transaction_id, str)
+        and len(transaction_id) == 32
+        and all(character in "0123456789abcdef" for character in transaction_id)
+    )
+
+
 def is_plausible_other_runtime_link(*, legacy: Path, canonical: Path) -> bool:
     """Validate another runtime's storage shape without reading its uploads."""
 
@@ -499,16 +512,7 @@ def is_recognized_other_runtime_link(*, legacy: Path, canonical: Path) -> bool:
             / "uploads-migration"
             / "receipt.json"
         )
-        transaction_id = receipt.get("transactionId")
-        return (
-            receipt.get("schemaVersion") == SCHEMA_VERSION
-            and receipt.get("legacyCompatibility") == "exact_symlink"
-            and receipt.get("canonicalStorage") == "app_support_data_uploads"
-            and receipt.get("mode") in {"migrate", "adopt", "create"}
-            and isinstance(transaction_id, str)
-            and len(transaction_id) == 32
-            and all(character in "0123456789abcdef" for character in transaction_id)
-        )
+        return is_exact_link_receipt(receipt)
     except MigrationError:
         return False
 
@@ -933,7 +937,13 @@ def _migrate_uploads_unlocked(
             fingerprint = fingerprint_tree(canonical)
             receipt_metadata = lstat_optional(receipt)
             if receipt_metadata is not None:
-                if not preserved_link_receipt_matches(read_private_json(receipt), target):
+                receipt_payload = read_private_json(receipt)
+                # Storage already migrated through another checkout remains valid.
+                # Keep its original proof and the shared checkout's link untouched.
+                if not (
+                    preserved_link_receipt_matches(receipt_payload, target)
+                    or is_exact_link_receipt(receipt_payload)
+                ):
                     raise MigrationError(
                         "Legacy uploads compatibility receipt conflicts with the shared checkout"
                     )

@@ -433,7 +433,7 @@ function exactUniqueStrings(value, invalidCode) {
 function normalizeRunner(value) {
   const runner = String(value || "").trim();
   if (!runner) return "main";
-  if (!["background_execution", "background_activation"].includes(runner)) {
+  if (!["background_execution", "background_activation", "main_compaction", "worker_source"].includes(runner)) {
     fail("eval_family_runner_invalid");
   }
   return runner;
@@ -834,6 +834,11 @@ async function buildFamilyPlans({ catalog, configuredRoutes, mainAgentId }) {
   assertStringId(mainAgentId, "configured_main_agent_identity_unavailable");
   const plans = [];
   for (const family of catalog.families) {
+    // Inventory every declared family, but never treat a specialized runner as Main.
+    // Its installed artifact verifier must exist before this runner can certify it.
+    if (["main_compaction", "worker_source"].includes(family.runner)) {
+      fail(`family_installed_route_unavailable:${sha(family.id)}`);
+    }
     const route = configuredRoutes[family.id];
     assertConfiguredRoute(route, family);
     const surfaceGroups = new Map();

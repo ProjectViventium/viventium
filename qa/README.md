@@ -4,6 +4,10 @@ This folder is the public-safe QA operating system for Viventium. It is the plac
 behavior, test cases, user-grade evidence, and regression history stay organized as the product
 changes.
 
+Use [`catalog.yaml`](catalog.yaml) to find a capability and its durable acceptance journey.
+Consolidated `qa/<capability>/cases.yaml` files route to the existing detailed `sourceInventories`;
+they do not replace those banks or claim execution. Candidate-bound reports own results.
+
 ## Operating Contract
 
 - Quality is owned by every developer and AI agent touching the product, not by a later cleanup pass.
@@ -18,6 +22,10 @@ changes.
   case, with expected outcome and rerun instructions.
 - Existing QA scope must be revisited when touched code can affect that feature. Do not create a new
   isolated report and leave the living feature cases stale.
+
+<a id="real-surface-proof"></a>
+<a id="surface-gates"></a>
+<a id="supporting-evidence"></a>
 
 ## Full-View Evidence Gate
 
@@ -45,6 +53,8 @@ the finding, but they cannot replace required user-path evidence.
 running, completed, delivered, recovered by fallback, backed by memory/tools, routed through a named
 model or Feeling state, or ready for release. A neighboring subsystem, historical pass, planned
 callback, log-only inference, or merely reachable process cannot prove a different claim.
+
+<a id="traceability"></a>
 
 ## Source-Audit And Alignment Contract
 
@@ -222,6 +232,8 @@ timeout, rate limit, auth/config missing, request rejected, unsupported configur
 prerequisite unavailable. Named-entity/contact/date/current-fact lookups must exercise the documented
 browser or local-delegation fallback when the primary search provider fails.
 
+<a id="blast-radius"></a>
+
 ## Regression Selection
 
 For every change, run impacted scopes by tracing:
@@ -241,6 +253,12 @@ Rerun cadence:
 - rerun the full feature suite before any release-readiness or production-signoff claim
 - refresh `Last Run` whenever a case is rerun; stale pass results are evidence history, not current
   acceptance
+
+## Cleanup
+
+Follow the owning [evidence-before-cleanup contract](../docs/requirements_and_learnings/55_Parallel_Work_Orchestration.md#evidence-before-cleanup-contract).
+Keep required proof before removing exact synthetic fixtures; record incomplete cleanup as an open
+result in the owning case report.
 
 ## Public-Safe Evidence
 

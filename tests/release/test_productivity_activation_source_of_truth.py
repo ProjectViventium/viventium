@@ -376,11 +376,12 @@ def test_main_agent_does_not_defer_productivity_checks_to_background_cortices() 
     assert "choose tools from declared capabilities and structured metadata" in instructions
     assert "before an external write, confirm the user requested it" in instructions
     assert "require explicit confirmation and a declared write-capable path" in instructions
-    assert "automatic durable mission delegation is allowed only" in instructions
-    assert "when delegation is allowed, use it for independently completable long-running" in instructions
+    assert "this is automatic when the current parallel work capsule says `mode: parallel`" in instructions
+    assert "an explicit focused preference limits new automatic delegation" in instructions
+    assert "send independently completable substantial work to the declared durable delegation tool" in instructions
     assert "never say work was delegated, accepted, queued, or is running unless" in instructions
     assert "accepted, queued, or deferred is not complete" in instructions
-    assert "on tool failure, state the exact failure and recovery path" in instructions
+    assert "on tool failure, state the exact user-relevant limitation and recovery path" in instructions
 
 
 def test_runtime_card_guard_fallback_matches_productivity_live_data_rule() -> None:
@@ -554,8 +555,8 @@ def test_productivity_and_help_instructions_do_not_contradict_parallel_tooling()
     support_instructions = support_agent["instructions"]
 
     assert "handled by the main agent directly" not in ms365_instructions
-    assert "another cortex may activate in parallel for the google portion" in ms365_instructions.lower()
-    assert "another cortex may activate in parallel for the microsoft portion" in google_instructions.lower()
+    assert "another specialist may cover the rest of a mixed request" in ms365_instructions.lower()
+    assert "another specialist may cover the rest of a mixed request" in google_instructions.lower()
     assert "you have no tools" not in support_instructions.lower()
     assert "if a search tool is available" in support_instructions.lower()
     assert "verify viventium usage/help information" in support_instructions.lower()
@@ -593,8 +594,8 @@ def test_runtime_activation_plumbing_stays_config_driven_and_avoids_illegal_titl
     assert "hasExplicitProductivityRequest" not in productivity_context_source
     assert "reduceMessagesForProductivitySpecialist" not in productivity_context_source
     assert "agent?.intent_scope" not in productivity_context_source
-    assert "extractLegacyProductivityScopeHeader" in productivity_context_source
-    assert "scopeHeaderPattern" in productivity_context_source
+    assert "extractLegacyProductivityScopeHeader" not in productivity_context_source
+    assert "scopeHeaderPattern" not in productivity_context_source
     assert "normalized === 'gmail'" not in productivity_context_source
     assert "normalized === 'google'" not in productivity_context_source
     assert "normalized === 'outlook'" not in productivity_context_source

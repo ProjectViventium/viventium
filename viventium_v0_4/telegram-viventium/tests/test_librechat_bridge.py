@@ -1,4 +1,5 @@
 import asyncio
+import json
 import sys
 import tempfile
 import types
@@ -12,6 +13,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from TelegramVivBot.utils.librechat_bridge import (
+    format_memory_receipt_text,
     TELEGRAM_CALLBACK_INTERRUPTED_NOTICE,
     _async_client_options_for_url,
     _bridge_error_event,
@@ -515,6 +517,10 @@ def test_stream_error_message_classifies_tool_errors():
         (
             "provider_temporarily_unavailable",
             "The model provider is temporarily unavailable. Please try again shortly.",
+        ),
+        (
+            "source_context_unavailable",
+            "The conversation context could not be preserved. Please retry this turn.",
         ),
         (
             "completion_error",
@@ -2435,7 +2441,8 @@ async def test_stream_response_schedules_glasshive_followup_when_tool_call_strea
 
 
 @pytest.mark.asyncio
-async def test_stream_response_text_and_final_attachments(monkeypatch):
+@pytest.mark.parametrize("memory_receipt", [None, {"status": "failed", "keys": [], "errorType": "writer_unavailable"}])
+async def test_stream_response_text_attachments_and_memory_receipt(monkeypatch, memory_receipt):
     bridge = _make_bridge()
 
     payloads = [
@@ -2445,6 +2452,7 @@ async def test_stream_response_text_and_final_attachments(monkeypatch):
         },
         {
             "final": True,
+            "memoryReceipt": memory_receipt,
             "responseMessage": {
                 "content": [],
                 "attachments": [{"file_id": "file-3", "filename": "z.txt", "filepath": "/files/u/z.txt"}],
@@ -2497,8 +2505,7 @@ async def test_stream_response_text_and_final_attachments(monkeypatch):
 
     chunks = [chunk async for chunk in bridge._stream_response("stream-text-attach", "333")]
 
-    assert chunks == [
-        "Hello",
+    assert chunks == ["Hello", *(["\n\n" + format_memory_receipt_text(memory_receipt)] if memory_receipt else []),
         {
             "type": "attachment",
             "attachment": {"file_id": "file-3", "filename": "z.txt", "filepath": "/files/u/z.txt"},
@@ -6271,3 +6278,695 @@ async def test_chunked_callback_failure_reports_visible_interruption_without_aud
     assert messages[-1][1] == TELEGRAM_CALLBACK_INTERRUPTED_NOTICE
     assert messages[-1][2] is None
     assert all(message[3] is None for message in messages)
+
+
+@pytest.mark.asyncio
+async def test_stream_response_emits_server_authored_durable_effect_identity(monkeypatch):
+    bridge = _make_bridge()
+    payloads = [
+        {
+            "final": True,
+            "logical_turn_id": "turn-effect",
+            "revision": 4,
+            "durableEffectReceipt": {"effect_ref": "telegram-work-ref"},
+            "responseMessage": {
+                "messageId": "message-effect",
+                "content": [{"type": "text", "text": "Background work started."}],
+            },
+        }
+    ]
+
+    async def fake_iter_sse_json_events(*, chunk_iter):
+        _ = chunk_iter
+        for payload in payloads:
+            yield payload
+
+    class _FakeResponse:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+        def raise_for_status(self):
+            return None
+
+        def aiter_bytes(self):
+            async def _gen():
+                if False:
+                    yield b""
+
+            return _gen()
+
+    class _FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+        def stream(self, *_args, **_kwargs):
+            return _FakeResponse()
+
+    import TelegramVivBot.utils.librechat_bridge as bridge_module
+
+    monkeypatch.setattr(bridge_module, "iter_sse_json_events", fake_iter_sse_json_events)
+    monkeypatch.setattr(bridge_module.httpx, "AsyncClient", lambda **_kwargs: _FakeClient())
+
+    chunks = [chunk async for chunk in bridge._stream_response("stream-effect", "111")]
+
+    assert chunks == [
+        {
+            "type": "logical_turn",
+            "logical_turn_id": "turn-effect",
+            "revision": 4,
+        },
+        {"type": "durable_effect", "effect_ref": "telegram-work-ref"},
+        "Background work started.",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ack_delivery_commits_exact_durable_effect_identity(monkeypatch):
+    bridge = _make_bridge()
+    monkeypatch.setenv(
+        "VIVENTIUM_DELIVERY_ACK_ENDPOINT",
+        "/api/viventium/interactions/delivery-ack",
+    )
+    monkeypatch.setenv("VIVENTIUM_TELEGRAM_INTERACTION_ADAPTER_SECRET", "adapter-secret")
+    payloads = []
+
+    class _FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"acknowledged": True}
+
+    class _FakeClient:
+        def __init__(self, *args, **kwargs):
+            _ = args, kwargs
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+        async def post(self, _url, json=None, headers=None):
+            payloads.append((json, headers))
+            return _FakeResponse()
+
+    import TelegramVivBot.utils.librechat_bridge as bridge_module
+
+    monkeypatch.setattr(bridge_module.httpx, "AsyncClient", _FakeClient)
+
+    assert (
+        await bridge.ack_delivery_status(
+            "turn-1",
+            7,
+            "committed",
+            "presentation-1",
+            effect_ref="telegram-work-ref",
+        )
+        == "recorded"
+    )
+    assert payloads[0][0]["effect_ref"] == "telegram-work-ref"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("event", ["run.needs_input", "run.blocked"])
+async def test_glasshive_nonterminal_attention_delivery_uses_its_atomic_claim(event):
+    bridge = _make_bridge()
+    messages = []
+    marked = []
+
+    async def on_message(chat_id, text):
+        messages.append((chat_id, text))
+        return {"message_ids": ["9010"]}
+
+    async def fail_if_authorized(_delivery):
+        raise AssertionError("nonterminal attention delivery must not request a terminal permit")
+
+    async def fake_mark(delivery, status, *, error="", reason=""):
+        marked.append((delivery["deliveryId"], status, error, reason))
+        return True
+
+    bridge.set_on_message_callback(on_message)
+    bridge._authorize_glasshive_delivery = fail_if_authorized  # type: ignore[assignment]
+    bridge._mark_glasshive_delivery_status = fake_mark  # type: ignore[assignment]
+
+    delivery = {
+        "deliveryId": f"ghcd_{event}",
+        "claimId": f"claim_{event}",
+        "telegramChatId": "404",
+        "event": event,
+        "text": "Reconnect the connected model account, then resume this work.",
+        "terminalCallbackResultKey": "",
+        "workerCompletionPresentation": None,
+    }
+
+    assert await bridge._deliver_glasshive_delivery(delivery) is True
+    assert messages == [
+        (404, "Reconnect the connected model account, then resume this work.")
+    ]
+    assert marked == [(f"ghcd_{event}", "sent", "", "")]
+
+
+@pytest.mark.asyncio
+async def test_glasshive_nonterminal_attention_without_receipt_is_not_retried():
+    bridge = _make_bridge()
+    marked = []
+
+    async def on_message(_chat_id, _text):
+        return None
+
+    async def fail_if_authorized(_delivery):
+        raise AssertionError("nonterminal attention delivery must not request a terminal permit")
+
+    async def fake_mark(delivery, status, *, error="", reason=""):
+        marked.append((delivery["deliveryId"], status, error, reason))
+        return True
+
+    bridge.set_on_message_callback(on_message)
+    bridge._authorize_glasshive_delivery = fail_if_authorized  # type: ignore[assignment]
+    bridge._mark_glasshive_delivery_status = fake_mark  # type: ignore[assignment]
+
+    delivery = {
+        "deliveryId": "ghcd_attention_no_receipt",
+        "claimId": "claim_attention_no_receipt",
+        "telegramChatId": "404",
+        "event": "run.needs_input",
+        "text": "Reconnect the connected model account, then resume this work.",
+        "terminalCallbackResultKey": "",
+        "workerCompletionPresentation": None,
+    }
+
+    assert await bridge._deliver_glasshive_delivery(delivery) is False
+    assert marked == [
+        (
+            "ghcd_attention_no_receipt",
+            "delivery_unknown",
+            "",
+            "telegram_receipt_missing_after_send",
+        )
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("malformed_terminal_key", [None, 0, {}, " ", "\t\n"])
+async def test_glasshive_attention_with_malformed_terminal_key_cannot_bypass_authorization(
+    malformed_terminal_key,
+):
+    bridge = _make_bridge()
+    authorized = []
+    messages = []
+
+    async def on_message(chat_id, text):
+        messages.append((chat_id, text))
+        return {"message_ids": ["must-not-send"]}
+
+    async def authorize(delivery):
+        authorized.append(delivery["deliveryId"])
+        return None
+
+    async def fake_mark(_delivery, _status, *, error="", reason=""):
+        return True
+
+    bridge.set_on_message_callback(on_message)
+    bridge._authorize_glasshive_delivery = authorize  # type: ignore[assignment]
+    bridge._mark_glasshive_delivery_status = fake_mark  # type: ignore[assignment]
+
+    delivery = {
+        "deliveryId": "ghcd_attention_malformed_terminal_key",
+        "claimId": "claim_attention_malformed_terminal_key",
+        "telegramChatId": "404",
+        "event": "run.needs_input",
+        "text": "Reconnect the connected model account, then resume this work.",
+        "terminalCallbackResultKey": malformed_terminal_key,
+        "workerCompletionPresentation": None,
+    }
+
+    assert await bridge._deliver_glasshive_delivery(delivery) is False
+    assert authorized == ["ghcd_attention_malformed_terminal_key"]
+    assert messages == []
+
+
+@pytest.mark.asyncio
+async def test_glasshive_attention_without_worker_presentation_field_cannot_bypass_authorization():
+    bridge = _make_bridge()
+    authorized = []
+    messages = []
+
+    async def on_message(chat_id, text):
+        messages.append((chat_id, text))
+        return {"message_ids": ["must-not-send"]}
+
+    async def authorize(delivery):
+        authorized.append(delivery["deliveryId"])
+        return None
+
+    async def fake_mark(_delivery, _status, *, error="", reason=""):
+        return True
+
+    bridge.set_on_message_callback(on_message)
+    bridge._authorize_glasshive_delivery = authorize  # type: ignore[assignment]
+    bridge._mark_glasshive_delivery_status = fake_mark  # type: ignore[assignment]
+
+    delivery = {
+        "deliveryId": "ghcd_attention_missing_worker_presentation",
+        "claimId": "claim_attention_missing_worker_presentation",
+        "telegramChatId": "404",
+        "event": "run.needs_input",
+        "text": "Reconnect the connected model account, then resume this work.",
+        "terminalCallbackResultKey": "",
+    }
+
+    assert await bridge._deliver_glasshive_delivery(delivery) is False
+    assert authorized == ["ghcd_attention_missing_worker_presentation"]
+    assert messages == []
+
+
+@pytest.mark.asyncio
+async def test_glasshive_terminal_delivery_still_requires_terminal_permit():
+    bridge = _make_bridge()
+    messages = []
+    authorized = []
+    marked = []
+
+    async def on_message(chat_id, text):
+        messages.append((chat_id, text))
+        return {"message_ids": ["9011"]}
+
+    async def authorize(delivery):
+        authorized.append(delivery["deliveryId"])
+        return await _fake_glasshive_dispatch_permit(delivery)
+
+    async def fake_mark(delivery, status, *, error="", reason=""):
+        marked.append((delivery["deliveryId"], status, error, reason))
+        return True
+
+    bridge.set_on_message_callback(on_message)
+    bridge._authorize_glasshive_delivery = authorize  # type: ignore[assignment]
+    bridge._renew_glasshive_delivery = _fake_glasshive_dispatch_permit_renewal  # type: ignore[assignment]
+    bridge._mark_glasshive_delivery_status = fake_mark  # type: ignore[assignment]
+
+    assert await bridge._deliver_glasshive_delivery(
+        {
+            "deliveryId": "ghcd_terminal_failed",
+            "claimId": "claim_terminal_failed",
+            "telegramChatId": "404",
+            "event": "run.failed",
+            "text": "Worker failed truthfully.",
+            "terminalCallbackResultKey": "terminal-result-key",
+            "workerCompletionPresentation": {"revision": 1},
+        }
+    ) is True
+    assert authorized == ["ghcd_terminal_failed"]
+    assert messages == [(404, "Worker failed truthfully.")]
+    assert marked == [("ghcd_terminal_failed", "sent", "", "")]
+
+
+def test_memory_receipt_text_renders_only_durable_truth():
+    assert format_memory_receipt_text(None) == ""
+    assert format_memory_receipt_text({"status": "pending", "keys": []}) == ""
+    assert format_memory_receipt_text({"status": "unchanged", "keys": []}) == ""
+    assert "Some changes may already be saved" in format_memory_receipt_text({"status": "uncertain", "keys": []})
+    assert format_memory_receipt_text({"status": "saved", "keys": []}) == ""
+    assert format_memory_receipt_text({"status": "saved", "keys": ["core", "preferences"]}) == (
+        "🧠 Saved to memory: core, preferences"
+    )
+    failed = format_memory_receipt_text(
+        {"status": "failed", "keys": [], "errorType": "usage_limit_reached", "message": "private"}
+    )
+    assert failed == "⚠️ Not saved to memory.\nProvider usage limit reached. Check usage or wait for the limit to reset."
+    assert "private" not in failed
+    partial = format_memory_receipt_text({"status": "partial", "keys": ["core"], "errorType": "provider_unavailable"})
+    assert "partially saved" in partial and "saved: core" in partial
+
+
+@pytest.mark.asyncio
+async def test_followup_poll_surfaces_the_durable_memory_receipt_once_and_keeps_polling():
+    bridge = _make_bridge()
+    delivered = []
+    states = [
+        {"cortexParts": [], "followUp": None, "memoryReceipt": None},
+        {"cortexParts": [], "followUp": None, "memoryReceipt": {"status": "saved", "keys": ["preferences"]}},
+        {"cortexParts": [], "followUp": None, "memoryReceipt": {"status": "saved", "keys": ["preferences"]}},
+        {
+            "cortexParts": [],
+            "followUp": {"messageId": "followup-1", "text": "Follow-up text."},
+            "memoryReceipt": {"status": "saved", "keys": ["preferences"]},
+        },
+    ]
+
+    async def on_message(chat_id, text, parse_mode=None):
+        delivered.append((chat_id, text, parse_mode))
+        return ["9001"]
+
+    async def fake_fetch_followup_state(*, message_id, conversation_id, stream_id):
+        _ = message_id, conversation_id, stream_id
+        return states.pop(0) if states else {"cortexParts": [], "followUp": None}
+
+    bridge.set_on_message_callback(on_message)
+    bridge.followup_interval_s = 0.01
+    bridge.followup_timeout_s = 1.0
+    bridge.followup_grace_s = 0.05
+    stream_id = "stream-memory-receipt"
+    chat_id = "111"
+    _bind_poll_delivery_authority(bridge, stream_id=stream_id, telegram_chat_id=chat_id)
+    bridge._response_message_ids[stream_id] = "msg-memory-receipt"
+    bridge._conversation_by_stream[stream_id] = "conv-memory-receipt"
+    bridge._set_active_stream(chat_id, stream_id)
+    bridge._fetch_followup_state = fake_fetch_followup_state  # type: ignore[assignment]
+
+    await asyncio.wait_for(bridge._poll_for_followup(stream_id=stream_id, chat_id=chat_id), timeout=2.0)
+
+    texts = [text for _chat, text, _mode in delivered]
+    # Exactly one receipt for the turn, and the Phase B follow-up still reaches the user.
+    assert texts.count("🧠 Saved to memory: preferences") == 1
+    assert "Follow-up text." in texts
+    # The receipt never displaces the follow-up: it is delivered on the poll pass that saw it.
+    assert texts.index("🧠 Saved to memory: preferences") < texts.index("Follow-up text.")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("flag,expected", [(False, []), (True, [("stream-anchor", "111")])])
+async def test_memory_writer_anchor_arms_the_bounded_followup_poll_for_an_ordinary_turn(
+    monkeypatch, flag, expected
+):
+    """A plain turn polls only when the final event says a saved-memory write is in flight."""
+    bridge = _make_bridge()
+    scheduled = []
+    payload = {
+        "final": True,
+        "conversation": {"conversationId": "conv-anchor", "title": "t"},
+        "responseMessage": {
+            "messageId": "msg-anchor",
+            "conversationId": "conv-anchor",
+            "text": "Got it.",
+            "content": [{"type": "text", "text": "Got it."}],
+        },
+    }
+    if flag:
+        payload["memoryWriterScheduled"] = True
+
+    async def fake_iter_sse_json_events(*, chunk_iter):
+        _ = chunk_iter
+        yield payload
+
+    class _FakeResponse:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            _ = exc_type, exc, tb
+            return False
+
+        def raise_for_status(self):
+            return None
+
+        def aiter_bytes(self):
+            async def _gen():
+                if False:
+                    yield b""
+
+            return _gen()
+
+    class _FakeClient:
+        def __init__(self, *args, **kwargs):
+            _ = args, kwargs
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            _ = exc_type, exc, tb
+            return False
+
+        def stream(self, *args, **kwargs):
+            _ = args, kwargs
+            return _FakeResponse()
+
+    import TelegramVivBot.utils.librechat_bridge as bridge_module
+
+    monkeypatch.setattr(bridge_module, "iter_sse_json_events", fake_iter_sse_json_events)
+    monkeypatch.setattr(bridge_module.httpx, "AsyncClient", _FakeClient)
+    monkeypatch.setattr(
+        bridge,
+        "_schedule_followup_poll",
+        lambda stream_id, chat_id: scheduled.append((stream_id, chat_id)) or True,
+    )
+
+    chunks = [chunk async for chunk in bridge._stream_response("stream-anchor", "111")]
+    assert any(chunk == "Got it." or (isinstance(chunk, dict) and chunk.get("type") == "final") for chunk in chunks) or chunks
+    assert scheduled == expected
+
+
+def test_memory_receipt_keeps_primary_limit_and_fallback_sign_in_distinct():
+    receipt = {"status": "failed", "keys": [], "errorType": "provider_auth", "failures": [
+        {"errorType": "usage_limit_reached", "provider": "openAI", "providerLabel": "OpenAI",
+         "message": "Bearer synthetic-private-token"},
+        {"errorType": "provider_auth", "provider": "anthropic", "providerLabel": "Anthropic",
+         "accountId": "synthetic-private-account"},
+    ]}
+    text = format_memory_receipt_text(receipt)
+    assert "OpenAI usage limit reached. Check usage or wait for the limit to reset." in text
+    assert "Anthropic needs sign-in. Reconnect it in Connected Accounts." in text
+    assert "synthetic-private" not in text and "Bearer" not in text
+    assert text.startswith("⚠️ Not saved to memory.")
+
+
+def test_memory_receipt_uncertainty_keeps_provider_failures():
+    text = format_memory_receipt_text({"status": "uncertain", "keys": [], "failures": [
+        {"errorType": "provider_rate_limited", "provider": "openAI", "providerLabel": "OpenAI"},
+        {"errorType": "provider_auth", "provider": "anthropic", "providerLabel": "Anthropic"},
+    ]})
+    assert "Some changes may already be saved" in text
+    assert "OpenAI is temporarily unavailable. Try again shortly." in text
+    assert "Anthropic needs sign-in" in text
+    assert "Not saved to memory" not in text
+
+
+def test_memory_receipt_text_states_only_what_happened():
+    """Nothing schedules a retry here, so the wording may not promise one."""
+    failed = format_memory_receipt_text(
+        {"status": "failed", "keys": [], "errorType": "writer_exception"}
+    )
+    assert failed == "⚠️ Not saved to memory.\nThe memory writer failed."
+    assert "retry" not in failed.lower()
+
+
+@pytest.mark.asyncio
+async def test_memory_receipt_is_retried_until_delivery_succeeds_and_then_never_repeats():
+    """A refused send must not consume the once-only mark, and per-stream state is cleaned."""
+    bridge = _make_bridge()
+    attempts = []
+    outcomes = [False, True]
+    receipt = {"status": "saved", "keys": ["preferences"]}
+    states = [
+        {"cortexParts": [], "followUp": None, "memoryReceipt": receipt},
+        {"cortexParts": [], "followUp": None, "memoryReceipt": receipt},
+        {"cortexParts": [], "followUp": None, "memoryReceipt": receipt},
+        {
+            "cortexParts": [],
+            "followUp": {"messageId": "followup-1", "text": "Follow-up text."},
+            "memoryReceipt": receipt,
+        },
+    ]
+
+    async def on_message(chat_id, text, parse_mode=None):
+        _ = chat_id, parse_mode
+        return ["9001"]
+
+    async def fake_fetch_followup_state(*, message_id, conversation_id, stream_id):
+        _ = message_id, conversation_id, stream_id
+        return states.pop(0) if states else {"cortexParts": [], "followUp": None}
+
+    async def fake_send(chat_id, text, *, stream_id=None, return_receipt=False, before_side_effect=None, **kwargs):
+        _ = chat_id, stream_id, kwargs
+        if before_side_effect is not None:
+            await before_side_effect()
+        attempts.append(text)
+        ok = True
+        if text.startswith("\U0001f9e0"):
+            ok = outcomes.pop(0) if outcomes else True
+        if return_receipt:
+            return {"sent": ok, "message_ids": ["9001"] if ok else []}
+        return ok
+
+    bridge.set_on_message_callback(on_message)
+    bridge.followup_interval_s = 0.01
+    bridge.followup_timeout_s = 1.0
+    bridge.followup_grace_s = 0.05
+    stream_id = "stream-receipt-retry"
+    chat_id = "111"
+    _bind_poll_delivery_authority(bridge, stream_id=stream_id, telegram_chat_id=chat_id)
+    bridge._response_message_ids[stream_id] = "msg-receipt-retry"
+    bridge._conversation_by_stream[stream_id] = "conv-receipt-retry"
+    bridge._set_active_stream(chat_id, stream_id)
+    bridge._fetch_followup_state = fake_fetch_followup_state  # type: ignore[assignment]
+    bridge._send_followup_text = fake_send  # type: ignore[assignment]
+
+    await asyncio.wait_for(
+        bridge._poll_for_followup(stream_id=stream_id, chat_id=chat_id), timeout=2.0
+    )
+
+    saved_text = "\U0001f9e0 Saved to memory: preferences"
+    receipts = [text for text in attempts if text.startswith("\U0001f9e0")]
+    # Refused once, retried on the next pass, then never repeated.
+    assert receipts == [saved_text, saved_text]
+    # The receipt never displaces the Phase B follow-up.
+    assert "Follow-up text." in attempts
+    assert attempts.index(saved_text) < attempts.index("Follow-up text.")
+    # Per-stream dedupe state does not leak past the poll.
+    assert stream_id not in bridge._memory_receipt_sent
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("completion", [
+    {"followUp": {"messageId": "followup", "text": "Worker finished."}},
+    {"canonicalText": "Worker finished."},
+    {"followUp": {"messageId": "followup", "text": "{NTA}"}},
+    {"followUpDecision": {"result": "suppressed"}},
+])
+async def test_memory_receipt_waits_after_worker_terminal_and_retries_refused_delivery(completion):
+    bridge = _make_bridge()
+    stream_id, chat_id = "memory-after-worker", "111"
+    _bind_poll_delivery_authority(bridge, stream_id=stream_id, telegram_chat_id=chat_id)
+    bridge._response_message_ids[stream_id] = "answer"
+    bridge._conversation_by_stream[stream_id] = "conversation"
+    bridge._set_active_stream(chat_id, stream_id)
+    bridge.followup_timeout_s = 2
+    bridge.followup_interval_s = 0.01
+    bridge.set_on_message_callback(lambda *args, **kwargs: ["telegram-receipt"])
+    receipts, worker_texts, fetches = [], [], []
+    states = [
+        {"cortexParts": [], "memoryReceipt": {"status": "pending"}, **completion},
+        {"cortexParts": [], "memoryReceipt": {"status": "saved", "keys": ["preferences"]}, **completion},
+    ]
+
+    async def fetch(**kwargs):
+        fetches.append(kwargs)
+        return states.pop(0) if len(states) > 1 else states[0]
+
+    async def send(_chat, text, **kwargs):
+        if text.startswith("🧠"):
+            receipts.append(text)
+            sent = len(receipts) > 1
+            return {"sent": sent, "message_ids": ["memory-receipt"] if sent else []}
+        worker_texts.append(text)
+        if kwargs.get("return_receipt"):
+            return {"sent": True, "message_ids": ["telegram-receipt"]}
+        return True
+
+    bridge._fetch_followup_state = fetch
+    bridge._send_followup_text = send
+    await bridge._poll_for_followup(stream_id=stream_id, chat_id=chat_id)
+    assert receipts == ["🧠 Saved to memory: preferences"] * 2
+    assert len(fetches) >= 3
+    assert worker_texts.count("Worker finished.") <= 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("terminal", [
+    {"status": "saved", "keys": ["preferences"]},
+    {"status": "failed", "message": "Memory provider unavailable."},
+    {"status": "unchanged"},
+])
+async def test_memory_receipt_restart_retains_identity_and_worker_completion(terminal):
+    bridge = _make_bridge()
+    stream_id, chat_id = "memory-restart", "111"
+    _bind_poll_delivery_authority(bridge, stream_id=stream_id, telegram_chat_id=chat_id)
+    bridge._stream_identity[stream_id].update(telegram_message_id="42", presentation_source_sequence=43)
+    assert bridge._poll_delivery_authority(stream_id)["source_sequence"] == 43
+    bridge._response_message_ids[stream_id] = "answer"
+    bridge._conversation_by_stream[stream_id] = "conversation"
+    bridge._remember_stream_text(stream_id, "Original reply.", brief_main_reply=False)
+    bridge.followup_timeout_s = .01
+    bridge.followup_interval_s = .01
+    bridge.set_on_message_callback(lambda *args, **kwargs: ["worker-receipt"])
+
+    async def pending(**kwargs):
+        return {"memoryReceipt": {"status": "pending"}, "followUp": {"text": "{NTA}"}}
+
+    bridge._fetch_followup_state = pending
+    await bridge._poll_for_followup(stream_id=stream_id, chat_id=chat_id)
+    assert bridge._response_message_ids[stream_id] == "answer"
+    cursor = bridge._cortex_ack_store.pending_memory_polls(bridge._memory_poll_scope())[0][1]
+    assert cursor["followup_sent"] is True
+    assert cursor["identity"]["logical_turn_revision"] == 1
+    assert cursor["identity"]["telegram_message_id"] == "42"
+    assert cursor["identity"]["presentation_source_sequence"] == 43
+    assert "Original reply." not in json.dumps(cursor)
+    assert bridge.secret not in json.dumps(cursor)
+
+    restarted = _make_bridge()
+    restarted._cortex_ack_store = _CortexTelegramAckStore(bridge._cortex_ack_store.path)
+    deliveries = []
+
+    async def fetched(**kwargs):
+        assert restarted._get_identity_params(stream_id) == {"telegramChatId": chat_id, "telegramUserId": "user-1"}
+        return {"memoryReceipt": terminal, "followUp": {"text": "Must not repeat this worker."}}
+
+    async def send(_chat, text, **kwargs):
+        assert restarted._poll_delivery_authority(stream_id)["source_sequence"] == 43
+        deliveries.append(text)
+        return {"sent": True, "message_ids": ["memory-receipt"]}
+
+    restarted.set_on_message_callback(lambda *args, **kwargs: None)
+    restarted._fetch_followup_state = fetched
+    restarted._send_followup_text = send
+    restarted._resume_memory_polls()
+    assert restarted._poll_delivery_authority(stream_id)["source_sequence"] == 43
+    task = restarted._followup_task_by_stream[stream_id]
+    await task
+    expected = format_memory_receipt_text(terminal)
+    assert deliveries == ([expected] if expected else [])
+    assert restarted._cortex_ack_store.pending_memory_polls(restarted._memory_poll_scope()) == []
+    assert stream_id not in restarted._response_message_ids
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("interruption", ["sending", "delivery_unknown"])
+async def test_memory_receipt_restart_never_replays_uncertain_transport(interruption):
+    bridge = _make_bridge()
+    stream_id = "memory-unknown"
+    _bind_poll_delivery_authority(bridge, stream_id=stream_id, telegram_chat_id="111")
+    bridge._response_message_ids[stream_id] = "answer"
+    bridge._conversation_by_stream[stream_id] = "conversation"
+    bridge._memory_delivery_state[stream_id] = interruption
+    bridge._save_memory_poll(stream_id, "111")
+    restarted = _make_bridge()
+    restarted._cortex_ack_store = _CortexTelegramAckStore(bridge._cortex_ack_store.path)
+    restarted.set_on_message_callback(lambda *args, **kwargs: pytest.fail("uncertain receipt repeated"))
+    restarted._resume_memory_polls()
+    assert restarted._followup_task_by_stream == {}
+    assert restarted._cortex_ack_store.pending_memory_polls(restarted._memory_poll_scope())[0][1]["delivery_state"] == "delivery_unknown"
+    restarted.secret = "another-bot-secret"
+    assert restarted._cortex_ack_store.pending_memory_polls(restarted._memory_poll_scope()) == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", ["refused", "exception", "no_receipt", "success"])
+async def test_memory_receipt_transport_distinguishes_refusal_from_lost_ack(outcome):
+    bridge = _make_bridge()
+    stream_id = "memory-transport"
+    _bind_poll_delivery_authority(bridge, stream_id=stream_id, telegram_chat_id="111")
+    bridge._response_message_ids[stream_id] = "answer"
+    bridge._conversation_by_stream[stream_id] = "conversation"
+
+    async def callback(*args, **kwargs):
+        if outcome == "exception":
+            raise RuntimeError("acknowledgement lost")
+        if outcome == "refused":
+            return False
+        return ["telegram-id"] if outcome == "success" else None
+
+    bridge.set_on_message_callback(callback)
+    await bridge._poll_memory_receipt(stream_id, "111", {"memoryReceipt": {"status": "saved", "keys": ["preferences"]}})
+    assert bridge._memory_delivery_state[stream_id] == {
+        "refused": "pending", "exception": "delivery_unknown", "no_receipt": "delivery_unknown", "success": "sent",
+    }[outcome]
+    cursor = bridge._cortex_ack_store.pending_memory_polls(bridge._memory_poll_scope())[0][1]
+    assert "preferences" not in json.dumps(cursor)
+    assert cursor["memory_sent"] is (outcome == "success")

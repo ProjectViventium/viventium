@@ -1,128 +1,59 @@
 # Contributing to Viventium
 
-Thank you for your interest in contributing to Viventium. This document
-describes the public contribution flow for the main product repo.
+Start with the [contributor setup](docs/04_SETUP_GUIDE.md#contributor-setup). It covers the supported
+toolchain, test dependencies and pinned component bootstrap. Then follow the
+[isolated runtime quickstart](docs/requirements_and_learnings/50_Stable_Dev_Runtime.md#contributor-quickstart)
+to run your checkout without replacing an existing daily installation.
 
-## Getting Started
+## Find the owning flow
 
-1. Fork the repository and clone your fork.
-2. Read:
-   - `README.md`
-   - `docs/04_SETUP_GUIDE.md`
-   - `docs/05_ENVIRONMENT.md`
-   - `docs/requirements_and_learnings/01_Key_Principles.md`
-3. Run the installer or doctor flow:
+Read the [project contract](AGENTS.md) and [key principles](docs/requirements_and_learnings/01_Key_Principles.md).
+Use the [capability map](docs/README.md#capabilities-and-acceptance) to find the relevant requirement
+and [QA journey](qa/catalog.yaml). Follow the trigger through configuration, compiled output,
+runtime code and the visible result. The [systems map](docs/architecture/systems-map.md) identifies
+component boundaries.
 
-```bash
-./install.sh
-bin/viventium doctor
-```
+Managed components are separate repositories with their own instructions and dependencies.
+Check `git rev-parse --show-toplevel` before editing. Component source, parent pins and built/running
+artifacts must agree for a delivery claim. Starting a development environment does not promote
+source changes into the installed app.
 
-## Development Principles
+## Make and verify a change
 
-We follow these core principles:
+1. Create your working branch from the current project base.
+2. Make the smallest coherent change in the owning component. Reuse existing mechanisms; models
+   own semantic judgment and runtime code owns structure, authority, persistence and recovery.
+3. Run the relevant regression checks with the component's documented environment. For a root
+   compiler change, after completing contributor setup:
 
-### 1. Beautifully Simple
-- Don't overcomplicate things
-- Seek elegant, efficient solutions
-- Study the codebase before adding new patterns
+   ```sh
+   .venv/bin/python -m pytest tests/release/test_config_compiler.py -q
+   ```
 
-### 2. Single Source of Truth
-- Avoid code duplication
-- Use existing abstractions when possible
-- Follow the DRY principle
+4. Exercise the affected user journey in the isolated runtime. Check the result, relevant failure
+   and recovery state, and persistence. Follow the [QA contract](qa/README.md); record missing
+   prerequisites separately from passing checks. Run broader checks when the change affects them.
+5. Update the owning requirement or runtime document when behavior changes. Keep one source of
+   truth; link to existing procedures and retain requirement IDs.
+6. Review the diff for unrelated edits, secrets, private data and machine-specific paths before
+   committing. Keep private logs, screenshots and user prompts outside public repositories.
 
-### 3. Separation of Concerns
-- Keep modules focused on their responsibility
-- Clear modular boundaries
-- Each component should do one thing well
+Prompt changes follow the existing [Prompt Workbench contract](docs/requirements_and_learnings/49_Prompt_Architecture_and_Token_Efficiency.md),
+including source-to-live lineage and old/proposed cases on the configured models. Deterministic
+tests, model evaluations and real user QA prove different things.
 
-### 4. Dynamic Configuration
-- Avoid hardcoding values
-- Use environment variables for configuration
-- Make code extensible without modification
+## Submit work
 
-## How to Contribute
+Open an issue with the expected result, actual result and reproducible steps. For a pull request,
+explain the problem, resulting behavior, relevant validation and remaining gaps. Identify any
+component and parent-pin changes needed to deliver it. Maintainers review correctness, user
+experience, simplicity and alignment before merging.
 
-### Reporting Bugs
-
-- Use the GitHub issue tracker
-- Include a clear description of the bug
-- Provide steps to reproduce
-- Include relevant logs or error messages
-- Mention your environment (OS, Python version, etc.)
-
-### Suggesting Features
-
-- Open an issue with the `enhancement` label
-- Describe the use case and motivation
-- Explain how it fits with the brain-inspired architecture
-- Consider how it impacts existing cortices
-
-### Submitting Code
-
-1. Create a branch from `main`.
-2. Make the smallest coherent change that solves one problem.
-3. Add or update tests.
-4. Update the matching doc in `docs/requirements_and_learnings/` when behavior changes.
-5. Run the relevant checks:
-
-```bash
-python3 -m pytest tests/release/test_config_compiler.py -q
-```
-
-Additional component-specific checks:
-
-```bash
-cd viventium_v0_4/telegram-viventium && pytest
-cd viventium_v0_4/voice-gateway && python3 -m pytest tests -q
-```
-
-6. Commit with a clear single-line message.
-7. Open a pull request that explains:
-   - what changed,
-   - why,
-   - what was tested,
-   - any follow-up work or limitations.
-
-## Code Style
-
-- **Python**: Follow PEP 8, use type hints
-- **Imports**: Group by standard library, third-party, local
-- **Docstrings**: Use Google style docstrings
-- **Comments**: Explain *why*, not *what*
-
-## Testing
-
-- Write unit tests for new functionality
-- Integration tests for orchestration changes
-- Run the full test suite before submitting
-
-## Documentation
-
-- Update relevant docs when changing functionality
-- Add docstrings to public functions and classes
-- Keep the README up to date
-
-## Code Review Process
-
-1. All submissions require review
-2. Maintainers will review for:
-   - Code quality and style
-   - Test coverage
-   - Documentation
-   - Alignment with architecture principles
-3. Address feedback and update your PR
-4. Once approved, your code will be merged
-
-## Questions?
-
-- Open an issue for questions
-- See [Troubleshooting](./docs/06_TROUBLESHOOTING.md) for common issues
-- Review existing issues and PRs for context
+Follow the component's style and tooling. Explain non-obvious decisions in comments; keep routine
+code readable without narration. Use the [troubleshooting guide](docs/06_TROUBLESHOOTING.md) for
+setup and runtime failures.
 
 ## License
 
-By contributing to the main `viventium` repo, you agree that your contributions
-will be licensed under the project `LICENSE`. Public component repos keep their
-own upstream-compatible licenses. See `LICENSE-MATRIX.md`.
+Contributions to this repository use its [LICENSE](LICENSE). Component repositories retain their
+upstream-compatible licenses; see [LICENSE-MATRIX.md](LICENSE-MATRIX.md).

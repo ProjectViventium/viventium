@@ -1,0 +1,85 @@
+schemaVersion: 1
+purpose: Route each capability to its product entrypoint and retained durable acceptance sources.
+statusPolicy: Execution status belongs in candidate-bound reports, never in this catalog.
+capabilities:
+  - id: background-cognition
+    requirements:
+      - docs/requirements_and_learnings/02_Background_Agents.md
+    cases:
+      - qa/background-cognition/cases.yaml
+  - id: telegram-channels
+    requirements:
+      - docs/requirements_and_learnings/03_Telegram_Bridge.md
+      - docs/requirements_and_learnings/25_Scheduling_Telegram_UX_Fixes.md
+    cases:
+      - qa/telegram-channels/cases.yaml
+  - id: runtime-install-release
+    requirements:
+      - docs/requirements_and_learnings/capabilities/runtime-install-release.md
+    cases:
+      - qa/runtime-install-release/cases.yaml
+  - id: voice
+    requirements:
+      - docs/requirements_and_learnings/capabilities/voice.md
+    cases:
+      - qa/voice/cases.yaml
+  - id: main-scheduling-continuity
+    requirements:
+      - docs/requirements_and_learnings/capabilities/main-scheduling-continuity.md
+    cases:
+      - qa/main-scheduling-continuity/cases.yaml
+  - id: interaction-delivery
+    requirements:
+      - docs/requirements_and_learnings/capabilities/interaction-delivery.md
+    cases:
+      - qa/interaction-delivery/cases.yaml
+  - id: parallel-work
+    requirements:
+      - docs/requirements_and_learnings/capabilities/parallel-work.md
+    cases:
+      - qa/parallel-work/cases.yaml
+  - id: glasshive
+    requirements:
+      - docs/requirements_and_learnings/capabilities/glasshive.md
+    cases:
+      - qa/glasshive/cases.yaml
+  - id: prompt-workbench
+    requirements:
+      - docs/requirements_and_learnings/capabilities/prompt-workbench.md
+    cases:
+      - qa/prompt-workbench/cases.yaml
+  - id: memory-recall-transcripts
+    requirements:
+      - docs/requirements_and_learnings/capabilities/memory-recall-transcripts.md
+    cases:
+      - qa/memory-recall-transcripts/cases.yaml
+  - id: feelings-truth-seeking
+    requirements:
+      - docs/requirements_and_learnings/capabilities/feelings-truth-seeking.md
+    cases:
+      - qa/feelings-truth-seeking/cases.yaml
+  - id: connected-tools-search
+    requirements:
+      - docs/requirements_and_learnings/capabilities/connected-tools-search.md
+    cases:
+      - qa/connected-tools-search/cases.yaml
+  - id: interface-brand
+    requirements:
+      - docs/requirements_and_learnings/capabilities/interface-brand.md
+    cases:
+      - qa/interface-brand/cases.yaml
+  - id: periphery-insights
+    requirements:
+      - docs/requirements_and_learnings/53_Viventium_Periphery_Nightly_Insights.md
+    cases:
+      - qa/periphery-insights/cases.yaml
+  - id: health-whoop
+    requirements:
+      - docs/requirements_and_learnings/capabilities/health-whoop.md
+    cases:
+      - qa/health-whoop/cases.yaml
+  - id: life
+    requirements:
+      - docs/requirements_and_learnings/capabilities/life.md
+    cases:
+      - qa/life/cases.yaml

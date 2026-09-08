@@ -1,0 +1,16 @@
+schemaVersion: 1
+capability: interface-brand
+requirementOwner: docs/requirements_and_learnings/capabilities/interface-brand.md
+statusPolicy: Run results belong in dated, candidate-bound reports.
+sourceInventories:
+  - qa/branding-assets/cases.md
+  - qa/cognitive-architecture/cases.md
+journeys:
+  - id: changed-surface
+    requirements: [CORE-017, GOV-015]
+    userAction: Complete the changed workflow using keyboard, pointer, narrow and wide layouts, and light and dark themes.
+    surfaces: [real changed browser or desktop surface]
+    expectedResult: The workflow is clear, accessible, responsive, Viventium-branded, and complete in loading, empty, error, and success states.
+    degradedAndRecovery: Errors name the real blocker and preserve a useful retry or recovery path without layout breakage.
+    persistenceAndCleanup: Refresh and restart preserve intended state; packaged assets match reviewed source and synthetic data is removed.
+    evidence: [headed interaction, accessibility tree, responsive screenshots, asset hashes, installed artifact identity]

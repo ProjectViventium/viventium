@@ -1,0 +1,24 @@
+schemaVersion: 1
+capability: prompt-workbench
+requirementOwner: docs/requirements_and_learnings/capabilities/prompt-workbench.md
+statusPolicy: Run results belong in dated, candidate-bound reports.
+sourceInventories:
+  - qa/prompt-architecture/cases.md
+  - qa/prompt-workbench/cases.md
+journeys:
+  - id: semantic-change
+    requirements: [GOV-002]
+    userAction: Propose one semantic prompt or model change and compare it with the current version.
+    surfaces: [Prompt Workbench, exact configured models]
+    expectedResult: Sanitized positive, negative, and adjacent cases old versus proposed show the intended gain without relevant regression.
+    degradedAndRecovery: Missing exact model, auth, evaluator, or source-to-live equality blocks publish and leaves the current version active.
+    persistenceAndCleanup: Draft, evaluation, publish, rollback, and history remain versioned; private prompts never enter public evidence.
+    evidence: [source and live hashes, exact-model outputs, aggregate scores, headed browser flow]
+  - id: judge-calibration
+    requirements: [GOV-023]
+    userAction: Score a predeclared hand-graded subset with the proposed behavioral judge before using it on the full bank.
+    surfaces: [Prompt Workbench evaluation]
+    expectedResult: Judge agreement and known error modes meet the declared threshold before its score informs acceptance.
+    degradedAndRecovery: A miscalibrated or unavailable judge cannot convert behavior to PASS.
+    persistenceAndCleanup: Only private-safe aggregate evidence is public; detailed sensitive examples remain private.
+    evidence: [frozen subset digest, human labels, judge labels, agreement and error summary]

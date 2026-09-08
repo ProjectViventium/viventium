@@ -23,6 +23,7 @@ from worker import (
     _report_voice_gateway_failure,
     _report_voice_gateway_initialization_failure_and_abandon,
     _report_voice_initialization_failure_and_abandon,
+    _owner_wait_seconds,
     _resolve_canonical_owner_participant,
     _validate_dispatch_job_bindings,
     _validate_voice_session_claim,
@@ -1152,3 +1153,16 @@ class AuthoritativeRouteTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_owner_wait_covers_the_browser_join_budget_and_honours_the_compiled_seam(monkeypatch):
+    monkeypatch.delenv("VIVENTIUM_VOICE_OWNER_WAIT_S", raising=False)
+    assert _owner_wait_seconds() == 45.0
+    monkeypatch.setenv("VIVENTIUM_VOICE_OWNER_WAIT_S", "90")
+    assert _owner_wait_seconds() == 90.0
+    monkeypatch.setenv("VIVENTIUM_VOICE_OWNER_WAIT_S", "0")
+    assert _owner_wait_seconds() == 0.25
+    monkeypatch.setenv("VIVENTIUM_VOICE_OWNER_WAIT_S", "9999")
+    assert _owner_wait_seconds() == 180.0
+    monkeypatch.setenv("VIVENTIUM_VOICE_OWNER_WAIT_S", "soon")
+    assert _owner_wait_seconds() == 45.0

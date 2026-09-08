@@ -18,8 +18,11 @@ fresh installed runtime.
 
 The quality bar is one responsive Main plus durable, truthful, isolated missions: no dropped rapid
 input, no worker impersonation, no phantom acknowledgement, no cross-owner or cross-process authority,
-no hidden stale/queued work, and no latency regression on focused turns. The deployment flag remains
-off and the default remains `focused` while any release-blocking case is not fully passed.
+no hidden stale/queued work, and no latency regression on focused turns. A ready account uses
+automatic ordinary delegation without an opt-in step; an explicit `focused` preference remains
+authoritative. Work and controls use owner-scoped operational readiness and report missing
+prerequisites truthfully. Public release certification remains a separate evidence gate and must
+not disable authorized local work or hide existing missions.
 
 The plain-language
 [Queen Bee and Worker Bee contract](../../docs/requirements_and_learnings/55_Parallel_Work_Orchestration.md#locked-queen-bee-and-worker-bee-user-experience)

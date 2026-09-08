@@ -815,7 +815,7 @@ def extract_shell_function(text: str, name: str) -> str:
         depth -= line.count("}")
         if depth == 0:
             break
-    return "\n".join(collected) + "\n"
+    return "\n".join(collected).replace("${BASH_SOURCE[0]}", str(START_SCRIPT)) + "\n"
 
 
 def test_quiesced_validation_prepares_secrets_without_writing_librechat_env() -> None:
@@ -872,8 +872,9 @@ def test_librechat_env_mutators_preserve_inode_for_semantic_noops(
     )
 
 
+@pytest.mark.parametrize("checkout_drift", [False, True])
 def test_full_reconciliation_preserves_existing_auth_secrets_and_unknown_fields(
-    tmp_path: Path,
+    tmp_path: Path, checkout_drift: bool,
 ) -> None:
     script = START_SCRIPT.read_text(encoding="utf-8")
     function_names = (
@@ -886,7 +887,8 @@ def test_full_reconciliation_preserves_existing_auth_secrets_and_unknown_fields(
         "load_ms365_credentials_from_librechat_env",
         "upsert_env_kv",
         "remove_env_kv",
-        "ensure_librechat_env",
+        "load_librechat_instance_secrets",
+            "ensure_librechat_env",
     )
     definitions = "".join(
         extract_shell_function(script, name) for name in function_names
@@ -922,8 +924,8 @@ def test_full_reconciliation_preserves_existing_auth_secrets_and_unknown_fields(
         encoding="utf-8",
     )
     env_file.write_text(
-        "JWT_SECRET=existing-jwt\n"
-        "JWT_REFRESH_SECRET=existing-refresh\n"
+        f"JWT_SECRET={'a' * 64}\n"
+        f"JWT_REFRESH_SECRET={'b' * 64}\n"
         f"CREDS_KEY={'1' * 64}\n"
         f"CREDS_IV={'2' * 32}\n"
         "MEILI_MASTER_KEY=existing-meili\n"
@@ -945,12 +947,27 @@ def test_full_reconciliation_preserves_existing_auth_secrets_and_unknown_fields(
         encoding="utf-8",
     )
 
+    instance_support = tmp_path / "instance-support"
+    instance_state = instance_support / "state"
+    instance_state.mkdir(parents=True)
+    instance_values = dict(line.split("=", 1) for line in env_file.read_text().splitlines()
+                           if line.split("=", 1)[0] in {"JWT_SECRET", "JWT_REFRESH_SECRET", "CREDS_KEY", "CREDS_IV"})
+    secret_file = instance_state / "native-secrets.json"
+    secret_file.write_text(json.dumps(instance_values))
+    secret_file.chmod(0o600)
+    if checkout_drift:
+        for key, value in instance_values.items():
+            env_file.write_text(env_file.read_text().replace(f"{key}={value}", f"{key}={'f' * len(value)}"))
+
     completed = subprocess.run(
         [
             "bash",
             "-lc",
             (
                 "set -euo pipefail\n"
+                f"PYTHON_BIN='{sys.executable}'\n"
+                f"VIVENTIUM_CORE_DIR='{REPO_ROOT}'\n"
+                f"VIVENTIUM_APP_SUPPORT_ROOT='{instance_support}'\n"
                 f"LIBRECHAT_RUNTIME_ENV_FILE='{env_file}'\n"
                 "VIVENTIUM_LOCAL_MONGO_PORT='27117'\n"
                 "VIVENTIUM_LOCAL_MONGO_DB='LibreChatViventium'\n"
@@ -1008,8 +1025,8 @@ def test_full_reconciliation_preserves_existing_auth_secrets_and_unknown_fields(
 
     assert completed.returncode == 0, completed.stderr
     contents = env_file.read_text(encoding="utf-8")
-    assert "JWT_SECRET=existing-jwt\n" in contents
-    assert "JWT_REFRESH_SECRET=existing-refresh\n" in contents
+    assert f"JWT_SECRET={'a' * 64}\n" in contents
+    assert f"JWT_REFRESH_SECRET={'b' * 64}\n" in contents
     assert f"CREDS_KEY={'1' * 64}\n" in contents
     assert f"CREDS_IV={'2' * 32}\n" in contents
     assert "MEILI_MASTER_KEY=existing-meili\n" in contents
@@ -1132,13 +1149,14 @@ def test_alignment_canonical_owner_file_does_not_resurrect_deleted_provider_key(
             "load_ms365_credentials_from_librechat_env",
             "upsert_env_kv",
             "remove_env_kv",
+            "load_librechat_instance_secrets",
             "ensure_librechat_env",
         )
     )
     env_file = tmp_path / ".env"
     env_file.write_text(
-        "JWT_SECRET=existing-jwt\n"
-        "JWT_REFRESH_SECRET=existing-refresh\n"
+        f"JWT_SECRET={'a' * 64}\n"
+        f"JWT_REFRESH_SECRET={'b' * 64}\n"
         f"CREDS_KEY={'1' * 64}\n"
         f"CREDS_IV={'2' * 32}\n"
         "OWNER_NOTE=provider-key-intentionally-deleted\n",
@@ -1150,12 +1168,24 @@ def test_alignment_canonical_owner_file_does_not_resurrect_deleted_provider_key(
         encoding="utf-8",
     )
 
+    instance_support = tmp_path / "instance-support"
+    instance_state = instance_support / "state"
+    instance_state.mkdir(parents=True)
+    instance_values = dict(line.split("=", 1) for line in env_file.read_text().splitlines()
+                           if line.split("=", 1)[0] in {"JWT_SECRET", "JWT_REFRESH_SECRET", "CREDS_KEY", "CREDS_IV"})
+    secret_file = instance_state / "native-secrets.json"
+    secret_file.write_text(json.dumps(instance_values))
+    secret_file.chmod(0o600)
+
     completed = subprocess.run(
         [
             "bash",
             "-lc",
             (
                 "set -euo pipefail\n"
+                f"PYTHON_BIN='{sys.executable}'\n"
+                f"VIVENTIUM_CORE_DIR='{REPO_ROOT}'\n"
+                f"VIVENTIUM_APP_SUPPORT_ROOT='{instance_support}'\n"
                 "unset GROQ_API_KEY\n"
                 f"LIBRECHAT_RUNTIME_ENV_FILE='{env_file}'\n"
                 f"LIBRECHAT_CANONICAL_ENV_FILE='{env_file}'\n"

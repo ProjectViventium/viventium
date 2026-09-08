@@ -20,4 +20,5 @@ The source hash covers:
 
 - `apps/macos/ViventiumHelper/Package.swift`
 - `apps/macos/ViventiumHelper/Sources/ViventiumHelper/ViventiumHelperApp.swift`
+- `apps/macos/ViventiumHelper/Sources/ViventiumHelper/LifeSetup.swift`
 - `apps/macos/ViventiumHelper/Sources/ViventiumHelper/Resources/Info.plist`

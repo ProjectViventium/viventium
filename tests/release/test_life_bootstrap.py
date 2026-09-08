@@ -145,6 +145,61 @@ def test_life_bootstrap_repairs_only_missing_items_in_a_partial_personalized_tre
     assert "AGENTS.md" in result["preserved_files"]
 
 
+@pytest.mark.parametrize("initial_mode", [0o700, 0o755])
+def test_life_bootstrap_changes_root_permissions_only_when_needed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, initial_mode: int,
+) -> None:
+    template = tmp_path / "template"
+    template.mkdir()
+    (template / "CURRENT.md").write_text("template\n", encoding="utf-8")
+    life_dir = tmp_path / "Life"
+    life_dir.mkdir(mode=initial_mode)
+    life_dir.chmod(initial_mode)
+    personal = life_dir / "CURRENT.md"
+    personal.write_text("personal\n", encoding="utf-8")
+    original_chmod = Path.chmod
+    root_calls = []
+
+    def guarded_chmod(path: Path, mode: int, **kwargs) -> None:
+        if path == life_dir:
+            root_calls.append(mode)
+            if stat.S_IMODE(path.stat().st_mode) == 0o700:
+                raise PermissionError("Unnecessary permission mutation")
+        original_chmod(path, mode, **kwargs)
+
+    monkeypatch.setattr(Path, "chmod", guarded_chmod)
+    life_bootstrap.bootstrap_life(
+        template_dir=template, life_dir=life_dir, state_file=tmp_path / "state.json",
+    )
+    assert root_calls == ([] if initial_mode == 0o700 else [0o700])
+    assert stat.S_IMODE(life_dir.stat().st_mode) == 0o700
+    assert personal.read_text(encoding="utf-8") == "personal\n"
+
+
+def test_life_bootstrap_does_not_ignore_required_permission_denial(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    template = tmp_path / "template"
+    template.mkdir()
+    life_dir = tmp_path / "Life"
+    life_dir.mkdir(mode=0o755)
+    life_dir.chmod(0o755)
+    original_chmod = Path.chmod
+
+    def denied_chmod(path: Path, mode: int, **kwargs) -> None:
+        if path == life_dir:
+            raise PermissionError("Required permission change denied")
+        original_chmod(path, mode, **kwargs)
+
+    monkeypatch.setattr(Path, "chmod", denied_chmod)
+    with pytest.raises(PermissionError, match="Required permission change denied"):
+        life_bootstrap.bootstrap_life(
+            template_dir=template, life_dir=life_dir, state_file=tmp_path / "state.json",
+        )
+    assert stat.S_IMODE(life_dir.stat().st_mode) == 0o755
+    assert not (tmp_path / "state.json").exists()
+
+
 def test_runtime_env_value_reads_compiled_life_path_without_executing_shell(tmp_path: Path) -> None:
     runtime_env = tmp_path / "runtime.env"
     runtime_env.write_text(
@@ -293,8 +348,9 @@ def test_life_bootstrap_rejects_a_symlink_root_or_regular_file(tmp_path: Path) -
 
 
 def test_life_bootstrap_rejects_a_symlink_in_the_destination_ancestor_chain(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(Path, "home", lambda: tmp_path / "synthetic-home")
     real_parent = tmp_path / "real-parent"
     real_parent.mkdir()
     linked_parent = tmp_path / "linked-parent"

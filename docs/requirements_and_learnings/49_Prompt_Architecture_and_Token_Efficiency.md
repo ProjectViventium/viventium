@@ -40,6 +40,60 @@ ClaudeViv review conclusion:
 
 ## Implementation Log
 
+### 2026-09-06 Delivery Constraints At The Follow-Up Boundary
+
+The source-owned Phase B prompt keeps useful evidence subordinate to the user's timing, conditions,
+destination, format and count. A pending request or acknowledgement alone does not authorize early
+delivery. The existing `phase_b_followup` case family covers a future delivery, a held result and a
+later released condition, using the actual production follow-up route and full visible context.
+Exact-model comparisons retain failures separately from storage and visible-delivery acceptance.
+
+### 2026-09-07 Native Evidence Across Graph Handoffs
+
+Phase B receives the primary graph's actual native tool records as separate typed input, alongside
+its final answer and parallel insights. The existing saved-result reader joins only the accepted
+owner, message, stream, logical revision, snapshot hash and context epoch. Each node retains its
+own run, input hash, authority hash, tool outcome and bounded-output coverage. A graph handoff may
+release native terminal-answer ownership without discarding evidence from before or after it.
+The reader performs no tool call, data acquisition or reconciliation. Read-only source-byte and
+parent checks reject edits, deletion, foreign owners and stale context before synthesis; absence or
+clipping stays explicit. The semantic follow-up policy is unchanged: models judge the supplied
+evidence rather than treating one limited search as complete source coverage.
+
+### 2026-09-06 Complete Answer At The Follow-Up Boundary
+
+The existing Phase B formatter now preserves the complete recent answer on every surface. A real
+foreground Reality → Main → Red Team → Main chain exposed a repeated recommendation because the
+old 2,400-character prefix omitted Main's conclusion. The semantic policy is unchanged; the model
+receives the evidence needed to apply it. Existing provider context admission remains the capacity
+owner. Focused formatter checks and old/proposed Workbench runs on the exact configured primary and
+fallback distinguish redundant advice, new failure evidence, and the first useful pending result.
+These are supporting checks; the installed user-path retry remains an acceptance gate in `ANTI-009`.
+
+### 2026-09-06 Host Scope And Existing Authorization
+
+`worker.host_native_harness` and `worker.safety_checkpoint` own the host frame and shared action-boundary text. The existing compiled worker loader substitutes its existing operating, capability, completion and safety blocks in the same order. Workbench exposes their sources, consumer links and required context; managed source failures remain closed. Standalone GlassHive retains its component-owned defaults.
+
+The workspace is a default working location, not an extra permission boundary. Workers use the current request and applicable prior authorization for ordinary local app and file work, including authorized locations outside that workspace. They preserve genuine destructive-action, external-effect, private-data, account and OS-consent boundaries. Neither full-access tools nor a project document grants new authority. Host instructions must not suggest using another interpreter or removing security metadata to evade quarantine or a permission denial.
+
+Exact configured worker-model old/proposed comparison and actual app/file user-path evidence remain separate acceptance gates. Source extraction and deterministic composition checks alone do not prove model behavior.
+
+### 2026-09-06 Worker Completion And Capability Source Ownership
+
+`worker.completion_contract` and `worker.native_capability_inventory` own these two instruction
+blocks for managed Viventium workers. The compiler includes them in the normal prompt bundle;
+GlassHive resolves them before its existing project, host harness, AGENTS and run-instruction
+composition. Workbench links the source entries to those exact consumer owners. This extraction
+preserves the emitted text, whitespace and composition order; it does not change model behavior.
+
+The shared Python compiled body/includes reader is reused by Scheduler and this worker adapter.
+A managed installation with a missing or invalid required prompt fails with a typed setup error;
+it cannot silently restore inline text. Native GlassHive explicitly uses its installed bundle path.
+Standalone GlassHive keeps its component-owned compatibility defaults and needs no Viventium
+registry or shared module. Byte-parity and mutation checks cover that deliberate boundary. Other
+host templates and compatibility wrappers remain separate inventory work; these two entries do
+not establish complete Workbench ownership of every GlassHive instruction.
+
 ### 2026-08-29 Source-Audit Reconciliation
 
 The retained prompt-architecture source adds five atomic requirements that earlier summaries made

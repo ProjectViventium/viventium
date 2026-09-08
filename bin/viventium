@@ -557,9 +557,36 @@ hold_detached_runtime_owner() {
 
   value_is_true "${VIVENTIUM_DETACHED_START:-false}" || return 0
   [[ "$poll_seconds" =~ ^[1-9][0-9]*$ ]] || poll_seconds=2
-  while detached_owner_process_group_has_live_peer "$$"; do
+  # The launcher re-parents the stack into its own recorded process group, so the holder must
+  # also watch that group: an owner record that disappears while the stack still runs would leave
+  # `dev-runtime status` reporting no live owner for a live stack.
+  while detached_owner_process_group_has_live_peer "$$" || detached_launch_process_group_running; do
     sleep "$poll_seconds"
   done
+}
+
+# === VIVENTIUM START ===
+# Feature: Adopt the Viventium-managed Meilisearch container on a plain start.
+# Purpose: The launcher runs Meilisearch as a labelled Docker container on the activation path,
+#          while the native stack expects a native meilisearch process on the same port. When a
+#          container carrying this stack's own labels already publishes the port, the native stack
+#          must skip Meilisearch and let the launcher adopt its container instead of refusing the
+#          port as foreign. Identity comes from the container labels the launcher sets, never from
+#          the container name or a process listing.
+# === VIVENTIUM END ===
+viventium_meilisearch_container_owns_port() {
+  local port="${1:-}"
+  [[ -n "$port" ]] || return 1
+  command -v docker >/dev/null 2>&1 || return 1
+  local names=""
+  names="$(
+    docker ps \
+      --filter "label=viventium.stack=viventium_v0_4" \
+      --filter "label=viventium.service=meilisearch" \
+      --filter "publish=${port}" \
+      --format '{{.Names}}' 2>/dev/null || true
+  )"
+  [[ -n "$names" ]]
 }
 
 write_stack_owner_state() {
@@ -1307,6 +1334,19 @@ Usage:
 Repairs duplicate saved-memory keys and duplicate connected-provider key rows.
 Dry-run is the default. Unique indexes are only created with --apply --create-indexes
 after duplicate rows are gone.
+USAGE
+      ;;
+    life)
+      cat <<'USAGE'
+Usage:
+  bin/viventium life status [--json] [--show-path]
+  bin/viventium life enable --folder /absolute/path [--json]
+  bin/viventium life disable [--json]
+  bin/viventium life intent --text "what you intend to connect" [--json]
+  bin/viventium life intent --clear
+
+Optional Life setup on this Mac: choose the Life folder and record your own source intent.
+Nothing is scanned, read, uploaded, or indexed, and no live connector is claimed.
 USAGE
       ;;
     doctor)
@@ -3560,6 +3600,14 @@ recover_interrupted_dev_runtime_activations() {
   done
 }
 
+prepare_dev_runtime_librechat_candidate() (
+  local LIBRECHAT_DIR="$REPO_ROOT/viventium_v0_4/LibreChat"
+  # This shared owner has no service, database, helper or channel startup effects.
+  source "$REPO_ROOT/scripts/viventium/librechat_build.sh" || return 1
+  log_error() { printf '%s\n' "$*" >&2; }
+  VIVENTIUM_APP_SUPPORT_DIR="$APP_SUPPORT_DIR" prepare_librechat_candidate
+)
+
 dev_runtime_command() {
   local action="${1:-status}"
   shift || true
@@ -3883,6 +3931,11 @@ dev_runtime_command() {
         echo "Runtime activation could not stage its Telegram runtime component; binding, live runtime, helper, and running state were not changed." >&2
         return 1
       fi
+      if ! prepare_dev_runtime_librechat_candidate; then
+        rollback_prepared_dev_runtime_activation "$activation_dir" || return 1
+        echo "Candidate dependencies or package builds are not ready; the current app remains running." >&2
+        return 1
+      fi
       if ! "$REPO_ROOT/scripts/viventium/doctor.sh" \
         --config "$CONFIG_FILE" \
         --runtime-dir "$candidate_runtime" \
@@ -4179,6 +4232,28 @@ report_bug_command() {
       exit 1
       ;;
   esac
+}
+
+life_command() {
+  local action="${1:-status}"
+  if [[ "$action" == "--help" || "$action" == "-h" || "$action" == "help" ]]; then
+    subcommand_usage life
+    return 0
+  fi
+  shift || true
+  if [[ ! -f "$CONFIG_FILE" ]]; then
+    echo "Missing config: $CONFIG_FILE" >&2
+    echo "Run: bin/viventium install" >&2
+    return 1
+  fi
+  refresh_repo_python
+  local life_tool="$REPO_ROOT/scripts/viventium/life_setup.py"
+  local backup_dir="$APP_SUPPORT_DIR/state/config-backups"
+  "$PYTHON_BIN" "$life_tool" \
+    --config-file "$CONFIG_FILE" \
+    --state-dir "$APP_SUPPORT_DIR/state" \
+    --backup-dir "$backup_dir" \
+    "$action" "$@"
 }
 
 transcripts_command() {
@@ -5360,6 +5435,14 @@ sandpack_runtime_required() {
 }
 
 
+glasshive_runtime_surface_healthy() {
+  local base_url=""
+  local runtime_port=""
+  runtime_port="$(read_generated_env_value "GLASSHIVE_RUNTIME_PORT" "8766")"
+  base_url="$(read_generated_env_value "GLASSHIVE_RUNTIME_BASE_URL" "http://127.0.0.1:${runtime_port}")"
+  viventium_glasshive_runtime_healthy "$base_url" 3
+}
+
 rag_api_surface_healthy() {
   local base_url=""
   base_url="$(read_generated_env_value "RAG_API_URL" "")"
@@ -5726,6 +5809,7 @@ all_user_surfaces_healthy() {
   api_surface_healthy "$api_port" &&
     frontend_surface_healthy "$frontend_port" &&
     { ! sandpack_runtime_required || sandpack_surface_healthy "$sandpack_port"; } &&
+    { ! runtime_env_true "START_GLASSHIVE" "false" || glasshive_runtime_surface_healthy; } &&
     { express_install_experience || playground_surface_healthy "$playground_port"; }
 }
 
@@ -5874,7 +5958,52 @@ canonical_attached = [
         "{command}",
         "--restart",
     ],
+    [
+        "{ownerExecutablePath}",
+        "--app-support-dir",
+        "{appSupportDir}",
+        "--config-file",
+        "{configFile}",
+        "--runtime-dir",
+        "{runtimeDir}",
+        "{command}",
+    ],
 ]
+canonical_attached_flags = [
+    "--start",
+    "--restart",
+    "--skip-livekit",
+    "--skip-librechat",
+    "--skip-playground",
+    "--modern-playground",
+    "--classic-playground",
+    "--skip-voice-gateway",
+    "--skip-google-mcp",
+    "--skip-ms365-mcp",
+    "--skip-scheduling-mcp",
+    "--skip-glasshive",
+    "--skip-rag-api",
+    "--skip-skyvern",
+    "--skip-code-interpreter",
+    "--skip-firecrawl",
+    "--skip-prompt-workbench",
+    "--skip-telegram",
+    "--skip-v1-agent",
+    "--skip-docker",
+    "--skip-health-checks",
+    "--skip-v1-sync",
+    "--skip-voice-deps",
+    "--skip-mcp-verify",
+    "--no-bootstrap",
+    "--private-overlay",
+    "--fast",
+    "--profile=isolated",
+    "--profile=compat",
+]
+canonical_attached_enums = {
+    "--profile": ["isolated", "compat"],
+    "--runtime-profile": ["isolated", "compat"],
+}
 canonical_wrappers = [
     "",
     "/bin/bash ",
@@ -5893,12 +6022,22 @@ if (
         "command": "start",
         "argvTemplate": canonical_detached,
     }
-    or contract.get("attached")
-    != {
-        "allowTrailingArguments": False,
-        "commands": ["start", "launch"],
-        "argvTemplates": canonical_attached,
-    }
+    or contract.get("attached") not in (
+        {
+            "allowTrailingArguments": False,
+            "commands": ["start", "launch"],
+            "argvTemplates": canonical_attached,
+            "flagOptions": canonical_attached_flags,
+            "enumOptions": canonical_attached_enums,
+        },
+        # Rollback can target the original version-1 attached contract. Its
+        # detached argv is identical and remains validated above.
+        {
+            "allowTrailingArguments": False,
+            "commands": ["start", "launch"],
+            "argvTemplates": canonical_attached[:4],
+        },
+    )
     or contract.get("processWrappers") != canonical_wrappers
 ):
     raise SystemExit("Unsupported runtime owner command contract")
@@ -6026,6 +6165,10 @@ launch_log_indicates_startup_failure() {
   tail_output="$(tail -c "+$((start_offset + 1))" "$launch_log" 2>/dev/null | tail -n 200 || true)"
   [[ -n "$tail_output" ]] || return 1
 
+  if printf '%s\n' "$tail_output" | grep -Eq '\[viventium\].*FATAL_STARTUP:'; then
+    return 0
+  fi
+
   # Some launcher warnings and errors come from optional services that may
   # recover after the required user surfaces are healthy. Check only structural
   # required-surface gates against the raw log; color alone is not fatality.
@@ -6035,6 +6178,14 @@ launch_log_indicates_startup_failure() {
       '\[viventium\].*(No external LiveKit endpoint was configured|LiveKit is not reachable at|Configured LiveKit endpoint did not respond at|Could not replace the stale managed LiveKit container safely|LiveKit container is running but not responding at|Port [0-9]+ is already in use; refusing to treat it as LiveKit without explicit configuration|LiveKit did not respond after startup|Voice gateway directory not found, skipping|Local voice gateway requires Python 3[.]10[+])'
   then
     return 0
+  fi
+
+  # This launcher's EXIT trap owns terminal failures. Optional jobs share its
+  # log and may emit build errors while Main remains healthy. Keep the legacy
+  # parser only for logs emitted before the typed startup contract was armed.
+  if tail -c "+$((start_offset + 1))" "$launch_log" 2>/dev/null |
+    grep -E '\[viventium\].*STARTUP_CONTRACT: core-handoff-v1' >/dev/null; then
+    return 1
   fi
 
   # Launcher warnings are explicitly non-terminal. Optional-system warnings
@@ -6116,8 +6267,10 @@ install_waiting_on_surfaces() {
   local frontend_port=""
   local playground_port=""
   local sandpack_port=""
+  local glasshive_port=""
   local waiting_on=()
   assign_runtime_ports api_port frontend_port playground_port sandpack_port
+  glasshive_port="$(read_generated_env_value "GLASSHIVE_RUNTIME_PORT" "8766")"
 
   if ! api_surface_healthy "$api_port"; then
     if [[ "$display_mode" == "compact" ]]; then
@@ -6132,6 +6285,9 @@ install_waiting_on_surfaces() {
     else
       waiting_on+=("LibreChat Frontend :$frontend_port")
     fi
+  fi
+  if runtime_env_true "START_GLASSHIVE" "false" && ! glasshive_runtime_surface_healthy; then
+    waiting_on+=("GlassHive Main :$glasshive_port")
   fi
   if sandpack_runtime_required && ! sandpack_surface_healthy "$sandpack_port"; then
     if [[ "$display_mode" == "compact" ]]; then
@@ -7886,6 +8042,18 @@ if [[ $# -gt 0 ]]; then
   shift
 fi
 
+# Establish a fresh source instance before Python bootstrap or the CLI lock creates
+# App Support state. Existing instances must explicitly adopt verified legacy keys.
+if [[ "$COMMAND" == "install" || "$COMMAND" == "bootstrap" ]]; then
+  if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+    subcommand_usage install
+    exit 0
+  fi
+  PYTHON_BIN="$(resolve_repo_python)"
+  "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/native_runtime.py" source-secrets \
+    --app-support-dir "$APP_SUPPORT_DIR" --initialize
+fi
+
 SKIP_PYTHON_BOOTSTRAP=0
 case "$COMMAND" in
   restore|qa-control|qa-evidence|release-check)
@@ -7961,10 +8129,6 @@ case "$COMMAND" in
     CURRENT_INSTALL_STAGE="configure"
     INSTALL_TRAP_ACTIVE=1
     trap 'install_status=$?; if [[ "${INSTALL_TRAP_ACTIVE:-0}" == "1" && "$install_status" -ne 0 ]]; then drain_failed_install_runtime || true; rollback_config_candidate || true; write_install_stage "$CURRENT_INSTALL_STAGE"; print_install_recovery_guidance "$CURRENT_INSTALL_STAGE"; fi; cleanup_config_candidate || true; cleanup_cli_lock || true; exit "$install_status"' EXIT
-    if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
-      subcommand_usage install
-      exit 0
-    fi
     while [[ $# -gt 0 ]]; do
       case "${1:-}" in
         --no-start)
@@ -9017,7 +9181,7 @@ PY
       echo "Interrupted helper installation recovery failed closed." >&2
       exit 1
     fi
-    if [[ "${VIVENTIUM_DETACHED_START:-false}" != "true" ]]; then
+    if ! value_is_true "${VIVENTIUM_DETACHED_START:-false}"; then
       set_helper_runtime_intent running
     fi
     launch_stack_detached "$@"
@@ -9124,6 +9288,9 @@ PY
     ;;
   transcripts)
     transcripts_command "$@"
+    ;;
+  life)
+    life_command "$@"
     ;;
   qa-test-account)
     qa_test_account_command "$@"
@@ -9407,6 +9574,9 @@ PY
         NATIVE_STACK_SKIP_MEILI=0
         if express_install_experience; then
           NATIVE_STACK_SKIP_MEILI=1
+        elif viventium_meilisearch_container_owns_port "${VIVENTIUM_LOCAL_MEILI_PORT:-7700}"; then
+          echo "[viventium] Adopting the Viventium-managed Meilisearch container on port ${VIVENTIUM_LOCAL_MEILI_PORT:-7700}; the native Meilisearch process is not started."
+          NATIVE_STACK_SKIP_MEILI=1
         fi
         VIVENTIUM_NATIVE_STACK_SKIP_LIVEKIT=1 \
           VIVENTIUM_NATIVE_STACK_SKIP_MEILI="$NATIVE_STACK_SKIP_MEILI" \
@@ -9529,6 +9699,18 @@ PY
       echo "Dev-environment stop refused because the compiled runtime identity is not marked as a dev environment; no services were stopped." >&2
       exit 1
     fi
+    # === VIVENTIUM START ===
+    # Feature: Truthful stack owner record across stop.
+    # Purpose: The owner record names the live process that owns the stack. A `stop` record
+    #          written without a transition outlived the stopping process and kept claiming
+    #          `command: stop` after a later detached launch. Capture the prior owner and remove
+    #          this record when the stop process exits, exactly as `start` does.
+    # === VIVENTIUM END ===
+    capture_stack_owner_state_for_transition
+    STACK_OWNER_TRANSITION_ACTIVE=1
+    trap start_owner_transition_exit_cleanup EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
     write_stack_owner_state "$COMMAND"
     VIVENTIUM_LAUNCHER_INTERNAL=1 \
       "$REPO_ROOT/viventium_v0_4/viventium-librechat-start.sh" --stop "$@" || stop_status=$?

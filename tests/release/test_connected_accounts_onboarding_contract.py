@@ -40,5 +40,5 @@ def test_connected_account_oauth_origin_never_falls_back_to_request_host() -> No
     route_tests = read("api/server/routes/__tests__/connectedAccounts.spec.js")
 
     assert "req.get('host')" not in route
-    assert "Missing ${CONNECTED_ACCOUNTS_RETURN_ORIGIN_ENV} or DOMAIN_SERVER" in route
+    assert "Missing ${CONNECTED_ACCOUNTS_RETURN_ORIGIN_ENV}, DOMAIN_CLIENT or DOMAIN_SERVER" in route
     assert "untrusted.example" in route_tests

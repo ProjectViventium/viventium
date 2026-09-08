@@ -11,6 +11,28 @@ VIVENTIUM END -->
 - Social share metadata must use Viventium title/description and link to `https://viventium.ai`.
 - Help/marketing links in the modern playground must point to `https://viventium.ai`.
 
+## Everyday interface
+
+Use short, human wording and existing components. Show the useful state and primary action first;
+put account mechanics, experimental integrations, exclusivity and diagnostics in details. A stored
+account means saved, not verified access. Keep explicit API-key, sign-in and removal paths available.
+The Connected Accounts shortcut opens those rows first. On narrow screens, the active settings tab
+must remain visible, rows must fit, and controls must work by keyboard in light and dark themes.
+Activity details stay separate from the answer, and show original events without duplicate summaries.
+Main's landing view needs no technical role description. Keep that choice in the managed agent
+source, with model-menu metadata derived by the existing compiler. Key dialogs use provider display
+names and associate their retention description with the dialog for assistive technology.
+
+A temporary server outage must not be presented as a rejected sign-in. Authentication owns refresh
+and redirects: a confirmed rejected session or successful refresh without a token goes to sign-in;
+transport, rate-limit and server failures preserve the requested route. Reuse the request library's
+bounded recovery and offer one Retry action if the initial session cannot be checked. Do not infer
+rejection from elapsed time, clear a known session on a transient user lookup failure, or claim an
+unverified session is authenticated. Preserve query, hash and subdirectory destinations.
+Explicit Log out opens the local sign-in page on either server success or failure. Its trusted
+local destination is separate from post-login redirect validation; identity-provider logout keeps
+its existing server-authored redirect.
+
 ## Specifications
 ### Asset sources
 - Favicon + app icons: `docs/assets/favicon_viv/`
@@ -49,6 +71,24 @@ VIVENTIUM END -->
   - `client/src/components/SidePanel/Agents/Code/ApiKeyDialog.tsx`: code API link points to `https://viventium.ai`.
 - **Copied assets** (post-build): `client/public/assets/*`
   - `site.webmanifest` icon paths are `/assets/...` because `post-build` copies `public/assets` → `dist/assets`.
+
+### Browser stylesheet compatibility
+
+LibreChat's standard `client/.browserslistrc` gives PostCSS the same Baseline Widely Available
+2025-05-01 floor already shipped by Vite 7: Chrome/Edge 107, Firefox 104, and Safari 16, including
+compatible mobile/downstream browsers. Keep it aligned when changing the JavaScript target.
+`postcss-preset-env` owns required CSS fallbacks and its built-in Autoprefixer; do not add a second
+prefixing pass. Native dark, group, and focus selectors must retain their meaning, and Safari's
+required prefixes must remain. Do not suppress warnings or raise the browser floor merely to
+make builds quiet.
+
+The existing LibreChat release-contract suite processes real CSS and checks that its target list
+includes the installed Vite defaults. Supporting dev/build measurements are separate from real
+browser responsiveness, theme, keyboard, and mobile QA in `BRAND-001`.
+
+Sources: [Vite 7 target change](https://v7.vite.dev/guide/migration.html),
+[PostCSS Preset Env target/prefix ownership](https://github.com/csstools/postcss-plugins/blob/main/plugin-packs/postcss-preset-env/README.md),
+[Browserslist dated Baseline queries](https://github.com/browserslist/browserslist#full-list).
 
 ### Modern agent playground (`viventium_v0_4/agent-starter-react`)
 - **App metadata + icons**: `app/layout.tsx`

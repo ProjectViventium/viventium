@@ -1,5 +1,7 @@
 # Architecture Overview
 
+Start with the [current overview](architecture/overview.md); this entrypoint retains detailed component context.
+
 This is the high-level map of both stacks. Deep dives live in the version-specific docs.
 
 ## v0.4 (LibreChat Stack)

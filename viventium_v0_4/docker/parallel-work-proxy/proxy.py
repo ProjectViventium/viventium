@@ -14,7 +14,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit
 
 
-MAX_REQUEST_BYTES = 2 * 1024 * 1024
+MAX_REQUEST_BYTES_BY_ROLE = {
+    "provider": 15 * 1024 * 1024,
+    "broker": 2 * 1024 * 1024,
+}
 ROUTES = {
     "provider": {
         "/openai/v1/responses": "/api/viventium/glasshive/providers/openai/v1/responses",
@@ -68,6 +71,11 @@ def forward_headers(headers, *, content_length: int) -> dict[str, str]:
             result[output_name] = value
     result["Content-Length"] = str(content_length)
     return result
+
+
+def request_body_allowed(role: str, content_length: int) -> bool:
+    limit = MAX_REQUEST_BYTES_BY_ROLE.get(str(role or "").strip().lower())
+    return limit is not None and 0 <= content_length <= limit
 
 
 def _configuration() -> tuple[str, str, int]:
@@ -128,7 +136,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
             content_length = int(self.headers.get("Content-Length") or "")
         except ValueError:
             content_length = -1
-        if content_length < 0 or content_length > MAX_REQUEST_BYTES:
+        if not request_body_allowed(role, content_length):
             self._empty(413)
             return
         body = self.rfile.read(content_length)
