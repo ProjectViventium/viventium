@@ -263,6 +263,46 @@ def test_config_compile_runs_native_continuity_and_release_boundary_suites() -> 
     assert "python -m pytest -q tests" in source
 
 
+@pytest.mark.parametrize("architecture", ["x86_64", "arm64"])
+def test_telegram_ci_reuses_native_build_policy_and_checks_real_import(
+    monkeypatch: pytest.MonkeyPatch, architecture: str,
+) -> None:
+    import platform
+
+    workflow = yaml.safe_load(_workflow_sources()["config-compile.yml"])
+    script = next(
+        step["run"] for step in workflow["jobs"]["python"]["steps"]
+        if step.get("name") == "Run Telegram smart-delivery regression suite"
+    )
+    python_script = script.split("python - <<'PYTHON'\n", 1)[1].rsplit("\nPYTHON", 1)[0]
+    calls = []
+    monkeypatch.chdir(ROOT)
+    monkeypatch.setattr(platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(platform, "machine", lambda: architecture)
+    monkeypatch.setattr(sys, "executable", "/synthetic/hosted Python/bin/python")
+    monkeypatch.setattr(sys, "path", sys.path[:])
+    monkeypatch.setenv("OPENAI_API_KEY", "synthetic-build-secret")
+    monkeypatch.setenv("NO_REPAIR", "untrusted-shell-override")
+    monkeypatch.setattr(subprocess, "run", lambda argv, **kwargs: calls.append((argv, kwargs)))
+
+    exec(compile(python_script, "telegram-ci", "exec"), {})
+
+    assert len(calls) == 2
+    prefix = [
+        "uv", "run", "--project", "TelegramVivBot", "--frozen",
+        "--with", "pytest==8.4.2", "--with", "pytest-asyncio==1.4.0",
+        "--python", sys.executable,
+    ]
+    assert calls[0][0] == prefix + ["python", "-c", "from pywhispercpp.model import Model"]
+    assert calls[1][0] == prefix + ["python", "-m", "pytest", "-q", "tests"]
+    for _, options in calls:
+        assert options["cwd"] == ROOT / "viventium_v0_4" / "telegram-viventium"
+        assert options["check"] is True
+        assert "OPENAI_API_KEY" not in options["env"]
+        assert options["env"].get("NO_REPAIR") == ("1" if architecture == "x86_64" else None)
+    assert calls[0][1]["env"] is calls[1][1]["env"]
+
+
 @pytest.mark.parametrize(
     ("workflow_name", "job_name", "step_name"),
     (

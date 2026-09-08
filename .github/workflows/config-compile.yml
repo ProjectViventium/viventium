@@ -101,10 +101,33 @@ jobs:
         run: |
           git ls-files --error-unmatch \
             viventium_v0_4/telegram-viventium/tests/test_telegram_chunks.py
-          cd viventium_v0_4/telegram-viventium
-          uv run --project TelegramVivBot --frozen \
-            --with pytest==8.4.2 --with pytest-asyncio==1.4.0 \
-            python -m pytest -q tests
+          python - <<'PYTHON'
+          import os
+          from pathlib import Path
+          import shlex
+          import subprocess
+          import sys
+
+          repo = Path.cwd()
+          sys.path.insert(0, str(repo / "scripts" / "viventium"))
+          from telegram_runtime_component import _dependency_sync_environment
+
+          # Reuse the installed runtime's native dependency-build policy.
+          environment = _dependency_sync_environment(dict(os.environ))
+          telegram_root = repo / "viventium_v0_4" / "telegram-viventium"
+          uv_command = shlex.split(
+              "uv run --project TelegramVivBot --frozen "
+              "--with pytest==8.4.2 --with pytest-asyncio==1.4.0"
+          ) + ["--python", sys.executable]
+          subprocess.run(
+              uv_command + ["python", "-c", "from pywhispercpp.model import Model"],
+              cwd=telegram_root, env=environment, check=True,
+          )
+          subprocess.run(
+              uv_command + shlex.split("python -m pytest -q tests"),
+              cwd=telegram_root, env=environment, check=True,
+          )
+          PYTHON
       - name: Run cross-architecture installer and payload policy suites
         run: |
           python -m pytest tests/release/ -q
