@@ -70,7 +70,7 @@ def _normalized_local_whisper_language(config):
         return ""
     return language
 
-def get_audio_message(file_bytes):
+def get_audio_message(file_bytes, *, raise_errors=False):
     """Transcribe audio bytes using local Whisper or API"""
     import logging
     import tempfile
@@ -151,15 +151,19 @@ def get_audio_message(file_bytes):
 
         if not transcript:
             logger.warning("Transcription returned empty result")
-            return "error: Transcription returned empty result"
+            return "" if raise_errors else "error: Transcription returned empty result"
 
         logger.debug(f"Final transcript length: {len(transcript)} characters")
         return transcript
 
     except RuntimeError as e:
+        if raise_errors:
+            raise
         logger.exception(f"Runtime error during transcription: {e}")
         return f"error: {str(e)}"
     except Exception as e:
+        if raise_errors:
+            raise
         logger.exception(f"Unexpected error processing audio file: {e}")
         return f"error: Error processing audio file: {str(e)}"
 

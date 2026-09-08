@@ -226,7 +226,9 @@ def test_telegram_bot_survives_detached_launcher_exit() -> None:
         start_telegram_bot.index("TELEGRAM_STARTED_BY_SCRIPT=true")
     ]
 
-    assert "cleanup() {\n  if detached_start_requested; then\n    return\n  fi" in launcher_text
+    cleanup = launcher_text[launcher_text.index("cleanup() {"):launcher_text.index("\n}\n", launcher_text.index("cleanup() {"))]
+    assert "if detached_start_requested; then\n    return\n  fi" in cleanup
+    assert cleanup.index("if detached_start_requested") < cleanup.index("stop_telegram_bot_watchdog")
     assert "trap '' HUP" in launcher_text
     assert (
         'nohup "${telegram_launch_program[@]}" >"$LOG_DIR/telegram_bot.log" 2>&1 < /dev/null &'
@@ -380,7 +382,7 @@ def test_searxng_readiness_probe_uses_root_endpoint() -> None:
     assert '/search?q=ping&format=json' not in launcher_text
 
 
-def test_local_search_sync_failure_does_not_abort_frontend_startup() -> None:
+def test_local_search_sync_failure_does_not_abort_frontend_startup(tmp_path: Path) -> None:
     launcher_text = (REPO_ROOT / "viventium_v0_4" / "viventium-librechat-start.sh").read_text(
         encoding="utf-8"
     )
@@ -389,7 +391,19 @@ def test_local_search_sync_failure_does_not_abort_frontend_startup() -> None:
         'if ! USE_REDIS=false USE_REDIS_STREAMS=false node scripts/viventium-sync-local-search.js; then'
         in launcher_text
     )
-    assert 'Local conversation search sync failed; continuing without blocking frontend startup' in launcher_text
+    assert 'Local conversation search sync failed; the API will retry its normal background sync' in launcher_text
+    start = launcher_text.index('      if is_truthy "${SEARCH:-false}"; then', launcher_text.index('      prepare_librechat_build_outputs || exit 1'))
+    end = launcher_text.index('      # Keep detached/direct launches', start)
+    observed = subprocess.run(
+        ["bash", "-c", 'set -eu; SEARCH=true; YELLOW=; CYAN=; NC=; LOG_DIR="$1"; ' +
+         'is_truthy() { return 0; }; log_warn() { :; }; ' +
+         'node() { sleep 0.2; touch "$LOG_DIR/search-finished"; return 1; };\n' +
+         launcher_text[start:end] + '\n[[ ! -e "$LOG_DIR/search-finished" ]]; touch "$LOG_DIR/frontend-started"; wait',
+         'probe', str(tmp_path)], capture_output=True, text=True,
+    )
+    assert observed.returncode == 0, observed.stderr
+    assert (tmp_path / 'frontend-started').exists()
+    assert (tmp_path / 'search-finished').exists()
 
 
 def test_meilisearch_readiness_requires_authenticated_probe_and_reclaims_stale_local_listener() -> None:
@@ -423,6 +437,7 @@ def test_server_package_rebuild_detects_newer_source_than_ignored_dist(tmp_path:
     launcher_text = (REPO_ROOT / "viventium_v0_4" / "viventium-librechat-start.sh").read_text(
         encoding="utf-8"
     )
+    launcher_text += (REPO_ROOT / "scripts/viventium/librechat_build.sh").read_text(encoding="utf-8")
     functions = "".join(
         extract_shell_function(launcher_text, name)
         for name in ("find_librechat_source_newer_than_dist", "should_rebuild_librechat_server_packages")
@@ -493,6 +508,7 @@ def test_client_package_rebuild_detects_newer_source_than_ignored_dist(tmp_path:
     launcher_text = (REPO_ROOT / "viventium_v0_4" / "viventium-librechat-start.sh").read_text(
         encoding="utf-8"
     )
+    launcher_text += (REPO_ROOT / "scripts/viventium/librechat_build.sh").read_text(encoding="utf-8")
     functions = "".join(
         extract_shell_function(launcher_text, name)
         for name in ("find_librechat_source_newer_than_dist", "should_rebuild_librechat_client_package")

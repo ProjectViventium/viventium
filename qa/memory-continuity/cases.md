@@ -21,6 +21,7 @@ Use stable `MEMCONT-NNN` IDs for memory continuity cases.
 | `MEMCONT-011` | Saved-memory entry keys never collide with control endpoints. | A user can store, display, update, and remove a memory whose key is `preferences` while memory preferences remain independently configurable. | Memories panel, memory API, data provider, Mongo | route/client contracts plus real browser write/read/panel/reload/cleanup | PASS 2026-08-09; the non-admin browser run wrote the ordinary synthetic fact to `preferences`, showed it in Memories, recovered it in a fresh chat, survived reload, used the canonical `/entries/:key` mutation contract, and restored prior state ([browser report](reports/2026-08-09-live-browser-saved-memory-model-route.md)) |
 | `MEMCONT-012` | Memory renames can reuse a deleted destination generation without hiding read failures. | A deleted target key cannot permanently poison rename, and an unavailable memory store is never presented as an empty memory. | Memories UI/API/persistence, main Agent initialization, background cortex | real-Chrome disposable-user rename, real-Mongo tombstone/CAS test, main/background degraded-context tests | PASS 2026-08-09; the Memories Edit dialog renamed into a deleted destination, preserved a monotonic revision after reload with zero console errors, and fully removed the disposable user state ([browser report](reports/2026-08-09-live-browser-tombstone-rename.md)). Access-check/load failures separately emit an explicit unavailable boundary instead of silent empty context. |
 | `MEMCONT-013` | A configured model fallback remains useful and visible instead of silently impersonating the failed primary route. | The user receives the fallback answer plus an expandable disclosure that survives reload. | non-admin LibreChat browser, Agent runtime, message persistence | initialization/runtime fallback tests, sequential-pruning regression, real-browser forced-primary-failure QA | PASS 2026-08-09; a disconnected primary route failed, the configured fallback answered, “Model fallback used” and its reason were visible and expandable, reload preserved both, persistence contained the structural event, zero console errors occurred, and fixtures were removed ([browser report](reports/2026-08-09-live-browser-fallback-disclosure.md)). |
+| `MEMCONT-014` | The memory writer records conversation evidence without performing quoted user tasks or inventing their outcomes. | Explicit remember, correction and partial-forget requests remain effective; unrelated saved facts survive. | configured native writer, Memories UI, browser chat and Mongo | Workbench old/proposed comparison, signed memory-tool effects, storage and reload | PASS 2026-09-06: canonical v3 and exact Luna/medium passed real save, correction, selective forget, stored receipts, Memories and reload; signed tool completion without authored chat text also passed. |
 
 ## `MEMCONT-001` - Core User Flow
 
@@ -123,6 +124,46 @@ Use stable `MEMCONT-NNN` IDs for memory continuity cases.
   6. Fill the target key close to its configured budget, submit a valid durable fact whose first
      full-key proposal exceeds the limit, and verify either one corrected in-budget write or one
      truthful final structured failure. Confirm there is no retry after a partial batch apply.
+  7. In an isolated runtime, interrupt an accepted pending write before it starts. Restart and
+     verify the protected source, current permissions/configuration, and pinned snapshot permit
+     exactly one recovery. Repeat with a later correction, deletion, source edit, revoked memory
+     permission, changed agent/configuration, and Voice provenance: recovery must refuse unsafe
+     reconstruction and leave a truthful failure with no stale mutation.
+     Repeat the correction, source edit/delete, and permission cases while the writer is still
+     queued or running in the live process. Disable memory, change the configured route/Agent, or
+     revoke that saved Agent's VIEW permission after admission and between two mutations. Each
+     change must stop the next write without substituting a provider or Agent. Earlier accepted
+     FIFO saves may accumulate; unrelated
+     panel revisions/tombstones must never become a new base for stale input. Receipt metadata alone
+     must not invalidate the unchanged source. Confirm stored source IDs resolve to the original
+     Message rows, not temporary model invocation IDs.
+  8. Interrupt after a mutation but before its receipt, and after its receipt but before delivery.
+     Confirm the running admission never reruns the model; stored values/revisions and tombstones
+     survive, a completed receipt is not replaced by an interruption error, and a missing receipt
+     yields an uncertain outcome rather than a claim that nothing was saved. Check Web/Telegram
+     projections, no-change completion, refused receipt-send retry, unrelated worker follow-up,
+     source payload removal after success/failure/deletion, and adapter-restart delivery separately.
+     Make the worker finish first through follow-up text, canonical text, and silent/terminal
+     decisions. A subsequent saved/failed memory receipt must still be delivered; unchanged must
+     settle quietly. Restart the adapter while memory is pending: preserve the original bound
+     identity and worker completion without repeating the worker. Refuse a receipt send explicitly
+     and require a retry; lose its transport acknowledgement and require retained delivery
+     uncertainty with no blind resend. Inspect the existing private receipt store to confirm it
+     contains only poll/delivery identity and hashes, no prompt, memory value, or provider token.
+     Reject admission and then make receipt persistence unavailable: the final visible response
+     must still carry a truthful memory failure/uncertainty. A duplicate existing admission must
+     not create a new failure or rerun the writer.
+  9. Force typed quota on the configured primary and auth failure on its declared fallback.
+     Expand the existing memory details: both providers and different next steps must remain
+     visible in Web and in the Telegram receipt. Repeat temporary 429, missing status, storage-full
+     and partial-apply cases. A later failure must not erase an earlier uncertain/partial outcome.
+     Confirm raw error text, synthetic bearer strings/account IDs and unknown provider labels do
+     not render. Details remain collapsed until opened and the saved receipt survives reload.
+- Failure-detail automation: `MemoryInfo.test.tsx`, `MemoryArtifacts.test.tsx`, memory
+  provider/controller serializer tests, `memoryReceipt.spec.js`, `cortexMessageState.spec.js`,
+  and Telegram receipt tests. Current revision: 42 client, 41 memory-package, 17 receipt/polling,
+  and 21 Telegram receipt checks pass. Actual browser and Telegram provider-failure details,
+  late-receipt appearance without reload, and persistence proof remain pending until recorded.
 - Expected result: the marker is stored once at a newer revision and recalled naturally in new web
   and voice conversations; stale writes and rollback attempts preserve newer user state.
 - Forbidden result: queued turns coalesce, delete/recreate resets a revision, a stale panel tab
@@ -132,7 +173,10 @@ Use stable `MEMCONT-NNN` IDs for memory continuity cases.
 - Evidence: visible Telegram send/reply, Mongo key/revision delta, hashed writer audit, new web answer,
   audible voice plus transcript, persistence after reload, and cleanup confirmation.
 - Automation: `memoryWriterCoordinator.spec.js`, packages API memory suites,
-  `memory.spec.ts`, Memories route/client conflict suites, and hardener rollback/CAS regressions.
+  `memory.spec.ts`, `memoryWrite.spec.ts`, `memory/recovery.spec.ts`, client/request and shared
+  receipt projection suites, Telegram receipt tests, Memories route/client conflict suites, and
+  hardener rollback/CAS regressions. Restart/visible-channel cases added September 4 require new
+  delivered-runtime evidence; the earlier PASS below does not close those new gates.
 - Last run: PASS 2026-07-14; the native pre-repair journey reproduced a near-full-key
   rejection and false-success log with no revision advance. After repair, a new native Telegram
   write hit the same rejection, made exactly one bounded correction, applied a 471-token replacement,
@@ -374,6 +418,37 @@ Use stable `MEMCONT-NNN` IDs for memory continuity cases.
   expandable disclosure, persistence/reload, zero console errors, and exact cleanup; focused API
   fallback/pruning tests passed 34/34.
 
+## `MEMCONT-014` - Memory Writer Task Isolation
+
+- Requirement: `20_Memory_System.md`; `memory.archivist` owns the distinction between a
+  conversation record and the memory writer's task.
+- Steps:
+  1. Use the configured memory model to compare the previous and proposed source on a quoted
+     attachment task, explicit memory update, reported file result, and partial forget/correction.
+  2. Verify signed memory-tool effects preserve unrelated facts and do not infer missing files,
+     tools, failure or completion from the memory writer's own restricted environment.
+  3. Through normal browser chat, ask Main to use an attachment; inspect the resulting memory
+     receipt and stored entries after Main finishes. The writer must not perform the quoted task.
+  4. Ask to remember a synthetic preference, correct one event detail, and forget one of two
+     stored details. Inspect Memories and reload; preserve the unrelated detail and user state.
+  5. If a native writer completes its signed memory effect without authored chat text, verify that
+     only its exact completed tool/result receipt can settle the typed missing-terminal response.
+     An uncertain write, failed receipt or different provider failure must remain an error.
+- Expected result: memory reflects supported facts and the user's memory edits; no invented
+  blocker or outcome is stored, and the visible receipt matches persisted changes.
+- Forbidden result: treating quoted chat as a new tool task, losing unrelated memory, claiming
+  a save after transport failure, or treating signed fixture effects as real storage/UI proof.
+- Last run: PASS for the bounded Web subset on 2026-09-06. Canonical v3 and the configured
+  Luna/medium writer passed real save, correction, selective forget, stored receipts, Memories
+  and reload. The FULL browser recording retry delivered the requested review; canonical native
+  transcript and command evidence reached the writer, and same-chat recall plus reload retained
+  the findings. All four proposed exact-model subjects also completed with signed fixture effects.
+  In the historical comparison, the old quoted attachment case attempted the quoted task and
+  omitted the memory tool; two old adjacent cases made correct fixture changes but failed native
+  terminal-response handling. Those are transport failures, not incorrect-memory verdicts.
+  Telegram composed-flow activation and the separate restart/late-receipt gates remain open;
+  this bounded Web result does not close them.
+
 ## Natural User Use Case Checklist
 
 These rows are the minimum natural-user checklist gate for Memory Continuity. Add narrower feature-specific
@@ -396,3 +471,19 @@ rows before claiming a pass when the feature behavior changes.
 | `MEMCONT-UC-013` | Store a generic durable fact, reset/start a fresh conversation, and ask for it without repeating it in browser and Telegram. | `20_Memory_System.md` / `MEMCONT-010` | non-admin browser and native Telegram Desktop | visible answer/reload, zero-history boundary, Luna writer/read receipts, Mongo revisions, exact cleanup | Both surfaces recover the account-scoped fact without same-thread history, recall, host credential substitution, or entity-specific prompting. | PASS 2026-08-09; both routes recovered distinct two-field fixtures and exact cleanup restored the pre-test memory state. |
 | `MEMCONT-UC-014` | Store and edit a saved memory whose key matches a settings control name, then reload and ask for it in a fresh chat. | `20_Memory_System.md` / `MEMCONT-011` | non-admin browser, Memories panel, fresh chat | visible card, canonical entry route, API status, memory revision, reload, exact cleanup | The entry is edited as memory, never routed to the preferences controller; settings remain intact and the fresh answer uses the saved fact. | PASS 2026-08-09; `preferences` entry was visible and usable after reload, and prior memory/preferences state was restored. |
 | `MEMCONT-UC-015` | Send a normal turn when the configured primary model route is unavailable but its fallback is healthy. | runtime fallback contract / `MEMCONT-013` | non-admin LibreChat browser | visible answer, expanded disclosure, reload, persisted message part, console, cleanup | The fallback answer is delivered with an honest expandable disclosure that survives reload. | PASS 2026-08-09; real Chrome, persistence, console, and cleanup all agreed. |
+| `MEMCONT-UC-016` | Ask Main to use an attachment, then remember, correct and partially forget synthetic information. | `20_Memory_System.md` / `MEMCONT-014` | normal browser chat and Memories | configured native writer, signed receipt, stored revisions, reload | Main performs the task; memory stores supported information and explicit edits while retaining unrelated facts. | PASS 2026-09-06 on the FULL browser candidate: the unchanged recording retry read the requested checkout guides and delivered a useful two-bullet review. Canonical native transcript and command evidence reached the configured Luna/medium writer; working memory recorded completion, and natural same-chat recall plus reload retained the findings and no pending work. Prior save/correction/selective-forget gates remain valid; Telegram composed-flow activation is tracked separately. |
+
+### Governed manual memory keys
+
+With an ordinary synthetic account and a configured key list, open Memories, inspect allowed
+keys, reject an invalid key before submission, create an unused allowed key, reload, and remove
+only that account's synthetic entry. Confirm server authorization and key validation agree with
+the dialog. Repeat without a governed list to retain free-form behavior. Source regressions live
+in LibreChat's memory route and `MemoryCreateDialog` tests. Status: PARTIAL; preservation review
+confirms source and regressions, not a fresh installed browser run.
+
+The saved-memory QA runner records the conversation as soon as the user message persists, so an
+assistant timeout cannot hide cleanup scope. Cleanup removes only the exact request's tenant,
+owner and family tombstone plus its run liveness dependencies. An idle paused worker is eligible
+only when every run is terminal; an active worker is refused. Eight isolated cleanup tests pass
+for the publication candidate; they do not certify the live memory journey.

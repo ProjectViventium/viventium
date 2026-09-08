@@ -215,13 +215,16 @@ def test_config_compile_runs_native_continuity_and_release_boundary_suites() -> 
     assert '>> "$GITHUB_ENV"' in source
     assert 'python-version: "3.12"' in source
     assert 'python-version: "3.12.' not in source
-    assert "uv==0.11.28" in source
-    assert "pytest==8.4.2" in source
-    assert "pydantic==2.12.5" in source
-    assert "croniter==6.0.0" in source
-    assert "fastapi==0.141.1" in source
-    assert "fastmcp==3.4.5" in source
-    assert "httpx==0.28.1" in source
+    assert "-r scripts/viventium/requirements-tests.txt" in source
+    test_requirements = (ROOT / "scripts/viventium/requirements-tests.txt").read_text()
+    assert "-r requirements.txt" in test_requirements
+    assert "uv==0.11.28" in test_requirements
+    assert "pytest==8.4.2" in test_requirements
+    assert "pydantic==2.12.5" in test_requirements
+    assert "croniter==6.0.0" in test_requirements
+    assert "fastapi==0.141.1" in test_requirements
+    assert "fastmcp==3.4.5" in test_requirements
+    assert "httpx==0.28.1" in test_requirements
     assert "fetch-depth: 0" in source
     assert "Fetch and validate the exact configured components" in source
     assert "python scripts/viventium/bootstrap_components.py" in source
@@ -258,6 +261,46 @@ def test_config_compile_runs_native_continuity_and_release_boundary_suites() -> 
     assert "uv run --project TelegramVivBot --frozen" in source
     assert "--with pytest==8.4.2 --with pytest-asyncio==1.4.0" in source
     assert "python -m pytest -q tests" in source
+
+
+@pytest.mark.parametrize("architecture", ["x86_64", "arm64"])
+def test_telegram_ci_reuses_native_build_policy_and_checks_real_import(
+    monkeypatch: pytest.MonkeyPatch, architecture: str,
+) -> None:
+    import platform
+
+    workflow = yaml.safe_load(_workflow_sources()["config-compile.yml"])
+    script = next(
+        step["run"] for step in workflow["jobs"]["python"]["steps"]
+        if step.get("name") == "Run Telegram smart-delivery regression suite"
+    )
+    python_script = script.split("python - <<'PYTHON'\n", 1)[1].rsplit("\nPYTHON", 1)[0]
+    calls = []
+    monkeypatch.chdir(ROOT)
+    monkeypatch.setattr(platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(platform, "machine", lambda: architecture)
+    monkeypatch.setattr(sys, "executable", "/synthetic/hosted Python/bin/python")
+    monkeypatch.setattr(sys, "path", sys.path[:])
+    monkeypatch.setenv("OPENAI_API_KEY", "synthetic-build-secret")
+    monkeypatch.setenv("NO_REPAIR", "untrusted-shell-override")
+    monkeypatch.setattr(subprocess, "run", lambda argv, **kwargs: calls.append((argv, kwargs)))
+
+    exec(compile(python_script, "telegram-ci", "exec"), {})
+
+    assert len(calls) == 2
+    prefix = [
+        "uv", "run", "--project", "TelegramVivBot", "--frozen",
+        "--with", "pytest==8.4.2", "--with", "pytest-asyncio==1.4.0",
+        "--python", sys.executable,
+    ]
+    assert calls[0][0] == prefix + ["python", "-c", "from pywhispercpp.model import Model"]
+    assert calls[1][0] == prefix + ["python", "-m", "pytest", "-q", "tests"]
+    for _, options in calls:
+        assert options["cwd"] == ROOT / "viventium_v0_4" / "telegram-viventium"
+        assert options["check"] is True
+        assert "OPENAI_API_KEY" not in options["env"]
+        assert options["env"].get("NO_REPAIR") == ("1" if architecture == "x86_64" else None)
+    assert calls[0][1]["env"] is calls[1][1]["env"]
 
 
 @pytest.mark.parametrize(
@@ -679,7 +722,7 @@ def test_native_payload_candidate_refuses_unmerged_review_heads() -> None:
     assert 'policy_state = policy.get("publication_state")' in source
     assert 'lock_state != "merged" or policy_state != "merged"' in source
     assert "Native candidate pins are not merged release commits" in source
-    assert "Native LibreChat policy and parent component pin disagree" in source
+    assert "Native source pins belong only in components.lock.json" in source
 
 
 def test_native_payload_candidate_policy_step_fails_closed_for_pending_pins(
@@ -702,7 +745,7 @@ def test_native_payload_candidate_policy_step_fails_closed_for_pending_pins(
     assert "Native candidate pins are not merged release commits" in completed.stderr
 
 
-def test_native_payload_candidate_policy_step_accepts_merged_aligned_pins(
+def test_native_payload_candidate_policy_step_accepts_merged_canonical_pin(
     tmp_path: Path,
 ) -> None:
     lock_payload = json.loads((ROOT / "components.lock.json").read_text())
@@ -722,7 +765,7 @@ def test_native_payload_candidate_policy_step_accepts_merged_aligned_pins(
     assert completed.returncode == 0, completed.stderr
 
 
-def test_native_payload_candidate_policy_step_rejects_merged_misaligned_pin(
+def test_native_payload_candidate_policy_step_rejects_duplicate_native_source_pin(
     tmp_path: Path,
 ) -> None:
     lock_payload = json.loads((ROOT / "components.lock.json").read_text())
@@ -731,7 +774,7 @@ def test_native_payload_candidate_policy_step_rejects_merged_misaligned_pin(
     )
     lock_payload["publication_state"] = "merged"
     native_payload["publication_state"] = "merged"
-    native_payload["librechat"]["commit"] = "0" * 40
+    native_payload["librechat"] = {"commit": "0" * 40}
 
     completed = _run_native_component_policy_step(
         tmp_path,
@@ -740,7 +783,7 @@ def test_native_payload_candidate_policy_step_rejects_merged_misaligned_pin(
     )
 
     assert completed.returncode != 0
-    assert "Native LibreChat policy and parent component pin disagree" in completed.stderr
+    assert "Native source pins belong only in components.lock.json" in completed.stderr
 
 
 def test_native_payload_release_serializes_and_advances_signed_release_history() -> None:
@@ -838,12 +881,11 @@ def test_native_payload_release_pins_candidate_to_same_repo_commit_and_architect
     assert "macos-15" in source
     assert "macos-15-intel" in source
     assert "macos-latest" not in source
-    assert "import assemble_native_payload" in source
+    assert "import verify_native_release_metadata" in source
     assert re.search(
-        r"assemble_native_payload\.release_component_manifest\(\s*components,\s*os\.environ\[\"EXPECTED_ARCH\"\]\s*\)",
+        r"verify_native_release_metadata\.verify_component_policy\(\s*payload_root,\s*Path\(\"\.\"\),\s*os\.environ\[\"EXPECTED_ARCH\"\]\s*\)",
         source,
     )
-    assert 'metadata.get("components") != expected_components' in source
     assert "transport_native_candidate.py unpack" in source
     assert "native-payload-root-${EXPECTED_ARCH}.tar" in source
     assert "native-payload-root-${EXPECTED_ARCH}.tar.sha256" in source

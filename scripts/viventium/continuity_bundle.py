@@ -172,6 +172,7 @@ DOMAIN_CONTRACTS: dict[str, set[tuple[str, str]]] = {
     "mongo": {("captured", "restore")},
     "files": {("captured", "restore"), ("empty", "restore")},
     "schedules": {("captured", "restore"), ("empty", "restore")},
+    "glasshive": {("captured", "restore")},
     "recall": {("rebuild_required", "rebuild_derived")},
     "auth": {("reauth_required", "reauth_required")},
     "channels": {
@@ -193,6 +194,7 @@ ARTIFACT_CONTRACTS: dict[str, tuple[str, str, str, int]] = {
     "user_files_archive": ("files", "application/gzip", "archive", 1),
     "schedules_database": ("schedules", "application/vnd.sqlite3", "sqlite_backup", 1),
     "channel_state_archive": ("channels", "application/gzip", "archive", 1),
+    "glasshive_state_archive": ("glasshive", "application/gzip", "archive", 1),
     "telegram_user_config": ("channels", "application/json", "file_copy", 1),
 }
 
@@ -662,6 +664,7 @@ def capture_storage_capacity_plan(
     app_support: Path,
     profile: str,
     mongo_logical_source_bytes: int = 0,
+    component_archive_bytes: int = 0,
 ) -> dict[int, dict[str, Any]]:
     if (
         isinstance(mongo_logical_source_bytes, bool)
@@ -670,7 +673,9 @@ def capture_storage_capacity_plan(
         or mongo_logical_source_bytes > MAX_TOTAL_ARTIFACT_BYTES
     ):
         raise RestoreTransactionError("Mongo storage estimate is invalid")
-    estimated_bytes = CONTINUITY_TRANSACTION_OVERHEAD_BYTES + sanitized_config_bytes
+    if not isinstance(component_archive_bytes, int) or isinstance(component_archive_bytes, bool) or not 0 <= component_archive_bytes <= MAX_TOTAL_ARTIFACT_BYTES:
+        raise RestoreTransactionError("Component storage estimate is invalid")
+    estimated_bytes = CONTINUITY_TRANSACTION_OVERHEAD_BYTES + sanitized_config_bytes + component_archive_bytes
     if source_uploads.is_dir():
         estimated_bytes += archive_capture_size_estimate(source_uploads)
     if schedule_path.is_file():
@@ -1352,6 +1357,8 @@ def restore_storage_capacity_plan(
         CONTINUITY_TRANSACTION_OVERHEAD_BYTES
         + artifact_size("canonical_config")
         + artifact_size("schedules_database")
+        + artifact_size("glasshive_state_archive")
+        + artifact_size("glasshive_state_archive", expanded=True)
         + mongo_bytes
         + mongo_metadata_bytes
     )
@@ -1449,6 +1456,7 @@ def capture_bundle(
     mongo_socket: Path | None = None,
     data_schema: int | None = None,
     release_identity: str | None = None,
+    glasshive_state: Path | None = None,
 ) -> dict[str, Any]:
     repo_root = lexical(repo_root)
     app_support = lexical(app_support)
@@ -1466,6 +1474,11 @@ def capture_bundle(
     profile = runtime_env.get("VIVENTIUM_RUNTIME_PROFILE", "isolated").strip() or "isolated"
     if not SAFE_PROFILE.fullmatch(profile):
         raise RestoreTransactionError("Runtime profile selection is unsafe")
+    if glasshive_state is not None:
+        glasshive_state = lexical(glasshive_state)
+        contained(glasshive_state, runtime_dir, "GlassHive capture staging")
+        if profile != "native":
+            raise RestoreTransactionError("GlassHive component capture currently requires the Native lifecycle")
     source_config = app_support / "config.yaml"
     sanitized_config, redacted_config_fields = redact_canonical_config(source_config)
     default_schedule = app_support / "state" / "runtime" / profile / "scheduling" / "schedules.db"
@@ -1508,6 +1521,7 @@ def capture_bundle(
         runtime=runtime_env,
         app_support=app_support,
         profile=profile,
+        component_archive_bytes=archive_capture_size_estimate(glasshive_state) if glasshive_state else 0,
     )
     require_storage_capacity(base_capacity_plan, "continuity capture")
     mongo_source_bytes = mongo_logical_source_size(
@@ -1526,6 +1540,7 @@ def capture_bundle(
                 app_support=app_support,
                 profile=profile,
                 mongo_logical_source_bytes=mongo_source_bytes,
+                component_archive_bytes=archive_capture_size_estimate(glasshive_state) if glasshive_state else 0,
             ),
             "continuity capture",
         )
@@ -1598,6 +1613,13 @@ def capture_bundle(
             {"name": "auth", "status": "reauth_required", "policy": "reauth_required", "artifacts": []},
             {"name": "channels", "status": "reauth_required", "policy": "reauth_required", "artifacts": []},
         ]
+        glasshive_inventory = None
+        if glasshive_state is not None:
+            relative = "glasshive/state.tar.gz"
+            count, size = archive_tree(glasshive_state, snapshot / relative)
+            glasshive_inventory = {"count": count, "bytes": size}
+            artifacts.append(artifact_record(snapshot, relative, "glasshive", "glasshive_state_archive", uncompressed_size=gzip_expanded_size(snapshot / relative)))
+            domains.append({"name": "glasshive", "status": "captured", "policy": "restore", "artifacts": [relative]})
         runtime_selection: dict[str, Any] = {
             "profile": profile,
             "sourceDatabase": source_database,
@@ -1641,6 +1663,8 @@ def capture_bundle(
             "domains": domains,
             "artifacts": artifacts,
         }
+        if glasshive_inventory is not None:
+            manifest["inventory"]["glasshive"] = glasshive_inventory
         write_json_atomic(snapshot / MANIFEST_NAME, manifest)
         write_atomic(snapshot / MARKER_NAME, (MARKER_VALUE + "\n").encode("utf-8"))
         incomplete.unlink()
@@ -1675,7 +1699,7 @@ def validate_artifact_content(
         ]
         if len(version_rows) != 1 or int(version_rows[0].group(1)) != CONFIG_SCHEMA_VERSION:
             fail("invalid_config_artifact", "canonical config artifact lacks one supported top-level version")
-    elif role in {"mongo_archive", "user_files_archive", "channel_state_archive"}:
+    elif role in {"mongo_archive", "user_files_archive", "channel_state_archive", "glasshive_state_archive"}:
         if declared_uncompressed_size is None:
             fail("invalid_archive_contract", "archive artifact lacks a declared uncompressed size")
         expanded = 0
@@ -1784,7 +1808,7 @@ def validate_domains(payload: dict[str, Any]) -> dict[str, dict[str, Any]]:
         if status_value in {"empty", "rebuild_required", "reauth_required"} and artifact_paths:
             fail("unexpected_domain_artifact", "non-payload domain must not declare artifacts")
         domains[name] = raw_domain
-    if set(domains) != set(DOMAIN_CONTRACTS):
+    if set(domains) not in (set(DOMAIN_CONTRACTS), set(DOMAIN_CONTRACTS) - {"glasshive"}):
         fail("incomplete_domains", "manifest does not cover every required continuity domain")
     return domains
 
@@ -1874,7 +1898,7 @@ def validate_artifacts(
         if sha256_file(artifact_path) != checksum.lower():
             fail("artifact_checksum_mismatch", "artifact checksum does not match the manifest")
         declared_uncompressed_size: int | None = None
-        if role in {"mongo_archive", "user_files_archive", "channel_state_archive"}:
+        if role in {"mongo_archive", "user_files_archive", "channel_state_archive", "glasshive_state_archive"}:
             declared_uncompressed_size = raw_artifact.get("uncompressedSize")
             if (
                 not isinstance(declared_uncompressed_size, int)
@@ -1915,6 +1939,8 @@ def validate_artifacts(
         fail("invalid_files_artifacts", "captured files must contain one bounded uploads archive")
     if domains["files"]["status"] == "empty" and roles_by_domain["files"]:
         fail("unexpected_files_artifact", "empty files domain must not contain artifacts")
+    if "glasshive" in domains and roles_by_domain["glasshive"] != ["glasshive_state_archive"]:
+        fail("invalid_glasshive_artifacts", "GlassHive must contain one component-owned state archive")
     return artifacts
 
 
@@ -2103,6 +2129,20 @@ def validate_bundle(root: Path, *, require_complete: bool = True) -> dict[str, A
             total_archive_members += len(members)
             if total_archive_members > MAX_TOTAL_ARCHIVE_MEMBERS:
                 fail("archive_member_limit", "bundle archive member count exceeds the restore bound")
+        for artifact in [item for item in artifacts if item.get("role") == "glasshive_state_archive"]:
+            if profile != "native":
+                fail("invalid_glasshive_profile", "GlassHive state requires the Native lifecycle")
+            try:
+                members = safe_tar_members(root / str(artifact["path"]))
+            except RestoreTransactionError as error:
+                fail("invalid_glasshive_archive", str(error))
+            if inventory.get("glasshive") != {"count": len(members), "bytes": sum(item.size for item in members)}:
+                fail("invalid_glasshive_inventory", "GlassHive archive count/bytes do not match the manifest")
+            if not any(item.name == "runtime.sqlite" for item in members):
+                fail("invalid_glasshive_archive", "GlassHive archive lacks its component database")
+            total_archive_members += len(members)
+            if total_archive_members > MAX_TOTAL_ARCHIVE_MEMBERS:
+                fail("archive_member_limit", "bundle archive member count exceeds the restore bound")
         schedule_artifacts = [item for item in artifacts if item.get("role") == "schedules_database"]
         observed_schedule_tables = 0
         observed_schedule_tasks = 0
@@ -2168,6 +2208,7 @@ def validate_bundle(root: Path, *, require_complete: bool = True) -> dict[str, A
                 "policy": domains[name]["policy"],
             }
             for name in DOMAIN_CONTRACTS
+            if name in domains
         ],
     }
 
@@ -2177,6 +2218,7 @@ def extract_regular_tar(
     destination: Path,
     *,
     expected_members: int | None = None,
+    preserve_user_execute: bool = False,
 ) -> None:
     try:
         archive = tarfile.open(path, "r:gz")
@@ -2205,6 +2247,8 @@ def extract_regular_tar(
                 shutil.copyfileobj(source, output, length=1024 * 1024)
                 output.flush()
                 os.fsync(output.fileno())
+                if preserve_user_execute and member.mode & stat.S_IXUSR:
+                    os.fchmod(output.fileno(), 0o700)
 
 
 def mongo_database_empty(
@@ -2420,6 +2464,8 @@ def restore_bundle(
 
     domains = {item["name"]: item for item in payload["domains"]}
     artifacts = {item["role"]: item for item in payload["artifacts"]}
+    if "glasshive" in domains:
+        raise RestoreTransactionError("GlassHive Native state requires the Native transactional restore command")
     librechat_root = contained(target_repo / "viventium_v0_4" / "LibreChat", target_repo, "LibreChat target")
     if not librechat_root.is_dir():
         raise RestoreTransactionError("Independent target checkout lacks the LibreChat component")

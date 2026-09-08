@@ -78,6 +78,16 @@ def test_parallel_work_proxy_forwards_only_reviewed_request_headers():
     }
 
 
+def test_parallel_work_proxy_keeps_request_limits_role_scoped():
+    module = _proxy_module()
+    mib = 1024 * 1024
+
+    assert module.request_body_allowed("provider", 15 * mib) is True
+    assert module.request_body_allowed("provider", 15 * mib + 1) is False
+    assert module.request_body_allowed("broker", 2 * mib) is True
+    assert module.request_body_allowed("broker", 2 * mib + 1) is False
+
+
 def test_parallel_work_proxy_uses_explicit_close_framing_for_streamed_responses():
     source = PROXY_SOURCE.read_text(encoding="utf-8")
 
@@ -119,17 +129,17 @@ def test_parallel_work_broker_proxy_has_the_only_reviewed_host_egress_path():
     assert "      egress: {}" in broker_service
 
 
-def test_launcher_provisions_parallel_proxy_substrate_before_glasshive_runtime():
+def test_launcher_configures_proxy_before_main_and_builds_substrate_in_background():
     launcher = START_SCRIPT.read_text(encoding="utf-8")
-
-    assert "start_parallel_work_proxy_substrate()" in launcher
     start_glasshive = launcher.index("start_glasshive()")
-    proxy_call = launcher.index("start_parallel_work_proxy_substrate", start_glasshive)
-    runtime_call = launcher.index(
-        "uv run uvicorn workers_projects_runtime.api:create_app --factory",
-        start_glasshive,
+    runtime_start = launcher[start_glasshive:].split("\n}", 1)[0]
+    assert runtime_start.index("configure_parallel_work_proxy_substrate") < runtime_start.index(
+        "uv run uvicorn workers_projects_runtime.api:create_app --factory"
     )
-    assert proxy_call < runtime_call
+    assert "start_parallel_work_proxy_substrate" not in runtime_start
+    queued = launcher.split("queue_optional_services_parallel_with_librechat() {", 1)[1].split("\n}", 1)[0]
+    assert "queue_parallel_optional_start" in queued
+    assert "start_parallel_work_proxy_substrate" in queued
 
 
 def test_launcher_sets_glasshive_request_head_limit_for_context_headers():

@@ -27,6 +27,15 @@ LEGACY_APP_NAME = "Viventium Helper.app"
 ACTIVATION_STATE_NAME = ".activation-state.json"
 
 
+def owner_marker_bytes(bundle_identifier: str) -> bytes:
+    """Canonical app ownership resource, written before bundle signing."""
+    return json.dumps(
+        {"product": bundle_identifier, "schema_version": 1},
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8") + b"\n"
+
+
 class TransactionSafetyError(RuntimeError):
     """The live filesystem no longer matches the reviewed transaction state."""
 
@@ -685,11 +694,7 @@ def stage_bundle(
                         _copy_regular_file(Path(info_plist), contents_fd, "Info.plist", 0o644)
                         if icon_path is not None:
                             _copy_regular_file(Path(icon_path), resources_fd, "Viventium.icns", 0o644)
-                        marker = json.dumps(
-                            {"product": bundle_identifier, "schema_version": 1},
-                            sort_keys=True,
-                            separators=(",", ":"),
-                        ).encode("utf-8") + b"\n"
+                        marker = owner_marker_bytes(bundle_identifier)
                         _write_bytes(
                             resources_fd, "viventium-owner.json", marker, 0o644
                         )

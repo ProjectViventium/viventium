@@ -17,6 +17,7 @@ from pathlib import Path
 SOURCE_FILES = (
     Path("Package.swift"),
     Path("Sources/ViventiumHelper/ViventiumHelperApp.swift"),
+    Path("Sources/ViventiumHelper/LifeSetup.swift"),
     Path("Sources/ViventiumHelper/Resources/Info.plist"),
 )
 SHA256 = re.compile(r"^[0-9a-f]{64}$")

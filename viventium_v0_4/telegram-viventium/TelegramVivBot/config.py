@@ -523,7 +523,8 @@ PREFERENCES = {
     "ALWAYS_VOICE_RESPONSE": _get_bool_env('ALWAYS_VOICE_RESPONSE', False),
     # === VIVENTIUM START ===
     # LibreChat bridge metadata (stored per chat)
-    "LIBRECHAT_CONVERSATION_ID": "",
+    "LIBRECHAT_CONVERSATION_ID": "",  # Legacy read-only migration input.
+    "LIBRECHAT_CONVERSATION_STATE": None,
     "LIBRECHAT_CONVERSATION_STATE_VERSION": "",
     "LIBRECHAT_AGENT_ID": "",
     # Per-chat timezone hint for LibreChat time context injection
@@ -771,7 +772,8 @@ def get_telegram_call_link_result(conversation_key):
 
     payload = {"telegramUserId": normalized_user_id}
     try:
-        conversation_id = Users.get_config(config_lookup_id, "LIBRECHAT_CONVERSATION_ID") or ""
+        state = get_librechat_conversation_state(config_lookup_id)
+        conversation_id = state["conversation_id"]
         agent_id = Users.get_config(config_lookup_id, "LIBRECHAT_AGENT_ID") or ""
         if conversation_id:
             payload["conversationId"] = conversation_id
@@ -1113,6 +1115,24 @@ class UserConfig:
                 )
             # === VIVENTIUM END ===
 
+    def set_librechat_conversation_state(self, user_id, state):
+        """One durable state write, with legacy fields derived for supported rollback."""
+        self.user_init(user_id)
+        key = "global" if self.mode == "global" else self.user_id
+        values = self.users[key].data
+        previous = dict(values)
+        values.update({
+            "LIBRECHAT_CONVERSATION_STATE": dict(state),
+            "LIBRECHAT_CONVERSATION_ID": state["conversation_id"],
+            "LIBRECHAT_CONVERSATION_STATE_VERSION": "2",
+        })
+        try:
+            self._persist_user_config(key)
+        except Exception:
+            values.clear()
+            values.update(previous)
+            raise
+
     def toggle_config(self, user_id = None, parameter_name = None):
         if parameter_name not in self.parameter_name_list:
             if parameter_name in self.preferences:
@@ -1190,6 +1210,28 @@ stt_engine_ready = False
 stt_engine_chat_id = None
 
 
+def get_librechat_conversation_state(convo_id):
+    """Keep reset and pending-conversation identity in one existing preference write."""
+    state = Users.get_config(convo_id, "LIBRECHAT_CONVERSATION_STATE")
+    if (isinstance(state, dict) and isinstance(state.get("conversation_id"), str)
+            and isinstance(state.get("generation"), str)
+            and len(state["generation"]) == 64
+            and all(char in "0123456789abcdef" for char in state["generation"])):
+        legacy = Users.get_config(convo_id, "LIBRECHAT_CONVERSATION_ID")
+        if not isinstance(legacy, str) or legacy == state["conversation_id"]:
+            return dict(state)
+        # An older supported receiver changed the legacy pointer during rollback.
+        state = {"conversation_id": legacy, "generation": secrets.token_hex(32)}
+        Users.set_librechat_conversation_state(convo_id, state)
+        return dict(state)
+    version = str(Users.get_config(convo_id, "LIBRECHAT_CONVERSATION_STATE_VERSION") or "")
+    legacy = Users.get_config(convo_id, "LIBRECHAT_CONVERSATION_ID") if version == "2" else ""
+    state = {"conversation_id": legacy if isinstance(legacy, str) else "",
+             "generation": secrets.token_hex(32)}
+    Users.set_librechat_conversation_state(convo_id, state)
+    return dict(state)
+
+
 def InitEngine(chat_id=None, initialize_stt=True):
     global Users, ChatGPTbot, whisperBot
     global stt_engine_ready, stt_engine_chat_id
@@ -1214,29 +1256,15 @@ def InitEngine(chat_id=None, initialize_stt=True):
     if ChatGPTbot is None:
         if VIVENTIUM_TELEGRAM_BACKEND == "librechat":
             from utils.librechat_bridge import LibreChatBridge
-            librechat_conversation_state_version = "2"
-
             def get_conversation_id(convo_id):
-                stored_version = str(
-                    Users.get_config(convo_id, "LIBRECHAT_CONVERSATION_STATE_VERSION") or ""
-                ).strip()
-                if stored_version != librechat_conversation_state_version:
-                    Users.set_config(convo_id, "LIBRECHAT_CONVERSATION_ID", "")
-                    Users.set_config(
-                        convo_id,
-                        "LIBRECHAT_CONVERSATION_STATE_VERSION",
-                        librechat_conversation_state_version,
-                    )
-                    return ""
-                return Users.get_config(convo_id, "LIBRECHAT_CONVERSATION_ID") or ""
+                return get_librechat_conversation_state(convo_id)["conversation_id"]
 
             def set_conversation_id(convo_id, value):
-                Users.set_config(
-                    convo_id,
-                    "LIBRECHAT_CONVERSATION_STATE_VERSION",
-                    librechat_conversation_state_version,
-                )
-                Users.set_config(convo_id, "LIBRECHAT_CONVERSATION_ID", value or "")
+                state = get_librechat_conversation_state(convo_id)
+                Users.set_librechat_conversation_state(convo_id, {
+                    "conversation_id": value or "",
+                    "generation": state["generation"] if value else secrets.token_hex(32),
+                })
 
             def get_agent_id(convo_id):
                 return Users.get_config(convo_id, "LIBRECHAT_AGENT_ID") or ""
@@ -1246,6 +1274,7 @@ def InitEngine(chat_id=None, initialize_stt=True):
 
             ChatGPTbot = LibreChatBridge(
                 get_conversation_id=get_conversation_id,
+                get_conversation_state=get_librechat_conversation_state,
                 set_conversation_id=set_conversation_id,
                 get_agent_id=get_agent_id,
                 set_agent_id=set_agent_id,

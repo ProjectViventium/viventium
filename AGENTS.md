@@ -20,6 +20,8 @@ tests, permissions, or hooks.
   independent, sizeable work; keep small tasks local.
 - Deliver what the user asked for at the intended scope. Make routine in-scope judgments yourself.
   Ask only when different interpretations would cause materially different work.
+- <a id="communication"></a> **CORE-015:** Report the result briefly, plainly, and truthfully,
+  including any open evidence gate.
 
 ## Action Boundaries
 
@@ -30,7 +32,9 @@ tests, permissions, or hooks.
 - Require confirmation for external writes, destructive actions, purchases, public release, or a
   material expansion of scope.
 - Preserve unrelated user or agent changes. Do not stash, switch branches, blanket-stage, commit,
-  push, or open a PR unless the user asks for that action.
+  push, or open a PR unless the user asks for that action. **CORE-014**
+- **GOV-013:** Persist through routine authorized local blockers, but never expand authority or
+  bypass a real approval or security boundary.
 
 ## Core Outcome Metric
 
@@ -47,14 +51,15 @@ every path truthful, complete, useful, and fast.
 For non-trivial product work, read only the sources needed for the owning path:
 
 1. `docs/requirements_and_learnings/01_Key_Principles.md`
-2. the owning feature doc in `docs/requirements_and_learnings/`
-3. `docs/02_ARCHITECTURE_OVERVIEW.md` and `docs/03_SYSTEMS_MAP.md` when cross-system context matters
+2. the owning capability or retained feature doc linked from `docs/README.md`
+3. `docs/architecture/overview.md` and `docs/architecture/systems-map.md` when cross-system context matters
 4. the relevant runtime doc under `viventium_v0_4/docs/`
-5. the owning `qa/<feature>/` contract
+5. the owning journey in `qa/catalog.yaml` and its linked detailed case banks
 
 For installer, runtime, release, publish-boundary, continuity, or voice-component work, follow the
-specific document map in `docs/requirements_and_learnings/45_Runtime_Feature_QA_Map.md`. Do not load
-the whole documentation tree for a narrow change.
+active owner and QA journey linked from `docs/README.md`. The migration-era
+`docs/requirements_and_learnings/45_Runtime_Feature_QA_Map.md` remains a compatibility map, not the
+current status owner. Do not load the whole documentation tree for a narrow change.
 
 ## Repository And Delivery Boundaries
 
@@ -76,8 +81,13 @@ the whole documentation tree for a narrow change.
 - If the user authorizes a nested-repo push, push each component to its configured `origin`, never
   `upstream`.
 
+<a id="private-evidence"></a>
+
 ## Public And Private Safety
 
+- **CC-064 / GOV-004:** Keep recoverable byte-exact source and thread evidence, stable IDs, hashes,
+  and superseded history private. Publish only sanitized requirements, decisions, QA, evidence, and
+  gaps.
 - This repo contains only public-safe product code, tests, docs, examples, and release tooling.
 - Never track secrets, credentials, personal/customer data, private prompts/docs, exports,
   screenshots, attachments, snapshots, logs, generated runtime env files, or machine-local state.
@@ -95,8 +105,14 @@ the whole documentation tree for a narrow change.
 - If private identity or paths enter history intended for public review, rebuild the review branch
   from a clean base with sanitized metadata and abandon the contaminated branch.
 
+<a id="change-discipline"></a>
+
 ## Implementation Invariants
 
+- **CORE-005 / GOV-010:** Prefer the smallest proven native mechanism and reuse existing Viventium,
+  LibreChat, GlassHive, Codex, and Claude primitives.
+- **GOV-007:** Revalidate primary sources and current candidate identity before correcting a
+  contradiction, stale state, broken owner, or invalid evidence.
 - Trace the owning flow before editing: trigger -> config/compiler -> runtime -> user-visible output.
 - Prefer shared structural fixes over complaint-specific branches or owner-machine workarounds.
 - Viventium is AI-first: rely on model intelligence for semantic judgment. Give the model the goal,

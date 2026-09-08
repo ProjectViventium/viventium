@@ -767,6 +767,43 @@ class _FakeChat:
     type = "private"
 
 
+def _preparation_update(update):
+    """Give lightweight transport fixtures the PTB fields used by early retention."""
+    message = update.effective_message
+    if not hasattr(update, "update_id"):
+        update.update_id = message.message_id
+    if not hasattr(message, "date"):
+        message.date = datetime.now(timezone.utc)
+    if not hasattr(message, "chat"):
+        message.chat = types.SimpleNamespace(type="private")
+    if not hasattr(message.from_user, "first_name"):
+        message.from_user.first_name = "Sample"
+    if not getattr(update, "message", None):
+        update.message = message
+    if not hasattr(message, "to_dict"):
+        def to_dict():
+            return {
+                "message_id": message.message_id, "date": int(message.date.timestamp()),
+                "chat": {"id": message.chat_id, "type": message.chat.type},
+                "from": {"id": message.from_user.id, "is_bot": False,
+                         "first_name": message.from_user.first_name},
+                "text": getattr(message, "text", None), "caption": getattr(message, "caption", None),
+                "message_thread_id": getattr(message, "message_thread_id", None),
+                "media_group_id": getattr(message, "media_group_id", None),
+            }
+        message.to_dict = to_dict
+    return update
+
+
+def _preparation_receipt(kwargs, receipt):
+    if kwargs.get("input") is not None:
+        receipt["input"] = {"claimed": True, "state": "preparing",
+            "sourceEventId": receipt["source_event_id"],
+            "sourceMessageId": f"source-{kwargs['source_sequence']}",
+            "claimToken": f"claim-{kwargs['source_sequence']}"}
+    return receipt
+
+
 class _FakeUpdateMessage:
     def __init__(self) -> None:
         self.from_user = types.SimpleNamespace(
@@ -788,13 +825,19 @@ class _FakeUpdateMessage:
 
 
 class _FakeRobot:
+    def capture_conversation_state(self, _key):
+        return {"conversation_id": "existing", "generation": "a" * 64}
+
+    async def input_status(self, *_args, **_kwargs):
+        return {"input": {"state": "preparing"}}
+
     async def observe_source_order(self, **kwargs):
-        return {
+        return _preparation_receipt(kwargs, {
             "latest_source_sequence": int(kwargs["source_sequence"]),
             "stale": False,
             "source_order_scope": "a" * 64,
             "source_event_id": "c" * 64,
-        }
+        })
 
     async def source_order_is_current(self, **_kwargs):
         return True
@@ -2491,7 +2534,7 @@ def test_command_ingress_observes_n_plus_one_280ms_before_stale_presentation(
         def reopened_visible_texts(self):
             return [message["text"] for message in self.messages]
 
-    class _CoreOrderedRobot:
+    class _CoreOrderedRobot(_FakeRobot):
         def __init__(self):
             self.acks = []
             self.observations = []
@@ -2522,7 +2565,7 @@ def test_command_ingress_observes_n_plus_one_280ms_before_stale_presentation(
             self.observations.append(sequence)
             if sequence == 12346:
                 source_n_plus_one_observed_at = asyncio.get_running_loop().time()
-            return {
+            return _preparation_receipt(kwargs, {
                 "latest_source_sequence": latest_source_sequence,
                 "observed_at": 1,
                 "stale": sequence < latest_source_sequence,
@@ -2530,7 +2573,7 @@ def test_command_ingress_observes_n_plus_one_280ms_before_stale_presentation(
                 "source_event_id": "c" * 64,
                 "durability": "durable",
                 "replica_safe": True,
-            }
+            })
 
         async def source_order_is_current(self, **kwargs):
             return int(kwargs["source_sequence"]) >= latest_source_sequence
@@ -2595,12 +2638,12 @@ def test_command_ingress_observes_n_plus_one_280ms_before_stale_presentation(
         first_context.bot = shared_bot
         second_context.bot = shared_bot
         source_n_task = asyncio.create_task(
-            tg_bot.command_bot(_update(12345), first_context, has_command=False)
+            tg_bot.command_bot(_preparation_update(_update(12345)), first_context, has_command=False)
         )
         await source_n_send_started.wait()
         boundary_order.clear()
         source_n_plus_one_task = asyncio.create_task(
-            tg_bot.command_bot(_update(12346), second_context, has_command=False)
+            tg_bot.command_bot(_preparation_update(_update(12346)), second_context, has_command=False)
         )
         for _ in range(100):
             evidence = read_redacted_audit(
@@ -4761,7 +4804,7 @@ def test_handle_file_does_not_forward_failed_transcription(monkeypatch):
     )
     context = _FakeContext()
 
-    asyncio.run(tg_bot.handle_file(update, context))
+    asyncio.run(tg_bot.handle_file(_preparation_update(update), context))
 
     assert forwarded_calls == []
     assert len(context.bot.messages) == 1
@@ -4769,22 +4812,22 @@ def test_handle_file_does_not_forward_failed_transcription(monkeypatch):
     assert "🎤 Transcription" not in context.bot.messages[0]["text"]
 
 
-def test_captioned_transcription_failure_makes_zero_core_calls_and_one_telegram_error(
+def test_captioned_transcription_failure_retains_input_without_starting_main(
     monkeypatch,
 ):
     forwarded_calls = []
     core_calls = []
     robot_resolution_calls = []
 
-    class _CoreCallRecorder:
-        async def observe_source_order(self, **_kwargs):
+    class _CoreCallRecorder(_FakeRobot):
+        async def observe_source_order(self, **kwargs):
             core_calls.append("source-order")
-            return {
+            return _preparation_receipt(kwargs, {
                 "latest_source_sequence": 123,
                 "stale": False,
                 "source_order_scope": "a" * 64,
                 "source_event_id": "c" * 64,
-            }
+            })
 
         async def source_order_is_current(self, **_kwargs):
             core_calls.append("source-order-current")
@@ -4851,10 +4894,11 @@ def test_captioned_transcription_failure_makes_zero_core_calls_and_one_telegram_
         edited_channel_post=None,
     )
 
-    asyncio.run(tg_bot.command_bot(update, context, has_command=False))
+    asyncio.run(tg_bot.command_bot(_preparation_update(update), context, has_command=False))
 
-    assert core_calls == []
-    assert robot_resolution_calls == []
+    assert core_calls[0] == "source-order"
+    assert "chat" not in core_calls
+    assert robot_resolution_calls == ["chat-1"]
     assert forwarded_calls == []
     assert len(context.bot.messages) == 1
     assert context.bot.messages[0]["text"] == (
@@ -4916,7 +4960,7 @@ def test_handle_file_reports_attachment_capture_error(monkeypatch):
     )
     context = _FakeContext()
 
-    asyncio.run(tg_bot.handle_file(update, context))
+    asyncio.run(tg_bot.handle_file(_preparation_update(update), context))
 
     assert forwarded_calls == []
     assert len(context.bot.messages) == 1
@@ -4995,7 +5039,7 @@ def test_handle_file_preserves_reply_provenance_and_quoted_document_text(monkeyp
     context = _FakeContext()
     context.bot.id = 700
 
-    asyncio.run(tg_bot.handle_file(update, context))
+    asyncio.run(tg_bot.handle_file(_preparation_update(update), context))
 
     assert len(forwarded_calls) == 1
     reply_context = forwarded_calls[0][1]["reply_context"]
@@ -5079,8 +5123,8 @@ def test_media_group_coalesces_files_into_one_viventium_call(monkeypatch):
         for task in list(tg_bot._MEDIA_GROUP_TASKS.values()):
             task.cancel()
         tg_bot._MEDIA_GROUP_TASKS.clear()
-        await tg_bot.command_bot(update1, _FakeCommandContext(), has_command=False)
-        await tg_bot.command_bot(update2, _FakeCommandContext(), has_command=False)
+        await tg_bot.command_bot(_preparation_update(update1), _FakeCommandContext(), has_command=False)
+        await tg_bot.command_bot(_preparation_update(update2), _FakeCommandContext(), has_command=False)
         tasks = list(tg_bot._MEDIA_GROUP_TASKS.values())
         if tasks:
             results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -5156,7 +5200,7 @@ def test_command_bot_get_me_timeout_without_reply_does_not_crash(monkeypatch):
     )
     context = _FakeCommandContext()
 
-    asyncio.run(tg_bot.command_bot(update, context, has_command=False))
+    asyncio.run(tg_bot.command_bot(_preparation_update(update), context, has_command=False))
 
     assert len(forwarded) == 1
     assert context.job_queue.jobs
@@ -5811,4 +5855,88 @@ def test_parallel_instruction_handler_is_nonblocking_and_precedes_normal_text_ha
     )
     assert instruction_index < normal_index
     assert application.handlers[instruction_index].block is False
+
+
+def test_get_viventium_response_commits_exact_durable_effect_identity(monkeypatch):
+    class _EffectRobot:
+        def __init__(self):
+            self.acks = []
+
+        async def ask_stream_async(self, *args, **kwargs):
+            _ = args, kwargs
+            yield {"type": "logical_turn", "logical_turn_id": "turn-effect", "revision": 4}
+            yield {"type": "durable_effect", "effect_ref": "telegram-work-ref"}
+            yield "Background work started."
+
+        async def ack_delivery_status(self, *args, **kwargs):
+            self.acks.append((args, kwargs))
+            return "recorded"
+
+        def reset(self, *args, **kwargs):
+            _ = args, kwargs
+
+    async def _noop_send_librechat_attachments(**_kwargs):
+        return None
+
+    monkeypatch.setattr(
+        tg_bot,
+        "Users",
+        types.SimpleNamespace(get_config=lambda *_args, **_kwargs: False),
+    )
+    monkeypatch.setattr(tg_bot, "should_send_voice_reply", lambda **_kwargs: False)
+    monkeypatch.setattr(
+        tg_bot,
+        "send_librechat_attachments",
+        _noop_send_librechat_attachments,
+    )
+    context = _FakeContext()
+    robot = _EffectRobot()
+
+    asyncio.run(
+        tg_bot.getViventiumResponse(
+            update_message=_FakeUpdateMessage(),
+            context=context,
+            title="",
+            robot=robot,
+            message="synthetic request",
+            chatid=111,
+            messageid=222,
+            convo_id="chat-1",
+            message_thread_id=None,
+            trace_id="test-durable-effect-ack",
+            telegram_message_id=222,
+            telegram_update_id=333,
+        )
+    )
+
+    assert len(robot.acks) == 1
+    args, kwargs = robot.acks[0]
+    assert args[:3] == ("turn-effect", 4, "committed")
+    assert kwargs == {"effect_ref": "telegram-work-ref"}
 # === VIVENTIUM END ===
+
+
+def test_authored_preview_is_early_replaced_and_never_part_of_final(monkeypatch):
+    context = _FakeContext()
+    class Robot:
+        async def ask_stream_async(self, *args, **kwargs):
+            yield {"type": "assistant_preview", "text": "Timezone: UTC."}
+            await asyncio.sleep(0.03)
+            assert any("Timezone: UTC." in m["text"] for m in context.bot.messages)
+            yield {"type": "assistant_preview", "text": "Checking the page."}
+            await asyncio.sleep(0.03)
+            yield {"type": "assistant_preview", "text": ""}
+            yield "Final answer only."
+        def reset(self, **kwargs): pass
+    async def noop(**kwargs): pass
+    monkeypatch.setattr(tg_bot, "Users", types.SimpleNamespace(get_config=lambda *a, **k: False))
+    monkeypatch.setattr(tg_bot, "should_send_voice_reply", lambda **k: False)
+    monkeypatch.setattr(tg_bot, "send_librechat_attachments", noop)
+    monkeypatch.setattr(tg_bot.config, "VIVENTIUM_TELEGRAM_STREAM_EDIT_INTERVAL_S", 0.01)
+    asyncio.run(tg_bot.getViventiumResponse(update_message=_FakeUpdateMessage(), context=context,
+        title="", robot=Robot(), message="Check the page. Also, what time zone?", chatid=111,
+        messageid=222, convo_id="chat-1", message_thread_id=None, voice_note_detected=False,
+        files=None, telegram_message_id=222, telegram_update_id=333))
+    assert len(context.bot.messages) == 1
+    assert context.bot.edits[-1]["text"] == "Final answer only."
+    assert all("Timezone: UTC.Final" not in row["text"] for row in context.bot.messages + context.bot.edits)

@@ -1,0 +1,15 @@
+schemaVersion: 1
+capability: health-whoop
+requirementOwner: docs/requirements_and_learnings/capabilities/health-whoop.md
+statusPolicy: Run results belong in dated, candidate-bound reports.
+sourceInventories:
+  - qa/periphery-nightly-insights/cases.md
+journeys:
+  - id: failure-recovery
+    requirements: [DATA-001, DATA-002, DATA-004, DATA-008, DATA-010]
+    userAction: Connect a synthetic WHOOP source, acquire all authorized families, force one request failure, recover, and run again.
+    surfaces: [onboarding, health acquisition, Life projection, scheduled analysis]
+    expectedResult: Complete paginated evidence with preserved units and relationships reaches only its authorized private owners and creates no duplicate.
+    degradedAndRecovery: Auth, export, manual path, provider, pagination, and analysis failures expose the real blocker and one valid recovery action.
+    persistenceAndCleanup: Restart resumes safely; removal clears synthetic raw and derived private state without leaking it to public evidence.
+    evidence: [visible onboarding state, request and pagination receipts, private state counts, logs, conversation result, cleanup proof]

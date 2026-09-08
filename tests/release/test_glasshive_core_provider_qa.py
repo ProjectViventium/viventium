@@ -58,7 +58,7 @@ def test_quality_matrix_separates_like_for_like_quality_from_native_capability()
     assert "executed: false" in source
 
 
-def test_native_default_advertises_core_glasshive_while_parallel_work_stays_dark(
+def test_native_default_advertises_core_glasshive_and_automatic_parallel_work(
     tmp_path: Path,
 ) -> None:
     config = yaml.safe_load(
@@ -69,7 +69,8 @@ def test_native_default_advertises_core_glasshive_while_parallel_work_stays_dark
     assert glasshive["enabled"] is True
     assert glasshive["provider"]["enabled"] is True
     assert glasshive["host_worker"]["enabled"] is True
-    assert glasshive["orchestration"]["available"] is False
+    assert glasshive["orchestration"]["available"] is True
+    assert glasshive["orchestration"]["default_mode"] == "parallel"
 
     config_path = tmp_path / "native-config.yaml"
     output_dir = tmp_path / "compiled"

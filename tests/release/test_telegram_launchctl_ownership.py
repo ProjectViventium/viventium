@@ -31,6 +31,7 @@ def test_disabled_telegram_without_owned_receipt_never_touches_launchctl(tmp_pat
     receipt_valid_function = extract_shell_function(launcher_source, "telegram_launchctl_receipt_valid")
     migrate_function = extract_shell_function(launcher_source, "migrate_legacy_telegram_launchctl_receipt")
     stop_function = extract_shell_function(launcher_source, "stop_telegram_launchctl_job")
+    scoped_function = extract_shell_function(launcher_source, "stop_scoped_telegram_launchctl_jobs")
     launchctl_log = tmp_path / "launchctl.log"
 
     completed = subprocess.run(
@@ -57,7 +58,7 @@ def test_disabled_telegram_without_owned_receipt_never_touches_launchctl(tmp_pat
                 f"  printf '%s\\n' \"$*\" >> {str(launchctl_log)!r}\n"
                 "  return 0\n"
                 "}\n"
-                f"{receipt_path_function}{receipt_valid_function}{migrate_function}{stop_function}"
+                f"{receipt_path_function}{receipt_valid_function}{migrate_function}{scoped_function}{stop_function}"
                 "stop_telegram_launchctl_job\n"
             ),
         ],
@@ -68,7 +69,11 @@ def test_disabled_telegram_without_owned_receipt_never_touches_launchctl(tmp_pat
     )
 
     assert completed.returncode == 0, completed.stderr
-    assert not launchctl_log.exists()
+    # The scoped fallback may enumerate this runtime's own labels read-only, but without an owned
+    # receipt or a job logging to this state root it must never boot anything out.
+    commands = launchctl_log.read_text(encoding="utf-8") if launchctl_log.exists() else ""
+    assert "bootout" not in commands
+    assert "remove" not in commands
 
 
 def test_owned_telegram_receipt_allows_targeted_launchctl_cleanup(tmp_path: Path) -> None:

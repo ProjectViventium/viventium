@@ -56,6 +56,8 @@ from sse import (
     VoiceControlDisplayFilter,
 )
 from speaker_segments import SPEAKER_CONTEXT_EXTRA_KEY
+
+TYPED_INPUT_EXTRA_KEY = "viventiumTypedInputV1"
 from voice_hop_trace import VoiceHopTrace
 
 # === VIVENTIUM START ===
@@ -737,6 +739,10 @@ def _extract_last_user_speaker_context(chat_ctx: ChatContext) -> dict[str, Any]:
         if getattr(item, "type", None) != "message" or getattr(item, "role", None) != "user":
             continue
         extra = getattr(item, "extra", None)
+        typed_input = extra.get(TYPED_INPUT_EXTRA_KEY) if isinstance(extra, dict) else None
+        if isinstance(typed_input, dict):
+            return {"typedInput": dict(typed_input), "speakerSegments": [],
+                    "speakerSegmentRevisions": [], "speakerLabel": "You"}
         context = extra.get(SPEAKER_CONTEXT_EXTRA_KEY) if isinstance(extra, dict) else None
         if not isinstance(context, dict):
             return {}

@@ -1,0 +1,15 @@
+schemaVersion: 1
+capability: life
+requirementOwner: docs/requirements_and_learnings/capabilities/life.md
+statusPolicy: Run results belong in dated, candidate-bound reports.
+sourceInventories:
+  - qa/installer-resilience/cases.md
+journeys:
+  - id: optional-life-setup
+    requirements: [ONB-007, ONB-008]
+    userAction: Skip Connect Your Life, then enable it, choose a synthetic folder, record source intent, reopen the helper, and disable it.
+    surfaces: [installer, macOS helper, Life folder]
+    expectedResult: Setup is optional and clear; folder choice and user text persist without scanning, reading, uploading, indexing, or claiming a live connector.
+    degradedAndRecovery: Invalid or unavailable local paths produce one truthful action; remote users are told folder choice occurs on the Mac.
+    persistenceAndCleanup: Restart preserves owner-only enabled and path state. Clear keeps LIFE enabled; disable persists off and keeps personal content. A note-only API update preserves Mac-selected folders. Disable and cleanup remove synthetic intent without logging the path.
+    evidence: [visible helper flow, typed config, filesystem metadata only, logs redaction, cleanup proof]

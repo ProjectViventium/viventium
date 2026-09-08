@@ -242,6 +242,7 @@ def _make_runtime_repo(root: Path) -> None:
     _write(bot / "config.py", "SYNTHETIC = True\n")
     _write(bot / "utils" / "__init__.py", "")
     _write(bot / "utils" / "singleton.py", "SYNTHETIC = True\n")
+    _write(bot / "utils" / "telegram_preparation.py", "SYNTHETIC = True\n")
     _write(bot / "aient" / "aient" / "__init__.py", "")
     _write(bot / "md2tgmd" / "setup.py", "from setuptools import setup\nsetup()\n")
     _write(bot / "md2tgmd" / "src" / "md2tgmd.py", "SYNTHETIC = True\n")
@@ -249,6 +250,7 @@ def _make_runtime_repo(root: Path) -> None:
     shared = root / "viventium_v0_4" / "shared"
     _write(shared / "__init__.py", "")
     _write(shared / "no_response.py", "SYNTHETIC = True\n")
+    _write(shared / "compiled_prompt_contract.py", "SYNTHETIC = True\n")
     _write(shared / "voice" / "tts_provider_capabilities.json", "{}\n")
     _write(shared / "voice" / "cartesia_sonic3_capabilities.json", "{}\n")
     _write(shared / "voice" / "xai_tts_capabilities.json", "{}\n")
@@ -347,6 +349,43 @@ def test_component_prepare_is_content_addressed_and_public_code_only(
         code_root / "scripts" / "viventium" / "telegram_poller_handoff.py"
     )
     assert Path(selected["compat_cli"]) == code_root / "bin" / "viventium"
+    # The controller launcher can run against an older predecessor checkout.
+    # Its instance-secret command must travel with the controller, not that checkout.
+    secret_owner = code_root / "scripts" / "viventium" / "native_runtime.py"
+    assert secret_owner.read_bytes() == (
+        REPO_ROOT / "scripts" / "viventium" / "native_runtime.py"
+    ).read_bytes()
+    build_owner = code_root / "scripts" / "viventium" / "librechat_build.sh"
+    assert build_owner.read_bytes() == (
+        REPO_ROOT / "scripts" / "viventium" / "librechat_build.sh"
+    ).read_bytes()
+    launcher_source = Path(selected["compat_launcher"]).read_text()
+    method = launcher_source.split("load_librechat_instance_secrets() {", 1)[1].split("\n}", 1)[0]
+    probe = code_root / "viventium_v0_4" / "instance-secret-probe.sh"
+    probe.write_text(
+        "#!/bin/bash\nset -euo pipefail\n"
+        + "load_librechat_instance_secrets() {" + method + "\n}\n"
+        + "load_librechat_instance_secrets\n"
+        + '[[ -n "$CREDS_KEY" && -n "$JWT_SECRET" ]]\n'
+    )
+    owner_spec = importlib.util.spec_from_file_location("bundled_secret_owner", secret_owner)
+    assert owner_spec is not None and owner_spec.loader is not None
+    owner_module = importlib.util.module_from_spec(owner_spec)
+    bytecode_setting = sys.dont_write_bytecode
+    sys.dont_write_bytecode = True
+    try:
+        owner_spec.loader.exec_module(owner_module)
+    finally:
+        sys.dont_write_bytecode = bytecode_setting
+    owner_module.runtime_secrets(tmp_path / "new-instance")
+    checked = subprocess.run(
+        ["bash", str(probe)], capture_output=True, text=True,
+        env={**os.environ, "PYTHON_BIN": sys.executable,
+             "VIVENTIUM_CORE_DIR": str(tmp_path / "old-predecessor"),
+             "VIVENTIUM_APP_SUPPORT_ROOT": str(tmp_path / "new-instance")},
+    )
+    assert checked.returncode == 0, checked.stderr
+    probe.unlink()
     for component_path in (
         Path(selected["compat_launcher"]),
         Path(selected["component_tool"]),
@@ -1383,3 +1422,35 @@ def test_runtime_wiring_prepares_candidate_before_publication_and_start() -> Non
         'if [[ "$telegram_use_installed_component" != "true" ]] &&\n'
         "    host_supports_local_chatterbox_mlx"
     ) in launcher
+
+
+@pytest.mark.parametrize("missing_required", [False, True])
+def test_current_receiver_inventory_includes_declared_new_dependencies_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, missing_required: bool,
+) -> None:
+    module = _load_component_module()
+    repo = tmp_path / "repo"
+    _make_runtime_repo(repo)
+    required = {
+        "viventium_v0_4/shared/compiled_prompt_contract.py",
+        "viventium_v0_4/telegram-viventium/TelegramVivBot/utils/telegram_preparation.py",
+    }
+    private = repo / "viventium_v0_4/telegram-viventium/TelegramVivBot/private_untracked.py"
+    _write(private, "PRIVATE = True\n")
+    # Simulate the required public modules being newly authored, while the rest
+    # of the source tree is tracked. Unrelated untracked files are still private.
+    def tracked(root: Path) -> set[Path]:
+        return {
+            module._lexical(path) for path in root.rglob("*") if path.is_file()
+            and path != private and path.relative_to(repo).as_posix() not in required
+        }
+    monkeypatch.setattr(module, "_git_tracked_paths", tracked)
+    if missing_required:
+        (repo / sorted(required)[0]).unlink()
+        with pytest.raises(module.ComponentError, match="missing required public code"):
+            module._selected_sources(repo)
+        return
+    selected = module._selected_sources(repo)
+    destinations = {relative.as_posix() for _, relative in selected}
+    assert required <= destinations
+    assert private.relative_to(repo).as_posix() not in destinations

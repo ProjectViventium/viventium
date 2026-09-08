@@ -7,9 +7,11 @@ import argparse
 import contextlib
 import fcntl
 import hashlib
+import hmac
 import importlib.util
 import json
 import os
+import pwd
 import re
 import secrets
 import shlex
@@ -24,6 +26,7 @@ import urllib.parse
 import urllib.request
 import uuid
 from contextlib import contextmanager
+from collections.abc import Callable, Iterable
 from pathlib import Path
 
 
@@ -31,7 +34,15 @@ class RuntimeError_(RuntimeError):
     pass
 
 
-SERVICE_ORDER = ("mongodb", "librechat", "frontend-proxy")
+SERVICE_ORDER = ("mongodb", "redis", "glasshive", "glasshive-mcp", "librechat", "frontend-proxy", "scheduling")
+OPTIONAL_SERVICE_NAMES = {"redis", "scheduling"}
+GLASSHIVE_API_SERVICE_ORDER = tuple(service for service in SERVICE_ORDER if service not in {"glasshive-mcp", *OPTIONAL_SERVICE_NAMES})
+CORE_SERVICE_ORDER = tuple(service for service in SERVICE_ORDER if not service.startswith("glasshive") and service not in OPTIONAL_SERVICE_NAMES)
+
+
+def complete_service_states() -> tuple[set[str], ...]:
+    bases = (set(CORE_SERVICE_ORDER), set(GLASSHIVE_API_SERVICE_ORDER), set(SERVICE_ORDER) - OPTIONAL_SERVICE_NAMES)
+    return tuple(base | extra for base in bases for extra in (set(), {"scheduling"}, {"redis"}, OPTIONAL_SERVICE_NAMES))
 SERVICE_PORTS = {
     "frontend-proxy": (3190, 3191),
 }
@@ -194,16 +205,56 @@ def write_atomic(path: Path, content: str, mode: int = 0o600) -> None:
         os.close(directory)
 
 
-def runtime_secrets(support: Path) -> dict[str, str]:
+RUNTIME_SECRET_LENGTHS = {
+    "JWT_SECRET": 64,
+    "JWT_REFRESH_SECRET": 64,
+    "CREDS_KEY": 64,
+    "CREDS_IV": 32,
+}
+
+
+def validate_runtime_secrets(values: object) -> dict[str, str]:
+    if not isinstance(values, dict) or set(values) != set(RUNTIME_SECRET_LENGTHS):
+        raise RuntimeError_("Native machine secrets schema is invalid")
+    for key, length in RUNTIME_SECRET_LENGTHS.items():
+        value = values[key]
+        if not isinstance(value, str) or len(value) != length or any(c not in "0123456789abcdef" for c in value):
+            raise RuntimeError_("Native machine secrets contain an invalid value")
+    return values
+
+
+def read_private_secret_file(path: Path) -> str:
+    try:
+        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        with os.fdopen(descriptor, encoding="utf-8") as handle:
+            metadata = os.fstat(handle.fileno())
+            if (not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.getuid()
+                    or stat.S_IMODE(metadata.st_mode) != 0o600 or metadata.st_nlink != 1
+                    or metadata.st_size > 1024 * 1024):
+                raise RuntimeError_("Instance secret file has unsafe ownership or permissions")
+            return handle.read()
+    except (OSError, UnicodeError) as error:
+        raise RuntimeError_("Instance secret file is unavailable or unsafe") from error
+
+
+def runtime_secrets(
+    support: Path, *, create: bool = True, adopted: dict[str, str] | None = None
+) -> dict[str, str]:
     path = support / "state" / "native-secrets.json"
     lock_path = support / "state" / "native-secrets.lock"
-    expected_lengths = {
-        "JWT_SECRET": 64,
-        "JWT_REFRESH_SECRET": 64,
-        "CREDS_KEY": 64,
-        "CREDS_IV": 32,
-    }
     validate_support_children(support)
+    if adopted is not None:
+        validate_runtime_secrets(adopted)
+    if not create and adopted is None:
+        if not path.exists() and not path.is_symlink():
+            raise RuntimeError_(
+                "Instance secrets are missing. Import the verified original LibreChat .env "
+                "with source-secrets --adopt-env before starting this existing instance."
+            )
+        try:
+            return validate_runtime_secrets(json.loads(read_private_secret_file(path)))
+        except json.JSONDecodeError as error:
+            raise RuntimeError_("Native machine secrets are invalid") from error
     ensure_support_directories(support, "state")
     lock_descriptor = os.open(
         lock_path,
@@ -212,28 +263,54 @@ def runtime_secrets(support: Path) -> dict[str, str]:
     )
     try:
         lock_metadata = os.fstat(lock_descriptor)
-        if lock_metadata.st_uid != os.getuid() or stat.S_IMODE(lock_metadata.st_mode) != 0o600:
+        if (not stat.S_ISREG(lock_metadata.st_mode) or lock_metadata.st_nlink != 1
+                or lock_metadata.st_uid != os.getuid() or stat.S_IMODE(lock_metadata.st_mode) != 0o600):
             raise RuntimeError_("Native machine-secret lock has unsafe ownership or permissions")
         fcntl.flock(lock_descriptor, fcntl.LOCK_EX)
-        if not path.exists():
-            values = {key: secrets.token_hex(length // 2) for key, length in expected_lengths.items()}
+        if not path.exists() and not path.is_symlink():
+            values = adopted if adopted is not None else {
+                key: secrets.token_hex(length // 2) for key, length in RUNTIME_SECRET_LENGTHS.items()
+            }
             write_atomic(path, json.dumps(values, sort_keys=True, separators=(",", ":")) + "\n")
+        values = runtime_secrets(support, create=False)
+        if adopted is not None and values != adopted:
+            raise RuntimeError_("Instance secrets already exist and differ; refusing replacement")
+        return values
     finally:
         os.close(lock_descriptor)
-    try:
-        metadata = path.lstat()
-        values = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as error:
-        raise RuntimeError_("Native machine secrets are unavailable or invalid") from error
-    if path.is_symlink() or not path.is_file() or metadata.st_uid != os.getuid() or stat.S_IMODE(metadata.st_mode) != 0o600:
-        raise RuntimeError_("Native machine secrets have unsafe ownership or permissions")
-    if set(values) != set(expected_lengths):
-        raise RuntimeError_("Native machine secrets schema is invalid")
-    for key, length in expected_lengths.items():
-        value = values[key]
-        if not isinstance(value, str) or len(value) != length or any(c not in "0123456789abcdef" for c in value):
-            raise RuntimeError_("Native machine secrets contain an invalid value")
-    return values
+
+
+def source_secrets(args: argparse.Namespace) -> None:
+    """Use the existing instance owner for source installs; never rotate at startup."""
+    support = lexical_support(args.app_support_dir)
+    if args.adopt_env is not None:
+        # Reuse the upgrade owner's dotenv grammar without executing the legacy file.
+        from upgrade_transaction import _parse_dotenv_assignments, UpgradeTransactionError
+
+        try:
+            assignments = _parse_dotenv_assignments(read_private_secret_file(args.adopt_env))
+        except UpgradeTransactionError as error:
+            raise RuntimeError_("Legacy instance environment is malformed") from error
+        values: dict[str, str] = {}
+        for key, value in assignments:
+            if key in RUNTIME_SECRET_LENGTHS:
+                if key in values:
+                    raise RuntimeError_("Legacy instance environment has duplicate secret fields")
+                values[key] = value
+        runtime_secrets(support, adopted=values)
+        print("Instance secrets adopted; source file preserved.")
+    elif args.initialize:
+        with lifecycle_lock(support):
+            if (support / "state/native-secrets.json").exists():
+                runtime_secrets(support, create=False)
+            else:
+                validate_support_children(support)
+                if support.exists() and any(support.iterdir()):
+                    raise RuntimeError_("Existing instance has no secret owner; explicit legacy adoption is required")
+                runtime_secrets(support)
+    else:
+        for key, value in runtime_secrets(support, create=False).items():
+            print(f"export {key}={shlex.quote(value)}")
 
 
 def runtime_state(support: Path) -> dict[str, object]:
@@ -282,11 +359,308 @@ def mongodb_socket_path(support: Path) -> Path:
 
 def mongodb_uri(support: Path) -> str:
     socket_host = urllib.parse.quote(str(mongodb_socket_path(support)), safe="")
-    return f"mongodb://{socket_host}/LibreChat"
+    return f"mongodb://{socket_host}/LibreChat?directConnection=true"
 
 
 def native_api_socket_path(support: Path) -> Path:
     return support / "runtime" / "librechat-api.sock"
+
+
+def native_glasshive_socket_path(support: Path) -> Path:
+    return support / "runtime" / "glasshive.sock"
+
+
+def native_glasshive_mcp_socket_path(support: Path) -> Path:
+    return support / "runtime" / "glasshive-mcp.sock"
+
+
+def native_scheduling_socket_path(support: Path) -> Path:
+    return support / "runtime" / "scheduling.sock"
+
+
+def native_redis_socket_path(support: Path) -> Path:
+    return support / "runtime" / "redis.sock"
+
+
+def native_redis_environment(root: Path, support: Path) -> dict[str, str]:
+    if "redis" not in build_metadata(root).get("components", {}):
+        return {}
+    return {"USE_REDIS": "true", "USE_REDIS_STREAMS": "true",
+            "REDIS_SOCKET_PATH": str(native_redis_socket_path(support)),
+            "REDIS_KEY_PREFIX": "viventium-native"}
+
+
+def native_redis_command(root: Path, support: Path) -> list[str]:
+    return [str(root / "runtime/redis/bin/redis-server"), "--port", "0", "--unixsocket",
+            str(native_redis_socket_path(support)), "--unixsocketperm", "600", "--daemonize", "no",
+            "--dir", str(support / "state/runtime/native/continuity/redis"),
+            "--appendonly", "yes", "--appendfsync", "always", "--save", "",
+            "--loglevel", "warning", "--protected-mode", "yes"]
+
+
+def native_body_paths(root: Path) -> dict[str, Path]:
+    components = build_metadata(root).get("components", {})
+    if not isinstance(components, dict):
+        raise RuntimeError_("Native component inventory is invalid")
+    component = components.get("glasshive", {})
+    if not isinstance(component, dict):
+        raise RuntimeError_("Native GlassHive inventory is invalid")
+    bodies = component.get("native_bodies")
+    if bodies is None:
+        return {}
+    if not isinstance(bodies, dict) or set(bodies) != {"codex-cli", "claude-code"}:
+        raise RuntimeError_("Native provider body inventory is incomplete")
+    result = {}
+    for profile, body in bodies.items():
+        relative = body.get("executable") if isinstance(body, dict) else None
+        if not isinstance(relative, str) or not relative or relative.startswith("/") or "\\" in relative or any(part in {"", ".", ".."} for part in relative.split("/")):
+            raise RuntimeError_("Native provider executable path is invalid")
+        body_root = root / "runtime/native-bodies" / profile
+        executable = body_root / relative
+        try:
+            executable.resolve(strict=True).relative_to(body_root.resolve(strict=True))
+        except (OSError, ValueError) as error:
+            raise RuntimeError_("Native provider executable is unavailable") from error
+        if executable.is_symlink() or not executable.is_file() or not os.access(executable, os.X_OK):
+            raise RuntimeError_("Native provider executable is unavailable")
+        result[profile] = executable
+    return result
+
+
+def release_services(root: Path) -> tuple[str, ...]:
+    components = build_metadata(root).get("components") or {}
+    services = CORE_SERVICE_ORDER if "glasshive" not in components else (
+        tuple(service for service in SERVICE_ORDER if service not in OPTIONAL_SERVICE_NAMES)
+        if native_body_paths(root) else GLASSHIVE_API_SERVICE_ORDER
+    )
+    selected = set(services) | (OPTIONAL_SERVICE_NAMES & components.keys())
+    return tuple(service for service in SERVICE_ORDER if service in selected)
+
+
+def native_glasshive_transport_environment(root: Path, support: Path) -> dict[str, str]:
+    if not native_body_paths(root):
+        return {}
+    key = bytes.fromhex(runtime_secrets(support)["CREDS_KEY"])
+    token_domains = {
+        "WPR_API_TOKEN": "api",
+        "GLASSHIVE_PROVIDER_API_KEY": "provider",
+        "GLASSHIVE_MCP_API_KEY": "mcp",
+        "VIVENTIUM_GLASSHIVE_SERVICE_ASSERTION_SECRET": "account-assertion",
+        "VIVENTIUM_GLASSHIVE_CALLBACK_SECRET": "callback",
+        "VIVENTIUM_GLASSHIVE_CAPABILITY_BROKER_SECRET": "capability-broker",
+        "VIVENTIUM_GLASSHIVE_ADMISSION_SECRET": "capability-admission",
+        "GLASSHIVE_BOOTSTRAP_SOURCE_SECRET": "bootstrap-source",
+    }
+    environment = {name: hmac.new(key, f"viventium.native.glasshive.{domain}.v1".encode(), hashlib.sha256).hexdigest() for name, domain in token_domains.items()}
+    base = "http://127.0.0.1:3190"
+    environment.update({
+        "GLASSHIVE_PROVIDER_BASE_URL": base + "/__viventium_native_glasshive/v1",
+        "WPR_MCP_BASE_URL": base + "/__viventium_native_glasshive",
+        "GLASSHIVE_RUNTIME_PUBLIC_BASE_URL": base + "/__viventium_native_glasshive",
+        "GLASSHIVE_MCP_URL": base + "/__viventium_native_glasshive_mcp/mcp",
+        "VIVENTIUM_GLASSHIVE_CALLBACK_URL": base + "/api/viventium/glasshive/callback",
+        "VIVENTIUM_GLASSHIVE_ADMISSION_URL": base + "/api/viventium/glasshive/capabilities/admit",
+        "VIVENTIUM_NATIVE_GLASSHIVE_SOCKET": str(native_glasshive_socket_path(support)),
+        "VIVENTIUM_NATIVE_GLASSHIVE_MCP_SOCKET": str(native_glasshive_mcp_socket_path(support)),
+        "GLASSHIVE_PROVIDER_DEFAULT_WORKSPACE": str(support / "state/runtime/native/glasshive/workspaces"),
+        "GLASSHIVE_PROVIDER_ALLOWED_WORKSPACE_ROOTS": str(support / "state/runtime/native/glasshive/workspaces"),
+        "WPR_HOST_WORKSPACE_ROOT": str(support / "state/runtime/native/glasshive/workspaces"),
+        "WPR_LIBRECHAT_UPLOADS_ROOT": str(support / "data/uploads"),
+        "WPR_BOOTSTRAP_SOURCE_ROOTS": str(support / "data/uploads"),
+    })
+    return environment
+
+
+def native_scheduling_environment(root: Path, support: Path) -> dict[str, str]:
+    if "scheduling" not in release_services(root):
+        return {}
+    ensure_support_directories(support, "state/runtime/native/scheduling", "runtime/scheduling-home")
+    key = bytes.fromhex(runtime_secrets(support)["CREDS_KEY"])
+    secrets = {name: hmac.new(key, f"viventium.native.scheduling.{domain}.v1".encode(), hashlib.sha256).hexdigest()
+               for name, domain in {"SCHEDULING_MCP_API_KEY": "mcp", "SCHEDULER_LIBRECHAT_SECRET": "dispatch"}.items()}
+    return {**secrets,
+            "VIVENTIUM_SCHEDULER_SECRET": secrets["SCHEDULER_LIBRECHAT_SECRET"],
+            "VIVENTIUM_NATIVE_SCHEDULING_SOCKET": str(native_scheduling_socket_path(support)),
+            "SCHEDULING_MCP_URL": "http://127.0.0.1:3190/__viventium_native_scheduling/mcp",
+            "SCHEDULER_LIBRECHAT_URL": "http://127.0.0.1:3190",
+            "GLASSHIVE_SCHEDULING_OWNER_URL": "http://127.0.0.1:3190/__viventium_native_scheduling/mcp",
+            "SCHEDULING_DB_PATH": str(support / "state/runtime/native/scheduling/schedules.db"),
+            "VIVENTIUM_STATE_ROOT": str(support / "state/runtime/native"),
+            "VIVENTIUM_RUNTIME_PROFILE": "native"}
+
+
+def scheduling_server_command(root: Path, support: Path) -> list[str]:
+    return [str(root / "runtime/python/bin/python3"), "-I", "-B",
+            str(root / "runtime/scripts/native_scheduling_server.py"),
+            str(root / "runtime/scheduling"), str(native_scheduling_socket_path(support))]
+
+
+def native_glasshive_environment(root: Path, support: Path) -> dict[str, str]:
+    ensure_support_directories(support, "runtime/tmp", "runtime/glasshive-home", "state/runtime/native/glasshive/workspaces", "state/provider-accounts/glasshive", "data/uploads")
+    metadata = build_metadata(root)
+    # Domain separation gives the existing machine-secret owner a stable service
+    # credential without coupling GlassHive auth to a user session or new registry.
+    token = hmac.new(bytes.fromhex(runtime_secrets(support)["CREDS_KEY"]), b"viventium.native.glasshive.api.v1", hashlib.sha256).hexdigest()
+    environment = {
+        "HOME": str(support / "runtime/glasshive-home"),
+        "PATH": f"{root / 'runtime/node/bin'}:/usr/bin:/bin",
+        "TMPDIR": str(support / "runtime/tmp"), "LANG": "en_US.UTF-8",
+        "VIVENTIUM_DISABLE_DEFAULT_RUNTIME_ENV": "1",
+        "GLASSHIVE_AUTO_DISCOVER_CODEX_WORKSPACE_DEPS": "false",
+        "GLASSHIVE_HOST_WORKERS_ENABLED": "false",
+        "WPR_API_TOKEN": token,
+        "WPR_DB_PATH": str(support / "state/runtime/native/glasshive/runtime.sqlite"),
+        "GLASSHIVE_PROVIDER_ACCOUNT_HOME_ROOT": str(support / "state/provider-accounts/glasshive"),
+        "GLASSHIVE_RELEASE_ID": str(metadata["source_commit"]),
+        "GLASSHIVE_PARENT_REVISION": str(metadata["source_commit"]),
+        "GLASSHIVE_COMPONENT_REVISION": str(metadata["components"]["glasshive"]["commit"]),
+    }
+    bodies = native_body_paths(root)
+    if bodies:
+        environment.update({name: value for name, value in load_native_runtime_env(support / "runtime/runtime.env").items()
+                            if name in NATIVE_ALLOWED_PLAIN_ENV or name.startswith("VIVENTIUM_")})
+        environment.update(native_glasshive_transport_environment(root, support))
+        environment.update(native_scheduling_environment(root, support))
+        environment.update({
+            "GLASSHIVE_HOST_WORKERS_ENABLED": "true",
+            "VIVENTIUM_PROMPT_BUNDLE_PATH": str(root / "runtime/defaults/prompt-bundle.json"),
+            "VIVENTIUM_NATIVE_FIRST_ADMIN_STATE": str(support / "state/native-first-admin.json"),
+            "CODEX_HOME": str(support / "runtime/glasshive-home/.codex"),
+            "USER": pwd.getpwuid(os.getuid()).pw_name,
+            "LOGNAME": pwd.getpwuid(os.getuid()).pw_name,
+            "WPR_CODEX_BIN": str(bodies["codex-cli"]),
+            "WPR_CLAUDE_CODE_BIN": str(bodies["claude-code"]),
+            "DISABLE_AUTOUPDATER": "1",
+            "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+        })
+    return environment
+
+
+def native_provider_auth_command(root: Path, support: Path, profile: str, action: str, arguments: list[str]) -> tuple[list[str], dict[str, str]]:
+    """Run the published CLI login without an application credential projection."""
+    bodies = native_body_paths(root)
+    if profile not in bodies or action not in {"login", "status", "logout"}:
+        raise RuntimeError_("This payload has no selected native provider login")
+    if action != "login" and arguments:
+        raise RuntimeError_("Additional native provider arguments are accepted only for login")
+    ensure_support_directories(support, "runtime/tmp", "runtime/glasshive-home", "runtime/glasshive-home/.codex")
+    home = support / "runtime/glasshive-home"
+    username = pwd.getpwuid(os.getuid()).pw_name
+    env = {
+        "HOME": str(home), "CODEX_HOME": str(home / ".codex"),
+        "USER": username, "LOGNAME": username,
+        "PATH": f"{root / 'runtime/node/bin'}:/usr/bin:/bin",
+        "TMPDIR": str(support / "runtime/tmp"), "LANG": "en_US.UTF-8",
+        "DISABLE_AUTOUPDATER": "1", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+    }
+    if profile == "codex-cli":
+        operation = ["login", "status"] if action == "status" else [action]
+        command = [str(bodies[profile]), *operation, *arguments, "-c", 'cli_auth_credentials_store="file"']
+    else:
+        command = [str(bodies[profile]), "auth", action, *arguments]
+    return command, env
+
+
+def provider_auth(args: argparse.Namespace) -> None:
+    support = lexical_support(args.app_support_dir)
+    with lifecycle_lock(support):
+        root = installed_release_root(support)
+        first_admin = ensure_first_admin_state(support)
+        if first_admin.get("status") != "closed":
+            raise RuntimeError_("Complete installed owner setup before connecting a native provider")
+        require_closed_admin_user_id(first_admin)
+        arguments = list(args.provider_arguments)
+        if arguments[:1] == ["--"]:
+            arguments = arguments[1:]
+        command, env = native_provider_auth_command(root, support, args.provider, args.action, arguments)
+        # The provider owns its chooser, browser callback, stdin, credential store,
+        # and refresh. Do not record authentication output in application evidence.
+        process = subprocess.Popen(command, cwd=env["HOME"], env=env, umask=0o077)
+        try:
+            code = process.wait(timeout=10) if args.action == "status" else process.wait()
+        except BaseException as error:
+            if process.poll() is None:
+                process.terminate()
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait()
+            if isinstance(error, subprocess.TimeoutExpired):
+                raise RuntimeError_("Native provider status is unavailable; try again") from error
+            raise
+        if code != 0:
+            raise RuntimeError_("Native provider authentication did not complete; use the provider's displayed guidance")
+        if args.action == "logout":
+            status_command, status_env = native_provider_auth_command(root, support, args.provider, "status", [])
+            try:
+                result = subprocess.run(status_command, cwd=status_env["HOME"], env=status_env,
+                                        stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                        stderr=subprocess.PIPE, text=True, timeout=10, check=False)
+            except subprocess.TimeoutExpired as error:
+                raise RuntimeError_("Native provider disconnect status is unavailable; check the provider before reconnecting") from error
+            if args.provider == "codex-cli":
+                # The pinned CLI has no JSON status mode. Its documented logged-out
+                # result is exit 1 with this exact terminal status line.
+                lines = result.stderr.strip().splitlines()
+                disconnected = result.returncode == 1 and bool(lines) and lines[-1] == "Not logged in"
+            else:
+                try:
+                    status_value = json.loads(result.stdout)
+                except (TypeError, json.JSONDecodeError):
+                    status_value = None
+                disconnected = (result.returncode in {0, 1} and isinstance(status_value, dict)
+                                and status_value.get("loggedIn") is False and not status_value.get("error"))
+            if not disconnected:
+                raise RuntimeError_("Native provider disconnect was not verified; inspect its status before reconnecting")
+
+
+def glasshive_python_command(root: Path, code: str, *arguments: str) -> list[str]:
+    return [
+        str(root / "runtime/python/bin/python3"), "-I", "-B", "-c",
+        "import sys; sys.path[:0]=sys.argv[1:3]; del sys.argv[1:3]; " + code,
+        str(root / "runtime/glasshive/src"), str(root / "runtime/glasshive/site-packages"),
+        *arguments,
+    ]
+
+
+def glasshive_server_command(root: Path, support: Path) -> list[str]:
+    # Uvicorn's uds shortcut chmods a newly created socket to 0666. Bind it
+    # privately before handing ownership to the existing server sockets API.
+    return glasshive_python_command(root,
+        "import os, socket, uvicorn\n"
+        "os.umask(0o077)\n"
+        "with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as listener:\n"
+        "    listener.bind(sys.argv[1])\n"
+        "    os.chmod(sys.argv[1], 0o600)\n"
+        "    uvicorn.Server(uvicorn.Config('workers_projects_runtime.api:app', uds=sys.argv[1], http='h11', access_log=False)).run(sockets=[listener])\n",
+        str(native_glasshive_socket_path(support)),
+    )
+
+
+def glasshive_mcp_server_command(root: Path, support: Path) -> list[str]:
+    return glasshive_python_command(root,
+        "import os, socket, uvicorn\n"
+        "from workers_projects_runtime.mcp_server import create_mcp_server, McpHttpAuthMiddleware\n"
+        "server = create_mcp_server(base_url=os.environ['WPR_MCP_BASE_URL'], host='127.0.0.1', port=3190)\n"
+        "app = server.streamable_http_app()\n"
+        "if server.settings.auth is None: app.add_middleware(McpHttpAuthMiddleware)\n"
+        "os.umask(0o077)\n"
+        "with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as listener:\n"
+        "    listener.bind(sys.argv[1])\n"
+        "    os.chmod(sys.argv[1], 0o600)\n"
+        "    uvicorn.Server(uvicorn.Config(app, uds=sys.argv[1], http='h11', access_log=False)).run(sockets=[listener])\n",
+        str(native_glasshive_mcp_socket_path(support)),
+    )
+
+
+def run_glasshive_continuity(root: Path, support: Path, operation: str, *arguments: str) -> None:
+    run_native_maintenance(
+        f"glasshive-{operation}",
+        glasshive_python_command(root, "import runpy; runpy.run_module('workers_projects_runtime.native_continuity', run_name='__main__')", operation, *arguments),
+        support, cwd=root, env=native_glasshive_environment(root, support),
+        root=root,
+    )
 
 
 def validate_native_socket_lengths(support: Path) -> None:
@@ -294,7 +668,7 @@ def validate_native_socket_lengths(support: Path) -> None:
     # Validate both service socket names before launching any child so a long
     # custom App Support path fails with a useful, deterministic error.
     maximum = 103 if sys.platform == "darwin" else 107
-    for path in (mongodb_socket_path(support), native_api_socket_path(support)):
+    for path in (mongodb_socket_path(support), native_api_socket_path(support), native_glasshive_socket_path(support), native_glasshive_mcp_socket_path(support), native_scheduling_socket_path(support), native_redis_socket_path(support)):
         if len(os.fsencode(path)) > maximum:
             raise RuntimeError_("Native App Support path is too long for private service sockets")
 
@@ -313,11 +687,13 @@ def required_assets(root: Path) -> tuple[Path, ...]:
         root / "runtime" / "scripts" / "continuity_bundle.py",
         root / "runtime" / "scripts" / "continuity_mongo.cjs",
         root / "runtime" / "scripts" / "native_first_admin_recovery.js",
+        root / "runtime" / "scripts" / "native_mongodb_replica.js",
         root / "runtime" / "scripts" / "native_verify_agent.js",
         root / "bin" / "viventium-native-registration-close",
         root / "runtime" / "defaults" / "librechat.yaml",
         root / "runtime" / "defaults" / "native-runtime.env",
         root / "runtime" / "defaults" / "prompt-bundle.json",
+        root / "runtime" / "shared" / "compiled_prompt_contract.py",
         root / "runtime" / "defaults" / "viventium-agents.yaml",
         root / "runtime" / "librechat" / "scripts" / "viventium-seed-agents.js",
         root / "runtime" / "librechat" / "scripts" / "viventium-reconcile-user-defaults.js",
@@ -333,6 +709,35 @@ def required_assets(root: Path) -> tuple[Path, ...]:
 
 
 def packaged_health(root: Path) -> None:
+    if "sequential-thinking" in build_metadata(root).get("components", {}):
+        if not (root / "runtime/sequential-thinking/node_modules/@modelcontextprotocol/server-sequential-thinking/dist/index.js").is_file():
+            raise RuntimeError_("Bundled Sequential Thinking is incomplete")
+    if "redis" in release_services(root):
+        executable = root / "runtime/redis/bin/redis-server"
+        if executable.is_symlink() or not executable.is_file() or not os.access(executable, os.X_OK):
+            raise RuntimeError_("Bundled Redis is unavailable")
+        expected = build_metadata(root)["components"]["redis"].get("executable_sha256")
+        if hashlib.sha256(executable.read_bytes()).hexdigest() != expected:
+            raise RuntimeError_("Bundled Redis differs from its release")
+    if "scheduling" in release_services(root):
+        for relative in ("scheduling_cortex/server.py", "site-packages", "uv.lock", "requirements.txt"):
+            if not (root / "runtime/scheduling" / relative).exists():
+                raise RuntimeError_("Bundled Scheduling Cortex is incomplete")
+    if "glasshive" in release_services(root):
+        for relative in ("src/workers_projects_runtime/api.py", "src/workers_projects_runtime/native_continuity.py", "site-packages/uvicorn/__init__.py", "workstation-requirements.lock"):
+            path = root / "runtime/glasshive" / relative
+            if path.is_symlink() or not path.is_file():
+                raise RuntimeError_(f"Packaged GlassHive runtime is incomplete: {relative}")
+    bodies = native_body_paths(root)
+    if bodies:
+        metadata = build_metadata(root)["components"]["glasshive"]["native_bodies"]
+        for profile, executable in bodies.items():
+            with executable.open("rb") as stream:
+                digest = hashlib.file_digest(stream, "sha256").hexdigest()
+            if digest != metadata[profile].get("executable_sha256"):
+                raise RuntimeError_("Packaged Native provider executable differs from its release")
+        if not (root / "runtime/glasshive/src/workers_projects_runtime/mcp_server.py").is_file():
+            raise RuntimeError_("Packaged GlassHive MCP gateway is incomplete")
     missing = [str(path.relative_to(root)) for path in required_assets(root) if not path.exists()]
     if missing:
         raise RuntimeError_("Native payload is incomplete: " + ", ".join(missing))
@@ -377,6 +782,8 @@ NATIVE_FIXED_ENV = {
     "ANTHROPIC_API_KEY": "user_provided",
     "GROQ_API_KEY": "user_provided",
     "XAI_API_KEY": "user_provided",
+    "GROQ_BASE_URL": "https://api.groq.com/openai/v1/",
+    "XAI_BASE_URL": "https://api.x.ai/v1",
     "VIVENTIUM_LC_API_PORT": "3180",
     "VIVENTIUM_LC_FRONTEND_PORT": "3190",
     "VIVENTIUM_PLAYGROUND_PORT": "3300",
@@ -394,6 +801,36 @@ NATIVE_ALLOWED_PLAIN_ENV = {
     "SAFE_MODE",
     "SEARCH",
     "TTS_PROVIDER_PRIMARY",
+    "GLASSHIVE_PROVIDER_ALLOW_FULL_ACCESS",
+    "GLASSHIVE_PROVIDER_DEFAULT_ACCESS",
+    "GLASSHIVE_PROVIDER_TRUST_IDENTITY_HEADERS",
+    "GLASSHIVE_PROVIDER_PRINCIPAL_ID",
+    "GLASSHIVE_PROVIDER_TENANT_ID",
+    "GLASSHIVE_HOST_PLUGIN_DENYLIST",
+    "GLASSHIVE_HOST_CODEX_NATIVE_MCP_ALLOWLIST",
+    "WPR_DEFAULT_EXECUTION_MODE",
+    "WPR_HOST_DEFAULT_EXECUTION_MODE",
+    "WPR_HOST_DESTRUCTIVE_CONFIRMATION",
+    "WPR_HOST_ADVISORY_REVIEWER_ENABLED",
+    "WPR_HOST_ADVISORY_REVIEWER_MODE",
+    "WPR_HOST_PROMPT_VISIBILITY",
+    "WPR_HOST_CODEX_CLI_AVAILABLE",
+    "WPR_HOST_CLAUDE_CLI_AVAILABLE",
+    "WPR_HOST_NATIVE_WEB_ACCESS",
+    "WPR_MODEL_HOST_CODEX_CLI",
+    "WPR_MODEL_CODEX_CLI",
+    "WPR_MODEL_CLAUDE_CODE",
+    "WPR_CODEX_CLI_REASONING_EFFORT",
+    "WPR_CODEX_CLI_PERSONALITY",
+    "WPR_CODEX_CLI_CONVERSATION_PROJECT_INSTRUCTIONS",
+    "WPR_CODEX_CLI_IGNORE_USER_CONFIG",
+    "WPR_CODEX_CLI_DISABLE_FEATURES",
+    "WPR_CODEX_CLI_ALLOWED_REASONING_EFFORTS",
+    "WPR_CODEX_CLI_REASONING_EFFORT_FALLBACK",
+    "WPR_CODEX_CLI_XHIGH_ROUTE_PROVEN",
+    "WPR_CODEX_APP_SERVER_QA_ENABLED",
+    "WPR_CLAUDE_CODE_CONVERSATION_AUTO_MEMORY",
+    "WPR_CLAUDE_CODE_EFFORT",
 }
 
 
@@ -459,14 +896,22 @@ def load_native_runtime_env(path: Path) -> dict[str, str]:
 
 def native_child_environment(support: Path) -> dict[str, str]:
     """Build a minimal child environment without inheriting host provider credentials."""
-    ensure_support_directories(support, "runtime/tmp")
+    ensure_support_directories(support, "runtime/tmp", "logs/librechat", "data/uploads/images")
     environment = {
         "HOME": str(user_home()),
         "PATH": "/usr/bin:/bin",
         "TMPDIR": str(support / "runtime" / "tmp"),
+        "LIBRECHAT_LOG_DIR": str(support / "logs" / "librechat"),
+        "VIVENTIUM_LIBRECHAT_UPLOADS_ROOT": str(support / "data" / "uploads"),
+        "VIVENTIUM_LIBRECHAT_IMAGE_OUTPUT_ROOT": str(support / "data" / "uploads" / "images"),
         "LANG": "en_US.UTF-8",
     }
     environment.update(load_native_runtime_env(support / "runtime" / "runtime.env"))
+    # The supervisor owns one backend per canonical mutable root. Keep Cortex
+    # delivery leases stable across release relocation and distinct across installs.
+    environment["VIVENTIUM_RUNTIME_SLOT_ID"] = "native-" + hashlib.sha256(
+        os.fsencode(support.resolve())
+    ).hexdigest()[:32]
     return environment
 
 
@@ -671,6 +1116,92 @@ def ensure_helper_applications_directory() -> Path:
     return applications
 
 
+def helper_processes(app: Path) -> dict[int, tuple[Path, str]]:
+    """Find only this user's executables inside the exact installed app."""
+    if not app.exists():
+        return {}
+    if helper_owner(app) is None or not helper_tree_is_safe(app):
+        raise RuntimeError_("Native helper process ownership is unsafe")
+    executable_dir = app.resolve() / "Contents" / "MacOS"
+    result = subprocess.run(
+        ["/bin/ps", "-ww", "-axo", "pid=,uid=,comm="],
+        check=False, capture_output=True, text=True, timeout=10,
+    )
+    if result.returncode != 0:
+        raise RuntimeError_("Native helper process inventory is unavailable")
+    identities: dict[int, tuple[Path, str]] = {}
+    for line in result.stdout.splitlines():
+        fields = line.strip().split(maxsplit=2)
+        if len(fields) != 3 or not fields[0].isdigit() or fields[1] != str(os.getuid()):
+            continue
+        executable = Path(fields[2])
+        if not executable.is_absolute() or executable.parent != executable_dir:
+            continue
+        pid = int(fields[0])
+        started = process_value(pid, "lstart")
+        if started is None:
+            continue
+        if process_executable(pid) != executable:
+            raise RuntimeError_("Native helper executable identity could not be verified")
+        identities[pid] = (executable, started)
+    return identities
+
+
+def helper_process_matches(pid: int, identity: tuple[Path, str]) -> bool:
+    executable, started = identity
+    return (
+        process_value(pid, "uid") == str(os.getuid())
+        and process_value(pid, "lstart") == started
+        and process_executable(pid) == executable
+    )
+
+
+def quiesce_helper(app: Path, *, timeout: float = 10) -> None:
+    """Retire the owned app, never another app or a reused process ID."""
+    identities = helper_processes(app)
+    for pid, identity in identities.items():
+        if helper_process_matches(pid, identity):
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline and any(
+        helper_process_matches(pid, identity) for pid, identity in identities.items()
+    ):
+        time.sleep(0.1)
+    for pid, identity in identities.items():
+        if helper_process_matches(pid, identity):
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+    deadline = time.monotonic() + 2
+    while helper_processes(app):
+        if time.monotonic() >= deadline:
+            raise RuntimeError_("The installed Viventium helper did not stop; its bundle was preserved")
+        time.sleep(0.1)
+
+
+
+def move_helper_bundle(source: Path, destination: Path) -> None:
+    """Darwin needs root write permission to move a sealed directory across parents."""
+    metadata = source.lstat()
+    if (not stat.S_ISDIR(metadata.st_mode) or metadata.st_uid != os.getuid()):
+        raise RuntimeError_("Helper move found an unsafe application directory")
+    mode = stat.S_IMODE(metadata.st_mode)
+    restore_mode = not mode & stat.S_IWUSR
+    moved = False
+    try:
+        if restore_mode:
+            source.chmod(mode | stat.S_IWUSR)
+        os.replace(source, destination)
+        moved = True
+    finally:
+        if restore_mode:
+            (destination if moved else source).chmod(mode)
+
+
 def install_helper(source: Path, support: Path) -> Path | None:
     validate_support_children(support)
     ensure_support_directories(support, "state")
@@ -691,30 +1222,66 @@ def install_helper(source: Path, support: Path) -> Path | None:
         if helper_owner(staged) is None:
             raise RuntimeError_("Staged helper ownership verification failed")
         if target.exists():
-            os.replace(target, backup)
+            quiesce_helper(target)
+            move_helper_bundle(target, backup)
             moved_prior = True
-        os.replace(staged, target)
+        move_helper_bundle(staged, target)
         if helper_owner(target) is None:
             raise RuntimeError_("Activated helper ownership verification failed")
         return backup if moved_prior else None
     except Exception:
+        # The verified payload is immutable; copied bundle directories retain that mode.
+        # Reuse its owner-checked removal so cleanup cannot hide the activation failure.
+        from native_payload import _remove_verified_tree
         if staged.exists():
-            shutil.rmtree(staged)
+            _remove_verified_tree(staged)
         if moved_prior and backup.exists():
             if target.exists():
                 if helper_owner(target) is not None and helper_tree_is_safe(target):
-                    shutil.rmtree(target)
+                    _remove_verified_tree(target)
                 else:
                     raise RuntimeError_("Helper activation failed and an unrelated app now occupies the target; prior helper remains backed up")
-            os.replace(backup, target)
+            move_helper_bundle(backup, target)
         raise
 
 
 def rollback_helper(target: Path, backup: Path | None) -> None:
-    if target.exists() and helper_owner(target) is not None and helper_tree_is_safe(target):
-        shutil.rmtree(target)
+    if target.exists() or target.is_symlink():
+        if helper_owner(target) is None or not helper_tree_is_safe(target):
+            raise RuntimeError_("Helper rollback found an unrelated application; the prior helper remains backed up")
+        from native_payload import _remove_verified_tree
+        quiesce_helper(target)
+        _remove_verified_tree(target)
     if backup is not None and backup.exists():
-        os.replace(backup, target)
+        move_helper_bundle(backup, target)
+
+
+def native_helper_config(support: Path, root: Path) -> dict[str, object] | None:
+    path = support / "helper-config.json"
+    if not path.exists() and not path.is_symlink():
+        return None
+    try:
+        config = json.loads(read_private_secret_file(path))
+    except (RuntimeError_, json.JSONDecodeError) as error:
+        raise RuntimeError_("Existing helper configuration is invalid") from error
+    if not isinstance(config, dict):
+        raise RuntimeError_("Existing helper configuration is invalid")
+    if config.get("nativeRuntime") is not True:
+        return None
+    if config.get("repoRoot") != str(root) or config.get("appSupportDir") != str(support):
+        raise RuntimeError_("The helper belongs to another runtime; its state was preserved")
+    return config
+
+
+def set_helper_desired_state(support: Path, config: dict[str, object], desired: str) -> None:
+    supervision = config.get("runtimeSupervision")
+    supervision = dict(supervision) if isinstance(supervision, dict) else {}
+    supervision.update({
+        "schemaVersion": 1, "desiredState": desired, "consecutiveLaunchAttempts": 0,
+        "nextLaunchAttemptAt": None, "healthySince": None,
+    })
+    config["runtimeSupervision"] = supervision
+    write_atomic(support / "helper-config.json", json.dumps(config, sort_keys=True, separators=(",", ":")) + "\n")
 
 
 def ensure_first_admin_state(support: Path) -> dict[str, object]:
@@ -759,13 +1326,21 @@ def require_closed_admin_user_id(first_admin: dict[str, object]) -> str:
     return admin_user_id
 
 
-def install(args: argparse.Namespace, *, _lock_held: bool = False) -> None:
+def install(args: argparse.Namespace) -> None:
     support = lexical_support(args.app_support_dir)
-    if not _lock_held:
-        with lifecycle_lock(support):
-            install(args, _lock_held=True)
-        return
+    with lifecycle_lock(support):
+        complete = prepare_install(args, support)
+    complete()
+
+
+def prepare_install(args: argparse.Namespace, support: Path) -> Callable[[], None]:
+    """Prepare under the lifecycle lock; the app must start after it is released."""
     root = release_root()
+    uses_helper = not args.local_qa and not args.no_helper
+    if uses_helper and support != lexical_support(default_support()):
+        raise RuntimeError_("The installed app requires canonical Application Support; use --local-qa or --no-helper for an isolated runtime")
+    if uses_helper and not (root / "apps" / "Viventium.app").is_dir():
+        raise RuntimeError_("The packaged Viventium helper is missing")
     packaged_health(root)
     validate_support_children(support)
     refuse_cross_mode_install(support)
@@ -775,6 +1350,8 @@ def install(args: argparse.Namespace, *, _lock_held: bool = False) -> None:
     if not args.no_start:
         preflight_service_ports(support, root)
         preexisting_services = guard_pid_snapshot(support, root)
+        if uses_helper and any(preexisting_services.values()):
+            raise RuntimeError_("Native app setup requires stopped services; use the supported Bootstrap update to stop and replace the owned runtime")
     ensure_support_directories(support, "logs", "runtime", "state", "data/mongodb", "backups")
     prepare_data_schema(support, root)
 
@@ -783,7 +1360,7 @@ def install(args: argparse.Namespace, *, _lock_held: bool = False) -> None:
         shutil.copyfile(root / "runtime" / "defaults" / "config.yaml", config)
         config.chmod(0o600)
     runtime_secrets(support)
-    first_admin = ensure_first_admin_state(support)
+    ensure_first_admin_state(support)
     packaged_runtime_env = root / "runtime" / "defaults" / "native-runtime.env"
     load_native_runtime_env(packaged_runtime_env)
     write_atomic(
@@ -794,59 +1371,136 @@ def install(args: argparse.Namespace, *, _lock_held: bool = False) -> None:
     helper_source = root / "apps" / "Viventium.app"
     helper_target = user_home() / "Applications" / "Viventium.app"
     helper_backup: Path | None = None
+    helper_installed = False
+    state_written = False
+    installation_id = uuid.uuid4().hex
+    helper_was_running = bool(helper_processes(helper_target)) if uses_helper else False
     previous_state_path = support / "state" / "native-runtime.json"
     previous_state = previous_state_path.read_bytes() if previous_state_path.is_file() else None
-    if not args.local_qa and not args.no_helper and helper_source.is_dir():
-        helper_backup = install_helper(helper_source, support)
-        helper_config = {
-            "repoRoot": str(root),
-            "appSupportDir": str(support),
-            "allowProtectedRepoRoot": True,
-            "showInStatusBar": True,
-            "nativeRuntime": True,
-        }
-        write_atomic(
-            support / "helper-config.json",
-            json.dumps(helper_config, sort_keys=True, separators=(",", ":")) + "\n",
-        )
-    state = {
-        "schema_version": 1,
-        "release_root": str(root),
-        "installed_at": int(time.time()),
-        "local_qa": bool(args.local_qa),
-    }
-    write_atomic(
-        support / "state" / "native-runtime.json",
-        json.dumps(state, sort_keys=True, separators=(",", ":")) + "\n",
-    )
-    try:
-        if not args.no_start:
-            start(args, _lock_held=True)
-            health(type("HealthArgs", (), {"app_support_dir": support, "installed_only": False})())
-        if not args.local_qa and not args.no_helper:
-            subprocess.run(["/usr/bin/open", "-gj", str(helper_target)], check=False)
-        if not args.no_start and not args.no_open:
-            path = "__viventium_native_first_admin" if first_admin["status"] == "open" else ""
-            token = f"?token={first_admin['token']}" if first_admin["status"] == "open" else ""
-            subprocess.run(["/usr/bin/open", f"http://127.0.0.1:3190/{path}{token}"], check=False)
-    except BaseException:
+    helper_config_path = support / "helper-config.json"
+    previous_helper_config = None
+    helper_config: dict[str, object] = {}
+    if uses_helper and (helper_config_path.exists() or helper_config_path.is_symlink()):
+        try:
+            previous_helper_config = read_private_secret_file(helper_config_path)
+            helper_config = json.loads(previous_helper_config)
+        except (RuntimeError_, json.JSONDecodeError) as error:
+            raise RuntimeError_("Existing helper configuration is invalid") from error
+        if not isinstance(helper_config, dict):
+            raise RuntimeError_("Existing helper configuration is invalid")
+
+    def rollback_attempt() -> None:
+        if state_written and runtime_state(support).get("installation_id") != installation_id:
+            raise RuntimeError_("Native installation changed during setup; a newer installation was preserved")
+        # Retire the candidate supervisor before restoring state or stopping its
+        # services, otherwise it can start the failed candidate again.
+        if helper_installed:
+            quiesce_helper(helper_target)
         if not args.no_start:
             stop_attempt_services(support, root, preexisting_services)
-        if not args.local_qa and not args.no_helper:
+        if helper_installed:
             rollback_helper(helper_target, helper_backup)
+            if previous_helper_config is None:
+                helper_config_path.unlink(missing_ok=True)
+            else:
+                write_atomic(helper_config_path, previous_helper_config)
         if previous_state is None:
             previous_state_path.unlink(missing_ok=True)
         else:
             write_atomic(previous_state_path, previous_state.decode("utf-8"))
+
+    try:
+        if uses_helper:
+            helper_backup = install_helper(helper_source, support)
+            helper_installed = True
+            # Keep setup acknowledgement and future preferences in their owning
+            # config, while binding launch identity and the requested run intent.
+            helper_config.update({
+                "repoRoot": str(root),
+                "appSupportDir": str(support),
+                "allowProtectedRepoRoot": True,
+                "nativeRuntime": True,
+            })
+            helper_config.setdefault("showInStatusBar", True)
+            supervision = helper_config.get("runtimeSupervision")
+            supervision = dict(supervision) if isinstance(supervision, dict) else {}
+            supervision.update({
+                "schemaVersion": 1,
+                "desiredState": "stopped" if args.no_start else "running",
+                "consecutiveLaunchAttempts": 0,
+                "nextLaunchAttemptAt": None,
+                "healthySince": None,
+            })
+            helper_config["runtimeSupervision"] = supervision
+            write_atomic(helper_config_path, json.dumps(helper_config, sort_keys=True, separators=(",", ":")) + "\n")
+        state = {
+            "schema_version": 1,
+            "installation_id": installation_id,
+            "release_root": str(root),
+            "installed_at": int(time.time()),
+            "local_qa": bool(args.local_qa),
+        }
+        write_atomic(previous_state_path, json.dumps(state, sort_keys=True, separators=(",", ":")) + "\n")
+        state_written = True
+    except BaseException:
+        rollback_attempt()
+        if helper_was_running:
+            subprocess.run(["/usr/bin/open", "-gj", str(helper_target)], check=False, timeout=10)
         raise
-    print(f"Viventium Native installed at {root}")
+
+    def complete_install() -> None:
+        health_args = type("HealthArgs", (), {"app_support_dir": support, "installed_only": False})()
+        try:
+            if runtime_state(support).get("installation_id") != installation_id:
+                raise RuntimeError_("Native installation changed before startup")
+            if uses_helper:
+                # LaunchServices establishes the persistent app as responsible
+                # code. Its existing native CLI path owns guarded child startup.
+                subprocess.run(["/usr/bin/open", "-gj", str(helper_target)], check=True, timeout=10)
+                if not args.no_start:
+                    deadline = time.monotonic() + args.timeout
+                    while True:
+                        try:
+                            health(health_args)
+                            break
+                        except RuntimeError_:
+                            if time.monotonic() >= deadline:
+                                raise
+                            time.sleep(0.25)
+            elif not args.no_start:
+                # Explicit headless/no-helper QA keeps its existing direct path;
+                # it does not prove installed-app computer permissions.
+                with lifecycle_lock(support):
+                    if runtime_state(support).get("installation_id") != installation_id:
+                        raise RuntimeError_("Native installation changed before startup")
+                    start(args, _lock_held=True)
+                    health(health_args)
+            with lifecycle_lock(support):
+                if runtime_state(support).get("installation_id") != installation_id:
+                    raise RuntimeError_("Native installation changed before completion")
+                if not args.no_start and not args.no_open:
+                    first_admin = ensure_first_admin_state(support)
+                    path = "__viventium_native_first_admin" if first_admin["status"] == "open" else ""
+                    token = f"?token={first_admin['token']}" if first_admin["status"] == "open" else ""
+                    subprocess.run(["/usr/bin/open", f"http://127.0.0.1:3190/{path}{token}"], check=False)
+                print(f"Viventium Native installed at {root}")
+        except BaseException:
+            with lifecycle_lock(support):
+                rollback_attempt()
+            if helper_was_running and helper_backup is not None:
+                subprocess.run(["/usr/bin/open", "-gj", str(helper_target)], check=False, timeout=10)
+            raise
+
+    return complete_install
 
 
 def refuse_cross_mode_install(support: Path) -> None:
     runtime_env = support / "runtime" / "runtime.env"
     native_state = support / "state" / "native-runtime.json"
     if native_state.exists() or native_state.is_symlink():
-        installed_release_root(support)
+        previous = Path(str(runtime_state(support).get("release_root", ""))).resolve()
+        if previous != release_root():
+            validate_bootstrap_replacement(support)
     native_owned = native_state.is_file() or data_schema_state_path(support).is_file()
     if runtime_env.is_file():
         values = runtime_env.read_text(encoding="utf-8", errors="replace").splitlines()
@@ -873,6 +1527,40 @@ def refuse_cross_mode_install(support: Path) -> None:
         raise RuntimeError_(
             "Established non-Native App Support requires a reviewed source/Docker-to-Native migration; refusing to overwrite runtime.env or present empty history"
         )
+
+
+def validate_bootstrap_replacement(support: Path) -> None:
+    """Let the verified Bootstrap target replace prior state only during activation."""
+    root = release_root()
+    install_root = support / "native"
+    if root.parent != (install_root / "releases").resolve() or root.is_symlink():
+        raise RuntimeError_("Installed release pointer does not match this payload")
+    import native_payload
+
+    try:
+        for relative in ("native", "native/releases", "native/state", "native/state/native-installer"):
+            validate_existing_private_directory(support / relative)
+        active = native_payload._read_pointer(install_root / "active", install_root / "releases")
+        if active != root or root.is_symlink():
+            raise RuntimeError_("Installed release pointer does not match this payload")
+        # Reuse the installer's transaction schema; require its existing private-file boundary.
+        read_private_secret_file(native_payload._pending_activation_path(install_root))
+        pending = native_payload._read_pending_activation(install_root)
+        if not pending or pending["phase"] != "pointer_switched" or pending["candidateReleaseKey"] != root.name:
+            raise RuntimeError_("Native install has no matching Bootstrap activation")
+        manifest = root / ".viventium-manifest.json"
+        descriptor = os.open(manifest, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        with os.fdopen(descriptor, "rb") as stream:
+            metadata = os.fstat(stream.fileno())
+            if (not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.getuid()
+                    or metadata.st_nlink != 1 or metadata.st_mode & 0o222
+                    or metadata.st_size > native_payload.MAX_MANIFEST_BYTES):
+                raise RuntimeError_("Native activation manifest is unsafe")
+            digest = hashlib.file_digest(stream, "sha256").hexdigest()
+        if digest != pending["manifestSha256"]:
+            raise RuntimeError_("Native activation manifest does not match this payload")
+    except (native_payload.PayloadError, OSError) as error:
+        raise RuntimeError_("Native Bootstrap activation is unavailable or unsafe") from error
 
 
 def pid_path(support: Path, service: str) -> Path:
@@ -1129,6 +1817,10 @@ def assert_native_restore_quiesced(
     socket_paths = [
         native_api_socket_path(support),
         mongodb_socket_path(support),
+        native_glasshive_socket_path(support),
+        native_glasshive_mcp_socket_path(support),
+        native_scheduling_socket_path(support),
+        native_redis_socket_path(support),
         support / "runtime" / f"nr-{transaction_id[:8]}.sock",
     ]
     if any(unix_socket_pids(path) for path in socket_paths):
@@ -1144,7 +1836,7 @@ def assert_native_snapshot_capture_state(support: Path, root: Path) -> None:
     mongo_guard = require_owned_service("mongodb", support, root)
     if any(listener_pids(port) for port in SERVICE_PORTS["frontend-proxy"]) or unix_socket_pids(
         native_api_socket_path(support)
-    ):
+    ) or unix_socket_pids(native_glasshive_socket_path(support)) or unix_socket_pids(native_glasshive_mcp_socket_path(support)) or unix_socket_pids(native_scheduling_socket_path(support)) or unix_socket_pids(native_redis_socket_path(support)):
         raise RuntimeError_("Native snapshot could not quiesce web writes")
     mongo_listeners = unix_socket_pids(mongodb_socket_path(support))
     if not listeners_owned_by_guard(mongo_listeners, mongo_guard):
@@ -1155,7 +1847,7 @@ def assert_native_snapshot_capture_state(support: Path, root: Path) -> None:
 
 def validate_coherent_service_state(snapshot: dict[str, int | None]) -> set[str]:
     running = {name for name, pid in snapshot.items() if pid is not None}
-    allowed = [set(), {"mongodb"}, set(SERVICE_ORDER)]
+    allowed = [set(), {"mongodb"}, *complete_service_states()]
     if running not in allowed:
         raise RuntimeError_("Native runtime service state is inconsistent; repair it before continuity work")
     return running
@@ -1169,12 +1861,15 @@ def restore_exact_service_state(
     timeout: float,
 ) -> None:
     wanted = validate_coherent_service_state(prior)
-    if wanted == set(SERVICE_ORDER):
+    if wanted in complete_service_states():
         start(
             type("StartArgs", (), {"app_support_dir": support, "timeout": timeout})(),
             _lock_held=True,
             _allow_pending_restore=True,
         )
+        for service in ("scheduling", "glasshive-mcp", "glasshive", "redis"):
+            if service not in wanted:
+                stop_service(service, support, root)
     elif wanted == {"mongodb"}:
         if owned_mongodb_socket_pid(support, root) is None:
             # start() is the only supported dependency-aware launcher; converge
@@ -1184,11 +1879,9 @@ def restore_exact_service_state(
                 _lock_held=True,
                 _allow_pending_restore=True,
             )
-        stop_service("frontend-proxy", support, root)
-        stop_service("librechat", support, root)
+        stop_services(("scheduling", "frontend-proxy", "librechat", "glasshive-mcp", "glasshive", "redis"), support, root)
     else:
-        for service in reversed(SERVICE_ORDER):
-            stop_service(service, support, root)
+        stop_services(reversed(SERVICE_ORDER), support, root)
     observed = guard_pid_snapshot(support, root)
     if {name for name, pid in observed.items() if pid is not None} != wanted:
         raise RuntimeError_("Native continuity could not restore the exact prior service state")
@@ -1376,10 +2069,18 @@ def owned_listener_pid(service: str, support: Path, root: Path) -> int | None:
 
 
 def owned_service_pid(service: str, support: Path, root: Path) -> int | None:
+    if service == "redis":
+        return owned_private_socket_pid(support, root, service=service, path=native_redis_socket_path(support), label="Redis")
     if service == "mongodb":
         return owned_mongodb_socket_pid(support, root)
     if service == "librechat":
         return owned_api_socket_pid(support, root)
+    if service == "scheduling":
+        return owned_private_socket_pid(support, root, service=service, path=native_scheduling_socket_path(support), label="Scheduling")
+    if service == "glasshive":
+        return owned_private_socket_pid(support, root, service=service, path=native_glasshive_socket_path(support), label="GlassHive")
+    if service == "glasshive-mcp":
+        return owned_private_socket_pid(support, root, service=service, path=native_glasshive_mcp_socket_path(support), label="GlassHive MCP")
     return owned_listener_pid(service, support, root)
 
 
@@ -1408,11 +2109,10 @@ def stop_attempt_services(
     attempted: set[str] | None = None,
 ) -> None:
     """Drain only guards that were not present before this lifecycle attempt."""
-    for service in reversed(SERVICE_ORDER):
-        if preexisting.get(service) is None and (
-            attempted is None or service in attempted
-        ):
-            stop_service(service, support, root)
+    stop_services([
+        service for service in reversed(SERVICE_ORDER)
+        if preexisting.get(service) is None and (attempted is None or service in attempted)
+    ], support, root)
 
 
 def spawn(service: str, command: list[str], support: Path, *, cwd: Path, env: dict[str, str]) -> None:
@@ -1550,15 +2250,18 @@ def semantic_http_ready(
         return False
 
 
-def semantic_unix_http_ready(path: Path, request_path: str = "/api/config") -> bool:
+def semantic_unix_http_ready(path: Path, request_path: str = "/api/config", expected_json: dict[str, object] | None = None, *, bearer_token: str | None = None) -> bool:
     if not request_path.startswith("/") or "\r" in request_path or "\n" in request_path:
         return False
+    if bearer_token is not None and re.fullmatch(r"[0-9a-f]{64}", bearer_token) is None:
+        return False
+    authorization = f"Authorization: Bearer {bearer_token}\r\n" if bearer_token else ""
     try:
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
             connection.settimeout(1)
             connection.connect(str(path))
             connection.sendall(
-                f"GET {request_path} HTTP/1.0\r\nHost: localhost\r\nConnection: close\r\n\r\n".encode(
+                f"GET {request_path} HTTP/1.0\r\nHost: localhost\r\n{authorization}Connection: close\r\n\r\n".encode(
                     "ascii"
                 )
             )
@@ -1568,10 +2271,71 @@ def semantic_unix_http_ready(path: Path, request_path: str = "/api/config") -> b
                 if not chunk:
                     break
                 status_line += chunk
+            if expected_json is not None:
+                while len(status_line) <= 1024 * 1024:
+                    chunk = connection.recv(65536)
+                    if not chunk:
+                        break
+                    status_line += chunk
+                if len(status_line) > 1024 * 1024 or b"\r\n\r\n" not in status_line:
+                    return False
+                body = json.loads(status_line.split(b"\r\n\r\n", 1)[1])
+                if not isinstance(body, dict) or any(body.get(key) != value for key, value in expected_json.items()):
+                    return False
         match = re.match(rb"HTTP/1\.[01] ([1-5][0-9]{2}) ", status_line)
         return match is not None and int(match.group(1)) < 500
-    except OSError:
+    except (OSError, ValueError):
         return False
+
+
+def wait_owned_glasshive_socket(support: Path, root: Path, timeout: float, *, mcp: bool = False) -> bool:
+    deadline = time.monotonic() + timeout
+    path = native_glasshive_mcp_socket_path(support) if mcp else native_glasshive_socket_path(support)
+    token = native_glasshive_transport_environment(root, support)["GLASSHIVE_MCP_API_KEY"] if mcp else None
+    metadata = build_metadata(root)
+    expected = {"status": "ok", "release": {
+        "release_id": metadata["source_commit"], "parent_revision": metadata["source_commit"],
+        "glasshive_revision": metadata["components"]["glasshive"]["commit"],
+    }}
+    while time.monotonic() < deadline:
+        pid = owned_service_pid("glasshive-mcp" if mcp else "glasshive", support, root)
+        if pid is not None:
+            if not process_group_tcp_listener_pids(pid) and semantic_unix_http_ready(path, "/health", expected, **({"bearer_token": token} if mcp else {})):
+                return True
+        time.sleep(0.1)
+    return False
+
+
+def wait_owned_scheduling_socket(support: Path, root: Path, timeout: float) -> bool:
+    deadline = time.monotonic() + timeout
+    expected = {"status": "ok", "service": "scheduling-cortex", "runtime_profile": "native",
+                "db_path_sha256": hashlib.sha256(str(support / "state/runtime/native/scheduling/schedules.db").encode()).hexdigest()}
+    while time.monotonic() < deadline:
+        pid = owned_service_pid("scheduling", support, root)
+        if pid is not None and not process_group_tcp_listener_pids(pid) and semantic_unix_http_ready(
+            native_scheduling_socket_path(support), "/health", expected
+        ):
+            return True
+        time.sleep(0.1)
+    return False
+
+
+def wait_owned_redis_socket(support: Path, root: Path, timeout: float) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        pid = owned_service_pid("redis", support, root)
+        if pid is not None and not process_group_tcp_listener_pids(pid):
+            try:
+                with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
+                    connection.settimeout(1)
+                    connection.connect(str(native_redis_socket_path(support)))
+                    connection.sendall(b"*1\r\n$4\r\nPING\r\n")
+                    if connection.recv(64) == b"+PONG\r\n":
+                        return True
+            except OSError:
+                pass
+        time.sleep(0.1)
+    return False
 
 
 def wait_owned_api_socket(support: Path, root: Path, timeout: float) -> bool:
@@ -1792,6 +2556,16 @@ def start(
     root = Path(str(state["release_root"])).resolve()
     if root != release_root():
         raise RuntimeError_("Installed release pointer does not match this payload")
+    helper_config = native_helper_config(support, root)
+    if getattr(args, "respect_stopped", False):
+        if helper_config is None:
+            raise RuntimeError_("The installed helper configuration is unavailable")
+        supervision = helper_config.get("runtimeSupervision")
+        if isinstance(supervision, dict) and supervision.get("desiredState") == "stopped":
+            print("Viventium remains stopped")
+            return
+    elif helper_config is not None:
+        set_helper_desired_state(support, helper_config, "running")
     packaged_health(root)
     if not _allow_pending_restore:
         recover_native_restore_before_lifecycle(support, root)
@@ -1800,16 +2574,23 @@ def start(
     preflight_service_ports(support, root)
     preflight_mongodb_socket(support, root)
     preflight_api_socket(support, root)
+    if "redis" in release_services(root):
+        preflight_private_socket(support, root, service="redis", path=native_redis_socket_path(support), label="Redis")
     preexisting = guard_pid_snapshot(support, root)
     attempted: set[str] = set()
     try:
         first_admin = ensure_first_admin_state(support)
         mongo_uri = mongodb_uri(support)
         env = native_child_environment(support)
-        env.update(runtime_secrets(support))
+        env.update(runtime_secrets(support, create=False))
+        env.update(native_glasshive_transport_environment(root, support))
+        env.update(native_scheduling_environment(root, support))
+        env.update(native_redis_environment(root, support))
         env.update(
             {
                 "NODE_ENV": "production",
+                "VIVENTIUM_NATIVE_NODE_BINARY": str(root / "runtime/node/bin/node"),
+                "VIVENTIUM_NATIVE_SEQUENTIAL_THINKING_ENTRYPOINT": str(root / "runtime/sequential-thinking/node_modules/@modelcontextprotocol/server-sequential-thinking/dist/index.js"),
                 "NODE_OPTIONS": "--max-old-space-size=1024",
                 "HOST": "127.0.0.1",
                 "PORT": "3180",
@@ -1848,6 +2629,7 @@ def start(
                 "--port", "27117",
                 "--nounixsocket",
                 "--filePermissions", "0600",
+                "--replSet", "vivenNative",
                 "--dbpath", str(support / "data" / "mongodb"),
                 "--wiredTigerCacheSizeGB", "0.5",
                 "--quiet",
@@ -1860,7 +2642,21 @@ def start(
             attempted.add("mongodb")
         if not wait_owned_mongodb_socket(support, root, args.timeout):
             raise RuntimeError_("Bundled MongoDB did not become ready")
+        if "redis" in release_services(root):
+            ensure_support_directories(support, "state/runtime/native/continuity/redis")
+            spawn("redis", native_redis_command(root, support), support, cwd=support, env=env)
+            if preexisting["redis"] is None:
+                attempted.add("redis")
+            if not wait_owned_redis_socket(support, root, args.timeout):
+                raise RuntimeError_("Bundled Redis did not become ready")
         librechat = root / "runtime" / "librechat"
+        run_native_maintenance(
+            "mongodb-replica-ready",
+            [str(root / "runtime/node/bin/node"), str(root / "runtime/scripts/native_mongodb_replica.js"),
+             str(librechat), str(mongodb_socket_path(support)), str(args.timeout)],
+            support, cwd=librechat, env=env, required_service="mongodb", root=root,
+            public_failure_message="Native MongoDB transaction readiness did not complete",
+        )
         run_native_maintenance(
             "first-admin-recovery",
             [
@@ -1885,6 +2681,32 @@ def start(
         first_admin = ensure_first_admin_state(support)
         env["ALLOW_REGISTRATION"] = "true" if first_admin["status"] == "open" else "false"
         maintain_native_identity(root, support, env, first_admin)
+        if "glasshive" in release_services(root):
+            try:
+                preflight_private_socket(support, root, service="glasshive", path=native_glasshive_socket_path(support), label="GlassHive")
+                spawn("glasshive", glasshive_server_command(root, support), support, cwd=root,
+                      env=native_glasshive_environment(root, support))
+                if preexisting.get("glasshive") is None:
+                    attempted.add("glasshive")
+                if not wait_owned_glasshive_socket(support, root, args.timeout):
+                    raise RuntimeError_("Bundled GlassHive did not become ready")
+                if "glasshive-mcp" in release_services(root):
+                    preflight_private_socket(support, root, service="glasshive-mcp", path=native_glasshive_mcp_socket_path(support), label="GlassHive MCP")
+                    spawn("glasshive-mcp", glasshive_mcp_server_command(root, support), support, cwd=root,
+                          env=native_glasshive_environment(root, support))
+                    if preexisting.get("glasshive-mcp") is None:
+                        attempted.add("glasshive-mcp")
+                    if not wait_owned_glasshive_socket(support, root, args.timeout, mcp=True):
+                        raise RuntimeError_("Bundled GlassHive MCP did not become ready")
+            except (RuntimeError_, OSError) as error:
+                if native_body_paths(root):
+                    raise
+                if preexisting.get("glasshive") is None:
+                    try:
+                        stop_service("glasshive", support, root)
+                    except (RuntimeError_, OSError) as cleanup_error:
+                        error = RuntimeError_(f"{error}; {cleanup_error}")
+                print(f"GlassHive needs repair: {error}", file=sys.stderr)
         spawn(
             "librechat",
             [str(root / "runtime" / "node" / "bin" / "node"), "api/server/index.js"],
@@ -1925,6 +2747,15 @@ def start(
             expected_sha256=sandpack_index_sha256,
         ):
             raise RuntimeError_("Native isolated artifact runtime did not become ready")
+        if "scheduling" in release_services(root):
+            preflight_private_socket(support, root, service="scheduling", path=native_scheduling_socket_path(support), label="Scheduling")
+            spawn("scheduling", scheduling_server_command(root, support), support, cwd=root,
+                  env={**env, "HOME": str(support / "runtime/scheduling-home"),
+                       "VIVENTIUM_PRIVATE_USER_DATA_DIR": str(support / "private-user-data")})
+            if preexisting.get("scheduling") is None:
+                attempted.add("scheduling")
+            if not wait_owned_scheduling_socket(support, root, args.timeout):
+                raise RuntimeError_("Bundled Scheduling Cortex did not become ready")
     except BaseException:
         stop_attempt_services(support, root, preexisting, attempted)
         raise
@@ -1951,13 +2782,29 @@ def stop_service(service: str, support: Path, root: Path) -> None:
     socket_path = {
         "librechat": native_api_socket_path(support),
         "mongodb": mongodb_socket_path(support),
+        "glasshive": native_glasshive_socket_path(support),
+        "glasshive-mcp": native_glasshive_mcp_socket_path(support),
+        "scheduling": native_scheduling_socket_path(support),
+        "redis": native_redis_socket_path(support),
     }.get(service)
     if socket_path is not None:
-        label = "API" if service == "librechat" else "MongoDB"
+        label = {"librechat": "API", "mongodb": "MongoDB", "glasshive": "GlassHive", "glasshive-mcp": "GlassHive MCP", "scheduling": "Scheduling", "redis": "Redis"}[service]
         if private_socket_metadata(socket_path, label) is not None and not unix_socket_pids(
             socket_path
         ):
             socket_path.unlink()
+
+
+def stop_services(services: Iterable[str], support: Path, root: Path) -> None:
+    """Drain every selected owned guard even if another service cannot clean up."""
+    failures = []
+    for service in services:
+        try:
+            stop_service(service, support, root)
+        except (RuntimeError_, OSError) as error:
+            failures.append(f"{service}: {error}")
+    if failures:
+        raise RuntimeError_("Native service cleanup is incomplete: " + "; ".join(failures))
 
 
 def stop(args: argparse.Namespace, *, _lock_held: bool = False) -> None:
@@ -1968,10 +2815,18 @@ def stop(args: argparse.Namespace, *, _lock_held: bool = False) -> None:
         return
     validate_support_children(support)
     root = installed_release_root(support, allow_missing=True)
+    helper_config = native_helper_config(support, root)
+    if helper_config is not None:
+        # A menu Stop already changed the live controller's desired state. Keep
+        # its Start control alive; external CLI/Bootstrap stops retire the exact
+        # app before saving stopped intent so cached supervision cannot overwrite
+        # it. Already-submitted starts must acquire this same lifecycle lock.
+        if os.environ.get("VIVENTIUM_HELPER_STOP_BACKGROUND_NATIVE") != "1" and support == lexical_support(default_support()):
+            quiesce_helper(user_home() / "Applications" / "Viventium.app")
+        set_helper_desired_state(support, helper_config, "stopped")
     if native_restore_journal_path(support).exists() or native_restore_journal_path(support).is_symlink():
         recover_native_restore_before_lifecycle(support, root)
-    for service in ("frontend-proxy", "librechat", "mongodb"):
-        stop_service(service, support, root)
+    stop_services(reversed(SERVICE_ORDER), support, root)
 
 
 def registration_close(args: argparse.Namespace) -> None:
@@ -2000,12 +2855,20 @@ def health(args: argparse.Namespace) -> None:
     state_path = support / "state" / "native-runtime.json"
     if not state_path.exists():
         return
-    for service in SERVICE_ORDER:
+    for service in release_services(root):
         owned = owned_service_pid(service, support, root)
         if owned is None:
             raise RuntimeError_(f"Native service is not running: {service}")
     if not semantic_unix_http_ready(native_api_socket_path(support), "/api/health"):
         raise RuntimeError_("Native LibreChat API did not pass its semantic health probe")
+    if "redis" in release_services(root) and not wait_owned_redis_socket(support, root, 1):
+        raise RuntimeError_("Bundled Redis is not ready")
+    if "scheduling" in release_services(root) and not wait_owned_scheduling_socket(support, root, 1):
+        raise RuntimeError_("Bundled Scheduling Cortex is not ready")
+    if "glasshive" in release_services(root) and not wait_owned_glasshive_socket(support, root, 1):
+        raise RuntimeError_("Native GlassHive did not pass its owned health probe")
+    if "glasshive-mcp" in release_services(root) and not wait_owned_glasshive_socket(support, root, 1, mcp=True):
+        raise RuntimeError_("Native GlassHive MCP did not pass its owned health probe")
     metadata = build_metadata(root)
     release_id = str(metadata["source_commit"])
     sandpack_index_sha256 = str(metadata["sandpack_index_sha256"])
@@ -2028,7 +2891,7 @@ def status(args: argparse.Namespace) -> None:
     root = release_root()
     result = {
         service: owned_service_pid(service, support, root)
-        for service in SERVICE_ORDER
+        for service in release_services(root)
     }
     print(json.dumps(result, sort_keys=True))
     if not all(result.values()):
@@ -2088,7 +2951,7 @@ def password_reset_link(args: argparse.Namespace, *, _lock_held: bool = False) -
         _lock_held=True,
     )
     environment = native_child_environment(support)
-    environment.update(runtime_secrets(support))
+    environment.update(runtime_secrets(support, create=False))
     mongo_uri = mongodb_uri(support)
     environment.update(
         {
@@ -2138,6 +3001,7 @@ NATIVE_RESTORE_ROOTS = (
     "data/uploads",
     "state/runtime/native/scheduling",
     "state/runtime/native/continuity",
+    "state/runtime/native/glasshive",
 )
 NATIVE_RESTORE_LABELS = {
     "config.yaml": "config",
@@ -2145,6 +3009,7 @@ NATIVE_RESTORE_LABELS = {
     "data/uploads": "uploads",
     "state/runtime/native/scheduling": "schedules",
     "state/runtime/native/continuity": "continuity",
+    "state/runtime/native/glasshive": "glasshive",
 }
 SAFE_NATIVE_TRANSACTION = re.compile(r"^[0-9a-f]{32}$")
 SAFE_NATIVE_RELEASE = re.compile(r"^[0-9a-f]{40}$")
@@ -2368,7 +3233,7 @@ def validate_owner_private_tree(
     return size, entries
 
 
-def make_tree_owner_private(path: Path) -> None:
+def make_tree_owner_private(path: Path, *, preserve_user_execute: bool = False) -> None:
     if not path.exists() or path.is_symlink():
         return
     for current, directories, files in os.walk(path, topdown=False, followlinks=False):
@@ -2378,7 +3243,7 @@ def make_tree_owner_private(path: Path) -> None:
             metadata = child.lstat()
             if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
                 raise RuntimeError_("Native restore staging tree contains an unsafe entry")
-            child.chmod(0o600)
+            child.chmod(0o700 if preserve_user_execute and metadata.st_mode & stat.S_IXUSR else 0o600)
         for name in directories:
             child = current_path / name
             metadata = child.lstat()
@@ -2616,7 +3481,7 @@ def read_native_restore_journal(support: Path, *, release_identity: str) -> dict
         != [service for service in SERVICE_ORDER if service in prior_services]
         or len(set(prior_services)) != len(prior_services)
         or set(prior_services)
-        not in (set(), {"mongodb"}, set(SERVICE_ORDER))
+        not in (set(), {"mongodb"}, *complete_service_states())
         or not isinstance(roots, dict)
         or set(roots) != set(NATIVE_RESTORE_ROOTS)
     ):
@@ -3314,6 +4179,9 @@ def prepare_native_restore_stage(
         }
         if "canonical_config" not in artifacts or "mongo_archive" not in artifacts:
             raise RuntimeError_("Native snapshot lacks required canonical artifacts")
+        has_glasshive = "glasshive" in release_services(root)
+        if has_glasshive != ("glasshive" in domains):
+            raise RuntimeError_("Native snapshot GlassHive component coverage differs from this release; restore with the matching release before migrating")
         config_source = snapshot_input / str(artifacts["canonical_config"]["path"])
         copy_private_file(config_source, stage / "config.yaml")
         continuity.validate_artifact_content(stage / "config.yaml", "canonical_config")
@@ -3337,6 +4205,14 @@ def prepare_native_restore_stage(
 
         continuity_stage = stage / "state" / "runtime" / "native" / "continuity"
         ensure_private_directory(continuity_stage)
+        glasshive_stage = stage / "state/runtime/native/glasshive"
+        ensure_private_directory(glasshive_stage)
+        if has_glasshive:
+            continuity.extract_regular_tar(
+                snapshot_input / str(artifacts["glasshive_state_archive"]["path"]),
+                glasshive_stage, preserve_user_execute=True,
+            )
+            run_glasshive_continuity(root, support, "prepare", str(glasshive_stage), str(support / "state/runtime/native/glasshive"))
         now = int(time.time())
         write_atomic(
             continuity_stage / "recall-rebuild-required.json",
@@ -3383,7 +4259,7 @@ def prepare_native_restore_stage(
         )
         remove_owner_private_path(snapshot_input)
         fsync_existing_directories(stage)
-        make_tree_owner_private(stage)
+        make_tree_owner_private(stage, preserve_user_execute=True)
         validate_owner_private_tree(stage)
         return stage
     except BaseException:
@@ -3410,8 +4286,7 @@ def recover_native_restore_before_lifecycle(support: Path, root: Path) -> None:
         support,
         support / "runtime" / f"nr-{transaction_id[:8]}.sock",
     )
-    for service in reversed(SERVICE_ORDER):
-        stop_service(service, support, root)
+    stop_services(reversed(SERVICE_ORDER), support, root)
     if payload.get("phase") != "service_recovery_pending":
         recover_native_restore(
             support,
@@ -3439,6 +4314,7 @@ def snapshot(args: argparse.Namespace, *, _lock_held: bool = False) -> None:
     recover_native_restore_before_lifecycle(support, root)
     preexisting = guard_pid_snapshot(support, root)
     validate_coherent_service_state(preexisting)
+    glasshive_stage = None
     try:
         if owned_mongodb_socket_pid(support, root) is None:
             start(
@@ -3451,12 +4327,14 @@ def snapshot(args: argparse.Namespace, *, _lock_held: bool = False) -> None:
                 _allow_pending_restore=True,
             )
         require_owned_service("mongodb", support, root)
-        stop_service("frontend-proxy", support, root)
-        stop_service("librechat", support, root)
+        stop_services(("scheduling", "frontend-proxy", "librechat", "glasshive-mcp", "glasshive", "redis"), support, root)
         assert_native_snapshot_capture_state(support, root)
         continuity = load_continuity_module(root)
         ensure_support_directories(support, "snapshots", "data/uploads")
         metadata = build_metadata(root)
+        if "glasshive" in release_services(root):
+            glasshive_stage = support / "runtime" / f"glasshive-snapshot-{uuid.uuid4().hex}"
+            run_glasshive_continuity(root, support, "capture", str(support / "state/runtime/native/glasshive/runtime.sqlite"), str(glasshive_stage))
         result = continuity.capture_bundle(
             repo_root=root,
             app_support=support,
@@ -3467,6 +4345,7 @@ def snapshot(args: argparse.Namespace, *, _lock_held: bool = False) -> None:
             mongo_socket=mongodb_socket_path(support),
             data_schema=inspect_data_schema(support, root),
             release_identity=str(metadata["source_commit"]),
+            glasshive_state=glasshive_stage,
         )
         created = Path(str(result.get("snapshotDir", "")))
         try:
@@ -3485,6 +4364,8 @@ def snapshot(args: argparse.Namespace, *, _lock_held: bool = False) -> None:
             raise
         raise RuntimeError_(f"Native snapshot failed: {error}") from error
     finally:
+        if glasshive_stage is not None and glasshive_stage.exists():
+            remove_owner_private_path(glasshive_stage)
         restore_exact_service_state(
             support,
             root,
@@ -3533,8 +4414,7 @@ def restore(args: argparse.Namespace, *, _lock_held: bool = False) -> None:
             prior_services=preexisting,
         )
         services_quiesced = True
-        for service in reversed(SERVICE_ORDER):
-            stop_service(service, support, root)
+        stop_services(reversed(SERVICE_ORDER), support, root)
         stop_restore_mongod(
             root,
             support,
@@ -3546,6 +4426,8 @@ def restore(args: argparse.Namespace, *, _lock_held: bool = False) -> None:
             transaction_id=transaction_id,
             timeout=min(float(args.timeout), 30.0),
         )
+        if "glasshive" in release_services(root):
+            run_glasshive_continuity(root, support, "quiescent", str(support / "state/runtime/native/glasshive/runtime.sqlite"))
         activate_native_restore_state(
             support,
             stage,
@@ -3565,7 +4447,7 @@ def restore(args: argparse.Namespace, *, _lock_held: bool = False) -> None:
             desired_after_restore,
             timeout=float(args.timeout),
         )
-        if prior_running == set(SERVICE_ORDER) and not args.no_start:
+        if prior_running in complete_service_states() and not args.no_start:
             health(
                 type(
                     "HealthArgs",
@@ -3700,6 +4582,79 @@ def uninstall(args: argparse.Namespace, *, _lock_held: bool = False) -> None:
     )
 
 
+NATIVE_PARALLEL_SERVICES = ("librechat", "glasshive", "glasshive-mcp", "redis")
+
+
+def native_parallel_work_identity(support: Path) -> dict[str, object]:
+    """Bind operational Parallel Work to the existing installed Native release.
+
+    This is installed provenance, not a substitute for release acceptance. Only the
+    installer's explicitly local-QA manifest authorizes pre-release exposure here.
+    """
+    import native_payload
+
+    support = lexical_support(support)
+    reject_pending_restore_for_read(support)
+    root = installed_release_root(support)
+    state = runtime_state(support)
+    installation_id = state.get("installation_id")
+    if not isinstance(installation_id, str) or re.fullmatch(r"[0-9a-f]{32}", installation_id) is None:
+        raise RuntimeError_("Native installed identity is invalid")
+    metadata = build_metadata(root)
+    try:
+        candidate = native_payload._candidate_from_staged_release(root)
+    except native_payload.PayloadError as error:
+        raise RuntimeError_("Native installed artifact identity is invalid") from error
+    if metadata.get("mode") not in {"local-qa", "candidate"}:
+        raise RuntimeError_("Native installed candidate mode is invalid")
+
+    # Hash only existing authority records; do not invent a source stack owner.
+    records: dict[str, str] = {
+        "state": read_private_secret_file(support / "state/native-runtime.json"),
+    }
+    for service in NATIVE_PARALLEL_SERVICES:
+        require_owned_service(service, support, root)
+        records[service] = read_private_secret_file(pid_path(support, service))
+    records["owner"] = read_private_secret_file(support / "state/native-first-admin.json")
+    first_admin = json.loads(records["owner"])
+    if first_admin.get("schema_version") != 1 or first_admin.get("status") != "closed" or "token" in first_admin:
+        raise RuntimeError_("Native installed owner setup is incomplete")
+    require_closed_admin_user_id(first_admin)
+    binding = {
+        "contractVersion": 1,
+        "installationId": installation_id,
+        "releaseRoot": str(root),
+        "supportRoot": str(support),
+        "ownerUid": os.getuid(),
+        "records": {name: hashlib.sha256(value.encode()).hexdigest() for name, value in records.items()},
+    }
+    digest = lambda value: "sha256:" + hashlib.sha256(
+        json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    local_qa = candidate.payload["local_qa"] is True and metadata["mode"] == "local-qa"
+    # Recheck installation and service ownership after hashing the immutable tree.
+    if runtime_state(support) != state or read_private_secret_file(support / "state/native-first-admin.json") != records["owner"]:
+        raise RuntimeError_("Native installed identity changed during verification")
+    for service in NATIVE_PARALLEL_SERVICES:
+        require_owned_service(service, support, root)
+        if read_private_secret_file(pid_path(support, service)) != records[service]:
+            raise RuntimeError_("Native runtime ownership changed during verification")
+    return {
+        "contractVersion": 1,
+        "localQa": local_qa,
+        "candidateDigest": "sha256:" + candidate.manifest_sha256,
+        "installedArtifactDigest": digest({
+            "manifestSha256": candidate.manifest_sha256,
+            "sourceCommit": metadata["source_commit"],
+        }),
+        "runtimeOwnerBindingHash": digest(binding),
+    }
+
+
+def parallel_work_identity(args: argparse.Namespace) -> None:
+    print(json.dumps(native_parallel_work_identity(args.app_support_dir), sort_keys=True))
+
+
 def schema(args: argparse.Namespace) -> None:
     support = lexical_support(args.app_support_dir)
     reject_pending_restore_for_read(support)
@@ -3710,11 +4665,22 @@ def schema(args: argparse.Namespace) -> None:
 def parser() -> argparse.ArgumentParser:
     value = argparse.ArgumentParser(description=__doc__)
     subparsers = value.add_subparsers(dest="command", required=True)
-    for name in ("install", "start", "stop", "registration-close", "status", "health", "doctor", "configure", "password-reset-link", "upgrade", "snapshot", "restore", "uninstall", "schema"):
+    for name in ("install", "start", "stop", "registration-close", "status", "health", "doctor", "configure", "password-reset-link", "upgrade", "snapshot", "restore", "uninstall", "schema", "source-secrets", "provider-auth", "parallel-work-identity"):
         command = subparsers.add_parser(name)
         command.add_argument("--app-support-dir", type=Path, default=default_support())
+        if name == "provider-auth":
+            command.add_argument("provider", choices=("codex-cli", "claude-code"))
+            command.add_argument("action", choices=("login", "status", "logout"))
+            command.add_argument("provider_arguments", nargs=argparse.REMAINDER)
+        if name == "source-secrets":
+            action = command.add_mutually_exclusive_group(required=True)
+            action.add_argument("--adopt-env", type=Path)
+            action.add_argument("--initialize", action="store_true")
+            action.add_argument("--export", action="store_true")
         if name in {"install", "start", "registration-close"}:
             command.add_argument("--timeout", type=float, default=60)
+        if name == "start":
+            command.add_argument("--respect-stopped", action="store_true")
         if name == "install":
             command.add_argument("--no-start", action="store_true")
             command.add_argument("--local-qa", action="store_true")
@@ -3758,6 +4724,9 @@ def main(argv: list[str] | None = None) -> int:
             "restore": restore,
             "uninstall": uninstall,
             "schema": schema,
+            "source-secrets": source_secrets,
+            "provider-auth": provider_auth,
+            "parallel-work-identity": parallel_work_identity,
         }[args.command](args)
     except KeyboardInterrupt:
         print("Viventium Native: operation interrupted after safe cleanup", file=sys.stderr)

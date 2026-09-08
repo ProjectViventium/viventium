@@ -2710,7 +2710,7 @@ def test_scheduler_prompt_contracts_are_visible_as_workbench_related_sources() -
     )
     canonical_output = prompt_service.related_config_for_prompt("scheduler.canonical_output")
 
-    assert envelope[0]["selector"] == "SCHEDULER_RUN_ENVELOPE_TEMPLATE"
+    assert envelope[0]["selector"] == "render_scheduler_run_envelope"
     assert opportunity[0]["selector"] == (
         "CONSCIOUSNESS_CONTINUITY_OPPORTUNITY_PROMPT_ID"
     )
@@ -2719,6 +2719,25 @@ def test_scheduler_prompt_contracts_are_visible_as_workbench_related_sources() -
         row["status"] == "source"
         for row in [*envelope, *opportunity, *canonical_output]
     )
+
+
+def test_feeling_prompt_contracts_show_only_declared_public_owners() -> None:
+    capsule = prompt_service.related_config_for_prompt("feelings.capsule_policy")
+    guard = prompt_service.related_config_for_prompt("main.user_fact_guard")
+    assert {row["id"] for row in capsule} == {"feelings-numeric-kernel", "feelings-owner-ranges"}
+    assert {row["id"] for row in guard} == {"feelings-final-tail"}
+    assert {row["selector"] for row in capsule} == {"buildFeelingCapsule", "/bands/:bandId"}
+    assert guard[0]["selector"] == "buildViventiumDynamicTail"
+    for row in [*capsule, *guard]:
+        assert row["status"] == "source"
+        assert row["selector"] in (REPO_ROOT / row["path"]).read_text(encoding="utf-8")
+    assert prompt_service._related_config_row("invalid-path", {
+        "source": "feelings.kernel", "path": "docs/README.md", "selector": "Viventium",
+    }) is None
+    assert prompt_service._related_config_row("invalid-selector", {
+        "source": "feelings.kernel", "path": capsule[0]["path"],
+        "selector": "nonexistentSyntheticFeelingAccessor",
+    }) is None
 
 
 def test_legacy_nightly_runs_without_trigger_provenance_remain_unknown() -> None:
@@ -3008,6 +3027,66 @@ def test_workbench_stalled_nightly_reconciles_confirmed_worker_failure_and_paren
     assert persisted["lease_until"] is None
     assert persisted["lease_owner"] is None
     parent = store.get_task("synthetic-nightly-owner", str(definition["task_id"]))
+    assert parent["last_status"] == "error"
+    assert parent["last_delivery_outcome"] == "failed"
+
+
+@pytest.mark.parametrize("read_only", [False, True], ids=["durable", "read-only"])
+def test_workbench_stalled_needs_input_becomes_action_required_without_ending_worker(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    read_only: bool,
+) -> None:
+    store, definition, original_run = _create_orphaned_nightly_run(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        scheduled_prompts,
+        "_glasshive_run_snapshot",
+        lambda _run: {
+            "run_id": "run_synthetic_nightly",
+            "worker_id": "wrk_synthetic_nightly",
+            "project_id": "prj_synthetic_nightly",
+            "state": "needs_input",
+            "failure_class": "provider_connected_account_reconnect_required",
+            "failure_retryable": False,
+        },
+    )
+
+    result = scheduled_prompts.list_scheduled_prompts(
+        user_id="synthetic-nightly-owner",
+        read_only=read_only,
+    )
+
+    [public] = [
+        row
+        for row in result["scheduledPrompts"]
+        if row.get("id") == definition["id"]
+    ]
+    assert public["lastStatus"] == "error"
+    assert public["latestScheduledRun"]["status"] == "failed"
+    assert (
+        public["latestScheduledRun"]["errorClass"]
+        == "provider_connected_account_reconnect_required"
+    )
+    assert "reconnected" in public["latestScheduledRun"]["resultSummary"]
+
+    [persisted] = store.list_scheduled_prompt_runs(definition_id=str(definition["id"]))
+    parent = store.get_task("synthetic-nightly-owner", str(definition["task_id"]))
+    if read_only:
+        assert persisted["status"] == original_run["status"]
+        assert persisted["lease_until"] == original_run["lease_until"]
+        assert parent["last_status"] == "running"
+        return
+
+    assert persisted["status"] == "failed"
+    assert persisted["disposition"] == "failed"
+    assert persisted["error_class"] == "provider_connected_account_reconnect_required"
+    assert persisted["lease_owner"] is None
+    assert persisted["lease_until"] is None
+    callback_summary = persisted["callback_payload"]
+    assert callback_summary["event"] == "run.needs_input"
+    assert callback_summary["status"] == "failed"
+    assert callback_summary["failure_class"] == "provider_connected_account_reconnect_required"
+    assert persisted["execution_snapshot"]["terminal_reconciliation"]["state"] == "needs_input"
     assert parent["last_status"] == "error"
     assert parent["last_delivery_outcome"] == "failed"
 
@@ -8631,16 +8710,34 @@ def test_pw047_inventory_enumerates_complete_route_lineage_without_provider_exec
     bank = evals.load_eval_bank()
     families = bank["families"]
     case_count = sum(len(family["cases"]) for family in families)
-    plan_count = sum(
-        len({case.get("surface") or "web" for case in family["cases"]})
-        for family in families
-    )
+    family_ids = [family["id"] for family in families]
+    case_ids = [case["id"] for family in families for case in family["cases"]]
 
-    assert len(families) == 21
-    assert case_count == 177
-    assert plan_count == 29
+    # Compare the exposed inventory with its authored bank, so dropped or duplicated rows fail
+    # without fixing the bank to one historical size.
+    assert families
+    assert len(family_ids) == len(set(family_ids))
+    assert all(family["cases"] for family in families)
+    assert len(case_ids) == len(set(case_ids))
+    inventory = evals.eval_bank_summary()
+    assert inventory["familyCount"] == len(families)
+    assert inventory["caseCount"] == case_count
+    assert [family["id"] for family in inventory["families"]] == family_ids
+    assert {
+        family["id"]: [case["id"] for case in family["cases"]]
+        for family in inventory["families"]
+    } == {
+        family["id"]: [case["id"] for case in family["cases"]]
+        for family in families
+    }
+    unsupported_runners = {"main_compaction", "worker_source"}
+    assert unsupported_runners <= {family.get("runner") for family in families}
     for family in families:
         runner = family.get("runner") or "main"
+        # These bank families have no aggregate runner verifier. Inventory includes them, but
+        # run_pw_047 rejects their execution before provider calls; do not certify a Main alias.
+        if runner in unsupported_runners:
+            continue
         route = evals._configured_family_execution_route(family["id"])
         assert route is not None
         assert route["kind"] == runner

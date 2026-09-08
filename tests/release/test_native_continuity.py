@@ -60,6 +60,7 @@ def make_active_state(support: Path, marker: bytes) -> None:
     private_file(support / "config.yaml", b"version: 1\nstate: " + marker + b"\n")
     private_file(support / "data" / "mongodb" / "WiredTiger", marker + b"-mongo")
     private_file(support / "data" / "uploads" / "asset.txt", marker + b"-upload")
+    private_file(support / "state" / "runtime" / "native" / "glasshive" / "runtime.sqlite", marker + b"-glasshive")
     private_file(
         support / "state" / "runtime" / "native" / "scheduling" / "schedules.db",
         marker + b"-schedule",
@@ -77,6 +78,7 @@ def make_staged_state(stage: Path, marker: bytes) -> None:
     private_file(stage / "config.yaml", b"version: 1\nstate: " + marker + b"\n")
     private_file(stage / "data" / "mongodb" / "WiredTiger", marker + b"-mongo")
     private_file(stage / "data" / "uploads" / "asset.txt", marker + b"-upload")
+    private_file(stage / "state" / "runtime" / "native" / "glasshive" / "runtime.sqlite", marker + b"-glasshive")
     private_file(
         stage / "state" / "runtime" / "native" / "scheduling" / "schedules.db",
         marker + b"-schedule",
@@ -154,6 +156,7 @@ def digest_active_state(support: Path) -> str:
         "data/uploads",
         "state/runtime/native/scheduling",
         "state/runtime/native/continuity",
+        "state/runtime/native/glasshive",
         "state/native-runtime.json",
     ):
         path = support / relative
@@ -176,8 +179,38 @@ def test_native_payload_ships_the_shared_continuity_validator_and_adapter() -> N
     assert "continuity_mongo.cjs" in source
 
 
+def test_native_glasshive_environment_is_private_and_independent_of_owner_config(tmp_path, monkeypatch):
+    runtime = load_native_runtime()
+    support = tmp_path / "support"
+    root = tmp_path / "release"
+    monkeypatch.setenv("WPR_API_TOKEN", "owner-token-must-not-inherit")
+    monkeypatch.setenv("OPENAI_API_KEY", "owner-provider-must-not-inherit")
+    monkeypatch.setattr(runtime, "build_metadata", lambda _root: {
+        "source_commit": "a" * 40, "components": {"glasshive": {"commit": "b" * 40}},
+    })
+    first = runtime.native_glasshive_environment(root, support)
+    second = runtime.native_glasshive_environment(root, support)
+    assert first["WPR_API_TOKEN"] == second["WPR_API_TOKEN"]
+    assert first["WPR_API_TOKEN"] != "owner-token-must-not-inherit"
+    assert "OPENAI_API_KEY" not in first
+    assert first["VIVENTIUM_DISABLE_DEFAULT_RUNTIME_ENV"] == "1"
+    assert first["GLASSHIVE_HOST_WORKERS_ENABLED"] == "false"
+    assert first["WPR_DB_PATH"] == str(support / "state/runtime/native/glasshive/runtime.sqlite")
+    assert first["GLASSHIVE_COMPONENT_REVISION"] == "b" * 40
+
+
+def test_native_service_expectations_follow_packaged_component_metadata(tmp_path, monkeypatch):
+    runtime = load_native_runtime()
+    monkeypatch.setattr(runtime, "build_metadata", lambda _root: {"components": {}})
+    assert runtime.release_services(tmp_path) == ("mongodb", "librechat", "frontend-proxy")
+    monkeypatch.setattr(runtime, "build_metadata", lambda _root: {"components": {"glasshive": {"commit": "a" * 40}}})
+    assert runtime.release_services(tmp_path) == ("mongodb", "glasshive", "librechat", "frontend-proxy")
+    assert "state/runtime/native/glasshive" in runtime.NATIVE_RESTORE_ROOTS
+
+
+@pytest.mark.parametrize("fault_after", ["mongodb", "glasshive"])
 def test_native_restore_activation_rolls_back_every_owned_root_after_injected_failure(
-    tmp_path: Path,
+    tmp_path: Path, fault_after: str,
 ) -> None:
     runtime = load_native_runtime()
     support = tmp_path / "support"
@@ -198,7 +231,7 @@ def test_native_restore_activation_rolls_back_every_owned_root_after_injected_fa
             stage,
             transaction_id,
             release_identity="b" * 40,
-            fault_after="mongodb",
+            fault_after=fault_after,
         )
 
     assert immutable_state.read_bytes() == immutable_before
@@ -704,7 +737,7 @@ def test_process_loss_recovery_replays_exact_prior_service_intent(
         del timeout
         events.append("restore-exact")
         assert {name for name, pid in observed.items() if pid is not None} == set(
-            runtime.SERVICE_ORDER
+            prior
         )
 
     monkeypatch.setattr(runtime, "restore_exact_service_state", restore_exact)
@@ -713,8 +746,12 @@ def test_process_loss_recovery_replays_exact_prior_service_intent(
 
     assert events == [
         "stop-staging",
+        "stop:scheduling",
         "stop:frontend-proxy",
         "stop:librechat",
+        "stop:glasshive-mcp",
+        "stop:glasshive",
+        "stop:redis",
         "stop:mongodb",
         "restore-exact",
     ]
@@ -771,11 +808,12 @@ def test_top_level_restore_restores_prior_services_after_activation_auto_rollbac
     with pytest.raises(runtime.RuntimeError_, match="activation failed"):
         runtime.restore(args, _lock_held=True)
 
-    assert restored == [set(runtime.SERVICE_ORDER)]
+    assert restored == [set(prior)]
 
 
+@pytest.mark.parametrize("component_enabled", [False, True])
 def test_native_snapshot_quiesces_writers_and_restores_exact_prior_service_state(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, component_enabled: bool,
 ) -> None:
     runtime = load_native_runtime()
     support = tmp_path / "support"
@@ -794,12 +832,21 @@ def test_native_snapshot_quiesces_writers_and_restores_exact_prior_service_state
     monkeypatch.setattr(runtime, "assert_native_snapshot_capture_state", lambda *_args: events.append("capture-state"))
     monkeypatch.setattr(runtime, "restore_exact_service_state", lambda *_args, **_kwargs: events.append("restore-exact"))
     monkeypatch.setattr(runtime, "inspect_data_schema", lambda *_args: 1)
-    monkeypatch.setattr(runtime, "build_metadata", lambda _root: {"source_commit": "f" * 40})
+    monkeypatch.setattr(runtime, "build_metadata", lambda _root: {"source_commit": "f" * 40, "components": {"glasshive": {"commit": "a" * 40}} if component_enabled else {}})
+    captures = []
+    def component_capture(_root, _support, operation, database, output):
+        assert operation == "capture"
+        assert database == str(support / "state/runtime/native/glasshive/runtime.sqlite")
+        private_file(Path(output) / "runtime.sqlite", b"sanitized")
+        captures.append(Path(output))
+        events.append("component-capture")
+    monkeypatch.setattr(runtime, "run_glasshive_continuity", component_capture)
 
     class Continuity:
         @staticmethod
         def capture_bundle(**kwargs):
             assert kwargs["data_schema"] == 1
+            assert kwargs["glasshive_state"] == (captures[0] if component_enabled else None)
             events.append("capture")
             return {"snapshotDir": str(created), "recoverable": True}
 
@@ -817,12 +864,18 @@ def test_native_snapshot_quiesces_writers_and_restores_exact_prior_service_state
     runtime.snapshot(args, _lock_held=True)
 
     assert events == [
+        "stop:scheduling",
         "stop:frontend-proxy",
         "stop:librechat",
+        "stop:glasshive-mcp",
+        "stop:glasshive",
+        "stop:redis",
         "capture-state",
+        *(["component-capture"] if component_enabled else []),
         "capture",
         "restore-exact",
     ]
+    assert all(not path.exists() for path in captures)
 
 
 def test_native_restore_rejects_incompatible_snapshot_data_schema(tmp_path: Path) -> None:
@@ -964,3 +1017,24 @@ def test_durable_restore_rename_fsyncs_both_parents_and_transaction_directories(
 
     assert destination.read_bytes() == b"old"
     assert set(synced) == {source_parent, destination_parent, transaction}
+
+
+def test_restore_mongodb_only_drains_optional_services_started_for_recovery(tmp_path, monkeypatch):
+    runtime = load_native_runtime()
+    support, root = tmp_path / "support", tmp_path / "release"
+    running = set()
+    stops = []
+    monkeypatch.setattr(runtime, "owned_mongodb_socket_pid", lambda *_args: None)
+    monkeypatch.setattr(runtime, "start", lambda *_args, **_kwargs: running.update(runtime.SERVICE_ORDER))
+    def stop(service, *_args):
+        stops.append(service)
+        running.discard(service)
+    monkeypatch.setattr(runtime, "stop_service", stop)
+    monkeypatch.setattr(runtime, "guard_pid_snapshot", lambda *_args: {
+        service: (100 + index if service in running else None)
+        for index, service in enumerate(runtime.SERVICE_ORDER)
+    })
+    prior = {service: (101 if service == "mongodb" else None) for service in runtime.SERVICE_ORDER}
+    runtime.restore_exact_service_state(support, root, prior, timeout=1)
+    assert running == {"mongodb"}
+    assert set(stops) == set(runtime.SERVICE_ORDER) - {"mongodb"}

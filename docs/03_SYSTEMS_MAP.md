@@ -1,5 +1,7 @@
 # Systems Map
 
+Start with the [current overview](architecture/systems-map.md); this entrypoint retains detailed component context.
+
 ## v0.4 (Active Stack)
 
 Location: `viventium_v0_4/`

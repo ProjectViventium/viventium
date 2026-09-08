@@ -1,0 +1,28 @@
+schemaVersion: 1
+capability: telegram-channels
+requirementOwner:
+  - docs/requirements_and_learnings/03_Telegram_Bridge.md
+  - docs/requirements_and_learnings/25_Scheduling_Telegram_UX_Fixes.md
+statusPolicy: Run results belong in dated, candidate-bound reports.
+sourceInventories:
+  - qa/telegram-detached-api-stability/cases.md
+  - qa/telegram-document-attachments/cases.md
+  - qa/telegram-local-bot-api/cases.md
+  - qa/telegram-media-downloads/cases.md
+  - qa/telegram-media-prereqs/cases.md
+  - qa/telegram-runtime/cases.md
+  - qa/telegram-settings-latency/cases.md
+  - qa/telegram-voice-replies/cases.md
+relatedJourneys:
+  - capability: voice
+    journey: telegram-call-public-edge
+    note: Telegram /call is entered here but owned by the Voice capability. Run that journey there; do not duplicate it in Telegram QA.
+journeys:
+  - id: telegram-main-parity
+    requirements: [CORE-002, CORE-007, CC-048]
+    userAction: Send text, reply, document, photo, voice note, correction, and exact work control through Telegram Desktop.
+    surfaces: [Telegram Desktop, Main, Active Work]
+    expectedResult: Main receives exact ordered inputs, uses authorized capabilities, retracts stale preview when possible, and delivers one current useful result.
+    degradedAndRecovery: Download, transcription, provider, formatting, rate, and retraction failures stay distinct with one useful action.
+    persistenceAndCleanup: Restart and native follow-up preserve owner and objective; synthetic messages, files, and work are removed exactly.
+    evidence: [visible Telegram exchange, message parts, delivery ledger, file hashes, logs, cleanup proof]

@@ -1,0 +1,15 @@
+schemaVersion: 1
+capability: background-cognition
+requirementOwner: docs/requirements_and_learnings/02_Background_Agents.md
+statusPolicy: Run results belong in dated, candidate-bound reports.
+sourceInventories:
+  - qa/background_agents/cases.md
+journeys:
+  - id: background-help-without-delay
+    requirements: [CORE-002, CORE-012]
+    userAction: Ask a natural question that benefits from background research, then continue chatting.
+    surfaces: [Web, Telegram]
+    expectedResult: Main answers promptly, useful background evidence appears once, and Main remains the final speaker.
+    degradedAndRecovery: Unavailable or failed background work is distinct from a healthy empty result and does not block Main.
+    persistenceAndCleanup: Refresh and restart preserve accepted work and its owner scope; synthetic data leaves no residue.
+    evidence: [visible result, message parts, work state, logs, installed candidate identity]

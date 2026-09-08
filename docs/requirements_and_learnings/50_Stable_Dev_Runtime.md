@@ -15,6 +15,9 @@ confusing upstream component boundaries.
   - LibreChat frontend
   - Modern LiveKit Playground (`agent-starter-react`)
   - voice health port when needed
+- Stopping the development wrapper signals only its own server jobs. Other applications and
+  Viventium runtimes can use the same executable names and must remain running. Single-server
+  launches pass signals directly to their native npm owner.
 - Dev envs also separate per-runtime sidecars that own mutable runtime-local state, including
   Scheduling Cortex and the local GlassHive provider, MCP, and operator surfaces. `dev-env create`
   offsets explicit/default loopback GlassHive URLs by the same requested port offset; it never
@@ -36,6 +39,12 @@ confusing upstream component boundaries.
   - Microsoft 365 MCP
 - Shared singleton services must not be duplicated merely because a developer starts a dev env.
 - Full isolation is an explicit advanced future mode, not the default.
+- Browser session cookies are scoped by the configured development environment, because cookies
+  do not distinguish ports on the same host. Refresh, provider, OpenID, OAuth handshake and social
+  login session cookies all use the same owner. Local prod keeps its existing cookie names; a dev
+  environment never reads or clears those cookies. A missing or invalid dev identity fails closed.
+  This prevents accidental sign-in/logout interference; it does not make same-host services a
+  security boundary. Cookie security flags and account authorization remain unchanged.
 - A listener on the configured Mongo port is not sufficient persistence readiness. Before reusing an
   existing Mongo process, the native launcher must query the running server's parsed command-line
   options and verify that `storage.dbPath` resolves to the configured Viventium data directory. A
@@ -67,6 +76,14 @@ confusing upstream component boundaries.
   must preserve this state and unknown future helper-config fields. A developer checkout inside a
   macOS-protected folder still requires the user's one-time operating-system folder approval before
   the installed helper can execute it.
+
+Before a validated checkout activation stops the current app, it prepares the candidate's
+LibreChat dependencies and required package/client outputs through the same owner used by startup.
+A preparation failure rolls back the prepared transaction while the current app stays running.
+The existing lockfile/source freshness and pinned-Node checks remain active; copying a checkout does
+not make older dependencies or outputs trusted. A candidate that needs builds must be inactive and
+must own its dependency/output trees. Startup rechecks readiness after publication; no timestamp
+adjustment or bypass receipt substitutes for preparation.
 
 ## Mental Model For Contributors
 
@@ -194,12 +211,30 @@ active runtime reports the sidecar as ready.
   ports, native credential inputs, and MongoDB/Meilisearch/LiveKit data/config paths. Ambient values
   inherited from local prod must never make a dev child inspect or manage canonical state, and local
   path expressions are evaluated only after the selected structural roots exist.
+- An explicit `VIVENTIUM_ENV_FILE` is the sole file source for GlassHive runtime and UI loaders.
+  Missing keys or a missing selected file do not import another installation's default settings.
+  The launcher supplies the selected override layer; existing process settings retain precedence.
+- Active-owner proof accepts the supported attached `dev-env run` command with its scoped
+  App Support/config/runtime paths, including the wrapper's default component lock and typed
+  launcher options. Profile selectors must match the receipt's runtime profile. Unknown options,
+  path overrides after the command, shell syntax, and foreign process identities remain rejected.
+  Detached starts retain their exact command. This command check supplements the existing
+  PID/start-time, executable, current-directory, scope, and receipt-binding checks.
+- Repeated start preserves a live runtime's verified process-group receipt and existing services
+  and watchdogs. It does not publish a new group while reusing children from the previous group.
+  A restart must stop the owned predecessor before binding its successor. Invalid live receipts
+  fail closed; an empty stale group can be replaced. This keeps missing-service recovery with its
+  existing supervisor and prevents same-checkout processes from becoming stop authority.
 - Dev stop is strict and runtime-scoped: stop its own Prompt Workbench sidecar, PID-owned services,
   unique listeners, and local Compose project, but never use same-checkout or workspace-wide process
   sweeps that could terminate local prod or shared singletons.
 - Recall/RAG remains shared by default. When a dev environment explicitly owns local RAG, the
   compiler offsets the vector-database host port and gives the dev stack a distinct Compose project
   name so start/stop cannot claim the product RAG containers.
+  The launcher's protection of shared Docker services must preserve this explicit local choice;
+  start, restart and cleanup address only the compiler-selected dev RAG project. Shared RAG stays
+  the default. Separate web authentication requires a compatible shared service or the existing
+  private RAG option; copying production web secrets is not an isolation fix.
 - Native support-service PID files are hints, not authority. Stop must verify that the live PID still
   matches the expected MongoDB, Meilisearch, or LiveKit runtime identity before signalling it; stale
   or reused PIDs are removed without killing the unrelated process. Process identity inspection must
@@ -272,6 +307,21 @@ bin/viventium dev-env run dev start
 app-facing/local-runtime ports (including local GlassHive), and records the shared singleton
 services in `runtime.dev_env`. Remote GlassHive URLs stay byte-for-byte unchanged.
 
+New dev environments disable remote network setup and both Telegram pollers, and remove inherited
+public origins, the connected-account browser-return override, and the installed LiveKit node address.
+Account sign-in returns to the configured frontend origin unless an explicit return override is set.
+They must not claim the installed instance's
+router mapping, public links or bot updates. The source config and provider choices stay unchanged.
+For explicit channel or remote QA, configure a separate test bot or access route in the dev config.
+The launcher `--skip-telegram` option skips both Telegram processes. Creation also removes inherited
+LIFE and allowed-workspace folder choices. The compiler supplies a private default LIFE folder
+under the named dev environment, reports it as not yet chosen, and limits the default workspace
+roots to that folder. An explicit later folder choice still works through the existing LIFE setup.
+This separates default context; a native provider granted full filesystem access still has that
+access and the dev environment is not an operating-system sandbox.
+Existing dev environments retain their explicit configuration. Review inherited origins, bot flags
+and folder choices in that environment's config before reusing one created by an older version.
+
 Generated dev-env state lives under:
 
 ```text
@@ -291,6 +341,15 @@ LibreChat to the wrong GlassHive MCP and is not an isolated test environment.
 ```bash
 bin/viventium dev-runtime activate-current --validate --restart --allow-protected-folder
 ```
+
+The sealed recovery launcher carries its instance-secret command as part of the same controller bundle. During rollback it resolves that command from the controller bundle, so an older predecessor checkout does not need to implement a newer command. Existing instance secrets remain authoritative.
+
+Rollback restores the helper's checkout and protected-folder choice only when the changed binding
+belongs to the failed candidate. It preserves unrelated settings and the user's Stop intent. The
+recorded helper must restart after rollback, even if its executable is already running: that
+process may still hold the candidate's configuration in memory. The existing executable and
+process-start checks limit the restart to the transaction's helper; another checkout binding is
+a recovery conflict. A successful activation retains its candidate binding.
 
 `dev-runtime activate-current` is a developer-friendly wrapper over the existing
 `runtime-checkout` state. It does not copy source code. It selects the current checkout, compiles

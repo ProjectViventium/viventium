@@ -407,6 +407,13 @@ Provider-specific code stays behind that adapter. The adapter must:
 - support reconnect, disconnect, local credential deletion, and provider-side revocation guidance;
 - never silently move from subscription usage to paid API usage.
 
+The experimental local OpenAI callback owner may bind only the registered Codex CLI loopback
+ports, `1455` then `1457`, and must use the successfully bound URI in both confidential state
+and the code exchange. It must not cancel or reuse another process's listener. When both ports
+are occupied, automatic sign-in fails before issuing an authorization URL; an explicit manual
+mode remains distinct. This follows the [native callback owner's registered fallback](https://github.com/openai/codex/blob/main/codex-rs/login/src/server.rs)
+and does not change the public-shipping authorization gate below.
+
 The release must qualify one primary route plus an explicit parity-tested fallback architecture.
 The person's activation requires only the route they selected. A fallback that needs another
 credential remains **Available — connect to use** and is never invoked silently. Do not require a
@@ -593,6 +600,38 @@ explain this before consent, use a non-personal app/device name, and offer local
 
 Homebrew, npm, and clone-based install remain developer or later convenience surfaces. They are not
 the primary activation answer and do not block the signed Mac release.
+
+### Source-instance credential continuity
+
+Source checkouts and side-by-side developer instances use the existing private
+`state/native-secrets.json` under their selected App Support root. Its `JWT_SECRET`,
+`JWT_REFRESH_SECRET`, `CREDS_KEY`, and `CREDS_IV` belong to the instance database.
+Both normal and quiesced launcher paths read that owner; checkout `.env` files are
+outputs and cannot replace those values. Native service startup and password-reset
+preparation also read existing secrets without generating replacements.
+
+A fresh source install or dev-environment creation initializes this owner only while
+the target App Support directory is absent or empty. An existing instance with no
+owner stops before secret materialization. An operator must first verify which original
+private LibreChat environment decrypts its saved credentials, then use the existing owner:
+
+```sh
+python3 scripts/viventium/native_runtime.py source-secrets \
+  --app-support-dir "<selected-instance-support>" --adopt-env "<verified-original-env>"
+```
+
+Adoption accepts only the four complete fields in the existing schema from an owner-only
+regular file. It preserves that source and refuses conflicting existing values, duplicate
+fields, unsafe files, or incomplete input. It does not rotate keys, reconnect accounts, or
+modify credential rows. The next normal launcher run materializes the same values into its
+checkout output. Keep values and decrypt evidence private; do not print the internal export.
+This continuity repair retains the existing encryption format; it does not satisfy the
+separate public-release credential-storage migration requirement.
+
+Owning regressions: `tests/release/test_instance_secrets.py`,
+`test_librechat_env_upgrade_continuity.py`, and `test_stable_dev_runtime_workflows.py`.
+Actual adoption, restart, saved-account use, and subsequent checkout reuse remain separate
+user-level acceptance gates.
 
 ## 10. Minimal-effort execution plan
 

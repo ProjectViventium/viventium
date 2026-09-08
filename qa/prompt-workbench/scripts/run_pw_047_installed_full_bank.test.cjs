@@ -828,7 +828,7 @@ test("rejects a missing or duplicate surface subgroup before any execution", asy
   );
 });
 
-test("partitions the current bank into 29 plans covering all 177 cases exactly once", async () => {
+test("inventories every current-bank case and refuses unsupported installed runners", async () => {
   const bank = JSON.parse(
     fs.readFileSync(
       path.resolve(
@@ -842,6 +842,42 @@ test("partitions the current bank into 29 plans covering all 177 cases exactly o
       "utf8",
     ),
   );
+  assert.equal(Object.hasOwn(bank, "familyCount"), false);
+  assert.equal(Object.hasOwn(bank, "caseCount"), false);
+  bank.familyCount = bank.families.length;
+  bank.caseCount = bank.families.reduce(
+    (count, family) => count + family.cases.length,
+    0,
+  );
+  const catalog = validateEvalBank(bank);
+  const unsupported = catalog.families.filter((family) =>
+    ["main_compaction", "worker_source"].includes(family.runner));
+  assert.ok(unsupported.length > 0);
+  assert.equal(catalog.caseCount, bank.caseCount);
+  assert.equal(catalog.caseIds.length, bank.caseCount);
+  await assert.rejects(buildFamilyPlans({
+    catalog, configuredRoutes: makeRoutesForCatalog(catalog), mainAgentId: MAIN_AGENT_ID,
+  }), /family_installed_route_unavailable/);
+});
+
+test("partitions every supported current-bank case exactly once with complete hashes", async () => {
+  const bank = JSON.parse(
+    fs.readFileSync(
+      path.resolve(
+        __dirname,
+        "..",
+        "..",
+        "prompt-architecture",
+        "evals",
+        "prompt-bank.json",
+      ),
+      "utf8",
+    ),
+  );
+  assert.equal(Object.hasOwn(bank, "familyCount"), false);
+  assert.equal(Object.hasOwn(bank, "caseCount"), false);
+  bank.families = bank.families.filter((family) =>
+    !["main_compaction", "worker_source"].includes(family.runner));
   bank.familyCount = bank.families.length;
   bank.caseCount = bank.families.reduce(
     (count, family) => count + family.cases.length,
@@ -855,14 +891,21 @@ test("partitions the current bank into 29 plans covering all 177 cases exactly o
   });
   const coverage = validatePlanCoverage(catalog, plans);
   const selectedCaseIds = plans.flatMap((plan) => plan.caseIds);
+  const expectedPlanCount = new Set(
+    catalog.families.flatMap((family) =>
+      family.cases.map((testCase) => `${family.id}\u0000${testCase.surface}`),
+    ),
+  ).size;
 
-  assert.equal(catalog.caseCount, 177);
-  assert.equal(plans.length, 29);
-  assert.equal(coverage.surfacePlanCount, 29);
-  assert.equal(coverage.executedCaseCount, 177);
-  assert.equal(coverage.uniqueExecutedCaseCount, 177);
+  assert.equal(plans.length, expectedPlanCount);
+  assert.equal(coverage.surfacePlanCount, expectedPlanCount);
+  assert.equal(coverage.executedCaseCount, catalog.caseCount);
+  assert.equal(coverage.uniqueExecutedCaseCount, catalog.caseCount);
   assert.deepEqual([...selectedCaseIds].sort(), [...catalog.caseIds].sort());
-  assert.equal(new Set(selectedCaseIds).size, 177);
+  assert.equal(new Set(selectedCaseIds).size, catalog.caseCount);
+  assert.match(catalog.bankHash, /^[0-9a-f]{64}$/);
+  assert.equal(catalog.caseSetHash, jsonHash([...selectedCaseIds].sort()));
+  assert.match(coverage.planSetHash, /^[0-9a-f]{64}$/);
   for (const plan of plans) {
     const family = catalog.families.find((row) => row.id === plan.familyId);
     assert.ok(
@@ -1564,3 +1607,16 @@ test("cleanup-only refuses path traversal, mismatched ownership, and sibling del
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+for (const runner of ["main_compaction", "worker_source"]) {
+  test(`specialized ${runner} inventory cannot fall through to Main acceptance`, async () => {
+    const bank = makeBank();
+    bank.families = [{ ...bank.families[0], runner }];
+    bank.familyCount = 1;
+    bank.caseCount = 1;
+    const catalog = validateEvalBank(bank);
+    assert.equal(catalog.families[0].runner, runner);
+    await assert.rejects(buildFamilyPlans({ catalog, configuredRoutes: {}, mainAgentId: MAIN_AGENT_ID }),
+      /family_installed_route_unavailable/);
+  });
+}

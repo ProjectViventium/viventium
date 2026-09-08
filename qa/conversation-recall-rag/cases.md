@@ -183,3 +183,16 @@ rows before claiming a pass when the feature behavior changes.
 - `tests/release/test_rag_compose_resource_guardrails.py`
 - `tests/release/test_rag_postgres_migration.py`
 - `tests/release/test_rag_postgres_migration_docker.py`
+
+## `RAG-007` — Open retained source citations through the active app address
+
+- Start signed in through an alternate address for the same installation. Ask about an older
+  user-stated fact and request its source conversation.
+- Open the returned citation, then reload its destination. The original source and signed-in
+  account must remain available without another login or message rewrite.
+- Preserve external links, different installations/ports, source paths, queries and fragments.
+  Use the server-declared installation origin; never infer identity from loopback hostnames.
+- Supporting checks: `client/src/utils/__tests__/appLinks.test.ts` and existing citation checks.
+- Current evidence: development source/build and actual browser click pass on 2026-09-06.
+  Independent Deep Memory retrieved the original user source; one Main answer survived reload.
+  Normal installed artifact and Telegram source-link parity remain open.

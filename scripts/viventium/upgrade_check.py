@@ -551,17 +551,12 @@ def helper_needs_rebuild(repo: Path) -> bool:
     helper_dir = repo / HELPER_RELATIVE_PATH
     if not helper_dir.exists():
         return False
-    paths = [
-        helper_dir / "Package.swift",
-        helper_dir / "Sources" / "ViventiumHelper" / "ViventiumHelperApp.swift",
-        helper_dir / "Sources" / "ViventiumHelper" / "Resources" / "Info.plist",
-    ]
+    from helper_artifact_verify import HelperArtifactError, helper_source_hash
+
     prebuilt_dir = helper_dir / "prebuilt"
     source_hash_file = prebuilt_dir / "source.sha256"
     binary = prebuilt_dir / HELPER_BINARY_NAME
     binary_hash_file = prebuilt_dir / "binary.sha256"
-    if not all(path.is_file() for path in paths):
-        return True
     source_hash = _read_expected_digest(source_hash_file)
     binary_hash = _read_expected_digest(binary_hash_file)
     if source_hash is None or binary_hash is None:
@@ -569,16 +564,11 @@ def helper_needs_rebuild(repo: Path) -> bool:
     if not binary.is_file() or not os.access(binary, os.X_OK) or not _is_universal_macos_binary(binary):
         return True
 
-    digest = hashlib.sha256()
     try:
-        for path in paths:
-            digest.update(path.relative_to(helper_dir).as_posix().encode("utf-8"))
-            digest.update(b"\0")
-            digest.update(path.read_bytes())
-            digest.update(b"\0")
-    except OSError:
+        measured_source_hash = helper_source_hash(helper_dir)
+    except (HelperArtifactError, OSError):
         return True
-    if digest.hexdigest() != source_hash:
+    if measured_source_hash != source_hash:
         return True
     try:
         binary_digest = hashlib.sha256(binary.read_bytes()).hexdigest()

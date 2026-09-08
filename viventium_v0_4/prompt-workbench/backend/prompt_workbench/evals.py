@@ -356,7 +356,7 @@ def run_exact_model_eval(
         prompt_id=prompt_id,
     ):
         cmd.append(f"--prompt-id={prompt_id}")
-    if execution_target:
+    if execution_target and execution_target.get("agentId"):
         cmd.append(f"--agent-id={execution_target['agentId']}")
     if execution_target or semantic_judge_required:
         # Direct specialist cases use qualitative evidence/uncertainty rubrics. A transport-only
@@ -423,7 +423,9 @@ def run_exact_model_eval(
                 runner_summary = _public_runner_summary(json.dumps(canonical_summary))
         except (OSError, UnicodeError, json.JSONDecodeError, TypeError, ValueError):
             pass
-    if runner == EXACT_MODEL_EVAL_SCRIPT:
+    if runner == EXACT_MODEL_EVAL_SCRIPT and (execution_target or {}).get("mode") == "worker_source_replay":
+        execution_route = _worker_source_execution_route(output_dir, selected=selected)
+    elif runner == EXACT_MODEL_EVAL_SCRIPT:
         execution_route = _exact_model_execution_route(
             output_dir,
             execution_target=execution_target,
@@ -667,6 +669,16 @@ def _background_execution_target(
     *,
     selected: list[dict[str, dict[str, Any]]],
 ) -> dict[str, str] | None:
+    worker_families = [row["family"] for row in selected if row["family"].get("runner") == "worker_source"]
+    if worker_families:
+        if len(worker_families) != len(selected) or len({row.get("id") for row in worker_families}) != 1:
+            raise ValueError("Worker source replay requires one isolated family")
+        worker_family = worker_families[0]
+        target = worker_family.get("executionTarget") or {}
+        prompt_ref = str(target.get("promptRef") or "")
+        if not prompt_ref.startswith("worker.") or prompt_ref not in _prompt_refs(worker_family):
+            raise ValueError("Worker source replay requires a declared worker promptRef")
+        return {"mode": "worker_source_replay", "promptRef": prompt_ref}
     candidate_ids = (
         {family_id}
         if family_id
@@ -1034,6 +1046,64 @@ def _validate_observed_lineage(
         },
         None,
     )
+
+
+def _configured_worker_route(slot: str) -> dict[str, str]:
+    if slot not in {"primary", "fallback"}:
+        raise ValueError("invalid_worker_route_slot")
+    profile = os.environ.get("GLASSHIVE_DEFAULT_WORKER_PROFILE" if slot == "primary" else "GLASSHIVE_DEFAULT_FALLBACK_WORKER_PROFILE", "")
+    fields = {
+        "codex-cli": ("WPR_MODEL_CODEX_CLI", "WPR_CODEX_CLI_REASONING_EFFORT"),
+        "claude-code": ("WPR_MODEL_CLAUDE_CODE", "WPR_CLAUDE_CODE_EFFORT"),
+    }.get(profile)
+    if not fields or not all(os.environ.get(field) for field in fields):
+        raise ValueError("configured_native_worker_route_unavailable")
+    return {"slot": slot, "profile": profile, "provider": "glasshive-harness",
+            "model": profile + ":" + os.environ[fields[0]], "nativeModel": os.environ[fields[0]],
+            "effort": os.environ[fields[1]], "access": "full"}
+
+
+def _worker_source_execution_route(output_dir: Path, *, selected: list[dict[str, Any]]) -> dict[str, Any]:
+    """Validate source replay separately; never fabricate a Main runtime frame."""
+    def invalid(reason: str) -> dict[str, Any]:
+        return {"status": "unverified", "reason": reason, "mode": "worker_source_replay"}
+    try:
+        payload = json.loads((output_dir / "exact-model-eval.json").read_text())
+    except (OSError, ValueError):
+        return invalid("execution_artifact_unavailable")
+    rows = payload.get("liveResults") or []
+    if payload.get("kind") != "worker_source_replay" or len(rows) != len(selected):
+        return invalid("execution_case_coverage_unverified")
+    source_hash = str(payload.get("sourceSnapshotSha256") or "")
+    if not re.fullmatch(r"[0-9a-f]{64}", source_hash) or not payload.get("sourceFiles"):
+        return invalid("worker_source_lineage_missing")
+    evidence = []
+    for expected, row in zip(selected, rows):
+        case = expected["case"]
+        if row.get("caseId") != case.get("id") or row.get("status") != "completed":
+            return invalid("execution_case_coverage_unverified")
+        try:
+            route = _configured_worker_route((case.get("fixture") or {}).get("workerSource", {}).get("route", "primary"))
+        except ValueError as error:
+            return invalid(str(error))
+        observed = row.get("observedRoute") or {}
+        if row.get("requestedRoute") != route or any(observed.get(key) != value for key, value in route.items()):
+            return invalid("native_worker_route_mismatch")
+        identity = str(row.get("requestIdentityHash") or "")
+        instructions = str(row.get("instructionsSha256") or "")
+        if (not re.fullmatch(r"[0-9a-f]{64}", identity) or row.get("observedRequestIdentityHash") != identity
+            or not re.fullmatch(r"[0-9a-f]{64}", instructions) or observed.get("instructionsSha256") != instructions
+            or observed.get("nativeTools") is not True or observed.get("state") != "completed"):
+            return invalid("native_worker_source_evidence_mismatch")
+        audit = row.get("nativeAudit") or {}
+        if not audit.get("stdoutHash") or not isinstance(row.get("nativeCalls"), list):
+            return invalid("native_worker_tool_audit_missing")
+        judge = row.get("semanticJudge") or {}
+        if judge.get("status") != "judged" or judge.get("pass") is not True or not judge.get("rawHash") or not judge.get("attemptCount"):
+            return invalid("semantic_judgment_unverified")
+        evidence.append({"caseId": case["id"], "configuredRoute": route, "runIdHash": observed.get("runIdHash"), "instructionsSha256": instructions})
+    return {"status": "verified", "mode": "worker_source_replay", "sourceSnapshotSha256": source_hash, "caseEvidence": evidence,
+            "scope": "Native model source replay; actual mission/app/file acceptance remains separate"}
 
 
 def _exact_model_execution_route(

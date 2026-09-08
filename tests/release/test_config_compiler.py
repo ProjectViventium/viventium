@@ -952,6 +952,13 @@ def test_native_runtime_env_is_secret_free_relocatable_and_fixed_to_native_ports
         "OTUC_LLM_PROVIDER": "openai",
         "OTUC_LLM_MODEL": "gpt-5.6-sol",
         "START_SCHEDULING_MCP": "true",
+        "WPR_MODEL_CODEX_CLI": "configured-native-model",
+        "WPR_CODEX_CLI_REASONING_EFFORT": "medium",
+        "WPR_MODEL_CLAUDE_CODE": "configured-fallback-model",
+        "WPR_CLAUDE_CODE_EFFORT": "high",
+        "GLASSHIVE_PROVIDER_DEFAULT_ACCESS": "workspace",
+        "WPR_CODEX_BIN": "/private/build/codex",
+        "GLASSHIVE_PROVIDER_API_KEY": "must-not-ship",
     }
 
     native = config_compiler.render_native_runtime_env(config, source)
@@ -959,6 +966,10 @@ def test_native_runtime_env_is_secret_free_relocatable_and_fixed_to_native_ports
     assert native["VIVENTIUM_MAIN_AGENT_ID"] == "agent_viventium_main_fixture"
     assert native["VIVENTIUM_MEMORY_HARDENING_SCHEDULE"] == "0 3 * * *"
     assert native["OTUC_LLM_MODEL"] == "gpt-5.6-sol"
+    for name in ("WPR_MODEL_CODEX_CLI", "WPR_CODEX_CLI_REASONING_EFFORT", "WPR_MODEL_CLAUDE_CODE", "WPR_CLAUDE_CODE_EFFORT", "GLASSHIVE_PROVIDER_DEFAULT_ACCESS"):
+        assert native[name] == source[name]
+    assert "WPR_CODEX_BIN" not in native
+    assert "GLASSHIVE_PROVIDER_API_KEY" not in native
     assert native["START_SCHEDULING_MCP"] == "false"
     assert native["VIVENTIUM_RUNTIME_PROFILE"] == "native"
     assert native["VIVENTIUM_INSTALL_MODE"] == "native"
@@ -1048,6 +1059,24 @@ def test_scheduling_cortex_can_be_omitted_from_canonical_native_defaults() -> No
     assert "scheduling-cortex" not in rendered["mcpServers"]
     assert "sequential-thinking" not in rendered["mcpServers"]
     assert env["START_SCHEDULING_MCP"] == "false"
+
+
+@pytest.mark.parametrize("mode", ["native", "docker"])
+def test_native_enabled_mcp_dependencies_use_installed_transport(mode) -> None:
+    config = minimal_compile_config()
+    config["install"]["mode"] = mode
+    config["integrations"]["scheduling_cortex"] = {"enabled": True}
+    config["integrations"]["sequential_thinking"] = {"enabled": True}
+    assignments = config_compiler.build_agent_assignments(config)
+    env = config_compiler.render_runtime_env(config, assignments)
+    rendered = yaml.safe_load(config_compiler.render_librechat_yaml(config, assignments, env))["mcpServers"]
+    if mode == "native":
+        assert rendered["scheduling-cortex"]["headers"]["Authorization"] == "Bearer ${SCHEDULING_MCP_API_KEY}"
+        assert rendered["sequential-thinking"]["command"] == "${VIVENTIUM_NATIVE_NODE_BINARY}"
+        assert rendered["sequential-thinking"]["args"] == ["${VIVENTIUM_NATIVE_SEQUENTIAL_THINKING_ENTRYPOINT}"]
+    else:
+        assert "Authorization" not in rendered["scheduling-cortex"]["headers"]
+        assert rendered["sequential-thinking"]["command"] == "npx"
 
 
 def test_missing_legacy_scheduling_key_stays_disabled_without_enabled_predecessor() -> None:
@@ -1460,7 +1489,7 @@ def test_native_agent_bundle_keeps_interactive_glasshive_red_team_at_high_effort
     )
 
     assert red_team["provider"] == "glasshive-harness"
-    assert red_team["model"] == "codex-cli:gpt-5.6-sol"
+    assert red_team["model"] == "codex-cli:gpt-6-astra"
     assert red_team["model_parameters"]["reasoning_effort"] == "high"
 
 
@@ -1674,6 +1703,18 @@ def test_direct_launcher_regenerates_canonical_runtime_before_loading_env() -> N
     )
 
 
+def test_launcher_uses_compiled_librechat_yaml_when_runtime_requests_it() -> None:
+    script = START_SCRIPT.read_text(encoding="utf-8")
+
+    selector = 'if truthy_env_value "${VIVENTIUM_USE_GENERATED_LIBRECHAT_YAML:-false}"; then'
+    generated_source = '$(dirname "$ENV_FILE_PRIMARY")/librechat.yaml'
+
+    assert selector in script
+    assert generated_source in script
+    assert script.index("# Load .env first, then .env.local") < script.index(selector)
+    assert script.index(selector) < script.index("ensure_librechat_yaml() {")
+
+
 def test_launcher_keeps_glasshive_state_under_runtime_state_root() -> None:
     script = START_SCRIPT.read_text(encoding="utf-8")
     start_index = script.index("start_glasshive() {")
@@ -1787,6 +1828,14 @@ def test_launcher_publishes_only_signed_glasshive_surfaces() -> None:
     assert '"${GLASSHIVE_PUBLIC_LINKS_ONLY:-false}" == "true"' in prepare_body
     assert 'helper_args+=(--glasshive-port "$glasshive_port")' in prepare_body
     assert 'helper_args+=(--public-glasshive-origin "$VIVENTIUM_PUBLIC_GLASSHIVE_URL")' in prepare_body
+    assert (
+        'local configured_glasshive_artifact_base_url="${GLASSHIVE_ARTIFACT_BASE_URL:-}"'
+        in prepare_body
+    )
+    assert (
+        'export GLASSHIVE_ARTIFACT_BASE_URL="${configured_glasshive_artifact_base_url:-$public_glasshive_url}"'
+        in prepare_body
+    )
 
 
 def source_of_truth_built_in_agent_map() -> dict[str, str]:
@@ -1819,10 +1868,10 @@ def test_main_agent_voice_profile_preserves_recall_capable_primary_and_independe
         "useResponsesApi": True,
     }
     assert main_agent["fallback_llm_provider"] == "glasshive-harness"
-    assert main_agent["fallback_llm_model"] == "claude-code:opus"
+    assert main_agent["fallback_llm_model"] == "claude-code:claude-opus-5"
     assert main_agent["fallback_llm_model_parameters"] == {
-        "model": "claude-code:opus",
-        "reasoning_effort": "high",
+        "model": "claude-code:claude-opus-5",
+        "reasoning_effort": "low",
     }
 
 
@@ -1960,13 +2009,14 @@ def test_glasshive_compiles_as_exact_core_agent_provider(
 
     assert assignments["conscious"] == (
         "glasshive-harness",
-        "codex-cli:gpt-5.6-sol",
+        "codex-cli:gpt-6-astra",
     )
     assert env["VIVENTIUM_FC_CONSCIOUS_LLM_PROVIDER"] == "glasshive-harness"
-    assert env["VIVENTIUM_FC_CONSCIOUS_LLM_MODEL"] == "codex-cli:gpt-5.6-sol"
+    assert env["VIVENTIUM_FC_CONSCIOUS_LLM_MODEL"] == "codex-cli:gpt-6-astra"
+    assert capability["message_delta_mode"] == "incremental"
     assert endpoint["modelDisplayLabel"] == "GlassHive"
     assert endpoint["models"] == {
-        "default": ["codex-cli:gpt-5.6-sol", "claude-code:opus"],
+        "default": ["codex-cli:gpt-6-astra", "claude-code:claude-opus-5", "codex-cli:gpt-5.6-sol", "claude-code:opus"],
         "fetch": False,
     }
     assert endpoint["titleEndpoint"] == "openAI"
@@ -1986,7 +2036,7 @@ def test_glasshive_compiles_as_exact_core_agent_provider(
     assert capability["default_access"] == "full"
     assert capability["allow_full_access"] is True
     assert capability["host_tools_transport"] == "broker_mcp"
-    assert capability["host_tools"] == ["file_search", "web_search"]
+    assert capability["host_tools"] == ["file_search", "web_search", "transcribe_audio"]
     assert capability["excluded_mcp_servers"] == ["glasshive-workers-projects"]
     health_policy = librechat["mcpServers"]["viventium-health"]["viventiumGlassHive"]
     assert health_policy["permitsAutonomousWorker"] is True
@@ -2003,6 +2053,7 @@ def test_glasshive_compiles_as_exact_core_agent_provider(
         "ultra",
     ]
     assert capability["models"][1]["effortChoices"] == [
+        "default",
         "low",
         "medium",
         "high",
@@ -2026,6 +2077,7 @@ def test_glasshive_compiles_as_exact_core_agent_provider(
     assert env["GLASSHIVE_PROVIDER_DEFAULT_WORKSPACE"] == str(tmp_path / "Life")
     assert env["GLASSHIVE_PROVIDER_ALLOWED_WORKSPACE_ROOTS"] == str(tmp_path)
     assert env["VIVENTIUM_LIFE_DIR"] == str(tmp_path / "Life")
+    assert env["VIVENTIUM_LIFE_FOLDER_CHOSEN"] == "true"
     assert librechat["mcpServers"]["glasshive-workers-projects"]["headers"][
         "X-WPR-Token"
     ] == "${GLASSHIVE_MCP_API_KEY}"
@@ -2079,7 +2131,7 @@ def test_glasshive_compiler_capability_matches_tracked_source_of_truth(
         "consciousAgent"
     ] == {
         "provider": "glasshive-harness",
-        "model": "codex-cli:gpt-5.6-sol",
+        "model": "codex-cli:gpt-6-astra",
     }
     assert env["VIVENTIUM_TELEGRAM_SSE_READ_TIMEOUT_S"] == "720"
 
@@ -2923,11 +2975,20 @@ def test_glasshive_effort_registry_matches_the_runtime_contract() -> None:
         and node.target.id == "GLASSHIVE_MODELS"
     )
     assert isinstance(registry_assignment.value, ast.Dict)
+    requirements_tree = ast.parse(
+        GLASSHIVE_CONVERSATION_PROVIDER.with_name("runtime_requirements.py").read_text()
+    )
+    effort_constants = {
+        target.id: ast.literal_eval(node.value)
+        for node in requirements_tree.body if isinstance(node, ast.Assign)
+        for target in node.targets
+        if isinstance(target, ast.Name) and target.id == "CLAUDE_CODE_EFFORT_LEVELS"
+    }
     endpoint_models = {}
     for call in registry_assignment.value.values:
         assert isinstance(call, ast.Call)
         keywords = {
-            keyword.arg: ast.literal_eval(keyword.value)
+            keyword.arg: (effort_constants[keyword.value.id] if isinstance(keyword.value, ast.Name) else ast.literal_eval(keyword.value))
             for keyword in call.keywords
             if keyword.arg in {"id", "effort_choices"}
         }
@@ -2942,6 +3003,7 @@ def test_glasshive_effort_registry_matches_the_runtime_contract() -> None:
         "ultra",
     ]
     expected_claude = [
+        "default",
         "low",
         "medium",
         "high",
@@ -2954,6 +3016,10 @@ def test_glasshive_effort_registry_matches_the_runtime_contract() -> None:
     assert compiler_models["claude-code:opus"]["effortChoices"] == expected_claude
     assert template_models["claude-code:opus"]["effortChoices"] == expected_claude
     assert endpoint_models["claude-code:opus"] == expected_claude
+    expected_luna = ["low", "medium", "high", "xhigh", "max"]
+    assert compiler_models["codex-cli:gpt-5.6-luna"]["effortChoices"] == expected_luna
+    assert template_models["codex-cli:gpt-5.6-luna"]["effortChoices"] == expected_luna
+    assert endpoint_models["codex-cli:gpt-5.6-luna"] == expected_luna
 
 
 def test_glasshive_provider_enablement_is_explicit_and_mismatches_fail_loud(
@@ -3144,6 +3210,22 @@ def test_render_runtime_env_emits_glasshive_launch_env_only_when_enabled(tmp_pat
     assert public_host_env["GLASSHIVE_LINK_REF_TTL_SECONDS"] == "86400"
     assert public_host_env["GLASSHIVE_MAX_WATCH_SESSION_DURATION_S"] == "1800"
     assert public_host_env["GLASSHIVE_UI_PORT"] == "8780"
+
+    local_artifact_config = copy.deepcopy(public_host_config)
+    local_artifact_config["integrations"]["glasshive"]["artifact_base_url"] = (
+        "http://127.0.0.1:8780"
+    )
+    local_artifact_env = config_compiler.render_runtime_env(
+        local_artifact_config,
+        config_compiler.build_agent_assignments(local_artifact_config),
+    )
+    assert local_artifact_env["VIVENTIUM_PUBLIC_GLASSHIVE_URL"] == (
+        "https://glasshive.app.example.test"
+    )
+    assert local_artifact_env["GLASSHIVE_OPERATOR_BASE_URL"] == (
+        "https://glasshive.app.example.test"
+    )
+    assert local_artifact_env["GLASSHIVE_ARTIFACT_BASE_URL"] == "http://127.0.0.1:8780"
 
     disabled_host_config = copy.deepcopy(base_config)
     disabled_host_config["integrations"]["glasshive"] = {
@@ -3854,9 +3936,7 @@ def test_glasshive_multi_user_control_plane_compiles_signed_identity_and_mcp_oau
     assert env["GLASSHIVE_AUTH_STATE_PATH"] == "/var/lib/glasshive/gateway/auth.sqlite3"
 
     config_compiler.render_service_envs(tmp_path, env)
-    librechat_env = (tmp_path / "service-env" / "librechat.env").read_text(
-        encoding="utf-8"
-    )
+    librechat_env = (tmp_path / "service-env" / "librechat.env").read_text(encoding="utf-8")
     gateway_env = (tmp_path / "service-env" / "glasshive-gateway.env").read_text(
         encoding="utf-8"
     )
@@ -4851,6 +4931,12 @@ def test_mcp_server_instructions_own_scheduling_and_glasshive_cognition(tmp_path
 
     servers = config_compiler.build_mcp_servers(config, {"lc_api_port": 3080}, "agent-main")
     scheduling = servers["scheduling-cortex"]["serverInstructions"]
+    # The scheduler's existing same-conversation resolver consumes this trusted
+    # request header; omitting it silently creates a different delivery chat.
+    conversation_header = "{{LIBRECHAT_BODY_CONVERSATIONID}}"
+    assert servers["scheduling-cortex"]["headers"]["X-Viventium-Conversation-Id"] == conversation_header
+    source_servers = yaml.safe_load(SOURCE_OF_TRUTH_LIBRECHAT_YAML.read_text())["mcpServers"]
+    assert source_servers["scheduling-cortex"]["headers"]["X-Viventium-Conversation-Id"] == conversation_header
     glasshive = servers["glasshive-workers-projects"]["serverInstructions"]
     ms365 = servers["ms-365"]["serverInstructions"].lower()
     google_workspace = servers["google_workspace"]["serverInstructions"].lower()
@@ -5236,7 +5322,7 @@ def test_build_agent_assignments_glasshive_routes_all_conscious_cortex_execution
     for role in config_compiler.AGENT_ASSIGNMENT_ROLES - {"memory", "deep_memory"}:
         assert assignments[role] == (
             "glasshive-harness",
-            "codex-cli:gpt-5.6-sol",
+            "codex-cli:gpt-6-astra",
         )
     assert assignments["deep_memory"] == ("openai", "gpt-5.6-terra")
     assert assignments["memory"] == ("openai", "gpt-5.6-luna")
@@ -6614,6 +6700,20 @@ def test_config_compiler_with_integrations_and_voice(tmp_path: Path) -> None:
     assert telegram_codex_settings["runtime"]["legacy_paired_users_path"].endswith(
         "state/runtime/isolated/telegram-codex/state/paired_users.json"
     )
+    telegram_state_dir = next(
+        line.split("=", 1)[1].strip().strip("'\"")
+        for line in telegram_env.splitlines()
+        if line.startswith("VIVENTIUM_TELEGRAM_STATE_DIR=")
+    )
+    assert telegram_state_dir.endswith("state/runtime/isolated/telegram")
+    assert not telegram_state_dir.endswith("/runtime/telegram")
+    librechat_env = (output_dir / "service-env" / "librechat.env").read_text(encoding="utf-8")
+    life_intent_file = next(
+        line.split("=", 1)[1].strip().strip("'\"")
+        for line in librechat_env.splitlines()
+        if line.startswith("VIVENTIUM_LIFE_INTENT_FILE=")
+    )
+    assert life_intent_file.endswith("state/life/intent.json")
     assert telegram_codex_projects["default_project"] == "viventium_core"
     assert "telegram_codex" in telegram_codex_projects["projects"]
     assert f"BOT_TOKEN={VALID_TELEGRAM_TOKEN}" in telegram_env
@@ -9348,9 +9448,7 @@ def test_cross_surface_delivery_ack_contract_is_compiled_for_core_and_adapters(
     assert "VIVENTIUM_INTERACTION_ADAPTER_SECRET" not in env
 
     config_compiler.render_service_envs(tmp_path, env)
-    librechat_env = (tmp_path / "service-env" / "librechat.env").read_text(
-        encoding="utf-8"
-    )
+    librechat_env = (tmp_path / "service-env" / "librechat.env").read_text(encoding="utf-8")
     telegram_env = (tmp_path / "service-env" / "telegram.config.env").read_text(
         encoding="utf-8"
     )
@@ -9568,6 +9666,18 @@ def test_main_agent_mcp_servers_have_reviewed_glasshive_projection_policy() -> N
         assert declared_tool_names <= set(policy["toolPolicies"])
         assert compiled_servers[server_name]["viventiumGlassHive"] == policy
 
+    conversation_header = "{{LIBRECHAT_BODY_CONVERSATIONID}}"
+    assert compiled_servers["scheduling-cortex"]["headers"][
+        "X-Viventium-Conversation-Id"
+    ] == conversation_header
+    assert librechat["mcpServers"]["scheduling-cortex"]["headers"][
+        "X-Viventium-Conversation-Id"
+    ] == conversation_header
+    public_example = yaml.safe_load((REPO_ROOT / "librechat.yaml.example").read_text())
+    assert public_example["mcpServers"]["scheduling-cortex"]["headers"][
+        "X-Viventium-Conversation-Id"
+    ] == conversation_header
+
 
 def test_health_runtime_command_is_compiled_as_a_direct_app_support_executable(monkeypatch) -> None:
     config = minimal_compile_config()
@@ -9607,6 +9717,13 @@ def test_public_agent_bootstrap_template_uses_glasshive_opus5_high_fallbacks() -
     ]
 
     for agent in agents:
+        if agent.get("id") == bundle["mainAgent"]["id"]:
+            assert agent["fallback_llm_provider"] == "glasshive-harness"
+            assert agent["fallback_llm_model"] == "claude-code:claude-opus-5"
+            assert agent["fallback_llm_model_parameters"] == {
+                "model": "claude-code:claude-opus-5", "reasoning_effort": "low",
+            }
+            continue
         if agent.get("id") == "agent_viventium_deep_memory_95aeb3":
             assert agent.get("fallback_llm_provider") == "glasshive-harness"
             assert agent.get("fallback_llm_model") == "codex-cli:gpt-5.6-sol"
@@ -10166,7 +10283,7 @@ def test_llm_memory_override_changes_only_the_compiled_memory_agent() -> None:
     [
         (
             {"provider": "xai", "model": "grok-4.5"},
-            "llm.memory.provider must be openai or anthropic",
+            "llm.memory.provider must be openai, anthropic, or glasshive-harness",
         ),
         (
             {"provider": "anthropic", "model": "claude-opus-5"},
@@ -10194,7 +10311,7 @@ def test_public_schema_declares_optional_memory_model_assignment() -> None:
     memory_schema = schema["properties"]["llm"]["properties"]["memory"]
 
     assert memory_schema["required"] == ["provider", "model"]
-    assert memory_schema["properties"]["provider"]["enum"] == ["openai", "anthropic"]
+    assert memory_schema["properties"]["provider"]["enum"] == ["openai", "anthropic", "glasshive-harness"]
     assert memory_schema["properties"]["model"]["minLength"] == 1
 
 
@@ -10826,7 +10943,7 @@ def test_config_compiler_rejects_duplicate_or_unsupported_main_agent_fallback(
             config_compiler.build_agent_assignments(config),
         )
 
-def test_parallel_work_compiler_defaults_dark_and_emits_bounded_runtime_contract(
+def test_parallel_work_compiler_defaults_automatic_and_emits_bounded_runtime_contract(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -10849,10 +10966,10 @@ def test_parallel_work_compiler_defaults_dark_and_emits_bounded_runtime_contract
     )
 
     assert settings == {
-        "available": False,
+        "available": True,
         "isolated_parallel_policy": False,
-        "automatic_execution_mode": "docker",
-        "default_mode": "focused",
+        "automatic_execution_mode": "host",
+        "default_mode": "parallel",
         "conversation_slots_per_cli": 4,
         "mission_slots_per_cli": 3,
         "account_active_limit": 4,
@@ -10867,10 +10984,10 @@ def test_parallel_work_compiler_defaults_dark_and_emits_bounded_runtime_contract
         "snapshot_cold_timeout_ms": 100,
         "authorization_horizon_seconds": 86400,
     }
-    assert env["VIVENTIUM_PARALLEL_WORK_AVAILABLE"] == "false"
+    assert env["VIVENTIUM_PARALLEL_WORK_AVAILABLE"] == "true"
     assert env["VIVENTIUM_GLASSHIVE_ISOLATED_PARALLEL_POLICY"] == "false"
-    assert env["VIVENTIUM_PARALLEL_WORK_EXECUTION_MODE"] == "docker"
-    assert env["VIVENTIUM_PARALLEL_WORK_DEFAULT_MODE"] == "focused"
+    assert env["VIVENTIUM_PARALLEL_WORK_EXECUTION_MODE"] == "host"
+    assert env["VIVENTIUM_PARALLEL_WORK_DEFAULT_MODE"] == "parallel"
     assert env["WPR_HOST_CONVERSATION_SLOTS_PER_CLI"] == "4"
     assert env["GLASSHIVE_CONVERSATION_EXECUTOR_WORKERS"] == "4"
     assert env["WPR_HOST_MISSION_SLOTS_PER_CLI"] == "3"
@@ -10885,13 +11002,13 @@ def test_parallel_work_compiler_defaults_dark_and_emits_bounded_runtime_contract
     assert env["VIVENTIUM_ACTIVE_WORK_CACHE_MS"] == "2000"
     assert env["VIVENTIUM_ACTIVE_WORK_COLD_TIMEOUT_MS"] == "100"
     assert env["VIVENTIUM_GLASSHIVE_AUTHORIZATION_HORIZON_SECONDS"] == "86400"
-    assert "USE_REDIS" not in env
-    assert "USE_REDIS_STREAMS" not in env
-    assert "REDIS_URI" not in env
-    assert "VIVENTIUM_PARALLEL_REDIS_CONTAINER" not in env
-    assert "VIVENTIUM_PARALLEL_REDIS_VOLUME" not in env
-    assert "GLASSHIVE_IDLE_TERMINATE_AFTER_S" not in env
-    assert "GLASSHIVE_IDLE_REAPER_INTERVAL_S" not in env
+    assert env["USE_REDIS"] == "true"
+    assert env["USE_REDIS_STREAMS"] == "true"
+    assert env["REDIS_URI"].startswith("redis://")
+    assert env["VIVENTIUM_PARALLEL_REDIS_CONTAINER"]
+    assert env["VIVENTIUM_PARALLEL_REDIS_VOLUME"]
+    assert env["GLASSHIVE_IDLE_TERMINATE_AFTER_S"] == "1800"
+    assert env["GLASSHIVE_IDLE_REAPER_INTERVAL_S"] == "60"
     assert env["VIVENTIUM_GLASSHIVE_ADMISSION_URL"].endswith(
         "/api/viventium/glasshive/capabilities/admit"
     )
@@ -11018,6 +11135,9 @@ def test_parallel_work_redis_is_isolated_for_compat_and_named_dev_profiles() -> 
         "orchestration": {"available": True},
         "host_worker": {"enabled": True},
     }
+    with pytest.raises(SystemExit, match="single directory name"):
+        config_compiler.build_agent_assignments(dev)
+    dev["runtime"]["dev_env"]["name"] = "Feature Redis QA"
     dev_env = config_compiler.render_runtime_env(
         dev,
         config_compiler.build_agent_assignments(dev),
@@ -11117,14 +11237,11 @@ def test_parallel_work_compiler_validates_limits_and_requires_glasshive() -> Non
     ):
         config_compiler.resolve_glasshive_orchestration_settings(config)
 
-def test_parallel_work_availability_enables_fail_closed_isolated_mission_policy() -> None:
+def test_parallel_work_availability_uses_authorized_host_mission_policy() -> None:
     config = minimal_compile_config()
     config["integrations"]["glasshive"] = {
         "enabled": True,
         "orchestration": {"available": True, "default_mode": "parallel"},
-        # Legacy/manual host defaults remain independently configurable. The Parallel
-        # product lane itself is always isolated and the runtime policy rejects host
-        # mission coexistence while it is advertised.
         "host_worker": {"enabled": True, "default_execution_mode": "host"},
     }
 
@@ -11135,22 +11252,22 @@ def test_parallel_work_availability_enables_fail_closed_isolated_mission_policy(
     )
 
     assert settings["available"] is True
-    assert settings["isolated_parallel_policy"] is True
-    assert settings["automatic_execution_mode"] == "docker"
+    assert settings["isolated_parallel_policy"] is False
+    assert settings["automatic_execution_mode"] == "host"
     assert env["VIVENTIUM_PARALLEL_WORK_AVAILABLE"] == "true"
-    assert env["VIVENTIUM_GLASSHIVE_ISOLATED_PARALLEL_POLICY"] == "true"
-    assert env["VIVENTIUM_PARALLEL_WORK_EXECUTION_MODE"] == "docker"
+    assert env["VIVENTIUM_GLASSHIVE_ISOLATED_PARALLEL_POLICY"] == "false"
+    assert env["VIVENTIUM_PARALLEL_WORK_EXECUTION_MODE"] == "host"
     assert env["GLASSHIVE_DEFAULT_EXECUTION_MODE"] == "host"
 
-def test_public_schema_declares_parallel_work_dark_defaults() -> None:
+def test_public_schema_declares_parallel_work_automatic_defaults() -> None:
     schema = yaml.safe_load((REPO_ROOT / "config.schema.yaml").read_text(encoding="utf-8"))
     orchestration = (
         schema["properties"]["integrations"]["properties"]["glasshive"]["properties"]
         ["orchestration"]
     )
 
-    assert orchestration["properties"]["available"]["default"] is False
-    assert orchestration["properties"]["default_mode"]["default"] == "focused"
+    assert orchestration["properties"]["available"]["default"] is True
+    assert orchestration["properties"]["default_mode"]["default"] == "parallel"
     assert orchestration["properties"]["mission_slots_per_cli"]["default"] == 3
     assert orchestration["properties"]["account_active_limit"]["default"] == 4
     assert orchestration["properties"]["min_available_disk_mb"]["default"] == 4096
@@ -11678,3 +11795,268 @@ def test_config_compiler_explicit_local_chatterbox_provider_falls_back_on_unsupp
     else:
         assert "no supported local TTS route" in error
     assert not (output_dir / "runtime.env").exists()
+
+
+def test_default_life_path_is_not_reported_as_an_owner_choice(tmp_path, monkeypatch) -> None:
+    """The compiler always provides a LIFE path; only an explicit life_dir is a chosen folder."""
+    configure_synthetic_glasshive_runtime(tmp_path, monkeypatch)
+    monkeypatch.setattr(config_compiler.shutil, "which", lambda _name: None)
+    config = minimal_compile_config()
+    config["integrations"]["glasshive"] = {"enabled": True, "provider": {"enabled": True}}
+    assignments = config_compiler.build_agent_assignments(config)
+    env = config_compiler.render_runtime_env(config, assignments)
+    assert env["VIVENTIUM_LIFE_DIR"].endswith("/Documents/Viventium/Life")
+    assert env["VIVENTIUM_LIFE_FOLDER_CHOSEN"] == "false"
+
+
+def test_dev_life_default_is_separate_and_explicit_folder_choice_still_wins(tmp_path) -> None:
+    config = minimal_compile_config()
+    config["runtime"]["dev_env"] = {
+        "enabled": True, "name": "synthetic-dev", "source_app_support_dir": str(tmp_path),
+    }
+    config["integrations"]["glasshive"] = {"enabled": True, "provider": {"enabled": True}}
+    provider = config_compiler.resolve_glasshive_provider_settings(config)
+    expected = tmp_path / "dev-envs" / "synthetic-dev" / "Life"
+    assert provider["life_dir"] == str(expected)
+    assert provider["allowed_workspace_roots"] == [str(expected)]
+    assert provider["life_dir_chosen"] is False
+
+    chosen = tmp_path / "chosen-folder"
+    config["integrations"]["glasshive"]["provider"]["life_dir"] = str(chosen)
+    provider = config_compiler.resolve_glasshive_provider_settings(config)
+    assert provider["life_dir"] == str(chosen)
+    assert provider["life_dir_chosen"] is True
+
+
+def test_voice_owner_wait_seam_defaults_and_accepts_bounded_overrides(tmp_path, monkeypatch) -> None:
+    configure_synthetic_glasshive_runtime(tmp_path, monkeypatch)
+    monkeypatch.setattr(config_compiler.shutil, "which", lambda _name: None)
+    config = minimal_compile_config()
+    assignments = config_compiler.build_agent_assignments(config)
+    env = config_compiler.render_runtime_env(config, assignments)
+    assert env["VIVENTIUM_VOICE_OWNER_WAIT_S"] == "45"
+
+    config["voice"] = {**(config.get("voice") or {}), "worker": {"owner_wait_s": 90}}
+    env = config_compiler.render_runtime_env(config, assignments)
+    assert env["VIVENTIUM_VOICE_OWNER_WAIT_S"] == "90"
+
+    assert config_compiler.resolve_voice_owner_wait_s({"owner_wait_s": "12.5"}) == "12.5"
+    with pytest.raises(SystemExit):
+        config_compiler.resolve_voice_owner_wait_s({"owner_wait_s": 0})
+    with pytest.raises(SystemExit):
+        config_compiler.resolve_voice_owner_wait_s({"owner_wait_s": 999})
+    with pytest.raises(SystemExit):
+        config_compiler.resolve_voice_owner_wait_s({"owner_wait_s": "soon"})
+    for value in ("nan", "inf", "-inf", float("nan"), float("inf"), float("-inf")):
+        with pytest.raises(SystemExit):
+            config_compiler.resolve_voice_owner_wait_s({"owner_wait_s": value})
+
+
+@pytest.mark.parametrize("configured, expected", [(None, False), (False, False), (True, True)])
+def test_viventium_conversation_auto_memory_compiles_explicit_native_policy(configured, expected):
+    config = minimal_compile_config()
+    worker = {"enabled": True}
+    if configured is not None:
+        worker["claude_conversation_auto_memory"] = configured
+    config["integrations"]["glasshive"] = {"enabled": True, "host_worker": worker}
+    settings = config_compiler.resolve_glasshive_host_worker_settings(config)
+    env = config_compiler.render_runtime_env(config, config_compiler.build_agent_assignments(config))
+    assert settings["claude_conversation_auto_memory"] is expected
+    assert env["WPR_CLAUDE_CODE_CONVERSATION_AUTO_MEMORY"] == str(expected).lower()
+
+
+@pytest.mark.parametrize("value", ["false", "", 0, None])
+def test_viventium_conversation_auto_memory_rejects_non_boolean(value):
+    config = minimal_compile_config()
+    config["integrations"]["glasshive"] = {
+        "enabled": True, "host_worker": {"claude_conversation_auto_memory": value},
+    }
+    with pytest.raises(SystemExit, match="claude_conversation_auto_memory"):
+        config_compiler.resolve_glasshive_host_worker_settings(config)
+
+
+def test_public_schema_declares_conversation_auto_memory_owner():
+    schema = yaml.safe_load((REPO_ROOT / "config.schema.yaml").read_text(encoding="utf-8"))
+    policy = schema["properties"]["integrations"]["properties"]["glasshive"]["properties"]["host_worker"]["properties"]["claude_conversation_auto_memory"]
+    assert policy["type"] == "boolean"
+    assert policy["default"] is False
+
+
+@pytest.mark.parametrize("host_worker,provider", [
+    ({"enabled": False}, {"allow_full_access": True}),
+    ({"enabled": True}, {"allow_full_access": False}),
+    ({"enabled": True, "default_execution_mode": "docker"}, {"allow_full_access": True}),
+])
+def test_parallel_work_preserves_restricted_execution_authority(host_worker, provider):
+    config = minimal_compile_config()
+    config["integrations"]["glasshive"] = {
+        "enabled": True, "host_worker": host_worker, "provider": provider,
+    }
+    settings = config_compiler.resolve_glasshive_orchestration_settings(config)
+    assert settings["available"] is True
+    assert settings["automatic_execution_mode"] == "docker"
+    assert settings["isolated_parallel_policy"] is True
+
+
+def test_native_fresh_memory_route_preserves_model_effort_and_explicit_choices() -> None:
+    preset = yaml.safe_load((REPO_ROOT / "config.minimal.example.yaml").read_text())
+    assignments = config_compiler.build_agent_assignments(preset)
+    assert assignments["memory"] == ("glasshive-harness", "codex-cli:gpt-5.6-luna")
+    payload = {"memory": {"agent": {"instructions": "Owning writer prompt"}}}
+    config_compiler.apply_memory_assignment(payload, assignments, preset)
+    assert payload["memory"]["agent"] == {
+        "provider": "glasshive-harness", "model": "codex-cli:gpt-5.6-luna",
+        "model_parameters": {"model": "codex-cli:gpt-5.6-luna", "reasoning_effort": "medium"},
+        "instructions": "Owning writer prompt",
+    }
+    explicit = copy.deepcopy(preset)
+    explicit["llm"]["memory"] = {"provider": "openai", "model": "custom-memory-model"}
+    assert config_compiler.build_agent_assignments(explicit)["memory"] == ("openai", "custom-memory-model")
+    existing = copy.deepcopy(preset)
+    del existing["llm"]["memory"]
+    assert config_compiler.build_agent_assignments(existing)["memory"] == ("openai", "gpt-5.6-luna")
+    assert {key: value for key, value in assignments.items() if key != "memory"} == {
+        key: value for key, value in config_compiler.build_agent_assignments(existing).items() if key != "memory"
+    }
+
+
+@pytest.mark.parametrize("provider_enabled, model, message", [
+    (False, "codex-cli:gpt-5.6-luna", "requires the configured GlassHive provider"),
+    (True, "codex-cli:undeclared-model", "must match a declared GlassHive provider model"),
+    (True, "claude-code:opus", "broker-only memory tools"),
+])
+def test_saved_memory_native_route_requires_declared_enabled_transport(provider_enabled, model, message):
+    config = minimal_compile_config()
+    config["integrations"]["glasshive"] = {"enabled": True, "provider": {"enabled": provider_enabled}}
+    config["llm"]["memory"] = {"provider": "glasshive-harness", "model": model}
+    with pytest.raises(SystemExit, match=message):
+        config_compiler.build_agent_assignments(config)
+
+
+def test_native_deep_memory_route_retains_exact_model_and_existing_choices():
+    preset = yaml.safe_load((REPO_ROOT / "config.minimal.example.yaml").read_text())
+    assignments = config_compiler.build_agent_assignments(preset)
+    assert assignments["deep_memory"] == ("glasshive-harness", "codex-cli:gpt-5.6-terra")
+    model = next(item for item in config_compiler.GLASSHIVE_PROVIDER_MODELS
+                 if item["id"] == assignments["deep_memory"][1])
+    assert model["recommendedEffort"] == "medium"
+    assert model["contextLimit"] == 272000
+    existing = copy.deepcopy(preset)
+    del existing["llm"]["deep_memory"]
+    previous = config_compiler.build_agent_assignments(existing)
+    assert previous["deep_memory"] == ("openai", "gpt-5.6-terra")
+    assert {key: value for key, value in assignments.items() if key != "deep_memory"} == {
+        key: value for key, value in previous.items() if key != "deep_memory"
+    }
+    explicit = copy.deepcopy(preset)
+    explicit["llm"]["deep_memory"] = {"provider": "openai", "model": "custom-recall-model"}
+    assert config_compiler.build_agent_assignments(explicit)["deep_memory"] == ("openai", "custom-recall-model")
+
+
+@pytest.mark.parametrize("route, enabled, error", [
+    ({"provider": "glasshive-harness", "model": "codex-cli:unknown"}, True, "declared"),
+    ({"provider": "glasshive-harness", "model": "codex-cli:gpt-5.6-terra"}, False, "configured GlassHive"),
+    ({"provider": "openai", "model": ""}, True, "non-empty"),
+    ({"provider": "xai", "model": "custom"}, True, "provider must be"),
+])
+def test_deep_memory_explicit_route_rejects_unavailable_or_invalid_configuration(route, enabled, error):
+    config = minimal_compile_config()
+    config["integrations"]["glasshive"] = {"enabled": True, "provider": {"enabled": enabled}}
+    config["llm"]["deep_memory"] = route
+    with pytest.raises(SystemExit, match=error):
+        config_compiler.build_agent_assignments(config)
+
+
+def test_native_bundle_projects_deep_memory_route_and_retains_its_prompt():
+    preset = yaml.safe_load((REPO_ROOT / "config.minimal.example.yaml").read_text())
+    source = next(agent for agent in config_compiler.load_source_of_truth_agents_bundle()["backgroundAgents"]
+                  if agent["id"] == "agent_viventium_deep_memory_95aeb3")
+    for route, expected_provider, expected_model in [
+        (preset["llm"]["deep_memory"], "glasshive-harness", "codex-cli:gpt-5.6-terra"),
+        ({"provider": "openai", "model": "custom-recall-model"}, "openai", "custom-recall-model"),
+    ]:
+        configured = copy.deepcopy(preset)
+        configured["llm"]["deep_memory"] = route
+        bundle = config_compiler.render_native_agents_bundle(
+            configured, config_compiler.build_agent_assignments(configured),
+            {"sequential-thinking", "scheduling-cortex", "glasshive-workers-projects"},
+        )
+        agent = next(agent for agent in bundle["backgroundAgents"] if agent["id"] == source["id"])
+        assert agent["provider"] == expected_provider
+        assert agent["model"] == expected_model
+        assert agent["model_parameters"]["model"] == expected_model
+        assert agent["model_parameters"]["reasoning_effort"] == "medium"
+        assert agent.get("instructions") == source.get("instructions")
+        assert agent.get("fallback_llm_provider") == source.get("fallback_llm_provider")
+        assert agent.get("fallback_llm_model") == source.get("fallback_llm_model")
+
+
+def test_native_harness_workspace_is_provisioned_without_life_selection() -> None:
+    config = minimal_compile_config()
+    config["integrations"]["glasshive"] = {"enabled": True, "provider": {"enabled": True}}
+    source = copy.deepcopy(config_compiler.load_source_of_truth_agents_bundle())
+    compiled = config_compiler.render_native_agents_bundle(
+        config, config_compiler.build_agent_assignments(config), set()
+    )
+    native_agents = [a for a in [compiled["mainAgent"], *compiled["backgroundAgents"]]
+                     if a.get("provider") == "glasshive-harness"]
+    assert native_agents
+    for agent in native_agents:
+        assert agent["glasshive_options"]["workspace"] == {"mode": "default"}, agent["id"]
+        assert agent["glasshive_options"]["access"] == "full"
+    assert config_compiler.load_source_of_truth_agents_bundle() == source
+    assert compiled["mainAgent"]["model"] == "codex-cli:gpt-6-astra"
+    assert compiled["mainAgent"]["model_parameters"]["reasoning_effort"] == "medium"
+
+
+def test_native_harness_preserves_explicit_custom_workspace(monkeypatch) -> None:
+    config = minimal_compile_config()
+    config["integrations"]["glasshive"] = {"enabled": True, "provider": {"enabled": True}}
+    source = copy.deepcopy(config_compiler.load_source_of_truth_agents_bundle())
+    options = source["mainAgent"]["glasshive_options"]
+    options["workspace"] = {"mode": "custom", "path": "/opt/example-workspace"}
+    options["access"] = "read_only"
+    monkeypatch.setattr(config_compiler, "load_source_of_truth_agents_bundle", lambda: source)
+    compiled = config_compiler.render_native_agents_bundle(
+        config, config_compiler.build_agent_assignments(config), set()
+    )
+    assert compiled["mainAgent"]["glasshive_options"] == options
+
+
+def test_native_harness_preserves_owner_selected_life_workspace() -> None:
+    config = minimal_compile_config()
+    config["integrations"]["glasshive"] = {
+        "enabled": True, "provider": {"enabled": True, "life_dir": "/opt/example-life"}
+    }
+    compiled = config_compiler.render_native_agents_bundle(
+        config, config_compiler.build_agent_assignments(config), set()
+    )
+    for agent in [compiled["mainAgent"], *compiled["backgroundAgents"]]:
+        if agent.get("provider") == "glasshive-harness":
+            assert agent["glasshive_options"]["workspace"] == {"mode": "life"}
+
+
+@pytest.mark.parametrize("effort", ["default", "low", "medium", "high", "xhigh", "max"])
+def test_host_claude_supported_effort_is_not_remapped(effort):
+    config = minimal_compile_config()
+    config["integrations"]["glasshive"] = {"enabled": True, "host_worker": {"claude_effort": effort}}
+    settings = config_compiler.resolve_glasshive_host_worker_settings(config)
+    assert settings["claude_effort"] == effort
+
+
+def test_host_claude_unknown_effort_is_rejected():
+    config = minimal_compile_config()
+    config["integrations"]["glasshive"] = {"enabled": True, "host_worker": {"claude_effort": "ultra"}}
+    with pytest.raises(SystemExit, match="claude_effort"):
+        config_compiler.resolve_glasshive_host_worker_settings(config)
+
+
+def test_explicit_role_model_catalog_preserves_existing_default_aliases():
+    models = {item["id"]: item for item in config_compiler.GLASSHIVE_PROVIDER_MODELS}
+    assert models["codex-cli:gpt-6-astra"]["contextLimit"] == 272000
+    assert models["codex-cli:gpt-6-astra"]["effortChoices"] == ["low", "medium", "high", "xhigh", "max", "ultra"]
+    assert models["claude-code:claude-opus-5"]["contextLimit"] == 1000000
+    assert {"low", "medium"}.issubset(models["claude-code:claude-opus-5"]["effortChoices"])
+    assert models["claude-code:opus"]["label"] == "Claude / Opus"
+    assert config_compiler.GLASSHIVE_PROVIDER_MODEL_BY_WORKER_PROFILE["codex-cli"] == "codex-cli:gpt-5.6-sol"
+    assert config_compiler.GLASSHIVE_PROVIDER_MODEL_BY_WORKER_PROFILE["claude-code"] == "claude-code:opus"

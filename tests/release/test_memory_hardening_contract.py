@@ -1206,6 +1206,77 @@ def test_memory_hardening_status_does_not_open_live_redis_clients(
     )
 
 
+def _run_with_completion_exit_deadline(
+    command: list[str], tmp_path: Path, output_ready,
+    *, startup_timeout: float = 30, exit_timeout: float = 5,
+) -> subprocess.CompletedProcess:
+    stdout_path = tmp_path / "child-stdout.txt"
+    stderr_path = tmp_path / "child-stderr.txt"
+    with stdout_path.open("w") as stdout_file, stderr_path.open("w") as stderr_file:
+        process = subprocess.Popen(command, cwd=ROOT, stdout=stdout_file, stderr=stderr_file)
+        try:
+            startup_deadline = time.monotonic() + startup_timeout
+            while not output_ready(stdout_path.read_text()):
+                if process.poll() is not None:
+                    if output_ready(stdout_path.read_text()):
+                        break
+                    raise AssertionError("The standalone command exited before valid output.")
+                if time.monotonic() >= startup_deadline:
+                    raise TimeoutError("The standalone command did not complete startup/output.")
+                time.sleep(0.02)
+            try:
+                process.wait(timeout=exit_timeout)
+            except subprocess.TimeoutExpired as error:
+                raise TimeoutError(
+                    "The standalone command retained handles after completing its output."
+                ) from error
+            result = subprocess.CompletedProcess(
+                command, process.returncode, stdout_path.read_text(), stderr_path.read_text(),
+            )
+            result.check_returncode()
+            return result
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait()
+
+
+def test_completion_exit_deadline_allows_slow_startup(tmp_path: Path) -> None:
+    result = _run_with_completion_exit_deadline(
+        [sys.executable, "-u", "-c", "import time; time.sleep(1.25); print('ready')"],
+        tmp_path, lambda output: output == "ready\n",
+        startup_timeout=5, exit_timeout=1,
+    )
+    assert result.stdout == "ready\n"
+    assert result.returncode == 0
+
+
+@pytest.mark.parametrize("completed", [False, True])
+def test_completion_exit_deadline_rejects_and_reaps_stalled_child(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, completed: bool,
+) -> None:
+    processes = []
+    real_popen = subprocess.Popen
+
+    def record_process(*args, **kwargs):
+        process = real_popen(*args, **kwargs)
+        processes.append(process)
+        return process
+
+    monkeypatch.setattr(subprocess, "Popen", record_process)
+    script = "import time; " + ("print('ready', flush=True); " if completed else "")
+    script += "time.sleep(10)"
+    message = "retained handles after completing" if completed else "did not complete startup"
+    with pytest.raises(TimeoutError, match=message):
+        _run_with_completion_exit_deadline(
+            [sys.executable, "-u", "-c", script], tmp_path,
+            lambda output: output == "ready\n",
+            startup_timeout=5 if completed else 0.2, exit_timeout=0.2,
+        )
+    assert len(processes) == 1
+    assert processes[0].poll() is not None
+
+
 @pytest.mark.parametrize("mode", ["help", "status"])
 def test_memory_hardening_direct_node_entrypoint_releases_inherited_redis_handles(
     monkeypatch: pytest.MonkeyPatch,
@@ -1218,23 +1289,26 @@ def test_memory_hardening_direct_node_entrypoint_releases_inherited_redis_handle
     app_support_dir = tmp_path / "isolated-app-support"
     arguments = ["--help"] if mode == "help" else ["--mode", "status"]
 
-    try:
-        result = subprocess.run(
-            [
-                "node",
-                str(ROOT / "viventium_v0_4/LibreChat/scripts/viventium-memory-hardening.js"),
-                *arguments,
-                "--app-support-dir",
-                str(app_support_dir),
-            ],
-            cwd=ROOT,
-            text=True,
-            capture_output=True,
-            check=True,
-            timeout=5,
-        )
-    except subprocess.TimeoutExpired:
-        pytest.fail("The standalone hardener retained inherited Redis handles after completing.")
+    def output_ready(output: str) -> bool:
+        if mode == "help":
+            return "viventium-memory-hardening.js --mode dry-run" in output
+        try:
+            return json.loads(output).get("run_count") == 0
+        except (ValueError, AttributeError):
+            return False
+
+    # Cold dependency loading and retained handles are separate failure phases.
+    # Preserve the five-second natural-exit bound after complete, valid output.
+    result = _run_with_completion_exit_deadline(
+        [
+            "node",
+            str(ROOT / "viventium_v0_4/LibreChat/scripts/viventium-memory-hardening.js"),
+            *arguments,
+            "--app-support-dir",
+            str(app_support_dir),
+        ],
+        tmp_path, output_ready,
+    )
 
     if mode == "help":
         assert "viventium-memory-hardening.js --mode dry-run" in result.stdout

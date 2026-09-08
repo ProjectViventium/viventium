@@ -55,7 +55,7 @@ ACCOUNT_MENU = (
 def _source_digest() -> str:
     digest = hashlib.sha256()
     helper_dir = HELPER_PACKAGE.parent
-    for path in (HELPER_PACKAGE, HELPER_SOURCE, HELPER_INFO_PLIST):
+    for path in (HELPER_PACKAGE, HELPER_SOURCE, HELPER_SOURCE.with_name("LifeSetup.swift"), HELPER_INFO_PLIST):
         digest.update(path.relative_to(helper_dir).as_posix().encode("utf-8"))
         digest.update(b"\0")
         digest.update(path.read_bytes())

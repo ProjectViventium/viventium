@@ -4,16 +4,16 @@
 
 | Case ID    | Requirement                             | User Outcome                                                                             | Surfaces                             | Last Run                                                                                                                               |
 | ---------- | --------------------------------------- | ---------------------------------------------------------------------------------------- | ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------- |
-| `ANTI-001` | Reality Check happy path                | Current-fact evidence returns to Main before one final answer                            | Web, GlassHive, web/tool             | `FAIL` 2026-08-29 — current source lacks required Reality Check `web_search`; historical Real-Web evidence belongs to the older candidate         |
+| `ANTI-001` | Reality Check happy path                | Current-fact evidence returns to Main before one final answer                            | Web, GlassHive, web/tool             | `PARTIAL` 2026-09-06 — real Web evidence returned through Reality to Main; installed and channel acceptance remain         |
 | `ANTI-002` | No-trigger / ordinary turn              | Main answers naturally without unnecessary foreground consultants                        | Web, logs, DB                        | `PASS` 2026-08-11                                                                                                                      |
-| `ANTI-003` | Main → Reality → Main → Red Team → Main | Reality is challenged and Main synthesizes last                                          | Web, GlassHive, Red Team             | `FAIL` 2026-08-29 — current source duplicates Red Team across background and handoff registries; historical Main-last Web proof remains scoped    |
+| `ANTI-003` | Main → Reality → Main → Red Team → Main | Reality is challenged and Main synthesizes last                                          | Web, GlassHive, Red Team             | `PARTIAL` 2026-09-06 — full real Web chain and complete consultant context passed; installed/channel and Phase B gates remain    |
 | `ANTI-004` | Handoff loop safety                     | Bidirectional edges terminate without recursive handoff                                  | Web, Agent graph                     | `PASS` 2026-08-11 — the adversarial repeat-check prompt ran each consultant once, returned Main-last, and survived refresh             |
 | `ANTI-005` | Failure honesty                         | Missing evidence/provider/tool state is not fabricated                                   | Web, tool/provider health            | `PASS` 2026-08-11 — healthy, empty, rate-limit, auth, unavailable, rejected, refresh, and recovery paths passed through the signed broker         |
 | `ANTI-006` | Persistence/reload                      | Consult order, evidence, and final answer survive refresh/restart                        | Web, DB                              | `PARTIAL` 2026-08-11                                                                                                                   |
 | `ANTI-007` | Telegram parity                         | User receives one Main-authored final answer with persisted evidence                     | Telegram, DB/ledger                  | `BLOCKED` 2026-08-11                                                                                                                   |
 | `ANTI-008` | Voice latency/exclusion                 | Voice remains responsive and does not block on foreground research                       | Voice/playground                     | `PARTIAL` 2026-08-11 — real isolated voice transport ran, but latency targets missed and the required balanced semantic, lookup, interruption, cancel, recovery, and persistence paths remain open |
-| `ANTI-009` | Phase B duplicate suppression           | Already-used evidence does not create a repetitive follow-up                             | Web, Phase B, DB                     | `PASS` 2026-08-11 — final-runtime foreground/background overlap stayed follow-up-silent; genuinely new older evidence surfaced once   |
-| `ANTI-010` | Deep Memory late surfacing              | Relevant older evidence appears later; irrelevant search stays silent                    | Web, recall/RAG, Phase B             | `FAIL` 2026-08-29 — current source lacks the required non-empty-source result-evidence declaration; historical Real-Web proof is scoped           |
+| `ANTI-009` | Phase B duplicate suppression           | Already-used evidence does not create a repetitive follow-up                             | Web, Phase B, DB                     | `PARTIAL` 2026-09-06 — development-Web duplicate retry passed after formatter/route repair; later-candidate installed and channel proof remains   |
+| `ANTI-010` | Deep Memory late surfacing              | Relevant older evidence appears later; irrelevant search stays silent                    | Web, recall/RAG, Phase B             | `PARTIAL` 2026-09-06 — independent original-source recall passed; distinct useful late evidence and channel acceptance remain           |
 | `ANTI-011` | My World context/tool evidence          | Shared context arrives automatically; each agent uses only assigned tools                | Web, memory, RAG, Life/GlassHive     | `FAIL` 2026-08-29 — current source lacks required Reality Check and Deep Research `web_search` declarations                           |
 | `ANTI-012` | Parallel text activation                | Text detection overlaps Main and does not impose a fixed 1,300 ms wait                   | Web, timing/logs                     | `PARTIAL` 2026-08-11                                                                                                                   |
 | `ANTI-013` | Disposable-account isolation            | Real QA proves parity without changing protected user state                              | Web, DB/index/connection state       | `PARTIAL` 2026-08-11                                                                                                                   |
@@ -24,11 +24,21 @@
 
 ## Common Preconditions And Evidence
 
-The current 2026-08-29 source gate is `FAIL`: 8 of 12
-`test_anti_sycophancy_architecture_contract.py` cases pass and four fail. The failures are the
-missing Deep Memory result-evidence declaration, missing Reality Check `web_search`, duplicate Red
-Team registration, and missing Deep Research `web_search`. Historical Real-Web results remain
-evidence for their tested candidate; they cannot certify the current source.
+Current candidate acceptance is `PARTIAL`. The selected implementation has all 12 architecture
+contracts passing: declared search tools, one shared Red Team, independent Deep Memory and its
+source-evidence gate are present. The 29 August source failures below describe an older candidate.
+On 6 September, real Web use proved independent scoped recall of an original user decision,
+Reality returning evidence to one Main answer, reload persistence, and silence for redundant later
+evidence. A second natural decision ran the complete Reality → Main → Red Team → Main chain with
+the full consultant outputs reaching their next consumers and a useful final recommendation. Its
+later Phase B repeated advice: the recent-answer prefix had hidden Main's conclusion. The formatter
+correction passes exact primary/fallback comparisons. The installed retry then exposed request cleanup
+invalidating the late callback's agent route. Preserving that completed route passes the real Web retry:
+late results settle without reload, the existing owner reads the full saved answer, a durable model
+no-response decision suppresses repeated evidence, and reload preserves the result. Distinct valuable
+late follow-up and channel journeys remain open. These
+observations do not replace the retained case-specific gates below.
+Historical Real-Web results remain evidence for their tested candidate only.
 
 - Use a disposable signed-in non-owner QA identity and synthetic public-safe evidence.
 - Prove the intended source bundle, compiled/generated config, active runtime artifact, provider
@@ -251,14 +261,23 @@ evidence for their tested candidate; they cannot certify the current source.
   material evidence.
 - Steps:
   1. Complete the foreground chain and wait through the configured Phase B window.
-  2. Run one duplicate-evidence case and one genuinely new-evidence case.
+  2. Run one duplicate-evidence case and one genuinely new-evidence case. Include a complete answer
+     whose conclusion falls beyond a short prefix, and a pending request awaiting its first useful
+     result. Inspect the actual rendered recent-answer context rather than its reported length.
   3. Inspect visible follow-ups, `{NTA}`/silent terminal state, follow-up provider route, and DB parts.
 - Expected result: duplicate evidence produces no visible follow-up through the existing value gate;
   genuinely new material produces one concise additive Main-authored follow-up.
 - Forbidden result: repeated warning/challenge, original answer replacement, new receipt/dedup system
   treated as required, or permanent background progress state.
 - Automation: Phase B decision/eval tests support; real Web wait and persistence check mandatory.
-- Last run: `PASS` 2026-08-11 — a final-runtime foreground Reality/Red chain overlapped background Red and
+- Current run: `PARTIAL` 2026-09-06 — a real full consultation exposed repeated advice after the
+  formatter cut off Main's conclusion. Removing that cut preserves all three surfaces. Exact
+  configured primary and fallback comparisons reproduce the old duplicate, suppress it with the
+  complete answer, and retain both new failure evidence and the first useful pending result.
+  The same dated development-Web record above reports a passing retry after preserving the
+  completed route: redundant evidence settled silently and survived reload. This historical subset
+  does not establish distinct useful late delivery or installed/channel acceptance for a later candidate.
+- Historical run: `PASS` 2026-08-11 — a final-runtime foreground Reality/Red chain overlapped background Red and
   Deep Memory work without adding a second assistant message after Main. The persisted turn
   retained one Main-last answer and no duplicate Phase B follow-up. A separate real Deep Memory
   turn had already proved the positive half by surfacing genuinely new older evidence exactly once
@@ -283,8 +302,10 @@ evidence for their tested candidate; they cannot certify the current source.
 - Forbidden result: runtime keyword gate, broad filesystem/app-state substitution, saved-memory
   mutation, first-answer wait, or an irrelevant visible memory dump.
 - Automation: always-mode/schema and recall/broker tests plus Phase B eval; real Web mandatory.
-- Last run: `FAIL` — the 2026-08-29 current source contract lacks the required Deep Memory
-  non-empty-source `result_evidence` declaration. Historically, an older synthetic fact outside Immediate Access Memory Keys was recalled on
+- Current run: `PARTIAL` 2026-09-06 — configured source evidence is enforced on direct and native
+  results. Independent execution, retrieved evidence, late completion and a durable no-response
+  decision passed on installed Web; distinct valuable late delivery and channel parity remain open.
+  The 2026-08-29 missing-declaration failure is historical. Historically, an older synthetic fact outside Immediate Access Memory Keys was recalled on
   a naturally related turn. Main answered first without waiting; Deep Memory's primary provider
   rate-limited, its configured fallback used scoped conversation `file_search`, and Phase B added
   one Main-authored follow-up containing the exact remembered date and prerequisite. The card named
@@ -525,7 +546,7 @@ evidence for their tested candidate; they cannot certify the current source.
 | `ANTI-UC-006` | Send the same decision through Telegram                             | `ANTI-007`              | Telegram            | Delivered message, ledger, stored graph state            | One Main-authored delivered answer                            | `BLOCKED` 2026-08-11 |
 | `ANTI-UC-007` | Ask the same live-fact question by voice                            | `ANTI-008`              | Voice/playground    | Audio/RTC state, transcript, graph/tool events           | Responsive honest speech without blocking foreground research | `PARTIAL` 2026-08-11 |
 | `ANTI-UC-008` | Wait for overlapping background work                                | `ANTI-009`              | Web                 | Phase B state and persisted parts                        | New value surfaces once; duplicate evidence stays silent      | `PASS` 2026-08-11 |
-| `ANTI-UC-009` | Let old evidence become relevant naturally                          | `ANTI-010`              | Web + recall        | Scoped recall provenance, Phase B, refresh               | Main answers first; useful memory surfaces later once         | `FAIL` 2026-08-29 — current source lacks required result-evidence declaration |
+| `ANTI-UC-009` | Let old evidence become relevant naturally                          | `ANTI-010`              | Web + recall        | Scoped recall provenance, Phase B, refresh               | Main answers first; useful memory surfaces later once         | `PARTIAL` 2026-09-06 — receipt enforced; useful distinct late delivery remains |
 | `ANTI-UC-010` | Require Memory Keys, recall, `Life/`, and web together              | `ANTI-011`              | Web + tools         | Shared context, signed capability scope, tool provenance | Sources stay distinct and no manual recap is needed           | `FAIL` 2026-08-29 — current source lacks required web tools |
 | `ANTI-UC-011` | Compare ordinary, activated, and timeout text turns                 | `ANTI-012`              | Web                 | Detector/Main timing and invocation counts               | No fixed wait or duplicate Main execution                     | `PARTIAL` 2026-08-11 |
 | `ANTI-UC-012` | Complete and clean a disposable-user run                            | `ANTI-013`              | All                 | Before/after counts and nonce sweep                      | Protected state unchanged; synthetic evidence removed         | `PARTIAL` 2026-08-11 |

@@ -78,14 +78,18 @@ def test_background_direct_action_ownership_matches_main_parallel_work_tools() -
     assert app_glasshive["tool_names"] == glasshive["tool_names"]
 
 
-def test_main_declares_parallel_capability_while_defaulting_to_focused() -> None:
+def test_main_declares_automatic_parallel_capability() -> None:
     orchestration = _bundle()["mainAgent"]["glasshive_options"]["orchestration"]
 
     assert orchestration == {
         "parallel_available": True,
-        "default_mode": "focused",
+        "default_mode": "parallel",
         "worker_profile": "codex-cli",
+        "worker_model": "codex-cli:gpt-6-astra",
+        "worker_reasoning_effort": "medium",
         "fallback_worker_profile": "claude-code",
+        "fallback_worker_model": "claude-code:claude-opus-5",
+        "fallback_worker_reasoning_effort": "medium",
     }
 
 

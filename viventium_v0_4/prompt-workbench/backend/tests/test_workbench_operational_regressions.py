@@ -2247,3 +2247,329 @@ def test_installed_proof_does_not_hide_failed_continuity_or_cognitive_health() -
     assert report["status"] == "blocked"
     assert "continuity_latest_scheduled_run_failed" in report["blockingChecks"]
     assert "cognitive_integrity_blocked" in report["blockingChecks"]
+
+
+def test_agent_source_bundle_overlays_applied_prompt_registry_without_changing_other_fields(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source_path = tmp_path / "local.viventium-agents.yaml"
+    source_path.write_text(
+        """\
+meta:
+  version: 7
+mainAgent:
+  id: main-agent
+  instructions: stale main instructions
+  tools:
+    - keep-main-tool
+backgroundAgents:
+  - id: parallel-agent
+    instructions: stale parallel instructions
+    provider: keep-provider
+  - id: unmanaged-agent
+    instructions: keep unmanaged instructions
+config:
+  keep: unchanged
+""",
+        encoding="utf-8",
+    )
+    prompt_root = tmp_path / "prompts"
+    (prompt_root / "main").mkdir(parents=True)
+    (prompt_root / "cortex").mkdir()
+    (prompt_root / "main" / "conscious.md").write_text(
+        """\
+---
+id: main.conscious_agent
+owner_layer: test
+target: main.instructions
+version: 1
+status: active
+safety_class: public_product
+required_context: []
+output_contract: system_instructions
+includes:
+- main.tools
+---
+""",
+        encoding="utf-8",
+    )
+    (prompt_root / "main" / "tools.md").write_text(
+        """\
+---
+id: main.tools
+owner_layer: test
+target: main.instructions.section
+version: 1
+status: active
+safety_class: public_product
+required_context: []
+output_contract: system_instructions
+---
+Applied main tools
+""",
+        encoding="utf-8",
+    )
+    (prompt_root / "cortex" / "parallel.md").write_text(
+        """\
+---
+id: cortex.parallel.execution
+owner_layer: test
+target: backgroundAgents.parallel-agent.instructions
+version: 1
+status: active
+safety_class: public_product
+required_context: []
+output_contract: system_instructions
+---
+Applied parallel instructions
+""",
+        encoding="utf-8",
+    )
+    before = source_path.read_bytes()
+    monkeypatch.setattr(prompt_service, "AGENTS_SOURCE_PATH", source_path)
+    monkeypatch.setattr(prompt_service, "PROMPTS_ROOT", prompt_root)
+
+    bundle = prompt_service.source_agents_bundle()
+
+    assert bundle["mainAgent"]["instructions"] == "Applied main tools"
+    assert bundle["mainAgent"]["tools"] == ["keep-main-tool"]
+    assert bundle["backgroundAgents"][0]["instructions"] == "Applied parallel instructions"
+    assert bundle["backgroundAgents"][0]["provider"] == "keep-provider"
+    assert bundle["backgroundAgents"][1]["instructions"] == "keep unmanaged instructions"
+    assert bundle["config"] == {"keep": "unchanged"}
+    assert source_path.read_bytes() == before
+
+
+@pytest.mark.parametrize("review_flag", ("--dry-run", "--compare-reviewed"))
+def test_prompt_push_uses_private_ephemeral_rendered_bundle(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    review_flag: str,
+) -> None:
+    private_root = tmp_path / "private"
+    observed: dict[str, object] = {}
+    bundle = {
+        "meta": {"version": 7},
+        "mainAgent": {
+            "id": "main-agent",
+            "instructions": "applied rendered instructions",
+            "tools": ["keep-main-tool"],
+        },
+        "config": {"keep": "unchanged"},
+    }
+
+    def fake_run(cmd: list[str], **_kwargs: object) -> SimpleNamespace:
+        input_arg = next(arg for arg in cmd if arg.startswith("--in="))
+        input_path = Path(input_arg.removeprefix("--in="))
+        observed["input_path"] = input_path
+        observed["mode"] = input_path.stat().st_mode & 0o777
+        observed["bundle"] = sync_engine.yaml.safe_load(
+            input_path.read_text(encoding="utf-8")
+        )
+        return SimpleNamespace(returncode=0, stdout="{}", stderr="")
+
+    monkeypatch.setattr(sync_engine, "workbench_private_root", lambda: private_root)
+    monkeypatch.setattr(sync_engine, "source_agents_bundle", lambda: bundle)
+    monkeypatch.setattr(sync_engine.subprocess, "run", fake_run)
+
+    sync_engine.run_agent_sync(["push", "--env=local", "--prompts-only", review_flag])
+
+    assert observed["bundle"] == bundle
+    assert observed["mode"] == 0o600
+    assert private_root in Path(observed["input_path"]).parents
+    assert not Path(observed["input_path"]).exists()
+
+
+def test_pull_sync_cannot_rewrite_prompt_source_of_truth(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed: list[list[str]] = []
+
+    def fake_run(cmd: list[str], **_kwargs: object) -> SimpleNamespace:
+        observed.append(cmd)
+        return SimpleNamespace(returncode=0, stdout="{}", stderr="")
+
+    monkeypatch.setattr(sync_engine.subprocess, "run", fake_run)
+
+    sync_engine.run_agent_sync(["pull", "--env=local"])
+
+    assert observed
+    assert "--no-source-of-truth" in observed[0]
+
+
+def test_live_import_advances_only_matching_reconciled_ledger_rows(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    private_root = tmp_path / "private"
+    private_root.mkdir()
+    ledger_path = private_root / "sync-ledger.json"
+    untouched_conflict = {
+        "agentId": "other-agent",
+        "sourcePromptId": "cortex.other.execution",
+        "sourceCommit": "old-commit",
+        "sourceHash": "other-source-before",
+        "renderedHash": "other-source-before",
+        "liveHash": "other-live-before",
+        "liveAgentVersion": 3,
+        "updatedAt": "2026-01-01T00:00:00+00:00",
+        "evalRunIds": ["other-eval"],
+    }
+    ledger_path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "records": {
+                    "main-agent": {
+                        "agentId": "main-agent",
+                        "sourcePromptId": "main.conscious_agent",
+                        "sourceCommit": "old-commit",
+                        "sourceHash": "source-before",
+                        "renderedHash": "source-before",
+                        "liveHash": "live-before",
+                        "liveAgentVersion": 1,
+                        "updatedAt": "2026-01-01T00:00:00+00:00",
+                        "evalRunIds": ["passing-eval"],
+                    },
+                    "other-agent": untouched_conflict,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        sync_engine,
+        "get_status",
+        lambda private_root=None: {
+            "sourceCommit": "current-commit",
+            "agents": [
+                {
+                    "agentId": "main-agent",
+                    "sourcePromptId": "main.conscious_agent",
+                    "sourceHash": "reconciled",
+                    "liveHash": "reconciled",
+                    "liveAgentVersion": 2,
+                },
+                {
+                    "agentId": "other-agent",
+                    "sourcePromptId": "cortex.other.execution",
+                    "sourceHash": "other-source-now",
+                    "liveHash": "other-live-now",
+                    "liveAgentVersion": 4,
+                },
+            ],
+        },
+    )
+
+    result = sync_engine.advance_matching_reconciled_rows(private_root=private_root)
+    updated = json.loads(ledger_path.read_text(encoding="utf-8"))
+
+    assert result == {"status": "updated", "updatedRecordCount": 1}
+    assert updated["records"]["main-agent"]["sourceHash"] == "reconciled"
+    assert updated["records"]["main-agent"]["liveHash"] == "reconciled"
+    assert updated["records"]["main-agent"]["evalRunIds"] == ["passing-eval"]
+    assert updated["records"]["other-agent"] == untouched_conflict
+    assert (
+        sync_engine.classify_sync_state(
+            source_hash="next-source-edit",
+            live_hash="reconciled",
+            ledger_record=updated["records"]["main-agent"],
+        )
+        == "source-ahead"
+    )
+
+
+@pytest.mark.parametrize(
+    ("draft_kind", "expected_advances"),
+    (("live-import", 1), ("source-edit", 0), ("eval-edit", 0)),
+)
+def test_apply_draft_advances_reconciled_rows_only_for_live_import(
+    draft_kind: str,
+    expected_advances: int,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app_module = importlib.import_module("prompt_workbench.app")
+    advances: list[bool] = []
+    monkeypatch.setattr(
+        app_module.drafts,
+        "get_draft",
+        lambda _draft_id: {"kind": draft_kind},
+    )
+    monkeypatch.setattr(
+        app_module.drafts,
+        "apply_draft",
+        lambda draft_id, token: {
+            "id": draft_id,
+            "status": "applied",
+            "token": token,
+        },
+    )
+    monkeypatch.setattr(
+        app_module.sync_engine,
+        "advance_matching_reconciled_rows",
+        lambda: advances.append(True),
+        raising=False,
+    )
+
+    result = app_module.apply_draft(
+        "synthetic-draft",
+        SimpleNamespace(idempotencyToken="reviewed-token"),
+        None,
+    )
+
+    assert result["status"] == "applied"
+    assert len(advances) == expected_advances
+
+
+def test_reviewed_push_pulls_fresh_live_before_advancing_ledger(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    private_root = tmp_path / "private"
+    calls: list[list[str]] = []
+    ledger_refresh_after_calls: list[list[list[str]]] = []
+    status = {
+        "counts": {
+            "synced": 0,
+            "source-ahead": 1,
+            "live-ahead": 0,
+            "conflict": 0,
+        },
+        "agents": [
+            {
+                "agentId": "main-agent",
+                "label": "Main",
+                "sourceHash": "source-after-edit",
+            }
+        ],
+    }
+
+    def fake_run(args: list[str]) -> dict[str, object]:
+        calls.append(args)
+        return {
+            "returnCode": 0,
+            "parsed": {"args": args},
+            "stdoutTail": "synthetic reviewed output",
+        }
+
+    monkeypatch.setattr(sync_engine, "workbench_private_root", lambda: private_root)
+    monkeypatch.setattr(drafts, "workbench_private_root", lambda: private_root)
+    monkeypatch.setattr(sync_engine, "get_status", lambda: status)
+    monkeypatch.setattr(sync_engine, "run_agent_sync", fake_run)
+    monkeypatch.setattr(
+        sync_engine,
+        "refresh_ledger_after_reconcile",
+        lambda private_root=None: ledger_refresh_after_calls.append(list(calls))
+        or {"status": "updated"},
+    )
+
+    dry_run = sync_engine.push_live_dry_run(env="local")
+    sync_engine.push_live_reviewed(review_token=dry_run["reviewToken"], env="local")
+
+    assert calls == [
+        ["push", "--env=local", "--prompts-only", "--dry-run"],
+        ["push", "--env=local", "--prompts-only", "--compare-reviewed"],
+        ["pull", "--env=local"],
+    ]
+    assert ledger_refresh_after_calls == [calls]

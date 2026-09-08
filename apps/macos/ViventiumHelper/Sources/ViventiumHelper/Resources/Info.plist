@@ -43,5 +43,13 @@
   <false/>
   <key>NSPrincipalClass</key>
   <string>NSApplication</string>
+  <key>NSAppleEventsUsageDescription</key>
+  <string>Viventium controls apps to complete the work you ask it to do.</string>
+  <key>NSDesktopFolderUsageDescription</key>
+  <string>Viventium uses files on your Desktop when you ask it to work with them.</string>
+  <key>NSDocumentsFolderUsageDescription</key>
+  <string>Viventium uses your documents when you ask it to work with them.</string>
+  <key>NSDownloadsFolderUsageDescription</key>
+  <string>Viventium uses downloaded files when you ask it to work with them.</string>
 </dict>
 </plist>

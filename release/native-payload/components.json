@@ -1,9 +1,6 @@
 {
   "schema_version": 1,
   "publication_state": "merged",
-  "librechat": {
-    "commit": "ae36f2ec680f9ae60903fa71aad2d94fece02c55"
-  },
   "mongodb": {
     "version": "8.0.23",
     "architectures": {
@@ -48,6 +45,109 @@
         "sha256": "8e6b7e6533bdf746287008edf91102e7bee0a6ca1d24f16c4514237cafd706c5",
         "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20260718/cpython-3.12.13%2B20260718-x86_64-apple-darwin-install_only_stripped.tar.gz"
       }
+    }
+  },
+  "native_bodies": {
+    "codex-cli": {
+      "version": "0.147.0",
+      "license": "Apache-2.0",
+      "license_files": [
+        "LICENSE",
+        "NOTICE"
+      ],
+      "architectures": {
+        "arm64": {
+          "sha256": "493de2d788c6ff01de222307c767231c1e6c802d5dd808523550fad6d972f4d3",
+          "url": "https://registry.npmjs.org/@openai/codex/-/codex-0.147.0-darwin-arm64.tgz",
+          "package_name": "@openai/codex",
+          "package_version": "0.147.0-darwin-arm64",
+          "executable": "vendor/aarch64-apple-darwin/bin/codex",
+          "required_files": [
+            "vendor/aarch64-apple-darwin/bin/codex",
+            "vendor/aarch64-apple-darwin/bin/codex-code-mode-host",
+            "vendor/aarch64-apple-darwin/codex-path/rg",
+            "vendor/aarch64-apple-darwin/codex-resources/zsh/bin/zsh",
+            "vendor/aarch64-apple-darwin/codex-package.json"
+          ]
+        },
+        "x86_64": {
+          "sha256": "43cd79decdd0c110daa90a0fd34e73523c7a10fb0e4d5d9bf1437d9298be08b6",
+          "url": "https://registry.npmjs.org/@openai/codex/-/codex-0.147.0-darwin-x64.tgz",
+          "package_name": "@openai/codex",
+          "package_version": "0.147.0-darwin-x64",
+          "executable": "vendor/x86_64-apple-darwin/bin/codex",
+          "required_files": [
+            "vendor/x86_64-apple-darwin/bin/codex",
+            "vendor/x86_64-apple-darwin/bin/codex-code-mode-host",
+            "vendor/x86_64-apple-darwin/codex-path/rg",
+            "vendor/x86_64-apple-darwin/codex-resources/zsh/bin/zsh",
+            "vendor/x86_64-apple-darwin/codex-package.json"
+          ]
+        }
+      },
+      "additional_notices": [
+        {
+          "source": "release/native-payload/licenses/codex/LICENSE",
+          "destination": "LICENSE",
+          "sha256": "d17f227e4df5da1600391338865ce0f3055211760a36688f816941d58232d8dc",
+          "source_url": "https://raw.githubusercontent.com/openai/codex/be6e8eac029b183056b7e4402879f15d2c85f61b/LICENSE"
+        },
+        {
+          "source": "release/native-payload/licenses/codex/NOTICE",
+          "destination": "NOTICE",
+          "sha256": "9d71575ecfd9a843fc1677b0efb08053c6ba9fd686a0de1a6f5382fd3c220915",
+          "source_url": "https://raw.githubusercontent.com/openai/codex/be6e8eac029b183056b7e4402879f15d2c85f61b/NOTICE"
+        }
+      ]
+    },
+    "claude-code": {
+      "version": "2.1.233",
+      "license": "LicenseRef-Anthropic-Commercial",
+      "license_files": [
+        "LICENSE.md"
+      ],
+      "architectures": {
+        "arm64": {
+          "sha256": "a56373192dfec21b03697ecfd3cfd14c9eaa8336d752179be78c675f3e234edd",
+          "url": "https://registry.npmjs.org/@anthropic-ai/claude-code-darwin-arm64/-/claude-code-darwin-arm64-2.1.233.tgz",
+          "package_name": "@anthropic-ai/claude-code-darwin-arm64",
+          "package_version": "2.1.233",
+          "executable": "claude",
+          "required_files": [
+            "claude",
+            "LICENSE.md"
+          ]
+        },
+        "x86_64": {
+          "sha256": "2c3ea49d9e5446c3d1a9b5db737972ca1815894aaa994b048dff94ed9321393a",
+          "url": "https://registry.npmjs.org/@anthropic-ai/claude-code-darwin-x64/-/claude-code-darwin-x64-2.1.233.tgz",
+          "package_name": "@anthropic-ai/claude-code-darwin-x64",
+          "package_version": "2.1.233",
+          "executable": "claude",
+          "required_files": [
+            "claude",
+            "LICENSE.md"
+          ]
+        }
+      }
+    }
+  },
+  "redis": {
+    "version": "7.2.15",
+    "license": "BSD-3-Clause",
+    "source": {
+      "url": "https://download.redis.io/releases/redis-7.2.15.tar.gz",
+      "sha256": "7bf7975331511fdb788e85dae63964b128fccee1df026a10db57444babc9c9c4"
+    },
+    "checksum_source": "https://raw.githubusercontent.com/redis/redis-hashes/master/README"
+  },
+  "sequential-thinking": {
+    "upstream_revision": "a40bc270fb5ece62673f8a1196f57116d885c5eb",
+    "notice": {
+      "source": "release/native-payload/sequential-thinking/UPSTREAM-LICENSE",
+      "destination": "LICENSE",
+      "sha256": "0382b0057770ca05e9c350a50aa3b1c1fea84da0bc81d723bf00b9aa841be58a",
+      "url": "https://raw.githubusercontent.com/modelcontextprotocol/servers/a40bc270fb5ece62673f8a1196f57116d885c5eb/LICENSE"
     }
   }
 }

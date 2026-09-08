@@ -140,6 +140,7 @@ def _make_fake_runtime_repo_root(path: Path) -> None:
     shared_root = path / "viventium_v0_4" / "shared"
     shared_root.mkdir(parents=True)
     (shared_root / "__init__.py").write_text("", encoding="utf-8")
+    (shared_root / "compiled_prompt_contract.py").write_text("SYNTHETIC = True\n", encoding="utf-8")
     (shared_root / "no_response.py").write_text(
         "def is_no_response_only(_value):\n    return False\n",
         encoding="utf-8",
@@ -167,6 +168,7 @@ def _make_fake_runtime_repo_root(path: Path) -> None:
         "SYNTHETIC = True\n",
         encoding="utf-8",
     )
+    (telegram_bot_root / "utils" / "telegram_preparation.py").write_text("SYNTHETIC = True\n", encoding="utf-8")
     (telegram_bot_root / "utils" / "singleton.py").write_text(
         "SYNTHETIC = True\n",
         encoding="utf-8",
@@ -1457,12 +1459,13 @@ def test_install_prefers_safe_public_checkout_for_helper_runtime_when_repo_root_
             str(unsafe_repo_root),
             "--no-launch",
         ],
-        check=True,
+        check=False,
         text=True,
         capture_output=True,
         env=env,
     )
 
+    assert completed.returncode == 0, completed.stderr
     helper_config = app_support / "helper-config.json"
     stack_wrapper = app_support / "helper-scripts" / "viventium-stack.sh"
     helper_config_text = helper_config.read_text(encoding="utf-8")
@@ -1573,12 +1576,13 @@ def test_install_honors_explicit_active_developer_checkout_in_documents(tmp_path
             str(unsafe_repo_root),
             "--no-launch",
         ],
-        check=True,
+        check=False,
         text=True,
         capture_output=True,
         env=env,
     )
 
+    assert completed.returncode == 0, completed.stderr
     helper_config = json.loads((app_support / "helper-config.json").read_text(encoding="utf-8"))
     stack_wrapper_text = (app_support / "helper-scripts" / "viventium-stack.sh").read_text(encoding="utf-8")
     installed_scheduler_root = (
@@ -1840,7 +1844,9 @@ def test_helper_source_autostarts_stack_on_launch() -> None:
     assert "setRuntimeDesiredState(.running)" in source
     assert 'return self.makeNamedHelperLogURL(appSupportDir: appSupportDir, logFileName: "viventium-helper.log")' in source
     assert 'private nonisolated static func makeNamedHelperLogURL(' in source
-    assert 'process.arguments = ["\\(repoRoot)/bin/viventium", "--app-support-dir", appSupportDir] + arguments' in source
+    assert 'process.arguments = HelperCLICommand.arguments(' in source
+    assert 'return ["\\(repoRoot)/bin/viventium"] +' in source
+    assert '(native ? [] : ["--app-support-dir", appSupportDir]) + action' in source
     assert "let configured = self.applyActiveRuntimeCheckout(decoded)" in source
     assert "let healed = self.healProtectedFolderBinding(configured)" in source
     assert "if healed != decoded {" in source
@@ -1915,11 +1921,9 @@ def test_helper_source_autostarts_stack_on_launch() -> None:
         "            !FileManager.default.isExecutableFile(atPath: binViventiumPath)"
         in source
     )
-    assert (
-        'let command = recoveryCommand ??\n'
-        '            (["/bin/bash", binViventiumPath, "--app-support-dir", appSupportDir] + commandArguments)'
-        in source
-    )
+    assert "let command = recoveryCommand ??" in source
+    assert '(["/bin/bash"] + HelperCLICommand.arguments(' in source
+    assert 'repoRoot: repoRoot, appSupportDir: appSupportDir, command: commandArguments' in source
     assert "let recoveryPointerExists = self.telegramRecoveryPointerExists(" in source
     assert "if recoveryPointerExists && recovery == nil {" in source
     assert "let recovery = self.loadTelegramRecoverySelection(" in source
@@ -2072,7 +2076,8 @@ def test_helper_source_autostarts_stack_on_launch() -> None:
     assert "private func activateHelperLifecycle() {" in source
     assert "private func presentStatusBarRestorePrompt() {" in source
     assert "private static func saveConfig(_ config: HelperConfig) -> Bool" in source
-    assert 'self?.presentStatusBarRestorePrompt()' in source
+    assert 'guard let self, !self.showInStatusBarEnabled else { return }' in source
+    assert 'self.presentStatusBarRestorePrompt()' in source
     assert 'self.log("Status-bar helper enabled")' in source
     assert 'self.log("Status-bar helper hidden")' in source
     assert 'Run `bin/viventium status-bar on` whenever you want to bring the menu-bar icon back.' in source
@@ -2348,7 +2353,8 @@ def test_helper_package_stays_compatible_with_clean_intel_command_line_tools() -
     assert 'verify_installed_bundle' in install_script
     assert "sign_installed_bundle() {" in install_script
     assert 'local bundle="${1:-$HELPER_APP_BUNDLE}"' in install_script
-    assert '/usr/bin/codesign --force --sign - --identifier "$HELPER_BUNDLE_IDENTIFIER" "$bundle"' in install_script
+    assert '/usr/bin/codesign --force --sign - --identifier "$HELPER_BUNDLE_IDENTIFIER"' in install_script
+    assert '--entitlements "$HELPER_PACKAGE_DIR/ViventiumHelper.entitlements" "$bundle"' in install_script
     assert 'strings "$installed_executable" | grep -F -- "prompt-workbench" >/dev/null' in install_script
     assert "Installed helper is missing Prompt Workbench support." in install_script
     assert "sign_installed_bundle" in install_script
@@ -2470,6 +2476,7 @@ def test_prebuilt_helper_source_marker_matches_current_sources() -> None:
     for relative_path in (
         Path("Package.swift"),
         Path("Sources") / "ViventiumHelper" / "ViventiumHelperApp.swift",
+        Path("Sources") / "ViventiumHelper" / "LifeSetup.swift",
         Path("Sources") / "ViventiumHelper" / "Resources" / "Info.plist",
     ):
         digest.update(relative_path.as_posix().encode("utf-8"))
@@ -2498,6 +2505,7 @@ def test_prebuilt_helper_source_digest_marker_matches_current_sources() -> None:
     source_paths = (
         HELPER_PACKAGE,
         HELPER_SOURCE,
+        HELPER_SOURCE.with_name("LifeSetup.swift"),
         HELPER_INFO_PLIST,
     )
     digest = hashlib.sha256()

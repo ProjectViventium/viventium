@@ -680,6 +680,12 @@ Use stable `SCHED-NNN` IDs for scheduling cortex cases.
   4. Compare Reaction and automatic-memory counts for scheduled and ordinary turns.
   5. Persist trusted scheduler control, assistant `{NTA}`, and literal user-authored `{NTA}` records;
      refresh UI, recall, automatic memory, and audit views.
+     Let a useful scheduled answer overlap an ordinary user answer in the same conversation.
+     Verify both answers appear without reload and after reload, then send a follow-up and inspect
+     its parent. Switch ordinary and regenerated answer branches in Chat and Share; unselected
+     ordinary branches stay hidden and an additive result never takes over the composer.
+     Export selected/all branches as text, Markdown, and flat/recursive JSON. Reimport JSON and
+     verify both answers, valid parent links, branch controls, and hidden control text.
   6. Exercise a scheduled request that needs an intelligent cortex.
   7. Exercise unavailable OAuth or confirmation-required behavior and verify it does not become an
      interactive hidden prompt.
@@ -697,10 +703,15 @@ Use stable `SCHED-NNN` IDs for scheduling cortex cases.
 - Automation: authoritative-field forgery matrix, typed/current and legacy/untyped history fixtures,
   Reaction/memory counts, `{NTA}` visibility/recall tests, cortex relevance, and OAuth
   unavailable/confirmation tests.
+  Shared branch projection, Chat/Share selectors, composer ownership, and JSON structural-parent
+  regressions support the overlapping-answer path; they do not replace visible delivery/reimport.
 - Last run: PARTIAL 2026-08-30; the 2026-08-11 typed-origin, exact-once Reaction, memory, basic
   forgery, cortex, and OAuth/confirmation subset passed. The full five-field authority,
   typed-versus-legacy history, and trusted/literal visibility matrix is NOT RUN
   ([report](reports/2026-08-11-consciousness-continuity-and-turn-coherence.md)).
+  The overlapping-answer subset is PARTIAL on the current development candidate: stored answers
+  display together in Chat/Share and export with valid parents; fresh live overlap and visible
+  reimport remain open ([report](reports/2026-09-05-overlapping-result-visibility.md)).
 
 ## `SCHED-022` - Scheduler Prompt Contract Equality
 

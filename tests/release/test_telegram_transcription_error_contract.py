@@ -107,8 +107,8 @@ def test_telegram_bot_stops_before_forwarding_failed_transcription() -> None:
     ).read_text(encoding="utf-8")
 
     assert "async def _resolve_voice_input_message(" in bot_source
-    assert "message, voice_input_failed = await _with_source_ordered_context_bot(" in bot_source
-    assert "lambda guarded_context: _resolve_voice_input_message(" in bot_source
+    assert "message, voice_input_failed = await _resolve_prepared_voice_input(" in bot_source
+    assert "lambda guarded: _resolve_voice_input_message(guarded, **kwargs)" in bot_source
     assert "if voice_input_failed:" in bot_source
     assert "show_transcription=False" in bot_source
     assert "message = voice_text" not in bot_source
@@ -118,7 +118,7 @@ def test_telegram_bot_stops_before_forwarding_failed_transcription() -> None:
     assert "return None, True" in transcription_error_block
     assert "return message, False" not in transcription_error_block
     assert 'transcription_display = f"🎤 Transcription:\\n> {voice_text}"' in bot_source
-    assert "return voice_text, False" in bot_source
+    assert "return _prepared_voice_text(message, voice_text), False" in bot_source
 
 
 def test_telegram_launcher_supports_managed_local_bot_api_contract() -> None:

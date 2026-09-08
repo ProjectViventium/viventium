@@ -98,6 +98,8 @@ release_tests:
     qa_owner: qa/stable-dev-runtime/cases.md
   tests/release/test_macos_helper_supervision.py:
     qa_owner: qa/stable-dev-runtime/cases.md
+  tests/release/test_macos_worker_access.py:
+    qa_owner: qa/stable-dev-runtime/cases.md
   tests/release/test_managed_agent_migration_history.py:
     qa_owner: qa/agent-config-continuity/cases.md
   tests/release/test_memory_hardening_contract.py:
@@ -310,3 +312,51 @@ release_tests:
     qa_owner: qa/telegram-runtime/cases.md
   tests/release/test_tr026_installed_journey_semantic_verifier.py:
     qa_owner: qa/telegram-runtime/cases.md
+  tests/release/test_cli_meilisearch_container_adoption.py:
+    qa_owner: qa/installer-resilience/cases.md
+  tests/release/test_cli_stop_owner_record_transient.py:
+    qa_owner: qa/stable-dev-runtime/cases.md
+  tests/release/test_launcher_glasshive_watchdog.py:
+    qa_owner: qa/installer-resilience/cases.md
+  tests/release/test_launcher_telegram_launchd_scope.py:
+    qa_owner: qa/stable-dev-runtime/cases.md
+  tests/release/test_launcher_trusted_root_paths.py:
+    qa_owner: qa/installer-resilience/cases.md
+  tests/release/test_life_setup.py:
+    qa_owner: qa/installer-resilience/cases.md
+  tests/release/test_macos_helper_config_ownership.py:
+    qa_owner: qa/installer-resilience/cases.md
+  tests/release/test_helper_hash_consumers.py:
+    qa_owner: qa/stable-dev-runtime/cases.md
+  tests/release/test_launcher_reconciled_startup.py:
+    qa_owner: qa/stable-dev-runtime/cases.md
+  tests/release/test_instance_secrets.py:
+    qa_owner: qa/installer-resilience/cases.md
+  tests/release/test_native_helper_signing.py:
+    qa_owner: qa/installer-resilience/cases.md
+  tests/release/test_native_installer_diagnostics.py:
+    qa_owner: qa/installer-resilience/cases.md
+  tests/release/test_native_mongodb_replica.py:
+    qa_owner: qa/installer-resilience/cases.md
+  tests/release/test_librechat_candidate_preparation.py:
+    qa_owner: qa/release-readiness/cases.md
+  tests/release/test_native_browser_compliance.py:
+    qa_owner: qa/release-readiness/cases.md
+  tests/release/test_native_local_compliance.py:
+    qa_owner: qa/release-readiness/cases.md
+  tests/release/test_native_release_metadata.py:
+    qa_owner: qa/release-readiness/cases.md
+  tests/release/test_native_life_command.py:
+    qa_owner: qa/glasshive-core-provider/cases.md
+  tests/release/test_native_parallel_work.py:
+    qa_owner: qa/parallel-orchestrator/cases.md
+  tests/release/test_native_worker_prompt_closure.py:
+    qa_owner: qa/prompt-workbench/cases.md
+  tests/release/test_worker_prompt_registry.py:
+    qa_owner: qa/prompt-workbench/cases.md
+  tests/release/test_worker_source_evals.py:
+    qa_owner: qa/prompt-workbench/cases.md
+  tests/release/test_queen_turn_diagnostics.py:
+    qa_owner: qa/main-continuity/cases.md
+  tests/release/test_transcription_adapter.py:
+    qa_owner: qa/modern-playground-voice/cases.md

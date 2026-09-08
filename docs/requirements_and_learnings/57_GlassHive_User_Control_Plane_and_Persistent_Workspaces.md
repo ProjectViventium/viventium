@@ -549,6 +549,12 @@ compliant hosted topology.
   primary navigation. A workspace card has one clear `Open workspace` action; completed output opens
   the exact scoped artifact or honest result fallback without resuming compute. Only an explicit
   Continue/Send action may restart or dispatch work.
+- Terminal artifact enumeration prunes directories already excluded by the deliverable policy
+  before descending into them. It preserves eligible files, directory priority, newest-first
+  ordering, entry caps, and the existing rule against following directory symlinks. General
+  conversation completion must not traverse excluded dependency trees or browser profiles before
+  committing a useful answer. A later detached memory-receipt update is not answer latency;
+  acceptance evidence uses the existing first-visible-text and final-replay timestamps.
 - Workspaces is the bounded multi-worker control room. Overview polling uses compact payloads only
   for visible cards, never overlaps, and fetches full detail only for the selected/expanded card or a
   completion transition. At most three visible active workers get view-only live desktop previews;

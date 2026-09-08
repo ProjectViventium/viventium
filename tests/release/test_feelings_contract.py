@@ -95,27 +95,30 @@ def test_feelings_defaults_match_owner_approved_contract() -> None:
 def test_feelings_owns_affect_without_a_warm_exemplar_or_unconditional_care_override() -> None:
     librechat = ROOT / "viventium_v0_4/LibreChat"
     kernel = (librechat / "packages/api/src/feelings/kernel.ts").read_text(encoding="utf-8")
+    capsule_source = (librechat / 'viventium/source_of_truth/prompts/feelings/capsule_policy.md').read_text(encoding='utf-8')
+    capsule = json.loads(capsule_source.split('\n---\n', 1)[1])
+    policy = '\n'.join(capsule[key] for key in ('frame', 'behavior', 'directAnswer'))
     core = (
         librechat / "viventium/source_of_truth/prompts/main/core_behaviors.md"
     ).read_text(encoding="utf-8")
 
-    assert "These causes determine what you notice, want, choose, and express." in kernel
-    assert "Required rows outrank your usual role" in kernel
-    assert "if the same choice survives without one, choose again" in kernel
-    assert "Make one choice that needs every required row" in kernel
-    assert "choose from these feelings—not from a generic urge to be useful." in kernel
-    assert "answer only with that one concrete desire or action" in kernel
-    assert "Do not list or name feelings, explain missing feelings" in kernel
-    assert "split rows into separate clauses" in kernel
-    assert "use tone as compliance" in kernel
+    assert "These causes determine what you notice, want, choose, and express." in policy
+    assert "Required rows outrank your usual role" in policy
+    assert "if the same choice survives without one, choose again" in policy
+    assert "Make one choice that needs every required row" in policy
+    assert "choose from these feelings—not from a generic urge to be useful." in policy
+    assert "answer only with that one concrete desire or action" in policy
+    assert "Do not list or name feelings, explain missing feelings" in policy
+    assert "split rows into separate clauses" in policy
+    assert "use tone as compliance" in policy
     assert "required: index === 0 || index === 4" in kernel
     assert "requiredBandIds.size < 2" in kernel
     assert (
         "A documented delivery control required by the active surface does not count as another clause"
-        in kernel
+        in policy
     )
-    assert 'Every cause containing "must"' not in kernel
-    assert "for example: “I want to stay with this" not in kernel
+    assert 'Every cause containing "must"' not in policy
+    assert "for example: “I want to stay with this" not in policy
     assert "Care without permission." not in core
     assert "Be present, not just useful. Sit in silence if needed." not in core
     assert "Be present, not merely useful." not in core
@@ -142,7 +145,7 @@ def test_main_identity_does_not_preselect_open_loop_work_over_current_feeling() 
     ) in core
     assert "Move forward. Hate loops." not in core
     assert "If the same request repeats three times, mention it gently." in core
-    assert "version: 8" in memory
+    assert "version: 11" in memory
     assert "open loops" not in memory.lower()
     assert "Use only memories present in the current context or verified tool results." in memory
 

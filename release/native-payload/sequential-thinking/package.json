@@ -1,0 +1,8 @@
+{
+  "name": "viventium-native-sequential-thinking",
+  "private": true,
+  "version": "1.0.0",
+  "dependencies": {
+    "@modelcontextprotocol/server-sequential-thinking": "2026.8.31"
+  }
+}

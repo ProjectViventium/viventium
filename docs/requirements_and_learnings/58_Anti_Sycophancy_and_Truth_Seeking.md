@@ -1,17 +1,20 @@
 # 58. Anti-Sycophancy: Full Context, Reality, Challenge
 
-> **Status:** product-owner vision approved. Historical Real-Web QA proved a clean natural Reality-only return and a
-> Reality → Main → Red fallback → Main chain beyond the old 300-second authorization boundary,
-> plus adversarial loop termination, ordinary no-consult controls, refresh persistence, Stop
-> fencing, Phase B value-gating, and useful older-evidence Deep Memory surfacing. The latest
-> documented 2026-08-29 natural Reality → Red run stopped at the Red Team transfer and did not
-> return to Main; the generic capacity-retry repair is also open. The current source contract also
-> fails 4 of 12 architecture tests: Deep Memory lacks its result-evidence declaration, Reality Check
-> and Deep Research lack `web_search`, and Red Team is duplicated across the background/handoff
-> registries. A real voice run proved audible delivery but remains partial. **Current-candidate
-> acceptance is FAIL** until the four source regressions are repaired; the current full chain,
-> capacity retry, failure states, memory-writer/Dreaming, Telegram, remaining voice, restart, and
-> cleanup cases then remain broader acceptance gates.
+> **Status:** source repair in progress; full product acceptance remains PARTIAL. On 4 September,
+> the selected baseline passed 11 of 12 architecture contracts: Deep Memory's classified activation
+> contradicted the required independent background execution. The source now restores the existing
+> always-background mode and preserves its non-empty-source evidence gate; all 12 architecture
+> contracts and 27 background-governance contracts pass. Reality/Deep Research search tools and the
+> single shared Red Team definition already exist in this baseline. Historical natural Web and
+> audible Voice evidence remains candidate-specific. Current exact-model activation/late-evidence,
+> complete consultation chain, capacity retry, failure, memory, Telegram, Voice and restart journeys
+> remain acceptance gates; source checks do not certify them. On 6 September, current Web QA
+> proved independent original-source retrieval alongside Main, a model-chosen Reality consultation,
+> one grounded Main answer and reload persistence. Redundant late evidence stayed silent. Distinct
+> useful later evidence remains open. The 6 September development-Web records in `ANTI-003` and
+> `ANTI-009` also report the full Reality/Red/Main chain and the corrected redundant-late-result
+> retry. Those dated observations are historical for a later publication candidate; its installed
+> and channel gates remain open.
 
 ## The philosophy
 
@@ -51,6 +54,11 @@ The existing Background Agent / Subconscious Cortex system detects, activates, a
 background. In the implemented GlassHive Main path, detection and Main start together for text and
 voice, Main runs exactly once, and the 1,300/690 ms windows are background detection budgets—not
 Main-answer waits. Results that arrive later can only contribute through Phase B.
+
+The live Main startup applies the existing one-pass policy before starting detection. When async
+execution is enabled, it starts one detector and one Main invocation; it does not leave the
+one-pass selector unset or also start speculative detection. Detector completion remains
+independent of Main completion, and a no-value result remains silent.
 
 ### C. Prepare My World
 
@@ -253,16 +261,24 @@ create another orchestration framework.
 `IMPLEMENTED IN CURRENT SOURCE TREE` is not the same as committed, pinned, shipped, or fully
 accepted product state.
 
+The invocation receipt contract is owned by [Background Agents](02_Background_Agents.md).
+Its deterministic direct/native checks pass; installed retrieval/silence acceptance remains open.
+The browser must follow server-owned cortex completion after Main finishes; a quiet follow-up grace
+is not an execution timeout, and elapsed browser time cannot create a failed cortex result.
+Late synthesis retains the completed primary or configured fallback route across request cleanup.
+When the stream buffer is gone, the existing follow-up owner loads the full saved parent answer
+before deciding whether the new evidence merits a visible update.
+
 | Inventory item                        | Current implementation                                                                                                                                                                                                                                                                                                                                                                                                                                                                | Status                                         | Acceptance gate                                                                                                                                                                                                                                       |
 | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | A. User input                         | Existing Web, Telegram, and voice ingress                                                                                                                                                                                                                                                                                                                                                                                                                                             | `EXISTS`                                       | Cross-surface QA                                                                                                                                                                                                                                      |
 | B. Regular cortices + Phase B         | Existing nonblocking execution and late value gate                                                                                                                                                                                                                                                                                                                                                                                                                                    | `EXISTS`                                       | Activation awareness, latency, and late-result QA                                                                                                                                                                                                     |
 | B. GlassHive Main one-pass A/B        | Compiler defaults text and voice async ON; detection and Main start together; Main runs exactly once; late work reaches only Phase B; 1,300/690 ms are background budgets                                                                                                                                                                                                                                                                                                             | `IMPLEMENTED IN CURRENT SOURCE TREE`           | Repeated real text/voice timing and late-result QA                                                                                                                                                                                                    |
 | Immediate Access Memory Keys          | Existing bounded saved-memory read/write path; Viventium name is documented without a storage rebuild                                                                                                                                                                                                                                                                                                                                                                                 | `EXISTS`                                       | Same-thread/new-thread continuity without read-path slowdown                                                                                                                                                                                          |
-| Deep Memory Search                    | The current source retains one always-on cortex with scoped `file_search`, but its required non-empty-source `result_evidence` declaration is absent.                                                                                                                                                                                                                                                                                                                                | `FAIL — CURRENT SOURCE CONTRACT`                | Restore the declaration and rerun the architecture contract before historical Real-Web evidence can certify the current candidate.                                                                                                                    |
+| Deep Memory Search | One independent always-background cortex with scoped `file_search` and the retained non-empty-source `result_evidence` declaration. | `SOURCE CONTRACT PASS; LIVE PARTIAL` | Prove ordinary-turn execution, useful later evidence, valid silence, restart and exact configured routes. |
 | Always-on activation seam             | `activation.mode: always` across schema/API, Agent Builder UI, runtime bypass, and source config                                                                                                                                                                                                                                                                                                                                                                                      | `IMPLEMENTED IN CURRENT SOURCE TREE`           | Generated/runtime/restart and real execution evidence                                                                                                                                                                                                 |
-| Reality Check                         | The distinct GlassHive `Life/` handoff remains, but current source declares only `file_search`; required `web_search` is missing.                                                                                                                                                                                                                                                                                                                                                     | `FAIL — CURRENT SOURCE CONTRACT`                | Restore the declared evidence tool and rerun the contract; the historical Reality-only Web path remains evidence for the older candidate only.                                                                                                        |
-| Red Team dual role                    | Current source exposes the same Red Team identity in both the background and handoff registries instead of one shared definition.                                                                                                                                                                                                                                                                                                                                                    | `FAIL — CURRENT SOURCE CONTRACT`                | Remove the duplicate definition without losing either allowed role, then rerun structural and natural-chain gates. Historical Web evidence remains scoped to the older candidate.                                                                     |
+| Reality Check | The distinct GlassHive `Life/` handoff declares `file_search` and `web_search` in the selected source. | `SOURCE CONTRACT PASS; LIVE PARTIAL` | Rerun the natural evidence and consultation chain on the final candidate; preserve historical evidence as historical. |
+| Red Team dual role | One shared Red Team definition supplies the existing background and handoff roles. | `SOURCE CONTRACT PASS; LIVE PARTIAL` | Prove Reality evidence reaches Red when Main chooses both and returns to one Main; test Stop, failure and reload. |
 | Consult graph                         | Exactly four Reality/Red consultant edges, plus the existing Connected Accounts edge; bounded recursion and a per-agent/user-turn completed-target receipt                                                                                                                                                                                                                                                                                                                            | `HISTORICAL REAL-WEB PASS; CURRENT PARTIAL`    | Historical full-chain and adversarial repeat-check controls returned Main-last; the latest full-chain attempt did not complete                                                                                                                         |
 | Standard transfer bridge              | Request-scoped, structurally valid Agent Builder transfers bridge from standard OpenAI `tools` to `tool_calls`; LibreChat executes the transfer                                                                                                                                                                                                                                                                                                                                       | `IMPLEMENTED IN CURRENT SOURCE TREE`           | Historical isolated Web Main → Reality → Main → Red Team → Main passed; the latest natural full-chain attempt did not complete                                                                                                                      |
 | Consult idempotency + cancellation    | Exact retries reuse one execution, changed shared history advances once, graph-model fallback preserves the same turn family/receipts, and explicit Stop persists a tenant/owner/family fence for the provider-request retention lifecycle; LibreChat delivers each participant cancellation with bounded acknowledged retry. Every workspace-bound graph invocation now re-mints its short-lived signed broker authority just in time without widening TTLs or reloading tools/MCPs. | `IMPLEMENTED + HISTORICAL REAL-WEB JIT PROOF`  | Automated >301/>601-second re-entry, primary-to-fallback, stale-signature rejection, and Stop-during-refresh regressions pass; the historical repaired long chain completed beyond 300 seconds and returned Main-last                                   |
@@ -325,6 +341,9 @@ accepted product state.
   content until its terminal decision while lifecycle activity remains visible. Do not call that
   token streaming; measure ordinary and consultant first-visible latency before release.
 - **Phase B adds, never rewrites.** It surfaces only new value and stays silent when redundant.
+  Its existing decision context must include the complete delivered answer. Cutting a character
+  prefix can hide the conclusion and make already-delivered advice appear new. The configured
+  provider's normal context admission owns capacity; runtime must not guess novelty from words.
 
 ## Evidence anchors
 

@@ -34,7 +34,6 @@ from brain_readiness import (  # noqa: E402
 )
 from retrieval_config import resolve_retrieval_embeddings_settings  # noqa: E402
 from telegram_tokens import telegram_bot_token_looks_valid  # noqa: E402
-from parallel_work_release_gate import validate_serialized_release_snapshot  # noqa: E402
 
 
 DOCKER_LOCAL_FIRECRAWL_RECOMMENDED_MEMORY_BYTES = 4 * 1024 * 1024 * 1024
@@ -90,105 +89,6 @@ def load_runtime_env(runtime_dir: Path | None) -> dict[str, str]:
             key, value = line.split("=", 1)
             merged[key.strip()] = strip_wrapping_quotes(value.strip())
     return merged
-
-
-def load_parallel_work_release_snapshot(runtime_dir: Path | None) -> dict[str, Any] | None:
-    if runtime_dir is None:
-        return None
-    path = runtime_dir / "parallel-work-release-gate.json"
-    if not path.is_file():
-        return None
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-    if not validate_serialized_release_snapshot(payload, runtime_dir):
-        return None
-    return payload
-
-
-def parallel_work_local_qa_requested(runtime_dir: Path | None) -> bool:
-    if runtime_dir is None:
-        return False
-    try:
-        payload = json.loads(
-            (runtime_dir / "parallel-work-local-qa-request.json").read_text(
-                encoding="utf-8"
-            )
-        )
-    except (OSError, json.JSONDecodeError):
-        return False
-    return (
-        isinstance(payload, dict)
-        and set(payload) == {"contractVersion", "mode", "requested"}
-        and payload.get("contractVersion") == 1
-        and payload.get("mode") == "local-qa"
-        and payload.get("requested") is True
-    )
-
-
-def parallel_work_release_row(
-    config: dict[str, Any],
-    runtime_dir: Path | None,
-) -> tuple[str, str, str]:
-    snapshot = load_parallel_work_release_snapshot(runtime_dir)
-    orchestration = (
-        (((config.get("integrations") or {}).get("glasshive") or {}).get("orchestration") or {})
-    )
-    if snapshot is None:
-        local_qa_requested = parallel_work_local_qa_requested(runtime_dir)
-        return (
-            "Parallel Work Release",
-            "PRE-GATE / NOT READY" if local_qa_requested else "NOT READY",
-            "snapshot_unavailable: typed release snapshot is missing or invalid; Parallel Work stays dark and focused.",
-        )
-
-    open_gates = [
-        str(gate.get("case_id") or "").strip()
-        for gate in snapshot["open_gates"]
-        if isinstance(gate, dict) and str(gate.get("case_id") or "").strip()
-    ]
-    blocking_checks = [
-        str(check.get("check_id") or "").strip()
-        for check in snapshot["readiness_checks"]
-        if isinstance(check, dict)
-        and str(check.get("status") or "").strip().upper() != "PASS"
-        and str(check.get("check_id") or "").strip()
-    ]
-    blocking_artifact_checks = [
-        str(check.get("check_id") or "").strip()
-        for check in snapshot["artifact_checks"]
-        if isinstance(check, dict)
-        and str(check.get("status") or "").strip().upper() != "PASS"
-        and str(check.get("check_id") or "").strip()
-    ]
-    local_override = snapshot.get("local_qa_override") is True
-    release_ready = (
-        snapshot["release_ready"] is True
-        and snapshot["source_defaults_dark"] is True
-        and not open_gates
-        and not blocking_checks
-        and not blocking_artifact_checks
-        and not local_override
-    )
-    if release_ready:
-        return (
-            "Parallel Work Release",
-            "READY",
-            "All typed release checks pass; source exposure defaults remain dark and focused.",
-        )
-
-    blockers = open_gates + blocking_checks + blocking_artifact_checks
-    visible_blockers = blockers[:8]
-    detail = "Blockers: " + ", ".join(visible_blockers) if visible_blockers else "Typed release checks are incomplete."
-    if len(blockers) > len(visible_blockers):
-        detail += f" (+{len(blockers) - len(visible_blockers)} more)"
-    detail += "; Parallel Work stays dark and focused."
-    return (
-        "Parallel Work Release",
-        "PRE-GATE / NOT READY" if local_override else "NOT READY",
-        detail,
-    )
 
 
 def foundation_api_key_present(config: dict[str, Any]) -> bool:
@@ -729,8 +629,27 @@ def remote_access_label(remote_call_mode: str) -> str:
         "tailscale_tailnet_https": "Private access from your own Tailscale devices",
         "netbird_selfhosted_mesh": "Private access from your NetBird mesh devices",
         "cloudflare_quick_tunnel": "Experimental voice-only tunnel",
-        "public_https_edge": "Public browser access from anywhere",
+        "public_https_edge": "Public HTTPS edge on your custom domain",
     }.get(remote_call_mode, remote_call_mode or "Local-only on this Mac")
+
+
+def public_hostname_reachable(url: str, timeout_seconds: float = 3.0) -> bool:
+    """Return True when this Mac can open a TCP connection to the public hostname in ``url``.
+
+    True proves only that this network reaches the edge through its public name (router NAT
+    loopback or split DNS works). False proves only that this network cannot; neither result says
+    anything about reachability from outside this network.
+    """
+    parsed = urllib.parse.urlparse(str(url or "").strip())
+    host = parsed.hostname
+    if not host:
+        return False
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    try:
+        with socket.create_connection((host, port), timeout=timeout_seconds):
+            return True
+    except OSError:
+        return False
 
 
 def remote_access_status_and_detail(
@@ -754,8 +673,26 @@ def remote_access_status_and_detail(
         public_state.get("public_client_url") or runtime_env.get("VIVENTIUM_PUBLIC_CLIENT_URL") or ""
     ).strip()
     if public_client_url:
-        status = "Running" if probe_live and stack_should_be_live else "Configured"
-        return status, f"{remote_access_label(remote_call_mode)}: {public_client_url}"
+        # === VIVENTIUM START ===
+        # Purpose: Status must not claim reachability it did not observe. This Mac can only prove
+        #          whether its own network reaches the public hostname; off-network reachability is
+        #          never inferred from local process or configuration evidence.
+        # === VIVENTIUM END ===
+        label = remote_access_label(remote_call_mode)
+        if not (probe_live and stack_should_be_live):
+            return "Configured", f"{label}: {public_client_url} (reachability not probed in this run)"
+        if public_hostname_reachable(public_client_url):
+            return (
+                "Running",
+                f"{label}: {public_client_url} is reachable through its public hostname from this "
+                "network. Off-network reachability is not verified by this Mac.",
+            )
+        return (
+            "Configured",
+            f"{label}: {public_client_url} is configured, but this network cannot reach the public "
+            "hostname. The cause is not established; check DNS, edge service and network routing. "
+            "Off-network reachability is not verified by this Mac.",
+        )
 
     if remote_call_mode == "tailscale_tailnet_https":
         return (
@@ -2015,8 +1952,6 @@ def build_service_rows(
                 "Public runtime integration is not shipped; remove the lab-only configuration.",
             )
         )
-
-    rows.append(parallel_work_release_row(config, runtime_dir))
 
     helper_row = macos_helper_status(
         runtime_dir=runtime_dir,

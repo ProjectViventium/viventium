@@ -22,227 +22,26 @@ def load_install_summary_module():
     return module
 
 
-def _write_parallel_work_release_snapshot(
-    runtime_dir: Path,
-    *,
-    label: str = "NOT READY",
-    release_ready: bool = False,
-    local_qa_override: bool = False,
-    open_gate: str = "PWK-UC-014",
-    prompt_status: str = "verified",
-    storage_status: str = "healthy",
-) -> None:
-    payload = {
-        "contract_version": 1,
-        "mode": "local-qa" if local_qa_override else "default",
-        "label": label,
-        "release_ready": release_ready,
-        "local_qa_override": local_qa_override,
-        "source_defaults_dark": True,
-        "gate_count": 78,
-        "open_gate_count": 1 if open_gate else 0,
-        "open_gates": (
-            [{"case_id": open_gate, "status": "PARTIAL", "source": "cases.md", "detail": "open"}]
-            if open_gate
-            else []
-        ),
-        "readiness_checks": [
-            {
-                "check_id": "PROMPT-LAYERS",
-                "status": "PASS" if prompt_status == "verified" else "FAIL",
-                "reason": "" if prompt_status == "verified" else "prompt_layers_unknown",
-            },
-            {
-                "check_id": "STORAGE-PRESSURE",
-                "status": "PASS" if storage_status == "healthy" else "FAIL",
-                "reason": "" if storage_status == "healthy" else "storage_pressure",
-            },
-        ],
-        "artifact_checks": [
-            {"check_id": "SOURCE-IDENTITY", "status": "PASS", "reason": ""},
-            {"check_id": "NESTED-PINS", "status": "PASS", "reason": ""},
-            {"check_id": "PREBUILT-IDENTITY", "status": "PASS", "reason": ""},
-            {"check_id": "INSTALLED-ARTIFACT", "status": "PASS", "reason": ""},
-        ],
-    }
-    runtime_dir.mkdir(parents=True, exist_ok=True)
-    (runtime_dir / "parallel-work-release-gate.json").write_text(
-        json.dumps(payload),
-        encoding="utf-8",
-    )
-
-
-def test_parallel_work_release_row_consumes_typed_snapshot_without_qa_prose(
-    tmp_path: Path, monkeypatch
-) -> None:
-    install_summary = load_install_summary_module()
-    monkeypatch.setattr(
-        install_summary, "validate_serialized_release_snapshot", lambda *_args: True
-    )
-    runtime_dir = tmp_path / "runtime"
-    _write_parallel_work_release_snapshot(
-        runtime_dir,
-        prompt_status="unknown",
-        storage_status="critical",
-    )
-
-    row = install_summary.parallel_work_release_row(
-        {"integrations": {"glasshive": {"orchestration": {"available": False}}}},
-        runtime_dir,
-    )
-
-    assert row[0] == "Parallel Work Release"
-    assert row[1] == "NOT READY"
-    assert "PWK-UC-014" in row[2]
-    assert "PROMPT-LAYERS" in row[2]
-    assert "STORAGE-PRESSURE" in row[2]
-
-
-def test_parallel_work_release_row_labels_explicit_local_override_pre_gate(
-    tmp_path: Path, monkeypatch
-) -> None:
-    install_summary = load_install_summary_module()
-    monkeypatch.setattr(
-        install_summary, "validate_serialized_release_snapshot", lambda *_args: True
-    )
-    runtime_dir = tmp_path / "runtime"
-    _write_parallel_work_release_snapshot(runtime_dir, local_qa_override=True)
-
-    row = install_summary.parallel_work_release_row(
-        {"integrations": {"glasshive": {"orchestration": {"available": True}}}},
-        runtime_dir,
-    )
-
-    assert row[1] == "PRE-GATE / NOT READY"
-    assert "Ready" not in row[2]
-
-
-def test_parallel_work_release_row_never_reports_ready_for_local_override(
-    tmp_path: Path, monkeypatch
-) -> None:
-    install_summary = load_install_summary_module()
-    monkeypatch.setattr(
-        install_summary, "validate_serialized_release_snapshot", lambda *_args: True
-    )
-    runtime_dir = tmp_path / "runtime"
-    _write_parallel_work_release_snapshot(
-        runtime_dir,
-        label="PRE-GATE / NOT READY",
-        release_ready=True,
-        local_qa_override=True,
-        open_gate="",
-    )
-
-    row = install_summary.parallel_work_release_row(
-        {"integrations": {"glasshive": {"orchestration": {"available": True}}}},
-        runtime_dir,
-    )
-
-    assert row[1] == "PRE-GATE / NOT READY"
-    assert "Ready" not in row[2]
-
-
-def test_parallel_work_release_row_rejects_forged_incomplete_ready_snapshot(
-    tmp_path: Path,
-) -> None:
-    install_summary = load_install_summary_module()
-    runtime_dir = tmp_path / "runtime"
-    _write_parallel_work_release_snapshot(
-        runtime_dir,
-        label="READY",
-        release_ready=True,
-        local_qa_override=False,
-        open_gate="",
-    )
-
-    row = install_summary.parallel_work_release_row({}, runtime_dir)
-
-    assert row[1] == "NOT READY"
-    assert "snapshot_unavailable" in row[2]
-
-
-def test_parallel_work_release_row_fails_closed_when_snapshot_is_missing_or_invalid(
-    tmp_path: Path,
-) -> None:
+def test_service_summary_does_not_consume_public_release_gates(tmp_path: Path, monkeypatch) -> None:
     install_summary = load_install_summary_module()
     runtime_dir = tmp_path / "runtime"
     runtime_dir.mkdir()
+    release_snapshot = runtime_dir / "parallel-work-release-gate.json"
+    release_snapshot.write_text('{"open_gate_count": 133}', encoding="utf-8")
+    original_read_text = Path.read_text
 
-    missing = install_summary.parallel_work_release_row({}, runtime_dir)
-    (runtime_dir / "parallel-work-release-gate.json").write_text("{}", encoding="utf-8")
-    invalid = install_summary.parallel_work_release_row({}, runtime_dir)
-    (runtime_dir / "parallel-work-release-gate.json").write_text(
-        json.dumps(
-            {
-                "contract_version": 1,
-                "release_ready": True,
-                "source_defaults_dark": True,
-                "open_gates": [],
-                "readiness_checks": [],
-                "artifact_checks": [],
-            }
-        ),
-        encoding="utf-8",
-    )
-    missing_checks = install_summary.parallel_work_release_row({}, runtime_dir)
+    def read_without_release_snapshot(path, *args, **kwargs):
+        if path == release_snapshot:
+            raise AssertionError("Local service status must not evaluate public release evidence")
+        return original_read_text(path, *args, **kwargs)
 
-    assert missing[1] == "NOT READY"
-    assert invalid[1] == "NOT READY"
-    assert missing_checks[1] == "NOT READY"
-    assert "snapshot" in missing[2].lower()
-    assert "snapshot" in invalid[2].lower()
-    assert "snapshot" in missing_checks[2].lower()
+    monkeypatch.setattr(Path, "read_text", read_without_release_snapshot)
+    monkeypatch.setattr(install_summary, "local_network_host", lambda: None)
 
+    rows = install_summary.build_service_rows({}, {}, runtime_dir=runtime_dir, probe_live=False)
 
-def test_parallel_work_release_row_labels_missing_snapshot_not_ready_even_when_config_requests_local_override(
-    tmp_path: Path,
-) -> None:
-    install_summary = load_install_summary_module()
-    runtime_dir = tmp_path / "runtime"
-    runtime_dir.mkdir()
-
-    row = install_summary.parallel_work_release_row(
-        {"integrations": {"glasshive": {"orchestration": {"available": True}}}},
-        runtime_dir,
-    )
-
-    assert row[1] == "NOT READY"
-    assert "snapshot" in row[2].lower()
-
-
-def test_parallel_work_release_row_preserves_requested_pre_gate_for_invalid_snapshots(
-    tmp_path: Path,
-) -> None:
-    install_summary = load_install_summary_module()
-    runtime_dir = tmp_path / "runtime"
-    runtime_dir.mkdir()
-    (runtime_dir / "parallel-work-local-qa-request.json").write_text(
-        json.dumps({"contractVersion": 1, "mode": "local-qa", "requested": True}),
-        encoding="utf-8",
-    )
-
-    missing = install_summary.parallel_work_release_row({}, runtime_dir)
-    (runtime_dir / "parallel-work-release-gate.json").write_text("{", encoding="utf-8")
-    malformed = install_summary.parallel_work_release_row({}, runtime_dir)
-    (runtime_dir / "parallel-work-release-gate.json").write_text(
-        json.dumps({"contract_version": 1, "mode": "local-qa", "expiresAt": "2000-01-01"}),
-        encoding="utf-8",
-    )
-    expired = install_summary.parallel_work_release_row({}, runtime_dir)
-
-    assert {missing[1], malformed[1], expired[1]} == {"PRE-GATE / NOT READY"}
-
-
-def test_malformed_local_qa_request_fails_closed(tmp_path: Path) -> None:
-    install_summary = load_install_summary_module()
-    runtime_dir = tmp_path / "runtime"
-    runtime_dir.mkdir()
-    (runtime_dir / "parallel-work-local-qa-request.json").write_text(
-        "{", encoding="utf-8"
-    )
-
-    assert install_summary.parallel_work_local_qa_requested(runtime_dir) is False
-    assert install_summary.parallel_work_release_row({}, runtime_dir)[1] == "NOT READY"
+    assert all(name != "Parallel Work Release" for name, _status, _detail in rows)
+    assert all("stays dark and focused" not in detail for _name, _status, detail in rows)
 
 
 def test_http_ok_prefers_curl_when_available(monkeypatch) -> None:
@@ -1176,6 +975,7 @@ def test_build_service_rows_uses_live_public_network_state_for_remote_access(mon
 
     monkeypatch.setattr(install_summary, "http_ok", lambda _url: True)
     monkeypatch.setattr(install_summary, "local_network_host", lambda: None)
+    monkeypatch.setattr(install_summary, "public_hostname_reachable", lambda _url: True)
 
     rows = install_summary.build_service_rows(
         config,
@@ -1188,6 +988,71 @@ def test_build_service_rows_uses_live_public_network_state_for_remote_access(mon
     remote_status, remote_detail = services["Remote Access"]
     assert remote_status == "Running"
     assert "https://app.example.test" in remote_detail
+    assert "from anywhere" not in remote_detail
+    assert "Off-network reachability is not verified by this Mac" in remote_detail
+
+
+def test_build_service_rows_reports_local_hairpin_unavailable_without_claiming_off_network_reach(
+    monkeypatch, tmp_path: Path
+) -> None:
+    install_summary = load_install_summary_module()
+
+    config = {
+        "runtime": {
+            "profile": "isolated",
+            "network": {"remote_call_mode": "public_https_edge"},
+            "ports": {"lc_frontend_port": 3190, "lc_api_port": 3180, "playground_port": 3300},
+        },
+        "llm": {"primary": {"auth_mode": "connected_account"}},
+        "voice": {"mode": "local"},
+        "integrations": {},
+    }
+    runtime_dir = tmp_path / "runtime"
+    runtime_dir.mkdir(parents=True)
+    state_root = tmp_path / "state" / "runtime" / "isolated"
+    state_root.mkdir(parents=True)
+    (state_root / "public-network.json").write_text(
+        '{"provider":"public_https_edge","public_client_url":"https://app.example.test"}',
+        encoding="utf-8",
+    )
+    (state_root / "stack-owner.json").write_text('{"command":"start"}\n', encoding="utf-8")
+
+    monkeypatch.setattr(install_summary, "http_ok", lambda _url: True)
+    monkeypatch.setattr(install_summary, "local_network_host", lambda: None)
+    monkeypatch.setattr(install_summary, "public_hostname_reachable", lambda _url: False)
+
+    rows = install_summary.build_service_rows(
+        config,
+        {},
+        runtime_dir=runtime_dir,
+        probe_live=True,
+    )
+    services = {name: (status, detail) for name, status, detail in rows}
+
+    remote_status, remote_detail = services["Remote Access"]
+    assert remote_status == "Configured"
+    assert "this network cannot reach the public hostname" in remote_detail
+    assert "router NAT loopback unavailable" not in remote_detail
+    assert "cause is not established" in remote_detail
+    assert "from anywhere" not in remote_detail
+    assert "Off-network reachability is not verified by this Mac" in remote_detail
+
+    unprobed_rows = install_summary.build_service_rows(
+        config,
+        {},
+        runtime_dir=runtime_dir,
+        probe_live=False,
+    )
+    unprobed = {name: (status, detail) for name, status, detail in unprobed_rows}
+    assert unprobed["Remote Access"][0] == "Configured"
+    assert "not probed" in unprobed["Remote Access"][1]
+
+
+def test_public_hostname_reachable_rejects_urls_without_a_host() -> None:
+    install_summary = load_install_summary_module()
+
+    assert install_summary.public_hostname_reachable("") is False
+    assert install_summary.public_hostname_reachable("not a url") is False
 
 
 def test_build_service_rows_reports_action_required_when_remote_access_state_saved_an_error(

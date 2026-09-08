@@ -1,0 +1,66 @@
+schemaVersion: 1
+capability: runtime-install-release
+requirementOwner: docs/requirements_and_learnings/capabilities/runtime-install-release.md
+statusPolicy: Run results belong in dated, candidate-bound reports.
+sourceInventories:
+  - qa/continuity-ops/cases.md
+  - qa/config-alignment/cases.md
+  - qa/config-compiler-memory/cases.md
+  - qa/config-compiler-xai-models/cases.md
+  - qa/installer-piped-bootstrap/cases.md
+  - qa/installer-resilience/cases.md
+  - qa/installer-wait-taglines/cases.md
+  - qa/local-docker-services/cases.md
+  - qa/release-readiness/cases.md
+  - qa/remote-access/cases.md
+  - qa/self-healing/cases.md
+  - qa/stable-dev-runtime/cases.md
+journeys:
+  - id: native-auth-and-scheduling
+    requirements: [ONB-003, ONB-009, AR-010, AR-017, RESTORE-001]
+    userAction: On a clean supported Mac, create the local owner, open Connect AI from setup, complete the official browser sign-in, and get two useful persisted answers without a Terminal. Save, correct, forget and recall through the configured memory writer. Create a due schedule, change it, restart, and observe its one correct delivery.
+    surfaces: [native installer, macOS helper, provider browser, Web, Scheduling Cortex]
+    expectedResult: Configured provider and model identities remain intact. Fresh native defaults use the owner's official native login for Main, workers and the declared saved-memory writer; an explicitly selected direct writer keeps its own credential requirement. Status reflects actual account and writer availability. The existing scheduler and durable DB deliver once and preserve context without interrupting live chat.
+    degradedAndRecovery: Cancel sign-in, deny it, retry, disconnect and reconnect; preserve the current draft and saved history. Distinguish missing native login, unavailable configured writer and a missing credential for an explicitly selected direct writer. Reject another owner and unauthenticated scheduling requests. Failed or deferred delivery keeps the existing occurrence and recovery contract.
+    persistenceAndCleanup: Verify owner login state after helper reopen and service restart. Restore a native snapshot and verify scheduling, history and memory; credentials require reconnection. Remove synthetic tasks and proof data only. Record missing credentials or unrun UI paths as open gates.
+    evidence: [exact installed model and component identities, visible sign-in and useful answers, cancel and status result, saved memory state, schedule delivery and DB state, restored user path]
+  - id: installed-worker-computer-access
+    requirements: [ONB-003, ONB-006, CORE-013]
+    userAction: Install on a clean supported Mac, grant the requested Viventium access, then ask an actual worker from Web and Telegram to inspect and fill a synthetic local browser form without submitting it.
+    surfaces: [macOS helper, macOS privacy controls, installed worker, Chrome, Web, Telegram]
+    expectedResult: Setup uses the persistent app identity; actual workers can capture the screen, inspect app accessibility, focus the existing browser, fill the form, and return the result. No special user prompt or per-worker setup is needed, and the form is not submitted.
+    degradedAndRecovery: Deny and revoke Accessibility, Screen Recording, and target-app Automation separately. Computer Access shows the helper's actual grants and repair action; worker failures identify the missing capability without claiming all paths unavailable. Restore access and retry the same worker task. Chat stays usable.
+    persistenceAndCleanup: Prove the worker actions after app restart, login, and signed upgrade with the same owner identity. With a live supervisor, Stop then upgrade and install with --no-start; services must remain stopped until explicit Start. Menu Stop retains Start and Computer Access controls, and reopening a hidden app restores access to its menu. Failed first-start restores the prior helper and configuration. Keep private screenshots and TCC diagnostics outside public artifacts; remove only the synthetic form and test state.
+    evidence: [app signing identity, responsible process chain, actual worker screenshot and app-control result, visible form state, Web and Telegram delivery, denied and recovered states, restart and upgrade identity]
+  - id: installed-candidate
+    requirements: [CORE-013, GOV-014]
+    userAction: Install or activate the reviewed candidate, start Viventium, and get a persistent first answer.
+    surfaces: [installer, macOS helper, CLI, Web]
+    expectedResult: Source, component pins, compiled and prebuilt artifacts, installed processes, visible behavior, and durable state identify one candidate.
+    degradedAndRecovery: Retry interrupted extraction of the same verified candidate without duplicating its verified file prefix; retain the attempt history and quarantine or reject tampered, linked or unexpected entries. Missing prerequisites, auth, unhealthy services, restore limits, and rollback state each produce one truthful next action.
+    persistenceAndCleanup: Restart preserves user state; content-verified restore and rollback use the supported independent target and prove the recovered state through its real surfaces.
+    evidence: [source and pin hashes, build hashes, process identity, visible first answer, persisted state]
+  - id: release-entry-and-platform-matrix
+    requirements: [ONB-009]
+    userAction: On isolated state, exercise applicable new-user and existing-user setup on desktop and mobile, including provider and LIFE lifecycle plus keyboard, screen-reader, reduced-motion, contrast, and zoom paths.
+    surfaces: [installer, CLI, macOS helper, desktop Web, mobile Web, accessibility interfaces]
+    expectedResult: Every supported platform and access path reaches the same truthful, useful product without contaminating personal state.
+    degradedAndRecovery: Denied, expired, revoked, rate-limited, offline, and unsupported provider or platform states each give one specific recovery action.
+    persistenceAndCleanup: Refresh and restart preserve authorized state; disposable identities, credentials, and test data are removed exactly.
+    evidence: [platform identity, accessibility checks, visible first and second answer, provider state, LIFE state, cleanup receipt]
+  - id: release-enabled-capability-matrix
+    requirements: [ONB-009]
+    userAction: Exercise every enabled capability through its real surface, including Telegram text, media, and voice; Call, Wing, Listen-Only; memory and recall; scheduling; Prompt Workbench; GlassHive; and Parallel Work.
+    surfaces: [Web, Telegram, audible Voice, Prompt Workbench, GlassHive workspace]
+    expectedResult: Each enabled path meets the outcome metric and preserves authorization, identity, inputs, result delivery, and cross-surface parity.
+    degradedAndRecovery: A disabled or unavailable optional capability is reported as such and cannot block core chat or be counted as a pass.
+    persistenceAndCleanup: Reload, restart, and handoff preserve the applicable result and state; synthetic artifacts and schedules are cleaned up.
+    evidence: [visible or audible result, delivery receipt, logs, state, exact artifacts, per-capability QA owner]
+  - id: release-recovery-network-and-artifact-matrix
+    requirements: [ONB-009, POST-RT-001, POST-RT-002, RESTORE-001]
+    userAction: Exercise stop, start, restart, upgrade, backup, restore, rollback, LAN and off-LAN access, then verify the exact supported release artifact.
+    surfaces: [installer, CLI, macOS helper, Web, network boundary, restore target]
+    expectedResult: Recovery preserves the complete authorized product and every tested layer identifies the same release candidate. Helper, CLI, login item, watchdog, component supervisors, and reboot recovery honor intentional Stop until explicit Start or Restart. Status distinguishes starting, stopped, unavailable dependency, downstream blocked, healthy empty, and optional skip with one root cause and no stale starting state.
+    degradedAndRecovery: Interruption, corrupt backup, unreachable network, failed upgrade, and rollback each fail safely with one truthful next action.
+    persistenceAndCleanup: Independent content-verified restore recovers conversations, config, memory, schedules, enabled capabilities, and artifacts through the real browser; corrupt, incomplete, or metadata-only inputs mutate nothing. Rollback preserves the declared preimage and user intent. User-global helper, login, and reboot proof requires a separate supported macOS user or VM; temporary network exposure, backups, and synthetic state are removed or retained as declared.
+    evidence: [source and pin hashes, build and installed hashes, socket probes, backup manifest, restore result, rollback identity, public-safety scan]

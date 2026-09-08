@@ -19,10 +19,20 @@
   },
   "attached": {
     "allowTrailingArguments": false,
-    "commands": ["start", "launch"],
+    "commands": [
+      "start",
+      "launch"
+    ],
     "argvTemplates": [
-      ["{ownerExecutablePath}", "{command}"],
-      ["{ownerExecutablePath}", "{command}", "--restart"],
+      [
+        "{ownerExecutablePath}",
+        "{command}"
+      ],
+      [
+        "{ownerExecutablePath}",
+        "{command}",
+        "--restart"
+      ],
       [
         "{ownerExecutablePath}",
         "--app-support-dir",
@@ -47,8 +57,59 @@
         "{componentsLockFile}",
         "{command}",
         "--restart"
+      ],
+      [
+        "{ownerExecutablePath}",
+        "--app-support-dir",
+        "{appSupportDir}",
+        "--config-file",
+        "{configFile}",
+        "--runtime-dir",
+        "{runtimeDir}",
+        "{command}"
       ]
-    ]
+    ],
+    "flagOptions": [
+      "--start",
+      "--restart",
+      "--skip-livekit",
+      "--skip-librechat",
+      "--skip-playground",
+      "--modern-playground",
+      "--classic-playground",
+      "--skip-voice-gateway",
+      "--skip-google-mcp",
+      "--skip-ms365-mcp",
+      "--skip-scheduling-mcp",
+      "--skip-glasshive",
+      "--skip-rag-api",
+      "--skip-skyvern",
+      "--skip-code-interpreter",
+      "--skip-firecrawl",
+      "--skip-prompt-workbench",
+      "--skip-telegram",
+      "--skip-v1-agent",
+      "--skip-docker",
+      "--skip-health-checks",
+      "--skip-v1-sync",
+      "--skip-voice-deps",
+      "--skip-mcp-verify",
+      "--no-bootstrap",
+      "--private-overlay",
+      "--fast",
+      "--profile=isolated",
+      "--profile=compat"
+    ],
+    "enumOptions": {
+      "--profile": [
+        "isolated",
+        "compat"
+      ],
+      "--runtime-profile": [
+        "isolated",
+        "compat"
+      ]
+    }
   },
   "processWrappers": [
     "",

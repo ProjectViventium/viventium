@@ -82,7 +82,7 @@ atomic_traceability:
   stable_requirement_ids_with_disposition_only_direct_mappings: 8
   stable_requirement_ids_with_any_direct_message_mapping: 312
   required_owner_declaration_rows: 288
-  required_owner_declaration_sha256: 2c389b9861e73de660bb84a2d65b5e56bc374264729d5f5da26fe246b9040671
+  required_owner_declaration_sha256: 60a5dcb807e9e5c4c1d6ad9c681e1054eabf333604226373c7982d69572b6ff7
   required_owner_declaration_canonicalization: >-
     sha256 of lexicographically sorted unique tab-separated requirement ID, repository-relative
     owning product-document path, and exact declaration behavior; rows are LF-joined with one
@@ -232,8 +232,9 @@ stale_case_catalog_audit:
   markers_in_current_files_absent_from_head: 75
   markers_in_untracked_current_files: 11
   existing_case_catalog_date_resets: 0
-  current_recent_marker_total: 267
-  post_initial_audit_recent_marker_delta: 181
+  current_marker_as_of: 2026-09-07
+  current_recent_marker_total: 264
+  post_initial_audit_recent_marker_delta: 178
   current_stale_triage_marker_total: 164
   current_total_stale_marker_delta_after_initial_audit: 0
   method: read_only_current_marker_comparison_against_head

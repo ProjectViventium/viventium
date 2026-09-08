@@ -340,9 +340,21 @@ properties:
           - auth_mode
       secondary:
         type: object
+      deep_memory:
+        type: object
+        description: Optional Deep Memory route. New native installations select the same model through official CLI sign-in; existing configurations retain their foundation route. Agent fallback settings remain separate.
+        required: [provider, model]
+        additionalProperties: false
+        properties:
+          provider:
+            type: string
+            enum: [openai, anthropic, glasshive-harness]
+          model:
+            type: string
+            minLength: 1
       memory:
         type: object
-        description: Optional saved-memory writer route and explicitly authorized fallback. Each route must use an authenticated configured foundation provider and affects only memory.agent.
+        description: Optional saved-memory writer route. Select a configured foundation provider or a declared Codex model with broker-only memory tools; authentication remains owner-bound at runtime. An explicit fallback must use a configured foundation provider. Affects only memory.agent.
         required:
           - provider
           - model
@@ -350,7 +362,7 @@ properties:
         properties:
           provider:
             type: string
-            enum: [openai, anthropic]
+            enum: [openai, anthropic, glasshive-harness]
           model:
             type: string
             minLength: 1
@@ -446,6 +458,27 @@ properties:
             type: integer
           instructions:
             type: string
+      worker:
+        type: object
+        description: Voice gateway worker tuning. Every key is optional; omitted keys use the gateway defaults.
+        properties:
+          owner_wait_s:
+            type: number
+            exclusiveMinimum: 0
+            maximum: 180
+            description: Seconds the gateway waits for the exact owner participant to join before releasing its call claim (default 45). It must cover opening the call page and joining LiveKit, including the Telegram /call button path.
+          initialize_process_timeout_s:
+            type: number
+          idle_processes:
+            type: integer
+          load_threshold:
+            type: number
+          job_memory_warn_mb:
+            type: integer
+          job_memory_limit_mb:
+            type: integer
+          prewarm_local_tts:
+            type: boolean
       wing_mode:
         type: object
         properties:
@@ -558,6 +591,9 @@ properties:
         properties:
           enabled:
             type: boolean
+          artifact_base_url:
+            type: string
+            description: User-facing base URL for generated GlassHive artifact links.
           provider:
             type: object
             description: Core Agent Builder provider surface backed by GlassHive harness workers.
@@ -567,6 +603,9 @@ properties:
               base_url:
                 type: string
                 description: OpenAI-compatible GlassHive base URL as reached by LibreChat.
+              life_enabled:
+                type: boolean
+                description: Owner-controlled optional Life setup; selecting sources records intent only.
               life_dir:
                 type: string
                 description: Absolute canonical per-user Viventium LIFE folder on the GlassHive host; a leading ~ is supported.
@@ -595,15 +634,15 @@ properties:
                 description: Absolute server-side roots within which custom working folders may be selected; a leading ~ is supported.
           orchestration:
             type: object
-            description: Dark-by-default Parallel work availability, isolated Docker admission, resource, and snapshot limits. Requested availability still fails closed until GlassHive reports isolation-ready with no active host mission.
+            description: Automatic independent work using the configured host or isolated worker runtime. Admission requires authenticated owner readiness and retains resource limits.
             properties:
               available:
                 type: boolean
-                default: false
+                default: true
               default_mode:
                 type: string
                 enum: [focused, parallel]
-                default: focused
+                default: parallel
               conversation_slots_per_cli:
                 type: integer
                 minimum: 1
@@ -707,6 +746,10 @@ properties:
                 description: Project-instruction policy for Codex conversation workers. Viventium defaults to inherit so the harness runs in the exact chosen folder and honors its canonical AGENTS.md; exclude is an explicit opt-out for deployments that prohibit workspace instructions.
                 enum: [inherit, exclude]
                 default: inherit
+              claude_conversation_auto_memory:
+                type: boolean
+                description: Native Claude auto-memory for conversation workers. Viventium defaults to false because its governed Saved memory owns automatic persistence. Ordinary missions retain native settings.
+                default: false
               codex_app_server_qa_enabled:
                 type: boolean
                 description: Opt-in QA probe only. Production GlassHive conversation transport remains codex exec.

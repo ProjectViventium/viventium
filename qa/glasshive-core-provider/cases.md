@@ -54,6 +54,11 @@
 
 ## Acceptance Rules
 
+For the ordinary Main and persistence cases, verify one initially collapsed harness activity
+disclosure per author/parallel round. Expand it while streaming, confirm later progress remains
+visible there, then reload and reopen the same history. The answer and failures stay visible
+outside it. A parallel author or later round retains its own history.
+
 - Every applicable row is `PASS`, `FAIL`, `PARTIAL`, or `BLOCKED` in a dated report.
 - A required real user path cannot be replaced by a mock, source review, unit test, DB row, or another
   model's review.
@@ -69,3 +74,5 @@
 
 - `tests/release/test_glasshive_core_provider_qa.py`
 - `tests/release/test_life_bootstrap.py`
+
+Supporting release regressions: `tests/release/test_native_life_command.py`. These automated checks do not replace the user-path acceptance above.

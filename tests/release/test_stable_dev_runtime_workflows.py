@@ -145,6 +145,10 @@ def test_dev_runtime_validation_fails_closed_before_restart() -> None:
     assert activation.index(app_support_gate) < activation.index(begin_gate)
     assert activation.index(compile_invocation) < activation.index(compile_guard)
     assert activation.index(compile_guard) < activation.index(doctor_guard)
+    preparation_gate = "if ! prepare_dev_runtime_librechat_candidate; then"
+    assert activation.index(compile_guard) < activation.index(preparation_gate)
+    assert activation.index(preparation_gate) < activation.index(doctor_guard)
+    assert activation.index(preparation_gate) < activation.index("if ! stop_stack_for_upgrade; then")
     assert activation.index(doctor_guard) < activation.index(artifact_guard)
     assert activation.index(begin_gate) < activation.index(helper_process_gate)
     assert activation.index(helper_process_gate) < activation.index(stop_gate)
@@ -271,6 +275,63 @@ def test_dev_env_offsets_app_facing_and_runtime_sidecar_ports(tmp_path: Path) ->
         "google_workspace_mcp",
         "ms365_mcp",
     ]
+
+
+def test_new_dev_env_does_not_inherit_external_delivery_or_public_origins(tmp_path: Path) -> None:
+    app_support = tmp_path / "App Support"
+    app_support.mkdir()
+    config_path = app_support / "config.yaml"
+    config = minimal_config()
+    config["runtime"]["network"] = {
+        "remote_call_mode": "tailscale",
+        "public_client_origin": "https://chat.example.test",
+        "public_api_origin": "https://api.example.test",
+        "public_playground_origin": "https://voice.example.test",
+        "public_livekit_url": "wss://rtc.example.test",
+        "public_glasshive_origin": "https://work.example.test",
+        "livekit_node_ip": "192.0.2.8",
+    }
+    config["runtime"]["auth"]["connected_accounts_return_origin"] = "http://localhost:3190"
+    config["integrations"]["telegram"] = {"enabled": True, "bot_username": "synthetic_bot"}
+    config["integrations"]["telegram_codex"] = {"enabled": True}
+    config["integrations"]["glasshive"] = {"enabled": True, "provider": {
+        "enabled": True, "life_dir": str(tmp_path / "owner-life"),
+        "allowed_workspace_roots": [str(tmp_path / "owner-projects")],
+    }}
+    original = yaml.safe_dump(config, sort_keys=False)
+    config_path.write_text(original)
+    subprocess.run(
+        [sys.executable, str(DEV_RUNTIME), "--repo-root", str(REPO_ROOT),
+         "--app-support-dir", str(app_support), "--config-file", str(config_path),
+         "create", "isolated"],
+        check=True, capture_output=True, text=True,
+    )
+    created = yaml.safe_load((app_support / "dev-envs/isolated/config.yaml").read_text())
+    assert created["runtime"]["network"] == {"remote_call_mode": "disabled"}
+    assert "connected_accounts_return_origin" not in created["runtime"]["auth"]
+    assert created["runtime"]["auth"]["allow_registration"] is True
+    assert created["integrations"]["telegram"]["enabled"] is False
+    assert created["integrations"]["telegram_codex"]["enabled"] is False
+    assert created["integrations"]["telegram"]["bot_username"] == "synthetic_bot"
+    provider = created["integrations"]["glasshive"]["provider"]
+    assert "life_dir" not in provider
+    assert "allowed_workspace_roots" not in provider
+    assert provider["enabled"] is True
+    assert created["llm"] == config["llm"]
+    assert config_path.read_text() == original
+
+
+@pytest.mark.parametrize("skip, expected", [("true", "false false"), ("false", "true true")])
+def test_skip_telegram_covers_both_telegram_processes(skip: str, expected: str) -> None:
+    source = FULL_STACK_LAUNCHER.read_text()
+    start = source.index('[[ "$SKIP_TELEGRAM" == "true" ]]')
+    end = source.index('[[ "$SKIP_V1_AGENT"', start)
+    result = subprocess.run(
+        ["bash", "-c", source[start:end] + '\nprintf "%s %s" "$START_TELEGRAM" "$START_TELEGRAM_CODEX"'],
+        env={**os.environ, "SKIP_TELEGRAM": skip, "START_TELEGRAM": "true", "START_TELEGRAM_CODEX": "true"},
+        check=True, capture_output=True, text=True,
+    )
+    assert result.stdout == expected
 
 
 def test_dev_env_offsets_local_glasshive_surfaces_without_rewriting_remote_urls(
@@ -464,7 +525,8 @@ def test_dev_env_stop_preserves_shared_checkout_and_singleton_processes() -> Non
     assert 'if [[ "$START_SEARXNG" == "true" ]] && runtime_allows_workspace_wide_process_sweep; then' in stop_block
     assert 'if [[ "$START_FIRECRAWL" == "true" ]] && runtime_allows_workspace_wide_process_sweep; then' in stop_block
     assert 'if [[ "$START_RAG_API" == "true" ]]' in stop_block
-    assert 'remove_compose_service_containers "$VIVENTIUM_RAG_COMPOSE_PROJECT_NAME" "rag_api" "vectordb"' in stop_block
+    assert "stop_rag_compose_project" in stop_block
+    assert 'remove_compose_service_containers "$VIVENTIUM_RAG_COMPOSE_PROJECT_NAME" "rag_api" "vectordb"' in source
     glasshive_stop = stop_block.split('if [[ -d "$GLASSHIVE_RUNTIME_DIR"', 1)[1].split("# === VIVENTIUM START ===", 1)[0]
     guarded_glasshive_sweep = glasshive_stop.split("if runtime_allows_workspace_wide_process_sweep; then", 1)[1]
     for port_name in ("GLASSHIVE_RUNTIME_PORT", "GLASSHIVE_MCP_PORT", "GLASSHIVE_UI_PORT"):
@@ -843,6 +905,8 @@ prepare_runtime_exports() {{
 value_is_true() {{ [[ "${{1:-}}" == "true" || "${{1:-}}" == "1" ]]; }}
 set_helper_runtime_intent() {{ :; }}
 write_stack_owner_state() {{ :; }}
+capture_stack_owner_state_for_transition() {{ :; }}
+start_owner_transition_exit_cleanup() {{ :; }}
 stop_native_stack_detached() {{ return 99; }}
 APP_SUPPORT_DIR={shlex.quote(str(selected_support))}
 GENERATED_ENV={shlex.quote(str(runtime_env))}
@@ -1332,6 +1396,7 @@ def test_feature_request_approval_creates_isolated_feature_worktree(tmp_path: Pa
         encoding="utf-8",
     )
     env = os.environ.copy()
+    env["HOME"] = str(tmp_path)
     env["PATH"] = f"{fake_bin}{os.pathsep}{env.get('PATH', '')}"
 
     start = subprocess.run(
@@ -1384,7 +1449,9 @@ def test_feature_request_approval_creates_isolated_feature_worktree(tmp_path: Pa
     worktree = Path(payload["isolated_worktree"])
     assert worktree.exists()
     implementation_prompt = (Path(payload["run_dir"]) / "03-approved-implementation-prompt.md").read_text(encoding="utf-8")
-    assert str(worktree) in implementation_prompt
+    expected_worktree = "~/" + worktree.relative_to(tmp_path).as_posix()
+    assert f"Implementation write target: {expected_worktree}" in implementation_prompt
+    assert str(tmp_path) not in implementation_prompt
     assert "Do not push or create a remote PR" in implementation_prompt
 
 
@@ -1413,6 +1480,7 @@ def test_bug_report_approval_creates_isolated_bugfix_worktree(tmp_path: Path) ->
         encoding="utf-8",
     )
     env = os.environ.copy()
+    env["HOME"] = str(tmp_path)
     env["PATH"] = f"{fake_bin}{os.pathsep}{env.get('PATH', '')}"
 
     start = subprocess.run(
@@ -1465,7 +1533,9 @@ def test_bug_report_approval_creates_isolated_bugfix_worktree(tmp_path: Path) ->
     worktree = Path(payload["isolated_worktree"])
     assert worktree.exists()
     implementation_prompt = (Path(payload["run_dir"]) / "07-approved-bugfix-prompt.md").read_text(encoding="utf-8")
-    assert str(worktree) in implementation_prompt
+    expected_worktree = "~/" + worktree.relative_to(tmp_path).as_posix()
+    assert f"Implementation write target: {expected_worktree}" in implementation_prompt
+    assert str(tmp_path) not in implementation_prompt
     assert "Reproduce or validate the bug" in implementation_prompt
     assert "Do not push or create a remote PR" in implementation_prompt
 
@@ -2502,6 +2572,8 @@ def test_dev_env_offsets_default_sandpack_port_for_older_configs(tmp_path: Path)
 def test_dev_env_reuses_the_canonical_validated_runtime_tools() -> None:
     dev_runtime_source = DEV_RUNTIME.read_text(encoding="utf-8")
     launcher_source = FULL_STACK_LAUNCHER.read_text(encoding="utf-8")
+
+    launcher_source += (REPO_ROOT / "scripts/viventium/librechat_build.sh").read_text(encoding="utf-8")
 
     assert 'env["VIVENTIUM_RUNTIME_TOOLS_DIR"] = str(' in dev_runtime_source
     assert 'Path(args.app_support_dir).expanduser().resolve() / "runtime-tools"' in dev_runtime_source

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import audioop
 import asyncio
+import concurrent.futures
 import hashlib
 import importlib.metadata
 import logging
@@ -17,6 +18,7 @@ import platform
 import socket
 import subprocess
 import sys
+import threading
 import time
 import urllib.request
 from collections.abc import AsyncIterable
@@ -68,6 +70,8 @@ except ImportError as exc:
 
 _logger = logging.getLogger(__name__)
 _MODEL_CACHE: dict[str, Model] = {}
+_MODEL_EXECUTORS: dict[tuple[int, str], concurrent.futures.ThreadPoolExecutor] = {}
+_MODEL_EXECUTOR_LOCK = threading.Lock()
 _LOCAL_WHISPER_VAD_MIN_SPEECH_S = "0.35"
 _LOCAL_WHISPER_VAD_MIN_SILENCE_S = "0.5"
 _MODEL_WARMUP_DONE: set[str] = set()
@@ -470,6 +474,19 @@ def _get_model(model_name_override: Optional[str] = None) -> Model:
     return cached_model
 
 
+def _get_model_executor(model_name: str) -> concurrent.futures.ThreadPoolExecutor:
+    """Keep mutable native inference serialized without occupying the call event loop."""
+    key = (os.getpid(), model_name)
+    with _MODEL_EXECUTOR_LOCK:
+        executor = _MODEL_EXECUTORS.get(key)
+        if executor is None:
+            executor = concurrent.futures.ThreadPoolExecutor(
+                max_workers=1, thread_name_prefix="whispercpp-inference"
+            )
+            _MODEL_EXECUTORS[key] = executor
+        return executor
+
+
 def prewarm_model(model_name: Optional[str] = None) -> None:
     """Ensure the local whisper.cpp model is downloaded, loaded, and first-inference warmed."""
     resolved_model = _default_model_name(model_name)
@@ -486,14 +503,15 @@ def prewarm_model(model_name: Optional[str] = None) -> None:
     warmup_samples = max(1, int(16000 * warmup_audio_s))
     warmup_audio = np.zeros(warmup_samples, dtype=np.float32)
     start = time.perf_counter()
-    model.transcribe(
+    _get_model_executor(resolved_model).submit(
+        model.transcribe,
         warmup_audio,
         **_transcribe_kwargs(
             os.getenv("VIVENTIUM_STT_LANGUAGE", "en"),
             model_name=resolved_model,
             audio_duration_s=warmup_audio_s,
         ),
-    )
+    ).result()
     elapsed_ms = (time.perf_counter() - start) * 1000.0
     _MODEL_WARMUP_DONE.add(resolved_model)
     if _latency_logging_enabled():
@@ -625,9 +643,10 @@ class PyWhisperCppSTT(STT):
             audio_duration_s=output_audio_duration_s,
         )
         transcribe_start_ns = time.perf_counter_ns()
-        segments = self._model.transcribe(
-            audio_data,
-            **transcribe_params,
+        segments = await asyncio.wrap_future(
+            _get_model_executor(self._model_name).submit(
+                self._model.transcribe, audio_data, **transcribe_params
+            )
         )
         transcribe_end_ns = time.perf_counter_ns()
         stage_start = mark("transcribe_ms", stage_start)

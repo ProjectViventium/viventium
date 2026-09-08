@@ -73,6 +73,11 @@ recall score cannot silently certify mutation behavior.
 - Embed them via the existing vector pipeline.
 - Persist as file records with a recall context.
 - Inject these files into runtime file-search resources when policy allows.
+- A provider that executes native tools retains the participant's declared tool names separately
+  from ordinary model tool binding. Its signed capability broker resolves those declarations
+  against enabled endpoint capabilities and the same initialized, owner-scoped file resources.
+  Primary and declared fallback preserve this access; removing ordinary binding must not silently
+  remove conversation/file search or web search from the broker.
 - Persist processed meeting transcript artifacts as user-scoped vector files with the
   `meeting_transcript` context. The default transcript RAG mode is `detailed_summary_only`, so only
   detailed `meeting_summary:*` artifacts plus the source-scoped `meeting_inventory:*` table of
@@ -823,11 +828,29 @@ user/Agent resource set once; in-process providers receive the normal tool insta
 GlassHive conversation providers receive the same scoped capability through the signed broker MCP.
 GlassHive never reads LibreChat Mongo directly and never receives provider credentials.
 
-Resolution must use canonical `primeFiles` semantics: inline `.files` and agent knowledge-base
-`.file_ids` are unioned only after the normal database/ACL filter. Conversation-provider sessions
-and lower-level delegated GlassHive workers receive this same resource scope. If a declared and
-resolved host capability cannot be materialized into a broker grant, execution fails closed before
-the worker is told that the tool is available.
+Resolution must use canonical `primeFiles` semantics: union IDs from staged `.files` and Agent
+knowledge-base `.file_ids`, then read current unexpired File rows and apply the existing owner/shared
+Agent access filter. A staged descriptor cannot restore a deleted, expired, or denied upload or
+replace current saved metadata. Rowless source-only conversation recall is reconstructed by the
+existing scope policy and attachment builder for the current authorized user/Agent; staged flags,
+filenames, and prefixes do not grant access. Missing or denied Agent scope fails closed. Rowless
+vector resources remain unavailable.
+
+Conversation-provider sessions and lower-level delegated GlassHive workers receive this same
+resource scope. If a declared and resolved host capability cannot be materialized into a broker
+grant, execution fails closed before the worker is told that the tool is available.
+
+Indexed and direct Message recall use the same escaped source-turn header. A source conversation
+address comes from its stored ID and the configured current chat address, including any base path;
+retrieved prose cannot replace this metadata. Missing or unsafe address configuration produces no
+invented link. Rebuilding a derived corpus refreshes its addresses after a move. Native output,
+streaming, evidence and failure redaction must preserve ordinary source links and identifiers while
+removing recognized credential forms. A correct fact with an unusable source is not accepted recall.
+The browser projects only links whose origin matches this installation’s declared canonical client
+origin onto the active signed-in origin. Paths, queries and fragments survive; other installations,
+ports and external sources keep their original destinations. This also repairs retained citations
+after an alias change without rewriting messages or indexes. Non-browser delivery retains absolute
+source addresses and its existing channel address rules.
 
 The broker grant carries only a compact signed resource reference. The full bounded resource scope
 is retained server-side and its digest is revalidated when hydrated. This avoids oversized HTTP

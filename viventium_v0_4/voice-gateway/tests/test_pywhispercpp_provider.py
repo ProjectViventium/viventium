@@ -3,6 +3,7 @@ import os
 import tempfile
 import unittest
 import asyncio
+import threading
 from types import SimpleNamespace
 from pathlib import Path
 from unittest.mock import patch
@@ -245,6 +246,100 @@ class TestPyWhisperCppRecognition(unittest.TestCase):
         self.assertEqual(fake_model.kwargs["audio_ctx"], 768)
         self.assertEqual(fake_model.kwargs["no_context"], True)
         self.assertEqual(fake_model.kwargs["single_segment"], True)
+
+    def test_transcription_keeps_call_control_callbacks_responsive(self) -> None:
+        release = threading.Event()
+        timed_out = threading.Event()
+        seen = []
+        async def scenario():
+            loop = asyncio.get_running_loop()
+            def control():
+                seen.append(not release.is_set())
+                release.set()
+            def transcribe(_audio, **_kwargs):
+                loop.call_soon_threadsafe(control)
+                release.wait(2)
+                return [SimpleNamespace(text="The retained transcript.")]
+            fake = SimpleNamespace(transcribe=transcribe)
+            def fallback():
+                timed_out.set()
+                release.set()
+            timer = threading.Timer(0.2, fallback)
+            timer.start()
+            try:
+                with patch.object(pywhispercpp_provider, "_get_model", return_value=fake):
+                    stt = pywhispercpp_provider.PyWhisperCppSTT(language="en")
+                event = await stt._recognize_impl(AudioFrame(
+                    data=b"\x00\x00" * 4, sample_rate=16000, num_channels=1, samples_per_channel=4,
+                ))
+                await asyncio.sleep(0)
+                self.assertEqual(event.alternatives[0].text, "The retained transcript.")
+                self.assertEqual(seen, [True])
+                self.assertFalse(timed_out.is_set())
+            finally:
+                release.set()
+                timer.cancel()
+        asyncio.run(scenario())
+
+    def test_cancelled_inference_retains_native_serialization_and_cancels_queued_work(self) -> None:
+        async def scenario():
+            loop = asyncio.get_running_loop()
+            started = asyncio.Event()
+            release = threading.Event()
+            calls = []
+            running = 0
+            peak = 0
+            def transcribe(_audio, **_kwargs):
+                nonlocal running, peak
+                running += 1
+                peak = max(peak, running)
+                calls.append(len(calls) + 1)
+                if len(calls) == 1:
+                    loop.call_soon_threadsafe(started.set)
+                    release.wait(2)
+                running -= 1
+                return [SimpleNamespace(text="A current transcript.")]
+            fake = SimpleNamespace(transcribe=transcribe)
+            with patch.object(pywhispercpp_provider, "_get_model", return_value=fake):
+                first = pywhispercpp_provider.PyWhisperCppSTT(language="en")
+                second = pywhispercpp_provider.PyWhisperCppSTT(language="en")
+            frame = AudioFrame(data=b"\x00\x00" * 4, sample_rate=16000,
+                               num_channels=1, samples_per_channel=4)
+            timer = threading.Timer(0.5, release.set)
+            timer.start()
+            try:
+                active = asyncio.create_task(first._recognize_impl(frame))
+                await started.wait()
+                active.cancel()
+                with self.assertRaises(asyncio.CancelledError):
+                    await active
+                obsolete = asyncio.create_task(second._recognize_impl(frame))
+                await asyncio.sleep(0)
+                obsolete.cancel()
+                with self.assertRaises(asyncio.CancelledError):
+                    await obsolete
+                current = asyncio.create_task(second._recognize_impl(frame))
+                await asyncio.sleep(0)
+                self.assertFalse(release.is_set())
+                self.assertEqual(calls, [1])
+                release.set()
+                result = await current
+                self.assertEqual(result.alternatives[0].text, "A current transcript.")
+                self.assertEqual(calls, [1, 2])
+                self.assertEqual(peak, 1)
+            finally:
+                release.set()
+                timer.cancel()
+        asyncio.run(scenario())
+
+    def test_native_transcription_failure_remains_a_failure(self) -> None:
+        fake = SimpleNamespace(transcribe=lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("native failure")))
+        with patch.object(pywhispercpp_provider, "_get_model", return_value=fake):
+            stt = pywhispercpp_provider.PyWhisperCppSTT(language="en")
+        with self.assertRaisesRegex(RuntimeError, "native failure"):
+            asyncio.run(stt._recognize_impl(AudioFrame(
+                data=b"\x00\x00" * 4, sample_rate=16000, num_channels=1, samples_per_channel=4,
+            )))
 
     def test_large_turbo_audio_ctx_can_be_overridden(self) -> None:
         with patch.dict(os.environ, {"VIVENTIUM_STT_AUDIO_CTX": "0"}, clear=True):

@@ -29,7 +29,8 @@ from typing import Callable, Iterator
 
 
 MANIFEST_SCHEMA_VERSION = 1
-MAX_MANIFEST_BYTES = 2 * 1024 * 1024
+# A complete dependency inventory must fit the same bound as the Bootstrap download.
+MAX_MANIFEST_BYTES = 64 * 1024 * 1024
 MAX_ARCHIVE_BYTES = 8 * 1024 * 1024 * 1024
 MAX_UNCOMPRESSED_BYTES = 16 * 1024 * 1024 * 1024
 MAX_FILE_COUNT = 200_000
@@ -775,6 +776,70 @@ def _existing_capacity_path(path: Path) -> Path:
     return candidate
 
 
+def _stage_file_identity(path: Path) -> tuple:
+    metadata = path.lstat()
+    return (*metadata[:7], metadata.st_mtime_ns, metadata.st_ctime_ns)
+
+
+def _verified_interrupted_stage(
+    candidate: VerifiedCandidate, attempt: Path
+) -> tuple[dict[str, tuple], str | None]:
+    """Reuse only the verified extraction prefix of this exact pending candidate."""
+    metadata = attempt.lstat()
+    if not stat.S_ISDIR(metadata.st_mode) or metadata.st_uid != os.getuid():
+        raise PayloadError("interrupted stage is not an owned directory")
+
+    def reject_walk_error(error: OSError) -> None:
+        raise error
+
+    expected = {entry["path"]: entry for entry in candidate.payload["files"]}
+    expected_directories = {"."}
+    for relative in expected:
+        expected_directories.update(str(parent) for parent in PurePosixPath(relative).parents)
+    files: dict[str, tuple] = {}
+    for root, directories, filenames in os.walk(
+        attempt, followlinks=False, onerror=reject_walk_error
+    ):
+        for path in [Path(root), *(Path(root) / name for name in directories)]:
+            metadata = path.lstat()
+            # mkdir(parents=True) historically created intermediate parents as 0755.
+            if (
+                not stat.S_ISDIR(metadata.st_mode)
+                or metadata.st_uid != os.getuid()
+                or stat.S_IMODE(metadata.st_mode) not in {0o700, 0o755}
+                or path.relative_to(attempt).as_posix() not in expected_directories
+            ):
+                raise PayloadError("interrupted stage contains an unsafe directory")
+        for name in filenames:
+            path = Path(root) / name
+            relative = path.relative_to(attempt).as_posix()
+            metadata = path.lstat()
+            if (
+                relative not in expected
+                or not stat.S_ISREG(metadata.st_mode)
+                or metadata.st_uid != os.getuid()
+                or metadata.st_nlink != 1
+                or stat.S_IMODE(metadata.st_mode) != 0o600
+            ):
+                raise PayloadError("interrupted stage contains an unsafe file")
+            files[relative] = _stage_file_identity(path)
+    paths = sorted(files)
+    if paths != sorted(expected)[:len(paths)]:
+        raise PayloadError("interrupted stage is not an extraction prefix")
+    incomplete = None
+    for relative in paths:
+        path = attempt / relative
+        entry = expected[relative]
+        size = path.lstat().st_size
+        if size != entry["size"] or _sha256_file(path) != entry["sha256"]:
+            if relative != paths[-1] or size != 0 or entry["size"] == 0:
+                raise PayloadError("interrupted stage file does not match manifest")
+            incomplete = relative
+        if _stage_file_identity(path) != files[relative]:
+            raise PayloadError("interrupted stage changed during verification")
+    return files, incomplete
+
+
 def preflight_stage_capacity(
     candidate: VerifiedCandidate,
     install_root: Path,
@@ -967,23 +1032,36 @@ def stage_candidate(
                 _clear_state(pending_path)
                 return final_path
 
+        attempt = None
+        reusable: dict[str, tuple] = {}
+        incomplete = None
         if pending is not None:
             stale_attempt = staging_root / pending["attemptName"]
             if stale_attempt.exists() or stale_attempt.is_symlink():
-                _quarantine_incomplete_stage(stale_attempt, staging_root, candidate)
-                _append_journal(install_root, "incomplete_stage_quarantined", candidate)
-            _clear_state(pending_path)
+                try:
+                    if pending["phase"] != "prepared" or stale_attempt.is_symlink():
+                        raise PayloadError("interrupted stage is not a prepared directory")
+                    reusable, incomplete = _verified_interrupted_stage(candidate, stale_attempt)
+                except (OSError, PayloadError):
+                    _quarantine_incomplete_stage(stale_attempt, staging_root, candidate)
+                    _append_journal(install_root, "incomplete_stage_quarantined", candidate)
+                else:
+                    attempt = stale_attempt
+                    _append_journal(install_root, "stage_resumed", candidate)
+            if attempt is None:
+                _clear_state(pending_path)
 
-        attempt = staging_root / f"{candidate.release_key}.{uuid.uuid4().hex}"
-        _write_pending_stage(
-            install_root,
-            candidate,
-            attempt.name,
-            phase="prepared",
-        )
-        attempt.mkdir(mode=0o700)
-        _fsync_directory(staging_root)
-        _append_journal(install_root, "stage_started", candidate)
+        if attempt is None:
+            attempt = staging_root / f"{candidate.release_key}.{uuid.uuid4().hex}"
+            _write_pending_stage(
+                install_root,
+                candidate,
+                attempt.name,
+                phase="prepared",
+            )
+            attempt.mkdir(mode=0o700)
+            _fsync_directory(staging_root)
+            _append_journal(install_root, "stage_started", candidate)
         manifest_files = {entry["path"]: entry for entry in candidate.payload["files"]}
         try:
             with zipfile.ZipFile(artifact_path, "r") as archive:
@@ -992,6 +1070,15 @@ def stage_candidate(
                     entry = manifest_files[info.filename]
                     relative = _safe_relative_path(info.filename)
                     destination = attempt.joinpath(*relative.parts)
+                    if info.filename in reusable:
+                        if _stage_file_identity(destination) != reusable[info.filename]:
+                            raise PayloadError("interrupted stage changed before reuse")
+                        if info.filename != incomplete:
+                            continue
+                        # Only this verified final empty member can be replaced. The
+                        # existing exclusive writer and atomic tree publication still apply.
+                        destination.unlink()
+                        _fsync_directory(destination.parent)
                     destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
                     descriptor = os.open(
                         destination,

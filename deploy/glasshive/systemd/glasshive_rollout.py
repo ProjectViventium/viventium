@@ -1883,6 +1883,7 @@ def ingress_route_contract(ports: Mapping[str, int]) -> dict[str, object]:
                 "/api/",
                 "/r/",
                 "/watch/",
+                "/w/",
                 "/desktop/",
                 "/novnc/",
                 "/ui/",

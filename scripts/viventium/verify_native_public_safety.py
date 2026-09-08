@@ -16,7 +16,7 @@ class PublicSafetyError(RuntimeError):
 
 
 FORBIDDEN_DIRECTORY_NAMES = {".cache", "__pycache__"}
-FORBIDDEN_FILE_SUFFIXES = ("-audit.json", ".log", ".pyc", ".pyo")
+FORBIDDEN_FILE_SUFFIXES = ("-audit.json", ".log", ".pyc", ".pyo", ".orig", ".rej")
 FORBIDDEN_ENV_DIRECTORY_NAMES = {"service-env"}
 FORBIDDEN_ENV_FILE_NAMES = {
     ".env",
@@ -43,9 +43,16 @@ THIRD_PARTY_RUNTIME_SURFACES = (
 CUSTOMIZED_RUNTIME_SURFACES = (
     Path("payload/runtime/librechat"),
 )
+VENDORED_BROWSER_RUNTIME = Path("payload/runtime/librechat/client/dist/sandpack-bundler")
 PRIVATE_PATH_PATTERNS = (
     ("private absolute path", re.compile(rb"/(?:Users|home)/[^/\x00\s\"']+/")),
     ("private temporary path", re.compile(rb"/(?:private/)?var/folders/")),
+)
+# Match the existing pinned Sandpack producer's virtual-filesystem policy. This exception
+# covers only its three virtual home names; real build paths and private temp roots still fail.
+VENDORED_PRIVATE_PATH_PATTERNS = (
+    ("private absolute path", re.compile(rb"/(?:Users/[^/\x00\s\"']+/|home/(?!(?:ai|myself|sandbox)/)[^/\x00\s\"']+/)")),
+    PRIVATE_PATH_PATTERNS[1],
 )
 SECRET_PATTERNS = (
     ("high-confidence secret", re.compile(rb"\bsk-(?:proj-)?[A-Za-z0-9_-]{20,}\b")),
@@ -155,7 +162,9 @@ def verify(root: Path, forbidden_prefixes: list[str]) -> dict[str, object]:
         if scan_exact_prefixes(path, prefixes):
             findings.append(f"forbidden producer prefix: {relative.as_posix()}")
         if should_scan_generic_patterns(relative):
-            for label in sorted(scan_patterns(path, PRIVATE_PATH_PATTERNS + SECRET_PATTERNS)):
+            path_patterns = VENDORED_PRIVATE_PATH_PATTERNS if VENDORED_BROWSER_RUNTIME in relative.parents else PRIVATE_PATH_PATTERNS
+            patterns = path_patterns + SECRET_PATTERNS
+            for label in sorted(scan_patterns(path, patterns)):
                 findings.append(f"{label}: {relative.as_posix()}")
 
     if findings:

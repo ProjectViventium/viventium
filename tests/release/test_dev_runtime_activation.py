@@ -304,6 +304,8 @@ def prepare(
     helper_quiesced: bool = True,
     helper_process_quiesced: bool = True,
     helper_executables: list[Path] | None = None,
+    helper_config: dict[str, object] | None = None,
+    helper_config_missing: bool = False,
 ) -> tuple[Path, Path, Path, Path, Path]:
     support = tmp_path / "support"
     runtime = support / "runtime"
@@ -340,9 +342,12 @@ def prepare(
     (candidate / "runtime.env").write_text("VERSION=new\n", encoding="utf-8")
     checkout.write_text('{"repoRoot":"/old"}\n', encoding="utf-8")
     helper.write_text(
+        json.dumps(helper_config) + "\n" if helper_config is not None else
         '{"runtimeSupervision":{"desiredState":"running"}}\n',
         encoding="utf-8",
     )
+    if helper_config_missing:
+        helper.unlink()
     run_tool(
         "begin",
         "--transaction-dir",
@@ -419,7 +424,7 @@ def make_synthetic_helper_executable(tmp_path: Path) -> Path:
 
 
 def test_helper_process_quiescence_stops_exact_legacy_helper_and_blocks_resurrection(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     executable = make_synthetic_helper_executable(tmp_path)
     legacy_helper = subprocess.Popen([str(executable)])
@@ -493,19 +498,31 @@ def test_helper_process_quiescence_stops_exact_legacy_helper_and_blocks_resurrec
             support,
         )
         assert rolled_back["helperProcessRestoration"]["status"] == "pending"
-        restored_helper = subprocess.Popen([str(executable)])
+        stale_helper = subprocess.Popen([str(executable)])
+        restored_helpers = []
+        module = load_module()
+        original_run = module.subprocess.run
+        def launch_helper(argv, **kwargs):
+            if argv[:2] == ["/usr/bin/open", "-g"]:
+                restored_helpers.append(subprocess.Popen([str(executable)]))
+                return subprocess.CompletedProcess(argv, 0)
+            return original_run(argv, **kwargs)
+        monkeypatch.setattr(module.subprocess, "run", launch_helper)
         try:
-            restored = run_tool(
-                "restore-helper-process",
-                "--transaction-dir",
-                transaction,
-                "--app-support-dir",
-                support,
-            )
+            args = module.build_parser().parse_args([
+                "restore-helper-process", "--transaction-dir", str(transaction),
+                "--app-support-dir", str(support),
+            ])
+            restored = module.restore_helper_process(args)
             assert restored["helperProcessRestoration"]["status"] == "complete"
+            assert stale_helper.wait(timeout=5) < 0
+            assert len(restored_helpers) == 1
+            assert restored_helpers[0].poll() is None
         finally:
-            restored_helper.terminate()
-            restored_helper.wait(timeout=5)
+            for helper in [stale_helper, *restored_helpers]:
+                if helper.poll() is None:
+                    helper.terminate()
+                helper.wait(timeout=5)
     finally:
         if legacy_helper.poll() is None:
             legacy_helper.terminate()
@@ -5135,3 +5152,140 @@ def test_in_progress_legacy_journal_retirement_names_remain_recoverable(
         slot = candidate_env.with_name(record[field])
         assert slot.read_bytes() == b""
         assert slot.stat().st_nlink == 1
+
+
+@pytest.mark.parametrize("desired_state", ["running", "stopped"])
+def test_rollback_restores_candidate_helper_binding_and_keeps_personalization(
+    tmp_path: Path, desired_state: str,
+) -> None:
+    original = {"repoRoot": "/old", "allowProtectedRepoRoot": False,
+                "runtimeSupervision": {"desiredState": desired_state}}
+    support, _, transaction, checkout, helper = prepare(tmp_path, helper_config=original)
+    published = run_tool("publish", "--transaction-dir", transaction, "--app-support-dir", support)
+    current = json.loads(helper.read_text())
+    current.update({"repoRoot": published["candidateEnv"]["repoRoot"],
+                    "allowProtectedRepoRoot": True, "ownerPreference": {"keep": True}})
+    current["runtimeSupervision"]["ownerRetryPreference"] = "keep"
+    helper.write_text(json.dumps(current))
+    checkout.write_text(json.dumps({"repoRoot": current["repoRoot"]}))
+    run_tool("rollback", "--transaction-dir", transaction, "--app-support-dir", support)
+    restored = json.loads(helper.read_text())
+    assert restored["repoRoot"] == "/old"
+    assert restored["allowProtectedRepoRoot"] is False
+    assert restored["ownerPreference"] == {"keep": True}
+    assert restored["runtimeSupervision"] == {"desiredState": desired_state,
+                                               "ownerRetryPreference": "keep"}
+
+
+def test_commit_supervision_restore_keeps_candidate_helper_binding(tmp_path: Path) -> None:
+    support, _, transaction, _, helper = prepare(tmp_path, helper_config={
+        "repoRoot": "/old", "runtimeSupervision": {"desiredState": "stopped"}})
+    module = load_module()
+    _, payload = module.load_manifest(transaction, support)
+    candidate_root = payload["candidateEnv"]["repoRoot"]
+    current = json.loads(helper.read_text())
+    current.update({"repoRoot": candidate_root, "allowProtectedRepoRoot": True})
+    helper.write_text(json.dumps(current))
+    module.restore_helper_supervision(payload, transaction, support)
+    restored = json.loads(helper.read_text())
+    assert restored["repoRoot"] == candidate_root
+    assert restored["allowProtectedRepoRoot"] is True
+    assert restored["runtimeSupervision"]["desiredState"] == "stopped"
+
+
+def test_helper_rollback_refresh_replaces_stale_process_and_preserves_stop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    executable = make_synthetic_helper_executable(tmp_path)
+    support, _, transaction, _, helper = prepare(tmp_path, helper_config={
+        "repoRoot": "/old", "runtimeSupervision": {"desiredState": "running"}})
+    payload = run_tool("rollback", "--transaction-dir", transaction, "--app-support-dir", support)
+    # The process receipt represents the exact helper stopped by activation.
+    payload["helperProcessRestoration"] = {
+        "status": "pending", "expectedRunningExecutablePaths": [str(executable)]}
+    current = json.loads(helper.read_text())
+    current["repoRoot"] = payload["candidateEnv"]["repoRoot"]
+    current["runtimeSupervision"]["desiredState"] = "stopped"
+    current["ownerPreference"] = "keep"
+    helper.write_text(json.dumps(current))
+    module = load_module()
+    monkeypatch.setattr(module, "load_manifest", lambda *_: (transaction, payload))
+    old = {"pid": 4242, "executablePath": os.path.realpath(executable), "startToken": "old"}
+    new = {"pid": 4243, "executablePath": os.path.realpath(executable), "startToken": "new"}
+    running = [old]
+    monkeypatch.setattr(module, "running_helper_processes", lambda paths: list(running))
+    monkeypatch.setattr(module, "process_identity", lambda pid: old if pid == old["pid"] else None)
+    signals = []
+    def stop(pid, sig):
+        signals.append((pid, sig))
+        running.clear()
+        # A legacy helper flushes its cached candidate binding and running intent.
+        flushed = json.loads(helper.read_text())
+        flushed["runtimeSupervision"]["desiredState"] = "running"
+        flushed["runtimeSupervision"]["privateNestedPreference"] = "keep-new"
+        helper.write_text(json.dumps(flushed))
+    monkeypatch.setattr(module.os, "kill", stop)
+    def launch(argv, **kwargs):
+        assert argv == ["/usr/bin/open", "-g", str(executable.parent.parent.parent)]
+        restored = json.loads(helper.read_text())
+        assert restored["repoRoot"] == "/old"
+        assert restored["runtimeSupervision"]["desiredState"] == "stopped"
+        assert restored["ownerPreference"] == "keep"
+        assert restored["runtimeSupervision"]["privateNestedPreference"] == "keep-new"
+        running.append(new)
+        return subprocess.CompletedProcess(argv, 0)
+    monkeypatch.setattr(module.subprocess, "run", launch)
+    args = module.build_parser().parse_args(["restore-helper-process", "--transaction-dir",
+        str(transaction), "--app-support-dir", str(support)])
+    result = module.restore_helper_process(args)
+    assert signals == [(old["pid"], module.signal.SIGTERM)]
+    assert running == [new]
+    assert result["helperProcessRestoration"]["status"] == "complete"
+    module.restore_helper_process(args)
+    assert len(signals) == 1
+
+
+def test_helper_rollback_refresh_rejects_unrelated_binding_before_signal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    executable = make_synthetic_helper_executable(tmp_path)
+    support, _, transaction, _, helper = prepare(tmp_path, helper_config={
+        "repoRoot": "/old", "runtimeSupervision": {"desiredState": "running"}})
+    payload = run_tool("rollback", "--transaction-dir", transaction, "--app-support-dir", support)
+    payload["helperProcessRestoration"] = {
+        "status": "pending", "expectedRunningExecutablePaths": [str(executable)]}
+    current = json.loads(helper.read_text()); current["repoRoot"] = "/another-checkout"
+    helper.write_text(json.dumps(current))
+    module = load_module()
+    monkeypatch.setattr(module, "load_manifest", lambda *_: (transaction, payload))
+    monkeypatch.setattr(module, "stop_helper_processes", lambda *_: pytest.fail("must not stop"))
+    args = module.build_parser().parse_args(["restore-helper-process", "--transaction-dir",
+        str(transaction), "--app-support-dir", str(support)])
+    with pytest.raises(module.ActivationError, match="changed outside this activation"):
+        module.restore_helper_process(args)
+    assert json.loads(helper.read_text())["repoRoot"] == "/another-checkout"
+
+
+def test_helper_rollback_refresh_without_original_config_does_not_create_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    executable = make_synthetic_helper_executable(tmp_path)
+    support, _, transaction, _, helper = prepare(tmp_path, helper_config_missing=True)
+    payload = run_tool("rollback", "--transaction-dir", transaction, "--app-support-dir", support)
+    payload["helperProcessRestoration"] = {
+        "status": "pending", "expectedRunningExecutablePaths": [str(executable)]}
+    module = load_module()
+    monkeypatch.setattr(module, "load_manifest", lambda *_: (transaction, payload))
+    running = []
+    monkeypatch.setattr(module, "running_helper_processes", lambda paths: list(running))
+    def launch(argv, **kwargs):
+        assert not helper.exists()
+        running.append({"pid": 4243, "executablePath": os.path.realpath(executable),
+                        "startToken": "new"})
+        return subprocess.CompletedProcess(argv, 0)
+    monkeypatch.setattr(module.subprocess, "run", launch)
+    args = module.build_parser().parse_args(["restore-helper-process", "--transaction-dir",
+        str(transaction), "--app-support-dir", str(support)])
+    result = module.restore_helper_process(args)
+    assert result["helperProcessRestoration"]["status"] == "complete"
+    assert not helper.exists()

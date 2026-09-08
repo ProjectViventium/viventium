@@ -1,0 +1,27 @@
+schemaVersion: 1
+capability: interaction-delivery
+requirementOwner: docs/requirements_and_learnings/capabilities/interaction-delivery.md
+statusPolicy: Run results belong in dated, candidate-bound reports.
+sourceInventories:
+  - qa/agent-config-continuity/cases.md
+  - qa/agent-streaming-usage/cases.md
+  - qa/citation-rendering/cases.md
+  - qa/main-continuity/cases.md
+  - qa/no-response/cases.md
+journeys:
+  - id: cross-surface-supersession
+    requirements: [CC-043, CC-047, CC-048, CC-056, HARD-005, HARD-021, PW-076, PW-110, PW-111]
+    userAction: Send rapid input and a correction before the first presentation commits while durable work or a callback continues.
+    surfaces: [Web, Telegram, Voice, callback]
+    expectedResult: One current Main presentation covers all unresolved input, while committed effects and accepted work happen once.
+    degradedAndRecovery: Failed transcription, stale preview, closed stream, unavailable provider, and recoverable pending state remain distinct.
+    persistenceAndCleanup: Reload and restart preserve the current presentation and exact origin binding without duplicate delivery.
+    evidence: [visible transcript, ordered source segments, message parts, effect receipts, callback and delivery state]
+  - id: main-natural-response
+    requirements: [CORE-001, CORE-002, CORE-009, HARD-005, CC-047]
+    userAction: From a new chat send one ordinary natural prompt, wait for the answer, reload, then send two rapid follow-ups before the first follow-up answer commits.
+    surfaces: [Web, Telegram]
+    expectedResult: One useful Main answer arrives in one conversation with one user row, one assistant row, one provider session, and stable navigation with no flicker or replay; reload shows the same conversation; the rapid follow-ups yield one current presentation with no connection error and no repeated side effects.
+    degradedAndRecovery: Provider unavailable, timeout, rate limit, and isolation conflict each surface once as a typed state; a conflict is never treated as success and never triggers a resubmission with a new conversation.
+    persistenceAndCleanup: Reload and restart preserve the conversation and answer; the synthetic conversation is removed through the supported owner path.
+    evidence: [visible answer and URL, turn identity count, provider session and project counts, message rows, served client identity, send-to-first-visible timing]

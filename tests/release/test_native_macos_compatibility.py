@@ -130,7 +130,7 @@ def test_unlisted_macho_object_is_rejected(tmp_path: Path) -> None:
 
 
 def test_native_minimum_macos_policy_is_consistent_across_apps_build_and_release() -> None:
-    assert POLICY.read_text(encoding="utf-8") == "14.0\n"
+    assert POLICY.read_text(encoding="utf-8") == "15.0\n"
     helper_plist = plistlib.loads(
         (ROOT / "apps/macos/ViventiumHelper/Sources/ViventiumHelper/Resources/Info.plist").read_bytes()
     )
@@ -153,5 +153,5 @@ def test_native_minimum_macos_policy_is_consistent_across_apps_build_and_release
     assert "--minimum-macos 13.0" not in release_workflow
 
     public_bootstrap = (ROOT / "install.sh").read_text(encoding="utf-8")
-    assert 'NATIVE_BOOTSTRAP_MINIMUM_MACOS="14.0"' in public_bootstrap
+    assert 'NATIVE_BOOTSTRAP_MINIMUM_MACOS="15.0"' in public_bootstrap
     assert "requires macOS" in public_bootstrap

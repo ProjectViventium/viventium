@@ -20,12 +20,19 @@ Use stable `BRAND-NNN` IDs for branding assets cases.
 - Preconditions: local runtime or focused harness is available with synthetic public-safe data.
 - Steps:
   1. Open login, app shell, and playground; verify logo/favicon/brand assets load from repo/runtime public paths and survive refresh.
-  2. Compare visible result with source/config, logs or persisted state summary, and the owning requirement doc.
-  3. Save a public-safe dated report under `reports/` using the standard run-report template.
+  2. In LibreChat, switch light/dark themes, focus controls with the keyboard, hover grouped
+     controls, and repeat at phone width. Compare development and built CSS delivery: styling
+     must remain intact and supported targets must not change to silence transform warnings.
+  3. Compare visible result with source/config, logs or persisted state summary, and the owning
+     requirement doc. The release-contract CSS checks must preserve native selectors and required
+     browser prefixes without the repeated full-stylesheet warning dump.
+  4. Save a public-safe dated report under `reports/` using the standard run-report template.
 - Expected result: visible behavior, supporting evidence, and documentation agree.
 - Forbidden result: mocks, backend logs, source inspection, or model output are treated as full acceptance when a user-visible surface exists.
 - Evidence to capture: sanitized visible result, supporting command/test result, state/log summary, and public-safety review.
-- Automation: Playwright browser QA plus config compiler tests.
+- Automation: Playwright browser QA, config compiler tests, and LibreChat's
+  `npm run test:release-contracts` CSS/target checks. September 4 CSS checks and isolated dev/build
+  transform measurements pass; new live theme/focus/mobile/performance proof remains open.
 - Last run: PARTIAL 2026-05-18 (`reports/2026-05-18-librechat-model-selector-icons.md`;
   LibreChat model selector asset path verified, full playground/favicon/PWA sweep not run).
 

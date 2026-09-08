@@ -343,6 +343,36 @@ class TestRefAudioValidation(unittest.TestCase):
         self.assertEqual(captured["opts"].worker_type, WorkerType.ROOM)
         self.assertEqual(captured["opts"].job_memory_warn_mb, 2200.0)
         self.assertEqual(captured["opts"].job_memory_limit_mb, 2200.0)
+        self.assertIsNot(captured["opts"].load_fnc, worker_module._disabled_voice_worker_load)
+
+    def test_run_reports_zero_scheduler_load_for_local_whisper(self) -> None:
+        captured = {}
+
+        def _fake_run_app(opts):
+            captured["opts"] = opts
+
+        with (
+            patch("worker.start_health_server"),
+            patch("worker._semantic_turn_detector_status", return_value=(True, "ready")),
+            patch(
+                "worker.load_env",
+                return_value=SimpleNamespace(
+                    livekit_agent_name="librechat-voice-gateway",
+                    stt_provider="whisper_local",
+                    voice_turn_detection="turn_detector",
+                    voice_requested_turn_detection="turn_detector",
+                    voice_initialize_process_timeout_s=120.0,
+                    voice_idle_processes=1,
+                    voice_worker_load_threshold=float("inf"),
+                    voice_job_memory_warn_mb=2200.0,
+                    voice_job_memory_limit_mb=2200.0,
+                ),
+            ),
+            patch("worker.cli.run_app", side_effect=_fake_run_app),
+        ):
+            run()
+
+        self.assertEqual(captured["opts"].load_fnc(), 0.0)
 
     def test_prewarm_process_prewarms_local_chatterbox_at_startup(self) -> None:
         proc = SimpleNamespace(userdata={})

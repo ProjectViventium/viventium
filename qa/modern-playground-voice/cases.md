@@ -4,7 +4,7 @@
 
 | Use Case ID | Natural user action | Requirement / case link | Real surface to use | Supporting evidence to compare | Expected visible result | Last run |
 | --- | --- | --- | --- | --- | --- | --- |
-| `MPV-UC-001` | Start a call from an authenticated LibreChat conversation and send a simple typed or spoken prompt. | `docs/requirements_and_learnings/06_Voice_Calls.md` / `MPV-001` | LibreChat browser plus Modern Playground | Voice gateway logs, LiveKit state, persisted chat message, generated voice config | Call connects, agent joins, transcript shows a real assistant answer. | PARTIAL 2026-05-18; synthetic microphone/worker dispatch passed; authenticated answer still required |
+| `MPV-UC-001` | Start a call from an authenticated LibreChat conversation and send a simple typed or spoken prompt. | `docs/requirements_and_learnings/06_Voice_Calls.md` / `MPV-001` | LibreChat browser plus Modern Playground | Voice gateway logs, LiveKit state, persisted chat message, generated voice config | Call connects, agent joins, transcript shows a real assistant answer. | PARTIAL 2026-09-06; FULL authenticated Chrome call joins and answers typed contextual input; corrected complete answer survives linked-chat reload and normal hangup. Typed owner reminder also invokes the real scheduler, arrives once in linked chat after hangup, and persists after reload. Actual spoken/audible and installed-artifact gates remain. |
 | `MPV-UC-002` | Interrupt or send a second turn while prior work or follow-up timing is still active. | `docs/requirements_and_learnings/06_Voice_Calls.md` / `MPV-003` | Modern Playground call | Transcript, stream ids, Mongo message chain, voice gateway timing logs | Turns stay distinct, no stale follow-up is spoken as current conversation state. | PARTIAL 2026-05-15 |
 | `MPV-UC-003` | Ask the voice agent to look something up when Web Search appears enabled. | `docs/requirements_and_learnings/06_Voice_Calls.md`, `docs/requirements_and_learnings/10_Open_Source_Web_Search.md` / `MPV-006` | Modern Playground and linked LibreChat browser conversation | Visible transcript/chat, persisted `web_search` tool-call parts, local search backend health, hosted search backend status, request logs, Docker/container state for local providers, browser/local-delegation fallback when available | Voice/search either returns grounded evidence or says the exact degraded provider class without inventing facts; named-entity/current-fact failures use fallback before stopping. | FAIL (escaped 2026-05-18; fix run pending) |
 | `MPV-UC-004` | Reload linked chat after a voice turn that used model/tooling. | `docs/requirements_and_learnings/34_Voice_Chat_LLM_Override.md` / `MPV-005` | LibreChat browser conversation | DB message content parts, logs, transcript, generated no-reasoning config | Visible chat persists audible answer only; no reasoning blocks or raw private transcript leak. | PARTIAL 2026-05-21; recovered provider-error cleanup and route restoration passed; full spoken audio not rerun |
@@ -1764,3 +1764,26 @@ public-safe browser/audio, log, persistence, and installed-artifact evidence. `P
 - Save raw events, logs, call identifiers, process samples, audio, and screenshots only under the
   private configurable output root. Publish only the content-free
   `viventium.voice.acceptance.result.v1` schema after its privacy check passes.
+
+### Playback-state evidence boundary
+
+The call UI records its first observed playback-ready media state per call through
+`data-viventium-audio-proof-version="1"`. It reports track presence, playback time, mute state,
+volume, and connection state without changing audio playback. Call reload/recovery must be checked
+separately: this historical observation does not certify later playback. Media-element state
+supports, but does not replace, audible user QA; even a silent track can satisfy it.
+
+### Delivered-audio evidence boundary
+
+During the existing audible-browser journey, require `data-viventium-audio-proof-version="1"`
+and `data-viventium-audio-playback="confirmed"`. Correlate the bounded browser event with the same
+call and inspect unmuted playback, positive time/volume and a live enabled remote track. This is
+supporting evidence only: a silent track can satisfy media-element state. Human audible QA remains
+required. Source-marker preservation does not create a new installed PASS.
+
+Streaming regressions must distinguish declared incremental chunks from declared snapshots.
+Incremental is the default; valid repeated/prefix chunks remain byte-faithful. Normalize snapshots
+only through adapter metadata, before fan-out, replay, persistence and speech. Never infer the
+protocol from text, keywords, provider labels or prompt content.
+
+Supporting release regressions: `tests/release/test_transcription_adapter.py`. These automated checks do not replace the user-path acceptance above.

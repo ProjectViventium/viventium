@@ -85,6 +85,44 @@ def _extract_shell_function(text: str, name: str) -> str:
     return "\n".join(collected) + "\n"
 
 
+def test_librechat_wrapper_cleanup_stops_only_its_jobs(tmp_path: Path) -> None:
+    cleanup = _extract_shell_function(
+        _read("viventium_v0_4/LibreChat/viventium-start.sh"), "cleanup"
+    )
+    owned_pid = tmp_path / "owned.pid"
+    unsafe_calls = tmp_path / "global-stop.calls"
+    unrelated = subprocess.Popen(["sleep", "120"], start_new_session=True)
+    # The old implementation must never execute a real global process-name kill.
+    script = f"""
+set -eu
+YELLOW='' GREEN='' NC=''
+pkill() {{ printf '%s\\n' "$*" >> {str(unsafe_calls)!r}; }}
+{cleanup}
+sleep 120 &
+printf '%s\\n' "$!" > {str(owned_pid)!r}
+cleanup
+"""
+    process = subprocess.Popen(
+        ["bash", "-c", script], start_new_session=True,
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+    try:
+        assert process.wait(timeout=5) == 0
+        assert not unsafe_calls.exists(), "Cleanup selected processes outside its own jobs"
+        pid = int(owned_pid.read_text())
+        probe = subprocess.run(["kill", "-0", str(pid)], capture_output=True)
+        assert probe.returncode != 0, "Owned server was left running"
+        assert unrelated.poll() is None, "Unrelated application was stopped"
+    finally:
+        # Each test process has its own group, including a possible old-code orphan.
+        for owned_process in (process, unrelated):
+            try:
+                os.killpg(owned_process.pid, 15)
+            except ProcessLookupError:
+                pass
+            owned_process.wait(timeout=5)
+
+
 def _livekit_startup_block() -> str:
     launcher = _read("viventium_v0_4/viventium-librechat-start.sh")
     return launcher.split("# LiveKit server (Docker)", maxsplit=1)[1].split(
@@ -368,6 +406,87 @@ kill_recorded_detached_launch_process_group
             subprocess.run(["kill", "-TERM", str(child_pid)], check=False)
 
 
+def test_noncanonical_private_rag_keeps_its_compiled_start_choice(tmp_path: Path) -> None:
+    launcher = _read("viventium_v0_4/viventium-librechat-start.sh")
+    names = ["canonical_app_support_root", "runtime_stop_requires_process_group"]
+    if "runtime_owns_rag_compose_project() {" in launcher:
+        names.append("runtime_owns_rag_compose_project")
+    names.append("protect_noncanonical_runtime_from_global_docker_mutation")
+    functions = "\n".join(_extract_shell_function(launcher, name) for name in names)
+    for enabled, shared, project, start, expected in [
+        ("true", "false", "viventium-rag-synthetic-dev", "true", "true"),
+        ("true", "false", "viventium-rag-synthetic-dev", "false", "false"),
+        ("true", "true", "viventium-rag", "true", "false"),
+        ("false", "false", "viventium-rag-synthetic-dev", "true", "false"),
+        ("true", "false", "viventium-rag", "true", "false"),
+        ("true", "false", "librechat", "true", "false"),
+    ]:
+        script = f"""
+set -euo pipefail
+VIVENTIUM_APP_SUPPORT_ROOT={str(tmp_path / 'isolated')!r}
+GLOBAL_DOCKER_CLEANUP_ALLOWED=true
+RESTART_DOCKER_SERVICES=true
+VIVENTIUM_DEV_ENV_ENABLED={enabled}
+VIVENTIUM_SHARED_RAG_API={shared}
+VIVENTIUM_RAG_COMPOSE_PROJECT_NAME={project}
+START_RAG_API={start}
+START_MS365_MCP=true
+START_CODE_INTERPRETER=true
+START_SKYVERN=true
+START_FIRECRAWL=true
+START_SEARXNG=true
+log_warn() {{ :; }}
+{functions}
+protect_noncanonical_runtime_from_global_docker_mutation
+printf '%s\\n' "$START_RAG_API" "$GLOBAL_DOCKER_CLEANUP_ALLOWED" "$RESTART_DOCKER_SERVICES" "$START_MS365_MCP"
+"""
+        result = subprocess.run(["bash", "-c", script], capture_output=True, text=True, check=True)
+        assert result.stdout.splitlines() == [expected, "false", "false", "false"], (enabled, shared, project, result.stdout)
+
+
+def test_rag_stop_targets_only_the_selected_owned_project(tmp_path: Path) -> None:
+    launcher = _read("viventium_v0_4/viventium-librechat-start.sh")
+    functions = "\n".join(_extract_shell_function(launcher, name) for name in (
+        "canonical_app_support_root", "runtime_stop_requires_process_group",
+        "runtime_owns_rag_compose_project", "stop_rag_compose_project",
+    ))
+    compose = tmp_path / "librechat"
+    compose.mkdir()
+    (compose / "rag.yml").write_text("services: {}\n", encoding="utf-8")
+    calls = tmp_path / "calls"
+    for shared, project, expected in [
+        ("false", "viventium-rag-synthetic-dev", True),
+        ("true", "viventium-rag", False),
+        ("false", "viventium-rag", False),
+    ]:
+        calls.write_text("", encoding="utf-8")
+        script = f"""
+set -euo pipefail
+VIVENTIUM_APP_SUPPORT_ROOT={str(tmp_path / 'dev-state')!r}
+GLOBAL_DOCKER_CLEANUP_ALLOWED=false
+VIVENTIUM_DEV_ENV_ENABLED=true
+VIVENTIUM_SHARED_RAG_API={shared}
+VIVENTIUM_RAG_COMPOSE_PROJECT_NAME={project}
+VIVENTIUM_RAG_API_PORT=12110
+LIBRECHAT_DIR={str(compose)!r}
+calls={str(calls)!r}
+docker() {{ printf '%s\\n' "$*" >> "$calls"; }}
+remove_compose_service_containers() {{ printf 'remove %s\\n' "$*" >> "$calls"; }}
+runtime_allows_workspace_wide_process_sweep() {{ return 1; }}
+{functions}
+stop_rag_compose_project
+"""
+        subprocess.run(["bash", "-c", script], capture_output=True, text=True, check=True)
+        lines = calls.read_text(encoding="utf-8").splitlines()
+        if expected:
+            assert lines == [
+                f"compose --project-name {project} -f {compose}/rag.yml down",
+                f"remove {project} rag_api vectordb",
+            ]
+        else:
+            assert lines == []
+
+
 def test_restart_stops_predecessor_before_recording_successor_group() -> None:
     launcher = _read("viventium_v0_4/viventium-librechat-start.sh")
     restart = launcher.index('if [[ "$RESTART_SERVICES" == "true" ]]; then')
@@ -395,6 +514,7 @@ def test_noncanonical_start_restart_and_stop_preserve_global_docker(
         for name in (
             "canonical_app_support_root",
             "runtime_stop_requires_process_group",
+            "runtime_owns_rag_compose_project",
             "protect_noncanonical_runtime_from_global_docker_mutation",
         )
     )
@@ -1432,3 +1552,128 @@ def test_optional_launchers_reference_existing_owning_docs() -> None:
                 continue
             target = line.split("Documentation:", 1)[1].strip()
             assert (ROOT / target).is_file(), f"{relative} points to missing {target}"
+
+
+def _runtime_start_boundary_defs() -> str:
+    launcher = _read("viventium_v0_4/viventium-librechat-start.sh")
+    names = (
+        "current_process_group_id", "read_detached_launch_process_group",
+        "process_start_identity", "record_detached_launch_process_group_members",
+        "canonical_app_support_root", "runtime_stop_requires_process_group",
+        "runtime_process_group_receipt_valid", "runtime_process_group_pids",
+        "pid_matches_recorded_runtime_process_group", "pid_matches_runtime_stop_identity",
+        "record_detached_launch_process_group", "clear_runtime_start_claim_after_handoff",
+    )
+    return "\n".join(_extract_shell_function(launcher, name) for name in names)
+
+
+def _runtime_start_boundary() -> str:
+    launcher = _read("viventium_v0_4/viventium-librechat-start.sh")
+    start = launcher.index("# Preserve the predecessor receipt through restart cleanup")
+    return launcher[start:launcher.index("cleanup_stale_containers", start)]
+
+
+def _write_runtime_group_receipt(state: Path, process: subprocess.Popen) -> tuple[Path, Path]:
+    state.mkdir(parents=True)
+    pgid = state / "detached-launch.pgid"
+    members = state / "detached-launch.members"
+    start = subprocess.run(["ps", "-p", str(process.pid), "-o", "lstart="],
+                           check=True, capture_output=True, text=True).stdout.strip()
+    pgid.write_text(f"{process.pid}\n", encoding="utf-8")
+    members.write_text(f"{process.pid}\t{start}\n", encoding="utf-8")
+    return pgid, members
+
+
+def test_repeated_start_preserves_live_owner_and_creates_no_second_supervisor(tmp_path: Path) -> None:
+    owner = subprocess.Popen(["sleep", "120"], start_new_session=True)
+    unrelated = subprocess.Popen(["sleep", "120"], start_new_session=True)
+    try:
+        state = tmp_path / "runtime-state"
+        pgid, members = _write_runtime_group_receipt(state, owner)
+        before = (pgid.read_bytes(), members.read_bytes())
+        marker = tmp_path / "second-supervisor"
+        script = f"""
+set -euo pipefail
+DETACHED_LAUNCH_PGID_FILE={str(pgid)!r}
+DETACHED_LAUNCH_MEMBERS_FILE={str(members)!r}
+VIVENTIUM_APP_SUPPORT_ROOT={str(tmp_path / 'alternate-root')!r}
+RESTART_SERVICES=false
+log_info() {{ :; }}
+log_error() {{ printf '%s\n' "$*" >&2; }}
+{_runtime_start_boundary_defs()}
+pid_matches_runtime_stop_identity {owner.pid}
+if pid_matches_runtime_stop_identity {unrelated.pid}; then exit 9; fi
+{_runtime_start_boundary()}
+printf 'started' > {str(marker)!r}
+"""
+        for _ in range(2):
+            result = subprocess.run(["bash", "-c", script], start_new_session=True,
+                                    capture_output=True, text=True)
+            assert result.returncode == 0, result.stderr
+            assert not marker.exists(), "Repeated start created another supervisor"
+            assert (pgid.read_bytes(), members.read_bytes()) == before
+        assert owner.poll() is None
+        assert unrelated.poll() is None
+    finally:
+        owner.terminate(); unrelated.terminate()
+        owner.wait(timeout=5); unrelated.wait(timeout=5)
+
+
+def test_start_refuses_unverified_live_group_without_overwriting_receipt(tmp_path: Path) -> None:
+    owner = subprocess.Popen(["sleep", "120"], start_new_session=True)
+    try:
+        pgid, members = _write_runtime_group_receipt(tmp_path / "runtime-state", owner)
+        members.write_text(f"{owner.pid}\tnot-the-live-start-identity\n", encoding="utf-8")
+        before = (pgid.read_bytes(), members.read_bytes())
+        script = f"""
+set -euo pipefail
+DETACHED_LAUNCH_PGID_FILE={str(pgid)!r}
+DETACHED_LAUNCH_MEMBERS_FILE={str(members)!r}
+VIVENTIUM_APP_SUPPORT_ROOT={str(tmp_path / 'alternate-root')!r}
+RESTART_SERVICES=false
+log_info() {{ :; }}
+log_error() {{ printf '%s\n' "$*" >&2; }}
+{_runtime_start_boundary_defs()}
+{_runtime_start_boundary()}
+"""
+        result = subprocess.run(["bash", "-c", script], start_new_session=True,
+                                capture_output=True, text=True)
+        assert result.returncode != 0
+        assert (pgid.read_bytes(), members.read_bytes()) == before
+        assert owner.poll() is None
+    finally:
+        owner.terminate(); owner.wait(timeout=5)
+
+
+def test_restart_binds_successor_only_after_owned_predecessor_stops(tmp_path: Path) -> None:
+    owner = subprocess.Popen(["sleep", "120"], start_new_session=True)
+    unrelated = subprocess.Popen(["sleep", "120"], start_new_session=True)
+    try:
+        pgid, members = _write_runtime_group_receipt(tmp_path / "runtime-state", owner)
+        script = f"""
+set -euo pipefail
+DETACHED_LAUNCH_PGID_FILE={str(pgid)!r}
+DETACHED_LAUNCH_MEMBERS_FILE={str(members)!r}
+VIVENTIUM_APP_SUPPORT_ROOT={str(tmp_path / 'alternate-root')!r}
+RESTART_SERVICES=true
+log_info() {{ :; }}
+log_warn() {{ :; }}
+log_error() {{ printf '%s\n' "$*" >&2; }}
+{_runtime_group_stop_defs()}
+{_runtime_start_boundary_defs()}
+authorize_runtime_process_group_stop
+kill_recorded_detached_launch_process_group
+{_runtime_start_boundary()}
+[[ "$(read_detached_launch_process_group)" == "$(current_process_group_id)" ]]
+runtime_process_group_receipt_valid
+"""
+        result = subprocess.run(["bash", "-c", script], start_new_session=True,
+                                capture_output=True, text=True)
+        assert result.returncode == 0, result.stderr
+        assert int(pgid.read_text()) != owner.pid
+        assert owner.wait(timeout=5) != 0
+        assert unrelated.poll() is None
+    finally:
+        if owner.poll() is None: owner.terminate()
+        unrelated.terminate()
+        owner.wait(timeout=5); unrelated.wait(timeout=5)

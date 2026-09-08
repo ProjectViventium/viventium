@@ -433,13 +433,19 @@ def test_source_easy_install_compiles_canonical_main_to_glasshive_codex(
     assert compiled_agents["mainAgent"]["provider"] == "glasshive-harness"
     assert compiled_agents["mainAgent"]["model"] == "codex-cli:gpt-5.6-sol"
     assert compiled_agents["mainAgent"]["glasshive_options"] == {
-        "workspace": {"mode": "life"},
+        "workspace": {"mode": "default"},
         "access": "full",
+        "fallback_model": "claude-code:claude-opus-5",
+        "fallback_reasoning_effort": "low",
         "orchestration": {
-            "default_mode": "focused",
+            "default_mode": "parallel",
             "parallel_available": True,
             "worker_profile": "codex-cli",
+            "worker_model": "codex-cli:gpt-6-astra",
+            "worker_reasoning_effort": "medium",
             "fallback_worker_profile": "claude-code",
+            "fallback_worker_model": "claude-code:claude-opus-5",
+            "fallback_worker_reasoning_effort": "medium",
         },
     }
     assert runtime_env["START_GLASSHIVE"] == "true"

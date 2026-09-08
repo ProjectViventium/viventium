@@ -1,0 +1,19 @@
+schemaVersion: 1
+capability: connected-tools-search
+requirementOwner: docs/requirements_and_learnings/capabilities/connected-tools-search.md
+statusPolicy: Run results belong in dated, candidate-bound reports.
+sourceInventories:
+  - qa/connected-accounts-handoff/cases.md
+  - qa/mcp-oauth/cases.md
+  - qa/mcp-tooling/cases.md
+  - qa/web-search/cases.md
+  - qa/web-search-telegram/cases.md
+journeys:
+  - id: authorized-tool-and-search
+    requirements: [GOV-027, CORE-008, TOOLS-RESULT-001]
+    userAction: In the installed browser connect one isolated authorized account, issue a real signed-in read-only current-data request through its intended tool and current-information search, then revoke or degrade each dependency.
+    surfaces: [Web, Telegram, MCP, external supported client]
+    expectedResult: Main uses only the current capability intersection and reports successful data, healthy empty result, or exact failure truthfully.
+    degradedAndRecovery: Denial, expiry, revocation, quota, timeout, unsupported setup, and missing local prerequisite each have one valid next action.
+    persistenceAndCleanup: Reconnect and restart preserve owner scope and a repeated real current-data request succeeds without duplicate mutation. Revocation removes access and synthetic connection state; URLs, logs, storage, and retained evidence expose no credentials or private result.
+    evidence: [visible final answer, model-visible tool contract, auth state, tool result, fallback result, cleanup proof]

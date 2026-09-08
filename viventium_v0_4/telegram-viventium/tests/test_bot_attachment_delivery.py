@@ -3,6 +3,7 @@ from io import BytesIO
 from pathlib import Path
 
 import pytest
+import httpx
 
 ROOT = Path(__file__).resolve().parents[1]
 BOT_DIR = ROOT / "TelegramVivBot"
@@ -264,3 +265,110 @@ async def test_send_attachments_rewrites_code_download_path_when_missing_file_id
     )
     assert len(context.bot.documents) == 1
     assert context.bot.documents[0]["filename"] == "out.csv"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [401, 403, 404, 410, 503])
+async def test_unavailable_attachment_reports_one_notice_without_losing_successes(status):
+    context = _FakeContext()
+
+    async def fetch(**kwargs):
+        if kwargs["url"].endswith("unavailable"):
+            raise httpx.HTTPStatusError(
+                "synthetic-private-error-detail",
+                request=httpx.Request("GET", "https://example.invalid/file"),
+                response=httpx.Response(status),
+            )
+        return b"%PDF-synthetic", "application/pdf"
+
+    await send_librechat_attachments(
+        bot=context.bot,
+        base_url="https://example.invalid",
+        secret="synthetic",
+        telegram_user_id="owner",
+        telegram_username="",
+        telegram_chat_id="chat",
+        attachments=[
+            {"file_id": "available", "filename": "report.pdf"},
+            {"file_id": "unavailable", "filename": "unavailable.pdf"},
+            {"file_id": "unavailable", "filename": "duplicate.pdf"},
+        ],
+        message_thread_id=7,
+        reply_to_message_id=42,
+        fetch_bytes=fetch,
+    )
+
+    assert [item["filename"] for item in context.bot.documents] == ["report.pdf"]
+    assert len(context.bot.messages) == 1
+    notice = context.bot.messages[0]
+    assert notice["chat_id"] == "chat"
+    assert notice["message_thread_id"] == 7
+    assert notice["reply_to_message_id"] == 42
+    assert "1 file" in notice["text"]
+    assert "synthetic-private-error-detail" not in notice["text"]
+    assert ("unavailable" in notice["text"]) == (status in {404, 410})
+    assert "deleted" not in notice["text"]
+
+
+@pytest.mark.asyncio
+async def test_document_and_album_rejections_produce_one_delivery_notice():
+    context = _FakeContext()
+
+    async def reject(**_kwargs):
+        raise RuntimeError("synthetic-private-error-detail")
+
+    context.bot.send_document = reject
+    context.bot.send_media_group = reject
+
+    async def fetch(**kwargs):
+        return (b"image", "image/png") if kwargs["url"].endswith("image") else (b"pdf", "application/pdf")
+
+    await send_librechat_attachments(
+        bot=context.bot,
+        base_url="https://example.invalid",
+        secret="synthetic",
+        telegram_user_id="owner",
+        telegram_username="",
+        telegram_chat_id="chat",
+        attachments=[{"file_id": "image"}, {"file_id": "document"}],
+        message_thread_id=None,
+        reply_to_message_id=42,
+        fetch_bytes=fetch,
+    )
+
+    assert len(context.bot.messages) == 1
+    assert "2 files" in context.bot.messages[0]["text"]
+    assert "could not be confirmed" in context.bot.messages[0]["text"]
+    assert "synthetic-private-error-detail" not in context.bot.messages[0]["text"]
+
+
+@pytest.mark.asyncio
+async def test_document_timeout_does_not_claim_the_file_was_not_delivered():
+    from telegram.error import TimedOut
+
+    context = _FakeContext()
+
+    async def timeout(**_kwargs):
+        raise TimedOut()
+
+    context.bot.send_document = timeout
+
+    async def fetch(**_kwargs):
+        return b"pdf", "application/pdf"
+
+    await send_librechat_attachments(
+        bot=context.bot,
+        base_url="https://example.invalid",
+        secret="synthetic",
+        telegram_user_id="owner",
+        telegram_username="",
+        telegram_chat_id="chat",
+        attachments=[{"file_id": "document"}],
+        message_thread_id=None,
+        reply_to_message_id=42,
+        fetch_bytes=fetch,
+    )
+
+    assert len(context.bot.messages) == 1
+    assert "could not be confirmed" in context.bot.messages[0]["text"]
+    assert "not delivered" not in context.bot.messages[0]["text"]

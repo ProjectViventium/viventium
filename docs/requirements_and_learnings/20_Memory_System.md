@@ -70,6 +70,13 @@ recall remains model-chosen. See
 - Intended for facts, stable preferences, durable project context, and other information the user
   explicitly wants retained.
 - Governed by the user-level memory opt-in and memory writer rules.
+- Main confirms a lasting save or deletion only from a successful result for that exact change.
+  Pending work supports an acknowledgement, not a completion claim. A verified file write supports
+  a claim about that file, not a claim that Saved memory also changed. The registered
+  `main.memory_policy` prompt owns this judgment; no runtime phrase detection or response rewriting.
+- The existing writer-health gate retains the original typed failure on later turns. A sign-in or
+  access-denied failure must not become a quota error merely because its route is suppressed.
+  Historical receipts without provider identity remain generic; current config cannot identify them.
 
 ### Conversation recall
 
@@ -400,13 +407,18 @@ runtime retrieval, freshness, or context assembly.
 The memory runtime is configurable, but the generated `librechat.yaml` must still come from the
 installer/compiler ownership layer instead of inheriting historical template defaults.
 
-- The compiler must assign `memory.agent.provider` and `memory.agent.model` from actually available
-  foundation auth (`openai` / `anthropic`), including connected-account auth.
+- The compiler owns `memory.agent.provider` and `memory.agent.model`. Foundation routes use the
+  configured OpenAI or Anthropic authorization. The native preset explicitly selects the supported
+  owner-bound Codex subscription route; official CLI login is not copied into an API credential.
 - Do not silently leave the memory writer on xAI when xAI was never configured for that install.
+- Deep Memory has a separate explicit `llm.deep_memory: {provider, model}` route. The native
+  preset selects the same Terra/medium model through `glasshive-harness` /
+  `codex-cli:gpt-5.6-terra`; existing configurations retain their foundation route. Its existing
+  agent fallback settings remain separate from the saved-memory writer.
 - By default, the memory writer follows configured foundation priority: the first available
   foundation provider is selected. An optional `llm.memory: {provider, model}` override may select
-  another already-authenticated OpenAI or Anthropic route, and the compiler must reject an
-  unavailable provider. This override changes only `memory.agent` and does not authorize an
+  another authenticated foundation route or supported native Codex route. The compiler must reject
+  unavailable or unsupported selections. This override changes only `memory.agent` and does not authorize an
   automatic fallback by itself.
 - An operator may explicitly authorize one separate saved-memory-only recovery route with
   `llm.memory.fallback: {provider, model}`. The compiler must reject unavailable, unsupported, or
@@ -463,10 +475,11 @@ both code and QA:
 
 #### 2.6.2 Saved-memory writer initialization is part of product correctness
 
-- The generated runtime contract currently compiles `memory.agent.provider` from foundation
-  availability using lower-case values such as `openai`.
-- Operators can explicitly choose a different authenticated foundation route through
-  `llm.memory.provider` and `llm.memory.model`; omission preserves normal foundation priority.
+- The generated runtime contract uses the explicit `llm.memory` route when configured; otherwise
+  it preserves foundation priority and canonical lower-case provider values.
+- The native preset explicitly selects `glasshive-harness` / `codex-cli:gpt-5.6-luna` / `medium`.
+  Its official signed-in Codex account must support that exact route. Main's account or fallback
+  does not silently replace the configured writer; unsupported native harness profiles fail closed.
 - A distinct `llm.memory.fallback.provider` / `llm.memory.fallback.model` route is available only
   when explicitly configured and authenticated. Main-agent fallback authority never transfers to
   the independent ephemeral saved-memory writer, and missing authorization remains a live blocker.
@@ -480,6 +493,23 @@ both code and QA:
   processor. In particular, writer snapshots require the revision-bearing
   `getAllUserMemoryStates` method; supplying only the legacy visible-memory methods is an
   initialization failure, not a successful no-op.
+- Native inference reuses the admitted detached writer, original revision snapshot, governed
+  `apply_memory_changes` tool, compare-and-set storage, effect records, and receipt delivery.
+  The existing active queue entry holds its broker callback only for that writer attempt. The
+  signed grant binds user, conversation, response, process owner, and invocation; it grants no
+  connected servers or Main/mission delegation. Same-input transport repeats return the original
+  apply result; a different second batch cannot rebase the snapshot or apply another batch.
+- The native writer signs the existing `provider_capabilities.native_tools: false` narrowing.
+  The supported Codex runtime enforces it through its existing private configuration and official
+  read-only CLI policy. Only the signed broker MCP is configured; shell/image tools, inherited
+  apps, plugins, browser controls, project instructions, and model fallback are disabled. Normal
+  Main and mission capabilities remain unchanged. This is a runtime authority boundary, not a
+  prompt instruction to avoid using tools.
+- A provider response is not proof of a save. Real governed tool results own receipts. If transport
+  fails, close further callback admission and finish any already-started apply before reporting its
+  effects. Existing interrupted-write recovery owns restart uncertainty. QA must cover disconnects
+  before invocation, during a mutation, and after effect persistence, then GUI save, correction,
+  forgetting, recall, and reload with the generated native route.
 - Connected-account OpenAI Codex routes are a second runtime contract inside the memory writer:
   - top-level `instructions` must be present on Responses requests
   - `system` / `developer` messages must not remain inside Responses `input`
@@ -491,6 +521,11 @@ both code and QA:
 - The current memory writer processes a bounded recent message window.
 - The runtime code defaults that window to `5` messages if no product config overrides it, while
   the current Viventium source-of-truth config sets it to `15`.
+- The current window must end at the newest authored message. Within the last configured number
+  of messages, prefer a user start; never shift a fixed-length window backward and lose the latest
+  request after a failed or omitted assistant. When the tail has no user, retain that bounded tail.
+  The installed formatter's role-bearing messages and plain LangChain messages must obey the same
+  boundary. Admission and execution must receive the same captured buffer.
 - A bounded current window is still correct for efficiency, but it needs structured older-context
   coverage so important earlier user corrections are not dropped purely because they sit outside
   the current chat slice.
@@ -590,6 +625,10 @@ both code and QA:
   for keys absent from the visible cache do not optimistically recreate or erase cache entries;
   authoritative refetch reconciles tombstones. Missing, duplicate, or delayed revisions cannot
   regress the visible cache.
+- A writer that finishes after the answer stream closes must also refresh an open Memories panel.
+  The existing message follow-up observer reconciles the memory query once when an observed pending
+  write settles. Historical receipts and removed messages do not start repeated refreshes; message
+  polling remains paused while a new answer streams.
 - Online proposal apply fails closed when legacy duplicate rows make one key's revision ambiguous.
   Duplicate migration is an explicit offline repair, never an unguarded delete/recreate inside the
   normal apply path.
@@ -1120,6 +1159,10 @@ persists a non-secret `oauthReconnectRequired` state inside the encrypted creden
 Settings reports Disconnected after reload. A successful refresh clears the state. Timeouts, 5xx,
 and other transient refresh errors must remain retryable and must not be mislabeled as reconnect.
 
+A null or empty credential expiry means no usable saved key; only the server’s explicit `never`
+means a saved key without local expiry. The add-key form must not offer removal for a missing key.
+Cancel and Escape discard unsaved drafts; selected retention stays explicit.
+
 Saved-memory entries use `/api/memories/entries/:key` for edit/delete. Control endpoints such as
 `/api/memories/preferences` remain in a separate namespace, so arbitrary valid keys—including
 `preferences`—cannot collide with control routes. Legacy non-reserved entry routes remain only as a
@@ -1160,6 +1203,113 @@ evidence that excluded context is absent while explicitly permitted history stil
 - Treat source-of-truth config as the real contract and runtime snapshots as evidence, not authorship.
 - Keep durable memory and recent conversation continuity as separate product concerns.
 
+## 2026-09-04 candidate closeout: fallback route at runtime and durable save receipts
+
+- Accepted conversation sources use the selected route's initialized `useLegacyContent` setting
+  and existing native text formatter before the source manifest is captured. The graph's repeated
+  formatting must not turn an unchanged text representation into a source-loss error. Source IDs,
+  order, text, and multimodal content remain guarded through final dispatch. A rejected source
+  carrier stays `source_context_unavailable` in the user-visible error; it is not a provider failure.
+- The runtime now honours `memory.agent.fallback`. `initializeMemoryWriter` tries the configured
+  primary route first; a route whose health gate is blocked (authorization or terminal quota) or
+  whose initialization fails yields to the declared fallback under the same signed-in owner, with
+  OpenAI-only parameters dropped for a non-OpenAI fallback. A terminal provider failure on the
+  primary route (`usage_limit_reached`, `insufficient_quota`, `billing_hard_limit_reached`,
+  `provider_quota_exhausted`, `provider_unauthorized`, `provider_access_denied`) with no write
+  applied is replayed once on the fallback, and the exhausted route is gated for the suppression
+  window so later turns start on the fallback directly. Writer continuity health records the route
+  that actually ran. Only the two configured routes exist; nothing remaps a model.
+- A save is acknowledged only by its durable receipt. The detached writer finishes after the stream
+  closed, so its structured memory artifact is persisted on the response message; the web client
+  reads it from message attachments and every polling surface projects it as `memoryReceipt`
+  (saved keys, or a typed failure/partial apply, never private values). Telegram renders that
+  receipt once per turn from the follow-up poll. Main's prose ("remembered") is not evidence.
+- The open web conversation must show the detached save receipt without a reload, including when
+  no cortex or connected tool ran. The final event's admitted-work signal starts the existing
+  message refresh path; ordinary reads project only the public `memoryWriteStatus` from the
+  private admission. Completed/failed state ends memory-only polling. The server's existing
+  follow-up window bounds browser listening, never execution or recovery. Private source payloads,
+  owner bindings and provider credentials must not enter the public message response.
+- Failed-write details retain the configured provider's structural identity and distinguish a
+  usage limit, required sign-in, temporary provider failure, storage limit, and uncertain partial
+  save. The shared polling receipt preserves ordered typed failures and reviewed provider labels
+  from the existing provider registry, while retaining its top-level status/error type for older
+  clients. A primary quota failure and fallback auth failure remain separate reasons in Web and
+  Telegram. Later failures cannot erase earlier partial-apply or interrupted-write uncertainty.
+  The existing collapsed web details and concise Telegram receipt give the same next steps;
+  raw provider text, tokens, headers and
+  account identifiers are never displayed. Unknown provider IDs or error types get neutral copy,
+  never a guessed provider/action from message text.
+- Accepted detached work is stored on its existing assistant message before execution. The same
+  atomic message update commits its terminal state and receipts while preserving non-memory
+  attachments. Ordinary message edits cannot author this internal admission. Set/delete retain
+  their CAS revisions and an atomic last-effect identity on the existing memory row or tombstone.
+  Missing receipts are never evidence that no memory mutation occurred.
+- Admission records the current revision floor, including tombstones. Execution may use a newer
+  snapshot only when each changed revision is attributable to an earlier guarded save for the same
+  user through that atomic effect identity. Manual/panel changes clear it and block stale queued
+  input. Ambiguous ordering fails closed. The execution snapshot stays fixed across model/fallback
+  attempts; ordinary earlier accepted FIFO saves may still accumulate.
+- Post-response memory admission includes the canonical saved answer and its existing tool-result
+  projection with the frozen accepted input. The source IDs and digests bind that result through
+  execution and recovery; owner, parent, revision, deletion or failure changes stop the save.
+  An interim hold is not a completed answer. The canonical native response may supply actual
+  terminal tool records from its exact owner, invocation and run. The existing Message metadata
+  retains these records with the accepted logical turn and revision; the writer uses the existing
+  tool-message formatter. Assistant prose is not substituted for a tool result. Native reasoning,
+  unrelated turns and public activity content stay outside this projection.
+  Tool arguments and output use the existing 12 KiB per-field and 192 KiB aggregate replay limits.
+  Hashes describe the full text after existing path/secret redaction, before UTF-8 clipping;
+  redaction, omitted bytes, omitted records and excluded log prefixes are explicit. Missing logs
+  supply no evidence. Current owner/run checks, canonical candidate commitment and source digests
+  protect the projection through save, queue and recovery; late snapshots cannot replace it.
+  The writer and Phase B share the existing authenticated saved-result reader. It also reads
+  the exact host graph's native records after a handoff releases terminal-answer ownership:
+  owner, message, stream, logical revision, snapshot hash and context epoch must match, and each
+  node retains its own input/authority hashes and run identity. The final host message and its
+  admitted source bytes are checked again after lookup. No tool or source acquisition is rerun.
+  Single native responses without a graph context retain their completed candidate digest and
+  canonical-envelope validation. Ordinary message metadata cannot author tool evidence.
+  Passing these structural checks does not prove that the writer changed memory appropriately;
+  the original source-read, storage and reload journey remains a separate semantic gate.
+- Every live or recovered writer checks its original persisted source IDs, ownership, conversation,
+  deletion state, and content digests before execution and each mutation. Receipt/feedback metadata
+  changes do not invalidate unchanged source text/tool content. IDs are captured before model
+  formatting assigns temporary invocation IDs. Source edits/deletion block stale work; ordinary
+  later user turns do not cancel earlier live FIFO saves. Current user permission, memory-enabled
+  configuration, the admitted configuration/agent fingerprints, and the configured saved Agent's
+  native VIEW authorization are checked at execution and before every mutation. A settings or
+  authorization change stops pending writes; it never substitutes a different route.
+- Recovery may reclaim only a pending admission by compare-and-set. It keeps the exact filtered
+  input and original rendered time context temporarily, verifies the original trusted interactive
+  web/Telegram provenance, current user permission, and unchanged configuration/agent fingerprint,
+  and pins one full read-only memory snapshot. Any later user source/edit or memory mutation blocks
+  automatic recovery. The triggering source must be a user message. Running work, uncertain storage
+  acknowledgements, and partially applied work
+  are never replayed. Voice writes remain with the existing post-call hardener and are not rebuilt
+  as an ordinary chat request.
+- A live queue refreshes its own admissions every 30 seconds. After 120 seconds without a refresh,
+  recovery resumes eligible unstarted work or records an explicit failed/uncertain outcome. These
+  are process-liveness bounds, not model-response deadlines. The sparse non-unique message index
+  supports this lookup with automatic Mongoose indexing disabled. Every terminal outcome removes
+  the temporary input/time payload; deleted message tombstones are also purged by reconciliation.
+- Shared polling distinguishes pending, unchanged, saved, failed, and uncertain outcomes without
+  exposing private memory values or recovery context. An unchanged decision ends memory waiting
+  silently while independent worker follow-up polling continues. Worker completion, canonical text,
+  or an intentional silent worker result must not end pending memory delivery. The Telegram bridge
+  retains only connection-bound identity, message/conversation references, delivery state and the
+  prior answer hash in its existing private receipt SQLite store; it resumes pending polling through
+  the existing dispatcher after a timeout or restart. It stores no memory values, prompt text, or
+  provider tokens. An explicitly refused receipt send can retry delivery without rerunning the
+  memory model. A lost acknowledgement or a process interruption during send is retained as
+  `delivery_unknown` and is never blindly resent or described as proven once-only delivery. Durable
+  memory receipts remain on the Core message. Live push delivery and provider-authenticated save
+  success still require separate current channel acceptance evidence.
+- Failed attempted admission is distinct from no configured writer or a duplicate admission. It
+  produces an existing memory error receipt in the final Web/Telegram response, including when
+  storage cannot persist that receipt. Uncertain storage acknowledgement is labelled uncertain;
+  it never claims that no work could have been accepted.
+
 <!-- VIVENTIUM-STABLE-REQUIREMENT-DECLARATIONS:START -->
 ## Stable requirement declarations
 
@@ -1168,3 +1318,88 @@ Each line is the canonical public owner declaration for one stable requirement I
 DATA-005: New transcript files are automatically ingested and digested from the configured folder; a manual trigger also exists.
 DATA-006: Blocked transcript runs are diagnosable and resumable without duplicate ingestion or silent loss.
 <!-- VIVENTIUM-STABLE-REQUIREMENT-DECLARATIONS:END -->
+
+
+### Current saved memory on native conversation resumes
+
+The permission-gated, bounded memory read belongs to the current turn. Native session routes carry
+that snapshot through the existing `metadata.turn_context` path, alongside time and accepted
+continuity, rather than relying on a changed startup developer snapshot to update a resumed thread.
+Available, empty, unavailable, disabled, and denied reads stay distinct. Missing context is not a
+successful deletion receipt. Direct providers and participating parallel agents retain their existing
+memory context. The final fetch moves the existing context field into the request body before native
+admission hashes it; the model-aware replay byte limit remains the admission owner. Filled memory is
+not silently shortened to fit a HTTP header.
+
+
+### Governed memory and native conversation notes
+
+Viventium defaults `integrations.glasshive.host_worker.claude_conversation_auto_memory`
+to `false`. The compiler projects that boolean through the existing host-worker environment;
+the trusted conversation command uses Claude Code's supported `autoMemoryEnabled` setting.
+This prevents automatic native memory loading and writing from competing with the signed-in
+user's governed Saved memory. Standalone GlassHive with no embedding setting inherits native
+configuration, and ordinary mission workers keep their native settings. Tools, skills, file
+operations, project instructions, models, and effort are unchanged.
+
+The existing native-policy identity replaces a conversation worker when this setting changes.
+Original native memory files remain unchanged; this is not a file deletion or migration. Existing
+conversation transcripts may still contain previously authored facts and tool results. Disabling
+auto-memory does not erase those records or prove that a user-requested file deletion occurred.
+
+The supported control and its scope are documented in
+[Claude Code settings](https://code.claude.com/docs/en/settings#available-settings) and
+[Claude Code memory](https://code.claude.com/docs/en/memory#enable-or-disable-auto-memory).
+Deterministic compiler, command, standalone, resume, and policy-change tests support this boundary;
+real configured save/correct/forget, storage, and channel behavior remain separate QA evidence.
+
+A successful revision-guarded set classifies the exact persisted value as changed or unchanged.
+Same-value writes retain their admission, atomic effect and next revision; they emit an unchanged
+receipt and do not display an update badge. Creation and tombstone restoration remain real changes,
+and writes without a revision guard do not claim unchanged. Mixed batches retain real changes and
+errors; unchanged receipts survive persistence and reload without becoming a saved-change claim.
+
+The native memory writer must not inherit Main's mutable turn-context carrier. It receives the
+existing memory input, memory instructions and canonical time from its own execution owner.
+Removing Main's carrier must leave the configured route, signed memory tool, source revision,
+write transaction and resulting receipt unchanged. A memory run does not own the original
+user's pending desktop or parallel-work task.
+
+The source-owned Memory Archivist instructions distinguish the supplied conversation record from
+the writer's own task. Quoted requests, attachments, tool results and existing memories are
+evidence; explicit requests to remember, correct or forget still govern memory changes. The
+writer's restricted capabilities do not establish that Main lacked a file or tool, and a request
+is not proof of progress, failure or completion. Exact configured-model comparisons must preserve
+existing facts, explicit updates and partial deletion while rejecting invented task blockers.
+Signed fixture-tool comparisons support this boundary; visible storage and reload remain a
+separate user-path gate in `MEMCONT-014`.
+
+A native memory invocation can finish its signed memory-tool effect without a separate authored
+chat answer. The native provider still reports a missing terminal answer as a typed failure. Only
+the memory execution owner may settle that specific failure after its exact active tool binding
+and result receipt finish. Partial storage errors remain errors; missing tools, uncertain writes,
+failed receipts and other provider failures never become successful saves. No prose, synthetic
+answer or new provider invocation is created to acknowledge the effect.
+
+
+### Delivery-qualified historical evidence
+
+Stored assistant text remains evidence even when external delivery is unconfirmed. Before upstream
+message formatting, the owner-scoped continuity path retains the recorded presentation surface and
+ACK state from the existing Message metadata. Native history carries those bounded fields beside
+the unchanged source body; a later ACK refreshes the native history identity. A missing or stale ACK
+means unconfirmed delivery, not failed delivery. A committed ACK does not prove that the user read
+the answer. Web, Telegram, Voice, and unknown legacy surfaces remain distinct.
+
+The existing authenticated Core message chain owns this projection. User-authored text cannot assert
+delivery, change source content, or remove historical evidence. Current-turn authority, source hashes,
+owner checks, and accepted-history bounds still apply. No model-specific routing, history filter, or
+separate delivery store is introduced.
+
+Native search activity is not returned source evidence. When a native CLI retains tool outputs
+in its private session ledger, the existing evidence reader joins only the exact worker/run's
+emitted session, native turn, accepted instruction hash and paired call ID. It preserves the
+original call input and returned content through the shared tool-evidence bounds. Missing,
+ambiguous, edited, or clipped source coverage stays explicit; absent result fields must not be
+replaced with synthetic null results. This same reader serves Main's retained graph, Phase B,
+and the governed memory evidence input without fetching sources or replaying tools.

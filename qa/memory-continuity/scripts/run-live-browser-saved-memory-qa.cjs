@@ -322,7 +322,14 @@ function messageText(message) {
   return `${text}\n${content}`.trim();
 }
 
-async function waitForTurn({ db, userId, prompt, startedAt, timeoutMs }) {
+async function waitForTurn({
+  db,
+  userId,
+  prompt,
+  startedAt,
+  timeoutMs,
+  onUserMessage,
+}) {
   const userMessage = await waitForCondition(
     () =>
       db.collection("messages").findOne(
@@ -333,9 +340,10 @@ async function waitForTurn({ db, userId, prompt, startedAt, timeoutMs }) {
           createdAt: { $gte: startedAt },
         },
         { sort: { createdAt: -1, _id: -1 } },
-      ),
+    ),
     { timeoutMs, error: "browser_user_message_not_persisted" },
   );
+  if (typeof onUserMessage === "function") onUserMessage(userMessage);
   const assistantMessage = await waitForCondition(
     async () => {
       const rows = await db
@@ -461,9 +469,18 @@ function prepareGlassHiveRuntimeRecovery(databasePath, scope, options) {
   const workers = sqliteJson(
     databasePath,
     `WITH target AS (SELECT DISTINCT project_id FROM provider_sessions WHERE ${scope})
-     SELECT worker_id, state, pid, state_dir
+     SELECT
+       workers.worker_id,
+       workers.state,
+       workers.pid,
+       workers.state_dir,
+       (SELECT count(*)
+        FROM runs
+        WHERE runs.worker_id = workers.worker_id
+          AND runs.state NOT IN ('completed', 'failed', 'cancelled', 'interrupted'))
+         AS nonterminal_run_count
      FROM workers
-     WHERE project_id IN (SELECT project_id FROM target);`,
+     WHERE workers.project_id IN (SELECT project_id FROM target);`,
   );
   const moves = [];
   for (const worker of workers) {
@@ -471,9 +488,12 @@ function prepareGlassHiveRuntimeRecovery(databasePath, scope, options) {
     if (!/^wrk_[a-z0-9_]+$/i.test(workerId)) {
       throw new Error("glasshive_cleanup_refused_invalid_worker_id");
     }
+    const state = String(worker.state || "");
+    const idlePausedWorker =
+      state === "paused" && Number(worker.nonterminal_run_count || 0) === 0;
     if (
       Number(worker.pid || 0) > 0 ||
-      !["ready", "terminated"].includes(String(worker.state))
+      (!idlePausedWorker && !["ready", "terminated"].includes(state))
     ) {
       throw new Error("glasshive_cleanup_refused_active_worker");
     }
@@ -521,7 +541,9 @@ function cleanupGlassHiveConversations(conversationIds, options = {}) {
   if (exactIds.length === 0) return true;
   if (
     !exactIds.every((value) =>
-      /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(value),
+      /^(?:[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}|main-continuity-compaction-[a-f0-9]{24})$/i.test(
+        value,
+      ),
     )
   ) {
     throw new Error("glasshive_cleanup_refused_invalid_conversation_id");
@@ -611,6 +633,25 @@ function cleanupGlassHiveConversations(conversationIds, options = {}) {
          SELECT request_id FROM provider_requests
          WHERE session_id IN (SELECT session_id FROM qa_target_sessions)
        );
+       DELETE FROM provider_stop_tombstones
+         WHERE EXISTS (
+           SELECT 1
+           FROM provider_requests AS target_request
+           WHERE target_request.session_id IN (
+                   SELECT session_id FROM qa_target_sessions
+                 )
+             AND target_request.tenant_id = provider_stop_tombstones.tenant_id
+             AND target_request.owner_id = provider_stop_tombstones.owner_id
+             AND (
+               target_request.idempotency_key =
+                 provider_stop_tombstones.base_idempotency_key
+               OR substr(
+                    target_request.idempotency_key,
+                    1,
+                    length(provider_stop_tombstones.base_idempotency_key) + 7
+                  ) = provider_stop_tombstones.base_idempotency_key || ':graph:'
+             )
+         );
        DELETE FROM provider_requests
          WHERE session_id IN (SELECT session_id FROM qa_target_sessions);
        DELETE FROM provider_account_run_fences
@@ -626,6 +667,8 @@ function cleanupGlassHiveConversations(conversationIds, options = {}) {
        DELETE FROM callback_trace_events
          WHERE run_id IN (SELECT run_id FROM qa_target_runs);
        DELETE FROM capacity_attempts
+         WHERE run_id IN (SELECT run_id FROM qa_target_runs);
+       DELETE FROM provider_liveness_events
          WHERE run_id IN (SELECT run_id FROM qa_target_runs);
        DELETE FROM run_attempts
          WHERE run_id IN (SELECT run_id FROM qa_target_runs);
@@ -841,12 +884,11 @@ async function main() {
       prompt: writePrompt,
       startedAt: writeStartedAt,
       timeoutMs: args.timeoutMs,
+      onUserMessage: (message) => {
+        conversationIds.push(message.conversationId);
+        result.writeConversationHash = hashValue(message.conversationId, 12);
+      },
     });
-    conversationIds.push(writeTurn.userMessage.conversationId);
-    result.writeConversationHash = hashValue(
-      writeTurn.userMessage.conversationId,
-      12,
-    );
     const receipt = await waitForWriterReceipt({
       userId: String(user._id),
       startedAt: writeStartedAt,
@@ -930,12 +972,11 @@ async function main() {
       prompt: readPrompt,
       startedAt: readStartedAt,
       timeoutMs: args.timeoutMs,
+      onUserMessage: (message) => {
+        conversationIds.push(message.conversationId);
+        result.readConversationHash = hashValue(message.conversationId, 12);
+      },
     });
-    conversationIds.push(readTurn.userMessage.conversationId);
-    result.readConversationHash = hashValue(
-      readTurn.userMessage.conversationId,
-      12,
-    );
     const normalizedAnswer = readTurn.assistantText.toLowerCase();
     result.freshConversationRecovered =
       normalizedAnswer.includes("graphite") &&
@@ -1141,4 +1182,5 @@ module.exports = {
   parseEnvFile,
   providerNamesMatch,
   safeError,
+  waitForTurn,
 };

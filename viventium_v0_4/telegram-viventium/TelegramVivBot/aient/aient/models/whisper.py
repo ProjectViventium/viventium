@@ -169,7 +169,7 @@ class Whisper:
         if response.status_code != 200:
             error_text = response.text
             logger.error(f"Whisper API error: {response.status_code} {response.reason} - {error_text}")
-            raise Exception(f"Whisper API error {response.status_code} {response.reason}: {error_text}")
+            raise requests.HTTPError(f"Whisper API error {response.status_code} {response.reason}: {error_text}", response=response)
         
         try:
             json_data = json.loads(response.text)

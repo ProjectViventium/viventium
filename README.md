@@ -38,10 +38,11 @@ A local Viventium install can give you:
 
 ### Easy Install (Recommended)
 
-Easy Install is the guided, native-first product path for a new Mac. It is designed to install the
-useful local core without Docker, open browser setup automatically, and let you securely add an
-OpenAI or Anthropic API key before your first answer. Optional providers, channels, voice, recall,
-and automation come later.
+Easy Install guides a new Mac through native runtime setup and opens browser setup automatically.
+The current source-checkout defaults use GlassHive Main through Codex. Install Codex and sign in
+with `codex login` when preflight requests it; an existing supported CLI login is reused. Provider
+API keys are separate credentials for the components configured to use them. Additional providers
+and integrations can be connected later.
 
 The command below exercises the current source-checkout candidate. It still requires Git and may
 install developer/runtime prerequisites; it is not the finished no-developer-tools Easy Install
@@ -156,6 +157,8 @@ Intel install, first-use, and restart acceptance run. Intel support must remain 
 gate passes.
 
 ## Commands
+
+For source changes and tests, follow [Contributor Setup](docs/04_SETUP_GUIDE.md#contributor-setup).
 
 ```bash
 bin/viventium doctor

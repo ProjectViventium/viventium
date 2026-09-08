@@ -161,6 +161,7 @@ def test_ensure_librechat_env_persists_retrieval_embeddings_contract(tmp_path: P
                 "merge_allowed_hosts_csv() { printf '\\n'; }\n"
                 "port_in_use() { return 1; }\n"
                 "is_librechat_default_secret() { return 1; }\n"
+                "load_librechat_instance_secrets() { JWT_SECRET=synthetic; JWT_REFRESH_SECRET=synthetic; CREDS_KEY=synthetic; CREDS_IV=synthetic; }\n"
                 "first_existing_path() { return 1; }\n"
                 "log_warn() { :; }\n"
                 "log_info() { :; }\n"

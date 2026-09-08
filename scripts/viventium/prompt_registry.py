@@ -45,6 +45,10 @@ PRIVATE_PATTERN_RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
 VARIABLE_RE = re.compile(r"{{\s*([A-Za-z0-9_.-]+)\s*}}")
 KNOWN_RUNTIME_PLACEHOLDERS = frozenset(
     {
+        "critical_operating_instructions",
+        "native_capability_inventory",
+        "completion_contract",
+        "safety_checkpoint",
         "current_user",
         "current_date",
         "current_datetime",

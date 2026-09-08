@@ -213,7 +213,8 @@ Root release contracts: `tests/release/test_librechat_emo_qa_parent_control.py` 
   use `clear-emo-insight` and `cleanup-emo-insight` before clearing the parent QA session.
 - **Expected result:** immutable attempts show `pending -> claimed -> sent`, with one presentation
   receipt for each required surface and one visible insight. First-write failure survives in the
-  outbox. Redis succeeds only from a live subscriber or durable replay write. Promoted Telegram
+  Mongo outbox. Web presentation requires an actual subscriber transport acknowledgement; Redis
+  chunk storage alone cannot settle delivery. A total Mongo outage cannot claim durable acceptance. Promoted Telegram
   delivery uses a new revision/generation. The replay is a no-op. One parent claim failure does not
   block later parents. For a terminal non-retryable fault, the row becomes `dropped` with a bounded
   typed reason and no false visible-success claim.
@@ -229,6 +230,17 @@ Root release contracts: `tests/release/test_librechat_emo_qa_parent_control.py` 
   private insight text in logs, raw owner/conversation/parent IDs or case token in arguments or
   output, a real-user fixture, duplicate Mongo fixture/control rows, expired scope use other than
   exact cleanup, component digest mismatch or echo, broad cleanup, or `sent` without a receipt.
+- **Supporting source coverage (2026-09-07):** the preserved Cortex producer/outbox/follow-up/recovery
+  batch passed 371 focused API tests and 17 typed stream tests. Acceptance-failure callbacks expose
+  no unaccepted result and do not rerun inference; stale parent acknowledgements are cleared; wrong
+  owners/claims and storage-only presentation fail closed. Regression owners are LibreChat's
+  `BackgroundCortexService.deliveryPreservation.spec.js`, `CortexInsightOutboxService.spec.js`,
+  `BackgroundCortexFollowUpService.deliveryPreservation.spec.js`,
+  `staleCortexMessageRecovery.deliveryPreservation.spec.js`, and
+  `CortexDeliveryPreservation.stream_integration.spec.ts`. These isolated tests and the candidate
+  bundle build do not establish installed artifact identity, browser rendering, Telegram visibility,
+  restart acceptance, or a clean global typecheck. Keep the installed case `NOT RUN` until its
+  required evidence is captured.
 - **Last run:** `NOT RUN` (cataloged 2026-08-22).
 
 ## Required Evidence Per Product Run

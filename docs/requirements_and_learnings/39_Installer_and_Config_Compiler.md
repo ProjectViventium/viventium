@@ -127,7 +127,8 @@ Required before Native core readiness:
 Deferred until the core is ready unless a later accepted requirement proves otherwise:
 
 - Groq or xAI activation credentials beyond the user's selected first provider;
-- GlassHive worker authentication, Prompt Workbench schedules, and nightly automation;
+- additional GlassHive worker accounts beyond the selected core provider, Prompt Workbench schedules,
+  and nightly automation;
 - voice, LiveKit, local speech models, and the modern voice playground;
 - conversation Recall/RAG, local SearXNG/Firecrawl, Code Interpreter, Microsoft 365 MCP, Skyvern,
   and GlassHive Docker workstation execution;
@@ -139,6 +140,110 @@ starts it. The implementation must prove whether current chat startup requires i
 search can be disabled safely, the native-core lane defers Meilisearch and exposes it as an optional
 capability; otherwise the acceptance evidence must record why it remains in the core.
 
+Native source selection comes only from `components.lock.json`; external binary policy does not
+duplicate component commits. Each assembled artifact freezes the chosen pins and the release verifier
+compares them with the tagged parent lock. Assembly validates the compiler-owned environment through
+the installed runtime reader before publishing a payload. The Native supervisor supplies Cortex
+with a stable slot derived from its canonical mutable root, distinct from other installs and stable
+across release upgrades. Native child processes use an owner-only file creation mask so user uploads
+and runtime writes meet the same private-tree contract that restore validates.
+
+Native child processes bind LibreChat logs to `logs/librechat`, file uploads to `data/uploads`,
+and image output to `data/uploads/images` under App Support. Image writes, reads, static serving,
+and deletion use the same configured path; the existing uploads snapshot/restore owner includes
+images. Package code and bundled assets remain immutable. Standalone LibreChat keeps its defaults.
+
+A runtime that already migrated uploads may select a checkout shared with another runtime. Preserve
+both validated migration receipts and the existing compatibility link; reads and writes still use
+the selected runtime's compiler-owned upload root. Do not merge, relink, or enumerate another
+runtime's files. Malformed receipts and unrecognized links remain startup failures.
+
+The full Native harness includes the parent-pinned GlassHive source, hash-locked production Python
+dependencies, and complete publisher-pinned Codex/Claude packages, including companion executables
+and notices. The selected Codex shell companion requires macOS 15; the owning minimum-OS policy and
+code-object verifier must agree. The API-only package retains its unavailable-provider guard and
+does not satisfy full-harness acceptance. Compiled model, effort, and access settings remain intact;
+installed body paths come from the immutable component inventory. No developer login is inherited.
+The existing API and MCP gateway run on owned private Unix sockets with mutable state outside the
+payload. Fixed authenticated routes in the existing loopback proxy retain upstream credential-plane
+and owner-assertion checks; browser cookies do not grant service access. Full-harness readiness
+requires both services. Component health remains separate from actual provider login and useful
+answers under `AR-010`, `AR-017`, `AR-041`, and `AR-044`; commercial-license and release-authority
+holds remain independent of local functional QA.
+
+Native agent defaults use the already provisioned private working folder when the owner has not
+selected LIFE. Core chat must not depend on a guessed LIFE path under a provider login home. An
+explicit LIFE selection or custom workspace is retained; selecting a folder does not grant access
+or change the configured model, effort, or native tool authority.
+
+Native first-owner setup links to **Connect AI** in the installed helper. The helper launches the
+provider's official browser sign-in without a Terminal, shows the result, and can cancel that exact
+login process. Reopening Connect AI checks the official CLI status. Terminal remains an optional
+advanced route for published alternative login arguments. Fresh Native defaults use the same
+first-owner OpenAI account connection for Main and the separate saved-memory model execution.
+The memory writer receives only its admitted, signed memory apply tool; native app and shell access
+remain disabled for that writer. Explicit direct-provider choices retain their own credentials.
+Installation must not imply complete memory readiness until actual save/correct/forget/recall works.
+
+Native Scheduling Cortex uses the same selected LibreChat scheduler, its existing locked Python
+dependencies, shared prompt contract and installed Workbench/periphery support layout. It runs on a
+private mode-`0600` Unix socket, reached through an authenticated route in the existing web proxy.
+The scheduler starts after the core web surface is ready and stops before it; its existing schedules
+DB remains inside the native snapshot/restore boundary. Native MCP transport auth is separate from
+the existing scheduler dispatch and signed GlassHive callback contracts. No second scheduler or
+prompt fallback is introduced. Actual due delivery, restart, and restore remain acceptance gates.
+
+Native parallel work packages the existing Redis job store dependency. The producer verifies and
+builds the selected upstream Redis source for each Mac architecture; installation needs no compiler
+or Homebrew. The native owner starts Redis on its private mode-`0600` Unix socket with TCP disabled,
+append-only persistence and per-write sync. Both existing LibreChat Redis clients use that socket.
+Job and source-order state live under `state/runtime/native/continuity/redis`, so the existing
+quiesce, snapshot and restore owner includes them. The immutable package and live owned services
+provide runtime identity; actual parallel-work acceptance remains a separate gate.
+
+Enabled Sequential Thinking uses the existing official MCP package at the selected locked version,
+run through bundled Node over stdio. Its dependency closure and publisher notice ship in the
+payload; no `npx` or package download runs during installation or chat. This transport change does
+not change its tool schema or decide when models should use it.
+
+After first-owner setup, `bin/viventium provider-auth codex-cli login` and
+`bin/viventium provider-auth claude-code login` run the exact installed, unmodified CLI in its
+private login home. `status` and `logout` use that same owner; published login arguments follow
+`--`, including device, API-key stdin, Console, and SSO choices supported by the pinned body.
+The application does not read, copy, or project these credentials. Codex uses its explicit file
+backend and an exact private link from each worker's isolated configuration home to the CLI-owned
+auth file. Central logout removes that file; worker configuration and history remain separate.
+Claude resolves and refreshes its own login before any legacy token-projection path. An installed
+native worker can use this personal login only for the protected first administrator, checked at
+authenticated request hydration and again before worker configuration or execution. Missing owner
+authority requires recovery; it is distinct from a different user's denied request. Standalone and
+per-account multi-user security gates remain unchanged. The pinned Codex file backend provides only
+process-local refresh synchronization; the link adds no cross-process refresh fence. Real sign-in,
+useful authenticated work, refresh, cancellation, and disconnect remain installed acceptance gates.
+The [Claude Code native distribution and authentication terms](https://code.claude.com/docs/en/legal-and-compliance#authentication-and-credential-use)
+require the unmodified provider login and preserve its supported authentication choices.
+
+Native MongoDB retains its owned mode-`0600` socket and no-TCP boundary while providing transactions
+through one replica-set member at that exact socket. The existing maintenance owner initializes only
+an uninitialized set, rejects unexpected topology instead of reconfiguring it, and waits for a writable
+primary before application writes. Logical restore does not copy the source's machine-local replica
+configuration; the destination initializes its own socket member before serving transactions.
+
+Native snapshots that include GlassHive use its component-owned quiescent SQLite/workspace export.
+They retain work identities and safe user files, clear execution grants and native session handles,
+and require account reconnection. Restore binds portable workspace paths to the destination and uses
+the existing exact-root activation and rollback journal. A snapshot from a release without GlassHive
+remains valid for that release; a component-coverage mismatch requires a reviewed migration rather
+than silently dropping work. Running or unsettled worker work blocks capture until its owning
+lifecycle can quiesce it. Process startup alone is not full worker restoration proof.
+The component verifies the original callback and work chains before projecting a disposable SQLite
+copy. It removes callback delivery credentials and their decoded event copies, retains task/result
+meaning and record order, and rebuilds the existing chains. The existing trace records public-safe
+source/export heads and affected fields as `continuity.projected`; the original source stays intact.
+Restore verifies the projected chains and provenance, retains append-only protection, and refuses
+historical delivery authority or unhandled credential copies. Source tests do not replace the
+installed export, reconnect, task/result inspection and re-export acceptance gate.
+
 ### Packaging, Install, And Upgrade Boundary
 
 - The public command is a thin bootstrap. It detects supported OS/architecture, downloads an
@@ -149,6 +254,16 @@ capability; otherwise the acceptance evidence must record why it remains in the 
   compilation on the user's Mac are developer flows, not the final Easy Install product path.
 - Release directories are immutable. Upgrade stages and validates the next version before an atomic
   active-version switch. Failed readiness returns to the last known-good compatible release.
+  During the existing Bootstrap `pointer_switched` transaction, only its exact active target and
+  matching immutable manifest may replace a prior native runtime binding. Ordinary start, stop,
+  and registration commands still require the installed binding; old payloads cannot take over.
+  Installed helper copies retain sealed bundle permissions. Moving the owned prior app to or from
+  its backup temporarily enables root-directory owner write and restores its original mode.
+  Failed activation removes only verified owned staging through the existing immutable-tree cleanup,
+  so read-only directories cannot hide the original failure or prevent rollback.
+- First-owner setup opens the current protected setup state after startup. A token captured before
+  startup cannot remain authoritative if startup rotates or closes registration. One-shot identity
+  maintenance releases every connection it opened, so registration closure and restart can finish.
 - Data/schema migration and binary activation are separate gates. A pre-migration recovery point is
   mandatory, and automatic binary rollback must not pretend an incompatible data migration was
   reversed.
@@ -981,19 +1096,31 @@ delta on the disposable MacBook Air. Until those gates pass, release wording rem
   bootstrapping App Support, and must reject boolean schema versions, oversized artifacts, and
   excessive declared or observed archive expansion.
 - A producer's positive marker, complete domain ledger, typed artifacts, size/hash checks, and
-  format checks establish only a structurally valid complete-bundle candidate. They do not prove
-  recoverability. The CLI must keep `recoverable: false` and name the apply engine as unavailable
-  until a public capture/apply path restores an independent target and the required user-visible,
-  database, schedule, recall, channel, and reauthentication checks pass.
-- Structural and gzip validation do not prove Mongo archive semantics; the candidate result must say
-  `semanticValidation: not_performed` until a data-plane adapter verifies the contents.
-- The public apply engine is currently unavailable. After candidate validation, every non-validation
-  request exits `4` before live-audit creation, safety copies, channel writes, Recall markers, or any
-  target mutation. `--allow-older-snapshot`, `--apply-telegram`, and `--mark-recall-stale` are reserved
-  compatibility flags, not partial mutation paths.
-- A future transactional apply engine must stage into an independent target, make pre-apply safety
-  copies of directly affected state, validate every adapter, activate atomically, and write the
-  Recall rebuild-required and reauthentication ledgers before this contract can change.
+  format checks establish a structurally valid bundle candidate. Supported logical-data validation
+  reports `semanticValidation: performed` and the applicable `restoreEngine`; legacy structural-only
+  candidates remain ineligible. `recoverable: true` denotes eligibility for the implemented
+  transaction, not proof that a user has completed independent-target recovery.
+- The public source apply path is implemented by `scripts/viventium/restore.sh` and
+  `scripts/viventium/continuity_bundle.py`. It requires an absent independent App Support target,
+  a fresh independent checkout, and an empty credential-free loopback Mongo database whose name
+  differs from the source. It validates private path ownership, source/target separation, bundle
+  content, logical data, and storage capacity before claiming and staging target state.
+- The transaction restores only owned state, activates the staged target, and records Recall
+  rebuild and account/channel reauthentication requirements. Failure rolls back its own target and
+  database writes; incomplete rollback remains an explicit error with its journal. A supplied
+  independent Mongo data directory keeps the restored persistence store bound across restart.
+- `--validate-only` changes no target state. `--apply-telegram` and `--allow-older-snapshot` are
+  rejected compatibility options; `--mark-recall-stale` is accepted for compatibility because every
+  restore already requires derived Recall rebuild. Credentials and browser sessions are excluded
+  and require reauthentication.
+- Native payload state, including GlassHive, uses the existing Native transaction in
+  `scripts/viventium/native_runtime.py`, with its exact-root staging, activation and rollback journal.
+  The source apply path refuses Native GlassHive state rather than silently omitting it.
+- Complete recovery remains a real independent-target acceptance gate: open restored history and
+  artifacts, inspect memories and schedules, rebuild Recall, reconnect permitted accounts, and prove
+  restart and rollback. A valid bundle or successful transaction alone cannot close that gate.
+  [Upgrade, restore, and migrate](../how-to/upgrade-and-migrate.md) links the supported commands and
+  owning acceptance journeys.
 - `bin/viventium continuity-audit` owns the operator review surface for current continuity metadata
   and the explicit `--clear-recall-marker` acknowledgement after rebuild.
 - `bin/viventium upgrade` must capture pre/post continuity audits and treat their severity as part
@@ -1046,12 +1173,16 @@ delta on the disposable MacBook Air. Until those gates pass, release wording rem
 
 ## LIFE Activation And Intent-Only Setup Contract
 
-This source-accepted contract is current product truth but is not yet implemented or accepted end
-to end. It extends the bootstrap rules above without authorizing background file discovery.
+This optional setup extends the bootstrap rules above without authorizing background file discovery.
+The CLI, Mac helper and authenticated owner API use the same LIFE setup owner. Installed acceptance
+remains a separate candidate-bound gate.
 
 - `viventium life` and the authenticated setup/LIFE API expose one canonical enabled state and LIFE
-  root. They validate owner scope, migrate a supported legacy root safely, and never place a private
-  path in process arguments, public logs, or public QA.
+  root: `integrations.glasshive.provider.life_enabled` and `life_dir`. The enabled flag controls
+  optional setup, not the existing harness workspace authority. Selected source folders are only
+  intent; they never alter workspace roots or access grants. The owner validates folder scope and
+  preserves configured legacy roots. Helper and API requests keep private paths off command
+  arguments, public logs, and public QA.
 - The Mac helper exposes **Setup**, **Open Life Folder**, **Choose Life Folders**, and a short
   plain-language **What is Life?** explanation through that same validated boundary. These are views
   and explicit user actions, not a second state store.
@@ -1061,14 +1192,29 @@ to end. It extends the bootstrap rules above without authorizing background file
 - The intent record is one human-readable managed block in
   `Life/Sources/WHAT_TO_CONNECT.md`. Updates replace only that block and preserve all manual text
   outside it. Connection wishes never enter `AGENTS.md` or `99_System/sources.yaml`.
+  The prior `state/life/intent.json` is read without mutation and retired only after an explicit
+  save or clear succeeds. A note-only API update preserves the Mac-selected folders, including
+  intent for an unavailable disk. Clear removes only intent; Disable also persists the off state
+  and keeps the chosen Life root, templates and personal notes. Enable reuses the additive bootstrap.
+  Native payloads include this owner, the CLI action and the same template.
+  Helper requests carry selected paths and text on stdin, not command arguments. The helper opens
+  a private input file, unlinks its directory entry before launch, and passes the open descriptor
+  to the child. Large notes therefore cannot fill an undrained pipe before the child starts.
 - A remote-phone user receives truthful guidance that native folder choice must happen on the Mac.
   Remote setup cannot claim that a server-side path picker selected local folders.
 - Skip, defer, cancel, invalid path, permission denial, symlink, full disk, restart, upgrade, and
   repeated submission preserve existing LIFE content and return one specific recovery action.
 
+- Truth contract (2026-09-04): the compiler always provides a LIFE path, so `VIVENTIUM_LIFE_DIR` is
+  not evidence of an owner choice. Only an explicit `integrations.glasshive.provider.life_dir`
+  compiles `VIVENTIUM_LIFE_FOLDER_CHOSEN=true`. The setup API now reads the same live configuration
+  owner and reports `folderConfigured` only for an explicit choice. `bin/viventium life` accepts the documented
+  `--json` and `--show-path` flags before or after the action.
+
 Acceptance is owned by `INST-027` and `INST-UC-019` in
-`qa/installer-resilience/cases.md`. Until those cases pass, existing LIFE bootstrap coverage is only
-partial and must not be presented as the complete setup experience.
+`qa/installer-resilience/cases.md`. The native picker, persistence,
+clear/disable, recovery and installed-artifact checks must pass for the delivered candidate; source
+checks and an isolated helper view do not substitute for the installed helper gate.
 
 ## Feelings compiler contract
 

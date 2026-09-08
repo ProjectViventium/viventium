@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import argparse
+import contextlib
 import errno
 import json
 import importlib.util
 import hashlib
+import io
 import os
 import shlex
 import shutil
@@ -12,6 +15,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import tarfile
 import threading
 import time
 import urllib.error
@@ -202,6 +206,8 @@ def fixture_inputs(tmp_path: Path) -> dict[str, Path]:
         "ANTHROPIC_API_KEY=user_provided\n"
         "GROQ_API_KEY=user_provided\n"
         "XAI_API_KEY=user_provided\n"
+        "GROQ_BASE_URL=https://api.groq.com/openai/v1/\n"
+        "XAI_BASE_URL=https://api.x.ai/v1\n"
         "VIVENTIUM_LC_API_PORT=3180\n"
         "VIVENTIUM_LC_FRONTEND_PORT=3190\n"
         "VIVENTIUM_PLAYGROUND_PORT=3300\n"
@@ -272,6 +278,250 @@ def tree_digest(root: Path) -> list[tuple[str, bytes, int]]:
         for path in sorted(root.rglob("*"))
         if path.is_file()
     ]
+
+
+def glasshive_source_fixture(tmp_path: Path) -> tuple[Path, Path, str]:
+    repo = tmp_path / "parent"
+    source = tmp_path / "GlassHive"
+    file(source / "LICENSE", "Synthetic component license\n")
+    file(source / "runtime_phase1" / "pyproject.toml", '[project]\nname="synthetic-runtime"\nversion="1.0"\n')
+    file(source / "runtime_phase1" / "uv.lock", "version = 1\n")
+    file(source / "runtime_phase1" / "workstation-requirements.lock", "synthetic-worker==1.0\n")
+    file(source / "runtime_phase1" / "src" / "workers_projects_runtime" / "api.py", "app = None\n")
+    subprocess.run(["git", "init", "-q", str(source)], check=True)
+    subprocess.run(["git", "-C", str(source), "add", "."], check=True)
+    subprocess.run(
+        ["git", "-C", str(source), "-c", "user.name=Synthetic Builder", "-c",
+         "user.email=builder@example.invalid", "commit", "-qm", "Synthetic fixture"],
+        check=True,
+    )
+    pin = subprocess.check_output(["git", "-C", str(source), "rev-parse", "HEAD"], text=True).strip()
+    file(repo / "components.lock.json", json.dumps({"components": [{"name": "GlassHive", "ref": pin}]}))
+    return repo, source, pin
+
+
+@pytest.mark.parametrize("local_qa_worktree", [False, True])
+def test_native_glasshive_staging_uses_selected_source_and_hash_locked_dependencies(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, local_qa_worktree: bool,
+) -> None:
+    assembler = load_native_assembler(monkeypatch)
+    repo, source, pin = glasshive_source_fixture(tmp_path)
+    uv = executable(tmp_path / "uv")
+    python = executable(tmp_path / "python")
+    output = tmp_path / "payload" / "runtime" / "glasshive"
+    if local_qa_worktree:
+        file(source / "runtime_phase1/src/workers_projects_runtime/native_continuity.py", "value = 'reviewed change'\n")
+    calls = []
+
+    def build(command, **kwargs):
+        calls.append((command, kwargs))
+        if "export" in command:
+            file(Path(command[command.index("--output-file") + 1]), "synthetic==1.0 --hash=sha256:" + "a" * 64)
+        else:
+            target = Path(command[command.index("--target") + 1])
+            file(target / "synthetic" / "__init__.py", "value = 1\n")
+            executable(target / "bin" / "synthetic", "#!/private/build/python\n")
+            file(target / "synthetic-1.0.dist-info" / "METADATA", "Name: synthetic\nVersion: 1.0\nLicense-Expression: MIT\n")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setenv("WPR_API_TOKEN", "synthetic-owner-secret")
+    monkeypatch.setattr(assembler, "run_glasshive_build", build)
+    manifest = assembler.stage_glasshive(
+        repo, source, python, uv, output, source_date_epoch=1700000000, local_qa_worktree=local_qa_worktree,
+    )
+
+    assert manifest["commit"] == pin
+    assert manifest["source_kind"] == ("local-qa-worktree" if local_qa_worktree else "component-pin")
+    assert len(manifest["source_tree_sha256"]) == 64
+    assert (output / "src/workers_projects_runtime/native_continuity.py").exists() == local_qa_worktree
+    assert manifest["uv_lock_sha256"] == hashlib.sha256((source / "runtime_phase1" / "uv.lock").read_bytes()).hexdigest()
+    assert (output / "src" / "workers_projects_runtime" / "api.py").is_file()
+    assert (output / "workstation-requirements.lock").is_file()
+    assert (output / "site-packages" / "synthetic" / "__init__.py").is_file()
+    assert not (output / "site-packages" / "bin").exists()
+    assert not (output / ".git").exists()
+    assert "--locked" in calls[0][0]
+    assert "--no-dev" in calls[0][0]
+    assert "--no-emit-project" in calls[0][0]
+    assert "--require-hashes" in calls[1][0]
+    assert "--only-binary" in calls[1][0]
+    assert str(python) in calls[1][0]
+    assert all("WPR_API_TOKEN" not in kwargs["env"] for _, kwargs in calls)
+
+
+def test_native_candidate_never_accepts_local_qa_worktree_input(monkeypatch):
+    assembler = load_native_assembler(monkeypatch)
+    with pytest.raises(assembler.AssemblyError, match="restricted to local QA"):
+        assembler.assemble(argparse.Namespace(mode="candidate", glasshive_local_qa_worktree=True))
+
+
+@pytest.mark.parametrize("failure", [None, "digest", "traversal", "link", "missing-companion", "package-version", "package-json", "notice-digest", "notice-replace", "notice-escape"])
+def test_native_body_staging_binds_complete_publisher_archive(tmp_path, monkeypatch, failure):
+    assembler = load_native_assembler(monkeypatch)
+    archive = tmp_path / "body.tgz"
+    entries = {"package/package.json": json.dumps({"name": "synthetic-body", "version": "1.2.3"}),
+               "package/bin/body": "executable bytes", "package/bin/companion": "companion bytes",
+               "package/LICENSE": "Synthetic license"}
+    if failure == "traversal":
+        entries["package/../escape"] = "escape"
+    elif failure == "missing-companion":
+        entries.pop("package/bin/companion")
+    elif failure == "package-version":
+        entries["package/package.json"] = json.dumps({"name": "synthetic-body", "version": "1.2.4"})
+    elif failure == "package-json":
+        entries["package/package.json"] = "[]"
+    with tarfile.open(archive, "w:gz") as bundle:
+        for name, body in entries.items():
+            item = tarfile.TarInfo(name); data = body.encode(); item.size = len(data); item.mode = 0o755 if "/bin/" in name else 0o644
+            bundle.addfile(item, io.BytesIO(data))
+        if failure == "link":
+            item = tarfile.TarInfo("package/link"); item.type = tarfile.SYMTYPE; item.linkname = "bin/body"; bundle.addfile(item)
+    policy = {"version": "1.2.3", "license": "MIT", "license_files": ["LICENSE"], "architectures": {"arm64": {
+        "sha256": hashlib.sha256(archive.read_bytes()).hexdigest(), "package_name": "synthetic-body", "package_version": "1.2.3",
+        "executable": "bin/body", "required_files": ["bin/body", "bin/companion", "LICENSE"]}}}
+    file(tmp_path / "notices/NOTICE", "Synthetic notice")
+    policy["additional_notices"] = [{"source": "notices/NOTICE", "destination": "NOTICE",
+                                     "sha256": hashlib.sha256(b"Synthetic notice").hexdigest()}]
+    if failure == "digest":
+        policy["architectures"]["arm64"]["sha256"] = "0" * 64
+    elif failure == "notice-digest":
+        policy["additional_notices"][0]["sha256"] = "0" * 64
+    elif failure == "notice-replace":
+        policy["additional_notices"][0]["destination"] = "LICENSE"
+    elif failure == "notice-escape":
+        policy["additional_notices"][0]["source"] = "../NOTICE"
+    output = tmp_path / "staged"
+    if failure:
+        with pytest.raises(assembler.AssemblyError):
+            assembler.stage_native_body(tmp_path, archive, output, policy, "arm64", source_date_epoch=1700000000)
+        assert not (tmp_path / "escape").exists()
+    else:
+        result = assembler.stage_native_body(tmp_path, archive, output, policy, "arm64", source_date_epoch=1700000000)
+        assert (output / "bin/companion").read_text() == "companion bytes"
+        assert (output / "NOTICE").read_text() == "Synthetic notice"
+        assert result["executable"] == "bin/body" and result["version"] == "1.2.3"
+        assert result["archive_sha256"] == hashlib.sha256(archive.read_bytes()).hexdigest()
+        assert result["executable_sha256"] == hashlib.sha256(b"executable bytes").hexdigest()
+
+
+def test_native_code_inventory_reuses_verifier_without_per_file_processes(tmp_path, monkeypatch):
+    assembler = load_native_assembler(monkeypatch)
+    executable = tmp_path / "runtime/python/lib/native.so"
+    executable.parent.mkdir(parents=True)
+    executable.write_bytes(b"\xcf\xfa\xed\xfe" + b"synthetic")
+    file(tmp_path / "runtime/python/README.txt", "ordinary dependency text")
+    monkeypatch.setattr(assembler.subprocess, "run", lambda *_args, **_kwargs: pytest.fail("per-file subprocess is unnecessary"))
+    assert assembler.macho_paths(tmp_path) == ["runtime/python/lib/native.so", "apps/Viventium.app"]
+
+
+@pytest.mark.parametrize("change", ["wrong_pin", "modified_source", "untracked_source"])
+def test_native_glasshive_staging_refuses_unselected_or_dirty_source(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, change: str,
+) -> None:
+    assembler = load_native_assembler(monkeypatch)
+    repo, source, _ = glasshive_source_fixture(tmp_path)
+    if change == "wrong_pin":
+        file(repo / "components.lock.json", json.dumps({"components": [{"name": "GlassHive", "ref": "a" * 40}]}))
+    elif change == "modified_source":
+        file(source / "runtime_phase1" / "src" / "workers_projects_runtime" / "api.py", "changed = True\n")
+    else:
+        file(source / "runtime_phase1" / "src" / "private.json", '{"private":"synthetic"}')
+    with pytest.raises(assembler.AssemblyError, match="GlassHive.*(pin|source)"):
+        assembler.stage_glasshive(
+            repo, source, tmp_path / "python", tmp_path / "uv", tmp_path / "output",
+            source_date_epoch=1700000000,
+        )
+
+
+def test_native_compliance_includes_glasshive_wheels_and_holds_unknown_licenses(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.syspath_prepend(str(GENERATE_COMPLIANCE.parent))
+    spec = importlib.util.spec_from_file_location("native_glasshive_compliance", GENERATE_COMPLIANCE)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    root = tmp_path / "runtime" / "glasshive"
+    file(root / "LICENSE", "Synthetic first-party license\n")
+    dependency = root / "site-packages" / "synthetic-1.0.dist-info"
+    file(dependency / "METADATA", "Name: synthetic\nVersion: 1.0\nLicense-Expression: MIT\nLicense-File: LICENSE\n")
+    file(dependency / "licenses" / "LICENSE", "Synthetic MIT notice\n")
+    unknown = root / "site-packages" / "unreviewed-2.0.dist-info"
+    file(unknown / "METADATA", "Name: unreviewed\nVersion: 2.0\n")
+    file(unknown / "LICENSE", "Synthetic unreviewed notice\n")
+    packages = module.glasshive_inventory(tmp_path, {"glasshive": {"version": "0.3.0"}})
+    records = {item["name"]: module.scan_package_record(tmp_path, item) for item in packages}
+    assert set(records) == {"GlassHive", "synthetic", "unreviewed"}
+    assert records["synthetic"]["allowed"] is True
+    assert records["synthetic"]["license_files"] == ["runtime/glasshive/site-packages/synthetic-1.0.dist-info/licenses/LICENSE"]
+    assert records["unreviewed"]["allowed"] is False
+    assert records["unreviewed"]["license"] == "NOASSERTION"
+    file(dependency / "METADATA", "Name: synthetic\nVersion: 1.0\nLicense-Expression: MIT\nLicense-File: ../../outside\n")
+    with pytest.raises(module.ComplianceError, match="unsafe"):
+        module.glasshive_inventory(tmp_path, {"glasshive": {"version": "0.3.0"}})
+
+
+@pytest.mark.parametrize("failure", [None, "undeclared", "executable", "notice", "identity"])
+def test_native_body_compliance_requires_exact_inventory_and_retains_license_hold(tmp_path, monkeypatch, failure):
+    monkeypatch.syspath_prepend(str(GENERATE_COMPLIANCE.parent))
+    spec = importlib.util.spec_from_file_location("native_body_compliance", GENERATE_COMPLIANCE)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    bodies = {}
+    for profile, license_value in (("codex-cli", "Apache-2.0"), ("claude-code", "LicenseRef-Anthropic-Commercial")):
+        root = tmp_path / "runtime/native-bodies" / profile
+        file(root / "package.json", json.dumps({"name": profile, "version": "1.0"}))
+        file(root / "LICENSE", "Synthetic notice")
+        executable(root / "body")
+        bodies[profile] = {"package_name": profile, "package_version": "1.0", "license": license_value,
+                           "license_files": ["LICENSE"], "executable": "body",
+                           "executable_sha256": hashlib.sha256((root / "body").read_bytes()).hexdigest()}
+    if failure == "undeclared":
+        file(tmp_path / "runtime/native-bodies/unselected/body")
+    elif failure == "executable":
+        file(tmp_path / "runtime/native-bodies/codex-cli/body", "changed")
+    elif failure == "notice":
+        (tmp_path / "runtime/native-bodies/codex-cli/LICENSE").unlink()
+    elif failure == "identity":
+        bodies["codex-cli"]["package_version"] = "2.0"
+    if failure:
+        with pytest.raises(module.ComplianceError):
+            module.native_body_inventory(tmp_path, {"glasshive": {"native_bodies": bodies}})
+    else:
+        packages = module.native_body_inventory(tmp_path, {"glasshive": {"native_bodies": bodies}})
+        records = {item["name"]: module.scan_package_record(tmp_path, item) for item in packages}
+        assert records["codex-cli"]["allowed"] is True
+        assert records["claude-code"]["allowed"] is False
+        assert records["claude-code"]["notice_present"] is True
+
+
+@pytest.mark.parametrize("failure", [None, "digest", "identity", "missing"])
+def test_native_browser_adapter_inventory_verifies_retained_pruned_metadata(tmp_path, monkeypatch, failure):
+    monkeypatch.syspath_prepend(str(GENERATE_COMPLIANCE.parent))
+    spec = importlib.util.spec_from_file_location("native_browser_metadata", GENERATE_COMPLIANCE)
+    module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+    root = tmp_path / "runtime/librechat"; closure = root / "client/dist-compliance"
+    file(root / "package-lock.json", json.dumps({"lockfileVersion": 3, "packages": {
+        "node_modules/synthetic-adapter": {"version": "1.0", "integrity": "sha512-synthetic"}}}))
+    file(root / "client/third_party/browser-compliance/overrides.json", json.dumps({
+        "schemaVersion": 1, "sources": [], "packageOverrides": [], "supplementalNotices": []}))
+    file(closure / "module-closure.json", json.dumps({"schemaVersion": 1, "packageLockPaths": []}))
+    def record(name, body):
+        file(closure / name, body)
+        return {"path": name, "sha256": hashlib.sha256(body.encode()).hexdigest()}
+    metadata = record("vendored/synthetic/package.json", json.dumps({"name": "synthetic-adapter", "version": "1.0"}))
+    component = {"id": "synthetic", "name": "Synthetic adapter", "upstreamPackage": "synthetic-adapter",
+        "upstreamVersion": "1.0", "upstreamIntegrity": "sha512-synthetic", "license": "MIT", "modified": True,
+        "packageMetadata": metadata, "notice": record("vendored/synthetic/NOTICE", "Synthetic notice"),
+        "legalFiles": [record("vendored/synthetic/LICENSE", "Synthetic license")]}
+    if failure == "digest": file(closure / metadata["path"], "changed")
+    elif failure == "identity": component["packageMetadata"] = record(metadata["path"], json.dumps({"name": "other", "version": "1.0"}))
+    elif failure == "missing": (closure / metadata["path"]).unlink()
+    file(closure / "manifest.json", json.dumps({"schemaVersion": 1, "packages": [], "vendoredComponents": [component]}))
+    assert not (root / "node_modules/synthetic-adapter").exists()
+    if failure:
+        with pytest.raises(module.ComplianceError): module.browser_inventory(tmp_path)
+    else:
+        assert module.browser_inventory(tmp_path)[0]["name"] == "Synthetic adapter"
 
 
 def load_native_runtime():
@@ -376,7 +626,7 @@ def test_native_health_surfaces_recovery_for_closed_state_without_owner_id(
     monkeypatch.setattr(runtime, "owned_service_pid", lambda *_args: 123)
     monkeypatch.setattr(runtime, "semantic_unix_http_ready", lambda *_args: True)
     monkeypatch.setattr(runtime, "semantic_http_ready", lambda *_args, **_kwargs: True)
-    monkeypatch.setattr(runtime, "native_child_environment", lambda _support: {})
+    monkeypatch.setattr(runtime, "native_child_environment", lambda _support, **_kwargs: {})
     monkeypatch.setattr(
         runtime,
         "build_metadata",
@@ -432,6 +682,7 @@ def test_assembler_builds_deterministic_relocatable_payload_and_bootstrap(tmp_pa
     ).read_bytes() == NATIVE_FIRST_ADMIN_RECOVERY.read_bytes()
     assert (payload / "bin" / "viventium-native-registration-close").is_file()
     assert (payload / "bin" / "viventium-native-password-reset-link").is_file()
+    assert (payload / "bin" / "viventium-native-provider-auth").is_file()
     assert (payload / "apps" / "Viventium.app" / "Contents" / "MacOS" / "Viventium").is_file()
     assert (first / "bootstrap" / "ViventiumBootstrap.app").is_dir()
     bootstrap_python = (
@@ -477,7 +728,7 @@ def test_assembler_builds_deterministic_relocatable_payload_and_bootstrap(tmp_pa
     assert metadata == {
         "arch": "arm64",
         "components": {
-            "librechat": {"commit": component_policy["librechat"]["commit"]},
+            "librechat": {"commit": next(item["ref"] for item in json.loads((REPO_ROOT / "components.lock.json").read_text())["components"] if item["name"] == "LibreChat")},
             "mongodb": {
                 "archive_sha256": component_policy["mongodb"]["architectures"]["arm64"][
                     "sha256"
@@ -509,8 +760,25 @@ def test_assembler_builds_deterministic_relocatable_payload_and_bootstrap(tmp_pa
         "source_date_epoch": 1700000000,
         "sandpack_index_sha256": hashlib.sha256(sandpack_index.read_bytes()).hexdigest(),
     }
+    for owner in ("life_setup.py", "life_bootstrap.py", "config_settings.py"):
+        assert (first / "payload/runtime/scripts" / owner).read_bytes() == (REPO_ROOT / "scripts/viventium" / owner).read_bytes()
+    assert (first / "payload/templates/life-v0.01/AGENTS.md").read_bytes() == (REPO_ROOT / "templates/life-v0.01/AGENTS.md").read_bytes()
     assert not any(path.is_symlink() for path in first.rglob("*"))
     assert {mode for _, _, mode in tree_digest(first)} <= {0o644, 0o755}
+
+
+def test_assembler_refreshes_prebuilt_bootstrap_from_selected_source(tmp_path: Path) -> None:
+    inputs = fixture_inputs(tmp_path)
+    names = ("native_payload.py", "install_native_payload.py")
+    for name in names:
+        file(inputs["bootstrap"] / "Contents/Resources/scripts" / name, "# stale producer input\n")
+    output = tmp_path / "candidate"
+    result = run_assembler(tmp_path, inputs, output)
+    assert result.returncode == 0, result.stderr
+    for name in names:
+        expected = (REPO_ROOT / "scripts/viventium" / name).read_bytes()
+        assert (output / "bootstrap/ViventiumBootstrap.app/Contents/Resources/scripts" / name).read_bytes() == expected
+    assert (output / "payload/runtime/scripts/native_payload.py").read_bytes() == (output / "bootstrap/ViventiumBootstrap.app/Contents/Resources/scripts/native_payload.py").read_bytes()
 
 
 def test_assembler_rejects_missing_built_runtime_and_external_symlink(tmp_path: Path) -> None:
@@ -605,10 +873,15 @@ def test_native_candidate_config_excludes_unbundled_glasshive(
     config = yaml.safe_load(
         (REPO_ROOT / "config.minimal.example.yaml").read_text(encoding="utf-8")
     )
+    # This fixture's synthetic Node has no npm installation; sequential-thinking bundling has
+    # its own native-component tests and is not part of the unbundled-GlassHive contract.
+    config.setdefault("integrations", {})["sequential_thinking"] = {"enabled": False}
     glasshive = config.setdefault("integrations", {}).setdefault("glasshive", {})
     glasshive["enabled"] = False
     glasshive.setdefault("provider", {})["enabled"] = False
     glasshive.setdefault("host_worker", {})["enabled"] = False
+    for role in ("memory", "deep_memory"):
+        config["llm"][role] = {"provider": "openai", "model": "gpt-5.6-sol", "reasoning_effort": "medium"}
     config_path = tmp_path / "native-config.yaml"
     compiled = tmp_path / "compiled"
     config_path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
@@ -638,13 +911,34 @@ def test_native_candidate_config_excludes_unbundled_glasshive(
     ).read_bytes() == config_path.read_bytes()
 
 
+@pytest.mark.parametrize("records", [[], [{"name": "LibreChat", "ref": "not-a-pin"}], [{"name": "LibreChat", "ref": "a" * 40}] * 2, None])
+def test_native_release_selection_rejects_ambiguous_or_invalid_parent_pin(tmp_path, monkeypatch, records):
+    assembler = load_native_assembler(monkeypatch)
+    file(tmp_path / "components.lock.json", json.dumps({"components": records}))
+    with pytest.raises(assembler.AssemblyError, match="LibreChat parent component pin"):
+        assembler.selected_component_pin(tmp_path, "LibreChat")
+
+
+def test_native_release_selection_follows_parent_lock_without_rewriting_prior_manifest(tmp_path, monkeypatch):
+    assembler = load_native_assembler(monkeypatch)
+    policy = assembler.read_components(REPO_ROOT / "release/native-payload/components.json")
+    lock = tmp_path / "components.lock.json"
+    file(lock, json.dumps({"components": [{"name": "LibreChat", "ref": "a" * 40}]}))
+    first = assembler.release_component_manifest(policy, "arm64", tmp_path)
+    file(lock, json.dumps({"components": [{"name": "LibreChat", "ref": "b" * 40}]}))
+    second = assembler.release_component_manifest(policy, "arm64", tmp_path)
+    assert first["librechat"]["commit"] == "a" * 40
+    assert second["librechat"]["commit"] == "b" * 40
+    assert "librechat" not in policy
+
+
 def test_assembler_rejects_unattestable_component_metadata(tmp_path: Path) -> None:
     inputs = fixture_inputs(tmp_path)
     policy = json.loads(
         (REPO_ROOT / "release" / "native-payload" / "components.json").read_text()
     )
 
-    policy["librechat"]["commit"] = "not-a-full-commit"
+    policy["librechat"] = {"commit": "0" * 40}
     invalid_commit_policy = file(
         tmp_path / "invalid-commit-components.json", json.dumps(policy)
     )
@@ -656,7 +950,7 @@ def test_assembler_rejects_unattestable_component_metadata(tmp_path: Path) -> No
         str(invalid_commit_policy),
     )
     assert invalid_commit.returncode != 0
-    assert "LibreChat component commit" in invalid_commit.stderr
+    assert "Native source pins belong only in components.lock.json" in invalid_commit.stderr
 
     policy = json.loads(
         (REPO_ROOT / "release" / "native-payload" / "components.json").read_text()
@@ -744,6 +1038,43 @@ def test_candidate_sandpack_runtime_is_bound_to_public_policy(monkeypatch, tmp_p
     assert len(local_digest) == 64
     with pytest.raises(assembler.AssemblyError, match="does not match public policy"):
         assembler.validate_sandpack_runtime(librechat, mode="candidate")
+
+
+@pytest.mark.parametrize("recovered_status", ["open", "closed"])
+def test_native_install_opens_current_first_admin_state_after_startup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, recovered_status: str
+) -> None:
+    inputs = fixture_inputs(tmp_path)
+    output = tmp_path / "candidate"
+    result = run_assembler(tmp_path, inputs, output)
+    assert result.returncode == 0, result.stderr
+    runtime = load_native_runtime()
+    support = tmp_path / "support"
+    root = output / "payload"
+    monkeypatch.setattr(runtime, "release_root", lambda: root)
+    monkeypatch.setattr(runtime, "preflight_service_ports", lambda *_: None)
+    monkeypatch.setattr(runtime, "guard_pid_snapshot", lambda *_: {})
+    monkeypatch.setattr(runtime, "health", lambda *_: None)
+    current = {"schema_version": 1, "status": recovered_status}
+    if recovered_status == "open":
+        current["token"] = "b" * 64
+    else:
+        current["admin_user_id"] = "c" * 24
+    def startup(*_args, **_kwargs):
+        previous = runtime.ensure_first_admin_state(support)
+        assert previous["status"] == "open"
+        assert previous["token"] != current.get("token")
+        runtime.write_atomic(support / "state/native-first-admin.json", json.dumps(current))
+    monkeypatch.setattr(runtime, "start", startup)
+    opened = []
+    monkeypatch.setattr(runtime.subprocess, "run", lambda command, **_: opened.append(command) or subprocess.CompletedProcess(command, 0))
+    runtime.install(argparse.Namespace(app_support_dir=support, local_qa=True,
+        no_helper=True, no_start=False, no_open=False, timeout=1))
+    expected = "http://127.0.0.1:3190/"
+    if recovered_status == "open":
+        expected += "__viventium_native_first_admin?token=" + current["token"]
+    assert opened == [["/usr/bin/open", expected]]
+    assert runtime.ensure_first_admin_state(support) == current
 
 
 def test_local_qa_install_and_health_entrypoints_run_without_target_build_tools(tmp_path: Path) -> None:
@@ -1148,6 +1479,49 @@ def test_native_old_release_stop_and_registration_hook_cannot_touch_active_runti
     assert calls == []
 
 
+@pytest.mark.parametrize("invalid", [None, "no_pending", "prepared", "health_passed", "key", "digest", "active", "pending_symlink", "writable_manifest"])
+def test_native_install_accepts_only_exact_bootstrap_replacement(tmp_path, monkeypatch, invalid):
+    monkeypatch.syspath_prepend(str(ASSEMBLER.parent))
+    import native_payload
+    runtime = load_native_runtime()
+    support = tmp_path / "support"
+    install_root = support / "native"
+    root = install_root / "releases" / "candidate"
+    root.mkdir(parents=True)
+    old = install_root / "releases" / "previous"
+    old.mkdir()
+    state = file(support / "state/native-runtime.json", json.dumps({
+        "schema_version": 1, "release_root": str(old), "local_qa": True,
+    }))
+    state.chmod(0o600)
+    before = state.read_bytes()
+    manifest = file(root / ".viventium-manifest.json", '{"verified":"candidate"}\n')
+    manifest.chmod(0o600 if invalid == "writable_manifest" else 0o444)
+    (install_root / "active").symlink_to(old if invalid == "active" else root, target_is_directory=True)
+    pending = file(native_payload._pending_activation_path(install_root), json.dumps({
+        "schema": 1, "candidateReleaseKey": "wrong" if invalid == "key" else root.name,
+        "priorReleaseKey": old.name, "phase": invalid if invalid in {"prepared", "health_passed"} else "pointer_switched",
+        "manifestSha256": "0" * 64 if invalid == "digest" else hashlib.sha256(manifest.read_bytes()).hexdigest(),
+    }))
+    pending.chmod(0o600)
+    if invalid == "no_pending":
+        pending.unlink()
+    elif invalid == "pending_symlink":
+        target = pending.with_name("original.json")
+        pending.rename(target)
+        pending.symlink_to(target)
+    monkeypatch.setattr(runtime, "release_root", lambda: root)
+    if invalid:
+        with pytest.raises(runtime.RuntimeError_):
+            runtime.refuse_cross_mode_install(support)
+    else:
+        runtime.refuse_cross_mode_install(support)
+        # The exception belongs only to install. A stale lifecycle command stays fenced.
+        with pytest.raises(runtime.RuntimeError_, match="release pointer"):
+            runtime.installed_release_root(support)
+    assert state.read_bytes() == before
+
+
 def test_native_start_failure_stops_only_services_launched_by_that_attempt(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1175,8 +1549,8 @@ def test_native_start_failure_stops_only_services_launched_by_that_attempt(
         "ensure_first_admin_state",
         lambda _support: {"schema_version": 1, "status": "open", "token": "a" * 64},
     )
-    monkeypatch.setattr(runtime, "native_child_environment", lambda _support: {})
-    monkeypatch.setattr(runtime, "runtime_secrets", lambda _support: {})
+    monkeypatch.setattr(runtime, "native_child_environment", lambda _support, **_kwargs: {})
+    monkeypatch.setattr(runtime, "runtime_secrets", lambda _support, **_kwargs: {})
     monkeypatch.setattr(
         runtime,
         "spawn",
@@ -1196,8 +1570,9 @@ def test_native_start_failure_stops_only_services_launched_by_that_attempt(
     assert stopped == ["mongodb"]
 
 
+@pytest.mark.parametrize("failed_service", ["librechat", "glasshive-mcp"])
 def test_native_start_failure_preserves_a_preexisting_owned_service(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failed_service: str
 ) -> None:
     runtime = load_native_runtime()
     root = tmp_path / "release"
@@ -1212,11 +1587,17 @@ def test_native_start_failure_preserves_a_preexisting_owned_service(
     monkeypatch.setattr(
         runtime,
         "build_metadata",
-        lambda _root: {"source_commit": "a" * 40, "sandpack_index_sha256": "0" * 64},
+        lambda _root: {"source_commit": "a" * 40, "sandpack_index_sha256": "0" * 64,
+                       "components": {"glasshive": {"commit": "b" * 40}} if failed_service == "glasshive-mcp" else {}},
     )
     monkeypatch.setattr(runtime, "preflight_service_ports", lambda *_args: None)
     monkeypatch.setattr(runtime, "preflight_mongodb_socket", lambda *_args: None)
     monkeypatch.setattr(runtime, "preflight_api_socket", lambda *_args: None)
+    monkeypatch.setattr(runtime, "preflight_private_socket", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(runtime, "native_body_paths", lambda _root: {"codex-cli": root / "body"} if failed_service == "glasshive-mcp" else {})
+    monkeypatch.setattr(runtime, "native_glasshive_transport_environment", lambda *_args: {})
+    monkeypatch.setattr(runtime, "native_glasshive_environment", lambda *_args: {})
+    monkeypatch.setattr(runtime, "wait_owned_glasshive_socket", lambda *_args, **kwargs: not kwargs.get("mcp"))
     monkeypatch.setattr(
         runtime,
         "live_pid",
@@ -1227,8 +1608,8 @@ def test_native_start_failure_preserves_a_preexisting_owned_service(
         "ensure_first_admin_state",
         lambda _support: {"schema_version": 1, "status": "open", "token": "a" * 64},
     )
-    monkeypatch.setattr(runtime, "native_child_environment", lambda _support: {})
-    monkeypatch.setattr(runtime, "runtime_secrets", lambda _support: {})
+    monkeypatch.setattr(runtime, "native_child_environment", lambda _support, **_kwargs: {})
+    monkeypatch.setattr(runtime, "runtime_secrets", lambda _support, **_kwargs: {})
     monkeypatch.setattr(runtime, "spawn", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
         runtime,
@@ -1242,11 +1623,15 @@ def test_native_start_failure_preserves_a_preexisting_owned_service(
         lambda service, _support, _root: stopped.append(service),
     )
 
-    with pytest.raises(runtime.RuntimeError_, match="LibreChat did not become ready"):
+    with pytest.raises(runtime.RuntimeError_, match="did not become ready"):
         runtime.start(type("Args", (), {"app_support_dir": support, "timeout": 0.1})())
 
-    assert stopped == ["librechat"]
-    assert maintenance[0] == (
+    assert stopped == (["glasshive-mcp", "glasshive"] if failed_service == "glasshive-mcp" else ["librechat"])
+    assert maintenance[0] == ("mongodb-replica-ready", [
+        str(root / "runtime/node/bin/node"), str(root / "runtime/scripts/native_mongodb_replica.js"),
+        str(root / "runtime/librechat"), str(runtime.mongodb_socket_path(support)), "0.1",
+    ])
+    assert maintenance[1] == (
         "first-admin-recovery",
         [
             str(root / "runtime" / "node" / "bin" / "node"),
@@ -1265,7 +1650,7 @@ def test_native_mongodb_connections_use_a_support_owned_unix_socket(tmp_path: Pa
 
     socket_path = support / "runtime" / "mongodb-27117.sock"
     assert runtime.mongodb_uri(support) == (
-        f"mongodb://{urllib.parse.quote(str(socket_path), safe='')}/LibreChat"
+        f"mongodb://{urllib.parse.quote(str(socket_path), safe='')}/LibreChat?directConnection=true"
     )
 
 
@@ -1456,6 +1841,7 @@ def owned_helper(path: Path, source_commit: str) -> None:
 def test_helper_activation_refuses_unrelated_app_and_rolls_back_owned_prior(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.syspath_prepend(str(NATIVE_RUNTIME.parent))
     runtime = load_native_runtime()
     home = tmp_path / "home"
     target = home / "Applications" / "Viventium.app"
@@ -1483,6 +1869,70 @@ def test_helper_activation_refuses_unrelated_app_and_rolls_back_owned_prior(
     with pytest.raises(OSError, match="synthetic activation failure"):
         runtime.install_helper(source, support)
     assert (target / "prior.txt").read_text() == "prior\n"
+
+
+@pytest.mark.parametrize("phase", ["activate", "backup", "rollback"])
+def test_sealed_helper_cleanup_preserves_prior_app_and_original_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, phase: str
+) -> None:
+    monkeypatch.syspath_prepend(str(NATIVE_RUNTIME.parent))
+    import native_payload
+    runtime = load_native_runtime()
+    home = tmp_path / "home"
+    home.mkdir()
+    target = home / "Applications" / "Viventium.app"
+    source = tmp_path / "source" / "Viventium.app"
+    owned_helper(source, "b" * 40)
+    owned_helper(target, "a" * 40)
+    file(target / "prior.txt", "prior\n")
+    for bundle in (source, target):
+        for current, _directories, files in os.walk(bundle, topdown=False):
+            for name in files:
+                path = Path(current) / name
+                path.chmod(0o555 if path.stat().st_mode & 0o111 else 0o444)
+            Path(current).chmod(0o555)
+    source_before = {str(p.relative_to(source)): (p.stat().st_mode, p.read_bytes())
+                     for p in source.rglob("*") if p.is_file()}
+    source_directory_modes = {
+        str(path.relative_to(source)): path.stat().st_mode
+        for path in [source, *source.rglob("*")] if path.is_dir()
+    }
+    support = tmp_path / "support"
+    monkeypatch.setattr(runtime, "user_home", lambda: home)
+    monkeypatch.setattr(runtime, "quiesce_helper", lambda _app: None)
+    real_replace = runtime.os.replace
+    def replace_bundle(source_path, destination_path):
+        # Exercise Darwin's sealed-directory rename constraint on every test host.
+        if Path(source_path).is_dir() and not Path(source_path).stat().st_mode & 0o200:
+            raise PermissionError("sealed directory requires owner write for rename")
+        if ((phase == "activate" and Path(source_path).name.startswith(".Viventium.app.installing"))
+                or (phase == "backup" and Path(source_path) == target)):
+            raise OSError("synthetic activation failure")
+        return real_replace(source_path, destination_path)
+    monkeypatch.setattr(runtime.os, "replace", replace_bundle)
+    try:
+        if phase in ("activate", "backup"):
+            with pytest.raises(OSError, match="synthetic activation failure"):
+                runtime.install_helper(source, support)
+        else:
+            backup = runtime.install_helper(source, support)
+            assert backup is not None
+            assert target.stat().st_mode & 0o777 == 0o555
+            assert backup.stat().st_mode & 0o777 == 0o555
+            runtime.rollback_helper(target, backup)
+        assert (target / "prior.txt").read_text() == "prior\n"
+        assert target.stat().st_mode & 0o777 == 0o555
+        assert not list(target.parent.glob(".Viventium.app.installing.*"))
+        assert {str(p.relative_to(source)): (p.stat().st_mode, p.read_bytes())
+                for p in source.rglob("*") if p.is_file()} == source_before
+        assert {
+            str(path.relative_to(source)): path.stat().st_mode
+            for path in [source, *source.rglob("*")] if path.is_dir()
+        } == source_directory_modes
+    finally:
+        for app in [source, target, *target.parent.glob(".Viventium.app.installing.*")]:
+            if app.exists():
+                native_payload._make_verified_tree_removable(app)
 
 
 def test_native_helper_refuses_symlinked_applications_without_touching_external_target(
@@ -1537,7 +1987,7 @@ def test_candidate_workflow_is_exact_dual_arch_relocatable_producer() -> None:
         '/usr/bin/strip -S "$bundle_root/ViventiumBootstrap.app/Contents/MacOS/ViventiumBootstrap"',
         '/usr/bin/codesign --force --sign - "$bundle_root/Viventium.app/Contents/MacOS/ViventiumHelper"',
         '/usr/bin/codesign --force --sign - "$bundle_root/ViventiumBootstrap.app/Contents/MacOS/ViventiumBootstrap"',
-        '/usr/bin/codesign --force --sign - "$candidate_root/payload/apps/Viventium.app"',
+        '/usr/bin/codesign --force --sign - --entitlements apps/macos/ViventiumHelper/ViventiumHelper.entitlements "$candidate_root/payload/apps/Viventium.app"',
         '/usr/bin/codesign --force --sign - "$candidate_root/bootstrap/ViventiumBootstrap.app"',
         '/usr/bin/codesign --verify --strict --verbose=2 "$candidate_root/payload/apps/Viventium.app"',
         '/usr/bin/codesign --verify --strict --verbose=2 "$candidate_root/bootstrap/ViventiumBootstrap.app"',
@@ -1566,11 +2016,12 @@ def test_candidate_workflow_is_exact_dual_arch_relocatable_producer() -> None:
     assert 'python-version: "3.12"' in workflow
     assert "Record hosted Python toolchain" in workflow
     assert "python -VV" in workflow
-    assert "glasshive:\n              enabled: false" in workflow
+    assert "glasshive:\n              enabled: true" in workflow
     assert "glasshive: { enabled: false }" not in workflow
-    assert 'native_glasshive["enabled"] = False' in workflow
-    assert 'native_glasshive.setdefault("provider", {})["enabled"] = False' in workflow
-    assert 'native_glasshive.setdefault("host_worker", {})["enabled"] = False' in workflow
+    assert 'native_glasshive["enabled"] = False' not in workflow
+    assert '--glasshive-root "$GITHUB_WORKSPACE/viventium_v0_4/GlassHive"' in workflow
+    assert '--codex-archive "${RUNNER_TEMP}/downloads/codex-cli.tar.gz"' in workflow
+    assert '--claude-code-archive "${RUNNER_TEMP}/downloads/claude-code.tar.gz"' in workflow
     assert "VIVENTIUM_LOCAL_SUBSCRIPTION_AUTH=true" not in workflow
     assert '/bin/cp -R "${RUNNER_TEMP}/components/python"' not in workflow
     assert '"token": sys.argv[1]' not in workflow
@@ -1823,6 +2274,7 @@ def test_native_payload_cli_matches_helper_and_lifecycle_contract(tmp_path: Path
         "status",
         "doctor",
         "password-reset-link",
+        "provider-auth",
         "snapshot",
         "restore",
         "uninstall",
@@ -1845,8 +2297,11 @@ def test_native_helper_offers_only_the_implemented_native_continuity_actions() -
     assert "Install updates with a new signed Viventium Bootstrap" in native_menu
     assert 'arguments: ["restore", snapshotPath]' in source
     assert 'logFileName: "helper-restore.log"' in source
-    assert 'manager.fileExists(atPath: "\\(repoRoot)/bin/viventium-native-start")' in source
-    assert 'process.arguments = ["\\(repoRoot)/bin/viventium"] + arguments' in source
+    assert 'FileManager.default.fileExists(atPath: "\\(repoRoot)/bin/viventium-native-start")' in source
+    assert "process.arguments = HelperCLICommand.arguments(" in source
+    assert "repoRoot: repoRoot, appSupportDir: appSupportDir, command: arguments" in source
+    assert 'return ["\\(repoRoot)/bin/viventium"] +' in source
+    assert '(native ? [] : ["--app-support-dir", appSupportDir]) + action' in source
     assert 'environment["VIVENTIUM_APP_SUPPORT_DIR"] = appSupportDir' in source
 
 
@@ -1874,7 +2329,7 @@ def test_native_password_reset_link_uses_only_bundled_runtime_and_local_mongo(
         "native_child_environment",
         lambda _support: {"HOME": "/synthetic-home", "PATH": "/usr/bin:/bin"},
     )
-    monkeypatch.setattr(runtime, "runtime_secrets", lambda _support: {"CREDS_KEY": "a" * 32, "CREDS_IV": "b" * 32})
+    monkeypatch.setattr(runtime, "runtime_secrets", lambda _support, **_kwargs: {"CREDS_KEY": "a" * 32, "CREDS_IV": "b" * 32})
     monkeypatch.setattr(runtime, "require_owned_service", lambda *_args: 4242)
 
     def run(command, **kwargs):
@@ -1959,6 +2414,25 @@ def test_native_install_refuses_established_source_app_support_without_mutation(
     assert not (support / "state" / "native-runtime.json").exists()
 
 
+def test_native_runtime_accepts_compiler_owned_contract_and_rejects_endpoint_changes(tmp_path, monkeypatch):
+    monkeypatch.syspath_prepend(str(ASSEMBLER.parent))
+    import config_compiler
+    runtime = load_native_runtime()
+    native = config_compiler.render_native_runtime_env({"install": {"mode": "native"}}, {
+        "OPENAI_API_KEY": "synthetic-secret", "START_GLASSHIVE": "true",
+        "GROQ_BASE_URL": "https://untrusted.invalid", "XAI_BASE_URL": "https://untrusted.invalid",
+    })
+    path = tmp_path / "native-runtime.env"
+    config_compiler.dump_env(path, native)
+    assert runtime.load_native_runtime_env(path) == native
+    assert "synthetic-secret" not in path.read_text()
+    assert native["START_GLASSHIVE"] == "false"
+    for name in ("GROQ_BASE_URL", "XAI_BASE_URL"):
+        config_compiler.dump_env(path, {**native, name: "https://untrusted.invalid"})
+        with pytest.raises(runtime.RuntimeError_, match="fixed Native profile"):
+            runtime.load_native_runtime_env(path)
+
+
 def test_native_runtime_env_parser_rejects_secrets_paths_placeholders_and_wrong_ports(
     tmp_path: Path,
 ) -> None:
@@ -1973,6 +2447,8 @@ def test_native_runtime_env_parser_rejects_secrets_paths_placeholders_and_wrong_
         "ANTHROPIC_API_KEY=user_provided\n"
         "GROQ_API_KEY=user_provided\n"
         "XAI_API_KEY=user_provided\n"
+        "GROQ_BASE_URL=https://api.groq.com/openai/v1/\n"
+        "XAI_BASE_URL=https://api.x.ai/v1\n"
         "VIVENTIUM_LC_API_PORT=3180\n"
         "VIVENTIUM_LC_FRONTEND_PORT=3190\n"
         "VIVENTIUM_PLAYGROUND_PORT=3300\n"
@@ -1999,6 +2475,172 @@ def test_native_runtime_env_parser_rejects_secrets_paths_placeholders_and_wrong_
             runtime.load_native_runtime_env(candidate)
 
 
+def test_native_guard_creates_private_mutable_files_regardless_of_launcher_umask(tmp_path):
+    result = subprocess.run([
+        sys.executable, str(REPO_ROOT / "scripts/viventium/native_process_guard.py"),
+        "--token", "a" * 64, "--", sys.executable, "-c",
+        "from pathlib import Path; Path('uploads').mkdir(); Path('uploads/report.txt').write_text('user work')",
+    ], cwd=tmp_path, umask=0o022, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert (tmp_path / "uploads").stat().st_mode & 0o777 == 0o700
+    assert (tmp_path / "uploads/report.txt").stat().st_mode & 0o777 == 0o600
+
+
+@pytest.mark.parametrize("components", [[], "invalid", {"glasshive": []}, {"glasshive": "invalid"}, {"glasshive": {"native_bodies": []}}])
+def test_native_body_inventory_rejects_malformed_structure(tmp_path, monkeypatch, components):
+    runtime = load_native_runtime()
+    monkeypatch.setattr(runtime, "build_metadata", lambda _root: {"components": components})
+    with pytest.raises(runtime.RuntimeError_, match="inventory"):
+        runtime.native_body_paths(tmp_path)
+
+
+def test_native_harness_uses_packaged_bodies_and_compiled_route_without_host_credentials(tmp_path, monkeypatch):
+    runtime = load_native_runtime(); root = tmp_path / "release"; support = tmp_path / "support"
+    bodies = {"codex-cli": root / "codex", "claude-code": root / "claude"}
+    monkeypatch.setattr(runtime, "native_body_paths", lambda _root: bodies)
+    monkeypatch.setattr(runtime, "ensure_support_directories", lambda *_args: None)
+    monkeypatch.setattr(runtime, "build_metadata", lambda _root: {"source_commit": "a" * 40, "components": {"glasshive": {"commit": "b" * 40}}})
+    monkeypatch.setattr(runtime, "runtime_secrets", lambda *_args, **_kwargs: {"CREDS_KEY": "c" * 64})
+    monkeypatch.setattr(runtime, "load_native_runtime_env", lambda _path: {
+        "WPR_MODEL_CODEX_CLI": "selected-primary", "WPR_CODEX_CLI_REASONING_EFFORT": "medium",
+        "WPR_MODEL_CLAUDE_CODE": "selected-fallback", "WPR_CLAUDE_CODE_EFFORT": "high",
+        "GLASSHIVE_PROVIDER_ALLOW_FULL_ACCESS": "false", "OPENAI_API_KEY": "user_provided",
+        "VIVENTIUM_PROMPT_BUNDLE_PATH": "/retired-build/prompt-bundle.json"})
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "host-secret-must-not-leak")
+    env = runtime.native_glasshive_environment(root, support)
+    assert env["VIVENTIUM_PROMPT_BUNDLE_PATH"] == str(root / "runtime/defaults/prompt-bundle.json")
+    assert env["WPR_CODEX_BIN"] == str(bodies["codex-cli"])
+    assert env["WPR_CLAUDE_CODE_BIN"] == str(bodies["claude-code"])
+    assert env["WPR_MODEL_CODEX_CLI"] == "selected-primary"
+    assert env["WPR_CODEX_CLI_REASONING_EFFORT"] == "medium"
+    assert env["WPR_MODEL_CLAUDE_CODE"] == "selected-fallback"
+    assert env["WPR_CLAUDE_CODE_EFFORT"] == "high"
+    assert env["GLASSHIVE_PROVIDER_ALLOW_FULL_ACCESS"] == "false"
+    assert "OPENAI_API_KEY" not in env and "ANTHROPIC_API_KEY" not in env
+    assert len({env[name] for name in ("WPR_API_TOKEN", "GLASSHIVE_PROVIDER_API_KEY", "GLASSHIVE_MCP_API_KEY", "VIVENTIUM_GLASSHIVE_SERVICE_ASSERTION_SECRET")}) == 4
+
+
+def test_native_glasshive_socket_is_private_before_server_start(tmp_path):
+    runtime = load_native_runtime()
+    root = tmp_path / "release"
+    file(root / "runtime/glasshive/site-packages/uvicorn.py", """
+import os, stat
+class Config:
+    def __init__(self, *args, **kwargs): self.uds = kwargs['uds']
+class Server:
+    def __init__(self, config): self.config = config
+    def run(self, *, sockets):
+        assert len(sockets) == 1
+        assert stat.S_IMODE(os.stat(self.config.uds).st_mode) == 0o600
+        assert sockets[0].getsockname() == self.config.uds
+""")
+    support = Path(tempfile.mkdtemp(prefix="vi-private-uds-", dir="/private/tmp"))
+    try:
+        (support / "runtime").mkdir(mode=0o700)
+        command = runtime.glasshive_server_command(root, support)
+        command[0] = sys.executable
+        result = subprocess.run(command, capture_output=True, text=True)
+        assert result.returncode == 0, result.stderr
+        assert runtime.native_glasshive_socket_path(support).stat().st_mode & 0o777 == 0o600
+    finally:
+        shutil.rmtree(support)
+
+
+def test_native_cleanup_drains_other_owned_services_after_socket_error(tmp_path, monkeypatch):
+    runtime = load_native_runtime()
+    stopped = []
+    def stop_service(service, support, root):
+        stopped.append(service)
+        if service == "glasshive":
+            raise runtime.RuntimeError_("unsafe socket remains untouched")
+    monkeypatch.setattr(runtime, "stop_service", stop_service)
+    with pytest.raises(runtime.RuntimeError_, match="glasshive: unsafe socket"):
+        runtime.stop_attempt_services(tmp_path, tmp_path, {service: None for service in runtime.SERVICE_ORDER})
+    assert stopped == list(reversed(runtime.SERVICE_ORDER))
+
+
+def test_native_cortex_slot_is_stable_per_mutable_root(tmp_path, monkeypatch):
+    runtime = load_native_runtime()
+    monkeypatch.setenv("VIVENTIUM_RUNTIME_SLOT_ID", "foreign-runtime")
+    slots = []
+    for name in ("first", "second"):
+        support = tmp_path / name
+        file(support / "runtime/runtime.env", "\n".join(f"{key}={value}" for key, value in runtime.NATIVE_FIXED_ENV.items()))
+        first = runtime.native_child_environment(support)["VIVENTIUM_RUNTIME_SLOT_ID"]
+        assert runtime.native_child_environment(support)["VIVENTIUM_RUNTIME_SLOT_ID"] == first
+        assert str(support) not in first
+        assert first != "foreign-runtime"
+        slots.append(first)
+    assert slots[0] != slots[1]
+
+
+def test_native_child_logs_use_private_mutable_support(tmp_path, monkeypatch):
+    runtime = load_native_runtime()
+    support = tmp_path / "support"
+    file(support / "runtime/runtime.env", "\n".join(
+        f"{key}={value}" for key, value in runtime.NATIVE_FIXED_ENV.items()))
+    monkeypatch.setenv("LIBRECHAT_LOG_DIR", str(tmp_path / "foreign"))
+
+    child = runtime.native_child_environment(support)
+
+    logs = support / "logs/librechat"
+    assert child["LIBRECHAT_LOG_DIR"] == str(logs)
+    assert logs.is_dir()
+    assert logs.stat().st_mode & 0o777 == 0o700
+    assert not (tmp_path / "foreign").exists()
+
+
+def test_native_child_files_use_the_existing_uploads_continuity_root(tmp_path, monkeypatch):
+    runtime = load_native_runtime()
+    support = tmp_path / "support"
+    file(support / "runtime/runtime.env", "\n".join(
+        f"{key}={value}" for key, value in runtime.NATIVE_FIXED_ENV.items()))
+    monkeypatch.setenv("VIVENTIUM_LIBRECHAT_UPLOADS_ROOT", str(tmp_path / "foreign"))
+    monkeypatch.setenv("VIVENTIUM_LIBRECHAT_IMAGE_OUTPUT_ROOT", str(tmp_path / "foreign-images"))
+
+    child = runtime.native_child_environment(support)
+
+    uploads = support / "data/uploads"
+    images = uploads / "images"
+    assert child["VIVENTIUM_LIBRECHAT_UPLOADS_ROOT"] == str(uploads)
+    assert child["VIVENTIUM_LIBRECHAT_IMAGE_OUTPUT_ROOT"] == str(images)
+    assert images.stat().st_mode & 0o777 == 0o700
+    assert str(images.relative_to(support)).startswith("data/uploads/")
+    assert "data/uploads" in runtime.NATIVE_RESTORE_ROOTS
+    assert not (tmp_path / "foreign").exists()
+    assert not (tmp_path / "foreign-images").exists()
+
+
+def test_native_child_files_reject_external_image_symlink(tmp_path):
+    runtime = load_native_runtime()
+    support = tmp_path / "support"
+    file(support / "runtime/runtime.env", "\n".join(
+        f"{key}={value}" for key, value in runtime.NATIVE_FIXED_ENV.items()))
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (support / "data/uploads").mkdir(parents=True)
+    (support / "data/uploads/images").symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(runtime.RuntimeError_, match="unsafe"):
+        runtime.native_child_environment(support)
+    assert list(outside.iterdir()) == []
+
+
+def test_native_child_logs_reject_external_symlink(tmp_path):
+    runtime = load_native_runtime()
+    support = tmp_path / "support"
+    file(support / "runtime/runtime.env", "\n".join(
+        f"{key}={value}" for key, value in runtime.NATIVE_FIXED_ENV.items()))
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (support / "logs").mkdir()
+    (support / "logs/librechat").symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(runtime.RuntimeError_, match="unsafe"):
+        runtime.native_child_environment(support)
+    assert list(outside.iterdir()) == []
+
+
 def test_native_child_environment_does_not_inherit_host_provider_credentials(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2014,6 +2656,8 @@ def test_native_child_environment_does_not_inherit_host_provider_credentials(
         "ANTHROPIC_API_KEY=user_provided\n"
         "GROQ_API_KEY=user_provided\n"
         "XAI_API_KEY=user_provided\n"
+        "GROQ_BASE_URL=https://api.groq.com/openai/v1/\n"
+        "XAI_BASE_URL=https://api.x.ai/v1\n"
         "VIVENTIUM_LC_API_PORT=3180\n"
         "VIVENTIUM_LC_FRONTEND_PORT=3190\n"
         "VIVENTIUM_PLAYGROUND_PORT=3300\n"
@@ -2044,16 +2688,14 @@ def test_first_admin_proxy_closes_replay_and_reopens_definite_upstream_error() -
     assert "VIVENTIUM_NATIVE_REGISTRATION_CLOSE_HOOK" in source
     assert "reloadClosedRegistration" in source
     assert "already been used or is invalid" in source
-    assert "/login?redirect_to=%2Fc%2Fnew%3Fsetup%3Daccounts" in source
+    assert "/login?redirect_to=%2Fc%2Fnew" in source
     assert "/login?setup=accounts" not in source
     assert "connect-src 'self'" in source
     assert "HttpOnly; SameSite=Strict" in source
     assert "function firstAdminCookie" in source
     assert "requestURL.pathname === '/register'" in source
-    assert (
-        "location.href='/login?redirect_to=%2Fc%2Fnew%3Fsetup%3Daccounts'"
-        in source
-    )
+    assert 'href="viventium://connect-ai"' in source
+    assert 'href="/login?redirect_to=%2Fc%2Fnew"' in source
     assert ".catch(() =>" in source
     assert "x.token=" not in source
     assert 'name="confirm_password"' in source
@@ -2874,7 +3516,8 @@ def test_first_admin_proxy_connection_error_allows_same_token_retry(tmp_path: Pa
             assert clean_page.status == 200
             assert "connect-src 'self'" in clean_page.headers["Content-Security-Policy"]
             assert 'name="confirm_password"' in page
-            assert "/login?redirect_to=%2Fc%2Fnew%3Fsetup%3Daccounts" in page
+            assert "/login?redirect_to=%2Fc%2Fnew" in page
+            assert "setup%3Daccounts" not in page
             assert "/login?setup=accounts" not in page
             assert token not in page
 
@@ -3014,6 +3657,107 @@ def test_first_admin_proxy_hook_failure_stays_closed_and_returns_service_unavail
         server.shutdown()
         thread.join(timeout=3)
         shutil.rmtree(short_root)
+
+
+def test_native_glasshive_proxy_retains_auth_owner_rejection_and_private_socket_boundary():
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node is unavailable")
+    def free_port():
+        with socket.socket() as handle:
+            handle.bind(("127.0.0.1", 0))
+            return handle.getsockname()[1]
+    received = []
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            received.append((self.path, dict(self.headers)))
+            self.send_response(403 if self.headers.get("X-Viventium-Service-Assertion") == "foreign-owner" else 200)
+            self.end_headers()
+            self.wfile.write(b"owner boundary")
+        def log_message(self, *_args):
+            pass
+    class UnixHTTPServer(HTTPServer):
+        address_family = socket.AF_UNIX
+    with tempfile.TemporaryDirectory(prefix="viv-gh-proxy-", dir="/private/tmp") as raw:
+        base = Path(raw); support = base / "support"; runtime_dir = support / "runtime"
+        runtime_dir.mkdir(parents=True, mode=0o700)
+        servers = []
+        proxy = None
+        try:
+            for name in ("librechat-api.sock", "glasshive.sock", "glasshive-mcp.sock", "scheduling.sock"):
+                server = UnixHTTPServer(str(runtime_dir / name), Handler)
+                (runtime_dir / name).chmod(0o600)
+                thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
+                servers.append((server, thread))
+            release = base / "release"
+            sandpack, digest = native_proxy_sandpack_fixture(release)
+            state = file(support / "state/native-first-admin.json", json.dumps({"schema_version": 1, "status": "closed"}))
+            hook = executable(base / "close-hook")
+            port, artifact_port = free_port(), free_port()
+            environment = {"PATH": "/usr/bin:/bin", "VIVENTIUM_NATIVE_RELEASE_ID": "e" * 40,
+                "VIVENTIUM_NATIVE_RELEASE_ROOT": str(release), "VIVENTIUM_NATIVE_FIRST_ADMIN_STATE": str(state),
+                "VIVENTIUM_NATIVE_PROXY_TARGET_SOCKET": str(runtime_dir / "librechat-api.sock"),
+                "VIVENTIUM_NATIVE_PROXY_LISTEN_PORT": str(port), "VIVENTIUM_NATIVE_SANDPACK_LISTEN_PORT": str(artifact_port),
+                "VIVENTIUM_NATIVE_SANDPACK_ROOT": str(sandpack), "VIVENTIUM_NATIVE_SANDPACK_INDEX_SHA256": digest,
+                "VIVENTIUM_NATIVE_REGISTRATION_CLOSE_HOOK": str(hook), "VIVENTIUM_APP_SUPPORT_DIR": str(support),
+                "VIVENTIUM_NATIVE_GLASSHIVE_SOCKET": str(runtime_dir / "glasshive.sock"),
+                "VIVENTIUM_NATIVE_GLASSHIVE_MCP_SOCKET": str(runtime_dir / "glasshive-mcp.sock"),
+                "WPR_API_TOKEN": "a" * 64, "GLASSHIVE_PROVIDER_API_KEY": "b" * 64, "GLASSHIVE_MCP_API_KEY": "c" * 64,
+                "VIVENTIUM_NATIVE_SCHEDULING_SOCKET": str(runtime_dir / "scheduling.sock"),
+                "SCHEDULING_MCP_API_KEY": "d" * 64, "SCHEDULER_LIBRECHAT_SECRET": "e" * 64}
+            proxy = subprocess.Popen([node, str(NATIVE_PROXY)], env=environment, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+            def request(path, headers=None):
+                try:
+                    with LOOPBACK_OPENER.open(urllib.request.Request(f"http://127.0.0.1:{port}" + path, headers=headers or {}), timeout=2) as response:
+                        return response.status, response.read()
+                except urllib.error.HTTPError as error:
+                    return error.code, error.read()
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline:
+                try:
+                    if request("/__viventium_native_health")[0] == 200: break
+                except OSError: time.sleep(0.05)
+            prefix = "/__viventium_native_glasshive/v1/work/work-1"
+            for headers in ({}, {"Cookie": "session=synthetic"}, {"Authorization": "Bearer wrong"}):
+                assert request(prefix, headers)[0] == 401
+            assert received == []
+            assert request(prefix, {"Authorization": "Bearer " + "a" * 64,
+                                    "X-Viventium-Service-Assertion": "foreign-owner"})[0] == 403
+            assert request(prefix + "?detail=1", {"Authorization": "Bearer " + "a" * 64,
+                          "X-Viventium-Service-Assertion": "correct-owner", "Cookie": "session=synthetic"}) == (200, b"owner boundary")
+            assert received[-1][0] == "/v1/work/work-1?detail=1"
+            assert {key.lower(): value for key, value in received[-1][1].items()}["x-viventium-service-assertion"] == "correct-owner"
+            assert not any(name.lower() == "cookie" for name in received[-1][1])
+            assert request("/__viventium_native_glasshive_mcp/mcp", {"Authorization": "Bearer " + "a" * 64})[0] == 401
+            assert request("/__viventium_native_glasshive_mcp/mcp", {"X-WPR-Token": "c" * 64})[0] == 200
+            schedule_prefix = "/__viventium_native_scheduling/"
+            for headers in ({}, {"Cookie": "session=synthetic"}, {"X-WPR-Token": "c" * 64},
+                            {"X-Viventium-Scheduler-Secret": "e" * 64},
+                            {"X-GlassHive-Signature": "synthetic"}):
+                before = len(received)
+                assert request(schedule_prefix + "mcp", headers)[0] == 401
+                assert len(received) == before
+            assert request(schedule_prefix + "mcp", {"Authorization": "Bearer " + "d" * 64})[0] == 200
+            assert received[-1][0] == "/mcp"
+            assert request(schedule_prefix + "internal/glasshive/recurring-schedules",
+                           {"X-Viventium-Scheduler-Secret": "e" * 64})[0] == 200
+            callback_path = "/internal/scheduled-prompts/glasshive-callback"
+            before = len(received)
+            assert request(callback_path, {"Cookie": "session=synthetic"})[0] == 401
+            assert len(received) == before
+            assert request(callback_path, {"X-GlassHive-Signature": "synthetic"})[0] == 200
+            assert received[-1][0] == callback_path
+            (runtime_dir / "scheduling.sock").chmod(0o666)
+            assert request(schedule_prefix + "mcp", {"Authorization": "Bearer " + "d" * 64})[0] == 503
+            before = len(received)
+            (runtime_dir / "glasshive.sock").chmod(0o666)
+            assert request(prefix, {"Authorization": "Bearer " + "b" * 64})[0] == 503
+            assert len(received) == before
+        finally:
+            if proxy is not None:
+                proxy.terminate(); proxy.wait(timeout=5)
+            for server, thread in servers:
+                server.shutdown(); server.server_close(); thread.join(timeout=2)
 
 
 def test_native_proxy_never_forwards_to_obsolete_or_foreign_tcp_target(tmp_path: Path) -> None:
@@ -3591,3 +4335,204 @@ def test_bootstrap_launcher_uses_only_its_signed_bundled_python() -> None:
     assert 'executableURL = URL(fileURLWithPath: "/usr/bin/python3")' not in source
     assert "brew" not in source.lower()
     assert "source install" not in source.lower()
+
+
+@pytest.mark.parametrize("profile,arguments,expected", [
+    ("codex-cli", [], ["login", "-c", 'cli_auth_credentials_store="file"']),
+    ("codex-cli", ["--device-auth"], ["login", "--device-auth", "-c", 'cli_auth_credentials_store="file"']),
+    ("codex-cli", ["--with-api-key"], ["login", "--with-api-key", "-c", 'cli_auth_credentials_store="file"']),
+    ("claude-code", [], ["auth", "login"]),
+    ("claude-code", ["--console"], ["auth", "login", "--console"]),
+    ("claude-code", ["--sso"], ["auth", "login", "--sso"]),
+])
+def test_native_provider_auth_preserves_published_login_choices(tmp_path, monkeypatch, profile, arguments, expected):
+    runtime = load_native_runtime()
+    root, support = tmp_path / "release", tmp_path / "support"
+    monkeypatch.setattr(runtime, "native_body_paths", lambda _: {"codex-cli": root / "codex", "claude-code": root / "claude"})
+    monkeypatch.setenv("OPENAI_API_KEY", "synthetic-unselected")
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "synthetic-unselected")
+    command, env = runtime.native_provider_auth_command(root, support, profile, "login", arguments)
+    assert command[1:] == expected
+    assert command[0] == str(root / ("codex" if profile == "codex-cli" else "claude"))
+    assert env["HOME"] == str(support / "runtime/glasshive-home")
+    assert env["CODEX_HOME"] == str(support / "runtime/glasshive-home/.codex")
+    assert not {"OPENAI_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "WPR_API_TOKEN"} & env.keys()
+    assert Path(env["CODEX_HOME"]).stat().st_mode & 0o777 == 0o700
+
+
+def test_native_provider_auth_parser_preserves_helper_lifecycle_options():
+    runtime = load_native_runtime()
+    command = runtime.parser().parse_args(["provider-auth", "codex-cli", "login", "--", "--device-auth"])
+    assert command.provider == "codex-cli" and command.provider_arguments[-1] == "--device-auth"
+    assert runtime.parser().parse_args(["start", "--respect-stopped"]).respect_stopped
+
+
+def test_native_provider_auth_cancel_joins_only_its_child(tmp_path, monkeypatch):
+    runtime = load_native_runtime()
+    monkeypatch.setattr(runtime, "lifecycle_lock", lambda *_: contextlib.nullcontext())
+    monkeypatch.setattr(runtime, "installed_release_root", lambda _: tmp_path)
+    monkeypatch.setattr(runtime, "ensure_first_admin_state", lambda _: {"status": "closed", "admin_user_id": "a" * 24})
+    monkeypatch.setattr(runtime, "native_provider_auth_command", lambda *_: (["/owned/provider", "login"], {"HOME": str(tmp_path)}))
+    events = []
+    class Child:
+        def wait(self, **kwargs):
+            events.append(("wait", kwargs))
+            if not kwargs:
+                raise KeyboardInterrupt()
+            return 0
+        def poll(self):
+            return None
+        def terminate(self):
+            events.append(("terminate", {}))
+    monkeypatch.setattr(runtime.subprocess, "Popen", lambda *_args, **_kwargs: Child())
+    args = argparse.Namespace(app_support_dir=tmp_path, provider="codex-cli", action="login", provider_arguments=[])
+    with pytest.raises(KeyboardInterrupt):
+        runtime.provider_auth(args)
+    assert events == [("wait", {}), ("terminate", {}), ("wait", {"timeout": 5})]
+
+
+def test_native_provider_auth_refuses_incomplete_owner_before_launch(tmp_path, monkeypatch):
+    runtime = load_native_runtime()
+    monkeypatch.setattr(runtime, "lifecycle_lock", lambda *_: contextlib.nullcontext())
+    monkeypatch.setattr(runtime, "installed_release_root", lambda _: tmp_path)
+    monkeypatch.setattr(runtime, "ensure_first_admin_state", lambda _: {"status": "open"})
+    monkeypatch.setattr(runtime.subprocess, "Popen", lambda *_args, **_kwargs: pytest.fail("must not launch provider"))
+    args = argparse.Namespace(app_support_dir=tmp_path, provider="claude-code", action="login", provider_arguments=[])
+    with pytest.raises(runtime.RuntimeError_, match="owner setup"):
+        runtime.provider_auth(args)
+
+
+@pytest.mark.parametrize("action,login_exit,status_exit,expected", [
+    ("login", 1, 0, "did not complete"),
+    ("logout", 0, 0, "disconnect was not verified"),
+    ("logout", 0, 2, "disconnect was not verified"),
+    ("logout", 0, -15, "disconnect was not verified"),
+    ("logout", 0, "timeout", "disconnect status is unavailable"),
+    ("logout", 0, "config_failure", "disconnect was not verified"),
+    ("logout", 0, 1, None),
+])
+def test_native_provider_auth_lifecycle_failure_and_disconnect(tmp_path, monkeypatch, action, login_exit, status_exit, expected):
+    runtime = load_native_runtime()
+    monkeypatch.setattr(runtime, "lifecycle_lock", lambda *_: contextlib.nullcontext())
+    monkeypatch.setattr(runtime, "installed_release_root", lambda _: tmp_path)
+    monkeypatch.setattr(runtime, "ensure_first_admin_state", lambda _: {"status": "closed", "admin_user_id": "a" * 24})
+    commands = []
+    def command(_root, _support, _profile, operation, arguments):
+        commands.append(operation)
+        return ["/owned/provider", operation], {"HOME": str(tmp_path)}
+    monkeypatch.setattr(runtime, "native_provider_auth_command", command)
+    monkeypatch.setattr(runtime.subprocess, "Popen", lambda *_args, **_kwargs: type("Child", (), {"wait": lambda _: login_exit})())
+    def status(*_args, **_kwargs):
+        if status_exit == "timeout":
+            raise subprocess.TimeoutExpired([], 10)
+        if status_exit == "config_failure":
+            return subprocess.CompletedProcess([], 1, stdout="", stderr="Invalid configuration")
+        return subprocess.CompletedProcess([], status_exit, stdout="", stderr="Not logged in" if status_exit == 1 else "")
+    monkeypatch.setattr(runtime.subprocess, "run", status)
+    args = argparse.Namespace(app_support_dir=tmp_path, provider="codex-cli", action=action, provider_arguments=[])
+    if expected:
+        with pytest.raises(runtime.RuntimeError_, match=expected):
+            runtime.provider_auth(args)
+    else:
+        runtime.provider_auth(args)
+    assert commands == (["logout", "status"] if action == "logout" else ["login"])
+
+
+def test_native_provider_auth_rejects_stale_installed_payload_before_login(tmp_path, monkeypatch):
+    runtime = load_native_runtime()
+    monkeypatch.setattr(runtime, "lifecycle_lock", lambda *_: contextlib.nullcontext())
+    monkeypatch.setattr(runtime, "release_root", lambda: tmp_path / "old")
+    monkeypatch.setattr(runtime, "runtime_state", lambda _: {"release_root": str(tmp_path / "current")})
+    state = tmp_path / "state/native-runtime.json"
+    state.parent.mkdir()
+    state.write_text("{}")
+    monkeypatch.setattr(runtime.subprocess, "Popen", lambda *_args, **_kwargs: pytest.fail("must not launch provider"))
+    args = argparse.Namespace(app_support_dir=tmp_path, provider="codex-cli", action="login", provider_arguments=[])
+    with pytest.raises(runtime.RuntimeError_, match="Installed release pointer"):
+        runtime.provider_auth(args)
+
+
+def test_native_scheduling_keeps_legacy_service_selection_and_separates_credentials(tmp_path, monkeypatch):
+    runtime = load_native_runtime()
+    root, support = tmp_path / "release", tmp_path / "support"
+    metadata = {"components": {}}
+    monkeypatch.setattr(runtime, "build_metadata", lambda _: metadata)
+    monkeypatch.setattr(runtime, "runtime_secrets", lambda *_args, **_kwargs: {"CREDS_KEY": "a" * 64})
+    assert runtime.release_services(root) == runtime.CORE_SERVICE_ORDER
+    assert runtime.native_scheduling_environment(root, support) == {}
+    metadata["components"]["scheduling"] = {"version": "0.1.0"}
+    assert runtime.release_services(root) == (*runtime.CORE_SERVICE_ORDER, "scheduling")
+    env = runtime.native_scheduling_environment(root, support)
+    assert env["SCHEDULING_MCP_API_KEY"] != env["SCHEDULER_LIBRECHAT_SECRET"]
+    assert env["VIVENTIUM_SCHEDULER_SECRET"] == env["SCHEDULER_LIBRECHAT_SECRET"]
+    assert env["SCHEDULING_DB_PATH"] == str(support / "state/runtime/native/scheduling/schedules.db")
+    assert env["SCHEDULING_MCP_URL"].endswith("/__viventium_native_scheduling/mcp")
+    assert env["GLASSHIVE_SCHEDULING_OWNER_URL"] == env["SCHEDULING_MCP_URL"]
+    assert (support / "state/runtime/native/scheduling").stat().st_mode & 0o777 == 0o700
+    assert not any(name.startswith("OPENAI") or name.startswith("ANTHROPIC") for name in env)
+    command = runtime.scheduling_server_command(root, support)
+    assert command[:3] == [str(root / "runtime/python/bin/python3"), "-I", "-B"]
+    assert command[-1] == str(support / "runtime/scheduling.sock")
+    assert "--port" not in command
+
+
+def test_native_redis_uses_private_persistent_store_and_preserves_legacy_service_state(tmp_path, monkeypatch):
+    runtime = load_native_runtime()
+    root, support = tmp_path / "release", tmp_path / "support"
+    metadata = {"components": {}}
+    monkeypatch.setattr(runtime, "build_metadata", lambda _: metadata)
+    assert runtime.native_redis_environment(root, support) == {}
+    metadata["components"]["redis"] = {"version": "7.2.15"}
+    assert runtime.release_services(root) == ("mongodb", "redis", "librechat", "frontend-proxy")
+    environment = runtime.native_redis_environment(root, support)
+    assert environment["USE_REDIS_STREAMS"] == "true"
+    assert environment["REDIS_SOCKET_PATH"] == str(support / "runtime/redis.sock")
+    assert "REDIS_URI" not in environment
+    command = runtime.native_redis_command(root, support)
+    for option, expected in (("--port", "0"), ("--unixsocketperm", "600"),
+                             ("--appendonly", "yes"), ("--appendfsync", "always")):
+        assert command[command.index(option) + 1] == expected
+    assert command[command.index("--dir") + 1] == str(support / "state/runtime/native/continuity/redis")
+    for services in (runtime.CORE_SERVICE_ORDER, runtime.release_services(root), runtime.SERVICE_ORDER):
+        assert runtime.validate_coherent_service_state(dict.fromkeys(services, 42)) == set(services)
+    with pytest.raises(runtime.RuntimeError_, match="inconsistent"):
+        runtime.validate_coherent_service_state({"mongodb": 42, "redis": 43})
+
+
+def test_native_redis_rejects_changed_source_before_executing_build(tmp_path, monkeypatch):
+    assembler = load_native_assembler(monkeypatch)
+    archive = file(tmp_path / "redis.tar.gz", "untrusted archive")
+    monkeypatch.setattr(assembler.subprocess, "run", lambda *args, **kwargs: pytest.fail("must not build unverified archive"))
+    with pytest.raises(assembler.AssemblyError, match="publisher policy"):
+        assembler.stage_redis(archive, tmp_path / "output", {"source": {"sha256": "a" * 64}},
+                              "arm64", source_date_epoch=1788624000)
+
+
+def test_native_copy_excludes_customized_development_sources_only(tmp_path, monkeypatch):
+    module = load_native_assembler(monkeypatch)
+    source = tmp_path / "librechat"
+    destination = tmp_path / "payload"
+    kept = ["api/server/index.js", "client/dist/index.html", "packages/api/dist/index.js",
+            "node_modules/vendor/test/entry.js", "node_modules/vendor/runtime.spec.js",
+            "viventium/MCPs/scheduling-cortex/src/server.py"]
+    excluded = ["client/src/main.tsx", "api/test/fixture.js", "api/server/foo.test.js",
+                "packages/api/src/foo.spec.ts", "viventium/MCPs/scheduling-cortex/tests/test_server.py",
+                "librechat.example.yaml", ".venv/bin/python"]
+    for relative in kept + excluded:
+        path = source / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("fixture\n")
+    module.copy_safe(source, destination, boundary=source, source_date_epoch=1, customized_librechat=True)
+    assert all((destination / relative).is_file() for relative in kept)
+    assert all(not (destination / relative).exists() for relative in excluded)
+
+
+def test_native_work_view_and_artifact_links_use_the_existing_proxy_origin(tmp_path, monkeypatch):
+    runtime = load_native_runtime()
+    monkeypatch.setattr(runtime, "native_body_paths", lambda *_: {"codex": tmp_path / "codex"})
+    monkeypatch.setattr(runtime, "runtime_secrets", lambda *_: {"CREDS_KEY": "11" * 32})
+    environment = runtime.native_glasshive_transport_environment(tmp_path / "release", tmp_path / "support")
+    public_base = environment["GLASSHIVE_RUNTIME_PUBLIC_BASE_URL"]
+    assert public_base == environment["WPR_MCP_BASE_URL"]
+    assert public_base + "/v1" == environment["GLASSHIVE_PROVIDER_BASE_URL"]
+    assert urllib.parse.urlparse(public_base + "/w/opaque-ref").path.startswith("/__viventium_native_glasshive/w/")

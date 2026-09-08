@@ -99,8 +99,57 @@ python3 scripts/viventium/qa_storage_guard.py cleanup \
   --state-root /path/to/private-evidence/qa-storage-guard
 ```
 
+The clone source can be an existing local base or an official vanilla OCI image pinned as
+`registry.example.invalid/images/macos-vanilla@sha256:<64 lowercase hex digits>`. Resolve and retain
+the manifest digest before cloning; mutable tags and ambiguous references are rejected. The same
+receipt records the source and full pre-clone Tart inventory. Cleanup deletes the one target and
+only a cache that this run introduced; pre-existing sources and user VMs remain. Since native Tart
+OCI deletion also collects unreferenced cache entries, another OCI source blocks that deletion.
+Missing old inventory requires explicit operator recovery evidence; it is never reconstructed from
+current state. Automatic cache pruning stays off.
+
+A retained stopped-VM run may transport one local-QA payload with
+`--dir=payload:/absolute/sealed-artifacts:ro`. The directory must contain exactly one owned,
+non-writable manifest and ZIP, without links or other files. The existing native installer verifies
+the local-QA manifest and archive hash before launch; the guard records their identities and the
+exact read-only mount. General host shares, writable mounts, and additional directories remain
+rejected. This does not approve public redistribution or grant access to host user data.
+
+If an operator explicitly authorized a concurrent runtime stop/restart/rebuild, cleanup can accept
+`--acknowledge-external-runtime-changes <private-record.json>` only with this run ID, the exact
+removed/added container and image IDs and hashes of the reviewed evidence. It never infers authorization
+from names or rewrites the baseline. All other resource checks remain active, and the receipt
+records `COMPLETE_WITH_AUTHORIZED_EXTERNAL_CHANGE`, which is not a clean QA pass.
+
+A retained receipt-owned VM can continue with the same flag on `run`, before `--`. The command
+validates that exact VM, the reviewed delta and all existing storage limits before starting. Every
+monitor sample must still match the exact acknowledged container/image delta; volume changes, a
+replaced Docker disk, further runtime changes and storage overruns remain failures. The original
+baseline and lease stay intact, and the receipt retains the acknowledgment as evidence. The flag
+applies only to that invocation; later commands must supply their current reviewed acknowledgment
+again. It cannot by itself resume a `CLEANUP_REQUIRED` receipt or turn a run into release acceptance.
+
+After explicit operator review, `run --resume-stopped-vm` can retry the same retained Tart VM after
+its failure is resolved. It requires that exact owned VM to report stopped, no live Tart or VM-owned
+process, and a stopped previous process group when its identity was recorded. Legacy receipts with
+no process identity require explicit operator review of the original command evidence; the current
+absence check does not reconstruct a historical PID. Recovery accepts only the existing Tart run
+with graphics/audio/clipboard disable options and optional `--capture-system-keys` for guest keyboard input,
+rechecks the original limits and current reviewed
+Docker delta before running, and preserves the previous failure in recovery history. It never raises
+limits, resets a baseline, creates another VM, or converts a failed run into clean acceptance.
+
+The numeric host-growth budget and free-space floor are QA resource settings. When the owner
+authorizes a different task budget, `run --host-growth-budget-bytes <bytes>` and/or
+`--minimum-host-free-bytes <bytes>`, with `--resource-budget-reason <reason>`, apply to that one
+retained stopped-VM command. The free-space floor must remain at least 32 GiB. The guard
+records original and effective policies plus the reason and command without replacing its baseline,
+original policy, lease or failure history. The effective free-space floor, Docker limits, exact resource
+ownership and stopped-VM checks remain mandatory. Later commands use the original budget unless
+explicitly supplied again. This does not authorize unrelated deletion or turn prior failures into a pass.
+
 Do not start a second run when the guard says `CLEANUP_REQUIRED`. Review the persistent receipt,
-remove only receipt-owned synthetic leftovers, and rerun the exact cleanup. Cleanup will not release
+remove only receipt-owned synthetic leftovers, then use the bounded stopped-VM recovery above or rerun the exact cleanup. Cleanup will not release
 the lease while a post-baseline Docker container, volume, or image remains. Never use a global Tart or
 Docker prune as recovery. The automated contract uses fake executables only; it does not count as the
 final real disposable-Mac acceptance run. A guarded driver must also leave its exact process group

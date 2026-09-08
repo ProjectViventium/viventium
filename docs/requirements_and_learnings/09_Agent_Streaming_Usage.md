@@ -35,6 +35,15 @@ Perplexity) stream usage fields in multiple chunks, which triggers LangChain mer
 - LangChain’s `_mergeDicts` warns on duplicate `completion_tokens` fields when types differ.
 - Disabling per-chunk usage for Perplexity removes log noise without losing final usage totals.
 
+## Native Codex usage
+
+Read usage from the completed Codex turn, using the existing profile runtime and provider response
+paths. Codex input totals include cached tokens; normalize them to the runtime's disjoint input,
+cache-read and cache-write buckets so the public total does not double-count cached input. Output
+tokens already include reasoning tokens. Preserve an explicit zero; missing or inconsistent terminal
+usage remains unknown. Interim text or tool events cannot supply trusted final usage. Do not infer
+usage from text length or report a missing record as a measured zero.
+
 ## Cross-Surface Logical-Turn Contract
 
 A logical turn is the canonical conversation-and-interaction-class lifecycle shared by web,
@@ -152,6 +161,15 @@ recorded, the next claim reconciles that persisted final as committed before ope
 logical turn. This narrow restart recovery never applies to `external_adapter` jobs.
 
 ### Presentation versus durable work
+
+Web chat keeps harness activity in one initially collapsed disclosure per author and parallel
+round within a message. Opening it shows the original progress rows in order. Streaming additions
+keep an open disclosure open; reloading restores the same history, initially collapsed. Answer text,
+failures, memory receipts, and files remain outside this disclosure. Grouping changes presentation
+only: it preserves each event and message-part identity and never merges different authors' work.
+Before persistence, the legacy aggregate activity text reconciles with its captured typed stream
+while its source type is still known. This prevents the same event appearing twice without
+collapsing distinct typed events, repeated operations, or uncaptured progress.
 
 Supersession retracts an unfinished response; it does not implicitly cancel committed external
 effects, durable GlassHive work, or background tasks. Explicit cancellation remains the only

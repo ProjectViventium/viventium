@@ -180,15 +180,19 @@ def test_staging_rejects_output_symlink_ancestors_and_source_containment(tmp_pat
     assert not (source / "nested-output").exists()
 
 
-def test_staging_accepts_only_the_canonical_macos_var_alias(tmp_path: Path) -> None:
+def test_staging_accepts_only_the_canonical_macos_var_alias(tmp_path: Path, request: pytest.FixtureRequest) -> None:
     if sys.platform != "darwin" or not Path("/var").is_symlink():
         pytest.skip("macOS system alias contract")
     stager = load_stager()
     source = tmp_path / "node-source"
     write(source / "bin/node", b"node-runtime", 0o755)
     write(source / "LICENSE", b"node-license")
-    assert tmp_path.parts[:3] == ("/", "private", "var")
-    aliased_parent = Path("/var").joinpath(*tmp_path.parts[3:])
+    import tempfile
+    import shutil
+
+    alias_fixture = Path(tempfile.mkdtemp(prefix="viventium-var-alias-", dir="/private/var/tmp"))
+    request.addfinalizer(lambda: shutil.rmtree(alias_fixture))
+    aliased_parent = Path("/var").joinpath(*alias_fixture.parts[3:])
     aliased_output = aliased_parent / "alias-output"
 
     stager.stage_component(
@@ -198,4 +202,4 @@ def test_staging_accepts_only_the_canonical_macos_var_alias(tmp_path: Path) -> N
         source_date_epoch=1_700_000_000,
     )
 
-    assert (tmp_path / "alias-output" / "bin" / "node").is_file()
+    assert (alias_fixture / "alias-output" / "bin" / "node").is_file()

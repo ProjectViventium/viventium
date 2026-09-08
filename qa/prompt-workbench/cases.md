@@ -1481,12 +1481,13 @@ rows before claiming a pass when the feature behavior changes.
 | `PW-UC-018` | Select Emotional Resonance and Red Team direct-execution families, run both, inspect their prompt/runtime lineage, and reload history. | `49_Prompt_Architecture_and_Token_Efficiency.md` / `PW-042`, `ACT-44` | Real Prompt Workbench browser plus direct specialist runner and private run history | Target agent id hash, exact linked prompt/version hash, runtime-context ids/count, independent semantic verdicts, browser console/network, and persisted public-safe run summary | Each family invokes only its named specialist, records one execution-prompt dependency and zero Feelings runtime contexts, passes supported-inference/adversarial-independence rubrics, and persists without raw responses or private state values. | PARTIAL 2026-07-15: Emotional Resonance 2/2 and Red Team 2/2 independently judged; current-build browser/reload acceptance is pending ([report](../background_agents/reports/2026-07-15-specialist-cortex-execution.md)) |
 | `PW-UC-019` | Run an eval once with an unavailable semantic judge, then with a working judge, and inspect/reload both summaries. | `49_Prompt_Architecture_and_Token_Efficiency.md` / `PW-043` | exact-model runner plus real Prompt Workbench browser | runner status/counts, sanitized blocker, valid verdict, recent-run UI, reload, console/network | The outage is `blocked_semantic_judge` with one unavailable and zero semantic failures; the working route reports judged pass/fail normally; neither view exposes provider bodies or credential fragments. | PARTIAL 2026-07-15 for classification/redaction; live Workbench display/reload pending final browser pass |
 | `PW-UC-020` | Check several non-contiguous named eval cases, run them live, inspect lineage, and reload history. | `49_Prompt_Architecture_and_Token_Efficiency.md` / `PW-044`, `EMO-046` | real Prompt Workbench browser plus `/api/evals/run` and exact-model runner | visible checkbox state, request `caseIds`, saved selected IDs, lineage case IDs, runner filters, semantic counts, console/network | The same exact bounded case set appears at every layer; unknown/filter-mismatched IDs fail closed; the numeric first-N limit cannot silently substitute different cases. | PASS 2026-07-16: the five named Feelings regressions completed and passed 5/5 through the headed UI with matching lineage/history and zero browser/network/API errors ([report](../emotional-cortex/reports/2026-07-16-feelings-range-potency-and-telegram-replay.md)) |
-| `PW-UC-021` | Open the installed Workbench, inspect prompt lineage and Continuity, run one approved exact-model case, reload its history, and leave no synthetic residue. | `49_Prompt_Architecture_and_Token_Efficiency.md` / `PW-049` | installed token-free localhost Workbench browser and current APIs | build identity, registry/source/rendered/live hashes, visible edit controls, exact provider/model/agent/surface evidence, reload history, cleanup and owner-config fingerprints | The current installed journey passes only with explicit local QA authority; it uses a non-owner synthetic eval identity, preserves personal schedules, removes its exact draft/run, and stays `PRE-GATE / NOT READY`. | PARTIAL 2026-08-27: rebuilt installed Workbench, current backend/frontend receipt, healthy 80-frame trace source, 82-prompt registry, 175-case bank, exact configured Main route and semantic result, reload history, token-free browser security, exact synthetic cleanup, and unchanged personal schedule fingerprint passed. |
+| `PW-UC-021` | Open the installed Workbench, inspect prompt lineage and Continuity, run one approved exact-model case, reload its history, and leave no synthetic residue. | `49_Prompt_Architecture_and_Token_Efficiency.md` / `PW-049` | installed token-free localhost Workbench browser and current APIs | build identity, registry/source/rendered/live hashes, visible edit controls, exact provider/model/agent/surface evidence, reload history, cleanup and owner-config fingerprints | The current installed journey passes only with explicit local QA authority; it uses a non-owner synthetic eval identity, preserves personal schedules, removes its exact draft/run, and stays `PRE-GATE / NOT READY`. | PARTIAL 2026-08-27: the installed 175-case candidate passed the named bounded journey but trailed the then-current 177-case bank. Both counts are historical; the canonical bank has since moved and has no current installed acceptance. |
 | `PW-UC-022` | Open one synthetic continuity schedule and inspect its schedule, composed prompt, model and effort, history, destinations, dependencies, latency, cost, and disposition in existing Workbench views. | `CC-027` / `PW-051` | Prompt Workbench scheduled-prompt list, detail, history, and Run Now | source prompt and schedule metadata, rendered prompt, run/delivery ledger, model/effort, latency and cost | All operational facts are available through the existing Workbench control plane; no separate continuity dashboard or competing author exists. | NOT RUN — cataloged 2026-08-30. |
 | `PW-UC-023` | Rename and edit metadata on two synthetic schedules, then run the same behavior from each. | `CC-028` / `PW-046` | Prompt Workbench schedule editor and Scheduler | before/after metadata, schedule IDs, prompt selection, occurrence ledgers, and visible results | Behavior follows typed metadata and remains unchanged by title or display-name changes. | NOT RUN — cataloged 2026-08-30. |
-| `PW-UC-024` | Update one synthetic owner-scoped continuity schedule twice, run it manually and naturally, and reopen its existing conversation. | `CC-029` / `PW-046`, `SCHED-022` | Prompt Workbench, Scheduler, and durable conversation | schedule-object identity, registered prompt ID, occurrence rows, conversation receipt, and refresh | One scheduled object is updated in place, uses `scheduler.consciousness_continuity_opportunity`, and reuses the same durable conversation without exposing owner data. | NOT RUN — cataloged 2026-08-30. |
+| `PW-UC-024` | Update one private synthetic owner-scoped `viventium_agent` scheduled object twice, run it manually and naturally, and reopen its existing conversation. | `CC-029` / `PW-046`, `SCHED-022` | Prompt Workbench, Scheduler, and durable conversation | schedule-object identity, exact executor/type `viventium_agent`, registered prompt ID, occurrence rows, conversation receipt, and refresh | One private `viventium_agent` scheduled object is updated in place, uses `scheduler.consciousness_continuity_opportunity`, and reuses the same durable conversation without exposing owner data. | NOT RUN — cataloged 2026-08-30. |
 | `PW-UC-025` | Run one synthetic scheduled answer to Web and Telegram and inspect the matching Workbench run. | `CC-050` / `PW-052` | Prompt Workbench, Web, Telegram, and delivery ledger | canonical output hash, per-destination payloads, message count, Workbench run row, and sanitized logs | One canonical answer is adapted once per destination; Telegram contains no `{MSG_BREAK}`, and Workbench records audit state without authoring a second answer. | NOT RUN — cataloged 2026-08-30. |
 | `PW-UC-026` | Open Workbench from every supported local entry, navigate/reload/logout, and inspect URL, history, referrer, logs, and persistent browser storage. | `HARD-020` / `PW-053` | Installed Workbench browser, helper launch, current APIs, and logs | address/history entries, `Referer` headers, access/application logs, `localStorage`, session state, invalid/replay controls | Authentication works through the supported exchange/session and no authentication material enters any named sink. | NOT RUN — cataloged 2026-08-30. |
+| `PW-UC-027` | Launch durable work and open its nonterminal View / Steer link, then reload it. | `49_Prompt_Architecture_and_Token_Efficiency.md` / `PW-050` | Installed LibreChat browser, configured Main launch path, and mission-control link | typed launch metadata, exact receipt-to-URL binding, browser label and destination, reload state, and sanitized logs | The visible `View / Steer <task>` link targets the exact nonterminal work receipt, exposes no raw private URL, and keeps the same binding after reload. | PARTIAL 2026-08-28: source and automated receipt-binding checks passed; compilation, activation, exact configured Main launch, installed browser label/destination inspection, and reload proof remain open ([report](reports/2026-08-28-nonterminal-view-steer-receipt-truth.md)). |
 
 ## Release Test Traceability
 
@@ -1585,15 +1586,14 @@ Cleanup is a separate exact-manifest action and never runs automatically:
 VIVENTIUM_QA_ALLOW_PW_047_INSTALLED_FULL_BANK=1 node qa/prompt-workbench/scripts/run_pw_047_installed_full_bank.cjs --local-qa --cleanup-only --manifest=<private-PW-047-aggregate.json>
 ```
 
-Last Run: NOT RUN — cataloged 2026-08-27. The runner's 35 deterministic contract tests
-pass, including missing/mismatched effort, undeclared effort-only fallback, missing typed fallback
-reason, and replay lineage-loss cases. A GET-only installed preflight bound bank version 7, 21
-families, 175 unique cases, the current
-source/build/live hashes, and all 21 configured family routes into 29 exact-surface plans: 15 web,
-12 native, and 2 other non-native. The plans cover all 175 cases exactly once and made zero
-`/api/evals/run` requests. No live model run, acceptance report, cleanup, or restart was executed.
-The remaining prerequisite is one explicitly authorized installed live run whose 29 canonical
-artifacts and history rows all pass candidate-bound readback.
+Last Run: NOT RUN — cataloged 2026-08-27. On 2026-09-01, the runner's 35 deterministic
+contract tests passed against the canonical version-7 bank. The bank generates the current case
+count and one plan for each family/surface group; the runner proves unique IDs, exact-once coverage,
+complete readback, route identity, and bank/case/plan hashes without maintaining duplicate counts in
+this status record. The historical GET-only installed preflight covered 175 cases; its then-current
+source snapshot had 177. No current live model run, acceptance report, cleanup, or restart was
+executed. The remaining prerequisite is one explicitly authorized installed live run whose
+candidate-bound artifacts and history rows cover every case in the canonical bank.
 
 ## PW-048 Requested Surface Must Equal Executed Surface
 
@@ -1663,9 +1663,11 @@ Last Run: PARTIAL 2026-08-27. The bounded installed journey passed against the r
 Workbench with token-free loopback administration, healthy `/api/frames`, 82
 source/rendered/compiled/live prompt rows, 175 eval cases, one exact configured Main web case with
 semantic evidence, history persistence after reload, unchanged personal schedule configuration,
-keyboard/theme/responsive checks, and exact synthetic draft/run cleanup. A runner false positive
-caused by its own injected failed-save 503 was repaired without suppressing other console errors.
-The result remains private and explicitly `PRE-GATE / NOT READY`; it is not release evidence.
+keyboard/theme/responsive checks, and exact synthetic draft/run cleanup. That installed 175-case
+candidate trailed the then-current 177-case bank, and the canonical bank has since moved again, so
+the result is historical supporting evidence. A runner false positive caused by its own injected
+failed-save 503 was repaired without suppressing other console errors. The result remains private
+and explicitly `PRE-GATE / NOT READY`; it is not release evidence.
 
 ## PW-050 Nonterminal View / Steer Receipt Truth
 
@@ -1750,3 +1752,13 @@ Forbidden Result: one model answer per destination, leaked `{MSG_BREAK}`, duplic
 or Workbench acting as a second author.
 
 Last Run: NOT RUN — cataloged 2026-08-30.
+
+### Installed full-bank coverage boundary
+
+The aggregate runner inventories all current family and case IDs. The `main_compaction` and
+`worker_source` families require their own installed-artifact verification before PW-047 can
+certify a complete bank. They fail with `family_installed_route_unavailable`; they are never
+silently executed as Main or excluded from the count. Individual backend evaluations remain
+available. A passing runner regression suite does not close this full-bank acceptance gap.
+
+Supporting release regressions: `tests/release/test_native_worker_prompt_closure.py`, `tests/release/test_worker_prompt_registry.py`, `tests/release/test_worker_source_evals.py`. These automated checks do not replace the user-path acceptance above.

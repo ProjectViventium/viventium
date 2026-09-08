@@ -26,6 +26,7 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 from telegram_tokens import telegram_bot_token_validation_error
+from native_runtime import NATIVE_ALLOWED_PLAIN_ENV
 from host_cli_auth import (
     DEFAULT_GLASSHIVE_PROVIDER_MODEL,
     GLASSHIVE_PROVIDER_MODEL_BY_WORKER_PROFILE,
@@ -1482,14 +1483,14 @@ def resolve_host_cli_path(command: str, explicit_path: Any = None) -> str:
 
 
 def resolve_glasshive_orchestration_settings(config: dict[str, Any]) -> dict[str, Any]:
-    """Resolve the dark-by-default Parallel work admission and latency contract."""
+    """Resolve automatic work using the installation's existing execution authority."""
     integrations = config.get("integrations", {}) or {}
     glasshive = integrations.get("glasshive") or {}
     raw = glasshive.get("orchestration") or {}
     if not isinstance(raw, dict):
         raise SystemExit("integrations.glasshive.orchestration must be a mapping")
 
-    default_mode = str(raw.get("default_mode") or "focused").strip().lower()
+    default_mode = str(raw.get("default_mode") or "parallel").strip().lower()
     if default_mode not in {"focused", "parallel"}:
         raise SystemExit(
             "integrations.glasshive.orchestration.default_mode must be focused or parallel"
@@ -1509,7 +1510,16 @@ def resolve_glasshive_orchestration_settings(config: dict[str, Any]) -> dict[str
             "must be at most 86400"
         )
 
-    available = resolve_bool(raw.get("available"), False) and glasshive_enabled(config)
+    available = resolve_bool(raw.get("available"), True) and glasshive_enabled(config)
+    host_worker = resolve_glasshive_host_worker_settings(config)
+    provider = glasshive.get("provider") or {}
+    execution_mode = (
+        "host"
+        if host_worker["enabled"]
+        and host_worker["default_execution_mode"] == "host"
+        and resolve_bool(provider.get("allow_full_access"), True)
+        else "docker"
+    )
     storage_pressure_critical_percent = bounded_number_or_default(
         raw.get("storage_pressure_critical_percent"),
         90.0,
@@ -1526,12 +1536,8 @@ def resolve_glasshive_orchestration_settings(config: dict[str, Any]) -> dict[str
     )
     return {
         "available": available,
-        # Automatic Parallel missions always cross an actual isolation boundary. When
-        # the product surface is advertised, GlassHive also enables a fail-closed
-        # mutual-exclusion policy so an unrestricted legacy host mission cannot coexist
-        # with (and steal authority from) the trusted conversation orchestrator lane.
-        "isolated_parallel_policy": available,
-        "automatic_execution_mode": "docker",
+        "isolated_parallel_policy": available and execution_mode == "docker",
+        "automatic_execution_mode": execution_mode,
         "default_mode": default_mode,
         "conversation_slots_per_cli": limit("conversation_slots_per_cli", 4),
         "mission_slots_per_cli": limit("mission_slots_per_cli", 3),
@@ -1753,13 +1759,18 @@ def resolve_glasshive_host_worker_settings(config: dict[str, Any]) -> dict[str, 
     claude_effort = str(
         host_worker.get("claude_effort") or "default"
     ).strip().lower()
-    if claude_effort not in {"default", "max"}:
+    if claude_effort not in {"default", "low", "medium", "high", "xhigh", "max"}:
         raise SystemExit(
-            "integrations.glasshive.host_worker.claude_effort must be default or max"
+            "integrations.glasshive.host_worker.claude_effort must be default, low, medium, high, xhigh, or max"
         )
     codex_ignore_user_config = ""
     if "codex_ignore_user_config" in host_worker:
         codex_ignore_user_config = "true" if resolve_bool(host_worker.get("codex_ignore_user_config"), False) else "false"
+    claude_conversation_auto_memory = host_worker.get("claude_conversation_auto_memory", False)
+    if not isinstance(claude_conversation_auto_memory, bool):
+        raise SystemExit(
+            "integrations.glasshive.host_worker.claude_conversation_auto_memory must be a boolean"
+        )
     claude_enable_chrome = ""
     if "claude_enable_chrome" in host_worker:
         claude_enable_chrome = "true" if resolve_bool(host_worker.get("claude_enable_chrome"), True) else "false"
@@ -1800,6 +1811,7 @@ def resolve_glasshive_host_worker_settings(config: dict[str, Any]) -> dict[str, 
         "codex_reasoning_effort_fallback": codex_reasoning_effort_fallback,
         "codex_xhigh_route_proven": codex_xhigh_route_proven,
         "claude_enable_chrome": claude_enable_chrome,
+        "claude_conversation_auto_memory": claude_conversation_auto_memory,
         "claude_effort": claude_effort,
         "codex_cli_available": bool(codex_cli_path),
         "claude_cli_available": bool(claude_cli_path),
@@ -1829,9 +1841,18 @@ def resolve_glasshive_provider_settings(config: dict[str, Any]) -> dict[str, Any
         # The supported local runtime is host-native, so LibreChat reaches this on loopback.
         # Docker-specific deployments can override integrations.glasshive.provider.base_url.
         base_url = "http://127.0.0.1:8766/v1"
-    life_dir = str(
-        provider.get("life_dir") or Path.home() / "Documents" / "Viventium" / "Life"
-    ).strip()
+    # The default LIFE location is always available to the runtime; only an explicit
+    # `integrations.glasshive.provider.life_dir` is a folder the owner chose.
+    life_dir_chosen = bool(str(provider.get("life_dir") or "").strip())
+    dev_env = runtime_dev_env_settings(config)
+    default_life_path = Path.home() / "Documents" / "Viventium" / "Life"
+    if dev_env["enabled"]:
+        dev_name = dev_env["name"] or "dev"
+        if dev_name in {".", ".."} or Path(dev_name).name != dev_name:
+            raise SystemExit("runtime.dev_env.name must be a single directory name")
+        source_support = (config.get("runtime", {}).get("dev_env") or {}).get("source_app_support_dir")
+        default_life_path = Path(source_support or APP_SUPPORT_VIVENTIUM_DIR).expanduser() / "dev-envs" / dev_name / "Life"
+    life_dir = str(provider.get("life_dir") or default_life_path).strip()
     life_path = Path(life_dir).expanduser()
     if not life_path.is_absolute():
         raise SystemExit(
@@ -1849,7 +1870,7 @@ def resolve_glasshive_provider_settings(config: dict[str, Any]) -> dict[str, Any
             str(value) for value in raw_roots if str(value).strip()
         ]
     else:
-        raw_workspace_roots = [str(life_path.parent)]
+        raw_workspace_roots = [str(life_path if dev_env["enabled"] else life_path.parent)]
     allowed_workspace_roots = []
     for raw_workspace_root in raw_workspace_roots:
         workspace_root = Path(raw_workspace_root.strip()).expanduser()
@@ -1879,6 +1900,7 @@ def resolve_glasshive_provider_settings(config: dict[str, Any]) -> dict[str, Any
         "enabled": enabled,
         "base_url": base_url,
         "life_dir": str(life_path),
+        "life_dir_chosen": life_dir_chosen,
         "principal_id": str(provider.get("principal_id") or "librechat").strip() or "librechat",
         "tenant_id": str(
             provider.get("tenant_id")
@@ -1975,6 +1997,7 @@ AGENT_ASSIGNMENT_ROLES = {
 }
 BACKGROUND_AGENT_ASSIGNMENT_ROLE_BY_ID = {
     "agent_viventium_background_analysis_95aeb3": "background_analysis",
+    "agent_viventium_deep_memory_95aeb3": "deep_memory",
     "agent_viventium_confirmation_bias_95aeb3": "confirmation_bias",
     "agent_viventium_red_team_95aeb3": "red_team",
     "agent_viventium_deep_research_95aeb3": "deep_research",
@@ -1988,10 +2011,10 @@ BACKGROUND_AGENT_ASSIGNMENT_ROLE_BY_ID = {
 }
 TEXT_FALLBACK_ASSIGNMENT_ROLE_BY_ID = {
     **BACKGROUND_AGENT_ASSIGNMENT_ROLE_BY_ID,
-    "agent_viventium_deep_memory_95aeb3": "deep_memory",
 }
 BACKGROUND_AGENT_REASONING_EFFORT_BY_ID = {
     "agent_viventium_background_analysis_95aeb3": "medium",
+    "agent_viventium_deep_memory_95aeb3": "medium",
     "agent_viventium_confirmation_bias_95aeb3": "medium",
     "agent_viventium_red_team_95aeb3": "xhigh",
     "agent_viventium_deep_research_95aeb3": "xhigh",
@@ -2258,6 +2281,22 @@ CURATED_CUSTOM_ENDPOINTS = [
 GLASSHIVE_PROVIDER_ID = "glasshive-harness"
 GLASSHIVE_PROVIDER_MODELS = [
     {
+        "id": "codex-cli:gpt-6-astra",
+        "label": "Codex / GPT-6 Astra",
+        "harnessProfile": "codex-cli",
+        "effortChoices": ["low", "medium", "high", "xhigh", "max", "ultra"],
+        "recommendedEffort": "medium",
+        "contextLimit": 272000,
+    },
+    {
+        "id": "claude-code:claude-opus-5",
+        "label": "Claude / Opus 5",
+        "harnessProfile": "claude-code",
+        "effortChoices": ["default", "low", "medium", "high", "xhigh", "max"],
+        "recommendedEffort": "medium",
+        "contextLimit": 1000000,
+    },
+    {
         "id": GLASSHIVE_PROVIDER_MODEL_BY_WORKER_PROFILE["codex-cli"],
         "label": "Codex / GPT-5.6 Sol",
         "harnessProfile": "codex-cli",
@@ -2274,11 +2313,27 @@ GLASSHIVE_PROVIDER_MODELS = [
     },
     {
         "id": GLASSHIVE_PROVIDER_MODEL_BY_WORKER_PROFILE["claude-code"],
-        "label": "Claude / Opus 5",
+        "label": "Claude / Opus",
         "harnessProfile": "claude-code",
-        "effortChoices": ["low", "medium", "high", "xhigh", "max"],
+        "effortChoices": ["default", "low", "medium", "high", "xhigh", "max"],
         "recommendedEffort": "high",
         "contextLimit": 200000,
+    },
+    {
+        "id": "codex-cli:gpt-5.6-luna",
+        "label": "Codex / GPT-5.6 Luna",
+        "harnessProfile": "codex-cli",
+        "effortChoices": ["low", "medium", "high", "xhigh", "max"],
+        "recommendedEffort": "medium",
+        "contextLimit": 272000,
+    },
+    {
+        "id": "codex-cli:gpt-5.6-terra",
+        "label": "Codex / GPT-5.6 Terra",
+        "harnessProfile": "codex-cli",
+        "effortChoices": ["low", "medium", "high", "xhigh", "max", "ultra"],
+        "recommendedEffort": "medium",
+        "contextLimit": 272000,
     },
 ]
 GLASSHIVE_PROVIDER_DROP_PARAMS = [
@@ -4008,7 +4063,7 @@ def build_agent_provider_capabilities(config: dict[str, Any]) -> dict[str, Any]:
             "default_access": provider["default_access"],
             "allow_full_access": provider["allow_full_access"],
             "host_tools_transport": "broker_mcp",
-            "host_tools": ["file_search", "web_search"],
+            "host_tools": ["file_search", "web_search", "transcribe_audio"],
             # Conversation-only Core facades. Keep these separate from host_tools
             # so mission roots cannot inherit authority to launch or control
             # sibling work.
@@ -4026,6 +4081,8 @@ def build_agent_provider_capabilities(config: dict[str, Any]) -> dict[str, Any]:
             "responses_api": False,
             "messaging_delivery_disposition": True,
             "messaging_delivery_disposition_version": 1,
+            # The adapter emits incremental chunks; snapshot normalization is opt-in.
+            "message_delta_mode": "incremental",
             "excluded_mcp_servers": ["glasshive-workers-projects"],
             "models": copy.deepcopy(GLASSHIVE_PROVIDER_MODELS),
         }
@@ -4039,30 +4096,42 @@ def choose_provider(available: list[str], preferred: list[str], fallback: str) -
     return fallback
 
 
-def resolve_memory_agent_override(
+def resolve_agent_route_override(
     config: dict[str, Any],
     foundation_available: list[str],
+    role: str,
 ) -> tuple[str, str] | None:
-    """Resolve the optional saved-memory writer route without changing any other role."""
-    raw = (config.get("llm", {}) or {}).get("memory")
+    """Resolve an explicit role route; never infer a transport change from authentication failure."""
+    key = f"llm.{role}"
+    raw = (config.get("llm", {}) or {}).get(role)
     if raw is None:
         return None
     if not isinstance(raw, dict):
-        raise SystemExit("llm.memory must be a mapping with provider and model")
+        raise SystemExit(f"{key} must be a mapping with provider and model")
 
     provider = normalize_provider_name(raw.get("provider"))
     model = str(raw.get("model") or "").strip()
-    if provider not in {"openai", "anthropic"}:
-        raise SystemExit("llm.memory.provider must be openai or anthropic")
-    if provider not in foundation_available:
-        raise SystemExit(
-            "llm.memory.provider must have configured foundation authentication"
-        )
+    if provider not in {"openai", "anthropic", GLASSHIVE_PROVIDER_ID}:
+        raise SystemExit(f"{key}.provider must be openai, anthropic, or glasshive-harness")
     if not model:
-        raise SystemExit("llm.memory.model must be a non-empty string")
+        raise SystemExit(f"{key}.model must be a non-empty string")
+    if provider == GLASSHIVE_PROVIDER_ID:
+        if not resolve_glasshive_provider_settings(config)["enabled"]:
+            raise SystemExit(f"{key}.provider requires the configured GlassHive provider")
+        if model not in {str(item["id"]) for item in GLASSHIVE_PROVIDER_MODELS}:
+            raise SystemExit(f"{key}.model must match a declared GlassHive provider model")
+        selected = next(item for item in GLASSHIVE_PROVIDER_MODELS if item["id"] == model)
+        if role == "memory" and selected["harnessProfile"] != "codex-cli":
+            raise SystemExit(f"{key}.model requires a native profile with broker-only memory tools")
+    elif provider not in foundation_available:
+        raise SystemExit(
+            f"{key}.provider must have configured foundation authentication"
+        )
 
     fallback = raw.get("fallback")
     if fallback is not None:
+        if role != "memory":
+            raise SystemExit(f"{key}.fallback belongs in the existing agent fallback configuration")
         if not isinstance(fallback, dict):
             raise SystemExit("llm.memory.fallback must be a mapping with provider and model")
         fallback_provider = normalize_provider_name(fallback.get("provider"))
@@ -4228,14 +4297,18 @@ def build_agent_assignments(config: dict[str, Any]) -> dict[str, tuple[str, str]
         if glasshive_provider["enabled"]
         else choose_provider(foundation_available, ["openai", "anthropic"], foundation_fallback)
     )
-    # Deep Memory must be able to overlap the GlassHive conscious Main. Keep its primary route on
-    # an authenticated foundation provider while the other conscious cortex roles continue to use
-    # the configured GlassHive execution path.
+    # Existing configurations keep their foundation route. Native's preset explicitly selects
+    # the same model through its signed-in CLI; distinct actor sessions permit overlap with Main.
     deep_memory_provider = choose_provider(
         foundation_available,
         ["openai", "anthropic"],
         foundation_fallback,
     )
+    deep_memory_assignment = resolve_agent_route_override(config, foundation_available, "deep_memory")
+    if deep_memory_assignment is None:
+        deep_memory_assignment = (
+            deep_memory_provider, assignment_model(config, deep_memory_provider, "deep_memory")
+        )
     cortex_provider = GLASSHIVE_PROVIDER_ID if glasshive_provider["enabled"] else None
     reflective_provider = cortex_provider or choose_provider(
         foundation_available, ["openai", "anthropic"], foundation_fallback
@@ -4249,10 +4322,10 @@ def build_agent_assignments(config: dict[str, Any]) -> dict[str, tuple[str, str]
     support_provider = cortex_provider or choose_provider(
         foundation_available, ["openai", "anthropic"], foundation_fallback
     )
-    # Saved memory follows configured foundation priority unless the operator explicitly chooses a
-    # different authenticated foundation route under llm.memory. This selection remains scoped to
-    # memory.agent and does not introduce runtime fallback orchestration.
-    memory_assignment = resolve_memory_agent_override(config, foundation_available)
+    # Saved memory follows configured foundation priority unless llm.memory explicitly selects
+    # another configured route. Native's public preset selects its official CLI route here;
+    # existing installation choices and direct-provider defaults stay intact.
+    memory_assignment = resolve_agent_route_override(config, foundation_available, "memory")
     if memory_assignment is None:
         memory_provider = foundation_available[0]
         memory_assignment = (
@@ -4266,10 +4339,7 @@ def build_agent_assignments(config: dict[str, Any]) -> dict[str, tuple[str, str]
             reflective_provider,
             assignment_model(config, reflective_provider, "background_analysis"),
         ),
-        "deep_memory": (
-            deep_memory_provider,
-            assignment_model(config, deep_memory_provider, "deep_memory"),
-        ),
+        "deep_memory": deep_memory_assignment,
         "confirmation_bias": (
             reflective_provider,
             assignment_model(config, reflective_provider, "confirmation_bias"),
@@ -4323,6 +4393,10 @@ def apply_memory_assignment(
     model_parameters = copy.deepcopy(agent.get("model_parameters") or {})
     if provider == "openai":
         model_parameters["reasoning_effort"] = "medium"
+    elif provider == GLASSHIVE_PROVIDER_ID:
+        selected = next(item for item in GLASSHIVE_PROVIDER_MODELS if item["id"] == model)
+        model_parameters["model"] = model
+        model_parameters["reasoning_effort"] = selected["recommendedEffort"]
     else:
         model_parameters.pop("reasoning_effort", None)
     if model_parameters:
@@ -4924,6 +4998,27 @@ def build_agent_capabilities(code_interpreter_is_enabled: bool) -> list[str]:
     return [capability for capability in CURATED_AGENT_CAPABILITIES if capability != "execute_code"]
 
 
+DEFAULT_VOICE_OWNER_WAIT_S = 45.0
+MAX_VOICE_OWNER_WAIT_S = 180.0
+
+
+def resolve_voice_owner_wait_s(voice_worker: dict[str, Any] | None) -> str:
+    """Seconds the voice gateway waits for the exact owner participant before releasing its claim."""
+
+    raw = (voice_worker or {}).get("owner_wait_s")
+    if raw in (None, ""):
+        return f"{DEFAULT_VOICE_OWNER_WAIT_S:g}"
+    try:
+        value = float(str(raw).strip())
+    except ValueError as exc:
+        raise SystemExit("voice.worker.owner_wait_s must be a number of seconds") from exc
+    if not math.isfinite(value) or value <= 0 or value > MAX_VOICE_OWNER_WAIT_S:
+        raise SystemExit(
+            f"voice.worker.owner_wait_s must be between 0 and {MAX_VOICE_OWNER_WAIT_S:g} seconds"
+        )
+    return f"{value:g}"
+
+
 def render_runtime_env(
     config: dict[str, Any],
     assignments: dict[str, tuple[str, str]],
@@ -5135,6 +5230,8 @@ def render_runtime_env(
         "VIVENTIUM_LIFE_HEALTH_DIR": str(health.get("life_projection_dir") or "").strip()
         if health_enabled
         else "",
+        # Owner-recorded Life source intent (bin/viventium life intent); read-only for the API.
+        "VIVENTIUM_LIFE_INTENT_FILE": str(runtime_app_support_dir / "state" / "life" / "intent.json"),
         "VIVENTIUM_SHARED_SINGLETON_SERVICES": ",".join(sorted(shared_services)),
         "VIVENTIUM_WORK_REQUEST_CREATE_PR_AFTER_USER_APPROVAL": "true"
         if feature_request_pr_after_approval
@@ -5409,7 +5506,17 @@ def render_runtime_env(
         # LIFE is a source/Docker install concern independent of whether the
         # GlassHive provider is currently enabled. Native filters this key.
         "VIVENTIUM_LIFE_DIR": str(glasshive_provider["life_dir"]),
+        # Truth for the setup API: the default path above is not an owner choice.
+        "VIVENTIUM_LIFE_FOLDER_CHOSEN": (
+            "true" if glasshive_provider.get("life_dir_chosen") else "false"
+        ),
     }
+    # Live Telegram receipt state (SQLite with WAL/SHM) must not live under the generated
+    # runtime: that surface is checkpointed as immutable config during activation, and its
+    # WAL/SHM files appear and vanish with the bot process.
+    env["VIVENTIUM_TELEGRAM_STATE_DIR"] = str(
+        runtime_app_support_dir / "state" / "runtime" / runtime_profile / "telegram"
+    )
     # Source-native installs launch the API-owned Sandpack listener just like the
     # Docker/source paths, so its listener must follow any compiled port override.
     # Immutable Native payloads use render_native_runtime_env(), which deliberately
@@ -5590,6 +5697,9 @@ def render_runtime_env(
         env["WPR_CODEX_CLI_CONVERSATION_PROJECT_INSTRUCTIONS"] = str(
             glasshive_host_worker["codex_conversation_project_instructions"]
         )
+        env["WPR_CLAUDE_CODE_CONVERSATION_AUTO_MEMORY"] = str(
+            glasshive_host_worker["claude_conversation_auto_memory"]
+        ).lower()
         env["WPR_HOST_NATIVE_WEB_ACCESS"] = str(
             glasshive_host_worker["native_web_access"]
         )
@@ -5681,6 +5791,11 @@ def render_runtime_env(
                     if dev_env["enabled"] and configured_local_ui_port
                     else "8780"
                 )
+            explicit_artifact_base_url = str(
+                integrations.get("glasshive", {}).get("artifact_base_url") or ""
+            ).strip().rstrip("/")
+            if explicit_artifact_base_url:
+                env["GLASSHIVE_ARTIFACT_BASE_URL"] = explicit_artifact_base_url
         env["WPR_LIBRECHAT_UPLOADS_ROOT"] = str(canonical_uploads_root)
         env["WPR_BOOTSTRAP_SOURCE_ROOTS"] = str(canonical_uploads_root)
         env["VIVENTIUM_GLASSHIVE_CALLBACK_URL"] = f"http://localhost:{profile['lc_api_port']}/api/viventium/glasshive/callback"
@@ -6065,6 +6180,9 @@ def render_runtime_env(
                 glasshive_provider["allowed_workspace_roots"]
             )
             env["VIVENTIUM_LIFE_DIR"] = str(glasshive_provider["life_dir"])
+            env["VIVENTIUM_LIFE_FOLDER_CHOSEN"] = (
+                "true" if glasshive_provider.get("life_dir_chosen") else "false"
+            )
 
     public_client_origin = str(network.get("public_client_origin", "") or "").strip()
     public_api_origin = str(network.get("public_api_origin", "") or "").strip()
@@ -6427,6 +6545,10 @@ def render_runtime_env(
         env["VIVENTIUM_VOICE_PREWARM_LOCAL_TTS"] = (
             "true" if resolve_bool(voice_worker.get("prewarm_local_tts"), True) else "false"
         )
+    # The gateway binds the exact owner participant after its job starts; the owner's browser
+    # still has to open the call page, exchange the launch capability, and join LiveKit. The
+    # wait must cover that join budget, not a single-digit second guess.
+    env["VIVENTIUM_VOICE_OWNER_WAIT_S"] = resolve_voice_owner_wait_s(voice_worker)
     wing_mode = voice.get("wing_mode", voice.get("shadow_mode", {})) or {}
     # Legacy readers still receive the compatibility variables, but a fresh Call always begins in
     # Call mode. Historical default_enabled values are accepted for migration only and ignored.
@@ -6752,18 +6874,7 @@ def dump_env(path: Path, env: dict[str, str]) -> None:
 
 def render_native_runtime_env(config: dict[str, Any], env: dict[str, str]) -> dict[str, str]:
     """Return the secret-free, relocatable behavior contract shipped in Native payloads."""
-    allowed_plain_keys = {
-        "DEBUG_LOGGING",
-        "MONGO_AUTO_INDEX",
-        "OTUC_ACTIVATION_LLM",
-        "OTUC_ACTIVATION_PROVIDER",
-        "OTUC_LLM_MODEL",
-        "OTUC_LLM_PROVIDER",
-        "PLAYGROUND_VARIANT",
-        "SAFE_MODE",
-        "SEARCH",
-        "TTS_PROVIDER_PRIMARY",
-    }
+    allowed_plain_keys = NATIVE_ALLOWED_PLAIN_ENV
     denied_keys = {
         "VIVENTIUM_BOOTSTRAP_REGISTRATION_ONCE",
         "VIVENTIUM_EXPERIMENTAL_DIRECT_SUBSCRIPTION_AUTH",
@@ -6980,7 +7091,8 @@ def render_native_agents_bundle(
         agent["fallback_llm_model_parameters"] = parameters
 
     disabled_handoff_ids: set[str] = set()
-    glasshive_provider_available = resolve_glasshive_provider_settings(config)["enabled"]
+    native_provider = resolve_glasshive_provider_settings(config)
+    glasshive_provider_available = native_provider["enabled"]
     for group_name in ("mainAgent", "backgroundAgents", "handoffAgents"):
         raw_group = bundle.get(group_name)
         agents = [raw_group] if isinstance(raw_group, dict) else raw_group
@@ -7006,6 +7118,12 @@ def render_native_agents_bundle(
                 restore_direct_text_fallback(agent, agent_id)
             if str(agent.get("provider") or "").strip() != GLASSHIVE_PROVIDER_ID:
                 agent.pop("glasshive_options", None)
+            elif not native_provider["life_dir_chosen"]:
+                options = agent.setdefault("glasshive_options", {})
+                workspace = options.get("workspace") or {}
+                if workspace.get("mode", "default") in {"life", "default"}:
+                    # Native provisions its working folder independently of optional LIFE setup.
+                    options["workspace"] = {"mode": "default"}
             original_tools = agent.get("tools") if isinstance(agent.get("tools"), list) else []
             agent["tools"] = [tool for tool in original_tools if tool_is_available(tool)]
             for options_name in ("tool_options", "tool_kwargs"):
@@ -7209,6 +7327,7 @@ def build_mcp_servers(
                 "X-Viventium-User-Id": "{{LIBRECHAT_USER_ID}}",
                 "X-Viventium-Storage-User-Id": "{{LIBRECHAT_USER_ID}}",
                 "X-Viventium-Agent-Id": default_main_agent_id,
+                "X-Viventium-Conversation-Id": "{{LIBRECHAT_BODY_CONVERSATIONID}}",
             },
             "startup": False,
             "chatMenu": True,
@@ -7240,6 +7359,8 @@ def build_mcp_servers(
             "serverInstructions": True,
             "viventiumTrustedServerInstructions": True,
         }
+    if config.get("install", {}).get("mode") == "native" and "scheduling-cortex" in servers:
+        servers["scheduling-cortex"]["headers"]["Authorization"] = "Bearer ${SCHEDULING_MCP_API_KEY}"
     if integrations.get("sequential_thinking", {}).get("enabled", True):
         servers["sequential-thinking"] = {
             "type": "stdio",
@@ -7248,6 +7369,9 @@ def build_mcp_servers(
             "timeout": 300000,
             "chatMenu": True,
         }
+        if config.get("install", {}).get("mode") == "native":
+            servers["sequential-thinking"]["command"] = "${VIVENTIUM_NATIVE_NODE_BINARY}"
+            servers["sequential-thinking"]["args"] = ["${VIVENTIUM_NATIVE_SEQUENTIAL_THINKING_ENTRYPOINT}"]
 
     if glasshive_enabled(config):
         glasshive_enterprise = resolve_glasshive_enterprise_settings(config)
@@ -7583,6 +7707,7 @@ def render_service_envs(output_dir: Path, env: dict[str, str]) -> None:
     service_dir.mkdir(parents=True, exist_ok=True)
 
     librechat_keys = [
+        "VIVENTIUM_LIFE_INTENT_FILE",
         "OPENAI_API_KEY",
         "ANTHROPIC_API_KEY",
         "XAI_API_KEY",
@@ -7663,6 +7788,7 @@ def render_service_envs(output_dir: Path, env: dict[str, str]) -> None:
         "VIVENTIUM_CALL_SESSION_SECRET",
         "VIVENTIUM_TELEGRAM_INTERACTION_ADAPTER_SECRET",
         "VIVENTIUM_DELIVERY_ACK_ENDPOINT",
+        "VIVENTIUM_TELEGRAM_STATE_DIR",
         "VIVENTIUM_TELEGRAM_STT_PROVIDER",
         "VIVENTIUM_TELEGRAM_MAX_FILE_SIZE",
         "VIVENTIUM_TELEGRAM_BOT_API_ORIGIN",

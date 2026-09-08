@@ -52,11 +52,22 @@ public component pins and digests, builds and prunes LibreChat, compiles canonic
 builds the helper/bootstrap apps, assembles a relocatable root, and runs install, start, registration,
 Connected Accounts start, health, and stop smoke checks. It receives no release credentials. The
 producer also refuses to run unless `components.lock.json` and `components.json` both mark their
-publication state as `merged`; review-head pins remain explicit and cannot become an artifact by
+publication state as `merged`. Source component commits come only from `components.lock.json`;
+`components.json` owns external binary versions and publisher digests. Assembly freezes the selected
+source commits in immutable `build.json`, and release verification recomputes the expected selection
+from the tagged parent lock. Review-head pins remain explicit and cannot become an artifact by
 accident. OpenClaw remains `lab-only` and unapproved in the public component manifest. The
 protected release workflow injects only public trust/release policy, signs nested code and both apps,
 notarizes/staples supported bundles, packages the bootstrap archive, independently re-verifies it,
 and allowlists the exact draft-release assets.
+
+Release verification covers the complete configured component selection: base runtimes, GlassHive
+and its provider bodies, Redis, scheduling, and Sequential Thinking. Optional components must match
+their source pins or publisher policy and their staged files; configured capabilities cannot lose
+their required package. After nested signing, the workflow refreshes measured provider-body and
+Redis executable hashes while retaining publisher and source provenance. It copies the signed
+payload Python into Bootstrap and rebuilds both identical Python inventories before sealing
+Bootstrap, so a second signing timestamp cannot make the two runtimes differ.
 
 Immutable Native LibreChat does not bind the historical API port `3180`. Its backend and public
 `3190` proxy communicate through the exact owner-checked Unix socket in the private Native runtime
@@ -64,7 +75,9 @@ directory, including first-admin registration and WebSocket upgrades. Candidate 
 listener on `3180`; source and Docker profiles keep their separate documented TCP contracts.
 Immutable Native MongoDB is also socket-only: `mongod` binds the exact support-owned mode-`0600`
 Unix socket, disables its automatic `/tmp` socket, and is rejected if its process group exposes any
-TCP listener. Source and Docker profiles retain their separate configured MongoDB TCP contracts.
+TCP listener. A single-member replica set at that socket provides application transactions. The
+maintenance helper initializes only a new set and refuses unexpected topology. Source and Docker
+profiles retain their separate configured MongoDB TCP contracts.
 
 The producer is intentionally fail-closed until MongoDB redistribution approval is recorded. The
 release workflow remains fail-closed until all three public policy files and protected authorities
@@ -91,6 +104,54 @@ verifier accepts the archive only
 with its explicit local-QA override. These paths are useful for assembly, install, archive, staging,
 activation, health, recovery, and rollback tests; they are never public-release evidence.
 
+Assembly copies Bootstrap installer modules from the selected repository source, even when the
+prebuilt app input is older. Bootstrap and the payload therefore use the same manifest verifier.
+
+After an abrupt extraction interruption, retry keeps the same manifest-bound pending attempt and
+reuses only its verified file prefix. Each reused file must match the manifest size and digest,
+the extraction permissions, and its original regular-file identity. Only the final empty file
+left by interrupted creation can be replaced by the exclusive writer. Unexpected, linked, or
+tampered entries keep the existing quarantine or refusal behavior. Recovery appends to the
+installer journal; it does not erase the prior attempt or change the disk reserve.
+
+The production copy omits customized development tests, client source, examples, and virtual
+environments. Packaged runtime code, built browser output, and production dependencies remain.
+Vendored Sandpack virtual-filesystem examples may contain upstream paths; its files still reject
+exact producer prefixes and secret material.
+
+The assembler accepts `--glasshive-root` with an explicit `--uv` build tool. It verifies the selected
+parent component commit, exports the existing production lock, installs hash-verified binary wheels
+with the bundled Python, and inventories their notices. No package manager is needed at runtime.
+For local source QA only, `--glasshive-local-qa-worktree` records the selected commit plus a source-tree
+digest while including reviewed uncommitted changes; candidate mode rejects that option. This does
+not approve a distribution route or an unresolved dependency license. A complete harness also
+requires `--codex-archive` and `--claude-code-archive`, matched to the exact publisher hashes in
+`components.json`; the assembler retains their companions, notices, and executable identities.
+The current complete package requires macOS 15 because of its selected Codex shell companion.
+Without both body packages, provider/worker advertisements remain rejected. The configured model
+and effort flow through the compiler-owned environment; the installed runtime supplies exact body
+paths and private authenticated API/MCP routes. Real provider login, useful work, and restore remain
+acceptance gates after assembly. Commercial/FSL license-review and signing gates are unchanged.
+
+Enabled Scheduling Cortex is packaged from its selected LibreChat source and production lock,
+including the existing prompt/periphery support files. The native service uses an owned private
+Unix socket and the current proxy; snapshots preserve its durable schedules. A native configuration
+must not disable required scheduling to compensate for missing package inputs.
+
+Enabled parallel work requires `--redis-archive`, the upstream source pinned in `components.json`.
+The macOS producer builds Redis with the system compiler for the selected architecture, retains its
+notices, and bundles it with no Homebrew dependency. Native uses one private Unix socket and the
+existing LibreChat job store. Append-only job and source-order state stays inside the existing
+continuity snapshot root; no Redis TCP port is exposed.
+
+Enabled Sequential Thinking is installed from `sequential-thinking/package-lock.json` by the
+producer and launched from its immutable stdio entrypoint using bundled Node. The exact upstream
+notice accompanies the npm package; unresolved publisher licensing remains a release gate.
+
+Connect AI in the installed helper launches the official browser login directly. Terminal is optional.
+The fresh default uses that same owner-bound OpenAI login for chat and saved memory.
+Existing direct-provider memory settings still require their configured account connection.
+
 The `stable` channel requires an SSH manifest signing key. The protected release workflow additionally
 requires Developer ID signing with hardened runtime and timestamping, Apple notarization with a
 successful `--wait` result, stapling and Gatekeeper checks, dual-architecture installed-artifact
@@ -98,7 +159,8 @@ health checks, attestations, and a complete GitHub draft release. Publishing tha
 separate release-owner decision after clean-Mac acceptance.
 
 The immutable Native edition exposes the **Easy Install** lifecycle. Its public CLI supports
-launch/start/stop/status/doctor, local one-time `password-reset-link`, complete owner-only `snapshot`,
+launch/start/stop/status/doctor, local one-time `password-reset-link`, native CLI-owned
+`provider-auth <codex-cli|claude-code> <login|status|logout>`, complete owner-only `snapshot`,
 same-profile transactional `restore`, and ownership-safe uninstall. Snapshot and restore ship the
 same logical-bundle validator and Mongo adapter as the source continuity flow; restore stages on the
 App Support filesystem, journals exact-root activation, automatically rolls back injected failure,
@@ -124,3 +186,8 @@ Primary references: [Apple Developer ID certificates](https://developer.apple.co
 [GitHub protected environments](https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments),
 [GitHub secure workflow use](https://docs.github.com/en/actions/reference/security/secure-use), and
 [GitHub immutable releases](https://docs.github.com/en/enterprise-cloud@latest/code-security/concepts/supply-chain-security/immutable-releases).
+
+Native LIFE setup uses the same `life_setup.py` owner and additive template as the source install.
+The payload includes its CLI route and Python dependencies; selecting source folders records intent
+only. The helper build and source digest include the separate LIFE view. Installed helper and
+permission acceptance still require the actual delivered candidate.

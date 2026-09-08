@@ -9,6 +9,7 @@ import json
 import os
 import shlex
 import shutil
+import stat
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -120,7 +121,8 @@ def bootstrap_life(
         raise ValueError(f"LIFE template is not a directory: {template_dir}")
 
     life_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
-    life_dir.chmod(0o700)
+    if stat.S_IMODE(life_dir.stat().st_mode) != 0o700:
+        life_dir.chmod(0o700)
     created_files: list[str] = []
     preserved_files: list[str] = []
     skipped_symlinks: list[str] = []

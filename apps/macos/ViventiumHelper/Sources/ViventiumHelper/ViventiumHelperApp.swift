@@ -1,10 +1,14 @@
 import AppKit
+import ApplicationServices
+import CoreGraphics
 import CoreFoundation
 import Darwin
 import Foundation
 import SwiftUI
 
 private extension Notification.Name {
+    static let viventiumHelperReopened = Notification.Name("ai.viventium.helper.reopened")
+    static let viventiumNativeProviderSetup = Notification.Name("ai.viventium.helper.native-provider-setup")
     static let viventiumWhoopOAuthCallback = Notification.Name(
         "ai.viventium.helper.whoop-oauth-callback"
     )
@@ -26,6 +30,17 @@ private enum WhoopOAuthCallbackURL {
 }
 
 private final class ViventiumHelperApplicationDelegate: NSObject, NSApplicationDelegate {
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        if NSApp.isActive {
+            NotificationCenter.default.post(name: .viventiumHelperReopened, object: nil)
+        }
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        NotificationCenter.default.post(name: .viventiumHelperReopened, object: nil)
+        return true
+    }
+
     func application(_ application: NSApplication, open urls: [URL]) {
         for url in urls where WhoopOAuthCallbackURL.isAccepted(url) {
             NotificationCenter.default.post(
@@ -33,6 +48,118 @@ private final class ViventiumHelperApplicationDelegate: NSObject, NSApplicationD
                 object: url
             )
         }
+        if urls.contains(where: { $0.absoluteString == "viventium://connect-ai" }) {
+            NotificationCenter.default.post(name: .viventiumNativeProviderSetup, object: nil)
+        }
+    }
+}
+
+// macOS owns these grants. A running chat or another app's grant is not proof
+// that Viventium can see or control the desktop.
+@MainActor
+private final class ComputerAccessController: ObservableObject {
+    @Published private(set) var accessibility = false
+    @Published private(set) var screenRecording = false
+    private var window: NSWindow?
+    private var refreshTimer: Timer?
+
+    var needsSetup: Bool { !self.accessibility || !self.screenRecording }
+
+    func refresh() {
+        self.accessibility = AXIsProcessTrusted()
+        self.screenRecording = CGPreflightScreenCaptureAccess()
+    }
+
+    func show() {
+        self.refresh()
+        if self.window == nil {
+            let window = NSWindow(
+                contentRect: NSRect(x: 0, y: 0, width: 490, height: 345),
+                styleMask: [.titled, .closable], backing: .buffered, defer: false
+            )
+            window.title = "Computer Access"
+            window.isReleasedWhenClosed = false
+            window.contentView = NSHostingView(rootView: ComputerAccessView(controller: self))
+            window.center()
+            self.window = window
+        }
+        self.window?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        self.refreshTimer?.invalidate()
+        self.refreshTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] timer in
+            Task { @MainActor in
+                guard let self, self.window?.isVisible == true else {
+                    timer.invalidate()
+                    return
+                }
+                self.refresh()
+            }
+        }
+    }
+
+    func requestAccessibility() {
+        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true]
+        _ = AXIsProcessTrustedWithOptions(options as CFDictionary)
+        self.openSettings("Privacy_Accessibility")
+    }
+
+    func requestScreenRecording() {
+        _ = CGRequestScreenCaptureAccess()
+        self.refresh()
+        if !self.screenRecording { self.openSettings("Privacy_ScreenCapture") }
+    }
+
+    func openSettings(_ pane: String) {
+        guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?\(pane)") else { return }
+        NSWorkspace.shared.open(url)
+    }
+}
+
+private struct ComputerAccessView: View {
+    @ObservedObject var controller: ComputerAccessController
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            Text("Let Viventium work on your Mac")
+                .font(.title2.weight(.semibold))
+            Text("Allow Viventium in macOS Settings. These permissions let your workers use the apps and files you ask them to use.")
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack {
+                Label("Control apps", systemImage: "cursorarrow.click")
+                Spacer()
+                if self.controller.accessibility { Text("Allowed").foregroundStyle(.secondary) }
+                else { Button("Allow…") { self.controller.requestAccessibility() } }
+            }
+            HStack {
+                Label("See the screen", systemImage: "display")
+                Spacer()
+                if self.controller.screenRecording { Text("Allowed").foregroundStyle(.secondary) }
+                else { Button("Allow…") { self.controller.requestScreenRecording() } }
+            }
+            HStack {
+                Label("Protected files", systemImage: "folder")
+                Spacer()
+                Button("Full Disk Access…") { self.controller.openSettings("Privacy_AllFiles") }
+            }
+            Text("macOS may also ask to control an app the first time you use it. If macOS asks you to reopen Viventium, finish active work first. You can keep chatting while access is off.")
+                .font(.callout).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(24)
+        .frame(width: 490)
+    }
+}
+
+enum HelperCLICommand {
+    static func arguments(repoRoot: String, appSupportDir: String, command: [String]) -> [String] {
+        let native = FileManager.default.fileExists(atPath: "\(repoRoot)/bin/viventium-native-start")
+        // The controller opens the requested view after health succeeds.
+        // Native launch's own browser side effect would open a second view early.
+        let action = native && command.first == "launch"
+            ? ["start", "--respect-stopped"] + command.dropFirst() : command
+        return ["\(repoRoot)/bin/viventium"] +
+            (native ? [] : ["--app-support-dir", appSupportDir]) + action
     }
 }
 
@@ -151,6 +278,7 @@ private struct HelperConfig: Codable, Equatable {
     var allowProtectedRepoRoot: Bool?
     var showInStatusBar: Bool?
     var nativeRuntime: Bool? = nil
+    var computerAccessSetupShown: Bool? = nil
     var runtimeSupervision: RuntimeSupervisionState? = nil
 }
 
@@ -405,6 +533,13 @@ final class HelperController: ObservableObject {
     @Published private(set) var showInStatusBarEnabled: Bool = true
 
     private var config: HelperConfig?
+    private let computerAccess = ComputerAccessController()
+    private var lifeSetup: LifeSetupController?
+    private var providerWindow: NSWindow?
+    private var providerLoginProcess: Process?
+    private var providerLoginCancelled = false
+    @Published private(set) var nativeProviderStatus: [String: String] = [:]
+    @Published private(set) var nativeProviderSigningIn: String?
     private let helperLogURL: URL?
     private var timer: Timer?
     private let envParser = RuntimeEnvParser()
@@ -432,6 +567,8 @@ final class HelperController: ObservableObject {
     private var steadyStateHealthSnapshot: (runtime: RuntimePorts, checkedAt: Date, snapshot: StackHealthSnapshot)?
     private var steadyStateHealthSnapshotTask: (runtime: RuntimePorts, task: Task<StackHealthSnapshot, Never>)?
     private var whoopOAuthObserver: NSObjectProtocol?
+    private var helperReopenObserver: NSObjectProtocol?
+    private var nativeProviderSetupObserver: NSObjectProtocol?
     private let steadyStateHealthRefreshInterval: TimeInterval = 30
     private let automaticTerminationReason = "Viventium status-bar helper keeps the local runtime available after login."
 
@@ -443,6 +580,19 @@ final class HelperController: ObservableObject {
         self.launchAtLoginEnabled = Self.launchAtLoginFastPathEnabled()
         self.showInStatusBarEnabled = self.config?.showInStatusBar ?? true
         self.log("Helper launched")
+        self.helperReopenObserver = NotificationCenter.default.addObserver(
+            forName: .viventiumHelperReopened, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                guard let self, !self.showInStatusBarEnabled else { return }
+                self.presentStatusBarRestorePrompt()
+            }
+        }
+        self.nativeProviderSetupObserver = NotificationCenter.default.addObserver(
+            forName: .viventiumNativeProviderSetup, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.showNativeProviderSetup() }
+        }
         self.whoopOAuthObserver = NotificationCenter.default.addObserver(
             forName: .viventiumWhoopOAuthCallback,
             object: nil,
@@ -455,12 +605,157 @@ final class HelperController: ObservableObject {
                 self?.handleWhoopOAuthCallback(url)
             }
         }
-        if self.showInStatusBarEnabled {
+        if self.showInStatusBarEnabled || self.config?.nativeRuntime == true {
             self.activateHelperLifecycle()
         } else {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
                 Task { @MainActor in
-                    self?.presentStatusBarRestorePrompt()
+                    guard let self, !self.showInStatusBarEnabled else { return }
+                    self.presentStatusBarRestorePrompt()
+                }
+            }
+        }
+        if var config = self.config, config.computerAccessSetupShown != true {
+            config.computerAccessSetupShown = true
+            if Self.saveConfig(config) { self.config = config }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+                guard let self else { return }
+                self.computerAccess.refresh()
+                if self.computerAccess.needsSetup { self.showComputerAccess() }
+            }
+        }
+    }
+
+    func showComputerAccess() {
+        self.computerAccess.show()
+    }
+
+    func showNativeProviderSetup() {
+        guard self.nativeRuntimeMode else { return }
+        if self.providerWindow == nil {
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 440, height: 335),
+                                  styleMask: [.titled, .closable], backing: .buffered, defer: false)
+            window.title = "Connect AI"
+            window.isReleasedWhenClosed = false
+            window.contentView = NSHostingView(rootView: NativeProviderSetupView(controller: self))
+            window.center()
+            self.providerWindow = window
+        }
+        self.providerWindow?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        if self.nativeProviderSigningIn == nil { self.refreshNativeProviderConnections() }
+    }
+
+    private func refreshNativeProviderConnections() {
+        guard let config else { return }
+        for provider in ["codex-cli", "claude-code"] {
+            Task.detached(priority: .utility) {
+                var environment = Self.makeCLIEnvironment()
+                environment["VIVENTIUM_APP_SUPPORT_DIR"] = config.appSupportDir
+                let process = Process()
+                process.executableURL = URL(fileURLWithPath: "\(config.repoRoot)/bin/viventium")
+                process.arguments = ["provider-auth", provider, "status"]
+                process.environment = environment
+                process.standardInput = FileHandle.nullDevice
+                process.standardOutput = FileHandle.nullDevice
+                process.standardError = FileHandle.nullDevice
+                do {
+                    try process.run()
+                    process.waitUntilExit()
+                    await MainActor.run {
+                        guard self.nativeProviderSigningIn == nil else { return }
+                        self.nativeProviderStatus[provider] = process.terminationStatus == 0 ? "Connected" : "Not connected"
+                    }
+                } catch {
+                    await MainActor.run { self.nativeProviderStatus[provider] = "Status unavailable" }
+                }
+            }
+        }
+    }
+
+    func showLifeSetup() {
+        guard let config else { return }
+        if self.lifeSetup == nil {
+            let repoRoot = config.repoRoot
+            let supportDir = config.appSupportDir
+            self.lifeSetup = LifeSetupController { arguments, input in
+                Self.runCLICaptured(repoRoot: repoRoot, appSupportDir: supportDir,
+                                    arguments: arguments, timeoutSeconds: 20, standardInput: input, privateOutput: true)
+            }
+        }
+        self.lifeSetup?.show()
+    }
+
+    func connectNativeProvider(_ provider: String) {
+        guard self.nativeRuntimeMode, let config, self.providerLoginProcess == nil,
+              ["codex-cli", "claude-code"].contains(provider) else { return }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "\(config.repoRoot)/bin/viventium")
+        process.arguments = ["provider-auth", provider, "login"]
+        var environment = Self.makeCLIEnvironment()
+        environment["VIVENTIUM_APP_SUPPORT_DIR"] = config.appSupportDir
+        process.environment = environment
+        process.currentDirectoryURL = URL(fileURLWithPath: config.repoRoot)
+        // Provider CLI owns the browser, callback and credential store. Auth
+        // output is never copied into app logs or review evidence.
+        process.standardInput = FileHandle.nullDevice
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        self.nativeProviderSigningIn = provider
+        self.nativeProviderStatus[provider] = "Finish sign-in in your browser."
+        self.providerLoginProcess = process
+        self.providerLoginCancelled = false
+        process.terminationHandler = { [weak self] completed in
+            Task { @MainActor in
+                guard let self, self.providerLoginProcess === completed else { return }
+                self.providerLoginProcess = nil
+                self.nativeProviderSigningIn = nil
+                self.nativeProviderStatus[provider] = self.providerLoginCancelled ? "Cancelled" : (
+                    completed.terminationStatus == 0 ? "Connected" : "Sign-in did not finish. Try again."
+                )
+            }
+        }
+        do { try process.run() }
+        catch {
+            self.providerLoginProcess = nil
+            self.nativeProviderSigningIn = nil
+            self.nativeProviderStatus[provider] = "Could not start sign-in. Open Viventium and finish account setup."
+        }
+    }
+
+    func cancelNativeProviderSignIn() {
+        // Python's existing cancellation path joins only its official CLI child.
+        self.providerLoginCancelled = true
+        self.providerLoginProcess?.interrupt()
+    }
+
+    func connectNativeProviderInTerminal(_ provider: String) {
+        guard self.nativeRuntimeMode, let config,
+              ["codex-cli", "claude-code"].contains(provider) else { return }
+        // Terminal hosts the provider's own interactive login. Viventium never
+        // captures login output, codes, tokens, or passwords.
+        let command = ["/usr/bin/env", "VIVENTIUM_APP_SUPPORT_DIR=\(config.appSupportDir)",
+                       "\(config.repoRoot)/bin/viventium", "provider-auth", provider, "login"]
+            .map(Self.shellQuoted).joined(separator: " ")
+        let script = """
+        tell application "Terminal"
+          activate
+          do script \(Self.appleScriptQuoted(command))
+        end tell
+        """
+        Task.detached(priority: .userInitiated) {
+            let result = Self.runSystemProcess(
+                executableURL: URL(fileURLWithPath: "/usr/bin/osascript"),
+                arguments: [], standardInput: script, timeoutSeconds: 30
+            )
+            if result.status != 0 {
+                await MainActor.run {
+                    let alert = NSAlert()
+                    alert.messageText = "Could not open sign-in"
+                    alert.informativeText = "Allow Viventium to control Terminal in macOS Settings, then try again."
+                    alert.alertStyle = .warning
+                    alert.addButton(withTitle: "OK")
+                    alert.runModal()
                 }
             }
         }
@@ -1524,6 +1819,10 @@ final class HelperController: ObservableObject {
     }
 
     private func stopStack(terminateWhenDone: Bool = false) {
+        // Release the native login's lifecycle lock before Stop waits for it.
+        if self.providerLoginProcess != nil {
+            self.cancelNativeProviderSignIn()
+        }
         if !terminateWhenDone {
             self.cancelDelayedQuitWatch()
         }
@@ -1915,7 +2214,18 @@ final class HelperController: ObservableObject {
         alert.runModal()
     }
 
+    private func refreshNativeDesiredState() {
+        guard let config, config.nativeRuntime == true,
+              let persisted = Self.loadConfig(), persisted.nativeRuntime == true,
+              persisted.repoRoot == config.repoRoot, persisted.appSupportDir == config.appSupportDir,
+              let supervision = persisted.runtimeSupervision,
+              supervision.desiredState != self.runtimeSupervision.desiredState else { return }
+        self.runtimeSupervision = supervision
+        self.config = persisted
+    }
+
     private func reconcileRuntimeSupervision(trigger: String) {
+        self.refreshNativeDesiredState()
         guard !self.runtimeSupervisionCheckInFlight,
               !self.stackLaunchInProgress,
               self.runtimeSupervision.desiredState == .running,
@@ -1950,6 +2260,7 @@ final class HelperController: ObservableObject {
                 return
             }
 
+            self.refreshNativeDesiredState()
             guard self.runtimeSupervision.desiredState == .running else {
                 return
             }
@@ -2114,6 +2425,7 @@ final class HelperController: ObservableObject {
                 allowProtectedRepoRoot: config.allowProtectedRepoRoot,
                 showInStatusBar: config.showInStatusBar,
                 nativeRuntime: config.nativeRuntime,
+                computerAccessSetupShown: config.computerAccessSetupShown,
                 runtimeSupervision: config.runtimeSupervision
             )
         }
@@ -2127,6 +2439,7 @@ final class HelperController: ObservableObject {
             allowProtectedRepoRoot: false,
             showInStatusBar: config.showInStatusBar,
             nativeRuntime: config.nativeRuntime,
+            computerAccessSetupShown: config.computerAccessSetupShown,
             runtimeSupervision: config.runtimeSupervision
         )
     }
@@ -2154,6 +2467,7 @@ final class HelperController: ObservableObject {
             allowProtectedRepoRoot: activeCheckout.allowProtectedFolderAccess == true,
             showInStatusBar: config.showInStatusBar,
             nativeRuntime: config.nativeRuntime,
+            computerAccessSetupShown: config.computerAccessSetupShown,
             runtimeSupervision: config.runtimeSupervision
         )
     }
@@ -3110,12 +3424,9 @@ final class HelperController: ObservableObject {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/bash")
         process.currentDirectoryURL = URL(fileURLWithPath: repoRoot, isDirectory: true)
-        let manager = FileManager.default
-        if manager.fileExists(atPath: "\(repoRoot)/bin/viventium-native-start") {
-            process.arguments = ["\(repoRoot)/bin/viventium"] + arguments
-        } else {
-            process.arguments = ["\(repoRoot)/bin/viventium", "--app-support-dir", appSupportDir] + arguments
-        }
+        process.arguments = HelperCLICommand.arguments(
+            repoRoot: repoRoot, appSupportDir: appSupportDir, command: arguments
+        )
         var environment = self.makeCLIEnvironment()
         environment["PWD"] = repoRoot
         environment["VIVENTIUM_APP_SUPPORT_DIR"] = appSupportDir
@@ -3621,7 +3932,9 @@ final class HelperController: ObservableObject {
         let escapedWorkingDirectory = self.shellQuoted(workingDirectory)
         let escapedPidPath = self.shellQuoted(pidFileURL.path)
         let command = recoveryCommand ??
-            (["/bin/bash", binViventiumPath, "--app-support-dir", appSupportDir] + commandArguments)
+            (["/bin/bash"] + HelperCLICommand.arguments(
+                repoRoot: repoRoot, appSupportDir: appSupportDir, command: commandArguments
+            ))
         let escapedCommand = command
             .map(self.shellQuoted)
             .joined(separator: " ")
@@ -3763,7 +4076,9 @@ printf '%s\\n' "$pid" > \(escapedPidPath)
         appSupportDir: String,
         arguments: [String],
         logFileName: String? = nil,
-        timeoutSeconds: TimeInterval? = nil
+        timeoutSeconds: TimeInterval? = nil,
+        standardInput: String? = nil,
+        privateOutput: Bool = false
     ) -> (exitStatus: Int32, stdout: String) {
         let process = self.makeCLIProcess(
             repoRoot: repoRoot,
@@ -3771,9 +4086,30 @@ printf '%s\\n' "$pid" > \(escapedPidPath)
             arguments: arguments,
             logFileName: logFileName
         )
+        // A pipe filled before process.run() deadlocks on a large intent. A private,
+        // unlinked input file supplies exact bytes without exposing them in argv or logs.
+        var stdinHandle: FileHandle?
+        defer { try? stdinHandle?.close() }
+        if let standardInput {
+            let inputURL = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+                .appendingPathComponent("viventium-helper-input-\(UUID().uuidString).json")
+            guard FileManager.default.createFile(atPath: inputURL.path,
+                contents: standardInput.data(using: .utf8), attributes: [.posixPermissions: 0o600]) else {
+                return (-1, "")
+            }
+            do {
+                stdinHandle = try FileHandle(forReadingFrom: inputURL)
+                try FileManager.default.removeItem(at: inputURL)
+            } catch {
+                try? FileManager.default.removeItem(at: inputURL)
+                return (-1, "")
+            }
+            process.standardInput = stdinHandle
+        }
+        if privateOutput { process.standardError = FileHandle.nullDevice }
         let stdoutURL = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
             .appendingPathComponent("viventium-helper-cli-\(UUID().uuidString).json")
-        FileManager.default.createFile(atPath: stdoutURL.path, contents: nil)
+        FileManager.default.createFile(atPath: stdoutURL.path, contents: nil, attributes: [.posixPermissions: 0o600])
         let stdoutHandle = try? FileHandle(forWritingTo: stdoutURL)
         process.standardOutput = stdoutHandle ?? FileHandle.nullDevice
         defer {
@@ -4553,6 +4889,42 @@ private enum LocalNetworkAddressResolver {
     }
 }
 
+private struct NativeProviderSetupView: View {
+    @ObservedObject var controller: HelperController
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            Text("Connect your AI accounts").font(.title2.weight(.semibold))
+            Text("Your provider opens a browser to sign you in.")
+                .foregroundStyle(.secondary)
+            ForEach([("codex-cli", "OpenAI"), ("claude-code", "Claude")], id: \.0) { provider, title in
+                HStack {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(title).fontWeight(.medium)
+                        if let status = self.controller.nativeProviderStatus[provider] {
+                            Text(status).font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                    Spacer()
+                    if self.controller.nativeProviderSigningIn == provider {
+                        Button("Cancel") { self.controller.cancelNativeProviderSignIn() }
+                    } else {
+                        Button("Sign In") { self.controller.connectNativeProvider(provider) }
+                            .disabled(self.controller.nativeProviderSigningIn != nil)
+                    }
+                }
+            }
+            Text("OpenAI enables the default chat and memory setup.")
+                .font(.callout).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack {
+                Spacer()
+                Button("Open Viventium") { self.controller.openViventium() }
+            }
+        }.padding(24).frame(width: 440)
+    }
+}
+
 @main
 struct ViventiumHelperApp: App {
     @NSApplicationDelegateAdaptor(ViventiumHelperApplicationDelegate.self)
@@ -4572,6 +4944,13 @@ struct ViventiumHelperApp: App {
             Button("Open Feelings") {
                 self.controller.openFeelings()
             }
+            Button("Life…") { self.controller.showLifeSetup() }
+            Button("Computer Access…") {
+                self.controller.showComputerAccess()
+            }
+            if self.controller.nativeRuntimeMode {
+                Button("Connect AI…") { self.controller.showNativeProviderSetup() }
+            }
             Button(self.controller.actionLabel) {
                 self.controller.toggleStack()
             }
@@ -4584,6 +4963,10 @@ struct ViventiumHelperApp: App {
             }
             Menu("Advanced") {
                 if self.controller.nativeRuntimeMode {
+                    Menu("Sign In with Terminal") {
+                        Button("OpenAI…") { self.controller.connectNativeProviderInTerminal("codex-cli") }
+                        Button("Claude…") { self.controller.connectNativeProviderInTerminal("claude-code") }
+                    }
                     Text("Install updates with a new signed Viventium Bootstrap")
                         .help("The immutable Easy Install edition does not run source updates or Custom Settings Install commands.")
                     Button(self.controller.backupActionLabel) {

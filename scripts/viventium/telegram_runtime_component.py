@@ -114,6 +114,8 @@ PREDECESSOR_REQUIRED_COMPONENT_FILES = (
     "scripts/viventium/telegram_poller_handoff.py",
     "scripts/viventium/telegram_runtime_component.py",
     "scripts/viventium/telegram_user_config_migration.py",
+    "scripts/viventium/native_runtime.py",
+    "scripts/viventium/librechat_build.sh",
     "viventium_v0_4/viventium-librechat-start.sh",
     "viventium_v0_4/telegram-viventium/TelegramVivBot/bot.py",
     "viventium_v0_4/telegram-viventium/TelegramVivBot/config.py",
@@ -131,6 +133,8 @@ PREDECESSOR_REQUIRED_COMPONENT_FILES = (
 CURRENT_REQUIRED_COMPONENT_FILES = (
     *PREDECESSOR_REQUIRED_COMPONENT_FILES,
     "viventium_v0_4/shared/voice/tts_provider_capabilities.json",
+    "viventium_v0_4/shared/compiled_prompt_contract.py",
+    "viventium_v0_4/telegram-viventium/TelegramVivBot/utils/telegram_preparation.py",
 )
 
 
@@ -211,7 +215,9 @@ def _git_tracked_paths(root: Path) -> set[Path] | None:
     }
 
 
-def _walk_selected_tree(root: Path, destination_prefix: Path) -> Iterator[tuple[Path, Path]]:
+def _walk_selected_tree(
+    root: Path, destination_prefix: Path, required_files: tuple[str, ...],
+) -> Iterator[tuple[Path, Path]]:
     if root.is_symlink() or not root.is_dir():
         raise ComponentError(f"Telegram runtime source directory is missing or symlinked: {root}")
     tracked_paths = _git_tracked_paths(root)
@@ -232,10 +238,16 @@ def _walk_selected_tree(root: Path, destination_prefix: Path) -> Iterator[tuple[
                 raise ComponentError(f"Telegram runtime source contains a symlink: {candidate}")
             if not _source_file_allowed(candidate):
                 continue
-            if tracked_paths is not None and _lexical(candidate) not in tracked_paths:
+            relative = destination_prefix / candidate.relative_to(root)
+            # Explicit public dependencies are part of the component even before
+            # a local source commit. Other untracked files remain excluded.
+            if (
+                tracked_paths is not None
+                and _lexical(candidate) not in tracked_paths
+                and relative.as_posix() not in required_files
+            ):
                 continue
-            relative = candidate.relative_to(root)
-            yield candidate, destination_prefix / relative
+            yield candidate, relative
 
 
 def _selected_sources(
@@ -252,12 +264,18 @@ def _selected_sources(
     shared = v0_root / "shared"
     voice = v0_root / "voice-gateway"
     voice_tracked_paths = _git_tracked_paths(voice)
+    required = (
+        PREDECESSOR_REQUIRED_COMPONENT_FILES
+        if predecessor_runtime
+        else CURRENT_REQUIRED_COMPONENT_FILES
+    )
     selected = [
         *_walk_selected_tree(
             telegram,
             Path("viventium_v0_4") / "telegram-viventium" / "TelegramVivBot",
+            required,
         ),
-        *_walk_selected_tree(shared, Path("viventium_v0_4") / "shared"),
+        *_walk_selected_tree(shared, Path("viventium_v0_4") / "shared", required),
     ]
     controller_root = _lexical(Path(__file__).resolve().parents[2])
     for relative in (
@@ -265,6 +283,8 @@ def _selected_sources(
         Path("scripts") / "viventium" / "telegram_poller_handoff.py",
         Path("scripts") / "viventium" / "telegram_runtime_component.py",
         Path("scripts") / "viventium" / "telegram_user_config_migration.py",
+        Path("scripts") / "viventium" / "native_runtime.py",
+        Path("scripts") / "viventium" / "librechat_build.sh",
         Path("viventium_v0_4") / "viventium-librechat-start.sh",
     ):
         candidate = controller_root / relative
@@ -290,11 +310,6 @@ def _selected_sources(
     destinations = [destination.as_posix() for _, destination in selected]
     if len(destinations) != len(set(destinations)):
         raise ComponentError("Telegram runtime component contains duplicate destination paths")
-    required = (
-        PREDECESSOR_REQUIRED_COMPONENT_FILES
-        if predecessor_runtime
-        else CURRENT_REQUIRED_COMPONENT_FILES
-    )
     missing = sorted(set(required) - set(destinations))
     if missing:
         raise ComponentError(

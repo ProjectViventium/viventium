@@ -191,6 +191,8 @@ jobs:
           python-version: "3.12"
       - name: Record hosted Python toolchain
         run: python -VV
+      - name: Install pinned release tooling dependencies
+        run: python -m pip install --disable-pip-version-check --requirement scripts/viventium/requirements.txt
       - name: Validate immutable inputs and approved public trust policy
         run: |
           set -euo pipefail
@@ -294,7 +296,7 @@ jobs:
           from pathlib import Path
 
           sys.path.insert(0, "scripts/viventium")
-          import assemble_native_payload
+          import verify_native_release_metadata
           import build_native_payload
 
           payload_root = Path("candidate/payload")
@@ -309,11 +311,9 @@ jobs:
               raise SystemExit("candidate build metadata is not bound to the tagged commit")
           if metadata.get("source_date_epoch") != tagged_epoch:
               raise SystemExit("candidate source timestamp is not derived from the tagged commit")
-          expected_components = assemble_native_payload.release_component_manifest(
-              components, os.environ["EXPECTED_ARCH"]
+          verify_native_release_metadata.verify_component_policy(
+              payload_root, Path("."), os.environ["EXPECTED_ARCH"]
           )
-          if metadata.get("components") != expected_components:
-              raise SystemExit("candidate components are not bound to architecture-specific policy")
           expected_schema = {key: schema[key] for key in ("minimum", "maximum", "target")}
           if metadata.get("data_schema") != expected_schema:
               raise SystemExit("candidate data schema is not bound to code policy")
@@ -448,13 +448,21 @@ jobs:
 
           while IFS= read -r relative_path; do
             [[ -n "$relative_path" ]] || continue
+            codesign_args=(--force --options runtime --timestamp --sign "$identity_hash")
+            if [[ "$relative_path" == "apps/Viventium.app" ]]; then
+              codesign_args+=(--entitlements apps/macos/ViventiumHelper/ViventiumHelper.entitlements)
+            fi
             /usr/bin/codesign \
-              --force \
-              --options runtime \
-              --timestamp \
-              --sign "$identity_hash" \
+              "${codesign_args[@]}" \
               "$payload_root/$relative_path"
           done < "$payload_root/release-metadata/apple-code-paths.txt"
+
+          python scripts/viventium/verify_native_release_metadata.py \
+            --payload-root "$payload_root" \
+            --repo-root "$GITHUB_WORKSPACE" \
+            --arch "$EXPECTED_ARCH" \
+            --bootstrap-app "$bootstrap_app" \
+            --refresh-after-signing
 
           python - "$bootstrap_app" "${work_root}/bootstrap-code-paths.txt" <<'PY'
           import subprocess
@@ -462,9 +470,10 @@ jobs:
           from pathlib import Path
 
           app = Path(sys.argv[1]).resolve()
+          python_root = app / "Contents/Resources/runtime/python"
           paths = []
           for path in app.rglob("*"):
-              if not path.is_file() or path.is_symlink():
+              if not path.is_file() or path.is_symlink() or path.is_relative_to(python_root):
                   continue
               kind = subprocess.run(
                   ["/usr/bin/file", "-b", str(path)],

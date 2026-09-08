@@ -167,6 +167,23 @@ Use stable `CONT-NNN` IDs for continuity ops cases.
   10. After the API writer stops and removes its Unix socket, run snapshot on vanilla macOS whose
       system `lsof` emits an error for an absent path. Confirm the absent socket is treated as no
       listener while an existing unsafe or unverifiable path still fails closed.
+  11. With a payload containing GlassHive, stop its owned API and export synthetic paused worker
+      work through the component helper. Compare worker/project/run identities, workspace contents
+      and execute permission after restore. Provider homes, bootstrap credentials, compute leases,
+      callbacks awaiting delivery and native process/session handles must not reactivate.
+  12. Reject active worker/run rows, unsupported component schema, unsafe workspace links and an
+      archive whose component coverage differs from the destination release. Inject failure after
+      GlassHive root activation and prove the prior GlassHive data and service intent return.
+      Retain acceptance of older bundles by releases without that component.
+  13. Export completed synthetic work with callback delivery/retry history and a useful result.
+      Verify the original chains before projection; compare retained source SQL bytes, record IDs,
+      order, task/result meaning, artifacts and source/export heads in the existing trace. Include
+      credential copies in JSON keys, values and nested encoded strings. Portable state must contain
+      no recoverable callback token; restored old leases cannot deliver, and append-only guards
+      remain active. Reject tampered source, projection provenance and imported history before
+      activation. Append new callback history after restore and repeat export/import; prior
+      provenance and useful history must remain verifiable. Inspect the restored task/result and
+      artifact through the installed user surface after permitted account reconnection.
 - Expected result: only semantically complete Native bundles publish; restore either commits a
   health-checked Native state or restores the exact prior mutable roots; immutable release/runtime
   selection and machine secrets are never replacement roots.
