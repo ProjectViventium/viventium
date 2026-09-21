@@ -1344,6 +1344,11 @@ def _macos_process_cwd(pid: int) -> Path | None:
 
 
 def _process_cwd(pid: int) -> Path | None:
+    if sys.platform.startswith("linux"):
+        try:
+            return Path(os.readlink(f"/proc/{pid}/cwd")).resolve(strict=True)
+        except (OSError, RuntimeError):
+            return None
     if sys.platform == "darwin":
         kernel_cwd = _macos_process_cwd(pid)
         if kernel_cwd is not None:
