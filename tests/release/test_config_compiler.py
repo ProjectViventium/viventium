@@ -2015,10 +2015,10 @@ def test_glasshive_compiles_as_exact_core_agent_provider(
     assert env["VIVENTIUM_FC_CONSCIOUS_LLM_MODEL"] == "codex-cli:gpt-6-astra"
     assert capability["message_delta_mode"] == "incremental"
     assert endpoint["modelDisplayLabel"] == "GlassHive"
-    assert endpoint["models"] == {
-        "default": ["codex-cli:gpt-6-astra", "claude-code:claude-opus-5", "codex-cli:gpt-5.6-sol", "claude-code:opus"],
-        "fetch": False,
-    }
+    source = yaml.safe_load(SOURCE_OF_TRUTH_LIBRECHAT_YAML.read_text(encoding="utf-8"))
+    source_endpoint = custom_endpoint(source["endpoints"]["custom"], "glasshive-harness")
+    assert endpoint["models"] == source_endpoint["models"]
+    assert "codex-cli:gpt-5.6-luna" in endpoint["models"]["default"]
     assert endpoint["titleEndpoint"] == "openAI"
     assert endpoint["titleModel"] == "gpt-5.6-terra"
     assert set(config_compiler.GLASSHIVE_PROVIDER_DROP_PARAMS) <= set(endpoint["dropParams"])
@@ -2052,7 +2052,7 @@ def test_glasshive_compiles_as_exact_core_agent_provider(
         "max",
         "ultra",
     ]
-    assert capability["models"][1]["effortChoices"] == [
+    assert next(model for model in capability["models"] if model["id"] == "claude-code:claude-opus-5")["effortChoices"] == [
         "default",
         "low",
         "medium",
@@ -9726,9 +9726,9 @@ def test_public_agent_bootstrap_template_uses_glasshive_opus5_high_fallbacks() -
             continue
         if agent.get("id") == "agent_viventium_deep_memory_95aeb3":
             assert agent.get("fallback_llm_provider") == "glasshive-harness"
-            assert agent.get("fallback_llm_model") == "codex-cli:gpt-5.6-sol"
+            assert agent.get("fallback_llm_model") == "claude-code:opus"
             assert agent.get("fallback_llm_model_parameters") == {
-                "model": "codex-cli:gpt-5.6-sol",
+                "model": "claude-code:opus",
                 "reasoning_effort": "medium",
             }
             continue

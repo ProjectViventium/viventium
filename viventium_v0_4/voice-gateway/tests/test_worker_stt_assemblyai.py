@@ -124,6 +124,16 @@ class TestAssemblyAISttModelSelection(unittest.TestCase):
             kwargs = _build_assemblyai_stt_kwargs(load_env())
         self.assertEqual(kwargs["model"], "u3-rt-pro")
 
+    def test_build_kwargs_passes_contextual_terms_to_assemblyai(self):
+        keyterms = ["Alpha Ledger.pdf", "Beta Notes.xlsx"]
+        with patch.dict(
+            os.environ,
+            _assemblyai_env(VIVENTIUM_ASSEMBLYAI_STT_MODEL="u3-rt-pro"),
+            clear=False,
+        ):
+            kwargs = _build_assemblyai_stt_kwargs(load_env(), keyterms)
+        self.assertEqual(kwargs["keyterms_prompt"], keyterms)
+
     @unittest.skipUnless(HAS_ASSEMBLYAI, "livekit-plugins-assemblyai not installed")
     def test_apply_requested_route_applies_selected_variant(self):
         requested = {
@@ -169,6 +179,21 @@ class TestAssemblyAISttModelSelection(unittest.TestCase):
         self.assertEqual(provider, "assemblyai")
         # The plugin exposes the resolved model via the .model property.
         self.assertEqual(getattr(stt_impl, "model", None), "u3-rt-pro")
+
+    @unittest.skipUnless(HAS_ASSEMBLYAI, "livekit-plugins-assemblyai not installed")
+    def test_build_stt_selection_passes_terms_only_to_assemblyai(self):
+        keyterms = ["Alpha Ledger.pdf", "Beta Notes.xlsx"]
+        with patch.dict(
+            os.environ,
+            _assemblyai_env(VIVENTIUM_ASSEMBLYAI_STT_MODEL="u3-rt-pro"),
+            clear=False,
+        ), patch("worker.assemblyai_stt.STT", return_value="assemblyai-stt") as stt_cls:
+            stt_impl, provider = build_stt_selection(
+                load_env(), vad=None, contextual_keyterms=keyterms
+            )
+        self.assertEqual(stt_impl, "assemblyai-stt")
+        self.assertEqual(provider, "assemblyai")
+        self.assertEqual(stt_cls.call_args.kwargs["keyterms_prompt"], keyterms)
 
 
 if __name__ == "__main__":
