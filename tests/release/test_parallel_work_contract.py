@@ -88,7 +88,7 @@ def test_main_declares_automatic_parallel_capability() -> None:
         "worker_model": "codex-cli:gpt-6-astra",
         "worker_reasoning_effort": "medium",
         "fallback_worker_profile": "claude-code",
-        "fallback_worker_model": "claude-code:claude-opus-5",
+        "fallback_worker_model": "claude-code:opus",
         "fallback_worker_reasoning_effort": "medium",
     }
 
