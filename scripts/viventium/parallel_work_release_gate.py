@@ -1626,7 +1626,9 @@ def _owner_process_image_executes(
                 if resolved:
                     allowed_interpreters.add(Path(resolved).resolve(strict=True))
             except (OSError, RuntimeError, ValueError):
-                return False
+                # An optional wrapper absent on this host cannot authorize a process.
+                # Keep validating the live image against the wrappers that do exist.
+                continue
 
     def matches(actual: tuple[str, ...], expected: tuple[str, ...]) -> bool:
         return actual == expected or (
