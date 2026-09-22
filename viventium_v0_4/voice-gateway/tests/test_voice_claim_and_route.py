@@ -827,6 +827,37 @@ class VoiceClaimBoundaryTests(unittest.TestCase):
             "local_chatterbox_turbo_mlx_8bit",
         )
 
+    def test_claim_preserves_bounded_contextual_keyterms(self):
+        validated = _validate_voice_session_claim(
+            _claim(contextualKeyterms=["Alpha Ledger.pdf", "Beta Notes.xlsx"]),
+            expected_call_session_id="call-1",
+            expected_room_name="room-1",
+            expected_gateway_agent_name="voice-gateway",
+            expected_owner_participant_identity="owner-1",
+        )
+        self.assertEqual(
+            validated["contextualKeyterms"],
+            ["Alpha Ledger.pdf", "Beta Notes.xlsx"],
+        )
+
+    def test_claim_rejects_unsafe_contextual_keyterms(self):
+        for keyterms in (
+            ["folder/file.txt"],
+            ["term\\with-path"],
+            ["x" * 97],
+            [f"term-{index}" for index in range(33)],
+        ):
+            with self.subTest(keyterms=keyterms), self.assertRaisesRegex(
+                RuntimeError, "invalid canonical voice claim"
+            ):
+                _validate_voice_session_claim(
+                    _claim(contextualKeyterms=keyterms),
+                    expected_call_session_id="call-1",
+                    expected_room_name="room-1",
+                    expected_gateway_agent_name="voice-gateway",
+                    expected_owner_participant_identity="owner-1",
+                )
+
     def test_claim_rejects_forged_or_stale_dispatch_bindings(self):
         cases = (
             ("callSessionId", "stale-call"),

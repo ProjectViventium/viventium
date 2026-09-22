@@ -440,8 +440,9 @@ def _wait_for_group_exit(
         present = _process_group_present(process_group_id)
         if present is False:
             return True
-        if present is None:
-            return False
+        # macOS can report EPERM for a still-owned group during the short interval between
+        # SIGTERM and child reaping. Keep waiting; the bounded timeout still fails closed if
+        # ownership cannot be proven resolved.
         time.sleep(PROCESS_GROUP_POLL_SECONDS)
     process.poll()
     return _process_group_present(process_group_id) is False

@@ -8,7 +8,7 @@
       "path": "viventium_v0_4/LibreChat",
       "origin": "https://github.com/ProjectViventium/viventium-librechat.git",
       "upstream": "https://github.com/danny-avila/LibreChat.git",
-      "ref": "a903270ad1791953b63180b87ff070a08922e0ee"
+      "ref": "2c53de22928cec191cbac1c69ff9de3694a03948"
     },
     {
       "name": "agents-playground",
@@ -36,14 +36,14 @@
       "path": "viventium_v0_4/agent-starter-react",
       "origin": "https://github.com/ProjectViventium/agent-starter-react.git",
       "upstream": "https://github.com/livekit-examples/agent-starter-react.git",
-      "ref": "58d4ff2458b5448b23fc066ca8cf645bef518039"
+      "ref": "a27f4b9a2e630b5f188e9f84594ffc94f9e92ec6"
     },
     {
       "name": "GlassHive",
       "path": "viventium_v0_4/GlassHive",
       "origin": "https://github.com/ProjectViventium/GlassHive.git",
       "upstream": "",
-      "ref": "9bafb4538432957a07bae6ec91081d76488e055a"
+      "ref": "10ba53c2b5c0bb187b3720d99129e55359fc8d67"
     },
     {
       "name": "Viventium-Health",

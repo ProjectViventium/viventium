@@ -435,8 +435,8 @@ def test_source_easy_install_compiles_canonical_main_to_glasshive_codex(
     assert compiled_agents["mainAgent"]["glasshive_options"] == {
         "workspace": {"mode": "default"},
         "access": "full",
-        "fallback_model": "claude-code:claude-opus-5",
-        "fallback_reasoning_effort": "low",
+        "fallback_model": "claude-code:opus",
+        "fallback_reasoning_effort": "high",
         "orchestration": {
             "default_mode": "parallel",
             "parallel_available": True,
@@ -444,7 +444,7 @@ def test_source_easy_install_compiles_canonical_main_to_glasshive_codex(
             "worker_model": "codex-cli:gpt-6-astra",
             "worker_reasoning_effort": "medium",
             "fallback_worker_profile": "claude-code",
-            "fallback_worker_model": "claude-code:claude-opus-5",
+            "fallback_worker_model": "claude-code:opus",
             "fallback_worker_reasoning_effort": "medium",
         },
     }

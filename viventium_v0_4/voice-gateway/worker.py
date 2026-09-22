@@ -22,6 +22,7 @@ import platform
 import sys
 import time
 import threading
+import unicodedata
 import wave
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
@@ -996,6 +997,38 @@ def _normalize_assemblyai_stt_model(model_name: str) -> str:
     if value in _ASSEMBLYAI_STT_MODEL_IDS:
         return value
     return ASSEMBLYAI_DEFAULT_STT_MODEL
+
+
+_VOICE_CONTEXT_KEYTERMS_MAX_COUNT = 32
+_VOICE_CONTEXT_KEYTERM_MAX_LENGTH = 96
+
+
+def _normalize_voice_context_keyterms(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if not isinstance(value, list) or len(value) > _VOICE_CONTEXT_KEYTERMS_MAX_COUNT:
+        raise RuntimeError("invalid canonical voice claim")
+
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for candidate in value:
+        if not isinstance(candidate, str):
+            raise RuntimeError("invalid canonical voice claim")
+        keyterm = " ".join(unicodedata.normalize("NFKC", candidate).strip().split())
+        if (
+            not keyterm
+            or len(keyterm) > _VOICE_CONTEXT_KEYTERM_MAX_LENGTH
+            or "/" in keyterm
+            or "\\" in keyterm
+            or any(ord(character) < 0x20 for character in keyterm)
+        ):
+            raise RuntimeError("invalid canonical voice claim")
+        identity = keyterm.casefold()
+        if identity in seen:
+            continue
+        seen.add(identity)
+        normalized.append(keyterm)
+    return normalized
 
 
 def _assemblyai_model_label(model_id: str) -> str:
@@ -2339,6 +2372,8 @@ def _validate_voice_session_claim(
         if variant is not None and len(variant) > 256:
             raise RuntimeError("invalid canonical voice claim")
 
+    contextual_keyterms = _normalize_voice_context_keyterms(payload.get("contextualKeyterms"))
+
     call_state = parse_voice_call_state_v1(
         payload.get("callState"),
         expected_call_session_id=expected_call_session_id,
@@ -2413,6 +2448,7 @@ def _validate_voice_session_claim(
         "gatewayAgentName": expected_gateway_agent_name.strip(),
         "ownerParticipantIdentity": claimed_owner.strip(),
         "requestedVoiceRoute": normalized_route,
+        "contextualKeyterms": contextual_keyterms,
         "callState": call_state,
         "speakerSessionState": normalized_state,
     }
@@ -2954,7 +2990,10 @@ def load_vad(env: Optional[Env] = None) -> Optional[Any]:
 # Feature: STT provider selection (AssemblyAI + local whisper.cpp)
 # Added: 2026-01-11
 # === VIVENTIUM END ===
-def _build_assemblyai_stt_kwargs(env: Env) -> dict[str, Any]:
+def _build_assemblyai_stt_kwargs(
+    env: Env,
+    contextual_keyterms: Optional[list[str]] = None,
+) -> dict[str, Any]:
     # Speaker labels use the already-selected AssemblyAI stream. They do not select a provider or
     # create a second/cloud route, so explicit local-only configurations remain local-only.
     kwargs: dict[str, Any] = {"speaker_labels": True}
@@ -2972,10 +3011,16 @@ def _build_assemblyai_stt_kwargs(env: Env) -> dict[str, Any]:
         kwargs["max_turn_silence"] = env.assemblyai_max_turn_silence_ms
     if env.assemblyai_format_turns:
         kwargs["format_turns"] = True
+    if contextual_keyterms:
+        kwargs["keyterms_prompt"] = contextual_keyterms
     return kwargs
 
 
-def build_stt_selection(env: Env, vad: Optional[Any]) -> tuple[Any, str]:
+def build_stt_selection(
+    env: Env,
+    vad: Optional[Any],
+    contextual_keyterms: Optional[list[str]] = None,
+) -> tuple[Any, str]:
     provider = _normalize_stt_provider(env.stt_provider)
 
     if provider == "assemblyai":
@@ -2994,12 +3039,16 @@ def build_stt_selection(env: Env, vad: Optional[Any]) -> tuple[Any, str]:
                 reason="credentials are unavailable",
             )
         else:
-            assemblyai_kwargs = _build_assemblyai_stt_kwargs(env)
+            assemblyai_kwargs = _build_assemblyai_stt_kwargs(env, contextual_keyterms)
+            log_kwargs = {
+                key: f"{len(value)} terms" if key == "keyterms_prompt" else value
+                for key, value in assemblyai_kwargs.items()
+            }
             logger.info(
                 "Using AssemblyAI STT%s",
                 ""
-                if not assemblyai_kwargs
-                else " with " + ", ".join(f"{key}={value}" for key, value in assemblyai_kwargs.items()),
+                if not log_kwargs
+                else " with " + ", ".join(f"{key}={value}" for key, value in log_kwargs.items()),
             )
             return assemblyai_stt.STT(**assemblyai_kwargs), "assemblyai"
 
@@ -5792,7 +5841,11 @@ async def entrypoint(ctx: JobContext) -> None:
 
     # STT (provider selection)
     try:
-        stt_impl, stt_provider = build_stt_selection(env, vad)
+        stt_impl, stt_provider = build_stt_selection(
+            env,
+            vad,
+            contextual_keyterms=claimed.get("contextualKeyterms"),
+        )
     except VoiceRouteError as exc:
         await _fail_voice_route_initialization(exc)
         raise

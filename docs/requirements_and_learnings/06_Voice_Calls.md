@@ -782,6 +782,12 @@ background-cortex behavior.
   voice-gateway capability catalog must stay aligned on the same id set.
 - The same ownership contract must work for both short exchanges and long continuous speech; fixes
   must widen the structural runtime contract, not hardcode one reproduced sentence shape.
+- For an AssemblyAI call, the authorized call claim may carry bounded contextual keyterms derived
+  from owner-visible file names and stable titles. The gateway validates and forwards those terms
+  through the installed AssemblyAI plugin's `keyterms_prompt`; local STT routes remain unchanged.
+  File contents and paths are excluded. The gateway logs the count, not the terms, and the list
+  stays within the authorized call context. A provider transcription remains evidence to evaluate, not a
+  guaranteed correction for every spoken word.
 
 ### xAI Standalone TTS Contract
 - xAI is a first-class TTS provider. The user-facing provider label is **xAI**; the only supported

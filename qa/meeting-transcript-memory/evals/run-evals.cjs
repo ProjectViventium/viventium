@@ -97,6 +97,12 @@ function loadFileSearchWithMocks({ axiosPost }) {
       getMessageText: (message) => message?.text || message?.content || '',
       shouldSkipFromRecallCorpus: ({ messageText }) => !messageText,
     },
+    '~/server/services/viventium/VoiceOrchestrationTraceService': {
+      recordVoiceOrchestrationTraceBestEffort: () => {},
+    },
+    '~/server/services/viventium/interactionContext': {
+      getTrustedInteractionContext: () => null,
+    },
   };
 
   Module._load = function patchedLoad(request, parent, isMain) {

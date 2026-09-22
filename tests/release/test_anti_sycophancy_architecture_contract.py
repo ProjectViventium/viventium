@@ -108,9 +108,9 @@ def test_deep_memory_is_one_always_on_background_cortex_with_recall_access() -> 
     assert agent["model"] == "gpt-5.6-terra"
     assert agent["model_parameters"]["resendFiles"] is True
     assert agent["fallback_llm_provider"] == "glasshive-harness"
-    assert agent["fallback_llm_model"] == "codex-cli:gpt-5.6-sol"
+    assert agent["fallback_llm_model"] == "claude-code:opus"
     assert agent["fallback_llm_model_parameters"] == {
-        "model": "codex-cli:gpt-5.6-sol",
+        "model": "claude-code:opus",
         "reasoning_effort": "medium",
     }
     assert agent["hide_sequential_outputs"] is False
