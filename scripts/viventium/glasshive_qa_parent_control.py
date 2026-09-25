@@ -47,15 +47,21 @@ CASE_BOUNDARIES = {
         "artifact_link_expired",
         "artifact_unavailable_restart_recovery",
     ),
+    # The installed component's coordinator case targets one conversation's Nth
+    # delegated admission for a selected owner. The component owns and arms it.
+    "XPF-COORD-001": ("coordinator_admission_prerequisite_missing",),
 }
 CASE_MODES = {
     "PWK-UC-016": "pwk_uc_016",
     "PWK-UC-017": "pwk_uc_017",
+    "XPF-COORD-001": "xpf_coord_001",
 }
+# The run fixtures this parent provisions, arms and consumes.
+FIXTURE_CASES = frozenset({"PWK-UC-016", "PWK-UC-017"})
 RUN_SCOPED_BOUNDARIES = frozenset(
     boundary
-    for boundaries in CASE_BOUNDARIES.values()
-    for boundary in boundaries
+    for case_id in FIXTURE_CASES
+    for boundary in CASE_BOUNDARIES[case_id]
 )
 ARTIFACT_SCOPED_BOUNDARIES = frozenset(
     {"artifact_link_expired", "artifact_unavailable_restart_recovery"}
@@ -732,7 +738,7 @@ def _state(path: Path) -> dict[str, object]:
         for name in ("projectId", "workerId", "workId", "runId")
     ]
     if (
-        case_id not in CASE_BOUNDARIES
+        case_id not in FIXTURE_CASES
         or status_value not in {"provisioning", "ready"}
         or not NAMESPACE_PATTERN.fullmatch(str(state.get("namespace") or ""))
         or not all(ID_PATTERN.fullmatch(value) for value in ids[:3])
@@ -1114,7 +1120,7 @@ def _common_active(
         local_qa_request_path=local_qa_request_path,
         now=now,
     )
-    if session.get("caseId") not in CASE_BOUNDARIES:
+    if session.get("caseId") not in FIXTURE_CASES:
         raise ParentControlError("operation_failed")
     state = _state(parent_state_path)
     _match_state(state, session, installed_root=installed_root)
@@ -1145,7 +1151,7 @@ def _common_cleanup(
     del now
     session = _raw_session(session_state_path)
     if (
-        session.get("caseId") not in CASE_BOUNDARIES
+        session.get("caseId") not in FIXTURE_CASES
         or session.get("installedRootHash") != _root_hash(installed_root)
     ):
         raise ParentControlError("operation_failed")
@@ -1211,7 +1217,7 @@ def prepare_fixture(
         local_qa_request_path=local_qa_request_path,
         now=checked_at,
     )
-    if case_id not in CASE_BOUNDARIES or session.get("caseId") != case_id:
+    if case_id not in FIXTURE_CASES or session.get("caseId") != case_id:
         raise ParentControlError("operation_failed")
     if not ID_PATTERN.fullmatch(str(owner_id or "")):
         raise ParentControlError("operation_failed")
@@ -1535,7 +1541,7 @@ def main(argv: Iterable[str] | None = None) -> int:
     parser = PrivateArgumentParser(allow_abbrev=False)
     subcommands = parser.add_subparsers(dest="command", required=True)
     prepare = subcommands.add_parser("prepare", allow_abbrev=False)
-    prepare.add_argument("--case-id", choices=sorted(CASE_BOUNDARIES), required=True)
+    prepare.add_argument("--case-id", choices=sorted(FIXTURE_CASES), required=True)
     prepare.add_argument("--owner-scope-stdin", action="store_true")
     arm = subcommands.add_parser("arm", allow_abbrev=False)
     arm.add_argument("--boundary", required=True)

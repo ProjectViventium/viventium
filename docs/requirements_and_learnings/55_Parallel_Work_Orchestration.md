@@ -1367,6 +1367,11 @@ measured installed service digest. Duplicate keys or options, invalid UTF-8, non
 files, unsafe path chains, replacement races, and noncanonical timestamps fail closed. Defaults
 stay dark.
 
+The root catalog mirrors the installed component's whole fault catalog. It also lists the
+component-owned `XPF-COORD-001` coordinator admission case, which targets one conversation's
+delegated admission rather than a run. The root prepares, arms and consumes only its two run
+fixtures and refuses that case.
+
 Arm verifies the selected database already contains one exact local synthetic fixture whose owner,
 work, current run, artifact observation, and trusted fixture idempotency identity agree. A durable
 hash-only tombstone prevents that exact arm from being recreated after consume, expiry, clear,
