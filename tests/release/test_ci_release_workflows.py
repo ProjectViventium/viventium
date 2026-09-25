@@ -206,7 +206,7 @@ def test_config_compile_uses_explicit_apple_silicon_and_intel_runners() -> None:
 def test_config_compile_runs_native_continuity_and_release_boundary_suites() -> None:
     source = _workflow_sources()["config-compile.yml"]
 
-    assert "timeout-minutes: 90" in source
+    assert "timeout-minutes: 150" in source
     assert "actions/setup-node@" in source
     assert 'node-version: "24"' in source
     assert "Record hosted Node toolchain" in source

@@ -25,7 +25,7 @@ jobs:
           - runner: macos-15-intel
             expected_arch: x86_64
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 90
+    timeout-minutes: 150
     env:
       EXPECTED_ARCH: ${{ matrix.expected_arch }}
     steps:

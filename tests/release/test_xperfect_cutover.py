@@ -310,6 +310,32 @@ def test_deployed_uvicorn_wrapper_has_exact_listener_identity(process_identity, 
     assert process_identity.service_process_matches(child.pid, root, service, port)
 
 
+@pytest.mark.skipif(sys.platform != "darwin", reason="framework interpreters are macOS-only")
+def test_framework_interpreter_reexec_keeps_exact_listener_identity(process_identity, tmp_path, monkeypatch):
+    # A framework python3.x re-executes Resources/Python.app and passes that path as argv[0].
+    framework = tmp_path / "Python.framework/Versions/3.12"
+    app = framework / "Resources/Python.app/Contents/MacOS/Python"
+    foreign_app = tmp_path / "Other.framework/Versions/3.12/Resources/Python.app/Contents/MacOS/Python"
+    for path in (framework / "bin/python3.12", app, foreign_app):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("")
+    root = tmp_path / "xPerfect"
+    service_root = root / "runtime_phase1"
+    (service_root / ".venv/bin").mkdir(parents=True)
+    (service_root / ".venv/bin/python").symlink_to(framework / "bin/python3.12")
+    port = 18766
+    arguments = ("-m", "uvicorn", "workers_projects_runtime.api:create_app", "--factory", "--port", str(port))
+    observed = {"value": (app.resolve(), (str(app), *arguments))}
+    monkeypatch.setattr(process_identity.process_inspector, "_live_process_image_and_argv",
+                        lambda pid: observed["value"])
+    monkeypatch.setattr(process_identity.process_inspector, "_process_cwd", lambda pid: service_root.resolve())
+    assert process_identity.service_process_matches(4242, root, "runtime", port)
+    observed["value"] = (foreign_app.resolve(), (str(foreign_app), *arguments))
+    assert not process_identity.service_process_matches(4242, root, "runtime", port)
+    observed["value"] = (app.resolve(), (str(foreign_app), *arguments))
+    assert not process_identity.service_process_matches(4242, root, "runtime", port)
+
+
 def test_duplicate_port_option_cannot_claim_listener_identity(process_identity, listening_service):
     child, root, port = listening_service("runtime", extra_options=("--port", "12345"))
     assert not process_identity.service_process_matches(child.pid, root, "runtime", port)

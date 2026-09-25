@@ -29,9 +29,11 @@ def service_process_matches(pid: int, component_root: Path, service: str, port: 
             framework_image = expected_python.parent.parent / "Resources/Python.app/Contents/MacOS/Python"
             if framework_image.is_file():
                 allowed_image = framework_image.resolve(strict=True)
-        if image not in {expected_python, allowed_image} or not argv:
+        interpreters = {expected_python, allowed_image}
+        if image not in interpreters or not argv:
             return False
-        if Path(argv[0]).resolve(strict=True) != expected_python:
+        # A macOS framework interpreter re-executes its Python.app and passes that path as argv[0].
+        if Path(argv[0]).resolve(strict=True) not in interpreters:
             return False
         if service == "mcp":
             if argv[1:3] != ("-m", "workers_projects_runtime.mcp_server"):
