@@ -1,6 +1,7 @@
 """The new component never adopts or modifies the retained GlassHive checkout."""
 from __future__ import annotations
 
+import ast
 import importlib.util
 import json
 from pathlib import Path
@@ -68,6 +69,44 @@ def test_legacy_config_bootstraps_xperfect_without_touching_old_checkout(tmp_pat
     assert {p.relative_to(old).as_posix(): p.read_bytes()
             for p in old.rglob("*") if p.is_file()} == before
     assert module.select_components([legacy, new], {"integrations": {"glasshive": {"enabled": False}}}) == []
+
+
+def component_asgi_kind(target: str) -> str:
+    """How the selected component defines a uvicorn target: a factory, an app, or not at all."""
+    module, _, name = target.partition(":")
+    source = ROOT / "viventium_v0_4/xPerfect/runtime_phase1/src" / (module.replace(".", "/") + ".py")
+    for node in ast.parse(source.read_text()).body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == name:
+            return "factory"
+        targets = node.targets if isinstance(node, ast.Assign) else [node.target] if isinstance(node, ast.AnnAssign) else []
+        if any(isinstance(item, ast.Name) and item.id == name for item in targets):
+            return "app"
+    return "missing"
+
+
+def uvicorn_command_target(line: str) -> tuple[str, bool]:
+    argv = shlex.split(line)
+    return next(arg for arg in argv if arg.startswith("workers_projects_runtime.api:")), "--factory" in argv
+
+
+@pytest.mark.parametrize("launcher", ["native", "systemd", "source"])
+def test_every_runtime_launcher_names_an_app_the_selected_component_defines(launcher):
+    # A stub uvicorn accepts any target; resolve each launcher's target in the real component.
+    if launcher == "native":
+        runtime = load_module("xperfect_native_runtime", "scripts/viventium/native_runtime.py")
+        code = runtime.glasshive_server_command(Path("/release"), Path("/support"))[4]
+        config = next(node for node in ast.walk(ast.parse(code))
+                      if isinstance(node, ast.Call) and getattr(node.func, "attr", "") == "Config")
+        target = config.args[0].value
+        factory = any(item.arg == "factory" and item.value.value is True for item in config.keywords)
+    elif launcher == "systemd":
+        unit = (ROOT / "deploy/glasshive/systemd/glasshive-runtime.service").read_text()
+        target, factory = uvicorn_command_target(next(line for line in unit.splitlines() if line.startswith("ExecStart=")))
+    else:
+        target, factory = uvicorn_command_target(next(
+            line for line in LAUNCHER.read_text().splitlines()
+            if "uv run uvicorn workers_projects_runtime.api:" in line and "kill_by_pattern" not in line))
+    assert component_asgi_kind(target) == ("factory" if factory else "app")
 
 
 def test_healthy_foreign_listeners_are_not_reused(tmp_path):

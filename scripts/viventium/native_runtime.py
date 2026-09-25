@@ -636,7 +636,7 @@ def glasshive_server_command(root: Path, support: Path) -> list[str]:
         "with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as listener:\n"
         "    listener.bind(sys.argv[1])\n"
         "    os.chmod(sys.argv[1], 0o600)\n"
-        "    uvicorn.Server(uvicorn.Config('workers_projects_runtime.api:app', uds=sys.argv[1], http='h11', access_log=False)).run(sockets=[listener])\n",
+        "    uvicorn.Server(uvicorn.Config('workers_projects_runtime.api:create_app', factory=True, uds=sys.argv[1], http='h11', access_log=False)).run(sockets=[listener])\n",
         str(native_glasshive_socket_path(support)),
     )
 

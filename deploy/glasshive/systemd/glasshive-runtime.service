@@ -21,7 +21,7 @@ Environment=VIVENTIUM_DISABLE_DEFAULT_RUNTIME_ENV=1
 Environment=PYTHONDONTWRITEBYTECODE=1
 ExecStartPre=/opt/viventium/current/viventium_v0_4/xPerfect/runtime_phase1/.venv/bin/python /opt/viventium/current/deploy/glasshive/systemd/glasshive_rootless_docker_probe.py
 ExecStartPre=/opt/viventium/current/viventium_v0_4/xPerfect/runtime_phase1/.venv/bin/python -m workers_projects_runtime.prepare_worker_image
-ExecStart=/opt/viventium/current/viventium_v0_4/xPerfect/runtime_phase1/.venv/bin/uvicorn workers_projects_runtime.api:app --host 127.0.0.1 --port ${GLASSHIVE_RUNTIME_PORT}
+ExecStart=/opt/viventium/current/viventium_v0_4/xPerfect/runtime_phase1/.venv/bin/uvicorn workers_projects_runtime.api:create_app --factory --host 127.0.0.1 --port ${GLASSHIVE_RUNTIME_PORT}
 TimeoutStartSec=20min
 Restart=on-failure
 RestartSec=3
