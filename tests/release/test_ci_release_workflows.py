@@ -206,7 +206,7 @@ def test_config_compile_uses_explicit_apple_silicon_and_intel_runners() -> None:
 def test_config_compile_runs_native_continuity_and_release_boundary_suites() -> None:
     source = _workflow_sources()["config-compile.yml"]
 
-    assert "timeout-minutes: 90" in source
+    assert "timeout-minutes: 150" in source
     assert "actions/setup-node@" in source
     assert 'node-version: "24"' in source
     assert "Record hosted Node toolchain" in source
@@ -499,6 +499,34 @@ def test_release_policy_rejects_stale_or_non_public_component_refs(
     assert result.returncode == 1
     assert "stale: lock ref" in result.stderr
     assert "private-origin: origin is outside" in result.stderr
+
+
+def test_release_policy_allows_the_xperfect_repository_only_at_its_component_path(
+    tmp_path: Path,
+) -> None:
+    expected_ref = "1" * 40
+    xperfect = {"origin": "https://github.com/xPerfectAI/xPerfect.git", "ref": expected_ref}
+    for name in ("accepted", "moved"):
+        (tmp_path / name).mkdir()
+    accepted = _run_release_component_refs_step(
+        tmp_path / "accepted",
+        lock_payload={"publication_state": "merged", "components": [
+            {"name": "xPerfect", "path": "viventium_v0_4/xPerfect", **xperfect}]},
+        remote_ref=expected_ref,
+    )
+    assert accepted.returncode == 0, accepted.stderr
+
+    moved = _run_release_component_refs_step(
+        tmp_path / "moved",
+        lock_payload={"publication_state": "merged", "components": [
+            {"name": "moved", "path": "viventium_v0_4/other", **xperfect},
+            {"name": "sibling", "path": "viventium_v0_4/xPerfect",
+             "origin": "https://github.com/xPerfectAI/other.git", "ref": expected_ref}]},
+        remote_ref=expected_ref,
+    )
+    assert moved.returncode == 1
+    assert "moved: origin is outside" in moved.stderr
+    assert "sibling: origin is outside" in moved.stderr
 
 
 def test_release_policy_retries_a_transient_public_ref_failure(

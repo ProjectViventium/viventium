@@ -51,7 +51,7 @@ def _release_paths(script_path: Path) -> tuple[Path, Path]:
     release_root = resolved_script.parents[3]
     manifest = release_root / "glasshive-release.json"
     working_directory = (
-        release_root / "viventium_v0_4/GlassHive/frontends/glass-drive-ui"
+        release_root / "viventium_v0_4/xPerfect/frontends/glass-drive-ui"
     )
     python_path = working_directory / ".venv/bin/python"
     if not manifest.is_file():

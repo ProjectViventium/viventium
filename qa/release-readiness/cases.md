@@ -156,6 +156,7 @@ rows before claiming a pass when the feature behavior changes.
 
 - `tests/release/test_agent_sync_review_contract.py`
 - `tests/release/test_bootstrap_components.py`
+- `tests/release/test_xperfect_cutover.py`
 - `tests/release/test_common_sh.py`
 - `tests/release/test_cursor_claude_bridge.py`
 - `tests/release/test_git_helper.py`

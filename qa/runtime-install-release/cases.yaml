@@ -64,3 +64,11 @@ journeys:
     degradedAndRecovery: Interruption, corrupt backup, unreachable network, failed upgrade, and rollback each fail safely with one truthful next action.
     persistenceAndCleanup: Independent content-verified restore recovers conversations, config, memory, schedules, enabled capabilities, and artifacts through the real browser; corrupt, incomplete, or metadata-only inputs mutate nothing. Rollback preserves the declared preimage and user intent. User-global helper, login, and reboot proof requires a separate supported macOS user or VM; temporary network exposure, backups, and synthetic state are removed or retained as declared.
     evidence: [source and pin hashes, build and installed hashes, socket probes, backup manifest, restore result, rollback identity, public-safety scan]
+  - id: xperfect-compatible-component-cutover
+    requirements: [CORE-013, ONB-002]
+    userAction: Upgrade an existing GlassHive-backed installation to the pinned xPerfect component, then answer, delegate, reopen a workspace, and restart.
+    surfaces: [installer, CLI, Web, worker workspace]
+    expectedResult: The xPerfect checkout and serving runtime agree; saved provider selections, config, state, files, and protocol identity survive; the original GlassHive repository is unchanged.
+    degradedAndRecovery: Missing new source, foreign or ambiguous listeners, failed validation, and incompatible database rollback fail closed without adopting old code or changing protected work.
+    persistenceAndCleanup: Reload and restart retain workspace and result identity; rehearse recovery with coherent disposable state before promotion, including byte-exact rollback of worker provider account state and refusal of an unknown source revision before state mutation.
+    evidence: [original repository hashes and remotes, component pin, compiled state path, kernel process identity, real workspace result, migration and recovery receipt]

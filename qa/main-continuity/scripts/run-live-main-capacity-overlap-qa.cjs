@@ -50,8 +50,8 @@ const CAPACITY_SOURCE_FILES = Object.freeze([
   "viventium_v0_4/LibreChat/api/server/services/BackgroundCortexService.js",
   "viventium_v0_4/LibreChat/api/server/services/viventium/GlassHiveConversationProviderService.js",
   "viventium_v0_4/LibreChat/api/server/controllers/agents/client.js",
-  "viventium_v0_4/GlassHive/runtime_phase1/src/workers_projects_runtime/conversation_provider.py",
-  "viventium_v0_4/GlassHive/runtime_phase1/src/workers_projects_runtime/store.py",
+  "viventium_v0_4/xPerfect/runtime_phase1/src/workers_projects_runtime/conversation_provider.py",
+  "viventium_v0_4/xPerfect/runtime_phase1/src/workers_projects_runtime/store.py",
 ]);
 
 function hash(value, length = 12) {

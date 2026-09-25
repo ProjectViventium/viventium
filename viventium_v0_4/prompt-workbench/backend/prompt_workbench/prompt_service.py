@@ -734,7 +734,7 @@ def _config_source_path(path_name: str) -> Path | None:
         (LIBRECHAT_ROOT / "packages/api/src/feelings/kernel.ts").resolve(),
         (LIBRECHAT_ROOT / "api/server/routes/viventium/feelings.js").resolve(),
     }
-    worker_root = (REPO_ROOT / "viventium_v0_4/GlassHive/runtime_phase1/src/workers_projects_runtime").resolve()
+    worker_root = (REPO_ROOT / "viventium_v0_4/xPerfect/runtime_phase1/src/workers_projects_runtime").resolve()
     worker_owners = {
         worker_root / name
         for name in ("bootstrap.py", "profile_runtime.py")

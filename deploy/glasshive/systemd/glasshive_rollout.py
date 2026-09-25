@@ -712,11 +712,11 @@ def _glasshive_lock_revision(source: Path) -> str:
         component
         for component in components
         if isinstance(component, dict)
-        and component.get("name") == "GlassHive"
-        and component.get("path") == "viventium_v0_4/GlassHive"
+        and component.get("name") == "xPerfect"
+        and component.get("path") == "viventium_v0_4/xPerfect"
     ]
     if len(matches) != 1 or not re.fullmatch(r"[0-9a-f]{40}", str(matches[0].get("ref") or "")):
-        raise RolloutError("components.lock.json has no exact GlassHive revision")
+        raise RolloutError("components.lock.json has no exact xPerfect revision")
     return str(matches[0]["ref"])
 
 
@@ -793,7 +793,7 @@ def _probe_relocated_project_imports(
     os.replace(staging, probe)
     try:
         _fsync_directory(releases_root)
-        glasshive = probe / "viventium_v0_4" / "GlassHive"
+        glasshive = probe / "viventium_v0_4" / "xPerfect"
         for project, package_name in (
             (glasshive / "runtime_phase1", "workers_projects_runtime"),
             (glasshive / "frontends" / "glass-drive-ui", "glass_drive_ui"),
@@ -840,7 +840,7 @@ def stage_release(
     uv: Path,
     python: Path,
 ) -> dict[str, object]:
-    """Build a minimal release only from clean, committed parent and GlassHive archives."""
+    """Build a minimal release only from clean, committed parent and xPerfect archives."""
 
     source = Path(source).resolve()
     releases_root = Path(releases_root).resolve()
@@ -857,12 +857,12 @@ def stage_release(
         raise RolloutError("parent checkout has no exact commit")
     if _git_value(source, "status", "--porcelain", "--untracked-files=normal"):
         raise RolloutError("parent checkout must be clean before release staging")
-    glasshive_source = source / "viventium_v0_4" / "GlassHive"
+    glasshive_source = source / "viventium_v0_4" / "xPerfect"
     glasshive_revision = _git_value(glasshive_source, "rev-parse", "HEAD")
     if _git_value(glasshive_source, "status", "--porcelain", "--untracked-files=normal"):
-        raise RolloutError("GlassHive checkout must be clean before release staging")
+        raise RolloutError("xPerfect checkout must be clean before release staging")
     if _glasshive_lock_revision(source) != glasshive_revision:
-        raise RolloutError("parent GlassHive component pin does not match the nested commit")
+        raise RolloutError("parent xPerfect component pin does not match the nested commit")
 
     releases_root.mkdir(parents=True, exist_ok=True)
     destination = releases_root / release_id
@@ -872,7 +872,7 @@ def stage_release(
     staging.mkdir(mode=0o700)
     try:
         _extract_git_archive(source, parent_revision, staging)
-        nested_destination = staging / "viventium_v0_4" / "GlassHive"
+        nested_destination = staging / "viventium_v0_4" / "xPerfect"
         if nested_destination.exists():
             if nested_destination.is_dir() and not nested_destination.is_symlink():
                 shutil.rmtree(nested_destination)
@@ -1871,6 +1871,7 @@ def ingress_route_contract(ports: Mapping[str, int]) -> dict[str, object]:
                 "/auth",
                 "/login",
                 "/confirm-change",
+                "/conversation",
                 "/favicon.ico",
                 "/health",
                 "/static",

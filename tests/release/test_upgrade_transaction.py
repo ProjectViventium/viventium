@@ -6,6 +6,7 @@ import json
 import os
 import shutil
 import socket
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -313,6 +314,62 @@ def test_transaction_restores_parent_components_config_runtime_and_database_stat
     assert ledger["was_running"] is True
     assert ledger["rollback_verification"]["state_restored"] is True
     assert ledger["rollback_verification"]["semantic_data_migration_reversal"] == "not_proven"
+
+
+def test_rollback_restores_native_provider_account_state(tmp_path: Path) -> None:
+    repo, _, support, _, _, _ = build_fixture(tmp_path)
+    account = support / "state" / "provider-accounts" / "glasshive" / "synthetic-account.json"
+    account.parent.mkdir(parents=True, mode=0o700)
+    account.write_bytes(b'{"session":"pre-upgrade-synthetic"}\n')
+    account.chmod(0o600)
+    before = account.read_bytes()
+
+    transaction = begin(repo, support, was_running=False)
+    account.write_bytes(b'{"session":"candidate-synthetic"}\n')
+    assert run("rollback", "--transaction", str(transaction)).returncode == 0
+
+    assert account.read_bytes() == before
+    assert account.stat().st_mode & 0o777 == 0o600
+
+
+def test_upgrade_keeps_old_provider_context_rows_and_rollback_restores_them(tmp_path: Path) -> None:
+    repo, _, support, _, _, _ = build_fixture(tmp_path)
+    database = support / "state" / "runtime" / "isolated" / "glasshive" / "runtime_phase1.db"
+    database.parent.mkdir(parents=True)
+    old_context = json.dumps({"turns": [{"user": "Old clipped user excerpt", "assistant": "Old clipped answer"}]})
+    with sqlite3.connect(database) as connection:
+        connection.execute("""CREATE TABLE provider_main_contexts (
+            tenant_id TEXT NOT NULL DEFAULT 'local', owner_id TEXT NOT NULL,
+            agent_id TEXT NOT NULL, continuity_domain_id TEXT NOT NULL,
+            version INTEGER NOT NULL DEFAULT 0, context_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+            PRIMARY KEY (tenant_id, owner_id, agent_id),
+            UNIQUE (tenant_id, owner_id, continuity_domain_id))""")
+        connection.execute("INSERT INTO provider_main_contexts VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                           ("local", "owner-a", "main-agent", "a" * 64, 1,
+                            old_context, "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"))
+
+    def context_rows() -> list[tuple[str, str, str, str, int, str, str, str]]:
+        with sqlite3.connect(database) as connection:
+            return connection.execute("SELECT * FROM provider_main_contexts ORDER BY owner_id").fetchall()
+
+    original = context_rows()
+
+    transaction = begin(repo, support, was_running=False)
+    prepared = run("prepare-candidate", "--transaction", str(transaction))
+    assert prepared.returncode == 0, prepared.stderr
+    candidate = json.loads(prepared.stdout)
+    Path(candidate["runtime_dir"]).mkdir(parents=True, exist_ok=True)
+    (Path(candidate["runtime_dir"]) / "runtime.env").write_text("VERSION=new\n", encoding="utf-8")
+    assert run("activate-candidate", "--transaction", str(transaction)).returncode == 0
+    assert context_rows() == original
+    with sqlite3.connect(database) as connection:
+        connection.execute("INSERT INTO provider_main_contexts VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                           ("local", "owner-b", "main-agent", "b" * 64, 1,
+                            '{"turns":[]}', "2026-01-02T00:00:00Z", "2026-01-02T00:00:00Z"))
+
+    assert run("rollback", "--transaction", str(transaction)).returncode == 0
+    assert context_rows() == original
 
 
 def test_candidate_is_staged_separately_and_activated_only_after_validation(tmp_path: Path) -> None:

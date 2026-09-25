@@ -1,4 +1,4 @@
-# GlassHive hosted split services and atomic rollout
+# xPerfect hosted split services and atomic rollout
 
 Hosted `multi_user` mode runs one three-service release under two operating-system identities:
 
@@ -57,9 +57,9 @@ predecessor. OIDC sessions remain independent.
 
 The active pointer is `/opt/viventium/current`, but it may point only to a sealed release below
 `/opt/viventium/releases`. A release contains a `glasshive-release.json` manifest binding the parent
-commit, exact nested GlassHive commit, every staged file, and both frozen virtual environments.
+commit, exact nested xPerfect commit, every staged file, and both frozen virtual environments.
 
-Create it only from a clean committed parent whose `components.lock.json` GlassHive pin equals the
+Create it only from a clean committed parent whose `components.lock.json` xPerfect pin equals the
 nested commit:
 
 ```bash

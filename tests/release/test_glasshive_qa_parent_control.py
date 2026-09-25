@@ -26,7 +26,7 @@ CLI = ROOT / "bin" / "viventium"
 NESTED = (
     ROOT
     / "viventium_v0_4"
-    / "GlassHive"
+    / "xPerfect"
     / "runtime_phase1"
     / "src"
     / "workers_projects_runtime"
@@ -55,7 +55,9 @@ CASE_BOUNDARIES = {
         "artifact_link_expired",
         "artifact_unavailable_restart_recovery",
     ),
+    "XPF-COORD-001": ("coordinator_admission_prerequisite_missing",),
 }
+FIXTURE_CASES = frozenset({"PWK-UC-016", "PWK-UC-017"})
 
 
 def load(path: Path, name: str):
@@ -269,10 +271,52 @@ def test_root_parent_catalog_matches_the_nested_installed_contract() -> None:
     assert parent.RUN_SCOPED_BOUNDARIES == nested.RUN_SCOPED_FAULTS
     assert parent.RUN_SCOPED_BOUNDARIES == frozenset(
         boundary
-        for boundaries in CASE_BOUNDARIES.values()
-        for boundary in boundaries
+        for case_id in FIXTURE_CASES
+        for boundary in CASE_BOUNDARIES[case_id]
     )
     assert parent.ARTIFACT_SCOPED_BOUNDARIES == nested.ARTIFACT_SCOPED_FAULTS
+    assert parent.FIXTURE_CASES == FIXTURE_CASES
+
+
+def test_root_refuses_to_prepare_the_component_owned_coordinator_case(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The installed component arms XPF-COORD-001 for one coordinator conversation.
+    # The root's run fixture cannot target it: both prepare entry points stop at the
+    # case gate, while a run-fixture case continues to its next step.
+    parent = load(PARENT, "glasshive_parent_component_owned_case")
+    reached: list[str] = []
+
+    def paths_from_environment() -> dict[str, Path]:
+        reached.append("paths")
+        raise parent.ParentControlError("operation_failed")
+
+    def runtime_authority(*_args: object, **_kwargs: object) -> None:
+        reached.append("authority")
+        raise parent.ParentControlError("operation_failed")
+
+    monkeypatch.setattr(parent, "_paths_from_environment", paths_from_environment)
+    monkeypatch.setattr(parent, "_runtime_authority_bound", runtime_authority)
+    for case_id, expected in (("XPF-COORD-001", []), ("PWK-UC-016", ["paths"])):
+        reached.clear()
+        assert parent.main(["prepare", "--case-id", case_id, "--owner-scope-stdin"]) == 2
+        assert reached == expected
+    for case_id, expected in (("XPF-COORD-001", []), ("PWK-UC-016", ["authority"])):
+        reached.clear()
+        _state, session = private_state(case_id)
+        monkeypatch.setattr(parent, "_active_session", lambda **_kwargs: session)
+        with pytest.raises(parent.ParentControlError):
+            parent.prepare_fixture(
+                case_id=case_id,
+                owner_id="qa_owner_" + "a" * 32,
+                parent_state_path=tmp_path / "parent.json",
+                session_state_path=tmp_path / "session.json",
+                installed_root=tmp_path,
+                artifact_identity_path=tmp_path / "identity.json",
+                local_qa_request_path=tmp_path / "request.json",
+                runtime_env_path=tmp_path / "runtime.env",
+            )
+        assert reached == expected
 
 
 @pytest.mark.parametrize(

@@ -3,6 +3,16 @@
   "entries": [
     {
       "kind": "file",
+      "path": "scripts/viventium/parallel_work_release_gate.py",
+      "trackedOnly": true
+    },
+    {
+      "kind": "file",
+      "path": "scripts/viventium/xperfect_process_identity.py",
+      "trackedOnly": true
+    },
+    {
+      "kind": "file",
       "path": "bin/viventium",
       "trackedOnly": true
     },
@@ -277,12 +287,12 @@
         ".py"
       ],
       "kind": "tree",
-      "path": "viventium_v0_4/GlassHive/runtime_phase1/src",
+      "path": "viventium_v0_4/xPerfect/runtime_phase1/src",
       "trackedOnly": true
     },
     {
       "kind": "file",
-      "path": "viventium_v0_4/GlassHive/runtime_phase1/src/workers_projects_runtime/local_qa_service_ack.py",
+      "path": "viventium_v0_4/xPerfect/runtime_phase1/src/workers_projects_runtime/local_qa_service_ack.py",
       "trackedOnly": false
     },
     {

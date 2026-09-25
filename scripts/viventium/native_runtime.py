@@ -461,6 +461,9 @@ def native_glasshive_transport_environment(root: Path, support: Path) -> dict[st
         "VIVENTIUM_GLASSHIVE_CALLBACK_URL": base + "/api/viventium/glasshive/callback",
         "VIVENTIUM_GLASSHIVE_ADMISSION_URL": base + "/api/viventium/glasshive/capabilities/admit",
         "VIVENTIUM_NATIVE_GLASSHIVE_SOCKET": str(native_glasshive_socket_path(support)),
+        # Host workers read background beyond the inline limit through the runtime's
+        # own owner-only socket, using xPerfect's stdio bridge.
+        "GLASSHIVE_PEER_RUNTIME_BASE_URL": "http+unix://" + urllib.parse.quote(str(native_glasshive_socket_path(support)), safe=""),
         "VIVENTIUM_NATIVE_GLASSHIVE_MCP_SOCKET": str(native_glasshive_mcp_socket_path(support)),
         "GLASSHIVE_PROVIDER_DEFAULT_WORKSPACE": str(support / "state/runtime/native/glasshive/workspaces"),
         "GLASSHIVE_PROVIDER_ALLOWED_WORKSPACE_ROOTS": str(support / "state/runtime/native/glasshive/workspaces"),
@@ -633,7 +636,7 @@ def glasshive_server_command(root: Path, support: Path) -> list[str]:
         "with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as listener:\n"
         "    listener.bind(sys.argv[1])\n"
         "    os.chmod(sys.argv[1], 0o600)\n"
-        "    uvicorn.Server(uvicorn.Config('workers_projects_runtime.api:app', uds=sys.argv[1], http='h11', access_log=False)).run(sockets=[listener])\n",
+        "    uvicorn.Server(uvicorn.Config('workers_projects_runtime.api:create_app', factory=True, uds=sys.argv[1], http='h11', access_log=False)).run(sockets=[listener])\n",
         str(native_glasshive_socket_path(support)),
     )
 

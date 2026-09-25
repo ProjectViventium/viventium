@@ -13,7 +13,7 @@ FEATURE_QA_ROOT = QA_ROOT / "glasshive_deep_research"
 PUBLIC_EVIDENCE_ROOTS = [
     REPO_ROOT / "docs" / "requirements_and_learnings",
     QA_ROOT,
-    REPO_ROOT / "viventium_v0_4" / "GlassHive" / "research" / "phase1",
+    REPO_ROOT / "viventium_v0_4" / "xPerfect" / "research" / "phase1",
 ]
 PUBLIC_TEXT_SUFFIXES = {".md", ".json", ".txt", ".yaml", ".yml", ".py", ".js", ".cjs"}
 

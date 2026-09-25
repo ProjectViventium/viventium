@@ -833,6 +833,7 @@ def _write_release_identity_fixture(
     running_service.parent.mkdir(parents=True, exist_ok=True)
     running_service.write_text("// installed service fixture\n", encoding="utf-8")
     runtime_loaded_files = {
+        "scripts/viventium/xperfect_process_identity.py": "# fixture\n",
         "scripts/viventium/feelings_qa_parent_control.py": "# fixture\n",
         "scripts/viventium/glasshive_qa_fixture.py": "# fixture\n",
         "scripts/viventium/glasshive_qa_parent_control.py": "# fixture\n",
@@ -893,9 +894,9 @@ def _write_release_identity_fixture(
             '{"name":"@viventium/data-schemas"}\n',
         "viventium_v0_4/LibreChat/api/server/utils/emails/inviteUser.handlebars":
             "<p>Fixture invitation</p>\n",
-        "viventium_v0_4/GlassHive/runtime_phase1/src/workers_projects_runtime/api.py":
+        "viventium_v0_4/xPerfect/runtime_phase1/src/workers_projects_runtime/api.py":
             "# fixture\n",
-        "viventium_v0_4/GlassHive/runtime_phase1/src/workers_projects_runtime/local_qa_service_ack.py":
+        "viventium_v0_4/xPerfect/runtime_phase1/src/workers_projects_runtime/local_qa_service_ack.py":
             "# fixture\n",
         "viventium_v0_4/telegram-viventium/TelegramVivBot/bot.py": "# fixture\n",
         "viventium_v0_4/telegram-viventium/TelegramVivBot/local_qa_service_ack.py":
@@ -3245,8 +3246,13 @@ def test_canonical_local_qa_writes_a_valid_pre_gate_snapshot_without_pass_receip
     assert gate.validate_snapshot_file(snapshot_path) is True
 
 
+@pytest.mark.parametrize("loaded_path", [
+    "viventium_v0_4/LibreChat/api/server/services/viventium/ReleaseGateConsumer.js",
+    "scripts/viventium/xperfect_process_identity.py",
+    "scripts/viventium/parallel_work_release_gate.py",
+])
 def test_runtime_service_manifest_digest_covers_loaded_release_file(
-    tmp_path: Path,
+    tmp_path: Path, loaded_path: str,
 ) -> None:
     root = tmp_path / "source"
     installed = tmp_path / "installed"
@@ -3255,10 +3261,7 @@ def test_runtime_service_manifest_digest_covers_loaded_release_file(
         root, installed
     )
     before = identity["installed"]["runningServiceSha256"]
-    loaded_service = (
-        installed
-        / "viventium_v0_4/LibreChat/api/server/services/viventium/ReleaseGateConsumer.js"
-    )
+    loaded_service = installed / loaded_path
     loaded_service.write_text("module.exports = { changed: true };\n", encoding="utf-8")
 
     after = gate.build_release_artifact_identity(
@@ -3428,7 +3431,7 @@ def test_runtime_service_manifest_covers_api_runtime_trees_and_excludes_tests() 
         "viventium_v0_4/LibreChat/api/utils",
     }
     required_trees = api_trees | {
-        "viventium_v0_4/GlassHive/runtime_phase1/src",
+        "viventium_v0_4/xPerfect/runtime_phase1/src",
         "viventium_v0_4/telegram-viventium/TelegramVivBot",
     }
 
@@ -3441,7 +3444,7 @@ def test_runtime_service_manifest_covers_api_runtime_trees_and_excludes_tests() 
         assert entry["excludeFileSuffixes"] == [".spec.js", ".test.js"]
 
 
-def test_runtime_service_manifest_binds_runtime_controls_but_not_offline_evidence_tools() -> None:
+def test_runtime_service_manifest_binds_runtime_controls_and_kernel_process_reader() -> None:
     manifest = json.loads(
         (
             ROOT
@@ -3450,6 +3453,8 @@ def test_runtime_service_manifest_binds_runtime_controls_but_not_offline_evidenc
     )
     entries = {entry["path"]: entry for entry in manifest["entries"]}
     required = {
+        "scripts/viventium/xperfect_process_identity.py",
+        "scripts/viventium/parallel_work_release_gate.py",
         "bin/viventium",
         "scripts/viventium/feelings_qa_parent_control.py",
         "scripts/viventium/glasshive_qa_parent_control.py",
@@ -3460,7 +3465,7 @@ def test_runtime_service_manifest_binds_runtime_controls_but_not_offline_evidenc
         "scripts/viventium/telegram_qa_parent_control.py",
         "viventium_v0_4/viventium-librechat-start.sh",
         "viventium_v0_4/LibreChat/api/server/services/viventium/localQaServiceAck.js",
-        "viventium_v0_4/GlassHive/runtime_phase1/src/workers_projects_runtime/local_qa_service_ack.py",
+        "viventium_v0_4/xPerfect/runtime_phase1/src/workers_projects_runtime/local_qa_service_ack.py",
         "viventium_v0_4/telegram-viventium/TelegramVivBot/local_qa_service_ack.py",
         "viventium_v0_4/telegram-viventium/TelegramVivBot/utils/orchestration.py",
         "viventium_v0_4/telegram-viventium/TelegramVivBot/utils/tr026_local_qa.py",
@@ -3470,7 +3475,6 @@ def test_runtime_service_manifest_binds_runtime_controls_but_not_offline_evidenc
     assert all((ROOT / path).is_file() for path in required)
     assert {
         "scripts/viventium/parallel_work_qa_evidence.py",
-        "scripts/viventium/parallel_work_release_gate.py",
     }.isdisjoint(entries)
 
 

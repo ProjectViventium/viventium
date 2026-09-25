@@ -72,7 +72,7 @@ def default_voice_components() -> list[dict[str, str]]:
         make_component("viventium_v0_4/agents-playground", "agents-playground"),
         make_component("viventium_v0_4/agent-starter-react", "agent-starter-react"),
         make_component("viventium_v0_4/Viventium-Health", "Viventium-Health"),
-        make_component("viventium_v0_4/GlassHive", "GlassHive"),
+        make_component("viventium_v0_4/xPerfect", "xPerfect"),
         make_component("viventium_v0_4/google_workspace_mcp", "google_workspace_mcp"),
     ]
 
@@ -121,7 +121,7 @@ def test_select_components_fetches_glasshive_when_enabled() -> None:
         }
     )
 
-    assert names == {"LibreChat", "agent-starter-react", "Viventium-Health", "GlassHive"}
+    assert names == {"LibreChat", "agent-starter-react", "Viventium-Health", "xPerfect"}
 
 
 @pytest.mark.parametrize("validate_only", [False, True])

@@ -23,7 +23,7 @@ CONFIG_COMPILER = ROOT / "scripts" / "viventium" / "config_compiler.py"
 GLASSHIVE_RUNTIME_REQUIREMENTS = (
     ROOT
     / "viventium_v0_4"
-    / "GlassHive"
+    / "xPerfect"
     / "runtime_phase1"
     / "src"
     / "workers_projects_runtime"
@@ -37,8 +37,8 @@ AGENT_DOCS = [
     ROOT / "CLAUDE.md",
     ROOT / "viventium_v0_4" / "LibreChat" / "AGENTS.md",
     ROOT / "viventium_v0_4" / "LibreChat" / "CLAUDE.md",
-    ROOT / "viventium_v0_4" / "GlassHive" / "AGENTS.md",
-    ROOT / "viventium_v0_4" / "GlassHive" / "CLAUDE.md",
+    ROOT / "viventium_v0_4" / "xPerfect" / "AGENTS.md",
+    ROOT / "viventium_v0_4" / "xPerfect" / "CLAUDE.md",
 ]
 # Codex does not auto-load above a nested git root. The local overlays explicitly require reading
 # the parent contract; the combined sets below model the contract after that required read.
@@ -56,12 +56,12 @@ EFFECTIVE_AGENT_DOCS = {
         ROOT / "AGENTS.md",
     ],
     "Codex in nested GlassHive after required parent read": [
-        ROOT / "viventium_v0_4" / "GlassHive" / "AGENTS.md",
+        ROOT / "viventium_v0_4" / "xPerfect" / "AGENTS.md",
         ROOT / "AGENTS.md",
     ],
     "Claude in nested GlassHive": [
-        ROOT / "viventium_v0_4" / "GlassHive" / "CLAUDE.md",
-        ROOT / "viventium_v0_4" / "GlassHive" / "AGENTS.md",
+        ROOT / "viventium_v0_4" / "xPerfect" / "CLAUDE.md",
+        ROOT / "viventium_v0_4" / "xPerfect" / "AGENTS.md",
         ROOT / "CLAUDE.md",
         ROOT / "AGENTS.md",
     ],
@@ -69,7 +69,7 @@ EFFECTIVE_AGENT_DOCS = {
 GLASSHIVE_MCP_SERVER = (
     ROOT
     / "viventium_v0_4"
-    / "GlassHive"
+    / "xPerfect"
     / "runtime_phase1"
     / "src"
     / "workers_projects_runtime"
@@ -588,8 +588,8 @@ def test_agent_instruction_architecture_is_lean_imported_and_reachable() -> None
     root_claude = ROOT / "CLAUDE.md"
     librechat_agents = ROOT / "viventium_v0_4" / "LibreChat" / "AGENTS.md"
     librechat_claude = ROOT / "viventium_v0_4" / "LibreChat" / "CLAUDE.md"
-    glasshive_agents = ROOT / "viventium_v0_4" / "GlassHive" / "AGENTS.md"
-    glasshive_claude = ROOT / "viventium_v0_4" / "GlassHive" / "CLAUDE.md"
+    glasshive_agents = ROOT / "viventium_v0_4" / "xPerfect" / "AGENTS.md"
+    glasshive_claude = ROOT / "viventium_v0_4" / "xPerfect" / "CLAUDE.md"
 
     assert len(_read(root_agents).splitlines()) < 200
     assert root_agents.stat().st_size < 16_384
@@ -1349,7 +1349,7 @@ def test_requirement_source_coverage_ledger_is_private_safe_and_resolves() -> No
     assert atomic["stable_requirement_ids_with_any_direct_message_mapping"] == 312
     assert atomic["required_owner_declaration_rows"] == 288
     assert atomic["required_owner_declaration_sha256"] == (
-        "60a5dcb807e9e5c4c1d6ad9c681e1054eabf333604226373c7982d69572b6ff7"
+        "7ad060985963c5174618eabd3fe03c49543c48ac1c7038ae01830ae07cabd31f"
     )
     assert atomic["required_owner_declaration_canonicalization"].startswith(
         "sha256 of lexicographically sorted unique tab-separated requirement ID"
@@ -1517,11 +1517,11 @@ def test_requirement_source_coverage_ledger_is_private_safe_and_resolves() -> No
         "markers_in_current_files_absent_from_head": 75,
         "markers_in_untracked_current_files": 11,
         "existing_case_catalog_date_resets": 0,
-        "current_marker_as_of": date(2026, 9, 21),
+        "current_marker_as_of": date(2026, 9, 25),
         "current_recent_marker_total": 264,
         "post_initial_audit_recent_marker_delta": 178,
-        "current_stale_triage_marker_total": 167,
-        "current_total_stale_marker_delta_after_initial_audit": 3,
+        "current_stale_triage_marker_total": 168,
+        "current_total_stale_marker_delta_after_initial_audit": 4,
         "method": "read_only_current_marker_comparison_against_head",
         "durability": "committed_public_source_and_tracked_triage_manifest",
         "limitation": (

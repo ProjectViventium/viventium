@@ -13,7 +13,7 @@ START_SCRIPT = ROOT / "viventium_v0_4" / "viventium-librechat-start.sh"
 GLASSHIVE_PROVIDER_SOURCE = (
     ROOT
     / "viventium_v0_4"
-    / "GlassHive"
+    / "xPerfect"
     / "runtime_phase1"
     / "src"
     / "workers_projects_runtime"

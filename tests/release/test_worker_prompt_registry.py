@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 from scripts.viventium.prompt_registry import build_prompt_bundle, load_prompt_registry, render_prompt
 
-BOOTSTRAP = ROOT / "viventium_v0_4/GlassHive/runtime_phase1/src/workers_projects_runtime/bootstrap.py"
+BOOTSTRAP = ROOT / "viventium_v0_4/xPerfect/runtime_phase1/src/workers_projects_runtime/bootstrap.py"
 PROMPTS = ROOT / "viventium_v0_4/LibreChat/viventium/source_of_truth/prompts"
 PAIRS = {
     "GLASSHIVE_SAFETY_CHECKPOINT_RULE": "worker.safety_checkpoint",
@@ -124,7 +124,11 @@ def test_workbench_exposes_sources_and_exact_consumer_relationships(monkeypatch)
         related = prompt_service.related_config_for_prompt(prompt_id)
         consumer = '_host_harness_prompt' if prompt_id == 'worker.host_native_harness' else '_instruction_with_completion_contract'
         assert {row['selector'] for row in related} == {'_worker_prompt', consumer}
-    assert prompt_service._config_source_path('viventium_v0_4/GlassHive/runtime_phase1/src/workers_projects_runtime/auth.py') is None
+    assert prompt_service._config_source_path(str(BOOTSTRAP.relative_to(ROOT))) == BOOTSTRAP.resolve()
+    profile = BOOTSTRAP.with_name('profile_runtime.py')
+    assert prompt_service._config_source_path(str(profile.relative_to(ROOT))) == profile.resolve()
+    assert prompt_service._config_source_path('viventium_v0_4/xPerfect/runtime_phase1/src/workers_projects_runtime/auth.py') is None
+    assert prompt_service._config_source_path('viventium_v0_4/GlassHive/runtime_phase1/src/workers_projects_runtime/bootstrap.py') is None
 
 
 @pytest.mark.parametrize('failure', ['missing_safety', 'missing_host', 'host_unknown_variable'])

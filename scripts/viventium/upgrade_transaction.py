@@ -2835,6 +2835,7 @@ def checkpoint_surface_candidates(
             False,
         ),
         ("runtime-state", support / "state" / "runtime", True, True),
+        ("provider-accounts", support / "state" / "provider-accounts", True, True),
         ("bootstrap-python", support / "state" / "bootstrap-python", True, False),
         ("legacy-mongo-state", support / "state" / "mongo-data", False, False),
         ("native-data", support / "data", False, False),

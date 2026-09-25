@@ -630,10 +630,10 @@ def glasshive_inventory(payload: Path, components: dict[str, object]) -> list[di
     if "glasshive" not in components and not root.exists():
         return []
     packages: list[dict[str, object]] = [{
-        "name": "GlassHive", "version": component_version(components, "glasshive"),
-        "license": "LicenseRef-FSL-1.1-ALv2", "root": root,
+        "name": "xPerfect", "version": component_version(components, "glasshive"),
+        "license": "Apache-2.0", "root": root,
         "path": root.relative_to(payload).as_posix(),
-        "notices": [required_notice(root, "LICENSE", "GlassHive")],
+        "notices": [required_notice(root, name, "xPerfect") for name in ("LICENSE", "NOTICE")],
         "inventory_scope": "physical-runtime",
     }]
     return packages + python_dependency_inventory(payload, root)

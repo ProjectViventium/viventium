@@ -303,17 +303,17 @@ def stage_glasshive(
     local_qa_worktree: bool = False,
 ) -> dict[str, str]:
     """Package the selected first-party source and its existing production lock."""
-    source = ensure_real_directory(source, "GlassHive source")
-    pin = selected_component_pin(repo, "GlassHive")
+    source = ensure_real_directory(source, "xPerfect source")
+    pin = selected_component_pin(repo, "xPerfect")
     paths = (
-        "LICENSE", "runtime_phase1/pyproject.toml", "runtime_phase1/uv.lock",
+        "LICENSE", "NOTICE", "runtime_phase1/pyproject.toml", "runtime_phase1/uv.lock",
         "runtime_phase1/src", "runtime_phase1/workstation-requirements.lock",
         "runtime_phase1/runtime_locks",
     )
     actual = command_output(["git", "-C", str(source), "rev-parse", "HEAD"]).strip()
     dirty = command_output(["git", "-C", str(source), "status", "--porcelain", "--untracked-files=all", "--", *paths])
     if actual != pin or (dirty and not local_qa_worktree):
-        raise AssemblyError("GlassHive source differs from the selected parent pin")
+        raise AssemblyError("xPerfect source differs from the selected parent pin")
     for path, label in ((python, "Python"), (uv, "uv build tool")):
         if not path.is_file() or not os.access(path, os.X_OK):
             raise AssemblyError(f"GlassHive {label} is unavailable")
@@ -326,9 +326,9 @@ def stage_glasshive(
         destination = relative.removeprefix("runtime_phase1/")
         copy_safe(source / relative, output / destination, boundary=source, source_date_epoch=source_date_epoch)
         source_digest.update(relative.encode("utf-8") + b"\0" + sha256_file(output / destination).encode("ascii") + b"\n")
-    for relative in ("LICENSE", "pyproject.toml", "uv.lock", "workstation-requirements.lock", "src/workers_projects_runtime/api.py"):
+    for relative in ("LICENSE", "NOTICE", "pyproject.toml", "uv.lock", "workstation-requirements.lock", "src/workers_projects_runtime/api.py"):
         if not (output / relative).is_file():
-            raise AssemblyError("GlassHive selected source is incomplete")
+            raise AssemblyError("xPerfect selected source is incomplete")
     requirements = output / "requirements.txt"
     with tempfile.TemporaryDirectory(prefix=".glasshive-build-", dir=output.parent) as raw:
         build = Path(raw)

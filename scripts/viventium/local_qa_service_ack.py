@@ -357,7 +357,7 @@ def _service_process_identity_valid(
                 cwd=cwd,
                 runtime_root=installed_root
                 / "viventium_v0_4"
-                / "GlassHive"
+                / "xPerfect"
                 / "runtime_phase1",
             )
         if service_id == "librechat-core":

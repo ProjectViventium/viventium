@@ -10,6 +10,8 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PUBLIC_ORIGIN_PREFIX = "https://github.com/ProjectViventium/"
+XPERFECT_ORIGIN = "https://github.com/xPerfectAI/xPerfect.git"
+XPERFECT_PATH = "viventium_v0_4/xPerfect"
 FULL_GIT_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 
 
@@ -23,7 +25,10 @@ def test_public_component_manifest_uses_projectviventium_origins() -> None:
         entry["path"]: entry["origin"]
         for entry in payload["repos"]
         if str(entry.get("path", "")).startswith("viventium_v0_4/")
-        and not str(entry.get("origin", "")).startswith(PUBLIC_ORIGIN_PREFIX)
+        and not (
+            str(entry.get("origin", "")).startswith(PUBLIC_ORIGIN_PREFIX)
+            or (entry.get("path") == XPERFECT_PATH and entry.get("origin") == XPERFECT_ORIGIN)
+        )
     }
 
     assert invalid == {}
@@ -52,7 +57,7 @@ def test_components_lock_uses_full_commit_shas_for_public_components() -> None:
     invalid = {
         entry["path"]: entry["ref"]
         for entry in lock_payload["components"]
-        if str(entry.get("origin", "")).startswith(PUBLIC_ORIGIN_PREFIX)
+        if str(entry.get("path", "")).startswith("viventium_v0_4/")
         and not FULL_GIT_SHA_RE.fullmatch(str(entry.get("ref", "")))
     }
 
@@ -388,3 +393,12 @@ def test_bootstrap_refuses_clean_local_commit_ahead_of_requested_origin(tmp_path
     assert completed.returncode != 0
     assert "does not exactly match the requested origin branch" in completed.stderr
     assert not cli_log.exists()
+
+
+def test_xperfect_manifest_has_exact_source_and_leaves_original_unmanaged() -> None:
+    repos = load_json(REPO_ROOT / "devops/git/repos.json")["repos"]
+    assert [entry for entry in repos if entry["name"] == "xPerfect"] == [{
+        "name": "xPerfect", "path": XPERFECT_PATH, "origin": XPERFECT_ORIGIN,
+        "upstream": "", "upstream_branch": "main",
+    }]
+    assert not any(entry["path"] == "viventium_v0_4/GlassHive" for entry in repos)

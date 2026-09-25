@@ -29,7 +29,7 @@ def _synthetic_release(tmp_path: Path) -> tuple[Path, Path]:
     (release / "glasshive-release.json").write_text("{}\n", encoding="utf-8")
     python_path = (
         release
-        / "viventium_v0_4/GlassHive/frontends/glass-drive-ui/.venv/bin/python"
+        / "viventium_v0_4/xPerfect/frontends/glass-drive-ui/.venv/bin/python"
     )
     python_path.parent.mkdir(parents=True)
     python_path.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")

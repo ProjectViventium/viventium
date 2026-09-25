@@ -66,6 +66,8 @@ jobs:
           origin_pattern = re.compile(
               r"https://github\.com/ProjectViventium/[A-Za-z0-9_.-]+\.git"
           )
+          # xPerfect is published by its own organization: allow that one repository at its path.
+          xperfect = ("viventium_v0_4/xPerfect", "https://github.com/xPerfectAI/xPerfect.git")
           sha_pattern = re.compile(r"[0-9a-f]{40}")
           errors = []
           components = lock.get("components")
@@ -76,8 +78,8 @@ jobs:
               name = component.get("name", "<unnamed>")
               origin = component.get("origin", "")
               expected_ref = component.get("ref", "")
-              if not origin_pattern.fullmatch(origin):
-                  errors.append(f"{name}: origin is outside the public ProjectViventium allowlist")
+              if not (origin_pattern.fullmatch(origin) or (component.get("path"), origin) == xperfect):
+                  errors.append(f"{name}: origin is outside the public component allowlist")
                   continue
               if not sha_pattern.fullmatch(expected_ref):
                   errors.append(f"{name}: ref is not a full lowercase commit SHA")

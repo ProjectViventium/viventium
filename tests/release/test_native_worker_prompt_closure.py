@@ -20,7 +20,7 @@ def test_native_assembly_loads_managed_worker_prompts_and_requires_the_loader(tm
     root = tmp_path / "candidate/payload"
     # Use the actual worker bootstrap in its installed layout, with its ordinary
     # dependencies. Its ancestor discovery must not reach the source checkout.
-    source = REPO_ROOT / "viventium_v0_4/GlassHive/runtime_phase1/src"
+    source = REPO_ROOT / "viventium_v0_4/xPerfect/runtime_phase1/src"
     installed_source = root / "runtime/glasshive/src"
     shutil.copytree(source, installed_source, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
     environment = {"PATH": os.defpath, "HOME": str(tmp_path), "PYTHONPATH": str(installed_source),

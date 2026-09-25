@@ -37,7 +37,7 @@ function readWorkerSource(target, bankPath) {
     if (!snapshot.sources?.length) throw new Error("worker_source_snapshot_lineage_missing");
     return { ...snapshot, snapshotSha256: sha(bytes) };
   }
-  const gh = path.join(root, "viventium_v0_4/GlassHive/runtime_phase1");
+  const gh = path.join(root, "viventium_v0_4/xPerfect/runtime_phase1");
   const script = `import json,hashlib\nfrom pathlib import Path\nfrom workers_projects_runtime import bootstrap as b, profile_runtime as p\nfiles=[Path(b.__file__),Path(p.__file__)]\nprint(json.dumps({'frames':{'harness':p.HOST_NATIVE_HARNESS_PROMPT,'project':b.GLASSHIVE_WORKER_PROJECT_CONTRACT,'agents':p.HOST_DEFAULT_AGENTS_MD,'claude':p.HOST_DEFAULT_CLAUDE_MD,'codex':p.HOST_DEFAULT_CODEX_MD},'sources':[{'path':f.name,'text':f.read_text(),'sha256':hashlib.sha256(f.read_bytes()).hexdigest()} for f in files]}))`;
   const rendered = execFileSync(path.join(gh, ".venv/bin/python"), ["-c", script], {
     encoding: "utf8", maxBuffer: 10 * 1024 * 1024,

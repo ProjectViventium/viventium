@@ -73,7 +73,7 @@ current status owner. Do not load the whole documentation tree for a narrow chan
   `git rev-parse --show-toplevel` before editing or reporting status.
 - `viventium_v0_4/LibreChat/` is the upstream-fork boundary. Its local instructions own fork markers
   and agent-sync safeguards.
-- `viventium_v0_4/GlassHive/` is a separate component. Its local instructions own worker/runtime
+- `viventium_v0_4/xPerfect/` is a separate component. Its local instructions own worker/runtime
   rules; the cross-boundary brokerage invariant is shared below.
 - A nested source change is not shipped until the component commit, parent pin in
   `components.lock.json`, compiled/prebuilt artifact, and installed/running artifact agree where
