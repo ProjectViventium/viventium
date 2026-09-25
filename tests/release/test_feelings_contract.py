@@ -384,7 +384,7 @@ def test_glasshive_provider_pins_the_declared_dynamic_tail_at_native_authority()
     )
     provider = (
         ROOT
-        / "viventium_v0_4/GlassHive/runtime_phase1/src/workers_projects_runtime/conversation_provider.py"
+        / "viventium_v0_4/xPerfect/runtime_phase1/src/workers_projects_runtime/conversation_provider.py"
     ).read_text(encoding="utf-8")
 
     assert "bindConversationProviderDeveloperInstructionTail" in binding

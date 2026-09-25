@@ -282,8 +282,9 @@ def tree_digest(root: Path) -> list[tuple[str, bytes, int]]:
 
 def glasshive_source_fixture(tmp_path: Path) -> tuple[Path, Path, str]:
     repo = tmp_path / "parent"
-    source = tmp_path / "GlassHive"
+    source = tmp_path / "xPerfect"
     file(source / "LICENSE", "Synthetic component license\n")
+    file(source / "NOTICE", "Synthetic component attribution\n")
     file(source / "runtime_phase1" / "pyproject.toml", '[project]\nname="synthetic-runtime"\nversion="1.0"\n')
     file(source / "runtime_phase1" / "uv.lock", "version = 1\n")
     file(source / "runtime_phase1" / "workstation-requirements.lock", "synthetic-worker==1.0\n")
@@ -296,7 +297,7 @@ def glasshive_source_fixture(tmp_path: Path) -> tuple[Path, Path, str]:
         check=True,
     )
     pin = subprocess.check_output(["git", "-C", str(source), "rev-parse", "HEAD"], text=True).strip()
-    file(repo / "components.lock.json", json.dumps({"components": [{"name": "GlassHive", "ref": pin}]}))
+    file(repo / "components.lock.json", json.dumps({"components": [{"name": "xPerfect", "ref": pin}]}))
     return repo, source, pin
 
 
@@ -331,6 +332,7 @@ def test_native_glasshive_staging_uses_selected_source_and_hash_locked_dependenc
     )
 
     assert manifest["commit"] == pin
+    assert (output / "NOTICE").read_bytes() == (source / "NOTICE").read_bytes()
     assert manifest["source_kind"] == ("local-qa-worktree" if local_qa_worktree else "component-pin")
     assert len(manifest["source_tree_sha256"]) == 64
     assert (output / "src/workers_projects_runtime/native_continuity.py").exists() == local_qa_worktree
@@ -414,19 +416,21 @@ def test_native_code_inventory_reuses_verifier_without_per_file_processes(tmp_pa
     assert assembler.macho_paths(tmp_path) == ["runtime/python/lib/native.so", "apps/Viventium.app"]
 
 
-@pytest.mark.parametrize("change", ["wrong_pin", "modified_source", "untracked_source"])
+@pytest.mark.parametrize("change", ["wrong_pin", "legacy_component_name", "modified_source", "untracked_source"])
 def test_native_glasshive_staging_refuses_unselected_or_dirty_source(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, change: str,
 ) -> None:
     assembler = load_native_assembler(monkeypatch)
-    repo, source, _ = glasshive_source_fixture(tmp_path)
+    repo, source, pin = glasshive_source_fixture(tmp_path)
     if change == "wrong_pin":
-        file(repo / "components.lock.json", json.dumps({"components": [{"name": "GlassHive", "ref": "a" * 40}]}))
+        file(repo / "components.lock.json", json.dumps({"components": [{"name": "xPerfect", "ref": "a" * 40}]}))
+    elif change == "legacy_component_name":
+        file(repo / "components.lock.json", json.dumps({"components": [{"name": "GlassHive", "ref": pin}]}))
     elif change == "modified_source":
         file(source / "runtime_phase1" / "src" / "workers_projects_runtime" / "api.py", "changed = True\n")
     else:
         file(source / "runtime_phase1" / "src" / "private.json", '{"private":"synthetic"}')
-    with pytest.raises(assembler.AssemblyError, match="GlassHive.*(pin|source)"):
+    with pytest.raises(assembler.AssemblyError, match="xPerfect.*(pin|source)"):
         assembler.stage_glasshive(
             repo, source, tmp_path / "python", tmp_path / "uv", tmp_path / "output",
             source_date_epoch=1700000000,
@@ -442,6 +446,7 @@ def test_native_compliance_includes_glasshive_wheels_and_holds_unknown_licenses(
     spec.loader.exec_module(module)
     root = tmp_path / "runtime" / "glasshive"
     file(root / "LICENSE", "Synthetic first-party license\n")
+    file(root / "NOTICE", "Synthetic first-party attribution\n")
     dependency = root / "site-packages" / "synthetic-1.0.dist-info"
     file(dependency / "METADATA", "Name: synthetic\nVersion: 1.0\nLicense-Expression: MIT\nLicense-File: LICENSE\n")
     file(dependency / "licenses" / "LICENSE", "Synthetic MIT notice\n")
@@ -450,7 +455,9 @@ def test_native_compliance_includes_glasshive_wheels_and_holds_unknown_licenses(
     file(unknown / "LICENSE", "Synthetic unreviewed notice\n")
     packages = module.glasshive_inventory(tmp_path, {"glasshive": {"version": "0.3.0"}})
     records = {item["name"]: module.scan_package_record(tmp_path, item) for item in packages}
-    assert set(records) == {"GlassHive", "synthetic", "unreviewed"}
+    assert set(records) == {"xPerfect", "synthetic", "unreviewed"}
+    assert records["xPerfect"]["license"] == "Apache-2.0"
+    assert records["xPerfect"]["license_files"] == ["runtime/glasshive/LICENSE", "runtime/glasshive/NOTICE"]
     assert records["synthetic"]["allowed"] is True
     assert records["synthetic"]["license_files"] == ["runtime/glasshive/site-packages/synthetic-1.0.dist-info/licenses/LICENSE"]
     assert records["unreviewed"]["allowed"] is False
@@ -2019,7 +2026,7 @@ def test_candidate_workflow_is_exact_dual_arch_relocatable_producer() -> None:
     assert "glasshive:\n              enabled: true" in workflow
     assert "glasshive: { enabled: false }" not in workflow
     assert 'native_glasshive["enabled"] = False' not in workflow
-    assert '--glasshive-root "$GITHUB_WORKSPACE/viventium_v0_4/GlassHive"' in workflow
+    assert '--glasshive-root "$GITHUB_WORKSPACE/viventium_v0_4/xPerfect"' in workflow
     assert '--codex-archive "${RUNNER_TEMP}/downloads/codex-cli.tar.gz"' in workflow
     assert '--claude-code-archive "${RUNNER_TEMP}/downloads/claude-code.tar.gz"' in workflow
     assert "VIVENTIUM_LOCAL_SUBSCRIPTION_AUTH=true" not in workflow
@@ -4525,6 +4532,16 @@ def test_native_copy_excludes_customized_development_sources_only(tmp_path, monk
     module.copy_safe(source, destination, boundary=source, source_date_epoch=1, customized_librechat=True)
     assert all((destination / relative).is_file() for relative in kept)
     assert all(not (destination / relative).exists() for relative in excluded)
+
+
+def test_native_host_workers_reach_runtime_context_through_its_own_socket(tmp_path, monkeypatch):
+    runtime = load_native_runtime()
+    monkeypatch.setattr(runtime, "native_body_paths", lambda *_: {"codex": tmp_path / "codex"})
+    monkeypatch.setattr(runtime, "runtime_secrets", lambda *_: {"CREDS_KEY": "11" * 32})
+    environment = runtime.native_glasshive_transport_environment(tmp_path / "release", tmp_path / "support")
+    route = urllib.parse.urlparse(environment["GLASSHIVE_PEER_RUNTIME_BASE_URL"])
+    assert route.scheme == "http+unix" and not route.path and not route.query
+    assert urllib.parse.unquote(route.netloc) == environment["VIVENTIUM_NATIVE_GLASSHIVE_SOCKET"]
 
 
 def test_native_work_view_and_artifact_links_use_the_existing_proxy_origin(tmp_path, monkeypatch):

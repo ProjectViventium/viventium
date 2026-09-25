@@ -1,4 +1,20 @@
-# GlassHive
+# xPerfect (GlassHive compatibility)
+
+## Component and compatibility
+
+The managed worker component is [xPerfect](https://github.com/xPerfectAI/xPerfect),
+installed at `viventium_v0_4/xPerfect/`. The retained GlassHive checkout is not a managed
+source or fallback. Existing `integrations.glasshive` config, `glasshive-harness` provider
+IDs, environment variables, supported protocol routes, and `glasshive` state directories remain
+compatible. Changing the source dependency does not move or recreate user state.
+
+The former provider-owned `main_context_v1` claim (`main_context_owner=provider_legacy`) is not a
+supported route in the current component. Viventium sends Core-owned V1 snapshots from its accepted
+conversation history after upgrade; it keeps the configured `glasshive-harness` provider and model.
+An old caller that still asserts provider-owned V1 receives an explicit request error. Ordinary
+standalone conversations without a V1 claim remain supported, but do not gain cross-thread Main
+memory from that path. Preserve old provider context rows in the state checkpoint for inspection and
+rollback; do not treat their bounded excerpts as a complete Core history or import them silently.
 
 ## User promise
 
@@ -111,7 +127,7 @@ produce useful results, preserve the user's full task, and expose honest fallbac
 
 ## Owners and QA
 
-- Provider and mission runtime: `viventium_v0_4/GlassHive/`
+- Provider and mission runtime: `viventium_v0_4/xPerfect/`
 - Host brokerage and user presentation: `viventium_v0_4/LibreChat/`
 - Mission lifecycle architecture: [Parallel Work runtime](../../architecture/parallel-work-runtime.md)
 - QA: `qa/glasshive-core-provider/`, `qa/glasshive-mcp-capability-broker/`,

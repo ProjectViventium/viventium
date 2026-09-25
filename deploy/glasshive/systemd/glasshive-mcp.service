@@ -11,11 +11,11 @@ User=glasshive-gateway
 Group=glasshive-state
 SupplementaryGroups=glasshive-state glasshive-gateway-secrets
 UMask=0007
-WorkingDirectory=/opt/viventium/current/viventium_v0_4/GlassHive/runtime_phase1
+WorkingDirectory=/opt/viventium/current/viventium_v0_4/xPerfect/runtime_phase1
 EnvironmentFile=/etc/viventium/glasshive/gateway.env
 EnvironmentFile=/etc/viventium/glasshive/gateway-active.env
 Environment=PYTHONDONTWRITEBYTECODE=1
-ExecStart=/opt/viventium/current/viventium_v0_4/GlassHive/runtime_phase1/.venv/bin/python -m workers_projects_runtime.mcp_server --transport streamable-http --host 127.0.0.1 --port ${GLASSHIVE_MCP_PORT}
+ExecStart=/opt/viventium/current/viventium_v0_4/xPerfect/runtime_phase1/.venv/bin/python -m workers_projects_runtime.mcp_server --transport streamable-http --host 127.0.0.1 --port ${GLASSHIVE_MCP_PORT}
 Restart=on-failure
 RestartSec=3
 NoNewPrivileges=true

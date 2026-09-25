@@ -128,6 +128,7 @@ GLASSHIVE_ENTERPRISE_WORKER_PROVIDER_ENV_KEYS = {
     "PORTKEY_PROVIDER",
     "PORTKEY_VIRTUAL_KEY",
     "WPR_CLAUDE_CODE_USE_API_KEY",
+    "XAI_API_KEY",
 }
 GLASSHIVE_OPENAI_PROVIDER_ENV_KEYS = {
     "OPENAI_API_BASE",
@@ -140,9 +141,11 @@ GLASSHIVE_OPENAI_PROVIDER_ENV_KEYS = {
     "PORTKEY_PROVIDER",
     "PORTKEY_VIRTUAL_KEY",
 }
+GLASSHIVE_XAI_PROVIDER_ENV_KEYS = {"XAI_API_KEY"}
 GLASSHIVE_ANTHROPIC_PROVIDER_ENV_KEYS = (
     GLASSHIVE_ENTERPRISE_WORKER_PROVIDER_ENV_KEYS
     - GLASSHIVE_OPENAI_PROVIDER_ENV_KEYS
+    - GLASSHIVE_XAI_PROVIDER_ENV_KEYS
 )
 DEFAULT_VIVENTIUM_GLASSHIVE_PLUGIN_DENYLIST = "viventium-feelings@project-viventium"
 DEFAULT_CORTEX_PHASE_A_NOTICE_MODE = "any_activated_on_voice"
@@ -203,7 +206,7 @@ DEFAULT_GOOGLE_WORKSPACE_MCP_SCOPE = (
 )
 LOCAL_MCP_ALLOWED_DOMAINS = ["localhost", "127.0.0.1", "host.docker.internal"]
 REPO_ROOT = SCRIPT_DIR.parent.parent
-GLASSHIVE_RUNTIME_DIR = REPO_ROOT / "viventium_v0_4" / "GlassHive" / "runtime_phase1"
+GLASSHIVE_RUNTIME_DIR = REPO_ROOT / "viventium_v0_4" / "xPerfect" / "runtime_phase1"
 LIBRECHAT_UPLOADS_DIR = REPO_ROOT / "viventium_v0_4" / "LibreChat" / "uploads"
 
 
@@ -359,7 +362,7 @@ def glasshive_enabled(config: dict[str, Any]) -> bool:
     )
     if not GLASSHIVE_RUNTIME_DIR.is_dir() or not provider_entrypoint.is_file():
         raise SystemExit(
-            "GlassHive provider component is missing or incomplete while "
+            "xPerfect provider component is missing or incomplete while "
             "integrations.glasshive.enabled is true; "
             "run `bin/viventium bootstrap-components` and compile again"
         )
@@ -4034,7 +4037,7 @@ def build_custom_endpoints(config: dict[str, Any] | None = None) -> list[dict[st
                     "titleEndpoint": "openAI",
                     "titleModel": "gpt-5.6-terra",
                     "summarize": False,
-                    "modelDisplayLabel": "GlassHive",
+                    "modelDisplayLabel": "xPerfect",
                     "dropParams": list(GLASSHIVE_PROVIDER_DROP_PARAMS),
                     "addParams": {"maxRetries": 0},
                     "forcePrompt": False,
@@ -4049,7 +4052,7 @@ def build_agent_provider_capabilities(config: dict[str, Any]) -> dict[str, Any]:
         return {}
     return {
         GLASSHIVE_PROVIDER_ID: {
-            "label": "GlassHive",
+            "label": "xPerfect",
             "main_chat": True,
             "cortex_execution": True,
             "phase_b_followup": True,
@@ -7950,6 +7953,8 @@ def render_service_envs(output_dir: Path, env: dict[str, str]) -> None:
         # worker bootstrap projects only the route selected by that profile.
         add_compatible_route(runtime="codex")
         add_compatible_route(runtime="openclaw")
+        if "XAI_API_KEY" in candidate_provider_env:
+            deployment_provider_env["XAI_API_KEY"] = candidate_provider_env["XAI_API_KEY"]
 
         use_bedrock = resolve_bool(candidate_provider_env.get("CLAUDE_CODE_USE_BEDROCK"), False)
         use_anthropic_key = resolve_bool(

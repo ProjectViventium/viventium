@@ -80,6 +80,29 @@ internals.
 - **ONB-011:** Use the smallest reviewable manifest and checks. Add another registry or launcher only
   after measured drift or isolation needs prove its value.
 
+### Worker component cutover
+
+- xPerfect is the managed worker source at `viventium_v0_4/xPerfect/`. The original
+  GlassHive checkout and history remain untouched; bootstrap and repository tooling must not
+  select it or rewrite its remotes.
+- Local runtime, MCP, and UI readiness requires an exact listener from the selected checkout
+  and expected service entrypoint. A healthy listener from another checkout is not readiness.
+  Restart and watchdog recovery leave foreign or ambiguous listeners untouched.
+- Existing configuration, provider IDs, ports, and state paths remain stable. Stop the previous
+  runtime before selecting the new checkout. A source rollback is not database rollback; verify
+  schema compatibility or recover a consistent matching pre-upgrade state through the supported
+  recovery procedure. The stopped source-upgrade checkpoint includes the Native worker provider
+  account home as well as runtime state, so failed activation restores both exact prior roots.
+- Native payload assembly and release verification select the same xPerfect component pin.
+  The packaged `runtime/glasshive` path remains compatible; its license inventory identifies
+  xPerfect as Apache-2.0 and preserves both `LICENSE` and `NOTICE`.
+- Hosted Linux staging, service interpreters, identity administration, and Prompt Workbench
+  source controls select the same xPerfect checkout. The browser ingress includes the authenticated
+  `/conversation` page; existing service, state, protocol, and payload identifiers remain compatible.
+- A supplied hosted xAI provider key is staged only in the worker provider environment. The gateway
+  and base runtime do not receive it; context and peer tokens are issued per worker, not compiled
+  from deployment configuration.
+
 ### One-time repository reconciliation
 
 - **ONB-010:** Repository migration preserves recoverable source and private state, classifies each

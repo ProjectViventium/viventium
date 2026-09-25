@@ -57,7 +57,7 @@ def verify_component_policy(payload: Path, repo: Path, arch: str, *, signed_byte
         required.add("sequential-thinking")
     require(required <= set(components), "Native defaults advertise a missing packaged component")
 
-    for name, owner in (("glasshive", "GlassHive"), ("scheduling", "LibreChat")):
+    for name, owner in (("glasshive", "xPerfect"), ("scheduling", "LibreChat")):
         if name not in components:
             continue
         record = components[name]

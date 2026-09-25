@@ -47,7 +47,7 @@ UI_PROBE_SPEC.loader.exec_module(ui_probe)
 SIGNED_LINKS_MODULE_PATH = (
     ROOT
     / "viventium_v0_4"
-    / "GlassHive"
+    / "xPerfect"
     / "runtime_phase1"
     / "src"
     / "workers_projects_runtime"
@@ -150,8 +150,8 @@ def test_database_inspection_fails_on_foreign_key_violation(tmp_path: Path) -> N
 
 def test_release_manifest_detects_mutation_and_unlisted_files(tmp_path: Path) -> None:
     release = tmp_path / "release"
-    (release / "viventium_v0_4" / "GlassHive").mkdir(parents=True)
-    tracked = release / "viventium_v0_4" / "GlassHive" / "artifact.txt"
+    (release / "viventium_v0_4" / "xPerfect").mkdir(parents=True)
+    tracked = release / "viventium_v0_4" / "xPerfect" / "artifact.txt"
     tracked.write_text("candidate\n", encoding="utf-8")
     rollout.write_release_manifest(
         release,
@@ -235,7 +235,7 @@ def test_stage_release_uses_clean_exact_pin_and_two_frozen_environments(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     source = tmp_path / "source"
-    glasshive = source / "viventium_v0_4" / "GlassHive"
+    glasshive = source / "viventium_v0_4" / "xPerfect"
     runtime = glasshive / "runtime_phase1"
     ui = glasshive / "frontends" / "glass-drive-ui"
     for project, package_name in (
@@ -270,8 +270,8 @@ def test_stage_release_uses_clean_exact_pin_and_two_frozen_environments(
             {
                 "components": [
                     {
-                        "name": "GlassHive",
-                        "path": "viventium_v0_4/GlassHive",
+                        "name": "xPerfect",
+                        "path": "viventium_v0_4/xPerfect",
                         "ref": glasshive_revision,
                     }
                 ]
@@ -396,8 +396,8 @@ def test_stage_release_uses_clean_exact_pin_and_two_frozen_environments(
         for _command, cwd in relocated_imports
     )
     for project in (
-        release / "viventium_v0_4" / "GlassHive" / "runtime_phase1",
-        release / "viventium_v0_4" / "GlassHive" / "frontends" / "glass-drive-ui",
+        release / "viventium_v0_4" / "xPerfect" / "runtime_phase1",
+        release / "viventium_v0_4" / "xPerfect" / "frontends" / "glass-drive-ui",
     ):
         site_roots = list((project / ".venv" / "lib").glob("python*/site-packages"))
         assert len(site_roots) == 1
@@ -436,7 +436,7 @@ def test_editable_path_rewrite_fails_closed_when_layout_is_ambiguous(tmp_path: P
 def test_relocation_import_failure_restores_staging_without_probe_residue(tmp_path: Path) -> None:
     releases = tmp_path / "releases"
     staging = releases / ".staging-release-synthetic"
-    glasshive = staging / "viventium_v0_4" / "GlassHive"
+    glasshive = staging / "viventium_v0_4" / "xPerfect"
     for project, exit_code in (
         (glasshive / "runtime_phase1", 0),
         (glasshive / "frontends" / "glass-drive-ui", 1),
@@ -508,7 +508,7 @@ def test_live_edge_contract_names_every_public_route_and_header_family() -> None
     auth_script = (
         ROOT
         / "viventium_v0_4"
-        / "GlassHive"
+        / "xPerfect"
         / "frontends"
         / "glass-drive-ui"
         / "src"
@@ -523,6 +523,7 @@ def test_live_edge_contract_names_every_public_route_and_header_family() -> None
             "/auth",
             "/login",
             "/confirm-change",
+            "/conversation",
             "/favicon.ico",
             "/health",
             "/static",
@@ -599,7 +600,7 @@ def test_ingress_contract_covers_every_decorated_bff_route_family() -> None:
     source_path = (
         ROOT
         / "viventium_v0_4"
-        / "GlassHive"
+        / "xPerfect"
         / "frontends"
         / "glass-drive-ui"
         / "src"
@@ -1215,8 +1216,8 @@ class FakeAdapters:
 
 
 def _release(path: Path, release_id: str, marker: str) -> None:
-    runtime_bin = path / "viventium_v0_4" / "GlassHive" / "runtime_phase1" / ".venv" / "bin"
-    ui_bin = path / "viventium_v0_4" / "GlassHive" / "frontends" / "glass-drive-ui" / ".venv" / "bin"
+    runtime_bin = path / "viventium_v0_4" / "xPerfect" / "runtime_phase1" / ".venv" / "bin"
+    ui_bin = path / "viventium_v0_4" / "xPerfect" / "frontends" / "glass-drive-ui" / ".venv" / "bin"
     runtime_bin.mkdir(parents=True)
     ui_bin.mkdir(parents=True)
     (runtime_bin / "python").write_text(marker, encoding="utf-8")

@@ -141,6 +141,21 @@ also shape delivery through controls the selected TTS provider really supports.
 - Make code dynamic - **avoid hardcoding things**
 - **MOST IMPORTANTLY**: **SEPARATION OF CONCERNS PRINCIPLE MUST BE FOLLOWED AT ALL TIMES** to maintain a clear modular design so the project does not turn into entangled spaghetti code
 
+### 1.1 No Unnecessary Learning Or Effort For New Users
+
+- The normal path must be immediately usable without product training or technical setup choices.
+  Use configured defaults and ask only for information, credentials, or consent needed for the real
+  task. Remove unnecessary steps, required fields, decisions, and words before adding explanation.
+- Reveal advanced options on request and contextual actions when useful. Preserve their full
+  capability without surrounding a simple task with settings, repeated status, or empty sections.
+- Simplicity must not hide errors, invent user intent or criteria, silently change a configured
+  provider/model, or weaken permissions. Give a clear recovery action when a real prerequisite fails.
+- Use the delivered browser/computer surface as a new user, without relying on implementation
+  knowledge. Record the default path's inputs, clicks, visible choices, confusing wording, and
+  before/after screenshots. Check the real result and ordinary error/recovery paths at supported
+  widths, themes, keyboard/focus, and accessibility settings. Tests and reviews support this visual
+  and user-level QA; they cannot replace it. `GOV-015` and `QASYS-024` own this acceptance boundary.
+
 ### 2. Documentation First
 - Document steps in `.md` format in `docs/` folder
 - Ensure compatibility and easiness for other developers to edit and extend code without headache
@@ -1270,7 +1285,7 @@ GOV-010: Use the path of least resistance: surgical structural fixes, native/pro
 GOV-011: Prove real Browser/Desktop/Telegram/Voice behavior with logs, DB, docs, generated and installed artifacts; report briefly and truthfully.
 GOV-012: Use independent review cycles when requested, focused on consequential unresolved decisions and the completed affected batch. Do not require per-edit reviews or inflate a score to claim completion. Run a separate Claude review only when requested.
 GOV-013: Persist through routine local blockers and use already authorized local setup/browser/computer paths instead of repeatedly asking the user to perform ordinary in-scope setup. Do not broaden authority or bypass real approval/security boundaries.
-GOV-015: User-facing placement/design changes require product-specific visual thinking and real responsive, light/dark, interaction, and accessibility QA. Independent design review supports but does not replace user-path proof.
+GOV-015: Remove unnecessary learning, inputs, decisions, clicks, and words from the default new-user path; reveal advanced options on demand. Prove this through real novice browser/computer use plus responsive, light/dark, interaction, keyboard, and accessibility QA. Independent design review supports but does not replace user-path proof.
 <a id="minimal-truth"></a>
 GOV-021: Keep only requirements and QA that close a sourced behavior, safety, compatibility, or user-experience gap. Do not add ceremonial gates, date-bump stale cases, recreate historical reports, or broaden architecture merely to make the inventory look complete.
 GOV-022: “Complete” means complete for the owning trigger→runtime→visible-result flow and its real blast radius. Older blanket “review EVERYTHING / leave no stone unturned” wording must not force whole-project ceremony for a narrow fix.

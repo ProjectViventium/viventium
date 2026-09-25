@@ -58,7 +58,7 @@ jobs:
           if "librechat" in policy:
               raise SystemExit("Native source pins belong only in components.lock.json")
           PY
-      - name: Fetch the exact pinned LibreChat and GlassHive components
+      - name: Fetch the exact pinned LibreChat and xPerfect components
         run: |
           set -euo pipefail
           cat > "${RUNNER_TEMP}/native-selection.yaml" <<'YAML'
@@ -291,7 +291,7 @@ jobs:
           python scripts/viventium/assemble_native_payload.py \
             --repo-root "$GITHUB_WORKSPACE" \
             --librechat-root "$GITHUB_WORKSPACE/viventium_v0_4/LibreChat" \
-            --glasshive-root "$GITHUB_WORKSPACE/viventium_v0_4/GlassHive" \
+            --glasshive-root "$GITHUB_WORKSPACE/viventium_v0_4/xPerfect" \
             --uv "$(command -v uv)" \
             --codex-archive "${RUNNER_TEMP}/downloads/codex-cli.tar.gz" \
             --claude-code-archive "${RUNNER_TEMP}/downloads/claude-code.tar.gz" \

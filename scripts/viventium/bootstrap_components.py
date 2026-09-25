@@ -1198,7 +1198,7 @@ def select_components(components: list[dict[str, Any]], config: dict[str, Any]) 
 
     integrations = config.get("integrations", {}) or {}
     if integrations.get("glasshive", {}).get("enabled"):
-        selected_names.add("GlassHive")
+        selected_names.add("xPerfect")
     if integrations.get("google_workspace", {}).get("enabled"):
         selected_names.add("google_workspace_mcp")
     if integrations.get("ms365", {}).get("enabled"):

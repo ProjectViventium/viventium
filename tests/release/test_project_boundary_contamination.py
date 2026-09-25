@@ -67,7 +67,7 @@ def tracked_files(repo: Path) -> list[Path]:
 
 def tracked_repos() -> list[Path]:
     repos = [ROOT]
-    for relative in ("viventium_v0_4/LibreChat", "viventium_v0_4/GlassHive"):
+    for relative in ("viventium_v0_4/LibreChat", "viventium_v0_4/xPerfect"):
         candidate = ROOT / relative
         if (candidate / ".git").exists():
             repos.append(candidate)

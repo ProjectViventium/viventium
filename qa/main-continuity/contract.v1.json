@@ -64,7 +64,7 @@
       "sourceRefs": ["MC-SRC-001:L3-L18", "MC-SRC-001:L83-L87"],
       "owners": [
         "viventium_v0_4/LibreChat/api/server/controllers/agents/client.js",
-        "viventium_v0_4/GlassHive/runtime_phase1/src/workers_projects_runtime/conversation_provider.py"
+        "viventium_v0_4/xPerfect/runtime_phase1/src/workers_projects_runtime/conversation_provider.py"
       ],
       "expected": "One owner-scoped continuity domain and one immutable admitted snapshot per logical turn serve primary, fallback, retry, schedule, Telegram, and Phase B.",
       "implementationStatus": "partial_candidate_unverified",
@@ -76,7 +76,7 @@
       "sourceRefs": ["MC-SRC-001:L42-L44", "MC-SRC-001:L89-L93"],
       "owners": [
         "viventium_v0_4/LibreChat/api/server/controllers/agents/client.js",
-        "viventium_v0_4/GlassHive/runtime_phase1/src/workers_projects_runtime/conversation_provider.py"
+        "viventium_v0_4/xPerfect/runtime_phase1/src/workers_projects_runtime/conversation_provider.py"
       ],
       "expected": "Only declared stable authority can rotate a native binding; time, Feelings, Active Work, reply, schedule, and health state remain per-turn.",
       "implementationStatus": "partial_candidate_unverified",
@@ -88,8 +88,8 @@
       "sourceRefs": ["MC-SRC-001:L12-L13", "MC-SRC-001:L95-L107"],
       "owners": [
         "viventium_v0_4/LibreChat/api/server/controllers/agents/client.js",
-        "viventium_v0_4/GlassHive/runtime_phase1/src/workers_projects_runtime/conversation_provider.py",
-        "viventium_v0_4/GlassHive/runtime_phase1/src/workers_projects_runtime/store.py"
+        "viventium_v0_4/xPerfect/runtime_phase1/src/workers_projects_runtime/conversation_provider.py",
+        "viventium_v0_4/xPerfect/runtime_phase1/src/workers_projects_runtime/store.py"
       ],
       "expected": "ReplayDecisionV1 declares bootstrap or delta, budget, epoch, digest, protected turns, tool pairs, semantic summary, output reserve, and usage scope.",
       "implementationStatus": "partial_candidate_unverified",
@@ -140,8 +140,8 @@
       "title": "Governed rapid and parallel turns",
       "sourceRefs": ["MC-SRC-001:L43", "MC-SRC-001:L123-L125"],
       "owners": [
-        "viventium_v0_4/GlassHive/runtime_phase1/src/workers_projects_runtime/conversation_provider.py",
-        "viventium_v0_4/GlassHive/runtime_phase1/src/workers_projects_runtime/store.py"
+        "viventium_v0_4/xPerfect/runtime_phase1/src/workers_projects_runtime/conversation_provider.py",
+        "viventium_v0_4/xPerfect/runtime_phase1/src/workers_projects_runtime/store.py"
       ],
       "expected": "Independent work delegates; rapid corrections coalesce or supersede; unavoidable siblings share a bounded snapshot, TTL, and deterministic accepted-turn commit.",
       "implementationStatus": "partial_candidate_unverified",
@@ -166,7 +166,7 @@
       "owners": [
         "viventium_v0_4/LibreChat/viventium/MCPs/scheduling-cortex/scheduling_cortex/scheduler.py",
         "viventium_v0_4/LibreChat/viventium/MCPs/scheduling-cortex/scheduling_cortex/dispatch.py",
-        "viventium_v0_4/GlassHive/runtime_phase1/src/workers_projects_runtime/failure_classification.py"
+        "viventium_v0_4/xPerfect/runtime_phase1/src/workers_projects_runtime/failure_classification.py"
       ],
       "expected": "One versioned closed failure contract drives exact retry wording, coalescing, useful-answer precedence, and an approval-gated reversible pause policy; release validation prevents contract drift.",
       "implementationStatus": "partial_candidate_unverified",
@@ -203,7 +203,7 @@
       "sourceRefs": ["MC-SRC-001:L67-L70", "MC-SRC-001:L131"],
       "owners": [
         "viventium_v0_4/LibreChat",
-        "viventium_v0_4/GlassHive",
+        "viventium_v0_4/xPerfect",
         "qa/main-continuity"
       ],
       "expected": "Continuity fixes preserve Agent Builder authority, native intelligence, tools, connectors, workspaces, refresh/resume, external MCP control, and general worker autonomy.",

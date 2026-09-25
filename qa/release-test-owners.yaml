@@ -360,3 +360,5 @@ release_tests:
     qa_owner: qa/main-continuity/cases.md
   tests/release/test_transcription_adapter.py:
     qa_owner: qa/modern-playground-voice/cases.md
+  tests/release/test_xperfect_cutover.py:
+    qa_owner: qa/release-readiness/cases.md

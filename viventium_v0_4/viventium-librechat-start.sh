@@ -505,7 +505,7 @@ if [[ -n "${VIVENTIUM_HELPER_CORE_ROOT:-}" ]]; then
 else
   SCHEDULING_MCP_DIR="${VIVENTIUM_SCHEDULING_MCP_DIR:-$SCHEDULING_MCP_SOURCE_DIR}"
 fi
-GLASSHIVE_DIR="$ROOT_DIR/GlassHive"
+GLASSHIVE_DIR="$ROOT_DIR/xPerfect"
 GLASSHIVE_RUNTIME_DIR="$GLASSHIVE_DIR/runtime_phase1"
 GLASSHIVE_UI_DIR="$GLASSHIVE_DIR/frontends/glass-drive-ui"
 V1_AGENT_DIR="$LEGACY_V0_3_DIR/viventium_v1/backend/brain/frontal-cortex"
@@ -8288,7 +8288,44 @@ restart_scheduling_mcp_runtime() {
 #          launcher: health-check the runtime port, restart only the scoped local stack after
 #          repeated failures, and leave a foreign listener untouched.
 # === VIVENTIUM END ===
+glasshive_local_listener_matches() {
+  local port="$1"
+  local service="$2"
+  local listener=""
+  local pid=""
+  local count=0
+  while IFS= read -r pid; do
+    [[ "$pid" =~ ^[0-9]+$ ]] || continue
+    listener="$pid"
+    count=$((count + 1))
+  done < <(find_port_listener_pids "$port" | sort -u)
+  [[ "$count" -eq 1 ]] || return 1
+  "$PYTHON_BIN" "$VIVENTIUM_CORE_DIR/scripts/viventium/xperfect_process_identity.py" \
+    --pid "$listener" --component-root "$GLASSHIVE_DIR" --service "$service" --port "$port"
+}
+
+glasshive_local_ports_owned() {
+  # Even Restart cannot claim or stop another checkout's healthy listener.
+  local service=""
+  local port=""
+  for service in runtime mcp ui; do
+    case "$service" in
+      runtime) port="$GLASSHIVE_RUNTIME_PORT" ;;
+      mcp) port="$GLASSHIVE_MCP_PORT" ;;
+      ui) port="$GLASSHIVE_UI_PORT" ;;
+    esac
+    if port_in_use "$port" && ! glasshive_local_listener_matches "$port" "$service"; then
+      log_error "xPerfect $service port belongs to another process; leaving it untouched"
+      return 1
+    fi
+  done
+  return 0
+}
+
 glasshive_runtime_healthy() {
+  if [[ "${GLASSHIVE_SERVICE_TOPOLOGY:-}" != "external_split" ]]; then
+    glasshive_local_listener_matches "$GLASSHIVE_RUNTIME_PORT" runtime || return 1
+  fi
   viventium_glasshive_runtime_healthy "${GLASSHIVE_RUNTIME_BASE_URL}" 3
 }
 
@@ -9938,6 +9975,11 @@ PY
 }
 
 glasshive_stack_ready() {
+  if [[ "${GLASSHIVE_SERVICE_TOPOLOGY:-}" != "external_split" ]]; then
+    glasshive_local_listener_matches "$GLASSHIVE_RUNTIME_PORT" runtime || return 1
+    glasshive_local_listener_matches "$GLASSHIVE_MCP_PORT" mcp || return 1
+    glasshive_local_listener_matches "$GLASSHIVE_UI_PORT" ui || return 1
+  fi
   local runtime_health=""
   local ui_health=""
   local mcp_status=""
@@ -10049,6 +10091,7 @@ wait_for_glasshive_stack_ready() {
 }
 
 stop_candidate_glasshive_stack() {
+  glasshive_local_ports_owned || return 1
   stop_pid_file_scoped "$GLASSHIVE_UI_PID_FILE" "$GLASSHIVE_UI_DIR"
   stop_pid_file_scoped "$GLASSHIVE_MCP_PID_FILE" "$GLASSHIVE_RUNTIME_DIR"
   stop_pid_file_scoped "$GLASSHIVE_RUNTIME_PID_FILE" "$GLASSHIVE_RUNTIME_DIR"
@@ -10105,6 +10148,7 @@ start_glasshive() {
   fi
 
   if [[ "$ports_in_use" == "true" ]]; then
+    glasshive_local_ports_owned || return 1
     if [[ "$RESTART_SERVICES" == "true" ]]; then
       log_warn "GlassHive services already running - restarting"
       stop_pid_file_scoped "$GLASSHIVE_RUNTIME_PID_FILE" "$GLASSHIVE_RUNTIME_DIR"

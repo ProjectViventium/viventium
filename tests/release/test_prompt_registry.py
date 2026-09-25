@@ -55,7 +55,7 @@ SCHEDULING_CORTEX_SERVER = (
 GLASSHIVE_MCP_SERVER = (
     REPO_ROOT
     / "viventium_v0_4"
-    / "GlassHive"
+    / "xPerfect"
     / "runtime_phase1"
     / "src"
     / "workers_projects_runtime"

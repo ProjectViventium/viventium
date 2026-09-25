@@ -38,7 +38,7 @@ def test_git_helper_list_includes_public_repo_catalog() -> None:
         "main|.|https://github.com/ProjectViventium/viventium"
     )
     assert "LibreChat|viventium_v0_4/LibreChat|https://github.com/ProjectViventium/viventium-librechat.git" in result.stdout
-    assert "GlassHive|viventium_v0_4/GlassHive|https://github.com/ProjectViventium/GlassHive.git" in result.stdout
+    assert "xPerfect|viventium_v0_4/xPerfect|https://github.com/xPerfectAI/xPerfect.git" in result.stdout
 
 
 def test_git_helper_push_dry_run_defaults_to_main_only() -> None:
@@ -60,14 +60,14 @@ def test_git_helper_push_dry_run_supports_explicit_repo_selection() -> None:
         "--repo",
         "LibreChat",
         "--repos",
-        "google_workspace_mcp,GlassHive",
+        "google_workspace_mcp,xPerfect",
     )
 
     assert result.returncode == 0, result.stderr
     assert "[main]" not in result.stdout
     assert "[LibreChat]" in result.stdout
     assert "[google_workspace_mcp]" in result.stdout
-    assert "[GlassHive]" in result.stdout
+    assert "[xPerfect]" in result.stdout
 
 
 def test_git_helper_unknown_repo_selector_fails_helpfully() -> None:

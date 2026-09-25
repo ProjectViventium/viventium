@@ -297,7 +297,7 @@ def _root_hash(path: Path) -> str:
 def _runtime_root(installed_root: Path) -> Path:
     try:
         root = installed_root.expanduser().resolve(strict=True)
-        runtime = root / "viventium_v0_4" / "GlassHive" / "runtime_phase1"
+        runtime = root / "viventium_v0_4" / "xPerfect" / "runtime_phase1"
         module = runtime / "src" / "workers_projects_runtime" / "local_qa_control.py"
         if not runtime.is_dir() or not module.is_file():
             raise ParentControlError("operation_failed")

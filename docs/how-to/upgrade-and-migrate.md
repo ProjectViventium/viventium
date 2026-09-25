@@ -86,3 +86,46 @@ the supported install or upgrade path.
 
 The v0.3 comparison guide remains historical context at
 [`07_MIGRATION_GUIDE.md`](../07_MIGRATION_GUIDE.md); v0.4 is the active product.
+
+## xPerfect component migration
+
+xPerfect replaces the managed GlassHive source at `viventium_v0_4/xPerfect/`.
+Existing `integrations.glasshive` settings and state paths continue to work. Keep the original
+GlassHive checkout; do not repoint its remote or replace it with a symlink.
+
+For an existing runtime, record its active checkout and take a consistent state snapshot. Use
+the existing validated activation transaction to promote the candidate; it checks component pins
+before state mutation and owns rollback when activation fails. Verify the new component pin,
+serving process, and persistent workspace. A healthy old listener is rejected; stop that runtime
+through its owning checkout before retrying. Retain any incomplete recovery journal.
+
+Test recovery on isolated state before promotion. Older code may not support a database opened by
+a newer runtime. Preserve both the pre-upgrade backup and any new state; changing the source pointer
+alone does not prove rollback. Use the source or Native restore owner and its independent-target
+requirements described above.
+
+### Main context V1 caller migration
+
+After upgrade, a Viventium Main turn must use the current Core-owned `main_context_v1` carrier from
+its accepted conversation history. Keep the existing `integrations.glasshive` setting, selected
+`glasshive-harness` provider, model, and owner credentials. The upgrade does not require a provider
+or model change. Verify a resumed Main conversation and a new turn against the same owner before
+calling the migration complete.
+
+For a prior provider-owned V1 conversation, the selected owner-bound Mongo branch must contain
+every meaningful prior message. Core carries the exact old messages as protected sources on the
+new V1 request, including after reload. If an ancestor is missing or cyclic, pruning removes a
+message, an old entry cannot be represented exactly, or the branch exceeds the bounded source
+carrier, the turn stops with
+`source_context_unavailable` instead of
+silently claiming full continuity. A clipped provider ledger row cannot fill missing Mongo
+history; pause cutover when the needed context exists only there.
+
+An external caller that declares `main_context_owner=provider_legacy` with `main_context_v1` must
+move to the Core-owned carrier through Viventium. The old provider-owned cross-thread claim is
+rejected; removing only the owner field does not convert its bounded old ledger to Core history.
+Standalone callers may instead use ordinary conversation requests without a V1 claim and retain
+their normal session behavior. Keep the old provider context rows with the pre-upgrade checkpoint;
+the source upgrade does not rewrite them. If the old caller requires provider-owned cross-thread
+Main memory, pause that caller's cutover until an explicit owner-scoped migration is implemented and
+tested. A successful source transaction alone does not prove this semantic migration.

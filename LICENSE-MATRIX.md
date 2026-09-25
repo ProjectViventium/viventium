@@ -6,7 +6,7 @@ the project as if one top-level license governs every component.
 | Surface | License | Why |
 |---|---|---|
 | `viventium` main repo | FSL 1.1 with Apache-2.0 future license | This repo contains Viventium-owned orchestration, product docs, installer, config compiler, and public release tooling. |
-| `GlassHive` | FSL 1.1 with Apache-2.0 future license | This first-party component repo contains Viventium-owned sandbox/runtime code and has no external upstream fork boundary. |
+| `xPerfect` | Apache-2.0 | The independent worker component preserves its own LICENSE, NOTICE, and third-party notices. |
 | `viventium-librechat` | MIT | LibreChat is MIT-licensed. The public component repo must preserve MIT compatibility and notices. |
 | `viventium-openclaw` | MIT | OpenClaw is MIT-licensed. |
 | `skyvern-source` | AGPL-3.0 | Skyvern is AGPL and must remain isolated in its own repo. |

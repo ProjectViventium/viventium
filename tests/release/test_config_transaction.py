@@ -528,7 +528,7 @@ def test_headless_configure_preserves_existing_fields_and_compiles_candidate(tmp
     fixture_repo.mkdir()
     for relative in ("bin", "scripts", "prompts", "docs/requirements_and_learnings",
                      "viventium_v0_4/LibreChat/viventium/source_of_truth",
-                     "viventium_v0_4/GlassHive/runtime_phase1/src"):
+                     "viventium_v0_4/xPerfect/runtime_phase1/src"):
         source = REPO_ROOT / relative
         if source.is_dir():
             shutil.copytree(source, fixture_repo / relative,

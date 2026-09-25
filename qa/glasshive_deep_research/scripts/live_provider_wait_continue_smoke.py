@@ -22,7 +22,7 @@ from fastapi.testclient import TestClient
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-RUNTIME_ROOT = REPO_ROOT / "viventium_v0_4" / "GlassHive" / "runtime_phase1"
+RUNTIME_ROOT = REPO_ROOT / "viventium_v0_4" / "xPerfect" / "runtime_phase1"
 sys.path.insert(0, str(RUNTIME_ROOT / "src"))
 
 from workers_projects_runtime.api import create_app  # noqa: E402

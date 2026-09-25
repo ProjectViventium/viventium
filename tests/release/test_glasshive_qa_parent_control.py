@@ -26,7 +26,7 @@ CLI = ROOT / "bin" / "viventium"
 NESTED = (
     ROOT
     / "viventium_v0_4"
-    / "GlassHive"
+    / "xPerfect"
     / "runtime_phase1"
     / "src"
     / "workers_projects_runtime"

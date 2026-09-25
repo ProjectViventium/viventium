@@ -30,7 +30,7 @@ def fixture(tmp_path, monkeypatch, arch="arm64"):
     repo, payload, bootstrap = (tmp_path / name for name in ("repo", "payload", "Bootstrap.app"))
     policy = json.loads((ROOT / "release/native-payload/components.json").read_text())
     put(repo / "release/native-payload/components.json", json.dumps(policy))
-    put(repo / "components.lock.json", json.dumps({"components": [{"name": "LibreChat", "ref": "a" * 40}, {"name": "GlassHive", "ref": "b" * 40}]}))
+    put(repo / "components.lock.json", json.dumps({"components": [{"name": "LibreChat", "ref": "a" * 40}, {"name": "xPerfect", "ref": "b" * 40}]}))
     put(payload / "runtime/defaults/config.yaml", "integrations:\n  glasshive:\n    enabled: true\n  scheduling_cortex:\n    enabled: true\n")
     put(payload / "runtime/defaults/librechat.yaml", "mcpServers:\n  sequential-thinking: {}\n")
     put(payload / "runtime/defaults/native-runtime.env", "".join(f"{key}={value}\n" for key, value in {**NATIVE_FIXED_ENV, "VIVENTIUM_PARALLEL_WORK_AVAILABLE": "true"}.items()))

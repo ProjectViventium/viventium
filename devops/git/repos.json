@@ -37,9 +37,9 @@
       "upstream_branch": "main"
     },
     {
-      "name": "GlassHive",
-      "path": "viventium_v0_4/GlassHive",
-      "origin": "https://github.com/ProjectViventium/GlassHive.git",
+      "name": "xPerfect",
+      "path": "viventium_v0_4/xPerfect",
+      "origin": "https://github.com/xPerfectAI/xPerfect.git",
       "upstream": "",
       "upstream_branch": "main"
     },

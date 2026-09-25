@@ -23,7 +23,7 @@ task truth.
 | --- | --- |
 | Web application, Main, memory, prompt assembly | `viventium_v0_4/LibreChat/` |
 | Install, config compile, health, lifecycle, restore | `scripts/viventium/` and `bin/viventium` |
-| Durable worker missions and workspaces | `viventium_v0_4/GlassHive/` |
+| Durable worker missions and workspaces | `viventium_v0_4/xPerfect/` |
 | Real-time speech and interruption | `viventium_v0_4/voice-gateway/` |
 | Modern Call/Wing/Listen-Only client | `viventium_v0_4/agent-starter-react/` |
 | Telegram transport | `viventium_v0_4/telegram-viventium/` |

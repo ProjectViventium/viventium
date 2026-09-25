@@ -94,7 +94,7 @@ def service_processes(tmp_path, module, monkeypatch):
         installed / "viventium_v0_4" / "telegram-viventium" / "TelegramVivBot"
     )
     telegram_entrypoint = telegram_root / "bot.py"
-    glasshive_root = installed / "viventium_v0_4" / "GlassHive" / "runtime_phase1"
+    glasshive_root = installed / "viventium_v0_4" / "xPerfect" / "runtime_phase1"
     glasshive_entrypoint = glasshive_root / ".venv" / "bin" / "uvicorn"
     glasshive_api = glasshive_root / "src" / "workers_projects_runtime" / "api.py"
 

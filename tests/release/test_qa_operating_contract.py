@@ -23,7 +23,7 @@ CONFIG_COMPILER = ROOT / "scripts" / "viventium" / "config_compiler.py"
 GLASSHIVE_RUNTIME_REQUIREMENTS = (
     ROOT
     / "viventium_v0_4"
-    / "GlassHive"
+    / "xPerfect"
     / "runtime_phase1"
     / "src"
     / "workers_projects_runtime"
@@ -37,8 +37,8 @@ AGENT_DOCS = [
     ROOT / "CLAUDE.md",
     ROOT / "viventium_v0_4" / "LibreChat" / "AGENTS.md",
     ROOT / "viventium_v0_4" / "LibreChat" / "CLAUDE.md",
-    ROOT / "viventium_v0_4" / "GlassHive" / "AGENTS.md",
-    ROOT / "viventium_v0_4" / "GlassHive" / "CLAUDE.md",
+    ROOT / "viventium_v0_4" / "xPerfect" / "AGENTS.md",
+    ROOT / "viventium_v0_4" / "xPerfect" / "CLAUDE.md",
 ]
 # Codex does not auto-load above a nested git root. The local overlays explicitly require reading
 # the parent contract; the combined sets below model the contract after that required read.
@@ -56,12 +56,12 @@ EFFECTIVE_AGENT_DOCS = {
         ROOT / "AGENTS.md",
     ],
     "Codex in nested GlassHive after required parent read": [
-        ROOT / "viventium_v0_4" / "GlassHive" / "AGENTS.md",
+        ROOT / "viventium_v0_4" / "xPerfect" / "AGENTS.md",
         ROOT / "AGENTS.md",
     ],
     "Claude in nested GlassHive": [
-        ROOT / "viventium_v0_4" / "GlassHive" / "CLAUDE.md",
-        ROOT / "viventium_v0_4" / "GlassHive" / "AGENTS.md",
+        ROOT / "viventium_v0_4" / "xPerfect" / "CLAUDE.md",
+        ROOT / "viventium_v0_4" / "xPerfect" / "AGENTS.md",
         ROOT / "CLAUDE.md",
         ROOT / "AGENTS.md",
     ],
@@ -69,7 +69,7 @@ EFFECTIVE_AGENT_DOCS = {
 GLASSHIVE_MCP_SERVER = (
     ROOT
     / "viventium_v0_4"
-    / "GlassHive"
+    / "xPerfect"
     / "runtime_phase1"
     / "src"
     / "workers_projects_runtime"
@@ -588,8 +588,8 @@ def test_agent_instruction_architecture_is_lean_imported_and_reachable() -> None
     root_claude = ROOT / "CLAUDE.md"
     librechat_agents = ROOT / "viventium_v0_4" / "LibreChat" / "AGENTS.md"
     librechat_claude = ROOT / "viventium_v0_4" / "LibreChat" / "CLAUDE.md"
-    glasshive_agents = ROOT / "viventium_v0_4" / "GlassHive" / "AGENTS.md"
-    glasshive_claude = ROOT / "viventium_v0_4" / "GlassHive" / "CLAUDE.md"
+    glasshive_agents = ROOT / "viventium_v0_4" / "xPerfect" / "AGENTS.md"
+    glasshive_claude = ROOT / "viventium_v0_4" / "xPerfect" / "CLAUDE.md"
 
     assert len(_read(root_agents).splitlines()) < 200
     assert root_agents.stat().st_size < 16_384

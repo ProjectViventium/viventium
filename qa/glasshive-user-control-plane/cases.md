@@ -144,7 +144,7 @@ most specific existing QA owner when a scenario already has a detailed provider 
 - Full-view evidence minimum: real browser failure state plus backend no-side-effect proof.
 - Automation: compiler topology tests, gateway negative tests, MCP OAuth role-admission tests,
   Playwright failure injection, the
-  [current Glass Drive server auth-boundary tests](../../viventium_v0_4/GlassHive/frontends/glass-drive-ui/tests/test_server.py), and the
+  [current Glass Drive server auth-boundary tests](../../viventium_v0_4/xPerfect/frontends/glass-drive-ui/tests/test_server.py), and the
   [hosted local-factor canary report](reports/2026-08-09-hosted-local-password-canary.md). Verify the
   compiler's canonical provider-email/enrollment settings override their legacy fallbacks, default
   closed when both are absent, and never project a password or mutable-email admission rule. Verify

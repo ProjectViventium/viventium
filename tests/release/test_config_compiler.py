@@ -56,7 +56,7 @@ START_SCRIPT = REPO_ROOT / "viventium_v0_4" / "viventium-librechat-start.sh"
 GLASSHIVE_CONVERSATION_PROVIDER = (
     REPO_ROOT
     / "viventium_v0_4"
-    / "GlassHive"
+    / "xPerfect"
     / "runtime_phase1"
     / "src"
     / "workers_projects_runtime"
@@ -699,7 +699,7 @@ def test_glasshive_enterprise_provider_env_allowlist_matches_worker_projection_c
     bootstrap_path = (
         REPO_ROOT
         / "viventium_v0_4"
-        / "GlassHive"
+        / "xPerfect"
         / "runtime_phase1"
         / "src"
         / "workers_projects_runtime"
@@ -724,8 +724,24 @@ def test_glasshive_enterprise_provider_env_allowlist_matches_worker_projection_c
         for element in assignment.value.elts
     }
     worker_keys.discard("GLASSHIVE_CAPABILITY_BROKER_TOKEN")
+    worker_keys.difference_update({"GLASSHIVE_CONTEXT_TOKEN", "GLASSHIVE_PEER_TOKEN"})
 
     assert config_compiler.GLASSHIVE_ENTERPRISE_WORKER_PROVIDER_ENV_KEYS == worker_keys
+
+
+def test_glasshive_xai_provider_key_is_isolated_from_gateway_and_runtime(tmp_path: Path) -> None:
+    env = {
+        "GLASSHIVE_SECURITY_MODE": "multi_user",
+        "XAI_API_KEY": "synthetic-xai-key",
+    }
+    config_compiler.render_service_envs(tmp_path, env)
+    service_dir = tmp_path / "service-env"
+    assert "XAI_API_KEY=synthetic-xai-key" in (
+        service_dir / "glasshive-runtime-provider.env"
+    ).read_text(encoding="utf-8")
+    for role in ("glasshive-gateway.env", "glasshive-runtime.env"):
+        assert "XAI_API_KEY" not in (service_dir / role).read_text(encoding="utf-8")
+    assert "XAI_API_KEY" not in config_compiler.GLASSHIVE_ANTHROPIC_PROVIDER_ENV_KEYS
 
 
 def test_scheduled_agent_defaults_to_sol_xhigh_and_rejects_partial_policy() -> None:
@@ -2014,7 +2030,7 @@ def test_glasshive_compiles_as_exact_core_agent_provider(
     assert env["VIVENTIUM_FC_CONSCIOUS_LLM_PROVIDER"] == "glasshive-harness"
     assert env["VIVENTIUM_FC_CONSCIOUS_LLM_MODEL"] == "codex-cli:gpt-6-astra"
     assert capability["message_delta_mode"] == "incremental"
-    assert endpoint["modelDisplayLabel"] == "GlassHive"
+    assert endpoint["modelDisplayLabel"] == "xPerfect"
     source = yaml.safe_load(SOURCE_OF_TRUTH_LIBRECHAT_YAML.read_text(encoding="utf-8"))
     source_endpoint = custom_endpoint(source["endpoints"]["custom"], "glasshive-harness")
     assert endpoint["models"] == source_endpoint["models"]
@@ -2179,7 +2195,9 @@ def test_viventium_glasshive_worker_policy_defaults_and_denylist_compile() -> No
 
 def test_viventium_glasshive_worker_policy_defaults_for_preserved_config_without_rewrite(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    configure_synthetic_glasshive_runtime(tmp_path, monkeypatch)
     config = minimal_compile_config()
     config["integrations"]["glasshive"] = {
         "enabled": True,
@@ -2212,7 +2230,8 @@ def test_viventium_glasshive_worker_policy_defaults_for_preserved_config_without
     ]
 
 
-def test_viventium_glasshive_worker_policy_preserves_explicit_empty_plugin_denylist() -> None:
+def test_viventium_glasshive_worker_policy_preserves_explicit_empty_plugin_denylist(tmp_path, monkeypatch) -> None:
+    configure_synthetic_glasshive_runtime(tmp_path, monkeypatch)
     config = minimal_compile_config()
     config["integrations"]["glasshive"] = {
         "enabled": True,
@@ -2921,7 +2940,7 @@ def test_glasshive_enabled_fails_loud_when_configured_component_is_missing(
     monkeypatch.setattr(config_compiler, "GLASSHIVE_RUNTIME_DIR", missing_dir)
 
     assert config_compiler.glasshive_enabled({"integrations": {}}) is False
-    with pytest.raises(SystemExit, match="GlassHive provider component is missing or incomplete"):
+    with pytest.raises(SystemExit, match="xPerfect provider component is missing or incomplete"):
         config_compiler.glasshive_enabled(
             {"integrations": {"glasshive": {"enabled": True}}}
         )
@@ -2931,7 +2950,7 @@ def test_glasshive_enabled_fails_loud_when_configured_component_is_missing(
     monkeypatch.setattr(config_compiler, "GLASSHIVE_RUNTIME_DIR", runtime_dir)
 
     assert config_compiler.glasshive_enabled({"integrations": {"glasshive": {"enabled": False}}}) is False
-    with pytest.raises(SystemExit, match="GlassHive provider component is missing or incomplete"):
+    with pytest.raises(SystemExit, match="xPerfect provider component is missing or incomplete"):
         config_compiler.glasshive_enabled(
             {"integrations": {"glasshive": {"enabled": True}}}
         )
@@ -3026,7 +3045,7 @@ def test_glasshive_provider_enablement_is_explicit_and_mismatches_fail_loud(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    runtime_dir = tmp_path / "GlassHive" / "runtime_phase1"
+    runtime_dir = tmp_path / "xPerfect" / "runtime_phase1"
     provider_entrypoint = (
         runtime_dir
         / "src"
@@ -3638,7 +3657,7 @@ print(json.dumps(results))
             "uv",
             "run",
             "--project",
-            str(REPO_ROOT / "viventium_v0_4" / "GlassHive" / "runtime_phase1"),
+            str(REPO_ROOT / "viventium_v0_4" / "xPerfect" / "runtime_phase1"),
             "--frozen",
             "python",
             "-c",
@@ -9767,7 +9786,7 @@ def test_active_product_surfaces_do_not_reference_retired_claude_models() -> Non
         REPO_ROOT / "viventium_v0_4" / "LibreChat" / "api" / "test" / "services" / "viventium",
         REPO_ROOT / "viventium_v0_4" / "LibreChat" / "packages" / "api" / "src" / "feelings",
         REPO_ROOT / "viventium_v0_4" / "LibreChat" / "client" / "src" / "components" / "Feelings",
-        REPO_ROOT / "viventium_v0_4" / "GlassHive",
+        REPO_ROOT / "viventium_v0_4" / "xPerfect",
         REPO_ROOT / "viventium_v0_4" / "telegram-viventium",
     ]
     explicit_files = [
@@ -12060,3 +12079,21 @@ def test_explicit_role_model_catalog_preserves_existing_default_aliases():
     assert models["claude-code:opus"]["label"] == "Claude / Opus"
     assert config_compiler.GLASSHIVE_PROVIDER_MODEL_BY_WORKER_PROFILE["codex-cli"] == "codex-cli:gpt-5.6-sol"
     assert config_compiler.GLASSHIVE_PROVIDER_MODEL_BY_WORKER_PROFILE["claude-code"] == "claude-code:opus"
+
+
+def test_xperfect_source_is_canonical_without_legacy_checkout_fallback(tmp_path, monkeypatch):
+    assert config_compiler.GLASSHIVE_RUNTIME_DIR == REPO_ROOT / "viventium_v0_4/xPerfect/runtime_phase1"
+    new_runtime = tmp_path / "xPerfect/runtime_phase1"
+    legacy_provider = tmp_path / "GlassHive/runtime_phase1/src/workers_projects_runtime/conversation_provider.py"
+    legacy_provider.parent.mkdir(parents=True)
+    legacy_provider.write_text("# retained old source\n")
+    monkeypatch.setattr(config_compiler, "GLASSHIVE_RUNTIME_DIR", new_runtime)
+    config = {"integrations": {"glasshive": {"enabled": True, "provider": {"enabled": True}}}}
+    with pytest.raises(SystemExit, match="xPerfect provider component is missing"):
+        config_compiler.glasshive_enabled(config)
+    provider = new_runtime / "src/workers_projects_runtime/conversation_provider.py"
+    provider.parent.mkdir(parents=True)
+    provider.write_text("# new source\n")
+    assert config_compiler.glasshive_enabled(config)
+    assert config_compiler.GLASSHIVE_PROVIDER_ID == "glasshive-harness"
+    assert config_compiler.build_agent_provider_capabilities(config)["glasshive-harness"]["label"] == "xPerfect"
