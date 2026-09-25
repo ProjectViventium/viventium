@@ -578,24 +578,43 @@ def test_native_stack_stop_prunes_a_dead_pid_and_is_a_real_noop(
     ).exists()
 
 
-def test_process_arguments_preserve_spaced_app_support_path(tmp_path: Path) -> None:
+def test_process_arguments_preserve_spaced_app_support_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     module = load_transaction_module()
     spaced_data_path = tmp_path / "Application Support" / "Viventium" / "mongo-data"
+    # A loaded runner can stall the reader between its KERN_PROCARGS2 size query and
+    # its read, where it allocates the buffer. Force that stall on every run so a
+    # subject that re-executes between the two calls fails deterministically.
+    allocate = module.ctypes.create_string_buffer
+    stalled_allocations: list[int] = []
+
+    def stalled_allocate(size: int):
+        stalled_allocations.append(size)
+        time.sleep(0.25)
+        return allocate(size)
+
+    monkeypatch.setattr(module.ctypes, "create_string_buffer", stalled_allocate)
     process = subprocess.Popen(
         [
             "/bin/sh",
             "-c",
-            "trap 'exit 0' TERM; read -r _; exit 0",
+            "trap 'exit 0' TERM; echo ready; read -r _; exit 0",
             "synthetic-mongod",
             "--dbpath",
             str(spaced_data_path),
         ],
         stdin=subprocess.PIPE,
-        stdout=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
     )
     stdin_pipe = process.stdin
     try:
+        # macOS /bin/sh is a launcher that re-executes the selected shell, and the
+        # kernel refuses KERN_PROCARGS2 during that exec. Inspect the final image only.
+        assert process.stdout is not None
+        assert process.stdout.readline() == b"ready\n"
         arguments = module._process_arguments(process.pid)
     finally:
         if process.poll() is None:
@@ -607,9 +626,12 @@ def test_process_arguments_preserve_spaced_app_support_path(tmp_path: Path) -> N
         except subprocess.TimeoutExpired:
             process.kill()
             process.wait(timeout=10)
+        if process.stdout is not None:
+            process.stdout.close()
 
     assert process.poll() is not None
     assert arguments[-2:] == ["--dbpath", str(spaced_data_path)]
+    assert len(stalled_allocations) == (1 if sys.platform == "darwin" else 0)
 
 
 def test_linux_process_arguments_preserve_spaced_path(
