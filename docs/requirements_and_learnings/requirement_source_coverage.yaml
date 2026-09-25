@@ -82,7 +82,7 @@ atomic_traceability:
   stable_requirement_ids_with_disposition_only_direct_mappings: 8
   stable_requirement_ids_with_any_direct_message_mapping: 312
   required_owner_declaration_rows: 288
-  required_owner_declaration_sha256: 60a5dcb807e9e5c4c1d6ad9c681e1054eabf333604226373c7982d69572b6ff7
+  required_owner_declaration_sha256: 7ad060985963c5174618eabd3fe03c49543c48ac1c7038ae01830ae07cabd31f
   required_owner_declaration_canonicalization: >-
     sha256 of lexicographically sorted unique tab-separated requirement ID, repository-relative
     owning product-document path, and exact declaration behavior; rows are LF-joined with one

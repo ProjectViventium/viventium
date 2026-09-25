@@ -53,6 +53,9 @@ entries:
   - path: qa/no-response/cases.md
     marker_count: 9
     marker_sha256: 501c04dd960a911df200e160d18c0da28e2aa9f8020cc25e72750914110bf305
+  - path: qa/periphery-nightly-insights/cases.md
+    marker_count: 1
+    marker_sha256: 5637c3d4e8e5dad43b129c7b10f2c79a69acc07db06d80c5e52681e7298c7658
   - path: qa/red-team-cortex/cases.md
     marker_count: 9
     marker_sha256: c4d325704597ee1e5a7de9171cc22db58852d01556bb941d36e8f353d83d6fc0

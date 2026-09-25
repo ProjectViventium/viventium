@@ -1349,7 +1349,7 @@ def test_requirement_source_coverage_ledger_is_private_safe_and_resolves() -> No
     assert atomic["stable_requirement_ids_with_any_direct_message_mapping"] == 312
     assert atomic["required_owner_declaration_rows"] == 288
     assert atomic["required_owner_declaration_sha256"] == (
-        "60a5dcb807e9e5c4c1d6ad9c681e1054eabf333604226373c7982d69572b6ff7"
+        "7ad060985963c5174618eabd3fe03c49543c48ac1c7038ae01830ae07cabd31f"
     )
     assert atomic["required_owner_declaration_canonicalization"].startswith(
         "sha256 of lexicographically sorted unique tab-separated requirement ID"
