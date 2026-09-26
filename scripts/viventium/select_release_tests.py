@@ -60,11 +60,16 @@ LANE_CONSUMERS = {
     }),
 }
 
-# This node resolves links stored in Markdown, outside the Python path trace.
-# Keep its confirmed source-only checkouts attached to this consumer, not all QA.
+# Data-driven reads can fall outside the Python path trace. Keep confirmed
+# source-only checkouts attached to their consumer, not every test in its file.
 CHECKOUT_CONSUMERS = {
     "tests/release/test_qa_operating_contract.py::test_current_requirement_and_qa_local_markdown_evidence_links_resolve": (
         LIBRECHAT, "viventium_v0_4/xPerfect", "viventium_v0_4/Viventium-Health",
+    ),
+    # The node joins ROOT to paths from a set and checks each file exists.
+    # Telegram is parent-tracked. Its adjacent shape-only node needs no checkout.
+    "tests/release/test_parallel_work_release_gate.py::test_runtime_service_manifest_binds_runtime_controls_and_kernel_process_reader": (
+        LIBRECHAT, "viventium_v0_4/xPerfect",
     ),
 }
 
