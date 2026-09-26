@@ -48,13 +48,6 @@ PLAYGROUND = "viventium_v0_4/agent-starter-react"
 LANES = ("node", "librechat_deps", "librechat_packages", "librechat_client", "playground_deps", "audio_tools")
 # Real audio execution was traced in the audit. Mentioning ffmpeg in a mocked
 # subprocess or a source assertion must not install it. Add consumers with evidence.
-# The minimal wizard -> compiler replay loads these locked source trees even
-# though its test body names only the config and subprocess entrypoint. Confirmed
-# by the clean-checkout failure and exact-source replay; it needs no client build.
-COMPONENT_CONSUMERS = {
-    "tests/release/test_config_compiler.py::test_public_minimal_example_compiles_without_preexisting_keychain_state":
-        frozenset({"LibreChat", "xPerfect"}),
-}
 LANE_CONSUMERS = {
     # This shell fixture delegates only the report parser to the real Node binary.
     "node": frozenset({
@@ -558,9 +551,115 @@ def _executes_node(tree: ast.Module) -> bool:
     return False
 
 
+def _executed_python_paths(repo: Repository, path: str, tree: ast.Module) -> set[str]:
+    """Resolve Python entrypoints in subprocess argv without running test code.
+
+    Script arguments can be rooted Paths, str(Path) wrappers, literal paths,
+    bound argv lists, or -m module names. Reading a script with cat, mentioning
+    its path, or passing it as data after -c is not execution evidence.
+    """
+    scan = _PythonScan(path, tree)
+    values = {target.id: n.value for n in ast.walk(tree) if isinstance(n, ast.Assign)
+              for target in n.targets if isinstance(target, ast.Name)}
+    def resolve(node: ast.AST | None, seen: frozenset[str] = frozenset()) -> ast.AST | None:
+        if isinstance(node, ast.Name) and node.id in values and node.id not in seen:
+            return resolve(values[node.id], seen | {node.id})
+        return node
+
+    def script_path(node: ast.AST, *, relative_allowed: bool) -> str | None:
+        result = scan.path(node)
+        if result is None:
+            value = _literal(resolve(node))
+            if value and relative_allowed and not PurePosixPath(value).is_absolute():
+                result = _normalize(value)
+        return result if result in repo.files and result.endswith(".py") else None
+
+    paths: set[str] = set()
+    for call in ast.walk(tree):
+        if not (isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute)
+                and isinstance(call.func.value, ast.Name) and call.func.value.id == "subprocess"
+                and call.func.attr in {"run", "Popen", "check_call", "check_output", "call"}):
+            continue
+        if any(k.arg == "shell" and not (isinstance(k.value, ast.Constant) and k.value.value is False)
+               for k in call.keywords):
+            continue  # shell argument semantics are not the direct argv contract
+        argv = resolve(call.args[0] if call.args else next((k.value for k in call.keywords if k.arg == "args"), None))
+        if not isinstance(argv, (ast.List, ast.Tuple)) or not argv.elts:
+            continue
+        cwd = next((k.value for k in call.keywords if k.arg == "cwd"), None)
+        relative_allowed = cwd is None or scan.path(cwd) == ""
+        executable = resolve(argv.elts[0])
+        direct = script_path(argv.elts[0], relative_allowed=relative_allowed)
+        if direct:
+            paths.add(direct)
+            continue
+        python = (isinstance(executable, ast.Attribute) and executable.attr == "executable"
+                  and isinstance(executable.value, ast.Name) and executable.value.id == "sys")
+        literal = _literal(executable)
+        python |= bool(literal and re.fullmatch(r"python(?:[0-9]+(?:\.[0-9]+)*)?", PurePosixPath(literal).name))
+        if not python:
+            continue
+        arguments = iter(argv.elts[1:])
+        for argument in arguments:
+            option = _literal(resolve(argument))
+            if option in {"-c", "-", "--help", "--version", "-V"}:
+                break
+            if option == "-m":
+                module = _literal(resolve(next(arguments, None)))
+                module_path = module.replace(".", "/") + ".py" if module else ""
+                if relative_allowed and module_path in repo.files:
+                    paths.add(module_path)
+                break
+            if option in {"-W", "-X"}:
+                next(arguments, None)
+                continue
+            if option and option.startswith("-") and option != "--":
+                continue
+            if option == "--":
+                argument = next(arguments, None)
+                if argument is None:
+                    break
+            entrypoint = script_path(argument, relative_allowed=relative_allowed)
+            if entrypoint:
+                paths.add(entrypoint)
+            break
+    return paths
+
+
+def _executed_source_components(repo: Repository, path: str, tree: ast.Module,
+                                cache: dict[str, tuple[set[str], set[str]]]) -> set[str]:
+    """Follow executed Python entrypoints for source checkouts, never build lanes.
+
+    The compiler's anchored source reads are the same regardless of the invoking
+    test's name. Recursively follow explicit Python subprocesses while bounding
+    cycles. Dynamic subprocesses and shell programs remain outside this trace.
+    """
+    required: set[str] = set()
+    pending = list(_executed_python_paths(repo, path, tree))
+    seen: set[str] = set()
+    while pending:
+        entrypoint = pending.pop()
+        if entrypoint in seen:
+            continue
+        seen.add(entrypoint)
+        if entrypoint not in cache:
+            try:
+                source_tree = ast.parse((repo.root / entrypoint).read_text(encoding="utf-8"))
+            except (OSError, SyntaxError, UnicodeError):
+                continue
+            _, rooted, _, _ = _PythonScan(entrypoint, source_tree).dependencies()
+            components = {component for p in rooted if (component := repo.component_of(p))}
+            cache[entrypoint] = components, _executed_python_paths(repo, entrypoint, source_tree)
+        components, children = cache[entrypoint]
+        required.update(components)
+        pending.extend(children - seen)
+    return required
+
+
 def _prerequisites(repo: Repository, tests: list[str]) -> tuple[dict[str, bool], list[str]]:
     lanes = dict.fromkeys(LANES, False)
     required: set[str] = set()
+    executed_cache: dict[str, tuple[set[str], set[str]]] = {}
     for selector in tests:
         path = selector.split("::", 1)[0]
         try:
@@ -569,6 +668,7 @@ def _prerequisites(repo: Repository, tests: list[str]) -> tuple[dict[str, bool],
             continue  # parse failure is reported; do not invent heavyweight prerequisites
         source = ast.unparse(tree)
         used, rooted, _, _ = _PythonScan(path, tree).dependencies()
+        required.update(_executed_source_components(repo, path, tree, executed_cache))
         # Only anchored paths prove a checkout dependency. Free-text fixture/assertion
         # paths are candidate test-selection evidence, not an instruction to clone.
         for dependency in rooted:
@@ -600,9 +700,6 @@ def _prerequisites(repo: Repository, tests: list[str]) -> tuple[dict[str, bool],
     lanes["node"] |= lanes["librechat_deps"] or lanes["playground_deps"]
     # Use exact lock names, with no implicit default LibreChat/Health selection.
     names = {json.loads(repo.components[p])["name"] for p in required if p in repo.components}
-    for consumer, components in COMPONENT_CONSUMERS.items():
-        if any(consumer == s.split("[", 1)[0] or consumer.startswith(s + "::") for s in tests):
-            names.update(components)
     return lanes, sorted(names)
 
 

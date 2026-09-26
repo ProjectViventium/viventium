@@ -459,9 +459,6 @@ def test_compiler_wizard_node_gets_only_confirmed_source_prerequisites() -> None
                               explicit=[node], reason="Wizard compiler replay")
     assert result.prerequisites == ["LibreChat", "xPerfect"]
     assert not any(result.lanes.values())
-    for consumer, components in selection.COMPONENT_CONSUMERS.items():
-        selection._definition_tree(repo, consumer)
-        assert components <= {json.loads(entry)["name"] for entry in repo.components.values()}
 
 
 def test_manual_blast_uses_explicit_base(repo: Path, tmp_path: Path) -> None:
@@ -548,3 +545,54 @@ def test_pr_retry_handoff_outage_fails_closed(monkeypatch: pytest.MonkeyPatch) -
     event = {"repository": {"full_name": "example/repo"}, "number": 42, "pull_request": {}}
     with pytest.raises(selection.SelectionError, match="retry did not infer a scope"):
         selection.event_handoff(event, "pull_request", refresh_pr=True)
+
+
+@pytest.mark.parametrize("invocation", [
+    "subprocess.run([sys.executable, str(ROOT / 'scripts/viventium/runner.py')])",
+    "subprocess.run([sys.executable, ROOT / 'scripts' / 'viventium' / 'runner.py'])",
+    "script = ROOT / 'scripts/viventium/runner.py'; argv = [sys.executable, str(script)]; subprocess.run(args=argv)",
+    "subprocess.run([sys.executable, '-B', str(ROOT.joinpath('scripts', 'viventium', 'runner.py'))])",
+    "subprocess.run(['python3', 'scripts/viventium/runner.py'], cwd=ROOT)",
+    "subprocess.run([sys.executable, '-m', 'scripts.viventium.runner'])",
+    "subprocess.run([str(ROOT / 'scripts/viventium/runner.py')])",
+])
+def test_executed_python_script_traces_component_sources_without_test_name_rules(repo: Path, invocation: str) -> None:
+    _write(repo, "scripts/viventium/runner.py", "from pathlib import Path\nROOT = Path(__file__).resolve().parents[2]\nassert (ROOT / 'viventium_v0_4/LibreChat/source.yaml').read_text()\nassert (ROOT / 'viventium_v0_4/Comp/source.yaml').read_text()\n")
+    _write(repo, "tests/release/test_entrypoint.py", "import subprocess, sys\nfrom pathlib import Path\nROOT = Path(__file__).resolve().parents[2]\ndef test_arbitrary_name():\n    " + invocation + "\n")
+    result = selection.select(selection.Repository.load(repo), scope="critical-path", changed=None,
+        components=[], explicit=["tests/release/test_entrypoint.py::test_arbitrary_name"], reason="Executable source consumer")
+    assert result.prerequisites == ["Comp", "LibreChat"]
+    assert not any(result.lanes.values())
+
+
+@pytest.mark.parametrize("invocation", [
+    "assert str(ROOT / 'scripts/viventium/runner.py')",
+    "subprocess.run(['cat', str(ROOT / 'scripts/viventium/runner.py')])",
+    "subprocess.run([sys.executable, '-c', 'pass', str(ROOT / 'scripts/viventium/runner.py')])",
+])
+def test_reading_or_mentioning_a_script_does_not_inherit_its_execution_prerequisites(repo: Path, invocation: str) -> None:
+    _write(repo, "scripts/viventium/runner.py", "from pathlib import Path\nROOT = Path(__file__).resolve().parents[2]\nassert (ROOT / 'viventium_v0_4/LibreChat/source.yaml').read_text()\n")
+    _write(repo, "tests/release/test_entrypoint.py", "import subprocess, sys\nfrom pathlib import Path\nROOT = Path(__file__).resolve().parents[2]\ndef test_source():\n    " + invocation + "\ndef test_unselected_execution():\n    subprocess.run([sys.executable, str(ROOT / 'scripts/viventium/runner.py')])\n")
+    result = selection.select(selection.Repository.load(repo), scope="critical-path", changed=None,
+        components=[], explicit=["tests/release/test_entrypoint.py::test_source"], reason="Source inspection only")
+    assert result.prerequisites == []
+    assert not any(result.lanes.values())
+
+
+def test_repaired_keychain_compiler_node_selects_its_runtime_source_checkouts() -> None:
+    node = "tests/release/test_config_compiler.py::test_config_compiler_easy_install_defaults_to_browser_api_key_not_direct_subscription_oauth"
+    result = selection.select(selection.Repository.load(ROOT), scope="critical-path", changed=None,
+        components=[], explicit=[node], reason="Compiler credential regression")
+    assert result.prerequisites == ["LibreChat", "xPerfect"]
+    assert not any(result.lanes.values())
+
+
+def test_instruction_architecture_remains_in_policy_with_its_two_source_checkouts() -> None:
+    node = "tests/release/test_qa_operating_contract.py::test_agent_instruction_architecture_is_lean_imported_and_reachable"
+    repo = selection.Repository.load(ROOT)
+    for partition in ("core", "policy", "activation"):
+        result = selection.select(repo, scope="critical-path", changed=None, components=[],
+                                  explicit=[node], reason="Instruction sources", partition=partition)
+        assert result.tests == ([node] if partition == "policy" else [])
+        assert result.prerequisites == (["LibreChat", "xPerfect"] if partition == "policy" else [])
+        assert not any(result.lanes.values())
