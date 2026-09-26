@@ -1,13 +1,36 @@
 name: Release Policy
 
+# Owns the four public policy files declared in select_release_tests.py.
+# All pytest workflows resolve the same typed QA mode before setup.
 on:
   pull_request:
+    types: [opened, synchronize, reopened]
   push:
     branches:
       - main
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: QA mode (full is explicit only)
+        type: choice
+        options: [skip, critical-path, blast-radius, full]
+        default: blast-radius
+      base:
+        description: Required comparison ref for manual blast-radius (no guessed fallback)
+        type: string
+        default: ''
+      tests:
+        description: Critical-path JSON array of release file/node selectors
+        type: string
+        default: '[]'
+      reason:
+        description: Required reason for critical-path selection
+        type: string
+        default: ''
 
 permissions:
   contents: read
+  pull-requests: read
 
 concurrency:
   group: release-policy-${{ github.ref }}
@@ -22,31 +45,61 @@ jobs:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
+          fetch-depth: 0
+      - name: Select release tests for this change
+        id: select
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SELECT_PARTITION: policy
+        run: |
+          python3 scripts/viventium/select_release_tests.py \
+            --event-file "$GITHUB_EVENT_PATH" --event-name "$GITHUB_EVENT_NAME" \
+            --partition "$SELECT_PARTITION" \
+            --github-output "$GITHUB_OUTPUT" --summary "$GITHUB_STEP_SUMMARY"
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        if: steps.select.outputs.count != '0'
         with:
           python-version: "3.11"
-      - run: python -m pip install pytest pyyaml
-      - name: Bootstrap pinned policy components
+      - name: Record hosted Python toolchain
+        if: steps.select.outputs.count != '0'
+        run: python -VV
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        if: steps.select.outputs.node == 'true'
+        with:
+          node-version: "24"
+      - name: Install test runner
+        if: steps.select.outputs.count != '0'
+        run: python -m pip install pytest==8.4.2 pyyaml==6.0.2
+      - name: Fetch and validate selected pinned components
+        if: steps.select.outputs.components_count != '0'
+        env:
+          SELECTED_COMPONENTS: ${{ steps.select.outputs.components_json }}
         run: |
-          printf '%s\n' \
-            'voice:' \
-            '  mode: disabled' \
-            'integrations:' \
-            '  glasshive:' \
-            '    enabled: true' \
-            > "$RUNNER_TEMP/release-policy-components.yaml"
-          python scripts/viventium/bootstrap_components.py \
-            --repo-root . \
-            --config "$RUNNER_TEMP/release-policy-components.yaml" \
-            --jobs 3
-      - run: >-
-          python -m pytest
-          tests/release/test_public_bootstrap_manifests.py
-          tests/release/test_private_repo_resolution_contract.py
-          tests/release/test_qa_operating_contract.py
-          tests/release/test_qa_storage_guard.py
-          -q
+          python - <<'PYTHON'
+          import json, os, subprocess, sys
+          names = json.loads(os.environ["SELECTED_COMPONENTS"])
+          if not names:
+              raise SystemExit("component step requires an explicit non-empty selection")
+          command = [sys.executable, "scripts/viventium/bootstrap_components.py", "--repo-root", "."]
+          for name in names:
+              command += ["--component", name]
+          subprocess.run(command + ["--jobs", "1"], check=True)
+          subprocess.run(command + ["--validate-only", "--strict-pinned"], check=True)
+          PYTHON
+      - name: Run selected release tests
+        if: steps.select.outputs.count != '0'
+        env:
+          SELECTED_TESTS: ${{ steps.select.outputs.tests_json }}
+        run: |
+          python - <<'PYTHON'
+          import json, os, subprocess, sys
+          selected = json.loads(os.environ["SELECTED_TESTS"])
+          if not selected:
+              raise SystemExit("pytest requires an explicit non-empty selection")
+          subprocess.run([sys.executable, "-m", "pytest", "-q", *selected], check=True)
+          PYTHON
       - name: Verify merged component refs are live public main tips
+        if: steps.select.outputs.live_refs == 'true'
         env:
           GIT_TERMINAL_PROMPT: "0"
         run: |

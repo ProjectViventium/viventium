@@ -966,7 +966,7 @@
   selectable and capability-aligned.
 - Forbidden Result: `/v1/realtime` starts; the setting silently becomes `/v1/tts`; legacy adapter
   instructions or catalog entries remain active; standalone xAI tag coverage regresses.
-- Evidence: `test_config_compiler_rejects_retired_xai_grok_voice_agent_route`,
+- Evidence: `test_config_compiler_preserves_but_safely_disables_retired_xai_voice_agent_route`,
   `test_load_env_rejects_retired_xai_voice_agent_route`,
   `test_xai_voice_runtime_exposes_only_standalone_tts`, voice provider contract tests, and
   `surfacePrompts.spec.js`.

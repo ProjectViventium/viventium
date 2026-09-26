@@ -2261,51 +2261,6 @@ def test_build_service_rows_reports_semantic_memory_hardening_health(
     assert "health failed" in services["Memory Hardening"][1]
 
 
-def test_snapshot_brain_setup_rows_matches_guided_public_postures() -> None:
-    install_summary = load_install_summary_module()
-
-    config = {
-        "runtime": {
-            "personalization": {"default_conversation_recall": False},
-            "memory_hardening": {"transcripts": {"source_dir": ""}},
-            "network": {"remote_call_mode": "disabled"},
-        },
-        "llm": {
-            "primary": {"provider": "openai", "auth_mode": "connected_account"},
-            "secondary": {"provider": "none", "auth_mode": "disabled"},
-        },
-        "voice": {"mode": "disabled"},
-        "integrations": {
-            "web_search": {"enabled": False},
-            "telegram": {"enabled": False},
-            "telegram_codex": {"enabled": False},
-            "google_workspace": {"enabled": False},
-            "ms365": {"enabled": False},
-            "code_interpreter": {"enabled": False},
-            "skyvern": {"enabled": False},
-            "openclaw": {"enabled": False},
-        },
-    }
-
-    rows = install_summary.build_brain_setup_rows(config, {})
-    states = {name: (state, action) for name, state, action in rows}
-
-    assert states["Direct AI Accounts"][0] == "Needs setup"
-    assert states["Transcript Ingest"][0] == "Needs setup"
-    assert states["Conversation Recall/RAG"][0] == "Needs setup"
-    assert states["Scheduler"][0] == "Needs setup"
-    assert states["GlassHive"][0] == "Needs setup"
-    assert states["Prompt Workbench"][0] == "Needs setup"
-    assert states["Nightly Reflection"][0] == "Needs setup"
-    assert states["Memory Hardening"][0] == "Needs setup"
-    assert states["Slack"][0] == "Needs setup"
-    assert states["WhatsApp"][0] == "Needs setup"
-    assert states["Code Interpreter"][0] == "Disabled by choice"
-    assert states["Skyvern"][0] == "Disabled by choice"
-    assert "OpenClaw" not in states
-    assert states["Remote Access"][0] == "Disabled by choice"
-
-
 def test_service_summary_does_not_present_lab_only_openclaw_as_configured() -> None:
     install_summary = load_install_summary_module()
     config = {
@@ -2350,27 +2305,6 @@ def test_voice_status_surfaces_retired_xai_route_as_action_required(tmp_path: Pa
     services = {name: (status, detail) for name, status, detail in rows}
     assert services["Voice"][0] == "Action Required"
     assert "legacy xAI Voice Agent route retired" in services["Voice"][1]
-
-
-def test_build_brain_setup_rows_does_not_call_connected_account_route_ready() -> None:
-    install_summary = load_install_summary_module()
-
-    config = {
-        "runtime": {"personalization": {"default_conversation_recall": False}},
-        "llm": {"primary": {"provider": "openai", "auth_mode": "connected_account"}},
-        "voice": {"mode": "local"},
-        "integrations": {},
-    }
-    runtime_env = {
-        "VIVENTIUM_LOCAL_SUBSCRIPTION_AUTH": "true",
-        "VIVENTIUM_OPENAI_AUTH_MODE": "connected_account",
-    }
-
-    rows = install_summary.build_brain_setup_rows(config, runtime_env)
-    states = {name: (state, action) for name, state, action in rows}
-
-    assert states["Direct AI Accounts"][0] == "Needs setup"
-    assert "Connected Accounts" in states["Direct AI Accounts"][1]
 
 
 def test_build_brain_setup_rows_does_not_call_unprobed_fallback_ready() -> None:

@@ -150,8 +150,14 @@ current status owner. Do not load the whole documentation tree for a narrow chan
 - Automated tests prove deterministic code and contracts; Prompt Workbench exact-model evals
   provide evidence for model behavior; real-user QA proves the delivered experience. These are
   separate gates; none substitutes for another.
-- Match verification to the actual blast radius. Run the smallest relevant automated checks, but
-  run them. Do not add browser, voice, release, or clean-machine ceremony to a docs-only change.
+- **QA scope:** the latest explicit user or approved-plan mode bounds every check in this section:
+  `skip` (run none, report `NOT RUN`), `critical-path` (only what the requested result depends on),
+  `blast-radius` (default: changed behavior and its confirmed consumers) or `full` (explicit request
+  only). Pass the mode unchanged to every delegated agent. Trace a change to a check before running
+  it; a name match is not relevance. Skipped is not passed. No scheduled full sweep is implied.
+  Handoff: `QA: <mode>; result: <goal>; selected checks: <paths/IDs + reason>; deferred: <category + trigger>`. [Details](qa/README.md#verification-scope-and-handoff).
+- Label QA resources by owner/candidate; keep current plus one rollback. Remove obsolete resources only
+  after exact reference/state/mount checks. Never use blanket volume cleanup or touch personal/client data.
 - For user-visible behavior, exercise the real affected surface. Browser-facing work requires a real
   browser; voice/audio work requires the delivered or audible path; installer/runtime work requires
   the generated and active artifact.
@@ -183,10 +189,10 @@ current status owner. Do not load the whole documentation tree for a narrow chan
 - Local prod status: `bin/viventium dev-runtime status`
 - Side-by-side dev: `bin/viventium dev-env create dev` and `bin/viventium dev-env run dev start`
 - Promote checkout: `bin/viventium dev-runtime activate-current --validate --restart --allow-protected-folder`
-- Release tests: `python3 -m pytest tests/release/ -q`
+- Blast-radius release-test selection (prints paths, does not run tests): `python3 scripts/viventium/select_release_tests.py --base origin/main --pytest-args`
+- Full release bank (explicit `full` scope only): `python3 -m pytest tests/release/ -q`
 - Compiler tests: `python3 -m pytest tests/release/test_config_compiler.py -q`
-- LibreChat: run `npm run backend:dev`, `npm run frontend:dev`, `npm run test:api`, or
-  `npm run test:client` from `viventium_v0_4/LibreChat/`.
+- LibreChat (`viventium_v0_4/LibreChat/`): `npm run backend:dev`, `npm run frontend:dev`, `npm run test:api`, `npm run test:client`.
 - Telegram: run `pytest` from `viventium_v0_4/telegram-viventium/`.
 - Voice gateway: run `python3 -m pytest tests -q` from `viventium_v0_4/voice-gateway/`.
 

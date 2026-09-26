@@ -8,13 +8,62 @@ Use [`catalog.yaml`](catalog.yaml) to find a capability and its durable acceptan
 Consolidated `qa/<capability>/cases.yaml` files route to the existing detailed `sourceInventories`;
 they do not replace those banks or claim execution. Candidate-bound reports own results.
 
+## Verification Scope And Handoff
+
+The latest explicit user instruction or user-approved plan sets the QA mode. It overrides older
+blanket wording here and in feature docs. Tests and user QA may take different modes.
+
+| Mode | Run | Do not |
+| --- | --- | --- |
+| `skip` | Nothing in the waived scope. Report `NOT RUN - skipped by request`. | Add substitute tests, builds or review loops. |
+| `critical-path` | Only checks the requested result depends on, each with a traced reason. | Run unrelated regression, platforms or maintenance. Log them in the backlog. |
+| `blast-radius` (default) | Changed behavior, its confirmed consumers, and their failure, recovery and user paths. | Sweep the project because of a folder name, an old checklist or a guess. |
+| `full` | Everything explicitly named: project, features, platforms. Explicit request only. | Expand into other repositories, environments or platforms. |
+
+- **Say it once:** put `QA: <mode>` at the top of the plan, handoff, PR or agent prompt. Every
+  developer, Codex or Claude session and subagent passes it on unchanged.
+- **Trace, then run:** link a changed file, config or component pin to the behavior a check protects
+  before running it. A similar name or keyword is not relevance. For release tests,
+  `scripts/viventium/select_release_tests.py` supplies static candidates, not proof of relevance.
+  An explicit critical-path selection records the tests and causal reason; unknown impact is reported.
+- **Tiers set when a check earns its cost:** T1 core checks while editing; T2 integration on one
+  coherent candidate; T3 artifact (production build, installed proof) once edits settle; T4 regression
+  of unchanged features, only when explicitly selected; T5 deferred platforms such as Intel,
+  only on explicit request. No recurring full or deferred-platform sweep is implied. They are not mandatory stages.
+- **Reuse:** keep valid evidence and exact-input artifacts. Use dev hot reload (`npm run backend:dev`,
+  `npm run frontend:dev`) while editing. Install or rebuild only a selected check's missing or changed
+  prerequisite. Rerun only invalidated evidence.
+- **Honesty:** skipped is not passed and is not an access failure. A required CI context stays real
+  until its policy changes; report the conflict, never force-merge or fake green.
+
+### Machine-readable handoff
+
+CI reads one typed `viventium-qa` JSON block from the pull request, or equivalent manual workflow
+inputs. Keep the same mode in the plan and delegated agent prompts. Example:
+
+```viventium-qa
+{"mode":"critical-path","tests":["tests/release/test_release_test_selection.py"],"reason":"Validate QA mode dispatch and its confirmed consumers."}
+```
+
+Use `skip` with a reason to waive execution, and `full` only when requested. Explicit selectors may
+name a test file or node. Selection reports must distinguish `NOT RUN` and unknown impact from a
+pass. The selector command's help owns exact CLI options; optional CI setup follows the selected
+checks. Deferred work stays in the owning backlog with a category and trigger, not an automatic
+nightly or weekly job. A required external context is changed through its normal policy controls;
+no forced merge or fabricated status.
+
+To change the mode on an open PR, edit its typed block, then use **Re-run jobs** on the existing
+PR run. A retry reads the current block only when the PR head and base still match that run;
+changed source needs its own run. Text edits alone do not start or replace checks. Manual dispatch
+validates the selected revision but does not substitute for required PR evidence.
+
 ## Operating Contract
 
 - Quality is owned by every developer and AI agent touching the product, not by a later cleanup pass.
 - Keep one living QA source of truth per feature or flow under `qa/<feature>/`.
-- Before a non-trivial feature, bug fix, runtime change, installer change, or release claim:
+- Within the selected QA scope, before accepting a feature, fix, runtime or release result:
   1. read the relevant `qa/<feature>/README.md` and `qa/<feature>/cases.md` when they exist
-  2. add or update the cases for the behavior being changed
+  2. reuse existing cases; add or update only for new or changed behavior
   3. run the smallest relevant automated tests
   4. run user-grade QA for every affected user-visible surface
   5. save a public-safe result report under the feature folder
@@ -83,7 +132,7 @@ it does not duplicate product truth or expose private source material.
 | `GOV-009` | “Fully aligned” means no recoverable requirement is missing, contradicted, assigned to the wrong owner, backed only by stale evidence, or represented by an overclaimed result. | `QASYS-002`, `QASYS-004` |
 | `GOV-010` | Prefer the smallest reusable structural correction and sparse, obvious UI; do not turn one complaint, prompt, provider, or machine into a special-case product branch. | `DOCIMPL-001` |
 | `GOV-011` | Prove the affected real Browser/Desktop/Telegram/Voice path and its supporting code, docs, state, logs, generated/shipped artifacts, and runtime identity when applicable, then report the result briefly and truthfully. | `QASYS-004`, `DOCIMPL-007`, `CORE-015` |
-| `GOV-012` | When iterative independent review is requested, run at least two fresh-context reviews and revise between them. Continue toward the 8/10 bar for at most four loops; never inflate a score or claim completion only to cross the bar. After that loop, run any separately requested Claude review-only pass as a distinct review and reconcile its findings without treating it as test evidence. | `QASYS-010`, `QASYS-UC-004`, review receipt, and affected QA owners |
+| `GOV-012` | When iterative independent review is requested, use a fresh critic and the requested gate. One review can suffice; revise and repeat only for material findings or an explicit minimum. Stop after at most four loops by default; never inflate a score or claim completion only to cross the bar. After that loop, run any separately requested Claude review-only pass as a distinct review and reconcile its findings without treating it as test evidence. | `QASYS-010`, `QASYS-UC-004`, review receipt, and affected QA owners |
 | `GOV-013` | Persist through routine local blockers by using already-authorized local setup, browser, and computer paths. Do not ask the user to repeat ordinary in-scope setup, broaden authority, or bypass a real approval or security boundary. | `QASYS-023`, `QASYS-UC-017` |
 | `GOV-015` | Remove unnecessary learning, inputs, choices, clicks, and words from the default new-user path; reveal advanced options on demand. Require real novice browser/computer use, visual judgment, and responsive, light/dark, interaction, keyboard, and accessibility QA. Independent review never replaces the user path. | `QASYS-024`, `QASYS-UC-018` |
 | `GOV-021` | Retain only a sourced behavior, safety, compatibility, or user-experience gate; do not add ceremonial checks, date-bump stale cases, recreate historical reports, broaden architecture without a proved need, or relabel unrun work to make coverage look complete. | `QASYS-002`, `QASYS-004` |
@@ -96,10 +145,10 @@ screenshot label into a requirement, make dirty bytes durable, or convert an unr
 
 ## Feature Inventory And Natural Use-Case Gate
 
-QA starts from the full feature map, not from the one symptom that happened to be reported. Before a
-feature, bug, runtime, installer, or release task is accepted:
+Within the selected QA scope, use the feature map to find the owning flow and confirmed consumers.
+The complete feature inventory is an index, not an instruction to execute unrelated product areas:
 
-1. Build or refresh the checklist from the complete feature inventory in
+1. Select affected entries from the complete feature inventory in
    [`docs/requirements_and_learnings/45_Runtime_Feature_QA_Map.md`](../docs/requirements_and_learnings/45_Runtime_Feature_QA_Map.md),
    [`qa/feature-user-use-case-checklist.md`](feature-user-use-case-checklist.md), the owning
    requirement docs, nested repo docs, scripts, tests, and runtime surfaces.
@@ -181,8 +230,8 @@ Every `NOT RUN` overall result records its immutable first-cataloged date inline
 `cataloged YYYY-MM-DD` or, for a machine-readable owner, as `catalogedOn`. A documentation review
 must never reset that date. Cataloged `NOT RUN` debt older than 90 days is indexed in
 [`stale-case-triage.yaml`](stale-case-triage.yaml). Re-triage does not change the original catalog
-date or imply execution. The deterministic gate enforces review age plus exact stale-marker counts
-and marker-line digests. It detects current source/manifest drift; review and protected history must
+date or imply execution. The deterministic gate checks the recorded triage snapshot and exact
+marker counts and digests. Calendar freshness is explicit maintenance, not a moving gate on unrelated PRs. It detects current source/manifest drift; review and protected history must
 reject a coordinated reset of both the original date and its manifest entry. Reviewing this debt during
 the owning feature's next change is a separate process obligation; the manifest does not pretend the
 test can infer when that change occurs.
@@ -243,16 +292,16 @@ For every change, run impacted scopes by tracing:
 - affected surfaces: Web UI, Telegram, Voice, Scheduler, MCP, installer, CLI, and API
 - affected delivery surfaces: source, nested component, compiled artifact, shipped bundle, live runtime
 
-If uncertainty remains, run the broader feature suite and record the residual risk. Do not downgrade a
-user-visible failure to "logs looked good."
+Inspect unresolved dependencies first. Expand only when confirmed impact and the selected QA mode
+justify it; record the reason. Do not downgrade a user-visible failure to "logs looked good."
 
 Rerun cadence:
 
-- rerun impacted feature cases on every change to that feature's owning code, config, prompts, runtime
-  wiring, generated artifacts, or delivery surface
-- rerun the full feature suite before any release-readiness or production-signoff claim
-- refresh `Last Run` whenever a case is rerun; stale pass results are evidence history, not current
-  acceptance
+- rerun selected cases when their relevant code, config, inputs, runtime or acceptance conditions
+  invalidate the evidence; a new message or unrelated edit does not invalidate a pass
+- perform final artifact/user proof for the selected delivery scope after compatible edits settle;
+  a full feature/project sweep requires `full` scope or a documented affected dependency
+- update `Last Run` only after execution; label retained evidence and requested skips honestly
 
 ## Cleanup
 

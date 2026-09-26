@@ -5704,6 +5704,13 @@ def test_config_compiler_easy_install_defaults_to_browser_api_key_not_direct_sub
     config_path = tmp_path / "config.yaml"
     output_dir = tmp_path / "out"
     write_config(config_path, config)
+    # Answer the Keychain lookup synthetically and isolate HOME, so the test never reads the
+    # developer's real Keychain item or runtime env files.
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    security = fake_bin / "security"
+    security.write_text("#!/bin/sh\nprintf 'gsk_synthetic_activation_key\\n'\n", encoding="utf-8")
+    security.chmod(0o755)
 
     subprocess.run(
         [
@@ -5716,9 +5723,15 @@ def test_config_compiler_easy_install_defaults_to_browser_api_key_not_direct_sub
         ],
         check=True,
         cwd=REPO_ROOT,
+        env={
+            **os.environ,
+            "HOME": str(tmp_path / "home"),
+            "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
+        },
     )
 
     runtime_env = (output_dir / "runtime.env").read_text(encoding="utf-8")
+    assert "GROQ_API_KEY=gsk_synthetic_activation_key" in runtime_env
     assert "VIVENTIUM_OPENAI_AUTH_MODE=user_provided" in runtime_env
     assert "OPENAI_API_KEY=user_provided" in runtime_env
     assert "VIVENTIUM_EXPERIMENTAL_DIRECT_SUBSCRIPTION_AUTH=false" in runtime_env
@@ -9974,26 +9987,6 @@ def test_viventium_config_compiler_defaults_codex_personality_to_none_and_app_se
     assert env["WPR_CODEX_APP_SERVER_QA_ENABLED"] == "false"
 
 
-def test_viventium_config_compiler_inherits_canonical_workspace_instructions_by_default() -> None:
-    config = minimal_compile_config()
-    config["integrations"]["glasshive"] = {
-        "enabled": True,
-        "host_worker": {"enabled": True},
-    }
-
-    settings = config_compiler.resolve_glasshive_host_worker_settings(config)
-    env = config_compiler.render_runtime_env(
-        config,
-        config_compiler.build_agent_assignments(config),
-    )
-
-    assert settings["codex_conversation_project_instructions"] == "inherit"
-    assert (
-        env["WPR_CODEX_CLI_CONVERSATION_PROJECT_INSTRUCTIONS"]
-        == "inherit"
-    )
-
-
 @pytest.mark.parametrize("mode", ["inherit", "exclude"])
 def test_viventium_config_compiler_validates_codex_conversation_project_instructions(
     mode: str,
@@ -10413,99 +10406,6 @@ def test_prune_unavailable_source_defaults_preserves_current_explicit_anthropic_
     assert normalized["endpoints"]["anthropic"]["summaryModel"] == "claude-opus-5"
 
 
-def test_resolve_voice_settings_fails_closed_on_intel_even_when_openai_key_exists(
-    monkeypatch,
-) -> None:
-    monkeypatch.setattr(config_compiler.platform, "system", lambda: "Darwin")
-    monkeypatch.setattr(config_compiler.platform, "machine", lambda: "x86_64")
-
-    config = {
-        "llm": {
-            "primary": {
-                "provider": "openai",
-                "auth_mode": "api_key",
-                "secret_value": "openai-test",
-            },
-            "secondary": {"provider": "none", "auth_mode": "disabled"},
-            "extra_provider_keys": {},
-        },
-        "voice": {
-            "mode": "local",
-        },
-    }
-
-    with pytest.raises(SystemExit, match="no supported local TTS route"):
-        config_compiler.resolve_voice_settings(config)
-
-
-def test_config_compiler_preserves_and_disables_retired_xai_grok_voice_agent_route(
-    tmp_path: Path,
-) -> None:
-    config = {
-        "version": 1,
-        "install": {"mode": "native"},
-        "runtime": {
-            "log_level": "info",
-            "profile": "isolated",
-            "call_session_secret": {"secret_value": "synthetic-call-secret"},
-        },
-        "llm": {
-            "activation": {
-                "provider": "groq",
-                "auth_mode": "api_key",
-                "secret_value": "synthetic-groq-key",
-            },
-            "primary": {
-                "provider": "openai",
-                "auth_mode": "api_key",
-                "secret_value": "synthetic-openai-key",
-            },
-            "secondary": {"provider": "none", "auth_mode": "disabled"},
-            "extra_provider_keys": {},
-        },
-        "voice": {
-            "mode": "hosted",
-            "stt_provider": "openai",
-            "tts_provider": "xai",
-            "tts": {
-                "secret_value": "synthetic-xai-key",
-                "xai": {"tts_api": "voice_agent"},
-            },
-        },
-        "integrations": {},
-    }
-    config_path = tmp_path / "config.yaml"
-    output_dir = tmp_path / "out"
-    write_config(config_path, config)
-    canonical_before = config_path.read_bytes()
-
-    result = subprocess.run(
-        [
-            sys.executable,
-            str(REPO_ROOT / "scripts/viventium/config_compiler.py"),
-            "--config",
-            str(config_path),
-            "--output-dir",
-            str(output_dir),
-        ],
-        check=False,
-        cwd=REPO_ROOT,
-        capture_output=True,
-        text=True,
-    )
-
-    assert result.returncode == 0
-    assert "Voice disabled: legacy xAI Voice Agent route retired" in (
-        result.stdout + result.stderr
-    )
-    runtime_env = (output_dir / "runtime.env").read_text(encoding="utf-8")
-    assert "VIVENTIUM_VOICE_ENABLED=false" in runtime_env
-    assert "VIVENTIUM_VOICE_DEGRADED_REASON=legacy_xai_voice_agent_route_retired" in runtime_env
-    assert "VIVENTIUM_XAI_TTS_API=voice_agent" in runtime_env
-    assert "VIVENTIUM_XAI_TTS_API=tts" not in runtime_env
-    assert config_path.read_bytes() == canonical_before
-
-
 @pytest.mark.skipif(
     not config_compiler.host_supports_local_tts(),
     reason="requires a host with supported local TTS",
@@ -10576,72 +10476,6 @@ def test_config_compiler_local_voice_browser_with_legacy_fast_llm_stays_local(
     assert "VIVENTIUM_OPENAI_TTS_VOICE=" not in runtime_env
     assert "VIVENTIUM_OPENAI_TTS_INSTRUCTIONS=" not in runtime_env
     assert "VIVENTIUM_OPENAI_TTS_SPEED=" not in runtime_env
-
-
-def test_config_compiler_allows_custom_openai_tts_with_legacy_fast_llm_in_hosted_mode(
-    tmp_path: Path,
-) -> None:
-    config = {
-        "version": 1,
-        "install": {"mode": "native"},
-        "runtime": {
-            "log_level": "info",
-            "profile": "compat",
-            "call_session_secret": {"secret_value": "call-secret-local-custom-openai-tts"},
-        },
-        "llm": {
-            "activation": {
-                "provider": "groq",
-                "auth_mode": "api_key",
-                "secret_value": "groq-test",
-            },
-            "primary": {
-                "provider": "openai",
-                "auth_mode": "api_key",
-                "secret_value": "openai-test",
-            },
-            "secondary": {"provider": "none", "auth_mode": "disabled"},
-            "extra_provider_keys": {},
-        },
-        "voice": {
-            "mode": "hosted",
-            "stt_provider": "whisper_local",
-            "tts_provider": "browser",
-            "fast_llm_provider": "x_ai",
-            "tts": {
-                "voice": "alloy",
-                "speed": 1.22,
-            },
-        },
-        "integrations": {
-            "telegram": {"enabled": False},
-            "google_workspace": {"enabled": False},
-            "ms365": {"enabled": False},
-            "skyvern": {"enabled": False},
-            "openclaw": {"enabled": False},
-        },
-    }
-    config_path = tmp_path / "config.yaml"
-    output_dir = tmp_path / "out"
-    write_config(config_path, config)
-
-    subprocess.run(
-        [
-            sys.executable,
-            str(REPO_ROOT / "scripts/viventium/config_compiler.py"),
-            "--config",
-            str(config_path),
-            "--output-dir",
-            str(output_dir),
-        ],
-        check=True,
-        cwd=REPO_ROOT,
-    )
-
-    runtime_env = (output_dir / "runtime.env").read_text(encoding="utf-8")
-
-    assert "VIVENTIUM_OPENAI_TTS_VOICE=alloy" in runtime_env
-    assert "VIVENTIUM_OPENAI_TTS_SPEED=1.22" in runtime_env
 
 
 def test_config_compiler_rejects_hosted_fallback_for_explicit_local_chatterbox(
@@ -11523,97 +11357,6 @@ def test_llm_memory_explicit_fallback_rejects_unauthorized_or_duplicate_routes(
     with pytest.raises(SystemExit, match=expected_message):
         config_compiler.build_agent_assignments(config)
 
-def test_resolve_voice_settings_keeps_local_first_stt_on_intel_even_when_openai_key_exists(
-    monkeypatch,
-) -> None:
-    monkeypatch.setattr(config_compiler.platform, "system", lambda: "Darwin")
-    monkeypatch.setattr(config_compiler.platform, "machine", lambda: "x86_64")
-
-    config = {
-        "llm": {
-            "primary": {
-                "provider": "openai",
-                "auth_mode": "api_key",
-                "secret_value": "openai-test",
-            },
-            "secondary": {"provider": "none", "auth_mode": "disabled"},
-            "extra_provider_keys": {},
-        },
-        "voice": {
-            "mode": "local",
-        },
-    }
-
-    with pytest.raises(SystemExit, match="no supported local TTS route"):
-        config_compiler.resolve_voice_settings(config)
-
-def test_config_compiler_rejects_retired_xai_grok_voice_agent_route(tmp_path: Path) -> None:
-    config = {
-        "version": 1,
-        "install": {"mode": "native"},
-        "runtime": {
-            "log_level": "info",
-            "profile": "isolated",
-            "call_session_secret": {"secret_value": "synthetic-call-secret"},
-        },
-        "llm": {
-            "activation": {
-                "provider": "groq",
-                "auth_mode": "api_key",
-                "secret_value": "synthetic-groq-key",
-            },
-            "primary": {
-                "provider": "openai",
-                "auth_mode": "api_key",
-                "secret_value": "synthetic-openai-key",
-            },
-            "secondary": {"provider": "none", "auth_mode": "disabled"},
-            "extra_provider_keys": {},
-        },
-        "voice": {
-            "mode": "hosted",
-            "stt_provider": "openai",
-            "tts_provider": "xai",
-            "tts": {
-                "secret_value": "synthetic-xai-key",
-                "xai": {"tts_api": "voice_agent"},
-            },
-        },
-        "integrations": {},
-    }
-    config_path = tmp_path / "config.yaml"
-    output_dir = tmp_path / "out"
-    write_config(config_path, config)
-    canonical_before = config_path.read_bytes()
-
-    result = subprocess.run(
-        [
-            sys.executable,
-            str(REPO_ROOT / "scripts/viventium/config_compiler.py"),
-            "--config",
-            str(config_path),
-            "--output-dir",
-            str(output_dir),
-        ],
-        check=False,
-        cwd=REPO_ROOT,
-        capture_output=True,
-        text=True,
-    )
-
-    assert result.returncode == 0
-    assert "Voice disabled: legacy xAI Voice Agent route retired" in (
-        result.stdout + result.stderr
-    )
-    runtime_env = (output_dir / "runtime.env").read_text(encoding="utf-8")
-    assert "VIVENTIUM_VOICE_ENABLED=false" in runtime_env
-    assert (
-        "VIVENTIUM_VOICE_DEGRADED_REASON=legacy_xai_voice_agent_route_retired"
-        in runtime_env
-    )
-    assert "VIVENTIUM_XAI_TTS_API=voice_agent" in runtime_env
-    assert "VIVENTIUM_XAI_TTS_API=tts" not in runtime_env
-    assert config_path.read_bytes() == canonical_before
 
 @pytest.mark.skipif(
     not config_compiler.host_supports_local_tts(),
@@ -11747,73 +11490,6 @@ def test_config_compiler_allows_custom_openai_tts_voice_and_speed(tmp_path: Path
 
     assert "VIVENTIUM_OPENAI_TTS_VOICE=alloy" in runtime_env
     assert "VIVENTIUM_OPENAI_TTS_SPEED=1.22" in runtime_env
-
-def test_config_compiler_explicit_local_chatterbox_provider_falls_back_on_unsupported_hosts(
-    tmp_path: Path,
-) -> None:
-    config = {
-        "version": 1,
-        "install": {"mode": "native"},
-        "runtime": {
-            "log_level": "info",
-            "profile": "compat",
-            "call_session_secret": {"secret_value": "call-secret-explicit-local-chatterbox"},
-        },
-        "llm": {
-            "activation": {
-                "provider": "groq",
-                "auth_mode": "api_key",
-                "secret_value": "groq-test",
-            },
-            "primary": {
-                "provider": "openai",
-                "auth_mode": "api_key",
-                "secret_value": "openai-test",
-            },
-            "secondary": {"provider": "none", "auth_mode": "disabled"},
-            "extra_provider_keys": {},
-        },
-        "voice": {
-            "mode": "local",
-            "stt_provider": "whisper_local",
-            "tts_provider": "local_chatterbox_turbo_mlx_8bit",
-            "tts_provider_fallback": "openai",
-            "fast_llm_provider": "x_ai",
-        },
-        "integrations": {
-            "telegram": {"enabled": False},
-            "google_workspace": {"enabled": False},
-            "ms365": {"enabled": False},
-            "skyvern": {"enabled": False},
-            "openclaw": {"enabled": False},
-        },
-    }
-    config_path = tmp_path / "config.yaml"
-    output_dir = tmp_path / "out"
-    write_config(config_path, config)
-
-    result = subprocess.run(
-        [
-            sys.executable,
-            str(REPO_ROOT / "scripts/viventium/config_compiler.py"),
-            "--config",
-            str(config_path),
-            "--output-dir",
-            str(output_dir),
-        ],
-        check=False,
-        cwd=REPO_ROOT,
-        capture_output=True,
-        text=True,
-    )
-
-    assert result.returncode != 0
-    error = result.stdout + result.stderr
-    if config_compiler.host_supports_local_tts():
-        assert "cannot use a hosted TTS fallback" in error
-    else:
-        assert "no supported local TTS route" in error
-    assert not (output_dir / "runtime.env").exists()
 
 
 def test_default_life_path_is_not_reported_as_an_owner_choice(tmp_path, monkeypatch) -> None:

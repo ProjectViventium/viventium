@@ -1,133 +1,165 @@
 name: Config Compile
 
+# The typed QA handoff is shared by all pytest workflows (qa/README.md).
+# PR/push partitions are disjoint. Manual Config Compile owns the whole selected bank.
+# Full and Intel runs require explicit requests. Static tracing is candidate evidence.
 on:
   pull_request:
+    types: [opened, synchronize, reopened]
   push:
     branches:
       - main
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: QA mode (full is explicit only)
+        type: choice
+        options: [skip, critical-path, blast-radius, full]
+        default: blast-radius
+      base:
+        description: Required comparison ref for manual blast-radius (no guessed fallback)
+        type: string
+        default: ''
+      tests:
+        description: Critical-path JSON array of release file/node selectors
+        type: string
+        default: '[]'
+      reason:
+        description: Required reason for critical-path selection
+        type: string
+        default: ''
+      intel:
+        description: Also run the same selection on deferred Intel (x86_64)
+        type: boolean
+        default: false
 
 permissions:
   contents: read
+  pull-requests: read
 
 concurrency:
-  group: config-compile-${{ github.ref }}
+  group: config-compile-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  python:
-    name: Easy Install core (${{ matrix.expected_arch }})
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - runner: macos-15
-            expected_arch: arm64
-          - runner: macos-15-intel
-            expected_arch: x86_64
-    runs-on: ${{ matrix.runner }}
+  arm64:
+    name: Easy Install core (arm64)
+    runs-on: macos-15
     timeout-minutes: 150
     env:
-      EXPECTED_ARCH: ${{ matrix.expected_arch }}
-    steps:
+      EXPECTED_ARCH: arm64
+    steps: &easy_install_core_steps
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
           fetch-depth: 0
+      - name: Select release tests for this change
+        id: select
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SELECT_PARTITION: ${{ github.event_name == 'workflow_dispatch' && 'all' || 'core' }}
+        run: |
+          python3 scripts/viventium/select_release_tests.py \
+            --event-file "$GITHUB_EVENT_PATH" --event-name "$GITHUB_EVENT_NAME" \
+            --partition "$SELECT_PARTITION" \
+            --github-output "$GITHUB_OUTPUT" --summary "$GITHUB_STEP_SUMMARY"
       - name: Verify runner architecture
+        if: steps.select.outputs.count != '0'
         run: test "$(uname -m)" = "$EXPECTED_ARCH"
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        if: steps.select.outputs.count != '0'
         with:
-          # Resolve the newest available 3.12 patch for each hosted macOS architecture.
           python-version: "3.12"
       - name: Record hosted Python toolchain
+        if: steps.select.outputs.count != '0'
         run: python -VV
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        if: steps.select.outputs.node == 'true'
         with:
           node-version: "24"
       - name: Record hosted Node toolchain
+        if: steps.select.outputs.node == 'true'
         run: |
           node_binary="$(node -p 'require("node:fs").realpathSync(process.execPath)')"
           test -n "$node_binary"
           test -x "$node_binary"
           printf 'VIVENTIUM_NODE_BINARY=%s\n' "$node_binary" >> "$GITHUB_ENV"
           "$node_binary" --version
+      - name: Install test runner
+        if: steps.select.outputs.count != '0'
+        run: python -m pip install -r scripts/viventium/requirements-tests.txt
+      - name: Fetch and validate selected pinned components
+        if: steps.select.outputs.components_count != '0'
+        env:
+          SELECTED_COMPONENTS: ${{ steps.select.outputs.components_json }}
+        run: |
+          python - <<'PYTHON'
+          import json, os, subprocess, sys
+          names = json.loads(os.environ["SELECTED_COMPONENTS"])
+          if not names:
+              raise SystemExit("component step requires an explicit non-empty selection")
+          command = [sys.executable, "scripts/viventium/bootstrap_components.py", "--repo-root", "."]
+          for name in names:
+              command += ["--component", name]
+          subprocess.run(command + ["--jobs", "1"], check=True)
+          subprocess.run(command + ["--validate-only", "--strict-pinned"], check=True)
+          PYTHON
       - name: Install and verify audio QA tools
+        if: steps.select.outputs.audio_tools == 'true'
         run: |
           brew install ffmpeg
           command -v ffmpeg
           command -v ffprobe
           ffmpeg -version
           ffprobe -version
-      - run: >-
-          python -m pip install
-          -r scripts/viventium/requirements-tests.txt
-      - name: Fetch and validate the exact configured components
-        run: |
-          python scripts/viventium/bootstrap_components.py \
-            --repo-root "$PWD" \
-            --config config.full.example.yaml \
-            --jobs 1
-      - name: Fetch and validate the exact modern playground test component
-        run: |
-          printf '%s\n' \
-            'voice:' '  mode: local' \
-            'runtime:' '  playground_variant: modern' \
-            > "$RUNNER_TEMP/modern-playground-selection.yaml"
-          python scripts/viventium/bootstrap_components.py \
-            --repo-root "$PWD" \
-            --config "$RUNNER_TEMP/modern-playground-selection.yaml" \
-            --jobs 1
-          python scripts/viventium/bootstrap_components.py \
-            --repo-root "$PWD" \
-            --config "$RUNNER_TEMP/modern-playground-selection.yaml" \
-            --validate-only \
-            --strict-pinned
-      - name: Install and build LibreChat runtime artifacts
+      - name: Install LibreChat dependencies
+        if: steps.select.outputs.librechat_deps == 'true'
+        timeout-minutes: 15
+        working-directory: viventium_v0_4/LibreChat
+        run: npm ci --ignore-scripts
+      - name: Install and build LibreChat packages
+        if: steps.select.outputs.librechat_packages == 'true'
+        timeout-minutes: 30
         working-directory: viventium_v0_4/LibreChat
         env:
           NODE_OPTIONS: --max-old-space-size=4096
         run: |
-          npm ci --ignore-scripts
           npm run build:packages
-          npm run build:client
           test -s packages/api/dist/index.js
           test -s packages/data-schemas/dist/index.cjs
           test -s packages/data-provider/dist/index.js
+      - name: Build LibreChat client artifacts
+        if: steps.select.outputs.librechat_client == 'true'
+        timeout-minutes: 30
+        working-directory: viventium_v0_4/LibreChat
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+        run: |
+          npm run build:client
           test -s client/dist/index.html
       - name: Install modern playground dependencies
+        if: steps.select.outputs.playground_deps == 'true'
         working-directory: viventium_v0_4/agent-starter-react
         run: corepack pnpm install --frozen-lockfile --ignore-scripts
-      - name: Run Telegram smart-delivery regression suite
+      - name: Run selected release tests
+        if: steps.select.outputs.count != '0'
+        env:
+          SELECTED_TESTS: ${{ steps.select.outputs.tests_json }}
         run: |
-          git ls-files --error-unmatch \
-            viventium_v0_4/telegram-viventium/tests/test_telegram_chunks.py
           python - <<'PYTHON'
-          import os
-          from pathlib import Path
-          import shlex
-          import subprocess
-          import sys
-
-          repo = Path.cwd()
-          sys.path.insert(0, str(repo / "scripts" / "viventium"))
-          from telegram_runtime_component import _dependency_sync_environment
-
-          # Reuse the installed runtime's native dependency-build policy.
-          environment = _dependency_sync_environment(dict(os.environ))
-          telegram_root = repo / "viventium_v0_4" / "telegram-viventium"
-          uv_command = shlex.split(
-              "uv run --project TelegramVivBot --frozen "
-              "--with pytest==8.4.2 --with pytest-asyncio==1.4.0"
-          ) + ["--python", sys.executable]
-          subprocess.run(
-              uv_command + ["python", "-c", "from pywhispercpp.model import Model"],
-              cwd=telegram_root, env=environment, check=True,
-          )
-          subprocess.run(
-              uv_command + shlex.split("python -m pytest -q tests"),
-              cwd=telegram_root, env=environment, check=True,
-          )
+          import json, os, subprocess, sys
+          selected = json.loads(os.environ["SELECTED_TESTS"])
+          if not selected:
+              raise SystemExit("pytest requires an explicit non-empty selection")
+          subprocess.run([sys.executable, "-m", "pytest", "-q", *selected], check=True)
           PYTHON
-      - name: Run cross-architecture installer and payload policy suites
-        run: |
-          python -m pytest tests/release/ -q
+
+  x86_64:
+    # Deferred platform: identical steps and selected mode, only on request.
+    name: Easy Install core (x86_64)
+    if: github.event_name == 'workflow_dispatch' && inputs.intel
+    runs-on: macos-15-intel
+    timeout-minutes: 150
+    env:
+      EXPECTED_ARCH: x86_64
+    steps: *easy_install_core_steps
