@@ -60,6 +60,14 @@ LANE_CONSUMERS = {
     }),
 }
 
+# This node resolves links stored in Markdown, outside the Python path trace.
+# Keep its confirmed source-only checkouts attached to this consumer, not all QA.
+CHECKOUT_CONSUMERS = {
+    "tests/release/test_qa_operating_contract.py::test_current_requirement_and_qa_local_markdown_evidence_links_resolve": (
+        LIBRECHAT, "viventium_v0_4/xPerfect", "viventium_v0_4/Viventium-Health",
+    ),
+}
+
 ROOT_NAMES = frozenset({"ROOT", "REPO_ROOT", "REPO", "REPOSITORY_ROOT", "PROJECT_ROOT"})
 # Receivers of these operations are anchors inside a longer path, not dependencies themselves.
 ANCHOR_ATTRIBUTES = frozenset(
@@ -675,6 +683,10 @@ def _prerequisites(repo: Repository, tests: list[str]) -> tuple[dict[str, bool],
             component = repo.component_of(dependency)
             if component:
                 required.add(component)
+        for consumer, checkouts in CHECKOUT_CONSUMERS.items():
+            if (consumer == selector.split("[", 1)[0]
+                    or consumer.startswith(selector + "::")):
+                required.update(checkouts)
         node = _executes_node(tree)
         lanes["node"] |= node
         client = any(p.startswith(LIBRECHAT + "/client/dist") for p in rooted)
@@ -704,9 +716,11 @@ def _prerequisites(repo: Repository, tests: list[str]) -> tuple[dict[str, bool],
 
 
 def select(repo: Repository, *, scope: str, changed: list[str] | None, components: list[str],
-           explicit: list[str] | None = None, reason: str = "", partition: str = "all") -> Selection:
+           explicit: list[str] | None = None, reason: str = "", partition: str = "all", live_refs: bool = False) -> Selection:
     if scope not in MODES or partition not in ("all", "core", *PARTITIONS):
         raise SelectionError("unknown QA mode or partition")
+    if not isinstance(live_refs, bool):
+        raise SelectionError("live_refs must be a boolean")
     explicit = explicit or []
     if scope == "critical-path" and (not explicit or not reason.strip()):
         raise SelectionError("critical-path requires explicit --test selectors and --reason")
@@ -761,8 +775,8 @@ def select(repo: Repository, *, scope: str, changed: list[str] | None, component
     lanes, prerequisites = _prerequisites(repo, selected)
     # The existing public-main pin check stays in the policy job. It is not a
     # prerequisite for unrelated tests, and skip must not execute it.
-    live_refs = partition in ("all", "policy") and bool(selected) and (
-        scope == "full" or (scope == "blast-radius" and LOCK_FILE in (changed or [])))
+    live_refs = partition in ("all", "policy") and (live_refs or (bool(selected) and (
+        scope == "full" or (scope == "blast-radius" and LOCK_FILE in (changed or [])))))
     return Selection(scope, scope == "full", reason, selected, lanes, changed or [], components,
                      unmapped, prerequisites, unparsed, status, partition, elsewhere, live_refs)
 
@@ -779,8 +793,8 @@ def _fenced_handoff(body: str) -> dict | None:
         result = json.loads(blocks[0])
     except ValueError as exc:
         raise SelectionError("invalid JSON in viventium-qa fence") from exc
-    if not isinstance(result, dict) or "mode" not in result or set(result) - {"mode", "tests", "reason"}:
-        raise SelectionError("QA handoff accepts only mode, tests, reason")
+    if not isinstance(result, dict) or "mode" not in result or set(result) - {"mode", "tests", "reason", "live_refs"}:
+        raise SelectionError("QA handoff accepts only mode, tests, reason, live_refs")
     return result
 
 
@@ -844,8 +858,16 @@ def event_handoff(event: dict, event_name: str, *, refresh_pr: bool = False) -> 
             tests = json.loads(tests) if isinstance(tests, str) and tests.strip() else tests or []
         except ValueError as exc:
             raise SelectionError("dispatch tests must be a JSON array of file/node selectors") from exc
-        return {"mode": inputs.get("mode", "blast-radius"), "tests": tests,
-                "reason": inputs.get("reason", "")}, True
+        handoff = {"mode": inputs.get("mode", "blast-radius"), "tests": tests,
+                   "reason": inputs.get("reason", "")}
+        if "live_refs" in inputs:
+            value = inputs["live_refs"]
+            if value in ("true", "false"):
+                value = value == "true"
+            if not isinstance(value, bool):
+                raise SelectionError("dispatch live_refs must be a boolean")
+            handoff["live_refs"] = value
+        return handoff, True
     if event_name == "pull_request":
         body = _current_pr_body(event) if refresh_pr else event.get("pull_request", {}).get("body") or ""
         current = _fenced_handoff(body)
@@ -894,6 +916,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--scope", "--mode", choices=MODES)
     parser.add_argument("--test", action="append", default=[], help="explicit release file or pytest node")
     parser.add_argument("--reason", default="")
+    parser.add_argument("--live-refs", action="store_true", default=None,
+                        help="explicitly verify public main pins in the policy partition; skip still runs none")
     parser.add_argument("--partition", choices=("all", "core", *PARTITIONS), default="all")
     parser.add_argument("--event-file", type=Path)
     parser.add_argument("--event-name", default=os.environ.get("GITHUB_EVENT_NAME", ""))
@@ -916,6 +940,7 @@ def main(argv: list[str] | None = None) -> int:
         scope = args.scope or handoff.get("mode", "blast-radius")
         explicit = args.test or handoff.get("tests", [])
         reason = args.reason or handoff.get("reason", "")
+        live_refs = args.live_refs if args.live_refs is not None else handoff.get("live_refs", False)
         if (scope not in MODES or not isinstance(explicit, list) or
                 not all(isinstance(t, str) for t in explicit) or not isinstance(reason, str)):
             raise SelectionError("QA handoff requires a valid mode, tests array and reason string")
@@ -946,7 +971,7 @@ def main(argv: list[str] | None = None) -> int:
                                   dict.fromkeys(LANES, False), [], [], [], status="NOT RUN", partition=args.partition)
         else:
             selection = select(repo, scope=scope, changed=changed, components=components,
-                               explicit=explicit, reason=reason, partition=args.partition)
+                               explicit=explicit, reason=reason, partition=args.partition, live_refs=live_refs)
     except (SelectionError, OSError, ValueError) as exc:
         print(f"QA selection failed: {exc}", file=sys.stderr)
         return 2

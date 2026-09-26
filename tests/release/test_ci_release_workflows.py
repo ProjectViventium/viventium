@@ -1077,3 +1077,13 @@ def test_body_only_pr_edits_cannot_replace_existing_check_evidence() -> None:
         triggers = workflow.get("on") or workflow[True]
         assert "edited" not in triggers["pull_request"]["types"]
         assert workflow["concurrency"]["cancel-in-progress"] is True
+
+
+def test_live_pin_dispatch_option_is_exposed_only_where_it_executes() -> None:
+    import yaml
+    workflows = ROOT / ".github" / "workflows"
+    for name in ("release-policy.yml", "config-compile.yml", "productivity-activation-contract.yml"):
+        document = yaml.safe_load((workflows / name).read_text())
+        events = document.get("on", document.get(True))
+        inputs = events["workflow_dispatch"]["inputs"]
+        assert ("live_refs" in inputs) == (name == "release-policy.yml")
