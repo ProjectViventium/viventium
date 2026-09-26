@@ -45,6 +45,11 @@ inputs. Keep the same mode in the plan and delegated agent prompts. Example:
 {"mode":"critical-path","tests":["tests/release/test_release_test_selection.py"],"reason":"Validate QA mode dispatch and its confirmed consumers."}
 ```
 
+For a component pin, add `"live_refs":true` to run the existing public-main reference check
+without widening the test selection. In CI this check runs only in Release Policy; its manual dispatch exposes the same option.
+`skip` still runs nothing. CLI `--live-refs` only reports selection; the caller must execute it.
+Source-only component checkouts are prerequisites, not package builds.
+
 Use `skip` with a reason to waive execution, and `full` only when requested. Explicit selectors may
 name a test file or node. Selection reports must distinguish `NOT RUN` and unknown impact from a
 pass. The selector command's help owns exact CLI options; optional CI setup follows the selected

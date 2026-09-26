@@ -596,3 +596,64 @@ def test_instruction_architecture_remains_in_policy_with_its_two_source_checkout
         assert result.tests == ([node] if partition == "policy" else [])
         assert result.prerequisites == (["LibreChat", "xPerfect"] if partition == "policy" else [])
         assert not any(result.lanes.values())
+
+
+@pytest.mark.parametrize("selector", [
+    "tests/release/test_qa_operating_contract.py",
+    "tests/release/test_qa_operating_contract.py::test_current_requirement_and_qa_local_markdown_evidence_links_resolve",
+])
+def test_markdown_link_consumer_gets_only_source_checkouts(selector: str) -> None:
+    result = selection.select(selection.Repository.load(ROOT), scope="critical-path",
+                              changed=None, components=[], explicit=[selector], reason="Resolve current doc links")
+    assert result.prerequisites == ["LibreChat", "Viventium-Health", "xPerfect"]
+    assert not any(result.lanes.values())
+
+
+def test_other_qa_node_does_not_inherit_markdown_checkout_dependency() -> None:
+    node = "tests/release/test_qa_operating_contract.py::test_agent_instruction_architecture_is_lean_imported_and_reachable"
+    result = selection.select(selection.Repository.load(ROOT), scope="critical-path",
+                              changed=None, components=[], explicit=[node], reason="Instruction import contract")
+    assert "Viventium-Health" not in result.prerequisites
+
+
+@pytest.mark.parametrize("partition,expected", [("all", True), ("policy", True), ("core", False), ("activation", False)])
+def test_explicit_public_pin_check_does_not_widen_critical_scope(partition: str, expected: bool) -> None:
+    node = "tests/release/test_public_bootstrap_manifests.py::test_components_lock_uses_full_commit_shas_for_public_components"
+    result = selection.select(selection.Repository.load(ROOT), scope="critical-path", changed=None,
+                              components=[], explicit=[node], reason="Publish a component pin",
+                              partition=partition, live_refs=True)
+    assert result.live_refs is expected
+    assert result.tests == ([node] if expected else [])
+    assert not result.prerequisites and not any(result.lanes.values())
+
+
+def test_skip_still_waives_explicit_public_pin_check(repo: Path) -> None:
+    result = _cli(repo, "--scope", "skip", "--live-refs")
+    assert result.returncode == 0
+    receipt = json.loads(result.stdout)
+    assert receipt["status"] == "NOT RUN" and not receipt["live_refs"]
+    assert not receipt["tests"] and not receipt["prerequisites"]
+
+
+@pytest.mark.parametrize("value", ["true", 1, None, []])
+def test_public_pin_handoff_rejects_nonboolean(value) -> None:
+    with pytest.raises(selection.SelectionError, match="live_refs must be a boolean"):
+        selection.select(selection.Repository.load(ROOT), scope="skip", changed=None,
+                         components=[], live_refs=value)
+
+
+def test_public_pin_request_survives_pr_and_dispatch_handoffs(repo: Path, tmp_path: Path) -> None:
+    handoff = {"mode": "critical-path", "tests": ["tests/release/test_docs.py::test_docs"],
+               "reason": "Component publication", "live_refs": True}
+    body = "```viventium-qa\n" + json.dumps(handoff) + "\n```"
+    event = {"pull_request": {"body": body}}
+    parsed, _ = selection.event_handoff(event, "pull_request")
+    dispatch, _ = selection.event_handoff({"inputs": {**handoff, "tests": json.dumps(handoff["tests"]),
+                                                    "live_refs": "true"}}, "workflow_dispatch")
+    assert parsed == dispatch == handoff
+    event_path = tmp_path / "event.json"
+    event_path.write_text(json.dumps(event))
+    run = _cli(repo, "--event-file", str(event_path), "--event-name", "pull_request")
+    assert run.returncode == 0, run.stderr
+    result = json.loads(run.stdout)
+    assert result["live_refs"] and result["tests"] == handoff["tests"]

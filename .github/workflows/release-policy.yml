@@ -23,6 +23,10 @@ on:
         description: Critical-path JSON array of release file/node selectors
         type: string
         default: '[]'
+      live_refs:
+        description: Verify public main component pins (ignored by skip)
+        type: boolean
+        default: false
       reason:
         description: Required reason for critical-path selection
         type: string
