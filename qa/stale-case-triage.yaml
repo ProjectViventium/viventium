@@ -1,20 +1,25 @@
 schema_version: 1
 reviewed_on: 2026-08-29
+# Existing marker snapshot recorded in requirement_source_coverage.yaml; not a new review.
+marker_as_of: 2026-09-25
 max_age_days: 90
+age_reference: marker_as_of
 first_cataloged_on_source: inline_cataloged_date_or_machine_readable_catalogedOn
 first_cataloged_on_immutable: true
-disposition: review_before_expiry_or_during_next_owning_change
+disposition: review_during_explicit_qa_maintenance
 deterministic_enforcement:
   - first_cataloged_on_presence
-  - review_age
+  - marker_as_of_snapshot
   - marker_count
   - marker_digest
-process_obligation: next_owning_feature_change_review
+process_obligation: explicit_qa_maintenance_review
 reason: >-
   These cases remain real acceptance debt. The 2026-08-29 documentation audit did not execute them,
-  so every row stays NOT RUN. The automated gate enforces review age plus exact marker counts and
-  digests. Reviewing the debt during the owning feature's next change remains an explicit process
-  obligation; this manifest does not claim that the test can infer when such a change occurs.
+  so every row stays NOT RUN. The automated gate checks catalog age at the recorded marker_as_of
+  boundary plus exact marker counts and digests. Advancing the calendar cannot change this snapshot
+  or fail an unrelated change. Calendar freshness remains debt for explicit QA maintenance selected
+  by the requested QA mode; this manifest does not claim that the test can infer when that work is
+  authorized. Maintenance must preserve original catalog dates and must not imply execution.
 
 entries:
   - path: qa/agent-config-continuity/cases.md

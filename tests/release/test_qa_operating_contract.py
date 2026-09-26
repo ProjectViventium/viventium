@@ -853,9 +853,7 @@ def test_natural_user_use_case_checklists_reject_generic_placeholder_rows() -> N
     )
 
 
-def test_cataloged_not_run_cases_have_fresh_digest_bound_triage() -> None:
-    today = date.today()
-    assert not _is_git_ignored(STALE_CASE_TRIAGE)
+def _assert_cataloged_not_run_triage() -> None:
     triage = yaml.safe_load(_read(STALE_CASE_TRIAGE))
     assert triage["schema_version"] == 1
     max_age_days = triage["max_age_days"]
@@ -864,18 +862,18 @@ def test_cataloged_not_run_cases_have_fresh_digest_bound_triage() -> None:
         "inline_cataloged_date_or_machine_readable_catalogedOn"
     )
     assert triage["first_cataloged_on_immutable"] is True
-    reviewed_on = triage["reviewed_on"]
-    if isinstance(reviewed_on, str):
-        reviewed_on = date.fromisoformat(reviewed_on)
-    assert 0 <= (today - reviewed_on).days <= max_age_days
-    assert triage["disposition"] == "review_before_expiry_or_during_next_owning_change"
+    reviewed_on = date.fromisoformat(str(triage["reviewed_on"]))
+    marker_as_of = date.fromisoformat(str(triage["marker_as_of"]))
+    assert reviewed_on <= marker_as_of
+    assert triage["age_reference"] == "marker_as_of"
+    assert triage["disposition"] == "review_during_explicit_qa_maintenance"
     assert triage["deterministic_enforcement"] == [
         "first_cataloged_on_presence",
-        "review_age",
+        "marker_as_of_snapshot",
         "marker_count",
         "marker_digest",
     ]
-    assert triage["process_obligation"] == "next_owning_feature_change_review"
+    assert triage["process_obligation"] == "explicit_qa_maintenance_review"
     assert "does not claim that the test can infer" in triage["reason"]
     assert len(triage["reason"]) >= 120
 
@@ -924,7 +922,7 @@ def test_cataloged_not_run_cases_have_fresh_digest_bound_triage() -> None:
             if not match:
                 continue
             cataloged = date(int(match.group(1)), int(match.group(2)), int(match.group(3)))
-            if (today - cataloged).days > max_age_days:
+            if (marker_as_of - cataloged).days > max_age_days:
                 stale_lines.append(line.rstrip())
         if stale_lines:
             stale_by_path[_relative(cases_path)] = stale_lines
@@ -955,9 +953,24 @@ def test_cataloged_not_run_cases_have_fresh_digest_bound_triage() -> None:
         digest = hashlib.sha256(("\n".join(lines) + "\n").encode("utf-8")).hexdigest()
         assert entry["marker_count"] == len(lines), f"Stale marker count changed for {path}"
         assert entry["marker_sha256"] == digest, f"Stale marker content changed for {path}"
+
+
+def test_cataloged_not_run_cases_have_fresh_digest_bound_triage() -> None:
+    assert not _is_git_ignored(STALE_CASE_TRIAGE)
+    _assert_cataloged_not_run_triage()
     assert _is_durable_repo_path(STALE_CASE_TRIAGE), (
         "qa/stale-case-triage.yaml content is internally current but its bytes must also match HEAD"
     )
+
+
+def test_cataloged_not_run_triage_does_not_expire_with_wall_clock(monkeypatch) -> None:
+    class LaterDate(date):
+        @classmethod
+        def today(cls):
+            return cls(2036, 8, 29)
+
+    monkeypatch.setitem(globals(), "date", LaterDate)
+    _assert_cataloged_not_run_triage()
 
 
 def test_voice_web_search_escaped_case_is_promoted_to_feature_cases() -> None:

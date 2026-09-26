@@ -1,5 +1,6 @@
 import hashlib
 import json
+import importlib.util
 import os
 from pathlib import Path
 import re
@@ -191,116 +192,132 @@ def test_official_actions_use_reviewed_node24_pins() -> None:
                     assert f"{action}@{commit}" in line, f"{workflow_name}: stale {action} pin"
 
 
-def test_config_compile_uses_explicit_apple_silicon_and_intel_runners() -> None:
+def _config_compile() -> dict:
+    return yaml.safe_load((WORKFLOW_ROOT / "config-compile.yml").read_text(encoding="utf-8"))
+
+
+def _named_step(steps: list[dict], name: str) -> dict:
+    return next(step for step in steps if step.get("name") == name)
+
+
+def test_config_compile_keeps_required_contexts_and_defers_intel_with_identical_steps() -> None:
     source = _workflow_sources()["config-compile.yml"]
+    workflow = _config_compile()
+    triggers = workflow.get("on") or workflow[True]
+    jobs = workflow["jobs"]
+    for job, arch, runner in (("arm64", "arm64", "macos-15"), ("x86_64", "x86_64", "macos-15-intel")):
+        assert jobs[job]["name"] == f"Easy Install core ({arch})"
+        assert jobs[job]["runs-on"] == runner
+        assert jobs[job]["env"]["EXPECTED_ARCH"] == arch
+    assert "schedule" not in triggers
+    assert jobs["x86_64"]["if"] == "github.event_name == 'workflow_dispatch' && inputs.intel"
+    assert jobs["x86_64"]["steps"] == jobs["arm64"]["steps"]
+    assert "steps: &easy_install_core_steps" in source and "steps: *easy_install_core_steps" in source
+    assert "QA_SCOPE" not in source  # Intel cannot silently override the selected mode to full.
+    assert triggers["workflow_dispatch"]["inputs"]["intel"]["type"] == "boolean"
+    assert jobs["arm64"]["timeout-minutes"] == jobs["x86_64"]["timeout-minutes"] == 150
 
-    assert "macos-15" in source
-    assert "macos-15-intel" in source
-    assert "macos-latest" not in source
-    assert "expected_arch: arm64" in source
-    assert "expected_arch: x86_64" in source
-    assert "EXPECTED_ARCH: ${{ matrix.expected_arch }}" in source
-    assert 'test "$(uname -m)" = "$EXPECTED_ARCH"' in source
 
-
-def test_config_compile_runs_native_continuity_and_release_boundary_suites() -> None:
+def test_config_compile_runs_the_selected_scope_with_only_needed_prerequisites() -> None:
     source = _workflow_sources()["config-compile.yml"]
-
-    assert "timeout-minutes: 150" in source
-    assert "actions/setup-node@" in source
-    assert 'node-version: "24"' in source
-    assert "Record hosted Node toolchain" in source
-    assert "realpathSync(process.execPath)" in source
-    assert "VIVENTIUM_NODE_BINARY=%s" in source
-    assert '>> "$GITHUB_ENV"' in source
-    assert 'python-version: "3.12"' in source
-    assert 'python-version: "3.12.' not in source
-    assert "-r scripts/viventium/requirements-tests.txt" in source
-    test_requirements = (ROOT / "scripts/viventium/requirements-tests.txt").read_text()
-    assert "-r requirements.txt" in test_requirements
-    assert "uv==0.11.28" in test_requirements
-    assert "pytest==8.4.2" in test_requirements
-    assert "pydantic==2.12.5" in test_requirements
-    assert "croniter==6.0.0" in test_requirements
-    assert "fastapi==0.141.1" in test_requirements
-    assert "fastmcp==3.4.5" in test_requirements
-    assert "httpx==0.28.1" in test_requirements
-    assert "fetch-depth: 0" in source
-    assert "Fetch and validate the exact configured components" in source
-    assert "python scripts/viventium/bootstrap_components.py" in source
-    assert '--config config.full.example.yaml' in source
-    assert '--jobs 1' in source
-    assert "modern-playground-selection.yaml" in source
-    assert "'  mode: local'" in source
-    assert "'  playground_variant: modern'" in source
-    assert "Install and verify audio QA tools" in source
-    assert "brew install ffmpeg" in source
-    assert "command -v ffmpeg" in source
-    assert "command -v ffprobe" in source
-    assert "Install and build LibreChat runtime artifacts" in source
-    assert "npm ci --ignore-scripts" in source
-    assert "npm run build:packages" in source
-    assert "npm run build:client" in source
-    assert "test -s packages/api/dist/index.js" in source
-    assert "test -s packages/data-schemas/dist/index.cjs" in source
-    assert "test -s packages/data-provider/dist/index.js" in source
-    assert "test -s client/dist/index.html" in source
-    assert "Install modern playground dependencies" in source
+    steps = _config_compile()["jobs"]["arm64"]["steps"]
+    selection = _named_step(steps, "Select release tests for this change")
+    assert selection["id"] == "select"
+    for fragment in ('--event-file "$GITHUB_EVENT_PATH"', '--event-name "$GITHUB_EVENT_NAME"',
+                     '--partition "$SELECT_PARTITION"', '--github-output "$GITHUB_OUTPUT"',
+                     '--summary "$GITHUB_STEP_SUMMARY"'):
+        assert fragment in selection["run"]
+    assert selection["env"]["SELECT_PARTITION"] == "${{ github.event_name == 'workflow_dispatch' && 'all' || 'core' }}"
+    # Every setup/check after selection is gated. A zero selection cannot install, build,
+    # bootstrap, verify toolchains or invoke pytest with an empty argument list.
+    select_index = steps.index(selection)
+    assert select_index == 1  # only checkout precedes the stdlib selector
+    for step in steps[select_index + 1:]:
+        assert str(step.get("if", "")).startswith("steps.select.outputs."), step
+    packages = _named_step(steps, "Install and build LibreChat packages")
+    client = _named_step(steps, "Build LibreChat client artifacts")
+    assert packages["if"] == "steps.select.outputs.librechat_packages == 'true'"
+    assert client["if"] == "steps.select.outputs.librechat_client == 'true'"
+    assert "npm run build:packages" in packages["run"] and "build:client" not in packages["run"]
+    assert "npm run build:client" in client["run"]
+    assert packages["timeout-minutes"] <= 30 and client["timeout-minutes"] <= 30
+    dependencies = _named_step(steps, "Install LibreChat dependencies")
+    assert dependencies["if"] == "steps.select.outputs.librechat_deps == 'true'"
+    assert "npm ci --ignore-scripts" in dependencies["run"]
+    assert "npm ci" not in packages["run"]
+    for artifact in ("packages/api/dist/index.js", "packages/data-schemas/dist/index.cjs", "packages/data-provider/dist/index.js"):
+        assert f"test -s {artifact}" in packages["run"]
+    assert "test -s client/dist/index.html" in client["run"]
+    assert _named_step(steps, "Install and verify audio QA tools")["if"] == "steps.select.outputs.audio_tools == 'true'"
+    assert _named_step(steps, "Install modern playground dependencies")["if"] == "steps.select.outputs.playground_deps == 'true'"
     assert "corepack pnpm install --frozen-lockfile --ignore-scripts" in source
-    assert source.index("modern-playground-selection.yaml") < source.index(
-        "Install modern playground dependencies"
-    )
-    assert source.index("bootstrap_components.py") < source.index("python -m pytest")
-    assert source.index("npm run build:packages") < source.index("python -m pytest")
-    assert source.index("npm run build:client") < source.index("python -m pytest")
-    assert source.index("pnpm install") < source.index("python -m pytest")
-    assert "python -m pytest tests/release/ -q" in source
-    assert "Run Telegram smart-delivery regression suite" in source
-    assert "git ls-files --error-unmatch" in source
-    assert "tests/test_telegram_chunks.py" in source
-    assert "uv run --project TelegramVivBot --frozen" in source
-    assert "--with pytest==8.4.2 --with pytest-asyncio==1.4.0" in source
-    assert "python -m pytest -q tests" in source
+    assert "realpathSync(process.execPath)" in source and "VIVENTIUM_NODE_BINARY=%s" in source
+    assert 'node-version: "24"' in source and 'python-version: "3.12"' in source
+    assert "requirements-tests.txt" in source
+    assert "Run Telegram smart-delivery regression suite" not in source
+    assert "uv run --project TelegramVivBot" not in source
+    assert "tests/release/ -q" not in source
 
 
-@pytest.mark.parametrize("architecture", ["x86_64", "arm64"])
-def test_telegram_ci_reuses_native_build_policy_and_checks_real_import(
-    monkeypatch: pytest.MonkeyPatch, architecture: str,
-) -> None:
-    import platform
+def _qa_workflow_steps() -> list[tuple[str, list[dict]]]:
+    result = []
+    for name, job in (("config-compile.yml", "arm64"), ("release-policy.yml", "manifests"),
+                      ("productivity-activation-contract.yml", "activation-contract")):
+        result.append((name, yaml.safe_load(_workflow_sources()[name])["jobs"][job]["steps"]))
+    return result
 
-    workflow = yaml.safe_load(_workflow_sources()["config-compile.yml"])
-    script = next(
-        step["run"] for step in workflow["jobs"]["python"]["steps"]
-        if step.get("name") == "Run Telegram smart-delivery regression suite"
-    )
-    python_script = script.split("python - <<'PYTHON'\n", 1)[1].rsplit("\nPYTHON", 1)[0]
+
+def test_all_pytest_workflows_share_modes_and_safe_json_argument_execution(monkeypatch: pytest.MonkeyPatch) -> None:
+    node = "tests/release/test_example.py::test_case[with spaces;$(not-a-command)]"
     calls = []
-    monkeypatch.chdir(ROOT)
-    monkeypatch.setattr(platform, "system", lambda: "Darwin")
-    monkeypatch.setattr(platform, "machine", lambda: architecture)
-    monkeypatch.setattr(sys, "executable", "/synthetic/hosted Python/bin/python")
-    monkeypatch.setattr(sys, "path", sys.path[:])
-    monkeypatch.setenv("OPENAI_API_KEY", "synthetic-build-secret")
-    monkeypatch.setenv("NO_REPAIR", "untrusted-shell-override")
     monkeypatch.setattr(subprocess, "run", lambda argv, **kwargs: calls.append((argv, kwargs)))
+    for name, steps in _qa_workflow_steps():
+        workflow = yaml.safe_load(_workflow_sources()[name])
+        triggers = workflow.get("on") or workflow[True]
+        inputs = triggers["workflow_dispatch"]["inputs"]
+        assert inputs["mode"]["options"] == ["skip", "critical-path", "blast-radius", "full"]
+        assert inputs["mode"]["default"] == "blast-radius"
+        assert triggers["pull_request"]["types"] == ["opened", "synchronize", "reopened"]
+        assert triggers["push"]["branches"] == ["main"]
+        assert "schedule" not in triggers
+        select = _named_step(steps, "Select release tests for this change")
+        assert steps.index(select) == 1
+        assert select["env"]["GH_TOKEN"] == "${{ github.token }}"
+        for step in steps[2:]:
+            assert str(step.get("if", "")).startswith("steps.select.outputs."), (name, step)
+        run = _named_step(steps, "Run selected release tests")
+        assert run["if"] == "steps.select.outputs.count != '0'"
+        assert run["env"]["SELECTED_TESTS"] == "${{ steps.select.outputs.tests_json }}"
+        assert "${{" not in run["run"]  # body/input text is never interpolated into shell code
+        script = run["run"].split("python - <<'PYTHON'\n", 1)[1].rsplit("\nPYTHON", 1)[0]
+        monkeypatch.setenv("SELECTED_TESTS", json.dumps([node]))
+        exec(compile(script, name, "exec"), {})
+        assert calls[-1][0] == [sys.executable, "-m", "pytest", "-q", node]
+        assert calls[-1][1] == {"check": True}
+        before = len(calls)
+        monkeypatch.setenv("SELECTED_TESTS", "[]")
+        with pytest.raises(SystemExit, match="explicit non-empty"):
+            exec(compile(script, name, "exec"), {})
+        assert len(calls) == before
 
-    exec(compile(python_script, "telegram-ci", "exec"), {})
 
-    assert len(calls) == 2
-    prefix = [
-        "uv", "run", "--project", "TelegramVivBot", "--frozen",
-        "--with", "pytest==8.4.2", "--with", "pytest-asyncio==1.4.0",
-        "--python", sys.executable,
-    ]
-    assert calls[0][0] == prefix + ["python", "-c", "from pywhispercpp.model import Model"]
-    assert calls[1][0] == prefix + ["python", "-m", "pytest", "-q", "tests"]
-    for _, options in calls:
-        assert options["cwd"] == ROOT / "viventium_v0_4" / "telegram-viventium"
-        assert options["check"] is True
-        assert "OPENAI_API_KEY" not in options["env"]
-        assert options["env"].get("NO_REPAIR") == ("1" if architecture == "x86_64" else None)
-    assert calls[0][1]["env"] is calls[1][1]["env"]
+def test_component_bootstrap_handoff_has_no_implicit_default_or_shell_expansion(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = []
+    monkeypatch.setattr(subprocess, "run", lambda argv, **kwargs: calls.append((argv, kwargs)))
+    for name, steps in _qa_workflow_steps():
+        bootstrap = _named_step(steps, "Fetch and validate selected pinned components")
+        assert bootstrap["if"] == "steps.select.outputs.components_count != '0'"
+        script = bootstrap["run"].split("python - <<'PYTHON'\n", 1)[1].rsplit("\nPYTHON", 1)[0]
+        monkeypatch.setenv("SELECTED_COMPONENTS", json.dumps(["LibreChat"]))
+        exec(compile(script, name, "exec"), {})
+        assert calls[-2][0][-4:] == ["--component", "LibreChat", "--jobs", "1"]
+        assert calls[-1][0][-4:] == ["--component", "LibreChat", "--validate-only", "--strict-pinned"]
+        assert "--config" not in calls[-1][0]
+        before = len(calls)
+        monkeypatch.setenv("SELECTED_COMPONENTS", "[]")
+        with pytest.raises(SystemExit, match="explicit non-empty"):
+            exec(compile(script, name, "exec"), {})
+        assert len(calls) == before
 
 
 @pytest.mark.parametrize(
@@ -308,8 +325,8 @@ def test_telegram_ci_reuses_native_build_policy_and_checks_real_import(
     (
         (
             "config-compile.yml",
-            "python",
-            "Install and build LibreChat runtime artifacts",
+            "arm64",
+            "Install and build LibreChat packages",
         ),
         (
             "native-payload-candidate.yml",
@@ -392,14 +409,14 @@ def test_pr_gate_push_triggers_only_default_branch() -> None:
         )
 
 
-def test_productivity_contract_fetches_pinned_component_before_source_checks() -> None:
-    source = _workflow_sources()["productivity-activation-contract.yml"]
-
-    assert "Fetch and validate the exact pinned contract components" in source
-    assert "scripts/viventium/bootstrap_components.py" in source
-    assert "--validate-only" in source
-    assert "--strict-pinned" in source
-    assert source.index("bootstrap_components.py") < source.index("python3 -m pytest")
+def test_productivity_contract_fetches_selected_pinned_component_before_source_checks() -> None:
+    workflow = yaml.safe_load(_workflow_sources()["productivity-activation-contract.yml"])
+    steps = workflow["jobs"]["activation-contract"]["steps"]
+    bootstrap = _named_step(steps, "Fetch and validate selected pinned components")
+    run = _named_step(steps, "Run selected release tests")
+    assert "--validate-only" in bootstrap["run"] and "--strict-pinned" in bootstrap["run"]
+    assert steps.index(bootstrap) < steps.index(run)
+    assert _named_step(steps, "Select release tests for this change")["env"]["SELECT_PARTITION"] == "activation"
 
 
 def test_changed_release_workflows_do_not_persist_checkout_credentials() -> None:
@@ -418,31 +435,24 @@ def test_changed_release_workflows_do_not_persist_checkout_credentials() -> None
         assert source.count("persist-credentials: false") == source.count("actions/checkout@"), name
 
 
-def test_release_policy_runs_qa_operating_contract_and_storage_guard() -> None:
-    source = _workflow_sources()["release-policy.yml"]
-
-    assert "tests/release/test_qa_operating_contract.py" in source
-    assert "tests/release/test_qa_storage_guard.py" in source
-
-
-def test_release_policy_executes_all_public_policy_suites_in_one_hosted_step() -> None:
-    workflow = yaml.safe_load(
-        (WORKFLOW_ROOT / "release-policy.yml").read_text(encoding="utf-8")
-    )
-    run_script = next(
-        step["run"]
-        for step in workflow["jobs"]["manifests"]["steps"]
-        if "tests/release/test_public_bootstrap_manifests.py" in step.get("run", "")
-    )
-
-    for suite in (
+def test_release_policy_preserves_public_policy_suites_without_duplicate_blanket_execution() -> None:
+    spec = importlib.util.spec_from_file_location("release_selector_workflow_contract", ROOT / "scripts/viventium/select_release_tests.py")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    assert module.PARTITIONS["policy"] == {
         "tests/release/test_public_bootstrap_manifests.py",
         "tests/release/test_private_repo_resolution_contract.py",
+        "tests/release/test_qa_operating_contract.py",
         "tests/release/test_qa_storage_guard.py",
-    ):
-        assert suite in run_script
-    assert "tests/release/test_qa_operating_contract.py" in run_script
-    assert "tests/release/test_qa_operating_contract.py::" not in run_script
+    }
+    assert module.PARTITIONS["activation"] == {
+        "tests/release/test_ci_release_workflows.py", "tests/release/test_no_runtime_nlu.py",
+    }
+    steps = dict(_qa_workflow_steps())["release-policy.yml"]
+    assert _named_step(steps, "Select release tests for this change")["env"]["SELECT_PARTITION"] == "policy"
+    assert _named_step(steps, "Verify merged component refs are live public main tips")["if"] == "steps.select.outputs.live_refs == 'true'"
+    assert sum(step.get("name") == "Run selected release tests" for step in steps) == 1
 
 
 def test_release_policy_verifies_merged_component_refs_against_public_main(
@@ -1059,3 +1069,11 @@ def test_native_release_requires_exact_compliance_bundle_and_license_scan() -> N
         "verify_native_compliance.py",
     ):
         assert required in source
+
+
+def test_body_only_pr_edits_cannot_replace_existing_check_evidence() -> None:
+    for name, _ in _qa_workflow_steps():
+        workflow = yaml.safe_load(_workflow_sources()[name])
+        triggers = workflow.get("on") or workflow[True]
+        assert "edited" not in triggers["pull_request"]["types"]
+        assert workflow["concurrency"]["cancel-in-progress"] is True

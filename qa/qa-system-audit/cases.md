@@ -42,7 +42,7 @@ Use stable `QASYS-NNN` IDs for QA-system structure, traceability, evidence, and 
 | `QASYS-UC-001` | Developer starts a fix by reading the feature map, enumerating user use cases, and appending newly authorized source messages at the private boundary before updating public joins. | `CC-064` / `QASYS-002`, `QASYS-009` | Private continuity source boundary plus docs and QA contract | Byte comparison, stable message IDs, SHA-256 values, supersession links/history, sanitized aggregate public proof, feature map, checklist, cases, and release tests | New source is appended byte-exactly with stable IDs and SHA-256; superseded records remain; public artifacts expose only sanitized aggregate proof; a use-case checklist exists before pass/fail claims. | PARTIAL 2026-08-30; the checklist contract passed 2026-05-18, but the private append/history and aggregate-proof branch is NOT RUN. |
 | `QASYS-UC-002` | Escaped user-visible failure crosses feature boundaries. | `QASYS-004`, `QASYS-009` | Real browser/computer plus logs/DB/state | Feature cases, visible UI, logs, DB/state, docs, generated config | A synthetic regression is added to every affected owner and unrun fixes remain visible. | PASS 2026-05-18 for the contract; product fix pending in affected owners |
 | `QASYS-UC-003` | Agent prepares a release/public-ready diff. | `QASYS-007` | Git diff and QA/report scan | tracked files, ignored files, public-safety scan, staged diff | No private data, local paths, raw IDs, screenshots, or secrets are published. | PARTIAL 2026-05-18; final diff review pending |
-| `QASYS-UC-004` | User requests an iterative independent review of complex work plus a separate Claude review-only pass. | `GOV-012`, `QASYS-010` | Fresh reviewer contexts, the exact reviewed files, and a distinct Claude review context after the loop | Review scores, actionable findings, revision log, deterministic checks, remaining gaps, and the separate Claude receipt | At least two fresh reviews occur with a revision between them; the final loop score is actual, a sub-8 result after four loops stays explicit, and the separately requested Claude review runs afterward without replacing tests or being merged into the loop score. | PARTIAL 2026-08-30; current loop is not final |
+| `QASYS-UC-004` | User requests an iterative independent review of complex work plus a separate Claude review-only pass. | `GOV-012`, `QASYS-010` | Fresh reviewer contexts, the exact reviewed files, and a distinct Claude review context after the loop | Review scores, actionable findings, revision log, deterministic checks, remaining gaps, and the separate Claude receipt | A fresh independent review occurs; further rounds require material findings or an explicit requested minimum; the final loop score is actual, a sub-8 result after four loops stays explicit, and the separately requested Claude review runs afterward without replacing tests or being merged into the loop score. | PARTIAL 2026-08-30; current loop is not final |
 | `QASYS-UC-005` | Ask for diagnosis only, then ask for one bounded fix while unrelated local changes are present. | `CORE-014` / `QASYS-011` | request text, repository diff, and affected owner files | authorization boundary, before/after diff, source evidence, and unrelated-file status | Diagnosis changes nothing; the authorized fix changes only the smallest source-backed scope and preserves unrelated work. | NOT RUN — cataloged 2026-08-30. |
 | `QASYS-UC-006` | Ask for a completion report after a run with both verified evidence and one open gate. | `CORE-015` / `QASYS-012` | final user-facing report and cited evidence | executed commands, visible result, supporting state, canonical statuses, and unrun-gate list | The report is short and plain, states what evidence proves, and names the open gate without a completion claim. | NOT RUN — cataloged 2026-08-30. |
 | `QASYS-UC-007` | Ask semantically equivalent requests with changed wording/provider labels and inspect how the decision is made. | `CORE-003`, `CORE-004` / `QASYS-013` | exact configured model boundary and runtime source | paired decisions, typed metadata, prompt/config lineage, and regex/keyword branch scan | The model owns semantic judgment; runtime uses typed structure and contains no wording/provider-name intent branch. | NOT RUN — cataloged 2026-08-30. |
@@ -156,12 +156,35 @@ Use stable `QASYS-NNN` IDs for QA-system structure, traceability, evidence, and 
   1. Search release tests for QA case IDs or owning QA docs.
   2. Search cases for automation commands and last-run links.
   3. Identify tests without case links and cases without automation/result links.
+  4. For a requested test audit, give each test its protected behavior, current source or case join,
+     tier (T1-T5) and disposition: keep, consolidate, rewrite, retire or owner review, with evidence.
+     A file-level owner or matching keyword alone is not an exact requirement join.
 - Expected result: release test names, case IDs, and QA reports form a lightweight graph.
 - Forbidden result: release tests and QA reports become parallel, unsynchronized systems.
 - Evidence to capture: test-to-case gap list.
 - Automation: `tests/release/test_qa_operating_contract.py`.
 - Last run: PARTIAL 2026-08-30; every release test has a central cases-based owner in the working
   tree, but the durability check fails while an owning case file remains untracked.
+
+## Verification Policy And Backlog
+
+Policy: [Verification Scope And Handoff](../README.md#verification-scope-and-handoff). A case in this
+ledger is not mandatory on every change. Audit each mode as its own scenario: `skip`,
+`critical-path`, `blast-radius` and `full`. Expected: the requested mode survives developer, Codex
+and Claude handoffs; omitted proof is reported as not run; no security or approval control is bypassed.
+
+Planned backlog. These items are off the default merge path; none of them is a failing gate.
+
+| Category | Item | Runs or revisits when |
+| --- | --- | --- |
+| Deferred platform | Intel (`x86_64`) Easy Install job. It reuses the Apple Silicon steps, so no separate implementation is needed. Known Intel-runner issues: an intermittent LibreChat `data-schemas` rollup stall, and `test_deferred_parallel_work_redis_waits_for_delayed_success…` missing its wait window (2026-09-26, `main` 9c95495; Apple Silicon passed). | Weekly schedule, manual `intel` run, or Intel returns to delivery scope. |
+| Broader regression | Full release bank, Modern Playground pnpm install and voice cases, Telegram suite with `pywhispercpp`, FFmpeg audio fixtures. | Their own paths or pins change (selected automatically), the daily schedule, or explicit `full`. |
+| Final artifact | Production LibreChat client build and native payload assembly. | LibreChat pin or build inputs change, final packaging, or release. |
+| CI infrastructure | Caching for LibreChat build outputs (keyed by component commit, lockfile and Node), the pnpm store and Homebrew/uv. Parallel test workers after an isolation review. | Next CI maintenance pass, with before/after timings. |
+| Test maintenance | 2026-09-25 per-test audit of all 3,589 release test functions: 86% keep; 305 brittle wording or step-freezing checks to rewrite; 146 duplicates to consolidate; 35 stale expectations; 9 retirements with evidence; 41 product decisions. Priority: two vacuous security tests and a date-based check that will fail every PR from 2026-10-08. | Next change to the owning feature, or an approved cleanup batch per area. |
+
+Keep private prompt/thread crosswalks and per-test audit evidence outside public source. Existing
+case status is unchanged.
 
 ## `QASYS-006` - Agent Instruction Alignment
 
@@ -249,11 +272,11 @@ Use stable `QASYS-NNN` IDs for QA-system structure, traceability, evidence, and 
 - Steps:
   1. Give a fresh-context reviewer the work product and evidence, not the worker's private reasoning.
   2. Record the score and actionable findings.
-  3. Revalidate each accepted finding against primary sources, revise the work, and run a second
-     fresh review.
+  3. Validate material findings against primary sources and repair them. Repeat independent review
+     only when the changed candidate, unresolved issue or explicit requested minimum requires it.
   4. Continue toward 8/10 for no more than four loops. If the gate is still unmet, report the real
      score and remaining defects as `PARTIAL` or `BLOCKED`; never alter or suppress the verdict.
-- Expected result: at least two fresh reviews, a revision between them, deterministic checks after
+- Expected result: a fresh review, revisions only for material findings, deterministic checks after
   the final edit, and an exact final score with any remaining defects.
 - Forbidden result: a stale or self-review is called independent, model opinion replaces required
   tests/user-path evidence, or a score is inflated to support a completion claim.
@@ -305,3 +328,24 @@ Use stable `QASYS-NNN` IDs for QA-system structure, traceability, evidence, and 
 
 - `tests/release/test_qa_operating_contract.py`
 - `tests/release/test_qa_results_public_safety.py`
+- `tests/release/test_release_test_selection.py`
+
+
+## Scoped verification backlog
+
+These are retained work, not automatic prerequisites. `QA: skip`, `critical-path`,
+`blast-radius` or explicit `full` controls execution and passes unchanged to all agents.
+
+| Category | Deferred work | Run or repair when |
+| --- | --- | --- |
+| Deferred platform compatibility | Intel macOS build and its timing-sensitive Redis recovery test | Intel is explicitly requested; reuse shared implementation. |
+| Unchanged feature regression | Modern Playground, Telegram/native transcription, audio/FFmpeg fixtures | The changed behavior demonstrably consumes that feature; install only its required tools. |
+| Final delivery artifacts | Production LibreChat client/package build and installed identity | Compatible relevant edits are complete and the requested result needs those bytes. Reuse unchanged verified artifacts. |
+| QA maintenance | Brittle source/copy locks, overlapping tests, fixed historical status, calendar freshness | Their owning behavior or QA mechanism changes; transfer unique assertions before consolidation. |
+| Parallel Work acceptance debt | Missing semantic verifier registrations and early-rejecting negative fixtures | Parallel Work acceptance is selected. Missing verifiers remain a gap, never synthetic green. |
+| Product contract reconciliation | Receipt-only cleanup wording versus existing scoped fallback; stale Redis startup wording | The owning cleanup/startup path changes. Preserve current safety checks until reconciled. |
+
+No test is removed because it is old, numerous or text-based. Public schema, safety, authority,
+privacy, configuration and compatibility assertions remain when they protect a current contract.
+The private source audit records every definition, source hash, decision, trigger and limit; its
+source-review decisions are not execution passes or a blanket deletion list.

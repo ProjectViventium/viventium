@@ -737,3 +737,32 @@ def test_alignment_rejects_config_changed_from_activation_digest(tmp_path: Path)
             "status": "config_changed_during_activation",
         }
     ]
+
+
+@pytest.mark.parametrize("names", [["LibreChat"], ["Viventium-Health"], ["LibreChat", "Viventium-Health"], ["LibreChat", "LibreChat"]])
+def test_explicit_component_cli_has_no_implicit_defaults(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, names: list[str]) -> None:
+    components = default_voice_components()
+    (tmp_path / "components.lock.json").write_text(json.dumps({"components": components}))
+    calls = []
+    monkeypatch.setattr(bootstrap_components, "validate_component", lambda root, component, **kwargs: calls.append((component["name"], kwargs)) or "validated")
+    argv = ["bootstrap_components.py", "--repo-root", str(tmp_path), "--validate-only", "--strict-pinned"]
+    for name in names:
+        argv += ["--component", name]
+    monkeypatch.setattr(sys, "argv", argv)
+    bootstrap_components.main()
+    assert {name for name, _ in calls} == set(names)
+    assert len(calls) == len(set(names))
+    assert all(options["strict_pinned"] for _, options in calls)
+
+
+@pytest.mark.parametrize("extra", [["--component", "missing"], ["--component", "../LibreChat"],
+                                    ["--component", "LibreChat", "--config", "missing.yaml"]])
+def test_invalid_explicit_component_selection_fails_before_checkout(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, extra: list[str]) -> None:
+    (tmp_path / "components.lock.json").write_text(json.dumps({"components": default_voice_components()}))
+    calls = []
+    monkeypatch.setattr(bootstrap_components, "clone_or_update_component", lambda *args, **kwargs: calls.append(args))
+    monkeypatch.setattr(sys, "argv", ["bootstrap_components.py", "--repo-root", str(tmp_path), *extra])
+    with pytest.raises(SystemExit) as error:
+        bootstrap_components.main()
+    assert error.value.code == 2
+    assert calls == []

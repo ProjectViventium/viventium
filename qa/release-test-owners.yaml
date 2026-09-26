@@ -3,6 +3,9 @@
 # Each tests/release/test_*.py file must appear here. Prefer the most specific
 # feature QA case catalog that already exists; use release-readiness for broad
 # public packaging and boundary checks.
+# Ownership routes review; it is not an always-run suite or a per-test requirement proof.
+# Select execution by the requested QA mode and confirmed dependency impact (qa/README.md);
+# scripts/viventium/select_release_tests.py computes the blast-radius set from a diff.
 release_tests:
   tests/release/test_anti_sycophancy_architecture_contract.py:
     qa_owner: qa/anti-sycophancy/cases.md
@@ -186,6 +189,8 @@ release_tests:
     qa_owner: qa/qa-system-audit/cases.md
   tests/release/test_qa_storage_guard.py:
     qa_owner: qa/installer-resilience/cases.md
+  tests/release/test_release_test_selection.py:
+    qa_owner: qa/qa-system-audit/cases.md
   tests/release/test_qa_results_public_safety.py:
     qa_owner: qa/qa-system-audit/cases.md
   tests/release/test_rag_api_override_contract.py:

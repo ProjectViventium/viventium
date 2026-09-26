@@ -1244,7 +1244,12 @@ def main() -> None:
         action="store_true",
         help="Do not fetch refs for existing repos that are missing the pinned commit",
     )
-    parser.add_argument(
+    selection_args = parser.add_mutually_exclusive_group()
+    selection_args.add_argument(
+        "--component", action="append",
+        help="Fetch/validate only this exact lockfile component name (repeatable; no implicit defaults)",
+    )
+    selection_args.add_argument(
         "--config",
         help="Optional config.yaml used to select only the components needed for this install",
     )
@@ -1323,7 +1328,15 @@ def main() -> None:
     source_root_env = os.environ.get("VIVENTIUM_COMPONENTS_SOURCE_ROOT", "").strip()
     source_root = Path(source_root_env) if source_root_env else None
 
-    components = select_components(payload.get("components", []), config)
+    locked_components = payload.get("components", [])
+    if args.component is not None:
+        requested = set(args.component)
+        known = {component.get("name") for component in locked_components}
+        if requested - known:
+            parser.error("unknown locked component name: " + ", ".join(sorted(requested - known)))
+        components = [component for component in locked_components if component.get("name") in requested]
+    else:
+        components = select_components(locked_components, config)
     components = apply_local_origin_overrides(components, source_root)
 
     if args.validate_only:

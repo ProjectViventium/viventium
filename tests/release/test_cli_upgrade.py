@@ -4672,6 +4672,7 @@ def test_meilisearch_recovery_refuses_foreign_container_and_reused_native_pid(
                 "-lc",
                 (
                     "set -euo pipefail\n"
+                    "GLOBAL_DOCKER_CLEANUP_ALLOWED=true\n"
                     f"{native_identity}"
                     f"{restart_function}"
                     "docker() {\n"
@@ -4681,7 +4682,7 @@ def test_meilisearch_recovery_refuses_foreign_container_and_reused_native_pid(
                     "  return 0\n"
                     "}\n"
                     "log_warn() { :; }\n"
-                    "log_error() { :; }\n"
+                    'log_error() { printf "%s\\n" "$*" >&2; }\n'
                     f"PYTHON_BIN={shlex.quote(sys.executable)}\n"
                     "MEILI_CONTAINER_NAME=viventium-meilisearch\n"
                     f"MEILI_NATIVE_PID_FILE={shlex.quote(str(pid_file))}\n"
@@ -4707,11 +4708,12 @@ def test_meilisearch_recovery_refuses_foreign_container_and_reused_native_pid(
                 "-lc",
                 (
                     "set -euo pipefail\n"
+                    "GLOBAL_DOCKER_CLEANUP_ALLOWED=true\n"
                     f"{native_identity}"
                     f"{restart_function}"
                     "docker() { return 0; }\n"
                     "log_warn() { :; }\n"
-                    "log_error() { :; }\n"
+                    'log_error() { printf "%s\\n" "$*" >&2; }\n'
                     f"PYTHON_BIN={shlex.quote(sys.executable)}\n"
                     "MEILI_CONTAINER_NAME=viventium-meilisearch\n"
                     f"MEILI_NATIVE_PID_FILE={shlex.quote(str(pid_file))}\n"
@@ -4734,21 +4736,20 @@ def test_meilisearch_recovery_refuses_foreign_container_and_reused_native_pid(
                 "-lc",
                 (
                     "set -euo pipefail\n"
+                    "GLOBAL_DOCKER_CLEANUP_ALLOWED=true\n"
                     f"{native_identity}"
                     f"{restart_function}"
-                    "inspect_count=0\n"
                     "docker() {\n"
                     '  if [[ "$1 $2" == "ps -aq" ]]; then printf "owned-container\\n"; return 0; fi\n'
                     '  if [[ "$1" == "inspect" ]]; then\n'
-                    "    inspect_count=$((inspect_count + 1))\n"
-                    '    if [[ "$inspect_count" == "1" ]]; then printf "viventium_v0_4\\n"; else printf "meilisearch\\n"; fi\n'
+                    '    if [[ "$3" == *viventium.stack* ]]; then printf "viventium_v0_4\\n"; else printf "meilisearch\\n"; fi\n'
                     "    return 0\n"
                     "  fi\n"
                     '  if [[ "$1 $2" == "rm -f" ]]; then touch "$REMOVAL_MARKER"; fi\n'
                     "  return 0\n"
                     "}\n"
                     "log_warn() { :; }\n"
-                    "log_error() { :; }\n"
+                    'log_error() { printf "%s\\n" "$*" >&2; }\n'
                     f"PYTHON_BIN={shlex.quote(sys.executable)}\n"
                     "MEILI_CONTAINER_NAME=viventium-meilisearch\n"
                     f"MEILI_NATIVE_PID_FILE={shlex.quote(str(pid_file))}\n"
@@ -4773,9 +4774,13 @@ def test_meilisearch_recovery_refuses_foreign_container_and_reused_native_pid(
         sleeper.terminate()
         sleeper.wait(timeout=5)
 
-    assert completed.returncode != 0
-    assert native_completed.returncode != 0
-    assert mixed_completed.returncode != 0
+    # Verify the intended ownership refusal, not an earlier shell setup failure.
+    assert completed.returncode == 2, completed.stderr
+    assert "foreign container" in completed.stderr
+    assert native_completed.returncode == 2, native_completed.stderr
+    assert "receipt does not match the live process" in native_completed.stderr
+    assert mixed_completed.returncode == 2, mixed_completed.stderr
+    assert "receipt does not match the live process" in mixed_completed.stderr
     assert not removal_marker.exists()
     assert pid_file.is_file()
 
@@ -4799,28 +4804,28 @@ def test_meilisearch_recovery_does_not_archive_after_owned_listener_stop_failure
         "recover_incompatible_local_meili_data",
     )
     archive_marker = tmp_path / "archive-called"
+    stop_marker = tmp_path / "stop-attempted"
     completed = subprocess.run(
         [
             "bash",
             "-lc",
             (
                 "set -euo pipefail\n"
+                    "GLOBAL_DOCKER_CLEANUP_ALLOWED=true\n"
                 f"{native_identity}"
                 f"{restart_function}"
                 f"{recovery_function}"
-                "inspect_count=0\n"
                 "docker() {\n"
                 '  if [[ "$1 $2" == "ps -aq" ]]; then printf "owned-container\\n"; return 0; fi\n'
                 '  if [[ "$1" == "inspect" ]]; then\n'
-                "    inspect_count=$((inspect_count + 1))\n"
-                '    if [[ "$inspect_count" == "1" ]]; then printf "viventium_v0_4\\n"; else printf "meilisearch\\n"; fi\n'
+                '    if [[ "$3" == *viventium.stack* ]]; then printf "viventium_v0_4\\n"; else printf "meilisearch\\n"; fi\n'
                 "    return 0\n"
                 "  fi\n"
-                '  if [[ "$1 $2" == "rm -f" ]]; then return 1; fi\n'
+                '  if [[ "$1 $2" == "rm -f" ]]; then touch "$STOP_MARKER"; return 1; fi\n'
                 "  return 0\n"
                 "}\n"
                 "log_warn() { :; }\n"
-                "log_error() { :; }\n"
+                'log_error() { printf "%s\\n" "$*" >&2; }\n'
                 "meili_log_indicates_incompatible_data() { return 0; }\n"
                 "meili_http_ping() { return 1; }\n"
                 'archive_incompatible_local_meili_data() { touch "$ARCHIVE_MARKER"; }\n'
@@ -4845,10 +4850,13 @@ def test_meilisearch_recovery_does_not_archive_after_owned_listener_stop_failure
         env={
             **os.environ,
             "ARCHIVE_MARKER": str(archive_marker),
+            "STOP_MARKER": str(stop_marker),
         },
     )
 
-    assert completed.returncode != 0
+    assert completed.returncode == 1, completed.stderr
+    assert "could not prove and stop every local listener" in completed.stderr
+    assert stop_marker.exists(), "The injected stop failure must actually run"
     assert not archive_marker.exists()
 
 
