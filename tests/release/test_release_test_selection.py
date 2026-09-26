@@ -616,6 +616,22 @@ def test_other_qa_node_does_not_inherit_markdown_checkout_dependency() -> None:
     assert "Viventium-Health" not in result.prerequisites
 
 
+def test_manifest_file_consumer_gets_its_source_checkouts_without_builds() -> None:
+    node = "tests/release/test_parallel_work_release_gate.py::test_runtime_service_manifest_binds_runtime_controls_and_kernel_process_reader"
+    result = selection.select(selection.Repository.load(ROOT), scope="critical-path",
+                              changed=None, components=[], explicit=[node], reason="Runtime manifest file existence")
+    assert result.prerequisites == ["LibreChat", "xPerfect"]
+    assert not any(result.lanes.values())
+
+
+def test_manifest_shape_only_node_does_not_fetch_component_sources() -> None:
+    node = "tests/release/test_parallel_work_release_gate.py::test_runtime_service_manifest_covers_api_runtime_trees_and_excludes_tests"
+    result = selection.select(selection.Repository.load(ROOT), scope="critical-path",
+                              changed=None, components=[], explicit=[node], reason="Manifest shape only")
+    assert result.prerequisites == []
+    assert not any(result.lanes.values())
+
+
 @pytest.mark.parametrize("partition,expected", [("all", True), ("policy", True), ("core", False), ("activation", False)])
 def test_explicit_public_pin_check_does_not_widen_critical_scope(partition: str, expected: bool) -> None:
     node = "tests/release/test_public_bootstrap_manifests.py::test_components_lock_uses_full_commit_shas_for_public_components"
