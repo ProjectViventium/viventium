@@ -46,6 +46,24 @@ PARTITIONS = {
 LIBRECHAT = "viventium_v0_4/LibreChat"
 PLAYGROUND = "viventium_v0_4/agent-starter-react"
 LANES = ("node", "librechat_deps", "librechat_packages", "librechat_client", "playground_deps", "audio_tools")
+# These nodes digest the repository's own runtime artifact manifest, which lists LibreChat and
+# xPerfect runtime sources and LibreChat's package and client build outputs. The manifest is
+# data, so the path trace cannot see these reads.
+RUNTIME_MANIFEST_DIGEST_CONSUMERS = frozenset({
+    "tests/release/test_parallel_work_release_gate.py::test_runtime_service_manifest_binds_tracked_nonempty_runtime_inputs",
+    "tests/release/test_glasshive_qa_parent_control.py::test_cleanup_remains_available_after_the_exact_session_expires",
+    "tests/release/test_glasshive_qa_parent_control.py::test_cleanup_rejects_same_size_parent_state_mutation_before_fixture_delete",
+})
+# These nodes find the Health checkout through its lock entry, not an anchored path.
+HEALTH_CHECKOUT_READERS = frozenset({
+    "tests/release/test_viventium_health_runtime.py::test_health_component_pin_matches_the_reviewed_component_head",
+    "tests/release/test_viventium_health_runtime.py::test_health_runtime_install_is_private_self_contained_and_reads_empty_archive",
+    "tests/release/test_viventium_health_runtime.py::test_health_runtime_reinstall_preserves_archive_and_replaces_runtime",
+    "tests/release/test_viventium_health_runtime.py::test_health_runtime_install_reuses_matching_artifact_without_rebuild",
+    "tests/release/test_viventium_health_runtime.py::test_health_runtime_install_rebuilds_a_tampered_installed_package",
+    "tests/release/test_viventium_health_runtime.py::test_public_cli_materializes_and_runs_the_health_component",
+    "tests/release/test_viventium_health_runtime.py::test_installed_health_runtime_serves_only_bounded_read_tools",
+})
 # Real audio execution was traced in the audit. Mentioning ffmpeg in a mocked
 # subprocess or a source assertion must not install it. Add consumers with evidence.
 LANE_CONSUMERS = {
@@ -54,6 +72,7 @@ LANE_CONSUMERS = {
         "tests/release/test_ci_release_workflows.py::test_live_activation_eval_shell_preserves_pass_failure_and_outage_semantics",
         "tests/release/test_parallel_work_installed_journey_qa.py",
     }),
+    "librechat_client": RUNTIME_MANIFEST_DIGEST_CONSUMERS,
     "audio_tools": frozenset({
         "tests/release/test_mpv_061_installed_scenario_preparation.py::test_local_say_and_ffmpeg_create_two_distinct_private_audible_wavs",
         "tests/release/test_voice_playground_dispatch_contract.py::test_synthetic_audio_qa_captures_actual_remote_audio_as_private_audible_wav",
@@ -71,6 +90,8 @@ CHECKOUT_CONSUMERS = {
     "tests/release/test_parallel_work_release_gate.py::test_runtime_service_manifest_binds_runtime_controls_and_kernel_process_reader": (
         LIBRECHAT, "viventium_v0_4/xPerfect",
     ),
+    **{node: (LIBRECHAT, "viventium_v0_4/xPerfect") for node in RUNTIME_MANIFEST_DIGEST_CONSUMERS},
+    **{node: ("viventium_v0_4/Viventium-Health",) for node in HEALTH_CHECKOUT_READERS},
 }
 
 ROOT_NAMES = frozenset({"ROOT", "REPO_ROOT", "REPO", "REPOSITORY_ROOT", "PROJECT_ROOT"})
@@ -712,6 +733,9 @@ def _prerequisites(repo: Repository, tests: list[str]) -> tuple[dict[str, bool],
         for lane, consumers in LANE_CONSUMERS.items():
             lanes[lane] |= any(c == selector.split("[", 1)[0] or c.startswith(selector + "::")
                                or ("::" not in c and selector.startswith(c + "::")) for c in consumers)
+    # A declared build consumer needs the same build chain as a traced one.
+    lanes["librechat_packages"] |= lanes["librechat_client"]
+    lanes["librechat_deps"] |= lanes["librechat_packages"]
     if lanes["librechat_deps"]:
         required.add(LIBRECHAT)
     lanes["node"] |= lanes["librechat_deps"] or lanes["playground_deps"]

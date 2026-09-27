@@ -74,7 +74,7 @@ rows before claiming a pass when the feature behavior changes.
 - The compiler drops a serial GlassHive fallback equal to the configured Main primary, and compiles
   a background cortex disabled when its declared visible evidence needs `file_search` but no RAG API
   is configured.
-- Expected: on a fresh isolated source Express install, the default Main answers on the configured
+- Expected: on a fresh isolated source Easy Install, the default Main answers on the configured
   model and the same conversation shows the answer after reload.
 - Forbidden: seeding tracked defaults over configured routes, bypassing a pending migration's bundle
   check, overriding an explicit curated bundle, or running a cortex without its evidence tool.

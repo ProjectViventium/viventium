@@ -624,6 +624,45 @@ def test_manifest_file_consumer_gets_its_source_checkouts_without_builds() -> No
     assert not any(result.lanes.values())
 
 
+@pytest.mark.parametrize("selector", sorted({
+    *selection.RUNTIME_MANIFEST_DIGEST_CONSUMERS,
+    "tests/release/test_glasshive_qa_parent_control.py",
+}))
+def test_real_manifest_digest_consumers_get_built_librechat_and_their_sources(selector: str) -> None:
+    result = selection.select(selection.Repository.load(ROOT), scope="critical-path",
+                              changed=None, components=[], explicit=[selector], reason="Real runtime manifest digest")
+    assert result.prerequisites == ["LibreChat", "xPerfect"]
+    for lane in ("node", "librechat_deps", "librechat_packages", "librechat_client"):
+        assert result.lanes[lane], lane
+    assert not result.lanes["playground_deps"] and not result.lanes["audio_tools"]
+
+
+@pytest.mark.parametrize("selector", [
+    "tests/release/test_viventium_health_runtime.py",
+    *sorted(selection.HEALTH_CHECKOUT_READERS),
+])
+def test_health_checkout_readers_get_only_the_health_checkout(selector: str) -> None:
+    result = selection.select(selection.Repository.load(ROOT), scope="critical-path",
+                              changed=None, components=[], explicit=[selector], reason="Health component checkout")
+    assert result.prerequisites == ["Viventium-Health"]
+    assert not any(result.lanes.values())
+
+
+def test_health_node_without_a_checkout_read_does_not_fetch_it() -> None:
+    node = "tests/release/test_viventium_health_runtime.py::test_health_runtime_installer_rejects_component_pin_drift"
+    result = selection.select(selection.Repository.load(ROOT), scope="critical-path",
+                              changed=None, components=[], explicit=[node], reason="Pin drift is rejected before a read")
+    assert result.prerequisites == []
+    assert not any(result.lanes.values())
+
+
+def test_declared_checkout_consumers_are_existing_release_test_nodes() -> None:
+    for consumer in (*selection.CHECKOUT_CONSUMERS, *selection.LANE_CONSUMERS["librechat_client"]):
+        path, _, name = consumer.partition("::")
+        source = (ROOT / path).read_text(encoding="utf-8")
+        assert not name or f"def {name}(" in source, f"{consumer} does not exist"
+
+
 def test_manifest_shape_only_node_does_not_fetch_component_sources() -> None:
     node = "tests/release/test_parallel_work_release_gate.py::test_runtime_service_manifest_covers_api_runtime_trees_and_excludes_tests"
     result = selection.select(selection.Repository.load(ROOT), scope="critical-path",
