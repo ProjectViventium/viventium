@@ -1403,6 +1403,127 @@ def test_native_agent_bundle_omits_tools_and_handoffs_owned_by_unavailable_servi
     assert direct_servers == []
 
 
+def compile_native_main_agent(default_model: str) -> dict:
+    config = minimal_compile_config()
+    config["integrations"]["glasshive"] = {
+        "enabled": True,
+        "provider": {"enabled": True, "default_model": default_model},
+    }
+    assignments = config_compiler.build_agent_assignments(config)
+    return config_compiler.render_native_agents_bundle(config, assignments, set())["mainAgent"]
+
+
+def test_native_main_agent_drops_a_serial_glasshive_fallback_equal_to_its_configured_model() -> None:
+    tracked = load_source_of_truth_agents_bundle()["mainAgent"]
+    serial_fallback = tracked["glasshive_options"]["fallback_model"]
+
+    main = compile_native_main_agent(serial_fallback)
+
+    assert main["model"] == serial_fallback
+    assert "fallback_model" not in main["glasshive_options"]
+    assert "fallback_reasoning_effort" not in main["glasshive_options"]
+    assert main["fallback_llm_model"] == tracked["fallback_llm_model"]
+
+
+def test_native_main_agent_keeps_a_distinct_serial_glasshive_fallback() -> None:
+    tracked = load_source_of_truth_agents_bundle()["mainAgent"]
+    primary = config_compiler.GLASSHIVE_PROVIDER_MODEL_BY_WORKER_PROFILE["codex-cli"]
+    assert primary != tracked["glasshive_options"]["fallback_model"]
+
+    main = compile_native_main_agent(primary)
+
+    assert main["model"] == primary
+    assert main["glasshive_options"]["fallback_model"] == tracked["glasshive_options"]["fallback_model"]
+    assert (
+        main["glasshive_options"]["fallback_reasoning_effort"]
+        == tracked["glasshive_options"]["fallback_reasoning_effort"]
+    )
+
+
+def file_search_evidence_cortex_ids(main_agent: dict) -> set[str]:
+    return {
+        cortex["agent_id"]
+        for cortex in main_agent["background_cortices"]
+        if any(
+            requirement.get("tool") == "file_search"
+            for requirement in (cortex.get("result_evidence") or {}).get("visible_insight_requires", [])
+        )
+    }
+
+
+def test_native_bundle_disables_cortices_whose_evidence_needs_unavailable_file_search() -> None:
+    tracked = load_source_of_truth_agents_bundle()
+    config = minimal_compile_config()
+    assignments = config_compiler.build_agent_assignments(config)
+
+    compiled = config_compiler.render_native_agents_bundle(
+        config, assignments, set(), file_search_available=False
+    )
+
+    gated = file_search_evidence_cortex_ids(tracked["mainAgent"])
+    assert gated
+    tracked_entries = {entry["agent_id"]: entry for entry in tracked["mainAgent"]["background_cortices"]}
+    for entry in compiled["mainAgent"]["background_cortices"]:
+        if entry["agent_id"] in gated:
+            assert entry["activation"]["enabled"] is False
+            assert entry["activation"]["mode"] == "disabled"
+        else:
+            assert entry["activation"] == tracked_entries[entry["agent_id"]]["activation"]
+    background_ids = {agent["id"] for agent in compiled["backgroundAgents"]}
+    assert gated <= background_ids
+
+
+def test_native_bundle_keeps_file_search_evidence_cortices_when_file_search_is_served() -> None:
+    tracked = load_source_of_truth_agents_bundle()
+    config = minimal_compile_config()
+    assignments = config_compiler.build_agent_assignments(config)
+
+    compiled = config_compiler.render_native_agents_bundle(config, assignments, set())
+
+    assert [entry["activation"] for entry in compiled["mainAgent"]["background_cortices"]] == [
+        entry["activation"] for entry in tracked["mainAgent"]["background_cortices"]
+    ]
+
+
+@pytest.mark.parametrize("conversation_recall", [False, True])
+def test_compiled_file_search_evidence_cortices_follow_the_rag_api(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, conversation_recall: bool
+) -> None:
+    config = minimal_compile_config()
+    config["runtime"]["personalization"] = {"default_conversation_recall": conversation_recall}
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
+    output_dir = tmp_path / "runtime"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["config_compiler.py", "--config", str(config_path), "--output-dir", str(output_dir)],
+    )
+
+    config_compiler.main()
+
+    env = config_compiler.parse_env_file(output_dir / "runtime.env")
+    main_agent = yaml.safe_load((output_dir / "viventium-agents.yaml").read_text(encoding="utf-8"))[
+        "mainAgent"
+    ]
+    gated = file_search_evidence_cortex_ids(main_agent)
+    assert gated
+    assert bool(env["RAG_API_URL"]) is conversation_recall
+    tracked_activation = {
+        entry["agent_id"]: entry["activation"]
+        for entry in load_source_of_truth_agents_bundle()["mainAgent"]["background_cortices"]
+    }
+    for entry in main_agent["background_cortices"]:
+        if entry["agent_id"] not in gated:
+            continue
+        expected = (
+            {key: tracked_activation[entry["agent_id"]][key] for key in ("enabled", "mode")}
+            if conversation_recall
+            else {"enabled": False, "mode": "disabled"}
+        )
+        assert {key: entry["activation"][key] for key in ("enabled", "mode")} == expected
+
+
 def test_native_connected_accounts_agent_receives_every_compiled_google_slot() -> None:
     config = minimal_compile_config()
     config["integrations"]["google_workspace"] = {
