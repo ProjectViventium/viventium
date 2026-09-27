@@ -5006,10 +5006,25 @@ EOF
   return 0
 }
 
-detect_viventium_agents_bundle() {
+# === VIVENTIUM START ===
+# Feature: Configured agent routes for native source installs.
+# Purpose: config_compiler.py renders the configured agent routes into runtime/viventium-agents.yaml
+# only for install.mode=native. Seed that bundle instead of the tracked defaults; an explicit curated
+# bundle stays authoritative.
+detect_compiled_viventium_agents_bundle() {
+  [[ "${VIVENTIUM_INSTALL_MODE:-}" == "native" ]] || return 1
+  local candidate="${VIVENTIUM_RUNTIME_DIR:-$VIVENTIUM_APP_SUPPORT_ROOT/runtime}/viventium-agents.yaml"
+  if [[ -f "$candidate" && ! -L "$candidate" ]]; then
+    printf "%s" "$candidate"
+    return 0
+  fi
+  return 1
+}
+# === VIVENTIUM END ===
+
+detect_viventium_release_agents_bundle() {
   local candidate=""
   for candidate in \
-    "${LIBRECHAT_AGENTS_BUNDLE_FILE:-}" \
     "$LIBRECHAT_DIR/viventium/source_of_truth/local.viventium-agents.yaml" \
     "$LIBRECHAT_DIR/tmp/viventium-agents.yaml" \
     "$LIBRECHAT_DIR/scripts/viventium-agents.yaml" \
@@ -5017,12 +5032,20 @@ detect_viventium_agents_bundle() {
     "$LIBRECHAT_DIR/scripts/viventium-agents-260127-b.yaml" \
     "$LIBRECHAT_DIR/scripts/viventium-agents-clawd.yaml"
   do
-    if [[ -n "$candidate" && -f "$candidate" ]]; then
+    if [[ -f "$candidate" ]]; then
       printf "%s" "$candidate"
       return 0
     fi
   done
   return 1
+}
+
+detect_viventium_agents_bundle() {
+  if [[ -n "${LIBRECHAT_AGENTS_BUNDLE_FILE:-}" && -f "$LIBRECHAT_AGENTS_BUNDLE_FILE" ]]; then
+    printf "%s" "$LIBRECHAT_AGENTS_BUNDLE_FILE"
+    return 0
+  fi
+  detect_compiled_viventium_agents_bundle || detect_viventium_release_agents_bundle
 }
 
 ensure_viventium_agents_seeded() {
@@ -5045,23 +5068,44 @@ ensure_viventium_agents_seeded() {
   local managed_baseline="$VIVENTIUM_STATE_ROOT/agent-managed-baseline.json"
   local managed_migration_state="$VIVENTIUM_BASE_STATE_DIR/runtime/agent-managed-migration-pending.json"
   mkdir -p "$(dirname "$managed_baseline")"
-  log_info "Ensuring built-in Viventium agents are present from $(basename "$bundle_path")"
-  if (
-    cd "$LIBRECHAT_DIR" &&
-      ensure_librechat_server_packages_ready &&
-      node "$seed_script" \
-        --bundle="$bundle_path" \
-        --managed-baseline="$managed_baseline" \
-        --managed-migration-state="$managed_migration_state" \
-        --public
-  ) >"$seed_log" 2>&1; then
-    log_success "Built-in Viventium agents ready"
-    return 0
+  # === VIVENTIUM START ===
+  # Feature: Finish a pending managed-agent migration before applying compiled routes.
+  # Purpose: agent_migration_state.py prepares an upgrade against the tracked release bundle and the
+  # seed refuses any other bundle while that state is pending. The seed consumes the state, so the
+  # compiled pass that follows runs as an ordinary managed update.
+  local seed_bundles=("$bundle_path")
+  local compiled_bundle=""
+  compiled_bundle="$(detect_compiled_viventium_agents_bundle || true)"
+  if [[ -n "$compiled_bundle" && "$bundle_path" == "$compiled_bundle" && -e "$managed_migration_state" ]]; then
+    local release_bundle=""
+    release_bundle="$(detect_viventium_release_agents_bundle || true)"
+    if [[ -z "$release_bundle" ]]; then
+      log_error "The pending managed-agent migration needs its release agent bundle"
+      return 1
+    fi
+    seed_bundles=("$release_bundle" "$bundle_path")
   fi
-
-  log_error "Built-in Viventium agent seeding failed"
-  tail -40 "$seed_log" 2>/dev/null || true
-  return 1
+  # === VIVENTIUM END ===
+  : >"$seed_log"
+  local seed_bundle=""
+  for seed_bundle in "${seed_bundles[@]}"; do
+    log_info "Ensuring built-in Viventium agents are present from $(basename "$seed_bundle")"
+    if ! (
+      cd "$LIBRECHAT_DIR" &&
+        ensure_librechat_server_packages_ready &&
+        node "$seed_script" \
+          --bundle="$seed_bundle" \
+          --managed-baseline="$managed_baseline" \
+          --managed-migration-state="$managed_migration_state" \
+          --public
+    ) >>"$seed_log" 2>&1; then
+      log_error "Built-in Viventium agent seeding failed"
+      tail -40 "$seed_log" 2>/dev/null || true
+      return 1
+    fi
+  done
+  log_success "Built-in Viventium agents ready"
+  return 0
 }
 
 reconcile_viventium_user_defaults() {

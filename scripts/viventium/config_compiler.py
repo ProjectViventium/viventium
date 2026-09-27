@@ -6936,6 +6936,8 @@ def render_native_agents_bundle(
     config: dict[str, Any],
     assignments: dict[str, tuple[str, str]],
     available_mcp_servers: set[str],
+    *,
+    file_search_available: bool = True,
 ) -> dict[str, Any]:
     """Compile agents against the services that the exact Native payload can provide."""
     if config.get("install", {}).get("mode") != "native":
@@ -6997,6 +6999,15 @@ def render_native_agents_bundle(
                 "model": conscious_model,
                 "reasoning_effort": "medium",
             }
+            glasshive_options = main_agent.get("glasshive_options")
+            if (
+                isinstance(glasshive_options, dict)
+                and str(glasshive_options.get("fallback_model") or "").strip() == conscious_model
+            ):
+                # A serial GlassHive fallback to the configured primary itself is rejected by the
+                # Agent contract; Main's outer fallback still covers a failed primary.
+                glasshive_options.pop("fallback_model", None)
+                glasshive_options.pop("fallback_reasoning_effort", None)
         elif conscious_provider == "openai":
             main_agent["model_parameters"] = {
                 "model": conscious_model,
@@ -7175,6 +7186,27 @@ def render_native_agents_bundle(
                     for agent_id in agent_ids
                     if str(agent_id or "").strip() not in disabled_handoff_ids
                 ]
+
+    # A visible insight needs a receipt from every declared evidence tool. Without the RAG API,
+    # file search returns no sources, so such a cortex is compiled disabled rather than run.
+    unavailable_evidence_tools = set() if file_search_available else {"file_search"}
+    main_agent = bundle.get("mainAgent")
+    cortices = main_agent.get("background_cortices") if isinstance(main_agent, dict) else None
+    for cortex in cortices if isinstance(cortices, list) else []:
+        if not isinstance(cortex, dict):
+            continue
+        requirements = (cortex.get("result_evidence") or {}).get("visible_insight_requires")
+        required_tools = {
+            str(requirement.get("tool") or "").strip()
+            for requirement in (requirements if isinstance(requirements, list) else [])
+            if isinstance(requirement, dict)
+        }
+        if required_tools & unavailable_evidence_tools:
+            cortex["activation"] = {
+                **(cortex.get("activation") or {}),
+                "enabled": False,
+                "mode": "disabled",
+            }
 
     activation_policy = (
         ((bundle.get("config") or {}).get("viventium") or {})
@@ -8711,6 +8743,7 @@ def main() -> None:
             config,
             assignments,
             set((rendered_librechat.get("mcpServers") or {}).keys()),
+            file_search_available=bool(env.get("RAG_API_URL")),
         )
     summary = {
         "config": str(config_path),

@@ -11,6 +11,8 @@ release_tests:
     qa_owner: qa/anti-sycophancy/cases.md
   tests/release/test_agent_migration_state.py:
     qa_owner: qa/agent-config-continuity/cases.md
+  tests/release/test_agent_seed_bundle_selection.py:
+    qa_owner: qa/agent-config-continuity/cases.md
   tests/release/test_agent_sync_review_contract.py:
     qa_owner: qa/release-readiness/cases.md
   tests/release/test_background_agent_browser_qa_harness.py:

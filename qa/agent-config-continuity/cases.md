@@ -15,6 +15,7 @@ Use stable `AGCFG-NNN` IDs for agent config continuity cases.
 | `AGCFG-005` | Every channel preserves an eager GlassHive gateway and scoped deferred discovery without semantic prompt guards. | Short and long requests can launch or check GlassHive from web, channel, and voice without a false unavailable claim. | source/fixture agent config, LibreChat web, isolated channel, Modern Playground voice, MCP/logs/state | release/Jest regressions plus isolated cross-surface QA | PARTIAL 2026-07-13; automated gateway/discovery regressions pass, dedicated isolated-channel parity NOT RUN |
 | `AGCFG-006` | The first verified administrator remains the canonical built-in-agent owner across restart and later administrators. | Existing and new users keep the intended main/background agents without ambiguous ownership, startup failure, or silent reassignment. | Native first-admin state, source managed baseline, Mongo users/agents/ACLs, restart | Native script/helper regressions plus LibreChat seed regressions and exact-payload user QA | PARTIAL 2026-07-22; automated exact-ID/mode/EPERM/seed/helper regressions pass, replacement exact-payload multi-admin restart NOT RUN |
 | `AGCFG-007` | A first upgrade from every retrievable public LibreChat pin migrates built-ins without overwriting user edits, including when no local managed baseline exists. | Existing users keep every present main/background field, even an old shipped-default value, and explicit deletions; only genuinely new successor fields are added. Interrupted or tampered migrations fail closed and retry safely. | parent component history, nested migration registry, protected App Support handoff, seed baseline, upgrade rollback | `tests/release/test_agent_migration_state.py`, `tests/release/test_managed_agent_migration_history.py`, `tests/release/test_cli_upgrade.py`, and LibreChat seed regressions | PARTIAL 2026-07-24; automated 76-lock-revision/64-retrievable-pin/22-baseline-group, frozen post-pin history audit, protected-state retry/tamper, and actual shipped-CLI ledger-discovery checks pass; real established-user browser/DB upgrade remains NOT RUN |
+| `AGCFG-008` | A native source start seeds the compiled agent routes instead of the tracked defaults; an explicit curated bundle stays authoritative and a pending managed migration finishes on its release bundle first. | The default Main answers on the model the install configured, without a silent tracked-default route or a rejected same-model fallback. | launcher seed selection, compiled `runtime/viventium-agents.yaml`, managed migration state, installed browser | `tests/release/test_agent_seed_bundle_selection.py`, `tests/release/test_config_compiler.py` | PARTIAL 2026-09-27; automated seed-selection and compiler cases pass and an isolated installed browser answer/reload on the configured route passed; released-pin CI pending |
 
 ## `AGCFG-001` - Core User Flow
 
@@ -60,6 +61,28 @@ rows before claiming a pass when the feature behavior changes.
 | `AGCFG-UC-005` | Send one synthetic long GlassHive request followed by a terse status request through an isolated channel, then repeat the launch/status contract in isolated web and voice surfaces. | `03_Telegram_Bridge.md`, `07_MCPs.md`, `37_LibreChat_v083_Config_Alignment.md` / `AGCFG-005`, `TR-008`, `MPV-014` | isolated channel, browser, Modern Playground call | provider-bound tool names, `tool_search`/tool calls, visible and audible results, fixture content parts, GlassHive run/events, runtime logs, restart/reload evidence | All three channels expose the eager launch/status/wait gateway; deferred tools remain discoverable in the same invocation; no channel claims GlassHive is unavailable while the server is healthy. | PARTIAL 2026-07-13; automated structural gateway/discovery tests pass, isolated three-surface proof NOT RUN |
 | `AGCFG-UC-006` | Complete first admin setup, add a second synthetic administrator, restart, and open the shipped main agent. | `39_Installer_and_Config_Compiler.md` / `AGCFG-006`, `INST-027` | exact Native payload and supported source Easy Install, browser, Mongo/ACL state | protected first-admin state, managed baseline, exact user lookup, agent authors, owner ACLs, restart logs | The original verified administrator remains the owner; startup succeeds; no administrator scan or silent owner rewrite occurs; invalid protected state gives recovery guidance. | PARTIAL 2026-07-22; automated deterministic script/seed regressions pass, replacement exact-payload browser/restart proof NOT RUN |
 | `AGCFG-UC-007` | Upgrade an existing install whose built-ins are unchanged, repeat with one synthetic user edit, interrupt once, and then start/retry. | `39_Installer_and_Config_Compiler.md` / `AGCFG-007` | supported source upgrade CLI, startup seed, Agent Builder browser UI | component refs, protected pending state, registry hashes, baseline/agent DB state, rollback/start logs | Unchanged managed fields advance, the synthetic edit survives, the one-time handoff is consumed only after successful agent/ACL/baseline writes, and retry neither drifts nor loses state. | PARTIAL 2026-07-22; automated deterministic history/state/reconciliation coverage passes, real established-user browser upgrade remains NOT RUN |
+
+## `AGCFG-008` - Source Native Installs Seed The Configured Agent Routes
+
+- `config_compiler.py` renders the configured routes into `runtime/viventium-agents.yaml` for
+  `install.mode=native`; the launcher seeds that bundle in native mode.
+- An explicit curated bundle (`LIBRECHAT_AGENTS_BUNDLE_FILE`) stays authoritative. Docker mode and a
+  symlinked compiled file keep the tracked release bundle.
+- A pending managed-agent migration is prepared against the tracked release bundle, whose hash the
+  seed enforces. The launcher finishes it on that bundle first, then applies the compiled routes as
+  an ordinary managed update, so user edits stay preserved.
+- The compiler drops a serial GlassHive fallback equal to the configured Main primary, and compiles
+  a background cortex disabled when its declared visible evidence needs `file_search` but no RAG API
+  is configured.
+- Expected: on a fresh isolated source Easy Install, the default Main answers on the configured
+  model and the same conversation shows the answer after reload.
+- Forbidden: seeding tracked defaults over configured routes, bypassing a pending migration's bundle
+  check, overriding an explicit curated bundle, or running a cortex without its evidence tool.
+- Automation: `tests/release/test_agent_seed_bundle_selection.py` and
+  `tests/release/test_config_compiler.py`.
+- Last run: PARTIAL 2026-09-27. Automated seed-selection, migration-order, curated, Docker and
+  symlink cases and the compiler cases pass; an isolated installed browser journey answered on the
+  configured `claude-code:opus` route and reloaded. Released-pin CI is pending.
 
 ## `AGCFG-007` - First-Upgrade Managed Baseline Migration
 
