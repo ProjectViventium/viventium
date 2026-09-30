@@ -513,6 +513,22 @@ def test_librechat_typescript_dependency_does_not_build_packages_or_client(repo:
     assert not result.lanes["librechat_packages"] and not result.lanes["librechat_client"]
 
 
+@pytest.mark.parametrize(("selector", "needs_packages"), [
+    ("tests/release/test_agent_sync_review_contract.py", True),
+    ("tests/release/test_agent_sync_review_contract.py::test_agent_sync_compare_reviews_user_visible_sequential_output_policy", True),
+    ("tests/release/test_agent_sync_review_contract.py::test_sync_script_help_exposes_compare_review_workflow_without_built_api", False),
+])
+def test_agent_sync_import_gets_builds_but_help_stays_source_only(selector: str, needs_packages: bool) -> None:
+    result = selection.select(selection.Repository.load(ROOT), scope="critical-path",
+                              changed=None, components=[], explicit=[selector], reason="Agent sync import prerequisites")
+    assert result.prerequisites == ["LibreChat"]
+    assert result.lanes["node"]
+    assert result.lanes["librechat_deps"] is needs_packages
+    assert result.lanes["librechat_packages"] is needs_packages
+    assert not result.lanes["librechat_client"]
+    assert not result.lanes["playground_deps"] and not result.lanes["audio_tools"]
+
+
 @pytest.mark.parametrize("moved", [None, "head", "base"])
 def test_explicit_pr_retry_reads_current_handoff_only_for_same_source(monkeypatch: pytest.MonkeyPatch, moved: str | None) -> None:
     original = {"number": 42, "head": {"sha": "a" * 40}, "base": {"sha": "b" * 40}, "body": _fence("blast-radius")}

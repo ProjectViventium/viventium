@@ -73,6 +73,10 @@ LANE_CONSUMERS = {
         "tests/release/test_parallel_work_installed_journey_qa.py",
     }),
     "librechat_client": RUNTIME_MANIFEST_DIGEST_CONSUMERS,
+    # Importing agent-sync loads the API and data-provider workspace packages.
+    "librechat_packages": frozenset({
+        "tests/release/test_agent_sync_review_contract.py::test_agent_sync_compare_reviews_user_visible_sequential_output_policy",
+    }),
     "audio_tools": frozenset({
         "tests/release/test_mpv_061_installed_scenario_preparation.py::test_local_say_and_ffmpeg_create_two_distinct_private_audible_wavs",
         "tests/release/test_voice_playground_dispatch_contract.py::test_synthetic_audio_qa_captures_actual_remote_audio_as_private_audible_wav",
