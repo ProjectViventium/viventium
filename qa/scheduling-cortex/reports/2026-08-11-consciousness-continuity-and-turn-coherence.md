@@ -1,4 +1,4 @@
-<!-- qa-evidence-exempt: Historical evidence snapshot retained verbatim; retroactive v2 fields would invent evidence that was not captured during the run. -->
+<!-- qa-evidence-exempt: Historical evidence snapshot retained with privacy redactions; retroactive v2 fields would invent evidence that was not captured during the run. -->
 # Consciousness Continuity And Turn Coherence — 2026-08-11
 
 ## Outcome
@@ -17,7 +17,7 @@ Presentation interruption remains distinct from durable-work cancellation.
 
 | Surface | Result | Evidence |
 | --- | --- | --- |
-| Prompt Workbench | PASS for discovery, editing controls, prompt lineage, schedule configuration, history, refresh, terminal-state truth, silence, and durable-conversation reuse | Headed browser showed the active private schedule, 45-minute Toronto cadence, 09:00–21:00 daily window, 17 projected opportunities, destinations, effective model, and all registered prompt links. Three post-fix Main opportunities completed `silent`; the latest two remained visible after refresh with Sol/xHigh provenance and reused one durable conversation. Mongo showed four internal, memory-ineligible messages, zero visible/unfinished messages, and an archived conversation. |
+| Prompt Workbench | PASS for discovery, editing controls, prompt lineage, schedule configuration, history, refresh, terminal-state truth, silence, and durable-conversation reuse | Headed browser showed the active private schedule with its configured cadence, daily window, projected count, destinations, effective model, and all registered prompt links. Owner-specific schedule values remain in private evidence. Three post-fix Main opportunities completed `silent`; the latest two remained visible after refresh with Sol/xHigh provenance and reused one durable conversation. Mongo showed four internal, memory-ineligible messages, zero visible/unfinished messages, and an archived conversation. |
 | Web A → unfinished B → C | PASS | A headed browser submitted C while B streamed. One current D reflected ordered A+C, the composer cleared, refresh did not restore B, and Mongo contained the two user revisions, one current assistant revision, and a content-free supersession tombstone. |
 | Telegram text A → unfinished B → C | PASS | A real rapid two-message path produced one coherent current response with no stale `Connection error`. The stale preview was retracted; Mongo showed one canonical conversation/logical turn, revisions 1 and 2, and only the revision-2 assistant result. |
 | Voice ordinary playback | PASS | A real headed playground call used the installed local STT/TTS path, matched one synthetic transcript, delivered 6.81 seconds of audio, completed playback, returned to listening, and removed all synthetic call/chat records. |

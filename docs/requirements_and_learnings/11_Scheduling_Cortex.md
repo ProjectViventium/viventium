@@ -620,8 +620,8 @@ CC-025: Registry source, compiled shared artifact, Workbench source, and runtime
 CC-026: The scheduled object remains editable/versioned and does not duplicate identity or tool policy.
 CC-028: Controls are metadata-driven, never title/name-specific.
 CC-029: Reuse/update one private `viventium_agent` scheduled object using `scheduler.consciousness_continuity_opportunity` and the same durable conversation.
-CC-030: Private default: every 45 minutes in `America/Toronto`, 09:00–21:00 inclusive, daily grid restart, 17 opportunities. Toronto wall time remains correct across DST.
-CC-031: Latest-only recovery inside the window; outside the window wait until next 09:00.
+CC-030: Keep owner-specific cadence, timezone, active hours, and projected daily opportunities in private configuration. Restart the configured local grid daily and preserve local wall time across DST.
+CC-031: Latest-only recovery inside the configured active window; outside the window wait until the next configured window opens.
 CC-032: No message cap or cooldown. Main and `{NTA}` decide whether anything user-visible is worthwhile.
 CC-033: One canonical result may fan out to LibreChat and Telegram. Voice parity does not authorize unsolicited calls.
 CC-034: Public templates are inactive and contain no private owner preferences. Activate the private schedule only after its gates pass.
@@ -631,7 +631,7 @@ CC-037: Do not create an inner-monologue, digest, epilogue, or private stream da
 CC-050: Generate one canonical scheduled answer, then adapt it per destination. Telegram must not expose `{MSG_BREAK}`. Workbench is an audit sink, not a duplicate author.
 CC-051: Scheduled Main gets the existing Main capability intersection: saved tools ∩ endpoint support ∩ MCP audience ∩ OAuth/authorization ∩ approvals. Scheduling adds and removes nothing.
 CC-053: Validate all nine Feelings separately and in mixed states, with act/plan/ask/communicate/silence outcomes.
-CC-054: Validate exact Toronto/DST/date/restart/sleep/clock/misfire behavior; concurrency, crash at each stage, lease recovery, and no duplicate effects.
+CC-054: Validate configured timezone/DST/date/restart/sleep/clock/misfire behavior; concurrency, crash at each stage, lease recovery, and no duplicate effects.
 CC-055: Validate disabled/edited/deleted/manual/Workbench-only/legacy schedules, OAuth, confirmations, prompt injection/forgery, and durable-effect non-replay.
 CC-061: Ordinary user turns must not receive repetitive per-heartbeat appraisal narration. Continuity cognition stays private unless Main has one useful, authorized result, question, plan, or action to surface.
 CC-062: Reject engagement pressure, guilt, clinginess, quota-obscuring behavior, and any objective that maximizes Feeling values. Silence and leaving the user alone remain valid outcomes.
