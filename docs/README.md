@@ -1,18 +1,21 @@
 # Viventium documentation
 
-Viventium's active product stack is `viventium_v0_4/`.
+Viventium's active product stack is `viventium_v0_4/`. The approved
+[cognitive-system vision and diagrams](architecture/cognitive-system.md) own the high-level product
+definition moving forward; runtime and feature docs own current delivery.
 
 <a id="read-order"></a>
 
 ## Start here
 
-1. [Key principles and product rules](requirements_and_learnings/01_Key_Principles.md)
-2. [Architecture overview](architecture/overview.md)
-3. [Systems map](architecture/systems-map.md)
-4. [Install and operate](how-to/install-and-operate.md)
-5. [Upgrade, restore, and migrate](how-to/upgrade-and-migrate.md)
-6. [Contributor setup](04_SETUP_GUIDE.md#contributor-setup)
-7. [QA catalog](../qa/catalog.yaml)
+1. [Approved cognitive-system vision and diagrams](architecture/cognitive-system.md)
+2. [Key principles and product rules](requirements_and_learnings/01_Key_Principles.md)
+3. [Architecture overview](architecture/overview.md)
+4. [Systems map](architecture/systems-map.md)
+5. [Install and operate](how-to/install-and-operate.md)
+6. [Upgrade, restore, and migrate](how-to/upgrade-and-migrate.md)
+7. [Contributor setup](04_SETUP_GUIDE.md#contributor-setup)
+8. [QA catalog](../qa/catalog.yaml)
 
 **GOV-008:** This read order links each capability to its owning detailed contracts and acceptance.
 

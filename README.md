@@ -14,6 +14,25 @@ AUI means **Artificial Ultimate Intelligence**, the ultimate ceiling beyond AGI 
 
 [Website](https://www.viventium.ai) · [Docs](https://www.viventium.ai/docs) · [Changelog](https://www.viventium.ai/changelog) · [Roadmap](https://www.viventium.ai/roadmap) · [Community](https://www.viventium.ai/community)
 
+## Product vision
+
+**One Soul. Everything connected.** Channels reach Viventium Core, powered by xPerfect: a harness
+of harnesses. Feelings, Subconscious work, Continuity, Life, Sleep / Dreaming, Scheduling Cortex,
+and Prompt Workbench form one cognitive system with shared building blocks.
+
+The [approved cognitive-system vision](docs/architecture/cognitive-system.md) is the product source
+of truth moving forward. The diagram shows the target; current support remains documented below.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/architecture/assets/cognitive-system/viventium-0.5-dark.png">
+  <img src="docs/architecture/assets/cognitive-system/viventium-0.5-light.png" alt="Viventium cognitive-system architecture and simple new-user journey, from connected channels through one Soul and xPerfect to shared cognition, life routines, and Prompt Workbench." width="1200">
+</picture>
+
+[Light SVG](docs/architecture/assets/cognitive-system/viventium-0.5-light.svg) ·
+[Dark SVG](docs/architecture/assets/cognitive-system/viventium-0.5-dark.svg) ·
+[Light PNG](docs/architecture/assets/cognitive-system/viventium-0.5-light.png) ·
+[Dark PNG](docs/architecture/assets/cognitive-system/viventium-0.5-dark.png)
+
 ## Why Viventium
 
 - **Voice + chat, one continuity layer**: think out loud, type when needed, and keep the same context across both.
