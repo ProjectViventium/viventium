@@ -96,6 +96,9 @@ internals.
 - Native payload assembly and release verification select the same xPerfect component pin.
   The packaged `runtime/glasshive` path remains compatible; its license inventory identifies
   xPerfect as Apache-2.0 and preserves both `LICENSE` and `NOTICE`.
+- Publisher scheduler payloads reject changed, untracked, or ignored selected support code,
+  prompts, and configuration from the parent or LibreChat checkout. Explicit local QA staging
+  retains its separate source label; unpackaged caches and support tests do not block it.
 - Hosted Linux staging, service interpreters, identity administration, and Prompt Workbench
   source controls select the same xPerfect checkout. The browser ingress includes the authenticated
   `/conversation` page; existing service, state, protocol, and payload identifiers remain compatible.

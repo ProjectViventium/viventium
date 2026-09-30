@@ -368,9 +368,35 @@ def stage_scheduling(repo: Path, python: Path, uv: Path, output: Path, *, source
     pin = selected_component_pin(repo, "LibreChat")
     actual = command_output(["git", "-C", str(source), "rev-parse", "HEAD"]).strip()
     contract = "viventium/source_of_truth/scheduled_failure_contract.v1.json"
-    dirty = command_output(["git", "-C", str(source), "status", "--porcelain", "--untracked-files=all", "--", relative_root, contract, "LICENSE"])
+    def support_paths(root: Path, relative: str, suffixes: set[str]) -> list[str]:
+        tracked = set(command_output(["git", "-C", str(root), "ls-files", "--", relative]).splitlines())
+        committed = set(command_output(["git", "-C", str(root), "ls-tree", "-r", "--name-only",
+                                        "HEAD", "--", relative]).splitlines())
+        present = {item.relative_to(root).as_posix() for item in (root / relative).rglob("*")
+                   if item.is_file()}
+        selected = {name for name in committed | tracked | present if Path(name).suffix in suffixes
+                    and not {"__pycache__", "tests"}.intersection(Path(name).parts)}
+        if not local_qa_worktree and (selected & present) - tracked:
+            raise AssemblyError("Scheduling support source differs from committed source")
+        return sorted(selected)
+
+    component_paths = [relative_root, contract, "LICENSE",
+                       "viventium/source_of_truth/local.viventium-agents.yaml",
+                       "viventium/source_of_truth/local.librechat.yaml",
+                       *support_paths(source, "viventium/source_of_truth/prompts", {".md", ".yaml", ".yml"})]
+    parent_paths = ["LICENSE", "scripts/viventium/prompt_registry.py"]
+    for relative in ("viventium_v0_4/shared",
+                     "viventium_v0_4/prompt-workbench/backend/prompt_workbench"):
+        parent_paths.extend(support_paths(repo, relative, {".py"}))
+    dirty = command_output(["git", "-C", str(source), "status", "--porcelain", "--untracked-files=all",
+                            "--", *component_paths])
     if actual != pin or (dirty and not local_qa_worktree):
         raise AssemblyError("Scheduling source differs from the selected LibreChat pin")
+    if not local_qa_worktree and command_output([
+        "git", "-C", str(repo), "status", "--porcelain", "--untracked-files=all",
+        "--", *parent_paths,
+    ]):
+        raise AssemblyError("Scheduling support source differs from committed parent source")
     if output.exists():
         raise AssemblyError("Scheduling staging output already exists")
     paths = [f"{relative_root}/{name}" for name in ("pyproject.toml", "uv.lock", "scheduling_cortex")]
