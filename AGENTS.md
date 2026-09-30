@@ -64,10 +64,8 @@ current status owner. Do not load the whole documentation tree for a narrow chan
 ## Repository And Delivery Boundaries
 
 - `viventium_v0_4/` is the active product stack.
-- `scripts/viventium/` owns install, configure, upgrade, preflight, doctor, compile, bootstrap, and
-  restore.
-- `docs/architecture/cognitive-system.md` owns the approved high-level product vision and diagrams.
-  It takes precedence over earlier V0.5 proposals; feature and runtime owners still define delivered behavior.
+- `scripts/viventium/` owns install, configure, upgrade, preflight, doctor, compile, bootstrap, and restore.
+- The approved vision and diagrams in `docs/architecture/cognitive-system.md` supersede earlier V0.5 proposals; feature and runtime owners define delivered behavior.
 - `docs/requirements_and_learnings/` is the feature source of truth. Extend the owning document
   instead of creating a duplicate.
 - `qa/` is the acceptance and evidence source of truth; follow `qa/README.md`.
