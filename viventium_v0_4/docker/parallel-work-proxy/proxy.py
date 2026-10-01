@@ -163,7 +163,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
                     self.send_header(name, value)
             self.end_headers()
             while True:
-                chunk = upstream.read(64 * 1024)
+                chunk = upstream.read1(64 * 1024)
                 if not chunk:
                     break
                 self.wfile.write(chunk)

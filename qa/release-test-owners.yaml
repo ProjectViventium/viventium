@@ -141,6 +141,8 @@ release_tests:
     qa_owner: qa/installer-resilience/cases.md
   tests/release/test_native_public_safety.py:
     qa_owner: qa/installer-resilience/cases.md
+  tests/release/test_native_scheduler_source_boundary.py:
+    qa_owner: qa/installer-resilience/cases.md
   tests/release/test_no_runtime_nlu.py:
     qa_owner: qa/release-readiness/cases.md
   tests/release/test_ollama_embeddings_prereqs.py:

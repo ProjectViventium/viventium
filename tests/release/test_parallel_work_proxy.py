@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import importlib.util
 import re
+import http.client
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 
@@ -27,6 +30,71 @@ def _proxy_module():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def test_parallel_work_proxy_delivers_a_live_event_before_upstream_closes(monkeypatch):
+    module = _proxy_module()
+    release = threading.Event()
+    received = threading.Event()
+    first_event = b"data: synthetic-live-event\n\n"
+    result = {}
+
+    class Upstream(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+
+        def log_message(self, *_args):
+            pass
+
+        def do_POST(self):
+            self.rfile.read(int(self.headers["Content-Length"]))
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Transfer-Encoding", "chunked")
+            self.end_headers()
+            self.wfile.write(f"{len(first_event):x}\r\n".encode() + first_event + b"\r\n")
+            self.wfile.flush()
+            release.wait(10)
+            self.wfile.write(b"0\r\n\r\n")
+            self.wfile.flush()
+
+    upstream = ThreadingHTTPServer(("127.0.0.1", 0), Upstream)
+    proxy = ThreadingHTTPServer(("127.0.0.1", 0), module.ProxyHandler)
+    monkeypatch.setattr(module, "_configuration", lambda: ("provider", *upstream.server_address))
+    servers = [threading.Thread(target=server.serve_forever, daemon=True) for server in (upstream, proxy)]
+    for thread in servers:
+        thread.start()
+
+    def consume():
+        connection = http.client.HTTPConnection(*proxy.server_address, timeout=10)
+        try:
+            connection.request("POST", "/openai/v1/responses", body=b"{}")
+            response = connection.getresponse()
+            result["status"] = response.status
+            result["event"] = response.read(len(first_event))
+            received.set()
+            result["tail"] = response.read()
+        except Exception as error:
+            result["error"] = error
+        finally:
+            connection.close()
+
+    consumer = threading.Thread(target=consume, daemon=True)
+    consumer.start()
+    try:
+        assert received.wait(5), "Proxy held a live event until upstream EOF"
+        assert not release.is_set()
+        assert result["status"] == 200
+        assert result["event"] == first_event
+    finally:
+        release.set()
+        consumer.join(10)
+        for server in (proxy, upstream):
+            server.shutdown()
+            server.server_close()
+        for thread in servers:
+            thread.join(5)
+    assert "error" not in result
+    assert result["tail"] == b""
 
 
 def test_parallel_work_proxy_allows_only_the_exact_role_routes():
