@@ -876,6 +876,7 @@ rows before claiming a pass when the feature behavior changes.
 - `tests/release/test_native_macos_compatibility.py`
 - `tests/release/test_native_release_sequence.py`
 - `tests/release/test_native_payload_assembler.py`
+- `tests/release/test_native_scheduler_source_boundary.py`
 - `tests/release/test_native_payload_builder.py`
 - `tests/release/test_native_public_safety.py`
 - `tests/release/test_native_payload.py`
