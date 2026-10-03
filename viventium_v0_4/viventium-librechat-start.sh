@@ -268,18 +268,53 @@ livekit_runtime_container_ids() {
   done <<<"$candidates"
 }
 
+livekit_public_node_ip_configured() {
+  "${PYTHON_BIN:-python3}" -c 'import ipaddress,sys
+try:
+    address = ipaddress.ip_address(sys.argv[1])
+except ValueError:
+    sys.exit(1)
+sys.exit(0 if address.version == 4 and address.is_global else 1)' "${LIVEKIT_NODE_IP:-}"
+}
+
+livekit_public_mapping_matches_configured() {
+  local container_id="$1"
+  # The pinned native transport discovers WAN mappings when local candidates
+  # are retained. Keep the declared public node IP as an assertion, never an
+  # implicit replacement. This check runs at startup, not on Voice turns.
+  docker logs "$container_id" 2>&1 | "${PYTHON_BIN:-python3}" -c 'import ipaddress,json,sys
+expected = sys.argv[1]
+for line in sys.stdin:
+    if "using external IPs" not in line:
+        continue
+    try:
+        data = json.loads(line[line.index(chr(123)):])
+        mappings = data.get("ips", [])
+        public = {str(ipaddress.ip_address(value.split("/")[0])) for value in mappings if ipaddress.ip_address(value.split("/")[0]).is_global}
+    except (ValueError, TypeError):
+        continue
+    if public == {expected} and data.get("advertiseInternalIP") is True:
+        sys.exit(0)
+sys.exit(1)' "$LIVEKIT_NODE_IP"
+}
+
 livekit_managed_container_matches_release() {
   local container_id="$1"
   local configured_image=""
   local image_label=""
   local source_label=""
   local http_port_label=""
+  local rtc_mode_label=""
 
   [[ -n "$container_id" ]] || return 1
   configured_image="$(docker inspect --format '{{.Config.Image}}' "$container_id" 2>/dev/null || true)"
   image_label="$(docker inspect --format '{{ index .Config.Labels "viventium.livekit.image" }}' "$container_id" 2>/dev/null || true)"
   source_label="$(docker inspect --format '{{ index .Config.Labels "viventium.livekit.source" }}' "$container_id" 2>/dev/null || true)"
   http_port_label="$(docker inspect --format '{{ index .Config.Labels "viventium.livekit.http-port" }}' "$container_id" 2>/dev/null || true)"
+  if livekit_public_node_ip_configured; then
+    rtc_mode_label="$(docker inspect --format '{{ index .Config.Labels "viventium.livekit.rtc-mode" }}' "$container_id" 2>/dev/null || true)"
+    [[ "$rtc_mode_label" == "public-local" ]] || return 1
+  fi
 
   [[ "$configured_image" == "$LIVEKIT_SERVER_IMAGE" ]] &&
     [[ "$image_label" == "$LIVEKIT_SERVER_IMAGE" ]] &&
@@ -1357,16 +1392,16 @@ export MCP_CONNECTION_STATUS_SETTLE_POLL_MS="${MCP_CONNECTION_STATUS_SETTLE_POLL
 
 # === VIVENTIUM START ===
 # Feature: Curated local OpenAI model inventory.
-# Purpose: Prevent local Viventium from falling back to older OpenAI families.
+# Purpose: Prefer the current OpenAI model and retain existing choices.
 # The launcher owns the default local OpenAI model inventory for both the chat
 # surface and Agent Builder/Assistants surface, while still allowing explicit
 # env overrides when needed. Direct API keys expose the full official GPT-5.6
 # family. The ChatGPT connected-account route exposes only slugs verified on
 # that distinct provider surface; do not silently remap unsupported aliases.
-DEFAULT_VIVENTIUM_OPENAI_MODELS="gpt-5.6,gpt-5.6-sol,gpt-5.6-terra,gpt-5.6-luna,gpt-5.4,gpt-5,gpt-5-chat-latest,gpt-5-mini,gpt-5-nano,o3,o4-mini"
-DEFAULT_VIVENTIUM_ASSISTANTS_MODELS="gpt-5.6,gpt-5.6-sol,gpt-5.6-terra,gpt-5.6-luna,gpt-5.4,gpt-5,gpt-5-chat-latest,gpt-5-codex,gpt-5-mini,gpt-5-nano,o3,o4-mini"
-CONNECTED_ACCOUNT_VIVENTIUM_OPENAI_MODELS="gpt-5.6-sol,gpt-5.6-terra,gpt-5.4,gpt-5.4-pro,gpt-5,gpt-5-pro,gpt-5-chat-latest,gpt-5-codex,gpt-5-mini,gpt-5-nano,o3-pro,o3,o4-mini"
-CONNECTED_ACCOUNT_VIVENTIUM_ASSISTANTS_MODELS="gpt-5.6-sol,gpt-5.6-terra,gpt-5.4,gpt-5.4-pro,gpt-5,gpt-5-pro,gpt-5-chat-latest,gpt-5-codex,gpt-5-mini,gpt-5-nano,o3-pro,o3,o4-mini"
+DEFAULT_VIVENTIUM_OPENAI_MODELS="gpt-6.1-sol,gpt-5.6,gpt-5.6-sol,gpt-5.6-terra,gpt-5.6-luna,gpt-5.4,gpt-5,gpt-5-chat-latest,gpt-5-mini,gpt-5-nano,o3,o4-mini"
+DEFAULT_VIVENTIUM_ASSISTANTS_MODELS="gpt-6.1-sol,gpt-5.6,gpt-5.6-sol,gpt-5.6-terra,gpt-5.6-luna,gpt-5.4,gpt-5,gpt-5-chat-latest,gpt-5-codex,gpt-5-mini,gpt-5-nano,o3,o4-mini"
+CONNECTED_ACCOUNT_VIVENTIUM_OPENAI_MODELS="gpt-6.1-sol,gpt-5.6-sol,gpt-5.6-terra,gpt-5.4,gpt-5.4-pro,gpt-5,gpt-5-pro,gpt-5-chat-latest,gpt-5-codex,gpt-5-mini,gpt-5-nano,o3-pro,o3,o4-mini"
+CONNECTED_ACCOUNT_VIVENTIUM_ASSISTANTS_MODELS="gpt-6.1-sol,gpt-5.6-sol,gpt-5.6-terra,gpt-5.4,gpt-5.4-pro,gpt-5,gpt-5-pro,gpt-5-chat-latest,gpt-5-codex,gpt-5-mini,gpt-5-nano,o3-pro,o3,o4-mini"
 # === VIVENTIUM END ===
 
 MONGO_CONTAINER_NAME="$VIVENTIUM_LOCAL_MONGO_CONTAINER"
@@ -3735,6 +3770,45 @@ kill_port_listeners() {
   log_warn "Stopping scoped processes that may own port $port"
   kill_pids "${scoped_port_pids[*]}"
 }
+
+glasshive_local_listener_matches() {
+  local port="$1"
+  local service="$2"
+  local listener=""
+  local pid=""
+  local count=0
+  while IFS= read -r pid; do
+    [[ "$pid" =~ ^[0-9]+$ ]] || continue
+    listener="$pid"
+    count=$((count + 1))
+  done < <(find_port_listener_pids "$port" | sort -u)
+  [[ "$count" -eq 1 ]] || return 1
+  "$PYTHON_BIN" "$VIVENTIUM_CORE_DIR/scripts/viventium/xperfect_process_identity.py" \
+    --pid "$listener" --component-root "$GLASSHIVE_DIR" --service "$service" --port "$port"
+}
+
+# === VIVENTIUM START ===
+# Fix: stop each xPerfect server while it still owns its port, then its `uv run` wrapper. The PID
+# files name the wrappers; killing a wrapper first lets its server close the port and linger in a
+# blocked shutdown as an orphan that keeps its background loops running. Only a listener proven to
+# be this runtime's exact service is stopped by port.
+stop_glasshive_services_listener_first() {
+  local service="" port="" scope=""
+  for service in ui mcp runtime; do
+    case "$service" in
+      ui) port="$GLASSHIVE_UI_PORT"; scope="$GLASSHIVE_UI_DIR" ;;
+      mcp) port="$GLASSHIVE_MCP_PORT"; scope="$GLASSHIVE_RUNTIME_DIR" ;;
+      runtime) port="$GLASSHIVE_RUNTIME_PORT"; scope="$GLASSHIVE_RUNTIME_DIR" ;;
+    esac
+    if glasshive_local_listener_matches "$port" "$service"; then
+      kill_port_listeners "$port" "$scope"
+    fi
+  done
+  stop_pid_file_scoped "$GLASSHIVE_UI_PID_FILE" "$GLASSHIVE_UI_DIR"
+  stop_pid_file_scoped "$GLASSHIVE_MCP_PID_FILE" "$GLASSHIVE_RUNTIME_DIR"
+  stop_pid_file_scoped "$GLASSHIVE_RUNTIME_PID_FILE" "$GLASSHIVE_RUNTIME_DIR"
+}
+# === VIVENTIUM END ===
 
 port_has_listener() {
   local port="$1"
@@ -7379,6 +7453,11 @@ stop_running_services() {
       kill_by_pattern_scoped "vite.*frontend" "$LIBRECHAT_DIR"
       kill_by_pattern_scoped "npm run dev --host" "$LIBRECHAT_DIR"
       kill_by_pattern_scoped "cross-env NODE_ENV=development vite" "$LIBRECHAT_DIR"
+      # Compiled serving profile: production API and the built-bundle server.
+      kill_by_pattern_scoped "npm run backend" "$LIBRECHAT_DIR"
+      kill_by_pattern_scoped "cross-env NODE_ENV=production node api/server/index.js" "$LIBRECHAT_DIR"
+      kill_by_pattern_scoped "npm run serve:compiled" "$LIBRECHAT_DIR"
+      kill_by_pattern_scoped "vite preview" "$LIBRECHAT_DIR"
       kill_by_pattern_scoped "npm ci" "$LIBRECHAT_DIR"
       kill_by_pattern_scoped "npm install" "$LIBRECHAT_DIR"
       kill_by_pattern_scoped "npm run build" "$LIBRECHAT_DIR"
@@ -7495,9 +7574,7 @@ stop_running_services() {
   scheduling_stop_failed="$SCHEDULING_MCP_STOP_FAILED"
 
   if [[ -d "$GLASSHIVE_RUNTIME_DIR" || -f "$GLASSHIVE_RUNTIME_PID_FILE" || -f "$GLASSHIVE_MCP_PID_FILE" ]]; then
-    stop_pid_file_scoped "$GLASSHIVE_RUNTIME_PID_FILE" "$GLASSHIVE_RUNTIME_DIR"
-    stop_pid_file_scoped "$GLASSHIVE_MCP_PID_FILE" "$GLASSHIVE_RUNTIME_DIR"
-    stop_pid_file_scoped "$GLASSHIVE_UI_PID_FILE" "$GLASSHIVE_UI_DIR"
+    stop_glasshive_services_listener_first
     if runtime_allows_workspace_wide_process_sweep; then
       kill_port_listeners "$GLASSHIVE_RUNTIME_PORT" "$GLASSHIVE_RUNTIME_DIR"
       kill_port_listeners "$GLASSHIVE_MCP_PORT" "$GLASSHIVE_RUNTIME_DIR"
@@ -8215,6 +8292,8 @@ restart_detached_librechat_backend() {
   kill_by_pattern_scoped "npm exec nodemon api/server/index.js" "$LIBRECHAT_DIR"
   kill_by_pattern_scoped "cross-env NODE_ENV=development npx nodemon api/server/index.js" "$LIBRECHAT_DIR"
   kill_by_pattern_scoped "node .*nodemon api/server/index.js" "$LIBRECHAT_DIR"
+  kill_by_pattern_scoped "npm run backend" "$LIBRECHAT_DIR"
+  kill_by_pattern_scoped "cross-env NODE_ENV=production node api/server/index.js" "$LIBRECHAT_DIR"
 
   local port_release_tries=0
   while [[ "$port_release_tries" -lt 10 ]] && {
@@ -8233,6 +8312,9 @@ restart_detached_librechat_backend() {
     cd "$LIBRECHAT_DIR"
     if [[ "${USE_LIBRECHAT_WRAPPER:-false}" == "true" && -x "./viventium-start.sh" ]]; then
       exec ./viventium-start.sh --backend-only
+    fi
+    if librechat_serves_compiled; then
+      exec npm run backend
     fi
     exec npm run backend:dev
   ) >>"$LIBRECHAT_API_WATCHDOG_LOG_FILE" 2>&1 &
@@ -8332,21 +8414,6 @@ restart_scheduling_mcp_runtime() {
 #          launcher: health-check the runtime port, restart only the scoped local stack after
 #          repeated failures, and leave a foreign listener untouched.
 # === VIVENTIUM END ===
-glasshive_local_listener_matches() {
-  local port="$1"
-  local service="$2"
-  local listener=""
-  local pid=""
-  local count=0
-  while IFS= read -r pid; do
-    [[ "$pid" =~ ^[0-9]+$ ]] || continue
-    listener="$pid"
-    count=$((count + 1))
-  done < <(find_port_listener_pids "$port" | sort -u)
-  [[ "$count" -eq 1 ]] || return 1
-  "$PYTHON_BIN" "$VIVENTIUM_CORE_DIR/scripts/viventium/xperfect_process_identity.py" \
-    --pid "$listener" --component-root "$GLASSHIVE_DIR" --service "$service" --port "$port"
-}
 
 glasshive_local_ports_owned() {
   # Even Restart cannot claim or stop another checkout's healthy listener.
@@ -8372,6 +8439,22 @@ glasshive_runtime_healthy() {
   fi
   viventium_glasshive_runtime_healthy "${GLASSHIVE_RUNTIME_BASE_URL}" 3
 }
+
+# === VIVENTIUM START ===
+# Fix: a slow runtime can miss the short health window while it is alive, and restarting it kills
+# live native runs. Returns 0 when a restart is warranted (not ours, invalid health, or silent for
+# the whole confirmation window) and 1 when it answered within that window.
+glasshive_runtime_confirmed_unresponsive() {
+  if [[ "${GLASSHIVE_SERVICE_TOPOLOGY:-}" != "external_split" ]]; then
+    glasshive_local_listener_matches "$GLASSHIVE_RUNTIME_PORT" runtime || return 0
+  fi
+  if viventium_glasshive_runtime_healthy "${GLASSHIVE_RUNTIME_BASE_URL}" \
+    "${GLASSHIVE_RUNTIME_WATCHDOG_CONFIRM_TIMEOUT_S:-45}"; then
+    return 1
+  fi
+  return 0
+}
+# === VIVENTIUM END ===
 
 restart_glasshive_runtime_stack() {
   log_warn "GlassHive runtime watchdog is restarting the local GlassHive stack"
@@ -8401,12 +8484,14 @@ start_glasshive_runtime_watchdog() {
     trap 'exit 0' INT TERM HUP
     local consecutive_failures=0
     local failed_recoveries=0
+    local slow_episode_logged=0
 
     while true; do
       sleep "$interval_s"
       if glasshive_runtime_healthy; then
         consecutive_failures=0
         failed_recoveries=0
+        slow_episode_logged=0
         continue
       fi
 
@@ -8415,6 +8500,16 @@ start_glasshive_runtime_watchdog() {
         continue
       fi
 
+      local confirm_status=0
+      glasshive_runtime_confirmed_unresponsive || confirm_status=$?
+      if [[ "$confirm_status" == "1" ]]; then
+        if [[ "$slow_episode_logged" != "1" ]]; then
+          log_warn "GlassHive runtime answered slowly but is alive; watchdog restart skipped"
+          slow_episode_logged=1
+        fi
+        consecutive_failures=0
+        continue
+      fi
       log_warn "GlassHive runtime watchdog detected ${consecutive_failures} failed health checks"
       if restart_glasshive_runtime_stack && wait_for_glasshive_stack_ready; then
         log_success "GlassHive runtime watchdog restored the local GlassHive stack"
@@ -8618,6 +8713,18 @@ rtc:
   tcp_port: ${LIVEKIT_TCP_PORT}
   udp_port: ${LIVEKIT_UDP_PORT}
 EOF
+
+  if livekit_public_node_ip_configured; then
+    # LiveKit 1.13.4 only retains internal candidates in native external-IP
+    # discovery mode. Keep loopback reachable through Docker's published ports
+    # while preserving the configured WAN route for callers outside this host.
+    cat >> "$config_file" <<EOF
+  use_external_ip: true
+  advertise_internal_ip: true
+  skip_external_ip_validation: true
+  enable_loopback_candidate: true
+EOF
+  fi
 
   if [[ -n "${LIVEKIT_TURN_DOMAIN:-}" && -n "${LIVEKIT_TURN_TLS_PORT:-}" && -n "$turn_cert_file" && -n "$turn_key_file" ]]; then
     cat >> "$config_file" <<EOF
@@ -9524,14 +9631,12 @@ cleanup() {
   stop_remote_call_tunnels
   stop_pid_file_scoped "$GOOGLE_MCP_PID_FILE" "$GOOGLE_MCP_DIR"
   stop_scheduling_mcp_for_runtime
+  if [[ "${GLASSHIVE_STARTED_BY_SCRIPT:-false}" == "true" ]]; then
+    stop_glasshive_services_listener_first
+  fi
   [[ "${GLASSHIVE_STARTED_BY_SCRIPT:-false}" == "true" && -n "${GLASSHIVE_RUNTIME_PID:-}" ]] && kill "${GLASSHIVE_RUNTIME_PID}" 2>/dev/null || true
   [[ "${GLASSHIVE_STARTED_BY_SCRIPT:-false}" == "true" && -n "${GLASSHIVE_MCP_PID:-}" ]] && kill "${GLASSHIVE_MCP_PID}" 2>/dev/null || true
   [[ "${GLASSHIVE_STARTED_BY_SCRIPT:-false}" == "true" && -n "${GLASSHIVE_UI_PID:-}" ]] && kill "${GLASSHIVE_UI_PID}" 2>/dev/null || true
-  if [[ "${GLASSHIVE_STARTED_BY_SCRIPT:-false}" == "true" ]]; then
-    stop_pid_file_scoped "$GLASSHIVE_RUNTIME_PID_FILE" "$GLASSHIVE_RUNTIME_DIR"
-    stop_pid_file_scoped "$GLASSHIVE_MCP_PID_FILE" "$GLASSHIVE_RUNTIME_DIR"
-    stop_pid_file_scoped "$GLASSHIVE_UI_PID_FILE" "$GLASSHIVE_UI_DIR"
-  fi
   [[ "$MS365_CALLBACK_STARTED_BY_SCRIPT" == "true" && -n "${MS365_MCP_CALLBACK_PID:-}" ]] && kill "${MS365_MCP_CALLBACK_PID}" 2>/dev/null || true
   if [[ "$RAG_API_STARTED_BY_SCRIPT" == "true" && "$SKIP_DOCKER" != "true" ]] && runtime_owns_rag_compose_project; then
     stop_rag_compose_project
@@ -10134,14 +10239,10 @@ wait_for_glasshive_stack_ready() {
   return 1
 }
 
+
 stop_candidate_glasshive_stack() {
   glasshive_local_ports_owned || return 1
-  stop_pid_file_scoped "$GLASSHIVE_UI_PID_FILE" "$GLASSHIVE_UI_DIR"
-  stop_pid_file_scoped "$GLASSHIVE_MCP_PID_FILE" "$GLASSHIVE_RUNTIME_DIR"
-  stop_pid_file_scoped "$GLASSHIVE_RUNTIME_PID_FILE" "$GLASSHIVE_RUNTIME_DIR"
-  kill_port_listeners "$GLASSHIVE_UI_PORT" "$GLASSHIVE_UI_DIR"
-  kill_port_listeners "$GLASSHIVE_MCP_PORT" "$GLASSHIVE_RUNTIME_DIR"
-  kill_port_listeners "$GLASSHIVE_RUNTIME_PORT" "$GLASSHIVE_RUNTIME_DIR"
+  stop_glasshive_services_listener_first
   if port_in_use "$GLASSHIVE_UI_PORT" || port_in_use "$GLASSHIVE_MCP_PORT" || port_in_use "$GLASSHIVE_RUNTIME_PORT"; then
     log_error "GlassHive candidate teardown left an active listener; preserving PID evidence"
     return 1
@@ -10195,12 +10296,7 @@ start_glasshive() {
     glasshive_local_ports_owned || return 1
     if [[ "$RESTART_SERVICES" == "true" ]]; then
       log_warn "GlassHive services already running - restarting"
-      stop_pid_file_scoped "$GLASSHIVE_RUNTIME_PID_FILE" "$GLASSHIVE_RUNTIME_DIR"
-      stop_pid_file_scoped "$GLASSHIVE_MCP_PID_FILE" "$GLASSHIVE_RUNTIME_DIR"
-      stop_pid_file_scoped "$GLASSHIVE_UI_PID_FILE" "$GLASSHIVE_UI_DIR"
-      kill_port_listeners "$GLASSHIVE_RUNTIME_PORT" "$GLASSHIVE_RUNTIME_DIR"
-      kill_port_listeners "$GLASSHIVE_MCP_PORT" "$GLASSHIVE_RUNTIME_DIR"
-      kill_port_listeners "$GLASSHIVE_UI_PORT" "$GLASSHIVE_UI_DIR"
+      stop_glasshive_services_listener_first
     elif glasshive_stack_ready; then
       log_success "GlassHive already running on ports $GLASSHIVE_RUNTIME_PORT/$GLASSHIVE_MCP_PORT/$GLASSHIVE_UI_PORT"
       return 0
@@ -12819,6 +12915,10 @@ if [[ "$SKIP_LIVEKIT" != "true" ]]; then
           log_error "LiveKit container is running but not responding at ${LIVEKIT_API_HOST}"
           exit 1
         fi
+        if livekit_public_node_ip_configured && ! livekit_public_mapping_matches_configured "$LIVEKIT_CONTAINER_ID"; then
+          log_error "LiveKit media route does not match the configured node IP."
+          exit 1
+        fi
       else
         if port_in_use "$LIVEKIT_HTTP_PORT"; then
           log_error "Port $LIVEKIT_HTTP_PORT is already in use; refusing to treat it as LiveKit without explicit configuration"
@@ -12855,6 +12955,9 @@ if [[ "$SKIP_LIVEKIT" != "true" ]]; then
             -p "${LIVEKIT_UDP_PORT}:${LIVEKIT_UDP_PORT}/udp"
             -v "$LIVEKIT_CFG:/etc/livekit.yaml:ro"
           )
+          if livekit_public_node_ip_configured; then
+            LIVEKIT_DOCKER_ARGS+=(--label "viventium.livekit.rtc-mode=public-local")
+          fi
           if [[ -n "${LIVEKIT_TURN_TLS_PORT:-}" ]]; then
             LIVEKIT_DOCKER_ARGS+=(-p "${LIVEKIT_TURN_TLS_PORT}:${LIVEKIT_TURN_TLS_PORT}")
           fi
@@ -12876,6 +12979,11 @@ if [[ "$SKIP_LIVEKIT" != "true" ]]; then
 
           if ! wait_for_http "$LIVEKIT_API_HOST" "LiveKit"; then
             log_error "LiveKit did not respond after startup; check Docker logs"
+            exit 1
+          fi
+          if livekit_public_node_ip_configured && ! livekit_public_mapping_matches_configured "$LIVEKIT_CONTAINER_ID"; then
+            log_error "LiveKit WAN discovery did not match the configured node IP; refusing an implicit media route replacement."
+            docker rm -f "$LIVEKIT_CONTAINER_ID" >/dev/null 2>&1 || true
             exit 1
           fi
         fi
@@ -13250,7 +13358,11 @@ if [[ "$SKIP_LIBRECHAT" != "true" ]]; then
       # frontend exit cannot strand Telegram behind a dead LibreChat API.
       STARTED_LIBRECHAT_PIDS=()
       if [[ "$LIBRECHAT_BACKEND_ALREADY_RUNNING" != "true" && "$LIBRECHAT_BACKEND_START_BLOCKED" != "true" ]]; then
-        npm run backend:dev &
+        if librechat_serves_compiled; then
+          npm run backend &
+        else
+          npm run backend:dev &
+        fi
         BACKEND_PID=$!
         STARTED_LIBRECHAT_PIDS+=("$BACKEND_PID")
         sleep 5
@@ -13259,7 +13371,12 @@ if [[ "$SKIP_LIBRECHAT" != "true" ]]; then
         librechat_dev_host="${HOST:-::}"
         (
           cd client
-          BACKEND_PORT="$LC_API_PORT" VIVENTIUM_LC_API_PORT="$LC_API_PORT" npm run dev -- --host "$librechat_dev_host" --port "$LC_FRONTEND_PORT"
+          if librechat_serves_compiled; then
+            # The bundle was prepared above; a taken port fails the start instead of moving it.
+            BACKEND_PORT="$LC_API_PORT" VIVENTIUM_LC_API_PORT="$LC_API_PORT" npm run serve:compiled -- --host "$librechat_dev_host" --port "$LC_FRONTEND_PORT" --strictPort
+          else
+            BACKEND_PORT="$LC_API_PORT" VIVENTIUM_LC_API_PORT="$LC_API_PORT" npm run dev -- --host "$librechat_dev_host" --port "$LC_FRONTEND_PORT"
+          fi
         ) &
         FRONTEND_PID=$!
         STARTED_LIBRECHAT_PIDS+=("$FRONTEND_PID")

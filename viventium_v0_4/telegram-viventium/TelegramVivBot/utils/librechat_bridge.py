@@ -53,9 +53,9 @@ try:
 except ModuleNotFoundError:
     from TelegramVivBot.utils.voice import normalize_delivery_disposition
 try:
-    from utils.orchestration import default_callback_store_path
+    from utils.orchestration import OrchestrationClient, WorkItem, default_callback_store_path
 except ModuleNotFoundError:
-    from TelegramVivBot.utils.orchestration import default_callback_store_path
+    from TelegramVivBot.utils.orchestration import OrchestrationClient, WorkItem, default_callback_store_path
 # Legacy MarkdownV2 import kept only for backward compat if needed.
 try:
     from md2tgmd.src.md2tgmd import escape as md2tgmd_escape
@@ -383,6 +383,7 @@ _ACTIVE_CORTEX_STATUSES = {"activating", "brewing"}
 _TERMINAL_CORTEX_FOLLOWUP_DECISION_RESULTS = {"suppressed", "empty", "skipped"}
 _GLASSHIVE_MCP_SERVER = "glasshive-workers-projects"
 _TERMINAL_GLASSHIVE_CALLBACK_EVENTS = {
+    "main.followup",
     "run.completed",
     "run.failed",
     "run.cancelled",
@@ -811,6 +812,11 @@ def extract_text_deltas(payload: dict[str, Any]) -> list[str]:
 def _is_file_attachment_payload(value: Any) -> bool:
     if not isinstance(value, dict):
         return False
+    # A typed unavailable native selection is a visible receipt, never a downloadable File.
+    receipt = value.get("nativeOutputFile")
+    if (isinstance(receipt, dict) and receipt.get("version") == 1
+            and receipt.get("status") == "unavailable" and isinstance(receipt.get("code"), str)):
+        return True
     file_id = value.get("file_id")
     filepath = value.get("filepath")
     if isinstance(file_id, str) and file_id.strip():
@@ -874,6 +880,8 @@ def format_memory_receipt_text(receipt: Any) -> str:
     reasons = []
     for failure in failures:
         error_type = str(failure.get("errorType") or "").strip().lower()
+        if status == "uncertain" and error_type == "writer_interrupted":
+            continue
         template = _MEMORY_RECEIPT_FAILURE_TEXT.get(error_type) or "Memory could not be saved. Try again."
         # The host derives this label from its provider registry; it never forwards a raw error label.
         provider = failure.get("providerLabel")
@@ -885,7 +893,7 @@ def format_memory_receipt_text(receipt: Any) -> str:
         saved = f" (saved: {', '.join(keys[:12])})" if keys else ""
         heading = f"⚠️ Memory only partially saved{saved}."
     elif status == "uncertain":
-        heading = "⚠️ Memory saving was interrupted."
+        heading = "⚠️ Memory saving could not be confirmed."
     if status in {"partial", "uncertain"}:
         reasons.append("Some changes may already be saved. Check Memories before retrying.")
     return "\n".join([heading, *reasons])
@@ -983,7 +991,14 @@ def _normalize_voice_route(payload: Any) -> Optional[dict[str, Any]]:
                 "provider": provider_text or None,
                 "variant": variant_text or None,
             }
+            if value.get("source") in ("saved", "default"):
+                normalized[modality]["source"] = value["source"]
 
+    if 'contextualKeyterms' in payload:
+        from .stt_env import normalize_voice_context_keyterms
+        keyterms = normalize_voice_context_keyterms(payload['contextualKeyterms'])
+        if keyterms:
+            normalized['contextualKeyterms'] = keyterms
     return normalized or None
 # === VIVENTIUM END ===
 
@@ -1014,6 +1029,23 @@ def extract_cortex_followup(payload: dict[str, Any]) -> Optional[str]:
     if isinstance(text, str) and text.strip():
         return sanitize_telegram_text(text)
     return None
+
+
+def _has_ledger_cortex_deliveries(state: Any) -> bool:
+    """Whether a parent's Cortex follow-up is owned by the durable delivery ledger."""
+    deliveries = state.get("insightDeliveries") if isinstance(state, dict) else None
+    return isinstance(deliveries, list) and len(deliveries) > 0
+
+
+def _is_ledger_cortex_followup_event(payload: Any) -> bool:
+    """Whether a live follow-up event carries a durable-ledger presentation identity."""
+    data = payload.get("data") if isinstance(payload, dict) else None
+    if not isinstance(data, dict):
+        return False
+    claim_token = data.get("presentationClaimToken")
+    return isinstance(data.get("cortexPresentation"), dict) or (
+        isinstance(claim_token, str) and bool(claim_token.strip())
+    )
 
 
 def extract_cortex_followup_delivery(payload: dict[str, Any]) -> Optional[dict[str, Any]]:
@@ -1372,6 +1404,11 @@ _STRUCTURED_STREAM_ERROR_MESSAGES = {
     ),
     "source_context_unavailable": (
         "The conversation context could not be preserved. Please retry this turn."
+    ),
+    # Occupancy is not a provider failure: the conversation was still finishing an earlier reply.
+    "conversation_session_authority_conflict": (
+        "This conversation was still finishing an earlier reply, so this message did not start. "
+        "Send it again to continue."
     ),
     "completion_error": "The model provider could not complete this request.",
 }
@@ -1951,6 +1988,7 @@ class LibreChatBridge:
         self._memory_receipt_pending: set[str] = set()
         self._memory_poll_cursors: set[str] = set()
         self._memory_poll_chat: dict[str, str] = {}
+        self._memory_poll_lifecycle: dict[str, dict[str, Any]] = {}
         self._memory_delivery_state: dict[str, str] = {}
         self._stream_text_hash_by_stream: dict[str, str] = {}
         self._followup_send_lock_by_stream: dict[str, asyncio.Lock] = {}
@@ -2563,7 +2601,7 @@ class LibreChatBridge:
         dispatch_permit = delivery.get("dispatchPermit")
         if status in {"sent", "delivery_unknown"} and isinstance(dispatch_permit, dict):
             payload["dispatchPermit"] = dispatch_permit
-        if status == "sent":
+        if status in {"sent", "delivery_unknown"}:
             message_ids = extract_telegram_delivery_message_ids(
                 delivery.get("telegramSentMessageIds")
             )
@@ -2774,6 +2812,10 @@ class LibreChatBridge:
         permit_lock = asyncio.Lock()
         authorized_side_effects = 0
         first_side_effect_authorized = asyncio.Event()
+
+        def retain_message_ids(message_ids: list[str]) -> None:
+            delivery["telegramSentMessageIds"] = extract_telegram_delivery_message_ids(message_ids)
+
         renewal_interval_s = max(
             0.01,
             min(15.0, self.glasshive_delivery_lease_ms / 3000.0),
@@ -2809,6 +2851,16 @@ class LibreChatBridge:
                 text,
                 return_receipt=True,
                 before_side_effect=renew_before_next_side_effect,
+                **({
+                    "attachments": delivery["attachments"],
+                    "on_message_ids": retain_message_ids,
+                    "telegram_user_id": str(delivery.get("telegramUserId") or ""),
+                    "message_thread_id": (
+                        int(delivery["telegramMessageThreadId"])
+                        if str(delivery.get("telegramMessageThreadId") or "").isdigit()
+                        and int(delivery["telegramMessageThreadId"]) > 0 else None
+                    ),
+                } if delivery.get("attachments") else {}),
             )
         )
 
@@ -2837,7 +2889,14 @@ class LibreChatBridge:
             )
             if renewal_task in done:
                 renewal_task.result()
-            return await send_task, permit_holder["value"]
+            result = await send_task
+            message_ids = extract_telegram_delivery_message_ids(result)
+            if message_ids:
+                delivery["telegramSentMessageIds"] = message_ids
+            # The same permit covers the receipt acknowledgement after the final file.
+            if delivery.get("attachments"):
+                await renew_before_next_side_effect()
+            return result, permit_holder["value"]
         finally:
             if not send_task.done():
                 send_task.cancel()
@@ -2879,12 +2938,38 @@ class LibreChatBridge:
         chat_id: str,
         text: str,
     ) -> bool:
-        delivery["claimAuthorizedTransportStarted"] = True
         try:
+            native_work_item = None
+            binding = delivery.get("nativeInputBinding")
+            if binding is not None:
+                if not isinstance(binding, dict) or binding.get("version") != 1:
+                    raise ValueError("native_question_binding_invalid")
+                user_id = str(delivery.get("telegramUserId") or "").strip()
+                work_ref = str(delivery.get("workRef") or "").strip()
+                if not user_id or not work_ref:
+                    raise ValueError("native_question_owner_missing")
+                snapshot = await OrchestrationClient(self.base_url, self.secret).get_snapshot(user_id)
+                native_work_item = next((item for item in snapshot.items if item.work_ref == work_ref), None)
+                pending = native_work_item.pending_native_input if native_work_item else None
+                current = {
+                    "requestId": pending.request_id, "requestFingerprint": pending.fingerprint,
+                    "runId": pending.run_id, "attemptId": pending.attempt_id, "sessionId": pending.session_id,
+                } if pending else {}
+                if snapshot.active_state != "fresh" or not pending or not pending.session_id or delivery.get("runId") != pending.run_id or any(binding.get(key) != value for key, value in current.items()):
+                    settled = await self._mark_glasshive_delivery_status(delivery, "suppressed", reason="native_question_no_longer_current")
+                    return settled is not False
+                text = pending.message or text
+            topic = str(delivery.get("telegramMessageThreadId") or "").strip()
+            if topic and (not topic.isdigit() or int(topic) <= 0):
+                raise ValueError("native_question_topic_invalid")
+            delivery["claimAuthorizedTransportStarted"] = True
             result = await self._send_followup_text(
                 chat_id,
                 text,
                 return_receipt=True,
+                message_thread_id=int(topic) if topic else None,
+                native_work_item=native_work_item,
+                telegram_user_id=str(delivery.get("telegramUserId") or ""),
             )
             sent = bool(result.get("sent")) if isinstance(result, dict) else bool(result)
             message_ids = (
@@ -2912,7 +2997,7 @@ class LibreChatBridge:
         except Exception as exc:
             await self._mark_glasshive_delivery_status(
                 delivery,
-                "delivery_unknown",
+                "delivery_unknown" if delivery.get("claimAuthorizedTransportStarted") else "failed",
                 reason=f"telegram_send_outcome_unknown:{str(exc)[:200]}",
             )
             return False
@@ -2959,6 +3044,13 @@ class LibreChatBridge:
                 if isinstance(result, dict)
                 else []
             )
+            if isinstance(result, dict) and result.get("delivery_unknown"):
+                if message_ids:
+                    delivery["telegramSentMessageIds"] = message_ids
+                await self._mark_glasshive_delivery_status(
+                    delivery, "delivery_unknown", reason="telegram_attachment_delivery_unknown"
+                )
+                return False
             if sent and message_ids:
                 delivery["telegramSentMessageIds"] = message_ids
                 settled = await self._mark_glasshive_delivery_status(delivery, "sent")
@@ -2977,6 +3069,11 @@ class LibreChatBridge:
             )
             return False
         except _GlassHiveDeliveryAuthorizationLost as exc:
+            message_ids = extract_telegram_delivery_message_ids(
+                getattr(exc, "telegram_message_ids", [])
+            )
+            if message_ids:
+                delivery["telegramSentMessageIds"] = message_ids
             if not exc.transport_started:
                 await self._release_glasshive_delivery(
                     delivery,
@@ -2996,6 +3093,11 @@ class LibreChatBridge:
             )
             return False
         except Exception as exc:
+            message_ids = extract_telegram_delivery_message_ids(
+                getattr(exc, "telegram_message_ids", [])
+            )
+            if message_ids:
+                delivery["telegramSentMessageIds"] = message_ids
             await self._mark_glasshive_delivery_status(
                 delivery,
                 "delivery_unknown",
@@ -3012,6 +3114,41 @@ class LibreChatBridge:
         if isinstance(route, dict):
             return route
         return None
+
+    # === VIVENTIUM START === Resolve the owner's current Listening choice before
+    # transcription; a completed chat's cached route is not selection authority.
+    async def get_voice_route(
+        self, *, telegram_user_id: str, telegram_chat_id: str,
+        telegram_message_thread_id=None,
+    ) -> dict[str, Any]:
+        if not telegram_user_id or not telegram_chat_id:
+            raise ValueError("Telegram voice route requires incoming identity")
+        conversation_key = (f'{telegram_chat_id}:{telegram_message_thread_id}:{telegram_user_id}'
+                            if telegram_message_thread_id else f'{telegram_chat_id}:{telegram_user_id}')
+        conversation_id = self._get_conversation_id(conversation_key) or 'new'
+        url = f"{self.base_url}/api/viventium/telegram/voice-route"
+        timeout_s = _parse_positive_float(
+            os.getenv("VIVENTIUM_TELEGRAM_VOICE_ROUTE_TIMEOUT_S", ""), 5.0,
+        )
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(timeout_s),
+            **_async_client_options_for_url(url),
+        ) as client:
+            response = await client.get(
+                url,
+                params={
+                    "telegramUserId": telegram_user_id,
+                    "telegramChatId": telegram_chat_id,
+                    "conversationId": conversation_id,
+                },
+                headers={"X-VIVENTIUM-TELEGRAM-SECRET": self.secret},
+            )
+            response.raise_for_status()
+            route = _normalize_voice_route(response.json().get("voiceRoute"))
+        if not route or route.get("stt", {}).get("source") not in ("saved", "default"):
+            raise ValueError("Telegram voice route lacks current selection provenance")
+        return route
+    # === VIVENTIUM END ===
 
     # === VIVENTIUM START ===
     # Feature: Telegram saved-voice-route parity.
@@ -3224,10 +3361,10 @@ class LibreChatBridge:
             "state": state,
             "presentation_ref": presentation_refs[-1],
             "presentation_refs": presentation_refs,
+            # A Cortex receipt names its presentation in every state, so its removal settles
+            # that presentation and never the turn's Main receipt.
             "cortex_presentation": (
-                cortex_delivery.get("cortexPresentation")
-                if state == "committed" and cortex_delivery
-                else None
+                cortex_delivery.get("cortexPresentation") if cortex_delivery else None
             ),
         }
         ack_key = self._cortex_ack_store.enqueue(payload)
@@ -3521,9 +3658,27 @@ class LibreChatBridge:
         stream_id: Optional[str] = None,
         return_receipt: bool = False,
         before_side_effect: Optional[Callable[[], Awaitable[bool]]] = None,
+        message_thread_id: Optional[int] = None,
+        native_work_item: Optional[WorkItem] = None,
+        telegram_user_id: str = "",
+        attachments: Optional[list[dict[str, Any]]] = None,
+        on_message_ids: Optional[Callable[[list[str]], None]] = None,
     ) -> Any:
         if not self.on_message_callback:
             return False
+        if attachments:
+            parameters = inspect.signature(self.on_message_callback).parameters
+            if (not any(
+                parameter.kind is inspect.Parameter.VAR_KEYWORD
+                for parameter in parameters.values()
+            ) and ("attachments" not in parameters or (
+                before_side_effect is not None and "before_side_effect" not in parameters
+            ) or (
+                on_message_ids is not None and "on_message_ids" not in parameters
+            ))):
+                raise _GlassHiveDeliveryAuthorizationLost(
+                    "telegram_attachment_callback_unavailable", transport_started=False
+                )
         # === VIVENTIUM START ===
         # Feature: Proactive follow-up voice parity.
         # Purpose: Apply existing voice preference gate + TTS for callback delivery.
@@ -3593,8 +3748,9 @@ class LibreChatBridge:
             *,
             payload_parse_mode: Optional[str],
             payload_voice_audio: Optional[bytes],
+            payload_attachments: Optional[list[dict[str, Any]]] = None,
         ) -> Any:
-            if return_receipt:
+            if return_receipt or attachments:
                 callback_parameters = inspect.signature(self.on_message_callback).parameters
                 accepts_kwargs = any(
                     parameter.kind is inspect.Parameter.VAR_KEYWORD
@@ -3606,10 +3762,29 @@ class LibreChatBridge:
                 if accepts_kwargs or "voice_audio" in callback_parameters:
                     callback_kwargs["voice_audio"] = payload_voice_audio
                 identity = self._stream_identity.get(stream_id or "", {})
+                if on_message_ids is not None:
+                    callback_kwargs["on_message_ids"] = lambda ids: on_message_ids(
+                        list(dict.fromkeys(delivered_message_ids + extract_telegram_delivery_message_ids(ids)))[:32]
+                    )
+                if payload_attachments:
+                    callback_kwargs["attachments"] = payload_attachments
+                    if accepts_kwargs or "telegram_user_id" in callback_parameters:
+                        callback_kwargs["telegram_user_id"] = (
+                            telegram_user_id or identity.get("telegram_user_id") or ""
+                        )
+                    if accepts_kwargs or "telegram_username" in callback_parameters:
+                        callback_kwargs["telegram_username"] = identity.get("telegram_username") or ""
                 raw_thread_id = str(identity.get("telegram_message_thread_id") or "").strip()
                 if raw_thread_id.isdigit() and int(raw_thread_id) > 0:
                     if accepts_kwargs or "message_thread_id" in callback_parameters:
                         callback_kwargs["message_thread_id"] = int(raw_thread_id)
+                if message_thread_id is not None and (accepts_kwargs or "message_thread_id" in callback_parameters):
+                    callback_kwargs["message_thread_id"] = message_thread_id
+                if native_work_item is not None:
+                    if not accepts_kwargs and "native_work_item" not in callback_parameters:
+                        raise RuntimeError("native_question_callback_unavailable")
+                    callback_kwargs["native_work_item"] = native_work_item
+                    callback_kwargs["telegram_user_id"] = telegram_user_id
                 if before_side_effect is not None and (
                     accepts_kwargs or "before_side_effect" in callback_parameters
                 ):
@@ -3700,6 +3875,7 @@ class LibreChatBridge:
                     payload,
                     payload_parse_mode=payload_parse_mode,
                     payload_voice_audio=voice_audio if index == last_index else None,
+                    payload_attachments=attachments if index == last_index else None,
                 )
                 if callback_result is False:
                     if return_receipt:
@@ -3708,6 +3884,14 @@ class LibreChatBridge:
                 delivered_message_ids.extend(
                     extract_telegram_delivery_message_ids(callback_result)
                 )
+                if isinstance(callback_result, dict) and callback_result.get("delivery_unknown"):
+                    if return_receipt:
+                        return {
+                            "sent": False,
+                            "delivery_unknown": True,
+                            "message_ids": list(dict.fromkeys(delivered_message_ids))[:32],
+                        }
+                    return False
             if return_receipt:
                 return {
                     "sent": True,
@@ -3715,7 +3899,12 @@ class LibreChatBridge:
                 }
             return True
             # === VIVENTIUM END ===
-        except _GlassHiveDeliveryAuthorizationLost:
+        except _GlassHiveDeliveryAuthorizationLost as exc:
+            exc.telegram_message_ids = list(dict.fromkeys(
+                delivered_message_ids + extract_telegram_delivery_message_ids(
+                    getattr(exc, "telegram_message_ids", [])
+                )
+            ))[:32]
             raise
         except _TelegramPollDeliveryStale:
             if return_receipt:
@@ -3728,6 +3917,11 @@ class LibreChatBridge:
         except Exception as exc:
             logger.warning("Failed to deliver Telegram callback: %s", exc)
             if return_receipt:
+                exc.telegram_message_ids = list(dict.fromkeys(
+                    delivered_message_ids + extract_telegram_delivery_message_ids(
+                        getattr(exc, "telegram_message_ids", [])
+                    )
+                ))[:32]
                 raise
             try:
                 await _invoke_callback(
@@ -4599,7 +4793,12 @@ class LibreChatBridge:
                     body = response.json()
                 except Exception:
                     body = {}
-                return "recorded" if body.get("acknowledged") is True else "unavailable"
+                if body.get("acknowledged") is True:
+                    self._record_memory_presentation_ack(
+                        str(logical_turn_id), normalized_revision, str(state), cortex_presentation,
+                    )
+                    return "recorded"
+                return "unavailable"
             try:
                 body = response.json()
             except Exception:
@@ -4686,17 +4885,19 @@ class LibreChatBridge:
                                 continue
 
                             if payload.get("_sse_event") == "error":
-                                err = payload.get("error")
+                                err = extract_final_error(payload)
+                                error_class = extract_final_error_class(payload)
                                 self._trace(
-                                    "LibreChatBridge stream error event: chat_id=%s stream_id=%s error=%s",
+                                    "LibreChatBridge stream error event: chat_id=%s stream_id=%s class=%s",
                                     chat_id,
                                     stream_id,
-                                    err,
+                                    error_class or "unstructured",
                                 )
                                 self._mark_stream_final(stream_id)
                                 yield _bridge_error_event(
-                                    _stream_error_message(str(err) if err else None),
+                                    _stream_error_message(err, error_class=error_class or None),
                                     speak=False,
+                                    error_class=error_class or None,
                                 )
                                 return
 
@@ -5075,7 +5276,9 @@ class LibreChatBridge:
         identity = self._stream_identity.get(stream_id, {})
         if not identity.get("telegram_user_id") or not identity.get("telegram_chat_id"):
             return
+        lifecycle = self._memory_poll_lifecycle.setdefault(stream_id, {"created_at": time.time()})
         self._cortex_ack_store.save_memory_poll(self._memory_poll_scope(), stream_id, {
+            **lifecycle,
             "chat_id": self._memory_poll_chat.get(stream_id, identity["telegram_chat_id"]),
             "message_id": self._response_message_ids.get(stream_id, ""),
             "conversation_id": self._conversation_by_stream.get(stream_id, ""),
@@ -5091,6 +5294,45 @@ class LibreChatBridge:
             "glasshive_seen": self._has_glasshive_seen(stream_id),
         })
 
+    def _finish_memory_poll(self, stream_id: str, *, mark_receipt_sent: bool = True) -> None:
+        self._cortex_ack_store.finish_memory_poll(self._memory_poll_scope(), stream_id)
+        self._memory_poll_cursors.discard(stream_id)
+        self._memory_receipt_pending.discard(stream_id)
+        self._memory_poll_chat.pop(stream_id, None)
+        self._memory_poll_lifecycle.pop(stream_id, None)
+        self._memory_delivery_state.pop(stream_id, None)
+        if mark_receipt_sent:
+            self._memory_receipt_sent.add(stream_id)
+        else:
+            self._memory_receipt_sent.discard(stream_id)
+
+    def _record_memory_presentation_ack(
+        self, logical_turn_id: str, revision: int, state: str,
+        cortex_presentation: Optional[dict[str, Any]] = None,
+    ) -> None:
+        # Only this bridge's recorded Main ACK can start the missing-admission bound.
+        # A separate Cortex addition/removal is not Main acceptance. An existing promotion
+        # of the exact parent Main message follows the same rule as Core's ACK consumer.
+        for stream_id in tuple(self._memory_poll_cursors):
+            identity = self._stream_identity.get(stream_id, {})
+            if (identity.get("logical_turn_id") != logical_turn_id
+                    or identity.get("logical_turn_revision") != revision):
+                continue
+            if cortex_presentation and (
+                state != "committed"
+                or cortex_presentation.get("messageId") != self._response_message_ids.get(stream_id)
+                or cortex_presentation.get("parentMessageId") != self._response_message_ids.get(stream_id)
+            ):
+                continue
+            if state in {"failed", "partial_removed"}:
+                self._finish_memory_poll(stream_id)
+            elif state == "committed":
+                lifecycle = self._memory_poll_lifecycle.setdefault(stream_id, {"created_at": time.time()})
+                lifecycle["presentation_state"] = "committed"
+                lifecycle.setdefault("presentation_committed_at", time.time())
+                lifecycle.pop("legacy_unconfirmed", None)
+                self._save_memory_poll(stream_id)
+
     def _resume_memory_polls(self) -> None:
         if not self.on_message_callback:
             return
@@ -5098,6 +5340,30 @@ class LibreChatBridge:
             task = self._followup_task_by_stream.get(stream_id)
             if task and not task.done():
                 continue
+            if cursor.get("missing_receipt_terminal") is True:
+                # Persisted before attempting the uncertain notice. A lost transport ACK
+                # must never cause that notice to be replayed after receiver restart.
+                self._finish_memory_poll(stream_id, mark_receipt_sent=False)
+                continue
+            created_at = cursor.get("created_at")
+            legacy = type(created_at) not in (int, float) or not math.isfinite(created_at) or created_at <= 0
+            lifecycle = {"created_at": time.time() if legacy else created_at}
+            committed_at = cursor.get("presentation_committed_at")
+            if (cursor.get("presentation_state") == "committed"
+                    and type(committed_at) in (int, float)
+                    and math.isfinite(committed_at) and committed_at > 0):
+                lifecycle.update(presentation_state="committed", presentation_committed_at=committed_at)
+            else:
+                # Receiver restart cannot establish that the missing Main ACK ever happened,
+                # including for a current-format cursor. Bound that unconfirmed lifecycle.
+                lifecycle["legacy_unconfirmed"] = True
+            if cursor.get("writer_admitted") is True:
+                lifecycle["writer_admitted"] = True
+            self._memory_poll_lifecycle[stream_id] = lifecycle
+            if any(cursor.get(key) != value for key, value in lifecycle.items()):
+                # Legacy cursors get an age anchor, never a guessed presentation ACK.
+                cursor.update(lifecycle)
+                self._cortex_ack_store.save_memory_poll(self._memory_poll_scope(), stream_id, cursor)
             if cursor.get("delivery_state") in {"sending", "delivery_unknown"}:
                 # A process can die after Telegram accepted the send. There is no Telegram
                 # idempotency token: retain uncertainty instead of blindly sending it twice.
@@ -5105,6 +5371,8 @@ class LibreChatBridge:
                     cursor["delivery_state"] = "delivery_unknown"
                     self._cortex_ack_store.save_memory_poll(self._memory_poll_scope(), stream_id, cursor)
                     logger.warning("Saved-memory receipt delivery acknowledgement is unknown: stream_id=%s", stream_id)
+                if time.time() - lifecycle["created_at"] >= max(self.followup_timeout_s, 1.0):
+                    self._finish_memory_poll(stream_id, mark_receipt_sent=False)
                 continue
             identity = cursor.get("identity")
             if not isinstance(identity, dict) or not cursor.get("message_id"):
@@ -5130,8 +5398,31 @@ class LibreChatBridge:
             self._schedule_followup_poll(stream_id=stream_id, chat_id=cursor["chat_id"])
 
     async def _poll_memory_receipt(self, stream_id: str, chat_id: str, state: Any) -> None:
+        if stream_id in self._memory_receipt_sent:
+            return
         receipt = state.get("memoryReceipt") if isinstance(state, dict) else None
-        if not isinstance(receipt, dict) or stream_id in self._memory_receipt_sent:
+        lifecycle = self._memory_poll_lifecycle.get(stream_id, {})
+        if isinstance(receipt, dict) and receipt.get("status") == "pending":
+            # Core's pending/running projection proves durable admission. It is not the
+            # pre-admission FINAL promise, and a slow writer must retain its receipt cursor.
+            lifecycle = self._memory_poll_lifecycle.setdefault(stream_id, {"created_at": time.time()})
+            lifecycle["writer_admitted"] = True
+        elif (lifecycle.get("legacy_unconfirmed") is True
+                and lifecycle.get("writer_admitted") is not True
+                and time.time() - lifecycle["created_at"] >= max(self.followup_timeout_s, 1.0)
+                and not isinstance(receipt, dict)):
+            self._finish_memory_poll(stream_id)
+            return
+        missing_receipt_expired = (
+            isinstance(state, dict) and "memoryReceipt" in state and receipt is None
+            and stream_id in self._memory_poll_cursors
+            and lifecycle.get("writer_admitted") is not True
+            and lifecycle.get("presentation_state") == "committed"
+            and time.time() - lifecycle["presentation_committed_at"] >= max(self.followup_timeout_s, 1.0)
+        )
+        if missing_receipt_expired:
+            receipt = {"status": "uncertain", "errorType": "writer_interrupted"}
+        if not isinstance(receipt, dict):
             return
         status = receipt.get("status")
         if status == "pending":
@@ -5151,6 +5442,8 @@ class LibreChatBridge:
         self._memory_receipt_pending.add(stream_id)
         self._memory_poll_cursors.add(stream_id)
         self._memory_delivery_state[stream_id] = "sending"
+        if missing_receipt_expired:
+            lifecycle["missing_receipt_terminal"] = True
         self._save_memory_poll(stream_id, chat_id)
         try:
             result = await self._send_followup_text(chat_id, text, stream_id=stream_id, return_receipt=True)
@@ -5170,6 +5463,8 @@ class LibreChatBridge:
             self._memory_receipt_pending.discard(stream_id)
             logger.warning("Saved-memory receipt delivery acknowledgement is unknown: stream_id=%s", stream_id)
         self._save_memory_poll(stream_id, chat_id)
+        if missing_receipt_expired:
+            self._finish_memory_poll(stream_id)
 
     async def _poll_for_followup(self, *, stream_id: str, chat_id: str) -> None:
         message_id = self._response_message_ids.get(stream_id, "")
@@ -5220,7 +5515,8 @@ class LibreChatBridge:
                                 callback_id = str(
                                     latest.get("callbackId") or latest.get("callback_id") or ""
                                 ).strip()
-                                if self._matches_streamed_text(stream_id, text):
+                                if (not latest.get("attachments")
+                                        and self._matches_streamed_text(stream_id, text)):
                                     delivery = await self._claim_glasshive_delivery_for_callback(latest)
                                     if delivery:
                                         await self._mark_glasshive_delivery_status(
@@ -5310,6 +5606,18 @@ class LibreChatBridge:
                                     stream_id,
                                 )
                                 self._mark_followup_sent(stream_id)
+                                self._cancel_insight_task(stream_id)
+                                if stream_id in self._memory_receipt_pending:
+                                    await asyncio.sleep(interval_s)
+                                    continue
+                                return
+                            # === VIVENTIUM END ===
+                            # === VIVENTIUM START ===
+                            # Fix: A ledger-backed Cortex follow-up is presented only by the durable
+                            # Cortex dispatcher, which authorizes Telegram before sending and
+                            # acknowledges with that authority. Sent from here it carried only a
+                            # turn-level acknowledgement, was refused, and was retracted (S0215).
+                            if _has_ledger_cortex_deliveries(state):
                                 self._cancel_insight_task(stream_id)
                                 if stream_id in self._memory_receipt_pending:
                                     await asyncio.sleep(interval_s)
@@ -5450,6 +5758,7 @@ class LibreChatBridge:
                 self._cortex_ack_store.finish_memory_poll(self._memory_poll_scope(), stream_id)
                 self._memory_poll_cursors.discard(stream_id)
                 self._memory_poll_chat.pop(stream_id, None)
+                self._memory_poll_lifecycle.pop(stream_id, None)
                 self._memory_delivery_state.pop(stream_id, None)
                 self._stream_text_hash_by_stream.pop(stream_id, None)
                 self._pending_followups.pop(stream_id, None)
@@ -5573,6 +5882,20 @@ class LibreChatBridge:
                                         self._mark_followup_sent(stream_id)
                                         self._cancel_followup_task(stream_id)
                                         followup_sent = True
+                                        return
+                                    # === VIVENTIUM END ===
+                                    # === VIVENTIUM START ===
+                                    # Fix: A ledger-backed follow-up has one Telegram presenter, the
+                                    # durable Cortex dispatcher, which authorizes before sending and
+                                    # acknowledges under its own lease. Sent from this live stream it
+                                    # carried no Telegram authority, so its acknowledgement could be
+                                    # refused and the message retracted, or race the dispatcher.
+                                    if _is_ledger_cortex_followup_event(payload):
+                                        self._trace(
+                                            "LibreChatBridge follow-up left to the durable Cortex dispatcher: chat_id=%s stream_id=%s",
+                                            chat_id,
+                                            stream_id,
+                                        )
                                         return
                                     # === VIVENTIUM END ===
                                     self._trace(
@@ -5806,6 +6129,11 @@ class LibreChatBridge:
         stream_id: Optional[str] = None,
         return_receipt: bool = False,
         before_side_effect: Optional[Callable[[], Awaitable[bool]]] = None,
+        message_thread_id: Optional[int] = None,
+        native_work_item: Optional[WorkItem] = None,
+        telegram_user_id: str = "",
+        attachments: Optional[list[dict[str, Any]]] = None,
+        on_message_ids: Optional[Callable[[list[str]], None]] = None,
     ) -> Any:
         if not text:
             return False
@@ -5838,5 +6166,10 @@ class LibreChatBridge:
             stream_id=stream_id,
             return_receipt=return_receipt,
             before_side_effect=before_side_effect,
+            message_thread_id=message_thread_id,
+            native_work_item=native_work_item,
+            telegram_user_id=telegram_user_id,
+            attachments=attachments,
+            on_message_ids=on_message_ids,
         )
     # === VIVENTIUM END ===

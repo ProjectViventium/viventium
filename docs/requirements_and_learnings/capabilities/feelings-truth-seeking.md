@@ -48,6 +48,8 @@
 - Feeling state is private, owner-scoped, versioned, bounded, and persistent. Runtime owns numeric
   state and decay; the model owns appraisal and expression.
 - No runtime keyword, phrase, or event-specific branch maps content to an emotion.
+- Request-pinned Feeling receipts use the full SHA-256 snapshot identity. Producers and durable
+  insight delivery share that contract; a shortened display hash must never become receipt authority.
 
 ### Parallel Work propagation
 

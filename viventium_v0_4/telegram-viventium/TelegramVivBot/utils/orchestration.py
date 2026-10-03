@@ -7,6 +7,8 @@ module only validates Core responses and stores short-lived opaque Telegram call
 from __future__ import annotations
 
 import asyncio
+import json
+import math
 import os
 import re
 import sqlite3
@@ -16,6 +18,7 @@ import time
 import urllib.parse
 import uuid
 from dataclasses import dataclass, replace
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
@@ -70,6 +73,29 @@ class OrchestrationLinkRequired(OrchestrationError):
 
 
 @dataclass(frozen=True)
+class NativePermission:
+    request_id: str
+    fingerprint: str
+    run_id: str
+    attempt_id: str
+    message: str
+    expires_at: float
+    options: tuple[tuple[str, str], ...]
+    session_id: str = ""
+
+    def response(self, option_id: str) -> dict[str, Any]:
+        if option_id not in {value for value, _ in self.options}:
+            raise ValueError("Native permission option is not offered")
+        return {
+            "version": 1,
+            "requestId": self.request_id,
+            "requestFingerprint": self.fingerprint,
+            "action": "accept",
+            "content": {"optionId": option_id},
+        }
+
+
+@dataclass(frozen=True)
 class WorkItem:
     work_ref: str
     title: str
@@ -77,6 +103,7 @@ class WorkItem:
     status_summary: str
     updated_at: str
     actions: tuple[str, ...]
+    pending_native_input: Optional[NativePermission] = None
 
 
 @dataclass(frozen=True)
@@ -84,6 +111,7 @@ class ActionReceipt:
     accepted: bool
     action: str
     message: str
+    confirmation_pending: bool = False
 
 
 @dataclass(frozen=True)
@@ -130,6 +158,10 @@ def _parse_work_item(raw: Any) -> Optional[WorkItem]:
             action = _safe_text(value, limit=32).lower()
             if action in ALLOWED_ACTIONS and action not in actions:
                 actions.append(action)
+    raw_pending = raw.get("pendingNativeInput")
+    pending = _parse_native_permission(raw_pending)
+    if raw_pending is not None:
+        actions = [action for action in actions if action == "stop"]
     return WorkItem(
         work_ref=work_ref,
         title=_safe_text(raw.get("title"), limit=240) or "Untitled work",
@@ -137,7 +169,58 @@ def _parse_work_item(raw: Any) -> Optional[WorkItem]:
         status_summary=_safe_text(raw.get("statusSummary"), limit=1000),
         updated_at=_safe_text(raw.get("updatedAt"), limit=64),
         actions=tuple(actions),
+        pending_native_input=pending,
     )
+
+
+def _parse_native_permission(raw: Any) -> Optional[NativePermission]:
+    if not isinstance(raw, dict) or raw.get("version") != 1 or raw.get("kind") != "permission" or raw.get("mode") != "form":
+        return None
+    required = [raw.get(key) for key in ("requestId", "requestFingerprint", "runId", "attemptId")]
+    if any(not isinstance(value, str) or not value or len(value) > 160 for value in required):
+        return None
+    try:
+        expiry = datetime.fromisoformat(str(raw.get("expiresAt") or "").replace("Z", "+00:00"))
+        if expiry.tzinfo is None:
+            return None
+        expires_at = expiry.timestamp()
+    except (ValueError, OverflowError, OSError):
+        return None
+    if not math.isfinite(expires_at) or expires_at <= time.time():
+        return None
+    schema = raw.get("requestedSchema")
+    if not isinstance(schema, dict) or schema.get("type") != "object" or schema.get("required") != ["optionId"]:
+        return None
+    properties = schema.get("properties")
+    option = properties.get("optionId") if isinstance(properties, dict) else None
+    if not isinstance(option, dict) or option.get("type") != "string":
+        return None
+    values, labels = option.get("enum"), option.get("enumNames")
+    if not isinstance(values, list) or not 1 <= len(values) <= 16:
+        return None
+    if any(not isinstance(value, str) or not value or len(value) > 160 for value in values) or len(set(values)) != len(values):
+        return None
+    if not isinstance(labels, list) or len(labels) != len(values):
+        return None
+    if any(not isinstance(label, str) or not label.strip() or len(label) > 240 for label in labels):
+        return None
+    return NativePermission(*required, _safe_text(raw.get("message"), limit=2000), expires_at,
+                            tuple(zip(values, labels)), _safe_text(raw.get("sessionId"), limit=160))
+
+
+def _validate_native_response(raw: Any) -> dict[str, Any]:
+    if not isinstance(raw, dict) or set(raw) != {"version", "requestId", "requestFingerprint", "action", "content"}:
+        raise ValueError("Native input response is invalid")
+    if raw.get("version") != 1 or raw.get("action") != "accept":
+        raise ValueError("Native input response is invalid")
+    if any(not isinstance(raw.get(key), str) or not raw[key] or len(raw[key]) > 160 for key in ("requestId", "requestFingerprint")):
+        raise ValueError("Native input identity is invalid")
+    content = raw.get("content")
+    if not isinstance(content, dict) or set(content) != {"optionId"}:
+        raise ValueError("Native input option is invalid")
+    if not isinstance(content["optionId"], str) or not content["optionId"] or len(content["optionId"]) > 160:
+        raise ValueError("Native input option is invalid")
+    return json.loads(json.dumps(raw))
 
 
 def parse_snapshot(
@@ -269,6 +352,8 @@ def format_active_work(snapshot: OrchestrationSnapshot) -> str:
             lines.extend(["", f"{index}. {item.title}", _state_label(item.state)])
             if item.status_summary:
                 lines.append(item.status_summary)
+            if item.pending_native_input and item.pending_native_input.message:
+                lines.append(item.pending_native_input.message)
 
     if snapshot.has_more:
         lines.append("")
@@ -374,6 +459,7 @@ class OrchestrationClient:
         action: str,
         *,
         instruction: Optional[str] = None,
+        native_input: Optional[dict[str, Any]] = None,
         operation_id: str,
     ) -> OrchestrationSnapshot:
         user_id = self._require_user_id(telegram_user_id)
@@ -398,6 +484,10 @@ class OrchestrationClient:
         }
         if normalized_instruction:
             body["instruction"] = normalized_instruction
+        if native_input is not None:
+            if normalized_action != "resume" or normalized_instruction:
+                raise ValueError("Native input requires its own owner response")
+            body["nativeInput"] = _validate_native_response(native_input)
         encoded_ref = urllib.parse.quote(normalized_work_ref, safe="")
         action_result = await self._request_json(
             "POST",
@@ -407,12 +497,15 @@ class OrchestrationClient:
         snapshot = await self.get_snapshot(user_id)
         status = _safe_text(action_result.get("status"), limit=64) or "accepted"
         label = normalized_action.replace("_", " ").capitalize()
+        pending = action_result.get("confirmationPending") is True or status == "pending"
+        accepted = not pending and (native_input is None or status in {"accepted", "already_accepted"})
         return replace(
             snapshot,
             action_receipt=ActionReceipt(
-                accepted=True,
+                accepted=accepted,
                 action=normalized_action,
-                message=f"{label} {status}.",
+                message=("Harness confirmation is pending. Retry the same choice." if pending else f"{label} {status}."),
+                confirmation_pending=pending,
             ),
         )
 
@@ -499,6 +592,7 @@ class CallbackTarget:
     token: str
     work_ref: str
     action: str
+    native_input: Optional[dict[str, Any]] = None
 
 
 @dataclass(frozen=True)
@@ -603,6 +697,8 @@ class CallbackCapabilityStore:
                 ("receipt", "TEXT"),
                 ("completed_at", "REAL"),
                 ("instruction", "TEXT"),
+                ("native_input", "TEXT"),
+                ("message_thread_id", "TEXT NOT NULL DEFAULT ''"),
             ):
                 if name not in existing_columns:
                     connection.execute(
@@ -643,10 +739,20 @@ class CallbackCapabilityStore:
         telegram_user_id: str,
         chat_id: str,
         targets: Iterable[tuple[str, str]],
+        message_thread_id: str = "",
+        native_input: Optional[dict[str, Any]] = None,
+        expires_at: Optional[float] = None,
         now: Optional[float] = None,
     ) -> tuple[CallbackTarget, ...]:
         user_id, normalized_chat_id = self._scope(telegram_user_id, chat_id)
-        expires_at = (time.time() if now is None else float(now)) + self.ttl_s
+        current = time.time() if now is None else float(now)
+        expiry = current + self.ttl_s
+        if expires_at is not None:
+            expiry = min(expiry, float(expires_at))
+            if not math.isfinite(expiry) or expiry <= current:
+                return ()
+        normalized_topic = _safe_text(str(message_thread_id or ""), limit=64)
+        native_body = _validate_native_response(native_input) if native_input is not None else None
         issued: list[CallbackTarget] = []
         with self._connect() as connection:
             for work_ref, action in targets:
@@ -656,22 +762,26 @@ class CallbackCapabilityStore:
                     raise ValueError("Unsupported work action")
                 if not WORK_REF_PATTERN.fullmatch(normalized_ref):
                     raise ValueError("workRef is invalid")
+                if native_body is not None and normalized_action != "resume":
+                    raise ValueError("Native input requires resume owner control")
                 token = str(uuid.uuid4())
                 connection.execute(
                     """
                     INSERT INTO telegram_work_callbacks
-                      (token, telegram_user_id, chat_id, work_ref, action, expires_at)
-                    VALUES (?, ?, ?, ?, ?, ?)
+                      (token, telegram_user_id, chat_id, work_ref, action, expires_at, message_thread_id, native_input)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     """,
-                    (token, user_id, normalized_chat_id, normalized_ref, normalized_action, expires_at),
+                    (token, user_id, normalized_chat_id, normalized_ref, normalized_action, expiry, normalized_topic,
+                     json.dumps(native_body, sort_keys=True) if native_body is not None else None),
                 )
-                issued.append(CallbackTarget(token, normalized_ref, normalized_action))
+                issued.append(CallbackTarget(token, normalized_ref, normalized_action, native_body))
             connection.execute(
                 """
                 DELETE FROM telegram_work_callbacks
-                WHERE expires_at < ? OR action_state = 'succeeded'
+                WHERE (expires_at < ? AND NOT (native_input IS NOT NULL AND operation_id IS NOT NULL
+                  AND action_state IN ('executing', 'uncertain') AND expires_at >= ?)) OR action_state = 'succeeded'
                 """,
-                (time.time() if now is None else float(now),),
+                (current, current - self.ttl_s),
             )
         return tuple(issued)
 
@@ -799,6 +909,7 @@ class CallbackCapabilityStore:
         *,
         telegram_user_id: str,
         chat_id: str,
+        message_thread_id: str = "",
         now: Optional[float] = None,
     ) -> Optional[ActionReservation]:
         user_id, normalized_chat_id = self._scope(telegram_user_id, chat_id)
@@ -808,12 +919,14 @@ class CallbackCapabilityStore:
             connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(
                 """
-                SELECT token, work_ref, action, action_state, operation_id, lease_until
+                SELECT token, work_ref, action, action_state, operation_id, lease_until, native_input
                 FROM telegram_work_callbacks
                 WHERE token = ? AND telegram_user_id = ? AND chat_id = ?
-                  AND prompt_message_id IS NULL AND expires_at >= ?
+                  AND prompt_message_id IS NULL AND message_thread_id = ?
+                  AND (expires_at >= ? OR (native_input IS NOT NULL AND operation_id IS NOT NULL
+                    AND action_state IN ('executing', 'uncertain') AND expires_at >= ?))
                 """,
-                (normalized_token, user_id, normalized_chat_id, current),
+                (normalized_token, user_id, normalized_chat_id, str(message_thread_id or ""), current, current - self.ttl_s),
             ).fetchone()
             if row is None:
                 return None
@@ -835,7 +948,8 @@ class CallbackCapabilityStore:
                 (operation_id, current + self.action_lease_s, row["token"]),
             )
         return ActionReservation(
-            CallbackTarget(row["token"], row["work_ref"], row["action"]),
+            CallbackTarget(row["token"], row["work_ref"], row["action"],
+                _validate_native_response(json.loads(row["native_input"])) if row["native_input"] else None),
             operation_id,
             replay,
         )
@@ -876,6 +990,7 @@ class CallbackCapabilityStore:
         *,
         telegram_user_id: str,
         chat_id: str,
+        message_thread_id: str = "",
         now: Optional[float] = None,
     ) -> Optional[CallbackTarget]:
         """Compatibility helper for non-network confirmation/setup call sites."""
@@ -884,6 +999,7 @@ class CallbackCapabilityStore:
             token,
             telegram_user_id=telegram_user_id,
             chat_id=chat_id,
+            message_thread_id=message_thread_id,
             now=now,
         )
         if reservation is None:

@@ -72,13 +72,13 @@ def test_feelings_defaults_match_owner_approved_contract() -> None:
     assert settings["agent_scope"] == "all_agents"
     assert settings["reaction"]["activation_mode"] == "always"
     assert settings["reaction"]["provider"] == "openai"
-    assert settings["reaction"]["model"] == "gpt-5.6-terra"
+    assert settings["reaction"]["model"] == "gpt-6.1-sol"
     assert settings["reaction"]["use_responses_api"] is True
-    assert settings["reaction"]["reasoning_effort"] == "none"
+    assert settings["reaction"]["reasoning_effort"] == "high"
     assert settings["reaction"]["service_tier"] == "priority"
     assert settings["reaction"]["timeout_ms"] == 15000
     assert settings["reaction"]["fallback_provider"] == "anthropic"
-    assert settings["reaction"]["fallback_model"] == "claude-opus-5"
+    assert settings["reaction"]["fallback_model"] == "claude-opus-5-5"
     assert list(settings["bands"]) == [
         "energy",
         "mood",
@@ -242,6 +242,16 @@ def test_feelings_rejects_invalid_reaction_modes_and_route_fields() -> None:
             config_compiler.resolve_feelings_settings(
                 {"runtime": {"feelings": {"reaction": reaction}}}
             )
+
+
+def test_feelings_accepts_explicit_native_model_without_changing_direct_defaults() -> None:
+    reaction = {"provider": "glasshive-harness", "model": "codex-cli:gpt-6.1-sol",
+                "reasoning_effort": "high", "fallback_provider": "none"}
+    settings = config_compiler.resolve_feelings_settings({"runtime": {"feelings": {"reaction": reaction}}})
+    assert all(settings["reaction"][key] == value for key, value in reaction.items())
+    with pytest.raises(SystemExit, match="declared harness model"):
+        config_compiler.resolve_feelings_settings({"runtime": {"feelings": {"reaction": {
+            **reaction, "model": "unsupported-native-model"}}}})
 
 
 def test_feelings_schema_and_examples_publish_the_contract() -> None:

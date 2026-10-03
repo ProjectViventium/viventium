@@ -53,6 +53,10 @@ logs, exports, caches, backups, or broad local files as a substitute for an unav
 resource. Its result is nonblocking and reaches the user only through Phase B when the existing
 value gate finds new, worthwhile evidence; otherwise it is silent.
 
+Voice follow-up source sealing, audible presentation receipts and duplicate suppression are owned
+by [Voice Calls](06_Voice_Calls.md#live-response-streaming). A saved recall result alone does not prove
+that its Voice presentation settled.
+
 Acceptance requires both an older-evidence positive case and successful-empty/degraded negative
 controls in [`qa/anti-sycophancy/`](../../qa/anti-sycophancy/README.md). An every-turn execution
 receipt alone does not prove useful recall.
@@ -827,6 +831,10 @@ Conversation recall is a host-owned `file_search` capability. LibreChat resolves
 user/Agent resource set once; in-process providers receive the normal tool instance, while
 GlassHive conversation providers receive the same scoped capability through the signed broker MCP.
 GlassHive never reads LibreChat Mongo directly and never receives provider credentials.
+Claude native read-only runs receive exact permission rules for the Core-authorized host reads,
+derived from Core's tool annotations. Existing explicit denials remain intact; write tools and
+ungranted tools receive no automatic rule. Deferred mission bundles retain these rules when the
+exact run grant is admitted. The signed broker scope remains authoritative.
 
 Resolution must use canonical `primeFiles` semantics: union IDs from staged `.files` and Agent
 knowledge-base `.file_ids`, then read current unexpired File rows and apply the existing owner/shared

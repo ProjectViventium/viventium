@@ -134,7 +134,9 @@ current status owner. Do not load the whole documentation tree for a narrow chan
   on stale installed artifacts.
 - Do not edit App Support files, database leftovers, or generated outputs and call that a product
   fix.
-- Prompt or model-behavior changes must use Prompt Workbench and follow
+- The approved QA mode applies to this entire file and linked procedures. Evidence types are selected
+  by the changed behavior; no edit automatically requires all tests, model evals and real-user QA.
+- Within that mode, prompt or model-behavior changes use Prompt Workbench and follow
   `docs/requirements_and_learnings/49_Prompt_Architecture_and_Token_Efficiency.md`. Inspect the
   owning source and source -> rendered/compiled -> live lineage; run the same sanitized positive,
   negative, and adjacent cases old versus proposed on the exact configured models before real-user
@@ -147,9 +149,10 @@ current status owner. Do not load the whole documentation tree for a narrow chan
 
 ## Verification Contract
 
-- Automated tests prove deterministic code and contracts; Prompt Workbench exact-model evals
-  provide evidence for model behavior; real-user QA proves the delivered experience. These are
-  separate gates; none substitutes for another.
+- Select evidence by the approved QA mode and changed contract: automated tests for deterministic
+  behavior, exact-model evals for changed model behavior, real-user QA for affected user paths.
+  These evidence types are not an automatic three-gate sequence. Reuse valid proof; when a type
+  is required, another type cannot substitute for it.
 - **QA scope:** the latest explicit user or approved-plan mode bounds every check in this section:
   `skip` (run none, report `NOT RUN`), `critical-path` (only what the requested result depends on),
   `blast-radius` (default: changed behavior and its confirmed consumers) or `full` (explicit request

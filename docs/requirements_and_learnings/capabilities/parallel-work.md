@@ -43,6 +43,9 @@ need no parallel-mode toggle, special delegation prompt, extra configuration, or
 
 - **PW-018:** Main remains responsive. Interactive replies and exact controls take priority over
   background execution and callback synthesis.
+  A fresh owner-scoped policy or configuration rejection returns unavailable authority immediately.
+  Transient startup, transport, proxy health, and capacity states retain the bounded readiness wait;
+  stale snapshots require refresh. The periodic watcher continues to recover changed configuration.
 
 ### Truthful status
 
@@ -100,6 +103,9 @@ need no parallel-mode toggle, special delegation prompt, extra configuration, or
   Queued work consumes no execution lease until capacity is available; CLI probes remain fenced.
   Waiting state shows available and required capacity, shortage or reservation, age, blocker,
   next retry, and timeout; it never promises unverified future delivery.
+- Native conversation capacity retry logs retain the typed Main or Cortex role, hashed stream
+  scope, retry delay, and elapsed wait in the rendered message. They contain no prompt, credential,
+  or raw owner, conversation, or stream identity.
 
 ### Exactly once
 

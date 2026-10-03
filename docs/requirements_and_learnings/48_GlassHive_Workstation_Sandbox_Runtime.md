@@ -1537,9 +1537,22 @@ LibreChat internals.
   uses native workspace-write/no-approval policy and Claude uses `acceptEdits` plus a fail-closed
   native sandbox. Both may read required runtime/system dependencies outside the selected folder;
   full access remains the default as explicitly approved for the canonical Main.
+  Grok maps the authenticated conversation access value to native ACP session permission mode
+  on new and resumed runs: full access requests always-approve; other conversation access requests
+  ask rather than inheriting ambient approval defaults. Native deny rules, PreToolUse hooks and
+  managed-policy restrictions remain enforced by Grok. This mapping grants no new access and does
+  not change mission permissions or claim a workspace sandbox. See
+  [Grok permissions](https://docs.x.ai/build/features/permissions) and the
+  [Voice approval controls](capabilities/voice.md).
 - Completion usage is taken from native harness events when supplied. If the native CLI omits usage,
   GlassHive returns a clearly marked estimate; streaming and non-streaming responses must agree on
   the final visible text and usage provenance.
+- Model-selected files retain the emitting native agent's verified provider and origin through
+  consultant transfers. Import uses that publisher's authorized route; missing or changed transport
+  identity is unavailable and cannot borrow Main's route. Source, signed-link and byte checks remain.
+  Imported message files without a tool-call identity render once through the normal Web attachment
+  UI, including saved Voice transcripts. Tool-owned files keep their existing placement. Local File
+  attachments use the authenticated download route; unavailable receipts show no download action.
 - Native Codex and Claude conversation output currently becomes user-visible at completed assistant
   event granularity, not token granularity. Agent Builder control therefore buffers a private
   bounded envelope and does not expose answer-content deltas while graph control is active.
@@ -1739,24 +1752,23 @@ as hard acceptance gates and pause before risky or irreversible external actions
 
 ## GlassHive Standard QA
 
-GlassHive Standard QA is the mandatory acceptance procedure for any non-trivial GlassHive change,
-enterprise deployment change, MCP wiring change, worker profile change, workspace UX change,
-artifact/upload/download change, auth/security change, lifecycle/cost-control change, or release-
-readiness claim. When the user says "do the GlassHive Standard QA", this section and
-`qa/glasshive_standard_qa/` are the source of truth.
+GlassHive Standard QA is a selectable case bank under the latest approved QA mode. A non-trivial
+change does not automatically select the whole bank. When the user requests Standard QA, use this
+section and `qa/glasshive_standard_qa/` within the requested scope and trace each selected case to
+the changed behavior.
 
-The procedure must run across the three real user entrypoints unless a surface is explicitly marked
-`BLOCKED` with the missing prerequisite:
+Select the affected real entrypoints below. An unselected surface is `NOT RUN`; only an unavailable
+required surface is `BLOCKED` with its exact prerequisite:
 
 - direct GlassHive UI
 - direct GlassHive MCP usage, tested before LibreChat when MCP behavior is involved
 - LibreChat config-only MCP integration, with no LibreChat application-code modification
 
-Supporting evidence is required from logs, DB/state, code, docs, generated config, and artifacts,
-but it cannot replace real user-path evidence. Every case result must be marked `PASS`, `FAIL`,
-`PARTIAL`, or `BLOCKED`.
+Use logs, state, code, docs, config or artifacts only where needed to prove selected cases. Supporting
+evidence cannot replace required user-path evidence. Record `PASS`, `FAIL`, `PARTIAL`, `BLOCKED` or
+`NOT RUN`; do not reopen still-valid evidence solely because another change was made.
 
-### Mandatory Cases
+### Selectable Cases
 
 1. Web search/current fact: ask a simple current-events question such as who won a named game on a
    specific recent date. The result must distinguish successful-empty from provider unavailable,
@@ -1818,8 +1830,8 @@ but it cannot replace real user-path evidence. Every case result must be marked 
    environments as `Workspaces`, show the launcher title `Define the project once. Watch the
 worker deliver.`, and keep documented launch fields (`Describe your project`, optional
    `Success Criteria`, optional `Context`) instead of drifting to ad hoc fields.
-9. Review-only second opinion: after Codex completes its own evidence-backed assessment, run a
-   Claude/ClaudeViv review-only pass with sanitized evidence and ask it to classify claims as
+9. Review-only second opinion: when explicitly requested or needed to resolve a consequential
+   uncertainty, use sanitized evidence and ask the reviewer to classify claims as
    `confirmed`, `partially_confirmed`, `cannot_confirm`, or `contradicted`.
 10. Failure recovery and continuation: run a synthetic long-form worker task that fails through a
     structured provider/runtime failure, verify `workspace_status` and `workspace_wait` return the

@@ -20,6 +20,15 @@ if str(TELEGRAM_ROOT) not in sys.path:
 from TelegramVivBot.aient.aient.utils.scripts import get_audio_message
 
 
+@pytest.fixture(autouse=True)
+def valid_decoded_audio(monkeypatch):
+    # These dispatch/lock tests use synthetic bytes; decoder fidelity has its own causal bank.
+    import numpy as np
+    from TelegramVivBot.utils import telegram_audio
+    monkeypatch.setattr(telegram_audio, 'decode_audio_bytes',
+                        lambda *_: telegram_audio.DecodedTelegramAudio(np.array([0.1], dtype=np.float32)))
+
+
 class StubAssemblyAI:
     def __init__(self):
         self.last_bytes = None
@@ -113,6 +122,8 @@ def test_get_audio_message_local_whisper_lazy_init(monkeypatch):
     assert text == "hello local"
     assert calls["count"] == 1
     assert len(stub.calls) == 1
+    import numpy as np
+    assert isinstance(stub.calls[0]['file_path'], np.ndarray)
 
 
 def test_get_audio_message_local_whisper_treats_auto_as_autodetect(monkeypatch):

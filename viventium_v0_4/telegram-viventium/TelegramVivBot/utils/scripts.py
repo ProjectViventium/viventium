@@ -28,6 +28,8 @@ import asyncio
 import logging
 import time
 import base64
+import json
+import uuid
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -59,8 +61,8 @@ EXTENSION_TO_MIME = {
     ".py": "text/x-python",
     ".js": "text/javascript",
     ".json": "application/json",
-    ".yml": "text/yaml",
-    ".yaml": "text/yaml",
+    ".yml": "application/x-yaml",
+    ".yaml": "application/x-yaml",
     ".csv": "text/csv",
     ".html": "text/html",
     ".xml": "application/xml",
@@ -109,6 +111,19 @@ class TelegramTranscriptionResult:
     error_text: Optional[str] = None
     error_code: Optional[str] = None
 
+    def __post_init__(self):
+        if self.error_text is not None and self.error_code:
+            self.error_text = TelegramTranscriptionNotice(self.error_text, self.error_code)
+
+
+class TelegramTranscriptionNotice(str):
+    """Keep typed preparation status through the existing string notice contract."""
+
+    def __new__(cls, text: str, error_code: str):
+        value = super().__new__(cls, text)
+        value.error_code = error_code
+        return value
+
 def detect_mime_from_path(file_path: str) -> str:
     """Detect MIME type from file path extension."""
     if not file_path:
@@ -138,6 +153,16 @@ def _transcription_runtime_error(
     media_label: str,
     error_code: str = "transcription_failed",
 ) -> TelegramTranscriptionResult:
+    if error_code == "no_speech":
+        return TelegramTranscriptionResult(
+            error_text=f"No speech was detected in this {media_label}.",
+            error_code=error_code,
+        )
+    if error_code == "speech_presence_unavailable":
+        return TelegramTranscriptionResult(
+            error_text="Voice transcription is unavailable because speech detection could not start. Text messages still work.",
+            error_code=error_code,
+        )
     if error_code == "media_decoder_unavailable":
         return TelegramTranscriptionResult(
             error_text=(
@@ -146,6 +171,18 @@ def _transcription_runtime_error(
             ),
             error_code=error_code,
         )
+    provider_notices = {
+        "provider_auth_missing": "The selected Listening provider has no usable authentication. Connect it in Viventium, then retry.",
+        "provider_unauthorized": "The selected Listening provider rejected its authentication. Check its connection in Viventium, then retry.",
+        "provider_access_denied": "The selected Listening provider denied access. Check its connection in Viventium, then retry.",
+        "provider_rate_limited": "The selected Listening provider rate-limited this request. Please try again shortly.",
+        "provider_temporarily_unavailable": "The selected Listening provider is temporarily unavailable. Please try again shortly.",
+        "provider_request_rejected": f"The selected Listening provider rejected this {media_label}. Check the Listening selection, then retry.",
+        "unsupported_configuration": "The selected Listening configuration is unsupported. Choose a supported Listening provider and model, then retry.",
+        "timeout": f"Timed out transcribing this {media_label}. Please retry.",
+    }
+    if error_code in provider_notices:
+        return TelegramTranscriptionResult(error_text=provider_notices[error_code], error_code=error_code)
     return TelegramTranscriptionResult(
         error_text=f"Temporarily unable to transcribe this {media_label}. Please retry.",
         error_code=error_code,
@@ -243,15 +280,18 @@ async def download_telegram_file_result(
             logger.warning(f"Downloaded file too large: {len(file_bytes)} > {max_bytes} bytes")
             return TelegramDownloadResult(error_code="file_too_large")
 
-        mime_type = (mime_type_hint or "").strip()
-        if not mime_type:
-            mime_type = detect_mime_from_path(file_path)
-        if mime_type == "application/octet-stream" and filename_hint:
-            mime_type = detect_mime_from_path(filename_hint)
-
         filename = (filename_hint or "").strip()
         if not filename:
             filename = file_path.rsplit("/", 1)[-1] if "/" in file_path else file_path
+
+        # Telegram clients can supply noncanonical MIME hints for known files.
+        # Keep the existing extension mapping authoritative for those filenames.
+        filename_mime = detect_mime_from_path(filename)
+        mime_type = (mime_type_hint or "").strip()
+        if filename_mime != "application/octet-stream":
+            mime_type = filename_mime
+        elif not mime_type:
+            mime_type = detect_mime_from_path(file_path)
 
         logger.debug(f"Downloaded file: {filename}, {len(file_bytes)} bytes, {mime_type}")
         return TelegramDownloadResult(
@@ -344,10 +384,15 @@ def _is_local_whisper_mode() -> bool:
     return whisper_mode in ("local", "pywhispercpp")
 
 
-def _get_audio_message_sync(file_bytes: bytes):
-    from aient.aient.utils.scripts import get_audio_message
+def _get_audio_message_sync(file_bytes: bytes, *, decoded_audio=None):
+    try:
+        from ..aient.aient.utils.scripts import get_audio_message
+    except ImportError:
+        if __package__ != 'utils':
+            raise
+        from aient.aient.utils.scripts import get_audio_message
 
-    return get_audio_message(file_bytes)
+    return get_audio_message(file_bytes, decoded_audio=decoded_audio, raise_errors=True)
 
 
 def _local_stt_lock() -> asyncio.Lock:
@@ -359,31 +404,152 @@ def _local_stt_lock() -> asyncio.Lock:
     return _LOCAL_STT_LOCK
 
 
-async def _transcribe_audio_bytes(file_bytes: bytes, timeout_s: int):
+async def _transcribe_audio_bytes(
+    file_bytes: bytes, timeout_s: int, *, decoded_audio=None, selection=None, timing=None,
+):
+    # === VIVENTIUM START === Exact source silence cannot become authored transcript text.
+    from .telegram_audio import decode_audio_bytes, TelegramAudioDecodeError
+    if decoded_audio is None:
+        decode_started = time.monotonic()
+        decoded_audio = await asyncio.wait_for(
+            asyncio.to_thread(decode_audio_bytes, file_bytes, timeout_s), timeout=timeout_s,
+        )
+        if timing:
+            timing("decode", (time.monotonic() - decode_started) * 1000,
+                   {"no_speech": decoded_audio.no_speech, "samples": int(decoded_audio.pcm.size)})
+    if decoded_audio.no_speech:
+        raise TelegramAudioDecodeError('no_speech')
+    from .telegram_vad import has_speech, SpeechPresenceError
+    from .telegram_stt import TelegramSTTError
+    presence_started = time.monotonic()
+    try:
+        speech_present = await asyncio.wait_for(has_speech(decoded_audio.pcm), timeout=timeout_s)
+    except (ImportError, SpeechPresenceError) as error:
+        raise TelegramSTTError('speech_presence_unavailable') from error
+    if timing:
+        timing('speech_presence', (time.monotonic() - presence_started) * 1000,
+               {'speech_present': speech_present})
+    if not speech_present:
+        raise TelegramAudioDecodeError('no_speech')
+    # === VIVENTIUM END ===
+    if selection is not None:
+        from .telegram_stt import transcribe_selected_audio
+        return await transcribe_selected_audio(
+            file_bytes, decoded_audio, selection, timeout_s, timing=timing,
+        )
     if _is_local_whisper_mode():
         logger.info("Waiting for local Whisper transcription lock")
         async with _local_stt_lock():
             logger.info("Acquired local Whisper transcription lock")
             return await asyncio.wait_for(
-                asyncio.to_thread(_get_audio_message_sync, file_bytes),
+                asyncio.to_thread(_get_audio_message_sync, file_bytes, decoded_audio=decoded_audio),
                 timeout=timeout_s,
             )
     return await asyncio.wait_for(
-        asyncio.to_thread(_get_audio_message_sync, file_bytes),
+        asyncio.to_thread(_get_audio_message_sync, file_bytes, decoded_audio=decoded_audio),
         timeout=timeout_s,
     )
 
-async def get_voice(file_id: str, context) -> TelegramTranscriptionResult:
+def resolve_telegram_listening_selection(route: dict, *, environment=None) -> dict:
+    """Saved Listening wins; explicit Telegram defaults retain their config authority."""
+    environment = os.environ if environment is None else environment
+    selected = route.get("stt") if isinstance(route, dict) else None
+    if not isinstance(selected, dict) or selected.get("source") not in ("saved", "default"):
+        raise ValueError("Current Listening selection provenance is missing")
+    from .stt_env import normalize_voice_context_keyterms
+    keyterms = normalize_voice_context_keyterms(route.get('contextualKeyterms'))
+    context_options = {'contextualKeyterms': keyterms} if keyterms else {}
+    if selected["source"] == "saved":
+        return {"provider": selected.get("provider"), "variant": selected.get("variant"),
+                **context_options}
+    provider = environment.get("VIVENTIUM_TELEGRAM_STT_PROVIDER", "").strip()
+    if provider in ("whisper_local", "local"):
+        provider = "pywhispercpp"
+    if not provider or (
+        environment.get("VIVENTIUM_TELEGRAM_STT_PROVIDER_SOURCE") == "inherited"
+        and provider == selected.get("provider")
+    ):
+        return {"provider": selected.get("provider"), "variant": selected.get("variant"),
+                **context_options}
+    default_models = {
+        "openai": environment.get("VIVENTIUM_OPENAI_STT_MODEL") or "gpt-4o-mini-transcribe",
+        "assemblyai": environment.get("VIVENTIUM_ASSEMBLYAI_STT_MODEL") or "u3-rt-pro",
+        "pywhispercpp": environment.get("VIVENTIUM_STT_MODEL")
+        or environment.get("LOCAL_WHISPER_MODEL_NAME")
+        or config._default_local_whisper_model_name(),
+    }
+    return {"provider": provider, "variant": default_models.get(provider), **context_options}
+
+
+async def _download_transcription_input(
+    file_id, context, *, filename, mime_type, telegram_user_id=None, telegram_chat_id=None,
+    telegram_message_thread_id=None, timing=None,
+):
+    """Read current owner selection alongside the independent media download."""
+    route_task = None
+    if telegram_user_id is not None or telegram_chat_id is not None:
+        bridge = getattr(config, "ChatGPTbot", None)
+        if not bridge or not hasattr(bridge, "get_voice_route"):
+            from .telegram_stt import TelegramSTTError
+            raise TelegramSTTError("voice_route_unavailable")
+        async def current_route():
+            started = time.monotonic()
+            try:
+                return await bridge.get_voice_route(
+                    telegram_user_id=str(telegram_user_id or ""),
+                    telegram_chat_id=str(telegram_chat_id or ""),
+                    **({'telegram_message_thread_id': telegram_message_thread_id}
+                       if telegram_message_thread_id else {}),
+                )
+            finally:
+                if timing:
+                    timing("voice_route", (time.monotonic() - started) * 1000, {})
+        route_task = asyncio.create_task(current_route())
+    try:
+        download_started = time.monotonic()
+        download = await download_telegram_file_result(
+            context.bot, file_id,
+            max_bytes=getattr(config, "VIVENTIUM_TELEGRAM_MAX_FILE_SIZE", 10_485_760),
+            filename_hint=filename, mime_type_hint=mime_type,
+        )
+        if timing:
+            timing("download", (time.monotonic() - download_started) * 1000,
+                   {"bytes": len(download.file_bytes or b""), "error_code": download.error_code})
+        if not download.file_bytes:
+            return download, None
+        if route_task is None:
+            return download, None
+        try:
+            route = await route_task
+            selection = resolve_telegram_listening_selection(route)
+            if timing:
+                timing("selection", 0, selection | {"source": route["stt"]["source"]})
+            return download, selection
+        except Exception as error:
+            from .telegram_stt import TelegramSTTError
+            raise TelegramSTTError("voice_route_unavailable") from error
+    finally:
+        if route_task is not None:
+            if not route_task.done():
+                route_task.cancel()
+            await asyncio.gather(route_task, return_exceptions=True)
+
+
+async def get_voice(
+    file_id: str, context, *, telegram_user_id=None, telegram_chat_id=None,
+    telegram_message_thread_id=None,
+) -> TelegramTranscriptionResult:
     """Transcribe a voice message using Whisper (local or API)"""
     logger.info(f"Starting voice transcription for file_id={file_id}")
 
+    from .telegram_audio import TelegramAudioDecodeError
+    timing = _telegram_stt_timing()
     try:
-        download_result = await download_telegram_file_result(
-            context.bot,
-            file_id,
-            max_bytes=getattr(config, "VIVENTIUM_TELEGRAM_MAX_FILE_SIZE", 10_485_760),
-            filename_hint="voice.ogg",
-            mime_type_hint="audio/ogg",
+        download_result, selection = await _download_transcription_input(
+            file_id, context, filename="voice.ogg", mime_type="audio/ogg",
+            telegram_user_id=telegram_user_id, telegram_chat_id=telegram_chat_id,
+            telegram_message_thread_id=telegram_message_thread_id,
+            timing=timing,
         )
         if not download_result.file_bytes:
             return _transcription_download_error("voice note", download_result.error_code)
@@ -391,7 +557,7 @@ async def get_voice(file_id: str, context) -> TelegramTranscriptionResult:
         file_bytes = download_result.file_bytes
         logger.debug(f"Downloaded {len(file_bytes)} bytes from Telegram")
 
-        if _is_local_whisper_mode() and not ffmpeg_runtime_ready():
+        if selection is None and _is_local_whisper_mode() and not ffmpeg_runtime_ready():
             logger.error("ffmpeg is not runnable for local Telegram voice transcription")
             return _transcription_runtime_error("voice note", "media_decoder_unavailable")
 
@@ -401,7 +567,9 @@ async def get_voice(file_id: str, context) -> TelegramTranscriptionResult:
         timeout_s = int(os.environ.get("LOCAL_WHISPER_TIMEOUT_S", "120"))
         start_ts = time.monotonic()
         try:
-            transcript = await _transcribe_audio_bytes(file_bytes, timeout_s)
+            transcript = await _transcribe_audio_bytes(
+                file_bytes, timeout_s, selection=selection, timing=timing,
+            )
         except asyncio.TimeoutError:
             logger.exception("Transcription timed out after %ss", timeout_s)
             return _transcription_runtime_error("voice note", "timeout")
@@ -410,16 +578,25 @@ async def get_voice(file_id: str, context) -> TelegramTranscriptionResult:
             logger.info("Transcription elapsed=%.2fs bytes=%d", elapsed, len(file_bytes))
 
         transcript_text = str(transcript or "").strip()
-        if not transcript_text or transcript_text.startswith("error:"):
-            logger.warning(f"Transcription failed or returned error: {transcript_text}")
-            return _transcription_runtime_error("voice note")
-
+        if not transcript_text:
+            return TelegramTranscriptionResult(
+                error_code='no_speech', error_text='No speech was detected in this voice note.',
+            )
         logger.info(f"Transcription successful, length: {len(transcript_text)} characters")
         return TelegramTranscriptionResult(text=transcript_text)
 
+    # === VIVENTIUM START === Keep no speech separate from invalid audio or provider failure.
+    except TelegramAudioDecodeError as error:
+        if error.code == 'no_speech':
+            return TelegramTranscriptionResult(
+                error_code='no_speech', error_text='No speech was detected in this voice note.',
+            )
+        return _transcription_runtime_error('voice note', error.code)
+    # === VIVENTIUM END ===
     except Exception as e:
-        logger.exception(f"Exception during voice transcription: {e}")
-        return _transcription_runtime_error("voice note")
+        logger.error("Voice transcription failed code=%s error=%s",
+                     getattr(e, "code", "transcription_failed"), type(e).__name__)
+        return _transcription_runtime_error("voice note", getattr(e, "code", "transcription_failed"))
 
 import os
 import sys
@@ -427,65 +604,69 @@ import tempfile
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
+def _telegram_stt_timing():
+    trace_id = uuid.uuid4().hex
+    def record(stage, elapsed_ms, metadata=None):
+        logger.info("[VIVENTIUM][telegram-stt] %s", json.dumps({
+            "trace_id": trace_id, "stage": stage, "elapsed_ms": round(elapsed_ms, 3),
+            **(metadata or {}),
+        }, sort_keys=True))
+    return record
+
+
 async def transcribe_video(
     file_id: str,
     context,
     *,
     media_label: str = "video note",
+    telegram_user_id=None,
+    telegram_chat_id=None,
+    telegram_message_thread_id=None,
 ) -> TelegramTranscriptionResult:
-    from aient.aient.utils.scripts import extract_audio_from_video
+    from .telegram_audio import TelegramAudioDecodeError
+    timing = _telegram_stt_timing()
 
     try:
-        if not ffmpeg_runtime_ready():
-            logger.error("ffmpeg is not runnable for Telegram %s transcription", media_label)
+        if telegram_user_id is None and telegram_chat_id is None and not ffmpeg_runtime_ready():
             return _transcription_runtime_error(media_label, "media_decoder_unavailable")
-
-        download_result = await download_telegram_file_result(
-            context.bot,
-            file_id,
-            max_bytes=getattr(config, "VIVENTIUM_TELEGRAM_MAX_FILE_SIZE", 10_485_760),
-            filename_hint="video.mp4",
-            mime_type_hint="video/mp4",
+        download_result, selection = await _download_transcription_input(
+            file_id, context, filename="video.mp4", mime_type="video/mp4",
+            telegram_user_id=telegram_user_id, telegram_chat_id=telegram_chat_id,
+            telegram_message_thread_id=telegram_message_thread_id,
+            timing=timing,
         )
         if not download_result.file_bytes:
             return _transcription_download_error(media_label, download_result.error_code)
 
-        file_bytes = download_result.file_bytes
-
-        file_ext = os.path.splitext(download_result.filename or "")[1]
-        if not file_ext:
-            file_ext = ".mp4"
-
-        with tempfile.NamedTemporaryFile(suffix=file_ext, delete=False) as temp_video:
-            temp_video.write(file_bytes)
-            temp_video_path = temp_video.name
-
-        audio_path = None
-        try:
-            audio_path = extract_audio_from_video(temp_video_path)
-            with open(audio_path, "rb") as audio_file:
-                audio_bytes = audio_file.read()
-            timeout_s = int(os.environ.get("LOCAL_WHISPER_TIMEOUT_S", "120"))
-            transcript = await _transcribe_audio_bytes(audio_bytes, timeout_s)
-        finally:
-            if audio_path and os.path.exists(audio_path):
-                os.remove(audio_path)
-            if os.path.exists(temp_video_path):
-                os.remove(temp_video_path)
+        # === VIVENTIUM START === Decode original video audio once, without an intermediate MP3.
+        timeout_s = int(os.environ.get("LOCAL_WHISPER_TIMEOUT_S", "120"))
+        transcript = await _transcribe_audio_bytes(
+            download_result.file_bytes, timeout_s, selection=selection, timing=timing,
+        )
+        # === VIVENTIUM END ===
 
         transcript_text = str(transcript or "").strip()
-        if not transcript_text or transcript_text.startswith("error:"):
-            logger.warning(f"Video transcription failed or returned error: {transcript_text}")
-            return _transcription_runtime_error(media_label)
-
+        if not transcript_text:
+            return TelegramTranscriptionResult(
+                error_code='no_speech', error_text=f'No speech was detected in this {media_label}.',
+            )
         return TelegramTranscriptionResult(text=transcript_text)
 
+    # === VIVENTIUM START === The same exact no-speech contract owns video-note audio.
+    except TelegramAudioDecodeError as error:
+        if error.code == 'no_speech':
+            return TelegramTranscriptionResult(
+                error_code='no_speech', error_text=f'No speech was detected in this {media_label}.',
+            )
+        return _transcription_runtime_error(media_label, error.code)
+    # === VIVENTIUM END ===
     except asyncio.TimeoutError:
         logger.exception("%s transcription timed out", media_label)
         return _transcription_runtime_error(media_label, "timeout")
     except Exception as e:
-        logger.exception(f"Exception during {media_label} transcription: {e}")
-        return _transcription_runtime_error(media_label)
+        logger.error("Media transcription failed code=%s error=%s",
+                     getattr(e, "code", "transcription_failed"), type(e).__name__)
+        return _transcription_runtime_error(media_label, getattr(e, "code", "transcription_failed"))
 
 async def GetMesage(update_message, context, voice=True, *, override_user_id: Optional[str] = None):
     from aient.aient.utils.scripts import Document_extract
@@ -590,13 +771,21 @@ async def GetMesage(update_message, context, voice=True, *, override_user_id: Op
         voice_result = None
         if update_message.voice:
             voice_file_id = update_message.voice.file_id
-            voice_result = await get_voice(voice_file_id, context)
+            voice_result = await get_voice(
+                voice_file_id, context,
+                **({"telegram_user_id": user_id, "telegram_chat_id": chatid,
+                    **({'telegram_message_thread_id': message_thread_id} if message_thread_id else {})}
+                   if VIVENTIUM_TELEGRAM_BACKEND == "librechat" else {}),
+            )
         elif update_message.video_note:
             video_note_file_id = update_message.video_note.file_id
             voice_result = await transcribe_video(
                 video_note_file_id,
                 context,
                 media_label="video note",
+                **({"telegram_user_id": user_id, "telegram_chat_id": chatid,
+                    **({'telegram_message_thread_id': message_thread_id} if message_thread_id else {})}
+                   if VIVENTIUM_TELEGRAM_BACKEND == "librechat" else {}),
             )
         if voice_result is not None:
             voice_text = voice_result.text
@@ -604,6 +793,10 @@ async def GetMesage(update_message, context, voice=True, *, override_user_id: Op
 
             if update_message.caption:
                 message = rawtext = CutNICK(update_message.caption, update_message)
+                # === VIVENTIUM START === A silent track does not erase the authored caption.
+                if voice_result.error_code == 'no_speech':
+                    voice_error_text = None
+                # === VIVENTIUM END ===
 
     if update_message.document:
         file = update_message.document
@@ -699,6 +892,8 @@ async def GetMesage(update_message, context, voice=True, *, override_user_id: Op
                     error_code=download_result.error_code,
                     media_kind="video",
                 ))
+        if update_message.caption:
+            message = rawtext = CutNICK(update_message.caption, update_message)
     # === VIVENTIUM END ===
 
     # === VIVENTIUM START ===

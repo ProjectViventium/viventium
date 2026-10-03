@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import sys
 from pathlib import Path
 
@@ -351,8 +352,12 @@ def test_get_message_returns_attachment_capture_errors(monkeypatch):
     ]
 
 
-def test_get_message_treats_regular_video_as_file_attachment(monkeypatch):
+@pytest.mark.parametrize("caption", [None, "Read the video label and spoken numbers.", "  Exact caption: café 17 + 23\nSecond line.  "])
+def test_get_message_treats_regular_video_as_file_attachment(monkeypatch, caption):
     message = _DummyMessage(chat_id="chat-1", user_id="user-1")
+    message.chat = types.SimpleNamespace(type="private")
+    message.caption = caption
+    monkeypatch.setattr(sys.modules["config"], "NICK", None, raising=False)
     message.video = types.SimpleNamespace(
         file_id="video-file",
         file_name="clip.mp4",
@@ -364,6 +369,7 @@ def test_get_message_treats_regular_video_as_file_attachment(monkeypatch):
             file_bytes=b"video-bytes",
             filename="clip.mp4",
             mime_type="video/mp4",
+            file_path="videos/source.mp4",
         )
 
     async def _fail_transcribe_video(*_args, **_kwargs):
@@ -382,7 +388,29 @@ def test_get_message_treats_regular_video_as_file_attachment(monkeypatch):
 
     assert result[-1] == []
     assert result[-2][0]["filename"] == "clip.mp4"
+    assert result[-2][0]["mime_type"] == "video/mp4"
+    assert base64.b64decode(result[-2][0]["data"]) == b"video-bytes"
+    assert result[0] == caption
+    assert result[1] == caption
+    assert result[8] == "videos/source.mp4"
     assert result[11] is None
+
+
+def test_get_message_preserves_video_caption_when_capture_disabled(monkeypatch):
+    message = _DummyMessage(chat_id="chat-1", user_id="user-1")
+    message.chat = types.SimpleNamespace(type="private")
+    message.caption = "Keep this exact video caption."
+    message.video = types.SimpleNamespace(file_id="video-file", file_name="clip.mp4", mime_type="video/mp4")
+    monkeypatch.setattr(sys.modules["config"], "NICK", None, raising=False)
+    monkeypatch.setattr(scripts.config, "VIVENTIUM_TELEGRAM_FILE_UPLOAD_ENABLED", False, raising=False)
+
+    async def no_download(*_args, **_kwargs):
+        raise AssertionError("disabled attachment capture must not download video")
+
+    monkeypatch.setattr(scripts, "download_telegram_file_result", no_download)
+    result = asyncio.run(scripts.GetMesage(message, context=None, voice=False))
+    assert result[:2] == (message.caption, message.caption)
+    assert result[-2:] == ([], [])
 
 
 def test_get_voice_surfaces_oversize_as_structured_error(monkeypatch):
@@ -456,12 +484,19 @@ def test_get_voice_surfaces_broken_local_decoder_as_structured_error(monkeypatch
 
 
 def test_get_voice_serializes_local_whisper_transcription(monkeypatch):
+    from TelegramVivBot.utils import telegram_audio
+    from TelegramVivBot.utils import telegram_vad
+    import numpy as np
+    monkeypatch.setattr(telegram_audio, "decode_audio_bytes", lambda *_: telegram_audio.DecodedTelegramAudio(np.array([0.1], dtype=np.float32)))
+    async def admitted_speech(_pcm):
+        return True
+    monkeypatch.setattr(telegram_vad, "has_speech", admitted_speech)
     async def _fake_download(*_args, **_kwargs):
         return scripts.TelegramDownloadResult(file_bytes=b"voice-bytes")
 
     active = {"count": 0, "max": 0}
 
-    def _fake_transcribe(_file_bytes):
+    def _fake_transcribe(_file_bytes, **_kwargs):
         active["count"] += 1
         active["max"] = max(active["max"], active["count"])
         import time
@@ -509,6 +544,13 @@ def test_transcribe_video_surfaces_broken_decoder_as_structured_error(monkeypatc
 
 
 def test_transcribe_video_uses_serialized_transcription_path(monkeypatch, tmp_path):
+    from TelegramVivBot.utils import telegram_audio
+    from TelegramVivBot.utils import telegram_vad
+    import numpy as np
+    monkeypatch.setattr(telegram_audio, "decode_audio_bytes", lambda *_: telegram_audio.DecodedTelegramAudio(np.array([0.1], dtype=np.float32)))
+    async def admitted_speech(_pcm):
+        return True
+    monkeypatch.setattr(telegram_vad, "has_speech", admitted_speech)
     async def _fake_download(*_args, **_kwargs):
         return scripts.TelegramDownloadResult(file_bytes=b"video-bytes", filename="clip.mp4")
 
@@ -519,7 +561,7 @@ def test_transcribe_video_uses_serialized_transcription_path(monkeypatch, tmp_pa
 
     active = {"count": 0, "max": 0}
 
-    def _fake_transcribe(_file_bytes):
+    def _fake_transcribe(_file_bytes, **_kwargs):
         active["count"] += 1
         active["max"] = max(active["max"], active["count"])
         import time

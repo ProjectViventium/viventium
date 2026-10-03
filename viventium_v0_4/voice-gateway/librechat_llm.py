@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import heapq
 import json
+import hashlib
 import logging
 import math
 import os
@@ -52,6 +53,7 @@ from sse import (
     sanitize_voice_delta_text,
     sanitize_voice_followup_text,
     sanitize_voice_tts_text,
+    safe_voice_tts_prefix_end,
     strip_voice_control_tags,
     VoiceControlDisplayFilter,
 )
@@ -299,8 +301,9 @@ class _NoResponseStreamGuard:
 # Purpose:
 # - TTS providers may synthesize tiny streamed deltas as their own utterances.
 # - A single-character first delta like "I" can sound like "EEE"; a later standalone "." can sound
-#   like "dot". Buffer phrase-sized chunks and drop orphan punctuation that arrives after the
-#   phrase it was meant to punctuate has already been sent to TTS.
+#   like "dot". Keep the phrase policy for unknown/non-native renderers. An actual native
+#   streaming renderer can receive safe word prefixes while one word remains for punctuation;
+#   its continuous segment is not flushed per word. Orphan punctuation is still dropped.
 class _VoiceTtsDeltaBuffer:
     _CLOSING_PUNCTUATION = "\"'”’)]}"
     _NUMBERED_PREFIX_RE = re.compile(r"^(?P<leading>\s*)(?P<marker>\d+[.)])\s+")
@@ -311,6 +314,7 @@ class _VoiceTtsDeltaBuffer:
         min_first_chars: int = 10,
         max_chars: int = 48,
         sanitize_chunk: Optional[Callable[[str], str]] = None,
+        native_streaming: Optional[Callable[[], bool]] = None,
     ) -> None:
         self._buffer = ""
         self._has_emitted = False
@@ -318,6 +322,7 @@ class _VoiceTtsDeltaBuffer:
         self._min_first_chars = max(1, min_first_chars)
         self._max_chars = max(self._min_first_chars, max_chars)
         self._sanitize_chunk = sanitize_chunk
+        self._native_streaming = native_streaming
 
     @staticmethod
     def _is_orphan_punctuation(text: str) -> bool:
@@ -439,6 +444,38 @@ class _VoiceTtsDeltaBuffer:
             return None
         if self._has_emitted and self._is_orphan_punctuation(stripped):
             return None
+        if self._native_streaming is not None and self._native_streaming():
+            # The native renderer keeps one continuous segment. Keep the final word here for
+            # delayed punctuation, but do not add an independent phrase-length wait.
+            candidates: list[int] = []
+            beyond_target = False
+            for match in re.finditer(r"\s+", text):
+                index = match.end()
+                if index >= len(text):
+                    continue
+                if index > self._max_chars:
+                    if candidates or beyond_target:
+                        break
+                    beyond_target = True
+                prefix = text[:index]
+                tail = strip_voice_control_tags(text[index:])
+                if not any(char.isalnum() for char in tail):
+                    continue
+                if safe_voice_tts_prefix_end(prefix) < len(prefix):
+                    continue
+                if self._ends_inside_non_speech_artifact(prefix.rstrip()):
+                    continue
+                terminal = self._terminal_candidate(strip_voice_control_tags(prefix))
+                if terminal.endswith(".") and terminal[-2:-1].isdigit():
+                    continue
+                if self._has_short_unclosed_quote_tail(prefix):
+                    continue
+                candidates.append(index)
+            if candidates:
+                preferred = [index for index in candidates if index <= self._max_chars]
+                return max(preferred) if preferred else min(candidates)
+            if safe_voice_tts_prefix_end(text) < len(text):
+                return None
         if self._ends_inside_non_speech_artifact(text):
             return None
         if len(stripped) >= 4 and self._ends_with_terminal(stripped):
@@ -755,6 +792,9 @@ def _extract_last_user_speaker_context(chat_ctx: ChatContext) -> dict[str, Any]:
             "ownerParticipantIdentity": str(context.get("ownerParticipantIdentity") or ""),
             "ownerTrackSid": str(context.get("ownerTrackSid") or ""),
             "utteranceEndAtMs": context.get("utteranceEndAtMs"),
+            "utteranceEndClock": context.get("utteranceEndClock"),
+            "utteranceEndOffsetMs": context.get("utteranceEndOffsetMs"),
+            "utteranceEndTimingSource": context.get("utteranceEndTimingSource"),
         }
         engagement = context.get("voiceEngagement")
         if isinstance(engagement, dict):
@@ -763,12 +803,38 @@ def _extract_last_user_speaker_context(chat_ctx: ChatContext) -> dict[str, Any]:
     return {}
 
 
-def _extract_final_response_text(final_event: dict[str, Any]) -> str:
-    """
-    Extract assistant text from a LibreChat `final: true` SSE payload.
-    """
+def _final_response_audio_is_skipped(final_event: dict[str, Any]) -> bool:
     resp = final_event.get("responseMessage")
     if not isinstance(resp, dict):
+        return False
+    # Core owns the model's delivery decision. A text-only result remains in
+    # chat, but must not be reintroduced by the terminal audio fallback.
+    metadata = resp.get("metadata")
+    viventium = metadata.get("viventium") if isinstance(metadata, dict) else None
+    disposition = (
+        viventium.get("deliveryDisposition") if isinstance(viventium, dict) else None
+    )
+    return (
+        isinstance(disposition, dict)
+        and disposition.get("version") == 1
+        and disposition.get("audio") == "skip"
+    )
+
+
+def _stream_delta_audio_is_skipped(event: dict[str, Any]) -> bool:
+    data = event.get("data")
+    delta = data.get("delta") if isinstance(data, dict) else None
+    if event.get("event") != "on_message_delta" or not isinstance(delta, dict):
+        return False
+    # The host carries the model control on the same delta as its text. Read it
+    # before forwarding any text to TTS; chat persistence stays with the host.
+    return _final_response_audio_is_skipped({"responseMessage": delta})
+
+
+def _extract_final_response_text(final_event: dict[str, Any]) -> str:
+    """Extract assistant text from a LibreChat `final: true` SSE payload."""
+    resp = final_event.get("responseMessage")
+    if not isinstance(resp, dict) or _final_response_audio_is_skipped(final_event):
         return ""
     content = resp.get("content")
     if not isinstance(content, list):
@@ -791,20 +857,16 @@ def _extract_final_response_text(final_event: dict[str, Any]) -> str:
                 "[LibreChatLLM] Final response contained error content; using voice-safe fallback (%s)",
                 _summarize_error_for_log(msg or "voice generation error"),
             )
-            return sanitize_voice_followup_text(_select_stream_error_message(msg or "voice generation error"))
+            return sanitize_voice_followup_text(_select_stream_error_message(msg or "voice generation error", code=part.get("error_class")))
         if part.get("type") != "text":
             continue
         t = part.get("text")
         if isinstance(t, str) and t:
-            parts.append(
-                sanitize_voice_followup_text(t, preserve_leading_space=len(parts) > 0)
-            )
+            parts.append(sanitize_voice_delta_text(t))
         elif isinstance(t, dict):
             v = t.get("value")
             if isinstance(v, str) and v:
-                parts.append(
-                    sanitize_voice_followup_text(v, preserve_leading_space=len(parts) > 0)
-                )
+                parts.append(sanitize_voice_delta_text(v))
     return "".join(parts).strip()
 
 
@@ -812,6 +874,9 @@ def _extract_resume_state_text(event: dict[str, Any]) -> str:
     """Return the raw persisted assistant text used to dedupe a resumed SSE stream."""
     resume_state = event.get("resumeState")
     if not isinstance(resume_state, dict):
+        return ""
+    final_event = resume_state.get("finalEvent")
+    if isinstance(final_event, dict) and _final_response_audio_is_skipped(final_event):
         return ""
     content = resume_state.get("aggregatedContent")
     if not isinstance(content, list):
@@ -874,7 +939,17 @@ def _get_voice_sse_retry_config() -> tuple[int, float]:
     return max_retries, retry_delay_s
 
 
-def _select_stream_error_message(error: Optional[str]) -> str:
+def _select_stream_error_message(error: Optional[str], *, code: Optional[str] = None) -> str:
+    native_stop_messages = {
+        "native_input_declined": "You declined that action. It was stopped.",
+        "native_input_expired": "The approval request expired, so that action was stopped. Please retry.",
+        "native_input_cancelled": "That action was cancelled.",
+        "native_turn_cancelled": "That action was cancelled.",
+        "source_context_unavailable": "The conversation context could not be preserved. Please retry this turn.",
+        "provider_response_failed": "The model returned no usable answer. Please retry this turn.",
+    }
+    if isinstance(code, str) and code in native_stop_messages:
+        return native_stop_messages[code]
     tool_message = os.getenv("VIVENTIUM_VOICE_TOOL_ERROR_MESSAGE", "").strip()
     stream_message = os.getenv("VIVENTIUM_VOICE_STREAM_ERROR_MESSAGE", "").strip()
     auth_message = os.getenv("VIVENTIUM_VOICE_AUTH_ERROR_MESSAGE", "").strip()
@@ -1230,11 +1305,19 @@ def _extract_voice_task_event(
     needs_input = task_event.get("needsInput")
     if needs_input is not None and (
         not isinstance(needs_input, dict)
-        or set(needs_input) - {"prompt", "inputType"}
-        or not _bounded_string(needs_input.get("prompt"), maximum=300, required=True)
+        or set(needs_input) - {"prompt", "inputType", "choices"}
+        or not _bounded_string(needs_input.get("prompt"), maximum=8000, required=True)
         or needs_input.get("inputType") not in {"text", "choice", "confirm"}
     ):
         return None
+    if needs_input is not None and "choices" in needs_input:
+        choices = needs_input["choices"]
+        if (not isinstance(choices, list) or not 1 <= len(choices) <= 16
+                or any(not isinstance(choice, dict) or set(choice) != {"value", "label"}
+                       or not _bounded_string(choice.get("value"), maximum=160, required=True)
+                       or not _bounded_string(choice.get("label"), maximum=160, required=True)
+                       for choice in choices)):
+            return None
     error = task_event.get("error")
     if error is not None and (
         not isinstance(error, dict)
@@ -1318,7 +1401,9 @@ def format_insights_for_direct_speech(insights: list[dict[str, Any]]) -> str:
 
 
 def _should_log_latency() -> bool:
-    return (os.getenv("VIVENTIUM_VOICE_LOG_LATENCY", "") or "").strip() == "1"
+    return (os.getenv("VIVENTIUM_VOICE_LOG_LATENCY", "") or "").strip().lower() in {
+        "1", "true", "yes", "y", "on",
+    }
 
 
 def _voice_abort_timeout_s() -> float:
@@ -1406,6 +1491,7 @@ class LibreChatLLM(llm.LLM):
         voice_mode: bool = True,
         voice_provider: str = "cartesia",
         voice_accepts_inline_controls: bool = False,
+        voice_native_streaming: bool = False,
         followup_handler: Optional[Callable[..., None]] = None,
         task_event_handler: Optional[Callable[[dict[str, Any]], Any]] = None,
         task_cancel_handler: Optional[Callable[[str, dict[str, Any]], Any]] = None,
@@ -1420,6 +1506,7 @@ class LibreChatLLM(llm.LLM):
         self._voice_mode = bool(voice_mode)
         self._voice_provider = voice_provider or "cartesia"
         self._voice_accepts_inline_controls = bool(voice_accepts_inline_controls)
+        self._voice_native_streaming = bool(voice_native_streaming)
         self._followup_handler = followup_handler
         self._task_event_handler = task_event_handler
         self._task_cancel_handler = task_cancel_handler
@@ -1443,6 +1530,8 @@ class LibreChatLLM(llm.LLM):
         self._task_id_by_trace_id: dict[str, str] = {}
         self._stream_id_by_trace_id: dict[str, str] = {}
         self._presentation_by_trace_id: dict[str, _VoicePresentation] = {}
+        self._speech_handles_by_trace_id: dict[str, Any] = {}
+        self._speech_output_trace_ids: set[str] = set()
         self._pending_production_trace_stages: set[tuple[str, str]] = set()
         self._sent_production_trace_stages: dict[tuple[str, str], None] = {}
         self._production_trace_tasks: set[asyncio.Task[bool]] = set()
@@ -1514,8 +1603,13 @@ class LibreChatLLM(llm.LLM):
             presentation_ref = str(getattr(handle, "id", "") or "").strip()
             if presentation_ref:
                 presentation.presentation_ref = presentation_ref[:160]
+            self._speech_handles_by_trace_id[presentation.trace_id] = handle
 
             def _on_done(completed: Any, *, bound=presentation) -> None:
+                self._speech_handles_by_trace_id.pop(bound.trace_id, None)
+                trace = self._traces_by_id.get(bound.trace_id)
+                if trace is not None:
+                    self.schedule_trace_terminal(trace)
                 task = asyncio.create_task(self._ack_completed_presentation(bound, completed))
                 self._delivery_ack_tasks.add(task)
                 task.add_done_callback(self._delivery_ack_tasks.discard)
@@ -1552,6 +1646,7 @@ class LibreChatLLM(llm.LLM):
         speech_handle: Any,
     ) -> bool:
         if not presentation.logical_turn_id or presentation.revision is None:
+            logger.warning("[VoiceDelivery] state=unavailable code=core_context_missing")
             return False
         interrupted = bool(getattr(speech_handle, "interrupted", False))
         if interrupted or not self._presentation_coordinator.is_current(presentation):
@@ -1568,8 +1663,15 @@ class LibreChatLLM(llm.LLM):
             state=state,
             presentation_ref=presentation.presentation_ref,
         )
-        if state == "committed" and accepted:
-            self.record_completed_trace_stage(presentation.trace_id, "audio.completed")
+        call_hash = hashlib.sha256(("call_session\0" + self._auth.call_session_id).encode()).hexdigest()
+        turn_hash = hashlib.sha256(("logical_turn\0" + presentation.logical_turn_id).encode()).hexdigest()
+        logger.info("[VoiceDelivery] state=%s accepted=%s callHash=%s turnHash=%s revision=%s",
+                    state, accepted, call_hash, turn_hash, presentation.revision)
+        if accepted:
+            stage = "audio.completed" if state == "committed" else (
+                "audio.interrupted" if interrupted else "audio.superseded"
+            ) if state == "partial_removed" else "audio.failed"
+            self.record_completed_trace_stage(presentation.trace_id, stage)
         return accepted
 
     async def ack_delivery(
@@ -1665,6 +1767,8 @@ class LibreChatLLM(llm.LLM):
             self._task_id_by_trace_id.pop(expired_id, None)
             self._stream_id_by_trace_id.pop(expired_id, None)
             self._presentation_by_trace_id.pop(expired_id, None)
+            self._speech_handles_by_trace_id.pop(expired_id, None)
+            self._speech_output_trace_ids.discard(expired_id)
 
     def bind_trace_task(self, correlation_id: str, task_id: str) -> None:
         if correlation_id in self._traces_by_id and (task_id or "").strip():
@@ -1692,14 +1796,14 @@ class LibreChatLLM(llm.LLM):
         self._task_id_by_trace_id[trace_id] = task_ref
         self._presentation_by_trace_id[trace_id] = presentation
 
-    async def _post_production_trace(self, correlation_id: str, stage: str) -> bool:
+    async def _post_production_trace(self, correlation_id: str, stage: str, *, presentation_ref: str = "") -> bool:
         trace_id = str(correlation_id or "").strip()[:160]
         normalized_stage = str(stage or "").strip()
         presentation = self._presentation_by_trace_id.get(trace_id)
         stream_id = self._stream_id_by_trace_id.get(trace_id, "")
         task_id = self._task_id_by_trace_id.get(trace_id, "")
         if (
-            normalized_stage not in {"tts.completed", "audio.completed"}
+            normalized_stage not in {"tts.completed", "audio.completed", "audio.failed", "audio.interrupted", "audio.superseded"}
             or trace_id not in self._traces_by_id
             or presentation is None
             or presentation.trace_id != trace_id
@@ -1711,6 +1815,17 @@ class LibreChatLLM(llm.LLM):
             or not self._auth.job_id
             or not self._auth.worker_id
         ):
+            logger.warning(
+                '[VoiceTrace] stage=%s accepted=false code=trace_context_missing traceBound=%s '
+                'presentationBound=%s coreBound=%s streamBound=%s taskBound=%s leaseBound=%s',
+                normalized_stage if normalized_stage in {
+                    'tts.completed', 'audio.completed', 'audio.failed', 'audio.interrupted', 'audio.superseded'
+                } else 'invalid',
+                trace_id in self._traces_by_id,
+                presentation is not None,
+                bool(presentation and presentation.logical_turn_id and presentation.revision is not None),
+                bool(stream_id), bool(task_id), bool(self._auth.job_id and self._auth.worker_id),
+            )
             return False
         headers = {
             "Content-Type": "application/json",
@@ -1725,7 +1840,7 @@ class LibreChatLLM(llm.LLM):
             "turnId": presentation.logical_turn_id,
             "streamId": stream_id,
             "taskId": task_id,
-            "presentationRef": presentation.presentation_ref,
+            "presentationRef": str(presentation_ref or presentation.presentation_ref).strip()[:160],
             "stage": normalized_stage,
         }
         url = f"{self._origin}/api/viventium/voice/trace/stages"
@@ -1743,6 +1858,8 @@ class LibreChatLLM(llm.LLM):
                 continue
             if 200 <= status_code < 300:
                 return True
+            logger.warning('[VoiceTrace] stage=%s accepted=false code=trace_http_rejected status=%s',
+                           normalized_stage, status_code)
             retryable = status_code in {408, 425, 429} or status_code >= 500
             if not retryable or attempt + 1 >= 3:
                 return False
@@ -1753,7 +1870,7 @@ class LibreChatLLM(llm.LLM):
         key = (str(correlation_id or "").strip()[:160], str(stage or "").strip())
         if (
             not key[0]
-            or key[1] not in {"tts.completed", "audio.completed"}
+            or key[1] not in {"tts.completed", "audio.completed", "audio.failed", "audio.interrupted", "audio.superseded"}
             or key in self._pending_production_trace_stages
             or key in self._sent_production_trace_stages
         ):
@@ -1782,6 +1899,10 @@ class LibreChatLLM(llm.LLM):
         task.add_done_callback(self._production_trace_tasks.discard)
         return True
 
+    async def record_followup_presentation(self, trace_id: str, presentation_ref: str, stage: str) -> bool:
+        """Join a persisted follow-up's actual playout outcome to its originating turn."""
+        return await self._post_production_trace(trace_id, stage, presentation_ref=presentation_ref)
+
     def task_id_for_trace(self, correlation_id: str) -> str:
         return self._task_id_by_trace_id.get((correlation_id or "").strip(), "")
 
@@ -1792,13 +1913,11 @@ class LibreChatLLM(llm.LLM):
         for correlation_id, trace in self._traces_by_id.items():
             if correlation_id in self._summarized_trace_ids or trace.has(hop):
                 continue
-            if hop == "tts_first_byte" and not trace.has("first_model_token"):
-                continue
-            if hop == "audio_output" and not trace.has("tts_first_byte"):
+            if not trace.has("first_model_token") and correlation_id not in self._speech_output_trace_ids:
                 continue
             if trace.record(hop, timestamp_ms):
                 logger.info("[VoiceHop] %s", trace.log_payload(hop))
-                if hop == "audio_output":
+                if trace.has("tts_first_byte") and trace.has("audio_output"):
                     self.finalize_trace_terminal(trace)
                 return correlation_id
         return ""
@@ -1848,6 +1967,11 @@ class LibreChatLLM(llm.LLM):
             return
 
         if trace.correlation_id in self._trace_finalizers:
+            return
+        handle = self._speech_handles_by_trace_id.get(trace.correlation_id)
+        if handle is not None and not bool(getattr(handle, "done", lambda: False)()):
+            # Streaming TTS reports timing when synthesis ends, after playout may start.
+            # The exact LiveKit handle owns this wait; its completion schedules the grace timer.
             return
 
         def _finalize_after_grace() -> None:
@@ -2340,6 +2464,8 @@ class LibreChatLLM(llm.LLM):
                                 )
                                 if task_event is not None:
                                     await self._relay_task_event_once(task_event)
+                                    if task_event["owner"]["kind"] == "glasshive_run":
+                                        saw_glasshive_tool_call = True
                                     if (
                                         task_event.get("taskId") == task_id
                                         and task_event.get("state")
@@ -2393,6 +2519,7 @@ class LibreChatLLM(llm.LLM):
                     "",
                     cortex_expected=saw_cortex_event,
                     glasshive_expected=saw_glasshive_tool_call,
+                    trace_id=request_id,
                     presentation_is_current=(
                         None
                         if presentation is None
@@ -3196,17 +3323,24 @@ class LibreChatLLM(llm.LLM):
 
     # === VIVENTIUM START ===
     # Feature: allow worker to override voice provider after TTS fallbacks.
+    def set_voice_native_streaming(self, enabled: bool) -> None:
+        """Update input buffering for the current attempt without claiming audible selection."""
+        self._voice_native_streaming = bool(enabled)
+
     def set_voice_provider(
         self,
         provider: str,
         *,
         accepts_inline_voice_controls: Optional[bool] = None,
+        native_streaming: Optional[bool] = None,
     ) -> None:
         value = (provider or "").strip()
         if value:
             self._voice_provider = value
         if accepts_inline_voice_controls is not None:
             self._voice_accepts_inline_controls = bool(accepts_inline_voice_controls)
+        if native_streaming is not None:
+            self._voice_native_streaming = bool(native_streaming)
     # === VIVENTIUM END ===
 
     def chat(
@@ -3277,7 +3411,11 @@ class _LibreChatLLMStream(llm.LLMStream):
         )
         self._llm_impl.register_trace(hop_trace)
         utterance_end_ms = speaker_context.get("utteranceEndAtMs")
-        if isinstance(utterance_end_ms, (int, float)):
+        if (
+            speaker_context.get("utteranceEndClock") == "utc"
+            and isinstance(utterance_end_ms, (int, float))
+            and not isinstance(utterance_end_ms, bool)
+        ):
             hop_trace.record("utterance_end", float(utterance_end_ms))
             logger.info("[VoiceHop] %s", hop_trace.log_payload("utterance_end"))
 
@@ -3412,14 +3550,8 @@ class _LibreChatLLMStream(llm.LLMStream):
                 # === VIVENTIUM START ===
                 # Guard against `{NTA}` flashing during streaming.
                 no_response_guard = _NoResponseStreamGuard()
-                tts_delta_buffer = _VoiceTtsDeltaBuffer(
-                    sanitize_chunk=lambda text: sanitize_voice_tts_text(
-                        text,
-                        preserve_leading_space=text[:1].isspace(),
-                        preserve_trailing_space=text[-1:].isspace(),
-                        allow_voice_controls=self._llm_impl._voice_accepts_inline_controls,
-                    )
-                )
+                # The SDK tees public text into display and TTS. Speech-only
+                # buffering/sanitization belongs to the agent's TTS node.
                 debug_display_filter = VoiceControlDisplayFilter()
                 # === VIVENTIUM END ===
                 # === VIVENTIUM START ===
@@ -3427,14 +3559,16 @@ class _LibreChatLLMStream(llm.LLMStream):
                 # === VIVENTIUM END ===
 
                 disconnected_speech: list[str] = []
+                first_public_text_at: Optional[float] = None
 
                 def emit_chat_delta(content: str) -> None:
-                    nonlocal first
+                    nonlocal first, first_public_text_at
                     if not content or _output_is_suppressed():
                         return
+                    self._llm_impl._speech_output_trace_ids.add(hop_trace.correlation_id)
                     if _should_debug_voice_markup():
                         logger.info(
-                            "[VoiceMarkup] tts_emit chunk_json=%s",
+                            "[VoiceMarkup] public_emit chunk_json=%s",
                             _debug_text_json(content),
                         )
                     cd = ChoiceDelta(
@@ -3443,6 +3577,16 @@ class _LibreChatLLMStream(llm.LLMStream):
                     )
                     first = False
                     self._event_ch.send_nowait(ChatChunk(id=self._request_id, delta=cd))
+                    if first_public_text_at is None:
+                        first_public_text_at = time.time()
+                        if log_latency:
+                            logger.info(
+                                "[VoiceLatency] llm_first_text_ms=%s request_id=%s stream_id=%s timestamp_ms=%s",
+                                int((first_public_text_at - started_at) * 1000),
+                                self._request_id,
+                                stream_id,
+                                first_public_text_at * 1000.0,
+                            )
 
                 def send_chat_delta(content: str) -> None:
                     if not content:
@@ -3516,10 +3660,7 @@ class _LibreChatLLMStream(llm.LLMStream):
                             )
                     collected_response.append(delta)
                     for emit_delta in no_response_guard.feed(delta):
-                        if not emit_delta:
-                            continue
-                        for buffered_delta in tts_delta_buffer.feed(emit_delta):
-                            send_chat_delta(buffered_delta)
+                        send_chat_delta(emit_delta)
 
                 # === VIVENTIUM START ===
                 attempts = 0
@@ -3593,6 +3734,8 @@ class _LibreChatLLMStream(llm.LLMStream):
                                             presentation=self._presentation,
                                         )
                                     await self._llm_impl._relay_task_event_once(task_event)
+                                    if task_event["owner"]["kind"] == "glasshive_run":
+                                        saw_glasshive_tool_call = True
                                     if (
                                         event_task_id == task_id
                                         and task_event["state"] in _VOICE_TASK_SUPPRESSING_STATES
@@ -3649,6 +3792,8 @@ class _LibreChatLLMStream(llm.LLMStream):
                                     continue
                                 # === VIVENTIUM END ===
 
+                                if _stream_delta_audio_is_skipped(event):
+                                    continue
                                 for raw_delta in extract_raw_text_deltas(event):
                                     await process_text_delta(raw_delta)
 
@@ -3675,8 +3820,7 @@ class _LibreChatLLMStream(llm.LLMStream):
                 if not _output_is_suppressed() and not saw_any_tokens and final_event:
                     text = _extract_final_response_text(final_event)
                     if text and not is_no_response_only(text):
-                        collected_response.append(text)
-                        send_chat_delta(text)
+                        await process_text_delta(text)
                 # === VIVENTIUM START ===
                 if stream_error and not _output_is_suppressed():
                     logger.warning(
@@ -3691,14 +3835,6 @@ class _LibreChatLLMStream(llm.LLMStream):
                         collected_response.append(fallback)
                         # Drop any buffered `{NTA}` deltas if we hit a stream error.
                         no_response_guard = _NoResponseStreamGuard()
-                        tts_delta_buffer = _VoiceTtsDeltaBuffer(
-                            sanitize_chunk=lambda text: sanitize_voice_tts_text(
-                                text,
-                                preserve_leading_space=text[:1].isspace(),
-                                preserve_trailing_space=text[-1:].isspace(),
-                                allow_voice_controls=self._llm_impl._voice_accepts_inline_controls,
-                            )
-                        )
                         send_chat_delta(fallback)
                 # === VIVENTIUM END ===
 
@@ -3726,12 +3862,7 @@ class _LibreChatLLMStream(llm.LLMStream):
                 suppressed, pending_emit = no_response_guard.finalize(full_response_text)
                 if not suppressed and not _output_is_suppressed():
                     for emit_delta in pending_emit:
-                        if not emit_delta:
-                            continue
-                        for buffered_delta in tts_delta_buffer.feed(emit_delta):
-                            send_chat_delta(buffered_delta)
-                    for buffered_delta in tts_delta_buffer.finalize():
-                        send_chat_delta(buffered_delta)
+                        send_chat_delta(emit_delta)
                 await flush_disconnected_speech()
                 # === VIVENTIUM END ===
 
@@ -3766,6 +3897,7 @@ class _LibreChatLLMStream(llm.LLMStream):
                             "".join(collected_response).strip(),
                             cortex_expected=saw_cortex_event,
                             glasshive_expected=saw_glasshive_tool_call,
+                            trace_id=self._request_id,
                             presentation_is_current=lambda: self._llm_impl._presentation_coordinator.is_current(
                                 self._presentation
                             ),

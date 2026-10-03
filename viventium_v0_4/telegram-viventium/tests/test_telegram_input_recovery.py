@@ -197,6 +197,34 @@ class InputRecoveryTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(result, ("Original transcribed goal", False))
 
+    async def test_typed_no_speech_cancels_preparation_without_authored_input(self):
+        from TelegramVivBot.utils.scripts import TelegramTranscriptionResult
+        finished = AsyncMock()
+        owners = load_bot_owners("_resolve_prepared_voice_input", "_resolve_voice_input_message",
+            "_prepared_voice_text", _finish_telegram_preparation=finished,
+            _with_source_ordered_context_bot=lambda context, _guard, operation: operation(context))
+        guard = SimpleNamespace(is_current=AsyncMock(return_value=True))
+        context = SimpleNamespace(bot=SimpleNamespace(send_message=AsyncMock()))
+        notice = TelegramTranscriptionResult(error_text="No speech was detected.", error_code="no_speech")
+        result = await owners["_resolve_prepared_voice_input"](context, guard,
+            chatid=8, messageid=42, message_thread_id=None,
+            message=None, voice_text=None, voice_error_text=notice.error_text)
+        self.assertEqual(result, (None, True))
+        finished.assert_awaited_once_with(guard, "cancelled", "no_speech")
+        context.bot.send_message.assert_awaited_once()
+
+    async def test_plain_notice_words_do_not_determine_preparation_status(self):
+        finished = AsyncMock()
+        owners = load_bot_owners("_resolve_prepared_voice_input", "_resolve_voice_input_message",
+            "_prepared_voice_text", _finish_telegram_preparation=finished,
+            _with_source_ordered_context_bot=lambda context, _guard, operation: operation(context))
+        guard = SimpleNamespace(is_current=AsyncMock(return_value=True))
+        context = SimpleNamespace(bot=SimpleNamespace(send_message=AsyncMock()))
+        await owners["_resolve_prepared_voice_input"](context, guard,
+            chatid=8, messageid=42, message_thread_id=None,
+            message=None, voice_text=None, voice_error_text="No speech was detected.")
+        finished.assert_awaited_once_with(guard, "failed", "transcription_failed")
+
     async def test_caption_and_successful_speech_both_reach_main(self):
         owners = load_bot_owners("_resolve_voice_input_message", "_prepared_voice_text")
         context = SimpleNamespace(bot=SimpleNamespace(send_message=AsyncMock()))

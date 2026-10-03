@@ -72,34 +72,11 @@ _logger = logging.getLogger(__name__)
 _MODEL_CACHE: dict[str, Model] = {}
 _MODEL_EXECUTORS: dict[tuple[int, str], concurrent.futures.ThreadPoolExecutor] = {}
 _MODEL_EXECUTOR_LOCK = threading.Lock()
-_LOCAL_WHISPER_VAD_MIN_SPEECH_S = "0.35"
 _LOCAL_WHISPER_VAD_MIN_SILENCE_S = "0.5"
 _MODEL_WARMUP_DONE: set[str] = set()
 
-# Common hallucination phrases Whisper outputs on silence/noise
-# Based on research: https://github.com/ggml-org/whisper.cpp/issues/1724
-HALLUCINATION_PHRASES = {
-    "thank you",
-    "thanks",
-    "okay",
-    "ok",
-    "bye",
-    "goodbye",
-    "you",
-    "thank you.",
-    "thanks.",
-    "okay.",
-    "- thank you",
-    "- thank you.",
-    "- okay",
-    "- okay.",
-}
-
-
 def _local_whisper_vad_env() -> dict[str, str]:
     source = dict(os.environ)
-    if not (source.get("VIVENTIUM_STT_VAD_MIN_SPEECH") or "").strip():
-        source["VIVENTIUM_STT_VAD_MIN_SPEECH"] = _LOCAL_WHISPER_VAD_MIN_SPEECH_S
     if not (source.get("VIVENTIUM_STT_VAD_MIN_SILENCE") or "").strip():
         source["VIVENTIUM_STT_VAD_MIN_SILENCE"] = _LOCAL_WHISPER_VAD_MIN_SILENCE_S
     return source
@@ -140,41 +117,12 @@ def _int_env(name: str, fallback: int) -> int:
         return fallback
 
 
-def _audio_ctx_for_transcribe(
-    model_name: str,
-    *,
-    audio_duration_s: Optional[float] = None,
-) -> int:
-    configured = (os.getenv("VIVENTIUM_STT_AUDIO_CTX", "") or "").strip()
-    if configured:
-        try:
-            return max(0, int(configured))
-        except ValueError:
-            return 0
-
-    if model_name != "large-v3-turbo":
-        return 0
-
-    reduced_ctx_max_audio_s = max(
-        0.0,
-        _float_env("VIVENTIUM_STT_REDUCED_AUDIO_CTX_MAX_AUDIO_S", 12.0),
-    )
-    if audio_duration_s is not None and audio_duration_s > reduced_ctx_max_audio_s:
-        return 0
-    return 768
-
-
 def _transcribe_kwargs(
     language: str,
     *,
     model_name: Optional[str] = None,
     audio_duration_s: Optional[float] = None,
 ) -> dict[str, object]:
-    resolved_model = _default_model_name(model_name)
-    audio_ctx = _audio_ctx_for_transcribe(
-        resolved_model,
-        audio_duration_s=audio_duration_s,
-    )
     params: dict[str, object] = {
         "language": language,
         "no_speech_thold": 0.7,
@@ -184,9 +132,10 @@ def _transcribe_kwargs(
         "entropy_thold": 2.2,
         "no_context": _bool_env("VIVENTIUM_STT_NO_CONTEXT", True),
         "single_segment": _bool_env("VIVENTIUM_STT_SINGLE_SEGMENT", True),
+        # Reduced context repeated speech in an exact-buffer native comparison.
+        # Reset the cached model to its full native context on every transcription.
+        "audio_ctx": 0,
     }
-    if audio_ctx > 0:
-        params["audio_ctx"] = audio_ctx
 
     # === VIVENTIUM START ===
     # Feature: Bounded temperature-fallback for real-time STT tail latency.
@@ -642,21 +591,22 @@ class PyWhisperCppSTT(STT):
             model_name=self._model_name,
             audio_duration_s=output_audio_duration_s,
         )
+        def transcribe_with_timing() -> tuple[Any, int, int]:
+            native_start_ns = time.perf_counter_ns()
+            native_segments = self._model.transcribe(audio_data, **transcribe_params)
+            return native_segments, native_start_ns, time.perf_counter_ns()
+
         transcribe_start_ns = time.perf_counter_ns()
-        segments = await asyncio.wrap_future(
-            _get_model_executor(self._model_name).submit(
-                self._model.transcribe, audio_data, **transcribe_params
-            )
+        executor = _get_model_executor(self._model_name)
+        transcribe_submit_ns = time.perf_counter_ns()
+        segments, native_start_ns, native_end_ns = await asyncio.wrap_future(
+            executor.submit(transcribe_with_timing)
         )
         transcribe_end_ns = time.perf_counter_ns()
         stage_start = mark("transcribe_ms", stage_start)
 
         text = " ".join([segment.text for segment in segments]) if segments else ""
 
-        text_clean = text.strip().lower()
-        if text_clean in HALLUCINATION_PHRASES:
-            _logger.debug("Filtered hallucination: '%s'", text)
-            text = ""
         mark("filter_ms", stage_start)
 
         if _latency_logging_enabled():
@@ -680,15 +630,19 @@ class PyWhisperCppSTT(STT):
                 timings.get("filter_ms", 0.0),
             )
             _logger.info(
-                "[VoiceLatencyDetail] pywhispercpp_transcribe model=%s audio_s=%.6f audio_ctx=%s no_context=%s single_segment=%s transcribe_perf_ns_start=%s transcribe_perf_ns_end=%s transcribe_wall_ms=%.3f",
+                "[VoiceLatencyDetail] pywhispercpp_transcribe model=%s audio_s=%.6f audio_ctx=%s no_context=%s single_segment=%s transcribe_perf_ns_start=%s transcribe_perf_ns_end=%s transcribe_wall_ms=%.3f transcribe_queue_wait_ms=%.3f transcribe_native_ms=%.3f transcribe_resume_ms=%.3f native_segment_count=%s",
                 self._model_name,
                 output_audio_duration_s,
-                transcribe_params.get("audio_ctx", "default"),
+                transcribe_params["audio_ctx"],
                 transcribe_params.get("no_context"),
                 transcribe_params.get("single_segment"),
                 transcribe_start_ns,
                 transcribe_end_ns,
                 _ms_since(transcribe_start_ns, transcribe_end_ns),
+                _ms_since(transcribe_submit_ns, native_start_ns),
+                _ms_since(native_start_ns, native_end_ns),
+                _ms_since(native_end_ns, transcribe_end_ns),
+                len(segments) if segments else 0,
             )
 
         return SpeechEvent(

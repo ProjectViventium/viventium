@@ -692,7 +692,7 @@ def test_source_easy_preflight_requires_codex_login_for_codex_main(
     auth_item = by_key["glasshive_host_worker_cli_auth"]
 
     assert auth_item.status == expected_status
-    assert auth_item.label == "Codex CLI login for GlassHive Main"
+    assert auth_item.label == "Codex CLI login for xPerfect Main"
     assert "codex login" in auth_item.manual_command
     assert by_key["glasshive_host_codex_cli"].status == (
         "ok" if authenticated_cli == "codex" else "optional"
@@ -709,12 +709,12 @@ def test_source_easy_preflight_requires_codex_login_for_codex_main(
 @pytest.mark.parametrize(
     ("explicit_model", "expected_model", "expected_auth_status", "expected_label"),
     [
-        (None, "claude-code:opus", "ok", "Claude Code login for GlassHive Main"),
+        (None, "claude-code:opus", "ok", "Claude Code login for xPerfect Main"),
         (
             "codex-cli:gpt-5.6-sol",
             "codex-cli:gpt-5.6-sol",
             "missing",
-            "Codex CLI login for GlassHive Main",
+            "Codex CLI login for xPerfect Main",
         ),
     ],
 )

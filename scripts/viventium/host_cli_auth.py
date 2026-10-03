@@ -11,10 +11,12 @@ from typing import Any
 
 CODEX_APP_CLI = Path("/Applications/Codex.app/Contents/Resources/codex")
 GLASSHIVE_PROVIDER_MODEL_BY_WORKER_PROFILE = {
-    "codex-cli": "codex-cli:gpt-5.6-sol",
-    "claude-code": "claude-code:opus",
+    "grok-build": "grok-build:grok-4.7",
+    "codex-cli": "codex-cli:gpt-6.1-sol",
+    "claude-code": "claude-code:claude-opus-5-5",
 }
 GLASSHIVE_WORKER_COMMAND_BY_PROFILE = {
+    "grok-build": "grok",
     "codex-cli": "codex",
     "claude-code": "claude",
 }
@@ -46,12 +48,17 @@ def codex_app_search_roots() -> list[Path]:
     return [Path("/Applications"), Path.home() / "Applications"]
 
 
-def codex_app_cli_candidates() -> list[Path]:
-    root_candidates = [root / "Codex.app" / "Contents" / "Resources" / "codex" for root in codex_app_search_roots()]
+def codex_app_cli_candidates(*, legacy_cli: Path | None = None) -> list[Path]:
+    legacy_cli = legacy_cli if legacy_cli is not None else CODEX_APP_CLI
+    layouts = (
+        Path("Codex.app/Contents/Resources/codex"),
+        Path("ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex"),
+    )
+    root_candidates = [root / layout for root in codex_app_search_roots() for layout in layouts]
     if os.environ.get("VIVENTIUM_CODEX_APP_DIRS", "").strip():
-        candidates: list[Path] = [*root_candidates, CODEX_APP_CLI]
+        candidates: list[Path] = [*root_candidates, legacy_cli]
     else:
-        candidates = [CODEX_APP_CLI, *root_candidates]
+        candidates = [legacy_cli, *root_candidates]
     deduped: list[Path] = []
     seen: set[str] = set()
     for candidate in candidates:

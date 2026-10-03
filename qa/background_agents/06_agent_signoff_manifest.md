@@ -9,9 +9,10 @@ background-agent roster.
   positive, sibling-negative, latest-turn, strict-output, injection, multilingual, typo, and
   combined-intent cases. Structured `activation.mode: always` cortices bypass that classifier and
   require their own execution/value-gate signoff.
-- Run the full two-pass `background_activation_routing` gate before every release while the primary
-  classifier is a preview model, and after any activation prompt, model, provider, fallback, parser,
-  or classifier-runtime change.
+- Apply the approved QA mode. Select exact-model cases affected by a prompt, model, provider,
+  fallback, parser or classifier-runtime change. Run the full two-pass roster only when full scope
+  is requested or a traced shared change affects the whole roster; a preview label or unrelated
+  release alone does not invalidate prior evidence.
 - A completed-call semantic pass does not erase unavailable evidence. Record completion rate,
   end-to-end required recall, semantic recall, precision, availability flaps, and latency separately.
 

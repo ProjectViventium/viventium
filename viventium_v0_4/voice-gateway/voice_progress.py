@@ -83,12 +83,14 @@ class _ActiveTask:
     task_id: str
     started_at: float
     last_activity_at: float
+    state: str
     phase: str
     detail: str
     latest_sequence: int
     model_acknowledged: bool = False
     neutral_ack_spoken: bool = False
     last_spoken_at: Optional[float] = None
+    last_progress_signature: Optional[tuple[str, str, str]] = None
 
 
 class VoiceProgressStateMachine:
@@ -157,6 +159,7 @@ class VoiceProgressStateMachine:
                 task_id=task_id,
                 started_at=now,
                 last_activity_at=now,
+                state=state,
                 phase=phase,
                 detail=detail,
                 latest_sequence=sequence,
@@ -165,17 +168,19 @@ class VoiceProgressStateMachine:
         if sequence <= task.latest_sequence:
             return []
         task.latest_sequence = sequence
-        phase_changed = bool(phase and phase != task.phase)
+        previous_signature = self._progress_signature(task)
+        task.state = state
         task.phase = phase or task.phase
         task.detail = detail or task.detail
         task.last_activity_at = now
         if (
-            phase_changed
+            self._progress_signature(task) != previous_signature
+            and self._progress_signature(task) != task.last_progress_signature
             and task.last_spoken_at is not None
             and now - task.last_spoken_at >= self._phase_rate_limit_s
             and self._global_speech_allowed(now)
         ):
-            self._record_speech_candidate(task, now)
+            self._record_progress_candidate(task, now)
             return [(task_id, self._progress_text(task))]
         return []
 
@@ -193,6 +198,12 @@ class VoiceProgressStateMachine:
         task.model_acknowledged = True
         task.last_spoken_at = now
         self._last_global_spoken_at = now
+
+    def on_speech_schedule_failed(self, task_id: str) -> None:
+        """Keep the current status pending without resetting its retry throttle."""
+        task = self._tasks.get(task_id)
+        if task is not None:
+            task.last_progress_signature = None
 
     def suppress_task(self, task_id: str, *, now: float) -> None:
         normalized = (task_id or "").strip()
@@ -218,14 +229,22 @@ class VoiceProgressStateMachine:
                 self._record_speech_candidate(task, now)
                 messages.append((task.task_id, "I'm on it."))
                 continue
-            # Activity events are not audible acknowledgements. Anchor the silence budget to
-            # actual/scheduled speech so repeated backend progress cannot hide dead air.
-            silence_anchor = task.last_spoken_at or task.started_at
+            # A newer event sequence is not new spoken progress. Keep only the latest
+            # authoritative tuple pending and retain the existing speech rate limits.
+            silence_anchor = (
+                task.last_spoken_at if task.last_spoken_at is not None else task.started_at
+            )
+            progress_delay = (
+                self._silence_update_s
+                if task.last_progress_signature is None
+                else self._phase_rate_limit_s
+            )
             if (
-                now - silence_anchor >= self._silence_update_s
+                self._progress_signature(task) != task.last_progress_signature
+                and now - silence_anchor >= progress_delay
                 and self._global_speech_allowed(now)
             ):
-                self._record_speech_candidate(task, now)
+                self._record_progress_candidate(task, now)
                 messages.append((task.task_id, self._progress_text(task)))
         return messages
 
@@ -238,6 +257,14 @@ class VoiceProgressStateMachine:
     def _record_speech_candidate(self, task: _ActiveTask, now: float) -> None:
         task.last_spoken_at = now
         self._last_global_spoken_at = now
+
+    def _record_progress_candidate(self, task: _ActiveTask, now: float) -> None:
+        self._record_speech_candidate(task, now)
+        task.last_progress_signature = self._progress_signature(task)
+
+    @staticmethod
+    def _progress_signature(task: _ActiveTask) -> tuple[str, str, str]:
+        return task.state, task.phase, task.detail
 
     def _prune_tombstones(self, now: float) -> None:
         expired = [
@@ -264,7 +291,7 @@ class AsyncVoiceProgressController:
         self,
         *,
         machine: VoiceProgressStateMachine,
-        speak: Callable[[str, str], None],
+        speak: Callable[[str, str], Optional[bool]],
         clock: Callable[[], float],
         stop_active_speech: Optional[Callable[[], None]] = None,
         initial_mode: str = "call",
@@ -306,7 +333,7 @@ class AsyncVoiceProgressController:
     def on_task_event(self, event: dict[str, Any]) -> None:
         state = str(event.get("state") or "")
         for task_id, text in self._machine.on_task_event(event, now=self._clock()):
-            self._speak(task_id, text)
+            self._schedule_speech(task_id, text)
         if (
             state
             in {
@@ -333,7 +360,11 @@ class AsyncVoiceProgressController:
 
     def poll(self) -> None:
         for task_id, text in self._machine.poll(now=self._clock()):
-            self._speak(task_id, text)
+            self._schedule_speech(task_id, text)
+
+    def _schedule_speech(self, task_id: str, text: str) -> None:
+        if self._speak(task_id, text) is False:
+            self._machine.on_speech_schedule_failed(task_id)
 
 
 async def sync_authoritative_call_mode_once(

@@ -2,8 +2,10 @@
 
 ## Current Easy Install Audit Package
 
-The current installer/new-user acceptance package is maintained through the case catalog and dated,
-public-safe results below:
+The installer/new-user acceptance package is maintained through the case catalog and dated,
+public-safe results below. They are historical evidence and a case inventory: the current approved
+plan and QA mode select today's installer work, and old review rounds and remediation phases are not
+standing instructions to repeat them.
 
 - [Native payload production integration QA](reports/2026-07-19-native-payload-production-integration.md);
 - [Native Bootstrap Finder UX QA](reports/2026-07-20-native-bootstrap-finder-ux.md);

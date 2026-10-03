@@ -46,12 +46,21 @@ from livekit.agents.utils import aio
 
 # === VIVENTIUM START ===
 # Feature: Strip voice control tags for non-expressive TTS providers during fallback.
-from sse import strip_voice_control_tags
+from sse import _safe_markup_prefix_end, strip_voice_control_tags
 # === VIVENTIUM END ===
 
 logger = logging.getLogger("voice-gateway.fallback_tts")
 
 ProviderSelectedCallback = Callable[[str, TTS], None]
+ProviderAttemptCallback = Callable[[TTS], None]
+
+
+def _report_provider_attempt(callback: Optional[ProviderAttemptCallback], tts_impl: TTS) -> None:
+    if callback is not None:
+        try:
+            callback(tts_impl)
+        except Exception:
+            logger.debug("on_provider_attempt callback failed", exc_info=True)
 
 
 @dataclass(frozen=True)
@@ -149,41 +158,6 @@ def _log_voice_rendering_observation(
         controls_state,
         controls_action,
     )
-
-
-def _safe_markup_prefix_end(text: str) -> int:
-    """
-    Return the prefix length that is safe to sanitize without cutting through a structural token.
-
-    We buffer incomplete `<...` and `[...]` regions until they close so shared voice-control
-    sanitization can run on complete text only.
-    """
-
-    tag_start: Optional[int] = None
-    bracket_start: Optional[int] = None
-
-    for index, ch in enumerate(text):
-        if tag_start is None and bracket_start is None:
-            if ch == "<":
-                tag_start = index
-            elif ch == "[":
-                bracket_start = index
-            continue
-
-        if tag_start is not None:
-            if ch == ">":
-                tag_start = None
-            continue
-
-        if bracket_start is not None and ch == "]":
-            bracket_start = None
-
-    safe_end = len(text)
-    if tag_start is not None:
-        safe_end = min(safe_end, tag_start)
-    if bracket_start is not None:
-        safe_end = min(safe_end, bracket_start)
-    return safe_end
 
 
 class _BufferedVoiceMarkupSanitizer:
@@ -423,6 +397,7 @@ class FallbackTTS(TTS):
         *,
         attempts: Sequence[ProviderAttempt],
         on_provider_selected: Optional[ProviderSelectedCallback] = None,
+        on_provider_attempt: Optional[ProviderAttemptCallback] = None,
     ) -> None:
         if not attempts:
             raise ValueError("FallbackTTS requires at least one ProviderAttempt")
@@ -434,6 +409,7 @@ class FallbackTTS(TTS):
         )
         self._attempts = list(attempts)
         self._on_provider_selected = on_provider_selected
+        self._on_provider_attempt = on_provider_attempt
 
     @property
     def provider(self) -> str:
@@ -457,11 +433,14 @@ class FallbackTTS(TTS):
     def stream(
         self, *, conn_options: APIConnectOptions = DEFAULT_API_CONNECT_OPTIONS
     ) -> SynthesizeStream:
+        # Reset input policy before upstream starts reading text; audible selection stays separate.
+        _report_provider_attempt(self._on_provider_attempt, self._attempts[0].tts)
         return _FallbackSynthesizeStream(
             tts=self,
             conn_options=conn_options,
             attempts=self._attempts,
             on_provider_selected=self._on_provider_selected,
+            on_provider_attempt=self._on_provider_attempt,
         )
 
 
@@ -627,10 +606,12 @@ class _FallbackSynthesizeStream(SynthesizeStream):
         conn_options: APIConnectOptions,
         attempts: Sequence[ProviderAttempt],
         on_provider_selected: Optional[ProviderSelectedCallback],
+        on_provider_attempt: Optional[ProviderAttemptCallback] = None,
     ) -> None:
         super().__init__(tts=tts, conn_options=conn_options)
         self._attempts = list(attempts)
         self._on_provider_selected = on_provider_selected
+        self._on_provider_attempt = on_provider_attempt
         self._pushed_tokens: list[str] = []
 
     async def _try_synthesize(
@@ -803,6 +784,7 @@ class _FallbackSynthesizeStream(SynthesizeStream):
         try:
             for attempt_index, attempt in enumerate(self._attempts):
                 try:
+                    _report_provider_attempt(self._on_provider_attempt, attempt.tts)
                     _log_voice_rendering_observation(
                         attempt,
                         event="attempt",

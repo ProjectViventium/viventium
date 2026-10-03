@@ -20,6 +20,7 @@ Use stable `TGDOC-NNN` IDs for telegram document attachments cases.
 | `TGDOC-008` | Telegram photos must reach the configured model or worker as exact owner-scoped bytes. | A single photo and a same-name album are readable without OCR/parser configuration, placeholders, or dropped files. | Telegram Desktop, LibreChat upload, GlassHive upload projection, provider workspace | LibreChat process/route tests plus GlassHive projection/materialization tests | PASS 2026-08-21; one post-restart uncaptioned photo and one three-photo album produced content-aware answers on the installed runtime |
 | `TGDOC-009` | One logical attachment turn must produce one visible assistant result. | The user gets one answer bubble even when Main and a background cortex both complete. | Telegram delivery, Mongo presentation, cortex follow-up | `BackgroundCortexFollowUpService.spec.js` and affected Telegram/Core suites | PASS 2026-08-21; final album produced one assistant row and one Telegram bubble |
 | `TGDOC-010` | Delegating a file/media task to a Worker Bee must preserve the complete supported input and output contract. | Every supported attachment family reaches the intended Bee with exact owner scope, identity, bytes, and order; generated files/media return once with a usable open/download action through Telegram or linked Active Work. | Telegram Desktop, LibreChat upload, GlassHive workspace, linked Web/Active Work, artifact delivery | Existing upload/projection/materialization suites plus Parallel Work artifact/delivery contracts; real installed matrix required | NOT RUN — cataloged 2026-08-24; narrower photo ingress and one-result delivery passes are supporting evidence only |
+| `TGDOC-011` | Main-generated files and media use the existing owner-scoped artifact and Telegram delivery contract. | The user receives and can open/download the generated output rather than only a claim or local path. | Native Main, Core artifact importer, Telegram photo/document sender, Telegram user UI | Existing native output-file, file importer and bot delivery suites; actual Telegram download | PASS 2026-10-03 for generated photo and text-document paths; full Worker/provider/restart matrix remains separate ([report](../modern-playground-voice/reports/2026-10-03-voice-and-telegram-acceptance.md)) |
 
 ## `TGDOC-001` - Core User Flow
 
@@ -250,6 +251,30 @@ Use stable `TGDOC-NNN` IDs for telegram document attachments cases.
 - Last run: NOT RUN — cataloged 2026-08-24. `TGDOC-003`, `TGDOC-005`, `TGDOC-008`, and `TGDOC-009` prove narrower
   ingress/grouping/photo/one-result behavior only.
 
+## `TGDOC-011` - Main-Generated Outbound Files And Media
+
+- Requirement: [Telegram Attachments](../../docs/requirements_and_learnings/03_Telegram_Bridge.md#telegram-attachments).
+- Risk covered: Main renders a real file locally but the Telegram user receives only text or an
+  unusable path; format-specific transport branches drop otherwise supported outputs.
+- Preconditions: linked local QA owner, active native Main and the existing authenticated artifact
+  importer and Telegram delivery path. Use synthetic content and declared supported file types.
+- Steps:
+  1. Ask Main to create an image, then a non-image document through its declared capabilities.
+  2. Inspect the selected native output descriptor and imported owner-scoped File record.
+  3. Open/download the bot's photo and document in Telegram, then reload the conversation.
+  4. Compare document bytes with the native and Core artifact; compare the photo with the normal
+     Telegram image encoding. Do not require photo bytes to equal Telegram's transcoded download.
+- Expected result: the existing output selection and importer preserve owner and file identity;
+  the existing photo/document dispatcher delivers each declared result once with a usable action.
+  Local rendering alone is not delivery. No directory scan, filename rule or new format-specific
+  transport is needed. Missing or rejected delivery remains truthful under the existing contract.
+- Evidence: actual opened/downloaded Telegram result, output/import/delivery receipts, exact
+  document-byte comparison and normal image-transcoding receipt. Keep raw evidence private.
+- Last run: PASS 2026-10-03, local development. A Main-generated image arrived as a real photo and
+  a Main-generated text document downloaded byte-exact. This proves these bounded consumers;
+  `TGDOC-010` remains the separate full Worker input/output, fallback and restart matrix. See the
+  [current report](../modern-playground-voice/reports/2026-10-03-voice-and-telegram-acceptance.md).
+
 ## Natural User Use Case Checklist
 
 These rows are the minimum natural-user checklist gate for Telegram Document Attachments. Add narrower feature-specific
@@ -267,3 +292,4 @@ rows before claiming a pass when the feature behavior changes.
 | `TGDOC-UC-008` | Send one photo without a caption, then send three different photos as one album and ask about every image. | `03_Telegram_Bridge.md` Telegram Attachments / `TGDOC-008` | Telegram Desktop and configured GlassHive-backed Main | Visible reply, upload rows, ordered file IDs, worker bundle/files, provider run, Mongo | Every exact image is readable in order; no parser error, placeholder, alias, or dropped attachment. | PASS 2026-08-21; post-restart single-photo and installed-runtime three-photo album passed |
 | `TGDOC-UC-009` | Wait after the album answer and confirm no duplicate result appears. | `03_Telegram_Bridge.md` Telegram Attachments / `TGDOC-009` | Telegram Desktop, follow-up cortex, delivery store | Visible bubble count, assistant-row count, follow-up decision, delivery acknowledgement | One logical result is shown once; a distinct additive follow-up remains allowed. | PASS 2026-08-21; one assistant row and one bubble after the full follow-up window |
 | `TGDOC-UC-010` | Send the supported synthetic file/media matrix, delegate it to one Bee, guide that Bee, restart/fallback, and open its generated file from Telegram and linked Active Work. | `01_Key_Principles.md`, `55_Parallel_Work_Orchestration.md` / `TGDOC-010`, `PWK-011`, `PWK-UC-019` | Installed Telegram Desktop, GlassHive worker, linked Web/Active Work, artifact viewer | Exact upload IDs/hashes/order, worker files, control/fallback/restart receipts, output hash, one delivery receipt, opened artifact | Exact authorized inputs reach only the intended Bee; one correct output returns once and opens on both surfaces; every unsupported or unavailable class is truthful and recoverable where supported. | NOT RUN — cataloged 2026-08-24; existing narrower attachment passes do not close Worker input/output parity |
+| `TGDOC-UC-011` | Ask Main for a generated image and a document, open/download each in Telegram, and reopen the chat. | `03_Telegram_Bridge.md` Telegram Attachments / `TGDOC-011` | Native Main, Core artifact importer, real Telegram photo/document UI | Selected output descriptor, owner-scoped File, one outbound receipt, downloaded bytes and image encoding | Each generated result arrives once and opens; document bytes remain exact and ordinary Telegram photo transcoding is accounted for. | PASS 2026-10-03 for actual photo/document consumers; full Worker/provider/restart matrix is not implied ([report](../modern-playground-voice/reports/2026-10-03-voice-and-telegram-acceptance.md)) |

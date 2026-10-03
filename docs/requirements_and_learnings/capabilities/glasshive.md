@@ -34,6 +34,18 @@ produce useful results, preserve the user's full task, and expose honest fallbac
   context, workspace, model, tools, memory, and Feelings for the turn and reuses canonical per-user
   LIFE without duplicating context or runs.
 
+Provider defaults are `codex-cli:gpt-6.1-sol`, `claude-code:claude-opus-5-5`, and
+`grok-build:grok-4.7`, each at high effort. `grok-build:grok-4.7-build-fast` is also selectable.
+Other supported models and efforts remain available. If the native catalog does not offer
+Grok 4.7 Fast but offers Grok 4.7, a Fast request uses Grok 4.7 and reports that actual model.
+Grok uses its native ACP system rules for
+server-owned agent instructions and the existing private worker sign-in boundary.
+
+### Backlog
+
+OpenCode model and effort parity is deferred. Keep its current routes unchanged until a separate
+request resumes that work.
+
 ### Non-goals
 
 - **GHM-005:** Implement the concrete provider path without speculative platform expansion.

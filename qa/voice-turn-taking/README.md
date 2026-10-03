@@ -136,15 +136,13 @@ Purpose:
 - verify launcher-owned model predownload
 - verify the previous missing-`model_q8.onnx` boot failure is gone
 
-Steps:
+Steps (only when this fault is selected):
 
-```bash
-rm -rf "$HOME/.cache/huggingface/hub/models--livekit--turn-detector"
-rm -f "$HOME/Library/Application Support/Viventium/state/runtime/isolated/logs/voice_gateway.log"
-rm -f "$HOME/Library/Application Support/Viventium/state/runtime/isolated/logs/voice_gateway_deps.log"
-./bin/viventium stop
-./bin/viventium start
-```
+1. Use a disposable, explicitly owned QA instance with a separate cache and log directory.
+2. Point the selected process at that fixture cache and create missing or partial model files there.
+3. Restart only that QA instance through its supported lifecycle command; preserve its logs.
+4. Never delete shared user caches/logs or stop the personal stack as a QA prerequisite.
+
 
 Evidence:
 - `voice_gateway_deps.log` is created automatically during startup

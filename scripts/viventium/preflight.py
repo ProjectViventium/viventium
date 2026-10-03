@@ -34,6 +34,7 @@ from installer_ui import InstallerUI
 from host_cli_auth import (
     DEFAULT_GLASSHIVE_PROVIDER_MODEL,
     codex_app_cli_candidates as shared_codex_app_cli_candidates,
+    codex_app_search_roots as shared_codex_app_search_roots,
     glasshive_worker_command_for_provider_model,
     host_cli_auth_ready as shared_host_cli_auth_ready,
     host_cli_command as shared_host_cli_command,
@@ -177,7 +178,7 @@ def executable_path_exists(path: Path) -> bool:
 
 
 def codex_app_search_roots() -> list[Path]:
-    return list({candidate.parents[3] for candidate in shared_codex_app_cli_candidates()})
+    return shared_codex_app_search_roots()
 
 
 def codex_app_cli_candidates() -> list[Path]:
@@ -1197,9 +1198,9 @@ def build_preflight_items(config: dict[str, Any]) -> list[PreflightItem]:
     items.append(
         PreflightItem(
             key="glasshive_followup_timeout",
-            label="GlassHive callback follow-up timeout",
+            label="xPerfect callback follow-up timeout",
             category="runtime config",
-            reason="keep Web, Telegram, and Voice listening long enough for non-blocking GlassHive worker callbacks",
+            reason="keep Web, Telegram, and Voice listening long enough for non-blocking xPerfect worker callbacks",
             status="ok" if glasshive_timeout_valid else "missing",
             manual_command=(
                 "Set runtime.glasshive_followup_timeout_s to an integer between "
@@ -1237,28 +1238,28 @@ def build_preflight_items(config: dict[str, Any]) -> list[PreflightItem]:
             [
                 PreflightItem(
                     key="glasshive_callback_secret",
-                    label="GlassHive callback secret",
-                    category="GlassHive host workers",
+                    label="xPerfect callback secret",
+                    category="xPerfect host workers",
                     reason="verify worker completion callbacks can be signed and accepted by Viventium",
                     status="ok" if callback_secret_ready else "missing",
                     install_kind="manual" if not callback_secret_ready else "none",
                     manual_command=(
                         "Set runtime.call_session_secret, VIVENTIUM_CALL_SESSION_SECRET, or "
-                        "VIVENTIUM_GLASSHIVE_CALLBACK_SECRET before enabling GlassHive host workers"
+                        "VIVENTIUM_GLASSHIVE_CALLBACK_SECRET before enabling xPerfect host workers"
                     ),
                 ),
                 PreflightItem(
                     key="glasshive_host_worker_cli_auth",
                     label=(
-                        f"{provider_worker_label} login for GlassHive Main"
+                        f"{provider_worker_label} login for xPerfect Main"
                         if ctx["glasshive_provider"]
                         else "Codex or Claude CLI login"
                     ),
-                    category="GlassHive host workers",
+                    category="xPerfect host workers",
                     reason=(
-                        "run the configured GlassHive Main model"
+                        "run the configured xPerfect Main model"
                         if ctx["glasshive_provider"]
-                        else "run required GlassHive host-native workers on this computer"
+                        else "run required xPerfect host-native workers on this computer"
                     ),
                     status="ok" if worker_cli_ready else "missing",
                     install_kind="manual" if not worker_cli_ready else "none",
@@ -1273,7 +1274,7 @@ def build_preflight_items(config: dict[str, Any]) -> list[PreflightItem]:
                         )
                         if ctx["glasshive_provider"] and provider_worker_command
                         else "Set integrations.glasshive.provider.default_model to a declared "
-                        "GlassHive model before rerunning preflight"
+                        "xPerfect model before rerunning preflight"
                         if ctx["glasshive_provider"]
                         else "Install and sign in to either Codex (`codex login`) or Claude Code "
                         "(`claude auth login`), then rerun preflight"
@@ -1282,25 +1283,25 @@ def build_preflight_items(config: dict[str, Any]) -> list[PreflightItem]:
                 PreflightItem(
                     key="glasshive_host_codex_cli",
                     label="Codex CLI login",
-                    category="GlassHive host workers",
+                    category="xPerfect host workers",
                     reason="available for @codex host-native workers",
                     status="ok" if codex_ready else "optional",
                     command="codex",
-                    manual_command="Install and sign in to the Codex CLI to make Codex the default GlassHive host worker",
+                    manual_command="Install and sign in to the Codex CLI to make Codex the default xPerfect host worker",
                 ),
                 PreflightItem(
                     key="glasshive_host_claude_cli",
                     label="Claude CLI login",
-                    category="GlassHive host workers",
+                    category="xPerfect host workers",
                     reason="available for @claude host-native workers",
                     status="ok" if claude_ready else "optional",
                     command="claude",
-                    manual_command="Install and sign in to Claude Code to make Claude available as a GlassHive host worker",
+                    manual_command="Install and sign in to Claude Code to make Claude available as a xPerfect host worker",
                 ),
                 PreflightItem(
                     key="glasshive_host_openclaw_cli",
                     label="OpenClaw CLI",
-                    category="GlassHive host workers",
+                    category="xPerfect host workers",
                     reason="run @openclaw host-native workers on this computer",
                     status="ok" if openclaw_ready else "optional",
                     install_kind="none",
@@ -1312,8 +1313,8 @@ def build_preflight_items(config: dict[str, Any]) -> list[PreflightItem]:
                 ),
                 PreflightItem(
                     key="glasshive_host_workspace_root",
-                    label="GlassHive host workspace root",
-                    category="GlassHive host workers",
+                    label="xPerfect host workspace root",
+                    category="xPerfect host workers",
                     reason="create host-native worker project folders under the configured user-scoped root",
                     status="ok" if workspace_ready else "missing",
                     install_kind="manual" if not workspace_ready else "none",

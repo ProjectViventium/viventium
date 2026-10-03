@@ -138,6 +138,8 @@ def _livekit_selector_defs() -> str:
                 launcher, "livekit_container_has_configured_http_port"
             ),
             _extract_shell_function(launcher, "livekit_runtime_container_ids"),
+            _extract_shell_function(launcher, "livekit_public_node_ip_configured"),
+            _extract_shell_function(launcher, "livekit_public_mapping_matches_configured"),
         )
     )
 
@@ -955,6 +957,108 @@ def test_livekit_runtime_image_is_immutable_and_release_locked() -> None:
     assert "\n              livekit/livekit-server\n" not in launcher
 
 
+def test_livekit_public_ipv4_config_keeps_local_candidates_and_declared_route(
+    tmp_path: Path,
+) -> None:
+    launcher = _read("viventium_v0_4/viventium-librechat-start.sh")
+    definitions = "\n".join(
+        _extract_shell_function(launcher, name)
+        for name in ("livekit_public_node_ip_configured", "write_livekit_config")
+    )
+    for node_ip, expected_dual in (
+        ("1.1.1.1", True),
+        ("192.168.1.10", False),
+        ("100.80.40.20", False),
+        ("127.0.0.1", False),
+        ("2001:4860:4860::8888", False),
+    ):
+        config_path = tmp_path / "livekit.yaml"
+        script = f"""
+set -eu
+LIVEKIT_NODE_IP={node_ip!r}
+LIVEKIT_HTTP_PORT=17880
+LIVEKIT_TCP_PORT=17881
+LIVEKIT_UDP_PORT=17882
+LIVEKIT_API_KEY=synthetic-key
+LIVEKIT_API_SECRET=synthetic-secret
+{definitions}
+write_livekit_config {str(config_path)!r} '' ''
+printf '%s' "$LIVEKIT_NODE_IP"
+"""
+        completed = subprocess.run(
+            ["/bin/bash", "-c", script], check=True, capture_output=True, text=True
+        )
+        assert completed.stdout == node_ip
+        config = config_path.read_text(encoding="utf-8")
+        assert ("use_external_ip: true" in config) is expected_dual
+        assert ("advertise_internal_ip: true" in config) is expected_dual
+        assert ("enable_loopback_candidate: true" in config) is expected_dual
+        assert "tcp_port: 17881" in config
+        assert "udp_port: 17882" in config
+
+
+def test_livekit_native_discovery_asserts_configured_public_ip() -> None:
+    definition = _extract_shell_function(
+        _read("viventium_v0_4/viventium-librechat-start.sh"),
+        "livekit_public_mapping_matches_configured",
+    )
+    for mappings, advertise_internal, expected_returncode in (
+        (["1.1.1.1/172.17.0.2", "127.0.0.1/127.0.0.1"], True, 0),
+        (["8.8.8.8/172.17.0.2", "127.0.0.1/127.0.0.1"], True, 1),
+        (["1.1.1.1/172.17.0.2"], False, 1),
+        ([], True, 1),
+    ):
+        payload = json.dumps({"ips": mappings, "advertiseInternalIP": advertise_internal})
+        script = f"""
+set -eu
+LIVEKIT_NODE_IP=1.1.1.1
+docker() {{ printf '%s\\n' 'native using external IPs {payload}'; }}
+{definition}
+livekit_public_mapping_matches_configured owned-container
+"""
+        completed = subprocess.run(
+            ["/bin/bash", "-c", script], check=False, capture_output=True, text=True
+        )
+        assert completed.returncode == expected_returncode
+        assert completed.stdout == ""
+
+
+def test_livekit_public_runtime_reuse_requires_dual_candidate_artifact() -> None:
+    launcher = _read("viventium_v0_4/viventium-librechat-start.sh")
+    definitions = "\n".join(
+        _extract_shell_function(launcher, name)
+        for name in (
+            "livekit_public_node_ip_configured", "livekit_managed_container_matches_release"
+        )
+    )
+    script = f"""
+set -euo pipefail
+LIVEKIT_NODE_IP=1.1.1.1
+LIVEKIT_SERVER_IMAGE='{LIVEKIT_IMAGE}'
+LIVEKIT_SERVER_SOURCE_COMMIT='{LIVEKIT_SOURCE_COMMIT}'
+LIVEKIT_HTTP_PORT=17880
+MOCK_RTC_MODE=''
+docker() {{
+  case "$3" in
+    *Config.Image*|*viventium.livekit.image*) printf '%s\\n' "$LIVEKIT_SERVER_IMAGE" ;;
+    *viventium.livekit.source*) printf '%s\\n' "$LIVEKIT_SERVER_SOURCE_COMMIT" ;;
+    *viventium.livekit.http-port*) printf '%s\\n' "$LIVEKIT_HTTP_PORT" ;;
+    *viventium.livekit.rtc-mode*) printf '%s\\n' "$MOCK_RTC_MODE" ;;
+    *) return 1 ;;
+  esac
+}}
+livekit_container_has_configured_http_port() {{ return 0; }}
+{definitions}
+if livekit_managed_container_matches_release stale; then exit 2; fi
+MOCK_RTC_MODE=public-local
+livekit_managed_container_matches_release current
+"""
+    completed = subprocess.run(
+        ["/bin/bash", "-c", script], check=False, capture_output=True, text=True
+    )
+    assert completed.returncode == 0
+
+
 def _run_legacy_voice_launcher(
     tmp_path: Path,
     *args: str,
@@ -1353,6 +1457,7 @@ LIVEKIT_SERVER_SOURCE_COMMIT='{LIVEKIT_SOURCE_COMMIT}'
 LIVEKIT_HTTP_PORT=17880
 MOCK_SOURCE='{LIVEKIT_SOURCE_COMMIT}'
 MOCK_HTTP_PORT="$LIVEKIT_HTTP_PORT"
+LIVEKIT_NODE_IP=127.0.0.1
 docker() {{
   case "$3" in
     *Config.Image*) printf '%s\\n' "$LIVEKIT_SERVER_IMAGE" ;;
@@ -1364,6 +1469,7 @@ docker() {{
 }}
 livekit_container_has_configured_http_port() {{ return 0; }}
 {function_def}
+{_extract_shell_function(launcher, 'livekit_public_node_ip_configured')}
 livekit_managed_container_matches_release exact && printf 'exact\\n'
 MOCK_SOURCE='stale-source'
 if livekit_managed_container_matches_release stale; then

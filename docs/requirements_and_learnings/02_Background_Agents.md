@@ -162,7 +162,11 @@ browser-only post-connect side effect.
 - Connecting OpenAI or Anthropic later in the browser unlocks auth for the configured provider mix;
   it does not currently recompute the built-in background-agent roster by itself.
 
-Authoritative execution matrix:
+Historical execution matrix (superseded defaults):
+
+This retained table records the earlier baseline. Current defaults are in
+[Related model decisions](#related-model-decisions-affect-main-agent--cortex-latency).
+Supported explicit model and effort choices remain available.
 
 | Agent               | Shipped Mixed Baseline                               | OpenAI-only install               | Anthropic-only install      | OpenAI + Anthropic install        |
 | ------------------- | ---------------------------------------------------- | --------------------------------- | --------------------------- | --------------------------------- |
@@ -181,21 +185,23 @@ Authoritative execution matrix:
 
 Model inventory rule:
 
-- The built-in conscious/subconscious source uses only the connected-account-proven explicit
-  `gpt-5.6-sol` and `gpt-5.6-terra` slugs. Do not use the unsupported connected-account alias or
-  Luna on these built-ins merely because direct API-key inventory exposes them.
-- Every source-owned conscious/subconscious agent declares
-  `glasshive-harness / claude-code:opus / high` (Claude / Opus 5) as its generic Agent text
-  fallback. That route is usable only when GlassHive is enabled; unavailable fallback capability
-  must surface honestly rather than causing a silent model downgrade.
+- Provider defaults use GPT 6.1 Sol/high, Opus 5.5/high, and Grok 4.7/high. Native Grok Fast
+  is used where the current catalog supports it. Explicit supported alternatives remain legal.
+- Source-owned conscious/subconscious agents use
+  `glasshive-harness / claude-code:claude-opus-5-5 / high` as the generic Agent text fallback.
+  That route is usable only when GlassHive is enabled; unavailable fallback capability must
+  surface honestly rather than causing a silent model downgrade.
   Phase B runtime owns retrying the configured backup once for provider timeout/abort/recoverable
   provider failures; prompt-only changes must not be used to hide those errors.
 - Every built-in background cortex activation classifier uses
   `groq / qwen/qwen3.6-27b` as the primary Phase A detector. Qwen thinking must be disabled with
   `reasoning_effort: none`, its reasoning trace must stay hidden, and JSON-object mode plus a fixed
   seed must keep the classifier fast and machine-readable. It must
-  carry provider fallbacks: `xai / grok-4.20-non-reasoning` first, then
-  `anthropic / claude-haiku-4-5`, then `openai / gpt-5.4`. This is a reliability contract for
+  carry provider fallbacks: `xai / grok-4.7` first, then
+  `anthropic / claude-opus-5-5`, then `openai / gpt-6.1-sol`, each at `high` effort.
+  Structured activation `reasoning_effort` must reach each provider's native effort field;
+  an explicit reasoning route uses the endpoint's existing output budget rather than the
+  legacy 100-token classifier cap. Explicit supported alternate models and efforts remain valid. This is a reliability contract for
   provider outages such as
   activation-provider 403/401/429 responses; it must not change activation intent semantics, add
   runtime keyword heuristics, or silently promote fallback providers into the default fast path.
@@ -206,7 +212,7 @@ Model inventory rule:
   fall back to the first discovered runtime model when no activation route exists yet. The built-in
   runtime env-normalization map must cover every built-in cortex, including Viventium User Help.
 - Phase A OpenAI activation fallback must apply the same reasoning-model sampling guard as Phase B:
-  Viventium's configured `gpt-5.4` activation run must not receive `temperature`, `topP`, penalties,
+  Viventium's configured `gpt-6.1-sol` activation run must not receive `temperature`, `topP`, penalties,
   `n`, or logprob sampling controls.
 - Phase B execution may have an explicit operator-configured outer guard when a deployment requires
   one. When it is unset, there is no automatic execution deadline: provider/tool terminal state and
@@ -447,6 +453,10 @@ Requirements:
 - If the conversation has moved on since the originating response, the adjudication prompt must also
   include the newer visible user/assistant exchange so the main agent can avoid stale or interruptive
   follow-ups without runtime text matching.
+- Internal worker callback cards remain in the conversation tree for ancestry, but their typed
+  status text is excluded from visible-answer context in both Main and follow-up adjudication.
+  A completed status is not proof that the worker result was delivered. Real descendant turns and
+  user/file-bearing messages retain their existing authority and visibility checks.
 - `{NTA}` means silent success. It is valid for redundant, irrelevant, or non-actionable
   background results and must not be delivered to web, Telegram, or voice users.
 - Phase B silent success, empty output, skipped/no-insight completion, and generated follow-up
@@ -457,6 +467,22 @@ Requirements:
 - Web polling must treat `suppressed`, `empty`, and `skipped` as terminal-silent decisions, but not
   `persisted`: the parent decision can be saved immediately before the new assistant follow-up, so
   stopping on `persisted` alone can hide a valid late Phase B message.
+- A persisted follow-up's decision record, on the follow-up and on its parent, starts with delivery
+  `pending`. Once the delivery ledger settles every row that follow-up presents, the record takes
+  the ledger's exact terminal outcome, `sent` or `dropped` with its reason, at the ledger's terminal
+  time. The ledger stays the delivery authority, and `result` does not change, so polling
+  semantics are unchanged. A crash or failed write between a settlement and its reflection, including
+  a reflection that updated only the follow-up or only the parent, converges on the recovery pass. It
+  walks every retained terminal ledger batch (30-day retention) with a rotating ascending cursor, so
+  each tick makes progress and no batch is starved by already reflected ones, and it records the
+  ledger's outcome on whichever of the follow-up and parent still reads `pending`. That pass only
+  reads the ledger and never presents anything again.
+- A delivery whose parent answer no longer exists (its conversation deleted, the answer replaced)
+  cannot be presented. Recovery defers it like any unavailable parent, but once every open row of
+  that parent is older than the stale window and has used every recovery attempt the ledger allows,
+  the pass settles it `dropped` with `delivery_attempts_exhausted` instead of deferring it forever.
+  The persisted follow-up message stays as it is and records that outcome; nothing is presented.
+  Work created by the current API process is never judged this way.
 - Web rendering must hide runtime-generated hold text parts marked as no-response, such as a
   scheduler Phase A `{NTA}` marker, using the structured runtime-hold flag rather than broad
   keyword filtering. The stored parent message is not edited; only the internal hold token is not
@@ -504,10 +530,9 @@ Requirements:
 - All GPT-5.6 conscious/subconscious bags set `useResponsesApi: true`; OpenAI documents Responses as
   the required path for reasoning plus tools, while Chat Completions function tools are compatible
   only at effective reasoning `none`.
-- The explicit effort map is part of the runtime contract: Sol/medium for the conscious agent,
-  Sol/xhigh for Red Team and Deep Research, Sol/high for Strategic Planning, Terra/medium for
-  Background Analysis, Confirmation Bias, Parietal Cortex, and Pattern Recognition, and Terra/low
-  for MS365, Google, Emotional Resonance, and Viventium User Help.
+- Current provider defaults are GPT-6.1 Sol/high, Opus 5.5/high, and Grok 4.7/high.
+  Runtime normalization preserves an explicitly selected model and effort when the provider/model
+  route is unchanged. A default replacement does not prohibit supported alternative choices.
 
 ## Memory Context Parity
 
@@ -581,8 +606,9 @@ Use this order so the fix stays surgical:
 - Phase A fallback reliability must be bounded inside the same activation-detection wait budget.
   Groq remains the first attempted classifier, but a slow primary attempt must not consume the
   entire turn when configured fallbacks are available. Runtime should use per-attempt activation
-  timeouts so the shipped `xAI -> Anthropic Haiku -> OpenAI GPT-5.4` fallback order can rescue
-  provider reachability failures without changing activation semantics. The per-attempt deadline
+  timeouts so the configured `xAI -> Anthropic -> OpenAI` fallback order can rescue provider
+  reachability failures without changing activation semantics. Current provider model defaults
+  follow the related model decisions below; supported explicit choices remain valid. The per-attempt deadline
   must be enforced independently of the
   provider client's `AbortSignal` behavior; a provider promise that ignores cancellation must still
   yield to the next configured fallback.
@@ -784,9 +810,11 @@ Provider attempts inside those total windows are independently bounded. The comp
 window still wins, so these knobs improve fallback completion without extending a blocking user
 path. If one configured provider fails to initialize without a usable HTTP status, activation
 continues to the next configured fallback; an unavailable middle route must not strand later routes.
-The shipped order is Qwen/Groq primary, then xAI, Anthropic Haiku, and OpenAI. This is structured
-source configuration rather than runtime provider-name branching: it gives the fastest recovery
-routes the first attempt while retaining a broad final fallback, and remains user-configurable.
+The shipped order is Qwen/Groq primary, then Grok 4.7/high, Opus 5.5/high, and GPT-6.1 Sol/high.
+This order is source configuration and remains user-configurable. Activation inference must carry
+the Connected Accounts initializer's complete transport configuration, including the subscription
+backend, headers, request adapter, and credential recovery. A typed reconnect failure is a
+user-scoped authentication failure and can use the next configured fallback.
 
 ### Async OFF — blocking detection with early-exit
 
@@ -924,12 +952,11 @@ preserve streaming. Two viable shapes, with a real trade-off:
 
 ### Related model decisions (affect Main Agent / cortex latency)
 
-- Main Agent text: `gpt-5.6-sol` with `reasoning_effort: medium` and Responses API. Background
-  execution uses the Sol/Terra effort map above. Every text route falls back to
-  `glasshive-harness / claude-code:opus / high` when that capability is available.
-- Voice LLM remains `xai / grok-4.5` with `reasoning_effort: low`. Its latency-preserving voice
-  fallback is `openAI / gpt-5.6-terra` with `reasoning_effort: none`; the text fallback policy does
-  not replace the explicit voice route. The dedicated route must pass the same recall,
+- Main Agent text defaults to `glasshive-harness / codex-cli:gpt-6.1-sol / high`.
+  Its fallback is `glasshive-harness / claude-code:claude-opus-5-5 / high`.
+- Voice LLM defaults to `glasshive-harness / grok-build:grok-4.7-build-fast / high` where the
+  current native catalog supports Fast; standard Grok 4.7/high is the supported alternative.
+  Voice uses the same Opus 5.5/high harness fallback and must pass the same recall,
   tool-ownership, audible-delivery, and persistence gates as the main route. The TTS provider is
   selected separately and does not determine the Voice LLM.
 - See `qa/modern-playground-voice/reports/2026-05-29-voice-chat-latency-rca-and-fixes.md` for the

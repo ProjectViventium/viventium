@@ -17,6 +17,49 @@ def resolve_whisper_mode(env) -> str:
     return "openai"
 
 
+# === VIVENTIUM START === Use the call's compiled AssemblyAI options for notes.
+def normalize_voice_context_keyterms(value):
+    if value is None:
+        return []
+    if (not isinstance(value, list) or len(value) > 32
+            or any(not isinstance(term, str) or not term.strip() or len(term) > 96
+                   or '/' in term or '\\' in term
+                   or any(ord(character) < 0x20 for character in term) for term in value)):
+        raise ValueError('Invalid canonical voice context keyterms')
+    return list(value)
+
+
+def build_assemblyai_stt_options(environment, contextual_keyterms=None):
+    import math
+
+    options = {'speaker_labels': True}
+    for source, target, integer in (
+        ('VIVENTIUM_ASSEMBLYAI_END_OF_TURN_CONFIDENCE_THRESHOLD',
+         'end_of_turn_confidence_threshold', False),
+        ('VIVENTIUM_ASSEMBLYAI_MIN_END_OF_TURN_SILENCE_WHEN_CONFIDENT_MS',
+         'min_turn_silence', True),
+        ('VIVENTIUM_ASSEMBLYAI_MAX_TURN_SILENCE_MS', 'max_turn_silence', True),
+    ):
+        raw = str(environment.get(source) or '').strip()
+        if not raw:
+            continue
+        try:
+            value = float(raw)
+        except ValueError:
+            continue
+        if math.isfinite(value) and value >= 0:
+            options[target] = int(value) if integer else value
+    if str(environment.get('VIVENTIUM_ASSEMBLYAI_FORMAT_TURNS') or '').strip().lower() in {
+        '1', 'true', 'yes', 'on',
+    }:
+        options['format_turns'] = True
+    keyterms = normalize_voice_context_keyterms(contextual_keyterms)
+    if keyterms:
+        options['keyterms_prompt'] = keyterms
+    return options
+# === VIVENTIUM END ===
+
+
 def resolve_api_whisper_config(
     user_api_key,
     user_api_url,

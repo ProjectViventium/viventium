@@ -34,6 +34,18 @@ a disabled switch must not imply that the user's saved choice was changed.
 
 Normal install/status summaries report local service and configuration state. Public certification
 belongs to `bin/viventium release-check`; it must not appear as a claim that local work is disabled.
+Telegram admission and Web/Voice tool discovery use the same owner-scoped operational claim.
+Authenticated entry observes the owner early so the existing deduplicated readiness probe can overlap
+input and agent preparation. Authoring reuses fresh ready, unready or unavailable observations without
+waiting for recovery. Unknown or stale observations can join that probe only within the existing
+Active Work cold budget (100 ms by default); an unfinished probe leaves this turn Focused, and a later
+turn can use its recovered result. Explicit status/warm-up callers keep the bounded readiness wait.
+Content-free stage logs retain the authoring span, probe children, status, typed reason and storage facts.
+Interactive roster refresh failures also record stage, error class and elapsed time. Cached stale
+and unavailable results retain their existing meaning and deadlines.
+Telegram account status preserves the saved preference during an outage and reports only the owner
+claim's availability and blockers. It does not add deployment certification to that claim. Source-order
+durability, owner isolation, authorization, and capacity checks still govern every admission.
 
 ## Product outcome
 
@@ -1256,10 +1268,10 @@ recovery path.
 `bin/viventium release-check` is the public claim command. Config compilation writes the evaluator's
 typed JSON projection to `parallel-work-release-gate.json`; install and status summaries consume
 that projection and do not parse QA Markdown. Open gates report **NOT READY**. An explicit requested
-local exposure reports **PRE-GATE / NOT READY**. Existing Web and Telegram readiness surfaces remain
-unavailable unless both the compiled release-gate snapshot and their structured operational
-orchestration snapshot pass. Missing snapshots and open QA return the same visible label and typed
-blockers on Web and Telegram; an explicit local override always reports **PRE-GATE / NOT READY**.
+local exposure reports **PRE-GATE / NOT READY**. This deployment certification projection is separate
+from owner-scoped local readiness. Web and Telegram account surfaces use the structured operational
+owner claim; an open or missing release snapshot does not disable authorized local work. A local
+override retains **PRE-GATE / NOT READY** in release diagnostics and cannot certify a public release.
 Source, compiled, installed, and prebuilt identities remain separate release evidence; no one
 surface may stand in for another.
 
@@ -1487,6 +1499,38 @@ completion callbacks or follow-up synthesis expose an insight. If both Mongo wri
 acceptance unavailable without exposing the result or rerunning inference to repair persistence.
 Internal Reaction and compaction callers opt out through explicit completed-result policy.
 
+One parent admits exactly one delivery envelope, while its activated cortices finish one at a time.
+Each completed Phase B insight is therefore accepted exactly and durably into the write-ahead outbox
+for its live Phase B owner, without its own ledger batch. The owner records the parent's one batch
+from every accepted insight and removes the outbox rows it represents. Before recording, the owner
+seals the parent turn: acceptances already writing complete and join the batch. A cortex attempt's
+lifetime is joined to its deadline: the execution deadline starts at attempt entry, and both that
+deadline and the guard that stops waiting for an attempt abort it with the owned reason
+`cortex_attempt_deadline`. The native harness contract cancels the exact request for that reason and
+acknowledges it only after capacity release. The guard then waits for the attempt to settle. Every
+attempt resolves its own native ownership at its boundary before it settles, with or without an
+observer: `none` when no native request was bound, `ended` when the provider completed it with the
+attempt's result, `released` when GlassHive acknowledged every exact bound request and run terminal
+with no retained lease (an attempt that ended without its result, even unaborted, sends that
+idempotent release itself; it also fences a request that was never admitted), and otherwise
+`unresolved`. Local settlement, absent output and an unreachable host are never release. No fallback
+or retry starts while ownership is `unresolved`: the direct and Phase B fallbacks, the Emotional
+Reaction timeout retry and the Main compaction transport retry all read it from the attempt's
+result, and a failure before any native request is bound keeps its fallback. Every fallback, the
+Phase B guard's included, is its own native request with its own `cortex-fallback` idempotency
+identity, never a replay of the stopped primary's. An attempt that has not settled within the join
+window is treated as possibly running and gets no fallback. An aborted
+attempt never accepts a result even when its provider stream still completes. A producer that
+still reaches acceptance after the seal is refused with the typed reason
+`cortex_insight_owner_closed`, or, when the owner recorded no batch, becomes the parent's batch
+through replay. Rows the owner releases after a failed follow-up, or rows whose runtime slot
+restarted, replay as one grouped batch per parent turn; a live owner's rows stay out of replay and
+recovery until its bounded owner lease ends. Each required surface has one delivery owner: the
+owner's emit presents Web, and after it settles every still-unpresented required surface goes to its
+durable dispatcher whatever the receipt target, because a subscriber receipt cannot show that a
+Telegram listener holds the lease. The dispatcher authorizes before sending and acknowledges under
+its own lease.
+
 Follow-up creation claims the exact accepted batch, renews its lease before persistence, and settles
 only matching saved message receipts. Suppression has a typed disposition. Promoting a new result
 onto an empty parent removes the old delivery acknowledgement and advances its revision. Startup
@@ -1572,6 +1616,18 @@ work-action call cannot mint this authority. Declines remain declines; a lost HT
 the identical operation, and stale, replaced or stopped requests cannot receive new approval.
 The native supervisor keeps its input channel open and preserves process cancellation. This is
 transport for the native harness's own approval flow, not a global permission grant.
+
+Native harness permission uses the same owner-input action on Web, Telegram and mission Voice.
+The signed attention callback carries only the exact request, fingerprint, run, attempt, session
+and expiry identity. Telegram topic and linked-user delivery come from the Core origin binding.
+Each consumer reads the current owner-scoped permission form before offering its actual options.
+An uncertain native acknowledgement remains pending; it does not mean accepted. Voice retains
+only the operation ID, response digest and exact task/work/call ownership in its existing durable
+task payload. A restart restores input through the same owner-scoped current-work read; it does
+not restore an approval grant or opaque capability. After expiry, only the identical retained
+operation and response digest can reconcile an uncertain acknowledgement; native operation truth
+prevents a new expired approval. Question expiry or replacement does not remove an existing exact-run
+Stop capability.
 
 PW-039: **Stop** targets only the exact Bee, preserves its workspace/history, and stays `stopping` until process-tree termination is proved. If termination cannot be proved, keep `stopping` and expose `stop_failed` only as a typed action/attention error detail, never as a public WorkState or terminal result.
 PW-040: **Retry/Continue** starts a new run in the same mission/workspace.

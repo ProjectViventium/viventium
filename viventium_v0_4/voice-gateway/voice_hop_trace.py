@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import json
+import time
+from contextlib import contextmanager
 from typing import Any, Optional
 
 
@@ -16,6 +20,43 @@ HOP_ORDER = (
     "tts_first_byte",
     "audio_output",
 )
+
+STAGE_NAMES = frozenset(
+    {"speaker_context", "speaker_finalize", "turn_authority", "speaker_persist", "owner_caption"}
+)
+
+
+@contextmanager
+def voice_stage_span(logger: Any, stage: str, context: dict[str, Any]):
+    """Measure callback work without recording transcript, participant or raw turn identifiers."""
+    if stage not in STAGE_NAMES:
+        raise ValueError("unsupported voice timing stage")
+    started = time.monotonic_ns()
+    status = "completed"
+    try:
+        yield
+    except BaseException as exc:
+        status = "cancelled" if isinstance(exc, asyncio.CancelledError) else "failed"
+        raise
+    finally:
+        segments = context.get("speakerSegments")
+        first = segments[0] if isinstance(segments, list) and segments else {}
+        first = first if isinstance(first, dict) else {}
+        call_id, turn_id = first.get("callSessionId"), first.get("turnId")
+        binding = f"voice-stage-v1\0{call_id}\0{turn_id}" if call_id and turn_id else None
+        logger.info(
+            "[VoiceStage] %s",
+            json.dumps(
+                {
+                    "event": "voice_stage", "stage": stage, "status": status,
+                    "turnHash": hashlib.sha256(binding.encode()).hexdigest() if binding else None,
+                    "bindingStatus": "bound" if binding else "missing",
+                    "endedAtMs": time.time_ns() / 1_000_000,
+                    "durationMs": (time.monotonic_ns() - started) / 1_000_000,
+                },
+                separators=(",", ":"),
+            ),
+        )
 
 
 class VoiceHopTrace:

@@ -26,11 +26,11 @@
 
 | Suite | Command or Manual Path | Required When | Historical evidence, not current signoff |
 | --- | --- | --- | --- |
-| Release tests | `PYTHONPATH=. python -m pytest tests/release -q` in a stable test environment with `pytest` and `pyyaml` | Before parent push | 2026-05-11 local / 2026-05-12 UTC: 504 passed, 2 skipped |
+| Release tests | `PYTHONPATH=. python -m pytest tests/release -q` in a stable test environment with `pytest` and `pyyaml` | Explicit full scope; otherwise select causally affected tests | 2026-05-11 local / 2026-05-12 UTC: 504 passed, 2 skipped |
 | Diff hygiene | `git diff --check` plus public/private pattern scans | Before staging | 2026-05-11 local / 2026-05-12 UTC: parent, LibreChat, and GlassHive diff checks passed; sensitive-pattern scans found no added private values |
 | Browser-visible QA | `node qa/background_agents/evals/run-visible-cards-browser-qa.cjs --headless` with local opt-in env | When background-agent UI behavior changed | 2026-05-11 local / 2026-05-12 UTC: PASS, public-safe report saved |
 | Latest-user activation QA | `node qa/background_agents/evals/run-latest-user-activation-browser-qa.cjs --headless` with local opt-in env | When activation history/window behavior changed | 2026-05-11 local / 2026-05-12 UTC: PASS, public-safe report saved |
-| Full activation classifier gate | `node qa/background_agents/evals/run-activation-model-evals.cjs --run-live --with-fallbacks --repetitions=1 --concurrency=1 --output-dir=<private-output> --public-report=<public-safe-report>` | Before release while the primary activation model is preview, and after any activation prompt/model/provider/fallback/parser/runtime change | 2026-07-15 PASS with degraded primary-provider health: current 67-case bank completed and passed all 737 target decisions with 100% required recall and activation precision, 0 FP/FN/inconsistency, and 0 unavailable decisions. All 737 Groq/Qwen primary attempts were provider-rejected and recovered by the configured xAI fallback; p50/p95/max was 551/779/1,319 ms. Restore/recheck Groq health and repeat under release-load conditions before multi-user capacity claims. |
+| Full activation classifier gate | `node qa/background_agents/evals/run-activation-model-evals.cjs --run-live --with-fallbacks --repetitions=1 --concurrency=1 --output-dir=<private-output> --public-report=<public-safe-report>` | Within approved QA scope after an affected activation change; select relevant cases and retain valid evidence | 2026-07-15 PASS with degraded primary-provider health: current 67-case bank completed and passed all 737 target decisions with 100% required recall and activation precision, 0 FP/FN/inconsistency, and 0 unavailable decisions. All 737 Groq/Qwen primary attempts were provider-rejected and recovered by the configured xAI fallback; p50/p95/max was 551/779/1,319 ms. Restore/recheck Groq health and repeat under release-load conditions before multi-user capacity claims. |
 | Background interruption/restart QA | `VIVENTIUM_QA_ALLOW_LOCAL_JWT=1 VIVENTIUM_QA_ALLOW_RUNTIME_RESTART=1 node qa/background_agents/evals/run-interruption-restart-browser-qa.cjs --headless` with a local synthetic QA user | When background status persistence, stale recovery, or runtime restart behavior changes | 2026-07-10: PASS; real active Red Team card/DB state, changed API process, same-conversation survival, terminal stale recovery, expanded reload detail, no generation placeholder |
 | Nested component tests | Targeted Jest/Pytest suites in changed nested repos | Before nested commit | 2026-05-11 local / 2026-05-12 UTC: focused LibreChat backend 254 passed, focused frontend cortex-card 14 passed, MCP manager 43 passed, Scheduling Cortex 85 passed, GlassHive runtime 109 passed / 3 skipped |
 
@@ -52,7 +52,8 @@
   `HEAD` ownership instead of treating Git-index presence as durability. New owners and current
   documentation repairs are uncommitted, so a clean checkout cannot recover the complete
   source-of-truth set or every central-map target.
-- Release remains open for durable tracked ownership; current full-suite reruns; clean checkout and
+- At the selected publication boundary, release remains open for durable tracked ownership;
+  approved-scope checks with invalidated evidence; clean checkout and
   install; nested component commit, parent pin, compiled/prebuilt artifact, and installed identity
   agreement; upgrade and rollback; required real-user surfaces; public-safety review; and zero-open
   acceptance. A PR merge is only one publication action and is not the sole remaining gate.

@@ -744,24 +744,14 @@ def test_glasshive_xai_provider_key_is_isolated_from_gateway_and_runtime(tmp_pat
     assert "XAI_API_KEY" not in config_compiler.GLASSHIVE_ANTHROPIC_PROVIDER_ENV_KEYS
 
 
-def test_scheduled_agent_defaults_to_sol_xhigh_and_rejects_partial_policy() -> None:
+def test_scheduled_agent_defaults_to_current_sol_high_and_preserves_old_choices() -> None:
     assert config_compiler.resolve_scheduled_agent_settings({}) == {
-        "provider": "openai",
-        "model": "gpt-5.6-sol",
-        "reasoning_effort": "xhigh",
+        "provider": "openai", "model": "gpt-6.1-sol", "reasoning_effort": "high",
     }
-
-    with pytest.raises(SystemExit, match="must stay xhigh"):
-        config_compiler.resolve_scheduled_agent_settings(
-            {
-                "runtime": {
-                    "scheduled_agent": {
-                        "model": "gpt-5.6-sol",
-                        "reasoning_effort": "medium",
-                    }
-                }
-            }
-        )
+    configured = {"runtime": {"scheduled_agent": {"model": "gpt-5.6-sol", "reasoning_effort": "medium"}}}
+    assert config_compiler.resolve_scheduled_agent_settings(configured)["reasoning_effort"] == "medium"
+    with pytest.raises(SystemExit, match="must be low"):
+        config_compiler.resolve_scheduled_agent_settings({"runtime": {"scheduled_agent": {"reasoning_effort": "invalid"}}})
 
 
 def load_source_of_truth_agents_bundle() -> dict:
@@ -1077,22 +1067,58 @@ def test_scheduling_cortex_can_be_omitted_from_canonical_native_defaults() -> No
     assert env["START_SCHEDULING_MCP"] == "false"
 
 
-@pytest.mark.parametrize("mode", ["native", "docker"])
-def test_native_enabled_mcp_dependencies_use_installed_transport(mode) -> None:
+@pytest.mark.parametrize(
+    ("mode", "native_payload"), [("native", True), ("native", False), ("docker", False)]
+)
+def test_native_enabled_mcp_dependencies_use_installed_transport(mode, native_payload) -> None:
     config = minimal_compile_config()
     config["install"]["mode"] = mode
     config["integrations"]["scheduling_cortex"] = {"enabled": True}
     config["integrations"]["sequential_thinking"] = {"enabled": True}
     assignments = config_compiler.build_agent_assignments(config)
     env = config_compiler.render_runtime_env(config, assignments)
-    rendered = yaml.safe_load(config_compiler.render_librechat_yaml(config, assignments, env))["mcpServers"]
-    if mode == "native":
+    rendered = yaml.safe_load(
+        config_compiler.render_librechat_yaml(config, assignments, env, native_payload=native_payload)
+    )["mcpServers"]
+    if native_payload:
         assert rendered["scheduling-cortex"]["headers"]["Authorization"] == "Bearer ${SCHEDULING_MCP_API_KEY}"
         assert rendered["sequential-thinking"]["command"] == "${VIVENTIUM_NATIVE_NODE_BINARY}"
         assert rendered["sequential-thinking"]["args"] == ["${VIVENTIUM_NATIVE_SEQUENTIAL_THINKING_ENTRYPOINT}"]
     else:
+        # Source checkouts, including the default install.mode=native, are launched from
+        # runtime.env; the doctor rejects any librechat.yaml reference it does not define.
         assert "Authorization" not in rendered["scheduling-cortex"]["headers"]
         assert rendered["sequential-thinking"]["command"] == "npx"
+        placeholders = set(re.findall(r"\$\{([A-Z0-9_]+)\}", json.dumps(rendered)))
+        assert not {
+            "SCHEDULING_MCP_API_KEY",
+            "VIVENTIUM_NATIVE_NODE_BINARY",
+            "VIVENTIUM_NATIVE_SEQUENTIAL_THINKING_ENTRYPOINT",
+        } & placeholders
+
+
+def test_native_payload_flag_requires_native_install(tmp_path: Path) -> None:
+    config = minimal_compile_config()
+    config["install"]["mode"] = "docker"
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "scripts/viventium/config_compiler.py"),
+            "--native-payload",
+            "--config",
+            str(config_path),
+            "--output-dir",
+            str(tmp_path / "out"),
+            "--dry-run",
+        ],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode != 0
+    assert "--native-payload requires install.mode=native" in completed.stderr
 
 
 def test_missing_legacy_scheduling_key_stays_disabled_without_enabled_predecessor() -> None:
@@ -1557,10 +1583,10 @@ def test_native_agent_bundle_rewrites_main_parameters_for_direct_openai_profile(
     compiled = config_compiler.render_native_agents_bundle(config, assignments, set())
 
     assert compiled["mainAgent"]["provider"] == "openai"
-    assert compiled["mainAgent"]["model"] == "gpt-5.6-sol"
+    assert compiled["mainAgent"]["model"] == "gpt-6.1-sol"
     assert compiled["mainAgent"]["model_parameters"] == {
-        "model": "gpt-5.6-sol",
-        "reasoning_effort": "medium",
+        "model": "gpt-6.1-sol",
+        "reasoning_effort": "high",
         "useResponsesApi": True,
     }
     assert "glasshive_options" not in compiled["mainAgent"]
@@ -1575,19 +1601,19 @@ def test_native_agent_bundle_restores_direct_fallbacks_without_glasshive() -> No
 
     for agent in agents:
         assert agent["fallback_llm_provider"] == "anthropic", agent["id"]
-        assert agent["fallback_llm_model"] == "claude-opus-5", agent["id"]
+        assert agent["fallback_llm_model"] == "claude-opus-5-5", agent["id"]
         parameters = agent["fallback_llm_model_parameters"]
-        assert parameters["model"] == "claude-opus-5", agent["id"]
+        assert parameters["model"] == "claude-opus-5-5", agent["id"]
         assert "reasoning_effort" not in parameters, agent["id"]
         assert "useResponsesApi" not in parameters, agent["id"]
 
     by_id = {agent["id"]: agent for agent in agents}
     assert by_id["agent_viventium_red_team_95aeb3"][
         "fallback_llm_model_parameters"
-    ]["effort"] == "max"
+    ]["effort"] == "high"
     assert by_id["agent_viventium_deep_research_95aeb3"][
         "fallback_llm_model_parameters"
-    ]["effort"] == "max"
+    ]["effort"] == "high"
     assert by_id["agent_viventium_strategic_planning_95aeb3"][
         "fallback_llm_model_parameters"
     ]["effort"] == "high"
@@ -1605,8 +1631,8 @@ def test_native_agent_bundle_rewrites_main_parameters_for_direct_anthropic_profi
     compiled = config_compiler.render_native_agents_bundle(config, assignments, set())
 
     assert compiled["mainAgent"]["provider"] == "anthropic"
-    assert compiled["mainAgent"]["model"] == "claude-opus-5"
-    assert compiled["mainAgent"]["model_parameters"] == {"model": "claude-opus-5"}
+    assert compiled["mainAgent"]["model"] == "claude-opus-5-5"
+    assert compiled["mainAgent"]["model_parameters"] == {"model": "claude-opus-5-5", "effort": "high"}
     assert "glasshive_options" not in compiled["mainAgent"]
 
 
@@ -1626,7 +1652,7 @@ def test_native_agent_bundle_keeps_interactive_glasshive_red_team_at_high_effort
     )
 
     assert red_team["provider"] == "glasshive-harness"
-    assert red_team["model"] == "codex-cli:gpt-6-astra"
+    assert red_team["model"] == "codex-cli:gpt-6.1-sol"
     assert red_team["model_parameters"]["reasoning_effort"] == "high"
 
 
@@ -1991,32 +2017,36 @@ def source_of_truth_built_in_agent_map() -> dict[str, str]:
 def test_main_agent_voice_profile_preserves_recall_capable_primary_and_independent_fallback() -> None:
     main_agent = load_source_of_truth_agents_bundle()["mainAgent"]
 
-    assert main_agent["voice_llm_provider"] == "xai"
-    assert main_agent["voice_llm_model"] == "grok-4.5"
+    assert main_agent["voice_llm_provider"] == "glasshive-harness"
+    assert main_agent["voice_llm_model"] == "grok-build:grok-4.7-build-fast"
     assert main_agent["voice_llm_model_parameters"] == {
-        "model": "grok-4.5",
-        "reasoning_effort": "low",
+        "model": "grok-build:grok-4.7-build-fast",
+        "reasoning_effort": "high",
     }
-    assert main_agent["voice_fallback_llm_provider"] == "openAI"
-    assert main_agent["voice_fallback_llm_model"] == "gpt-5.6-terra"
+    assert main_agent["voice_fallback_llm_provider"] == "glasshive-harness"
+    assert main_agent["voice_fallback_llm_model"] == "claude-code:claude-opus-5-5"
     assert main_agent["voice_fallback_llm_model_parameters"] == {
-        "model": "gpt-5.6-terra",
-        "reasoning_effort": "none",
-        "useResponsesApi": True,
+        "model": "claude-code:claude-opus-5-5",
+        "reasoning_effort": "high",
     }
     assert main_agent["fallback_llm_provider"] == "glasshive-harness"
-    assert main_agent["fallback_llm_model"] == "claude-code:claude-opus-5"
+    assert main_agent["fallback_llm_model"] == "claude-code:claude-opus-5-5"
     assert main_agent["fallback_llm_model_parameters"] == {
-        "model": "claude-code:claude-opus-5",
-        "reasoning_effort": "low",
+        "model": "claude-code:claude-opus-5-5",
+        "reasoning_effort": "high",
     }
+    compiled = compile_native_main_agent("codex-cli:gpt-6.1-sol")
+    for field in ("voice_llm_provider", "voice_llm_model", "voice_llm_model_parameters",
+                  "voice_fallback_llm_provider", "voice_fallback_llm_model",
+                  "voice_fallback_llm_model_parameters"):
+        assert compiled[field] == main_agent[field]
 
 
 XAI_CURRENT_DEFAULT_MODELS = [
+    "grok-4.7",
     "grok-4.5",
     "grok-4.20-non-reasoning",
     "grok-4.20-multi-agent-0309",
-    "grok-4.20-0309-reasoning",
 ]
 
 XAI_RETIRED_MODEL_IDS = {
@@ -2029,7 +2059,6 @@ XAI_RETIRED_MODEL_IDS = {
     "grok-3",
     "grok-imagine-image-pro",
 }
-
 
 def custom_endpoint(endpoints: list[dict], name: str) -> dict:
     for endpoint in endpoints:
@@ -2103,10 +2132,10 @@ def test_shipped_config_examples_use_evaluated_memory_and_worker_tiers(filename:
     memory_hardening = config["runtime"]["memory_hardening"]
     host_worker = config["integrations"]["glasshive"]["host_worker"]
 
-    assert memory_hardening["openai_model"] == "gpt-5.6-luna"
-    assert memory_hardening["openai_reasoning_effort"] == "medium"
-    assert host_worker["codex_model"] == "gpt-5.6-sol"
-    assert host_worker["codex_reasoning_effort"] == "xhigh"
+    assert memory_hardening["openai_model"] == "gpt-6.1-sol"
+    assert memory_hardening["openai_reasoning_effort"] == "high"
+    assert host_worker["codex_model"] == "gpt-6.1-sol"
+    assert host_worker["codex_reasoning_effort"] == "high"
 
 
 def test_build_custom_endpoints_xai_defaults_to_grok_45() -> None:
@@ -2115,8 +2144,8 @@ def test_build_custom_endpoints_xai_defaults_to_grok_45() -> None:
 
     assert models[:4] == XAI_CURRENT_DEFAULT_MODELS
     assert not any("experimental-beta-0304" in model for model in models)
-    assert xai["titleModel"] == "grok-4.5"
-    assert xai["summaryModel"] == "grok-4.5"
+    assert xai["titleModel"] == "grok-4.7"
+    assert xai["summaryModel"] == "grok-4.7"
     assert xai["titleModel"] not in XAI_RETIRED_MODEL_IDS
     assert xai["summaryModel"] not in XAI_RETIRED_MODEL_IDS
 
@@ -2146,10 +2175,10 @@ def test_glasshive_compiles_as_exact_core_agent_provider(
 
     assert assignments["conscious"] == (
         "glasshive-harness",
-        "codex-cli:gpt-6-astra",
+        "codex-cli:gpt-6.1-sol",
     )
     assert env["VIVENTIUM_FC_CONSCIOUS_LLM_PROVIDER"] == "glasshive-harness"
-    assert env["VIVENTIUM_FC_CONSCIOUS_LLM_MODEL"] == "codex-cli:gpt-6-astra"
+    assert env["VIVENTIUM_FC_CONSCIOUS_LLM_MODEL"] == "codex-cli:gpt-6.1-sol"
     assert capability["message_delta_mode"] == "incremental"
     assert endpoint["modelDisplayLabel"] == "xPerfect"
     source = yaml.safe_load(SOURCE_OF_TRUTH_LIBRECHAT_YAML.read_text(encoding="utf-8"))
@@ -2157,7 +2186,7 @@ def test_glasshive_compiles_as_exact_core_agent_provider(
     assert endpoint["models"] == source_endpoint["models"]
     assert "codex-cli:gpt-5.6-luna" in endpoint["models"]["default"]
     assert endpoint["titleEndpoint"] == "openAI"
-    assert endpoint["titleModel"] == "gpt-5.6-terra"
+    assert endpoint["titleModel"] == "gpt-6.1-sol"
     assert set(config_compiler.GLASSHIVE_PROVIDER_DROP_PARAMS) <= set(endpoint["dropParams"])
     assert capability["main_chat"] is True
     assert capability["cortex_execution"] is True
@@ -2180,14 +2209,13 @@ def test_glasshive_compiles_as_exact_core_agent_provider(
     assert health_policy["defaultToolAccess"] == "none"
     assert health_policy["contentReadPolicy"] == "require_broker_grant"
     assert health_policy["writePolicy"] == "deny"
-    assert capability["models"][0]["recommendedEffort"] == "medium"
+    assert capability["models"][0]["recommendedEffort"] == "high"
     assert capability["models"][0]["effortChoices"] == [
         "low",
         "medium",
         "high",
         "xhigh",
         "max",
-        "ultra",
     ]
     assert next(model for model in capability["models"] if model["id"] == "claude-code:claude-opus-5")["effortChoices"] == [
         "default",
@@ -2268,7 +2296,7 @@ def test_glasshive_compiler_capability_matches_tracked_source_of_truth(
         "consciousAgent"
     ] == {
         "provider": "glasshive-harness",
-        "model": "codex-cli:gpt-6-astra",
+        "model": "codex-cli:gpt-6.1-sol",
     }
     assert env["VIVENTIUM_TELEGRAM_SSE_READ_TIMEOUT_S"] == "720"
 
@@ -2727,8 +2755,8 @@ def test_source_template_xai_endpoint_uses_current_stable_models() -> None:
     assert models[:4] == XAI_CURRENT_DEFAULT_MODELS
     assert not any("experimental-beta-0304" in model for model in models)
     assert XAI_RETIRED_MODEL_IDS.isdisjoint(models)
-    assert xai["titleModel"] == "grok-4.5"
-    assert xai["summaryModel"] == "grok-4.5"
+    assert xai["titleModel"] == "grok-4.7"
+    assert xai["summaryModel"] == "grok-4.7"
 
 
 def test_rendered_librechat_yaml_xai_endpoint_uses_grok_45_after_source_template_merge() -> None:
@@ -2771,8 +2799,8 @@ def test_rendered_librechat_yaml_xai_endpoint_uses_grok_45_after_source_template
 
     assert models[:4] == XAI_CURRENT_DEFAULT_MODELS
     assert XAI_RETIRED_MODEL_IDS.isdisjoint({xai["titleModel"], xai["summaryModel"]})
-    assert xai["titleModel"] == "grok-4.5"
-    assert xai["summaryModel"] == "grok-4.5"
+    assert xai["titleModel"] == "grok-4.7"
+    assert xai["summaryModel"] == "grok-4.7"
 
 
 def test_rendered_librechat_yaml_exposes_grok_45_in_model_specs() -> None:
@@ -2811,13 +2839,13 @@ def test_rendered_librechat_yaml_exposes_grok_45_in_model_specs() -> None:
     env = config_compiler.render_runtime_env(config, assignments)
     librechat_yaml = yaml.safe_load(config_compiler.render_librechat_yaml(config, assignments, env))
     grok_spec = next(
-        item for item in librechat_yaml["modelSpecs"]["list"] if item.get("name") == "grok-4.5"
+        item for item in librechat_yaml["modelSpecs"]["list"] if item.get("name") == "grok-4.7"
     )
 
-    assert grok_spec["label"] == "Grok 4.5"
+    assert grok_spec["label"] == "Grok 4.7"
     assert grok_spec["group"] == "xai"
     assert grok_spec["preset"]["endpoint"] == "xai"
-    assert grok_spec["preset"]["model"] == "grok-4.5"
+    assert grok_spec["preset"]["model"] == "grok-4.7"
 
 
 def test_config_compiler_minimal(tmp_path: Path) -> None:
@@ -2925,8 +2953,8 @@ def test_config_compiler_minimal(tmp_path: Path) -> None:
     assert "VIVENTIUM_REMOTE_CALL_MODE=disabled" in runtime_env
     assert "VIVENTIUM_MAIN_AGENT_ID=agent_viventium_main_95aeb3" in runtime_env
     assert "VIVENTIUM_SCHEDULED_AGENT_PROVIDER=openai" in runtime_env
-    assert "VIVENTIUM_SCHEDULED_AGENT_MODEL=gpt-5.6-sol" in runtime_env
-    assert "VIVENTIUM_SCHEDULED_AGENT_REASONING_EFFORT=xhigh" in runtime_env
+    assert "VIVENTIUM_SCHEDULED_AGENT_MODEL=gpt-6.1-sol" in runtime_env
+    assert "VIVENTIUM_SCHEDULED_AGENT_REASONING_EFFORT=high" in runtime_env
     assert "VIVENTIUM_LOCAL_SUBSCRIPTION_AUTH=true" in runtime_env
     assert "VIVENTIUM_DEFAULT_CONVERSATION_RECALL=false" in runtime_env
     assert "VIVENTIUM_MEMORY_HARDENING_ENABLED=false" in runtime_env
@@ -2940,12 +2968,12 @@ def test_config_compiler_minimal(tmp_path: Path) -> None:
     assert "VIVENTIUM_MEMORY_HARDENING_MIN_APPLY_INTERVAL_SECONDS=300" in runtime_env
     assert "VIVENTIUM_MEMORY_HARDENING_PROVIDER_PROFILE=launch_ready_only" in runtime_env
     assert "VIVENTIUM_MEMORY_HARDENING_PROVIDER=openai" in runtime_env
-    assert "VIVENTIUM_MEMORY_HARDENING_MODEL=gpt-5.6-luna" in runtime_env
-    assert "VIVENTIUM_MEMORY_HARDENING_EFFORT=medium" in runtime_env
-    assert "VIVENTIUM_MEMORY_HARDENING_ANTHROPIC_MODEL=claude-opus-5" in runtime_env
-    assert "VIVENTIUM_MEMORY_HARDENING_ANTHROPIC_EFFORT=xhigh" in runtime_env
-    assert "VIVENTIUM_MEMORY_HARDENING_OPENAI_MODEL=gpt-5.6-luna" in runtime_env
-    assert "VIVENTIUM_MEMORY_HARDENING_OPENAI_REASONING_EFFORT=medium" in runtime_env
+    assert "VIVENTIUM_MEMORY_HARDENING_MODEL=gpt-6.1-sol" in runtime_env
+    assert "VIVENTIUM_MEMORY_HARDENING_EFFORT=high" in runtime_env
+    assert "VIVENTIUM_MEMORY_HARDENING_ANTHROPIC_MODEL=claude-opus-5-5" in runtime_env
+    assert "VIVENTIUM_MEMORY_HARDENING_ANTHROPIC_EFFORT=high" in runtime_env
+    assert "VIVENTIUM_MEMORY_HARDENING_OPENAI_MODEL=gpt-6.1-sol" in runtime_env
+    assert "VIVENTIUM_MEMORY_HARDENING_OPENAI_REASONING_EFFORT=high" in runtime_env
     assert "VIVENTIUM_MEMORY_TRANSCRIPTS_DIR=" in runtime_env
     assert "VIVENTIUM_MEMORY_TRANSCRIPTS_IGNORE_GLOBS=" in runtime_env
     assert "VIVENTIUM_MEMORY_TRANSCRIPTS_MAX_FILES_PER_RUN=20" in runtime_env
@@ -2999,8 +3027,8 @@ def test_config_compiler_minimal(tmp_path: Path) -> None:
     assert librechat_yaml["memory"]["disabled"] is False
     assert librechat_yaml["memory"]["personalize"] is True
     assert librechat_yaml["memory"]["agent"]["provider"] == "openai"
-    assert librechat_yaml["memory"]["agent"]["model"] == "gpt-5.6-luna"
-    assert librechat_yaml["memory"]["agent"]["model_parameters"]["reasoning_effort"] == "medium"
+    assert librechat_yaml["memory"]["agent"]["model"] == "gpt-6.1-sol"
+    assert librechat_yaml["memory"]["agent"]["model_parameters"]["reasoning_effort"] == "high"
     assert librechat_yaml["memory"]["readProfile"]["tokenLimit"] == 8000
     assert librechat_yaml["memory"]["readProfile"]["keyLimits"]["preferences"] == 600
     assert prompt_bundle["prompt_count"] >= 50
@@ -3026,7 +3054,7 @@ def test_config_compiler_minimal(tmp_path: Path) -> None:
     assert built_in_agents == source_of_truth_built_in_agent_map()
     assert "azureOpenAI" not in librechat_yaml["endpoints"]
     assert librechat_yaml["endpoints"]["anthropic"]["titleEndpoint"] == "anthropic"
-    assert librechat_yaml["endpoints"]["anthropic"]["titleModel"] == "claude-opus-5"
+    assert librechat_yaml["endpoints"]["anthropic"]["titleModel"] == "claude-opus-5-5"
     assert all(
         item.get("preset", {}).get("endpoint") != "azureOpenAI"
         for item in librechat_yaml["modelSpecs"]["list"]
@@ -3310,8 +3338,8 @@ def test_render_runtime_env_emits_glasshive_launch_env_only_when_enabled(tmp_pat
     assert default_host_env["GLASSHIVE_DEFAULT_WORKER_PROFILE"] == "codex-cli"
     assert default_host_env["GLASSHIVE_DEFAULT_EXECUTION_MODE"] == "host"
     assert default_host_env["WPR_DEFAULT_EXECUTION_MODE"] == "host"
-    assert default_host_env["WPR_MODEL_HOST_CODEX_CLI"] == "gpt-5.6-sol"
-    assert default_host_env["WPR_CODEX_CLI_REASONING_EFFORT"] == "xhigh"
+    assert default_host_env["WPR_MODEL_HOST_CODEX_CLI"] == "gpt-6.1-sol"
+    assert default_host_env["WPR_CODEX_CLI_REASONING_EFFORT"] == "high"
     assert default_host_env["WPR_CODEX_CLI_XHIGH_ROUTE_PROVEN"] == "true"
     assert default_host_env["GLASSHIVE_RECURRING_SCHEDULE_OWNER"] == "viventium_cortex"
     assert default_host_env["GLASSHIVE_SCHEDULING_OWNER_URL"] == "http://127.0.0.1:7110/mcp"
@@ -3531,6 +3559,31 @@ def test_render_runtime_env_uses_codex_app_bundle_when_shell_path_is_missing(
     assert env["GLASSHIVE_HOST_WORKERS_ENABLED"] == "true"
     assert env["WPR_HOST_CODEX_CLI_AVAILABLE"] == "true"
     assert env["WPR_CODEX_BIN"] == str(app_cli)
+
+
+def test_gui_compiler_discovers_chatgpt_codex_bundle_without_shell_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    configure_synthetic_glasshive_runtime(tmp_path, monkeypatch)
+    app_cli = tmp_path / "ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex"
+    app_cli.parent.mkdir(parents=True)
+    app_cli.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    app_cli.chmod(0o755)
+    monkeypatch.setenv("VIVENTIUM_CODEX_APP_DIRS", str(tmp_path))
+    monkeypatch.setattr(config_compiler, "CODEX_APP_CLI", tmp_path / "missing-legacy-cli")
+    monkeypatch.setattr(config_compiler.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path / "home"))
+
+    config = minimal_compile_config()
+    config["integrations"]["glasshive"] = {"enabled": True}
+    env = config_compiler.render_runtime_env(config, config_compiler.build_agent_assignments(config))
+    assert env["WPR_CODEX_BIN"] == str(app_cli)
+    assert env["WPR_HOST_CODEX_CLI_AVAILABLE"] == "true"
+    explicit_cli = tmp_path / "explicit-cli"
+    explicit_cli.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    explicit_cli.chmod(0o755)
+    assert config_compiler.resolve_host_cli_path("codex", explicit_cli) == str(explicit_cli)
 
 
 def test_remote_glasshive_urls_do_not_rebind_local_launcher_ports(
@@ -5393,10 +5446,10 @@ def test_render_librechat_yaml_preserves_defaults_and_overlays_compiled_memory_a
 
     assert librechat_yaml["memory"]["disabled"] is False
     assert librechat_yaml["memory"]["agent"]["provider"] == "openai"
-    assert librechat_yaml["memory"]["agent"]["model"] == "gpt-5.6-luna"
-    assert librechat_yaml["memory"]["agent"]["model_parameters"]["reasoning_effort"] == "medium"
+    assert librechat_yaml["memory"]["agent"]["model"] == "gpt-6.1-sol"
+    assert librechat_yaml["memory"]["agent"]["model_parameters"]["reasoning_effort"] == "high"
     assert librechat_yaml["endpoints"]["anthropic"]["titleEndpoint"] == "anthropic"
-    assert librechat_yaml["endpoints"]["anthropic"]["titleModel"] == "claude-opus-5"
+    assert librechat_yaml["endpoints"]["anthropic"]["titleModel"] == "claude-opus-5-5"
     assert librechat_yaml["viventium"]["background_cortices"]["activation_format"]["brew_begin_tag"]
     expected_recall_prompt = config_compiler.render_prompt(
         "main.conversation_recall",
@@ -5423,19 +5476,19 @@ def test_build_agent_assignments_openai_only_uses_gpt56_workload_profile() -> No
 
     assignments = config_compiler.build_agent_assignments(config)
 
-    assert assignments["conscious"] == ("openai", "gpt-5.6-sol")
-    assert assignments["background_analysis"] == ("openai", "gpt-5.6-terra")
-    assert assignments["deep_memory"] == ("openai", "gpt-5.6-terra")
-    assert assignments["confirmation_bias"] == ("openai", "gpt-5.6-terra")
-    assert assignments["red_team"] == ("openai", "gpt-5.6-sol")
-    assert assignments["deep_research"] == ("openai", "gpt-5.6-sol")
-    assert assignments["productivity"] == ("openai", "gpt-5.6-terra")
-    assert assignments["parietal"] == ("openai", "gpt-5.6-terra")
-    assert assignments["pattern_recognition"] == ("openai", "gpt-5.6-terra")
-    assert assignments["emotional_resonance"] == ("openai", "gpt-5.6-terra")
-    assert assignments["strategic_planning"] == ("openai", "gpt-5.6-sol")
-    assert assignments["support"] == ("openai", "gpt-5.6-terra")
-    assert assignments["memory"] == ("openai", "gpt-5.6-luna")
+    assert assignments["conscious"] == ("openai", "gpt-6.1-sol")
+    assert assignments["background_analysis"] == ("openai", "gpt-6.1-sol")
+    assert assignments["deep_memory"] == ("openai", "gpt-6.1-sol")
+    assert assignments["confirmation_bias"] == ("openai", "gpt-6.1-sol")
+    assert assignments["red_team"] == ("openai", "gpt-6.1-sol")
+    assert assignments["deep_research"] == ("openai", "gpt-6.1-sol")
+    assert assignments["productivity"] == ("openai", "gpt-6.1-sol")
+    assert assignments["parietal"] == ("openai", "gpt-6.1-sol")
+    assert assignments["pattern_recognition"] == ("openai", "gpt-6.1-sol")
+    assert assignments["emotional_resonance"] == ("openai", "gpt-6.1-sol")
+    assert assignments["strategic_planning"] == ("openai", "gpt-6.1-sol")
+    assert assignments["support"] == ("openai", "gpt-6.1-sol")
+    assert assignments["memory"] == ("openai", "gpt-6.1-sol")
 
 
 def test_build_agent_assignments_glasshive_routes_all_conscious_cortex_execution() -> None:
@@ -5462,10 +5515,10 @@ def test_build_agent_assignments_glasshive_routes_all_conscious_cortex_execution
     for role in config_compiler.AGENT_ASSIGNMENT_ROLES - {"memory", "deep_memory"}:
         assert assignments[role] == (
             "glasshive-harness",
-            "codex-cli:gpt-6-astra",
+            "codex-cli:gpt-6.1-sol",
         )
-    assert assignments["deep_memory"] == ("openai", "gpt-5.6-terra")
-    assert assignments["memory"] == ("openai", "gpt-5.6-luna")
+    assert assignments["deep_memory"] == ("openai", "gpt-6.1-sol")
+    assert assignments["memory"] == ("openai", "gpt-6.1-sol")
 
 def test_build_agent_assignments_anthropic_only_uses_opus5_agent_fallback_profile() -> None:
     config = {
@@ -5482,18 +5535,18 @@ def test_build_agent_assignments_anthropic_only_uses_opus5_agent_fallback_profil
 
     assignments = config_compiler.build_agent_assignments(config)
 
-    assert assignments["conscious"] == ("anthropic", "claude-opus-5")
-    assert assignments["background_analysis"] == ("anthropic", "claude-opus-5")
-    assert assignments["confirmation_bias"] == ("anthropic", "claude-opus-5")
-    assert assignments["red_team"] == ("anthropic", "claude-opus-5")
-    assert assignments["deep_research"] == ("anthropic", "claude-opus-5")
-    assert assignments["productivity"] == ("anthropic", "claude-opus-5")
-    assert assignments["parietal"] == ("anthropic", "claude-opus-5")
-    assert assignments["pattern_recognition"] == ("anthropic", "claude-opus-5")
-    assert assignments["emotional_resonance"] == ("anthropic", "claude-opus-5")
-    assert assignments["strategic_planning"] == ("anthropic", "claude-opus-5")
-    assert assignments["support"] == ("anthropic", "claude-opus-5")
-    assert assignments["memory"] == ("anthropic", "claude-opus-5")
+    assert assignments["conscious"] == ("anthropic", "claude-opus-5-5")
+    assert assignments["background_analysis"] == ("anthropic", "claude-opus-5-5")
+    assert assignments["confirmation_bias"] == ("anthropic", "claude-opus-5-5")
+    assert assignments["red_team"] == ("anthropic", "claude-opus-5-5")
+    assert assignments["deep_research"] == ("anthropic", "claude-opus-5-5")
+    assert assignments["productivity"] == ("anthropic", "claude-opus-5-5")
+    assert assignments["parietal"] == ("anthropic", "claude-opus-5-5")
+    assert assignments["pattern_recognition"] == ("anthropic", "claude-opus-5-5")
+    assert assignments["emotional_resonance"] == ("anthropic", "claude-opus-5-5")
+    assert assignments["strategic_planning"] == ("anthropic", "claude-opus-5-5")
+    assert assignments["support"] == ("anthropic", "claude-opus-5-5")
+    assert assignments["memory"] == ("anthropic", "claude-opus-5-5")
 
 
 def test_explicit_anthropic_model_override_is_preserved_across_default_upgrade() -> None:
@@ -5528,8 +5581,8 @@ def test_glasshive_anthropic_workers_default_to_opus5_without_owner_override() -
         {"llm": {"model_overrides": {}}}
     )
 
-    assert worker_env["WPR_MODEL_CLAUDE_CODE"] == "claude-opus-5"
-    assert worker_env["WPR_MODEL_OPENCLAW_CLAUDE"] == "claude-opus-5"
+    assert worker_env["WPR_MODEL_CLAUDE_CODE"] == "claude-opus-5-5"
+    assert worker_env["WPR_MODEL_OPENCLAW_CLAUDE"] == "claude-opus-5-5"
 
 
 def test_role_only_anthropic_override_is_isolated_and_kept_in_runtime_inventory() -> None:
@@ -5551,9 +5604,10 @@ def test_role_only_anthropic_override_is_isolated_and_kept_in_runtime_inventory(
     model_lists = config_compiler.runtime_model_lists(config, assignments)
 
     assert assignments["red_team"] == ("anthropic", "owner-selected-red-model")
-    assert assignments["deep_research"] == ("anthropic", "claude-opus-5")
-    assert assignments["conscious"] == ("anthropic", "claude-opus-5")
+    assert assignments["deep_research"] == ("anthropic", "claude-opus-5-5")
+    assert assignments["conscious"] == ("anthropic", "claude-opus-5-5")
     assert model_lists["ANTHROPIC_MODELS"] == [
+        "claude-opus-5-5",
         "claude-opus-5",
         "owner-selected-red-model",
     ]
@@ -5592,6 +5646,7 @@ def test_explicit_anthropic_default_override_keeps_generated_consumers_consisten
     )
 
     assert env["ANTHROPIC_MODELS"].split(",") == [
+        "claude-opus-5-5",
         "claude-opus-5",
         "claude-opus-4-8",
     ]
@@ -5605,7 +5660,7 @@ def test_explicit_anthropic_default_override_keeps_generated_consumers_consisten
         for entry in rendered["modelSpecs"]["list"]
         if entry.get("preset", {}).get("endpoint") == "anthropic"
     ]
-    assert anthropic_specs == ["claude-opus-5"]
+    assert anthropic_specs == ["claude-opus-5-5"]
 
 
 def test_build_agent_assignments_requires_openai_or_anthropic_foundation() -> None:
@@ -6013,7 +6068,7 @@ def test_config_compiler_full_run_accepts_explicit_xai_activation_override(tmp_p
     assert "XAI_API_KEY=xai-test" in runtime_env
     assert "GROQ_API_KEY=user_provided" in runtime_env
     assert "VIVENTIUM_BACKGROUND_ACTIVATION_PROVIDER=xai" in runtime_env
-    assert "VIVENTIUM_BACKGROUND_ACTIVATION_MODEL=grok-4.20-non-reasoning" in runtime_env
+    assert "VIVENTIUM_BACKGROUND_ACTIVATION_MODEL=grok-4.7" in runtime_env
 
 
 def test_render_runtime_env_exports_explicit_background_role_assignments() -> None:
@@ -6052,13 +6107,13 @@ def test_render_runtime_env_exports_explicit_background_role_assignments() -> No
     env = config_compiler.render_runtime_env(config, assignments)
 
     assert env["VIVENTIUM_CORTEX_BACKGROUND_ANALYSIS_LLM_PROVIDER"] == "openai"
-    assert env["VIVENTIUM_CORTEX_BACKGROUND_ANALYSIS_LLM_MODEL"] == "gpt-5.6-terra"
+    assert env["VIVENTIUM_CORTEX_BACKGROUND_ANALYSIS_LLM_MODEL"] == "gpt-6.1-sol"
     assert env["VIVENTIUM_CORTEX_RED_TEAM_LLM_PROVIDER"] == "openai"
-    assert env["VIVENTIUM_CORTEX_RED_TEAM_LLM_MODEL"] == "gpt-5.6-sol"
+    assert env["VIVENTIUM_CORTEX_RED_TEAM_LLM_MODEL"] == "gpt-6.1-sol"
     assert env["VIVENTIUM_CORTEX_PRODUCTIVITY_LLM_PROVIDER"] == "openai"
-    assert env["VIVENTIUM_CORTEX_PRODUCTIVITY_LLM_MODEL"] == "gpt-5.6-terra"
+    assert env["VIVENTIUM_CORTEX_PRODUCTIVITY_LLM_MODEL"] == "gpt-6.1-sol"
     assert env["VIVENTIUM_CORTEX_SUPPORT_LLM_PROVIDER"] == "openai"
-    assert env["VIVENTIUM_CORTEX_SUPPORT_LLM_MODEL"] == "gpt-5.6-terra"
+    assert env["VIVENTIUM_CORTEX_SUPPORT_LLM_MODEL"] == "gpt-6.1-sol"
     assert env["VIVENTIUM_BACKGROUND_ACTIVATION_PROVIDER"] == "groq"
     assert env["VIVENTIUM_BACKGROUND_ACTIVATION_MODEL"] == "qwen/qwen3.6-27b"
 
@@ -6101,18 +6156,18 @@ def test_build_agent_assignments_prefer_gpt56_agents_with_opus5_available_as_fal
 
     assignments = config_compiler.build_agent_assignments(config)
 
-    assert assignments["conscious"] == ("openai", "gpt-5.6-sol")
-    assert assignments["background_analysis"] == ("openai", "gpt-5.6-terra")
-    assert assignments["confirmation_bias"] == ("openai", "gpt-5.6-terra")
-    assert assignments["red_team"] == ("openai", "gpt-5.6-sol")
-    assert assignments["deep_research"] == ("openai", "gpt-5.6-sol")
-    assert assignments["productivity"] == ("openai", "gpt-5.6-terra")
-    assert assignments["parietal"] == ("openai", "gpt-5.6-terra")
-    assert assignments["pattern_recognition"] == ("openai", "gpt-5.6-terra")
-    assert assignments["emotional_resonance"] == ("openai", "gpt-5.6-terra")
-    assert assignments["strategic_planning"] == ("openai", "gpt-5.6-sol")
-    assert assignments["support"] == ("openai", "gpt-5.6-terra")
-    assert assignments["memory"] == ("openai", "gpt-5.6-luna")
+    assert assignments["conscious"] == ("openai", "gpt-6.1-sol")
+    assert assignments["background_analysis"] == ("openai", "gpt-6.1-sol")
+    assert assignments["confirmation_bias"] == ("openai", "gpt-6.1-sol")
+    assert assignments["red_team"] == ("openai", "gpt-6.1-sol")
+    assert assignments["deep_research"] == ("openai", "gpt-6.1-sol")
+    assert assignments["productivity"] == ("openai", "gpt-6.1-sol")
+    assert assignments["parietal"] == ("openai", "gpt-6.1-sol")
+    assert assignments["pattern_recognition"] == ("openai", "gpt-6.1-sol")
+    assert assignments["emotional_resonance"] == ("openai", "gpt-6.1-sol")
+    assert assignments["strategic_planning"] == ("openai", "gpt-6.1-sol")
+    assert assignments["support"] == ("openai", "gpt-6.1-sol")
+    assert assignments["memory"] == ("openai", "gpt-6.1-sol")
 
 
 def test_build_agent_assignments_memory_follows_anthropic_primary() -> None:
@@ -6153,7 +6208,7 @@ def test_build_agent_assignments_memory_follows_anthropic_primary() -> None:
 
     assignments = config_compiler.build_agent_assignments(config)
 
-    assert assignments["memory"] == ("anthropic", "claude-opus-5")
+    assert assignments["memory"] == ("anthropic", "claude-opus-5-5")
 
 
 def test_build_agent_assignments_uses_opus5_for_every_anthropic_agent_fallback_role() -> None:
@@ -6192,7 +6247,7 @@ def test_build_agent_assignments_uses_opus5_for_every_anthropic_agent_fallback_r
     opus5_roles = {
         role
         for role, assignment in assignments.items()
-        if assignment == ("anthropic", "claude-opus-5") and role != "conscious"
+        if assignment == ("anthropic", "claude-opus-5-5") and role != "conscious"
     }
 
     assert opus5_roles == {
@@ -6249,8 +6304,8 @@ def test_build_agent_assignments_do_not_promote_xai_into_main_agent_when_foundat
 
     assignments = config_compiler.build_agent_assignments(config)
 
-    assert assignments["conscious"] == ("openai", "gpt-5.6-sol")
-    assert assignments["memory"] == ("openai", "gpt-5.6-luna")
+    assert assignments["conscious"] == ("openai", "gpt-6.1-sol")
+    assert assignments["memory"] == ("openai", "gpt-6.1-sol")
 
 
 def test_render_runtime_env_uses_qwen_36_for_background_activation_defaults() -> None:
@@ -7048,6 +7103,15 @@ def test_config_compiler_emits_voice_turn_handling_env_overrides(tmp_path: Path)
     assert "VIVENTIUM_ASSEMBLYAI_MAX_TURN_SILENCE_MS=1500" in runtime_env
     assert "VIVENTIUM_ASSEMBLYAI_FORMAT_TURNS=true" in runtime_env
     assert "VIVENTIUM_ASSEMBLYAI_STT_MODEL=universal-streaming-multilingual" in runtime_env
+    telegram_env = (output_dir / "service-env" / "telegram.config.env").read_text(encoding="utf-8")
+    for line in (
+        "VIVENTIUM_ASSEMBLYAI_END_OF_TURN_CONFIDENCE_THRESHOLD=0.31",
+        "VIVENTIUM_ASSEMBLYAI_MIN_END_OF_TURN_SILENCE_WHEN_CONFIDENT_MS=240",
+        "VIVENTIUM_ASSEMBLYAI_MAX_TURN_SILENCE_MS=1500",
+        "VIVENTIUM_ASSEMBLYAI_FORMAT_TURNS=true",
+        "VIVENTIUM_ASSEMBLYAI_STT_MODEL=universal-streaming-multilingual",
+    ):
+        assert line in telegram_env
     assert "VIVENTIUM_STT_VAD_MIN_SPEECH=0.12" in runtime_env
     assert "VIVENTIUM_STT_VAD_MIN_SILENCE=0.72" in runtime_env
     assert "VIVENTIUM_STT_VAD_ACTIVATION=0.33" in runtime_env
@@ -7701,6 +7765,7 @@ def test_config_compiler_inherits_local_voice_stt_for_telegram_when_not_overridd
 
     expected_provider = "whisper_local" if voice_stt_provider == "local" else voice_stt_provider
     assert f"VIVENTIUM_TELEGRAM_STT_PROVIDER={expected_provider}" in telegram_env
+    assert "VIVENTIUM_TELEGRAM_STT_PROVIDER_SOURCE=inherited" in telegram_env
     assert "VIVENTIUM_TELEGRAM_STT_PROVIDER=openai" not in telegram_env
     assert "VIVENTIUM_TELEGRAM_STT_PROVIDER=assemblyai" not in telegram_env
 
@@ -7765,6 +7830,7 @@ def test_config_compiler_allows_explicit_telegram_stt_provider_override(tmp_path
     telegram_env = (output_dir / "service-env" / "telegram.config.env").read_text(encoding="utf-8")
 
     assert "VIVENTIUM_TELEGRAM_STT_PROVIDER=whisper_local" in telegram_env
+    assert "VIVENTIUM_TELEGRAM_STT_PROVIDER_SOURCE=explicit" in telegram_env
 
 
 def test_config_compiler_inherits_hosted_voice_stt_for_telegram_when_not_overridden(
@@ -8091,6 +8157,120 @@ def test_config_compiler_exports_dormant_voice_provider_keys_for_precall_selecti
     assert "ELEVEN_API_KEY=elevenlabs-dormant" in runtime_env
     assert "VIVENTIUM_XAI_TTS_API_KEY=synthetic_xai_dormant" in runtime_env
     assert "GROQ_API_KEY=groq-test" in runtime_env
+
+
+VOICE_PROVIDER_SECRET_NAMES = (
+    "ASSEMBLYAI_API_KEY",
+    "CARTESIA_API_KEY",
+    "ELEVENLABS_API_KEY",
+    "ELEVEN_API_KEY",
+    "VIVENTIUM_XAI_TTS_API_KEY",
+)
+
+
+class SharedMachineKeychain:
+    """A machine Keychain that already holds another install's voice-provider keys."""
+
+    VALUES = {
+        "viventium/assemblyai_api_key": "shared-assemblyai",
+        "viventium/cartesia_api_key": "shared-cartesia",
+        "viventium/elevenlabs_api_key": "shared-elevenlabs",
+        "viventium/x_ai_api_key": "shared-xai",
+    }
+
+    def __init__(self, real_run) -> None:
+        self.real_run = real_run
+        self.services: list[str] = []
+
+    def __call__(self, args, *positional, **keywords):
+        if isinstance(args, (list, tuple)) and args and args[0] == "security":
+            service = args[args.index("-s") + 1]
+            self.services.append(service)
+            value = self.VALUES.get(service)
+            return subprocess.CompletedProcess(
+                args, 0 if value else 44, stdout=f"{value or ''}\n", stderr=""
+            )
+        return self.real_run(args, *positional, **keywords)
+
+
+@pytest.fixture
+def shared_machine_keychain(monkeypatch: pytest.MonkeyPatch) -> SharedMachineKeychain:
+    keychain = SharedMachineKeychain(config_compiler.subprocess.run)
+    monkeypatch.setattr(config_compiler.subprocess, "run", keychain)
+    return keychain
+
+
+def test_disabled_voice_never_resolves_or_copies_voice_provider_secrets(
+    shared_machine_keychain: SharedMachineKeychain,
+) -> None:
+    config = minimal_compile_config()
+    config["llm"]["extra_provider_keys"] = {"x_ai": "synthetic_xai_llm"}
+    config["voice"] = {
+        "mode": "disabled",
+        "stt_provider": "assemblyai",
+        "tts_provider": "cartesia",
+        "provider_keys": {
+            "elevenlabs": {"secret_value": "explicit-elevenlabs"},
+            "xai": {"secret_value": "explicit-xai-voice"},
+        },
+    }
+
+    env = config_compiler.render_runtime_env(config, config_compiler.build_agent_assignments(config))
+
+    assert not [name for name in VOICE_PROVIDER_SECRET_NAMES if env.get(name)]
+    assert not shared_machine_keychain.services
+    # Provider secrets outside the voice capability still compile.
+    assert env["XAI_API_KEY"] == "synthetic_xai_llm"
+    assert env["GROQ_API_KEY"] == "groq-test"
+
+
+def test_enabled_voice_resolves_selected_or_configured_providers_only(
+    shared_machine_keychain: SharedMachineKeychain,
+) -> None:
+    config = minimal_compile_config()
+    config["voice"] = {
+        "mode": "hosted",
+        "stt_provider": "assemblyai",
+        "stt": {"secret_value": "explicit-assemblyai"},
+        "tts_provider": "cartesia",
+        "provider_keys": {"elevenlabs": {"secret_value": "explicit-elevenlabs"}},
+    }
+
+    env = config_compiler.render_runtime_env(config, config_compiler.build_agent_assignments(config))
+
+    assert env["ASSEMBLYAI_API_KEY"] == "explicit-assemblyai"
+    # A personal install keeps its own Keychain for the selected provider.
+    assert env["CARTESIA_API_KEY"] == "shared-cartesia"
+    assert env["ELEVENLABS_API_KEY"] == "explicit-elevenlabs"
+    # An adjacent provider that is neither selected nor configured stays out.
+    assert "VIVENTIUM_XAI_TTS_API_KEY" not in env
+    assert shared_machine_keychain.services == ["viventium/cartesia_api_key"]
+
+
+def test_isolated_dev_env_never_borrows_shared_keychain_voice_secrets(
+    shared_machine_keychain: SharedMachineKeychain,
+) -> None:
+    config = minimal_compile_config()
+    config["runtime"]["dev_env"] = {
+        "enabled": True,
+        "name": "voice-qa",
+        "port_offset": 2000,
+        "shared_singleton_services": [],
+    }
+    config["voice"] = {
+        "mode": "hosted",
+        "stt_provider": "assemblyai",
+        "tts_provider": "cartesia",
+        "provider_keys": {"elevenlabs": {"secret_value": "explicit-elevenlabs"}},
+    }
+
+    env = config_compiler.render_runtime_env(config, config_compiler.build_agent_assignments(config))
+
+    assert "ASSEMBLYAI_API_KEY" not in env
+    assert "CARTESIA_API_KEY" not in env
+    # Its own configuration still supplies its own key.
+    assert env["ELEVENLABS_API_KEY"] == "explicit-elevenlabs"
+    assert not shared_machine_keychain.services
 
 
 def test_config_compiler_normalizes_xai_tts_alias_and_prefers_tts_secret(tmp_path: Path) -> None:
@@ -8531,13 +8711,13 @@ def test_config_compiler_enables_connected_accounts_gate_for_openai_and_anthropi
     assert "OPENAI_MODELS=" not in runtime_env
     assert "ANTHROPIC_API_KEY=anthropic-test" in runtime_env
     assert "VIVENTIUM_MEMORY_HARDENING_PROVIDER=openai" in runtime_env
-    assert "VIVENTIUM_MEMORY_HARDENING_MODEL=gpt-5.6-luna" in runtime_env
-    assert "VIVENTIUM_MEMORY_HARDENING_EFFORT=medium" in runtime_env
+    assert "VIVENTIUM_MEMORY_HARDENING_MODEL=gpt-6.1-sol" in runtime_env
+    assert "VIVENTIUM_MEMORY_HARDENING_EFFORT=high" in runtime_env
     assert librechat_yaml["memory"]["agent"]["provider"] == "openai"
-    assert librechat_yaml["memory"]["agent"]["model"] == "gpt-5.6-luna"
-    assert librechat_yaml["memory"]["agent"]["model_parameters"]["reasoning_effort"] == "medium"
+    assert librechat_yaml["memory"]["agent"]["model"] == "gpt-6.1-sol"
+    assert librechat_yaml["memory"]["agent"]["model_parameters"]["reasoning_effort"] == "high"
     assert librechat_yaml["endpoints"]["anthropic"]["titleEndpoint"] == "anthropic"
-    assert librechat_yaml["endpoints"]["anthropic"]["titleModel"] == "claude-opus-5"
+    assert librechat_yaml["endpoints"]["anthropic"]["titleModel"] == "claude-opus-5-5"
 
 
 def test_render_librechat_yaml_uses_connected_anthropic_for_memory_when_no_other_foundation_exists() -> None:
@@ -8576,9 +8756,9 @@ def test_render_librechat_yaml_uses_connected_anthropic_for_memory_when_no_other
     librechat_yaml = yaml.safe_load(config_compiler.render_librechat_yaml(config, assignments, env))
 
     assert librechat_yaml["memory"]["agent"]["provider"] == "anthropic"
-    assert librechat_yaml["memory"]["agent"]["model"] == "claude-opus-5"
+    assert librechat_yaml["memory"]["agent"]["model"] == "claude-opus-5-5"
     assert librechat_yaml["endpoints"]["anthropic"]["titleEndpoint"] == "anthropic"
-    assert librechat_yaml["endpoints"]["anthropic"]["titleModel"] == "claude-opus-5"
+    assert librechat_yaml["endpoints"]["anthropic"]["titleModel"] == "claude-opus-5-5"
 
 
 def test_render_librechat_yaml_uses_connected_openai_for_memory_when_no_other_foundation_exists() -> None:
@@ -8618,11 +8798,11 @@ def test_render_librechat_yaml_uses_connected_openai_for_memory_when_no_other_fo
 
     assert env["VIVENTIUM_OPENAI_AUTH_MODE"] == "connected_account"
     assert env["VIVENTIUM_MEMORY_HARDENING_PROVIDER"] == "openai"
-    assert env["VIVENTIUM_MEMORY_HARDENING_MODEL"] == "gpt-5.6-luna"
-    assert env["VIVENTIUM_MEMORY_HARDENING_EFFORT"] == "medium"
+    assert env["VIVENTIUM_MEMORY_HARDENING_MODEL"] == "gpt-6.1-sol"
+    assert env["VIVENTIUM_MEMORY_HARDENING_EFFORT"] == "high"
     assert librechat_yaml["memory"]["agent"]["provider"] == "openai"
-    assert librechat_yaml["memory"]["agent"]["model"] == "gpt-5.6-luna"
-    assert librechat_yaml["memory"]["agent"]["model_parameters"]["reasoning_effort"] == "medium"
+    assert librechat_yaml["memory"]["agent"]["model"] == "gpt-6.1-sol"
+    assert librechat_yaml["memory"]["agent"]["model_parameters"]["reasoning_effort"] == "high"
 
 
 def test_config_compiler_falls_back_to_existing_runtime_env_when_keychain_secret_is_missing(
@@ -9872,17 +10052,17 @@ def test_public_agent_bootstrap_template_uses_glasshive_opus5_high_fallbacks() -
     for agent in agents:
         if agent.get("id") == bundle["mainAgent"]["id"]:
             assert agent["fallback_llm_provider"] == "glasshive-harness"
-            assert agent["fallback_llm_model"] == "claude-code:claude-opus-5"
+            assert agent["fallback_llm_model"] == "claude-code:claude-opus-5-5"
             assert agent["fallback_llm_model_parameters"] == {
-                "model": "claude-code:claude-opus-5", "reasoning_effort": "low",
+                "model": "claude-code:claude-opus-5-5", "reasoning_effort": "high",
             }
             continue
         if agent.get("id") == "agent_viventium_deep_memory_95aeb3":
             assert agent.get("fallback_llm_provider") == "glasshive-harness"
-            assert agent.get("fallback_llm_model") == "claude-code:opus"
+            assert agent.get("fallback_llm_model") == "claude-code:claude-opus-5-5"
             assert agent.get("fallback_llm_model_parameters") == {
-                "model": "claude-code:opus",
-                "reasoning_effort": "medium",
+                "model": "claude-code:claude-opus-5-5",
+                "reasoning_effort": "high",
             }
             continue
         if agent.get("id") == "agent_viventium_reality_check_95aeb3":
@@ -9890,13 +10070,13 @@ def test_public_agent_bootstrap_template_uses_glasshive_opus5_high_fallbacks() -
             # fallback materialization currently belongs to the primary Agent initialization path.
             assert agent.get("fallback_llm_provider") in (None, "")
             assert agent.get("fallback_llm_model") in (None, "")
-            assert agent["glasshive_options"]["fallback_model"] == "claude-code:opus"
+            assert agent["glasshive_options"]["fallback_model"] == "claude-code:claude-opus-5-5"
             assert agent["glasshive_options"]["fallback_reasoning_effort"] == "high"
             continue
         assert agent["fallback_llm_provider"] == "glasshive-harness"
-        assert agent["fallback_llm_model"] == "claude-code:opus"
+        assert agent["fallback_llm_model"] == "claude-code:claude-opus-5-5"
         assert agent["fallback_llm_model_parameters"] == {
-            "model": "claude-code:opus",
+            "model": "claude-code:claude-opus-5-5",
             "reasoning_effort": "high",
         }
 
@@ -9986,10 +10166,10 @@ def test_shipped_config_examples_default_memory_hardening_to_luna_medium(filenam
     memory_hardening = config["runtime"]["memory_hardening"]
     host_worker = config["integrations"]["glasshive"]["host_worker"]
 
-    assert memory_hardening["openai_model"] == "gpt-5.6-luna"
-    assert memory_hardening["openai_reasoning_effort"] == "medium"
-    assert host_worker["codex_model"] == "gpt-5.6-sol"
-    assert host_worker["codex_reasoning_effort"] == "xhigh"
+    assert memory_hardening["openai_model"] == "gpt-6.1-sol"
+    assert memory_hardening["openai_reasoning_effort"] == "high"
+    assert host_worker["codex_model"] == "gpt-6.1-sol"
+    assert host_worker["codex_reasoning_effort"] == "high"
     assert host_worker["plugin_denylist"] == [
         "viventium-feelings@project-viventium"
     ]
@@ -10304,19 +10484,19 @@ def test_build_agent_assignments_anthropic_only_uses_current_sonnet_profile() ->
 
     assignments = config_compiler.build_agent_assignments(config)
 
-    assert assignments["conscious"] == ("anthropic", "claude-opus-5")
-    assert assignments["background_analysis"] == ("anthropic", "claude-opus-5")
-    assert assignments["deep_memory"] == ("anthropic", "claude-opus-5")
-    assert assignments["confirmation_bias"] == ("anthropic", "claude-opus-5")
-    assert assignments["red_team"] == ("anthropic", "claude-opus-5")
-    assert assignments["deep_research"] == ("anthropic", "claude-opus-5")
-    assert assignments["productivity"] == ("anthropic", "claude-opus-5")
-    assert assignments["parietal"] == ("anthropic", "claude-opus-5")
-    assert assignments["pattern_recognition"] == ("anthropic", "claude-opus-5")
-    assert assignments["emotional_resonance"] == ("anthropic", "claude-opus-5")
-    assert assignments["strategic_planning"] == ("anthropic", "claude-opus-5")
-    assert assignments["support"] == ("anthropic", "claude-opus-5")
-    assert assignments["memory"] == ("anthropic", "claude-opus-5")
+    assert assignments["conscious"] == ("anthropic", "claude-opus-5-5")
+    assert assignments["background_analysis"] == ("anthropic", "claude-opus-5-5")
+    assert assignments["deep_memory"] == ("anthropic", "claude-opus-5-5")
+    assert assignments["confirmation_bias"] == ("anthropic", "claude-opus-5-5")
+    assert assignments["red_team"] == ("anthropic", "claude-opus-5-5")
+    assert assignments["deep_research"] == ("anthropic", "claude-opus-5-5")
+    assert assignments["productivity"] == ("anthropic", "claude-opus-5-5")
+    assert assignments["parietal"] == ("anthropic", "claude-opus-5-5")
+    assert assignments["pattern_recognition"] == ("anthropic", "claude-opus-5-5")
+    assert assignments["emotional_resonance"] == ("anthropic", "claude-opus-5-5")
+    assert assignments["strategic_planning"] == ("anthropic", "claude-opus-5-5")
+    assert assignments["support"] == ("anthropic", "claude-opus-5-5")
+    assert assignments["memory"] == ("anthropic", "claude-opus-5-5")
 
 
 def test_build_agent_assignments_prefer_gpt56_agents_with_glasshive_opus5_fallback() -> None:
@@ -10357,19 +10537,19 @@ def test_build_agent_assignments_prefer_gpt56_agents_with_glasshive_opus5_fallba
 
     assignments = config_compiler.build_agent_assignments(config)
 
-    assert assignments["conscious"] == ("openai", "gpt-5.6-sol")
-    assert assignments["background_analysis"] == ("openai", "gpt-5.6-terra")
-    assert assignments["deep_memory"] == ("openai", "gpt-5.6-terra")
-    assert assignments["confirmation_bias"] == ("openai", "gpt-5.6-terra")
-    assert assignments["red_team"] == ("openai", "gpt-5.6-sol")
-    assert assignments["deep_research"] == ("openai", "gpt-5.6-sol")
-    assert assignments["productivity"] == ("openai", "gpt-5.6-terra")
-    assert assignments["parietal"] == ("openai", "gpt-5.6-terra")
-    assert assignments["pattern_recognition"] == ("openai", "gpt-5.6-terra")
-    assert assignments["emotional_resonance"] == ("openai", "gpt-5.6-terra")
-    assert assignments["strategic_planning"] == ("openai", "gpt-5.6-sol")
-    assert assignments["support"] == ("openai", "gpt-5.6-terra")
-    assert assignments["memory"] == ("openai", "gpt-5.6-luna")
+    assert assignments["conscious"] == ("openai", "gpt-6.1-sol")
+    assert assignments["background_analysis"] == ("openai", "gpt-6.1-sol")
+    assert assignments["deep_memory"] == ("openai", "gpt-6.1-sol")
+    assert assignments["confirmation_bias"] == ("openai", "gpt-6.1-sol")
+    assert assignments["red_team"] == ("openai", "gpt-6.1-sol")
+    assert assignments["deep_research"] == ("openai", "gpt-6.1-sol")
+    assert assignments["productivity"] == ("openai", "gpt-6.1-sol")
+    assert assignments["parietal"] == ("openai", "gpt-6.1-sol")
+    assert assignments["pattern_recognition"] == ("openai", "gpt-6.1-sol")
+    assert assignments["emotional_resonance"] == ("openai", "gpt-6.1-sol")
+    assert assignments["strategic_planning"] == ("openai", "gpt-6.1-sol")
+    assert assignments["support"] == ("openai", "gpt-6.1-sol")
+    assert assignments["memory"] == ("openai", "gpt-6.1-sol")
 
 
 def test_llm_memory_override_changes_only_the_compiled_memory_agent() -> None:
@@ -10484,7 +10664,7 @@ def test_build_agent_assignments_uses_sonnet_for_every_direct_anthropic_role() -
     anthropic_roles = {
         role
         for role, assignment in assignments.items()
-        if assignment == ("anthropic", "claude-opus-5") and role != "conscious"
+        if assignment == ("anthropic", "claude-opus-5-5") and role != "conscious"
     }
 
     assert anthropic_roles == {
@@ -10876,8 +11056,8 @@ def test_config_compiler_projects_main_agent_fallback_worker_profile() -> None:
     )
 
     assert env["GLASSHIVE_DEFAULT_FALLBACK_WORKER_PROFILE"] == "claude-code"
-    assert env["WPR_MODEL_CLAUDE_CODE"] == "opus"
-    assert env["WPR_CLAUDE_CODE_EFFORT"] == "default"
+    assert env["WPR_MODEL_CLAUDE_CODE"] == "claude-opus-5-5"
+    assert env["WPR_CLAUDE_CODE_EFFORT"] == "high"
 
     explicit = copy.deepcopy(config)
     explicit["llm"]["model_overrides"] = {
@@ -11717,12 +11897,12 @@ def test_parallel_work_preserves_restricted_execution_authority(host_worker, pro
 def test_native_fresh_memory_route_preserves_model_effort_and_explicit_choices() -> None:
     preset = yaml.safe_load((REPO_ROOT / "config.minimal.example.yaml").read_text())
     assignments = config_compiler.build_agent_assignments(preset)
-    assert assignments["memory"] == ("glasshive-harness", "codex-cli:gpt-5.6-luna")
+    assert assignments["memory"] == ("glasshive-harness", "codex-cli:gpt-6.1-sol")
     payload = {"memory": {"agent": {"instructions": "Owning writer prompt"}}}
     config_compiler.apply_memory_assignment(payload, assignments, preset)
     assert payload["memory"]["agent"] == {
-        "provider": "glasshive-harness", "model": "codex-cli:gpt-5.6-luna",
-        "model_parameters": {"model": "codex-cli:gpt-5.6-luna", "reasoning_effort": "medium"},
+        "provider": "glasshive-harness", "model": "codex-cli:gpt-6.1-sol",
+        "model_parameters": {"model": "codex-cli:gpt-6.1-sol", "reasoning_effort": "high"},
         "instructions": "Owning writer prompt",
     }
     explicit = copy.deepcopy(preset)
@@ -11730,7 +11910,7 @@ def test_native_fresh_memory_route_preserves_model_effort_and_explicit_choices()
     assert config_compiler.build_agent_assignments(explicit)["memory"] == ("openai", "custom-memory-model")
     existing = copy.deepcopy(preset)
     del existing["llm"]["memory"]
-    assert config_compiler.build_agent_assignments(existing)["memory"] == ("openai", "gpt-5.6-luna")
+    assert config_compiler.build_agent_assignments(existing)["memory"] == ("openai", "gpt-6.1-sol")
     assert {key: value for key, value in assignments.items() if key != "memory"} == {
         key: value for key, value in config_compiler.build_agent_assignments(existing).items() if key != "memory"
     }
@@ -11752,15 +11932,15 @@ def test_saved_memory_native_route_requires_declared_enabled_transport(provider_
 def test_native_deep_memory_route_retains_exact_model_and_existing_choices():
     preset = yaml.safe_load((REPO_ROOT / "config.minimal.example.yaml").read_text())
     assignments = config_compiler.build_agent_assignments(preset)
-    assert assignments["deep_memory"] == ("glasshive-harness", "codex-cli:gpt-5.6-terra")
+    assert assignments["deep_memory"] == ("glasshive-harness", "codex-cli:gpt-6.1-sol")
     model = next(item for item in config_compiler.GLASSHIVE_PROVIDER_MODELS
                  if item["id"] == assignments["deep_memory"][1])
-    assert model["recommendedEffort"] == "medium"
-    assert model["contextLimit"] == 272000
+    assert model["recommendedEffort"] == "high"
+    assert model["contextLimit"] == 1050000
     existing = copy.deepcopy(preset)
     del existing["llm"]["deep_memory"]
     previous = config_compiler.build_agent_assignments(existing)
-    assert previous["deep_memory"] == ("openai", "gpt-5.6-terra")
+    assert previous["deep_memory"] == ("openai", "gpt-6.1-sol")
     assert {key: value for key, value in assignments.items() if key != "deep_memory"} == {
         key: value for key, value in previous.items() if key != "deep_memory"
     }
@@ -11788,7 +11968,7 @@ def test_native_bundle_projects_deep_memory_route_and_retains_its_prompt():
     source = next(agent for agent in config_compiler.load_source_of_truth_agents_bundle()["backgroundAgents"]
                   if agent["id"] == "agent_viventium_deep_memory_95aeb3")
     for route, expected_provider, expected_model in [
-        (preset["llm"]["deep_memory"], "glasshive-harness", "codex-cli:gpt-5.6-terra"),
+        (preset["llm"]["deep_memory"], "glasshive-harness", "codex-cli:gpt-6.1-sol"),
         ({"provider": "openai", "model": "custom-recall-model"}, "openai", "custom-recall-model"),
     ]:
         configured = copy.deepcopy(preset)
@@ -11801,7 +11981,7 @@ def test_native_bundle_projects_deep_memory_route_and_retains_its_prompt():
         assert agent["provider"] == expected_provider
         assert agent["model"] == expected_model
         assert agent["model_parameters"]["model"] == expected_model
-        assert agent["model_parameters"]["reasoning_effort"] == "medium"
+        assert agent["model_parameters"]["reasoning_effort"] == "high"
         assert agent.get("instructions") == source.get("instructions")
         assert agent.get("fallback_llm_provider") == source.get("fallback_llm_provider")
         assert agent.get("fallback_llm_model") == source.get("fallback_llm_model")
@@ -11821,8 +12001,8 @@ def test_native_harness_workspace_is_provisioned_without_life_selection() -> Non
         assert agent["glasshive_options"]["workspace"] == {"mode": "default"}, agent["id"]
         assert agent["glasshive_options"]["access"] == "full"
     assert config_compiler.load_source_of_truth_agents_bundle() == source
-    assert compiled["mainAgent"]["model"] == "codex-cli:gpt-6-astra"
-    assert compiled["mainAgent"]["model_parameters"]["reasoning_effort"] == "medium"
+    assert compiled["mainAgent"]["model"] == "codex-cli:gpt-6.1-sol"
+    assert compiled["mainAgent"]["model_parameters"]["reasoning_effort"] == "high"
 
 
 def test_native_harness_preserves_explicit_custom_workspace(monkeypatch) -> None:
@@ -11874,8 +12054,8 @@ def test_explicit_role_model_catalog_preserves_existing_default_aliases():
     assert models["claude-code:claude-opus-5"]["contextLimit"] == 1000000
     assert {"low", "medium"}.issubset(models["claude-code:claude-opus-5"]["effortChoices"])
     assert models["claude-code:opus"]["label"] == "Claude / Opus"
-    assert config_compiler.GLASSHIVE_PROVIDER_MODEL_BY_WORKER_PROFILE["codex-cli"] == "codex-cli:gpt-5.6-sol"
-    assert config_compiler.GLASSHIVE_PROVIDER_MODEL_BY_WORKER_PROFILE["claude-code"] == "claude-code:opus"
+    assert config_compiler.GLASSHIVE_PROVIDER_MODEL_BY_WORKER_PROFILE["codex-cli"] == "codex-cli:gpt-6.1-sol"
+    assert config_compiler.GLASSHIVE_PROVIDER_MODEL_BY_WORKER_PROFILE["claude-code"] == "claude-code:claude-opus-5-5"
 
 
 def test_xperfect_source_is_canonical_without_legacy_checkout_fallback(tmp_path, monkeypatch):
@@ -11894,3 +12074,56 @@ def test_xperfect_source_is_canonical_without_legacy_checkout_fallback(tmp_path,
     assert config_compiler.glasshive_enabled(config)
     assert config_compiler.GLASSHIVE_PROVIDER_ID == "glasshive-harness"
     assert config_compiler.build_agent_provider_capabilities(config)["glasshive-harness"]["label"] == "xPerfect"
+
+
+def test_current_provider_defaults_and_grok_fast_voice_contract() -> None:
+    assert set(config_compiler.MODEL_MAP["openai"].values()) == {"gpt-6.1-sol"}
+    assert set(config_compiler.MODEL_MAP["anthropic"].values()) == {"claude-opus-5-5"}
+    assert set(config_compiler.MODEL_MAP["x_ai"].values()) == {"grok-4.7"}
+    models = {m["id"]: m for m in config_compiler.GLASSHIVE_PROVIDER_MODELS}
+    for model in ["codex-cli:gpt-6.1-sol", "claude-code:claude-opus-5-5", "grok-build:grok-4.7", "grok-build:grok-4.7-build-fast"]:
+        assert models[model]["recommendedEffort"] == "high"
+        assert "medium" in models[model]["effortChoices"]
+    assert "codex-cli:gpt-5.6-sol" in models
+    assert "claude-code:opus" in models
+    config = minimal_compile_config()
+    config["integrations"]["glasshive"] = {"enabled": True, "provider": {"enabled": True}}
+    capability = config_compiler.build_agent_provider_capabilities(config)["glasshive-harness"]
+    assert capability["voice_pipeline_llm"] is True
+    assert capability["realtime_voice"] is False
+    assert "grok-build" in config_compiler.SUPPORTED_GLASSHIVE_WORKER_PROFILES
+
+
+def test_telegram_codex_provider_defaults_and_explicit_choices(tmp_path: Path) -> None:
+    default = yaml.safe_load(config_compiler.render_telegram_codex_settings({}, tmp_path))
+    assert default["codex"]["model"] == "gpt-6.1-sol"
+    assert default["codex"]["reasoning_effort"] == "high"
+    explicit = yaml.safe_load(config_compiler.render_telegram_codex_settings(
+        {"integrations": {"telegram_codex": {"model": "gpt-5.4", "reasoning_effort": "medium"}}},
+        tmp_path,
+    ))
+    assert explicit["codex"]["model"] == "gpt-5.4"
+    assert explicit["codex"]["reasoning_effort"] == "medium"
+
+
+def test_compiled_activation_fallbacks_keep_current_models_and_native_effort() -> None:
+    bundle = load_source_of_truth_agents_bundle()
+    config = minimal_compile_config()
+    compiled = config_compiler.render_native_agents_bundle(
+        config, config_compiler.build_agent_assignments(config), set()
+    )
+    assert [entry["activation"] for entry in compiled["mainAgent"]["background_cortices"]] == [
+        entry["activation"] for entry in bundle["mainAgent"]["background_cortices"]
+    ]
+    classified = [entry for entry in compiled["mainAgent"]["background_cortices"]
+                  if entry["activation"].get("fallbacks")]
+    assert len(classified) == 11
+    expected = [
+        {"provider": "xai", "model": "grok-4.7", "reasoning_effort": "high"},
+        {"provider": "anthropic", "model": "claude-opus-5-5", "reasoning_effort": "high"},
+        {"provider": "openai", "model": "gpt-6.1-sol", "reasoning_effort": "high"},
+    ]
+    for entry in classified:
+        assert entry["activation"]["provider"] == "groq"
+        assert entry["activation"]["model"] == "qwen/qwen3.6-27b"
+        assert entry["activation"]["fallbacks"] == expected

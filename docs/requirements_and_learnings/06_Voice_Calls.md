@@ -126,7 +126,7 @@ background-cortex behavior.
   `fallback_llm_model_parameters` fields.
 - The fallback panel receives the same compiled provider-capability metadata as the primary model
   panel. A GlassHive fallback must therefore show authenticated readiness, the friendly
-  `Claude / Opus 5` label, and its route-scoped effort selector; saving `High` must persist under
+  `Claude / Opus 5.5` label, and its route-scoped effort selector; saving `High` must persist under
   `fallback_llm_model_parameters.reasoning_effort` and survive reload.
 - Agent Builder must also expose a fallback route inside the Voice Chat Model page. It uses
   explicit `voice_fallback_llm_provider`, `voice_fallback_llm_model`, and
@@ -301,6 +301,17 @@ background-cortex behavior.
 - Browser and proxy voice-settings startup fetches must be timeout-bounded. A slow LibreChat
   runtime, restart, or Next.js dev cold compile should produce Viventium-specific recovery text and
   a retry path, not an indefinite `Loading your voice settings...` state.
+- LibreChat **Voice settings** opens the normal authenticated call with automatic connection
+  disabled. Listening and Speaking selectors remain editable before the user starts the call;
+  ordinary **Start call** keeps its one-click connection behavior. The bootstrap must preserve
+  an explicit `autoConnect=0`.
+- Speech choices apply to the current call and survive page reload. A failed save restores the
+  last saved choice, reports the failure, and blocks starting with an unsaved route. The connected
+  view reports the actual route; it must not claim that an ignored setting changed live audio.
+- The chat shows **Close voice settings** while only pre-call setup is open. Its explicit
+  **Save these voice choices as my default** action saves the persisted call choices through the
+  authenticated owner route and the existing voice-preferences service. New calls use those saved
+  Listening and Speaking choices. A per-call browser capability cannot change account defaults.
 - Launcher-managed local runtimes should prewarm the modern-playground voice startup routes after
   the playground answers HTTP and before starting the voice worker. The prewarm covers
   `call-session-voice-settings`, `call-session-state`, and `connection-details` so the first real
@@ -453,6 +464,9 @@ background-cortex behavior.
   `RoomOptions(text_output=TextOutputOptions(sync_transcription=...))`, not deprecated
   `RoomOutputOptions`. The playground transcript reader must key boundaries by LiveKit text-stream
   id, not by segment text or provider names.
+- Modern playground transcript entries use LiveKit's standard chat-link formatter so URLs in
+  user and assistant messages can be opened without copying text. File access keeps the linked
+  chat's existing account and download permissions.
 - Voice adapters must tolerate either incremental text deltas or cumulative message snapshots from
   the LibreChat/agent stream. The voice gateway declares `viventiumTextDeltaMode=auto` on the
   LibreChat voice request, and LibreChat must normalize a growing snapshot such as `I`, `I hear`,
@@ -483,6 +497,14 @@ background-cortex behavior.
   call-session and conversation identifiers kept out of public QA artifacts. Runtime logs must use
   non-deprecated LiveKit surfaces for `llm_node_ttft`, `tts_node_ttfb`, and `e2e_latency`, plus
   provider `tts_metrics` first-audio timing when the TTS implementation emits it.
+- STT end times retain their declared clock through the speaker-context and LLM boundaries.
+  Only times explicitly mapped to UTC enter the hop trace; relative offsets remain separate.
+- Native terminal text carries its canonical delivery disposition on the same message delta.
+  The gateway reads it before forwarding text to TTS, so a model-authored audio skip keeps the
+  chat result without speaking it. A later finish event cannot retract already spoken audio.
+  Core retains each strict chunk disposition for its exact graph invocation when saving the final
+  result. SDK chunk concatenation must not corrupt this control or reuse it across tool calls,
+  retries, agents, or provider contexts; malformed controls remain closed to audio.
 - The Cartesia public request contract is Sonic-3-only: `Cartesia-Version=2026-03-01`
   and `model_id=sonic-3`. Voice selection is by named persona in the UI, backed by Cartesia
   voice IDs: Megan (`e8e5fffb-252c-436d-b842-8879b84445b6`) and Lyra
@@ -580,6 +602,23 @@ background-cortex behavior.
 - Raw `cortex_insight` content is background cognition. It may be shown in LibreChat's
   background-insight UI, but it must not be spoken directly into the modern playground transcript
   or TTS path as a fallback.
+- Phase B must wait within the existing follow-up window for Main's successful native publication.
+  Pending or prepared native state is not failed generation; its tool evidence remains unread until
+  the exact source-bound Main answer is terminal and published. This does not require delaying
+  Phase B sampling until Main's audio finishes.
+- Before returning a persisted Cortex follow-up for speech, the existing authenticated Cortex fetch
+  seals its exact canonical text hash, child revision, claim generation, graph-result receipt and
+  presentation lease. Owner, conversation, parent, call, task and logical turn must match. The lease
+  is bounded by the current Call Session expiry; it is not a new playback timeout.
+- A completed audible follow-up reports `audio.completed` through the existing authenticated path
+  and settles the existing Cortex ledger with that sealed receipt. TTS completion alone, no first
+  audio, failure, interruption or supersession cannot mark the delivery `Sent`. Source changes and
+  stale claims cannot reuse the receipt; exact completion retries retain its original identity.
+- A fresh fetch suppresses follow-up playback when its exact ledger rows already show Voice
+  presentation or a dropped outcome. Completion acknowledgement retries remain idempotent.
+- Playback tracing and Cortex presentation settlement have separate durability. A diagnostic trace
+  can remain locally accepted without durable runtime binding; it cannot substitute for the ledger
+  receipt. Receipt failure does not erase the actual playback trace.
 - A normal, non-replacement voice follow-up that resolves to `{NTA}` is terminal. The persistence
   layer must not override that no-response decision with deterministic raw insight fallback text.
 - If voice follow-up generation returns empty text for a normal follow-up, the voice surface stays
@@ -636,14 +675,19 @@ background-cortex behavior.
 	  - local Whisper recognition should feed pywhispercpp in-memory 16 kHz mono float32 PCM instead
 	    of writing temporary WAV files; stage timing logs must stay sanitized and must not include raw
 	    transcript text
-  - `large-v3-turbo` uses `single_segment` and `no_context` by default for independent LiveKit final
-    chunks, and uses a configurable reduced audio context (`VIVENTIUM_STT_AUDIO_CTX`, default
-    `768`). The default reduced-context path must be duration-gated
-    (`VIVENTIUM_STT_REDUCED_AUDIO_CTX_MAX_AUDIO_S`, default `12.0`) so long monologues restore
-    the upstream/default context instead of silently losing tail audio. The model selection itself
-    must remain unchanged and operators may set `VIVENTIUM_STT_AUDIO_CTX=0` to restore the
-    upstream/default context for every chunk. Operators can independently disable `single_segment`
-    or `no_context` with their specific env flags when testing long-form transcription behavior.
+  - Local Whisper uses the full native model context (`audio_ctx=0`) for every transcription and
+    silence prewarm. The compact context and duration heuristic were removed after a captured
+    synthetic call reproduced repeated native text with context `768` while the same exact
+    float32 waveform returned the request once with context `0`. Received PCM conversion was
+    byte-exact and waveform correlation showed one ordered request. The finite comparison traded
+    about `0.15s` of decode time for correct text; speed must not override recognition quality.
+    The model selection stays configured. `single_segment` and `no_context` remain the defaults
+    for independent LiveKit final chunks; their existing env flags still allow long-form testing.
+  - Each transcription must explicitly set `audio_ctx=0` to restore native default, even after
+    a prior reduced-context call. The cached decoder retains omitted settings between calls.
+    Local STT latency detail separates executor queue wait, native transcription, and event-loop
+    resumption; it reports native segment count and selected context without transcript or audio
+    content. Submit-to-await wall time remains a separate measure.
 	  - diagnostic escape hatches that weaken the safety net, such as disabling isolated local
 	    Whisper load validation, disabling launcher preflight, or pointing at an explicit unmanaged
 	    model path, must log a visible warning
@@ -658,7 +702,7 @@ background-cortex behavior.
     available only after local VAD/final recognition. Provider STT routes such as AssemblyAI keep
     their default word guard unless explicitly configured otherwise.
   - when the semantic detector is unavailable, uncached, or lacks a registered local inference
-    runner, local Whisper must fall back to the local VAD profile: `0.35s` minimum speech, `0.5s`
+    runner, local Whisper must fall back to the shared local VAD profile: `0.1s` minimum speech, `0.5s`
     VAD silence, and `0.5s` local endpointing by default, with explicit env/config overrides still
     taking precedence
   - first-run detector downloads are best-effort; if the exact detector assets cannot be cached,
@@ -708,9 +752,12 @@ background-cortex behavior.
     TTS/STT paths.
   - local Whisper VAD fallback defaults to the shared `0.5s` silence budget, and explicit
     `VIVENTIUM_STT_VAD_MIN_SILENCE` still overrides that default
-  - local Whisper VAD fallback defaults to a slightly longer minimum speech threshold than
-    remote/STT-owned routes, and explicit `VIVENTIUM_STT_VAD_MIN_SPEECH` still overrides that
-    default
+  - local Whisper uses the shared `0.1s` minimum speech threshold in both the session VAD and STT
+    adapter so brief acknowledgements remain audible input. Explicit
+    `VIVENTIUM_STT_VAD_MIN_SPEECH` still overrides that default.
+  - local Whisper must retain the native transcript without a phrase blacklist. Existing VAD owns
+    speech presence; valid acknowledgements must not be discarded because they also occur in
+    silence hallucinations. Empty recognition, provider failure and no detected speech remain distinct.
   - local Whisper must keep a warm idle worker on Apple Silicon; setting idle processes to zero can
     lose early fake-microphone/user audio while the job process cold-loads
   - replacement idle-process prewarm must defer while active voice calls are running and must not
@@ -1010,6 +1057,9 @@ background-cortex behavior.
 
 - Speech interruption stops active TTS only. Stream closure, browser disconnect, and hangup do not
   cancel the authoritative task.
+- Verified source supersession closes the obsolete generation without a task error. Exact
+  committed-effect receipts remain bound to their source, response and job generation; real
+  provider failures and explicit cancellation retain their existing outcomes.
 - Explicit cancellation is task-id scoped. The internal terminal set is `completed`, `failed`,
   `cancelled_confirmed`, and `cancelled_unenforceable`; an already-completed external side effect is
   reported truthfully instead of being relabelled cancelled.
@@ -1030,8 +1080,18 @@ background-cortex behavior.
   dead input control. Listen-Only exposes no retry or new-work input authority.
 - Spoken acknowledgements and progress derive only from authoritative task events, never transcript
   keywords. A neutral fallback may speak after 1.2 seconds only when real work is running and the
-  model has not acknowledged it. Meaningful phase changes may speak; otherwise active-work silence
-  may not exceed five seconds.
+  model has not acknowledged it. Meaningful state, phase or detail changes may speak once within
+  the existing rate limits. Unchanged active work stays visible without periodic spoken repeats.
+  A failed speech schedule keeps the latest status pending without a busy retry loop.
+- The call-wide typed task stream arms native worker completion delivery from a terminal child
+  and its exact generation parent's canonical Main message. This join accepts either event order,
+  checks call/conversation and cancellation, and deduplicates each child and Main anchor pair.
+  It uses the existing worker-only follow-up window without changing a concurrent Cortex turn.
+  A terminal callback that precedes its Voice presentation keeps awaiting that presentation within
+  the same window; Core claims, permits and completed playback still own delivery.
+  Claim consumers compare the canonical callback reference while preserving the raw terminal binding
+  and exact owner, call, delivery and claim scope. Cancelling one task retains bounded parent
+  references for unrelated running workers; closing the call clears them.
 
 ### Automatic Speaker And Trust Rules
 
@@ -1047,6 +1107,13 @@ background-cortex behavior.
 - Shared-mic/guest/unverified speech may inform context but cannot authorize an external side
   effect. Listen-Only retains its strict no-TTS/no-tools/no-controller/no-cortex/no-live-memory/no-
   recall contract.
+- Restricted Native voice turns carry only the existing signed bootstrap capability
+  `provider_capabilities.native_tools: false`, after host tools and inherited workspace grants are
+  removed. Signing failure stops provider dispatch. The native harness uses a fresh stateless
+  session and empty private child workspace; the selected model and effort remain unchanged.
+  Grok must advertise an explicit empty tool inventory after model and authority setup and before
+  prompting. Missing, malformed, nonempty, or later native tool traffic fails the turn. This repairs
+  enforcement of the existing restriction; it does not change microphone participant trust.
 - Raw audio is not retained. Speaker maps expire with the call. Derived transcripts use existing
   conversation retention/deletion/export controls.
 

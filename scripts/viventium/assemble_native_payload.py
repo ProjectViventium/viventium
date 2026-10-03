@@ -218,6 +218,27 @@ def validate_native_compiled_defaults(compiled: Path, *, packaged_native_bodies:
                 f"Native compiled defaults advertise unavailable GlassHive runtime: {name}"
             )
 
+    # Source compiles keep npx and the unauthenticated loopback scheduler; the payload
+    # needs the bundled transports that only the Native supervisor resolves.
+    try:
+        servers = (yaml.safe_load((compiled / "librechat.yaml").read_text(encoding="utf-8")) or {}).get(
+            "mcpServers"
+        ) or {}
+    except (OSError, yaml.YAMLError, AttributeError) as error:
+        raise AssemblyError("Native compiled default is unavailable or invalid: librechat.yaml") from error
+    sequential = servers.get("sequential-thinking")
+    scheduling = servers.get("scheduling-cortex")
+    if (
+        isinstance(sequential, dict)
+        and sequential.get("command") != "${VIVENTIUM_NATIVE_NODE_BINARY}"
+    ) or (
+        isinstance(scheduling, dict)
+        and (scheduling.get("headers") or {}).get("Authorization") != "Bearer ${SCHEDULING_MCP_API_KEY}"
+    ):
+        raise AssemblyError(
+            "Native compiled defaults use source MCP transports; compile them with --native-payload"
+        )
+
 
 def is_lower_hex(value: object, length: int) -> bool:
     return (

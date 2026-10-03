@@ -3,6 +3,7 @@ import os
 import tempfile
 import unittest
 import asyncio
+import concurrent.futures
 import threading
 from types import SimpleNamespace
 from pathlib import Path
@@ -189,7 +190,7 @@ class TestPyWhisperCppRecognition(unittest.TestCase):
         self.assertEqual(media.size, 16000)
         self.assertEqual(kwargs["language"], "en")
         self.assertEqual(kwargs["temperature"], 0.0)
-        self.assertEqual(kwargs["audio_ctx"], 768)
+        self.assertEqual(kwargs["audio_ctx"], 0)
         self.assertEqual(kwargs["no_context"], True)
         self.assertEqual(kwargs["single_segment"], True)
 
@@ -243,9 +244,34 @@ class TestPyWhisperCppRecognition(unittest.TestCase):
         )
         self.assertEqual(fake_model.kwargs["language"], "en")
         self.assertEqual(fake_model.kwargs["temperature"], 0.0)
-        self.assertEqual(fake_model.kwargs["audio_ctx"], 768)
+        self.assertEqual(fake_model.kwargs["audio_ctx"], 0)
         self.assertEqual(fake_model.kwargs["no_context"], True)
         self.assertEqual(fake_model.kwargs["single_segment"], True)
+
+    # === VIVENTIUM START ===
+    # Native text is authored speech; VAD, not a phrase list, owns speech presence.
+    def test_recognize_preserves_acknowledgements_without_text_heuristics(self) -> None:
+        frame = AudioFrame(data=b"\x01\x00" * 4, sample_rate=16000,
+                           num_channels=1, samples_per_channel=4)
+        for text in ("Thank you.", "Thanks.", "Okay.", "Bye", "Goodbye", "You"):
+            with self.subTest(text=text):
+                fake = SimpleNamespace(transcribe=lambda *_args, **_kwargs: [SimpleNamespace(text=text)])
+                with patch.object(pywhispercpp_provider, "_get_model", return_value=fake):
+                    stt = pywhispercpp_provider.PyWhisperCppSTT(language="en")
+                event = asyncio.run(stt._recognize_impl(frame))
+                self.assertEqual(event.alternatives[0].text, text)
+
+    def test_empty_native_transcript_remains_empty(self) -> None:
+        frame = AudioFrame(data=b"\x01\x00" * 4, sample_rate=16000,
+                           num_channels=1, samples_per_channel=4)
+        for segments in ([], [SimpleNamespace(text="")]):
+            with self.subTest(segments=segments):
+                fake = SimpleNamespace(transcribe=lambda *_args, **_kwargs: segments)
+                with patch.object(pywhispercpp_provider, "_get_model", return_value=fake):
+                    stt = pywhispercpp_provider.PyWhisperCppSTT(language="en")
+                event = asyncio.run(stt._recognize_impl(frame))
+                self.assertEqual(event.alternatives[0].text, "")
+    # === VIVENTIUM END ===
 
     def test_transcription_keeps_call_control_callbacks_responsive(self) -> None:
         release = threading.Event()
@@ -341,40 +367,28 @@ class TestPyWhisperCppRecognition(unittest.TestCase):
                 data=b"\x00\x00" * 4, sample_rate=16000, num_channels=1, samples_per_channel=4,
             )))
 
-    def test_large_turbo_audio_ctx_can_be_overridden(self) -> None:
-        with patch.dict(os.environ, {"VIVENTIUM_STT_AUDIO_CTX": "0"}, clear=True):
-            kwargs = pywhispercpp_provider._transcribe_kwargs(
-                "en",
-                model_name="large-v3-turbo",
-            )
-
-        self.assertNotIn("audio_ctx", kwargs)
-
-    def test_large_turbo_reduced_audio_ctx_is_only_default_for_short_audio(self) -> None:
+    def test_full_native_audio_ctx_applies_to_short_and_long_audio(self) -> None:
         with patch.dict(os.environ, {}, clear=True):
-            short_kwargs = pywhispercpp_provider._transcribe_kwargs(
-                "en",
-                model_name="large-v3-turbo",
-                audio_duration_s=8.0,
-            )
-            long_kwargs = pywhispercpp_provider._transcribe_kwargs(
-                "en",
-                model_name="large-v3-turbo",
-                audio_duration_s=20.0,
-            )
+            for duration in (None, 0.25, 8.0, 12.0, 12.1, 20.0):
+                with self.subTest(duration=duration):
+                    kwargs = pywhispercpp_provider._transcribe_kwargs(
+                        "en", model_name="large-v3-turbo", audio_duration_s=duration,
+                    )
+                    self.assertEqual(kwargs["audio_ctx"], 0)
 
-        self.assertEqual(short_kwargs["audio_ctx"], 768)
-        self.assertNotIn("audio_ctx", long_kwargs)
-
-    def test_large_turbo_explicit_audio_ctx_applies_to_long_audio(self) -> None:
-        with patch.dict(os.environ, {"VIVENTIUM_STT_AUDIO_CTX": "512"}, clear=True):
-            kwargs = pywhispercpp_provider._transcribe_kwargs(
-                "en",
-                model_name="large-v3-turbo",
-                audio_duration_s=20.0,
-            )
-
-        self.assertEqual(kwargs["audio_ctx"], 512)
+    def test_prior_reduced_context_environment_cannot_limit_native_context(self) -> None:
+        for context in ("0", "512", "768", "invalid"):
+            with (
+                self.subTest(context=context),
+                patch.dict(os.environ, {
+                    "VIVENTIUM_STT_AUDIO_CTX": context,
+                    "VIVENTIUM_STT_REDUCED_AUDIO_CTX_MAX_AUDIO_S": "12.0",
+                }, clear=True),
+            ):
+                kwargs = pywhispercpp_provider._transcribe_kwargs(
+                    "en", model_name="large-v3-turbo", audio_duration_s=8.0,
+                )
+                self.assertEqual(kwargs["audio_ctx"], 0)
 
     def test_smaller_models_do_not_default_to_reduced_audio_ctx(self) -> None:
         with patch.dict(os.environ, {}, clear=True):
@@ -383,7 +397,83 @@ class TestPyWhisperCppRecognition(unittest.TestCase):
                 model_name="small",
             )
 
-        self.assertNotIn("audio_ctx", kwargs)
+        self.assertEqual(kwargs["audio_ctx"], 0)
+
+    def test_each_recognition_resets_cached_native_context_after_prewarm(self) -> None:
+        fake_model = SimpleNamespace(_params=SimpleNamespace(audio_ctx=768))
+        observed_contexts = []
+
+        def transcribe(_audio, **kwargs):
+            pywhispercpp_provider.Model._set_params(fake_model, kwargs)
+            observed_contexts.append(fake_model._params.audio_ctx)
+            return []
+
+        fake_model.transcribe = transcribe
+        with (
+            patch.object(pywhispercpp_provider, "_get_model", return_value=fake_model),
+            patch.dict(os.environ, {}, clear=True),
+        ):
+            pywhispercpp_provider.prewarm_model("large-v3-turbo")
+            stt = pywhispercpp_provider.PyWhisperCppSTT(model_name="large-v3-turbo")
+            for samples in (4, 320000):
+                fake_model._params.audio_ctx = 768
+                event = asyncio.run(stt._recognize_impl(AudioFrame(
+                    data=b"\x00\x00" * samples, sample_rate=16000,
+                    num_channels=1, samples_per_channel=samples,
+                )))
+                self.assertEqual(event.alternatives[0].text, "")
+
+        self.assertEqual(observed_contexts, [0, 0, 0])
+
+    def test_queued_recognition_separates_native_and_resume_timings(self) -> None:
+        release = threading.Event()
+        blocker_started = threading.Event()
+        native_called = threading.Event()
+
+        def block_executor():
+            blocker_started.set()
+            release.wait(2)
+
+        def transcribe(_audio, **_kwargs):
+            native_called.set()
+            return [SimpleNamespace(text="Private transcript")]
+
+        async def scenario():
+            stt = pywhispercpp_provider.PyWhisperCppSTT(model_name="large-v3-turbo")
+            task = asyncio.create_task(stt._recognize_impl(AudioFrame(
+                data=b"\x00\x00" * 4, sample_rate=16000,
+                num_channels=1, samples_per_channel=4,
+            )))
+            await asyncio.sleep(0)
+            self.assertFalse(native_called.is_set())
+            release.set()
+            event = await task
+            self.assertEqual(event.alternatives[0].text, "Private transcript")
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            blocker = executor.submit(block_executor)
+            self.assertTrue(blocker_started.wait(1))
+            try:
+                with (
+                    patch.object(pywhispercpp_provider, "_get_model", return_value=SimpleNamespace(transcribe=transcribe)),
+                    patch.object(pywhispercpp_provider, "_get_model_executor", return_value=executor),
+                    patch.object(pywhispercpp_provider.time, "perf_counter_ns", side_effect=[0, 10000000, 40000000, 45000000, 60000000]),
+                    patch.dict(os.environ, {"VIVENTIUM_VOICE_LOG_LATENCY": "1"}, clear=True),
+                    self.assertLogs("pywhispercpp_provider", level="INFO") as logs,
+                ):
+                    asyncio.run(scenario())
+            finally:
+                release.set()
+                blocker.result(timeout=1)
+
+        joined = "\n".join(logs.output)
+        self.assertIn("transcribe_wall_ms=60.000", joined)
+        self.assertIn("transcribe_queue_wait_ms=30.000", joined)
+        self.assertIn("transcribe_native_ms=5.000", joined)
+        self.assertIn("transcribe_resume_ms=15.000", joined)
+        self.assertIn("native_segment_count=1", joined)
+        self.assertIn("audio_ctx=0", joined)
+        self.assertNotIn("Private transcript", joined)
 
     def test_latency_log_reports_sanitized_stage_timings(self) -> None:
         samples = np.array([0, 8192, -8192, 0], dtype=np.int16)
@@ -409,6 +499,10 @@ class TestPyWhisperCppRecognition(unittest.TestCase):
         self.assertIn("pywhispercpp_recognize", joined)
         self.assertIn("transcribe_ms=", joined)
         self.assertIn("text_chars=12", joined)
+        self.assertIn("transcribe_queue_wait_ms=", joined)
+        self.assertIn("transcribe_native_ms=", joined)
+        self.assertIn("transcribe_resume_ms=", joined)
+        self.assertIn("native_segment_count=1", joined)
         self.assertNotIn("Secret words", joined)
 
 

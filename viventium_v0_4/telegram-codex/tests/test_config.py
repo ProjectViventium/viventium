@@ -53,6 +53,8 @@ projects:
 
     assert config.bot.token == "test-token"
     assert config.bot.username == "viv_codex_bot"
+    assert config.codex.model == "gpt-6.1-sol"
+    assert config.codex.reasoning_effort == "high"
     assert config.runtime.project_registry_path == projects_path.resolve()
     assert config.runtime.paired_users_path.name == "viv_codex_bot.json"
     assert config.runtime.paired_users_path != (runtime_root / "state" / "paired_users.json").resolve()
@@ -85,6 +87,9 @@ projects:
         f"""
 bot:
   env_file: {service_env}
+codex:
+  model: "gpt-5.4"
+  reasoning_effort: "medium"
 runtime:
   paired_users_path: {custom_paired_users_path}
 projects:
@@ -99,5 +104,7 @@ projects:
 
     config = load_config(root=Path("/tmp/unused-root"))
 
+    assert config.codex.model == "gpt-5.4"
+    assert config.codex.reasoning_effort == "medium"
     assert config.runtime.paired_users_path == custom_paired_users_path.resolve()
     assert config.runtime.paired_users_migration_sources == ()

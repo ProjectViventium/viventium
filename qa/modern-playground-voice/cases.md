@@ -298,17 +298,18 @@
      speech.
   4. Capture per-stage voice logs for VAD silence, PCM conversion/resample, whisper.cpp inference,
      LiveKit `transcription_delay`, Listen-Only persistence, and DB cleanup.
-  5. For long fixtures above the reduced-context duration gate, assert transcript text equality or a
-     tight WER bound so the latency optimization cannot silently truncate tail audio.
+  5. For short and long fixtures, assert one complete request in the final transcript and compare
+     transcript text equality or a tight WER bound; verify native `audio_ctx=0` on every call.
 - Expected Result: Short and long fixtures persist one complete transcript row; the `0.7s` pause
   persists as one continued row; local Whisper conversion stages are sub-250ms; visible delay is
-  dominated by the intentional `0.5s` VAD silence and measured whisper.cpp inference. Reduced
-  `audio_ctx=768` applies only to short chunks unless explicitly configured.
+  dominated by the intentional `0.5s` VAD silence and measured whisper.cpp inference. Full native
+  `audio_ctx=0` applies to short and long chunks and resets prior cached context on every call.
 - Forbidden Result: silently switching away from `large-v3-turbo`; raw transcript text in latency
-  logs; temp-file STT roundtrips; default reduced audio context on long chunks; local TTS prewarm
+  logs; temp-file STT roundtrips; reduced audio context repeating or truncating native text; local TTS prewarm
   competing with active local Whisper STT; claiming UI delay without LiveKit/backend timing evidence.
 - Evidence: `qa/modern-playground-voice/reports/2026-05-19-whispercpp-large-v3-turbo-local-optimization.md`
-- Last Run: PASS 2026-05-19 for direct benchmarks plus real browser/fake-microphone LiveKit QA.
+- Last Run: Historical PASS 2026-05-19 for the prior context policy. Loaded browser QA for the
+  full-context policy remains PENDING; the exact captured-buffer native comparison is supporting proof.
 
 ## MPV-009 Start Chat Is One Click And Mic Auto-Enables
 
@@ -1787,3 +1788,50 @@ only through adapter metadata, before fan-out, replay, persistence and speech. N
 protocol from text, keywords, provider labels or prompt content.
 
 Supporting release regressions: `tests/release/test_transcription_adapter.py`. These automated checks do not replace the user-path acceptance above.
+
+### MPV-062 Native Harness Model And Approval Parity
+
+- Last Run: PARTIAL 2026-10-03; [Voice and Telegram acceptance](reports/2026-10-03-voice-and-telegram-acceptance.md).
+  Current model receipts, voice selector save/reload, injected spoken recall, early
+  Main speech and one worker completion through audio and sent settlement pass their bounded
+  checks. Default microphone action authority, rejected hosted Listening recovery, original-owner
+  Web sign-in, public-edge acceptance and latency remain open. Earlier unchanged-path evidence
+  and failed runs are retained.
+- Requirements: CC-019, PW-050, PW-052, VOICE-EFFECT-001.
+- Preconditions: a local development call, a synthetic owner and writable scratch folder,
+  a configured native harness account, and an available selected model. Use the owning model
+  evaluation cases for semantic quality; this case checks selection and action transport.
+- Steps:
+  1. Select xPerfect, its provider, model and effort in the Voice model picker. Save and reload.
+     Check the same provider/model/effort controls on Main, background and fallback settings.
+     Check that other supported choices remain selectable.
+  2. Start a LiveKit call and ask for a harmless scratch file action. Approve the native
+     request once through Call activity. Verify the file's exact bytes and the reported result.
+  3. Ask the selected brain to list this call's tasks through its declared task capability.
+     Compare the result with the actual task state at the time of the tool call.
+  4. Request a second scratch action and reject its native request once. Check that no file
+     is written, the transcript reports the denial, the task records the typed failed outcome,
+     and no fallback model performs the action.
+     Check expiry and cancellation through the deterministic transport/runtime cases.
+  5. Send a new normal turn after rejection. Check that it completes. Reload the linked chat
+     and check the action result and typed failure are retained.
+  6. Inspect the actual runtime receipt for model, effort, owner and native authority. When
+     Fast is absent from the installed native catalog and standard Grok 4.7 exists, verify
+     that the Fast selection runs and reports standard 4.7. Preserve Fast when it is available.
+  7. Speak a fresh request into the selected microphone and hear its answer. Interrupt speech
+     and verify the owning barge-in contract. When explicitly authorized for local engineering QA,
+     use the existing real Chrome microphone-injection and captured-output workflow instead. Require
+     actual STT → selected full Main → TTS → returned audio, output content, interruption timing,
+     accepted revisions and task state. Text, TTS metrics, media state or nonzero energy alone
+     cannot replace this step. Record headset quality/endurance and installed acceptance separately.
+  8. Inspect the actual transcript's file and work actions. A complete inline link retains its
+     authored label and exact HTTP(S) target; an incomplete link stays non-clickable. A complete
+     or streamed code span must not turn its filename or URL into a fabricated bare-domain action.
+     Preserve ordinary links outside code and render HTML-like content as escaped text.
+- Expected Result: the selected native brain retains its authorized action and task controls
+  in Voice, approvals remain scoped to the current owner and exact request, stop reasons stay
+  truthful, and model/effort selection persists. Record each evidence type separately; do not
+  close audible acceptance from a typed Call turn.
+- Evidence: private dated run report, exact runtime receipts, scratch byte proof, saved UI views,
+  linked-chat persistence and delivered audio evidence. Keep private paths, IDs and raw native
+  transcripts out of the public case bank.

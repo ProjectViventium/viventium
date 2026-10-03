@@ -87,6 +87,46 @@ def _segment(segment_id, track_sid, sequence, start_ms, end_ms, actor_trust):
 
 
 class TestMultiTrackIngressCoordinator(unittest.TestCase):
+    def test_unproved_retry_clock_cannot_create_false_cross_track_overlap(self):
+        def coordinator():
+            return MultiTrackIngressCoordinator(call_session_id='call_1',
+                owner_participant_identity='owner', stt_impl=None,
+                audio_stream_factory=lambda _track: None,
+                on_segment_changes=lambda _segments: None,
+                on_ambient_turn=lambda _turn: None)
+        # The actual SDK retry fixture proves this owner utterance is physically1210–1900ms,
+        # while retained/backoff audio gives its unproved SDK pair2210–2900ms.
+        guest = _segment('guest', 'TR_guest', 1, 2500, 3100, 'authenticated_participant')
+        owner = _segment('owner', 'TR_owner', 2, 2210, 2900, 'owner_participant')
+        legacy = coordinator()
+        legacy.apply_call_wide_overlap([guest.copy()])
+        legacy_owner = owner.copy()
+        self.assertTrue(legacy.apply_call_wide_overlap([legacy_owner]))
+        self.assertEqual(legacy_owner['speaker']['actorTrust'], 'unknown')
+
+        fenced = coordinator()
+        fenced.apply_call_wide_overlap([guest.copy()])
+        self.assertEqual(fenced.apply_call_wide_overlap([owner], timeline_available=False), [])
+        self.assertEqual(owner['speaker']['actorTrust'], 'owner_participant')
+        self.assertFalse(owner['overlap'])
+        # A later proven overlapping span must still demote both tracks.
+        proven = _segment('proven', 'TR_owner', 3, 2700, 3000, 'owner_participant')
+        self.assertTrue(fenced.apply_call_wide_overlap([proven]))
+        self.assertEqual(proven['speaker']['actorTrust'], 'unknown')
+
+    def test_call_audio_timeline_keeps_its_paired_utc_origin(self):
+        monotonic = iter((100.0, 107.5))
+        coordinator = MultiTrackIngressCoordinator(
+            call_session_id="call_clock", owner_participant_identity="owner",
+            stt_impl=None, audio_stream_factory=lambda _track: None,
+            on_segment_changes=lambda _segments: None,
+            on_ambient_turn=lambda _turn: None,
+            clock=lambda: next(monotonic), wall_clock=lambda: 1_790_000_000.0,
+        )
+        self.assertEqual(coordinator.call_timeline_origin_at_ms(), 1_790_000_000_000.0)
+        self.assertEqual(coordinator.call_timeline_offset_s(), 7.5)
+        self.assertEqual(coordinator.call_timeline_origin_at_ms(), 1_790_000_000_000.0)
+
     def test_guest_shared_mic_state_persists_before_revisions_and_restores_per_track(self) -> None:
         async def first_connection():
             observed = []

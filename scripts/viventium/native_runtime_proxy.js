@@ -357,7 +357,11 @@ function createFirstAdmin(request, response) {
   });
 }
 
-const server = http.createServer((request, response) => {
+// Harness requests to GlassHive carry bounded context headers; accept the same request head
+// as the GlassHive runtime (native_runtime.GLASSHIVE_HTTP_REQUEST_HEAD_MAX_BYTES).
+const GLASSHIVE_HTTP_REQUEST_HEAD_MAX_BYTES = 512 * 1024;
+
+const server = http.createServer({maxHeaderSize: GLASSHIVE_HTTP_REQUEST_HEAD_MAX_BYTES}, (request, response) => {
   if (request.headers.host !== allowedHost) {
     response.writeHead(421, {'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store'});
     response.end('Native proxy host was rejected.\n');

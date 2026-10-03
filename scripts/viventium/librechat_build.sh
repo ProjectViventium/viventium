@@ -12,6 +12,14 @@ configure_librechat_build_runtime() {
   fi
 }
 
+# Compiled serving profile for source installs (`runtime.librechat_serve_mode: compiled`): the
+# production API (`npm run backend`) and the built client bundle (`npm run serve:compiled`, a
+# `vite preview` of client/dist) on the configured ports. Any other value keeps nodemon and the
+# Vite dev server. The bundle is prepared by prepare_librechat_build_outputs before it is served.
+librechat_serves_compiled() {
+  [[ "$(printf '%s' "${VIVENTIUM_LIBRECHAT_SERVE_MODE:-}" | tr '[:upper:]' '[:lower:]')" == "compiled" ]]
+}
+
 current_node_version() {
   if ! command -v node >/dev/null 2>&1; then
     return 1

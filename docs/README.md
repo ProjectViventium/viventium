@@ -30,7 +30,7 @@ definition moving forward; runtime and feature docs own current delivery.
 | Scheduling and continuity | [main-scheduling-continuity](requirements_and_learnings/capabilities/main-scheduling-continuity.md) | [cases](../qa/main-scheduling-continuity/cases.yaml) |
 | Interaction delivery | [interaction-delivery](requirements_and_learnings/capabilities/interaction-delivery.md) | [cases](../qa/interaction-delivery/cases.yaml) |
 | Parallel Work | [parallel-work](requirements_and_learnings/capabilities/parallel-work.md) | [cases](../qa/parallel-work/cases.yaml) |
-| GlassHive | [glasshive](requirements_and_learnings/capabilities/glasshive.md) | [cases](../qa/glasshive/cases.yaml) |
+| xPerfect | [glasshive](requirements_and_learnings/capabilities/glasshive.md) | [cases](../qa/glasshive/cases.yaml) |
 | Prompt Workbench | [prompt-workbench](requirements_and_learnings/capabilities/prompt-workbench.md) | [cases](../qa/prompt-workbench/cases.yaml) |
 | Memory and recall | [memory-recall-transcripts](requirements_and_learnings/capabilities/memory-recall-transcripts.md) | [cases](../qa/memory-recall-transcripts/cases.yaml) |
 | Feelings and truth seeking | [feelings-truth-seeking](requirements_and_learnings/capabilities/feelings-truth-seeking.md) | [cases](../qa/feelings-truth-seeking/cases.yaml) |
@@ -63,3 +63,10 @@ their exact loss, consumer, and safety gates pass. Runtime implementation detail
 
 Capability routing does not certify completion. Candidate-bound QA reports own execution results;
 unresolved owner, surface, seam, and planned acceptance mappings remain open until reviewed.
+
+Current scoped Voice/Telegram repair results are in the
+[2026-10-03 acceptance report](../qa/modern-playground-voice/reports/2026-10-03-voice-and-telegram-acceptance.md),
+grouped by requirement, user path and test owner. Its current model, recall, streaming, generated-file
+and delivery results supersede the listed older statuses; unchanged evidence retains its original
+date. Full spoken action parity, selected hosted recognition recovery and public-edge acceptance
+remain explicit gaps. The capability QA indexes link current and retained reports newest first.

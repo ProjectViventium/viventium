@@ -550,6 +550,31 @@ class TestWorkerTurnHandling(unittest.TestCase):
         self.assertTrue(authority.authoritative)
         self.assertEqual(operations.count(("apply", 9)), 1)
 
+    def test_stt_audio_offset_uses_paired_call_utc_origin_for_latency(self) -> None:
+        for origin in (1_790_000_000_000.0, None):
+            tracker = SpeakerSegmentTracker(call_session_id="call_clock")
+            tracker.ingest(
+                transcript="A stable timing test sentence.", is_final=True,
+                provider_speaker_id="A", created_at=1_790_000_012.0,
+                start_time=10.0, end_time=11.0,
+            )
+            message = SimpleNamespace(text_content="A stable timing test sentence.", extra={})
+            agent = ViventiumVoiceAgent(
+                instructions="test", speaker_tracker=tracker,
+                speaker_timeline_origin=(lambda: origin) if origin is not None else None,
+            )
+            asyncio.run(agent.on_user_turn_completed(None, message))
+            context = message.extra[SPEAKER_CONTEXT_EXTRA_KEY]
+            self.assertEqual(context["utteranceEndOffsetMs"], 11_000.0)
+            self.assertEqual(context["sttFinalObservedAtMs"], 1_790_000_012_000.0)
+            if origin is not None:
+                self.assertEqual(context["utteranceEndClock"], "utc")
+                self.assertEqual(context["utteranceEndAtMs"], origin + 11_000.0)
+                self.assertEqual(context["utteranceEndTimingSource"], "stt_call_audio_timeline")
+            else:
+                self.assertEqual(context["utteranceEndClock"], "call_audio_relative")
+                self.assertNotIn("utteranceEndAtMs", context)
+
     def test_raw_stt_event_preserves_timing_and_revises_same_mic_speakers(self) -> None:
         tracker = SpeakerSegmentTracker(
             call_session_id="call_1",
@@ -2004,7 +2029,15 @@ class TestWorkerTurnHandling(unittest.TestCase):
         self.assertEqual(env.voice_min_interruption_words, 0)
         self.assertEqual(env.voice_aec_warmup_duration_s, 1.0)
 
-    def test_local_whisper_uncached_fallback_uses_less_eager_vad(self) -> None:
+    def test_local_session_uses_shared_minimum_speech_default(self) -> None:
+        with patch.dict(os.environ, {}, clear=True):
+            for provider in ("pywhispercpp", "whisper_local"):
+                with self.subTest(provider=provider):
+                    kwargs = _silero_vad_kwargs_for_env(SimpleNamespace(stt_provider=provider))
+                    self.assertEqual(kwargs["min_speech_duration"], 0.1)
+                    self.assertEqual(kwargs["min_silence_duration"], 0.5)
+
+    def test_local_whisper_uncached_fallback_uses_shared_vad(self) -> None:
         with (
             patch.dict(os.environ, {"VIVENTIUM_STT_PROVIDER": "whisper_local"}, clear=True),
             patch("worker.HAS_TURN_DETECTOR", True),
@@ -2016,7 +2049,7 @@ class TestWorkerTurnHandling(unittest.TestCase):
         self.assertEqual(env.voice_turn_detection, "vad")
         self.assertEqual(env.voice_min_endpointing_delay_s, 0.5)
         self.assertEqual(env.voice_max_endpointing_delay_s, 3.0)
-        self.assertEqual(_silero_vad_kwargs_for_env(env)["min_speech_duration"], 0.35)
+        self.assertEqual(_silero_vad_kwargs_for_env(env)["min_speech_duration"], 0.1)
         self.assertEqual(_silero_vad_kwargs_for_env(env)["min_silence_duration"], 0.5)
 
     def test_local_whisper_respects_explicit_vad_min_speech_override(self) -> None:
@@ -2053,7 +2086,7 @@ class TestWorkerTurnHandling(unittest.TestCase):
 
         self.assertEqual(vad_kwargs["min_silence_duration"], 0.72)
 
-    def test_vad_kwargs_cache_key_changes_when_requested_route_changes_vad_timing(self) -> None:
+    def test_vad_kwargs_cache_key_reuses_shared_timing_when_provider_changes(self) -> None:
         with (
             patch.dict(
                 os.environ,
@@ -2081,12 +2114,12 @@ class TestWorkerTurnHandling(unittest.TestCase):
             assemblyai_key = _vad_kwargs_cache_key(_silero_vad_kwargs_for_env(updated))
 
         self.assertEqual(env.voice_turn_detection, "vad")
-        self.assertEqual(_silero_vad_kwargs_for_env(env)["min_speech_duration"], 0.35)
+        self.assertEqual(_silero_vad_kwargs_for_env(env)["min_speech_duration"], 0.1)
         self.assertEqual(_silero_vad_kwargs_for_env(env)["min_silence_duration"], 0.5)
         self.assertEqual(updated.voice_turn_detection, "stt")
         self.assertEqual(_silero_vad_kwargs_for_env(updated)["min_speech_duration"], 0.1)
         self.assertEqual(_silero_vad_kwargs_for_env(updated)["min_silence_duration"], 0.5)
-        self.assertNotEqual(local_key, assemblyai_key)
+        self.assertEqual(local_key, assemblyai_key)
 
     def test_load_env_raises_memory_warning_threshold_for_local_voice_route(self) -> None:
         with patch.dict(

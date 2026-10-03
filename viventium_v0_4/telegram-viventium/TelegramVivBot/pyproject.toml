@@ -30,4 +30,7 @@ dependencies = [
     "pywhispercpp>=1.0.0",
     "livekit>=0.18.0",
     "livekit-api>=0.6.0",
+    "livekit-agents==1.5.10",
+    "livekit-plugins-assemblyai==1.5.10",
+    "livekit-plugins-silero==1.5.10",
 ]

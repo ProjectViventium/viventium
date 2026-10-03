@@ -37,6 +37,7 @@ class Whisper:
         api_key: str = None,
         api_url: str = None,
         timeout: float = None,
+        use_environment_url: bool = True,
     ):
         self.api_key = api_key
         configured_timeout = timeout or float(os.environ.get("WHISPER_TIMEOUT", "300"))
@@ -44,12 +45,14 @@ class Whisper:
         self._is_azure = False
         
         # Set up API URL - use BaseAPI to parse it and get audio_transcriptions endpoint (matches standalone)
-        override_url = (os.environ.get("WHISPER_API_URL") or "").strip()
+        # === VIVENTIUM START === Saved provider routing can supply its own exact URL.
+        override_url = (os.environ.get("WHISPER_API_URL") or "").strip() if use_environment_url else ""
+        # === VIVENTIUM END ===
         if override_url:
             self.api_url_obj = None
             self.api_url = _append_api_version(override_url)
             self._is_azure = _is_azure_url(self.api_url)
-            logger.info(f"Initialized Whisper with WHISPER_API_URL: {self.api_url}")
+            logger.info("Initialized Whisper transcription endpoint")
         elif api_url:
             # Use BaseAPI to parse the URL and get the audio_transcriptions property
             try:
@@ -61,9 +64,13 @@ class Whisper:
                 if self._is_azure:
                     # Preserve query params for Azure (api-version).
                     self.api_url_obj = None
-                logger.info(f"Initialized Whisper with API URL: {self.api_url}")
+                logger.info("Initialized Whisper transcription endpoint")
             except Exception as e:
-                logger.warning(f"Failed to parse API URL {api_url}, using default: {e}")
+                # === VIVENTIUM START === An explicit selected endpoint must not fall back.
+                if not use_environment_url:
+                    raise
+                # === VIVENTIUM END ===
+                logger.warning("Whisper endpoint configuration failed; using default error_type=%s", type(e).__name__)
                 # Fallback to direct URL
                 self.api_url_obj = None
                 self.api_url = "https://api.openai.com/v1/audio/transcriptions"
@@ -78,9 +85,9 @@ class Whisper:
                 self._is_azure = _is_azure_url(self.api_url)
                 if self._is_azure:
                     self.api_url_obj = None
-                logger.info(f"Initialized Whisper with parsed BASE_URL: {self.api_url}")
+                logger.info("Initialized Whisper transcription endpoint")
             except Exception as e:
-                logger.warning(f"Failed to parse BASE_URL {base_url}, using default: {e}")
+                logger.warning("Whisper endpoint configuration failed; using default error_type=%s", type(e).__name__)
                 self.api_url_obj = None
                 self.api_url = "https://api.openai.com/v1/audio/transcriptions"
         
@@ -90,7 +97,7 @@ class Whisper:
     def generate(
         self,
         audio_file,
-        model: str = "whisper-1",
+        model: str = None,
         **kwargs,
     ):
         """
@@ -98,13 +105,13 @@ class Whisper:
         
         Args:
             audio_file: BytesIO stream or bytes containing audio data
-            model: Model name (default: whisper-1)
+            model: Explicit model; omitted uses AUDIO_MODEL_NAME, then whisper-1.
             **kwargs: Additional parameters
             
         Returns:
             str: Transcribed text
         """
-        logger.info(f"Starting Whisper transcription with model={model}, api_url={self.api_url}")
+        logger.info("Starting Whisper transcription with model=%s", model)
         
         # Handle BytesIO or bytes
         if hasattr(audio_file, 'read'):
@@ -141,10 +148,12 @@ class Whisper:
 
         data = {}
         if not self._is_azure:
-            data["model"] = os.environ.get("AUDIO_MODEL_NAME") or model or self.engine
+            # === VIVENTIUM START === Preserve saved selections and legacy defaults.
+            data["model"] = model or os.environ.get("AUDIO_MODEL_NAME") or self.engine
+            # === VIVENTIUM END ===
         
         model_name = data.get("model") or "azure-deployment"
-        logger.debug(f"Sending Whisper API request to {url} with model {model_name}")
+        logger.debug("Sending Whisper transcription request with model=%s", model_name)
         
         try:
             response = self.session.post(
@@ -156,20 +165,22 @@ class Whisper:
                 stream=True,
             )
             logger.debug(f"Whisper API response status: {response.status_code}")
-        except ConnectionError as e:
-            logger.error(f"Connection error during Whisper transcription: {e}")
-            raise RuntimeError(f"Connection error, please check server status or network connection: {e}")
-        except requests.exceptions.ReadTimeout as e:
-            logger.error(f"Request timeout during Whisper transcription: {e}")
-            raise RuntimeError(f"Request timeout, please check network connection or increase timeout: {e}")
+        except requests.exceptions.RequestException as e:
+            logger.error("Whisper transcription request failed error_type=%s", type(e).__name__)
+            raise
         except Exception as e:
-            logger.exception(f"Unexpected error during Whisper transcription: {e}")
-            raise RuntimeError(f"An unexpected error occurred during transcription: {e}")
+            logger.error("Whisper transcription request failed error_type=%s", type(e).__name__)
+            raise RuntimeError("Whisper transcription request failed") from e
 
         if response.status_code != 200:
-            error_text = response.text
-            logger.error(f"Whisper API error: {response.status_code} {response.reason} - {error_text}")
-            raise requests.HTTPError(f"Whisper API error {response.status_code} {response.reason}: {error_text}", response=response)
+            logger.error("Whisper transcription HTTP rejection status=%s", response.status_code)
+            close = getattr(response, 'close', None)
+            if callable(close):
+                try:
+                    close()
+                except Exception as error:
+                    logger.warning("Whisper response cleanup failed error_type=%s", type(error).__name__)
+            raise requests.HTTPError(f"Whisper transcription HTTP {response.status_code}", response=response)
         
         try:
             json_data = json.loads(response.text)
@@ -177,8 +188,8 @@ class Whisper:
             logger.info(f"Whisper transcription successful, length: {len(text)} characters")
             return text
         except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse Whisper API response as JSON: {e}, response: {response.text[:200]}")
-            raise RuntimeError(f"Failed to parse API response: {e}")
+            logger.error("Whisper transcription response is invalid JSON error_type=%s", type(e).__name__)
+            raise RuntimeError("Whisper transcription response is invalid JSON") from e
 
 # Function alias for backward compatibility
 def whisper(api_key=None, api_url=None):

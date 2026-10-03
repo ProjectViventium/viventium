@@ -2092,7 +2092,10 @@ async def _finish_telegram_preparation(guard, state, failure_code=""):
 
 async def _resolve_prepared_voice_input(context, guard, **kwargs):
     if kwargs.get("voice_error_text"):
-        await _finish_telegram_preparation(guard, "failed", "transcription_failed")
+        notice_code = getattr(kwargs["voice_error_text"], "error_code", "transcription_failed")
+        await _finish_telegram_preparation(
+            guard, "cancelled" if notice_code == "no_speech" else "failed", notice_code,
+        )
     has_presentation = kwargs.get("voice_error_text") or (
         kwargs.get("message") is None and kwargs.get("voice_text")
         and kwargs.get("show_transcription", True)
@@ -2183,10 +2186,13 @@ def _telegram_reply_context_v1(
         and sender_id
         and sender_id not in {current_bot_id, owner_sender_id}
     )
+    # Telegram reports the passage the user selected in the replied message as the reply's quote.
+    selected_quote = str(getattr(getattr(update_message, "quote", None), "text", None) or "")
     return {
         "version": 1,
         "repliedTelegramMessageId": str(replied_message_id),
-        "quoteText": str(getattr(replied, "text", None) or getattr(replied, "caption", None) or ""),
+        "quoteText": selected_quote
+        or str(getattr(replied, "text", None) or getattr(replied, "caption", None) or ""),
         "senderKind": (
             "assistant_candidate"
             if is_current_bot
@@ -2506,14 +2512,36 @@ def _parallel_work_settings_view(snapshot):
     return format_parallel_work_settings(snapshot), InlineKeyboardMarkup(rows)
 
 
-def _active_work_view(snapshot, *, telegram_user_id, chat_id):
+def _native_permission_buttons(item, *, telegram_user_id, chat_id, message_thread_id="", work_index=None):
+    pending = item.pending_native_input
+    if pending is None:
+        return []
+    store = _get_parallel_work_callback_store()
+    buttons = []
+    for option_id, label in pending.options:
+        issued = store.issue_actions(
+            telegram_user_id=str(telegram_user_id), chat_id=str(chat_id),
+            message_thread_id=str(message_thread_id or ""),
+            targets=[(item.work_ref, "resume")], native_input=pending.response(option_id),
+            expires_at=pending.expires_at,
+        )
+        if issued:
+            choice_label = f"{work_index} · {label}" if work_index is not None else label
+            buttons.append(InlineKeyboardButton(choice_label, callback_data=action_callback_data(issued[0].token)))
+    return [[button] for button in buttons]
+
+
+def _active_work_view(snapshot, *, telegram_user_id, chat_id, message_thread_id=""):
     rows = []
     if snapshot.active_state == "fresh":
         store = _get_parallel_work_callback_store()
         for index, item in enumerate(snapshot.items, start=1):
+            rows.extend(_native_permission_buttons(item, telegram_user_id=telegram_user_id,
+                chat_id=chat_id, message_thread_id=message_thread_id, work_index=index))
             issued = store.issue_actions(
                 telegram_user_id=str(telegram_user_id),
                 chat_id=str(chat_id),
+                message_thread_id=str(message_thread_id or ""),
                 targets=[(item.work_ref, action) for action in item.actions],
             )
             buttons = [
@@ -2622,10 +2650,11 @@ def _parallel_work_expired_view():
     )
 
 
-def _parallel_work_confirmation_view(target, *, telegram_user_id, chat_id):
+def _parallel_work_confirmation_view(target, *, telegram_user_id, chat_id, message_thread_id=""):
     confirmation = _get_parallel_work_callback_store().issue_actions(
         telegram_user_id=str(telegram_user_id),
         chat_id=str(chat_id),
+        message_thread_id=str(message_thread_id or ""),
         targets=[(target.work_ref, target.action)],
     )[0]
     action_label = "Stop / cancel"
@@ -2696,12 +2725,25 @@ async def _execute_parallel_work_action(
     """Execute one durable action and preserve its receipt across uncertain transports."""
 
     try:
+        action_kwargs = {"instruction": instruction, "operation_id": reservation.operation_id}
+        if reservation.target.native_input is not None:
+            action_kwargs["native_input"] = reservation.target.native_input
+            if not reservation.replay:
+                current = await client.get_snapshot(telegram_user_id)
+                item = next((value for value in current.items if value.work_ref == reservation.target.work_ref), None)
+                pending = getattr(item, "pending_native_input", None)
+                body = reservation.target.native_input
+                if current.active_state != "fresh" or pending is None or pending.request_id != body["requestId"] or pending.fingerprint != body["requestFingerprint"]:
+                    raise OrchestrationError("This harness question is no longer current. Refresh Active work.")
+                try:
+                    pending.response(body["content"]["optionId"])
+                except ValueError as exc:
+                    raise OrchestrationError("This harness choice is no longer offered. Refresh Active work.") from exc
         snapshot = await client.act(
             telegram_user_id,
             reservation.target.work_ref,
             reservation.target.action,
-            instruction=instruction,
-            operation_id=reservation.operation_id,
+            **action_kwargs,
         )
     except OrchestrationError as error:
         store.complete_action(
@@ -2717,6 +2759,9 @@ async def _execute_parallel_work_action(
         store.complete_action(reservation, succeeded=False, definitive=False)
         raise
     receipt = getattr(getattr(snapshot, "action_receipt", None), "message", "")
+    if getattr(getattr(snapshot, "action_receipt", None), "confirmation_pending", False):
+        store.complete_action(reservation, succeeded=False, definitive=False, receipt=str(receipt))
+        raise OrchestrationError(str(receipt or "Harness confirmation is pending."), indeterminate=True)
     store.complete_action(
         reservation,
         succeeded=True,
@@ -2768,6 +2813,7 @@ async def parallel_work_instruction_reply(update, context):
                 snapshot,
                 telegram_user_id=user_id,
                 chat_id=chat_id,
+                message_thread_id=str(getattr(message, "message_thread_id", "") or ""),
             )
         except OrchestrationLinkRequired as error:
             text, markup = _parallel_work_link_view(error)
@@ -2898,7 +2944,14 @@ async def deliver_proactive_telegram_message(
     parse_mode: Optional[str] = None,
     voice_audio: Optional[bytes] = None,
     before_side_effect: Optional[Callable[[], Awaitable[bool]]] = None,
-) -> list[str]:
+    reply_markup=None,
+    attachments: Optional[list[dict[str, Any]]] = None,
+    base_url: str = "",
+    secret: str = "",
+    telegram_user_id: str = "",
+    telegram_username: str = "",
+    on_message_ids: Optional[Callable[[list[str]], None]] = None,
+) -> Any:
     rendered = ""
     effective_parse_mode: Optional[str] = None
     message_ids: list[str] = []
@@ -2907,11 +2960,15 @@ async def deliver_proactive_telegram_message(
         if isinstance(message_thread_id, int) and message_thread_id > 0
         else {}
     )
+    if reply_markup is not None:
+        thread_kwargs["reply_markup"] = reply_markup
 
     def _remember_message_id(value: Any) -> None:
         message_id = getattr(value, "message_id", None)
         if message_id is not None and str(message_id).strip():
             message_ids.append(str(message_id).strip())
+            if on_message_ids is not None:
+                on_message_ids(list(dict.fromkeys(message_ids)))
 
     # Keep proactive formatting aligned with the main Telegram reply path.
     if parse_mode == "HTML":
@@ -2965,7 +3022,7 @@ async def deliver_proactive_telegram_message(
                 chat_id=chat_id,
                 audio=audio_stream,
                 title="Voice",
-                **thread_kwargs,
+                **{key: value for key, value in thread_kwargs.items() if key != "reply_markup"},
             )
             _remember_message_id(sent_audio)
         except Exception as exc:
@@ -2974,6 +3031,32 @@ async def deliver_proactive_telegram_message(
                 chat_id,
                 exc,
             )
+    if attachments:
+        try:
+            receipt = await send_librechat_attachments(
+                bot=bot,
+                base_url=base_url,
+                secret=secret,
+                telegram_user_id=telegram_user_id,
+                telegram_username=telegram_username,
+                telegram_chat_id=str(chat_id),
+                attachments=attachments,
+                message_thread_id=message_thread_id,
+                reply_to_message_id=None,
+                max_bytes=int(getattr(config, "VIVENTIUM_TELEGRAM_MAX_FILE_SIZE", 10485760) or 10485760),
+                text_fallback=bool(getattr(config, "VIVENTIUM_TELEGRAM_FILE_TEXT_FALLBACK", False)),
+                before_side_effect=before_side_effect,
+                on_message_ids=(
+                    lambda file_ids: on_message_ids(list(dict.fromkeys(message_ids + file_ids)))
+                ) if on_message_ids is not None else None,
+            )
+        except Exception as exc:
+            exc.telegram_message_ids = list(dict.fromkeys(
+                message_ids + list(getattr(exc, "telegram_message_ids", []))
+            ))
+            raise
+        message_ids.extend(receipt["message_ids"])
+        return {**receipt, "message_ids": list(dict.fromkeys(message_ids))}
     return list(dict.fromkeys(message_ids))
 # === VIVENTIUM END ===
 
@@ -3750,6 +3833,7 @@ async def _getViventiumResponse(
     final_segments = []
     logical_turn_id = ""
     logical_turn_revision = None
+    main_stream_failed = False  # VIVENTIUM: a failed Main stream never commits its turn.
     delivered_message_ids = []
     time_out = 600
     image_has_send = 0
@@ -4155,6 +4239,16 @@ async def _getViventiumResponse(
                 return
             await asyncio.gather(task, return_exceptions=True)
 
+    # === VIVENTIUM START ===
+    # Fix: a cleared authored preview withdraws drafts that are not on screen yet. An in-flight
+    # Telegram send keeps running, so the final edits the message it created instead of sending
+    # a second copy; the pre-final flush waits for it.
+    async def _discard_queued_stream_preview() -> None:
+        nonlocal stream_preview_pending
+        async with stream_preview_lock:
+            stream_preview_pending = None
+    # === VIVENTIUM END ===
+
     async def _cancel_stream_previews() -> None:
         nonlocal stream_preview_pending, stream_preview_task
         async with stream_preview_lock:
@@ -4178,6 +4272,46 @@ async def _getViventiumResponse(
         if preview_message_id is None:
             return True
         return await source_guard.retract_ref(chatid, preview_message_id)
+
+    # === VIVENTIUM START ===
+    # Fix: a Main stream that fails after its preview reached Telegram is a failed presentation.
+    # The unfinished preview is never kept as, or joined to, an answer: the existing retry terminal
+    # replaces the live output, and the logical turn is acknowledged failed instead of committed.
+    async def _fail_stream_presentation() -> None:
+        nonlocal answer_messageid, lastresult, stream_preview_superseded
+        stream_preview_superseded = True
+        await _cancel_stream_previews()
+        answer_messageid = None
+        lastresult = ""
+        pending_claim = source_guard.reserve_pending_retry_terminal()
+        if pending_claim is None:
+            await source_guard.retract_all()
+        else:
+            retry_terminal_id = None
+            try:
+                retry_terminal_id = await source_guard.send_retryable_terminal(
+                    persist=False, pending_claim=pending_claim
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Telegram retry terminal delivery failed: %s", type(exc).__name__
+                )
+            if source_guard.stale:
+                source_guard._store.complete_pending_terminal(pending_claim)
+            elif retry_terminal_id is None:
+                source_guard._store.reschedule_pending_terminal(pending_claim)
+        if (
+            logical_turn_id
+            and logical_turn_revision is not None
+            and hasattr(robot, "ack_delivery")
+        ):
+            await robot.ack_delivery(
+                logical_turn_id,
+                logical_turn_revision,
+                "failed",
+                f"telegram:{chatid}",
+            )
+    # === VIVENTIUM END ===
 
     async def _deliver_final_message_segments(segments) -> bool:
         nonlocal answer_messageid, lastresult
@@ -4378,6 +4512,18 @@ async def _getViventiumResponse(
                         # A pending failure is not a delivered Telegram response and must not be
                         # acknowledged as committed.
                         continue
+                    # === VIVENTIUM START ===
+                    # Fix: a failed Main stream is never a committed answer. Output already on
+                    # screen becomes the retry terminal; otherwise only the failure text is shown,
+                    # without any unfinished answer text, and acknowledged failed below.
+                    main_stream_failed = True
+                    await _discard_queued_stream_preview()
+                    await _flush_stream_previews()
+                    if source_guard.live_refs:
+                        await _fail_stream_presentation()
+                        return
+                    result = ""
+                    # === VIVENTIUM END ===
                     data = str(data.get("text") or "")
                     if not data:
                         continue
@@ -4391,7 +4537,7 @@ async def _getViventiumResponse(
                         if preview_text:
                             await _queue_stream_preview(preview_text)
                         else:
-                            await _cancel_stream_previews()
+                            await _discard_queued_stream_preview()
                         continue
                     if data.get("type") == "delivery_disposition":
                         raw_disposition = data.get("delivery_disposition")
@@ -4472,11 +4618,9 @@ async def _getViventiumResponse(
                     if not await _source_is_current_for_presentation():
                         continue
                     img_url = base64.b64decode(base64_str)
-                    media_group = []
-                    media_group.append(InputMediaPhoto(media=img_url))
-                    await context.bot.send_media_group(
+                    await context.bot.send_photo(
                         chat_id=chatid,
-                        media=media_group,
+                        photo=img_url,
                         message_thread_id=message_thread_id,
                         reply_to_message_id=messageid,
                     )
@@ -4663,6 +4807,7 @@ async def _getViventiumResponse(
         # REMOVED: system_prompt parameter - LiveKitBridge.reset() ignores it, Viventium handles system prompts
         robot.reset(convo_id=convo_id)
         bridge_error_audio_allowed = False
+        main_stream_failed = True  # VIVENTIUM: an interrupted reply is shown, never committed.
         interruption_notice = "Response interrupted before completion. Please try again."
         tmpresult = strip_incomplete_control_suffix(tmpresult)
         tmpresult = (
@@ -4708,17 +4853,20 @@ async def _getViventiumResponse(
                 # Limit the number of images to 10 (Telegram limit for albums)
                 image_urls_result = image_urls_result[:10]
 
-                # We send an album with all images
-                media_group = []
-                for img_url in image_urls_result:
-                    media_group.append(InputMediaPhoto(media=img_url))
-
-                await context.bot.send_media_group(
-                    chat_id=chatid,
-                    media=media_group,
-                    message_thread_id=message_thread_id,
-                    reply_to_message_id=messageid,
-                )
+                if len(image_urls_result) == 1:
+                    await context.bot.send_photo(
+                        chat_id=chatid,
+                        photo=image_urls_result[0],
+                        message_thread_id=message_thread_id,
+                        reply_to_message_id=messageid,
+                    )
+                else:
+                    await context.bot.send_media_group(
+                        chat_id=chatid,
+                        media=[InputMediaPhoto(media=img_url) for img_url in image_urls_result],
+                        message_thread_id=message_thread_id,
+                        reply_to_message_id=messageid,
+                    )
             except Exception as e:
                 logger.warning(f"Failed to send image(s): {str(e)}")
 
@@ -5013,6 +5161,23 @@ async def _getViventiumResponse(
     if source_guard.stale:
         return
 
+    # === VIVENTIUM START ===
+    # Fix: a presented failure notice closes the turn as failed; it never commits source coverage.
+    if main_stream_failed:
+        if (
+            logical_turn_id
+            and logical_turn_revision is not None
+            and hasattr(robot, "ack_delivery")
+        ):
+            await robot.ack_delivery(
+                logical_turn_id,
+                logical_turn_revision,
+                "failed",
+                f"telegram:{chatid}",
+            )
+        return
+    # === VIVENTIUM END ===
+
     presentation_refs = source_guard.presentation_refs()
     if logical_turn_id and logical_turn_revision is not None and presentation_refs:
         delivery_ack_status = "unavailable"
@@ -5140,6 +5305,7 @@ async def getViventiumResponse(
 async def _handle_parallel_work_callback(update, context, callback_query, data):
     user_id = str(getattr(getattr(update, "effective_user", None), "id", "") or "")
     chat_id = str(getattr(getattr(update, "effective_chat", None), "id", "") or "")
+    topic = str(getattr(callback_query.message, "message_thread_id", "") or "")
     client = _get_parallel_work_client()
     store = _get_parallel_work_callback_store()
     retry_callback_data = ""
@@ -5155,6 +5321,7 @@ async def _handle_parallel_work_callback(update, context, callback_query, data):
                 snapshot,
                 telegram_user_id=user_id,
                 chat_id=chat_id,
+                message_thread_id=topic,
             )
         elif data.startswith("PW:P:"):
             reservation = store.reserve_page(
@@ -5188,6 +5355,7 @@ async def _handle_parallel_work_callback(update, context, callback_query, data):
                     snapshot,
                     telegram_user_id=user_id,
                     chat_id=chat_id,
+                    message_thread_id=topic,
                 )
         elif data in {"PW:T:0", "PW:T:1"}:
             snapshot = await client.set_parallel_work(user_id, data.endswith(":1"))
@@ -5198,6 +5366,7 @@ async def _handle_parallel_work_callback(update, context, callback_query, data):
                 token,
                 telegram_user_id=user_id,
                 chat_id=chat_id,
+                message_thread_id=topic,
             )
             if reservation is None:
                 text, markup = _parallel_work_expired_view()
@@ -5207,6 +5376,7 @@ async def _handle_parallel_work_callback(update, context, callback_query, data):
                     reservation.target,
                     telegram_user_id=user_id,
                     chat_id=chat_id,
+                    message_thread_id=topic,
                 )
             elif reservation.target.action in INSTRUCTION_ACTIONS:
                 store.complete_action(reservation, succeeded=True, receipt="instruction_prompted")
@@ -5243,6 +5413,7 @@ async def _handle_parallel_work_callback(update, context, callback_query, data):
                     snapshot,
                     telegram_user_id=user_id,
                     chat_id=chat_id,
+                    message_thread_id=topic,
                 )
         elif data.startswith("PW:C:"):
             parts = data.split(":", 3)
@@ -5254,6 +5425,7 @@ async def _handle_parallel_work_callback(update, context, callback_query, data):
                         parts[3],
                         telegram_user_id=user_id,
                         chat_id=chat_id,
+                        message_thread_id=topic,
                     )
                     if target is None:
                         text, markup = _parallel_work_expired_view()
@@ -5269,6 +5441,7 @@ async def _handle_parallel_work_callback(update, context, callback_query, data):
                         parts[3],
                         telegram_user_id=user_id,
                         chat_id=chat_id,
+                        message_thread_id=topic,
                     )
                     if reservation is None:
                         text, markup = _parallel_work_expired_view()
@@ -5284,6 +5457,7 @@ async def _handle_parallel_work_callback(update, context, callback_query, data):
                             snapshot,
                             telegram_user_id=user_id,
                             chat_id=chat_id,
+                            message_thread_id=topic,
                         )
         elif data.startswith("PW:R:"):
             token = data[len("PW:R:"):]
@@ -5308,6 +5482,7 @@ async def _handle_parallel_work_callback(update, context, callback_query, data):
                     snapshot,
                     telegram_user_id=user_id,
                     chat_id=chat_id,
+                    message_thread_id=topic,
                 )
         else:
             text, markup = _parallel_work_expired_view()
@@ -5920,6 +6095,15 @@ async def _refresh_telegram_bot_metadata(application: Application) -> None:
 async def post_init(application: Application) -> None:
     # REMOVED: GET_MODELS - Model fetching is not needed, Viventium handles models
     
+    # Warm the same speech detector before exposing the bot as ready. A failed
+    # detector leaves text available and each voice input reports a typed cause.
+    from utils.telegram_vad import preload_speech_detector, SpeechPresenceError
+    try:
+        await preload_speech_detector()
+        logger.info("Telegram speech detector ready")
+    except SpeechPresenceError:
+        logger.error("Telegram speech detector unavailable code=speech_presence_unavailable")
+
     # Register callback for proactive messages from LiveKit agent
     # This allows the agent to send messages when the user hasn't initiated a request
     # === VIVENTIUM START ===
@@ -5932,8 +6116,23 @@ async def post_init(application: Application) -> None:
         voice_audio: Optional[bytes] = None,
         message_thread_id: Optional[int] = None,
         before_side_effect: Optional[Callable[[], Awaitable[bool]]] = None,
+        native_work_item=None,
+        telegram_user_id: str = "",
+        telegram_username: str = "",
+        attachments: Optional[list[dict[str, Any]]] = None,
+        on_message_ids: Optional[Callable[[list[str]], None]] = None,
     ):
         try:
+            markup = None
+            if native_work_item is not None:
+                rows = _native_permission_buttons(native_work_item, telegram_user_id=telegram_user_id,
+                    chat_id=chat_id, message_thread_id=message_thread_id)
+                stop = _get_parallel_work_callback_store().issue_actions(
+                    telegram_user_id=telegram_user_id, chat_id=str(chat_id),
+                    message_thread_id=str(message_thread_id or ""), targets=[(native_work_item.work_ref, "stop")],
+                )
+                rows.extend([[InlineKeyboardButton("Stop / cancel", callback_data=action_callback_data(target.token))] for target in stop])
+                markup = InlineKeyboardMarkup(rows)
             return await deliver_proactive_telegram_message(
                 application.bot,
                 chat_id=chat_id,
@@ -5942,6 +6141,13 @@ async def post_init(application: Application) -> None:
                 voice_audio=voice_audio,
                 message_thread_id=message_thread_id,
                 before_side_effect=before_side_effect,
+                reply_markup=markup,
+                attachments=attachments,
+                base_url=getattr(config.ChatGPTbot, "base_url", "") or "",
+                secret=getattr(config.ChatGPTbot, "secret", "") or "",
+                telegram_user_id=telegram_user_id,
+                telegram_username=telegram_username,
+                on_message_ids=on_message_ids,
             )
         except Exception as e:
             logging.error(f"Failed to deliver proactive message to {chat_id}: {e}")

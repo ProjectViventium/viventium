@@ -506,7 +506,8 @@ def native_glasshive_environment(root: Path, support: Path) -> dict[str, str]:
     token = hmac.new(bytes.fromhex(runtime_secrets(support)["CREDS_KEY"]), b"viventium.native.glasshive.api.v1", hashlib.sha256).hexdigest()
     environment = {
         "HOME": str(support / "runtime/glasshive-home"),
-        "PATH": f"{root / 'runtime/node/bin'}:/usr/bin:/bin",
+        # Host admission probes memory with sysctl, which macOS ships only in /usr/sbin.
+        "PATH": f"{root / 'runtime/node/bin'}:/usr/bin:/bin:/usr/sbin:/sbin",
         "TMPDIR": str(support / "runtime/tmp"), "LANG": "en_US.UTF-8",
         "VIVENTIUM_DISABLE_DEFAULT_RUNTIME_ENV": "1",
         "GLASSHIVE_AUTO_DISCOVER_CODEX_WORKSPACE_DEPS": "false",
@@ -627,6 +628,11 @@ def glasshive_python_command(root: Path, code: str, *arguments: str) -> list[str
     ]
 
 
+# Harness requests carry bounded context headers (bootstrap bundle, developer tail, turn context,
+# visible chain). Accept the same request head as the source launcher and GlassHive's contract.
+GLASSHIVE_HTTP_REQUEST_HEAD_MAX_BYTES = 512 * 1024
+
+
 def glasshive_server_command(root: Path, support: Path) -> list[str]:
     # Uvicorn's uds shortcut chmods a newly created socket to 0666. Bind it
     # privately before handing ownership to the existing server sockets API.
@@ -636,7 +642,8 @@ def glasshive_server_command(root: Path, support: Path) -> list[str]:
         "with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as listener:\n"
         "    listener.bind(sys.argv[1])\n"
         "    os.chmod(sys.argv[1], 0o600)\n"
-        "    uvicorn.Server(uvicorn.Config('workers_projects_runtime.api:create_app', factory=True, uds=sys.argv[1], http='h11', access_log=False)).run(sockets=[listener])\n",
+        "    uvicorn.Server(uvicorn.Config('workers_projects_runtime.api:create_app', factory=True, uds=sys.argv[1], http='h11', "
+        f"h11_max_incomplete_event_size={GLASSHIVE_HTTP_REQUEST_HEAD_MAX_BYTES}, access_log=False)).run(sockets=[listener])\n",
         str(native_glasshive_socket_path(support)),
     )
 
@@ -823,6 +830,8 @@ NATIVE_ALLOWED_PLAIN_ENV = {
     "WPR_MODEL_HOST_CODEX_CLI",
     "WPR_MODEL_CODEX_CLI",
     "WPR_MODEL_CLAUDE_CODE",
+    "WPR_MODEL_GROK_BUILD",
+    "WPR_GROK_REASONING_EFFORT",
     "WPR_CODEX_CLI_REASONING_EFFORT",
     "WPR_CODEX_CLI_PERSONALITY",
     "WPR_CODEX_CLI_CONVERSATION_PROJECT_INSTRUCTIONS",

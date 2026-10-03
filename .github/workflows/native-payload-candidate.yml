@@ -183,7 +183,9 @@ jobs:
           for profile in ("codex-cli", "claude-code", "redis"):
               record = policy["redis"]["source"] if profile == "redis" else policy["native_bodies"][profile]["architectures"][sys.argv[1]]
               target = Path(os.environ["RUNNER_TEMP"], "downloads", profile + ".tar.gz")
-              with urllib.request.urlopen(record["url"], timeout=60) as source, target.open("xb") as output:
+              # download.redis.io answers 403 to Python's default User-Agent.
+              request = urllib.request.Request(record["url"], headers={"User-Agent": "viventium-native-payload"})
+              with urllib.request.urlopen(request, timeout=60) as source, target.open("xb") as output:
                   while chunk := source.read(1024 * 1024):
                       output.write(chunk)
               with target.open("rb") as source:
@@ -211,6 +213,7 @@ jobs:
           )
           PY
           python scripts/viventium/config_compiler.py \
+            --native-payload \
             --config "${RUNNER_TEMP}/native-config.yaml" \
             --output-dir "${RUNNER_TEMP}/compiled-defaults"
           test -s "${RUNNER_TEMP}/compiled-defaults/config.yaml"

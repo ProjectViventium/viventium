@@ -70,14 +70,14 @@ runtime:
     reaction:
       activation_mode: always
       provider: openai
-      model: gpt-5.6-terra
+      model: gpt-6.1-sol
       use_responses_api: true
-      reasoning_effort: none
+      reasoning_effort: high
       fast: true
       service_tier: priority
       timeout_ms: 15000
       fallback_provider: anthropic
-      fallback_model: claude-opus-5
+      fallback_model: claude-opus-5-5
       activation_provider: groq
       activation_model: qwen/qwen3.6-27b
       activation_confidence_threshold: 0.55
@@ -105,10 +105,10 @@ runtime:
     require_full_lookback: true
     dry_run_first: true
     provider_profile: launch_ready_only
-    anthropic_model: claude-opus-5
-    anthropic_effort: xhigh
-    openai_model: gpt-5.6-luna
-    openai_reasoning_effort: medium
+    anthropic_model: claude-opus-5-5
+    anthropic_effort: high
+    openai_model: gpt-6.1-sol
+    openai_reasoning_effort: high
     transcripts:
       source_dir: ""
       max_files_per_run: 20
@@ -147,10 +147,10 @@ llm:
   # Saved memory uses official Codex sign-in with its configured model.
   memory:
     provider: glasshive-harness
-    model: codex-cli:gpt-5.6-luna
+    model: codex-cli:gpt-6.1-sol
   deep_memory:
     provider: glasshive-harness
-    model: codex-cli:gpt-5.6-terra
+    model: codex-cli:gpt-6.1-sol
 voice:
   mode: disabled
   stt_provider: whisper_local
@@ -189,8 +189,8 @@ integrations:
       codex_personality: none
       codex_conversation_project_instructions: inherit
       codex_app_server_qa_enabled: false
-      codex_model: gpt-5.6-sol
-      codex_reasoning_effort: xhigh
+      codex_model: gpt-6.1-sol
+      codex_reasoning_effort: high
       codex_xhigh_route_proven: true
   code_interpreter:
     enabled: false

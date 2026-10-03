@@ -336,7 +336,11 @@ def strip_voice_control_tags(text: str) -> str:
     """
     if not text:
         return ""
-    cleaned = _VCT_SPEAK_TAG_RE.sub("", text)
+    # Preserve the original structural boundary before removing an adjacent wrapper.
+    # Otherwise `[sigh]<whisper>text</whisper>` becomes `[sigh]text`, which is no
+    # longer a bracket-stage-direction boundary for the existing final pass.
+    cleaned = _strip_bracket_stage_directions(text)
+    cleaned = _VCT_SPEAK_TAG_RE.sub("", cleaned)
     cleaned = _VCT_EMOTION_SELF_CLOSING_RE.sub("", cleaned)
     cleaned = _VCT_EMOTION_WRAPPER_RE.sub(lambda m: m.group(1) or "", cleaned)
     cleaned = _VCT_BREAK_TAG_RE.sub("", cleaned)
@@ -459,7 +463,15 @@ class VoiceControlDisplayFilter:
                 content = source[index + 1 : closing]
                 left = source[index - 1] if index > 0 else ""
                 right = source[closing + 1] if closing + 1 < source_len else ""
+                # A completed label may receive its Markdown target in the
+                # next delta. Wait for that structural delimiter before
+                # treating a lowercase bracket label as a voice direction.
+                if not right and not final:
+                    self._pending = source[index:][-_VOICE_CONTROL_PENDING_MAX:]
+                    break
                 if (
+                    right != "("
+                    and
                     (_is_xai_bracket_control_tag(content) or _is_bracket_stage_direction(content))
                     and _is_stage_direction_boundary(left)
                     and _is_stage_direction_boundary(right)
@@ -514,6 +526,48 @@ def _strip_inline_markdown_emphasis(text: str) -> str:
         cleaned = updated
     cleaned = _MARKDOWN_MARKER_ONLY_LINE_RE.sub(" ", cleaned)
     return cleaned
+
+
+def _safe_markup_prefix_end(text: str) -> int:
+    """Keep unfinished angle/bracket tokens for the next streaming text input."""
+    tag_start: Optional[int] = None
+    bracket_start: Optional[int] = None
+    for index, char in enumerate(text):
+        if tag_start is None and bracket_start is None:
+            if char == "<":
+                tag_start = index
+            elif char == "[":
+                bracket_start = index
+            continue
+        if tag_start is not None:
+            if char == ">":
+                tag_start = None
+            continue
+        if bracket_start is not None and char == "]":
+            bracket_start = None
+    safe_end = len(text)
+    if tag_start is not None:
+        safe_end = min(safe_end, tag_start)
+    if bracket_start is not None:
+        safe_end = min(safe_end, bracket_start)
+    return safe_end
+
+
+def safe_voice_tts_prefix_end(text: str) -> int:
+    """Retain incomplete speech markup before applying the full-text sanitizer.
+
+    Complete emphasis uses the sanitizer's existing grammar. Masking it with equal-length
+    spaces keeps positions stable when an unfinished delimiter follows it.
+    """
+    safe_end = _safe_markup_prefix_end(text)
+    masked = _MARKDOWN_SPACED_DECORATION_RE.sub(
+        lambda match: " " * len(match.group(0)), text[:safe_end]
+    )
+    masked = _MARKDOWN_EMPHASIS_RE.sub(
+        lambda match: " " * len(match.group(0)), masked
+    )
+    pending = re.search(r"(?<!\w)(?:\*{1,3}|_{1,3}|~~)(?=\S)", masked)
+    return min(safe_end, pending.start()) if pending else safe_end
 
 
 def _normalize_voice_surface_whitespace(text: str) -> str:

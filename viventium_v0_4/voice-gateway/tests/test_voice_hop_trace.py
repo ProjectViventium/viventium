@@ -2,14 +2,38 @@ import json
 import os
 import sys
 import unittest
+from unittest.mock import Mock, patch
 
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from voice_hop_trace import VoiceHopTrace
+from voice_hop_trace import VoiceHopTrace, voice_stage_span
 
 
 class TestVoiceHopTrace(unittest.TestCase):
+    def test_stage_duration_uses_monotonic_clock_and_excludes_private_context(self) -> None:
+        log = Mock()
+        context = {"speakerSegments": [{"callSessionId": "private-call", "turnId": "private-turn", "text": "private words"}]}
+        with patch("voice_hop_trace.time.monotonic_ns", side_effect=[1_000_000, 4_000_000]), patch("voice_hop_trace.time.time_ns", return_value=9_000_000):
+            with voice_stage_span(log, "speaker_finalize", context):
+                pass
+        payload = json.loads(log.info.call_args.args[1])
+        self.assertEqual(payload["durationMs"], 3)
+        self.assertEqual(payload["endedAtMs"], 9)
+        self.assertEqual(payload["status"], "completed")
+        self.assertEqual(len(payload["turnHash"]), 64)
+        self.assertNotIn("private", log.info.call_args.args[1])
+
+    def test_stage_error_is_logged_and_preserves_exception(self) -> None:
+        log = Mock()
+        with self.assertRaisesRegex(RuntimeError, "synthetic"):
+            with voice_stage_span(log, "turn_authority", {}):
+                raise RuntimeError("synthetic")
+        payload = json.loads(log.info.call_args.args[1])
+        self.assertEqual(payload["status"], "failed")
+        self.assertEqual(payload["bindingStatus"], "missing")
+        self.assertIsNone(payload["turnHash"])
+
     def test_terminal_summary_proves_all_eight_hops(self) -> None:
         trace = VoiceHopTrace(correlation_id="lc_1", call_session_id="call_1")
         for index, hop in enumerate(

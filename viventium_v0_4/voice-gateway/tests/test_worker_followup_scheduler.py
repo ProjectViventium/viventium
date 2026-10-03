@@ -4,13 +4,13 @@ import os
 import sys
 import unittest
 from datetime import datetime, timedelta, timezone
-from types import MethodType
+from types import MethodType, SimpleNamespace
 from unittest import mock
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 import worker
-from librechat_llm import LibreChatAuth
+from librechat_llm import LibreChatAuth, LibreChatLLM
 from worker import CortexFollowupScheduler
 
 
@@ -18,11 +18,14 @@ class _DummySession:
     def __init__(self) -> None:
         self.say_calls: list[dict[str, object]] = []
         self.speech_handles: list[_DummySpeechHandle] = []
+        self.options = SimpleNamespace(tts_text_transforms=["filter_markdown", "filter_emoji"])
+        self.current_agent = object()
 
-    def say(self, text: str, *, allow_interruptions: bool, add_to_chat_ctx: bool):
+    def say(self, text: str, *, audio=None, allow_interruptions: bool, add_to_chat_ctx: bool):
         self.say_calls.append(
             {
                 "text": text,
+                "audio": audio,
                 "allow_interruptions": allow_interruptions,
                 "add_to_chat_ctx": add_to_chat_ctx,
             }
@@ -199,6 +202,311 @@ class _RecordingPostSession:
 
 
 class TestCortexFollowupScheduler(unittest.IsolatedAsyncioTestCase):
+    def _callwide_event(self, *, child=False, **changes):
+        event = {
+            "version": 1,
+            "eventId": "child_completed" if child else "parent_completed",
+            "taskId": "child_task" if child else "parent_task",
+            "callSessionId": "call_123",
+            "conversationId": "conversation_123",
+            "parentTaskId": "parent_task" if child else "",
+            "streamId": "worker_stream" if child else "main_stream",
+            "owner": {"kind": "glasshive_run" if child else "remote_generation",
+                      "id": "worker_run" if child else "main_stream"},
+            "state": "completed", "phase": "completed", "type": "result",
+            "sequence": 4, "emittedAt": "2026-01-01T00:00:00Z",
+            "cancellable": False, "retryable": False,
+            "resultMessageId": "mission_callback_not_anchor" if child else "main_anchor",
+        }
+        return {**event, **changes}
+
+    def _callwide_llm(self, scheduler):
+        llm = LibreChatLLM(
+            origin="http://example.test", auth=scheduler._auth,
+            task_event_handler=lambda event: scheduler.on_task_event(
+                event, is_task_suppressed=llm.is_task_output_suppressed,
+            ),
+        )
+        return llm
+
+    async def test_callwide_worker_join_converges_in_both_orders_and_replay(self):
+        for child_first in (False, True):
+            with self.subTest(child_first=child_first):
+                scheduler = self._build_scheduler(session=_DummySession())
+                scheduler._run = mock.AsyncMock()
+                llm = self._callwide_llm(scheduler)
+                parent, child = self._callwide_event(), self._callwide_event(child=True)
+                events = [child, parent] if child_first else [parent, child]
+                for event in events + events + [
+                    {**child, "eventId": "newer_terminal", "sequence": 5},
+                    {**child, "eventId": "older_terminal", "sequence": 3},
+                ]:
+                    await llm._relay_task_event_once(event)
+                await asyncio.gather(*scheduler._glasshive_tasks)
+                scheduler._run.assert_awaited_once()
+                args, kwargs = scheduler._run.await_args
+                self.assertEqual(args[1], "main_anchor")
+                self.assertFalse(kwargs["should_poll_cortex"])
+                self.assertTrue(kwargs["should_poll_glasshive"])
+                self.assertTrue(kwargs["wait_for_delivery"])
+                self.assertIsNone(kwargs["presentation_is_current"])
+                self.assertEqual(scheduler._seq, 0)
+                self.assertIsNone(scheduler._task)
+                self.assertIsNone(scheduler._cortex_task)
+                await scheduler.close()
+                self.assertEqual(scheduler._task_refs, {})
+                self.assertEqual(scheduler._worker_followup_pairs, {})
+
+    async def test_callwide_workers_keep_distinct_parent_and_child_pairs(self):
+        scheduler = self._build_scheduler(session=_DummySession())
+        scheduler._run = mock.AsyncMock()
+        llm = self._callwide_llm(scheduler)
+        parent, child = self._callwide_event(), self._callwide_event(child=True)
+        for event in [parent, child,
+                      self._callwide_event(child=True, taskId="other_child", eventId="other_child"),
+                      self._callwide_event(taskId="other_parent", eventId="other_parent",
+                                           streamId="other_stream", resultMessageId="other_anchor",
+                                           owner={"kind": "remote_generation", "id": "other_stream"}),
+                      self._callwide_event(child=True, taskId="third_child", eventId="third_child",
+                                           parentTaskId="other_parent")]:
+            await llm._relay_task_event_once(event)
+        await asyncio.gather(*scheduler._glasshive_tasks)
+        self.assertEqual([call.args[1] for call in scheduler._run.await_args_list],
+                         ["main_anchor", "main_anchor", "other_anchor"])
+        self.assertEqual(len(scheduler._worker_followup_pairs), 3)
+        scheduler.cancel_pending()
+        self.assertEqual(len(scheduler._task_refs), 5)
+        self.assertEqual(scheduler._worker_followup_pairs, {})
+        await scheduler.close()
+        self.assertEqual(scheduler._task_refs, {})
+
+    async def test_callwide_cancel_keeps_unrelated_running_worker_parent(self):
+        scheduler = self._build_scheduler(session=_DummySession())
+        scheduler._run = mock.AsyncMock()
+        llm = self._callwide_llm(scheduler)
+        parent = self._callwide_event()
+        child = self._callwide_event(child=True, state="running")
+        await llm._relay_task_event_once(parent)
+        await llm._relay_task_event_once(child)
+        progress = mock.Mock()
+        worker._apply_task_cancel_suppression(
+            "unrelated_task", progress_controller=progress,
+            followup_scheduler=scheduler, session=_DummySession(),
+        )
+        progress.suppress_task.assert_called_once_with("unrelated_task")
+        terminal = {**child, "state": "completed", "sequence": 5,
+                    "eventId": "worker_after_unrelated_cancel"}
+        await llm._relay_task_event_once(terminal)
+        await llm._relay_task_event_once(terminal)
+        await asyncio.gather(*scheduler._glasshive_tasks)
+        scheduler._run.assert_awaited_once()
+        self.assertEqual(scheduler._run.await_args.args[1], "main_anchor")
+        await scheduler.close()
+
+    async def test_callwide_worker_join_refuses_foreign_missing_and_cancelled_sources(self):
+        variants = [
+            ("wrong_call", {}, {"callSessionId": "another_call"}),
+            ("wrong_conversation", {}, {"conversationId": "another_conversation"}),
+            ("missing_parent", {}, {"parentTaskId": "missing"}),
+            ("missing_main_result", {"resultMessageId": ""}, {}),
+            ("wrong_parent_owner", {"owner": {"kind": "glasshive_run", "id": "main_stream"}}, {}),
+            ("wrong_parent_stream", {"streamId": "different_stream"}, {}),
+            ("cancelled_parent", {"state": "cancelled"}, {}),
+            ("cancelled_child", {}, {"state": "cancelled"}),
+            ("running_child", {}, {"state": "running"}),
+        ]
+        for name, parent_change, child_change in variants:
+            with self.subTest(case=name):
+                scheduler = self._build_scheduler(session=_DummySession())
+                scheduler._run = mock.AsyncMock()
+                llm = self._callwide_llm(scheduler)
+                await llm._relay_task_event_once(self._callwide_event(**parent_change))
+                await llm._relay_task_event_once(self._callwide_event(child=True, **child_change))
+                self.assertEqual(scheduler._glasshive_tasks, set())
+                scheduler._run.assert_not_called()
+                await scheduler.close()
+        scheduler = self._build_scheduler(session=_DummySession())
+        scheduler._run = mock.AsyncMock()
+        llm = self._callwide_llm(scheduler)
+        await llm._relay_task_event_once(self._callwide_event())
+        llm._task_event_gate.mark_cancel_accepted("child_task")
+        await llm._relay_task_event_once(self._callwide_event(child=True))
+        scheduler._run.assert_not_called()
+        await scheduler.close()
+
+    async def test_callwide_worker_arm_preserves_concurrent_cortex_delivery(self):
+        session = _DummySession()
+        scheduler = self._build_scheduler(session=session, timeout_s=2)
+        llm = self._callwide_llm(scheduler)
+        cortex_entered, release_cortex = asyncio.Event(), asyncio.Event()
+
+        async def fetch_cortex(_self, _http, _message):
+            cortex_entered.set()
+            await release_cortex.wait()
+            return {"followUp": {"messageId": "cortex_answer", "text": "Current Cortex answer."}}
+
+        async def fetch_worker(_self, _http, _message):
+            await asyncio.Future()
+
+        scheduler._fetch_cortex = MethodType(fetch_cortex, scheduler)
+        scheduler._fetch_glasshive = MethodType(fetch_worker, scheduler)
+        with mock.patch.object(worker.aiohttp, "ClientSession", _FakeClientSession):
+            scheduler.schedule("newer_main", [], "", cortex_expected=True)
+            cortex_task, seq = scheduler._cortex_task, scheduler._seq
+            await cortex_entered.wait()
+            await llm._relay_task_event_once(self._callwide_event())
+            await llm._relay_task_event_once(self._callwide_event(child=True))
+            self.assertEqual(scheduler._seq, seq)
+            self.assertIs(scheduler._cortex_task, cortex_task)
+            self.assertIs(scheduler._task, cortex_task)
+            release_cortex.set()
+            await cortex_task
+            self.assertEqual([call["text"] for call in session.say_calls], ["Current Cortex answer."])
+            self.assertEqual(len(scheduler._glasshive_tasks), 1)
+            await scheduler.close()
+
+    async def test_callwide_worker_waits_zero_to_ten_seconds_for_core_enqueue(self):
+        session = _DummySession()
+        scheduler = self._build_scheduler(session=session)
+        scheduler._glasshive_timeout_s = 20
+        llm = self._callwide_llm(scheduler)
+        scheduler._fetch_cortex = mock.AsyncMock(return_value={
+            "followUpDecision": {"result": "suppressed", "llmResult": "nta",
+                                 "selectedStrategy": "no_response_suppressed",
+                                 "suppressionReason": "no_response_tag"},
+        })
+        with mock.patch.object(worker.aiohttp, "ClientSession", _FakeClientSession):
+            scheduler.schedule("main_anchor", [], "", cortex_expected=True)
+            await scheduler._cortex_task
+        self.assertEqual(session.say_calls, [])
+        self.assertEqual(scheduler._fetch_cortex.await_count, 1)
+        cortex_seq = scheduler._seq
+        claim = scheduler._claim_glasshive_delivery
+        _install_claimed_terminal_delivery(scheduler, callback_id="callback_ready",
+                                           text="Main-authored completed report.")
+        scheduler._claim_glasshive_delivery = claim
+        elapsed, claims, anchors = [0.0], [], []
+
+        class DelayedSession(_FakeClientSession):
+            def get(self, url, *, headers):
+                anchors.append(url)
+                return _FakeResponse(200, {"latest": {"callbackId": "callback_ready",
+                    "event": "run.completed", "text": "Early mission callback."}})
+
+            def post(self, url, *, headers, json):
+                claims.append(elapsed[0])
+                deliveries = [] if elapsed[0] < 10 else [{
+                    "deliveryId": "delivery_ready", "claimId": "claim_ready",
+                    "callbackId": "callback_sha256:" + hashlib.sha256(b"callback_ready").hexdigest(), "userId": "synthetic_owner",
+                    "voiceCallSessionId": "call_123", "text": "Main-authored completed report.",
+                }]
+                elapsed[0] += 2
+                return _FakeResponse(200, {"deliveries": deliveries})
+
+        with mock.patch.object(worker.aiohttp, "ClientSession", DelayedSession), \
+             mock.patch.object(worker, "time", SimpleNamespace(monotonic=lambda: elapsed[0])):
+            await llm._relay_task_event_once(self._callwide_event())
+            await llm._relay_task_event_once(self._callwide_event(child=True))
+            await asyncio.gather(*scheduler._glasshive_tasks)
+        self.assertEqual(claims, [0, 2, 4, 6, 8, 10])
+        self.assertEqual(scheduler._seq, cortex_seq)
+        self.assertEqual(scheduler._fetch_cortex.await_count, 1)
+        self.assertTrue(all(url.endswith("/glasshive/main_anchor") for url in anchors))
+        self.assertEqual([call["text"] for call in session.say_calls],
+                         ["Main-authored completed report."])
+        await scheduler.close()
+
+    async def test_file_followup_keeps_display_link_and_exact_capped_speech(self) -> None:
+        session = _DummySession()
+        scheduler = self._build_scheduler(session=session)
+        text = "[sigh] Your report is ready 🙂. " + "Useful detail. " * 250
+        text += " [Download report](https://example.invalid/files/report.pdf?revision=2&view=owner)"
+        rendered = []
+
+        async def tts_node(agent, source, settings):
+            self.assertIs(agent, session.current_agent)
+            async for value in source:
+                rendered.append(value)
+            yield object()
+
+        with mock.patch.object(worker.Agent.default, "tts_node", tts_node):
+            queued, handle, reason = scheduler._start_speech(text, scheduler._seq)
+            self.assertTrue(queued)
+            self.assertEqual(reason, "queued")
+            self.assertEqual(rendered, [])  # No synthesis before SDK consumes audio.
+            call = session.say_calls[-1]
+            self.assertIn("https://example.invalid/files/report.pdf?revision=2&view=owner", call["text"])
+            self.assertGreater(len(call["text"]), worker._voice_followup_tts_max_chars())
+            async for _ in call["audio"]:
+                pass
+        expected = worker.cap_voice_followup_for_tts(worker.sanitize_voice_followup_text(text))
+        self.assertEqual("".join(rendered), expected.replace("🙂", ""))
+        self.assertNotIn("https://", "".join(rendered))
+        self.assertNotIn("[sigh]", "".join(rendered))
+        self.assertIn("I have the full report in the chat.", "".join(rendered))
+        self.assertIn(handle, scheduler._speech_handles)
+        handle.complete()
+        self.assertNotIn(handle, scheduler._speech_handles)
+        await scheduler.close()
+
+    async def test_supplied_followup_audio_closes_selected_node_on_interruption(self) -> None:
+        session = _DummySession()
+        closed = []
+
+        async def tts_node(agent, source, settings):
+            try:
+                async for value in source:
+                    yield value
+                await asyncio.Future()
+            finally:
+                closed.append(True)
+
+        with mock.patch.object(worker.Agent.default, "tts_node", tts_node):
+            audio = worker._voice_followup_audio(session, "Safe complete speech.")
+            self.assertEqual(closed, [])
+            await anext(audio)
+            await audio.aclose()
+        self.assertEqual(closed, [True])
+
+    async def test_intentional_followup_silence_is_skipped_not_failed(self) -> None:
+        for reason in ("listen_only", "not_authoritative", "empty", "no_response"):
+            session = _DummySession()
+            scheduler = self._build_scheduler(session=session)
+            scheduler._trace_handler = mock.AsyncMock(return_value=True)
+            text = "Synthetic follow-up."
+            if reason == "listen_only": scheduler._mode = "listen_only"
+            if reason == "not_authoritative": scheduler._authoritative_mode_available = False
+            if reason == "empty": text = ""
+            if reason == "no_response": text = "{NTA}"
+            self.assertFalse(scheduler._speak_cortex_followup(text, scheduler._seq,
+                trace_id="trace-one", presentation_ref="followup-one"))
+            await asyncio.sleep(0)
+            await scheduler.close()
+            self.assertEqual([c.args[2] for c in scheduler._trace_handler.await_args_list], ["audio.superseded"])
+
+    async def test_followup_trace_requires_playout_and_reports_interruption_and_stale(self) -> None:
+        for outcome in ("audible", "failed", "interrupted", "stale"):
+            session = _DummySession()
+            scheduler = self._build_scheduler(session=session)
+            scheduler._trace_handler = mock.AsyncMock(return_value=True)
+            current = {"value": True}
+            scheduler._speak_cortex_followup("Synthetic follow-up.", scheduler._seq,
+                trace_id="trace-one", presentation_ref="followup-one",
+                presentation_is_current=lambda: current["value"])
+            self.assertEqual(scheduler._trace_handler.await_count, 0)
+            handle = session.speech_handles[-1]
+            handle.interrupted = outcome == "interrupted"
+            handle.chat_items = []  # LiveKit say(add_to_chat_ctx=False) has no chat-item metrics.
+            if outcome == "audible": scheduler.note_started_playout(handle)
+            if outcome == "stale": current["value"] = False
+            handle.complete()
+            await asyncio.sleep(0)
+            await scheduler.close()
+            stages = [call.args[2] for call in scheduler._trace_handler.await_args_list]
+            expected = {"audible": ["tts.completed", "audio.completed"], "failed": ["audio.failed"],
+                "interrupted": ["audio.interrupted"], "stale": ["audio.superseded"]}
+            self.assertEqual(stages, expected[outcome])
+
     def _build_scheduler(
         self,
         *,
@@ -778,17 +1086,21 @@ class TestCortexFollowupScheduler(unittest.IsolatedAsyncioTestCase):
         self,
     ) -> None:
         scheduler = self._build_scheduler(session=_DummySession())
-        latest = {"callbackId": "callback_expected", "userId": "owner_expected"}
+        raw_callback = "cb_terminal_" + "a" * 64
+        canonical_callback = "callback_sha256:" + hashlib.sha256(raw_callback.encode()).hexdigest()
+        latest = {"callbackId": raw_callback, "userId": "owner_expected"}
         valid = {
             "deliveryId": "delivery_expected",
             "claimId": "claim_expected",
-            "callbackId": "callback_expected",
+            "callbackId": canonical_callback,
+            "terminalCallbackId": raw_callback,
             "voiceCallSessionId": "call_123",
             "userId": "owner_expected",
         }
 
         for label, changes in (
-            ("substituted_callback", {"callbackId": "callback_other"}),
+            ("substituted_callback", {"callbackId": "callback_sha256:" + "b" * 64}),
+            ("uncanonical_response", {"callbackId": raw_callback}),
             ("different_call", {"voiceCallSessionId": "call_other"}),
             ("different_owner", {"userId": "owner_other"}),
             ("missing_owner", {"userId": ""}),
@@ -804,10 +1116,15 @@ class TestCortexFollowupScheduler(unittest.IsolatedAsyncioTestCase):
                 )
                 self.assertIsNone(claimed)
 
-        claimed = await scheduler._claim_glasshive_delivery(
-            _RecordingPostSession([(200, {"deliveries": [valid]})]), latest
-        )
-        self.assertEqual(claimed, valid)
+        for requested_callback in (raw_callback, canonical_callback):
+            with self.subTest(requested_form=requested_callback[:16]):
+                http = _RecordingPostSession([(200, {"deliveries": [valid]})])
+                claimed = await scheduler._claim_glasshive_delivery(
+                    http, {**latest, "callbackId": requested_callback}
+                )
+                self.assertEqual(claimed, valid)
+                self.assertEqual(http.posts[0]["json"]["callbackId"], requested_callback)
+                self.assertEqual(claimed["terminalCallbackId"], raw_callback)
 
     async def test_followup_http_errors_never_read_or_log_private_response_bodies(
         self,
@@ -1861,7 +2178,18 @@ class TestCortexFollowupScheduler(unittest.IsolatedAsyncioTestCase):
                 session.speech_handles[0].complete()
                 await scheduler._task
 
-        spoken = str(session.say_calls[0]["text"])
+        rendered = []
+
+        async def selected_node(agent, source, settings):
+            async for value in source:
+                rendered.append(value)
+            yield object()
+
+        with mock.patch.object(worker.Agent.default, "tts_node", selected_node):
+            async for _ in session.say_calls[0]["audio"]:
+                pass
+        self.assertEqual(session.say_calls[0]["text"], "A" * 5000)
+        spoken = "".join(rendered)
         self.assertLessEqual(len(spoken), 800)
         self.assertIn("full report in the chat", spoken)
 

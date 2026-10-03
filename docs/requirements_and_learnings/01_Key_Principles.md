@@ -828,16 +828,18 @@ deterministic structural parsing of declared metadata is allowed.
 - **After push, restart the target LibreChat runtime** so it reloads from MongoDB. Environment-specific deployment commands belong in the private deployment runbooks, not the public source-of-truth doc.
 
 #### Model Governance Rule (Launch-Ready Baseline)
-- Out-of-the-box Viventium conscious and subconscious execution must stay within the current
-  launch-ready model families unless a newer documented evaluation replaces them:
-  - `openAI / gpt-5.6-sol` for the conscious agent and quality-first reasoning cortices
-  - `openAI / gpt-5.6-terra` for balanced, latency-sensitive, and tool-heavy cortices
-  - `glasshive-harness / claude-code:opus / high` (Claude / Opus 5) as the generic Agent text fallback when GlassHive is enabled
-  - voice remains the explicit `xai / grok-4.5` route with `reasoning_effort: low`
+- Current compiled defaults use the documented launch-ready model contracts:
+  - `glasshive-harness / codex-cli:gpt-6.1-sol / high` for Main
+  - `openAI / gpt-6.1-sol / high` for direct reasoning cortices
+  - `glasshive-harness / claude-code:claude-opus-5-5 / high` for the generic Agent text fallback
+  - `glasshive-harness / grok-build:grok-4.7-build-fast / high` for Voice LLM, with
+    `glasshive-harness / claude-code:claude-opus-5-5 / high` as its configured fallback
+- These are defaults. Older choices remain legal where the compiled model catalog and owning
+  workload contract support them. Preserve explicit operator choices; never silently remap them.
 - Memory writers, activation classifiers, helper/title models, and GlassHive workers are separate
   workloads with their own documented model contracts; do not infer their model from the
   conscious/subconscious execution matrix.
-- Unattended analytical automations default to OpenAI `gpt-5.6-sol` with `xhigh` reasoning. This
+- Unattended analytical automations default to OpenAI `gpt-6.1-sol` with `high` reasoning. This
   includes Prompt Workbench/GlassHive scheduled analysis and OpenAI memory hardening. A different
   route must be an explicit, documented operator fallback with visible requested/effective model
   evidence; never silently lower the model or effort.
@@ -928,15 +930,16 @@ deterministic structural parsing of declared metadata is allowed.
 
 - `glasshive-harness` is a real Agent Provider/Model choice, not an MCP tool wrapped by another LLM
   and not a parallel conscious-engine field. Any main agent or substantive cortex may select it.
-- Its exact initial model IDs are `codex-cli:gpt-5.6-sol` and `claude-code:opus` (currently displayed
-  as **Claude / Opus 5**, matching the native CLI's resolved `claude-opus-5`). Provider/model
+- Exact model IDs and supported older choices come from the compiled model catalog. Provider/model
   resolution must fail visibly on an unknown value; it must never coerce an unknown provider to
   OpenAI.
 - Provider behavior is selected from compiled capability metadata. GlassHive is eligible for main
-  chat, cortex execution, Phase-B follow-up, and the Agent Builder's generic text fallback, but not
-  Phase-A classification or real-time Voice LLM. A GlassHive primary may separately declare one
-  optional provider-internal serial fallback model in `glasshive_options`; that advanced option is
-  disabled by default and does not replace `fallback_llm_*`. Do not branch on provider labels.
+  chat, cortex execution, Phase-B follow-up, and the Agent Builder's generic text fallback. Its
+  `voice_pipeline_llm` capability permits the pipelined Voice LLM route. Phase-A classification
+  (`activation_classifier`) and direct real-time audio (`realtime_voice`) remain disabled. A
+  GlassHive primary may separately declare one optional provider-internal serial fallback model
+  in `glasshive_options`; that advanced option is disabled by default and does not replace
+  `fallback_llm_*`. Do not branch on provider labels.
 - A harness-backed turn has one authoring intelligence. GlassHive executes harness-native and
   brokered tools itself; LibreChat owns the existing graph, persistence, content parts, and UI but
   does not place a wrapper model in front of the harness.

@@ -1176,7 +1176,7 @@ Commands:
   runtime-checkout  Show or choose the checkout used by helper/start commands.
   dev-env           Create and run side-by-side local development environments.
   dev-runtime       Activate or inspect the checkout used by the installed runtime.
-  workflows         Run Viventium GlassHive-backed local work workflows.
+  workflows         Run Viventium xPerfect-backed local work workflows.
   heal              Alias for workflows start/status/cancel/open-artifacts heal flow.
   feature-request   Alias for workflows feature-request flow.
   report-bug        Alias for workflows bug-report flow.
@@ -1454,8 +1454,8 @@ Usage:
   bin/viventium workflows cancel
   bin/viventium workflows open-artifacts
 
-Runs Viventium local work workflows through GlassHive host workers when enabled.
-When GlassHive host workers are unavailable, the command fails loud unless an
+Runs Viventium local work workflows through xPerfect host workers when enabled.
+When xPerfect host workers are unavailable, the command fails loud unless an
 explicit degraded mode is requested.
 USAGE
       ;;
@@ -6287,7 +6287,7 @@ install_waiting_on_surfaces() {
     fi
   fi
   if runtime_env_true "START_GLASSHIVE" "false" && ! glasshive_runtime_surface_healthy; then
-    waiting_on+=("GlassHive Main :$glasshive_port")
+    waiting_on+=("xPerfect Main :$glasshive_port")
   fi
   if sandpack_runtime_required && ! sandpack_surface_healthy "$sandpack_port"; then
     if [[ "$display_mode" == "compact" ]]; then
@@ -6334,7 +6334,7 @@ install_waiting_on_surfaces() {
     waiting_on+=("Scheduling Cortex")
   fi
   if runtime_env_true "START_GLASSHIVE" "false" && ! glasshive_surface_healthy; then
-    waiting_on+=("GlassHive")
+    waiting_on+=("xPerfect")
   fi
   if runtime_env_true "START_PROMPT_WORKBENCH" "false" && ! prompt_workbench_surface_healthy; then
     waiting_on+=("Prompt Workbench")
@@ -9002,7 +9002,7 @@ PY
         fi
         if ! "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/glasshive_qa_parent_control.py" \
           clear-gate >/dev/null; then
-          echo "Clear the GlassHive fixture and controls before clearing the QA session." >&2
+          echo "Clear the xPerfect fixture and controls before clearing the QA session." >&2
           exit 1
         fi
         "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/telegram_qa_parent_control.py" \

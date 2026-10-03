@@ -62,6 +62,20 @@ PR run. A retry reads the current block only when the PR head and base still mat
 changed source needs its own run. Text edits alone do not start or replace checks. Manual dispatch
 validates the selected revision but does not substitute for required PR evidence.
 
+## Development And Publication Evidence
+
+During development, QA references must resolve in the current working tree; an uncommitted edit is
+not a defect and must not force a commit, pin, build or publication. Run the selected structural and
+behavioral checks against those bytes. This is development evidence, not a shipped-artifact claim.
+
+At an authorized publication or artifact-identity boundary, explicitly run the selected durability
+checks with `VIVENTIUM_QA_PHASE=publication`. The retained checks are
+`test_requirement_source_coverage_ledger_and_owners_are_durable`,
+`test_runtime_feature_qa_map_links_are_durable` and `test_stale_case_triage_publication_identity`
+in `tests/release/test_qa_operating_contract.py`. Without that phase they report `SKIPPED / NOT RUN`,
+not publication success. Pass the phase with the QA mode in a release handoff or CI invocation;
+CI alone does not select full scope or authorize Git mutations.
+
 ## Operating Contract
 
 - Quality is owned by every developer and AI agent touching the product, not by a later cleanup pass.

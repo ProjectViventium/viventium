@@ -8,6 +8,9 @@
 - Environment:
 - Tester:
 - Related change:
+- QA mode and authorizing instruction:
+- Selected cases and causal relevance:
+- Deferred / unselected cases (NOT RUN):
 
 ## Scope Run
 
@@ -17,8 +20,9 @@
 
 ## Natural User Use Case Checklist Run
 
-This section must be a real checklist, not a narrative shortcut. Include every applicable natural
-use case from the owning `cases.md` file and mark unrun items `BLOCKED` or `PARTIAL`.
+List the selected natural use cases from the owning bank. Mark an unavailable required case
+`BLOCKED` or `PARTIAL`; mark waived or out-of-scope cases `NOT RUN`, not blocked or passed.
+Reuse valid evidence. Omit unrelated rows below instead of creating new work to fill the template.
 
 | Use Case ID | Natural user action | Real surface used | Result | Visible evidence | Logs/DB/state/docs/artifact evidence | Remaining gap |
 | --- | --- | --- | --- | --- | --- | --- |
