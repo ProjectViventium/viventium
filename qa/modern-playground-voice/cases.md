@@ -1594,14 +1594,25 @@ public-safe browser/audio, log, persistence, and installed-artifact evidence. `P
   explicit task cancellation remains distinct from presentation interruption.
 - Steps: interrupt during partial TTS, during a durable GlassHive/tool task, after playback commit,
   and via explicit task cancellation. Observe current revision, task state, callback delivery, and
-  transcript persistence.
+  transcript persistence. Finish an ordinary and coalesced worker speech handle without audio,
+  interrupt one after audio begins, and queue a worker behind a speaking cortex. Recover from an
+  earlier speech error without a new global speaking-state event. Only the exact completed,
+  non-interrupted handle with its own native audio event may settle delivery.
 - Expected Result: partial speech is not committed, durable work continues through ordinary
   barge-in, completed results reattach truthfully, post-commit C is a normal follow-up, and only
   explicit cancellation stops durable work.
 - Forbidden Result: barge-in repeats a committed effect, partial playback commits automatically,
-  explicit cancellation is ignored, or late stale prose is voiced as current.
+  explicit cancellation is ignored, late stale prose is voiced as current, or a done/queued handle
+  is marked sent without its own positive audio evidence. Unknown output must not release a claim
+  for blind retry or settle the worker's coalesced presentation.
 - PASS Evidence: audible outcomes, task/action receipts, callback and presentation acknowledgements,
   voice/LibreChat logs, persisted task state, and focused regressions.
+- Supporting regression: `viventium_v0_4/voice-gateway/tests/test_worker_followup_scheduler.py` covers exact native
+  playout, interrupted/unheard output, queued-other-speaker isolation, permit renewal, uncertain
+  settlement and cancellation during settlement. The browser suite at
+  `viventium_v0_4/agent-starter-react/app/api/call-engagement/route.test.ts` keeps timeout and
+  cancellation active through a stalled response body. These source checks do not replace
+  candidate-bound installed/audio acceptance.
 - Last Run: PARTIAL 2026-08-11 — presentation passed; ordinary audible commit and
   partial stable supersession passed; interruption during a real durable GlassHive/tool effect
   remains outstanding. See

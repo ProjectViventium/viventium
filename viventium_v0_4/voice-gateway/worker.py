@@ -4581,6 +4581,7 @@ class CortexFollowupScheduler:
         self._presentation_trace_tasks: set[asyncio.Task[Any]] = set()
         self._cortex_speech_handles: set[Any] = set()
         self._audible_cortex_handles: set[Any] = set()
+        self._playout_audio: Optional[Any] = None
         self._task_refs: dict[str, dict[str, Any]] = {}
         self._worker_followup_pairs: dict[tuple[str, str], None] = {}
 
@@ -4684,6 +4685,9 @@ class CortexFollowupScheduler:
         _interrupt_livekit_speech_handles(self._speech_handles)
 
     async def close(self) -> None:
+        if self._playout_audio is not None:
+            self._playout_audio.off("playback_started", self._on_audio_playback_started)
+            self._playout_audio = None
         self._task_refs.clear()
         self._worker_followup_pairs.clear()
         tasks = {
@@ -5737,6 +5741,29 @@ class CortexFollowupScheduler:
             loop.call_soon_threadsafe(completed.set)
 
         async def settle_completed_speech(reason: str) -> bool:
+            interrupted = getattr(speech_handle, "interrupted", None)
+            output = getattr(self._session, "output", None)
+            audible = (
+                speech_handle in self._audible_cortex_handles
+                or (
+                    getattr(output, "audio_enabled", False) is True
+                    and getattr(output, "audio", None) is not None
+                    and LibreChatLLM._speech_handle_has_audible_playout(speech_handle)
+                )
+            )
+            if interrupted is not False or not audible:
+                await self._mark_glasshive_delivery_status(
+                    session,
+                    delivery,
+                    "delivery_unknown",
+                    dispatch_permit=current_permit,
+                    reason=(
+                        "voice_speech_interrupted"
+                        if interrupted is True
+                        else "voice_speech_playout_unconfirmed"
+                    ),
+                )
+                return False
             presentation = delivery.get("workerCompletionPresentation")
             if presentation is not None:
                 settled = await self._complete_glasshive_worker_presentation(
@@ -5851,6 +5878,8 @@ class CortexFollowupScheduler:
                 type(exc).__name__,
             )
             return False
+        finally:
+            self._audible_cortex_handles.discard(speech_handle)
 
     def _start_speech(
         self,
@@ -5954,10 +5983,30 @@ class CortexFollowupScheduler:
             record("audio.failed")
         return spoken
 
+    def bind_audio_playout(self) -> None:
+        audio = getattr(getattr(self._session, "output", None), "audio", None)
+        if audio is self._playout_audio:
+            return
+        if self._playout_audio is not None:
+            self._playout_audio.off("playback_started", self._on_audio_playback_started)
+        self._playout_audio = audio
+        if audio is not None:
+            audio.on("playback_started", self._on_audio_playback_started)
+
+    def _on_audio_playback_started(self, _event: Any) -> None:
+        self.note_started_playout(self._session.current_speech)
+
     def note_started_playout(self, handle: Any) -> None:
-        # LiveKit emits `speaking` after its first output frame, including say(add_to_chat_ctx=False).
-        # Its chat-item metrics are absent for that path; use the exact current speech handle instead.
-        if handle in self._cortex_speech_handles:
+        # Native audio playback_started fires per segment even if `speaking` is unchanged.
+        # Require enabled audio and the exact active handle;
+        # queued worker/cortex speech cannot borrow another handle's positive playout evidence.
+        output = getattr(self._session, "output", None)
+        if (
+            getattr(output, "audio_enabled", False) is True
+            and getattr(output, "audio", None) is not None
+            and handle is getattr(self._session, "current_speech", None)
+            and handle in self._speech_handles
+        ):
             self._audible_cortex_handles.add(handle)
 # === VIVENTIUM END ===
 
@@ -7386,8 +7435,6 @@ async def entrypoint(ctx: JobContext) -> None:
 
     @session.on("agent_state_changed")
     def _on_agent_state_changed(event: Any) -> None:
-        if getattr(event, "new_state", None) == "speaking":
-            followup_scheduler.note_started_playout(session.current_speech)
         if str(getattr(event, "new_state", "") or "") == "speaking":
             created_at = float(getattr(event, "created_at", 0.0) or 0.0)
             correlation_id = llm_impl.record_next_trace_hop(
@@ -7538,6 +7585,7 @@ async def entrypoint(ctx: JobContext) -> None:
             ),
         )
         task_stream_audio_gate.bind_current_output()
+        followup_scheduler.bind_audio_playout()
     except Exception:
         _reported, released = (
             await _report_voice_gateway_initialization_failure_and_abandon(

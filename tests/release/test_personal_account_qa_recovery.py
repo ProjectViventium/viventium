@@ -153,6 +153,8 @@ def test_creates_private_owner_bound_atomic_recovery_bundle(tmp_path: Path) -> N
     bundle = destination / receipt["backupId"]
     manifest = json.loads((bundle / "recoverable-manifest.json").read_text(encoding="utf-8"))
     assert receipt["status"] == "verified"
+    assert receipt["createdAt"] == "2026-08-25T16:00:00.000Z"
+    assert manifest["createdAt"] == receipt["createdAt"]
     assert receipt["ownerScopeHash"] == recovery.owner_scope_hash(OWNER_ID)
     assert receipt["restoreVerification"] == "verified"
     assert receipt["receiptSha256"] == recovery.sha256_value(
@@ -176,6 +178,49 @@ def test_creates_private_owner_bound_atomic_recovery_bundle(tmp_path: Path) -> N
     assert oct(bundle.stat().st_mode & 0o777) == "0o500"
     assert all(oct(path.stat().st_mode & 0o777) == "0o400" for path in bundle.iterdir())
     assert not any(path.name.startswith(".staging-") for path in destination.iterdir())
+
+
+@pytest.mark.parametrize("has_schedule_target", [False, True], ids=["message-only", "schedule-target"])
+def test_legacy_scheduler_snapshot_requires_revision_only_for_selected_schedules(
+    tmp_path: Path, has_schedule_target: bool
+) -> None:
+    source = tmp_path / "source"
+    write_source_bundle(source)
+    snapshot = source / "schedules.db"
+    connection = sqlite3.connect(snapshot)
+    connection.execute("ALTER TABLE scheduled_tasks DROP COLUMN cleanup_revision")
+    connection.close()
+    targets = (
+        {
+            "kind": "schedule",
+            "resourceId": PREIMAGE["resourceId"],
+            "resourceIdHash": RESOURCE_ID_HASH,
+            "revision": PREIMAGE["revision"],
+            "updatedAt": PREIMAGE["updatedAt"],
+            "stateSha256": PREIMAGE_STATE_SHA256,
+        },
+    ) if has_schedule_target else ()
+
+    if has_schedule_target:
+        with pytest.raises(ValueError, match="scheduler_restore_schema_unverified"):
+            recovery._verify_scheduler_snapshot(
+                snapshot, OWNER_ID, recovery.owner_scope_hash(OWNER_ID), targets
+            )
+        return
+
+    result = recovery._verify_scheduler_snapshot(
+        snapshot, OWNER_ID, recovery.owner_scope_hash(OWNER_ID), targets
+    )
+    assert result["status"] == "verified"
+    assert result["integrityCheck"] == "ok"
+    assert result["recordCount"] == 1
+    assert result["exactTargetCount"] == 0
+    assert result["ownerScopeHash"] == recovery.owner_scope_hash(OWNER_ID)
+    connection = sqlite3.connect(f"{snapshot.as_uri()}?mode=ro", uri=True)
+    assert "cleanup_revision" not in {
+        row[1] for row in connection.execute("PRAGMA table_info(scheduled_tasks)")
+    }
+    connection.close()
 
 
 def test_publication_renames_a_traversable_staging_directory_before_sealing_it(

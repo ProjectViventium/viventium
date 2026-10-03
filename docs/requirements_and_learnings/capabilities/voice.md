@@ -95,6 +95,10 @@ or Call participant grants.
 - **PW-053:** Only an explicitly engaged trusted Wing may use its authorized speaker role. Passive,
   unverified, and Listen-Only participants cannot launch or control work.
 
+The signed browser engagement proxy keeps its 8.5-second upstream deadline and browser cancellation
+active through the complete response-body read and response construction. Receiving headers does
+not end either guard; a stalled body retains the existing timeout or unavailable classification.
+
 ## Listen-Only
 
 - **VOICE-001:** Listen-Only records visible ambient transcripts through the configured speech-to-
@@ -109,6 +113,12 @@ or Call participant grants.
 - Distinguish missing authorization, unavailable media service, provider rejection, timeout,
   interruption, and completed playback.
 - Completed playback—not audio generation or track publication—is the user delivery boundary.
+- Worker completion requires a done, non-interrupted speech handle and positive native playout
+  evidence for that exact handle. The existing assistant audio metrics or the enabled audio
+  output's native `playback_started` first-frame event supply this evidence, including consecutive
+  speech when the global speaking state stays unchanged. A queued worker cannot borrow another
+  speaker's event. Interrupted, unheard or uncertain output retains `delivery_unknown` under the same claim
+  and dispatch permit; it never settles a coalesced worker presentation or enables blind replay.
 - Raw audio retention stays zero unless a separate explicit product policy says otherwise.
 - Transcript and task data remain owner- and call-scoped and follow normal retention and deletion.
 

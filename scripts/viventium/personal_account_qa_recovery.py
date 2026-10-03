@@ -332,7 +332,10 @@ def _verify_scheduler_snapshot(
             str(row[1])
             for row in connection.execute("PRAGMA table_info(scheduled_tasks)").fetchall()
         }
-        if not {"id", "user_id", "updated_at", "cleanup_revision"}.issubset(columns):
+        required_columns = {"id", "user_id", "updated_at"}
+        if target_bindings:
+            required_columns.add("cleanup_revision")
+        if not required_columns.issubset(columns):
             raise ValueError("scheduler_restore_schema_unverified")
         row_count = int(
             connection.execute(
@@ -529,7 +532,7 @@ def create_recovery_bundle(
             "backupId": backup_id,
             "ownerScopeHash": owner_hash,
             "reviewSetSha256": review_digest,
-            "createdAt": created_at.isoformat().replace("+00:00", "Z"),
+            "createdAt": created_at.isoformat(timespec="milliseconds").replace("+00:00", "Z"),
             "privateBoundary": "outside_public_repository_owner_only",
             "immutablePublication": True,
             "restoreVerification": "verified",
@@ -572,7 +575,7 @@ def create_recovery_bundle(
         "artifactSetSha256": artifact_set_sha256,
         "restoreVerification": "verified",
         "status": "verified",
-        "createdAt": created_at.isoformat().replace("+00:00", "Z"),
+        "createdAt": created_at.isoformat(timespec="milliseconds").replace("+00:00", "Z"),
     }
     return {**receipt, "receiptSha256": sha256_value(receipt)}
 
