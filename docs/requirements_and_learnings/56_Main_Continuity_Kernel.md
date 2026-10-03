@@ -612,6 +612,10 @@ admission status updates preserve source timestamps so they cannot invalidate a 
 Stale source edits remain conflicts. This source repair does not prove that a live account cleanup,
 legacy summary reconciliation, producer retirement, or search/RAG cleanup has completed.
 
+Recovery verifies owner-bound scheduler snapshots using their existing schema. Selected schedules
+also require cleanup revision and source timestamp checks. Message-only cleanup can use a legacy
+scheduler snapshot when no schedules are selected.
+
 Legacy continuity rows remain immutable typed evidence. Each real epoch reconciles them independently,
 using original native source when available and retaining uncertainty where historical coverage is
 incomplete. All retained legacy revision fields contribute to stale-replay rejection, including

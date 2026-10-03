@@ -8,7 +8,7 @@
       "path": "viventium_v0_4/LibreChat",
       "origin": "https://github.com/ProjectViventium/viventium-librechat.git",
       "upstream": "https://github.com/danny-avila/LibreChat.git",
-      "ref": "c70acf66c2ceb91ccfee89751b41dca4ac47c621"
+      "ref": "4129a7be7dd855ea96e77ee72270e72a8d8173cd"
     },
     {
       "name": "agents-playground",
@@ -36,7 +36,7 @@
       "path": "viventium_v0_4/agent-starter-react",
       "origin": "https://github.com/ProjectViventium/agent-starter-react.git",
       "upstream": "https://github.com/livekit-examples/agent-starter-react.git",
-      "ref": "a00acb70c173b4dfdadcf83c812db57c62d772ae"
+      "ref": "404ab6e73e3a0eb08b8f30b65036c5657540725e"
     },
     {
       "name": "xPerfect",
