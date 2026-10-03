@@ -81,14 +81,18 @@ def attach_speaker_context_to_message(
         "speakerLabel": legacy_label,
         "ownerParticipantIdentity": tracker.participant_identity,
         "ownerTrackSid": tracker.track_sid,
-        "utteranceEndAtMs": max(
+        # SpeechData timings are offsets within the call audio timeline. They
+        # are not UTC timestamps; the worker supplies the paired call origin.
+        "utteranceEndClock": "call_audio_relative",
+        "utteranceEndOffsetMs": max(
             (
                 float(item.get("endTimeMs"))
                 for item in segments
                 if isinstance(item.get("endTimeMs"), (int, float))
             ),
-            default=tracker.last_observed_at_ms,
+            default=None,
         ),
+        "sttFinalObservedAtMs": tracker.last_observed_at_ms,
     }
     extra = getattr(message, "extra", None)
     if not isinstance(extra, dict):

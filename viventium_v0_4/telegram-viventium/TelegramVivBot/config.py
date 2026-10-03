@@ -162,7 +162,7 @@ def _download_local_whisper_model(filename, model_path, expected_sha1):
         tmp_path.unlink(missing_ok=True)
 
 
-def _ensure_local_whisper_model_file(model_name, model_dir=None):
+def _local_whisper_model_path(model_name, model_dir=None):
     filename = _LOCAL_WHISPER_MODEL_FILES.get(model_name)
     if not filename:
         known_models = ", ".join(sorted(_LOCAL_WHISPER_MODEL_FILES))
@@ -180,8 +180,14 @@ def _ensure_local_whisper_model_file(model_name, model_dir=None):
         else Path.home() / ".cache" / "whisper"
     )
     model_dir = Path(model_dir or default_model_dir)
-    model_dir.mkdir(parents=True, exist_ok=True)
-    model_path = model_dir / filename
+    return model_dir / filename
+
+
+def _ensure_local_whisper_model_file(model_name, model_dir=None):
+    model_path = _local_whisper_model_path(model_name, model_dir)
+    filename = model_path.name
+    expected_sha1 = _LOCAL_WHISPER_MODEL_SHA1[filename]
+    model_path.parent.mkdir(parents=True, exist_ok=True)
     if model_path.exists():
         actual_sha1 = _sha1_file(model_path)
         if actual_sha1 == expected_sha1:

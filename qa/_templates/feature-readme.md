@@ -5,7 +5,9 @@
 - Owning requirements doc:
 - Runtime/code owners:
 - User-visible surfaces:
-- Out of scope:
+- QA mode and source of authorization:
+- Selected checks and causal relevance:
+- Out of scope / deferred checks:
 
 ## Quality Bar
 
@@ -26,9 +28,9 @@
 
 | Suite | Command or Manual Path | Required When | Last Run |
 | --- | --- | --- | --- |
-| Unit/API | `<command>` | Every code change touching this feature | `<date/result/report>` |
-| User-grade surface QA | `<browser/telegram/voice/scheduler path>` | Every user-visible behavior change | `<date/result/report>` |
-| Full feature regression | `<command/manual suite>` | Before release-readiness or production signoff | `<date/result/report>` |
+| Unit/API | `<command>` | Selected changed deterministic contract | `<date/result/report>` |
+| User-grade surface QA | `<browser/telegram/voice/scheduler path>` | Selected affected user path; valid evidence is missing or invalidated | `<date/result/report>` |
+| Full feature regression | `<command/manual suite>` | Explicit full scope or a demonstrated dependency covering the whole bank | `<date/result/report>` |
 
 ## Coverage Matrix
 
@@ -42,8 +44,8 @@ requirements to trace.
 ## Natural User Use Case Coverage
 
 Link to `cases.md#natural-user-use-case-checklist`. Keep this feature-specific: list the user actions
-people naturally try, then prove each one with the real surface and supporting logs/DB/code/docs
-evidence.
+people naturally try, then select cases within the approved mode. Prove selected cases with the
+real surface and only the supporting evidence needed; record unselected cases as NOT RUN.
 
 | Use Case Class | Feature-specific examples | Required evidence |
 | --- | --- | --- |

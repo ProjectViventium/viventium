@@ -892,7 +892,7 @@ def test_build_connected_accounts_notice_distinguishes_glasshive_authoring_from_
     notice = install_summary.build_connected_accounts_notice(config)
 
     assert "Codex CLI" in notice
-    assert "GlassHive-backed Viventium Main and background cortices" in notice
+    assert "xPerfect-backed Viventium Main and background cortices" in notice
     assert "configured direct fallback and auxiliary routes" in notice
     assert "direct background cortices" not in notice
     assert "shipped Viventium and background agents" not in notice
@@ -1891,7 +1891,7 @@ def test_build_service_rows_reports_default_nightly_routines() -> None:
     rows = install_summary.build_service_rows(config, runtime_env, probe_live=False)
     services = {name: (status, detail) for name, status, detail in rows}
 
-    assert services["GlassHive"] == (
+    assert services["xPerfect"] == (
         "Configured",
         "http://127.0.0.1:8780 | default worker: claude-code",
     )
@@ -1937,7 +1937,7 @@ def test_build_service_rows_probes_public_glasshive_through_its_local_upstream(m
     rows = install_summary.build_service_rows(config, runtime_env, probe_live=True)
     services = {name: (status, detail) for name, status, detail in rows}
 
-    assert services["GlassHive"] == (
+    assert services["xPerfect"] == (
         "Running",
         "https://glasshive.app.example.test | default worker: codex-cli",
     )
@@ -1975,8 +1975,8 @@ def test_glasshive_status_requires_the_enabled_provider_surface_to_be_healthy(
     rows = install_summary.build_service_rows(config, runtime_env, probe_live=True)
     services = {name: (status, detail) for name, status, detail in rows}
 
-    assert services["GlassHive"][0] == "Action Required"
-    assert "provider: http://127.0.0.1:8766/v1" in services["GlassHive"][1]
+    assert services["xPerfect"][0] == "Action Required"
+    assert "provider: http://127.0.0.1:8766/v1" in services["xPerfect"][1]
 
 
 def test_build_service_rows_reports_scheduler_health_and_sanitized_ledger(
@@ -2619,7 +2619,7 @@ def test_build_brain_setup_rows_reports_guided_postures_without_internal_lab_fea
     assert states["Transcript Ingest"][0] == "Needs setup"
     assert states["Conversation Recall/RAG"][0] == "Needs setup"
     assert states["Scheduler"][0] == "Needs setup"
-    assert states["GlassHive"][0] == "Needs setup"
+    assert states["xPerfect"][0] == "Needs setup"
     assert states["Prompt Workbench"][0] == "Needs setup"
     assert states["Nightly Reflection"][0] == "Needs setup"
     assert states["Memory Hardening"][0] == "Needs setup"

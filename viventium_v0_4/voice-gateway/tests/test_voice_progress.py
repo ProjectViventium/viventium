@@ -59,7 +59,7 @@ class TestVoiceProgressStateMachine(unittest.TestCase):
 
         self.assertEqual(machine.poll(now=1.3), [])
 
-    def test_long_silence_speaks_truthful_phase_and_rate_limits_repeats(self) -> None:
+    def test_long_silence_speaks_unchanged_progress_once(self) -> None:
         machine = VoiceProgressStateMachine(enabled=True)
         machine.on_task_event(_event(), now=0.0)
         machine.on_model_output("task_1", now=0.5)
@@ -69,7 +69,94 @@ class TestVoiceProgressStateMachine(unittest.TestCase):
             [("task_1", "I'm still working — Searching trusted sources.")],
         )
         self.assertEqual(machine.poll(now=6.0), [])
-        self.assertEqual(machine.on_task_event(_event(), now=6.1), [])
+        self.assertEqual(machine.on_task_event(_event(sequence=2), now=6.1), [])
+        for now in range(10, 181, 5):
+            self.assertEqual(machine.poll(now=float(now)), [])
+
+    def test_same_phase_changed_detail_speaks_once(self) -> None:
+        machine = VoiceProgressStateMachine(enabled=True)
+        machine.on_task_event(_event(), now=0.0)
+        machine.on_model_output("task_1", now=0.5)
+        machine.poll(now=5.0)
+
+        self.assertEqual(
+            machine.on_task_event(_event(detail="Reading source files", sequence=2), now=9.0),
+            [("task_1", "I'm still working — Reading source files.")],
+        )
+        self.assertEqual(machine.poll(now=20.0), [])
+
+    def test_changed_active_state_is_not_hidden_by_unchanged_phase_or_detail(self) -> None:
+        for state in ("needs_input", "recovering"):
+            with self.subTest(state=state):
+                machine = VoiceProgressStateMachine(enabled=True)
+                machine.on_task_event(_event(), now=0.0)
+                machine.on_model_output("task_1", now=0.5)
+                machine.poll(now=5.0)
+
+                self.assertEqual(
+                    machine.on_task_event(_event(state=state, sequence=2), now=9.0),
+                    [("task_1", "I'm still working — Searching trusted sources.")],
+                )
+                self.assertEqual(machine.poll(now=20.0), [])
+
+    def test_rate_limited_progress_collapses_to_latest_authoritative_detail(self) -> None:
+        machine = VoiceProgressStateMachine(enabled=True)
+        machine.on_task_event(_event(), now=0.0)
+        machine.on_model_output("task_1", now=0.5)
+        machine.poll(now=5.0)
+
+        self.assertEqual(
+            machine.on_task_event(_event(detail="Reading source files", sequence=2), now=6.0),
+            [],
+        )
+        self.assertEqual(
+            machine.on_task_event(_event(detail="Checking the result", sequence=3), now=7.0),
+            [],
+        )
+        self.assertEqual(machine.poll(now=8.99), [])
+        self.assertEqual(
+            machine.poll(now=9.0), [("task_1", "I'm still working — Checking the result.")]
+        )
+        self.assertEqual(machine.poll(now=20.0), [])
+
+    def test_failed_progress_schedule_keeps_status_pending_with_existing_throttle(self) -> None:
+        now = [0.0]
+        attempts = []
+
+        def speak(task_id, text):
+            attempts.append((task_id, text))
+            return len(attempts) not in {1, 3}
+
+        controller = AsyncVoiceProgressController(
+            machine=VoiceProgressStateMachine(enabled=True),
+            speak=speak,
+            clock=lambda: now[0],
+        )
+        controller.on_task_event(_event())
+        controller.on_model_output("task_1")
+        now[0] = 5.0
+        controller.poll()
+        for current in (5.1, 9.999):
+            now[0] = current
+            controller.poll()
+        self.assertEqual(len(attempts), 1)
+
+        now[0] = 10.0
+        controller.poll()
+        self.assertEqual(len(attempts), 2)
+        now[0] = 14.0
+        controller.on_task_event(_event(detail="Checking the result", sequence=2))
+        self.assertEqual(len(attempts), 3)
+        now[0] = 18.999
+        controller.poll()
+        self.assertEqual(len(attempts), 3)
+        now[0] = 19.0
+        controller.poll()
+        self.assertEqual(len(attempts), 4)
+        self.assertEqual(attempts[-1], ("task_1", "I'm still working — Checking the result."))
+        now[0] = 30.0
+        controller.poll()
+        self.assertEqual(len(attempts), 4)
 
     def test_long_silence_budget_starts_from_actual_audible_ack(self) -> None:
         machine = VoiceProgressStateMachine(enabled=True)
@@ -91,6 +178,16 @@ class TestVoiceProgressStateMachine(unittest.TestCase):
         self.assertEqual(machine.poll(now=1.2), [("task_1", "I'm on it.")])
         self.assertEqual(machine.poll(now=1.7), [])
         self.assertEqual(machine.poll(now=2.2), [("task_2", "I'm on it.")])
+        self.assertEqual(
+            machine.poll(now=6.2),
+            [("task_1", "I'm still working — Searching trusted sources.")],
+        )
+        self.assertEqual(machine.poll(now=6.7), [])
+        self.assertEqual(
+            machine.poll(now=7.2),
+            [("task_2", "I'm still working — Searching trusted sources.")],
+        )
+        self.assertEqual(machine.poll(now=20.0), [])
 
     def test_cancellation_race_removes_pending_speech(self) -> None:
         machine = VoiceProgressStateMachine(enabled=True)

@@ -81,8 +81,12 @@ rows before claiming a pass when the feature behavior changes.
 - Automation: `tests/release/test_agent_seed_bundle_selection.py` and
   `tests/release/test_config_compiler.py`.
 - Last run: PARTIAL 2026-09-27. Automated seed-selection, migration-order, curated, Docker and
-  symlink cases and the compiler cases pass; an isolated installed browser journey answered on the
-  configured `claude-code:opus` route and reloaded. Released-pin CI is pending.
+  symlink cases and the compiler cases pass. A source Easy Install from merged `main` answered on the
+  configured `claude-code:opus` route and kept the answer after reload. A local unsigned QA Native
+  artifact from the same pins (not a public release) installed and served its built client. Its Main
+  reached GlassHive only after the Native request-head and admission-probe repairs, then stopped at
+  the packaged Claude Code sign-in, which the QA run did not perform; the chat showed a generic
+  provider error instead of that sign-in state.
 
 ## `AGCFG-007` - First-Upgrade Managed Baseline Migration
 

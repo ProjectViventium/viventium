@@ -30,12 +30,15 @@ values = {
  'harness': p.HOST_NATIVE_HARNESS_PROMPT,
  'agents': p.HOST_DEFAULT_AGENTS_MD,
  'run': p._instruction_with_completion_contract('Synthetic requested work.'),
+ 'conversationFiles': b.conversation_file_delivery_instructions(),
 }
 print(json.dumps({'hashes':{k:hashlib.sha256(v.encode()).hexdigest() for k,v in values.items()},
  'registeredTextReachedRun':'Changed registered completion.' in values['run'],
  'registeredTextReachedHarness':'Changed registered capabilities.' in values['harness'],
  'registeredSafetyReachedAll':all('Changed registered safety.' in values[key] for key in ['project','harness']),
  'registeredHostReachedHarness':'Changed registered host.' in values['harness'],
+ 'registeredFilesReachedConversation':'Changed registered file delivery.' in values['conversationFiles'],
+ 'registeredFilesExcludedFromMission':all('Changed registered file delivery.' not in values[key] for key in ['project','harness','run']),
  'compiledLoaderImported':'compiled_prompt_contract' in sys.modules}))
 """
 
@@ -84,11 +87,14 @@ def test_compiled_source_edit_reaches_actual_run_harness_and_capabilities(tmp_pa
     bundle['prompts']['worker.native_capability_inventory']['body'] = 'Changed registered capabilities.\n'
     bundle['prompts']['worker.safety_checkpoint']['body'] = 'Changed registered safety.\n'
     bundle['prompts']['worker.host_native_harness']['body'] += '\nChanged registered host.\n'
+    bundle['prompts']['worker.conversation_file_delivery']['body'] = 'Changed registered file delivery.\n'
     result = probe(write_bundle(tmp_path, bundle))
     assert result.returncode == 0, result.stderr
     output = json.loads(result.stdout)
     assert output['registeredTextReachedRun'] and output['registeredTextReachedHarness']
     assert output['registeredSafetyReachedAll'] and output['registeredHostReachedHarness']
+    assert output['registeredFilesReachedConversation']
+    assert output['registeredFilesExcludedFromMission']
 
 
 @pytest.mark.parametrize('failure', ['missing_path', 'missing_entry', 'invalid_bundle', 'cycle', 'unknown_variable'])
@@ -127,6 +133,12 @@ def test_workbench_exposes_sources_and_exact_consumer_relationships(monkeypatch)
     assert prompt_service._config_source_path(str(BOOTSTRAP.relative_to(ROOT))) == BOOTSTRAP.resolve()
     profile = BOOTSTRAP.with_name('profile_runtime.py')
     assert prompt_service._config_source_path(str(profile.relative_to(ROOT))) == profile.resolve()
+    conversation = BOOTSTRAP.with_name('conversation_provider.py')
+    assert prompt_service._config_source_path(str(conversation.relative_to(ROOT))) == conversation.resolve()
+    detail = prompt_service.get_prompt('worker.conversation_file_delivery')
+    assert entries['worker.conversation_file_delivery']['ownerLayer'] == 'glasshive_worker'
+    assert detail['rendered'].strip() == detail['body'].strip()
+    assert {row['selector'] for row in prompt_service.related_config_for_prompt('worker.conversation_file_delivery')} == {'_worker_prompt', '_conversation_file_delivery_instructions'}
     assert prompt_service._config_source_path('viventium_v0_4/xPerfect/runtime_phase1/src/workers_projects_runtime/auth.py') is None
     assert prompt_service._config_source_path('viventium_v0_4/GlassHive/runtime_phase1/src/workers_projects_runtime/bootstrap.py') is None
 
@@ -162,3 +174,28 @@ def test_host_frame_substitutes_current_source_dependencies_in_order(tmp_path):
     assert text.index('CRITICAL OPERATING INSTRUCTIONS') < text.index('Native capability discovery')
     assert text.index('Native capability discovery') < text.index('GlassHive completion contract')
     assert text.index('GlassHive completion contract') < text.index('Safety boundary:')
+
+
+def test_registered_conversation_body_matches_standalone_compatibility():
+    registry = load_prompt_registry(PROMPTS)
+    module = ast.parse(BOOTSTRAP.read_text())
+    function = next(node for node in module.body if isinstance(node, ast.FunctionDef) and node.name == 'conversation_file_delivery_instructions')
+    value = next(node for node in ast.walk(function) if isinstance(node, ast.Return)).value
+    standalone = ast.literal_eval(value.args[1])
+    assert render_prompt('worker.conversation_file_delivery', registry).strip() == standalone.strip()
+
+
+@pytest.mark.parametrize('failure', ['missing', 'unknown_variable'])
+def test_registered_conversation_delivery_source_fails_closed_without_affecting_mission_import(tmp_path, failure):
+    bundle = build_prompt_bundle(PROMPTS)
+    if failure == 'missing':
+        del bundle['prompts']['worker.conversation_file_delivery']
+    else:
+        bundle['prompts']['worker.conversation_file_delivery']['body'] = '{{unsupported_root}}'
+    path = write_bundle(tmp_path, bundle)
+    result = probe(path)
+    assert result.returncode != 0 and 'required_prompt_invalid' in result.stderr
+    env = {key: value for key, value in os.environ.items() if not key.startswith('VIVENTIUM_')}
+    env.update(PYTHONPATH=str(BOOTSTRAP.parents[1]), VIVENTIUM_INSTALL_MODE='express', VIVENTIUM_PROMPT_BUNDLE_PATH=str(path))
+    legacy = subprocess.run([sys.executable, '-c', 'from workers_projects_runtime import bootstrap as b; assert b.GLASSHIVE_WORKER_PROJECT_CONTRACT'], env=env, capture_output=True, text=True)
+    assert legacy.returncode == 0, legacy.stderr

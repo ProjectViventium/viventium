@@ -841,6 +841,8 @@ state, parent pin agreement, and a final review-only pass.
 - Prompt-frame telemetry post-patch smoke: current prompt frames cover main assembly/runtime,
   cortex activation/execution, run creation, and Phase B follow-up with `unknown_layer_names=[]`
   and populated source/runtime/compiler hashes.
+- Saved memory writer turn context belongs to the existing `memory_context` layer, so a text turn
+  that saves memory does not mark a later voice turn's prompt contract as unknown.
 - Prompt observability dashboards were regenerated in public-safe form; private full-text dashboard
   output is local-only and must stay outside public commits.
 

@@ -632,11 +632,14 @@ def test_other_qa_node_does_not_inherit_markdown_checkout_dependency() -> None:
     assert "Viventium-Health" not in result.prerequisites
 
 
-def test_manifest_file_consumer_gets_its_source_checkouts_without_builds() -> None:
-    node = "tests/release/test_parallel_work_release_gate.py::test_runtime_service_manifest_binds_runtime_controls_and_kernel_process_reader"
+@pytest.mark.parametrize("node,expected", [
+    ("tests/release/test_parallel_work_release_gate.py::test_runtime_service_manifest_binds_runtime_controls_and_kernel_process_reader", ["LibreChat", "xPerfect"]),
+    ("tests/release/test_config_compiler.py::test_current_provider_defaults_and_grok_fast_voice_contract", ["xPerfect"]),
+])
+def test_manifest_file_consumer_gets_its_source_checkouts_without_builds(node: str, expected: list[str]) -> None:
     result = selection.select(selection.Repository.load(ROOT), scope="critical-path",
-                              changed=None, components=[], explicit=[node], reason="Runtime manifest file existence")
-    assert result.prerequisites == ["LibreChat", "xPerfect"]
+                              changed=None, components=[], explicit=[node], reason="Runtime source existence")
+    assert result.prerequisites == expected
     assert not any(result.lanes.values())
 
 

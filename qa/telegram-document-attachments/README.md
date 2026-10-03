@@ -5,6 +5,15 @@
 Validate that Telegram documents, photos, and albums reach the active model or delegated worker as
 readable context instead of being silently reduced to captions or attachment placeholders.
 
+## Latest scoped result
+
+The [2026-10-03 Voice and Telegram acceptance](../modern-playground-voice/reports/2026-10-03-voice-and-telegram-acceptance.md)
+records a Main-generated image delivered as a real Telegram photo and a Main-generated document
+downloaded byte-exact. `TGDOC-011` owns this outbound path; ingress cases remain separate.
+These local passes do not close `TGDOC-010`'s complete installed Worker input/output matrix,
+linked public-file access, hosted voice-note recovery, or cross-provider restart acceptance.
+Older reports below retain their original scope and dates.
+
 ## Scope
 
 - Telegram ingress for documents, single photos, and same-name photo albums
@@ -44,6 +53,9 @@ readable context instead of being silently reduced to captions or attachment pla
     order, and grouping. The Bee's generated file/media returns once and opens from Telegram or
     linked Active Work after control, fallback, and restart; unavailable inputs or delivery fail
     truthfully.
+    Generated single images use photos; albums contain two to ten images and a singleton tail uses
+    a photo. A definite photo rejection returns the same named bytes as documents. Ambiguous sends
+    never resend automatically; final rejection and uncertain delivery remain distinct.
 
 ## Evidence Rules
 

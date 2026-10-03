@@ -62,6 +62,13 @@ Excluded from this fork-replay inventory:
 
 ## Checklist Legend
 
+### Current source addendum — transcript links
+
+`agent-starter-react/components/livekit/chat-entry.tsx` now has the required top-of-file
+Viventium marker and reuses `formatChatMessageLinks` from the installed LiveKit components.
+Retain this formatter when porting the transcript; it adds no custom URL parser or access path.
+The historical hunk and comment audit below remain the baseline inventory.
+
 - File status codes: `A` = added file, `M` = modified upstream file, `D` = deleted upstream file, and `R###` = renamed file with git similarity percentage.
 - Comment audit results: `PASS` means a `VIVENTIUM START` / `VIVENTIUM END` marker pair is present, but the block body still needs a manual description/why/approach review; `REPAIR-TOP` means an added Viventium text file needs a top-of-file block only; `REPAIR-INLINE` means a modified or renamed upstream text file needs inline wrappers around changed Viventium blocks; `REVIEW` means comment support is format-dependent; `COMMENT-LIMITED` means lockfile/generated/JSON-style metadata where wrappers are invalid or undesirable; `N/A` means deletion or binary asset.
 - Hunk rows are public-safe location anchors. For exact line-by-line additions/removals, use the ignored raw diff artifact named in the final section.

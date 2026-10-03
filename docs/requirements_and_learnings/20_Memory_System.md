@@ -412,9 +412,12 @@ installer/compiler ownership layer instead of inheriting historical template def
   owner-bound Codex subscription route; official CLI login is not copied into an API credential.
 - Do not silently leave the memory writer on xAI when xAI was never configured for that install.
 - Deep Memory has a separate explicit `llm.deep_memory: {provider, model}` route. The native
-  preset selects the same Terra/medium model through `glasshive-harness` /
-  `codex-cli:gpt-5.6-terra`; existing configurations retain their foundation route. Its existing
+  preset selects GPT 6.1 Sol/High through `glasshive-harness` /
+  `codex-cli:gpt-6.1-sol`; existing configurations retain their foundation route. Its existing
   agent fallback settings remain separate from the saved-memory writer.
+- The saved-memory processor forwards the admitted native executor and uses the same
+  `apply_memory_changes` CAS tool, instructions, and artifact callback. Native execution exposes
+  only that owner-bound broker tool; it preserves applied changes if a later provider error occurs.
 - By default, the memory writer follows configured foundation priority: the first available
   foundation provider is selected. An optional `llm.memory: {provider, model}` override may select
   another authenticated foundation route or supported native Codex route. The compiler must reject
@@ -427,7 +430,7 @@ installer/compiler ownership layer instead of inheriting historical template def
 - Runtime recovery must initialize the fallback under the same signed-in memory owner, enforce the
   provider allowlist and capability policy, and verify owner-scoped provider authentication plus the
   actual authorized provider/model. The fallback must preserve memory instructions, governed keys,
-  storage methods, turn identity, and OpenAI's medium-effort memory contract without forwarding
+  storage methods, turn identity, and the configured model's effort without forwarding
   unsupported OpenAI parameters to Anthropic. It may replay a terminal quota failure only before
   any write applied; effective-provider telemetry must identify the actual route.
 - A provider failure must remain structured and privacy-safe. Terminal quota exhaustion is not
@@ -477,7 +480,7 @@ both code and QA:
 
 - The generated runtime contract uses the explicit `llm.memory` route when configured; otherwise
   it preserves foundation priority and canonical lower-case provider values.
-- The native preset explicitly selects `glasshive-harness` / `codex-cli:gpt-5.6-luna` / `medium`.
+- The native preset explicitly selects `glasshive-harness` / `codex-cli:gpt-6.1-sol` / `high`.
   Its official signed-in Codex account must support that exact route. Main's account or fallback
   does not silently replace the configured writer; unsupported native harness profiles fail closed.
 - A distinct `llm.memory.fallback.provider` / `llm.memory.fallback.model` route is available only
@@ -510,6 +513,9 @@ both code and QA:
   effects. Existing interrupted-write recovery owns restart uncertainty. QA must cover disconnects
   before invocation, during a mutation, and after effect persistence, then GUI save, correction,
   forgetting, recall, and reload with the generated native route.
+- A completed empty Codex chat terminal is distinct from a missing terminal. Main still rejects an
+  empty answer; the admitted memory writer follows its completed governed tool and receipt, including
+  a successful no-op, without requiring a separate authored chat report.
 - Connected-account OpenAI Codex routes are a second runtime contract inside the memory writer:
   - top-level `instructions` must be present on Responses requests
   - `system` / `developer` messages must not remain inside Responses `input`
@@ -680,6 +686,19 @@ The April 9, 2026 memory-integrity investigation added five concrete product tru
 - On April 9, 2026, a local restart onto the fixed compiled runtime proved this through the product
   path: saved-memory maintenance/write processing removed previously stale forgotten references from
   `context` and `drafts` without manual database edits.
+
+Saved-memory deletion updates the active snapshot and its tombstone; it does not erase admitted
+conversation history or authorized recall. Resumed Codex sessions can retain earlier saved-memory
+snapshots in append-only developer history. The latest snapshot and canonical fact guard own current
+fact use, but delivery proof is not selective-forgetting proof. The current bounded Main read carries
+text/status rather than writer revision/deletion metadata. Do not infer revocation from memory prose
+or reset a session on ordinary additions. Verify corrections and selective forgetting on the current
+model path; see [Codex Resumed Authority Delivery](54_Emotional_Cortex_And_Feeling_State.md#codex-resumed-authority-delivery).
+
+Recoverable account cleanup requires owner authorization and a verified backup receipt before
+mutation. Exact message tombstones use the native source mutation transaction so accepted continuity
+is invalidated and source retirement is recorded. Saved-memory edits, conversation cleanup, and
+search/RAG reconciliation have separate receipts; one does not prove the others are complete.
 
 #### 2.8.3 Punctuation corruption must be cleaned at shared boundaries
 

@@ -55,6 +55,10 @@
 - **PW-086 / PW-088:** Capacity and resource guards are configuration defaults owned by
   `config.schema.yaml` and the existing runtime policy. They cannot consume the interactive lane;
   changing a default requires measurement at its owning seam.
+- Conversation processors use the existing service dispatch budget. Account and tenant mission
+  caps apply to mission admission, not to the conversation pool across CLI families. Each
+  conversation still requires its configured CLI lane and measured resource reservation. A full
+  service pool remains a real queue boundary; this does not establish Main priority.
 
 ## Context and controls
 

@@ -737,7 +737,7 @@ def _config_source_path(path_name: str) -> Path | None:
     worker_root = (REPO_ROOT / "viventium_v0_4/xPerfect/runtime_phase1/src/workers_projects_runtime").resolve()
     worker_owners = {
         worker_root / name
-        for name in ("bootstrap.py", "profile_runtime.py")
+        for name in ("bootstrap.py", "profile_runtime.py", "conversation_provider.py")
     }
     if (
         candidate.is_file()

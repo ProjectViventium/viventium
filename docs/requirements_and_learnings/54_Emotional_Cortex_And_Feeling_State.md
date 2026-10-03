@@ -52,9 +52,9 @@ The intended mental model is:
 3. The Reaction Cortex is detached and never blocks the visible reply.
 4. Reaction activation is configurable. The per-user default is `always`; `classified` reuses the
    existing activation-classifier path and `disabled` stops reactions.
-5. The default reaction route is OpenAI `gpt-5.6-terra`, Responses API, reasoning `none`, and
+5. The default reaction route is OpenAI `gpt-6.1-sol`, Responses API, reasoning `high`, and
    Priority service tier, shown in the product as **Fast**. A declared Anthropic
-   `claude-opus-5` fallback recovers a provider timeout or other recoverable failure without
+   `claude-opus-5-5` fallback recovers a provider timeout or other recoverable failure without
    silently dropping appraisal quality; it is
    configurable and can be disabled with `fallback_provider: none`. The drawer and persisted
    health distinguish the requested primary route from the route that actually completed.
@@ -255,7 +255,7 @@ flowchart LR
     D --> E["Stream visible reply"]
     E --> F["Schedule detached reaction"]
     F --> G["Always / classified / disabled activation"]
-    G --> H["GPT-5.6 Fast typed appraisal"]
+    G --> H["Configured detached typed appraisal"]
     H --> I["Validate operations"]
     I --> J["Serialize, rebase, and compare-and-set"]
     J --> K["Next request reads new state"]
@@ -287,9 +287,12 @@ against a state already advanced by an earlier stimulus.
 
 For GlassHive, the host forwards the exact capsule through the existing bootstrap bundle. It does
 not interpret the feeling state or turn it into a worker plan. After memory and capability-broker
-instructions are assembled, the shared final-placement helper moves the capsule to the end of each
-worker instruction artifact (`agents_md`, `claude_md`, and `codex_md`). Structured final-run events
-record the route, pinned hash, capsule count, and trailing instruction characters for each artifact.
+instructions are assembled, the host emits one exact capsule at the end of `agents_md`, with a
+versioned projection record containing its SHA-256 and recipient scope. `claude_md` and `codex_md`
+retain their other context without duplicating the capsule. Disabled, unknown, or conscious-only
+scope emits an explicit zero-capsule projection for delegated workers. xPerfect validates the
+record before dispatch; this does not change the separate native Main conversation envelope.
+Structured final-run events record each artifact's pinned hash, count, and final placement.
 
 For the core `glasshive-harness` provider, the selected harness is the main speaking agent rather
 than a delegated specialist. The request-pinned capsule is therefore present exactly once in the
@@ -316,14 +319,14 @@ through `--add-dir`. A policy change replaces the native session at the next ser
 For the Codex conversation transport, `none` is paired with native developer-role delivery rather
 than user-prompt imitation. The final request-pinned Feeling authority is included in the current
 combined `system`/`developer` snapshot and materialized as worker-local Codex
-`developer_instructions`; it is excluded from visible user/assistant history. A present changed
-snapshot serially replaces the old native session and seeds visible history, while an unchanged
-snapshot and a Phase-B request with no repeated authority reuse the current session. Thus `none`
+`developer_instructions`; it is excluded from visible user/assistant history. Changed active units
+use the verified native delivery path in [Codex Resumed Authority Delivery](#codex-resumed-authority-delivery).
+Unchanged authority and a Phase-B request with no repeated authority reuse the current session. Thus `none`
 removes Codex's generic style layer, but does not remove Viventium identity, guardrails, capabilities,
 or the pinned Feeling state.
 
 Durable authority and mutable turn context are separate. Identity, guardrails, memory context, and
-the current Feeling capsule belong to the native developer instruction and its session-binding hash.
+the current Feeling capsule belong to native developer authority and its acknowledged unit digests.
 Current time and other changing turn facts do not: LibreChat encodes them into the final run request,
 the configured persistent-conversation provider carries them in a per-turn header, and GlassHive
 adds them to that turn's visible-context instruction. The capability decision is made from structured
@@ -331,13 +334,13 @@ provider metadata after fallback/remapping. A clock change therefore neither rep
 native worker nor disappears from the current turn. Direct providers keep the existing developer-
 instruction delivery because they do not preserve one native conversation session behind the route.
 
-App Server is not the current production answer. Installed-build QA on 2026-08-02 showed that an
+Historical installed-build QA on 2026-08-02 showed that an
 experimental settings update retained the first developer instruction across later turns and
 process resume. The documented per-turn collaboration-mode developer instruction also failed to make
 the second state current on one thread. Developer-role `thread/inject_items` reached the model, but
-only by persisting another item beside the old one. All violate current-only Feeling authority, so
-Viventium keeps the tested serial `codex exec` session boundary until Codex exposes and passes a
-bounded replacement mechanism.
+only by persisting another item beside the old one. That investigation used serial session
+replacement. The current verified developer-item synchronization below preserves ordinary exec
+resume and acknowledges the exact latest application units; it does not use App Server for inference.
 
 ## Prompt contract
 
@@ -412,7 +415,8 @@ GlassHive therefore carries the exact already-declared dynamic tail in the authe
 request as `X-GlassHive-Developer-Instruction-Tail-B64`. The header is encoding, not encryption. The
 provider rejects a non-empty declared tail that is absent from system/developer authority, removes
 duplicates, moves the exact opaque tail after capability-broker instructions, and hashes the
-effective pinned snapshot for session replacement. Off sends no tail. Runtime code remains generic:
+effective pinned units for native delivery. Off removes the Feeling capsule; saved memory and the
+fact guard can still form a declared tail. Runtime code remains generic:
 it does not branch on the Feeling tag, agent name, provider display label, or user prompt.
 
 The 2026-08-03 investigation linked the potency failure to competing prompt layers rather than a
@@ -432,11 +436,11 @@ post-build process reload changed the active child and DB evidence then showed t
 once at the final developer boundary. Source correctness is therefore insufficient; affected QA must
 prove source, built artifact, running process, and provider-bound instruction agree.
 
-A second installed-source drift omitted the native-session binding check for a changed effective
+A historical installed-source drift omitted the native-session binding check for a changed effective
 system/developer snapshot. That allowed a resumed Codex thread to retain the prior Feeling even when
-the provider received a new one. The provider now compares the current authority hash at each serial
-turn boundary: changed authority terminates and replaces the native worker while seeding visible
-history; unchanged authority resumes it. A real three-turn provider run proved depleted → bright
+the provider received a new one. The repair then compared the current authority hash at each serial
+turn boundary: changed authority replaced the native worker while seeding visible history;
+unchanged authority resumed it. A real three-turn provider run proved depleted → bright
 replacement, bright → bright reuse, old-worker termination, one capsule per worker, preserved visible
 history, and 5–6 second completions.
 
@@ -559,8 +563,13 @@ Rules enforced by runtime code:
   trail. Telemetry records only presence and character count;
 - malformed/empty output changes nothing and records degraded health;
 - OpenAI reactions request JSON-object mode; one malformed typed response may retry once with a
-  short schema-repair instruction after the first result, while a second invalid
-  response changes nothing and records degraded health;
+  short repair instruction and the same current canonical shape and enums after the first result.
+  Neutral `changes: []` still requires `innerState`; a second invalid response changes nothing
+  and records degraded health;
+- appraisal is bounded to two attempts. A recoverable native capacity failure may retry only after
+  the exact authenticated release is acknowledged; unresolved ownership blocks retry. Transport
+  retries preserve the original input. Schema repair instructions follow only a parse failure.
+  Exhaustion records degraded health without a Feeling write;
 - a late reaction cannot replace a newer manual value with an absolute stale snapshot: its validated
   relative deltas are rebased onto the latest materialized values and must win a final compare-and-set.
   In `always` mode, a later eligible external stimulus may still legitimately move Current after a
@@ -585,26 +594,27 @@ migration.
 The user may edit that instruction in the drawer. It belongs to the reaction worker only and never
 enters the speaking capsule.
 
-### GPT-5.6 route
+### Configured appraisal route
 
 The default route intentionally favors low latency without downgrading the appraisal task:
 
 ```yaml
 provider: openai
-model: gpt-5.6-terra
+model: gpt-6.1-sol
 use_responses_api: true
-reasoning_effort: none
+reasoning_effort: high
 fast: true
 service_tier: priority
 timeout_ms: 15000
 fallback_provider: anthropic
-fallback_model: claude-opus-5
+fallback_model: claude-opus-5-5
 ```
 
-OpenAI's current model guide describes GPT-5.6 and the Sol/Terra/Luna operating variants. `none` is
-the lowest reasoning-latency setting; Priority processing is the API mechanism behind the Fast label.
-See [Latest model guide](https://developers.openai.com/api/docs/guides/latest-model) and
-[Priority processing](https://developers.openai.com/api/docs/guides/priority-processing).
+Other supported model and effort choices remain selectable. Native xPerfect appraisal uses the
+selected harness model with an isolated stateless carrier and read-only workspace access. It receives
+typed current state as data, without Main’s Feeling capsule, tools, Voice delivery authority or context
+snapshot. Its own snapshot slot shadows Main’s immutable slot. API Priority processing does not
+apply to a native harness; requested and actual service-tier fields must preserve that distinction.
 
 The runtime records the requested provider, model, reasoning effort, service tier, fallback route,
 duration, whether fallback was used, the actual completing provider/model/service tier, and the
@@ -614,6 +624,11 @@ the configured account and the effective tier is not silently downgraded.
 The 15-second appraisal timeout is a detached-worker reliability budget, not main-response latency.
 An 8-second budget produced avoidable failures in live appraisal probes; 15 seconds preserved the
 nonblocking architecture while allowing the fast primary route to finish or fall back truthfully.
+
+Reaction failure telemetry records a bounded execution stage and error type, plus the trusted
+Voice call and logical-turn hashes. It never includes exception prose, stack traces, the stimulus or
+raw appraisal output. Native model receipts report the actual returned model when catalog resolution
+changes an optional Fast selection.
 
 ## Persistence and concurrency
 
@@ -717,14 +732,14 @@ runtime:
     reaction:
       activation_mode: always
       provider: openai
-      model: gpt-5.6-terra
+      model: gpt-6.1-sol
       use_responses_api: true
-      reasoning_effort: none
+      reasoning_effort: high
       fast: true
       service_tier: priority
       timeout_ms: 15000
       fallback_provider: anthropic
-      fallback_model: claude-opus-5
+      fallback_model: claude-opus-5-5
       activation_provider: groq
       activation_model: qwen/qwen3.6-27b
       activation_confidence_threshold: 0.55
@@ -794,9 +809,10 @@ Quality and performance are both acceptance criteria.
 - Selecting or saving a range performs no model call. Capsule assembly scans nine bands and injects
   at most one bounded addition per enabled band; telemetry records only counts/lengths, never prose.
 - Appraiser timeout is independent from main-agent timeout.
-- A recoverable primary provider failure uses the configured fallback within the detached appraiser;
-  one outer retry still covers malformed output or an unresolved transient failure. Every route is
-  bounded by the configured timeout and none block the visible reply.
+- A recoverable primary provider failure may use the configured fallback within the detached
+  appraiser, subject to native ownership and effect-safety gates. One outer retry covers malformed
+  output or an eligible transient failure; unresolved native ownership blocks retry. Every route
+  is bounded by the configured timeout and none block the visible reply.
 - Appraiser failure never changes state and never fails the reply.
 - Acceptance records main TTFT and detached reaction duration separately, plus requested and actual
   reaction routes.
@@ -830,7 +846,7 @@ What legitimately differs by design (and must stay honest about it):
   Viventium-compiled Codex worker must disable the downstream Feelings plugin by exact plugin ID.
   This prevents two independent feeling states. Standalone Codex and Claude Code users can enable
   the plugin normally; the generic GlassHive default does not deny it.
-- **Appraiser route.** The core product's default reaction route is OpenAI `gpt-5.6-terra` with an
+- **Appraiser route.** The core product's default reaction route is OpenAI `gpt-6.1-sol` at high effort with an
   Anthropic fallback. The plugin instead reuses the user's own signed-in harness model as the
   detached appraiser — that is the whole point of "no second account." It is not a downgrade claim;
   it is a different, path-of-least-resistance substrate.
@@ -1443,6 +1459,34 @@ document. The superseded divergent manual-band prototype is historical design ev
 second product contract, and must not be reintroduced or silently translated into runtime truth.
 Migration preserves valid current state or fails with a typed recoverable result; it never invents
 or drops bands to make a prototype pass. `V05D-027` / `V05D-UC-003` owns acceptance.
+
+## Codex Resumed Authority Delivery
+
+The earlier worker-replacement rule above is retained as historical evidence. Current host Codex
+conversation delivery uses the supported native developer-item channel for changed instructions
+before ordinary exec resume. The exact declared dynamic tail includes saved memory and the fact
+guard as well as the Feeling capsule; none may be dropped during the split. Native persistence,
+exact session/epoch binding and compaction revalidation own delivered-state acknowledgement.
+When stable instructions change, the exact dynamic tail follows them again. Recovery checks item
+order as well as digests, including a partially persisted inject whose acknowledgement was lost.
+Unchanged units add no preflight. Unconfirmed delivery fails honestly and never continues with
+stale Feeling authority. Before any model output, one existing fenced session recovery may replay
+the authenticated complete canonical source retained in the exact request/run's ephemeral bundle.
+It never uses the old native delta as a full-history seed. Missing source after a process restart,
+failed recovery, cancellation or deadline exhaustion keeps the typed failure/Stop result.
+Removal of a previously present capsule uses the existing rebind with admitted history because
+append-only native items cannot revoke it. Ordinary memory additions and Feeling updates do not
+reset the session. Scope and privacy stay unchanged.
+
+Earlier saved-memory snapshots can remain in the native developer history after a saved fact is
+corrected or deleted. The latest snapshot and fact guard own current fact use, but byte removal is
+not guaranteed before rebind or native compaction. Core's writer has typed CAS revisions and delete
+artifacts; the bounded Main read currently carries text/status, without a native revocation signal.
+Do not infer deletion from an opaque text diff or reset on every memory change. Current correction
+and selective-forgetting behavior needs semantic user-path evidence; instruction delivery alone
+does not prove it. Preserved conversation history and authorized recall are separate memory planes.
+Source/protocol checks support this mechanism; loaded user-path and latest-capsule potency evidence
+remain separate acceptance gates. See xPerfect's bootstrap and identity-projection runtime owner.
 
 ## Empty Feeling-Capsule Boundary
 

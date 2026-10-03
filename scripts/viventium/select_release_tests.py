@@ -86,6 +86,10 @@ LANE_CONSUMERS = {
 # Data-driven reads can fall outside the Python path trace. Keep confirmed
 # source-only checkouts attached to their consumer, not every test in its file.
 CHECKOUT_CONSUMERS = {
+    # Provider capability validation reads the resolved xPerfect runtime entrypoint.
+    "tests/release/test_config_compiler.py::test_current_provider_defaults_and_grok_fast_voice_contract": (
+        "viventium_v0_4/xPerfect",
+    ),
     "tests/release/test_qa_operating_contract.py::test_current_requirement_and_qa_local_markdown_evidence_links_resolve": (
         LIBRECHAT, "viventium_v0_4/xPerfect", "viventium_v0_4/Viventium-Health",
     ),

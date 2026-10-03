@@ -50,7 +50,7 @@ FEATURES: tuple[BrainReadinessFeature, ...] = (
     ),
     BrainReadinessFeature(
         key="glasshive",
-        label="GlassHive",
+        label="xPerfect",
         express_posture="installed",
         required_user_action=(
             "Easy Install requires Codex CLI installed and signed in. Custom Settings may use "
@@ -68,7 +68,7 @@ FEATURES: tuple[BrainReadinessFeature, ...] = (
             "GLASSHIVE_DEFAULT_WORKER_PROFILE",
         ),
         health_probe=(
-            "GlassHive operator/provider health plus authentication for the configured harness; "
+            "xPerfect operator/provider health plus authentication for the configured harness; "
             "Easy Install probes Codex specifically."
         ),
         self_heal_action=(
@@ -88,7 +88,7 @@ FEATURES: tuple[BrainReadinessFeature, ...] = (
         config_paths=("runtime.prompt_workbench.*",),
         generated_env_keys=("START_PROMPT_WORKBENCH", "VIVENTIUM_PROMPT_WORKBENCH_PORT"),
         health_probe="Workbench health endpoint, visible schedule state, callback completion.",
-        self_heal_action="Restart Viventium and inspect Scheduler/GlassHive ledger rows.",
+        self_heal_action="Restart Viventium and inspect Scheduler/xPerfect ledger rows.",
         qa_owner="qa/prompt-workbench/cases.md",
         public_safety_rule="Do not publish private prompt text, result bodies, or screenshots with private content.",
     ),
@@ -96,15 +96,15 @@ FEATURES: tuple[BrainReadinessFeature, ...] = (
         key="nightly_reflection",
         label="Nightly Reflection",
         express_posture="custom_only",
-        required_user_action="Use Custom Settings Install with Scheduler, Prompt Workbench, and GlassHive enabled.",
-        machine_prerequisite="Scheduler, Workbench, and GlassHive are healthy.",
+        required_user_action="Use Custom Settings Install with Scheduler, Prompt Workbench, and xPerfect enabled.",
+        machine_prerequisite="Scheduler, Workbench, and xPerfect are healthy.",
         config_paths=("runtime.prompt_workbench.seed_nightly.*", "runtime.nightly_routines.*"),
         generated_env_keys=(
             "VIVENTIUM_PROMPT_WORKBENCH_SEED_NIGHTLY_ENABLED",
             "VIVENTIUM_PROMPT_WORKBENCH_SEED_NIGHTLY_ACTIVE",
             "VIVENTIUM_PROMPT_WORKBENCH_SEED_NIGHTLY_EXECUTOR",
         ),
-        health_probe="scheduled prompt -> filled placeholders -> GlassHive run -> callback -> ledger -> Workbench completed.",
+        health_probe="scheduled prompt -> filled placeholders -> xPerfect run -> callback -> ledger -> Workbench completed.",
         self_heal_action="Rerun the due schedule or let the next safe nightly window prove delivery.",
         qa_owner="qa/prompt-workbench/cases.md",
         public_safety_rule="Use sanitized schedule metadata only; never publish the raw reflection result.",

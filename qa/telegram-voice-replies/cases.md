@@ -15,6 +15,7 @@ Use stable `TGVOICE-NNN` IDs for telegram voice replies cases.
 | `TGVOICE-005` | Telegram text-mode audio turns expose exactly the selected TTS provider/model control contract and shared Feelings expression rule without switching to LiveKit voice mode. | Expressive xAI, Cartesia, and Chatterbox replies can use one fitting supported control without the user asking; restrained/Feelings-off/OpenAI/ElevenLabs `eleven_turbo_v2_5`/unknown routes stay unmarked; visible text is clean; model-specific Eleven v3 tags never leak to v2.5. | Telegram voice-note/reply, always-voice text reply, LibreChat Telegram route payload/logs, metadata-only provider rendering events, prompt layers, Prompt Workbench | shared provider/model contract, `surfacePrompts.spec.js`, `telegram.spec.js`, `tests/test_librechat_bridge.py`, `tests/test_tts.py`, exact-model prompt bank | PARTIAL 2026-07-15: real xAI positive/calm/negative delivery passed on 2026-07-14; neutral Cartesia syntax, full provider/model contract, provider-matrix fixtures, structural marker validation, and privacy-safe provider-boundary telemetry pass automated checks; dynamic OpenAI/Eleven side-channel rendering and new non-xAI exact-model/audible paths remain open ([report](../emotional-cortex/reports/2026-07-14-feelings-activation-and-telegram-acceptance.md)) |
 | `TGVOICE-006` | Optional Telegram text audio is model-selected per answer through the shared `{SKIP_VOICE}` contract. | Copy/read/edit-first artifacts stay complete in text without wasting synthesis time; ordinary or explicitly requested spoken replies still receive audio. | Main turn, proactive callback, persistence, TTS, Preferences, Prompt Workbench | shared JS/Python grammar, persistence tests, bot/callback/TTS tests, exact-model prompt bank | PARTIAL 2026-07-22: real Telegram main-turn skip/conversation/explicit-speech paths, logs, DB, Workbench, and automation pass; proactive real-surface and future-channel parity remain partial |
 | `TGVOICE-007` | The Main Agent may create a small number of natural Telegram bubbles with `{MSG_BREAK}` while preserving one logical answer. | A conversational reply can arrive as two or three complete beats without fragment bombardment, duplicate history, duplicate audio, or artifact splitting. | Streaming preview, main turn, proactive callback, persistence, Telegram transport, Prompt Workbench | shared grammar, split-token streaming test, bot/callback/persistence tests, exact-model prompt bank | PARTIAL 2026-07-22: real two-bubble delivery, one final audio, one clean stored turn, reopen, and automation pass; proactive and attachment-plus-split paths remain partial |
+| `TGVOICE-008` | Saved Listening selection and whole-note speech follow the shared Telegram Voice contract. | Selected recognition stays exact; no-speech stops Main/TTS while captions survive; brief, quiet and paused speech keeps the complete note. | Preferences, Telegram voice/video notes, STT, Main | listening ingress, speech presence, silence, selected-STT and exact-SDK settings checks | PARTIAL 2026-10-03: selected hosted recognition rejected credentials; exact whole-note recovery remains unrun. Deterministic and finite acoustic proof is supporting evidence ([report](../modern-playground-voice/reports/2026-10-03-voice-and-telegram-acceptance.md)) |
 
 ## `TGVOICE-001` - Core User Flow
 
@@ -210,6 +211,32 @@ Use stable `TGVOICE-NNN` IDs for telegram voice replies cases.
 - Last run: PARTIAL 2026-07-22; a real short response arrived as two complete bubbles with one
   final audio attachment and one clean stored assistant turn. Real proactive delivery and
   attachment-plus-split interaction remain partial.
+
+## `TGVOICE-008` - Saved Listening And Whole-Note Speech
+
+- Requirement: `03_Telegram_Bridge.md` Telegram Voice and Call Behavior.
+- Preconditions: The loaded Telegram code and sealed dependencies agree. Use synthetic audio.
+- Steps:
+  1. Save an available Listening provider/model through Preferences, reload, and send a voice note
+     and a video note. Confirm the requested and effective recognition route in content-free logs.
+  2. Send exact silence, non-speech, brief and quiet speech, paused speech, and speech only at the
+     end of a longer note. Repeat silence with an authored caption.
+  3. Exercise unavailable selection, decoder and speech-detector failure, then healthy recovery.
+  4. For local recognition, send a second note with the resident model and confirm there is no
+     complete model-file validation. For AssemblyAI, send a note longer than its completion budget.
+- Expected result: Saved selection persists and is used without remapping. Accepted speech keeps
+  the complete note. No-speech invokes neither Main nor TTS; a caption remains usable. Failure
+  classes stay distinct and produce one useful notice. Local model readiness is reused; streaming
+  transcription has time to consume the complete note and uses the owner-scoped context settings.
+- Evidence: Visible exchanges, selected route and persisted preferences, whole-PCM identity,
+  provider-call counts, content-free stage timings, sealed/runtime identity and recovery.
+- Automation: `test_telegram_listening_ingress.py`, `test_telegram_speech_presence.py`,
+  `test_telegram_silence.py`, `test_telegram_selected_stt.py` and the exact-SDK settings checks.
+- Last run: PARTIAL 2026-10-03. The selected hosted recognition route rejected credentials; its
+  complete Telegram voice-note recovery remains unrun. Deterministic and finite acoustic checks
+  remain supporting proof. Raw hosted-STT success and local LiveKit speech do not close this path.
+  A synthetic voiced non-speech burst can still produce a false transcript. See the
+  [current report](../modern-playground-voice/reports/2026-10-03-voice-and-telegram-acceptance.md).
 
 ## Natural User Use Case Checklist
 

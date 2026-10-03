@@ -49,6 +49,18 @@ class TelegramPreparationTests(unittest.TestCase):
         self.assertNotIn("title", retained["message"]["chat"])
         self.assertEqual(retained["command"], {"title": "", "args": ["original", "args"], "hasCommand": True})
 
+    def test_selected_quote_survives_preparation_roundtrip(self):
+        reply = self.message(message_id=40, text="Willow fits 450 with 8 left; Elm is 7 over.")
+        value = self.message(text="Explain this", reply_to_message=reply,
+                             quote={"text": "Elm is 7 over", "position": 29, "is_manual": True})
+        original = Update.de_json({"update_id": 24, "message": value}, None)
+        retained = json.loads(json.dumps(owner.capture_telegram_preparation(original)))
+        self.assertEqual(retained["message"]["quote"],
+                         {"text": "Elm is 7 over", "position": 29, "is_manual": True})
+        recovered = owner.restore_telegram_preparation(retained, None, self.identity())
+        self.assertEqual(recovered.message.quote.text, "Elm is 7 over")
+        self.assertEqual(recovered.message.reply_to_message.text, reply["text"])
+
     def test_supported_media_preserves_references_used_by_existing_preparation(self):
         for kind, extra in (("photo", {"width": 20, "height": 30}),
                             ("video_note", {"length": 20, "duration": 5}),

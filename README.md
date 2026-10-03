@@ -58,7 +58,7 @@ A local Viventium install can give you:
 ### Easy Install (Recommended)
 
 Easy Install guides a new Mac through native runtime setup and opens browser setup automatically.
-The current source-checkout defaults use GlassHive Main through Codex. Install Codex and sign in
+The current source-checkout defaults use xPerfect Main through Codex. Install Codex and sign in
 with `codex login` when preflight requests it; an existing supported CLI login is reused. Provider
 API keys are separate credentials for the components configured to use them. Additional providers
 and integrations can be connected later.

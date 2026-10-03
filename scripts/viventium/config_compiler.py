@@ -28,6 +28,8 @@ if str(SCRIPT_DIR) not in sys.path:
 from telegram_tokens import telegram_bot_token_validation_error
 from native_runtime import NATIVE_ALLOWED_PLAIN_ENV
 from host_cli_auth import (
+    codex_app_cli_candidates as shared_codex_app_cli_candidates,
+    codex_app_search_roots,
     DEFAULT_GLASSHIVE_PROVIDER_MODEL,
     GLASSHIVE_PROVIDER_MODEL_BY_WORKER_PROFILE,
 )
@@ -97,7 +99,7 @@ DEFAULT_GLASSHIVE_IDLE_TERMINATE_AFTER_S = 1800
 DEFAULT_GLASSHIVE_IDLE_REAPER_INTERVAL_S = 60
 DEFAULT_PUBLIC_GLASSHIVE_LINK_REF_TTL_SECONDS = 86400
 DEFAULT_PUBLIC_GLASSHIVE_WATCH_SESSION_SECONDS = 1800
-SUPPORTED_GLASSHIVE_WORKER_PROFILES = {"codex-cli", "claude-code", "openclaw-general"}
+SUPPORTED_GLASSHIVE_WORKER_PROFILES = {"codex-cli", "claude-code", "grok-build", "openclaw-general"}
 GLASSHIVE_ENTERPRISE_WORKER_PROVIDER_ENV_KEYS = {
     "ANTHROPIC_API_KEY",
     "ANTHROPIC_API_URL",
@@ -1432,28 +1434,8 @@ def _executable_path(path: Path) -> bool:
     return path.is_file() and os.access(path, os.X_OK)
 
 
-def codex_app_search_roots() -> list[Path]:
-    override = os.environ.get("VIVENTIUM_CODEX_APP_DIRS", "").strip()
-    if override:
-        return [Path(entry).expanduser() for entry in override.split(os.pathsep) if entry.strip()]
-    return [Path("/Applications"), Path.home() / "Applications"]
-
-
 def codex_app_cli_candidates() -> list[Path]:
-    root_candidates = [root / "Codex.app" / "Contents" / "Resources" / "codex" for root in codex_app_search_roots()]
-    if os.environ.get("VIVENTIUM_CODEX_APP_DIRS", "").strip():
-        candidates: list[Path] = [*root_candidates, CODEX_APP_CLI]
-    else:
-        candidates = [CODEX_APP_CLI, *root_candidates]
-    deduped: list[Path] = []
-    seen: set[str] = set()
-    for candidate in candidates:
-        key = str(candidate)
-        if key in seen:
-            continue
-        seen.add(key)
-        deduped.append(candidate)
-    return deduped
+    return shared_codex_app_cli_candidates(legacy_cli=CODEX_APP_CLI)
 
 
 def resolve_host_cli_path(command: str, explicit_path: Any = None) -> str:
@@ -1717,16 +1699,16 @@ def resolve_glasshive_host_worker_settings(config: dict[str, Any]) -> dict[str, 
             "integrations.glasshive.host_worker.native_web_access "
             "must be inherit or disabled"
         )
-    valid_codex_efforts = {"none", "minimal", "low", "medium", "high", "xhigh"}
+    valid_codex_efforts = {"none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"}
     codex_model = str(
         host_worker.get("codex_model")
         or model_override_for(config, "openai", "glasshive_codex")
-        or "gpt-5.6-sol"
+        or "gpt-6.1-sol"
     ).strip()
     if not codex_model:
         raise SystemExit("integrations.glasshive.host_worker.codex_model must be non-empty")
     codex_reasoning_effort = str(
-        host_worker.get("codex_reasoning_effort") or "xhigh"
+        host_worker.get("codex_reasoning_effort") or "high"
     ).strip().lower()
     if codex_reasoning_effort not in valid_codex_efforts:
         raise SystemExit(
@@ -1760,7 +1742,7 @@ def resolve_glasshive_host_worker_settings(config: dict[str, Any]) -> dict[str, 
         else "false"
     )
     claude_effort = str(
-        host_worker.get("claude_effort") or "default"
+        host_worker.get("claude_effort") or "high"
     ).strip().lower()
     if claude_effort not in {"default", "low", "medium", "high", "xhigh", "max"}:
         raise SystemExit(
@@ -1931,56 +1913,53 @@ VOICE_PROVIDER_KEYCHAIN_SERVICES = {
 
 MODEL_MAP = {
     "openai": {
-        "conscious": "gpt-5.6-sol",
-        "background_analysis": "gpt-5.6-terra",
-        "deep_memory": "gpt-5.6-terra",
-        "confirmation_bias": "gpt-5.6-terra",
-        "red_team": "gpt-5.6-sol",
-        "deep_research": "gpt-5.6-sol",
-        "productivity": "gpt-5.6-terra",
-        "parietal": "gpt-5.6-terra",
-        "pattern_recognition": "gpt-5.6-terra",
-        "emotional_resonance": "gpt-5.6-terra",
-        "strategic_planning": "gpt-5.6-sol",
-        "support": "gpt-5.6-terra",
-        # The immediate writer is fail-closed and separately evaluated from the conscious agent.
-        # Luna/medium is the lowest-cost tier that cleared the repeated exact memory gate and the
-        # near-ceiling workpack; keep Sol for higher-variance conscious/strategic work.
-        "memory": "gpt-5.6-luna",
+        "conscious": "gpt-6.1-sol",
+        "background_analysis": "gpt-6.1-sol",
+        "deep_memory": "gpt-6.1-sol",
+        "confirmation_bias": "gpt-6.1-sol",
+        "red_team": "gpt-6.1-sol",
+        "deep_research": "gpt-6.1-sol",
+        "productivity": "gpt-6.1-sol",
+        "parietal": "gpt-6.1-sol",
+        "pattern_recognition": "gpt-6.1-sol",
+        "emotional_resonance": "gpt-6.1-sol",
+        "strategic_planning": "gpt-6.1-sol",
+        "support": "gpt-6.1-sol",
+        "memory": "gpt-6.1-sol",
     },
     "anthropic": {
-        "conscious": "claude-opus-5",
-        "background_analysis": "claude-opus-5",
-        "deep_memory": "claude-opus-5",
-        "confirmation_bias": "claude-opus-5",
-        "red_team": "claude-opus-5",
-        "deep_research": "claude-opus-5",
-        "productivity": "claude-opus-5",
-        "parietal": "claude-opus-5",
-        "pattern_recognition": "claude-opus-5",
-        "emotional_resonance": "claude-opus-5",
-        "strategic_planning": "claude-opus-5",
-        "support": "claude-opus-5",
-        "memory": "claude-opus-5",
+        "conscious": "claude-opus-5-5",
+        "background_analysis": "claude-opus-5-5",
+        "deep_memory": "claude-opus-5-5",
+        "confirmation_bias": "claude-opus-5-5",
+        "red_team": "claude-opus-5-5",
+        "deep_research": "claude-opus-5-5",
+        "productivity": "claude-opus-5-5",
+        "parietal": "claude-opus-5-5",
+        "pattern_recognition": "claude-opus-5-5",
+        "emotional_resonance": "claude-opus-5-5",
+        "strategic_planning": "claude-opus-5-5",
+        "support": "claude-opus-5-5",
+        "memory": "claude-opus-5-5",
     },
     "glasshive-harness": {
-        "conscious": "codex-cli:gpt-5.6-sol",
-        "deep_memory": "codex-cli:gpt-5.6-sol",
+        "conscious": "codex-cli:gpt-6.1-sol",
+        "deep_memory": "codex-cli:gpt-6.1-sol",
     },
     "x_ai": {
-        "conscious": "grok-4.5",
-        "background_analysis": "grok-4.5",
-        "deep_memory": "grok-4.5",
-        "confirmation_bias": "grok-4.5",
-        "red_team": "grok-4.5",
-        "deep_research": "grok-4.5",
-        "productivity": "grok-4.5",
-        "parietal": "grok-4.5",
-        "pattern_recognition": "grok-4.5",
-        "emotional_resonance": "grok-4.5",
-        "strategic_planning": "grok-4.5",
-        "support": "grok-4.5",
-        "memory": "grok-4.5",
+        "conscious": "grok-4.7",
+        "background_analysis": "grok-4.7",
+        "deep_memory": "grok-4.7",
+        "confirmation_bias": "grok-4.7",
+        "red_team": "grok-4.7",
+        "deep_research": "grok-4.7",
+        "productivity": "grok-4.7",
+        "parietal": "grok-4.7",
+        "pattern_recognition": "grok-4.7",
+        "emotional_resonance": "grok-4.7",
+        "strategic_planning": "grok-4.7",
+        "support": "grok-4.7",
+        "memory": "grok-4.7",
     },
 }
 AGENT_ASSIGNMENT_ROLES = {
@@ -2016,18 +1995,18 @@ TEXT_FALLBACK_ASSIGNMENT_ROLE_BY_ID = {
     **BACKGROUND_AGENT_ASSIGNMENT_ROLE_BY_ID,
 }
 BACKGROUND_AGENT_REASONING_EFFORT_BY_ID = {
-    "agent_viventium_background_analysis_95aeb3": "medium",
-    "agent_viventium_deep_memory_95aeb3": "medium",
-    "agent_viventium_confirmation_bias_95aeb3": "medium",
-    "agent_viventium_red_team_95aeb3": "xhigh",
-    "agent_viventium_deep_research_95aeb3": "xhigh",
-    "agent_viventium_online_tool_use_95aeb3": "low",
-    "agent_viventium_parietal_cortex_95aeb3": "medium",
-    "agent_viventium_pattern_recognition_95aeb3": "medium",
-    "agent_viventium_emotional_resonance_95aeb3": "low",
+    "agent_viventium_background_analysis_95aeb3": "high",
+    "agent_viventium_deep_memory_95aeb3": "high",
+    "agent_viventium_confirmation_bias_95aeb3": "high",
+    "agent_viventium_red_team_95aeb3": "high",
+    "agent_viventium_deep_research_95aeb3": "high",
+    "agent_viventium_online_tool_use_95aeb3": "high",
+    "agent_viventium_parietal_cortex_95aeb3": "high",
+    "agent_viventium_pattern_recognition_95aeb3": "high",
+    "agent_viventium_emotional_resonance_95aeb3": "high",
     "agent_viventium_strategic_planning_95aeb3": "high",
-    "agent_viventium_support_95aeb3": "low",
-    "agent_8Y1d7JNhpubtvzYz3hvEv": "low",
+    "agent_viventium_support_95aeb3": "high",
+    "agent_8Y1d7JNhpubtvzYz3hvEv": "high",
 }
 BACKGROUND_AGENT_GLASSHIVE_REASONING_EFFORT_BY_ID = {
     **BACKGROUND_AGENT_REASONING_EFFORT_BY_ID,
@@ -2037,13 +2016,15 @@ BACKGROUND_AGENT_GLASSHIVE_REASONING_EFFORT_BY_ID = {
 MODEL_OVERRIDE_ROLES = AGENT_ASSIGNMENT_ROLES | {
     "glasshive_codex",
     "glasshive_claude",
+    "glasshive_grok",
 }
 
 MEMORY_HARDENING_LAUNCH_READY_MODELS = {
-    "anthropic": {"claude-opus-5", "claude-opus-4-8"},
-    "openai": {"gpt-5.5", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"},
+    "anthropic": {"claude-opus-5-5", "claude-opus-5", "claude-opus-4-8"},
+    "openai": {"gpt-6.1-sol", "gpt-5.5", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"},
 }
 MEMORY_HARDENING_OPENAI_EFFORTS_BY_MODEL = {
+    "gpt-6.1-sol": {"low", "medium", "high", "xhigh", "max"},
     "gpt-5.5": {"xhigh"},
     "gpt-5.6-sol": {"xhigh"},
     "gpt-5.6-terra": {"high"},
@@ -2063,10 +2044,10 @@ DEFAULT_MEMORY_HARDENING = {
     "dry_run_first": True,
     "min_apply_interval_seconds": 300,
     "provider_profile": "launch_ready_only",
-    "anthropic_model": "claude-opus-5",
-    "anthropic_effort": "xhigh",
-    "openai_model": "gpt-5.6-luna",
-    "openai_reasoning_effort": "medium",
+    "anthropic_model": "claude-opus-5-5",
+    "anthropic_effort": "high",
+    "openai_model": "gpt-6.1-sol",
+    "openai_reasoning_effort": "high",
     "transcripts": {
         "source_dir": "",
         "ignore_globs": [],
@@ -2082,11 +2063,11 @@ DEFAULT_MEMORY_HARDENING = {
     },
 }
 
-SCHEDULED_AGENT_LAUNCH_READY_MODELS = {"gpt-5.6-sol"}
+SCHEDULED_AGENT_LAUNCH_READY_MODELS = {"gpt-6.1-sol", "gpt-5.6-sol"}
 DEFAULT_SCHEDULED_AGENT = {
     "provider": "openai",
-    "model": "gpt-5.6-sol",
-    "reasoning_effort": "xhigh",
+    "model": "gpt-6.1-sol",
+    "reasoning_effort": "high",
 }
 
 
@@ -2106,15 +2087,15 @@ def resolve_scheduled_agent_settings(config: dict[str, Any]) -> dict[str, str]:
     ).strip().lower()
     if provider != "openai":
         raise SystemExit(
-            "runtime.scheduled_agent.provider must stay openai for the gpt-5.6-sol automation route"
+            "runtime.scheduled_agent.provider must stay openai for the gpt-6.1-sol automation route"
         )
     if model not in SCHEDULED_AGENT_LAUNCH_READY_MODELS:
         raise SystemExit(
-            "runtime.scheduled_agent.model must stay on the launch-ready gpt-5.6-sol automation route"
+            "runtime.scheduled_agent.model must stay on the launch-ready gpt-6.1-sol automation route"
         )
-    if effort != "xhigh":
+    if effort not in {"low", "medium", "high", "xhigh", "max"}:
         raise SystemExit(
-            "runtime.scheduled_agent.reasoning_effort must stay xhigh for public builds"
+            "runtime.scheduled_agent.reasoning_effort must be low, medium, high, xhigh, or max"
         )
     return {"provider": provider, "model": model, "reasoning_effort": effort}
 
@@ -2122,7 +2103,7 @@ MEMORY_TRANSCRIPT_RAG_MODES = {"detailed_summary_only", "raw_and_summary", "raw_
 
 FEELINGS_AGENT_SCOPES = {"all_agents", "conscious_agent"}
 FEELINGS_REACTION_ACTIVATION_MODES = {"always", "classified", "disabled"}
-FEELINGS_REACTION_PROVIDERS = {"openai", "anthropic", "xai", "groq", "google"}
+FEELINGS_REACTION_PROVIDERS = {"openai", "anthropic", "xai", "groq", "google", "glasshive-harness"}
 FEELINGS_REACTION_FALLBACK_PROVIDERS = FEELINGS_REACTION_PROVIDERS | {"none"}
 FEELINGS_REASONING_EFFORTS = {"none", "low", "medium", "high", "xhigh", "max"}
 FEELINGS_SERVICE_TIERS = {"auto", "default", "flex", "priority"}
@@ -2133,14 +2114,14 @@ DEFAULT_FEELINGS = {
     "reaction": {
         "activation_mode": "always",
         "provider": "openai",
-        "model": "gpt-5.6-terra",
+        "model": "gpt-6.1-sol",
         "use_responses_api": True,
-        "reasoning_effort": "none",
+        "reasoning_effort": "high",
         "fast": True,
         "service_tier": "priority",
         "timeout_ms": 15000,
         "fallback_provider": "anthropic",
-        "fallback_model": "claude-opus-5",
+        "fallback_model": "claude-opus-5-5",
         "activation_provider": "groq",
         "activation_model": "qwen/qwen3.6-27b",
         "activation_confidence_threshold": 0.55,
@@ -2165,18 +2146,18 @@ CURRENT_BACKGROUND_ACTIVATION_PROVIDER_ALIASES = {"groq"}
 OPTIONAL_BACKGROUND_ACTIVATION_PROVIDER_ALIASES = {"xai", "x_ai"}
 BACKGROUND_ACTIVATION_MODELS_BY_PROVIDER = {
     "groq": CURRENT_BACKGROUND_ACTIVATION_MODEL,
-    "xai": "grok-4.20-non-reasoning",
+    "xai": "grok-4.7",
 }
 XAI_GROK_45_MODEL_SPEC = {
-    "name": "grok-4.5",
-    "label": "Grok 4.5",
+    "name": "grok-4.7",
+    "label": "Grok 4.7",
     "description": "xAI Grok",
     "group": "xai",
     "groupIcon": "xai",
     "iconURL": "xai",
     "preset": {
         "endpoint": "xai",
-        "model": "grok-4.5",
+        "model": "grok-4.7",
     },
 }
 
@@ -2230,6 +2211,7 @@ CURATED_CUSTOM_ENDPOINTS = [
         "apiKeyEnv": "XAI_API_KEY",
         "baseURL": "https://api.x.ai/v1",
         "models": [
+            "grok-4.7",
             "grok-4.5",
             "grok-4.20-non-reasoning",
             "grok-4.20-multi-agent-0309",
@@ -2238,8 +2220,8 @@ CURATED_CUSTOM_ENDPOINTS = [
             "grok-2-vision-1212",
             "grok-2-image-1212",
         ],
-        "titleModel": "grok-4.5",
-        "summaryModel": "grok-4.5",
+        "titleModel": "grok-4.7",
+        "summaryModel": "grok-4.7",
         "modelDisplayLabel": "Grok",
         "fetch": True,
         "titleMethod": "completion",
@@ -2283,6 +2265,14 @@ CURATED_CUSTOM_ENDPOINTS = [
 
 GLASSHIVE_PROVIDER_ID = "glasshive-harness"
 GLASSHIVE_PROVIDER_MODELS = [
+    {"id": "codex-cli:gpt-6.1-sol", "label": "OpenAI / GPT-6.1 Sol", "harnessProfile": "codex-cli",
+     "effortChoices": ["low", "medium", "high", "xhigh", "max"], "recommendedEffort": "high", "contextLimit": 1050000},
+    {"id": "claude-code:claude-opus-5-5", "label": "Anthropic / Opus 5.5", "harnessProfile": "claude-code",
+     "effortChoices": ["default", "low", "medium", "high", "xhigh", "max"], "recommendedEffort": "high", "contextLimit": 1000000},
+    {"id": "grok-build:grok-4.7", "label": "Grok / Grok 4.7", "harnessProfile": "grok-build",
+     "effortChoices": ["default", "low", "medium", "high", "xhigh"], "recommendedEffort": "high", "contextLimit": 500000},
+    {"id": "grok-build:grok-4.7-build-fast", "label": "Grok / Grok 4.7 Fast", "harnessProfile": "grok-build",
+     "effortChoices": ["default", "low", "medium", "high", "xhigh"], "recommendedEffort": "high", "contextLimit": 500000},
     {
         "id": "codex-cli:gpt-6-astra",
         "label": "Codex / GPT-6 Astra",
@@ -2300,7 +2290,7 @@ GLASSHIVE_PROVIDER_MODELS = [
         "contextLimit": 1000000,
     },
     {
-        "id": GLASSHIVE_PROVIDER_MODEL_BY_WORKER_PROFILE["codex-cli"],
+        "id": "codex-cli:gpt-5.6-sol",
         "label": "Codex / GPT-5.6 Sol",
         "harnessProfile": "codex-cli",
         "effortChoices": [
@@ -2315,7 +2305,7 @@ GLASSHIVE_PROVIDER_MODELS = [
         "contextLimit": 272000,
     },
     {
-        "id": GLASSHIVE_PROVIDER_MODEL_BY_WORKER_PROFILE["claude-code"],
+        "id": "claude-code:opus",
         "label": "Claude / Opus",
         "harnessProfile": "claude-code",
         "effortChoices": ["default", "low", "medium", "high", "xhigh", "max"],
@@ -3413,6 +3403,29 @@ def resolve_runtime_profile(config: dict[str, Any]) -> tuple[str, dict[str, Any]
     return runtime_profile, profile
 
 
+LIBRECHAT_SERVE_MODES = ("development", "compiled")
+
+
+def resolve_librechat_serve_mode(config: dict[str, Any]) -> str:
+    """How a source install serves LibreChat: development servers (default) or compiled."""
+    runtime = config.get("runtime", {}) or {}
+    mode = str(runtime.get("librechat_serve_mode") or "development").strip().lower()
+    if mode not in LIBRECHAT_SERVE_MODES:
+        raise SystemExit("runtime.librechat_serve_mode must be development or compiled")
+    return mode
+
+
+def source_runtime_slot_id(app_support_dir: Path, api_port: Any) -> str:
+    """Stable Cortex delivery slot of one source install's API, as Native derives its own.
+
+    The production API has no development-port fallback and requires an explicit slot. One
+    backend serves one App Support root and API port, so both bind the slot: restarts reclaim
+    their own prior claims, while another install or dev environment gets a distinct slot.
+    """
+    material = f"{Path(app_support_dir).expanduser()}:{api_port}"
+    return "source-" + hashlib.sha256(material.encode("utf-8")).hexdigest()[:32]
+
+
 def parse_env_file(path: Path) -> dict[str, str]:
     values: dict[str, str] = {}
     if not path.exists():
@@ -3849,6 +3862,8 @@ def resolve_voice_provider_secret(
     voice: dict[str, Any],
     resolved_voice: dict[str, str],
     provider_name: str,
+    *,
+    shared_keychain_fallback: bool = True,
 ) -> str:
     provider_name = normalize_voice_tts_provider(provider_name)
     provider_keys = voice.get("provider_keys", {}) or {}
@@ -3892,7 +3907,7 @@ def resolve_voice_provider_secret(
             return resolved
 
     service = VOICE_PROVIDER_KEYCHAIN_SERVICES.get(provider_name)
-    if not service:
+    if not service or not shared_keychain_fallback:
         return ""
     return resolve_optional_secret(f"keychain://{service}")
 
@@ -4035,7 +4050,7 @@ def build_custom_endpoints(config: dict[str, Any] | None = None) -> list[dict[st
                     },
                     "titleConvo": True,
                     "titleEndpoint": "openAI",
-                    "titleModel": "gpt-5.6-terra",
+                    "titleModel": "gpt-6.1-sol",
                     "summarize": False,
                     "modelDisplayLabel": "xPerfect",
                     "dropParams": list(GLASSHIVE_PROVIDER_DROP_PARAMS),
@@ -4058,6 +4073,7 @@ def build_agent_provider_capabilities(config: dict[str, Any]) -> dict[str, Any]:
             "phase_b_followup": True,
             "activation_classifier": False,
             "realtime_voice": False,
+            "voice_pipeline_llm": True,
             "automatic_fallback_target": True,
             "serial_model_fallback": True,
             "workspace_binding": True,
@@ -4208,7 +4224,7 @@ def runtime_model_lists(
     # remain on the managed current default even when an owner supplies a role override. Keep that
     # managed model in the provider inventory while preserving every explicit override verbatim.
     model_lists: dict[str, list[str]] = {
-        "ANTHROPIC_MODELS": ["claude-opus-5"],
+        "ANTHROPIC_MODELS": ["claude-opus-5-5", "claude-opus-5"],
     }
     overrides = (config.get("llm", {}) or {}).get("model_overrides") or {}
     if isinstance(overrides, dict):
@@ -4248,7 +4264,7 @@ def worker_runtime_model_env(config: dict[str, Any]) -> dict[str, str]:
     openai_model = (
         model_override_for(config, "openai", "glasshive_codex")
         or model_override_for(config, "openai", "default")
-        or "gpt-5.6-sol"
+        or "gpt-6.1-sol"
     )
     values["WPR_MODEL_HOST_CODEX_CLI"] = openai_model
     values["WPR_MODEL_CODEX_CLI"] = openai_model
@@ -4256,10 +4272,12 @@ def worker_runtime_model_env(config: dict[str, Any]) -> dict[str, str]:
     anthropic_model = (
         model_override_for(config, "anthropic", "glasshive_claude")
         or model_override_for(config, "anthropic", "default")
-        or "claude-opus-5"
+        or "claude-opus-5-5"
     )
     values["WPR_MODEL_CLAUDE_CODE"] = anthropic_model
     values["WPR_MODEL_OPENCLAW_CLAUDE"] = anthropic_model
+    values["WPR_MODEL_GROK_BUILD"] = model_override_for(config, "x_ai", "glasshive_grok") or "grok-4.7"
+    values["WPR_GROK_REASONING_EFFORT"] = "high"
     return values
 
 
@@ -4395,7 +4413,7 @@ def apply_memory_assignment(
         agent.pop("fallback", None)
     model_parameters = copy.deepcopy(agent.get("model_parameters") or {})
     if provider == "openai":
-        model_parameters["reasoning_effort"] = "medium"
+        model_parameters["reasoning_effort"] = "high"
     elif provider == GLASSHIVE_PROVIDER_ID:
         selected = next(item for item in GLASSHIVE_PROVIDER_MODELS if item["id"] == model)
         model_parameters["model"] = model
@@ -4646,12 +4664,12 @@ def resolve_feelings_settings(config: dict[str, Any]) -> dict[str, Any]:
         reaction.get("activation_mode") or "always"
     ).strip().lower()
     reaction["provider"] = str(reaction.get("provider") or "openai").strip().lower()
-    reaction["model"] = str(reaction.get("model") or "gpt-5.6-terra").strip()
+    reaction["model"] = str(reaction.get("model") or "gpt-6.1-sol").strip()
     reaction["use_responses_api"] = resolve_bool(
         reaction.get("use_responses_api"), True
     )
     reaction["reasoning_effort"] = str(
-        reaction.get("reasoning_effort") or "none"
+        reaction.get("reasoning_effort") or "high"
     ).strip().lower()
     reaction["fast"] = resolve_bool(reaction.get("fast"), True)
     reaction["service_tier"] = str(
@@ -4664,7 +4682,7 @@ def resolve_feelings_settings(config: dict[str, Any]) -> dict[str, Any]:
         reaction.get("fallback_provider") or "anthropic"
     ).strip().lower()
     reaction["fallback_model"] = str(
-        reaction.get("fallback_model") or "claude-opus-5"
+        reaction.get("fallback_model") or "claude-opus-5-5"
     ).strip()
     reaction["activation_provider"] = str(
         reaction.get("activation_provider") or CURRENT_BACKGROUND_ACTIVATION_PROVIDER
@@ -4694,10 +4712,14 @@ def resolve_feelings_settings(config: dict[str, Any]) -> dict[str, Any]:
         )
     if reaction["provider"] not in FEELINGS_REACTION_PROVIDERS:
         raise SystemExit(
-            "runtime.feelings.reaction.provider must be openai, anthropic, xai, groq, or google"
+            "runtime.feelings.reaction.provider must be openai, anthropic, xai, groq, google, or glasshive-harness"
         )
     if not reaction["model"]:
         raise SystemExit("runtime.feelings.reaction.model must be non-empty")
+    if reaction["provider"] == GLASSHIVE_PROVIDER_ID and reaction["model"] not in {
+        str(model["id"]) for model in GLASSHIVE_PROVIDER_MODELS
+    }:
+        raise SystemExit("runtime.feelings.reaction.model must match a declared harness model")
     if reaction["reasoning_effort"] not in FEELINGS_REASONING_EFFORTS:
         raise SystemExit(
             "runtime.feelings.reaction.reasoning_effort must be none, low, medium, high, xhigh, or max"
@@ -4708,10 +4730,14 @@ def resolve_feelings_settings(config: dict[str, Any]) -> dict[str, Any]:
         )
     if reaction["fallback_provider"] not in FEELINGS_REACTION_FALLBACK_PROVIDERS:
         raise SystemExit(
-            "runtime.feelings.reaction.fallback_provider must be none, openai, anthropic, xai, groq, or google"
+            "runtime.feelings.reaction.fallback_provider must be none, openai, anthropic, xai, groq, google, or glasshive-harness"
         )
     if reaction["fallback_provider"] != "none" and not reaction["fallback_model"]:
         raise SystemExit("runtime.feelings.reaction.fallback_model must be non-empty")
+    if reaction["fallback_provider"] == GLASSHIVE_PROVIDER_ID and reaction["fallback_model"] not in {
+        str(model["id"]) for model in GLASSHIVE_PROVIDER_MODELS
+    }:
+        raise SystemExit("runtime.feelings.reaction.fallback_model must match a declared harness model")
     settings["reaction"] = reaction
 
     raw_bands = raw.get("bands", {}) if isinstance(raw, dict) else {}
@@ -4859,8 +4885,8 @@ def resolve_memory_hardening_settings(config: dict[str, Any]) -> dict[str, Any]:
         )
     if settings["openai_model"] not in MEMORY_HARDENING_LAUNCH_READY_MODELS["openai"]:
         raise SystemExit("runtime.memory_hardening.openai_model must stay in launch-ready OpenAI families")
-    if settings["anthropic_effort"] != "xhigh":
-        raise SystemExit("runtime.memory_hardening.anthropic_effort must stay xhigh for public builds")
+    if settings["anthropic_effort"] not in {"low", "medium", "high", "xhigh", "max"}:
+        raise SystemExit("runtime.memory_hardening.anthropic_effort must be low, medium, high, xhigh, or max")
     allowed_openai_efforts = MEMORY_HARDENING_OPENAI_EFFORTS_BY_MODEL.get(
         settings["openai_model"], set()
     )
@@ -5753,7 +5779,7 @@ def render_runtime_env(
             env.setdefault(
                 "WPR_MODEL_CLAUDE_CODE",
                 model_override_for(config, "anthropic", "glasshive_claude")
-                or "opus",
+                or "claude-opus-5-5",
             )
             env["WPR_CLAUDE_CODE_EFFORT"] = str(
                 glasshive_host_worker["claude_effort"]
@@ -6254,6 +6280,9 @@ def render_runtime_env(
             telegram_settings.get("stt_provider", ""),
             "integrations.telegram.stt_provider",
         )
+        env["VIVENTIUM_TELEGRAM_STT_PROVIDER_SOURCE"] = (
+            "explicit" if telegram_stt_provider else "inherited"
+        )
         if not telegram_stt_provider:
             # Telegram must stay in STT parity with the configured voice route by default.
             # Operators can override Telegram only through integrations.telegram.stt_provider;
@@ -6711,7 +6740,17 @@ def render_runtime_env(
             or DEFAULT_XAI_TTS_SAMPLE_RATE
         )
         env["VIVENTIUM_XAI_TTS_BIT_RATE"] = configured_tts_bit_rate or DEFAULT_XAI_TTS_BIT_RATE
-    assemblyai_key = resolve_voice_provider_secret(voice, resolved_voice, "assemblyai")
+
+    # Voice-provider secrets exist only for an enabled voice capability. An isolated dev env
+    # resolves only the refs its own config names; it never borrows the shared machine Keychain.
+    def voice_provider_secret(provider_name: str) -> str:
+        if resolved_voice["mode"] == "disabled":
+            return ""
+        return resolve_voice_provider_secret(
+            voice, resolved_voice, provider_name, shared_keychain_fallback=not dev_env["enabled"]
+        )
+
+    assemblyai_key = voice_provider_secret("assemblyai")
     if assemblyai_key:
         env["ASSEMBLYAI_API_KEY"] = assemblyai_key
     # Engine selection: canonical `voice.stt.model` picks the AssemblyAI streaming model; default to
@@ -6750,12 +6789,12 @@ def render_runtime_env(
             stt_config.get("vad_activation_threshold")
         ).strip()
 
-    eleven_key = resolve_voice_provider_secret(voice, resolved_voice, "elevenlabs")
+    eleven_key = voice_provider_secret("elevenlabs")
     if eleven_key:
         env["ELEVENLABS_API_KEY"] = eleven_key
         env["ELEVEN_API_KEY"] = eleven_key
 
-    cartesia_key = resolve_voice_provider_secret(voice, resolved_voice, "cartesia")
+    cartesia_key = voice_provider_secret("cartesia")
     if cartesia_key:
         env["CARTESIA_API_KEY"] = cartesia_key
 
@@ -6765,7 +6804,7 @@ def render_runtime_env(
         and any(alias in voice_provider_keys for alias in ("xai", "x_ai", "grok", "xai_grok_voice"))
     )
     if "xai" in {resolved_voice["tts_provider"], resolved_voice["tts_provider_fallback"]} or has_xai_voice_provider_key:
-        xai_voice_key = resolve_voice_provider_secret(voice, resolved_voice, "xai")
+        xai_voice_key = voice_provider_secret("xai")
         if xai_voice_key:
             env["VIVENTIUM_XAI_TTS_API_KEY"] = xai_voice_key
 
@@ -6866,6 +6905,14 @@ def render_runtime_env(
         env["GOOGLE_API_KEY"] = env["GOOGLE_KEY"]
     ensure_user_provided_endpoint_surfaces(env)
 
+    # Compiled serving profile: the launcher serves the production API and the built client
+    # bundle. Development (the default) emits nothing, so existing installs stay byte-identical.
+    if resolve_librechat_serve_mode(config) == "compiled":
+        env["VIVENTIUM_LIBRECHAT_SERVE_MODE"] = "compiled"
+        env["VIVENTIUM_RUNTIME_SLOT_ID"] = source_runtime_slot_id(
+            runtime_app_support_dir, profile["lc_api_port"]
+        )
+
     return env
 
 
@@ -6883,6 +6930,9 @@ def render_native_runtime_env(config: dict[str, Any], env: dict[str, str]) -> di
         "VIVENTIUM_EXPERIMENTAL_DIRECT_SUBSCRIPTION_AUTH",
         "VIVENTIUM_LOCAL_SUBSCRIPTION_AUTH",
         "VIVENTIUM_REGISTRATION_APPROVAL",
+        # Source-install serving; Native owns its own compiled serving and delivery slot.
+        "VIVENTIUM_LIBRECHAT_SERVE_MODE",
+        "VIVENTIUM_RUNTIME_SLOT_ID",
     }
     denied_name_fragments = ("SECRET", "TOKEN", "PASSWORD", "CREDENTIAL", "API_KEY")
     denied_suffixes = ("_DIR", "_FILE", "_ORIGIN", "_PATH", "_PORT", "_ROOT", "_URL")
@@ -6997,7 +7047,7 @@ def render_native_agents_bundle(
         if conscious_provider == GLASSHIVE_PROVIDER_ID:
             main_agent["model_parameters"] = {
                 "model": conscious_model,
-                "reasoning_effort": "medium",
+                "reasoning_effort": "high",
             }
             glasshive_options = main_agent.get("glasshive_options")
             if (
@@ -7011,12 +7061,12 @@ def render_native_agents_bundle(
         elif conscious_provider == "openai":
             main_agent["model_parameters"] = {
                 "model": conscious_model,
-                "reasoning_effort": "medium",
+                "reasoning_effort": "high",
                 "useResponsesApi": True,
             }
             main_agent.pop("glasshive_options", None)
         elif conscious_provider == "anthropic":
-            main_agent["model_parameters"] = {"model": conscious_model}
+            main_agent["model_parameters"] = {"model": conscious_model, "effort": "high"}
             main_agent.pop("glasshive_options", None)
 
     background_agents = bundle.get("backgroundAgents")
@@ -7053,7 +7103,7 @@ def render_native_agents_bundle(
                 }
                 agent.pop("glasshive_options", None)
             elif provider == "anthropic":
-                parameters: dict[str, Any] = {"model": model}
+                parameters: dict[str, Any] = {"model": model, "effort": effort}
                 if effort == "xhigh":
                     parameters["thinkingBudget"] = 4000
                 elif effort == "high":
@@ -7310,6 +7360,8 @@ def build_mcp_servers(
     config: dict[str, Any],
     profile: dict[str, int],
     default_main_agent_id: str,
+    *,
+    native_payload: bool = False,
 ) -> dict[str, Any]:
     integrations = config.get("integrations", {}) or {}
     health = integrations.get("health", {}) if isinstance(integrations, dict) else {}
@@ -7394,7 +7446,10 @@ def build_mcp_servers(
             "serverInstructions": True,
             "viventiumTrustedServerInstructions": True,
         }
-    if config.get("install", {}).get("mode") == "native" and "scheduling-cortex" in servers:
+    # Only the packaged Native supervisor supplies these transport values. A source
+    # checkout with install.mode=native is launched from runtime.env and keeps the
+    # source transports, so every librechat.yaml reference stays resolvable there.
+    if native_payload and "scheduling-cortex" in servers:
         servers["scheduling-cortex"]["headers"]["Authorization"] = "Bearer ${SCHEDULING_MCP_API_KEY}"
     if integrations.get("sequential_thinking", {}).get("enabled", True):
         servers["sequential-thinking"] = {
@@ -7404,7 +7459,7 @@ def build_mcp_servers(
             "timeout": 300000,
             "chatMenu": True,
         }
-        if config.get("install", {}).get("mode") == "native":
+        if native_payload:
             servers["sequential-thinking"]["command"] = "${VIVENTIUM_NATIVE_NODE_BINARY}"
             servers["sequential-thinking"]["args"] = ["${VIVENTIUM_NATIVE_SEQUENTIAL_THINKING_ENTRYPOINT}"]
 
@@ -7604,6 +7659,8 @@ def render_librechat_yaml(
     config: dict[str, Any],
     assignments: dict[str, tuple[str, str]],
     env: dict[str, str],
+    *,
+    native_payload: bool = False,
 ) -> str:
     llm = config["llm"]
     agents = config.get("agents", {}) or {}
@@ -7641,7 +7698,9 @@ def render_librechat_yaml(
         "mcpSettings": {
             "allowedDomains": build_mcp_allowed_domains(config),
         },
-        "mcpServers": build_mcp_servers(config, profile, default_main_agent_id),
+        "mcpServers": build_mcp_servers(
+            config, profile, default_main_agent_id, native_payload=native_payload
+        ),
         "endpoints": {
             "agents": {
                 "disableBuilder": False,
@@ -7825,6 +7884,12 @@ def render_service_envs(output_dir: Path, env: dict[str, str]) -> None:
         "VIVENTIUM_DELIVERY_ACK_ENDPOINT",
         "VIVENTIUM_TELEGRAM_STATE_DIR",
         "VIVENTIUM_TELEGRAM_STT_PROVIDER",
+        "VIVENTIUM_TELEGRAM_STT_PROVIDER_SOURCE",
+        "VIVENTIUM_ASSEMBLYAI_STT_MODEL",
+        "VIVENTIUM_ASSEMBLYAI_END_OF_TURN_CONFIDENCE_THRESHOLD",
+        "VIVENTIUM_ASSEMBLYAI_MIN_END_OF_TURN_SILENCE_WHEN_CONFIDENT_MS",
+        "VIVENTIUM_ASSEMBLYAI_MAX_TURN_SILENCE_MS",
+        "VIVENTIUM_ASSEMBLYAI_FORMAT_TURNS",
         "VIVENTIUM_TELEGRAM_MAX_FILE_SIZE",
         "VIVENTIUM_TELEGRAM_BOT_API_ORIGIN",
         "VIVENTIUM_TELEGRAM_BOT_API_BASE_URL",
@@ -8099,7 +8164,8 @@ def render_telegram_codex_settings(config: dict[str, Any], output_dir: Path) -> 
         },
         "codex": {
             "command": "codex",
-            "model": "gpt-5.4",
+            "model": str(telegram_codex.get("model") or "gpt-6.1-sol"),
+            "reasoning_effort": str(telegram_codex.get("reasoning_effort") or "high"),
             "sandbox": "workspace-write",
             "approval_policy": "never",
             "skip_git_repo_check": False,
@@ -8607,6 +8673,14 @@ def main() -> None:
     )
     parser.add_argument("--dry-run", action="store_true", help="Validate and print summary without writing files")
     parser.add_argument(
+        "--native-payload",
+        action="store_true",
+        help=(
+            "Render the immutable Native payload defaults, whose supervisor supplies the "
+            "bundled MCP transports. Source checkouts, including install.mode=native, omit it."
+        ),
+    )
+    parser.add_argument(
         "--check-prompt-drift",
         action="store_true",
         help="Compare the live installed prompt-bundle.json against the current source registry.",
@@ -8714,6 +8788,8 @@ def main() -> None:
             parser.error("installed identity is outside the active runtime directory")
     config = load_yaml(config_path)
     validate_config(config, config_path)
+    if args.native_payload and config["install"]["mode"] != "native":
+        parser.error("--native-payload requires install.mode=native")
     config, scheduling_migrated = migrate_legacy_scheduling_enablement(
         config,
         resolve_scheduling_predecessor_runtime_env(config_path, output_dir),
@@ -8735,7 +8811,9 @@ def main() -> None:
     orchestration_settings = resolve_glasshive_orchestration_settings(config)
     readiness_facts_path = output_dir / "parallel-work-readiness-facts.json"
     artifact_identity_path = output_dir / "parallel-work-artifact-identity.json"
-    librechat_yaml = render_librechat_yaml(config, assignments, env)
+    librechat_yaml = render_librechat_yaml(
+        config, assignments, env, native_payload=args.native_payload
+    )
     native_agents_bundle = None
     if config["install"]["mode"] == "native":
         rendered_librechat = yaml.safe_load(librechat_yaml) or {}

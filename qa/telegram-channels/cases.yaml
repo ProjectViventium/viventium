@@ -4,6 +4,9 @@ requirementOwner:
   - docs/requirements_and_learnings/03_Telegram_Bridge.md
   - docs/requirements_and_learnings/25_Scheduling_Telegram_UX_Fixes.md
 statusPolicy: Run results belong in dated, candidate-bound reports.
+reports:
+  - qa/modern-playground-voice/reports/2026-10-03-voice-and-telegram-acceptance.md
+  - qa/modern-playground-voice/reports/2026-09-30-native-harness-parity-and-observability.md
 sourceInventories:
   - qa/telegram-detached-api-stability/cases.md
   - qa/telegram-document-attachments/cases.md

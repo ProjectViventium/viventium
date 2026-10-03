@@ -14,4 +14,7 @@
 - Voice-gateway regression tests pass after the change.
 
 ## Evidence
-- [report.md](report.md)
+
+- [Current scoped Voice and Telegram acceptance, 2026-10-03](../modern-playground-voice/reports/2026-10-03-voice-and-telegram-acceptance.md): actual Main speech began before the tool-bearing native turn ended; physical response under two seconds remains unmet. This bounded result does not execute the complete Cartesia/fallback matrix below.
+- [Retained native-harness evidence, 2026-09-30](../modern-playground-voice/reports/2026-09-30-native-harness-parity-and-observability.md): incremental text-to-TTS and stage measurements for unchanged paths.
+- [Original provider-wrapper report](report.md).

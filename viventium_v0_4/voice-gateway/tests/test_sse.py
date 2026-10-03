@@ -588,6 +588,21 @@ class TestSSEParser(unittest.IsolatedAsyncioTestCase):
         display = VoiceControlDisplayFilter()
         cleaned = display.feed("Use 1 < 2 and [note: important].")
         self.assertEqual(cleaned, "Use 1 < 2 and [note: important].")
+
+    def test_voice_control_display_filter_preserves_markdown_target_across_label_boundary(self) -> None:
+        for chunks in (
+            ["Read [the report](https://example.invalid/file?revision=2&view=owner)."],
+            ["Read [the ", "report]", "(https://example.invalid/file?revision=2&view=owner)."],
+            ["Read [sigh]", "(https://example.invalid/file?revision=2&view=owner)."],
+        ):
+            with self.subTest(chunks=chunks):
+                display = VoiceControlDisplayFilter()
+                actual = "".join(display.feed(value) for value in chunks)
+                actual += display.feed("", final=True)
+                self.assertEqual(actual, "".join(chunks))
+        display = VoiceControlDisplayFilter()
+        self.assertEqual(display.feed("[sigh]"), "")
+        self.assertEqual(display.feed("", final=True), "")
     # === VIVENTIUM END ===
 
     def test_extract_text_deltas_preserves_space_only_chunks(self) -> None:

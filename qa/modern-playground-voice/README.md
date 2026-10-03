@@ -6,6 +6,15 @@ Verify the complete authenticated Call/Wing/Listen-Only experience: one-click co
 conversation, truthful task/tool/source activity, automatic speaker separation, interruption and
 cancellation, reconnect/persistence, post-call memory boundaries, and extended-call reliability.
 
+## Latest scoped result
+
+The [2026-10-03 Voice and Telegram acceptance](reports/2026-10-03-voice-and-telegram-acceptance.md)
+records current defaults, saved voice selectors, spoken recall, early streamed speech and one
+worker completion through actual browser audio and durable settlement. Overall acceptance is
+PARTIAL: default microphone action authority, rejected hosted Listening recovery, original-owner
+Web sign-in, public-edge acceptance and the two-second target remain open. Retained unchanged-path
+evidence is linked in that report; it does not close the full MPV-061 journey or endurance gate.
+
 ## Acceptance Contract
 
 - An authenticated LibreChat conversation on `http://localhost:3190` shows the phone-button voice

@@ -1385,7 +1385,7 @@ def brain_setup_state(
         return "Needs setup", feature_guidance(key)
     if key == "glasshive":
         if resolve_bool((integrations.get("glasshive") or {}).get("enabled"), False):
-            return configured_unverified("GlassHive enabled")
+            return configured_unverified("xPerfect enabled")
         return "Needs setup", feature_guidance(key)
     if key == "prompt_workbench":
         if resolve_bool((runtime.get("prompt_workbench") or {}).get("enabled"), False):
@@ -1739,9 +1739,9 @@ def build_service_rows(
         )
         rows.append(
             (
-                "GlassHive",
+                "xPerfect",
                 glasshive_status,
-                f"{glasshive_url or 'Local GlassHive runtime'}{provider_detail} | default worker: {worker_profile}",
+                f"{glasshive_url or 'Local xPerfect runtime'}{provider_detail} | default worker: {worker_profile}",
             )
         )
 
@@ -2163,7 +2163,7 @@ def build_connected_accounts_notice(config: dict[str, Any], runtime_env: dict[st
     if glasshive_provider_enabled:
         lines.append(
             f"{next_step}. Verify [bold]Codex CLI[/bold] authentication on this Mac so the shipped "
-            "GlassHive-backed Viventium Main and background cortices can run; authenticate Claude Code too if you select "
+            "xPerfect-backed Viventium Main and background cortices can run; authenticate Claude Code too if you select "
             "the Claude harness model."
         )
         next_step += 1

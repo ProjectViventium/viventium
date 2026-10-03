@@ -10,7 +10,8 @@ pairing:
 
 codex:
   command: "codex"
-  model: "gpt-5.4"
+  model: "gpt-6.1-sol"
+  reasoning_effort: "high"
   sandbox: "workspace-write"
   approval_policy: "never"
   skip_git_repo_check: false

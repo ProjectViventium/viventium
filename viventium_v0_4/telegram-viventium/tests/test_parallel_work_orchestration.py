@@ -13,7 +13,7 @@ def _preference_payload(
 ):
     payload = {
         "available": available,
-        "mode": "parallel" if available and enabled else "focused",
+        "mode": "parallel" if enabled else "focused",
         "hasKnownWork": has_known_work,
     }
     if release_gate is not None:
@@ -738,21 +738,41 @@ def test_settings_text_reports_account_wide_unavailable_and_enabled_states():
     assert "unavailable" in orchestration.format_parallel_work_settings(unavailable).lower()
 
 
-def test_settings_text_keeps_pre_gate_label_and_blockers_visible():
+def test_ready_owner_text_has_no_deployment_certification_banner():
+    snapshot = orchestration.parse_snapshot(
+        _preference_payload(enabled=True), _active_work_payload(items=[_work_payload()])
+    )
+
+    for text in (
+        orchestration.format_parallel_work_settings(snapshot),
+        orchestration.format_active_work(snapshot),
+    ):
+        assert "On" in text
+        assert "NOT READY" not in text
+        assert "release_owner_unavailable" not in text
+    assert "Research durable workers" in orchestration.format_active_work(snapshot)
+
+
+def test_settings_text_preserves_choice_and_operational_blocker_during_owner_outage():
     snapshot = orchestration.parse_snapshot(
         _preference_payload(
             enabled=True,
+            available=False,
+            has_known_work=True,
             release_gate={
-                "label": "PRE-GATE / NOT READY",
-                "blockers": ["PWK-UC-014", "STORAGE-PRESSURE"],
+                "label": "NOT READY",
+                "blockers": ["operational_readiness_unavailable"],
             },
         )
     )
 
     text = orchestration.format_parallel_work_settings(snapshot)
 
-    assert "PRE-GATE / NOT READY" in text
-    assert "PWK-UC-014, STORAGE-PRESSURE" in text
+    assert snapshot.parallel_work_enabled is True
+    assert snapshot.parallel_work_available is False
+    assert snapshot.has_known_work is True
+    assert "NOT READY" in text
+    assert "operational_readiness_unavailable" in text
 
 
 def test_unavailable_launch_switch_keeps_known_work_visible_and_pageable():

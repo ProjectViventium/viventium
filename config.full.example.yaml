@@ -102,9 +102,9 @@ runtime:
       # always is the natural default. classified reuses the existing cortex activation detector.
       activation_mode: always
       provider: openai
-      model: gpt-5.6-terra
+      model: gpt-6.1-sol
       use_responses_api: true
-      reasoning_effort: none
+      reasoning_effort: high
       # Fast maps to OpenAI Priority processing; service_tier remains explicit and overridable.
       fast: true
       service_tier: priority
@@ -112,7 +112,7 @@ runtime:
       # A declared recovery route keeps the detached reaction moving if Terra times out.
       # Set fallback_provider to none to disable it.
       fallback_provider: anthropic
-      fallback_model: claude-opus-5
+      fallback_model: claude-opus-5-5
       activation_provider: groq
       activation_model: qwen/qwen3.6-27b
       activation_confidence_threshold: 0.55
@@ -144,10 +144,10 @@ runtime:
     require_full_lookback: true
     dry_run_first: true
     provider_profile: launch_ready_only
-    anthropic_model: claude-opus-5
-    anthropic_effort: xhigh
-    openai_model: gpt-5.6-luna
-    openai_reasoning_effort: medium
+    anthropic_model: claude-opus-5-5
+    anthropic_effort: high
+    openai_model: gpt-6.1-sol
+    openai_reasoning_effort: high
     transcripts:
       # Optional local folder for meeting transcripts. Empty disables transcript ingestion.
       source_dir: ""
@@ -217,7 +217,7 @@ llm:
   # The provider must already be authenticated above; this does not configure automatic fallback.
   # memory:
   #   provider: anthropic
-  #   model: claude-opus-5
+  #   model: claude-opus-5-5
   extra_provider_keys:
     openrouter: keychain://viventium/openrouter_api_key
 voice:
@@ -325,8 +325,8 @@ integrations:
       # prove that an assigned broker web capability cannot be bypassed by the worker CLI.
       # native_web_access: inherit
       # Quality-first default for host Codex work and unattended analytical automations.
-      codex_model: gpt-5.6-sol
-      codex_reasoning_effort: xhigh
+      codex_model: gpt-6.1-sol
+      codex_reasoning_effort: high
       codex_xhigh_route_proven: true
       # Override only for a deployment whose directly tested route supports a different subset.
       # codex_allowed_reasoning_efforts: ["none", "low", "medium", "high", "xhigh"]

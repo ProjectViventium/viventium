@@ -3,12 +3,11 @@
 Scope: brokered projection of LibreChat-managed MCP capabilities into GlassHive workers without
 copying provider credentials or letting the host chat model choose connected-account tools.
 
-Live browser QA must use a copied non-owner local QA account with connected-account credentials. Do
-not treat an unauthenticated Playwright profile, empty duplicate account, or owner account as valid
-evidence. Before running `GH-MCP-BROKER-014`, verify by metadata counts only that the QA account has
-the expected Google/MS365/model credential rows; if it does not, locally reseed or reconnect that QA
-account from the owner account under the private user-data folder, preserving the owner account and
-never writing token values or private message content into public QA artifacts.
+When selected, live broker QA needs an explicitly authorized isolated account and its own approved
+connections. Verify readiness using non-secret metadata. Missing access is a named prerequisite;
+do not copy owner credentials or seed private state merely to make QA run. Use the supported
+connection flow within existing authorization and preserve any required human-only grant. Keep
+tokens and private messages out of public evidence.
 
 Owning docs:
 

@@ -5,6 +5,11 @@
 Telegram messages must route through the main LibreChat Agents pipeline by default. Responses
 stream back to Telegram through the existing bridge.
 
+The separate `telegram-codex` native relay defaults to `gpt-6.1-sol` with `high`
+reasoning effort on new and resumed turns. Its generated settings and native CLI arguments
+must agree. Explicit supported model and effort settings remain available; this relay does
+not select the main Viventium Telegram bridge's model.
+
 ## Core Requirements
 
 - Telegram users receive complete responses or a clear error if the agent or voice stack disconnects.
@@ -31,6 +36,57 @@ stream back to Telegram through the existing bridge.
   into the new user-authored message. Core resolves assistant ownership from the authenticated
   owner, current chat, and durable outbound Telegram message-ID receipt. Unknown or foreign
   provenance yields `cannot verify`; it must never produce an authorship denial or spoof claim.
+- Core resolves that descriptor when it admits the turn, and the typed result becomes the turn's
+  `reply_context`. A retained (prepared) input takes the replied message from its own durable
+  ingress preparation, so its first admission and every replay present the same quote. The
+  adapter's descriptor of that same message may only add text it extracted from a quoted document.
+  Without a receipt, Telegram's own sender data decides whether the quote is the owner's, another
+  participant's, or unknown. Each receipt maps a Telegram message to the message it presented, so a
+  reply to a late addition names the addition and a reply to the answer names the answer. The route
+  used to ignore the adapter's descriptor entirely, so Main received no quote at all, even when its
+  answer happened to be right from history.
+- A quote stays with its own input:
+  - When Telegram reports the passage the user selected (`message.quote`), that passage is the
+    quote, not the whole replied message; the preparation saves it.
+  - The ready record keeps the text the adapter extracted from the input's quoted document, by
+    Telegram file ID, so an identity-only continuation or replay presents the same quoted facts
+    as the first admission.
+  - Each source segment carries its own typed quote. When a deferred quoted input joins a newer
+    input's turn, Main receives one quoted-evidence capsule per quoted input it owns, labelled
+    with the same S-number as the rapid source selection. The native delegation contract still
+    carries source text only.
+  - Telegram's additive (`response_only`) invocation owns its current input and every input
+    that no committed invocation authors. The rapid source selection lists the owned sources with
+    their turn S-numbers, and Main receives each owned input's quote.
+    - A claim only reserves a revision. The claim that first admits a source marks its
+      `authoring_revision` provisionally.
+    - A revision authors sources only at its request's generation handoff: after admission and
+      every request step that can fail, just before its input binds to the stream. Its job first
+      stores the final context, then the commit is recorded. At that commit, each source's author
+      is the earliest committed revision that carried it, else the committing revision.
+    - The commit takes over every earlier revision without a commit, which can then never commit.
+    - A refused commit removes the job and returns the claim.
+    - A commit whose replies are lost is reconciled from the ledger. If its outcome stays unknown,
+      it is relinquished and retried, never read as a refusal.
+    - A binding or started receipt that fails after the commit gives the authorship back.
+    - These facts live in the logical turn's author ledger, which outlives the turn's retirement.
+      So a winner still owns a reservation it fenced after another conversation replaces the turn,
+      and the new conversation never authors the old one.
+    - A revision claimed before the ledger existed is an author only while its job exists. A bare
+      reservation is fenced, and its sources belong to the winner. Retiring the turn keeps that
+      disposition in the ledger.
+    - A delivery's coverage marks each source its revision authored. An input not bound to its
+      own started stream settles only through the answer that authored it. So an author that
+      never ran cannot leave its input silently settled: the input is re-driven, or it records
+      the honest `source_input_uncovered` failure.
+    - The rule covers three shapes. An input deferred before any claim belongs to the combined
+      answer. So does the input of a reservation that loses its admission race. An input whose
+      earlier revision committed stays with that invocation.
+    - Before this rule, the consumer dropped every earlier quote in `response_only`, so the
+      combined answer took newer figures from history (S0942). Claim-time marks alone then
+      mistook a reservation for an author. A commit recorded before its job context, or lost
+      with a retired turn, made the same mistake. So did one recorded before request steps that
+      could still fail, and one whose lost reply was taken as a refusal.
 - For a session-backed conversation provider, the resolved `ReplyContextV1` must travel in the
   bounded invocation-local turn-context channel immediately with the current user turn. Storing it
   only in mutable bootstrap/developer instructions is insufficient because a resumed native
@@ -49,7 +105,66 @@ stream back to Telegram through the existing bridge.
   a durable Telegram delivery row. The bot may use in-turn polling as a fast path, but late worker
   results must still be claimed from the delivery ledger and sent automatically in the same
   Telegram chat after the original poll window ends or after a bot restart.
+- Prepared Telegram input must persist its source-message identity, conversation generation,
+  preparation state, claim/lease and recovery fields through the real ingress schema. Active
+  preparation has no expiry; terminal and legacy rows retain the existing expiry requirement.
+  The route uses the same exported canonical-conversation and accepted-source helpers as Main.
+- A permanent upload preparation failure settles every verified source claim in its media group
+  through the existing intake transaction. Each original source remains retained with a typed
+  failure; no partial attachment group starts a turn. Recovery reconciles older or late unadmitted
+  siblings from the same owner, chat, thread, conversation, generation and source scope. A late
+  member cannot become ready after its group permanently failed. Prepared or admitted inputs are
+  protected, retryable groups recover together, and a failed group cannot block later intake
+  settlement. A refused late member or conflicting group claim returns one non-retryable attachment
+  error asking the user to resend the whole group; it must not start an assistant turn or appear as
+  a generic connection error. A conflicting claim settles only its verified, live, unprepared
+  primary through the existing guarded status transaction; rejected related claims are untouched.
+  Recovery then closes its verified unadmitted siblings, without admitting the refused turn or
+  blocking later inputs. Other owner, lease and admitted-source guards keep their own errors.
+- Replay of a prepared input must retain its original owner-bound parent when the selected tip is
+  that same input or its interrupted provisional response. Later corrections retain their current
+  continuation parent. A saved legacy self-parent or missing provisional parent may be projected
+  through its verified retained original anchor without rewriting stored history; foreign, deleted,
+  missing or untrusted anchors remain refused.
 - Telegram must deliver LibreChat message attachments back to the Telegram user.
+  Native Main's intentionally published files follow the same contract: xPerfect records selected
+  output descriptors on its canonical durable response, and Core verifies the current owner,
+  conversation, message, stream, agent, turn, invocation, signed origin, MIME, length and SHA-256
+  before storing a normal File attachment. Existing selected files may be published; reading or
+  referring to a workspace file does not select it for export. Selected files become Telegram
+  documents through the existing authorized download and document sender. A native tool render is
+  local to the harness and is not channel delivery. The model persists its own requested output in
+  the admitted workspace or managed `TMPDIR` when needed and selects it in the final answer;
+  viewed images, screenshots, and discussed uploads remain context unless selected for delivery.
+  Distinct filenames may
+  contain identical bytes. The configured Core limits and existing Telegram document limit apply
+  before fetching and while reading bytes. An import failure preserves useful text and persists an
+  unavailable attachment receipt; the web and Telegram show an honest unavailable or size notice,
+  with no fabricated File or download. Replay retains saved attachments and does not regenerate
+  output. Byte-verified real-surface acceptance remains required for delivery claims.
+  The selected source may be in the admitted workspace or that worker's managed `TMPDIR`.
+  Arbitrary host folders do not become export roots. Explicit selection retains existing authorized
+  input-file returns; automatic discovery keeps its stricter operational-folder exclusions.
+  Existing traversal, private-name, symlink and hard-link checks apply to selected sources.
+  Rejected selections retain a basename and typed unavailable reason, even when no file succeeds.
+  Core's configured file count, per-file size and aggregate size bounds apply before import.
+  A completed agent transfer retains its verified selected-file carrier, including the original
+  publisher identity. It emits no intermediate attachment. The eventual successful visible final
+  imports each retained publication once through the same checks and attachment path. Hidden or
+  refused finals and interrupted graphs must not publish retained files.
+  A consultant transfer without a usable delivery identity retains its result but omits the
+  selected-file carrier. An assistant response with selected files still requires that identity;
+  missing identity remains a typed failure. The host import guards are unchanged.
+  Core imports verified signed artifact paths through the configured authenticated native provider
+  route, while retaining the original configured public-origin validation. Public links remain
+  public. The transport cannot change the grant path or bypass owner, expiry, byte or storage
+  checks. A changed or unavailable provider route remains an unavailable attachment; it does not
+  trigger an alternate public fetch. Transport diagnostics retain only request hash, status,
+  duration and a bounded error class, without URL, headers, credentials or response body.
+- Authored captions must survive native media formatting on both the current turn and retained
+  history. Known inline native media uses the existing hydrated media carrier, preserving bytes and
+  distinct items while avoiding exact duplicate hydration. Unknown content stays available for
+  validation; owner, ancestry and authored-text checks remain enforced.
 - Native conversation requests must carry the verified current upload ledger in their signed
   bootstrap, including an attachment-only turn. GlassHive resolves the original bytes under the
   authenticated owner's storage root and includes the workspace attachment paths in the current
@@ -155,17 +270,59 @@ Prompt-layer ownership and the runtime-vs-prompt boundary are also recorded in
 
 ## Telegram Voice and Call Behavior
 
-- Voice-note transcription must use the Telegram bridge STT provider. By default,
+- Voice-note and video-note transcription must use the linked user's current saved Listening
+  provider and model. The bot reads that authenticated selection alongside the independent media
+  download, before recognition; an older response's cached route is not selection authority.
+  Without a saved choice, the configured Telegram default applies. By default,
   `integrations.telegram.stt_provider` is empty and Telegram inherits the configured global voice
   STT provider, including local Whisper/whisper.cpp. The compiler must not silently remap local
   Whisper to OpenAI, AssemblyAI, or any hosted provider just because Telegram is a long-running
-  ingress process. Hosted providers are explicit Telegram overrides only.
+  ingress process. Hosted routes require a saved Listening choice or configured provider.
+  Compiler metadata distinguishes an explicit Telegram override from an inherited default.
+  Missing selection authority, provider credentials or unsupported configuration must stop
+  recognition honestly; they must not choose another model or provider.
 - Voice-note and video-note download/transcription failures must return one clean Telegram error and
   stop before chat submission.
+  Selected hosted recognition preserves typed authentication, access, rate-limit, timeout,
+  temporary-unavailable and request-rejected failures. A missing or placeholder credential is an
+  authentication blocker before any request. A generic client rejection does not prove an
+  unsupported model. Provider response bodies, credential samples and endpoint URLs must not
+  enter transcription logs or public errors. Exact selected route/model, whole input, one request
+  and owned session cleanup remain unchanged.
 - Voice-note and video-note transcription must share the same non-blocking serialized local-STT path
   whenever Telegram uses local Whisper, whether inherited from the global voice route or explicitly
   configured for Telegram. The bot must not run local native STT concurrently inside the polling
   process.
+- Local recognition keeps one resident model and swaps it under the existing native inference
+  lock. Validate the local model on a swap, rather than hashing its complete file for each note.
+  Saved OpenAI models override the legacy model default. AssemblyAI uses the selected
+  streaming engine with real-time pacing of the complete note, an owned HTTP session and no
+  automatic retry of already consumed PCM. Partial transcripts cannot become an authored input
+  after a provider failure.
+  AssemblyAI notes use the call's compiled confidence, silence and formatting settings and enable
+  speaker labels. The authenticated route supplies the same bounded artifact-display keyterms
+  from the linked owner's current conversation, including topics. Missing, empty or foreign
+  conversations supply no keyterms; a reset uses the new conversation rather than cached hints.
+  Its transcription deadline includes the decoded note duration plus the provider completion
+  budget, since the streaming engine consumes the note at real-time speed.
+- Nonempty, finite source PCM that is exactly zero is healthy no speech. Check the source before
+  channel mixing and resampling so quiet or opposite-channel speech is not classified as silence.
+  Empty, corrupt and nonfinite media retain distinct failures. A no-speech note returns one plain
+  notice, cancels its preparation and invokes neither Main nor TTS. An authored caption survives
+  a no-speech track. Nonzero brief, quiet and paused notes retain the complete audio.
+- Local native recognition joins timestamped segments in order. Exclude a segment only when its
+  valid in-bounds interval is entirely digital zero on the exact mono 16 kHz PCM consumed by the
+  decoder. Unknown PCM or invalid timestamps retain native text. The shared join serves selected
+  Listening and the attached-audio transcription tool. The model still receives the complete
+  input; quiet/nonzero speech is never removed by this guard. False text over nonzero noise and
+  inaccurate native timestamp attribution remain accuracy limits.
+- Nonzero notes use the existing shared Silero speech-presence check before recognition. This
+  check does not crop the note: an accepted note passes its complete original bytes and recognizer
+  PCM to the selected provider. Prepare the shared detector at bot startup and reuse it. If it
+  cannot start or run, return a distinct speech-detection-unavailable error; text messages remain
+  usable. Code and the sealed dependencies containing Silero must be activated together.
+- Content-free stage timings distinguish current route lookup, download, decode, local lock/model
+  readiness and recognition. Provider markers report requested and effective model identities.
 - Drift guardrail: do not "harden" Telegram by changing the omitted STT provider to OpenAI,
   AssemblyAI, or another hosted route. Reliability hardening for inherited local Whisper belongs in
   serialization, startup/preflight checks, decoder validation, and honest error reporting, not in a
@@ -359,6 +516,34 @@ Prompt-layer ownership and the runtime-vs-prompt boundary are also recorded in
   already persisted but the Telegram/voice delivery row is missing after a restart or partial
   failure, a repeated signed callback with the same callback id must repair the missing delivery
   row without creating a duplicate conversation message.
+- A ledger-backed Cortex follow-up has one Telegram presenter, the durable Cortex dispatcher. The
+  live insight stream and the post-stream poll leave it there, so the follow-up is always authorized
+  before sending and acknowledged under the dispatcher's own lease, never under a turn-level ack.
+- The dispatcher authorizes only against the turn's bound ingress row (`authorityBoundAt`), and
+  general recovery leaves a Telegram gap to it only then. Every admitted turn binds that row: a fresh
+  ingress before authoring, and a retained (prepared) input when its exact stream is admitted. A
+  retained turn previously stayed unbound, so its late follow-up could never reach Telegram:
+  recovery retried it as a stream presentation and dropped it as attempts exhausted. A continued
+  admission of the same stream keeps its first binding; a row that is not this owner's source on
+  that stream fails the turn closed.
+- A late Cortex addition's Telegram acknowledgement is its own receipt beside the turn's Main
+  receipt, in the Redis and in-memory job stores, and it names its presentation in every state,
+  including a removal. It stays fenced by the exact turn, owner stream and revision, and by the
+  presentation's owner, generation, claim and lease. A replay is idempotent, and a different receipt
+  for the same presentation conflicts. Input newer than the turn's source withdraws the addition
+  before its receipt commits, checked in the same transaction that would record it, as for Main's
+  receipt. The Redis logical-turn store used to write the addition into the Main receipt's slot: an
+  addition sent after a committed Main answer conflicted, so the adapter retracted it and the
+  delivery was dropped as `delivery_outcome_unknown`.
+- The acknowledgement route settles a Cortex receipt only for the message it presented: the
+  addition's own message, delivery rows and Telegram reply mapping. It never writes, deletes or
+  accepts the Main answer, never replaces the answer's reply mapping, and never takes Main's
+  durable-effect path. A presentation of the parent itself (a promoted empty answer, for which the
+  adapter records no Main receipt) is Main's first presentation, so its receipt also becomes Main's
+  and keeps Main's persistence and acceptance.
+- An idle chat (no message for `RESET_TIME`, default 3600 s) starts a new backend conversation on its
+  next message. Stored conversations are unchanged, and Main continuity and saved memory are
+  owner/agent-scoped, so this changes the visible thread, not what Main may know.
 - The same-turn GlassHive poller and the durable dispatcher must share the same delivery ledger.
   Authenticated Telegram/voice callback polling may expose an opaque callback id to the bridge so
   the fast path can claim and mark the exact delivery row before sending. It must not legacy-send a
@@ -372,6 +557,10 @@ Prompt-layer ownership and the runtime-vs-prompt boundary are also recorded in
   yet, the bridge must wait for the row and avoid the legacy fallback for that same-text callback.
   This suppression is stream-scoped only: a different callback result, or the same words in a later
   unrelated turn, must still deliver normally.
+- Generation failures keep their existing public error class through the live stream, durable
+  terminal replay, and Telegram error event. The bridge uses the same typed presentation as FINAL
+  and sends one non-spoken error notice. Legacy untyped callers retain their existing transport
+  signature. Unknown internal diagnostics are not sent as user-facing error text.
 - Provider authentication failures must surface as reconnect guidance on Telegram. They must not be
   collapsed into a generic connection error that implies Telegram or GlassHive transport is broken.
   Primary provider rate limits before visible assistant text must first pass through the main-agent
@@ -450,6 +639,13 @@ Prompt-layer ownership and the runtime-vs-prompt boundary are also recorded in
 
 Any file generated in LibreChat must be sent to the Telegram user as a Telegram photo/document,
 not silently dropped.
+
+A single image uses Telegram's photo method; albums contain two to ten images, with a single
+remaining image sent as a photo. Other files use the existing document method. If Telegram rejects
+a photo or album with `BadRequest`, send the original bytes and filenames as documents. Do not
+resend after a timeout, network interruption, blocked bot or rate limit. A definite final rejection
+is reported as not sent; an ambiguous send is reported as unconfirmed. Enforce the existing file
+size bound on downloaded bytes as well as declared metadata.
 
 When private host paths are redacted from a worker response, local Markdown citations keep their
 readable label as plain text. Redaction must not leave broken link syntax or expose a private path.
@@ -618,6 +814,12 @@ contract; it does not own a Telegram-only coordinator.
   identity. An uncertain Telegram send remains uncertain and is never replayed automatically.
   `test_memory_receipt_restart_retains_identity_and_worker_completion` checks this restart contract;
   the real Telegram delivery journey remains a separate acceptance gate.
+- The saved-memory follow-up window starts at Main's committed presentation receipt. A confirmed
+  pending or running writer retains its cursor until a terminal result, including after receiver
+  restart. If Core explicitly reports no writer throughout that window and no writer was admitted,
+  Telegram reports once that saving could not be confirmed and asks the user to check Memories
+  before retrying. Transport errors are not evidence that no writer exists. Failed or removed Main
+  presentations do not send a memory follow-up; an uncertain follow-up is never replayed.
 
 ## Parallel Work control surface
 
@@ -625,6 +827,9 @@ contract; it does not own a Telegram-only coordinator.
 Parallel Work contract. Telegram is a fast control surface, not a Telegram-only scheduler:
 
 - the toggle updates the linked LibreChat account without a model call;
+- admission, settings, and Active Work use the linked owner's operational readiness, with the same
+  existing claim as Web and tool discovery. Public release certification remains separate. An outage
+  preserves the saved preference and known work; it withholds new authority without cancelling work;
 - Active Work consumes only opaque references and the server-returned action mask;
 - Message, Steer, and Queue use short-lived user/chat-scoped prompt capabilities; Stop requires a
   confirmation; callback data never contains a raw work reference;

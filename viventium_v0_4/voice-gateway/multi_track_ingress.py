@@ -3,9 +3,16 @@
 from __future__ import annotations
 
 import asyncio
+import math
 import time
+from collections import deque
 from contextlib import suppress
 from typing import Any, Awaitable, Callable
+
+try:
+    from livekit.plugins.assemblyai.stt import SpeechStream as AssemblyAISpeechStream
+except ImportError:
+    AssemblyAISpeechStream = None
 
 from speaker_segments import (
     CallScopedSegmentSequencer,
@@ -13,6 +20,93 @@ from speaker_segments import (
     demote_segment_to_unknown,
     shared_microphone_state_applies_to_track,
 )
+
+
+def speech_stream_call_timeline_offset_s(stream: Any, call_origin_at_ms: Any) -> float | None:
+    """Translate SDK transcript time with its current public stream/retry clock pair."""
+    values = (getattr(stream, 'start_time', None),
+              getattr(stream, 'start_time_offset', None), call_origin_at_ms)
+    if any(not isinstance(value, (int, float)) or isinstance(value, bool)
+           or not math.isfinite(float(value)) for value in values):
+        return None
+    start_time, sdk_offset, origin_ms = (float(value) for value in values)
+    return start_time - origin_ms / 1000.0 - sdk_offset
+
+
+class AudioSampleTimeline:
+    """Map stream sample timestamps to measured audio receipt time across frame gaps."""
+
+    def __init__(self) -> None:
+        self._frames: deque[tuple[float, float, float]] = deque(maxlen=4096)
+        self._sdk_offset: float | None = None
+        self._samples_s = 0.0
+        self._generation_unproved = False
+
+    @staticmethod
+    def _finite(value: Any) -> bool:
+        return (isinstance(value, (int, float)) and not isinstance(value, bool)
+                and math.isfinite(float(value)))
+
+    def push_frame(self, frame: Any, stream: Any, call_time_s: Any) -> None:
+        duration = getattr(frame, "duration", None)
+        offset = getattr(stream, "start_time_offset", None)
+        if not all(self._finite(value) for value in (duration, offset, call_time_s)) or duration <= 0:
+            return
+        if offset != self._sdk_offset:
+            # The SDK changes this public offset for a new provider connection/retry.
+            if self._sdk_offset is not None:
+                self._generation_unproved = True
+            self._frames.clear()
+            self._samples_s = 0.0
+            self._sdk_offset = float(offset)
+        start = self._samples_s
+        self._samples_s += float(duration)
+        self._frames.append((start, self._samples_s, float(call_time_s)))
+
+    def physical_utc_available(self, stream: Any, alternative: Any = None) -> bool:
+        # A retry retains the SDK input channel. Frames forwarded during backoff can
+        # be replayed at the new connection; their provider sample origin is unproved.
+        if self._sdk_offset is not None and getattr(stream, "start_time_offset", None) != self._sdk_offset:
+            self._generation_unproved = True
+        if self._generation_unproved:
+            return False
+        if alternative is not None:
+            start = self.time_for(alternative, stream, end=False)
+            end = self.time_for(alternative, stream, end=True)
+            if (start is None) != (end is None):
+                return False
+        return True
+
+    def time_for(self, alternative: Any, stream: Any, *, end: bool) -> float | None:
+        if not self.physical_utc_available(stream):
+            return None
+        value = getattr(alternative, "end_time" if end else "start_time", None)
+        words = getattr(alternative, "words", None) or []
+        word = words[-1 if end else 0] if words else None
+        offset = getattr(word, "start_time_offset", None)
+        if not self._finite(offset):
+            offset = getattr(stream, "start_time_offset", None)
+        if not self._finite(value) or not self._finite(offset) or offset != self._sdk_offset:
+            return None
+        sample_time = float(value) - float(offset)
+        for start, stop, receipt_end in self._frames:
+            # A shared sample boundary has two different times after an audio gap:
+            # the preceding frame end and the following frame start.
+            within = start < sample_time <= stop if end else start <= sample_time < stop
+            if within or (end and math.isclose(sample_time, stop, rel_tol=0, abs_tol=1e-8)):
+                return receipt_end - (stop - sample_time)
+        return None
+
+
+def speech_stream_speaker_id(stream: Any, speaker_id: Any) -> Any:
+    """An unresolved AssemblyAI label is not evidence of a distinct diarized voice."""
+    # AssemblyAI's current wire contract uses PENDING for short/unassigned turns;
+    # pinned LiveKit 1.5.10 only normalizes its older UNKNOWN value.
+    # https://www.assemblyai.com/docs/streaming/label-speakers-and-separate-channels
+    if (AssemblyAISpeechStream is not None and isinstance(stream, AssemblyAISpeechStream)
+            and speaker_id in ("PENDING", "UNKNOWN")):
+        return None
+    return speaker_id
 
 
 class _OwnerTemporarilyAbsent(RuntimeError):
@@ -36,6 +130,7 @@ class MultiTrackIngressCoordinator:
         owner_present: Callable[[], bool] | None = None,
         initial_speaker_session_state: dict[str, Any] | None = None,
         clock: Callable[[], float] = time.monotonic,
+        wall_clock: Callable[[], float] = time.time,
         overlap_window_ms: int = 60_000,
         max_final_segments: int = 512,
         max_tracks: int = 8,
@@ -60,6 +155,7 @@ class MultiTrackIngressCoordinator:
         )
         self._clock = clock
         self._call_epoch = clock()
+        self._call_epoch_at_ms = wall_clock() * 1000.0
         self._overlap_window_ms = max(int(overlap_window_ms), 1_000)
         self._max_final_segments = max(int(max_final_segments), 1)
         self._max_tracks = max(int(max_tracks), 1)
@@ -86,11 +182,15 @@ class MultiTrackIngressCoordinator:
     def call_timeline_offset_s(self) -> float:
         return max(self._clock() - self._call_epoch, 0.0)
 
+    def call_timeline_origin_at_ms(self) -> float:
+        """UTC anchor captured with this call's monotonic audio timeline origin."""
+        return self._call_epoch_at_ms
+
     def apply_call_wide_overlap(
-        self, segments: list[dict[str, Any]]
+        self, segments: list[dict[str, Any]], *, timeline_available: bool = True,
     ) -> list[dict[str, Any]]:
         """Register owner or ambient finals in one call-wide overlap timeline."""
-        return self._apply_cross_track_overlap(segments)
+        return self._apply_cross_track_overlap(segments, timeline_available=timeline_available)
 
     def track_joined(self, participant: Any, track: Any, publication: Any) -> bool:
         identity = str(getattr(participant, "identity", "") or "").strip()
@@ -211,13 +311,24 @@ class MultiTrackIngressCoordinator:
         stream_start_offset_s = self.call_timeline_offset_s()
         speech_stream = self._stt_impl.stream()
         audio_stream = self._audio_stream_factory(track)
+        capabilities = getattr(self._stt_impl, "capabilities", None)
+        sample_timeline = (AudioSampleTimeline() if getattr(capabilities, "streaming", False)
+                           else None)
 
         async def _feed_audio() -> None:
+            first_frame = True
             try:
                 async for audio_event in audio_stream:
                     if not self._owner_present():
                         break
                     frame = getattr(audio_event, "frame", audio_event)
+                    if first_frame:
+                        duration = getattr(frame, "duration", 0.0)
+                        if isinstance(duration, (int, float)) and math.isfinite(duration):
+                            speech_stream.start_time = time.time() - max(float(duration), 0.0)
+                        first_frame = False
+                    if sample_timeline is not None:
+                        sample_timeline.push_frame(frame, speech_stream, self.call_timeline_offset_s())
                     speech_stream.push_frame(frame)
             finally:
                 speech_stream.end_input()
@@ -238,13 +349,24 @@ class MultiTrackIngressCoordinator:
                 is_final = "final_transcript" in event_type
                 relative_start = float(getattr(alternative, "start_time", 0.0) or 0.0)
                 relative_end = float(getattr(alternative, "end_time", 0.0) or 0.0)
+                stream_offset_s = speech_stream_call_timeline_offset_s(
+                    speech_stream, self.call_timeline_origin_at_ms())
+                if stream_offset_s is None:
+                    stream_offset_s = stream_start_offset_s
+                start_time, end_time = stream_offset_s + relative_start, stream_offset_s + relative_end
+                if sample_timeline is not None:
+                    measured_start = sample_timeline.time_for(alternative, speech_stream, end=False)
+                    measured_end = sample_timeline.time_for(alternative, speech_stream, end=True)
+                    if measured_start is not None and measured_end is not None and measured_end > measured_start:
+                        start_time, end_time = measured_start, measured_end
                 changes = tracker.ingest(
                     transcript=str(getattr(alternative, "text", "") or ""),
                     is_final=is_final,
-                    provider_speaker_id=getattr(alternative, "speaker_id", None),
+                    provider_speaker_id=speech_stream_speaker_id(
+                        speech_stream, getattr(alternative, "speaker_id", None)),
                     created_at=float(getattr(event, "created_at", 0.0) or 0.0),
-                    start_time=stream_start_offset_s + relative_start,
-                    end_time=stream_start_offset_s + relative_end,
+                    start_time=start_time,
+                    end_time=end_time,
                 )
                 await self._persist_pending_session_states(tracker)
                 if not self._owner_present():
@@ -255,7 +377,9 @@ class MultiTrackIngressCoordinator:
                     segments, revisions = tracker.finalize_turn(
                         str(getattr(alternative, "text", "") or "")
                     )
-                    overlap_revisions = self._apply_cross_track_overlap(segments)
+                    overlap_revisions = self._apply_cross_track_overlap(segments,
+                        timeline_available=(sample_timeline is None or
+                                            sample_timeline.physical_utc_available(speech_stream, alternative)))
                     all_revisions = [*revisions, *overlap_revisions]
                     if segments or all_revisions:
                         await self._on_segment_changes([*segments, *all_revisions])
@@ -293,8 +417,12 @@ class MultiTrackIngressCoordinator:
             raise
 
     def _apply_cross_track_overlap(
-        self, segments: list[dict[str, Any]]
+        self, segments: list[dict[str, Any]], *, timeline_available: bool = True,
     ) -> list[dict[str, Any]]:
+        # Provider-relative times from replayed/backoff audio cannot prove call-wide
+        # overlap. Keep attribution unchanged; do not register them as clock evidence.
+        if not timeline_available:
+            return []
         revisions: list[dict[str, Any]] = []
         for segment in segments:
             start_ms = segment.get("startTimeMs")

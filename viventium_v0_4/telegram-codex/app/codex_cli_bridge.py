@@ -212,6 +212,8 @@ class CodexCliBridge:
             command.extend(["-i", str(image_path)])
         if self._settings.model:
             command.extend(["-m", self._settings.model])
+        if self._settings.reasoning_effort:
+            command.extend(["-c", f'model_reasoning_effort={json.dumps(self._settings.reasoning_effort)}'])
         if self._settings.sandbox == "danger-full-access":
             command.append("--dangerously-bypass-approvals-and-sandbox")
         else:
@@ -236,6 +238,8 @@ class CodexCliBridge:
             command.extend(["-i", str(image_path)])
         if self._settings.model:
             command.extend(["-m", self._settings.model])
+        if self._settings.reasoning_effort:
+            command.extend(["-c", f'model_reasoning_effort={json.dumps(self._settings.reasoning_effort)}'])
         if self._settings.sandbox == "danger-full-access":
             command.append("--dangerously-bypass-approvals-and-sandbox")
         else:

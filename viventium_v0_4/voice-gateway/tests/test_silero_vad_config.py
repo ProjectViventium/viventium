@@ -56,6 +56,11 @@ class TestSileroVadConfig(unittest.TestCase):
 
 
 class TestPyWhisperCppProviderVadWiring(unittest.TestCase):
+    def test_local_adapter_uses_shared_minimum_speech_default(self) -> None:
+        with mock.patch.dict(os.environ, {}, clear=True):
+            kwargs = get_silero_vad_kwargs(pywhispercpp_provider._local_whisper_vad_env())
+        self.assertEqual(kwargs, get_silero_vad_kwargs({}))
+
     def test_intel_defaults_use_smaller_local_model(self) -> None:
         with (
             mock.patch("pywhispercpp_provider.platform.machine", return_value="x86_64"),
@@ -73,7 +78,7 @@ class TestPyWhisperCppProviderVadWiring(unittest.TestCase):
     def test_get_stt_uses_shared_vad_kwargs(self) -> None:
         expected_kwargs = {
             "sample_rate": 16000,
-            "min_speech_duration": 0.35,
+            "min_speech_duration": 0.1,
             "min_silence_duration": 0.5,
             "max_buffered_speech": 900.0,
             "activation_threshold": 0.4,
@@ -108,7 +113,8 @@ class TestPyWhisperCppProviderVadWiring(unittest.TestCase):
         stt_cls.assert_called_once_with(language="en")
         get_kwargs.assert_called_once()
         vad_env = get_kwargs.call_args.args[0]
-        self.assertEqual(vad_env["VIVENTIUM_STT_VAD_MIN_SPEECH"], "0.35")
+        self.assertNotIn("VIVENTIUM_STT_VAD_MIN_SPEECH", vad_env)
+        self.assertEqual(get_silero_vad_kwargs(vad_env)["min_speech_duration"], 0.1)
         self.assertEqual(vad_env["VIVENTIUM_STT_VAD_MIN_SILENCE"], "0.5")
         vad_load.assert_called_once_with(**expected_kwargs)
         adapter_cls.assert_called_once_with(stt="fake-stt", vad="fake-vad")

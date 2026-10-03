@@ -243,6 +243,8 @@ def _make_runtime_repo(root: Path) -> None:
     _write(bot / "utils" / "__init__.py", "")
     _write(bot / "utils" / "singleton.py", "SYNTHETIC = True\n")
     _write(bot / "utils" / "telegram_preparation.py", "SYNTHETIC = True\n")
+    for name in ("telegram_audio.py", "telegram_stt.py", "telegram_vad.py"):
+        _write(bot / "utils" / name, "SYNTHETIC = True\n")
     _write(bot / "aient" / "aient" / "__init__.py", "")
     _write(bot / "md2tgmd" / "setup.py", "from setuptools import setup\nsetup()\n")
     _write(bot / "md2tgmd" / "src" / "md2tgmd.py", "SYNTHETIC = True\n")
@@ -251,6 +253,8 @@ def _make_runtime_repo(root: Path) -> None:
     _write(shared / "__init__.py", "")
     _write(shared / "no_response.py", "SYNTHETIC = True\n")
     _write(shared / "compiled_prompt_contract.py", "SYNTHETIC = True\n")
+    _write(shared / "silero_vad_config.py", "SYNTHETIC = True\n")
+    _write(shared / "whisper_cpp_segments.py", "SYNTHETIC = True\n")
     _write(shared / "voice" / "tts_provider_capabilities.json", "{}\n")
     _write(shared / "voice" / "cartesia_sonic3_capabilities.json", "{}\n")
     _write(shared / "voice" / "xai_tts_capabilities.json", "{}\n")
@@ -1433,7 +1437,12 @@ def test_current_receiver_inventory_includes_declared_new_dependencies_only(
     _make_runtime_repo(repo)
     required = {
         "viventium_v0_4/shared/compiled_prompt_contract.py",
+        "viventium_v0_4/shared/silero_vad_config.py",
+        "viventium_v0_4/shared/whisper_cpp_segments.py",
         "viventium_v0_4/telegram-viventium/TelegramVivBot/utils/telegram_preparation.py",
+        "viventium_v0_4/telegram-viventium/TelegramVivBot/utils/telegram_audio.py",
+        "viventium_v0_4/telegram-viventium/TelegramVivBot/utils/telegram_stt.py",
+        "viventium_v0_4/telegram-viventium/TelegramVivBot/utils/telegram_vad.py",
     }
     private = repo / "viventium_v0_4/telegram-viventium/TelegramVivBot/private_untracked.py"
     _write(private, "PRIVATE = True\n")

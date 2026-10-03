@@ -987,7 +987,7 @@ def test_easy_install_copy_explains_source_checkout_glasshive_prerequisites() ->
 
     description = wizard.EASY_INSTALL_DESCRIPTION
     assert "Guided source checkout first run" in description
-    assert "GlassHive as Viventium Main" in description
+    assert "xPerfect as Viventium Main" in description
     assert "signed-in Codex CLI" in description
     assert "OpenAI API key" in description
     assert "browser" in description

@@ -36,6 +36,10 @@ properties:
         type: string
         description: Modern LiveKit playground is the default; classic agents-playground is explicit opt-in only.
         enum: [modern, classic]
+      librechat_serve_mode:
+        type: string
+        description: How a source install serves LibreChat. `development` (default) runs the nodemon API and the Vite dev server; `compiled` runs the production API and serves the built client bundle on the same ports. Native installs always serve compiled and ignore this key.
+        enum: [development, compiled]
       call_session_secret:
         type: object
       extra_env:
@@ -115,7 +119,7 @@ properties:
                 enum: [always, classified, disabled]
               provider:
                 type: string
-                enum: [openai, anthropic, xai, groq, google]
+                enum: [openai, anthropic, xai, groq, google, glasshive-harness]
               model:
                 type: string
               use_responses_api:
@@ -132,7 +136,7 @@ properties:
                 type: integer
               fallback_provider:
                 type: string
-                enum: [none, openai, anthropic, xai, groq, google]
+                enum: [none, openai, anthropic, xai, groq, google, glasshive-harness]
               fallback_model:
                 type: string
               activation_provider:
@@ -707,7 +711,7 @@ properties:
                 type: string
               default_worker_profile:
                 type: string
-                enum: [codex-cli, claude-code, openclaw-general]
+                enum: [codex-cli, claude-code, grok-build, openclaw-general]
               default_execution_mode:
                 type: string
                 enum: [host, docker]

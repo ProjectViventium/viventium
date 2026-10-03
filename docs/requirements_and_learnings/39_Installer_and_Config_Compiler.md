@@ -204,7 +204,11 @@ provide runtime identity; actual parallel-work acceptance remains a separate gat
 Enabled Sequential Thinking uses the existing official MCP package at the selected locked version,
 run through bundled Node over stdio. Its dependency closure and publisher notice ship in the
 payload; no `npx` or package download runs during installation or chat. This transport change does
-not change its tool schema or decide when models should use it.
+not change its tool schema or decide when models should use it. Only the payload defaults compile
+(`config_compiler.py --native-payload`) renders these bundled transports and the packaged scheduler
+bearer, because only the Native supervisor supplies their values. A source checkout with
+`install.mode: native` is launched from `runtime.env`, keeps the source transports, and must pass the
+doctor's unresolved-reference check; the assembler rejects payload defaults compiled without the flag.
 
 After first-owner setup, `bin/viventium provider-auth codex-cli login` and
 `bin/viventium provider-auth claude-code login` run the exact installed, unmodified CLI in its
@@ -354,7 +358,9 @@ and no edits to generated App Support outputs as a product fix.
 
 ### Testing And Acceptance
 
-- Every behavior change starts with a failing synthetic test and a linked installer QA case.
+- The approved QA mode selects affected installer cases. Add a causal regression for a repaired
+  defect when useful; do not require a test-first ceremony or the entire installer bank for each edit.
+  The VM and physical-machine cases below are selected only when the change depends on them.
 - Disposable Apple Silicon macOS VM acceptance covers exact bootstrap/payload, no-developer-tools
   install, account-first browser setup, first real model answer, persistence, idempotence,
   interruption, offline/corrupt payload, low resources, port collisions, auth failure classes,
@@ -374,8 +380,9 @@ and no edits to generated App Support outputs as a product fix.
 
 - Always: protect existing-user continuity; use attempt-scoped state; redact diagnostics; verify
   exact artifacts; keep optional capabilities deferrable; fail with one specific recovery action.
-- Ask before: adding dependencies, changing persistence schema, accepting a redistribution license,
-  requesting privileged macOS permissions, destructive clean-machine reset, or any cloud action.
+- Honor existing task authorization for routine dependencies and in-scope implementation. Ask only
+  at an actual unapproved boundary, such as accepting a license, granting privileged access,
+  destructive reset, credential replacement, or a material expansion of external actions.
 - Never: use personal state as a clean-install prerequisite; store provider secrets in tracked or
   generated plaintext config; call configured-only state ready; silently install Docker-only
   capabilities in the native-core lane; publish or push without explicit approval.
@@ -427,6 +434,29 @@ delta on the disposable MacBook Air. Until those gates pass, release wording rem
   - `GLASSHIVE_ARTIFACT_DOWNLOAD_MAX_BYTES`
   - `GLASSHIVE_WORKER_ENV_ALLOWLIST`
   - do not rely on manual App Support edits or one laptop's shell exports to make GlassHive launch/watch UX correct
+- A source install's LibreChat serving profile is part of the compiler boundary:
+  - `runtime.librechat_serve_mode: development` (the default) serves the nodemon API and the Vite
+    dev server; it emits nothing new, so existing installs compile unchanged
+  - `runtime.librechat_serve_mode: compiled` emits `VIVENTIUM_LIBRECHAT_SERVE_MODE=compiled`. The
+    launcher's direct start, the LibreChat wrapper and the detached API watchdog then run the
+    production API (`npm run backend`) and serve the built client bundle on the same frontend port
+    (`npm run serve:compiled`, a `vite preview` of `client/dist` that keeps the development proxy
+    rules for `/api` and `/oauth`, with `--strictPort`). The stop path covers both profiles
+  - the bundle comes from the same freshness-checked build owner as activation
+    (`prepare_librechat_build_outputs`); the wrapper also rebuilds a compiled bundle older than its
+    client inputs, so a compiled start never serves stale UI
+  - a direct wrapper start reads the profile only after every supported env source (explicit or
+    generated runtime env, then component `.env`), so it honors the generated choice exactly as a
+    launcher start that exported it first; `viventium-start.sh --print-serve-plan` prints the
+    profile and scripts a start would run, then exits
+  - the production API has no development-port Cortex delivery slot, so the compiler also emits a
+    stable `VIVENTIUM_RUNTIME_SLOT_ID` (`source-` plus 32 hex of the App Support path and API port):
+    restarts reclaim their own claims, and another install or dev environment gets a distinct slot.
+    Native payloads receive neither key; Native owns its compiled serving and its own slot
+  - production semantics apply: auth cookies are `Secure` when `DOMAIN_SERVER` is not localhost
+    (right for an HTTPS remote origin; Chromium and Firefox also accept them on http://localhost),
+    the client registers its service worker, and source edits no longer reload the API (activation
+    restarts it). Returning a browser profile to development needs that service worker unregistered
 - Stable developer runtimes are part of the compiler boundary:
   - `runtime.dev_env.enabled` marks a side-by-side developer runtime config
   - `runtime.dev_env.shared_singleton_services` declares heavy services that should be referenced
@@ -857,6 +887,8 @@ delta on the disposable MacBook Air. Until those gates pass, release wording rem
     interactive shell. On macOS, a valid app-bundled Codex CLI path is a supported Codex host-worker
     runtime and the compiler must emit it as `WPR_CODEX_BIN` when `codex` is not on the service
     `PATH`; discovery checks `/Applications`, `~/Applications`, and `VIVENTIUM_CODEX_APP_DIRS`.
+    Compiler and preflight share discovery for both the Codex app and the ChatGPT app
+    containing CodexCLI. Explicit configured executable paths retain precedence.
     The same service-visible rule applies to Claude: a current-user executable under
     `~/.local/bin` is a supported discovery result and must compile to `WPR_CLAUDE_CODE_BIN` rather
     than being reported unavailable only because the helper's launch `PATH` is narrower than the

@@ -30,6 +30,9 @@ def capture_telegram_preparation(update, *, title="", args=None, has_command=Fal
             result["photo"] = [select(value["photo"][-1], media_fields)]
         if include_reply and value.get("reply_to_message"):
             result["reply_to_message"] = message_reference(value["reply_to_message"], include_reply=False)
+            # The passage the user selected in the replied message, when Telegram reports one.
+            if value.get("quote"):
+                result["quote"] = select(value["quote"], ("text", "position", "is_manual"))
         return result
 
     return {

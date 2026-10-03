@@ -121,6 +121,7 @@ class CodexSettings:
     sandbox: str
     approval_policy: str
     skip_git_repo_check: bool
+    reasoning_effort: str = "high"
 
 
 @dataclass(frozen=True)
@@ -252,7 +253,8 @@ def load_config(root: Path | None = None) -> AppConfig:
         ),
         codex=CodexSettings(
             command=str(codex_raw.get("command") or "codex"),
-            model=str(codex_raw.get("model") or "gpt-5.4"),
+            model=str(codex_raw.get("model") or "gpt-6.1-sol"),
+            reasoning_effort=str(codex_raw.get("reasoning_effort") or "high"),
             sandbox=str(codex_raw.get("sandbox") or "workspace-write"),
             approval_policy=str(codex_raw.get("approval_policy") or "never"),
             skip_git_repo_check=bool(codex_raw.get("skip_git_repo_check", False)),

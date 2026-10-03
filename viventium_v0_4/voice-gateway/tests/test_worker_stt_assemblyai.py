@@ -9,8 +9,10 @@
 #   picked variant is applied and normalized, and that build_stt_selection actually hands the model
 #   to livekit-plugins-assemblyai.
 import os
+import asyncio
 import sys
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -27,7 +29,96 @@ from worker import (  # noqa: E402
     _normalize_assemblyai_stt_model,
     build_stt_selection,
     load_env,
+    _ingest_raw_stt_speaker_event,
 )
+from speaker_segments import SpeakerSegmentTracker
+from multi_track_ingress import MultiTrackIngressCoordinator
+from livekit.agents.stt import SpeechEventType
+from livekit.plugins.assemblyai.stt import SpeechStream as AssemblyAISpeechStream
+
+
+def _actual_assemblyai_events(labels):
+    """Exercise the pinned plugin's actual typed Turn decoder without a network call."""
+    stream = object.__new__(AssemblyAISpeechStream)
+    events = []
+    stream._event_ch = SimpleNamespace(send_nowait=events.append)
+    stream._opts = SimpleNamespace(format_turns=False)
+    stream._speech_duration = 0.0
+    stream._last_preflight_start_time = 0.0
+    stream._session_id = 'synthetic-pending'
+    stream.start_time_offset = 0.0
+    stream.start_time = 1_790_000_000.0
+    for index, label in enumerate(labels):
+        start_ms = index * 4000
+        stream._process_stream_event({
+            'type': 'Turn', 'speaker_label': label, 'end_of_turn': True,
+            'transcript': 'This is a stable synthetic attribution sentence.',
+            'words': [{'text': 'Stable', 'start': start_ms, 'end': start_ms + 1000},
+                      {'text': 'sentence', 'start': start_ms + 1000, 'end': start_ms + 3000}],
+        })
+    return stream, [event for event in events if event.type == SpeechEventType.FINAL_TRANSCRIPT]
+
+
+class TestAssemblyAIPendingSpeaker(unittest.TestCase):
+    def test_pending_is_unknown_without_relabeling_owner_but_real_second_voice_still_demotes(self):
+        stream, events = _actual_assemblyai_events(['A', 'PENDING', 'A', 'B'])
+        self.assertEqual(events[1].alternatives[0].speaker_id, 'PENDING')
+        tracker = SpeakerSegmentTracker(call_session_id='synthetic-pending', owner_signed=True,
+            participant_authenticated=True, participant_identity='synthetic-owner', participant_name='You')
+        for index, event in enumerate(events):
+            _ingest_raw_stt_speaker_event(tracker, event, timeline_offset_s=0, speech_stream=stream)
+            segments, _ = tracker.finalize_turn(event.alternatives[0].text)
+            if index == 1:
+                self.assertFalse(tracker.shared_microphone_detected)
+                self.assertEqual(tracker.pop_session_state_changes(), [])
+                self.assertEqual(segments[0]['speaker']['actorTrust'], 'unknown')
+                self.assertEqual(segments[0]['speaker']['key'], 'unknown')
+            elif index < 3:
+                self.assertEqual(segments[0]['speaker']['actorTrust'], 'owner_participant')
+            else:
+                self.assertTrue(tracker.shared_microphone_detected)
+                self.assertEqual(segments[0]['speaker']['actorTrust'], 'shared_mic_unverified')
+                self.assertEqual(tracker.pop_session_state_changes()[0]['attributionState'], 'shared_mic_unverified')
+
+    def test_pending_literal_is_not_remapped_for_a_different_provider(self):
+        _, events = _actual_assemblyai_events(['A', 'PENDING'])
+        tracker = SpeakerSegmentTracker(call_session_id='synthetic-other')
+        for event in events:
+            _ingest_raw_stt_speaker_event(tracker, event, timeline_offset_s=0,
+                                         speech_stream=SimpleNamespace())
+            tracker.finalize_turn(event.alternatives[0].text)
+        self.assertTrue(tracker.shared_microphone_detected)
+
+    def test_ambient_pending_does_not_create_a_second_speaker_tombstone(self):
+        stream, events = _actual_assemblyai_events(['A', 'PENDING', 'A'])
+        states, turns = [], []
+        async def append(target, value):
+            target.append(value)
+        async def empty_audio():
+            if False:
+                yield
+        async def event_source():
+            for event in events:
+                yield event
+        stream._event_aiter = event_source()
+        stream._task = SimpleNamespace(cancelled=lambda: False, exception=lambda: None)
+        stream.end_input = lambda: None
+        coordinator = MultiTrackIngressCoordinator(call_session_id='synthetic-pending',
+            owner_participant_identity='synthetic-owner', stt_impl=SimpleNamespace(stream=lambda: stream),
+            audio_stream_factory=lambda _track: empty_audio(), clock=lambda: 0,
+            wall_clock=lambda: 1_790_000_000.0,
+            on_segment_changes=lambda _value: append([], _value),
+            on_session_state_change=lambda value: append(states, value),
+            on_ambient_turn=lambda value: append(turns, value))
+        tracker = SpeakerSegmentTracker(call_session_id='synthetic-pending',
+            participant_authenticated=True, participant_identity='synthetic-guest')
+        asyncio.run(coordinator._run_track_once(participant=None, track=None,
+                                                track_sid='synthetic-track', tracker=tracker))
+        self.assertEqual(states, [])
+        self.assertFalse(tracker.shared_microphone_detected)
+        self.assertEqual(turns[0]['segments'][0]['speaker']['actorTrust'], 'authenticated_participant')
+        self.assertEqual(turns[1]['segments'][0]['speaker']['actorTrust'], 'unknown')
+        self.assertEqual(turns[2]['segments'][0]['speaker']['actorTrust'], 'authenticated_participant')
 
 _VALID_MODEL_IDS = {model_id for model_id, _label in ASSEMBLYAI_STT_MODELS}
 

@@ -586,7 +586,9 @@ all degraded paths remain actionable.
 
 ## Ordered execution plan
 
-The order is deliberate. Do not start a later phase merely because its code is easier.
+Historical remediation order, retained for traceability. The current approved delivery plan selects
+applicable rows and dependencies; this ledger does not activate all phases or override core-first
+work. Keep unrelated work deferred and reuse accepted evidence.
 
 ### Phase 0 — Restore a truthful green baseline
 

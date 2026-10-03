@@ -5,8 +5,11 @@
 # === VIVENTIUM END ===
 
 import base64
+import asyncio
 import sys
 import os
+
+import pytest
 
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'TelegramVivBot'))
@@ -17,6 +20,7 @@ from utils.scripts import (
     is_image_mime,
     SUPPORTED_IMAGE_MIMES,
     EXTENSION_TO_MIME,
+    download_telegram_file_result,
 )
 
 
@@ -46,8 +50,8 @@ class TestDetectMimeFromPath:
         assert detect_mime_from_path("README.md") == "text/markdown"
         assert detect_mime_from_path("script.py") == "text/x-python"
         assert detect_mime_from_path("config.json") == "application/json"
-        assert detect_mime_from_path("settings.yml") == "text/yaml"
-        assert detect_mime_from_path("settings.yaml") == "text/yaml"
+        assert detect_mime_from_path("settings.yml") == "application/x-yaml"
+        assert detect_mime_from_path("settings.yaml") == "application/x-yaml"
 
     def test_unknown_extension(self):
         assert detect_mime_from_path("file.xyz") == "application/octet-stream"
@@ -83,6 +87,72 @@ class TestEncodeFileForAgent:
         result = encode_file_for_agent(original, "image/png", "test.png")
         decoded = base64.b64decode(result["data"])
         assert decoded == original
+
+
+class TestTelegramDownloadMime:
+    @staticmethod
+    def download(filename, hint, path="documents/file_1", payload=b"synthetic source bytes"):
+        class DownloadFile:
+            file_path = path
+            file_size = len(payload)
+
+            async def download_as_bytearray(self):
+                return bytearray(payload)
+
+        class Bot:
+            async def get_file(self, file_id, **_kwargs):
+                assert file_id == "synthetic-file"
+                return DownloadFile()
+
+        return asyncio.run(download_telegram_file_result(
+            Bot(), "synthetic-file", max_bytes=1024,
+            filename_hint=filename, mime_type_hint=hint,
+        ))
+
+    @pytest.mark.parametrize("extension, hint, expected", [
+        (".py", "text/x-script.phyton", "text/x-python"),
+        (".PY", "application/octet-stream", "text/x-python"),
+        (".js", "text/plain", "text/javascript"),
+        (".json", "text/plain", "application/json"),
+        (".yml", "application/x-yaml", "application/x-yaml"),
+        (".yaml", "text/yaml", "application/x-yaml"),
+        (".csv", "application/csv", "text/csv"),
+        (".pdf", "application/octet-stream", "application/pdf"),
+        (".docx", "application/octet-stream",
+         "application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
+        (".xlsx", "application/octet-stream",
+         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
+        (".pptx", "application/octet-stream",
+         "application/vnd.openxmlformats-officedocument.presentationml.presentation"),
+    ])
+    def test_known_extension_normalizes_hint_without_changing_source(self, extension, hint, expected):
+        filename = "source" + extension
+        result = self.download(filename, hint)
+        assert result.mime_type == expected
+        assert result.filename == filename
+        assert result.file_path == "documents/file_1"
+        assert result.file_bytes == b"synthetic source bytes"
+        assert result.error_code is None
+
+    @pytest.mark.parametrize("filename, hint, path, expected", [
+        ("unknown.bin", "application/octet-stream", "documents/file_1", "application/octet-stream"),
+        ("unknown.xyz", "application/x-unknown", "documents/file_1", "application/x-unknown"),
+        ("unknown.bin", None, "documents/file_1", "application/octet-stream"),
+        ("source.py", None, "documents/file_1", "text/x-python"),
+        (None, None, "documents/source.py", "text/x-python"),
+        (None, "text/x-script.phyton", "documents/source.py", "text/x-python"),
+        ("unknown.bin", None, "documents/source.pdf", "application/pdf"),
+    ])
+    def test_unknown_and_missing_hints_preserve_existing_fallback(self, filename, hint, path, expected):
+        result = self.download(filename, hint, path=path)
+        assert result.mime_type == expected
+        assert result.file_bytes == b"synthetic source bytes"
+        assert result.error_code is None
+
+    @pytest.mark.parametrize("extension, mime", list(EXTENSION_TO_MIME.items()))
+    def test_known_correct_mime_hint_is_preserved(self, extension, mime):
+        result = self.download("source" + extension, mime)
+        assert result.mime_type == mime
 
 
 class TestIsImageMime:

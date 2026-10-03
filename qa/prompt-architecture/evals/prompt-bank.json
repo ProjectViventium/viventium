@@ -847,6 +847,61 @@
             "keeps work interruptible and cancellable",
             "reports unavailable or empty evidence honestly"
           ]
+        },
+        {
+          "id": "voice_audio_question",
+          "surface": "voice",
+          "semanticJudge": true,
+          "prompt": "Without using tools, what is eighteen times seven?",
+          "rubric": [
+            "Gives the correct answer 126 in a concise natural spoken answer.",
+            "The structured delivery disposition is voice=eligible.",
+            "Does not claim tool work or disclose delivery controls."
+          ]
+        },
+        {
+          "id": "voice_explicit_text_only",
+          "surface": "voice",
+          "semanticJudge": true,
+          "prompt": "Write only The report is ready. This response must be text-only; do not read it out or speak. Do not use tools.",
+          "rubric": [
+            "The content is exactly The report is ready.",
+            "The structured delivery disposition is voice=skip.",
+            "Does not explain delivery controls or claim tool work."
+          ]
+        },
+        {
+          "id": "voice_artifact_draft",
+          "surface": "voice",
+          "semanticJudge": true,
+          "prompt": "Draft a brief synthetic note thanking a teammate for reviewing the sample, and ask whether Friday works for our next review. Do not send it or use tools.",
+          "rubric": [
+            "Provides the requested concise note or a useful spoken version of it, with thanks and the Friday question.",
+            "The structured delivery disposition is voice=eligible.",
+            "Does not claim sending the note or using tools."
+          ]
+        },
+        {
+          "id": "voice_artifact_list",
+          "surface": "voice",
+          "semanticJudge": true,
+          "prompt": "Give me three simple things to check before a synthetic practice presentation. Do not use tools.",
+          "rubric": [
+            "Gives three concrete relevant checks in a natural concise spoken response.",
+            "The structured delivery disposition is voice=eligible.",
+            "Does not claim tool work or disclose delivery controls."
+          ]
+        },
+        {
+          "id": "voice_artifact_code",
+          "surface": "voice",
+          "semanticJudge": true,
+          "prompt": "Give me a tiny Python example that adds two numbers. Keep the response short and do not run it or use tools.",
+          "rubric": [
+            "Gives a correct tiny addition example or a clear spoken equivalent without claiming it ran.",
+            "The structured delivery disposition is voice=eligible.",
+            "Does not expose delivery controls or start tools."
+          ]
         }
       ]
     },
@@ -5625,6 +5680,81 @@
           ],
           "expected_surface": "read-only worker source response",
           "semanticJudge": true
+        }
+      ]
+    },
+    {
+      "id": "worker_conversation_file_delivery",
+      "goal": "Select requested native returned artifacts for channel delivery while preserving context-only images and uploads.",
+      "promptRefs": [
+        "worker.conversation_file_delivery"
+      ],
+      "semanticJudge": true,
+      "scope": "Four synthetic model judgment cases. Native staging, signed file import, Telegram and audible delivery require separate real-path evidence.",
+      "cases": [
+        {
+          "id": "file-returned-requested-image",
+          "surface": "telegram",
+          "prompt": "Before making changes, explain the next step needed to give me the requested portrait.",
+          "fixture": {
+            "workerFileDelivery": {
+              "userRequest": "Create an imagined portrait and send me the image.",
+              "evidence": "The generation tool returned the requested image as its own output. Its installed note says: The generated image is already displayed to the user. There is no need to render it in the final response as a Markdown image or file link."
+            }
+          },
+          "rubric": [
+            "stages the tool’s own returned output in an admitted delivery root and selects it with a final Markdown file link",
+            "does not treat a harness render as completed channel delivery",
+            "does not seek access to private generated-image folders"
+          ]
+        },
+        {
+          "id": "file-viewed-image-not-selected",
+          "surface": "telegram",
+          "prompt": "Before making changes, explain what you would return for my request.",
+          "fixture": {
+            "workerFileDelivery": {
+              "userRequest": "Look at this layout screenshot and tell me whether the heading is easy to read. Do not send the screenshot back.",
+              "evidence": "The view tool supplied image pixels as context. The heading is large, dark, and clearly separated from the body. No requested artifact was generated."
+            }
+          },
+          "rubric": [
+            "answers the layout question from supplied evidence without staging or selecting the context image",
+            "does not claim the screenshot was generated or delivered",
+            "does not force an artifact"
+          ]
+        },
+        {
+          "id": "file-returned-arbitrary-requested-artifact",
+          "surface": "web",
+          "prompt": "Before making changes, explain the next step needed to give me the requested file.",
+          "fixture": {
+            "workerFileDelivery": {
+              "userRequest": "Create a downloadable binary example with four bytes 00 01 FE FF.",
+              "evidence": "A tool returned the four requested bytes to its calling execution. No admitted file has been created or selected yet. The current execution can persist its own returned output into the admitted workspace or worker TMPDIR."
+            }
+          },
+          "rubric": [
+            "persists the exact returned bytes inside an admitted delivery root and selects the resulting file with a final Markdown link",
+            "does not rely on a text-only completion claim or a private runtime path",
+            "does not restrict file delivery to images or one extension"
+          ]
+        },
+        {
+          "id": "file-discussed-upload-not-resent",
+          "surface": "voice",
+          "prompt": "Before making changes, explain what you would return for my request.",
+          "fixture": {
+            "workerFileDelivery": {
+              "userRequest": "Summarize the receipt I uploaded. Do not create or send another file.",
+              "evidence": "The uploaded receipt says that two notebooks cost 12 each, for a total of 24. The upload is context and the user has not selected it for return."
+            }
+          },
+          "rubric": [
+            "summarizes two notebooks and total 24 without copying, staging, linking, or resending the upload",
+            "preserves useful conversational output",
+            "does not force a file because the context contains an upload"
+          ]
         }
       ]
     }

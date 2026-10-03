@@ -654,6 +654,11 @@ Added: 2026-01-11
 - With `VIVENTIUM_VOICE_LOG_LATENCY=1`, inspect `assistant_turn_metrics` for LiveKit
   `llm_node_ttft`, `tts_node_ttfb`, and `e2e_latency`; inspect `tts_provider_metrics` for
   provider-level TTS first-byte/audio-duration timing.
+- The content-free `[VoiceP0]` records separate provider end-of-turn receipt, STT final
+  observation and SDK commit. On the pinned xAI route they measure connect, first accepted
+  text, first text write, first audio receipt and actual socket reuse. Unsupported SDK
+  versions report unavailable instrumentation and retain the existing provider behavior.
+  Provider word-end offsets are relative evidence, not physical microphone end or UTC receipt.
 - Recommended Speaking order is Local Chatterbox first when available, then xAI Voice as the
   preferred hosted general-purpose route. As of 2026-07-16, the official xAI TTS model page lists
   $15 per 1M TTS characters; Cartesia now publishes credit/minute plan pricing, so do not preserve

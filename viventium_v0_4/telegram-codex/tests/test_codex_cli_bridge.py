@@ -10,7 +10,7 @@ def _bridge() -> CodexCliBridge:
     return CodexCliBridge(
         CodexSettings(
             command="codex",
-            model="gpt-5.4",
+            model="gpt-6.1-sol",
             sandbox="workspace-write",
             approval_policy="never",
             skip_git_repo_check=False,
@@ -58,6 +58,8 @@ def test_build_new_turn_command_includes_images_before_exec():
     )
 
     assert command[:5] == ["codex", "-i", "/tmp/workspace/a.png", "-i", "/tmp/workspace/b.jpg"]
+    assert command[command.index("-m") + 1] == "gpt-6.1-sol"
+    assert command[command.index("-c") + 1] == 'model_reasoning_effort="high"'
     assert "--json" in command
     assert "exec" in command
     assert "hi" in command
@@ -73,6 +75,8 @@ def test_build_resume_command_uses_output_file_and_no_json():
     )
 
     assert command[:3] == ["codex", "-i", "/tmp/workspace/a.png"]
+    assert command[command.index("-m") + 1] == "gpt-6.1-sol"
+    assert command[command.index("-c") + 1] == 'model_reasoning_effort="high"'
     assert command.count("--json") == 0
     assert command[-5:] == ["-o", "/tmp/codex-last-message.txt", "resume", "thread-123", "resume hi"]
     assert "-o" in command

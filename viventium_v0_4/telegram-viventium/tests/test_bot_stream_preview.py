@@ -86,6 +86,9 @@ async def test_post_init_does_not_block_readiness_on_optional_bot_metadata(
             raise AssertionError("description must wait for commands")
 
     application = types.SimpleNamespace(bot=_Bot(), bot_data={})
+    from utils import telegram_vad
+    async def prepared_detector(): return object()
+    monkeypatch.setattr(telegram_vad, 'preload_speech_detector', prepared_detector)
     monkeypatch.setenv("VIVENTIUM_TELEGRAM_READY_FILE", str(marker))
     monkeypatch.setattr(tg_bot.config, "ChatGPTbot", None)
 
@@ -122,6 +125,31 @@ def test_telegram_reply_context_is_typed_without_rewriting_user_text():
         "senderKind": "assistant_candidate",
         "timestamp": "2026-08-19T21:02:00+00:00",
     }
+
+
+def test_telegram_reply_context_uses_the_passage_the_user_selected():
+    replied = types.SimpleNamespace(
+        message_id=91,
+        text="Willow fits 450 with 8 left; Elm is 7 over.",
+        caption=None,
+        date=datetime(2026, 8, 19, 21, 2, tzinfo=timezone.utc),
+        from_user=types.SimpleNamespace(id=700, is_bot=True),
+        document=None,
+        audio=None,
+        video=None,
+        voice=None,
+        animation=None,
+        sticker=None,
+        photo=[],
+    )
+    update_message = types.SimpleNamespace(
+        reply_to_message=replied,
+        quote=types.SimpleNamespace(text="Elm is 7 over"),
+    )
+
+    descriptor = tg_bot._telegram_reply_context_v1(update_message, bot_user_id=700)
+    assert descriptor["repliedTelegramMessageId"] == "91"
+    assert descriptor["quoteText"] == "Elm is 7 over"
 
 
 def test_telegram_reply_context_marks_a_foreign_bot_as_third_party_candidate():
@@ -282,6 +310,8 @@ class _FakeTelegramBot:
         self.messages = []
         self.edits = []
         self.audios = []
+        self.photos = []
+        self.media_groups = []
         self.deletes = []
         self.edit_error = None
         self.edit_errors = []
@@ -326,6 +356,12 @@ class _FakeTelegramBot:
         return None
 
     async def send_media_group(self, **_kwargs):
+        assert 2 <= len(_kwargs["media"]) <= 10
+        self.media_groups.append(_kwargs)
+        return None
+
+    async def send_photo(self, **kwargs):
+        self.photos.append(kwargs)
         return None
 
     async def send_audio(self, **_kwargs):
@@ -692,6 +728,53 @@ def test_deliver_proactive_telegram_message_falls_back_to_text_when_voice_send_f
     assert len(bot.messages) == 1
     assert bot.messages[0]["chat_id"] == 654
     assert "Plain follow-up" in bot.messages[0]["text"]
+
+
+def test_proactive_files_use_existing_sender_and_return_all_telegram_receipts(monkeypatch):
+    from utils import librechat_attachments
+
+    class _FilesBot(_FakeTelegramBot):
+        def __init__(self):
+            super().__init__()
+            self.photos = []
+            self.documents = []
+
+        async def send_photo(self, **kwargs):
+            self.photos.append(kwargs)
+            return _Msg(1101)
+
+        async def send_document(self, **kwargs):
+            self.documents.append(kwargs)
+            return _Msg(1102)
+
+    bot = _FilesBot()
+    downloads = []
+    authorizations = []
+
+    async def fetch(**kwargs):
+        downloads.append(kwargs)
+        return b"original-bytes", ("image/png" if kwargs["url"].endswith("photo") else "text/csv")
+
+    async def authorize():
+        authorizations.append("permit")
+        return True
+
+    monkeypatch.setattr(librechat_attachments, "fetch_librechat_bytes", fetch)
+    receipt = asyncio.run(tg_bot.deliver_proactive_telegram_message(
+        bot, chat_id=321, message_thread_id=77, text="Your files are ready.",
+        attachments=[{"file_id": "photo", "filename": "result.png"},
+            {"file_id": "document", "filename": "result.csv"}],
+        base_url="http://core.test", secret="synthetic", telegram_user_id="123",
+        telegram_username="synthetic", before_side_effect=authorize,
+    ))
+    assert receipt["message_ids"] == ["1001", "1101", "1102"]
+    assert receipt["delivery_unknown"] is False
+    assert authorizations == ["permit"] * 3
+    assert bot.photos[0]["photo"] == b"original-bytes"
+    assert bot.documents[0]["document"].getvalue() == b"original-bytes"
+    assert all(item["telegram_user_id"] == "123" and item["telegram_chat_id"] == "321"
+        for item in downloads)
+    assert bot.photos[0]["message_thread_id"] == bot.documents[0]["message_thread_id"] == 77
 
 
 def test_resolve_voice_input_message_aborts_without_transcription_preview():
@@ -4408,6 +4491,93 @@ def test_get_viventium_response_recoverable_error_stays_pending_without_commit_a
     assert robot.acks == []
 
 
+class _FailingMainStreamRobot:
+    """A Main stream that fails after its optional preview, as in the S2230 transport timeout."""
+
+    def __init__(self, preview_text=""):
+        self.preview_text = preview_text
+        self.acks = []
+
+    async def ask_stream_async(self, *args, **kwargs):
+        _ = args, kwargs
+        yield {"type": "logical_turn", "logical_turn_id": "turn-1", "revision": 1}
+        if self.preview_text:
+            yield {"type": "assistant_preview", "text": self.preview_text}
+            await asyncio.sleep(0.05)
+        yield {"type": "bridge_error", "text": "Connection error. Please retry.", "speak": False}
+
+    async def ack_delivery(self, *args, **kwargs):
+        _ = kwargs
+        self.acks.append(args)
+        return True
+
+    async def ack_delivery_status(self, *args, **kwargs):
+        _ = kwargs
+        self.acks.append(args)
+        return "recorded"
+
+    def reset(self, *args, **kwargs):
+        _ = args, kwargs
+
+
+def _run_failing_main_stream(monkeypatch, robot):
+    async def _noop_send_librechat_attachments(**_kwargs):
+        return None
+
+    monkeypatch.setattr(tg_bot, "Users", types.SimpleNamespace(get_config=lambda *_a, **_k: False))
+    monkeypatch.setattr(tg_bot, "should_send_voice_reply", lambda **_k: False)
+    monkeypatch.setattr(tg_bot, "send_librechat_attachments", _noop_send_librechat_attachments)
+    context = _FakeContext()
+    asyncio.run(
+        tg_bot.getViventiumResponse(
+            update_message=_FakeUpdateMessage(),
+            context=context,
+            title="",
+            robot=robot,
+            message="synthetic request",
+            chatid=111,
+            messageid=222,
+            convo_id="chat-1",
+            message_thread_id=None,
+            trace_id="test-failed-main-stream",
+            telegram_message_id=222,
+            telegram_update_id=333,
+        )
+    )
+    return context
+
+
+def test_failed_main_stream_after_preview_shows_retry_terminal_and_acks_failed(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setenv(
+        "VIVENTIUM_TELEGRAM_RETRACTION_STORE_PATH", str(tmp_path / "retractions.sqlite3")
+    )
+    robot = _FailingMainStreamRobot("Larch: $334 total; Fir: $309 total.")
+
+    context = _run_failing_main_stream(monkeypatch, robot)
+
+    # The user result: the unfinished preview is not kept, nor joined to the transport error.
+    assert [message["text"] for message in context.bot.current_messages.values()] == [
+        "I could not safely confirm that reply. It was removed. Please retry your message."
+    ]
+    assert not any(
+        "Connection error" in str(item.get("text")) for item in context.bot.edits
+    )
+    assert robot.acks == [("turn-1", 1, "failed", "telegram:111")]
+
+
+def test_failed_main_stream_without_output_shows_only_failure_and_acks_failed(monkeypatch):
+    robot = _FailingMainStreamRobot()
+
+    context = _run_failing_main_stream(monkeypatch, robot)
+
+    assert [message["text"] for message in context.bot.current_messages.values()] == [
+        "Connection error. Please retry."
+    ]
+    assert robot.acks == [("turn-1", 1, "failed", "telegram:111")]
+
+
 def test_get_viventium_response_superseded_delete_failure_reports_failed_not_removed(monkeypatch):
     class _DeleteFailBot(_FakeTelegramBot):
         async def delete_message(self, **kwargs):
@@ -4765,12 +4935,16 @@ def test_get_viventium_response_xai_tts_does_not_split_wrapped_text(monkeypatch)
     assert len(context.bot.audios) == 1
 
 
-def test_handle_file_does_not_forward_failed_transcription(monkeypatch):
+@pytest.mark.parametrize('voice_error_text', [
+    'Temporarily unable to transcribe this video note. Please retry.',
+    'No speech was detected in this voice note.',
+])
+def test_handle_file_does_not_forward_failed_transcription(monkeypatch, voice_error_text):
     forwarded_calls = []
 
     async def _fake_handle_get_message_info(*_args, **_kwargs):
         return _make_message_info(
-            voice_error_text="Temporarily unable to transcribe this video note. Please retry."
+            voice_error_text=voice_error_text
         )
 
     async def _fake_get_viventium_response(*args, **kwargs):
@@ -4808,8 +4982,9 @@ def test_handle_file_does_not_forward_failed_transcription(monkeypatch):
 
     assert forwarded_calls == []
     assert len(context.bot.messages) == 1
-    assert context.bot.messages[0]["text"] == "Temporarily unable to transcribe this video note. Please retry."
+    assert context.bot.messages[0]["text"] == voice_error_text
     assert "🎤 Transcription" not in context.bot.messages[0]["text"]
+    assert context.bot.audios == []
 
 
 def test_captioned_transcription_failure_retains_input_without_starting_main(
@@ -5249,6 +5424,95 @@ def _parallel_snapshot(*, enabled=False, state="fresh", actions=None, items=True
             }
         ]
     return orchestration_module.parse_snapshot(preference, work)
+
+
+def _native_permission_snapshot():
+    return orchestration_module.parse_snapshot({"available": True, "mode": "parallel"}, {
+        "snapshot": "fresh", "overflowCount": 0, "work": [{"workRef": "work-native", "title": "Synthetic chart",
+        "state": "needs_input", "actions": ["resume", "stop"], "pendingNativeInput": {
+        "version": 1, "kind": "permission", "mode": "form", "requestId": "request-1", "requestFingerprint": "a" * 64,
+        "runId": "run-1", "attemptId": "attempt-1", "sessionId": "session-1", "expiresAt": "2099-01-01T00:00:00Z",
+        "message": "May I run the requested operation?", "requestedSchema": {"type": "object", "required": ["optionId"],
+        "properties": {"optionId": {"type": "string", "enum": ["allow_once", "reject_once"],
+        "enumNames": ["Allow once", "Reject once"]}}}}}]})
+
+
+def test_native_permission_keyboard_uses_actual_options_and_keeps_stop(monkeypatch, tmp_path):
+    store = orchestration_module.CallbackCapabilityStore(tmp_path / "callbacks.sqlite3")
+    monkeypatch.setattr(tg_bot, "_PARALLEL_WORK_CALLBACK_STORE", store)
+    text, markup = tg_bot._active_work_view(_native_permission_snapshot(), telegram_user_id="user-1", chat_id="chat-1", message_thread_id="7")
+    buttons = _flatten_keyboard(markup)
+    assert "May I run the requested operation?" in text
+    assert [button.text for button in buttons[:2]] == ["1 · Allow once", "1 · Reject once"]
+    assert any("Stop" in button.text for button in buttons)
+    assert not any("Resume" in button.text for button in buttons)
+    assert all("allow_once" not in (button.callback_data or "") for button in buttons)
+
+
+def test_multiple_native_questions_identify_each_work_in_the_choice_label(monkeypatch, tmp_path):
+    from dataclasses import replace
+    store = orchestration_module.CallbackCapabilityStore(tmp_path / "callbacks.sqlite3")
+    monkeypatch.setattr(tg_bot, "_PARALLEL_WORK_CALLBACK_STORE", store)
+    first = _native_permission_snapshot().items[0]
+    second = replace(first, work_ref="work-second", title="Second synthetic chart")
+    snapshot = replace(_native_permission_snapshot(), items=(first, second))
+    _, markup = tg_bot._active_work_view(snapshot, telegram_user_id="user-1", chat_id="chat-1", message_thread_id="7")
+    choices = [button for button in _flatten_keyboard(markup) if "Allow once" in button.text]
+    assert [button.text for button in choices] == ["1 · Allow once", "2 · Allow once"]
+    targets = [store.reserve_action(button.callback_data[len("PW:A:"):],
+        telegram_user_id="user-1", chat_id="chat-1", message_thread_id="7") for button in choices]
+    assert [target.target.work_ref for target in targets] == ["work-native", "work-second"]
+
+
+def test_native_permission_button_pending_ack_keeps_exact_choice_retry(monkeypatch, tmp_path):
+    from dataclasses import replace
+    store = orchestration_module.CallbackCapabilityStore(tmp_path / "callbacks.sqlite3")
+    snapshot = _native_permission_snapshot()
+    item = snapshot.items[0]
+    target = store.issue_actions(telegram_user_id="user-1", chat_id="chat-1", message_thread_id="7",
+        targets=[(item.work_ref, "resume")], native_input=item.pending_native_input.response("reject_once"))[0]
+
+    class NativeClient(_ParallelClient):
+        async def act(self, user_id, work_ref, action, *, instruction=None, operation_id, native_input=None):
+            self.action_calls.append((operation_id, native_input))
+            pending = len(self.action_calls) == 1
+            return replace(self.snapshot, action_receipt=orchestration_module.ActionReceipt(not pending,
+                action, "Harness confirmation is pending." if pending else "Choice delivered.", pending))
+
+    client = NativeClient(snapshot)
+    monkeypatch.setattr(tg_bot, "_PARALLEL_WORK_CALLBACK_STORE", store)
+    monkeypatch.setattr(tg_bot, "_PARALLEL_WORK_CLIENT", client)
+    data = orchestration_module.action_callback_data(target.token)
+    update, query = _parallel_callback_update(data)
+    query.message.message_thread_id = 7
+    asyncio.run(tg_bot.button_press(update, _FakeContext()))
+    buttons = _flatten_keyboard(query.text_edits[-1]["reply_markup"])
+    assert next(button for button in buttons if button.text == "Retry same action").callback_data == data
+    assert "pending" in query.text_edits[-1]["text"]
+    update2, query2 = _parallel_callback_update(data)
+    query2.message.message_thread_id = 7
+    asyncio.run(tg_bot.button_press(update2, _FakeContext()))
+    assert client.action_calls == [(target.token, target.native_input), (target.token, target.native_input)]
+    assert "Choice delivered" in query2.text_edits[-1]["text"]
+
+
+def test_native_permission_button_wrong_topic_or_replaced_request_does_not_submit(monkeypatch, tmp_path):
+    store = orchestration_module.CallbackCapabilityStore(tmp_path / "callbacks.sqlite3")
+    snapshot = _native_permission_snapshot()
+    item = snapshot.items[0]
+    target = store.issue_actions(telegram_user_id="user-1", chat_id="chat-1", message_thread_id="7",
+        targets=[(item.work_ref, "resume")], native_input=item.pending_native_input.response("allow_once"))[0]
+    client = _ParallelClient(_parallel_snapshot(items=False))
+    monkeypatch.setattr(tg_bot, "_PARALLEL_WORK_CALLBACK_STORE", store)
+    monkeypatch.setattr(tg_bot, "_PARALLEL_WORK_CLIENT", client)
+    update, query = _parallel_callback_update(orchestration_module.action_callback_data(target.token))
+    query.message.message_thread_id = 8
+    asyncio.run(tg_bot.button_press(update, _FakeContext()))
+    assert client.get_calls == [] and client.action_calls == []
+    query.message.message_thread_id = 7
+    asyncio.run(tg_bot.button_press(update, _FakeContext()))
+    assert client.action_calls == []
+    assert "no longer current" in query.text_edits[-1]["text"]
 
 
 class _ParallelClient:
@@ -5916,6 +6180,50 @@ def test_get_viventium_response_commits_exact_durable_effect_identity(monkeypatc
 # === VIVENTIUM END ===
 
 
+# === VIVENTIUM START === A preview clear never loses a preview message already sent. ===
+class _LateReplyTelegramBot(_FakeTelegramBot):
+    """Telegram creates the message at once; its reply reaches the bot later."""
+
+    async def send_message(self, **kwargs):
+        sent = await super().send_message(**kwargs)
+        await asyncio.sleep(0.2)
+        return sent
+
+
+def test_preview_clear_during_send_keeps_one_message_for_the_final(monkeypatch):
+    context = _FakeContext()
+    context.bot = _LateReplyTelegramBot()
+
+    class Robot:
+        async def ask_stream_async(self, *args, **kwargs):
+            yield {"type": "assistant_preview", "text": "Draft answer."}
+            for _ in range(100):
+                if context.bot.messages:
+                    break
+                await asyncio.sleep(0.005)
+            # The native final clears the authored preview while Telegram's reply is pending.
+            yield {"type": "assistant_preview", "text": ""}
+            yield "Final answer."
+
+        def reset(self, **kwargs):
+            pass
+
+    async def noop(**kwargs):
+        pass
+
+    monkeypatch.setattr(tg_bot, "Users", types.SimpleNamespace(get_config=lambda *a, **k: False))
+    monkeypatch.setattr(tg_bot, "should_send_voice_reply", lambda **k: False)
+    monkeypatch.setattr(tg_bot, "send_librechat_attachments", noop)
+    monkeypatch.setattr(tg_bot.config, "VIVENTIUM_TELEGRAM_STREAM_EDIT_INTERVAL_S", 0.01)
+    asyncio.run(tg_bot.getViventiumResponse(update_message=_FakeUpdateMessage(), context=context,
+        title="", robot=Robot(), message="Synthetic question.", chatid=111,
+        messageid=222, convo_id="chat-1", message_thread_id=None, voice_note_detected=False,
+        files=None, telegram_message_id=222, telegram_update_id=333))
+    assert len(context.bot.messages) == 1
+    assert _final_delivered_texts(context) == ["Final answer."]
+# === VIVENTIUM END ===
+
+
 def test_authored_preview_is_early_replaced_and_never_part_of_final(monkeypatch):
     context = _FakeContext()
     class Robot:
@@ -5940,3 +6248,102 @@ def test_authored_preview_is_early_replaced_and_never_part_of_final(monkeypatch)
     assert len(context.bot.messages) == 1
     assert context.bot.edits[-1]["text"] == "Final answer only."
     assert all("Timezone: UTC.Final" not in row["text"] for row in context.bot.messages + context.bot.edits)
+
+
+# === VIVENTIUM START === Legacy presentation obeys the same Telegram album cardinality.
+@pytest.mark.parametrize(("reply", "expected_photo", "album_size"), [
+    ("![image](data:image/png;base64,c3ludGhldGljLWltYWdl)", b"synthetic-image", 0),
+    ("Image: https://example.invalid/result.png", "https://example.invalid/result.png", 0),
+    ("Images: https://example.invalid/one.png https://example.invalid/two.png", None, 2),
+])
+def test_existing_image_presentations_use_photo_or_valid_album(monkeypatch, reply, expected_photo, album_size):
+    class Robot(_FakeRobot):
+        async def ask_stream_async(self, *_args, **_kwargs):
+            yield reply
+
+    async def noop(**_kwargs):
+        pass
+
+    context = _FakeContext()
+    monkeypatch.setattr(tg_bot, "Users", types.SimpleNamespace(get_config=lambda *_a, **_kw: False))
+    monkeypatch.setattr(tg_bot, "should_send_voice_reply", lambda **_kw: False)
+    monkeypatch.setattr(tg_bot, "send_librechat_attachments", noop)
+    asyncio.run(tg_bot.getViventiumResponse(
+        update_message=_FakeUpdateMessage(), context=context, title="", robot=Robot(),
+        message="Return the requested image.", chatid=111, messageid=222, convo_id="chat-1",
+        message_thread_id=7, voice_note_detected=False, files=None,
+        telegram_message_id=222, telegram_update_id=333,
+    ))
+
+    if album_size:
+        assert not context.bot.photos
+        assert len(context.bot.media_groups) == 1
+        assert len(context.bot.media_groups[0]["media"]) == album_size
+        sent = context.bot.media_groups[0]
+    else:
+        assert not context.bot.media_groups
+        assert [item["photo"] for item in context.bot.photos] == [expected_photo]
+        sent = context.bot.photos[0]
+    assert sent["message_thread_id"] == 7
+    assert sent["reply_to_message_id"] == 222
+# === VIVENTIUM END ===
+
+
+@pytest.mark.asyncio
+async def test_long_file_callback_cancelled_by_permit_loss_keeps_returned_file_ids(monkeypatch):
+    from utils import librechat_attachments
+    from utils.librechat_bridge import LibreChatBridge
+
+    bridge = LibreChatBridge(get_conversation_id=lambda _: "new",
+        set_conversation_id=lambda *_: None)
+    bridge.glasshive_delivery_lease_ms = 30
+    second_upload_started = asyncio.Event()
+    statuses, renewal_count = [], 0
+
+    class _FilesBot:
+        document_count = 0
+        async def send_message(self, **kwargs):
+            return _Msg(9001)
+        async def send_document(self, **kwargs):
+            self.document_count += 1
+            if self.document_count == 1:
+                return _Msg(9101)
+            second_upload_started.set()
+            await asyncio.Future()
+
+    bot = _FilesBot()
+    async def fetch(**kwargs):
+        return b"original", "application/x-custom"
+    monkeypatch.setattr(librechat_attachments, "fetch_librechat_bytes", fetch)
+    monkeypatch.setattr(tg_bot.config.Users, "get_config", lambda *_: False)
+
+    async def callback(chat_id, text, **kwargs):
+        return await tg_bot.deliver_proactive_telegram_message(bot,
+            chat_id=chat_id, text=text, base_url="http://core.test", secret="synthetic", **kwargs)
+    async def authorize(delivery):
+        return {"deliveryId": delivery["deliveryId"], "claimId": delivery["claimId"],
+            "surface": "telegram", "permitId": "a" * 32, "permitGeneration": 1,
+            "expiresAt": "2099-08-23T23:00:00.000Z", "resultRevision": 1,
+            "resultDigest": "sha256:" + "b" * 64}
+    async def renew(delivery, permit):
+        nonlocal renewal_count
+        renewal_count += 1
+        if second_upload_started.is_set():
+            return None
+        return {**permit, "expiresAt": "2099-08-23T23:01:00.000Z"}
+    async def mark(delivery, status, **kwargs):
+        statuses.append((status, delivery.get("telegramSentMessageIds")))
+        return True
+    bridge.set_on_message_callback(callback)
+    bridge._authorize_glasshive_delivery = authorize
+    bridge._renew_glasshive_delivery = renew
+    bridge._mark_glasshive_delivery_status = mark
+    bridge._release_glasshive_delivery = lambda *args: pytest.fail("uncertain file cannot replay")
+    delivery = {"deliveryId": "long-files", "claimId": "claim", "event": "main.followup",
+        "telegramChatId": "404", "telegramUserId": "123", "text": "Files ready.",
+        "attachments": [{"file_id": "one", "filename": "one.bin"},
+            {"file_id": "two", "filename": "two.bin"}]}
+    assert await asyncio.wait_for(bridge._deliver_glasshive_delivery(delivery), 1.0) is False
+    assert bot.document_count == 2
+    assert renewal_count == 4
+    assert statuses == [("delivery_unknown", ["9001", "9101"])]

@@ -27,6 +27,22 @@ token bookkeeping do not. Existing accepted-message IDs, positions, revision mar
 legacy artifacts are not rewritten. Current reads use the authored evidence; derived summaries must
 still satisfy their existing source-digest checks.
 
+The Main context carrier uses the provider formatter's stored-user-text normalization and its
+shared typed delivery/status exclusions. A completed assistant row containing only internal
+status parts contributes no answer text, but remains in the raw owner/conversation ancestry proof.
+A real answer mixed with internal status retains its exact authored text. Missing or altered
+answers, unfinished rows, foreign ownership and incomplete raw ancestry still fail admission.
+Exact Feeling-state mirrors are permitted only when each declared instruction field carries the
+same capsule and both instruction bodies end with the complete, identical declared request tail.
+Additional legitimate tail context does not create a second authority source.
+
+Saved failed answers and call turns with saved restricted speaker authority remain historical
+context. They do not become accepted Main source or force legacy-history protection. A genuine
+unreconciled legacy branch still requires exact ordered text, owner, conversation and ancestry;
+failed context may be carried in that branch without clearing its saved error or delivery state.
+Unfinished, deleted, internal, missing, reordered or changed source still fails that admission.
+Ordinary restricted history keeps the existing bounded replay and truthful omission behavior.
+
 Continue submits a normal new visible user turn after the selected assistant. It keeps the previous
 response and native FINAL intact. The new native admission carries one optional directly referenced
 parent proof captured from the raw history snapshot before mapping or attachment hydration. The
@@ -411,6 +427,22 @@ local model evaluation do not close `MC-008` or the real long-conversation journ
 - `new` and `same` keep their visible-conversation meanings. They do not control cognitive
   continuity.
 - Trusted scheduler envelopes use internal visibility and cannot enter UI, recall, or saved memory.
+- A trusted scheduler wake omits trusted scheduler envelopes and hidden scheduler outputs from Main
+  message history by type in the agent message builder. The loaded chain keeps them so the builder's
+  parent walk reaches every visible answer; they stay stored and accounted as skipped in the raw
+  ancestry proof. Every visible prior answer remains source under the protected-history guard, so
+  the wake either carries it faithfully or fails typed (`source_context_unavailable`). Row counts
+  are not knowledge delivered to Main.
+- Legacy conversation continuity: when unstamped legacy history cannot fit the protected carrier,
+  its oldest whole-turn prefix is reconciled into a reviewed semantic summary by the existing
+  compaction runner (owning Workbench generation and review prompts, exact configured Main route),
+  bound to each covered visible row's ID and content digest. Main receives that summary as a
+  required turn-context section plus the newest visible rows intact. The carrier bound is unchanged,
+  stored history is never rewritten, truncated or reset, a changed or missing covered row
+  invalidates the summary, and an unapproved summary is never used; the turn then fails typed. The
+  turn that needs it reconciles in the foreground, once per new covered prefix.
+- Native per-turn-header Main receives its request-pinned saved-memory snapshot, with explicit
+  availability status, in the per-turn developer tail; primary and retry reuse the same snapshot.
 - A useful result becomes an ordinary assistant message with durable provenance.
 - Every manual Main run creates a durable pre-dispatch receipt, uses that receipt as its occurrence
   and provider idempotency key, holds the same task exclusion lease as a scheduled occurrence, and
@@ -574,6 +606,12 @@ active epoch records. Retention must keep floors while older saved presentations
 System receipts and bookkeeping do not change accepted source generation; source hydration and
 invalidation share the same effective text and completed-tool-result projection.
 
+Recoverable account cleanup routes message tombstones through this same native source mutation
+transaction. Owner, revision and source timestamp compare-and-swap checks remain mandatory. Internal
+admission status updates preserve source timestamps so they cannot invalidate a valid source CAS.
+Stale source edits remain conflicts. This source repair does not prove that a live account cleanup,
+legacy summary reconciliation, producer retirement, or search/RAG cleanup has completed.
+
 Legacy continuity rows remain immutable typed evidence. Each real epoch reconciles them independently,
 using original native source when available and retaining uncertainty where historical coverage is
 incomplete. All retained legacy revision fields contribute to stale-replay rejection, including
@@ -609,11 +647,22 @@ parent stays internal and contributes no user-authored text or permission. Expli
 provenance and missing or mismatched identities remain unavailable; stored history is not rewritten.
 
 Accepted-turn compaction defers while every retained pending turn and the prior summary fit intact
-in the existing protected Message carrier and reference/summary capsule. Explicit compaction remains immediate. Claims process the oldest whole-turn
-prefix with an 80 KiB source target; an indivisible larger turn is supplied whole to the provider,
-whose actual input budget remains authoritative. Promotion advances only the claimed prefix watermark; it does not delete native source Messages. The
-former 5 KiB accepted-text clipping, 64-pending-turn eviction and 96 KiB compactor clipping are
-removed. Provider failure preserves the native source references and records degradation; this is
+in the existing protected Message carrier and reference/summary capsule. Explicit compaction remains
+immediate. Claims process the oldest whole-turn prefix with a default 80 KiB source target. When a
+claim exhausts its bounded attempts without an accepted proposal, the next claim takes at most half
+of that claimed source, with one indivisible whole turn as the floor. An epoch durably degraded by
+an unaccepted proposal starts at half the default after process-local learning is lost; a provider
+or transport failure does not change that default. Promotion restores the default source target.
+An indivisible larger turn is supplied whole to the provider, whose actual input budget remains
+authoritative. The 6 KiB semantic output contract and model-owned fidelity review remain unchanged.
+
+Generation, review and transport-retry waits use the store-owned claim lease. Additional size
+repairs are bounded by a shrinking proposal, a four-attempt ceiling and remaining time for review.
+The current process remembers an identical failed source/contract/compactor claim so that unchanged
+failure does not incur another model run; its degraded state stays explicit. Smaller or changed
+claims remain eligible. Promotion advances only the reviewed prefix watermark and never deletes
+native source Messages. The former 5 KiB accepted-text clipping, 64-pending-turn eviction and 96 KiB
+compactor clipping are removed. Failure retains unconsumed source and records degradation; it is
 not a successful semantic-continuity result.
 
 This candidate remains partial. Deterministic source/lease tests, exact-model role evaluation,

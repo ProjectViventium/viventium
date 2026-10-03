@@ -41,7 +41,7 @@ DOCKER_FEATURES = {"ms365", "conversation_recall", "code_interpreter", "skyvern"
 EASY_INSTALL_LABEL = "Easy Install"
 CUSTOM_SETTINGS_INSTALL_LABEL = "Custom Settings Install"
 EASY_INSTALL_DESCRIPTION = (
-    "Guided source checkout first run with GlassHive as Viventium Main. Have a signed-in "
+    "Guided source checkout first run with xPerfect as Viventium Main. Have a signed-in "
     "Codex CLI, add an OpenAI API key in the browser for supporting AI tasks, then "
     "send a first message. Use Custom Settings Install when you want other optional local "
     "services during setup."
@@ -798,7 +798,7 @@ def feature_options(*, docker_installed: bool) -> list[CheckboxOption]:
         CheckboxOption(
             group="Optional Automations",
             value="glasshive",
-            label="GlassHive",
+            label="xPerfect",
             note="Run delegated local workers; requires a supported worker CLI",
             checked=False,
         ),
@@ -813,7 +813,7 @@ def feature_options(*, docker_installed: bool) -> list[CheckboxOption]:
             group="Optional Automations",
             value="nightly_reflection",
             label="Nightly Reflection",
-            note="Also enables Scheduler, Prompt Workbench, and GlassHive",
+            note="Also enables Scheduler, Prompt Workbench, and xPerfect",
             checked=False,
         ),
         CheckboxOption(
@@ -1360,8 +1360,8 @@ def configure_easy_install(ui: InstallerUI) -> tuple[dict[str, Any], list[str]]:
         "viventium/call_session_secret",
     )
     # This wizard is shipped by the source-checkout installer, which bootstraps the pinned
-    # GlassHive component before compilation. The separate immutable Native payload does not
-    # package or call this wizard and keeps its own GlassHive-off compiled defaults.
+    # xPerfect component before compilation. The separate immutable Native payload does not
+    # package or call this wizard and keeps its own xPerfect-off compiled defaults.
     glasshive = config["integrations"]["glasshive"]
     glasshive["enabled"] = True
     glasshive["provider"]["enabled"] = True

@@ -42,6 +42,7 @@ TRIGGER_EVENT_SCHEMA_VERSION = 3
 SCHEDULE_V3_OBSERVATION_SCHEMA_VERSION = 1
 SCHEDULE_LIFECYCLE_SCHEMA_VERSION = 1
 DEFAULT_OPENAI_MEMORY_EFFORT_BY_MODEL = {
+    "gpt-6.1-sol": "high",
     "gpt-5.5": "xhigh",
     "gpt-5.6-sol": "xhigh",
     "gpt-5.6-terra": "high",
@@ -1112,13 +1113,13 @@ def default_memory_hardening_effort(args: argparse.Namespace, env: dict[str, str
             or model_for_provider(provider, env)
         )
     if not model:
-        model = "gpt-5.6-luna" if provider == "openai" else "claude-opus-5"
+        model = "gpt-6.1-sol" if provider == "openai" else "claude-opus-5-5"
     if provider == "openai":
         return DEFAULT_OPENAI_MEMORY_EFFORT_BY_MODEL.get(
             model,
             DEFAULT_OPENAI_MEMORY_EFFORT,
         )
-    return "xhigh"
+    return "high"
 
 
 def user_email_for_run(args: argparse.Namespace, runtime_env: dict[str, str]) -> str:

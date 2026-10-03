@@ -897,6 +897,7 @@ def test_native_candidate_config_excludes_unbundled_glasshive(
         [
             sys.executable,
             str(REPO_ROOT / "scripts/viventium/config_compiler.py"),
+            "--native-payload",
             "--config",
             str(config_path),
             "--output-dir",
@@ -916,6 +917,26 @@ def test_native_candidate_config_excludes_unbundled_glasshive(
     assert (
         output / "payload" / "runtime" / "defaults" / "config.yaml"
     ).read_bytes() == config_path.read_bytes()
+
+
+@pytest.mark.parametrize(
+    ("servers", "accepted"),
+    [
+        ({"sequential-thinking": {"command": "${VIVENTIUM_NATIVE_NODE_BINARY}"},
+          "scheduling-cortex": {"headers": {"Authorization": "Bearer ${SCHEDULING_MCP_API_KEY}"}}}, True),
+        ({"sequential-thinking": {"command": "npx"}}, False),
+        ({"scheduling-cortex": {"headers": {"X-Viventium-User-Id": "{{LIBRECHAT_USER_ID}}"}}}, False),
+    ],
+)
+def test_native_compiled_defaults_require_payload_mcp_transports(tmp_path, monkeypatch, servers, accepted):
+    compiled = fixture_inputs(tmp_path / "inputs")["compiled"]
+    file(compiled / "librechat.yaml", yaml.safe_dump({"version": "1.3.4", "mcpServers": servers}))
+    assembler = load_native_assembler(monkeypatch)
+    if accepted:
+        assembler.validate_native_compiled_defaults(compiled)
+    else:
+        with pytest.raises(assembler.AssemblyError, match="compile them with --native-payload"):
+            assembler.validate_native_compiled_defaults(compiled)
 
 
 @pytest.mark.parametrize("records", [[], [{"name": "LibreChat", "ref": "not-a-pin"}], [{"name": "LibreChat", "ref": "a" * 40}] * 2, None])
@@ -2527,6 +2548,20 @@ def test_native_harness_uses_packaged_bodies_and_compiled_route_without_host_cre
     assert len({env[name] for name in ("WPR_API_TOKEN", "GLASSHIVE_PROVIDER_API_KEY", "GLASSHIVE_MCP_API_KEY", "VIVENTIUM_GLASSHIVE_SERVICE_ASSERTION_SECRET")}) == 4
 
 
+def test_native_glasshive_path_resolves_the_host_admission_probes(tmp_path, monkeypatch):
+    runtime = load_native_runtime(); root = tmp_path / "release"; support = tmp_path / "support"
+    monkeypatch.setattr(runtime, "native_body_paths", lambda _root: {})
+    monkeypatch.setattr(runtime, "ensure_support_directories", lambda *_args: None)
+    monkeypatch.setattr(runtime, "build_metadata", lambda _root: {"source_commit": "a" * 40, "components": {"glasshive": {"commit": "b" * 40}}})
+    monkeypatch.setattr(runtime, "runtime_secrets", lambda *_args, **_kwargs: {"CREDS_KEY": "c" * 64})
+
+    env = runtime.native_glasshive_environment(root, support)
+
+    # GlassHive admits host work only after its process, memory and disk probes succeed.
+    probes = ("ps", "sysctl", "df") + (("vm_stat",) if sys.platform == "darwin" else ())
+    assert [name for name in probes if shutil.which(name, path=env["PATH"]) is None] == []
+
+
 def test_native_glasshive_socket_is_private_before_server_start(tmp_path):
     runtime = load_native_runtime()
     root = tmp_path / "release"
@@ -3760,6 +3795,112 @@ def test_native_glasshive_proxy_retains_auth_owner_rejection_and_private_socket_
             (runtime_dir / "glasshive.sock").chmod(0o666)
             assert request(prefix, {"Authorization": "Bearer " + "b" * 64})[0] == 503
             assert len(received) == before
+        finally:
+            if proxy is not None:
+                proxy.terminate(); proxy.wait(timeout=5)
+            for server, thread in servers:
+                server.shutdown(); server.server_close(); thread.join(timeout=2)
+
+
+def test_native_glasshive_server_accepts_the_source_harness_request_head(tmp_path):
+    runtime = load_native_runtime()
+    root = tmp_path / "release"
+    recorded = tmp_path / "uvicorn-config.json"
+    file(root / "runtime/glasshive/site-packages/uvicorn.py", f"""
+import json
+class Config:
+    def __init__(self, *args, **kwargs):
+        with open({str(recorded)!r}, "w") as handle:
+            json.dump({{k: v for k, v in kwargs.items() if isinstance(v, (int, str))}}, handle)
+class Server:
+    def __init__(self, config): pass
+    def run(self, *, sockets): pass
+""")
+    launcher = (REPO_ROOT / "viventium_v0_4/viventium-librechat-start.sh").read_text(encoding="utf-8")
+    source_head_bytes = int(launcher.split("\nGLASSHIVE_HTTP_REQUEST_HEAD_MIN_BYTES=", 1)[1].split("\n", 1)[0])
+    support = Path(tempfile.mkdtemp(prefix="vi-head-", dir="/private/tmp"))
+    try:
+        (support / "runtime").mkdir(mode=0o700)
+        command = runtime.glasshive_server_command(root, support)
+        command[0] = sys.executable
+        result = subprocess.run(command, capture_output=True, text=True)
+        assert result.returncode == 0, result.stderr
+    finally:
+        shutil.rmtree(support)
+
+    config = json.loads(recorded.read_text(encoding="utf-8"))
+    assert config["http"] == "h11"
+    assert config["h11_max_incomplete_event_size"] == source_head_bytes == runtime.GLASSHIVE_HTTP_REQUEST_HEAD_MAX_BYTES
+
+
+def test_native_proxy_forwards_a_harness_request_head_above_the_node_default():
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node is unavailable")
+    def free_port():
+        with socket.socket() as handle:
+            handle.bind(("127.0.0.1", 0))
+            return handle.getsockname()[1]
+    received = []
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            received.append(dict(self.headers))
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"ok")
+        def log_message(self, *_args):
+            pass
+    class UnixHTTPServer(HTTPServer):
+        address_family = socket.AF_UNIX
+    # A bootstrap bundle well above Node's 16 KiB default request head and below the contract.
+    bundle = "A" * (40 * 1024)
+    with tempfile.TemporaryDirectory(prefix="viv-gh-head-", dir="/private/tmp") as raw:
+        base = Path(raw); support = base / "support"; runtime_dir = support / "runtime"
+        runtime_dir.mkdir(parents=True, mode=0o700)
+        servers = []
+        proxy = None
+        try:
+            for name in ("librechat-api.sock", "glasshive.sock", "glasshive-mcp.sock", "scheduling.sock"):
+                server = UnixHTTPServer(str(runtime_dir / name), Handler)
+                (runtime_dir / name).chmod(0o600)
+                thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
+                servers.append((server, thread))
+            release = base / "release"
+            sandpack, digest = native_proxy_sandpack_fixture(release)
+            state = file(support / "state/native-first-admin.json", json.dumps({"schema_version": 1, "status": "closed"}))
+            hook = executable(base / "close-hook")
+            port, artifact_port = free_port(), free_port()
+            environment = {"PATH": "/usr/bin:/bin", "VIVENTIUM_NATIVE_RELEASE_ID": "e" * 40,
+                "VIVENTIUM_NATIVE_RELEASE_ROOT": str(release), "VIVENTIUM_NATIVE_FIRST_ADMIN_STATE": str(state),
+                "VIVENTIUM_NATIVE_PROXY_TARGET_SOCKET": str(runtime_dir / "librechat-api.sock"),
+                "VIVENTIUM_NATIVE_PROXY_LISTEN_PORT": str(port), "VIVENTIUM_NATIVE_SANDPACK_LISTEN_PORT": str(artifact_port),
+                "VIVENTIUM_NATIVE_SANDPACK_ROOT": str(sandpack), "VIVENTIUM_NATIVE_SANDPACK_INDEX_SHA256": digest,
+                "VIVENTIUM_NATIVE_REGISTRATION_CLOSE_HOOK": str(hook), "VIVENTIUM_APP_SUPPORT_DIR": str(support),
+                "VIVENTIUM_NATIVE_GLASSHIVE_SOCKET": str(runtime_dir / "glasshive.sock"),
+                "VIVENTIUM_NATIVE_GLASSHIVE_MCP_SOCKET": str(runtime_dir / "glasshive-mcp.sock"),
+                "WPR_API_TOKEN": "a" * 64, "GLASSHIVE_PROVIDER_API_KEY": "b" * 64, "GLASSHIVE_MCP_API_KEY": "c" * 64,
+                "VIVENTIUM_NATIVE_SCHEDULING_SOCKET": str(runtime_dir / "scheduling.sock"),
+                "SCHEDULING_MCP_API_KEY": "d" * 64, "SCHEDULER_LIBRECHAT_SECRET": "e" * 64}
+            proxy = subprocess.Popen([node, str(NATIVE_PROXY)], env=environment, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+            def request(path, headers):
+                try:
+                    with LOOPBACK_OPENER.open(urllib.request.Request(f"http://127.0.0.1:{port}" + path, headers=headers), timeout=5) as response:
+                        return response.status
+                except urllib.error.HTTPError as error:
+                    return error.code
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline:
+                try:
+                    if request("/__viventium_native_health", {}) == 200: break
+                except OSError: time.sleep(0.05)
+
+            status = request("/__viventium_native_glasshive/v1/chat/completions", {
+                "Authorization": "Bearer " + "a" * 64, "X-Viventium-Service-Assertion": "owner",
+                "X-GlassHive-Bootstrap-Bundle-B64": bundle})
+
+            assert status == 200
+            forwarded = {key.lower(): value for key, value in received[-1].items()}
+            assert forwarded["x-glasshive-bootstrap-bundle-b64"] == bundle
         finally:
             if proxy is not None:
                 proxy.terminate(); proxy.wait(timeout=5)

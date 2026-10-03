@@ -5,7 +5,18 @@
 Validate that Telegram voice-note replies reuse the linked user's saved modern voice Speaking route
 and do not drift from the browser voice selector.
 
-Latest acceptance: on 2026-07-11 the real Telegram always-voice xAI path passed feeling-aware
+## Latest scoped result
+
+The [2026-10-03 Voice and Telegram acceptance](../modern-playground-voice/reports/2026-10-03-voice-and-telegram-acceptance.md)
+keeps `TGVOICE-008` PARTIAL: the selected hosted recognition route rejected credentials, and its
+complete Telegram voice-note recovery has not passed. Raw hosted-STT tests and a successful local
+LiveKit call do not replace this exact Telegram path. Saved browser voice defaults passed reload
+and fresh-preview inheritance on the existing QA account; the original linked-owner Web sign-in
+remains separate.
+
+## Retained expression acceptance
+
+On 2026-07-11 the real Telegram always-voice xAI path passed feeling-aware
 expression without an explicit user request. Raw local output carried one supported xAI wrapping
 control, the visible bubble was clean, structural telemetry counted the control, and a voice note was
 delivered. The linked Prompt Workbench expressive/restrained/Feelings-off/plain slice passed 4/4.

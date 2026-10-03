@@ -6,9 +6,17 @@ import shutil
 import tempfile
 import threading
 from io import BytesIO
+from pathlib import Path
+import sys
 
 from ..core.utils import get_image_message
 
+# === VIVENTIUM START === Shared native segment join uses the exact decoder input.
+_SHARED_PATH = Path(__file__).resolve().parents[5] / 'shared'
+if str(_SHARED_PATH) not in sys.path:
+    sys.path.insert(0, str(_SHARED_PATH))
+from whisper_cpp_segments import join_native_segments
+# === VIVENTIUM END ===
 
 _LOCAL_STT_TRANSCRIBE_LOCK = threading.Lock()
 
@@ -70,7 +78,7 @@ def _normalized_local_whisper_language(config):
         return ""
     return language
 
-def get_audio_message(file_bytes, *, raise_errors=False):
+def get_audio_message(file_bytes, *, raise_errors=False, decoded_audio=None):
     """Transcribe audio bytes using local Whisper or API"""
     import logging
     import tempfile
@@ -78,6 +86,22 @@ def get_audio_message(file_bytes, *, raise_errors=False):
     logger = logging.getLogger(__name__)
     
     try:
+        # === VIVENTIUM START === Reuse exact validated float32 PCM across Telegram STT adapters.
+        try:
+            from ....utils.telegram_audio import decode_audio_bytes, TelegramAudioDecodeError
+        except ImportError:
+            # bot.py loads aient as a top-level package. Do not mask a missing
+            # dependency when the full package import was available.
+            if __package__ != 'aient.aient.utils':
+                raise
+            from utils.telegram_audio import decode_audio_bytes, TelegramAudioDecodeError
+        if decoded_audio is None:
+            decoded_audio = decode_audio_bytes(file_bytes)
+        if decoded_audio.no_speech:
+            if raise_errors:
+                raise TelegramAudioDecodeError('no_speech')
+            return ''
+        # === VIVENTIUM END ===
         # Create a byte stream object
         audio_stream = BytesIO(file_bytes)
         logger.debug(f"Created audio stream from {len(file_bytes)} bytes")
@@ -97,30 +121,18 @@ def get_audio_message(file_bytes, *, raise_errors=False):
                 logger.error(error_msg)
                 raise RuntimeError(error_msg)
             
-            # pywhispercpp.transcribe() requires a file path, not BytesIO
-            # Write BytesIO to temporary file (matches viventium_v1 pattern)
-            audio_stream.seek(0)
-            with tempfile.NamedTemporaryFile(suffix='.ogg', delete=False) as tmp_file:
-                tmp_path = tmp_file.name
-                tmp_file.write(file_bytes)
-            
-            try:
-                local_language = _normalized_local_whisper_language(config)
-                logger.debug(f"Transcribing with local model, language={local_language or 'auto'}, temp_file={tmp_path}")
-                
-                with _LOCAL_STT_TRANSCRIBE_LOCK:
-                    transcript_segments = config.local_whisper.transcribe(
-                        tmp_path,  # Pass file path, not BytesIO
-                        language=local_language,
-                        translate=False,
-                        print_realtime=config.LOCAL_WHISPER_VERBOSE,
-                    )
-                transcript = " ".join(segment.text for segment in transcript_segments)
-                logger.info(f"Local transcription successful, {len(transcript_segments)} segments")
-            finally:
-                # Clean up temp file
-                if os.path.exists(tmp_path):
-                    os.unlink(tmp_path)
+            # === VIVENTIUM START === pywhispercpp accepts ndarray; do not decode/quantize again.
+            local_language = _normalized_local_whisper_language(config)
+            with _LOCAL_STT_TRANSCRIBE_LOCK:
+                transcript_segments = config.local_whisper.transcribe(
+                    decoded_audio.pcm,
+                    language=local_language,
+                    translate=False,
+                    print_realtime=config.LOCAL_WHISPER_VERBOSE,
+                )
+            transcript = join_native_segments(transcript_segments, decoded_audio.pcm)
+            logger.info(f"Local transcription successful, {len(transcript_segments)} segments")
+            # === VIVENTIUM END ===
         # === VIVENTIUM START ===
         # Feature: AssemblyAI STT option for Telegram voice transcription.
         elif config.WHISPER_MODE == "assemblyai":

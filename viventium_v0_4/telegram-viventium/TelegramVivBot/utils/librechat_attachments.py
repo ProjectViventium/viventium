@@ -22,6 +22,7 @@ from typing import Any, Awaitable, Callable, Optional
 
 import httpx
 from telegram import InputMediaPhoto
+from telegram.error import BadRequest, Forbidden, RetryAfter
 try:
     from utils.librechat_http import async_client_options_for_url
 except ModuleNotFoundError:
@@ -116,20 +117,49 @@ async def send_librechat_attachments(
     fetch_bytes: Optional[
         Callable[..., Awaitable[tuple[bytes, str]]]
     ] = None,
-) -> None:
+    before_side_effect: Optional[Callable[[], Awaitable[bool]]] = None,
+    on_message_ids: Optional[Callable[[list[str]], None]] = None,
+) -> dict[str, Any]:
+    message_ids: list[str] = []
     if not attachments:
-        return
+        return {"message_ids": [], "delivery_unknown": False, "outcomes": {}}
 
     if fetch_bytes is None:
         fetch_bytes = fetch_librechat_bytes
 
     seen: set[str] = set()
-    images: list[bytes] = []
+    images: list[tuple[bytes, str]] = []
     documents: list[tuple[bytes, str]] = []
     unavailable = 0
     retrieval_failed = 0
     oversized = 0
+    rejected = 0
     unconfirmed = 0
+    sent = 0
+
+    async def authorize() -> None:
+        if before_side_effect is None:
+            return
+        try:
+            if await before_side_effect() is False:
+                raise RuntimeError("telegram_attachment_authorization_lost")
+        except Exception as exc:
+            exc.telegram_message_ids = list(message_ids)
+            raise
+
+    def remember(result: Any, expected: int = 1) -> None:
+        nonlocal unconfirmed, sent
+        results = result if isinstance(result, (list, tuple)) else [result]
+        confirmed = []
+        for item in results:
+            message_id = getattr(item, "message_id", None)
+            if message_id is not None and str(message_id).strip():
+                confirmed.append(str(message_id).strip())
+        message_ids.extend(confirmed)
+        if confirmed and on_message_ids is not None:
+            on_message_ids(list(dict.fromkeys(message_ids)))
+        sent += min(expected, len(confirmed))
+        unconfirmed += max(0, expected - len(confirmed))
 
     for att in attachments:
         if not isinstance(att, dict):
@@ -146,6 +176,16 @@ async def send_librechat_attachments(
             continue
         seen.add(dedupe_key)
 
+        # === VIVENTIUM START === Reuse existing notices for exact typed unavailable selections.
+        receipt = att.get("nativeOutputFile")
+        if (isinstance(receipt, dict) and receipt.get("version") == 1
+                and receipt.get("status") == "unavailable" and isinstance(receipt.get("code"), str)):
+            if receipt["code"] == "native_output_file_size_limit":
+                oversized += 1
+            else:
+                unavailable += 1
+            continue
+        # === VIVENTIUM END ===
         if size_hint is not None and size_hint > max_bytes:
             oversized += 1
             continue
@@ -178,25 +218,43 @@ async def send_librechat_attachments(
             retrieval_failed += 1
             continue
 
+        if len(blob) > max_bytes:
+            oversized += 1
+            continue
+
+        safe_name = filename or (f"{file_id}.bin" if file_id else "attachment.bin")
         final_mime = (content_type or mime_type or "").split(";")[0].strip().lower()
         if final_mime.startswith("image/"):
-            images.append(blob)
+            images.append((blob, safe_name))
         else:
-            safe_name = filename or (f"{file_id}.bin" if file_id else "attachment.bin")
             documents.append((blob, safe_name))
 
     for i in range(0, len(images), 10):
         batch = images[i : i + 10]
         if not batch:
             continue
-        media_group = [InputMediaPhoto(media=b) for b in batch]
+        await authorize()
         try:
-            await bot.send_media_group(
-                chat_id=telegram_chat_id,
-                media=media_group,
-                message_thread_id=message_thread_id,
-                reply_to_message_id=reply_to_message_id,
-            )
+            if len(batch) == 1:
+                result = await bot.send_photo(
+                    chat_id=telegram_chat_id,
+                    photo=batch[0][0],
+                    message_thread_id=message_thread_id,
+                    reply_to_message_id=reply_to_message_id,
+                )
+            else:
+                result = await bot.send_media_group(
+                    chat_id=telegram_chat_id,
+                    media=[InputMediaPhoto(media=blob) for blob, _ in batch],
+                    message_thread_id=message_thread_id,
+                    reply_to_message_id=reply_to_message_id,
+                )
+            remember(result, len(batch))
+        except BadRequest:
+            # A rejected photo/album was not sent. Preserve its original bytes as files.
+            documents.extend(batch)
+        except (Forbidden, RetryAfter):
+            rejected += len(batch)
         except Exception:
             unconfirmed += len(batch)
             continue
@@ -205,14 +263,18 @@ async def send_librechat_attachments(
         bio = BytesIO(blob)
         bio.name = safe_name
         bio.seek(0)
+        await authorize()
         try:
-            await bot.send_document(
+            result = await bot.send_document(
                 chat_id=telegram_chat_id,
                 message_thread_id=message_thread_id,
                 document=bio,
                 filename=safe_name,
                 reply_to_message_id=reply_to_message_id,
             )
+            remember(result)
+        except (BadRequest, Forbidden, RetryAfter):
+            rejected += 1
         except Exception:
             unconfirmed += 1
             continue
@@ -221,6 +283,7 @@ async def send_librechat_attachments(
     for count, detail in (
         (unavailable, "is unavailable" if unavailable == 1 else "are unavailable"),
         (retrieval_failed, "could not be retrieved"),
+        (rejected, "could not be sent"),
         (
             oversized,
             ("is too large to send" if oversized == 1 else "are too large to send")
@@ -234,9 +297,33 @@ async def send_librechat_attachments(
             f"Delivery of {unconfirmed} {'file' if unconfirmed == 1 else 'files'} could not be confirmed."
         )
     if notices:
-        await bot.send_message(
-            chat_id=telegram_chat_id,
-            message_thread_id=message_thread_id,
-            text="\n".join(notices),
-            reply_to_message_id=reply_to_message_id,
-        )
+        await authorize()
+        try:
+            notice = await bot.send_message(
+                chat_id=telegram_chat_id,
+                message_thread_id=message_thread_id,
+                text="\n".join(notices),
+                reply_to_message_id=reply_to_message_id,
+            )
+            notice_id = getattr(notice, "message_id", None)
+            if notice_id is not None and str(notice_id).strip():
+                message_ids.append(str(notice_id).strip())
+                if on_message_ids is not None:
+                    on_message_ids(list(dict.fromkeys(message_ids)))
+            else:
+                unconfirmed += 1
+        except Exception as exc:
+            exc.telegram_message_ids = list(message_ids)
+            raise
+    return {
+        "message_ids": list(dict.fromkeys(message_ids)),
+        "delivery_unknown": bool(unconfirmed),
+        "outcomes": {
+            "sent": sent,
+            "unavailable": unavailable,
+            "retrieval_failed": retrieval_failed,
+            "oversized": oversized,
+            "rejected": rejected,
+            "unconfirmed": unconfirmed,
+        },
+    }
