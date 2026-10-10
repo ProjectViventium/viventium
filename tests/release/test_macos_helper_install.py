@@ -141,6 +141,8 @@ def _make_fake_runtime_repo_root(path: Path) -> None:
     shared_root.mkdir(parents=True)
     (shared_root / "__init__.py").write_text("", encoding="utf-8")
     (shared_root / "compiled_prompt_contract.py").write_text("SYNTHETIC = True\n", encoding="utf-8")
+    for name in ("silero_vad_config.py", "whisper_cpp_segments.py"):
+        (shared_root / name).write_text("SYNTHETIC = True\n", encoding="utf-8")
     (shared_root / "no_response.py").write_text(
         "def is_no_response_only(_value):\n    return False\n",
         encoding="utf-8",
@@ -169,6 +171,8 @@ def _make_fake_runtime_repo_root(path: Path) -> None:
         encoding="utf-8",
     )
     (telegram_bot_root / "utils" / "telegram_preparation.py").write_text("SYNTHETIC = True\n", encoding="utf-8")
+    for name in ("telegram_audio.py", "telegram_stt.py", "telegram_vad.py"):
+        (telegram_bot_root / "utils" / name).write_text("SYNTHETIC = True\n", encoding="utf-8")
     (telegram_bot_root / "utils" / "singleton.py").write_text(
         "SYNTHETIC = True\n",
         encoding="utf-8",

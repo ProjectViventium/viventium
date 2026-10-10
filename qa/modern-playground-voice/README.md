@@ -37,6 +37,8 @@ evidence is linked in that report; it does not close the full MPV-061 journey or
   not cancel accepted work; passive Wing and Listen-Only cannot authorize new work.
   The fail-closed full-journey verifier is
   `scripts/mpv_061_full_journey_semantic_qa.js`; authority slice evidence cannot close MPV-061.
+- The installed observer follows the pinned producer's typed stages, including activation and failed,
+  interrupted, or superseded audio. Only `audio.completed` certifies completed playback.
 - Raw background insight text must not appear as direct modern-playground transcript/TTS output.
 - LibreChat may still surface the same insight inside its background-insight UI card.
 - When the flow fails, the report must separate:

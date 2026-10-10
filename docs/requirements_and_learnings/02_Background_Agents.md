@@ -222,15 +222,15 @@ Model inventory rule:
   `VIVENTIUM_CORTEX_EXECUTION_GUARD_GRACE_MS` may tune only that grace window, defaults to 15s,
   and is clamped between 0s and 60s.
 
-GlassHive Opus 5 fallback rule:
+GlassHive Opus 5.5 fallback rule:
 
-- GlassHive Claude / Opus 5 at `reasoning_effort: high` is the explicit generic Agent fallback for
+- GlassHive Claude / Opus 5.5 at `reasoning_effort: high` is the explicit generic Agent fallback for
   every conscious/subconscious text route when GlassHive is enabled.
 - Fallback parameter bags remain provider-native: GlassHive receives only
-  `model: claude-code:opus` plus `reasoning_effort: high`; direct-provider fields are sanitized.
+  `model: claude-code:claude-opus-5-5` plus `reasoning_effort: high`; direct-provider fields are sanitized.
 - When GlassHive is disabled, runtime normalization rewrites built-in Agent fallbacks to a distinct
-  available direct route. The Anthropic direct baseline is `claude-opus-5`; the retired direct
-  Opus route must not reappear.
+  available direct route. The Anthropic direct default is `claude-opus-5-5`; explicitly selected
+  supported alternatives remain valid.
 
 Canonical model-parameter rule:
 
@@ -546,7 +546,7 @@ Requirements:
   just explicit `thinking` fields already present in the source-of-truth YAML.
 - Background-cortex execution should therefore re-check the final initialized Anthropic config before
   Phase B execution and remove `temperature` if thinking is active.
-- Current shipped Anthropic Opus 5 built-ins that use thinking should not carry explicit
+- Current shipped Anthropic Opus 5.5 built-ins that use thinking should not carry explicit
   `temperature` at all.
 - If a future Anthropic built-in ever intentionally reintroduces temperature tuning, it must set
   `thinking: false` explicitly and be re-validated against the current Anthropic API contract before

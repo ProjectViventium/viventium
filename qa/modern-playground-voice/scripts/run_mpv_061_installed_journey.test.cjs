@@ -1667,20 +1667,33 @@ test("turn effects count only exact owner call turn and candidate trace facts", 
     segments: [{}],
     ledger: {
       work: [],
-      trace: [validAction, validControl, validResponse, foreignCandidate],
+      trace: [
+        validAction,
+        validControl,
+        validResponse,
+        foreignCandidate,
+        event("cortex.activation.completed", "cortex"),
+        ...["failed", "interrupted", "superseded"].map((outcome) =>
+          event("audio." + outcome, "audio", { outcome }),
+        ),
+      ],
     },
     stages: { ...stageCounts, control: 2, response: 2 },
   };
-  const window = runtime.windowFrom(
-    before,
-    after,
-    { kind: "trustedWingControl", mode: "wing", directlyAddressed: true },
-    { turnId },
-  );
+  const turn = {
+    kind: "trustedWingControl",
+    mode: "wing",
+    directlyAddressed: true,
+  };
+  const window = runtime.windowFrom(before, after, turn, { turnId });
 
   assert.equal(window.actionDelta, 1);
   assert.equal(window.controlDelta, 1);
   assert.equal(window.responseDelta, 1);
+  assert.equal(window.cortexDelta, 0);
+  assert.equal(window.audioDelta, 0);
+  after.ledger.trace.push(event("audio.completed", "audio"));
+  assert.equal(runtime.windowFrom(before, after, turn, { turnId }).audioDelta, 1);
 });
 
 test("existing evidence roots must be exact private owner directories", () => {

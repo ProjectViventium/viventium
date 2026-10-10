@@ -559,9 +559,21 @@ delta on the disposable MacBook Air. Until those gates pass, release wording rem
     otherwise Claude when `claude auth status` succeeds
   - the reconciler must not overwrite an explicit configured worker profile on later `start`,
     `compile-config`, `configure`, or `upgrade`; user choice beats auto-detection
-  - when GlassHive host-worker activation is explicitly enabled, preflight requires at least one
-    signed-in Codex or Claude CLI and gives one clear sign-in action if neither is usable; a disabled
-    or setup-pending worker must not block native-core readiness
+  - when GlassHive host-worker activation is explicitly enabled without a configured provider Main,
+    preflight requires at least one signed-in Codex or Claude CLI. A configured xPerfect Main instead
+    uses the exact declared model's native harness; another provider's login cannot substitute for it.
+    Supported explicit alternatives use the compiler's declared harness metadata. A disabled or
+    setup-pending worker must not block native-core readiness
+  - Grok Main preflight reuses xPerfect's quiet native ACP authentication probe, with a 30-second
+    outer deadline and no model inference. It preserves an explicit `WPR_GROK_BIN`, then PATH, then
+    an executable in the standard per-user Grok install location. Binary presence, a configured
+    secret reference, or a Codex/Claude login is not Grok authentication proof. Missing binaries,
+    the pinned component probe, rejected authentication, or probe failure remain missing prerequisites
+  - this Grok check verifies the authorized native account or credentials already projected into its
+    environment. It does not resolve or reorder compiler secrets. The source install currently runs
+    preflight before component bootstrap and credential compilation: a fresh checkout may need the
+    pinned xPerfect component first, and config-only credentials need the existing compiler projection
+    before this probe can verify them. These are source-install gaps, not verified fresh-install support
   - OpenClaw may be reported as optional, but missing OpenClaw must not block the default nightly
     workflow when Codex or Claude is ready
   - worker CLI auth is not the same as model-provider API or connected-account auth for memory

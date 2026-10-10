@@ -64,6 +64,12 @@ PROMPT_SOURCE_ROOT = (
 ANTI_SYCOPHANCY_VISION_PATH = ROOT / "viventium_v0_5" / "docs" / "07_Anti_Sycophancy.md"
 
 APPROVED_EXECUTION_FAMILIES = {
+    ("anthropic", "claude-opus-5-5"),
+    ("glasshive-harness", "codex-cli:gpt-6.1-sol"),
+    ("glasshive-harness", "grok-build:grok-4.7"),
+    ("glasshive-harness", "grok-build:grok-4.7-build-fast"),
+    ("openAI", "gpt-6.1-sol"),
+    ("xai", "grok-4.7"),
     ("anthropic", "claude-opus-5"),
     ("glasshive-harness", "codex-cli:gpt-5.6-sol"),
     ("glasshive-harness", "codex-cli:gpt-5.6-luna"),
@@ -71,22 +77,22 @@ APPROVED_EXECUTION_FAMILIES = {
     ("openAI", "gpt-5.6-terra"),
 }
 APPROVED_ACTIVATION_FAMILY = ("groq", "qwen/qwen3.6-27b")
-APPROVED_ACTIVATION_OVERRIDE_FAMILY = ("xai", "grok-4.20-non-reasoning")
-APPROVED_MAIN_AGENT_FAMILY = ("glasshive-harness", "codex-cli:gpt-5.6-luna")
+APPROVED_ACTIVATION_OVERRIDE_FAMILY = ("xai", "grok-4.7")
+APPROVED_MAIN_AGENT_FAMILY = ("glasshive-harness", "codex-cli:gpt-6.1-sol")
 APPROVED_MAIN_GLASSHIVE_OPTIONS = {
     "workspace": {"mode": "life"},
     "access": "full",
-    "fallback_model": "claude-code:opus",
+    "fallback_model": "claude-code:claude-opus-5-5",
     "fallback_reasoning_effort": "high",
     "orchestration": {
         "parallel_available": True,
         "default_mode": "parallel",
         "worker_profile": "codex-cli",
-        "worker_model": "codex-cli:gpt-6-astra",
-        "worker_reasoning_effort": "medium",
+        "worker_model": "codex-cli:gpt-6.1-sol",
+        "worker_reasoning_effort": "high",
         "fallback_worker_profile": "claude-code",
-        "fallback_worker_model": "claude-code:opus",
-        "fallback_worker_reasoning_effort": "medium",
+        "fallback_worker_model": "claude-code:claude-opus-5-5",
+        "fallback_worker_reasoning_effort": "high",
     },
 }
 
@@ -284,21 +290,21 @@ def test_background_agent_execution_models_stay_in_launch_ready_families() -> No
         )
 
 
-def test_conscious_main_uses_glasshive_and_subconscious_agents_keep_gpt56_workloads() -> None:
+def test_conscious_main_uses_glasshive_and_subconscious_agents_keep_current_high_workloads() -> None:
     bundle = _load_source_of_truth()
     expected = {
-        "Background Analysis": ("gpt-5.6-terra", "medium"),
-        "Confirmation Bias": ("gpt-5.6-terra", "medium"),
-        "Deep Memory Search": ("gpt-5.6-terra", "medium"),
-        "Red Team": ("gpt-5.6-sol", "xhigh"),
-        "Deep Research": ("gpt-5.6-sol", "xhigh"),
-        "MS365": ("gpt-5.6-terra", "low"),
-        "Parietal Cortex": ("gpt-5.6-terra", "medium"),
-        "Pattern Recognition": ("gpt-5.6-terra", "medium"),
-        "Emotional Resonance": ("gpt-5.6-terra", "low"),
-        "Strategic Planning": ("gpt-5.6-sol", "high"),
-        "Viventium User Help": ("gpt-5.6-terra", "low"),
-        "Google": ("gpt-5.6-terra", "low"),
+        "Background Analysis": ("gpt-6.1-sol", "high"),
+        "Confirmation Bias": ("gpt-6.1-sol", "high"),
+        "Deep Memory Search": ("gpt-6.1-sol", "high"),
+        "Red Team": ("gpt-6.1-sol", "high"),
+        "Deep Research": ("gpt-6.1-sol", "high"),
+        "MS365": ("gpt-6.1-sol", "high"),
+        "Parietal Cortex": ("gpt-6.1-sol", "high"),
+        "Pattern Recognition": ("gpt-6.1-sol", "high"),
+        "Emotional Resonance": ("gpt-6.1-sol", "high"),
+        "Strategic Planning": ("gpt-6.1-sol", "high"),
+        "Viventium User Help": ("gpt-6.1-sol", "high"),
+        "Google": ("gpt-6.1-sol", "high"),
     }
 
     agents = {"Viventium": bundle["mainAgent"]}
@@ -306,10 +312,10 @@ def test_conscious_main_uses_glasshive_and_subconscious_agents_keep_gpt56_worklo
     assert set(agents) == {"Viventium", *expected}
     main_agent = bundle["mainAgent"]
     assert main_agent.get("provider") == "glasshive-harness"
-    assert main_agent.get("model") == "codex-cli:gpt-5.6-luna"
+    assert main_agent.get("model") == "codex-cli:gpt-6.1-sol"
     assert main_agent.get("model_parameters") == {
-        "model": "codex-cli:gpt-5.6-luna",
-        "reasoning_effort": "medium",
+        "model": "codex-cli:gpt-6.1-sol",
+        "reasoning_effort": "high",
     }
     assert main_agent.get("glasshive_options") == APPROVED_MAIN_GLASSHIVE_OPTIONS
 
@@ -329,31 +335,30 @@ def test_conscious_main_uses_glasshive_and_subconscious_agents_keep_gpt56_worklo
         assert agent.get("model_parameters") == expected_model_parameters
         if name == "Deep Memory Search":
             assert agent.get("fallback_llm_provider") == "glasshive-harness"
-            assert agent.get("fallback_llm_model") == "claude-code:opus"
+            assert agent.get("fallback_llm_model") == "claude-code:claude-opus-5-5"
             assert agent.get("fallback_llm_model_parameters") == {
-                "model": "claude-code:opus",
-                "reasoning_effort": "medium",
+                "model": "claude-code:claude-opus-5-5",
+                "reasoning_effort": "high",
             }
         else:
             assert agent.get("fallback_llm_provider") == "glasshive-harness"
-            assert agent.get("fallback_llm_model") == "claude-code:opus"
+            assert agent.get("fallback_llm_model") == "claude-code:claude-opus-5-5"
             assert agent.get("fallback_llm_model_parameters") == {
-                "model": "claude-code:opus",
+                "model": "claude-code:claude-opus-5-5",
                 "reasoning_effort": "high",
             }
 
-    assert main_agent.get("voice_llm_provider") == "xai"
-    assert main_agent.get("voice_llm_model") == "grok-4.5"
+    assert main_agent.get("voice_llm_provider") == "glasshive-harness"
+    assert main_agent.get("voice_llm_model") == "grok-build:grok-4.7-build-fast"
     assert main_agent.get("voice_llm_model_parameters") == {
-        "model": "grok-4.5",
-        "reasoning_effort": "low",
+        "model": "grok-build:grok-4.7-build-fast",
+        "reasoning_effort": "high",
     }
-    assert main_agent.get("voice_fallback_llm_provider") == "openAI"
-    assert main_agent.get("voice_fallback_llm_model") == "gpt-5.6-terra"
+    assert main_agent.get("voice_fallback_llm_provider") == "glasshive-harness"
+    assert main_agent.get("voice_fallback_llm_model") == "claude-code:claude-opus-5-5"
     assert main_agent.get("voice_fallback_llm_model_parameters") == {
-        "model": "gpt-5.6-terra",
-        "reasoning_effort": "none",
-        "useResponsesApi": True,
+        "model": "claude-code:claude-opus-5-5",
+        "reasoning_effort": "high",
     }
 
 
@@ -377,7 +382,7 @@ def test_openai_reasoning_background_agents_do_not_ship_sampling_params() -> Non
 
     def is_openai_reasoning_without_sampling(model: str) -> bool:
         normalized = (model or "").strip().lower()
-        explicit_no_sampling_models = {"gpt-5.4", "gpt-5.6-sol", "gpt-5.6-terra"}
+        explicit_no_sampling_models = {"gpt-5.4", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-6.1-sol"}
         return bool(
             re.match(r"^o[13](?:[-.]|$)", normalized)
             or re.match(r"^gpt-5(?!\.|-chat)(?:-|$)", normalized)
@@ -406,23 +411,23 @@ def test_openai_reasoning_background_agents_do_not_ship_sampling_params() -> Non
             )
 
 
-def test_direct_background_agents_use_glasshive_opus5_high_as_the_text_fallback() -> None:
+def test_direct_background_agents_use_glasshive_opus55_high_as_the_text_fallback() -> None:
     bundle = _load_source_of_truth()
 
     for agent in bundle.get("backgroundAgents", []):
         if agent.get("id") == "agent_viventium_deep_memory_95aeb3":
             assert agent.get("provider") == "openAI"
             assert agent.get("fallback_llm_provider") == "glasshive-harness"
-            assert agent.get("fallback_llm_model") == "claude-code:opus"
+            assert agent.get("fallback_llm_model") == "claude-code:claude-opus-5-5"
             assert agent.get("fallback_llm_model_parameters") == {
-                "model": "claude-code:opus",
-                "reasoning_effort": "medium",
+                "model": "claude-code:claude-opus-5-5",
+                "reasoning_effort": "high",
             }
             continue
         assert agent.get("fallback_llm_provider") == "glasshive-harness"
-        assert agent.get("fallback_llm_model") == "claude-code:opus"
+        assert agent.get("fallback_llm_model") == "claude-code:claude-opus-5-5"
         assert agent.get("fallback_llm_model_parameters") == {
-            "model": "claude-code:opus",
+            "model": "claude-code:claude-opus-5-5",
             "reasoning_effort": "high",
         }
 
@@ -530,7 +535,7 @@ def test_red_team_activation_prompt_covers_explicit_pressure_test_requests() -> 
         assert phrase in prompt
 
 
-def test_red_team_execution_uses_decision_quality_stack_and_xhigh_openai_bag() -> None:
+def test_red_team_execution_uses_decision_quality_stack_and_high_openai_bag() -> None:
     bundle = _load_source_of_truth()
     red_team = _background_agent_by_name(bundle, "Red Team")
     instructions = (red_team.get("instructions") or "").lower()
@@ -556,14 +561,14 @@ def test_red_team_execution_uses_decision_quality_stack_and_xhigh_openai_bag() -
         assert phrase in instructions
 
     assert "web_search" in red_team.get("tools", [])
-    assert red_team.get("model_parameters", {}).get("reasoning_effort") == "xhigh"
+    assert red_team.get("model_parameters", {}).get("reasoning_effort") == "high"
     assert "thinkingBudget" not in red_team.get("model_parameters", {})
 
     runtime_contract = _load_runtime_models_contract()
     red_team_openai_parameters = runtime_contract["canonicalParameters"][
         "agent_viventium_red_team_95aeb3"
     ]["openAI"]
-    assert red_team_openai_parameters["reasoning_effort"] == "xhigh"
+    assert red_team_openai_parameters["reasoning_effort"] == "high"
 
 
 def test_truth_seeking_prompts_reward_evidence_supported_agreement_and_disagreement_symmetrically() -> None:
@@ -604,15 +609,23 @@ def test_local_source_of_truth_main_agent_uses_configured_glasshive_codex_route(
     ) == APPROVED_MAIN_AGENT_FAMILY
 
 
-def test_local_source_of_truth_main_agent_voice_route_uses_grok_low_reasoning() -> None:
+def test_local_source_of_truth_main_agent_voice_route_uses_native_grok_high_reasoning() -> None:
     bundle = _load_source_of_truth()
     main_agent = bundle.get("mainAgent", {})
 
-    assert main_agent.get("voice_llm_provider") == "xai"
-    assert main_agent.get("voice_llm_model") == "grok-4.5"
-    assert main_agent.get("voice_llm_model_parameters", {}).get("model") == "grok-4.5"
-    assert main_agent.get("voice_llm_model_parameters", {}).get("reasoning_effort") == "low"
+    assert main_agent.get("voice_llm_provider") == "glasshive-harness"
+    assert main_agent.get("voice_llm_model") == "grok-build:grok-4.7-build-fast"
+    assert main_agent.get("voice_llm_model_parameters", {}).get("model") == "grok-build:grok-4.7-build-fast"
+    assert main_agent.get("voice_llm_model_parameters", {}).get("reasoning_effort") == "high"
     assert "thinking" not in main_agent.get("voice_llm_model_parameters", {})
+    capabilities = _load_librechat_source_of_truth()["endpoints"]["agents"][
+        "providerCapabilities"
+    ]["glasshive-harness"]
+    assert capabilities["voice_pipeline_llm"] is True
+    declared_models = {model["id"]: model for model in capabilities["models"]}
+    native_grok = declared_models[main_agent["voice_llm_model"]]
+    assert native_grok["harnessProfile"] == "grok-build"
+    assert "high" in native_grok["effortChoices"]
 
 
 def test_runtime_models_script_exports_match_release_contract() -> None:
@@ -666,9 +679,9 @@ def test_all_background_activation_classifiers_keep_provider_fallbacks() -> None
     }
 
     expected_fallbacks = [
-        {"provider": "xai", "model": "grok-4.20-non-reasoning"},
-        {"provider": "anthropic", "model": "claude-haiku-4-5"},
-        {"provider": "openai", "model": "gpt-5.4"},
+        {"provider": "xai", "model": "grok-4.7", "reasoning_effort": "high"},
+        {"provider": "anthropic", "model": "claude-opus-5-5", "reasoning_effort": "high"},
+        {"provider": "openai", "model": "gpt-6.1-sol", "reasoning_effort": "high"},
     ]
 
     source_agent_ids = {agent["id"] for agent in bundle.get("backgroundAgents", [])}
@@ -784,13 +797,13 @@ def test_librechat_source_of_truth_stays_on_current_anthropic_inventory() -> Non
         if spec.get("preset", {}).get("endpoint") == "anthropic"
     ]
 
-    assert anthropic_names == ["claude-opus-5"]
+    assert anthropic_names == ["claude-opus-5-5"]
     assert "claude-sonnet-4-7" not in {
         spec.get("name")
         for spec in model_specs
         if spec.get("preset", {}).get("endpoint") == "anthropic"
     }
-    assert source.get("endpoints", {}).get("anthropic", {}).get("summaryModel") == "claude-opus-5"
+    assert source.get("endpoints", {}).get("anthropic", {}).get("summaryModel") == "claude-opus-5-5"
     assert source.get("balance", {}).get("enabled") is False
 
 
@@ -798,19 +811,19 @@ def test_librechat_source_of_truth_stays_on_current_anthropic_inventory() -> Non
 def test_conscious_and_subconscious_agents_use_approved_routes_with_managed_fallbacks() -> None:
     bundle = _load_source_of_truth()
     expected = {
-        "Viventium": ("glasshive-harness", "codex-cli:gpt-5.6-luna", "medium", False),
-        "Background Analysis": ("openAI", "gpt-5.6-terra", "medium", False),
-        "Confirmation Bias": ("openAI", "gpt-5.6-terra", "medium", False),
-        "Deep Memory Search": ("openAI", "gpt-5.6-terra", "medium", True),
-        "Red Team": ("openAI", "gpt-5.6-sol", "xhigh", True),
-        "Deep Research": ("openAI", "gpt-5.6-sol", "xhigh", False),
-        "MS365": ("openAI", "gpt-5.6-terra", "low", False),
-        "Parietal Cortex": ("openAI", "gpt-5.6-terra", "medium", False),
-        "Pattern Recognition": ("openAI", "gpt-5.6-terra", "medium", False),
-        "Emotional Resonance": ("openAI", "gpt-5.6-terra", "low", False),
-        "Strategic Planning": ("openAI", "gpt-5.6-sol", "high", False),
-        "Viventium User Help": ("openAI", "gpt-5.6-terra", "low", False),
-        "Google": ("openAI", "gpt-5.6-terra", "low", False),
+        "Viventium": ("glasshive-harness", "codex-cli:gpt-6.1-sol", "high", False),
+        "Background Analysis": ("openAI", "gpt-6.1-sol", "high", False),
+        "Confirmation Bias": ("openAI", "gpt-6.1-sol", "high", False),
+        "Deep Memory Search": ("openAI", "gpt-6.1-sol", "high", True),
+        "Red Team": ("openAI", "gpt-6.1-sol", "high", True),
+        "Deep Research": ("openAI", "gpt-6.1-sol", "high", False),
+        "MS365": ("openAI", "gpt-6.1-sol", "high", False),
+        "Parietal Cortex": ("openAI", "gpt-6.1-sol", "high", False),
+        "Pattern Recognition": ("openAI", "gpt-6.1-sol", "high", False),
+        "Emotional Resonance": ("openAI", "gpt-6.1-sol", "high", False),
+        "Strategic Planning": ("openAI", "gpt-6.1-sol", "high", False),
+        "Viventium User Help": ("openAI", "gpt-6.1-sol", "high", False),
+        "Google": ("openAI", "gpt-6.1-sol", "high", False),
     }
 
     agents = {"Viventium": bundle["mainAgent"]}
@@ -831,19 +844,19 @@ def test_conscious_and_subconscious_agents_use_approved_routes_with_managed_fall
         assert agent.get("model_parameters") == expected_parameters
         assert agent.get("fallback_llm_provider") == "glasshive-harness"
         if name == "Viventium":
-            expected_fallback_model = "claude-code:claude-opus-5"
+            expected_fallback_model = "claude-code:claude-opus-5-5"
             expected_fallback_parameters = {
                 "model": expected_fallback_model,
-                "reasoning_effort": "low",
+                "reasoning_effort": "high",
             }
         elif name == "Deep Memory Search":
-            expected_fallback_model = "claude-code:opus"
+            expected_fallback_model = "claude-code:claude-opus-5-5"
             expected_fallback_parameters = {
                 "model": expected_fallback_model,
-                "reasoning_effort": "medium",
+                "reasoning_effort": "high",
             }
         else:
-            expected_fallback_model = "claude-code:opus"
+            expected_fallback_model = "claude-code:claude-opus-5-5"
             expected_fallback_parameters = {
                 "model": expected_fallback_model,
                 "reasoning_effort": "high",
@@ -856,18 +869,17 @@ def test_conscious_and_subconscious_agents_use_approved_routes_with_managed_fall
     assert bundle["mainAgent"].get("glasshive_options") == APPROVED_MAIN_GLASSHIVE_OPTIONS
 
     main_agent = bundle["mainAgent"]
-    assert main_agent.get("voice_llm_provider") == "xai"
-    assert main_agent.get("voice_llm_model") == "grok-4.5"
+    assert main_agent.get("voice_llm_provider") == "glasshive-harness"
+    assert main_agent.get("voice_llm_model") == "grok-build:grok-4.7-build-fast"
     assert main_agent.get("voice_llm_model_parameters") == {
-        "model": "grok-4.5",
-        "reasoning_effort": "low",
+        "model": "grok-build:grok-4.7-build-fast",
+        "reasoning_effort": "high",
     }
-    assert main_agent.get("voice_fallback_llm_provider") == "openAI"
-    assert main_agent.get("voice_fallback_llm_model") == "gpt-5.6-terra"
+    assert main_agent.get("voice_fallback_llm_provider") == "glasshive-harness"
+    assert main_agent.get("voice_fallback_llm_model") == "claude-code:claude-opus-5-5"
     assert main_agent.get("voice_fallback_llm_model_parameters") == {
-        "model": "gpt-5.6-terra",
-        "reasoning_effort": "none",
-        "useResponsesApi": True,
+        "model": "claude-code:claude-opus-5-5",
+        "reasoning_effort": "high",
     }
 
 def test_all_background_agents_use_reviewed_glasshive_text_fallbacks() -> None:
@@ -876,15 +888,15 @@ def test_all_background_agents_use_reviewed_glasshive_text_fallbacks() -> None:
     for agent in bundle.get("backgroundAgents", []):
         assert agent.get("fallback_llm_provider") == "glasshive-harness"
         if agent.get("name") == "Deep Memory Search":
-            assert agent.get("fallback_llm_model") == "claude-code:opus"
+            assert agent.get("fallback_llm_model") == "claude-code:claude-opus-5-5"
             assert agent.get("fallback_llm_model_parameters") == {
-                "model": "claude-code:opus",
-                "reasoning_effort": "medium",
+                "model": "claude-code:claude-opus-5-5",
+                "reasoning_effort": "high",
             }
         else:
-            assert agent.get("fallback_llm_model") == "claude-code:opus"
+            assert agent.get("fallback_llm_model") == "claude-code:claude-opus-5-5"
             assert agent.get("fallback_llm_model_parameters") == {
-                "model": "claude-code:opus",
+                "model": "claude-code:claude-opus-5-5",
                 "reasoning_effort": "high",
             }
 

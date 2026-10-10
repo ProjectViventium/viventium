@@ -308,8 +308,11 @@
   logs; temp-file STT roundtrips; reduced audio context repeating or truncating native text; local TTS prewarm
   competing with active local Whisper STT; claiming UI delay without LiveKit/backend timing evidence.
 - Evidence: `qa/modern-playground-voice/reports/2026-05-19-whispercpp-large-v3-turbo-local-optimization.md`
-- Last Run: Historical PASS 2026-05-19 for the prior context policy. Loaded browser QA for the
-  full-context policy remains PENDING; the exact captured-buffer native comparison is supporting proof.
+  (historical policy); [full-context policy and bounded causal summary](../../docs/requirements_and_learnings/06_Voice_Calls.md#turn-taking-ownership-contract).
+  The exact captured-buffer proof is retained privately.
+- Last Run: PARTIAL (status reviewed 2026-10-10): the finite captured-buffer native comparison from
+  2026-10-02 is supporting proof; loaded browser QA for the current full-context policy is NOT RUN.
+  Historical PASS 2026-05-19 applies to the prior context policy.
 
 ## MPV-009 Start Chat Is One Click And Mic Auto-Enables
 

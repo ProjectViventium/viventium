@@ -674,7 +674,12 @@ every path truthful, complete, useful, and fast."""
     assert "GlassHive Host Brokerage" in _read(librechat_agents)
     assert "../../AGENTS.md" in _read(glasshive_agents)
     assert (glasshive_agents.parent / "../../AGENTS.md").resolve() == root_agents
-    assert "Worker Runtime Boundary" in _read(glasshive_agents)
+    glasshive_agents_text = _read(glasshive_agents)
+    assert "xPerfect is a standalone git and instruction root." in glasshive_agents_text
+    assert "[xPerfect AI Key Principles](docs/00_Key_Principles.md)" in glasshive_agents_text
+    assert (glasshive_agents.parent / "docs/00_Key_Principles.md").is_file()
+    assert "## Component Safety" in glasshive_agents_text
+    assert "built and running artifacts agree with the source" in glasshive_agents_text
     assert "host is a faithful courier" in _read(root_agents)
 
     for label, paths in EFFECTIVE_AGENT_DOCS.items():
@@ -1419,11 +1424,21 @@ def test_requirement_source_coverage_ledger_is_private_safe_and_resolves() -> No
             declaration_rows.append(
                 "\t".join((match.group(1), _relative(path), match.group(2)))
             )
-    assert len(declaration_ids) == len(set(declaration_ids)) == 288
-    declaration_payload = "\n".join(sorted(set(declaration_rows))) + "\n"
-    assert hashlib.sha256(declaration_payload.encode()).hexdigest() == atomic[
-        "required_owner_declaration_sha256"
+    current_declarations = data["current_owner_declarations"]
+    assert current_declarations["as_of"] == date(2026, 10, 10)
+    assert current_declarations["rows"] == 289
+    assert current_declarations["sha256"] == (
+        "529e84e0c36f5073a96c5b7ac22c06dfd8f38598446a77b1a3d0710721a7252a"
+    )
+    assert current_declarations["canonicalization"] == atomic[
+        "required_owner_declaration_canonicalization"
     ]
+    assert current_declarations["added_since_audit"] == ["VOICE-001"]
+    assert set(current_declarations["added_since_audit"]).issubset(declaration_ids)
+    assert "not a new retained-source audit or product acceptance" in current_declarations["rule"]
+    assert len(declaration_ids) == len(set(declaration_ids)) == current_declarations["rows"]
+    declaration_payload = "\n".join(sorted(set(declaration_rows))) + "\n"
+    assert hashlib.sha256(declaration_payload.encode()).hexdigest() == current_declarations["sha256"]
     assert atomic["derived_audit_requirement_ids_without_direct_alias"] == 48
     assert atomic["derived_audit_requirement_ids_sha256"] == (
         "72fd14720dd80735c97c4bae68626b9f10affdbeec1f08c6ff441083f1ad597d"
