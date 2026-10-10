@@ -16,6 +16,7 @@ Use stable `TGVOICE-NNN` IDs for telegram voice replies cases.
 | `TGVOICE-006` | Optional Telegram text audio is model-selected per answer through the shared `{SKIP_VOICE}` contract. | Copy/read/edit-first artifacts stay complete in text without wasting synthesis time; ordinary or explicitly requested spoken replies still receive audio. | Main turn, proactive callback, persistence, TTS, Preferences, Prompt Workbench | shared JS/Python grammar, persistence tests, bot/callback/TTS tests, exact-model prompt bank | PARTIAL 2026-07-22: real Telegram main-turn skip/conversation/explicit-speech paths, logs, DB, Workbench, and automation pass; proactive real-surface and future-channel parity remain partial |
 | `TGVOICE-007` | The Main Agent may create a small number of natural Telegram bubbles with `{MSG_BREAK}` while preserving one logical answer. | A conversational reply can arrive as two or three complete beats without fragment bombardment, duplicate history, duplicate audio, or artifact splitting. | Streaming preview, main turn, proactive callback, persistence, Telegram transport, Prompt Workbench | shared grammar, split-token streaming test, bot/callback/persistence tests, exact-model prompt bank | PARTIAL 2026-07-22: real two-bubble delivery, one final audio, one clean stored turn, reopen, and automation pass; proactive and attachment-plus-split paths remain partial |
 | `TGVOICE-008` | Saved Listening selection and whole-note speech follow the shared Telegram Voice contract. | Selected recognition stays exact; no-speech stops Main/TTS while captions survive; brief, quiet and paused speech keeps the complete note. | Preferences, Telegram voice/video notes, STT, Main | listening ingress, speech presence, silence, selected-STT and exact-SDK settings checks | PARTIAL 2026-10-03: selected hosted recognition rejected credentials; exact whole-note recovery remains unrun. Deterministic and finite acoustic proof is supporting evidence ([report](../modern-playground-voice/reports/2026-10-03-voice-and-telegram-acceptance.md)) |
+| `TGVOICE-009` | Automatic saved-memory status is logs only, never conversational text or speech. | Memory works silently while Main and worker answers retain text/audio delivery. | Telegram Main reply, proactive callback, FINAL/follow-up poll, cursor restart and redacted logs | `tests/test_librechat_bridge.py`, bot stream-preview and callback/TTS checks | PARTIAL 2026-10-09: 341 bridge checks pass; current native Telegram text/audio and quiet unchanged receipt pass; playback was not assessed |
 
 ## `TGVOICE-001` - Core User Flow
 
@@ -238,6 +239,38 @@ Use stable `TGVOICE-NNN` IDs for telegram voice replies cases.
   A synthetic voiced non-speech burst can still produce a false transcript. See the
   [current report](../modern-playground-voice/reports/2026-10-03-voice-and-telegram-acceptance.md).
 
+
+## `TGVOICE-009` - Quiet Memory Bookkeeping
+
+- Requirement: `docs/requirements_and_learnings/20_Memory_System.md` and
+  `docs/requirements_and_learnings/03_Telegram_Bridge.md`.
+- Steps:
+  1. Enable audio replies and send a natural synthetic preference through the real Telegram bot.
+  2. Inspect the reply and voice note; correlate FINAL/follow-up status with redacted logs and
+     durable state.
+  3. Repeat terminal polling/restart, pending-to-terminal, failed/partial/uncertain outcomes and
+     worker completion before memory completion, terminal memory before worker/restart, and
+     SQLite/filesystem cursor failures during writer admission or terminal observation.
+  4. Ask for an explanation or quotation of the former notice and confirm authored words remain
+     ordinary conversational content.
+- Expected result: Only model-authored conversational content is delivered/spoken. Terminal
+  receipt status, key count and safe ordered error codes go to logs once and mark memory observed
+  in the existing shared cursor. Pending/malformed responses cannot claim completion. Pending admission and independent
+  worker follow-up retain their identity and delivery. Quoted notice words remain intact.
+- Forbidden result: An automatic memory success/failure/uncertainty bubble or voice note, repeated
+  status after restart, lost worker response, phrase/emoji filtering, or memory key names, values,
+  provider payloads/labels, credentials or account identifiers in receipt logs.
+- Evidence: FINAL-to-text/TTS regression, proactive speech controls, terminal poll/restart/cursor
+  checks, ordered safe error codes, real visible Telegram bubbles, actual delivered/played voice
+  note and current loaded source identity.
+- Last run: PARTIAL 2026-10-09. All 341 owning bridge checks pass, including mocked text/audio,
+  terminal silence, metadata privacy, restart/worker controls and SQLite/filesystem cursor faults.
+  On the loaded current native Telegram bot, a natural conversational reply delivered one text
+  bubble and one voice note. Its later `unchanged` receipt produced one metadata-only log and no
+  extra bubble/audio. `saved`, `failed`, `partial` and `uncertain` silence are deterministic test
+  evidence; these outcomes were not separately induced on the real account. Audible playback
+  was not assessed. Mocked bytes and delivered voice notes do not certify audio quality.
+
 ## Natural User Use Case Checklist
 
 These rows are the minimum natural-user checklist gate for Telegram Voice Replies. Add narrower feature-specific
@@ -253,3 +286,4 @@ rows before claiming a pass when the feature behavior changes.
 | `TGVOICE-UC-006` | Send natural positive, calm, and negative Telegram messages without asking for emotion or markup while xAI is the saved TTS route. | `docs/requirements_and_learnings/03_Telegram_Bridge.md` / `TGVOICE-005`, `EMO-036` | Telegram Desktop, LibreChat/Telegram logs and DB, Prompt Workbench | Raw marker counts, prompt-frame metadata, clean visible text, TTS bytes/timing, delivered/played audio, Feelings-off/plain negative cases | Fitting xAI controls reach TTS and telemetry for expressive moments but not the bubble; the calm turn and Feelings-off/plain routes remain unmarked | PASS 2026-07-14 for real xAI positive/calm/negative delivery plus repeated expressive/restrained/off/plain exact-model boundaries; broader real-provider parity remains unproved ([report](../emotional-cortex/reports/2026-07-14-feelings-activation-and-telegram-acceptance.md)) |
 | `TGVOICE-UC-007` | With Smart voice for text enabled, request a copy-ready synthetic email, ordinary conversation, and an explicitly spoken reminder. | `docs/requirements_and_learnings/03_Telegram_Bridge.md` / `TGVOICE-006` | Telegram Desktop, Prompt Workbench | Visible text/audio, clean persisted message, voice-decision log, prompt lineage, exact-model eval | Email stays complete and text-only; conversation and explicitly spoken reminder still receive one audio attachment; no controls are visible | PASS 2026-07-22: all three real Telegram Desktop paths matched visible delivery, sanitized logs, and persistence evidence ([report](reports/2026-07-22-smart-delivery-controls.md)) |
 | `TGVOICE-UC-008` | Ask for a friendly two-beat reply, then a copy-ready artifact, and reopen the chat. | `docs/requirements_and_learnings/03_Telegram_Bridge.md` / `TGVOICE-007` | Telegram Desktop, logs, DB/history | Bubble count/content, final audio attachment, one persisted logical turn, refresh/reopen result | Natural beats may split into at most three complete bubbles; artifacts stay intact; one clean turn persists with at most one audio | PARTIAL 2026-07-22: real main-turn split, intact email artifact, reopen, logs, and persistence pass; proactive and attachment-plus-split paths remain partial ([report](reports/2026-07-22-smart-delivery-controls.md)) |
+| `TGVOICE-UC-009` | With audio enabled, send a natural synthetic preference, wait for memory and worker results, restart before a pending worker finishes, then request an explanation of the former notice. | `20_Memory_System.md`, `03_Telegram_Bridge.md` / `TGVOICE-009` | Telegram Desktop, actual delivered voice note, redacted logs, durable memory and shared cursor | Current loaded source identity, status/key count/safe error codes, provider-payload checks, restart and cursor-fault regressions | Memory bookkeeping stays in logs; Main and worker text/audio remain complete; an authored quotation is allowed; restart does not lose the worker result. | PARTIAL 2026-10-09: 341 owning bridge checks and current native text/audio plus quiet unchanged receipt pass; audible playback was not assessed |

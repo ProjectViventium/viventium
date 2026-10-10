@@ -5,7 +5,7 @@ import asyncio
 import json
 import aiohttp
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 from livekit.agents.llm.chat_context import ChatContext, ChatMessage
 
@@ -240,16 +240,25 @@ class _FakeClosedStreamSession:
         return _FakeJsonResponse({"streamId": "stream_voice_1", "conversationId": "conv_1"})
 
     def get(self, *args, **kwargs):
+        if args and str(args[0]).endswith("/state"):
+            return _FakeJsonResponse(None)
         self.get_calls.append((args, kwargs))
         return _FakeClosedSseResponse()
 
 
 class _FakeSseContent:
-    def __init__(self, events: list[dict]):
+    def __init__(self, events: list[dict], *, pause_before: int | None = None,
+                 started: asyncio.Event | None = None, release: asyncio.Event | None = None):
         self._events = events
+        self._pause_before = pause_before
+        self._started = started
+        self._release = release
 
     async def iter_any(self):
-        for event in self._events:
+        for index, event in enumerate(self._events):
+            if index == self._pause_before:
+                self._started.set()
+                await self._release.wait()
             payload = json.dumps(event)
             yield f"event: message\ndata: {payload}\n\n".encode("utf-8")
 
@@ -287,6 +296,8 @@ class _FakeStreamingSseSession:
         return _FakeJsonResponse({"streamId": "stream_voice_1", "conversationId": "conv_1"})
 
     def get(self, url, *args, **kwargs):
+        if str(url).endswith("/state"):
+            return _FakeJsonResponse(None)
         self.get_calls.append((url, args, kwargs))
         return _FakeStreamingSseResponse(self._events)
 
@@ -960,6 +971,29 @@ class TestExtractLastUserText(unittest.TestCase):
 
 
 class TestListenOnlyStream(unittest.TestCase):
+    def test_current_call_runtime_context_reaches_authenticated_post_without_user_text_change(self) -> None:
+        fake_session = _FakeListenOnlySession()
+        facts = {"version": 1, "callSessionId": "call_1", "readyRoute": {
+            "stt": {"provider": "pywhispercpp", "variant": "large-v3-turbo"},
+            "tts": {"provider": "local_chatterbox_turbo_mlx_8bit", "variant": "local-model"},
+        }, "configuredTtsFallback": None}
+
+        async def run_stream() -> None:
+            llm = LibreChatLLM(origin="http://librechat.test",
+                auth=LibreChatAuth(call_session_id="call_1", call_secret="secret"))
+            self.assertIsNone(llm._voice_runtime_context)
+            llm.set_voice_provider("local_chatterbox_turbo_mlx_8bit", runtime_context=facts)
+            stream = llm.chat(chat_ctx=ChatContext(items=[ChatMessage(role="user", content=["Current settings?"])]))
+            with patch("librechat_llm.aiohttp.ClientSession", return_value=fake_session):
+                async with stream:
+                    async for _chunk in stream:
+                        pass
+
+        asyncio.run(run_stream())
+        posted = fake_session.post_calls[0][1]["json"]
+        self.assertEqual(posted["voiceRuntimeContext"], facts)
+        self.assertEqual(posted["text"], "Current settings?")
+
     def test_listen_only_response_returns_without_stream_subscription(self) -> None:
         fake_session = _FakeListenOnlySession()
 
@@ -971,7 +1005,9 @@ class TestListenOnlyStream(unittest.TestCase):
             )
             stream = llm.chat(chat_ctx=ctx)
             with patch("librechat_llm.aiohttp.ClientSession", return_value=fake_session):
-                await stream._run()
+                async with stream:
+                    async for _chunk in stream:
+                        pass
 
         asyncio.run(run_stream())
 
@@ -1005,7 +1041,9 @@ class TestListenOnlyStream(unittest.TestCase):
             )
             stream = llm.chat(chat_ctx=ChatContext(items=[message]))
             with patch("librechat_llm.aiohttp.ClientSession", return_value=fake_session):
-                await stream._run()
+                async with stream:
+                    async for _chunk in stream:
+                        pass
 
         asyncio.run(run_stream())
 
@@ -1062,7 +1100,9 @@ class TestListenOnlyStream(unittest.TestCase):
             )
             stream = llm.chat(chat_ctx=ChatContext(items=[message]))
             with patch("librechat_llm.aiohttp.ClientSession", return_value=fake_session):
-                await stream._run()
+                async with stream:
+                    async for _chunk in stream:
+                        pass
 
         asyncio.run(run_stream())
 
@@ -1082,7 +1122,9 @@ class TestListenOnlyStream(unittest.TestCase):
             stream = llm.chat(chat_ctx=ctx)
             captured_stream_ids.append(stream._request_id)
             with patch("librechat_llm.aiohttp.ClientSession", return_value=fake_session):
-                await stream._run()
+                async with stream:
+                    async for _chunk in stream:
+                        pass
 
         asyncio.run(run_stream())
 
@@ -1104,7 +1146,9 @@ class TestListenOnlyStream(unittest.TestCase):
             )
             stream = llm.chat(chat_ctx=ChatContext(items=[message]))
             with patch("librechat_llm.aiohttp.ClientSession", return_value=fake_session):
-                await stream._run()
+                async with stream:
+                    async for _chunk in stream:
+                        pass
             payload = fake_session.post_calls[0][1]["json"]
             posted_source_ids.append(payload["sourceEventId"])
             self.assertNotIn("segment_stability", payload)
@@ -1512,6 +1556,55 @@ class _PublicVoicePresentationCoordinatorTests(unittest.TestCase):
         self.assertEqual(acknowledgements[0].kwargs["presentation_ref"], "speech-first")
         self.assertEqual(acknowledgements[1].kwargs["state"], "committed")
         self.assertEqual(acknowledgements[1].kwargs["revision"], 2)
+
+    def test_interrupted_playback_without_a_stable_successor_retains_main(self) -> None:
+        async def run(*, closing: bool, detached: bool):
+            llm = LibreChatLLM(origin="http://librechat.test",
+                auth=LibreChatAuth(call_session_id="call_1", call_secret="secret"))
+            llm.ack_delivery = AsyncMock(return_value=True)
+            llm.record_completed_trace_stage = Mock()
+            handle = _CompletableSpeechHandle("ended-speech")
+            llm.register_speech_handle(handle)
+            presentation = llm.chat(chat_ctx=ChatContext(items=[
+                ChatMessage(id="owned-source", role="user", content=["A useful answer."])
+            ]))._presentation
+            llm._presentation_coordinator.bind_core_context(presentation,
+                {"logical_turn_id": "logical-1", "revision": 1})
+            llm._speaker_delivery_closing = closing
+            if detached:
+                llm._presentation_coordinator._current = None
+            handle.mark_audible_playout()
+            handle.complete(interrupted=True)
+            await asyncio.sleep(0)
+            self.assertEqual(llm.ack_delivery.await_args.kwargs["state"], "failed")
+            self.assertEqual(presentation.delivery_state, "failed")
+            llm.record_completed_trace_stage.assert_called_once_with(
+                presentation.trace_id, "audio.interrupted")
+        for closing, detached in [(False, False), (True, False), (True, True)]:
+            with self.subTest(closing=closing, detached=detached):
+                asyncio.run(run(closing=closing, detached=detached))
+
+    def test_interrupted_playback_removes_only_a_distinct_stable_source(self) -> None:
+        async def run(*, same_source: bool):
+            llm = LibreChatLLM(origin="http://librechat.test",
+                auth=LibreChatAuth(call_session_id="call_1", call_secret="secret"))
+            llm.ack_delivery = AsyncMock(return_value=True)
+            first = llm._presentation_coordinator.begin_stable(
+                source_event_id="source-one", presentation_ref="speech-one")
+            llm._presentation_coordinator.bind_core_context(first,
+                {"logical_turn_id": "logical-1", "revision": 1})
+            llm._presentation_coordinator.begin_stable(
+                source_event_id="source-one" if same_source else "source-two",
+                presentation_ref="speech-two")
+            handle = _CompletableSpeechHandle("speech-one")
+            handle.mark_audible_playout()
+            handle.complete(interrupted=True)
+            self.assertTrue(await llm._ack_completed_presentation(first, handle))
+            self.assertEqual(llm.ack_delivery.await_args.kwargs["state"],
+                "failed" if same_source else "partial_removed")
+        for same_source in [False, True]:
+            with self.subTest(same_source=same_source):
+                asyncio.run(run(same_source=same_source))
 
     def test_playout_completion_fails_current_presentation_without_audible_output(self) -> None:
         async def run(*, include_unplayed_assistant_item: bool) -> list:
@@ -2679,7 +2772,8 @@ class _PublicLibreChatStreamingRunTests(unittest.TestCase):
                 correlation_id="request_timer_lifecycle",
                 call_session_id="call_1",
             )
-            llm.schedule_trace_terminal(trace, grace_s=60.0)
+            llm.register_trace(trace)
+            llm.schedule_trace_terminal(trace, grace_s=60.0, stream_terminal=True)
             await asyncio.sleep(0)
             self.assertEqual(len(llm._trace_finalizers), 1)
             self.assertFalse(
@@ -2757,7 +2851,6 @@ class _PublicLibreChatStreamingRunTests(unittest.TestCase):
 
         self.assertEqual(tts_correlation, "request_1")
         self.assertEqual(audio_correlation, "request_1")
-        self.assertEqual(llm.task_id_for_trace(audio_correlation), "task_1")
         self.assertFalse(second.has("tts_first_byte"))
 
     def test_structured_tool_start_and_completion_record_distinct_hops(self) -> None:
@@ -4007,6 +4100,138 @@ class _PublicVoiceTtsDeltaBufferTests(unittest.TestCase):
 class TestLibreChatStreamingRun(_PublicLibreChatStreamingRunTests):
     __test__ = True
 
+    def _file_failure_final(self, *, audio="eligible", content=None, attachments=None):
+        return {"final": True, "responseMessage": {
+            "messageId": "file-result",
+            "content": [{"type": "text", "text": "Here is the file."}] if content is None else content,
+            "metadata": {"viventium": {"deliveryDisposition": {
+                "version": 1, "audio": audio, "source": "model", "valid": True, "required": True,
+            }}},
+            "attachments": [{"nativeOutputFile": {
+                "version": 1, "status": "unavailable", "code": "native_output_file_unreadable",
+            }}] if attachments is None else attachments,
+        }}
+
+    async def _run_file_failure_stream(self, events, *, reconnect=False, hook=None, connected=True):
+        fake = _FakeResumingSseSession(events) if reconnect else _FakeStreamingSseSession(events)
+        def post(url, *args, **kwargs):
+            fake.post_calls.append((url, args, kwargs))
+            return _FakeJsonResponse({"streamId": "stream_voice_1", "taskId": "task_1",
+                "conversationId": "conv_1", "logical_turn_id": "logical-1", "revision": 2})
+        fake.post = post
+        relayed, followups, chunks = [], [], []
+        connection = {"connected": connected}
+        def relay(event):
+            relayed.append(event)
+            if hook:
+                hook(llm, event)
+        llm = LibreChatLLM(origin="http://librechat.test", auth=LibreChatAuth(
+            call_session_id="call_1", call_secret="secret"), task_event_handler=relay,
+            followup_handler=lambda *args, **kwargs: followups.append((args, kwargs)),
+            is_participant_connected=lambda: connection["connected"])
+        async def rejoin():
+            connection["connected"] = True
+            return True
+        llm.wait_for_participant_reconnect = rejoin
+        with patch("librechat_llm.aiohttp.ClientSession", return_value=fake), \
+             patch("librechat_llm._get_voice_sse_retry_config", return_value=(1, 0.0)):
+            async with llm.chat(chat_ctx=ChatContext(items=[ChatMessage(
+                    role="user", content=["Synthetic file request"])])) as stream:
+                async for chunk in stream:
+                    if chunk.delta and chunk.delta.content:
+                        chunks.append(chunk.delta.content)
+        return {"text": "".join(chunks), "tts": "".join(await _project_tts_chunks(chunks)),
+                "relayed": relayed, "followups": followups}
+
+    def test_current_final_file_failure_reaches_tts_without_waiting_for_background_completion(self):
+        for streamed in (False, True):
+            for task_state in (None, "completed", "running"):
+                with self.subTest(streamed=streamed, task_state=task_state):
+                    events = [{"text": "Here is the file."}] if streamed else []
+                    if task_state:
+                        events.append({"event": "voice_task_event", "voiceTaskEvent": _voice_task_event(
+                            "file-task-event", 3, state=task_state,
+                            phase="completed" if task_state == "completed" else "delegated",
+                            event_type="result" if task_state == "completed" else "progress",
+                            streamId="stream_voice_1", resultMessageId="file-result" if task_state == "completed" else "",
+                            error={"code": "native_output_file_unavailable", "message": "Private diagnostic"}
+                                  if task_state == "completed" else None)})
+                    final = self._file_failure_final()
+                    events.append(final)
+                    result = asyncio.run(self._run_file_failure_stream(events))
+                    self.assertEqual(result["text"], "Here is the file.\nThe file could not be attached.")
+                    self.assertIn("The file could not be attached.", result["tts"])
+                    self.assertNotIn("Private diagnostic", result["text"])
+                    self.assertEqual(result["followups"][0][0][0], "file-result")
+                    self.assertEqual(result["followups"][0][0][2], "Here is the file.")
+                    self.assertEqual(final["responseMessage"]["content"][0]["text"], "Here is the file.")
+
+    def test_file_failure_notice_keeps_model_silence_and_no_response_controls(self):
+        silent_range = {"type": "text", "text": "Silent result.", "deliveryDispositionRanges": [{
+            "start": 0, "end": 14, "disposition": {
+                "version": 1, "audio": "skip", "required": True, "valid": True, "source": "model",
+            }}]}
+        for final in (self._file_failure_final(audio="skip"),
+                      self._file_failure_final(content=[silent_range]),
+                      self._file_failure_final(content=[{"type": "text", "text": "{NTA}"}])):
+            with self.subTest(final=final):
+                self.assertEqual(asyncio.run(self._run_file_failure_stream([final]))["text"], "")
+        result = asyncio.run(self._run_file_failure_stream([
+            {"text": "Here is the file."}, self._file_failure_final(audio="skip")]))
+        self.assertEqual(result["text"], "Here is the file.")
+
+    def test_file_failure_notice_stops_with_current_task_and_current_presentation(self):
+        completed = {"event": "voice_task_event", "voiceTaskEvent": _voice_task_event(
+            "current-result", 3, state="completed", phase="completed", event_type="result")}
+        stop = {"event": "voice_task_event", "voiceTaskEvent": _voice_task_event(
+            "current-stop", 2, state="cancelling", phase="stopping", event_type="state")}
+        stopped = asyncio.run(self._run_file_failure_stream([
+            {"text": "Here is the file."}, stop, completed, self._file_failure_final()]))
+        self.assertEqual(stopped["text"], "Here is the file.")
+        def newer_turn(llm, _event):
+            llm._presentation_coordinator.begin_stable(source_event_id="newer", presentation_ref="newer")
+        superseded = asyncio.run(self._run_file_failure_stream([
+            {"text": "Here is the file."}, completed, self._file_failure_final()], hook=newer_turn))
+        self.assertEqual(superseded["text"], "Here is the file.")
+
+    def test_file_failure_notice_preserves_primary_generation_error_precedence(self):
+        final = self._file_failure_final(content=[{"type": "error", "error_class": "provider_response_failed",
+                                                  "error": "Private diagnostic"}])
+        result = asyncio.run(self._run_file_failure_stream([final]))
+        self.assertEqual(result["text"], "The model returned no usable answer. Please retry this turn.")
+        result = asyncio.run(self._run_file_failure_stream([
+            {"text": "Here is the file."}, {"_sse_event": "error", "error": "service failure"},
+            self._file_failure_final()]))
+        self.assertNotIn("The file could not be attached.", result["text"])
+
+    def test_file_failure_notice_requires_typed_unavailable_attachment_and_final(self):
+        for info in ({"version": True, "status": "unavailable"}, {"version": 2, "status": "unavailable"},
+                     {"version": 1, "status": "available"}, None):
+            with self.subTest(info=info):
+                final = self._file_failure_final(attachments=[{"nativeOutputFile": info}] if info else [])
+                self.assertEqual(asyncio.run(self._run_file_failure_stream([final]))["text"], "Here is the file.")
+        final = self._file_failure_final()
+        final["final"] = "true"
+        self.assertEqual(asyncio.run(self._run_file_failure_stream([final]))["text"], "Here is the file.")
+
+    def test_file_failure_notice_reconnect_uses_one_final_and_keeps_authored_dedupe(self):
+        final = self._file_failure_final()
+        sync = {"sync": True, "resumeState": {
+            "aggregatedContent": [{"type": "text", "text": "Here is the file."}], "finalEvent": final,
+        }}
+        result = asyncio.run(self._run_file_failure_stream([
+            [{"text": "Here is the file."}], [sync, final, final]], reconnect=True))
+        self.assertEqual(result["text"], "Here is the file.\nThe file could not be attached.")
+        self.assertEqual(result["followups"][0][0][2], "Here is the file.")
+        disconnected = asyncio.run(self._run_file_failure_stream([
+            {"text": "Here is the file."}, final], connected=False))
+        self.assertEqual(disconnected["text"], result["text"])
+
+    def test_empty_authored_file_failure_has_one_factual_notice_without_cortex_rewrite(self):
+        result = asyncio.run(self._run_file_failure_stream([self._file_failure_final(content=[])]))
+        self.assertEqual(result["text"], "The file could not be attached.")
+        self.assertEqual(result["followups"][0][0][2], "")
+
     def test_streamed_and_final_only_public_links_reach_sdk_unchanged(self) -> None:
         pieces = ["Read [the ", "report](https://example.invalid/report?revision=2&view=owner)",
                   " and https://example.invalid/source."]
@@ -4100,6 +4325,186 @@ class TestLibreChatStreamingRun(_PublicLibreChatStreamingRunTests):
                     return chunks
 
                 self.assertEqual("".join(asyncio.run(run())), "" if audio == "skip" else text)
+
+    def test_mixed_invocation_delivery_controls_apply_to_each_public_delta(self) -> None:
+        for controls in (("eligible", "skip"), ("skip", "eligible")):
+            with self.subTest(controls=controls):
+                texts = ["Useful current update. ", "The final result is ready. "]
+                events = []
+                for text, audio in zip(texts, controls):
+                    metadata = {"viventium": {"deliveryDisposition": {
+                        "version": 1, "audio": audio, "source": "model", "valid": True,
+                        "required": True,
+                    }}}
+                    events.append({"event": "on_message_delta", "data": {"delta": {
+                        "content": [{"type": "text", "text": text}], "metadata": metadata,
+                    }}})
+                events.append({"final": True, "responseMessage": {
+                    "content": [{"type": "text", "text": "".join(texts)}], "metadata": metadata,
+                }})
+
+                async def run() -> list[str]:
+                    fake = _FakeStreamingSseSession(events)
+                    llm = LibreChatLLM(origin="http://librechat.test", auth=LibreChatAuth(
+                        call_session_id="call_1", call_secret="secret"))
+                    chunks = []
+                    with patch("librechat_llm.aiohttp.ClientSession", return_value=fake):
+                        async with llm.chat(chat_ctx=ChatContext(items=[ChatMessage(
+                            role="user", content=["Synthetic request"])])) as stream:
+                            async for chunk in stream:
+                                if chunk.delta and chunk.delta.content:
+                                    chunks.append(chunk.delta.content)
+                    return chunks
+
+                spoken = "".join(asyncio.run(run()))
+                for text, audio in zip(texts, controls):
+                    self.assertEqual(text.strip() in spoken, audio == "eligible")
+                self.assertEqual(spoken.count(next(text.strip() for text, audio in zip(texts, controls)
+                                                  if audio == "eligible")), 1)
+
+    def test_mixed_audio_reconnect_tracks_silent_raw_text_before_and_after_completion(self) -> None:
+        # The native tool path can join two model envelopes at one content index.
+        # Graph reentry can instead produce two parts owned by the same Main.
+        texts = ["Useful update 🟢. ", "The final result is ready. "]
+        for controls in (("eligible", "skip"), ("skip", "eligible")):
+            for separate_parts in (False, True):
+                for completed in (False, True):
+                    for consumed in (0, 1, 2):
+                        with self.subTest(controls=controls, separate_parts=separate_parts,
+                                          completed=completed, consumed=consumed):
+                            dispositions = [{"version": 1, "audio": audio, "source": "model",
+                                             "valid": True, "required": True} for audio in controls]
+                            deltas = [{"event": "on_message_delta", "data": {"delta": {
+                                "content": [{"type": "text", "text": text}],
+                                "metadata": {"viventium": {"deliveryDisposition": disposition}},
+                            }}} for text, disposition in zip(texts, dispositions)]
+                            offsets = [0, len(texts[0].encode("utf-16-le")) // 2,
+                                       len("".join(texts).encode("utf-16-le")) // 2]
+                            if separate_parts:
+                                parts = [{"type": "text", "text": text, "agentId": "main",
+                                          "deliveryDispositionRanges": [{"start": 0,
+                                              "end": len(text.encode("utf-16-le")) // 2,
+                                              "disposition": disposition}]}
+                                         for text, disposition in zip(texts, dispositions)]
+                            else:
+                                parts = [{"type": "text", "text": "".join(texts), "agentId": "main",
+                                          "deliveryDispositionRanges": [{"start": offsets[i],
+                                              "end": offsets[i + 1], "disposition": disposition}
+                                              for i, disposition in enumerate(dispositions)]}]
+                            final = {"final": True, "responseMessage": {"content": parts,
+                                     "metadata": {"viventium": {
+                                         "deliveryDisposition": dispositions[-1]}}}}
+                            resume = {"aggregatedContent": parts}
+                            if completed:
+                                resume["finalEvent"] = final
+                            batches = [deltas[:consumed], [{"sync": True, "resumeState": resume}, final]]
+
+                            async def run() -> str:
+                                fake = _FakeResumingSseSession(batches)
+                                llm = LibreChatLLM(origin="http://librechat.test", auth=LibreChatAuth(
+                                    call_session_id="call_1", call_secret="secret"))
+                                chunks = []
+                                with patch("librechat_llm.aiohttp.ClientSession", return_value=fake), \
+                                     patch("librechat_llm._get_voice_sse_retry_config", return_value=(1, 0.0)):
+                                    async with llm.chat(chat_ctx=ChatContext(items=[ChatMessage(
+                                        role="user", content=["Synthetic request"])])) as stream:
+                                        async for chunk in stream:
+                                            if chunk.delta and chunk.delta.content:
+                                                chunks.append(chunk.delta.content)
+                                self.assertEqual(len(fake.get_calls), 2)
+                                return "".join(chunks)
+
+                            self.assertEqual(asyncio.run(run()), next(
+                                text for text, audio in zip(texts, controls) if audio == "eligible"))
+
+    def test_mixed_final_only_audio_uses_each_retained_choice(self) -> None:
+        for controls in (("eligible", "skip"), ("skip", "eligible")):
+            with self.subTest(controls=controls):
+                texts = ["Public update. ", "Public result."]
+                dispositions = [{"version": 1, "audio": audio, "source": "model", "valid": True,
+                                 "required": True} for audio in controls]
+                part = {"type": "text", "text": "".join(texts), "deliveryDispositionRanges": [
+                    {"start": 0, "end": len(texts[0]), "disposition": dispositions[0]},
+                    {"start": len(texts[0]), "end": len("".join(texts)), "disposition": dispositions[1]},
+                ]}
+                final = {"final": True, "responseMessage": {"content": [part],
+                    "metadata": {"viventium": {"deliveryDisposition": dispositions[-1]}}}}
+                self.assertEqual(_extract_final_response_text(final), next(
+                    text.strip() for text, audio in zip(texts, controls) if audio == "eligible"))
+
+    def test_invalid_resume_ranges_fail_closed_when_the_field_is_present(self) -> None:
+        from librechat_llm import _content_audio_segments
+        eligible = {"version": 1, "audio": "eligible", "source": "model", "valid": True,
+                    "required": True}
+        invalid = [
+            {"start": 0, "end": 8, "disposition": {**eligible, "source": "untrusted"}},
+            {"start": 0, "end": 8, "disposition": {**eligible, "required": False}},
+            {"start": 0, "end": 8, "disposition": {**eligible, "valid": False}},
+            {"start": 0, "end": 8, "disposition": {**eligible, "extra": True}},
+            {"start": False, "end": 8, "disposition": eligible},
+            {"start": 0, "end": 99, "disposition": eligible},
+            # Offset 3 divides the Unicode surrogate pair in this text.
+            {"start": 0, "end": 3, "disposition": eligible},
+        ]
+        for item in invalid:
+            for default in (False, True):
+                with self.subTest(item=item, default=default):
+                    part = {"type": "text", "text": "Hi🟢text", "deliveryDispositionRanges": [item]}
+                    self.assertEqual(_content_audio_segments([part], default_skipped=default),
+                                     [(part["text"], True)])
+
+    def test_absent_resume_ranges_keep_legacy_default_but_invalid_present_field_stays_silent(self) -> None:
+        from librechat_llm import _content_audio_segments
+        part = {"type": "text", "text": "Legacy result."}
+        for default in (False, True):
+            with self.subTest(default=default):
+                self.assertEqual(_content_audio_segments([part], default_skipped=default),
+                                 [(part["text"], default)])
+        for ranges in (None, [], {}, "unknown"):
+            with self.subTest(ranges=ranges):
+                malformed = {**part, "deliveryDispositionRanges": ranges}
+                self.assertEqual(_content_audio_segments([malformed], default_skipped=False),
+                                 [(part["text"], True)])
+
+    def test_valid_skip_prefix_does_not_leak_when_a_later_resume_range_is_malformed(self) -> None:
+        from librechat_llm import _content_audio_segments
+        choice = {"version": 1, "audio": "skip", "source": "model", "valid": True,
+                  "required": True}
+        part = {"type": "text", "text": "Hi🟢text", "deliveryDispositionRanges": [
+            {"start": 0, "end": 2, "disposition": choice},
+            {"start": 2, "end": 3, "disposition": {**choice, "audio": "eligible"}},
+        ]}
+        self.assertEqual(_content_audio_segments([part], default_skipped=False), [(part["text"], True)])
+
+    def test_malformed_running_resume_never_replays_known_silent_text_to_audio(self) -> None:
+        skip = {"version": 1, "audio": "skip", "source": "model", "valid": True, "required": True}
+        text = "Text-only detail. 🟢"
+        part = {"type": "text", "text": text, "deliveryDispositionRanges": [
+            {"start": 0, "end": 18, "disposition": skip},
+            {"start": 18, "end": 19, "disposition": {**skip, "audio": "eligible"}},
+        ]}
+        final = {"final": True, "responseMessage": {"content": [part],
+            "metadata": {"viventium": {"deliveryDisposition": {**skip, "audio": "eligible"}}}}}
+        batches = [[{"event": "on_message_delta", "data": {"delta": {
+            "content": [{"type": "text", "text": text}],
+            "metadata": {"viventium": {"deliveryDisposition": skip}},
+        }}}], [{"sync": True, "resumeState": {"aggregatedContent": [part]}}, final]]
+
+        async def run() -> list[str]:
+            fake = _FakeResumingSseSession(batches)
+            llm = LibreChatLLM(origin="http://librechat.test", auth=LibreChatAuth(
+                call_session_id="call_1", call_secret="secret"))
+            chunks = []
+            with patch("librechat_llm.aiohttp.ClientSession", return_value=fake), \
+                 patch("librechat_llm._get_voice_sse_retry_config", return_value=(1, 0.0)):
+                async with llm.chat(chat_ctx=ChatContext(items=[ChatMessage(
+                    role="user", content=["Synthetic request"])])) as stream:
+                    async for chunk in stream:
+                        if chunk.delta and chunk.delta.content:
+                            chunks.append(chunk.delta.content)
+            return chunks
+
+        self.assertEqual(asyncio.run(run()), [])
 
     def test_utterance_clock_survives_speaker_context_to_hop_trace(self) -> None:
         from speaker_segments import SPEAKER_CONTEXT_EXTRA_KEY
@@ -4363,7 +4768,8 @@ class TestLibreChatStreamingRun(_PublicLibreChatStreamingRunTests):
                 correlation_id="request_timer_lifecycle",
                 call_session_id="call_1",
             )
-            llm.schedule_trace_terminal(trace, grace_s=60.0)
+            llm.register_trace(trace)
+            llm.schedule_trace_terminal(trace, grace_s=60.0, stream_terminal=True)
             await asyncio.sleep(0)
             self.assertEqual(len(llm._trace_finalizers), 1)
             self.assertFalse(
@@ -4441,7 +4847,6 @@ class TestLibreChatStreamingRun(_PublicLibreChatStreamingRunTests):
 
         self.assertEqual(tts_correlation, "request_1")
         self.assertEqual(audio_correlation, "request_1")
-        self.assertEqual(llm.task_id_for_trace(audio_correlation), "task_1")
         self.assertFalse(second.has("tts_first_byte"))
 
     def test_structured_tool_start_and_completion_record_distinct_hops(self) -> None:
@@ -5228,8 +5633,42 @@ class TestVoiceTtsDeltaBuffer(_PublicVoiceTtsDeltaBufferTests):
         )
 
         self.assertEqual(buffer.feed("Right. That landed "), [])
-        self.assertEqual(buffer.feed("!"), ["Right. That landed!"])
+        # The next character can make this an image opener; input end resolves it.
+        self.assertEqual(buffer.feed("!"), [])
+        self.assertEqual(buffer.finalize(), ["Right. That landed!"])
+
+    def test_delayed_exclamation_releases_after_whitespace_rules_out_image(self) -> None:
+        buffer = _VoiceTtsDeltaBuffer(
+            sanitize_chunk=lambda text: sanitize_voice_tts_text(
+                text,
+                preserve_leading_space=text[:1].isspace(),
+                preserve_trailing_space=text[-1:].isspace(),
+                allow_voice_controls=False,
+            )
+        )
+
+        self.assertEqual(buffer.feed("Right. That landed "), [])
+        self.assertEqual(buffer.feed("!"), [])
+        self.assertEqual(buffer.feed(" "), ["Right. That landed! "])
         self.assertEqual(buffer.finalize(), [])
+
+    def test_delayed_exclamation_keeps_character_split_inline_image(self) -> None:
+        buffer = _VoiceTtsDeltaBuffer(
+            sanitize_chunk=lambda text: sanitize_voice_tts_text(
+                text,
+                preserve_leading_space=text[:1].isspace(),
+                preserve_trailing_space=text[-1:].isspace(),
+                allow_voice_controls=False,
+            )
+        )
+
+        self.assertEqual(buffer.feed("Right. That landed "), [])
+        self.assertEqual(buffer.feed("!"), [])
+        emitted = []
+        for char in "[the diagram](relative/diagram.png) then continue.":
+            emitted.extend(buffer.feed(char))
+        emitted.extend(buffer.finalize())
+        self.assertEqual("".join(emitted), "Right. That landed the diagram then continue.")
 
     def test_keeps_whitespace_latency_for_single_ongoing_sentence(self) -> None:
         buffer = _VoiceTtsDeltaBuffer()
@@ -5407,6 +5846,197 @@ class TestVoiceTtsDeltaBuffer(_PublicVoiceTtsDeltaBufferTests):
 
 class TestVoicePresentationCoordinator(_PublicVoicePresentationCoordinatorTests):
     __test__ = True
+
+    async def _cancelled_then_stable(self, *, speech_handle=None, early_completion=False,
+                                     offered_text=False, damage_binding="", ack_accepted=True,
+                                     replay_ack=False, same_source=False, provisional=False):
+        started = asyncio.Event()
+        admitted = asyncio.Event()
+        post_started = asyncio.Event()
+        order = []
+        if not early_completion:
+            admitted.set()
+
+        class Response(_FakeJsonResponse):
+            async def json(self):
+                if self._payload["revision"] == 1:
+                    post_started.set()
+                    await admitted.wait()
+                return self._payload
+
+        class Content:
+            async def iter_any(self):
+                if offered_text:
+                    yield b'event: message\ndata: {"text":"Already offered to speech."}\n\n'
+                started.set()
+                await asyncio.Event().wait()
+
+        class Session(_FakeStreamingSseSession):
+            def post(self, url, *args, **kwargs):
+                self.post_calls.append((url, args, kwargs))
+                revision = len(self.post_calls)
+                order.append(f"post-{revision}")
+                return Response({"streamId": kwargs["json"]["streamId"],
+                    "taskId": f"task_{revision}", "logical_turn_id": "logical-1", "revision": revision})
+
+            def get(self, url, *args, **kwargs):
+                if len(self.post_calls) == 1:
+                    response = _FakeStreamingSseResponse([])
+                    response.content = Content()
+                    return response
+                return _FakeStreamingSseResponse([{"final": True,
+                    "responseMessage": {"messageId": "answer-2", "content": [{"type": "text", "text": "Next."}]}}])
+
+        session = Session([])
+        llm = LibreChatLLM(origin="http://librechat.test",
+            auth=LibreChatAuth(call_session_id="call_1", call_secret="secret"))
+
+        async def acknowledge(**kwargs):
+            order.append("ack")
+            await asyncio.sleep(0)
+            return ack_accepted
+
+        llm.ack_delivery = AsyncMock(side_effect=acknowledge)
+        llm._start_task_continuation = unittest.mock.Mock()
+        with patch("librechat_llm.aiohttp.ClientSession", return_value=session):
+            if speech_handle is not None:
+                llm.register_speech_handle(speech_handle)
+            first = llm.chat(chat_ctx=ChatContext(items=[ChatMessage(id="first-source", role="user", content=["First."])]))
+            if early_completion:
+                await asyncio.wait_for(post_started.wait(), 1)
+                speech_handle.complete(interrupted=True)
+                await asyncio.sleep(0)
+                admitted.set()
+            await asyncio.wait_for(started.wait(), 1)
+            await first.aclose()
+            if provisional:
+                llm.note_provisional_interruption()
+                await llm._ack_unpresented_superseded_presentation(first._presentation, first._presentation)
+                llm.ack_delivery.assert_not_awaited()
+            if damage_binding == "task":
+                llm._task_id_by_trace_id.pop(first._request_id, None)
+            elif damage_binding == "other_task":
+                llm._task_id_by_trace_id[first._request_id] = "other-task"
+            elif damage_binding == "stream":
+                llm._stream_id_by_trace_id.pop(first._request_id, None)
+            elif damage_binding == "other_stream":
+                llm._stream_id_by_trace_id[first._request_id] = "other-stream"
+            elif damage_binding == "presentation":
+                llm._presentation_by_trace_id.pop(first._request_id, None)
+            elif damage_binding == "context":
+                first._presentation.logical_turn_id = ""
+            elif damage_binding == "other_context":
+                first._presentation.logical_turn_id = "other-logical-turn"
+            elif damage_binding == "revision":
+                first._presentation.revision = 2
+            elif damage_binding == "reference":
+                first._presentation.presentation_ref = "other-presentation"
+            elif damage_binding == "call":
+                llm._auth = LibreChatAuth(call_session_id="other-call", call_secret="secret")
+            elif damage_binding == "interrupted":
+                first._presentation.interrupted_binding = None
+            elif damage_binding == "audio_started":
+                first._presentation.audio_started_at_ms = 1
+            elif damage_binding == "playout_active":
+                first._presentation.playout_active = True
+            elif damage_binding == "sequence":
+                llm._presentation_coordinator.begin_stable(source_event_id="unadmitted-source", presentation_ref="unadmitted")
+            elif damage_binding == "closing":
+                llm._speaker_delivery_closing = True
+            second = llm.chat(chat_ctx=ChatContext(items=[ChatMessage(id="first-source" if same_source else "second-source", role="user", content=["Second."])]))
+            replays = []
+            if replay_ack:
+                replays = [asyncio.create_task(llm._ack_unpresented_superseded_presentation(
+                    first._presentation, second._presentation)) for _ in range(2)]
+            async with second:
+                async for _chunk in second:
+                    pass
+            if replays:
+                self.assertEqual(await asyncio.gather(*replays), [True, True])
+                self.assertTrue(await llm._ack_unpresented_superseded_presentation(
+                    first._presentation, second._presentation))
+            await llm.close_background_continuations()
+        return llm, first, second, order
+
+    def test_zero_presented_supersession_ack_fences_successor_receipt(self) -> None:
+        llm, first, _second, order = asyncio.run(self._cancelled_then_stable())
+        self.assertEqual(order, ["post-1", "post-2", "ack"])
+        self.assertEqual(llm.ack_delivery.await_args.kwargs, {
+            "logical_turn_id": "logical-1", "revision": 1, "state": "partial_removed",
+            "presentation_ref": first._request_id,
+        })
+        llm._start_task_continuation.assert_called_once()
+
+    def test_zero_presented_terminal_before_core_context_ack_is_retried_at_supersession(self) -> None:
+        handle = _CompletableSpeechHandle("speech-before-core")
+        llm, _first, _second, order = asyncio.run(self._cancelled_then_stable(
+            speech_handle=handle, early_completion=True))
+        self.assertEqual(order, ["post-1", "post-2", "ack"])
+        self.assertEqual(llm.ack_delivery.await_args.kwargs["presentation_ref"], handle.id)
+        self.assertEqual(llm.ack_delivery.await_args.kwargs["state"], "partial_removed")
+
+    def test_zero_presented_ack_never_covers_offered_or_live_or_audible_speech(self) -> None:
+        audible = _CompletableSpeechHandle("audible")
+        audible.mark_audible_playout()
+        for options in ({"offered_text": True}, {"speech_handle": _CompletableSpeechHandle("live")},
+                        {"speech_handle": audible}, {"speech_handle": SimpleNamespace(id="unknown-handle")}):
+            with self.subTest(options=options):
+                llm, _first, _second, order = asyncio.run(self._cancelled_then_stable(**options))
+                llm.ack_delivery.assert_not_awaited()
+                self.assertEqual(order, ["post-1", "post-2"])
+
+    def test_zero_presented_ack_requires_exact_owned_bindings(self) -> None:
+        for damaged in ("task", "other_task", "stream", "other_stream", "presentation", "context",
+                        "other_context", "revision", "reference", "call", "interrupted",
+                        "audio_started", "playout_active", "sequence", "closing"):
+            with self.subTest(damaged=damaged):
+                llm, _first, _second, order = asyncio.run(self._cancelled_then_stable(damage_binding=damaged))
+                llm.ack_delivery.assert_not_awaited()
+                self.assertEqual(order, ["post-1"] if damaged == "closing" else ["post-1", "post-2"])
+
+    def test_zero_presented_ack_is_idempotent_across_concurrent_and_completed_replay(self) -> None:
+        llm, _first, _second, order = asyncio.run(self._cancelled_then_stable(replay_ack=True))
+        llm.ack_delivery.assert_awaited_once()
+        self.assertEqual(order, ["post-1", "ack", "post-2"])
+
+    def test_zero_presented_ack_requires_new_stable_source(self) -> None:
+        llm, _first, _second, order = asyncio.run(self._cancelled_then_stable(same_source=True))
+        llm.ack_delivery.assert_not_awaited()
+        self.assertEqual(order, ["post-1", "post-2"])
+
+    def test_zero_presented_provisional_interruption_waits_for_stable_successor(self) -> None:
+        llm, first, _second, order = asyncio.run(self._cancelled_then_stable(provisional=True))
+        self.assertEqual(first._presentation.provisional_interruptions, 1)
+        llm.ack_delivery.assert_awaited_once()
+        self.assertEqual(order, ["post-1", "post-2", "ack"])
+
+    def test_zero_presented_failed_ack_is_not_recorded_as_accepted(self) -> None:
+        llm, first, _second, order = asyncio.run(self._cancelled_then_stable(ack_accepted=False))
+        self.assertEqual(order, ["post-1", "post-2", "ack"])
+        self.assertNotEqual(first._presentation.delivery_state, "partial_removed")
+
+    def test_completed_audible_ack_is_not_retracted_by_later_stable_turn_or_callback(self) -> None:
+        async def run():
+            llm = LibreChatLLM(origin="http://librechat.test",
+                auth=LibreChatAuth(call_session_id="call_1", call_secret="secret"))
+            llm.ack_delivery = AsyncMock(return_value=True)
+            first = llm._presentation_coordinator.begin_stable(
+                source_event_id="first-source", presentation_ref="first-speech")
+            llm._presentation_coordinator.bind_core_context(first, {"logical_turn_id": "logical-1", "revision": 1})
+            handle = _CompletableSpeechHandle("first-speech")
+            handle.mark_audible_playout()
+            handle.complete()
+            self.assertTrue(await llm._ack_completed_presentation(first, handle))
+            second = llm._presentation_coordinator.begin_stable(
+                source_event_id="second-source", presentation_ref="second-speech")
+            self.assertFalse(await llm._ack_unpresented_superseded_presentation(first, second))
+            self.assertTrue(await llm._ack_completed_presentation(first, handle))
+            return llm, first
+
+        llm, first = asyncio.run(run())
+        llm.ack_delivery.assert_awaited_once()
+        self.assertEqual(llm.ack_delivery.await_args.kwargs["state"], "committed")
+        self.assertEqual(first.delivery_state, "committed")
 
     def test_provisional_acoustic_interruption_does_not_supersede_presentation(self) -> None:
         coordinator = _VoicePresentationCoordinator()
@@ -6722,14 +7352,24 @@ class TestNativeInputStopPresentation(unittest.TestCase):
 
 class VoiceLateMetricsRegressionTests(unittest.TestCase):
     def test_playout_before_synthesis_metrics_joins_the_same_trace(self):
-        llm = LibreChatLLM(origin='http://librechat.test', auth=LibreChatAuth(call_session_id='call_1', call_secret='secret'))
-        trace = VoiceHopTrace(correlation_id='late-metrics', call_session_id='call_1')
-        trace.record('first_model_token', 1000)
-        llm.register_trace(trace)
-        self.assertEqual(llm.record_next_trace_hop('audio_output', 1300), 'late-metrics')
-        self.assertNotIn('late-metrics', llm._summarized_trace_ids)
-        self.assertEqual(llm.record_next_trace_hop('tts_first_byte', 1200), 'late-metrics')
-        self.assertIn('late-metrics', llm._summarized_trace_ids)
+        async def run(order):
+            llm = LibreChatLLM(origin='http://librechat.test', auth=LibreChatAuth(call_session_id='call_1', call_secret='secret'))
+            trace = VoiceHopTrace(correlation_id='late-metrics', call_session_id='call_1')
+            trace.record('first_model_token', 1000)
+            llm.register_trace(trace)
+            timestamps = {'audio_output': 1300, 'tts_first_byte': 1200}
+            for hop in order:
+                self.assertEqual(llm.record_next_trace_hop(hop, timestamps[hop]), 'late-metrics')
+            self.assertNotIn('late-metrics', llm._summarized_trace_ids)
+            self.assertEqual(trace.terminal_summary({})['timestampsMs']['audio_output'], 1300)
+            self.assertEqual(trace.terminal_summary({})['timestampsMs']['tts_first_byte'], 1200)
+            llm.schedule_trace_terminal(trace, grace_s=0, stream_terminal=True)
+            await asyncio.sleep(0.01)
+            self.assertIn('late-metrics', llm._summarized_trace_ids)
+            await llm.close_background_continuations()
+        for order in [('audio_output', 'tts_first_byte'), ('tts_first_byte', 'audio_output')]:
+            with self.subTest(order=order):
+                asyncio.run(run(order))
 
     def test_stream_grace_waits_for_its_active_livekit_handle(self):
         async def run():
@@ -6737,12 +7377,12 @@ class VoiceLateMetricsRegressionTests(unittest.TestCase):
             trace = VoiceHopTrace(correlation_id='active-playout', call_session_id='call_1')
             llm.register_trace(trace)
             llm._speech_handles_by_trace_id[trace.correlation_id] = SimpleNamespace(done=lambda: False)
-            llm.schedule_trace_terminal(trace, grace_s=0)
+            llm.schedule_trace_terminal(trace, grace_s=0, stream_terminal=True)
             await asyncio.sleep(0)
             self.assertNotIn(trace.correlation_id, llm._summarized_trace_ids)
             self.assertNotIn(trace.correlation_id, llm._trace_finalizers)
             llm._speech_handles_by_trace_id.pop(trace.correlation_id)
-            llm.schedule_trace_terminal(trace, grace_s=0)
+            llm.schedule_trace_terminal(trace, grace_s=0, stream_terminal=True)
             await asyncio.sleep(0.01)
             self.assertIn(trace.correlation_id, llm._summarized_trace_ids)
             await llm.close_background_continuations()
@@ -6756,3 +7396,1577 @@ class VoiceLateMetricsRegressionTests(unittest.TestCase):
         self.assertEqual(llm.record_next_trace_hop('audio_output', 1300), 'error-speech')
         self.assertEqual(llm.record_next_trace_hop('tts_first_byte', 1200), 'error-speech')
         self.assertFalse(trace.has('first_model_token'))
+
+    def test_early_exact_handle_completion_cannot_finalize_an_open_stream(self):
+        async def run():
+            llm = LibreChatLLM(origin='http://librechat.test', auth=LibreChatAuth(call_session_id='call_1', call_secret='secret'))
+            trace = VoiceHopTrace(correlation_id='early-handle', call_session_id='call_1')
+            llm.register_trace(trace)
+            presentation = llm._presentation_coordinator.begin_stable(source_event_id='source_1', presentation_ref=trace.correlation_id)
+            handle = _CompletableSpeechHandle('handle_1')
+            llm.register_speech_handle(handle)
+            llm._bind_next_speech_handle(presentation)
+            llm._ack_completed_presentation = AsyncMock(return_value=True)
+            handle.complete()
+            await asyncio.sleep(0)
+            self.assertNotIn(trace.correlation_id, llm._trace_finalizers)
+            self.assertNotIn(trace.correlation_id, llm._summarized_trace_ids)
+            llm.schedule_trace_terminal(trace, grace_s=0, stream_terminal=True)
+            await asyncio.sleep(0.01)
+            self.assertIn(trace.correlation_id, llm._summarized_trace_ids)
+            await llm.close_background_continuations()
+        asyncio.run(run())
+
+    async def _held_stream_trace_case(self, *, early_handle_done=False, detach=False, finish_detached=False):
+        started, release = asyncio.Event(), asyncio.Event()
+        events = [
+            {'event': 'on_run_step', 'data': {'id': 'tool-start', 'type': 'tool_calls', 'status': 'running'}},
+            {'text': 'A synthetic response can start speaking now.'},
+            {'event': 'on_run_step_completed', 'data': {'id': 'tool-end', 'result': {'type': 'tool_call'}}},
+            {'final': True, 'responseMessage': {'content': [{'type': 'text', 'text': 'A synthetic response can start speaking now.'}]}},
+        ]
+        session = _FakeStreamingSseSession(events)
+        original_post, original_get = session.post, session.get
+        def post(*args, **kwargs):
+            response = original_post(*args, **kwargs)
+            response._payload['taskId'] = 'task_1'
+            return response
+        def get(url, *args, **kwargs):
+            response = original_get(url, *args, **kwargs)
+            if not str(url).endswith('/state'):
+                response.content = _FakeSseContent(events, pause_before=2, started=started, release=release)
+            return response
+        session.post, session.get = post, get
+        llm = LibreChatLLM(origin='http://librechat.test', auth=LibreChatAuth(call_session_id='call_1', call_secret='secret'))
+        handle = _CompletableSpeechHandle('handle_1')
+        if not detach:
+            llm.register_speech_handle(handle)
+        llm._ack_completed_presentation = AsyncMock(return_value=True)
+        logs, chunks = [], []
+        loop = asyncio.get_running_loop()
+        with patch('librechat_llm.aiohttp.ClientSession', return_value=session), \
+             patch('librechat_llm.logger.info', side_effect=lambda fmt, *args: logs.append(fmt % args)), \
+             patch.object(loop, 'call_later', return_value=unittest.mock.Mock()) as schedule:
+            stream = llm.chat(chat_ctx=ChatContext(items=[ChatMessage(role='user', content=['Synthetic question.'])]))
+            send = stream._event_ch.send_nowait
+            def capture(chunk):
+                chunks.append(chunk)
+                return send(chunk)
+            try:
+                with patch.object(stream._event_ch, 'send_nowait', side_effect=capture):
+                    await asyncio.wait_for(started.wait(), 1)
+                    trace = llm._traces_by_id[stream._request_id]
+                    self.assertTrue(any(chunk.delta and chunk.delta.content for chunk in chunks))
+                    self.assertTrue(trace.has('first_model_token'))
+                    self.assertTrue(trace.has('tool_start'))
+                    self.assertFalse(trace.has('tool_end'))
+                    self.assertFalse(stream._task.done())
+                    self.assertEqual(len(session.post_calls), 1)
+                    if detach:
+                        await stream.aclose()
+                        await asyncio.sleep(0)
+                        self.assertTrue(llm._background_continuations)
+                        self.assertNotIn(trace.correlation_id, llm._trace_finalizers)
+                        if finish_detached:
+                            release.set()
+                            await llm.wait_for_background_continuations(timeout_s=1)
+                            self.assertTrue(trace.has('tool_end'))
+                            self.assertFalse(llm._background_continuations)
+                            self.assertEqual(schedule.call_args.args[0], 5.0)
+                            schedule.call_args.args[1]()
+                    else:
+                        llm.record_next_trace_hop('audio_output', 1300)
+                        llm.record_next_trace_hop('tts_first_byte', 1200)
+                        if early_handle_done:
+                            handle.complete()
+                            await asyncio.sleep(0)
+                        self.assertNotIn(trace.correlation_id, llm._summarized_trace_ids)
+                        self.assertNotIn(trace.correlation_id, llm._trace_finalizers)
+                        release.set()
+                        await stream._task
+                        self.assertTrue(trace.has('tool_end'))
+                        if not early_handle_done:
+                            self.assertNotIn(trace.correlation_id, llm._trace_finalizers)
+                            handle.complete()
+                            await asyncio.sleep(0)
+                        self.assertEqual(schedule.call_args.args[0], 5.0)
+                        schedule.call_args.args[1]()
+                    await llm.close_background_continuations()
+                    summaries = [json.loads(line[len('[VoiceHop] '):]) for line in logs if line.startswith('[VoiceHop] ') and 'voice_hop_trace_terminal' in line]
+                    self.assertEqual(len(summaries), 1)
+                    self.assertIn('utterance_end', summaries[0]['missingHops'])
+                    if not detach:
+                        self.assertNotIn('tool_end', summaries[0]['missingHops'])
+                        self.assertEqual(summaries[0]['timestampsMs']['audio_output'], 1300)
+                        self.assertEqual(summaries[0]['timestampsMs']['tts_first_byte'], 1200)
+            finally:
+                await stream.aclose()
+                await llm.close_background_continuations()
+
+    def test_sdk_owned_stream_speaks_before_late_tool_end_and_waits_for_handle(self):
+        for early in (False, True):
+            with self.subTest(early_handle_done=early):
+                asyncio.run(self._held_stream_trace_case(early_handle_done=early))
+
+    def test_cancelled_sdk_consumer_keeps_detached_terminal_owner(self):
+        for finish in (False, True):
+            with self.subTest(finish_detached=finish):
+                asyncio.run(self._held_stream_trace_case(detach=True, finish_detached=finish))
+
+    def test_call_end_seals_incomplete_trace_once_without_invented_clocks(self):
+        async def run():
+            llm = LibreChatLLM(origin='http://librechat.test', auth=LibreChatAuth(call_session_id='call_1', call_secret='secret'))
+            trace = VoiceHopTrace(correlation_id='call-end', call_session_id='call_1')
+            llm.register_trace(trace)
+            logs = []
+            with patch('librechat_llm.logger.info', side_effect=lambda fmt, *args: logs.append(fmt % args)):
+                await llm.close_background_continuations()
+                await llm.close_background_continuations()
+            summaries = [json.loads(line[len('[VoiceHop] '):]) for line in logs if 'voice_hop_trace_terminal' in line]
+            self.assertEqual(len(summaries), 1)
+            self.assertEqual(summaries[0]['status'], 'incomplete')
+            self.assertIn('audio_output', summaries[0]['missingHops'])
+            self.assertIn('utterance_end', summaries[0]['missingHops'])
+        asyncio.run(run())
+
+class TestPublicPartCompletionCarrier(unittest.TestCase):
+    def _completion(self, *, part='run-a:1', **changes):
+        completion = {'version': 1, 'complete': True, 'request_id': 'request-a', 'run_id': 'run-a',
+                      'part_id': part, 'message_id': 'message-a', 'stream_id': 'stream_voice_1'}
+        completion.update(changes)
+        return {'event': 'on_public_content_part_complete', 'data': {
+            'completion': completion, 'deliveryDisposition': {'version': 1, 'audio': 'eligible',
+                                                             'source': 'model', 'required': True, 'valid': True}}}
+
+    def _final(self, text='First part. Later part.'):
+        return {'final': True, 'responseMessage': {'content': [{'type': 'text', 'text': text}]}}
+
+    async def _run(self, events, *, fake=None, connected=True, reconnect=True, hook=None):
+        fake = fake or _FakeStreamingSseSession(events)
+        llm = LibreChatLLM(origin='http://librechat.test', auth=LibreChatAuth(call_session_id='call_1', call_secret='synthetic'), is_participant_connected=lambda: connected, task_event_handler=(lambda event: hook(llm, event)) if hook else None)
+        chunks = []
+        with patch('librechat_llm.aiohttp.ClientSession', return_value=fake), \
+             patch('librechat_llm._get_voice_sse_retry_config', return_value=(1, 0.0)), \
+             patch.object(llm, 'wait_for_participant_reconnect', return_value=reconnect):
+            async with llm.chat(chat_ctx=ChatContext(items=[ChatMessage(role='user', content=['Synthetic'])])) as stream:
+                async for chunk in stream:
+                    chunks.append(chunk)
+        return chunks
+
+    def _markers(self, chunks):
+        return [c.delta.extra['viventium_public_part_complete'] for c in chunks
+                if c.delta and 'viventium_public_part_complete' in (c.delta.extra or {})]
+
+    def test_completion_only_controls_follow_exact_tagged_text_and_do_not_end_cognition(self):
+        text = '<emphasis>First part.</emphasis>'
+        chunks = asyncio.run(self._run([{'text': text}, self._completion(), self._completion(),
+                                       {'text': ' Later part.'}, self._completion(part='run-a:2'), self._final(text+' Later part.')]))
+        self.assertEqual(''.join(c.delta.content or '' for c in chunks), text+' Later part.')
+        self.assertEqual([m['part_id'] for m in self._markers(chunks)], ['run-a:1', 'run-a:2'])
+        self.assertIsNone(chunks[1].delta.content)
+        self.assertTrue(chunks[2].delta.content)
+        self.assertTrue(all(c.id == chunks[0].id for c in chunks))
+
+    def test_invalid_unbound_skip_and_noncompletion_events_never_flush(self):
+        events = [{'text': 'Public.'}]
+        for changed in [{'complete': False}, {'stream_id': 'foreign'}, {'version': True}, {'text': 'must not carry text'}, {'run_id': ''}]:
+            events.append(self._completion(**changed))
+        skipped = self._completion(); skipped['data']['deliveryDisposition']['audio'] = 'skip'; events.append(skipped)
+        events += [{'event': 'on_run_step_completed', 'data': {'result': {'type': 'tool_call'}}}, self._final('Public.')]
+        chunks = asyncio.run(self._run(events))
+        self.assertEqual(self._markers(chunks), [])
+        self.assertEqual(''.join(c.delta.content or '' for c in chunks), 'Public.')
+
+    def test_control_without_public_text_or_only_no_response_has_no_speech(self):
+        for text in ['', '{NTA}']:
+            with self.subTest(text=text):
+                chunks = asyncio.run(self._run([{'text': text}, self._completion(), self._final(text)]))
+                self.assertEqual(self._markers(chunks), [])
+                self.assertEqual(''.join(c.delta.content or '' for c in chunks), '')
+
+    def test_stop_drops_late_control_and_text(self):
+        stopped = _voice_task_event('stop', 2, state='cancelling', phase='stopping', event_type='state')
+        events = [{'event': 'voice_task_event', 'voiceTaskEvent': _voice_task_event('running', 1)},
+                  {'text': 'First part.'}, {'event': 'voice_task_event', 'voiceTaskEvent': stopped},
+                  self._completion(), {'text': ' Forbidden late part.'}, self._final()]
+        chunks = asyncio.run(self._run(events))
+        self.assertEqual(self._markers(chunks), [])
+        self.assertEqual(''.join(c.delta.content or '' for c in chunks), 'First part.')
+
+    def test_reconnect_replay_preserves_one_boundary_and_exact_words(self):
+        boundary = self._completion()
+        fake = _FakeResumingSseSession([[{'text': 'First part.'}, boundary],
+                                        [{'sync': True, 'resumeState': {'aggregatedContent': [{'type': 'text', 'text': 'First part.'}]}}, boundary, {'text': ' Later part.'}, self._final()]])
+        chunks = asyncio.run(self._run([], fake=fake))
+        self.assertEqual(len(self._markers(chunks)), 1)
+        self.assertEqual(''.join(c.delta.content or '' for c in chunks), 'First part. Later part.')
+
+    def test_disconnected_queue_drains_text_then_control_and_grace_drop_has_neither(self):
+        events = [{'text': '<emphasis>First part.</emphasis>'}, self._completion(), self._final('<emphasis>First part.</emphasis>')]
+        chunks = asyncio.run(self._run(events, connected=False))
+        self.assertTrue(chunks[0].delta.content)
+        self.assertEqual(len(self._markers(chunks)), 1)
+        self.assertIsNone(chunks[1].delta.content)
+        self.assertEqual(asyncio.run(self._run(events, connected=False, reconnect=False)), [])
+
+    def test_artifact_failure_notice_survives_as_later_public_text_after_completion(self):
+        final = self._final('Here is the file.')
+        final['responseMessage'].update(metadata={'viventium': {'deliveryDisposition': {
+            'version': 1, 'audio': 'eligible', 'source': 'model', 'valid': True, 'required': True}}},
+            attachments=[{'nativeOutputFile': {'version': 1, 'status': 'unavailable', 'code': 'native_output_file_unreadable'}}])
+        chunks = asyncio.run(self._run([{'text': 'Here is the file.'}, self._completion(), final]))
+        self.assertEqual(len(self._markers(chunks)), 1)
+        self.assertEqual(''.join(c.delta.content or '' for c in chunks), 'Here is the file.\nThe file could not be attached.')
+        marker_index = next(i for i,c in enumerate(chunks) if c.delta.extra)
+        self.assertIn('could not be attached', chunks[marker_index+1].delta.content)
+
+    def test_completion_reaches_llm_consumer_while_final_is_still_pending(self):
+        async def run():
+            allow_final = asyncio.Event()
+            owner = self
+            class DeferredContent:
+                async def iter_any(self):
+                    for event in [{'text': '<emphasis>First part.</emphasis>'}, owner._completion()]:
+                        yield ('data: '+json.dumps(event)+'\n\n').encode()
+                    await allow_final.wait()
+                    yield ('data: '+json.dumps(owner._final('<emphasis>First part.</emphasis>'))+'\n\n').encode()
+            fake = _FakeStreamingSseSession([])
+            response = _FakeStreamingSseResponse([]); response.content = DeferredContent()
+            fake.get = lambda *args, **kwargs: response
+            llm = LibreChatLLM(origin='http://librechat.test', auth=LibreChatAuth(call_session_id='call_1', call_secret='synthetic'))
+            with patch('librechat_llm.aiohttp.ClientSession', return_value=fake):
+                stream = llm.chat(chat_ctx=ChatContext(items=[ChatMessage(role='user', content=['Synthetic'])]))
+                async with stream:
+                    async for chunk in stream:
+                        if chunk.delta.extra:
+                            self.assertFalse(stream._task.done())
+                            self.assertFalse(allow_final.is_set())
+                            allow_final.set()
+                self.assertTrue(allow_final.is_set())
+        asyncio.run(asyncio.wait_for(run(), timeout=2.0))
+
+    def test_supersession_drops_pending_control_without_suppressing_existing_words(self):
+        def supersede(llm, event):
+            if event['state'] == 'completed':
+                llm._presentation_coordinator.begin_stable(source_event_id='newer', presentation_ref='newer')
+        completed = _voice_task_event('finished', 2, state='completed', phase='completed', event_type='result')
+        events = [{'text': 'First part.'}, {'event': 'voice_task_event', 'voiceTaskEvent': completed},
+                  self._completion(), {'text': ' Forbidden later.'}, self._final()]
+        chunks = asyncio.run(self._run(events, hook=supersede))
+        self.assertEqual(self._markers(chunks), [])
+        self.assertEqual(''.join(c.delta.content or '' for c in chunks), 'First part.')
+
+    def test_skipped_model_delta_never_seals_an_eligible_control(self):
+        skipped = {'event': 'on_message_delta', 'data': {'delta': {
+            'content': [{'type': 'text', 'text': 'Unspoken tool handoff.'}], 'metadata': {'viventium': {
+                'deliveryDisposition': {'version': 1, 'audio': 'skip', 'source': 'model', 'valid': True, 'required': True}}}}}}
+        chunks = asyncio.run(self._run([skipped, self._completion(), self._final('')]))
+        self.assertEqual(self._markers(chunks), [])
+        self.assertEqual(''.join(c.delta.content or '' for c in chunks), '')
+
+
+class TestErrorSpeechCallAuthority(unittest.TestCase):
+    def _state(self, **changes):
+        state = {"version": 1, "callSessionId": "call_1", "mode": "call",
+                 "status": "listening", "revision": 7,
+                 "updatedAt": "2026-08-09T20:37:04.000Z"}
+        state.update(changes)
+        return state
+
+    def _error(self):
+        return {"event": "error", "error": "Synthetic upstream failure"}
+
+    def _final_error(self):
+        return {"final": True, "responseMessage": {"messageId": "message_1",
+                "content": [{"type": "error", "error": "Synthetic private failure",
+                             "error_class": "provider_response_failed"}]}}
+
+    async def _run(self, events, *, state=None, status=200, connected=True,
+                   reconnect=True, during_read=None, unavailable=False, hook=None):
+        class ErrorSseContent:
+            async def iter_any(self):
+                for event in events:
+                    kind = "error" if event.get("event") == "error" else "message"
+                    yield ("event: " + kind + "\ndata: " + json.dumps(event) + "\n\n").encode()
+
+        class ErrorSseSession(_FakeStreamingSseSession):
+            def get(self, url, *args, **kwargs):
+                self.get_calls.append((url, args, kwargs))
+                response = _FakeStreamingSseResponse([])
+                response.content = ErrorSseContent()
+                return response
+
+        fake = ErrorSseSession(events)
+        state_session = _FakeCallStateSession(state, status=status)
+        llm = LibreChatLLM(
+            origin="http://librechat.test",
+            auth=LibreChatAuth(call_session_id="call_1", call_secret="synthetic",
+                              job_id="job_1", worker_id="worker_1"),
+            is_participant_connected=lambda: connected,
+            task_event_handler=(lambda event: hook(llm, event)) if hook else None,
+        )
+        llm._call_state_session = state_session
+        if during_read:
+            base_get = state_session.get
+            def get(url, *args, **kwargs):
+                response = base_get(url, *args, **kwargs)
+                base_json = response.json
+                async def read():
+                    await asyncio.sleep(0)
+                    during_read(llm)
+                    return await base_json()
+                response.json = read
+                return response
+            state_session.get = get
+        if unavailable:
+            def get(url, *args, **kwargs):
+                state_session.get_calls.append((url, args, kwargs))
+                raise aiohttp.ClientConnectionError("Synthetic unavailable authority")
+            state_session.get = get
+        chunks = []
+        with patch("librechat_llm.aiohttp.ClientSession", return_value=fake), \
+             patch("librechat_llm._get_voice_sse_retry_config", return_value=(1, 0.0)), \
+             patch.object(llm, "wait_for_participant_reconnect", return_value=reconnect), \
+             patch.object(llm, "_followup_handler", None):
+            async with llm.chat(chat_ctx=ChatContext(items=[ChatMessage(role="user", content=["Synthetic"])])) as stream:
+                async for chunk in stream:
+                    chunks.append(chunk)
+        text = "".join(chunk.delta.content or "" for chunk in chunks)
+        self.assertFalse(any(str(call[0]).endswith("/abort") for call in fake.post_calls))
+        return text, state_session, llm
+
+    def test_ended_or_failed_call_suppresses_both_error_fallback_producers(self):
+        for status in ("ended", "failed"):
+            for error in (self._error(), self._final_error()):
+                with self.subTest(status=status, final="final" in error):
+                    text, state, _ = asyncio.run(self._run([error], state=self._state(status=status)))
+                    self.assertEqual(text, "")
+                    self.assertEqual(len(state.get_calls), 1)
+
+    def test_live_call_preserves_typed_and_stream_error_messages(self):
+        for error, expected in (
+            (self._error(), _select_stream_error_message("Synthetic upstream failure")),
+            (self._final_error(), "The model returned no usable answer. Please retry this turn."),
+        ):
+            with self.subTest(final="final" in error):
+                text, state, _ = asyncio.run(self._run([error], state=self._state()))
+                self.assertEqual(text, expected)
+                self.assertEqual(len(state.get_calls), 1)
+                self.assertEqual(state.get_calls[0][0], "http://librechat.test/api/viventium/voice/call-sessions/call_1/state")
+                self.assertEqual(state.get_calls[0][2]["headers"]["X-VIVENTIUM-WORKER-ID"], "worker_1")
+
+    def test_access_denial_keeps_typed_meaning_in_stream_and_final_error_speech(self):
+        for error in (
+            {"event": "error", "error": "403 PRIVATE_WORKSPACE_CANARY", "error_class": "provider_access_denied"},
+            {"final": True, "responseMessage": {"messageId": "message_1", "content": [
+                {"type": "error", "error": "403 PRIVATE_WORKSPACE_CANARY", "error_class": "provider_access_denied"}]}},
+        ):
+            with self.subTest(final="final" in error):
+                text, state, _ = asyncio.run(self._run([error], state=self._state()))
+                self.assertEqual(text, "The model provider denied access to this request.")
+                self.assertNotIn("PRIVATE_WORKSPACE_CANARY", text)
+                self.assertEqual(len(state.get_calls), 1)
+
+    def test_unknown_foreign_malformed_or_unavailable_authority_preserves_live_error(self):
+        cases = [({}, {}), (None, {}), (self._state(callSessionId="foreign"), {}),
+                 (self._state(revision=True), {}), (self._state(status="connected"), {}),
+                 (self._state(updatedAt="invalid"), {}), (self._state(mode="invalid"), {}),
+                 (self._state(status="ended"), {"status": 503}),
+                 (self._state(status="ended"), {"unavailable": True})]
+        for state, options in cases:
+            with self.subTest(state=state, options=options):
+                text, session, _ = asyncio.run(self._run([self._error()], state=state, **options))
+                self.assertEqual(text, _select_stream_error_message("Synthetic upstream failure"))
+                self.assertEqual(len(session.get_calls), 1)
+
+    def test_healthy_text_and_final_do_not_read_call_state(self):
+        final = {"final": True, "responseMessage": {"content": [{"type": "text", "text": "Useful reply."}]}}
+        for events in ([{"text": "Useful reply."}, final], [final]):
+            with self.subTest(streamed=len(events) == 2):
+                text, state, _ = asyncio.run(self._run(events, state=self._state(status="ended")))
+                self.assertEqual(text, "Useful reply.")
+                self.assertEqual(state.get_calls, [])
+
+    def test_already_stopped_stream_never_reads_or_emits_fallback(self):
+        stopped = _voice_task_event("stop", 2, state="cancelling", phase="stopping", event_type="state")
+        text, state, _ = asyncio.run(self._run(
+            [{"event": "voice_task_event", "voiceTaskEvent": _voice_task_event("running", 1)}, {"event": "voice_task_event", "voiceTaskEvent": stopped}, self._error()],
+            state=self._state()))
+        self.assertEqual(text, "")
+        self.assertEqual(state.get_calls, [])
+
+    def test_stop_and_supersession_during_authority_read_drop_error_output(self):
+        for transition in (
+            lambda llm: llm._task_event_gate.accept(_voice_task_event("stop", 2, state="cancelling", phase="stopping", event_type="state")),
+            lambda llm: llm._presentation_coordinator.begin_stable(source_event_id="newer", presentation_ref="newer"),
+        ):
+            with self.subTest(transition=transition):
+                text, state, _ = asyncio.run(self._run(
+                    [{"event": "voice_task_event", "voiceTaskEvent": _voice_task_event("running", 1)}, self._error()],
+                    state=self._state(), during_read=transition))
+                self.assertEqual(text, "")
+                self.assertEqual(len(state.get_calls), 1)
+
+    def test_end_discards_disconnected_speech_before_reconnect(self):
+        text, state, _ = asyncio.run(self._run(
+            [{"text": "Pending reply."}, self._error()],
+            state=self._state(status="ended"), connected=False))
+        self.assertEqual(text, "")
+        self.assertEqual(len(state.get_calls), 1)
+
+    def test_live_disconnected_error_survives_reconnect(self):
+        text, state, _ = asyncio.run(self._run([self._error()], state=self._state(), connected=False))
+        self.assertEqual(text, _select_stream_error_message("Synthetic upstream failure"))
+        self.assertEqual(len(state.get_calls), 1)
+
+    def test_existing_public_words_remain_and_only_late_apology_is_dropped(self):
+        text, _, _ = asyncio.run(self._run([{"text": "Useful reply."}, self._error()], state=self._state(status="ended")))
+        self.assertEqual(text, "Useful reply.")
+
+    def test_current_listen_only_state_suppresses_error_speech(self):
+        for error in (self._error(), self._final_error()):
+            with self.subTest(final="final" in error):
+                text, state, _ = asyncio.run(self._run([error], state=self._state(mode="listen_only")))
+                self.assertEqual(text, "")
+                self.assertEqual(len(state.get_calls), 1)
+
+    def test_skipped_final_error_has_no_speech_or_authority_fetch(self):
+        final = self._final_error()
+        final["responseMessage"]["metadata"] = {"viventium": {"deliveryDisposition": {
+            "version": 1, "audio": "skip", "source": "model", "valid": True, "required": True}}}
+        text, state, _ = asyncio.run(self._run([final], state=self._state()))
+        self.assertEqual(text, "")
+        self.assertEqual(state.get_calls, [])
+
+
+# === VIVENTIUM START === External task cancellation stops its already queued foreground speech.
+# Purpose: Exercise strict Core task-event delivery through the actual pinned LiveKit interruption
+# methods. No room, provider request, audio transform or client-auth shortcut is used.
+class TestExternalTaskCancelPlayout(unittest.IsolatedAsyncioTestCase):
+    def _fixture(self):
+        from types import MethodType
+        from unittest.mock import Mock
+        from livekit.agents.voice.agent_activity import AgentActivity
+        from livekit.agents.voice.agent_session import AgentSession
+        from livekit.agents.voice.speech_handle import InputDetails, SpeechHandle
+        import worker
+
+        speech = SpeechHandle(speech_id="main_speech", allow_interruptions=False,
+                              input_details=InputDetails(modality="text"))
+        queued = SpeechHandle(speech_id="queued_speech", allow_interruptions=False,
+                              input_details=InputDetails(modality="text"))
+        activity = SimpleNamespace(
+            _cancel_preemptive_generation=lambda: None,
+            _interrupt_background_speeches=lambda **kwargs: [],
+            _current_speech=speech, _speech_q=[(0, 0, queued)], _rt_session=None,
+        )
+        activity.interrupt = MethodType(AgentActivity.interrupt, activity)
+        session = object.__new__(AgentSession)
+        session._activity = activity
+        scheduler = SimpleNamespace(cancel_pending=Mock(), set_mode=Mock())
+        events = []
+        callbacks = []
+        llm = LibreChatLLM(origin="http://librechat.test",
+                          auth=LibreChatAuth(call_session_id="call_1", call_secret="synthetic"))
+        presentation = llm._presentation_coordinator.begin_stable(
+            source_event_id="source_1", presentation_ref="trace_1")
+        llm.register_trace(VoiceHopTrace(correlation_id="trace_1", call_session_id="call_1"))
+        llm.bind_trace_core_context("trace_1", stream_id="stream_1", task_id="task_1",
+                                    presentation=presentation)
+        llm._speech_handles_by_trace_id["trace_1"] = speech
+
+        def suppress(task_id, result):
+            callbacks.append((task_id, llm.is_task_output_suppressed(task_id)))
+            worker._apply_task_cancel_suppression(task_id, followup_scheduler=scheduler,
+                                                session=session)
+
+        llm.set_task_cancel_handler(suppress)
+        llm.set_task_event_handler(lambda event: events.append(
+            (event["state"], speech.interrupted, llm.is_task_output_suppressed(event["taskId"]))))
+        self.addCleanup(speech._mark_done)
+        self.addCleanup(queued._mark_done)
+        return SimpleNamespace(llm=llm, speech=speech, queued=queued, session=session,
+                               scheduler=scheduler, callbacks=callbacks, events=events)
+
+    @staticmethod
+    def _event(state="cancelling", sequence=2, **extra):
+        return _voice_task_event(f"event_{sequence}", sequence, state=state,
+                                 event_type="state", streamId="stream_1",
+                                 conversationId="conversation_1",
+                                 owner={"kind": "remote_generation", "id": "stream_1"}, **extra)
+
+    async def test_external_cancelling_interrupts_only_bound_native_speech_before_publish(self):
+        f = self._fixture()
+        with patch("librechat_llm.aiohttp.ClientSession") as no_network:
+            self.assertTrue(await f.llm._relay_task_event_once(self._event()))
+        no_network.assert_not_called()
+        self.assertTrue(f.speech.interrupted)
+        self.assertFalse(f.queued.interrupted)
+        self.assertEqual(f.callbacks, [])
+        self.assertEqual(f.events, [("cancelling", True, True)])
+        f.scheduler.cancel_pending.assert_not_called()
+
+    async def test_first_cancelled_confirmed_snapshot_also_interrupts_native_playout(self):
+        f = self._fixture()
+        self.assertTrue(await f.llm._relay_task_event_once(self._event("cancelled_confirmed")))
+        self.assertTrue(f.speech.interrupted)
+        self.assertFalse(f.queued.interrupted)
+        self.assertEqual(f.callbacks, [])
+
+    async def test_first_unconfirmed_cancel_snapshot_still_suppresses_native_playout(self):
+        f = self._fixture()
+        self.assertTrue(await f.llm._relay_task_event_once(self._event("cancelled_unenforceable")))
+        self.assertTrue(f.speech.interrupted)
+        self.assertEqual(f.callbacks, [])
+
+    async def test_exact_and_later_terminal_replays_do_not_interrupt_twice(self):
+        f = self._fixture()
+        event = self._event()
+        self.assertTrue(await f.llm._relay_task_event_once(event))
+        self.assertFalse(await f.llm._relay_task_event_once(event))
+        self.assertTrue(await f.llm._relay_task_event_once(self._event("cancelled_confirmed", 3)))
+        self.assertEqual(f.callbacks, [])
+        f.scheduler.cancel_pending.assert_not_called()
+
+    async def test_external_stop_does_not_invoke_callwide_cancel_callback(self):
+        f = self._fixture()
+        order = []
+
+        async def interrupt(task_id, event):
+            await asyncio.sleep(0)
+            f.session.interrupt(force=True)
+            order.append("interrupt")
+
+        f.llm.set_task_cancel_handler(interrupt)
+        f.llm.set_task_event_handler(lambda event: order.append("publish"))
+        await f.llm._relay_task_event_once(self._event())
+        self.assertEqual(order, ["publish"])
+        self.assertTrue(f.speech.interrupted)
+
+    async def test_direct_cancel_then_external_event_uses_existing_callback_once(self):
+        f = self._fixture()
+        transport = _FakeClosedStreamSession()
+        with patch("librechat_llm.aiohttp.ClientSession", return_value=transport):
+            await f.llm.cancel_task("task_1")
+            await f.llm._relay_task_event_once(self._event())
+        self.assertEqual(f.callbacks, [("task_1", True)])
+        self.assertTrue(f.speech.interrupted)
+        self.assertEqual(len(transport.post_calls), 1)
+
+    async def test_external_event_then_direct_cancel_keeps_native_interrupt_idempotent(self):
+        f = self._fixture()
+        transport = _FakeClosedStreamSession()
+        await f.llm._relay_task_event_once(self._event())
+        self.assertTrue(f.speech.interrupted)
+        interrupt_future = f.speech._interrupt_fut
+        with patch("librechat_llm.aiohttp.ClientSession", return_value=transport):
+            await f.llm.cancel_task("task_1")
+            await f.llm.cancel_task("task_1")
+        self.assertIs(f.speech._interrupt_fut, interrupt_future)
+        self.assertTrue(f.speech.interrupted)
+        self.assertTrue(f.queued.interrupted)
+        self.assertEqual(len(transport.post_calls), 1)
+
+    async def test_non_cancel_states_leave_current_native_speech_intact(self):
+        for state in ["queued", "running", "needs_input", "recovering", "completed", "failed"]:
+            with self.subTest(state=state):
+                f = self._fixture()
+                await f.llm._relay_task_event_once(self._event(state))
+                self.assertFalse(f.speech.interrupted)
+                self.assertEqual(f.callbacks, [])
+                f.speech._mark_done(); f.queued._mark_done()
+
+    async def test_background_worker_foreign_stream_owner_and_call_cannot_interrupt_main(self):
+        variants = [
+            {"taskId": "background_task", "streamId": "worker_stream", "owner": {"kind": "glasshive_run", "id": "worker_run"}},
+            {"taskId": "another_task"},
+            {"streamId": "another_stream"},
+            {"owner": {"kind": "glasshive_run", "id": "stream_1"}},
+            {"owner": {"kind": "remote_generation", "id": "another_stream"}},
+            {"callSessionId": "another_call"},
+            {"streamId": None},
+            {"sequence": True},
+        ]
+        for changes in variants:
+            with self.subTest(changes=changes):
+                f = self._fixture()
+                await f.llm._relay_task_event_once({**self._event(), **changes})
+                self.assertFalse(f.speech.interrupted)
+                self.assertFalse(f.queued.interrupted)
+                self.assertEqual(f.callbacks, [])
+                f.speech._mark_done(); f.queued._mark_done()
+
+    async def test_valid_cancel_without_owner_id_or_nonempty_stream_still_publishes(self):
+        variants = ["missing_owner_id", "missing_stream_and_binding", "missing_both", "blank_stream"]
+        for variant in variants:
+            with self.subTest(variant=variant):
+                f = self._fixture()
+                event = self._event()
+                if variant in {"missing_owner_id", "missing_both"}:
+                    event["owner"] = {"kind": "remote_generation"}
+                if variant in {"missing_stream_and_binding", "missing_both"}:
+                    event.pop("streamId")
+                    f.llm._stream_id_by_trace_id.clear()
+                if variant == "blank_stream":
+                    event["streamId"] = " "
+                    event["owner"]["id"] = " "
+                    f.llm._stream_id_by_trace_id["trace_1"] = " "
+                self.assertTrue(await f.llm._relay_task_event_once(event))
+                self.assertFalse(f.speech.interrupted)
+                self.assertFalse(f.queued.interrupted)
+                self.assertEqual(f.events, [("cancelling", False, True)])
+                self.assertTrue(f.llm.is_task_output_suppressed("task_1"))
+                self.assertEqual(f.callbacks, [])
+                f.speech._mark_done(); f.queued._mark_done()
+
+    async def test_stale_cancel_event_does_not_interrupt_or_install_barrier(self):
+        f = self._fixture()
+        await f.llm._relay_task_event_once(self._event("running", 5))
+        self.assertFalse(await f.llm._relay_task_event_once(self._event("cancelling", 4)))
+        self.assertFalse(f.speech.interrupted)
+        self.assertFalse(f.llm.is_task_output_suppressed("task_1"))
+
+    async def test_superseded_presentation_cannot_interrupt_newly_queued_reply(self):
+        f = self._fixture()
+        f.llm._presentation_coordinator.begin_stable(source_event_id="new_source",
+                                                    presentation_ref="new_trace")
+        await f.llm._relay_task_event_once(self._event())
+        self.assertFalse(f.speech.interrupted)
+        self.assertTrue(f.llm.is_task_output_suppressed("task_1"))
+        self.assertEqual(f.callbacks, [])
+
+    async def test_missing_task_or_stream_binding_blocks_callback_but_retains_suppression(self):
+        for binding in ["_task_id_by_trace_id", "_stream_id_by_trace_id"]:
+            with self.subTest(binding=binding):
+                f = self._fixture()
+                getattr(f.llm, binding).clear()
+                await f.llm._relay_task_event_once(self._event())
+                self.assertFalse(f.speech.interrupted)
+                self.assertTrue(f.llm.is_task_output_suppressed("task_1"))
+                self.assertEqual(f.callbacks, [])
+                f.speech._mark_done(); f.queued._mark_done()
+
+    async def test_listen_only_already_interrupted_playout_is_not_interrupted_again(self):
+        from unittest.mock import Mock
+        import worker
+        f = self._fixture()
+        worker._apply_authoritative_call_mode_to_speech_planes(
+            "listen_only", ambient_ingress=SimpleNamespace(set_mode=Mock()),
+            followup_scheduler=f.scheduler, session=f.session)
+        self.assertTrue(f.speech.interrupted)
+        await f.llm._relay_task_event_once(self._event())
+        self.assertEqual(f.callbacks, [])
+        self.assertTrue(f.llm.is_task_output_suppressed("task_1"))
+        f.scheduler.cancel_pending.assert_not_called()
+
+    async def test_ended_or_completed_handle_does_not_touch_closed_native_session(self):
+        f = self._fixture()
+        f.speech._mark_done()
+        f.session._activity = None
+        with self.assertNoLogs("voice-gateway", level="WARNING"):
+            await f.llm._relay_task_event_once(self._event())
+        self.assertEqual(f.callbacks, [])
+        self.assertTrue(f.llm.is_task_output_suppressed("task_1"))
+
+    async def test_healthy_task_event_does_not_add_suppression_lookup_or_network(self):
+        from unittest.mock import Mock
+        f = self._fixture()
+        f.llm.set_task_event_handler(None)
+        f.llm.is_task_output_suppressed = Mock(side_effect=AssertionError("extra healthy lookup"))
+        with patch("librechat_llm.aiohttp.ClientSession") as no_network:
+            self.assertTrue(await f.llm._relay_task_event_once(self._event("running")))
+        f.llm.is_task_output_suppressed.assert_not_called()
+        no_network.assert_not_called()
+        self.assertFalse(f.speech.interrupted)
+
+    async def _captured_followup_gate(self, *, detached=False):
+        event = _voice_task_event("followup_parent", 1, streamId="stream_voice_1",
+                                  owner={"kind": "generation_job", "id": "stream_voice_1"})
+        final = {"final": True, "responseMessage": {
+            "messageId": "followup_anchor", "content": [{"type": "text", "text": "Ready."}],
+        }}
+        transport = _FakeStreamingSseSession([
+            {"event": "voice_task_event", "voiceTaskEvent": event}, final])
+        followups = []
+        llm = LibreChatLLM(origin="http://librechat.test",
+                          auth=LibreChatAuth(call_session_id="call_1", call_secret="synthetic"),
+                          followup_handler=lambda *args, **kwargs: followups.append((args, kwargs)))
+        with patch("librechat_llm.aiohttp.ClientSession", return_value=transport):
+            if detached:
+                await llm._continue_task_stream(
+                    stream_id="stream_voice_1", task_id="task_1", headers={},
+                    request_id="trace_followup", pending_insights=[], saw_cortex_event=True,
+                    saw_glasshive_tool_call=False, cortex_message_id="",
+                    hop_trace=VoiceHopTrace(correlation_id="trace_followup", call_session_id="call_1"))
+            else:
+                stream = llm.chat(chat_ctx=ChatContext(items=[
+                    ChatMessage(role="user", content=["Continue."])]))
+                async with stream:
+                    async for _ in stream:
+                        pass
+        self.assertEqual(len(followups), 1)
+        return llm, followups[0][1]["presentation_is_current"]
+
+    async def test_scheduled_main_followup_predicate_tracks_later_task_stop(self):
+        llm, current = await self._captured_followup_gate()
+        self.assertTrue(current())
+        await llm._relay_task_event_once({**self._event(), "streamId": "stream_voice_1",
+                                        "owner": {"kind": "generation_job", "id": "stream_voice_1"}})
+        self.assertFalse(current())
+
+    async def test_detached_main_followup_predicate_tracks_later_task_stop(self):
+        llm, current = await self._captured_followup_gate(detached=True)
+        self.assertTrue(callable(current))
+        self.assertTrue(current())
+        await llm._relay_task_event_once({**self._event(), "streamId": "stream_voice_1",
+                                        "owner": {"kind": "generation_job", "id": "stream_voice_1"}})
+        self.assertFalse(current())
+
+    async def test_unrelated_task_stop_keeps_existing_main_followup_predicate_true(self):
+        llm, current = await self._captured_followup_gate()
+        await llm._relay_task_event_once({**self._event(), "taskId": "another_task"})
+        self.assertTrue(current())
+# === VIVENTIUM END ===
+
+
+class TestCompletedGenerationPlayoutStop(unittest.IsolatedAsyncioTestCase):
+    _fixture = TestExternalTaskCancelPlayout._fixture
+    _event = staticmethod(TestExternalTaskCancelPlayout._event)
+    def _playing_fixture(self):
+        f = self._fixture()
+        presentation = f.llm._presentation_by_trace_id["trace_1"]
+        presentation.presentation_ref = f.speech.id
+        presentation.playout_active = True
+        presentation.audio_started_at_ms = 1000
+        return f
+
+    def _completed_stop(self, sequence=2, **changes):
+        return {**self._event("completed", sequence,
+            presentation={"ref": "main_speech", "state": "stop_requested", "startedAtMs": 1000}),
+            **changes}
+
+    async def test_completed_stop_interrupts_only_exact_active_handle_and_preserves_job_state(self):
+        f = self._playing_fixture()
+        with patch("librechat_llm.aiohttp.ClientSession") as no_network:
+            self.assertTrue(await f.llm._relay_task_event_once(self._completed_stop()))
+        no_network.assert_not_called()
+        self.assertTrue(f.speech.interrupted)
+        self.assertFalse(f.queued.interrupted)
+        self.assertFalse(f.llm.is_task_output_suppressed("task_1"))
+        self.assertEqual(f.callbacks, [])
+        self.assertEqual(f.events, [("completed", True, False)])
+        f.scheduler.cancel_pending.assert_not_called()
+
+    async def test_new_generation_does_not_hide_still_active_old_speech_from_its_exact_stop(self):
+        f = self._playing_fixture()
+        f.llm._current_trace_id = "new_generation"
+        f.llm._presentation_coordinator.begin_stable(
+            source_event_id="source_new", presentation_ref="new_generation")
+        await f.llm._relay_task_event_once(self._completed_stop())
+        self.assertTrue(f.speech.interrupted)
+        self.assertFalse(f.queued.interrupted)
+
+    async def test_stale_ref_inactive_or_other_owner_cannot_stop_completed_speech(self):
+        changes = [
+            {"presentation": {"ref": "old_speech", "state": "stop_requested", "startedAtMs": 1000}},
+            {"presentation": {"ref": "main_speech", "state": "speaking", "startedAtMs": 1000}},
+            {"presentation": {"ref": "main_speech", "state": "stop_requested", "startedAtMs": True}},
+            {"owner": {"kind": "glasshive_run", "id": "stream_1"}},
+            {"streamId": "other_stream"}, {"taskId": "other_task"},
+            {"callSessionId": "other_call"},
+        ]
+        for change in changes:
+            with self.subTest(change=change):
+                f = self._playing_fixture()
+                await f.llm._relay_task_event_once(self._completed_stop(**change))
+                self.assertFalse(f.speech.interrupted)
+                self.assertFalse(f.queued.interrupted)
+        f = self._playing_fixture()
+        f.llm._presentation_by_trace_id["trace_1"].playout_active = False
+        await f.llm._relay_task_event_once(self._completed_stop())
+        self.assertFalse(f.speech.interrupted)
+
+    async def test_direct_completed_stop_bypasses_callwide_cancel_callback_and_task_barrier(self):
+        f = self._playing_fixture()
+        transport = _FakeClosedStreamSession()
+        result = {"version": 1, "outcome": "playout_stop_requested", "event": self._completed_stop()}
+        transport.post = lambda *args, **kwargs: _FakeJsonResponse(result)
+        with patch("librechat_llm.aiohttp.ClientSession", return_value=transport):
+            self.assertEqual(await f.llm.cancel_task("task_1"), result)
+            self.assertEqual(await f.llm.cancel_task("task_1"), result)
+        self.assertTrue(f.speech.interrupted)
+        self.assertFalse(f.queued.interrupted)
+        self.assertFalse(f.llm.is_task_output_suppressed("task_1"))
+        self.assertEqual(f.callbacks, [])
+        self.assertNotIn("task_1", f.llm._task_cancel_results)
+        f.scheduler.cancel_pending.assert_not_called()
+
+    async def test_stream_then_direct_completed_stop_remains_idempotent_without_global_cancel(self):
+        f = self._playing_fixture()
+        event = self._completed_stop()
+        await f.llm._relay_task_event_once(event)
+        interrupt_future = f.speech._interrupt_fut
+        transport = _FakeClosedStreamSession()
+        transport.post = lambda *args, **kwargs: _FakeJsonResponse(
+            {"version": 1, "outcome": "playout_stop_requested", "event": event})
+        with patch("librechat_llm.aiohttp.ClientSession", return_value=transport):
+            await f.llm.cancel_task("task_1")
+        self.assertIs(f.speech._interrupt_fut, interrupt_future)
+        self.assertFalse(f.queued.interrupted)
+        self.assertEqual(f.callbacks, [])
+
+    async def test_malformed_completed_stop_response_is_not_cached_or_converted_to_generation_cancel(self):
+        f = self._playing_fixture()
+        transport = _FakeClosedStreamSession()
+        transport.post = lambda *args, **kwargs: _FakeJsonResponse(
+            {"version": 1, "outcome": "playout_stop_requested", "event": self._event("completed")})
+        with patch("librechat_llm.aiohttp.ClientSession", return_value=transport):
+            with self.assertRaises(RuntimeError):
+                await f.llm.cancel_task("task_1")
+        self.assertFalse(f.speech.interrupted)
+        self.assertFalse(f.llm.is_task_output_suppressed("task_1"))
+        self.assertEqual(f.callbacks, [])
+        self.assertNotIn("task_1", f.llm._task_cancel_results)
+
+    async def test_native_started_projection_uses_exact_handle_without_await_or_network(self):
+        f = self._fixture()
+        with patch.object(f.llm, "record_completed_trace_stage", return_value=True) as publish:
+            with patch("librechat_llm.aiohttp.ClientSession") as no_network:
+                self.assertTrue(f.llm.record_speech_started(f.speech, 1000.75))
+                self.assertFalse(f.llm.record_speech_started(f.speech, 2000))
+                self.assertFalse(f.llm.record_speech_started(f.queued, 3000))
+        no_network.assert_not_called()
+        publish.assert_called_once_with("trace_1", "audio.started")
+        presentation = f.llm._presentation_by_trace_id["trace_1"]
+        self.assertTrue(presentation.playout_active)
+        self.assertEqual(presentation.audio_started_at_ms, 1000)
+
+    async def test_started_trace_reuses_existing_exact_core_and_worker_binding(self):
+        f = self._playing_fixture()
+        f.llm._auth = LibreChatAuth(call_session_id="call_1", call_secret="synthetic",
+                                   job_id="job_1", worker_id="worker_1")
+        presentation = f.llm._presentation_by_trace_id["trace_1"]
+        presentation.logical_turn_id = "logical_1"
+        presentation.revision = 1
+        transport = _FakeClosedStreamSession()
+        with patch("librechat_llm.aiohttp.ClientSession", return_value=transport):
+            self.assertTrue(await f.llm._post_production_trace("trace_1", "audio.started"))
+        body = transport.post_calls[0][2]["json"]
+        self.assertEqual(body, {"version": 1, "callSessionId": "call_1", "turnId": "logical_1",
+            "streamId": "stream_1", "taskId": "task_1", "presentationRef": "main_speech",
+            "stage": "audio.started", "startedAtMs": 1000})
+
+
+class TestExactFollowupProductionTrace(unittest.IsolatedAsyncioTestCase):
+    async def test_worker_trace_uses_canonical_worker_turn_and_parent_task_not_main_clock(self):
+        llm = LibreChatLLM(origin="http://example.test", auth=LibreChatAuth(call_session_id="call_1",
+            call_secret="synthetic", job_id="job_1", worker_id="worker_1"))
+        delivery = {"deliveryId": "delivery_1", "claimId": "claim_1", "dispatchPermit": {"permitId": "permit_1"},
+            "workerCompletionPresentation": {"callSessionId": "call_1", "presentationRef": "worker_ref",
+                                              "turnId": "worker_turn"}}
+        transport = _FakeDeliveryAckSession()
+        with patch("librechat_llm.aiohttp.ClientSession", return_value=transport):
+            self.assertTrue(await llm.record_followup_presentation("parent_stream", "worker_ref", "audio.started",
+                started_at_ms=2000, task_ref={"taskId": "parent_task", "streamId": "parent_stream"},
+                worker_delivery=delivery))
+        self.assertEqual(transport.post_calls[0][2]["json"], {"version": 1, "callSessionId": "call_1",
+            "turnId": "worker_turn", "streamId": "parent_stream", "taskId": "parent_task",
+            "presentationRef": "worker_ref", "stage": "audio.started", "startedAtMs": 2000,
+            "workerDelivery": {"deliveryId": "delivery_1", "claimId": "claim_1",
+                               "dispatchPermit": {"permitId": "permit_1"}}})
+
+    async def test_worker_trace_missing_or_foreign_identity_abstains_before_http(self):
+        llm = LibreChatLLM(origin="http://example.test", auth=LibreChatAuth(call_session_id="call_1",
+            call_secret="synthetic", job_id="job_1", worker_id="worker_1"))
+        good = {"deliveryId": "delivery_1", "claimId": "claim_1", "dispatchPermit": {},
+            "workerCompletionPresentation": {"callSessionId": "call_1", "presentationRef": "worker_ref",
+                                              "turnId": "worker_turn"}}
+        for proof in ([], {}, {**good, "deliveryId": None}, {**good, "claimId": None},
+            {**good, "dispatchPermit": None}, {**good, "workerCompletionPresentation": {
+                **good["workerCompletionPresentation"], "callSessionId": "foreign"}}):
+            with self.subTest(proof=proof), patch("librechat_llm.aiohttp.ClientSession") as no_http:
+                self.assertFalse(await llm.record_followup_presentation("parent", "worker_ref", "audio.started",
+                    started_at_ms=2000, task_ref={"taskId": "parent_task", "streamId": "parent_stream"},
+                    worker_delivery=proof))
+                no_http.assert_not_called()
+
+    async def test_cortex_trace_uses_its_own_native_start_clock(self):
+        f = TestCompletedGenerationPlayoutStop()._playing_fixture()
+        f.llm._auth = LibreChatAuth(call_session_id="call_1", call_secret="synthetic", job_id="job_1", worker_id="worker_1")
+        p = f.llm._presentation_by_trace_id["trace_1"]
+        p.logical_turn_id = "main_turn"; p.revision = 1
+        transport = _FakeDeliveryAckSession()
+        with patch("librechat_llm.aiohttp.ClientSession", return_value=transport):
+            self.assertTrue(await f.llm.record_followup_presentation("trace_1", "cortex_ref", "audio.started",
+                started_at_ms=3000, task_ref={"taskId": "task_1", "streamId": "stream_1"}))
+        body = transport.post_calls[0][2]["json"]
+        self.assertEqual(body["startedAtMs"], 3000)
+        self.assertEqual(body["presentationRef"], "cortex_ref")
+        self.assertEqual(body["turnId"], "main_turn")
+        self.assertNotIn("workerDelivery", body)
+
+
+class TestNeutralWorkerProductionTrace(unittest.IsolatedAsyncioTestCase):
+    async def test_neutral_callback_uses_its_existing_delivery_reference_and_stored_request(self):
+        llm = LibreChatLLM(origin="http://example.test", auth=LibreChatAuth(call_session_id="call_1",
+            call_secret="synthetic", job_id="job_1", worker_id="worker_1"))
+        delivery = {"deliveryId": "neutral_delivery", "claimId": "claim_1", "dispatchPermit": {"permitId": "permit_1"},
+                    "voiceCallSessionId": "call_1", "voiceRequestId": "stored_request"}
+        transport = _FakeDeliveryAckSession()
+        with patch("librechat_llm.aiohttp.ClientSession", return_value=transport):
+            self.assertTrue(await llm.record_followup_presentation("parent", "neutral_delivery", "audio.started",
+                started_at_ms=2000, task_ref={"taskId": "parent_task", "streamId": "parent_stream"},
+                worker_delivery=delivery))
+        body = transport.post_calls[0][2]["json"]
+        self.assertEqual(body["turnId"], "stored_request")
+        self.assertEqual(body["presentationRef"], "neutral_delivery")
+        self.assertNotIn("workerCompletionPresentation", body)
+
+class TestPendingCoreAdmission(unittest.TestCase):
+    """Exercise the actual HTTP cancellation race against a private Core fixture."""
+
+    async def _pending_post(self, *, status=200, timeout=False, closing=False,
+                            handle_done=True, audible=False, cancel_successor=False,
+                            missing_identity=False, changed_call=False, closing_waiter=False,
+                            malformed=False, ack_accepted=True, third_source=False,
+                            metadata=False, middle_receipt_failure=False):
+        from aiohttp import web
+        started, release, second_started = asyncio.Event(), asyncio.Event(), asyncio.Event()
+        order, requests, sessions = [], [], []
+        previous_receipts = []
+
+        async def chat(request):
+            body = await request.json()
+            requests.append(body)
+            revision = len(requests)
+            order.append(f"post-{revision}")
+            self.assertEqual(body["sourceEventId"],
+                all_streams[revision - 1]._presentation.source_event_id)
+            if revision > 1:
+                previous = all_streams[revision - 2]._presentation
+                previous_receipts.append({
+                    "sourceEventId": previous.source_event_id,
+                    "logicalTurnId": previous.logical_turn_id,
+                    "revision": previous.revision,
+                    "done": previous.admission_task.done(),
+                })
+            if revision == 1:
+                started.set()
+                await release.wait()
+            else:
+                second_started.set()
+            order.append(f"receipt-{revision}")
+            if revision == 2 and middle_receipt_failure:
+                # The original source reached Core, but no admitted identity is returned.
+                return web.json_response({"code": "voice_turn_authority_unavailable"}, status=503)
+            payload = {"streamId": body["streamId"], "taskId": f"task_{revision}",
+                       "logical_turn_id": "logical-1", "revision": revision}
+            if revision == 1 and missing_identity:
+                payload.pop("logical_turn_id")
+            if revision == 1 and malformed:
+                return web.Response(text="{", content_type="application/json")
+            return web.json_response(payload, status=status if revision == 1 else 200)
+
+        async def stream(request):
+            event = {"final": True, "responseMessage": {"messageId": "answer-2",
+                "content": [{"type": "text", "text": "Next."}]}}
+            return web.Response(text="data: " + json.dumps(event) + "\n\n",
+                                content_type="text/event-stream")
+
+        app = web.Application()
+        app.router.add_post("/api/viventium/voice/chat", chat)
+        app.router.add_get("/api/viventium/voice/stream/{stream_id}", stream)
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, "127.0.0.1", 0)
+        await site.start()
+        origin = "http://127.0.0.1:" + str(site._server.sockets[0].getsockname()[1])
+        original_session = aiohttp.ClientSession
+
+        def tracked_session(*args, **kwargs):
+            session = original_session(*args, **kwargs)
+            sessions.append(session)
+            return session
+
+        llm = LibreChatLLM(origin=origin,
+            auth=LibreChatAuth(call_session_id="call_1", call_secret="synthetic"),
+            timeout_s=0.075 if timeout else 1.0)
+        admission_errors = []
+        llm.on("error", admission_errors.append)
+        handle = _CompletableSpeechHandle("first-speech")
+        llm.register_speech_handle(handle)
+        llm._start_task_continuation = unittest.mock.Mock()
+        llm.schedule_trace_terminal = unittest.mock.Mock()
+        llm.record_completed_trace_stage = unittest.mock.Mock(return_value=True)
+
+        async def acknowledge(**kwargs):
+            order.append("ack")
+            return ack_accepted
+
+        llm.ack_delivery = AsyncMock(side_effect=acknowledge)
+        first, second = None, None
+        chunks = []
+        all_streams = []
+        expected_courier = []
+
+        def context(source_id, text):
+            message = ChatMessage(id=source_id, role="user", content=[text])
+            if metadata:
+                tracker = SpeakerSegmentTracker(call_session_id="call_1",
+                    participant_identity="owner-participant", participant_name="Owner",
+                    track_sid="TR_owner_mic", owner_signed=True)
+                tracker.ingest(transcript=text, is_final=True, provider_speaker_id="A",
+                    created_at=100.0 + len(expected_courier), start_time=10.0, end_time=11.0)
+                original = attach_speaker_context_to_message(tracker, message)
+                expected_courier.append({"text": text,
+                    "sourceEventId": f"voice:call_1:item:{source_id}",
+                    **{key: original[key] for key in ("speakerSegments", "speakerSegmentRevisions",
+                       "speakerLabel", "ownerParticipantIdentity", "ownerTrackSid")}})
+            return ChatContext(items=[message])
+        try:
+            with patch("librechat_llm.aiohttp.ClientSession", side_effect=tracked_session):
+                first = llm.chat(chat_ctx=context("first-source", "First."))
+                all_streams.append(first)
+                await asyncio.wait_for(started.wait(), 1)
+                if audible:
+                    handle.mark_audible_playout()
+                if handle_done:
+                    handle.complete(interrupted=True)
+                    await asyncio.sleep(0)
+                # Core has not returned any stream/task/logical-turn identity yet.
+                self.assertEqual(first._presentation.logical_turn_id, "")
+                self.assertIsNone(first._presentation.interrupted_binding)
+                await asyncio.wait_for(first.aclose(), 0.25)
+                if changed_call:
+                    llm._auth = LibreChatAuth(call_session_id="call_2", call_secret="synthetic")
+                if not closing:
+                    if cancel_successor:
+                        middle_handle = _CompletableSpeechHandle("second-speech")
+                        llm.register_speech_handle(middle_handle)
+                    second = llm.chat(chat_ctx=context("second-source", "Second: β\nline 2  \nnext." if metadata else "Second."))
+                    all_streams.append(second)
+                    await asyncio.sleep(0.02)
+                    if cancel_successor:
+                        middle_handle.complete(interrupted=True)
+                        await asyncio.wait_for(second.aclose(), 0.25)
+                        if third_source:
+                            second = llm.chat(chat_ctx=context("third-source", "Third: correction." if metadata else "Third."))
+                            all_streams.append(second)
+                            await asyncio.sleep(0.02)
+                    if closing_waiter:
+                        await asyncio.wait_for(llm.close_background_continuations(), 0.25)
+                else:
+                    await asyncio.wait_for(llm.close_background_continuations(), 0.25)
+                # No successor POST may start while the first real receipt is held.
+                self.assertEqual([body["sourceEventId"] for body in requests],
+                    ["voice:call_1:item:first-source"])
+                if not timeout:
+                    release.set()
+                consumer_error = None
+                if second is not None and (not cancel_successor or third_source):
+                    try:
+                        async with second:
+                            async for chunk in second:
+                                chunks.append(chunk)
+                    except TimeoutError:
+                        if not timeout:
+                            raise
+                        # Foreground failure is not an admission receipt. The
+                        # retained task below must prove the actual outcome.
+                        consumer_error = "timeout"
+                if consumer_error is None and any(event.recoverable for event in admission_errors):
+                    consumer_error = "deferred"
+                tasks = [getattr(item._presentation, "admission_task", None) for item in all_streams]
+                if not closing:
+                    await asyncio.gather(*(item for item in tasks if item is not None), return_exceptions=True)
+                # Timeout is exercised by the real aiohttp ClientTimeout.
+                release.set()
+                await llm.close_background_continuations()
+                self.assertTrue(all(session.closed for session in sessions))
+        finally:
+            release.set()
+            if first is not None:
+                await first.aclose()
+            if second is not None:
+                await second.aclose()
+            await llm.close_background_continuations()
+            await runner.cleanup()
+        llm._test_expected_courier = expected_courier
+        llm._test_previous_admission_receipts = previous_receipts
+        llm._test_admission_consumer_error = consumer_error
+        return llm, first, second, order, requests, chunks
+
+    def test_pending_post_interruption_retains_exact_receipt_before_successor(self):
+        llm, first, _second, order, requests, chunks = asyncio.run(self._pending_post())
+        self.assertEqual([item for item in order if item != "ack"],
+            ["post-1", "receipt-1", "post-2", "receipt-2"])
+        self.assertEqual(first._presentation.interrupted_binding,
+            ("call_1", "logical-1", 1, "first-speech", first._request_id, "task_1"))
+        self.assertEqual(llm.ack_delivery.await_args.kwargs,
+            {"logical_turn_id": "logical-1", "revision": 1, "state": "partial_removed",
+             "presentation_ref": "first-speech"})
+        self.assertEqual(len(requests), 2)
+        llm.ack_delivery.assert_awaited_once()
+        self.assertEqual(llm._test_previous_admission_receipts, [{
+            "sourceEventId": "voice:call_1:item:first-source",
+            "logicalTurnId": "logical-1", "revision": 1, "done": True,
+        }])
+        self.assertTrue(chunks)
+        llm._start_task_continuation.assert_called_once()
+
+    def test_pending_post_403_creates_no_ack_or_interrupted_identity(self):
+        llm, first, _second, _order, requests, _chunks = asyncio.run(self._pending_post(status=403))
+        self.assertEqual(first._presentation.logical_turn_id, "")
+        self.assertIsNone(first._presentation.interrupted_binding)
+        llm.ack_delivery.assert_not_awaited()
+        llm._start_task_continuation.assert_not_called()
+        self.assertEqual(len(requests), 2)
+
+    def test_pending_post_timeout_is_bounded_and_creates_no_ack(self):
+        llm, first, second, _order, requests, _chunks = asyncio.run(self._pending_post(timeout=True))
+        self.assertEqual(first._presentation.logical_turn_id, "")
+        llm.ack_delivery.assert_not_awaited()
+        self.assertEqual([item["text"] for item in requests], ["First.", "Second."])
+        self.assertEqual(second._presentation.logical_turn_id, "logical-1")
+        self.assertEqual(second._presentation.revision, 2)
+        if llm._test_admission_consumer_error in {"timeout", "deferred"}:
+            llm._start_task_continuation.assert_called_once()
+            self.assertEqual(llm._start_task_continuation.call_args.kwargs["task_id"], "task_2")
+        else:
+            llm._start_task_continuation.assert_not_called()
+
+    def test_pending_post_end_cancels_and_closes_its_owned_session(self):
+        llm, first, _second, _order, requests, _chunks = asyncio.run(self._pending_post(closing=True))
+        self.assertEqual(first._presentation.logical_turn_id, "")
+        llm.ack_delivery.assert_not_awaited()
+        llm._start_task_continuation.assert_not_called()
+        self.assertEqual(len(requests), 1)
+
+    def test_pending_post_end_drains_waiting_successor_without_dispatch_or_ack(self):
+        llm, first, _second, _order, requests, chunks = asyncio.run(self._pending_post(closing_waiter=True))
+        self.assertEqual(first._presentation.logical_turn_id, "")
+        llm.ack_delivery.assert_not_awaited()
+        llm._start_task_continuation.assert_not_called()
+        self.assertEqual(len(requests), 1)
+        self.assertEqual(chunks, [])
+
+    def test_pending_post_successor_cancel_does_not_cancel_predecessor_receipt(self):
+        llm, first, _second, order, requests, _chunks = asyncio.run(self._pending_post(cancel_successor=True))
+        self.assertEqual(first._presentation.logical_turn_id, "logical-1")
+        self.assertEqual([item for item in order if item != "ack"],
+            ["post-1", "receipt-1", "post-2", "receipt-2"])
+        self.assertEqual([item["text"] for item in requests], ["First.", "Second."])
+        llm.ack_delivery.assert_awaited_once()
+
+    def test_pending_post_third_source_couriers_each_input_after_prior_real_receipt(self):
+        llm, first, _third, order, requests, chunks = asyncio.run(self._pending_post(
+            cancel_successor=True, third_source=True))
+        self.assertEqual([item for item in order if item != "ack"],
+            ["post-1", "receipt-1", "post-2", "receipt-2", "post-3", "receipt-3"])
+        self.assertEqual([item["text"] for item in requests], ["First.", "Second.", "Third."])
+        self.assertEqual([item["sourceEventId"] for item in requests],
+            ["voice:call_1:item:first-source", "voice:call_1:item:second-source", "voice:call_1:item:third-source"])
+        self.assertEqual(llm.ack_delivery.await_count, 2)
+        self.assertEqual(llm.ack_delivery.await_args_list[0].kwargs,
+            {"logical_turn_id": "logical-1", "revision": 1, "state": "partial_removed", "presentation_ref": "first-speech"})
+        self.assertEqual(llm.ack_delivery.await_args_list[1].kwargs,
+            {"logical_turn_id": "logical-1", "revision": 2, "state": "partial_removed", "presentation_ref": "second-speech"})
+        self.assertEqual(llm._test_previous_admission_receipts, [
+            {"sourceEventId": "voice:call_1:item:first-source",
+             "logicalTurnId": "logical-1", "revision": 1, "done": True},
+            {"sourceEventId": "voice:call_1:item:second-source",
+             "logicalTurnId": "logical-1", "revision": 2, "done": True},
+        ])
+        self.assertTrue(chunks)
+
+    def test_pending_post_three_sources_preserve_exact_prose_and_speaker_metadata(self):
+        llm, _first, _third, order, requests, chunks = asyncio.run(self._pending_post(
+            cancel_successor=True, third_source=True, metadata=True))
+        self.assertEqual([item for item in order if item.startswith("post-")],
+            ["post-1", "post-2", "post-3"])
+        self.assertLess(order.index("receipt-1"), order.index("post-2"))
+        self.assertLess(order.index("receipt-2"), order.index("post-3"))
+        self.assertEqual(len(requests), 3)
+        for actual, expected in zip(requests, llm._test_expected_courier):
+            self.assertEqual({key: actual[key] for key in expected}, expected)
+        self.assertTrue(chunks)
+
+    def test_pending_post_middle_receipt_failure_does_not_fabricate_its_removal(self):
+        llm, _first, _third, order, requests, chunks = asyncio.run(self._pending_post(
+            cancel_successor=True, third_source=True, middle_receipt_failure=True))
+        self.assertEqual([item["text"] for item in requests], ["First.", "Second.", "Third."])
+        self.assertEqual([item for item in order if item.startswith("post-")],
+            ["post-1", "post-2", "post-3"])
+        self.assertLess(order.index("receipt-1"), order.index("post-2"))
+        self.assertLess(order.index("receipt-2"), order.index("post-3"))
+        llm.ack_delivery.assert_awaited_once()
+        self.assertEqual(llm.ack_delivery.await_args.kwargs["revision"], 1)
+        self.assertTrue(chunks)
+
+    def test_pending_post_live_handle_is_never_zero_presented_acknowledged(self):
+        llm, first, _second, order, _requests, _chunks = asyncio.run(self._pending_post(handle_done=False))
+        self.assertEqual(first._presentation.logical_turn_id, "logical-1")
+        llm.ack_delivery.assert_not_awaited()
+        self.assertEqual(order, ["post-1", "receipt-1", "post-2", "receipt-2"])
+
+    def test_pending_post_audible_handle_is_never_zero_presented_acknowledged(self):
+        llm, first, _second, order, _requests, _chunks = asyncio.run(self._pending_post(audible=True))
+        self.assertEqual(first._presentation.logical_turn_id, "logical-1")
+        llm.ack_delivery.assert_not_awaited()
+        self.assertEqual(order, ["post-1", "receipt-1", "post-2", "receipt-2"])
+
+    def test_pending_post_missing_core_identity_cannot_create_removal_ack(self):
+        llm, first, _second, _order, _requests, _chunks = asyncio.run(self._pending_post(missing_identity=True))
+        self.assertEqual(first._presentation.logical_turn_id, "")
+        self.assertIsNone(first._presentation.interrupted_binding)
+        llm.ack_delivery.assert_not_awaited()
+
+    def test_pending_post_malformed_receipt_cannot_create_identity_or_ack(self):
+        llm, first, _second, _order, _requests, _chunks = asyncio.run(self._pending_post(malformed=True))
+        self.assertEqual(first._presentation.logical_turn_id, "")
+        self.assertIsNone(first._presentation.interrupted_binding)
+        llm.ack_delivery.assert_not_awaited()
+        llm._start_task_continuation.assert_not_called()
+
+    def test_pending_post_denied_removal_ack_is_not_recorded_as_accepted(self):
+        llm, first, _second, order, _requests, _chunks = asyncio.run(self._pending_post(ack_accepted=False))
+        self.assertEqual([item for item in order if item != "ack"],
+            ["post-1", "receipt-1", "post-2", "receipt-2"])
+        llm.ack_delivery.assert_awaited_once()
+        self.assertNotEqual(first._presentation.delivery_state, "partial_removed")
+        self.assertIsNone(first._presentation.delivery_ack_identity)
+
+    def test_pending_post_receipt_does_not_cross_call_ownership(self):
+        llm, first, _second, _order, _requests, _chunks = asyncio.run(self._pending_post(changed_call=True))
+        # A late old-call receipt is not attached to the newly current owner.
+        self.assertEqual(first._presentation.logical_turn_id, "")
+        self.assertIsNone(first._presentation.interrupted_binding)
+        llm.ack_delivery.assert_not_awaited()
+        llm._start_task_continuation.assert_not_called()
+
+    def test_delayed_prior_ack_rechecks_exact_binding_before_removal(self):
+        async def run():
+            llm = LibreChatLLM(origin="http://librechat.test",
+                auth=LibreChatAuth(call_session_id="call_1", call_secret="synthetic"))
+            llm.ack_delivery = AsyncMock(return_value=True)
+            first = llm._presentation_coordinator.begin_stable(
+                source_event_id="source-1", presentation_ref="speech-1")
+            llm.register_trace(VoiceHopTrace(correlation_id=first.trace_id, call_session_id="call_1"))
+            llm._presentation_coordinator.bind_core_context(first, {"logical_turn_id": "logical-1", "revision": 1})
+            llm.bind_trace_core_context(first.trace_id, stream_id="stream-1", task_id="task-1", presentation=first)
+            first.interrupted_binding = ("call_1", "logical-1", 1, "speech-1", "stream-1", "task-1")
+            started, release = asyncio.Event(), asyncio.Event()
+
+            async def prior_ack():
+                started.set()
+                await release.wait()
+                return False
+
+            first.delivery_ack_task = asyncio.create_task(prior_ack())
+            second = llm._presentation_coordinator.begin_stable(
+                source_event_id="source-2", presentation_ref="speech-2")
+            removing = asyncio.create_task(llm._ack_unpresented_superseded_presentation(first, second))
+            await started.wait()
+            await asyncio.sleep(0)
+            llm._task_id_by_trace_id[first.trace_id] = "foreign-task"
+            release.set()
+            self.assertFalse(await removing)
+            llm.ack_delivery.assert_not_awaited()
+            await llm.close_background_continuations()
+
+        asyncio.run(run())
+
+
+
+class TestOrderedAdmissionDeadlineRecovery(unittest.IsolatedAsyncioTestCase):
+    """The consumer deadline must not erase an ordered source still waiting for Core."""
+
+    async def _held_prior(self, *, end=False, changed_call=False, four_pending=False,
+                          middle_failure=False):
+        from aiohttp import web
+        started, release = asyncio.Event(), asyncio.Event()
+        requests, sessions, order, streams, expected = [], [], [], [], []
+
+        async def chat(request):
+            body = await request.json()
+            requests.append(body)
+            number = len(requests)
+            order.append(f"post-{number}")
+            if number == 1:
+                started.set()
+                await release.wait()
+            order.append(f"receipt-{number}")
+            if middle_failure and number == 2:
+                return web.json_response({"code":"voice_turn_authority_unavailable"},status=503)
+            return web.json_response({"streamId": body["streamId"], "taskId": f"task-{number}",
+                "logical_turn_id": "logical-held", "revision": number})
+
+        async def stream(request):
+            return web.Response(text='data: {"final":true}\n\n', content_type="text/event-stream")
+
+        app = web.Application()
+        app.router.add_post('/api/viventium/voice/chat', chat)
+        app.router.add_get('/api/viventium/voice/stream/{stream_id}', stream)
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, '127.0.0.1', 0)
+        await site.start()
+        origin = 'http://127.0.0.1:' + str(site._server.sockets[0].getsockname()[1])
+        real_session = aiohttp.ClientSession
+
+        def tracking_session(*args, **kwargs):
+            result = real_session(*args, **kwargs)
+            sessions.append(result)
+            return result
+
+        llm = LibreChatLLM(origin=origin, auth=LibreChatAuth(call_session_id='held-call',
+            call_secret='synthetic'), timeout_s=0.06)
+        from livekit.agents import AgentSession
+        sdk_session = AgentSession()
+        sdk_errors = []
+        llm.on('error', sdk_errors.append)
+        llm.on('error', sdk_session._on_error)
+        llm._start_task_continuation = unittest.mock.Mock()
+        llm.schedule_trace_terminal = unittest.mock.Mock()
+        llm.record_completed_trace_stage = unittest.mock.Mock(return_value=True)
+
+        async def acknowledge(**kwargs):
+            order.append('ack-' + str(kwargs['revision']))
+            return True
+
+        llm.ack_delivery = AsyncMock(side_effect=acknowledge)
+
+        def context(number, text):
+            message = ChatMessage(id=f'held-{number}', role='user', content=[text])
+            tracker = SpeakerSegmentTracker(call_session_id='held-call',
+                participant_identity='held-owner', participant_name='Owner',
+                track_sid='TR_held', owner_signed=True)
+            tracker.ingest(transcript=text, is_final=True, provider_speaker_id='speaker-A',
+                created_at=100.0+number, start_time=float(number), end_time=float(number)+0.5)
+            original = attach_speaker_context_to_message(tracker, message)
+            expected.append({'text': text, 'sourceEventId': f'voice:held-call:item:held-{number}',
+                **{key: original[key] for key in ('speakerSegments', 'speakerSegmentRevisions',
+                    'speakerLabel', 'ownerParticipantIdentity', 'ownerTrackSid')}})
+            return ChatContext(items=[message])
+
+        try:
+            with patch('librechat_llm.aiohttp.ClientSession', side_effect=tracking_session):
+                first = llm.chat(chat_ctx=context(1, 'Alpha: Ω\nline 2  \nkeep.'))
+                # A held older attempt can have a longer remaining transport budget.
+                # This is a local control, not a product configuration mutation.
+                first._timeout_s = 0.75
+                streams.append(first)
+                await asyncio.wait_for(started.wait(), 0.5)
+                await first.aclose()
+                inputs = [(2, 'Beta: β\nsecond correction.'),
+                          (3, 'Gamma: γ\nlast correction.')]
+                if four_pending:
+                    inputs.extend([(4, 'Delta: δ\nkeep source four.'),
+                                   (5, 'Epsilon: ε\nkeep source five.')])
+                for number, text in inputs:
+                    current = llm.chat(chat_ctx=context(number, text))
+                    streams.append(current)
+                    async with current:
+                        chunks = [item async for item in current]
+                    self.assertEqual(chunks, [])
+                self._test_deadline_trace = {"order": list(order), "requests": list(requests),
+                    "foreground_pending_errors": len(sdk_errors),
+                    "admission_done": [item._presentation.admission_task.done() for item in streams]}
+                self.assertEqual(len(sdk_errors), len(inputs))
+                self.assertTrue(all(event.recoverable for event in sdk_errors))
+                self.assertTrue(all(isinstance(event.error, TimeoutError) for event in sdk_errors))
+                self.assertEqual(sdk_session._llm_error_counts, 0)
+                self.assertIsNone(sdk_session._closing_task)
+                # A timeout is neither a receipt nor permission to overtake A.
+                self.assertEqual(len(requests), 1)
+                self.assertEqual(llm.ack_delivery.await_count, 0)
+                self.assertTrue(all(item._presentation.logical_turn_id == '' for item in streams))
+                if end:
+                    await asyncio.wait_for(llm.close_background_continuations(), 0.3)
+                elif changed_call:
+                    llm._auth = LibreChatAuth(call_session_id='different-call', call_secret='synthetic')
+                else:
+                    self.assertTrue(all(not item._presentation.admission_task.done() for item in streams))
+                release.set()
+                await asyncio.wait_for(asyncio.gather(*(item._presentation.admission_task
+                    for item in streams), return_exceptions=True), 0.5)
+                if not end and not changed_call:
+                    self.assertEqual(len(requests), len(streams))
+                    for actual, original in zip(requests, expected):
+                        self.assertEqual({key: actual[key] for key in original}, original)
+                    self.assertEqual([entry for entry in order if not entry.startswith('ack-')],
+                        [part for number in range(1,len(streams)+1)
+                         for part in (f'post-{number}',f'receipt-{number}')])
+                    for number, item in enumerate(streams, 1):
+                        if middle_failure and number == 2:
+                            self.assertEqual(item._presentation.logical_turn_id,'')
+                            self.assertIsNone(item._presentation.interrupted_binding)
+                            continue
+                        self.assertEqual(item._presentation.logical_turn_id, 'logical-held')
+                        self.assertEqual(item._presentation.revision, number)
+                        self.assertEqual(item._presentation.interrupted_binding,
+                            ('held-call', 'logical-held', number, item._presentation.presentation_ref,
+                             item._request_id, f'task-{number}'))
+                    missing = 1 if middle_failure else 0
+                    self.assertEqual(llm._start_task_continuation.call_count, len(streams)-missing)
+                    self.assertEqual(llm.ack_delivery.await_count, len(streams)-1-missing)
+                    if middle_failure:
+                        actual_errors=[event for event in sdk_errors if not event.recoverable]
+                        self.assertEqual(len(actual_errors),1)
+                        self.assertIsInstance(actual_errors[0].error,RuntimeError)
+                        self.assertEqual(sdk_session._llm_error_counts,1)
+                        self.assertIsNone(sdk_session._closing_task)
+                else:
+                    self.assertEqual(len(requests), 1)
+                    llm.ack_delivery.assert_not_awaited()
+                    llm._start_task_continuation.assert_not_called()
+                await llm.close_background_continuations()
+                self.assertTrue(all(session.closed for session in sessions))
+                self.assertFalse(llm._background_continuations)
+        finally:
+            release.set()
+            for item in streams:
+                await item.aclose()
+            await llm.close_background_continuations()
+            await runner.cleanup()
+
+    async def test_held_prior_ready_retains_timed_out_successors_and_real_receipts(self):
+        await self._held_prior()
+
+    async def test_end_drains_timed_out_successors_without_post_or_ack(self):
+        await self._held_prior(end=True)
+
+    async def test_call_change_does_not_dispatch_timed_out_successors_with_old_owner(self):
+        await self._held_prior(changed_call=True)
+
+    async def test_four_pending_deadlines_do_not_close_installed_sdk_or_cancel_sources(self):
+        await self._held_prior(four_pending=True)
+
+    async def test_deferred_source_actual_transport_failure_stays_nonrecoverable(self):
+        await self._held_prior(middle_failure=True)
+
+
+class TestReadyReceiptWhileRemovalStalls(unittest.IsolatedAsyncioTestCase):
+    async def _ready_before_removal(self, *, removal_error=False):
+        from aiohttp import web
+        requests, sessions, order = [], [], []
+        received, ack_started, ack_release = asyncio.Event(), asyncio.Event(), asyncio.Event()
+        llm = None
+
+        async def chat(request):
+            body = await request.json()
+            requests.append(body)
+            number=len(requests)
+            order.append(f'post-{number}')
+            received.set()
+            if number == 2:
+                self.assertEqual(current._presentation.logical_turn_id,'real-successor')
+                self.assertEqual(current._presentation.revision,2)
+                self.assertTrue(current._presentation.admission_task.done())
+                self.assertFalse(prior.delivery_ack_task.done())
+            order.append(f'receipt-{number}')
+            return web.json_response({'streamId': body['streamId'],
+                'taskId': 'successor-task' if number == 1 else 'third-task',
+                'logical_turn_id': 'real-successor' if number == 1 else 'real-third',
+                'revision': number+1})
+
+        async def stream(request):
+            return web.Response(text='data: {"final":true,"responseMessage":{"content":[{"type":"text","text":"Ready."}]}}\n\n',
+                content_type='text/event-stream')
+
+        app = web.Application()
+        app.router.add_post('/api/viventium/voice/chat', chat)
+        app.router.add_get('/api/viventium/voice/stream/{stream_id}', stream)
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, '127.0.0.1', 0)
+        await site.start()
+        origin = 'http://127.0.0.1:' + str(site._server.sockets[0].getsockname()[1])
+        real_session = aiohttp.ClientSession
+
+        def track(*args, **kwargs):
+            result = real_session(*args, **kwargs)
+            sessions.append(result)
+            return result
+
+        llm = LibreChatLLM(origin=origin, auth=LibreChatAuth(call_session_id='ack-call',
+            call_secret='synthetic'), timeout_s=0.2)
+        llm._start_task_continuation = unittest.mock.Mock()
+        llm.schedule_trace_terminal = unittest.mock.Mock()
+        llm.record_completed_trace_stage = unittest.mock.Mock(return_value=True)
+        prior = llm._presentation_coordinator.begin_stable(source_event_id='prior-source',
+            presentation_ref='prior-presentation')
+        llm.register_trace(VoiceHopTrace(correlation_id=prior.trace_id, call_session_id='ack-call'))
+        llm._presentation_coordinator.bind_core_context(prior,
+            {'logical_turn_id': 'real-prior', 'revision': 1})
+        llm.bind_trace_core_context(prior.trace_id, stream_id='prior-stream', task_id='prior-task',
+            presentation=prior)
+        prior.interrupted_binding=('ack-call', 'real-prior', 1, 'prior-presentation',
+            'prior-stream', 'prior-task')
+
+        async def acknowledge(**kwargs):
+            ack_started.set()
+            await ack_release.wait()
+            if removal_error:
+                raise RuntimeError('Synthetic removal transport failure')
+            return True
+
+        llm.ack_delivery = AsyncMock(side_effect=acknowledge)
+        current, third = None, None
+        try:
+            with patch('librechat_llm.aiohttp.ClientSession', side_effect=track):
+                current = llm.chat(chat_ctx=ChatContext(items=[ChatMessage(id='successor-source',
+                    role='user', content=['Original: Ω\nretain me.'])]))
+                await asyncio.wait_for(asyncio.gather(received.wait(),ack_started.wait()),0.3)
+                # Transport delivery must bind before this independent ACK resolves.
+                for _ in range(15):
+                    if current._presentation.logical_turn_id:
+                        break
+                    await asyncio.sleep(0.002)
+                self.assertEqual(current._presentation.logical_turn_id,'real-successor')
+                self.assertEqual(current._presentation.revision,2)
+                self.assertEqual(llm._task_id_by_trace_id[current._request_id],'successor-task')
+                self.assertEqual(llm._stream_id_by_trace_id[current._request_id],current._request_id)
+                self.assertNotEqual(prior.delivery_state,'partial_removed')
+                self.assertIsNone(prior.delivery_ack_identity)
+                # B's own ready receipt admits C without waiting for A's ACK.
+                async with current:
+                    chunks=[item async for item in current]
+                self.assertTrue(chunks)
+                third=llm.chat(chat_ctx=ChatContext(items=[ChatMessage(id='third-source',
+                    role='user',content=['Third: γ\noriginal correction.'])]))
+                async with third:
+                    third_chunks=[item async for item in third]
+                self.assertTrue(third_chunks)
+                self.assertEqual(third._presentation.logical_turn_id,'real-third')
+                self.assertEqual(third._presentation.revision,3)
+                self.assertEqual(order,['post-1','receipt-1','post-2','receipt-2'])
+                if removal_error:
+                    ack_release.set()
+                await asyncio.wait_for(asyncio.gather(prior.delivery_ack_task,
+                    return_exceptions=True),0.4)
+                self.assertFalse(prior.delivery_ack_task.result())
+                llm._start_task_continuation.assert_not_called()
+                self.assertEqual(len(requests),2)
+                self.assertEqual(requests[1]['text'],'Third: γ\noriginal correction.')
+                self.assertEqual(requests[1]['sourceEventId'],'voice:ack-call:item:third-source')
+                self.assertEqual(requests[0]['text'],'Original: Ω\nretain me.')
+                self.assertEqual(requests[0]['sourceEventId'],'voice:ack-call:item:successor-source')
+                self.assertNotEqual(prior.delivery_state,'partial_removed')
+                self.assertIsNone(prior.delivery_ack_identity)
+                await llm.close_background_continuations()
+                self.assertTrue(all(session.closed for session in sessions))
+                self.assertFalse(llm._background_continuations)
+        finally:
+            ack_release.set()
+            if current is not None:
+                await current.aclose()
+            if third is not None:
+                await third.aclose()
+            await llm.close_background_continuations()
+            await runner.cleanup()
+
+    async def test_ready_receipt_survives_stalled_or_failed_prior_removal(self):
+        for removal_error in (False,True):
+            with self.subTest(removal_error=removal_error):
+                await self._ready_before_removal(removal_error=removal_error)

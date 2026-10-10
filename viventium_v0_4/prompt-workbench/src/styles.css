@@ -2025,6 +2025,12 @@ kbd {
   font-size: 12px;
 }
 .frame-row > div { min-width: 0; }
+.frame-lineage { margin: 6px 0; font-size: 10px; }
+.frame-lineage summary { cursor: pointer; color: var(--text-strong); }
+.frame-lineage dl { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 8px; margin: 8px 0; }
+.frame-lineage dt { color: var(--muted); }
+.frame-lineage dd { margin: 0; overflow-wrap: anywhere; }
+.frame-source-hash { display: contents; }
 .trace-empty {
   margin: 0;
   padding: 12px 0;

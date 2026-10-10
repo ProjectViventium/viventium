@@ -317,6 +317,7 @@ class _VoiceTtsDeltaBuffer:
         native_streaming: Optional[Callable[[], bool]] = None,
     ) -> None:
         self._buffer = ""
+        self._pending_markup_closers = ""
         self._has_emitted = False
         self._last_emitted_text = ""
         self._min_first_chars = max(1, min_first_chars)
@@ -378,8 +379,10 @@ class _VoiceTtsDeltaBuffer:
             return False
         tail = text.rsplit(maxsplit=1)[-1]
         lowered_tail = tail.lower()
-        if lowered_tail.startswith(("http://", "https://", "www.")):
-            return not bool(re.search(r"\.[A-Za-z]{2,}(?:/[^\s]*)?[.!?,;:]?$", tail))
+        if lowered_tail in ("http:", "https:") or lowered_tail.startswith(("http://", "https://", "www.")):
+            # A domain or query delimiter does not complete an opaque URL token. Its
+            # path/query can continue in the next delta; wait for whitespace or finalize.
+            return True
         if "@" in tail and re.search(r"[\w.+-]+@[\w.-]*$", tail):
             return not bool(re.search(r"@[\w.-]+\.[A-Za-z]{2,}[.!?,;:]?$", tail))
         if re.search(r"\[[^\]\n]*\]\([^)\s]*$", text):
@@ -428,6 +431,7 @@ class _VoiceTtsDeltaBuffer:
             match.end()
             for match in re.finditer(r"\s+", text)
             if match.end() >= self._min_first_chars and match.end() < len(text)
+            and safe_voice_tts_prefix_end(text[:match.end()]) == match.end()
         ]
         if not candidates:
             return None
@@ -438,6 +442,18 @@ class _VoiceTtsDeltaBuffer:
         return min(candidates)
 
     def _flush_split_index(self, text: str) -> Optional[int]:
+        # Classify the pending syntax once before scanning word candidates.
+        # A wholly pending tail has no safe prefix to render.
+        safe_end = (safe_voice_tts_prefix_end(text)
+                    if re.match(r"\s*(?:`|!?\[)", text) else None)
+        if safe_end is not None and not strip_voice_control_tags(text[:safe_end]).strip():
+            # Only a delimiter can complete these existing opaque syntax spans.
+            pending = text[safe_end:]
+            if pending.startswith("`"):
+                self._pending_markup_closers = "`"
+            elif re.match(r"!?\[[^\]]*\]\(", pending) and not any(char in pending for char in "\r\n"):
+                self._pending_markup_closers = ")`\r\n"
+            return None
         speech_text = strip_voice_control_tags(text)
         stripped = speech_text.strip()
         if not stripped:
@@ -474,7 +490,13 @@ class _VoiceTtsDeltaBuffer:
             if candidates:
                 preferred = [index for index in candidates if index <= self._max_chars]
                 return max(preferred) if preferred else min(candidates)
-            if safe_voice_tts_prefix_end(text) < len(text):
+        # Reuse an already classified pending prefix before legacy phrase output.
+        if safe_end is None:
+            safe_end = safe_voice_tts_prefix_end(text)
+        if safe_end < len(text):
+            text = text[:safe_end]
+            stripped = strip_voice_control_tags(text).strip()
+            if not stripped:
                 return None
         if self._ends_inside_non_speech_artifact(text):
             return None
@@ -562,6 +584,11 @@ class _VoiceTtsDeltaBuffer:
         if not delta:
             return []
         self._buffer += delta
+        if self._pending_markup_closers and not any(
+            char in delta for char in self._pending_markup_closers
+        ):
+            return []
+        self._pending_markup_closers = ""
         emitted: list[str] = []
         while True:
             split_index = self._flush_split_index(self._buffer)
@@ -577,6 +604,7 @@ class _VoiceTtsDeltaBuffer:
         return emitted
 
     def finalize(self) -> list[str]:
+        self._pending_markup_closers = ""
         if not self._buffer:
             return []
         out = self._buffer
@@ -656,6 +684,17 @@ class _VoicePresentation:
     logical_turn_id: str = ""
     revision: Optional[int] = None
     provisional_interruptions: int = 0
+    audio_started_at_ms: int = 0
+    playout_active: bool = False
+    output_offered: bool = False
+    interrupted_binding: Optional[tuple[str, str, int, str, str, str]] = None
+    speech_handle: Any = None
+    delivery_state: str = ""
+    delivery_ack_identity: Optional[tuple[str, int, str]] = None
+    delivery_ack_task: Optional[asyncio.Task[bool]] = None
+    admission_task: Optional[asyncio.Task[None]] = None
+    interruption_resolved: Optional[asyncio.Event] = None
+    interruption_outcome: str = ""
 
 
 def _extract_logical_turn_context(payload: Any) -> tuple[str, Optional[int]]:
@@ -699,6 +738,7 @@ class _VoicePresentationCoordinator:
         source_event_id: str,
         presentation_ref: str,
     ) -> _VoicePresentation:
+        previous = self._current
         self._sequence += 1
         presentation = _VoicePresentation(
             sequence=self._sequence,
@@ -707,7 +747,21 @@ class _VoicePresentationCoordinator:
             trace_id=str(presentation_ref or "")[:160],
         )
         self._current = presentation
+        if previous is not None and previous.interruption_resolved is not None:
+            self.resolve_interruption(previous, "partial_removed" if (
+                previous.source_event_id and presentation.source_event_id
+                and previous.source_event_id != presentation.source_event_id
+            ) else "failed")
         return presentation
+
+    @staticmethod
+    def resolve_interruption(presentation: _VoicePresentation, outcome: str) -> None:
+        if (presentation.interruption_resolved is not None
+                and presentation.interruption_resolved.is_set()):
+            return
+        presentation.interruption_outcome = outcome
+        if presentation.interruption_resolved is not None:
+            presentation.interruption_resolved.set()
 
     def note_provisional_interruption(self, presentation: _VoicePresentation) -> None:
         if self.is_current(presentation):
@@ -831,19 +885,122 @@ def _stream_delta_audio_is_skipped(event: dict[str, Any]) -> bool:
     return _final_response_audio_is_skipped({"responseMessage": delta})
 
 
+_PUBLIC_PART_COMPLETION_EXTRA = "viventium_public_part_complete"
+
+
+def _public_part_completion(value: Any) -> Optional[dict[str, Any]]:
+    """Transport structure only: no text, intent, or terminal success claim."""
+    keys = {"version", "complete", "request_id", "run_id", "part_id", "message_id", "stream_id"}
+    if (not isinstance(value, dict) or set(value) != keys
+            or type(value.get("version")) is not int or value["version"] != 1
+            or value.get("complete") is not True
+            or any(not isinstance(value.get(key), str) or not value[key].strip()
+                   for key in keys - {"version", "complete"})):
+        return None
+    if not value["part_id"].startswith(value["run_id"] + ":"):
+        return None
+    return dict(value)
+
+
+def _stream_public_part_completion(event: dict[str, Any], stream_id: str) -> Optional[dict[str, Any]]:
+    if event.get("event") != "on_public_content_part_complete":
+        return None
+    data = event.get("data")
+    if not isinstance(data, dict):
+        return None
+    disposition = data.get("deliveryDisposition")
+    if (not isinstance(disposition, dict) or type(disposition.get("version")) is not int
+            or disposition != {"version": 1, "audio": "eligible", "required": True,
+                               "valid": True, "source": "model"}):
+        return None
+    completion = _public_part_completion(data.get("completion"))
+    return completion if completion and completion["stream_id"] == stream_id else None
+
+
+def _content_audio_segments(content: Any, *, default_skipped: bool) -> list[tuple[str, bool]]:
+    """Read Core's per-envelope choices without changing the legacy audio default."""
+    segments: list[tuple[str, bool]] = []
+    if not isinstance(content, list):
+        return segments
+    for part in content:
+        if not isinstance(part, dict) or part.get("type") != "text":
+            continue
+        text = part.get("text")
+        if isinstance(text, dict):
+            text = text.get("value")
+        if not isinstance(text, str) or not text:
+            continue
+        if "deliveryDispositionRanges" not in part:
+            segments.append((text, default_skipped))
+            continue
+        ranges = part["deliveryDispositionRanges"]
+        if not isinstance(ranges, list) or not ranges:
+            segments.append((text, True))
+            continue
+        # Core uses JavaScript UTF-16 indices. Do not split a Unicode surrogate pair.
+        cursor = 0
+        annotated: list[tuple[str, bool]] = []
+        try:
+            encoded = text.encode("utf-16-le")
+            for item in ranges:
+                if not isinstance(item, dict):
+                    raise ValueError("invalid delivery range")
+                start, end = item.get("start"), item.get("end")
+                disposition = item.get("disposition")
+                if (type(start) is not int or type(end) is not int or
+                    start < cursor or end <= start or end * 2 > len(encoded) or
+                    not isinstance(disposition, dict) or
+                    set(disposition) != {"version", "audio", "required", "valid", "source"} or
+                    type(disposition.get("version")) is not int or disposition["version"] != 1):
+                    raise ValueError("invalid delivery range")
+                model = (disposition.get("source") == "model" and
+                         disposition.get("required") is True and disposition.get("valid") is True and
+                         disposition.get("audio") in ("skip", "eligible"))
+                silent_fallback = (disposition.get("audio") == "skip" and
+                    type(disposition.get("required")) is bool and (
+                        (disposition.get("source") == "legacy_marker" and disposition.get("valid") is True) or
+                        (disposition.get("source") in ("required_missing", "required_malformed") and
+                         disposition.get("required") is True and disposition.get("valid") is False)))
+                if not (model or silent_fallback):
+                    raise ValueError("invalid delivery choice")
+                if start > cursor:
+                    annotated.append((encoded[cursor * 2:start * 2].decode("utf-16-le"), default_skipped))
+                annotated.append((encoded[start * 2:end * 2].decode("utf-16-le"),
+                                  disposition["audio"] == "skip"))
+                cursor = end
+            if cursor * 2 < len(encoded):
+                annotated.append((encoded[cursor * 2:].decode("utf-16-le"), default_skipped))
+        except (ValueError, UnicodeError):
+            segments.append((text, True))
+        else:
+            segments.extend(annotated)
+    return segments
+
+
+def _extract_resume_state_audio_segments(event: dict[str, Any]) -> list[tuple[str, bool]]:
+    resume_state = event.get("resumeState")
+    if not isinstance(resume_state, dict):
+        return []
+    final_event = resume_state.get("finalEvent")
+    skipped = isinstance(final_event, dict) and _final_response_audio_is_skipped(final_event)
+    return _content_audio_segments(resume_state.get("aggregatedContent"), default_skipped=skipped)
+
+
 def _extract_final_response_text(final_event: dict[str, Any]) -> str:
     """Extract assistant text from a LibreChat `final: true` SSE payload."""
     resp = final_event.get("responseMessage")
-    if not isinstance(resp, dict) or _final_response_audio_is_skipped(final_event):
+    if not isinstance(resp, dict):
         return ""
     content = resp.get("content")
     if not isinstance(content, list):
         return ""
-    parts: list[str] = []
+    skipped = _final_response_audio_is_skipped(final_event)
     for part in content:
         if not isinstance(part, dict):
             continue
         if part.get("type") == "error":
+            if skipped:
+                return ""
             raw = part.get("error")
             msg = ""
             if isinstance(raw, str) and raw.strip():
@@ -858,39 +1015,39 @@ def _extract_final_response_text(final_event: dict[str, Any]) -> str:
                 _summarize_error_for_log(msg or "voice generation error"),
             )
             return sanitize_voice_followup_text(_select_stream_error_message(msg or "voice generation error", code=part.get("error_class")))
-        if part.get("type") != "text":
-            continue
-        t = part.get("text")
-        if isinstance(t, str) and t:
-            parts.append(sanitize_voice_delta_text(t))
-        elif isinstance(t, dict):
-            v = t.get("value")
-            if isinstance(v, str) and v:
-                parts.append(sanitize_voice_delta_text(v))
-    return "".join(parts).strip()
+    return "".join(sanitize_voice_delta_text(text) for text, silent in
+                   _content_audio_segments(content, default_skipped=skipped) if not silent).strip()
+
+
+def _final_file_delivery_failure_text(final_event: dict[str, Any]) -> str:
+    """Read the current canonical result's typed attachment failure, never provider prose."""
+    response = final_event.get("responseMessage")
+    if (final_event.get("final") is not True or not isinstance(response, dict)
+            or _final_response_audio_is_skipped(final_event)):
+        return ""
+    content = response.get("content")
+    if isinstance(content, list) and any(
+            isinstance(part, dict) and part.get("type") == "error" for part in content):
+        return ""
+    attachments = response.get("attachments")
+    if not isinstance(attachments, list) or not any(
+            isinstance(item, dict)
+            and isinstance(item.get("nativeOutputFile"), dict)
+            and type(item["nativeOutputFile"].get("version")) is int
+            and item["nativeOutputFile"]["version"] == 1
+            and item["nativeOutputFile"].get("status") == "unavailable"
+            for item in attachments):
+        return ""
+    segments = _content_audio_segments(content, default_skipped=False)
+    if ((segments and all(silent for _, silent in segments)) or
+            is_no_response_only("".join(text for text, silent in segments if not silent))):
+        return ""
+    return _select_stream_error_message(None, code="native_output_file_unavailable")
 
 
 def _extract_resume_state_text(event: dict[str, Any]) -> str:
-    """Return the raw persisted assistant text used to dedupe a resumed SSE stream."""
-    resume_state = event.get("resumeState")
-    if not isinstance(resume_state, dict):
-        return ""
-    final_event = resume_state.get("finalEvent")
-    if isinstance(final_event, dict) and _final_response_audio_is_skipped(final_event):
-        return ""
-    content = resume_state.get("aggregatedContent")
-    if not isinstance(content, list):
-        return ""
-    parts: list[str] = []
-    for part in content:
-        if not isinstance(part, dict) or part.get("type") != "text":
-            continue
-        text = part.get("text")
-        if isinstance(text, str):
-            parts.append(text)
-        elif isinstance(text, dict) and isinstance(text.get("value"), str):
-            parts.append(text["value"])
-    return "".join(parts)
+    """Return raw audible text; reconnect also tracks silent segments for dedupe."""
+    return "".join(text for text, skipped in _extract_resume_state_audio_segments(event) if not skipped)
 
 
 def _extract_final_response_message_id(final_event: dict[str, Any]) -> str:
@@ -941,12 +1098,14 @@ def _get_voice_sse_retry_config() -> tuple[int, float]:
 
 def _select_stream_error_message(error: Optional[str], *, code: Optional[str] = None) -> str:
     native_stop_messages = {
+        "native_output_file_unavailable": "The file could not be attached.",
         "native_input_declined": "You declined that action. It was stopped.",
         "native_input_expired": "The approval request expired, so that action was stopped. Please retry.",
         "native_input_cancelled": "That action was cancelled.",
         "native_turn_cancelled": "That action was cancelled.",
         "source_context_unavailable": "The conversation context could not be preserved. Please retry this turn.",
         "provider_response_failed": "The model returned no usable answer. Please retry this turn.",
+        "provider_access_denied": "The model provider denied access to this request.",
     }
     if isinstance(code, str) and code in native_stop_messages:
         return native_stop_messages[code]
@@ -1268,6 +1427,16 @@ def _extract_voice_task_event(
         return None
     if parsed_emitted_at.tzinfo is None:
         return None
+    created_at = task_event.get("createdAt")
+    if created_at is not None:
+        if not _bounded_string(created_at, maximum=64, required=True):
+            return None
+        try:
+            parsed_created_at = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        if parsed_created_at.tzinfo is None:
+            return None
     if not isinstance(task_event.get("cancellable"), bool):
         return None
     if not isinstance(task_event.get("retryable"), bool):
@@ -1292,6 +1461,18 @@ def _extract_voice_task_event(
     ):
         if key in task_event and not _bounded_string(task_event.get(key), maximum=maximum):
             return None
+    presentation = task_event.get("presentation")
+    if presentation is not None and (
+        not isinstance(presentation, dict)
+        or set(presentation) != {"ref", "state", "startedAtMs"}
+        or not _bounded_string(presentation.get("ref"), maximum=160, required=True)
+        or presentation.get("state") not in {
+            "speaking", "stop_requested", "completed", "interrupted", "failed", "superseded"}
+        or not isinstance(presentation.get("startedAtMs"), int)
+        or isinstance(presentation.get("startedAtMs"), bool)
+        or presentation["startedAtMs"] <= 0
+    ):
+        return None
     source = task_event.get("source")
     if source is not None and not _valid_voice_task_source(source):
         return None
@@ -1490,12 +1671,12 @@ class LibreChatLLM(llm.LLM):
         timeout_s: float = 120.0,
         voice_mode: bool = True,
         voice_provider: str = "cartesia",
+        voice_runtime_context: Optional[dict[str, Any]] = None,
         voice_accepts_inline_controls: bool = False,
         voice_native_streaming: bool = False,
         followup_handler: Optional[Callable[..., None]] = None,
         task_event_handler: Optional[Callable[[dict[str, Any]], Any]] = None,
         task_cancel_handler: Optional[Callable[[str, dict[str, Any]], Any]] = None,
-        model_output_handler: Optional[Callable[[str], Any]] = None,
         is_participant_connected: Optional[Callable[[], bool]] = None,
         participant_reconnect_grace_s: float = 60.0,
     ) -> None:
@@ -1505,12 +1686,12 @@ class LibreChatLLM(llm.LLM):
         self._timeout_s = float(timeout_s)
         self._voice_mode = bool(voice_mode)
         self._voice_provider = voice_provider or "cartesia"
+        self._voice_runtime_context = voice_runtime_context
         self._voice_accepts_inline_controls = bool(voice_accepts_inline_controls)
         self._voice_native_streaming = bool(voice_native_streaming)
         self._followup_handler = followup_handler
         self._task_event_handler = task_event_handler
         self._task_cancel_handler = task_cancel_handler
-        self._model_output_handler = model_output_handler
         self._is_participant_connected = is_participant_connected
         self._participant_reconnect_grace_s = max(
             0.0, float(participant_reconnect_grace_s)
@@ -1537,6 +1718,7 @@ class LibreChatLLM(llm.LLM):
         self._production_trace_tasks: set[asyncio.Task[bool]] = set()
         self._summarized_trace_ids: dict[str, None] = {}
         self._trace_finalizers: dict[str, asyncio.TimerHandle] = {}
+        self._terminal_stream_trace_ids: set[str] = set()
         self._background_continuations: set[asyncio.Task[None]] = set()
         self._continuations_by_task: dict[str, set[asyncio.Task[None]]] = {}
         self._seen_task_events: dict[tuple[Any, ...], None] = {}
@@ -1590,10 +1772,26 @@ class LibreChatLLM(llm.LLM):
         while len(self._pending_speech_handles) > 16:
             self._pending_speech_handles.pop(0)
 
-    def note_provisional_interruption(self) -> None:
+    def note_provisional_interruption(self, *, speech_handle: Any = None) -> None:
         current = self._presentation_coordinator._current
-        if current is not None:
-            self._presentation_coordinator.note_provisional_interruption(current)
+        if current is None:
+            return
+        if speech_handle is not None and (
+            current.speech_handle is not speech_handle
+            or bool(getattr(speech_handle, "done", lambda: False)())
+            or bool(getattr(speech_handle, "interrupted", False))
+        ):
+            return
+        self._presentation_coordinator.note_provisional_interruption(current)
+
+    def resolve_false_interruption(self, speech_handle: Any, *, resumed: bool) -> None:
+        """Resolve only the same LiveKit handle; resumed speech keeps its delivery claim."""
+        current = self._presentation_coordinator._current
+        if current is None or current.speech_handle is not speech_handle:
+            return
+        current.provisional_interruptions = 0
+        if not resumed:
+            self._presentation_coordinator.resolve_interruption(current, "failed")
 
     def _bind_next_speech_handle(self, presentation: _VoicePresentation) -> None:
         while self._pending_speech_handles:
@@ -1603,14 +1801,21 @@ class LibreChatLLM(llm.LLM):
             presentation_ref = str(getattr(handle, "id", "") or "").strip()
             if presentation_ref:
                 presentation.presentation_ref = presentation_ref[:160]
+            presentation.speech_handle = handle
             self._speech_handles_by_trace_id[presentation.trace_id] = handle
 
             def _on_done(completed: Any, *, bound=presentation) -> None:
+                bound.playout_active = False
                 self._speech_handles_by_trace_id.pop(bound.trace_id, None)
                 trace = self._traces_by_id.get(bound.trace_id)
                 if trace is not None:
                     self.schedule_trace_terminal(trace)
+                if (bound.delivery_state in {"committed", "partial_removed", "failed"}
+                        or (bound.delivery_ack_task is not None
+                            and not bound.delivery_ack_task.done())):
+                    return
                 task = asyncio.create_task(self._ack_completed_presentation(bound, completed))
+                bound.delivery_ack_task = task
                 self._delivery_ack_tasks.add(task)
                 task.add_done_callback(self._delivery_ack_tasks.discard)
 
@@ -1648,31 +1853,194 @@ class LibreChatLLM(llm.LLM):
         if not presentation.logical_turn_id or presentation.revision is None:
             logger.warning("[VoiceDelivery] state=unavailable code=core_context_missing")
             return False
+        identity = (presentation.logical_turn_id, presentation.revision, presentation.presentation_ref)
+        if (presentation.delivery_state in {"committed", "partial_removed", "failed"}
+                and presentation.delivery_ack_identity == identity):
+            return True
+        call_session_id = self._auth.call_session_id
         interrupted = bool(getattr(speech_handle, "interrupted", False))
-        if interrupted or not self._presentation_coordinator.is_current(presentation):
+        if (interrupted and presentation.provisional_interruptions > 0
+                and not self._speaker_delivery_closing
+                and self._presentation_coordinator.is_current(presentation)
+                and not presentation.interruption_outcome):
+            # Acoustic overlap precedes stable input. Do not close Core's claim during that gap.
+            presentation.interruption_resolved = asyncio.Event()
+            await presentation.interruption_resolved.wait()
+        if (self._auth.call_session_id != call_session_id
+                or (presentation.logical_turn_id, presentation.revision,
+                    presentation.presentation_ref) != identity):
+            return False
+        successor = self._presentation_coordinator._current
+        superseded = (
+            successor is not None
+            and successor is not presentation
+            and successor.sequence > presentation.sequence
+            and bool(successor.source_event_id)
+            and successor.source_event_id != presentation.source_event_id
+        )
+        if presentation.interruption_outcome == "failed" or self._speaker_delivery_closing:
+            state = "failed"
+        elif superseded:
             state = "partial_removed"
-        elif self._speech_handle_has_audible_playout(speech_handle):
+        elif (not interrupted and self._presentation_coordinator.is_current(presentation)
+                and self._speech_handle_has_audible_playout(speech_handle)):
             state = "committed"
         else:
-            # A completed handle can still represent terminal TTS/playout failure.
-            # Absence of first-audio evidence must never be reported as delivered.
+            # No stable replacement or positive complete playout: retain canonical content.
             state = "failed"
         accepted = await self.ack_delivery(
-            logical_turn_id=presentation.logical_turn_id,
-            revision=presentation.revision,
+            logical_turn_id=identity[0],
+            revision=identity[1],
             state=state,
-            presentation_ref=presentation.presentation_ref,
+            presentation_ref=identity[2],
         )
         call_hash = hashlib.sha256(("call_session\0" + self._auth.call_session_id).encode()).hexdigest()
         turn_hash = hashlib.sha256(("logical_turn\0" + presentation.logical_turn_id).encode()).hexdigest()
         logger.info("[VoiceDelivery] state=%s accepted=%s callHash=%s turnHash=%s revision=%s",
                     state, accepted, call_hash, turn_hash, presentation.revision)
         if accepted:
+            presentation.delivery_state = state
+            presentation.delivery_ack_identity = identity
             stage = "audio.completed" if state == "committed" else (
-                "audio.interrupted" if interrupted else "audio.superseded"
-            ) if state == "partial_removed" else "audio.failed"
+                "audio.interrupted" if interrupted else
+                "audio.superseded" if state == "partial_removed" else "audio.failed"
+            )
             self.record_completed_trace_stage(presentation.trace_id, stage)
         return accepted
+
+    async def _await_previous_presentation_admission(
+        self,
+        previous: Optional[_VoicePresentation],
+        successor: _VoicePresentation,
+    ) -> bool:
+        """Preserve original source POST order through its retained receipt."""
+        # A retained admission can be superseded in speech while still couriering
+        # its exact source. Only its owning task can finish this removal fence.
+        owns_admission = (
+            successor.admission_task is asyncio.current_task()
+            and successor.admission_task in self._background_continuations
+        )
+        if (previous is not None and previous.admission_task is not None
+                and not self._speaker_delivery_closing
+                and (self._presentation_coordinator.is_current(successor) or owns_admission)
+                and previous.sequence + 1 == successor.sequence
+                and previous.source_event_id
+                and previous.source_event_id != successor.source_event_id):
+            try:
+                await asyncio.shield(previous.admission_task)
+            except asyncio.CancelledError:
+                if not previous.admission_task.cancelled():
+                    raise
+                return False
+            except Exception:
+                return False
+        return True
+
+    async def _ack_unpresented_superseded_presentation(
+        self,
+        previous: Optional[_VoicePresentation],
+        successor: _VoicePresentation,
+        *,
+        wait_for_result: bool = True,
+    ) -> bool:
+        """Fence the prior removed presentation while its successor input is admitted."""
+        if not await self._await_previous_presentation_admission(previous, successor):
+            return False
+        owns_admission = (
+            successor.admission_task is asyncio.current_task()
+            and successor.admission_task in self._background_continuations
+        )
+        if (
+            self._speaker_delivery_closing
+            or previous is None
+            or not (self._presentation_coordinator.is_current(successor) or owns_admission)
+            or previous.sequence + 1 != successor.sequence
+            or not previous.source_event_id
+            or previous.source_event_id == successor.source_event_id
+            or self._presentation_by_trace_id.get(previous.trace_id) is not previous
+            or not previous.logical_turn_id
+            or previous.revision is None
+            or not previous.presentation_ref
+            or previous.interrupted_binding != (
+                self._auth.call_session_id,
+                previous.logical_turn_id,
+                previous.revision,
+                previous.presentation_ref,
+                self._stream_id_by_trace_id.get(previous.trace_id, ""),
+                self._task_id_by_trace_id.get(previous.trace_id, ""),
+            )
+            or previous.output_offered
+            or previous.audio_started_at_ms
+            or previous.playout_active
+        ):
+            return False
+        # A retained handle must be positively terminal. A missing map entry alone
+        # cannot prove that playback stopped or that a callback never ran.
+        if previous.speech_handle is not None:
+            try:
+                if (previous.speech_handle.done() is not True
+                        or self._speech_handle_has_audible_playout(previous.speech_handle)):
+                    return False
+            except Exception:
+                return False
+        binding = previous.interrupted_binding
+        identity = (previous.logical_turn_id, previous.revision, previous.presentation_ref)
+        while previous.delivery_ack_task is not None and not previous.delivery_ack_task.done():
+            if not wait_for_result:
+                return False
+            await asyncio.shield(previous.delivery_ack_task)
+        if (previous.interrupted_binding != binding
+                or binding != (self._auth.call_session_id, previous.logical_turn_id, previous.revision,
+                               previous.presentation_ref, self._stream_id_by_trace_id.get(previous.trace_id, ""),
+                               self._task_id_by_trace_id.get(previous.trace_id, ""))):
+            return False
+        if previous.delivery_state == "committed":
+            return False
+        if previous.delivery_state == "partial_removed":
+            return previous.delivery_ack_identity == identity
+
+        async def acknowledge() -> bool:
+            if (self._speaker_delivery_closing
+                    or self._auth.call_session_id != binding[0]
+                    or previous.interrupted_binding != binding):
+                return False
+            try:
+                async with asyncio.timeout(
+                    self._timeout_s if not wait_for_result and self._timeout_s > 0 else None
+                ):
+                    accepted = await self.ack_delivery(
+                        logical_turn_id=identity[0],
+                        revision=identity[1],
+                        state="partial_removed",
+                        presentation_ref=identity[2],
+                    )
+            except Exception as error:
+                if wait_for_result:
+                    raise
+                logger.warning("[VoiceDelivery] removed_presentation_ack_failed error=%s",
+                               type(error).__name__)
+                return False
+            if (self._speaker_delivery_closing
+                    or self._auth.call_session_id != binding[0]
+                    or previous.interrupted_binding != binding):
+                return False
+            call_hash = hashlib.sha256(("call_session\0" + self._auth.call_session_id).encode()).hexdigest()
+            turn_hash = hashlib.sha256(("logical_turn\0" + identity[0]).encode()).hexdigest()
+            logger.info("[VoiceDelivery] state=partial_removed accepted=%s code=zero_presented_supersession "
+                        "callHash=%s turnHash=%s revision=%s", accepted, call_hash, turn_hash, identity[1])
+            if accepted:
+                previous.delivery_state = "partial_removed"
+                previous.delivery_ack_identity = identity
+                self.record_completed_trace_stage(previous.trace_id, "audio.superseded")
+            return accepted
+
+        task = asyncio.create_task(acknowledge())
+        previous.delivery_ack_task = task
+        self._delivery_ack_tasks.add(task)
+        task.add_done_callback(self._delivery_ack_tasks.discard)
+        if not wait_for_result:
+            return False
+        return await asyncio.shield(task)
 
     async def ack_delivery(
         self,
@@ -1769,6 +2137,7 @@ class LibreChatLLM(llm.LLM):
             self._presentation_by_trace_id.pop(expired_id, None)
             self._speech_handles_by_trace_id.pop(expired_id, None)
             self._speech_output_trace_ids.discard(expired_id)
+            self._terminal_stream_trace_ids.discard(expired_id)
 
     def bind_trace_task(self, correlation_id: str, task_id: str) -> None:
         if correlation_id in self._traces_by_id and (task_id or "").strip():
@@ -1796,37 +2165,97 @@ class LibreChatLLM(llm.LLM):
         self._task_id_by_trace_id[trace_id] = task_ref
         self._presentation_by_trace_id[trace_id] = presentation
 
-    async def _post_production_trace(self, correlation_id: str, stage: str, *, presentation_ref: str = "") -> bool:
+    def record_speech_started(self, speech_handle: Any, timestamp_ms: float) -> bool:
+        if (speech_handle is None or not math.isfinite(timestamp_ms) or timestamp_ms <= 0
+                or speech_handle.done() or speech_handle.interrupted):
+            return False
+        for trace_id, bound_handle in self._speech_handles_by_trace_id.items():
+            if bound_handle is not speech_handle:
+                continue
+            presentation = self._presentation_by_trace_id.get(trace_id)
+            if presentation is None or presentation.audio_started_at_ms:
+                return False
+            for previous in self._presentation_by_trace_id.values():
+                previous.playout_active = False
+            presentation.audio_started_at_ms = int(timestamp_ms)
+            presentation.playout_active = True
+            return self.record_completed_trace_stage(trace_id, "audio.started")
+        return False
+
+    async def _post_production_trace(
+        self, correlation_id: str, stage: str, *, presentation_ref: str = "",
+        started_at_ms: int = 0, task_ref: Optional[dict[str, Any]] = None,
+        worker_delivery: Optional[dict[str, Any]] = None,
+    ) -> bool:
         trace_id = str(correlation_id or "").strip()[:160]
         normalized_stage = str(stage or "").strip()
+        cortex_turn_id = ""
+        if isinstance(task_ref, dict) and "callSessionId" in task_ref and task_ref["callSessionId"] != self._auth.call_session_id:
+            return False
         presentation = self._presentation_by_trace_id.get(trace_id)
         stream_id = self._stream_id_by_trace_id.get(trace_id, "")
         task_id = self._task_id_by_trace_id.get(trace_id, "")
-        if (
-            normalized_stage not in {"tts.completed", "audio.completed", "audio.failed", "audio.interrupted", "audio.superseded"}
-            or trace_id not in self._traces_by_id
-            or presentation is None
-            or presentation.trace_id != trace_id
-            or not presentation.logical_turn_id
-            or presentation.revision is None
-            or not presentation.presentation_ref
-            or not stream_id
-            or not task_id
-            or not self._auth.job_id
-            or not self._auth.worker_id
-        ):
-            logger.warning(
-                '[VoiceTrace] stage=%s accepted=false code=trace_context_missing traceBound=%s '
-                'presentationBound=%s coreBound=%s streamBound=%s taskBound=%s leaseBound=%s',
-                normalized_stage if normalized_stage in {
-                    'tts.completed', 'audio.completed', 'audio.failed', 'audio.interrupted', 'audio.superseded'
-                } else 'invalid',
-                trace_id in self._traces_by_id,
-                presentation is not None,
-                bool(presentation and presentation.logical_turn_id and presentation.revision is not None),
-                bool(stream_id), bool(task_id), bool(self._auth.job_id and self._auth.worker_id),
-            )
+        if worker_delivery is not None and not isinstance(worker_delivery, dict):
             return False
+        worker_presentation = (worker_delivery or {}).get("workerCompletionPresentation")
+        if worker_delivery is not None and worker_presentation is None:
+            worker_presentation = {"callSessionId": worker_delivery.get("voiceCallSessionId"),
+                "presentationRef": worker_delivery.get("deliveryId"),
+                "turnId": worker_delivery.get("voiceRequestId")}
+        if worker_delivery is not None:
+            if (not isinstance(worker_presentation, dict) or not isinstance(task_ref, dict)
+                    or worker_presentation.get("callSessionId") != self._auth.call_session_id
+                    or worker_presentation.get("presentationRef") != presentation_ref
+                    or not _bounded_string(worker_presentation.get("turnId"), maximum=160, required=True)
+                    or not _bounded_string(worker_delivery.get("deliveryId"), maximum=160, required=True)
+                    or not _bounded_string(worker_delivery.get("claimId"), maximum=160, required=True)
+                    or not isinstance(worker_delivery.get("dispatchPermit"), dict)
+                    or not _bounded_string(task_ref.get("taskId"), maximum=160, required=True)
+                    or not _bounded_string(task_ref.get("streamId"), maximum=160, required=True)
+                    or normalized_stage not in {"audio.started", "tts.completed", "audio.completed",
+                        "audio.failed", "audio.interrupted", "audio.superseded"}
+                    or not self._auth.job_id or not self._auth.worker_id):
+                return False
+            task_id, stream_id = task_ref["taskId"], task_ref["streamId"]
+        elif isinstance(task_ref, dict) and task_ref.get("callSessionId") == self._auth.call_session_id:
+            # The authenticated Cortex endpoint returns its canonical accepted presentation
+            # binding. Core revalidates these IDs against the durable task and message on ACK.
+            if (set(task_ref) != {"callSessionId", "taskId", "streamId", "turnId"}
+                    or not all(_bounded_string(task_ref.get(key), maximum=160, required=True)
+                        for key in ("taskId", "streamId", "turnId"))
+                    or not _bounded_string(presentation_ref, maximum=160, required=True)
+                    or normalized_stage not in {"audio.started", "tts.completed", "audio.completed",
+                        "audio.failed", "audio.interrupted", "audio.superseded"}
+                    or not self._auth.job_id or not self._auth.worker_id):
+                return False
+            task_id, stream_id = task_ref["taskId"], task_ref["streamId"]
+            cortex_turn_id = task_ref["turnId"]
+        else:
+            if (
+                normalized_stage not in {"audio.started", "tts.completed", "audio.completed", "audio.failed", "audio.interrupted", "audio.superseded"}
+                or trace_id not in self._traces_by_id
+                or presentation is None
+                or presentation.trace_id != trace_id
+                or not presentation.logical_turn_id
+                or presentation.revision is None
+                or not presentation.presentation_ref
+                or not stream_id
+                or not task_id
+                or not self._auth.job_id
+                or not self._auth.worker_id
+            ):
+                logger.warning(
+                    '[VoiceTrace] stage=%s accepted=false code=trace_context_missing traceBound=%s '
+                    'presentationBound=%s coreBound=%s streamBound=%s taskBound=%s leaseBound=%s',
+                    normalized_stage if normalized_stage in {
+                        'audio.started', 'tts.completed', 'audio.completed', 'audio.failed', 'audio.interrupted', 'audio.superseded'
+                    } else 'invalid',
+                    trace_id in self._traces_by_id,
+                    presentation is not None,
+                    bool(presentation and presentation.logical_turn_id and presentation.revision is not None),
+                    bool(stream_id), bool(task_id), bool(self._auth.job_id and self._auth.worker_id),
+                )
+                return False
         headers = {
             "Content-Type": "application/json",
             "X-VIVENTIUM-CALL-SESSION": self._auth.call_session_id,
@@ -1834,14 +2263,25 @@ class LibreChatLLM(llm.LLM):
             "X-VIVENTIUM-JOB-ID": self._auth.job_id,
             "X-VIVENTIUM-WORKER-ID": self._auth.worker_id,
         }
+        # A canonical Cortex child owns its playback clock. Zero means no
+        # playout, even when the same trace still has the parent's Main clock.
+        presentation_started_at_ms = started_at_ms or (
+            presentation.audio_started_at_ms if presentation and not cortex_turn_id else 0)
         body = {
             "version": 1,
             "callSessionId": self._auth.call_session_id,
-            "turnId": presentation.logical_turn_id,
+            "turnId": (worker_presentation["turnId"] if worker_delivery else
+                cortex_turn_id or presentation.logical_turn_id),
             "streamId": stream_id,
             "taskId": task_id,
             "presentationRef": str(presentation_ref or presentation.presentation_ref).strip()[:160],
             "stage": normalized_stage,
+            **({"startedAtMs": presentation_started_at_ms}
+               if presentation_started_at_ms else {}),
+            **({"workerDelivery": {"deliveryId": worker_delivery["deliveryId"],
+                  "claimId": worker_delivery["claimId"],
+                  "dispatchPermit": worker_delivery["dispatchPermit"]}}
+               if worker_delivery else {}),
         }
         url = f"{self._origin}/api/viventium/voice/trace/stages"
         for attempt in range(3):
@@ -1870,7 +2310,7 @@ class LibreChatLLM(llm.LLM):
         key = (str(correlation_id or "").strip()[:160], str(stage or "").strip())
         if (
             not key[0]
-            or key[1] not in {"tts.completed", "audio.completed", "audio.failed", "audio.interrupted", "audio.superseded"}
+            or key[1] not in {"audio.started", "tts.completed", "audio.completed", "audio.failed", "audio.interrupted", "audio.superseded"}
             or key in self._pending_production_trace_stages
             or key in self._sent_production_trace_stages
         ):
@@ -1899,12 +2339,14 @@ class LibreChatLLM(llm.LLM):
         task.add_done_callback(self._production_trace_tasks.discard)
         return True
 
-    async def record_followup_presentation(self, trace_id: str, presentation_ref: str, stage: str) -> bool:
-        """Join a persisted follow-up's actual playout outcome to its originating turn."""
-        return await self._post_production_trace(trace_id, stage, presentation_ref=presentation_ref)
+    async def record_followup_presentation(
+        self, trace_id: str, presentation_ref: str, stage: str, *, started_at_ms: int = 0,
+        task_ref: Optional[dict[str, Any]] = None, worker_delivery: Optional[dict[str, Any]] = None,
+    ) -> bool:
+        """Join a persisted follow-up's actual handle to its canonical presentation authority."""
+        return await self._post_production_trace(trace_id, stage, presentation_ref=presentation_ref,
+            started_at_ms=started_at_ms, task_ref=task_ref, worker_delivery=worker_delivery)
 
-    def task_id_for_trace(self, correlation_id: str) -> str:
-        return self._task_id_by_trace_id.get((correlation_id or "").strip(), "")
 
     def record_next_trace_hop(self, hop: str, timestamp_ms: float) -> str:
         """Correlate ordered single-session TTS/playout metrics without using transcript text."""
@@ -1918,7 +2360,7 @@ class LibreChatLLM(llm.LLM):
             if trace.record(hop, timestamp_ms):
                 logger.info("[VoiceHop] %s", trace.log_payload(hop))
                 if trace.has("tts_first_byte") and trace.has("audio_output"):
-                    self.finalize_trace_terminal(trace)
+                    self.schedule_trace_terminal(trace)
                 return correlation_id
         return ""
 
@@ -1931,7 +2373,7 @@ class LibreChatLLM(llm.LLM):
             or not trace.has("audio_output")
         ):
             return
-        self.finalize_trace_terminal(trace)
+        self.schedule_trace_terminal(trace)
 
     def finalize_trace_terminal(
         self, trace: VoiceHopTrace
@@ -1961,8 +2403,12 @@ class LibreChatLLM(llm.LLM):
         return summary
 
     def schedule_trace_terminal(
-        self, trace: VoiceHopTrace, *, grace_s: float = 5.0
+        self, trace: VoiceHopTrace, *, grace_s: float = 5.0, stream_terminal: bool = False
     ) -> None:
+        if stream_terminal and trace.correlation_id in self._traces_by_id:
+            self._terminal_stream_trace_ids.add(trace.correlation_id)
+        if trace.correlation_id not in self._terminal_stream_trace_ids:
+            return
         if trace.correlation_id in self._summarized_trace_ids:
             return
 
@@ -2106,10 +2552,6 @@ class LibreChatLLM(llm.LLM):
     def is_task_output_suppressed(self, task_id: str) -> bool:
         return self._task_event_gate.is_suppressed(task_id)
 
-    def set_model_output_handler(
-        self, handler: Optional[Callable[[str], Any]]
-    ) -> None:
-        self._model_output_handler = handler
 
     async def _relay_task_event_once(self, task_event: dict[str, Any]) -> bool:
         validated = _extract_voice_task_event(
@@ -2119,6 +2561,10 @@ class LibreChatLLM(llm.LLM):
         if validated is None:
             return False
         task_event = validated
+        cancel_accepted = (
+            task_event["state"] in _VOICE_TASK_SUPPRESSING_STATES
+            and not self.is_task_output_suppressed(task_event["taskId"])
+        )
         if not self._task_event_gate.accept(task_event):
             return False
         event_id = str(task_event.get("eventId") or "").strip()
@@ -2137,6 +2583,65 @@ class LibreChatLLM(llm.LLM):
         self._seen_task_events[key] = None
         while len(self._seen_task_events) > 4096:
             self._seen_task_events.pop(next(iter(self._seen_task_events)))
+        # === VIVENTIUM START === Stop queued foreground speech on an external task cancel.
+        # Interrupt only the bound native handle. Call-wide scheduler cancellation would also
+        # discard unrelated completed Worker Bee deliveries waiting for their speech permit.
+        presentation_stop = (
+            task_event["state"] == "completed"
+            and task_event.get("presentation", {}).get("state") == "stop_requested"
+        )
+        if presentation_stop or cancel_accepted:
+            trace_id = self._current_trace_id
+            presentation = self._presentation_by_trace_id.get(trace_id)
+            stream_id = task_event.get("streamId")
+            if (
+                _bounded_string(stream_id, maximum=160, required=True)
+                and self._task_id_by_trace_id.get(trace_id) == task_event["taskId"]
+                and self._stream_id_by_trace_id.get(trace_id) == stream_id
+                and task_event["owner"]["kind"] in {"generation_job", "remote_generation"}
+                and task_event["owner"].get("id") == stream_id
+                and presentation is not None
+                and self._presentation_coordinator.is_current(presentation)
+                and (not presentation_stop or presentation.presentation_ref
+                     == task_event["presentation"]["ref"])
+            ):
+                # Stop may arrive after an acoustically interrupted handle is already done.
+                self._presentation_coordinator.resolve_interruption(presentation, "failed")
+        if presentation_stop:
+            for trace_id, speech_handle in self._speech_handles_by_trace_id.items():
+                presentation = self._presentation_by_trace_id.get(trace_id)
+                stream_id = task_event.get("streamId")
+                if (
+                    _bounded_string(stream_id, maximum=160, required=True)
+                    and self._task_id_by_trace_id.get(trace_id) == task_event["taskId"]
+                    and self._stream_id_by_trace_id.get(trace_id) == stream_id
+                    and task_event["owner"]["kind"] in {"generation_job", "remote_generation"}
+                    and task_event["owner"].get("id") == stream_id
+                    and presentation is not None and presentation.playout_active
+                    and presentation.presentation_ref == task_event["presentation"]["ref"]
+                    and not speech_handle.done() and not speech_handle.interrupted
+                ):
+                    speech_handle.interrupt(force=True)
+                    break
+        if cancel_accepted:
+            trace_id = self._current_trace_id
+            presentation = self._presentation_by_trace_id.get(trace_id)
+            speech_handle = self._speech_handles_by_trace_id.get(trace_id)
+            stream_id = task_event.get("streamId")
+            if (
+                _bounded_string(stream_id, maximum=160, required=True)
+                and self._task_id_by_trace_id.get(trace_id) == task_event["taskId"]
+                and self._stream_id_by_trace_id.get(trace_id) == stream_id
+                and task_event["owner"]["kind"] in {"generation_job", "remote_generation"}
+                and task_event["owner"].get("id") == stream_id
+                and presentation is not None
+                and self._presentation_coordinator.is_current(presentation)
+                and speech_handle is not None
+                and not speech_handle.done()
+                and not speech_handle.interrupted
+            ):
+                speech_handle.interrupt(force=True)
+        # === VIVENTIUM END ===
         if self._task_event_handler is not None:
             handler_result = self._task_event_handler(task_event)
             if asyncio.iscoroutine(handler_result):
@@ -2520,10 +3025,13 @@ class LibreChatLLM(llm.LLM):
                     cortex_expected=saw_cortex_event,
                     glasshive_expected=saw_glasshive_tool_call,
                     trace_id=request_id,
-                    presentation_is_current=(
-                        None
-                        if presentation is None
-                        else lambda: self._presentation_coordinator.is_current(presentation)
+                    task_ref={"taskId": task_id, "streamId": stream_id},
+                    presentation_is_current=lambda: (
+                        not self.is_task_output_suppressed(task_id)
+                        and (
+                            presentation is None
+                            or self._presentation_coordinator.is_current(presentation)
+                        )
                     ),
                 )
             logger.info(
@@ -2544,6 +3052,8 @@ class LibreChatLLM(llm.LLM):
                 task_id,
             )
             raise
+        finally:
+            self.schedule_trace_terminal(hop_trace, stream_terminal=True)
 
     async def wait_for_background_continuations(self, *, timeout_s: float = 5.0) -> None:
         tasks = list(self._background_continuations)
@@ -2555,8 +3065,13 @@ class LibreChatLLM(llm.LLM):
         )
 
     async def close_background_continuations(self) -> None:
-        await self.stop_call_task_event_stream()
         self._speaker_delivery_closing = True
+        for presentation in self._presentation_by_trace_id.values():
+            self._presentation_coordinator.resolve_interruption(presentation, "failed")
+        current = self._presentation_coordinator._current
+        if current is not None:
+            self._presentation_coordinator.resolve_interruption(current, "failed")
+        await self.stop_call_task_event_stream()
         speaker_tasks = list(self._speaker_delivery_tasks)
         if speaker_tasks:
             _done, pending = await asyncio.wait(speaker_tasks, timeout=0.5)
@@ -2586,6 +3101,10 @@ class LibreChatLLM(llm.LLM):
                 task.cancel()
             if pending:
                 await asyncio.gather(*pending, return_exceptions=True)
+
+        # Actual call cleanup seals remaining diagnostic traces, including missing audio.
+        for trace in self._traces_by_id.values():
+            self.finalize_trace_terminal(trace)
 
         call_state_session = self._call_state_session
         self._call_state_session = None
@@ -2903,6 +3422,16 @@ class LibreChatLLM(llm.LLM):
                     result = await resp.json()
                     if not isinstance(result, dict):
                         result = {"version": 1, "taskId": normalized_task_id, "state": "cancelling"}
+            if result.get("outcome") == "playout_stop_requested":
+                event = _extract_voice_task_event(
+                    {"event": "voice_task_event", "voiceTaskEvent": result.get("event")},
+                    expected_call_session_id=self._auth.call_session_id)
+                if (event is None or event["taskId"] != normalized_task_id
+                        or event["state"] != "completed"
+                        or event.get("presentation", {}).get("state") != "stop_requested"):
+                    raise RuntimeError("LibreChat voice playout Stop response is invalid")
+                await self._relay_task_event_once(event)
+                return result
             self._task_cancel_results[normalized_task_id] = result
             while len(self._task_cancel_results) > 4_096:
                 self._task_cancel_results.pop(next(iter(self._task_cancel_results)))
@@ -3333,6 +3862,7 @@ class LibreChatLLM(llm.LLM):
         *,
         accepts_inline_voice_controls: Optional[bool] = None,
         native_streaming: Optional[bool] = None,
+        runtime_context: Optional[dict[str, Any]] = None,
     ) -> None:
         value = (provider or "").strip()
         if value:
@@ -3341,6 +3871,8 @@ class LibreChatLLM(llm.LLM):
             self._voice_accepts_inline_controls = bool(accepts_inline_voice_controls)
         if native_streaming is not None:
             self._voice_native_streaming = bool(native_streaming)
+        if runtime_context is not None:
+            self._voice_runtime_context = runtime_context
     # === VIVENTIUM END ===
 
     def chat(
@@ -3392,6 +3924,7 @@ class _LibreChatLLMStream(llm.LLMStream):
         self._auth = auth
         self._timeout_s = timeout_s
         self._request_id = f"lc_{uuid.uuid4().hex[:12]}"
+        self._previous_presentation = self._llm_impl._presentation_coordinator._current
         self._presentation = self._llm_impl._presentation_coordinator.begin_stable(
             source_event_id=_voice_source_event_id(chat_ctx, auth.call_session_id),
             presentation_ref=self._request_id,
@@ -3439,10 +3972,15 @@ class _LibreChatLLMStream(llm.LLMStream):
         task_id: Optional[str] = None
         final_event: Optional[dict[str, Any]] = None
         stream_error: Optional[str] = None
+        stream_error_code: Optional[str] = None
         pending_insights: list[dict[str, Any]] = []
         saw_cortex_event = False
         saw_glasshive_tool_call = False
         cortex_message_id = ""
+        continuation_started = False
+        admission_interrupted = False
+        admission_deferred = False
+        listen_only = False
 
         log_latency = _should_log_latency()
         started_at = time.time()
@@ -3453,74 +3991,211 @@ class _LibreChatLLMStream(llm.LLMStream):
         async with aiohttp.ClientSession(timeout=timeout) as session:
             try:
                 # 1) Start resumable generation
-                hop_trace.record("gateway_dispatch", time.time() * 1000.0)
-                logger.info("[VoiceHop] %s", hop_trace.log_payload("gateway_dispatch"))
-                async with session.post(
-                    chat_url,
-                    headers=headers,
-                    json={
-                        "text": user_text,
-                        "streamId": self._request_id,
-                        "voiceMode": self._llm_impl._voice_mode,
-                        "voiceProvider": self._llm_impl._voice_provider,
-                        # Normalize cumulative/snapshot-shaped text at LibreChat's stream boundary
-                        # before SSE fan-out, resumable storage, and Mongo aggregation.
-                        "viventiumTextDeltaMode": "auto",
-                        # Ensure surface-aware prompt rules apply for voice calls.
-                        "viventiumInputMode": "voice_call",
-                        "viventiumSurface": "voice",
-                        **speaker_post_context,
-                        "sourceEventId": self._presentation.source_event_id,
-                    },
-                ) as resp:
-                    if resp.status >= 400:
-                        raise RuntimeError(
-                            f"LibreChat voice chat failed: status {resp.status}"
-                        )
-                    payload = await resp.json()
-                    self._llm_impl._presentation_coordinator.bind_core_context(
-                        self._presentation,
-                        payload,
-                    )
-                    # === VIVENTIUM START ===
-                    # Feature: Listen-Only Mode
-                    # Purpose: The voice route can save the transcript and intentionally return no
-                    # stream; LiveKit should emit no assistant tokens or TTS.
-                    if (
-                        payload.get("listenOnly") is True
-                        or payload.get("status") in {"listen_only", "wing_passive"}
-                    ):
-                        if log_latency:
-                            logger.info(
-                                "[VoiceLatency] listen_only_saved_ms=%s request_id=%s stream_id=%s",
-                                int((time.time() - started_at) * 1000),
-                                self._request_id,
-                                payload.get("streamId") or "",
-                            )
+                def preserve_interrupted_task() -> None:
+                    nonlocal continuation_started
+                    if (self._llm_impl._speaker_delivery_closing
+                            or self._llm_impl._auth.call_session_id != self._auth.call_session_id
+                            or final_event is not None or not stream_id or not task_id):
                         return
-                    # === VIVENTIUM END ===
-                    stream_id = payload.get("streamId")
-                    task_id_value = payload.get("taskId")
-                    if isinstance(task_id_value, str) and task_id_value.strip():
-                        task_id = task_id_value.strip()
-                        self._llm_impl.bind_trace_task(self._request_id, task_id)
-                    if isinstance(stream_id, str) and stream_id.strip() and task_id:
-                        self._llm_impl.bind_trace_core_context(
-                            self._request_id,
+                    if (self._presentation.logical_turn_id
+                            and self._presentation.revision is not None):
+                        self._presentation.interrupted_binding = (
+                            self._auth.call_session_id,
+                            self._presentation.logical_turn_id,
+                            self._presentation.revision,
+                            self._presentation.presentation_ref,
+                            stream_id,
+                            task_id,
+                        )
+                    if not continuation_started:
+                        self._llm_impl._start_task_continuation(
                             stream_id=stream_id,
                             task_id=task_id,
+                            headers=dict(headers),
+                            request_id=self._request_id,
+                            pending_insights=pending_insights,
+                            saw_cortex_event=saw_cortex_event,
+                            saw_glasshive_tool_call=saw_glasshive_tool_call,
+                            cortex_message_id=cortex_message_id,
+                            hop_trace=hop_trace,
                             presentation=self._presentation,
                         )
-                    hop_trace.record("agent_start", time.time() * 1000.0)
-                    logger.info("[VoiceHop] %s", hop_trace.log_payload("agent_start"))
-                    post_sent_at = time.time()
-                    if log_latency:
-                        logger.info(
-                            "[VoiceLatency] chat_post_ms=%s request_id=%s stream_id=%s",
-                            int((post_sent_at - started_at) * 1000),
-                            self._request_id,
-                            stream_id or "",
-                        )
+                        continuation_started = True
+
+                async def post_ready() -> None:
+                    nonlocal stream_id, task_id, post_sent_at, listen_only
+                    if (self._llm_impl._speaker_delivery_closing
+                            or self._llm_impl._auth.call_session_id != self._auth.call_session_id):
+                        return
+                    # Waiting for an older receipt must not consume this input's
+                    # transport budget or erase its call-owned admission task.
+                    await self._llm_impl._await_previous_presentation_admission(
+                        self._previous_presentation, self._presentation,
+                    )
+                    if (self._llm_impl._speaker_delivery_closing
+                            or self._llm_impl._auth.call_session_id != self._auth.call_session_id):
+                        return
+                    # Preserve original source POST order through the retained
+                    # predecessor receipt. Core owns author and effect admission.
+                    async with (
+                        asyncio.timeout(self._timeout_s if self._timeout_s > 0 else None),
+                        aiohttp.ClientSession(timeout=timeout) as admission_session,
+                    ):
+                        async def post_receipt() -> dict[str, Any]:
+                            nonlocal stream_id, task_id, post_sent_at, listen_only
+                            hop_trace.record("gateway_dispatch", time.time() * 1000.0)
+                            logger.info("[VoiceHop] %s", hop_trace.log_payload("gateway_dispatch"))
+                            async with admission_session.post(
+                                chat_url,
+                                headers=headers,
+                                json={
+                                    "text": user_text,
+                                    "streamId": self._request_id,
+                                    "voiceMode": self._llm_impl._voice_mode,
+                                    "voiceProvider": self._llm_impl._voice_provider,
+                                    **({"voiceRuntimeContext": self._llm_impl._voice_runtime_context}
+                                       if self._llm_impl._voice_runtime_context else {}),
+                                    # Normalize cumulative/snapshot-shaped text at LibreChat's stream boundary
+                                    # before SSE fan-out, resumable storage, and Mongo aggregation.
+                                    "viventiumTextDeltaMode": "auto",
+                                    # Ensure surface-aware prompt rules apply for voice calls.
+                                    "viventiumInputMode": "voice_call",
+                                    "viventiumSurface": "voice",
+                                    **speaker_post_context,
+                                    "sourceEventId": self._presentation.source_event_id,
+                                },
+                            ) as resp:
+                                if resp.status >= 400:
+                                    raise RuntimeError(
+                                        f"LibreChat voice chat failed: status {resp.status}"
+                                    )
+                                payload = await resp.json()
+                            if (self._llm_impl._speaker_delivery_closing
+                                    or self._llm_impl._auth.call_session_id != self._auth.call_session_id):
+                                return payload
+                            # Bind authentic ready data before an independent
+                            # removed-presentation acknowledgement can fail.
+                            self._llm_impl._presentation_coordinator.bind_core_context(
+                                self._presentation,
+                                payload,
+                            )
+                            # === VIVENTIUM START ===
+                            # Feature: Listen-Only Mode
+                            # Purpose: The voice route can save the transcript and intentionally return no
+                            # stream; LiveKit should emit no assistant tokens or TTS.
+                            if (
+                                payload.get("listenOnly") is True
+                                or payload.get("status") in {"listen_only", "wing_passive"}
+                            ):
+                                if log_latency:
+                                    logger.info(
+                                        "[VoiceLatency] listen_only_saved_ms=%s request_id=%s stream_id=%s",
+                                        int((time.time() - started_at) * 1000),
+                                        self._request_id,
+                                        payload.get("streamId") or "",
+                                    )
+                                listen_only = True
+                                return payload
+                            # === VIVENTIUM END ===
+                            stream_id = payload.get("streamId")
+                            task_id_value = payload.get("taskId")
+                            if isinstance(task_id_value, str) and task_id_value.strip():
+                                task_id = task_id_value.strip()
+                                self._llm_impl.bind_trace_task(self._request_id, task_id)
+                            if isinstance(stream_id, str) and stream_id.strip() and task_id:
+                                self._llm_impl.bind_trace_core_context(
+                                    self._request_id,
+                                    stream_id=stream_id,
+                                    task_id=task_id,
+                                    presentation=self._presentation,
+                                )
+                            hop_trace.record("agent_start", time.time() * 1000.0)
+                            logger.info("[VoiceHop] %s", hop_trace.log_payload("agent_start"))
+                            post_sent_at = time.time()
+                            if log_latency:
+                                logger.info(
+                                    "[VoiceLatency] chat_post_ms=%s request_id=%s stream_id=%s",
+                                    int((post_sent_at - started_at) * 1000),
+                                    self._request_id,
+                                    stream_id or "",
+                                )
+                            if admission_interrupted:
+                                preserve_interrupted_task()
+                            return payload
+
+                        pending_post = asyncio.create_task(post_receipt())
+                        try:
+                            try:
+                                await self._llm_impl._ack_unpresented_superseded_presentation(
+                                    self._previous_presentation,
+                                    self._presentation,
+                                    wait_for_result=False,
+                                )
+                            except Exception as error:
+                                # Removal failure is not failure of a separately
+                                # authenticated successor admission receipt.
+                                logger.warning("[VoiceDelivery] removed_presentation_ack_failed error=%s",
+                                               type(error).__name__)
+                            if (self._llm_impl._speaker_delivery_closing
+                                    or self._llm_impl._auth.call_session_id != self._auth.call_session_id):
+                                return
+                            await pending_post
+                        finally:
+                            if not pending_post.done():
+                                pending_post.cancel()
+                            await asyncio.gather(pending_post, return_exceptions=True)
+
+                    if admission_interrupted:
+                        preserve_interrupted_task()
+
+                admission_task = asyncio.create_task(post_ready())
+                self._presentation.admission_task = admission_task
+                self._llm_impl._background_continuations.add(admission_task)
+
+                def admission_done(completed: asyncio.Task[None]) -> None:
+                    self._llm_impl._background_continuations.discard(completed)
+                    if completed.cancelled():
+                        return
+                    error = completed.exception()
+                    if admission_interrupted:
+                        preserve_interrupted_task()
+                    if admission_interrupted and error is not None:
+                        logger.warning("[VoiceTask] interrupted_admission_failed error=%s",
+                                       type(error).__name__)
+                        if (admission_deferred and not self._llm_impl._speaker_delivery_closing
+                                and self._llm_impl._auth.call_session_id == self._auth.call_session_id):
+                            # Pending input was recoverable; an actual courier
+                            # failure still follows the SDK's existing error path.
+                            self._emit_error(error, recoverable=False)
+                        if not continuation_started:
+                            self._llm_impl.schedule_trace_terminal(hop_trace, stream_terminal=True)
+
+                admission_task.add_done_callback(admission_done)
+                try:
+                    # The foreground remains bounded. A waiting source keeps its
+                    # existing ordered courier and authentic eventual receipt.
+                    async with asyncio.timeout(self._timeout_s if self._timeout_s > 0 else None):
+                        await asyncio.shield(admission_task)
+                except TimeoutError:
+                    if listen_only or (isinstance(stream_id, str) and stream_id and task_id):
+                        # The receipt already arrived. Its own stream can proceed
+                        # while the bounded removal fence finishes separately.
+                        logger.warning("[VoiceTask] admission_removal_wait_timeout receipt_retained=true")
+                    else:
+                        admission_interrupted = True
+                        preserve_interrupted_task()
+                        retained = not admission_task.done()
+                        logger.warning("[VoiceTask] admission_consumer_timeout retained=%s", retained)
+                        if retained:
+                            admission_deferred = True
+                            # End only the foreground stream. SDK unrecoverable
+                            # counters must not close a call whose input is pending.
+                            self._emit_error(TimeoutError("Voice input admission remains pending."),
+                                             recoverable=True)
+                            return
+                        raise
+                if listen_only or self._llm_impl._speaker_delivery_closing:
+                    return
 
                 if not isinstance(stream_id, str) or not stream_id:
                     raise RuntimeError("LibreChat voice chat returned no streamId")
@@ -3558,13 +4233,16 @@ class _LibreChatLLMStream(llm.LLMStream):
                 # Keep the canonical assistant messageId from cortex updates as a follow-up fallback.
                 # === VIVENTIUM END ===
 
-                disconnected_speech: list[str] = []
+                disconnected_speech: list[tuple[str, Optional[dict[str, Any]]]] = []
+                completed_public_parts: set[tuple[str, str, str]] = set()
+                public_part_response: list[str] = []
                 first_public_text_at: Optional[float] = None
 
-                def emit_chat_delta(content: str) -> None:
+                def emit_chat_delta(content: str, completion: Optional[dict[str, Any]] = None) -> None:
                     nonlocal first, first_public_text_at
-                    if not content or _output_is_suppressed():
+                    if (not content and not completion) or _output_is_suppressed():
                         return
+                    self._presentation.output_offered = True
                     self._llm_impl._speech_output_trace_ids.add(hop_trace.correlation_id)
                     if _should_debug_voice_markup():
                         logger.info(
@@ -3573,11 +4251,12 @@ class _LibreChatLLMStream(llm.LLMStream):
                         )
                     cd = ChoiceDelta(
                         role="assistant" if first else None,
-                        content=content,
+                        content=content or None,
+                        extra=({_PUBLIC_PART_COMPLETION_EXTRA: completion} if completion else {}),
                     )
                     first = False
                     self._event_ch.send_nowait(ChatChunk(id=self._request_id, delta=cd))
-                    if first_public_text_at is None:
+                    if content and first_public_text_at is None:
                         first_public_text_at = time.time()
                         if log_latency:
                             logger.info(
@@ -3588,19 +4267,19 @@ class _LibreChatLLMStream(llm.LLMStream):
                                 first_public_text_at * 1000.0,
                             )
 
-                def send_chat_delta(content: str) -> None:
-                    if not content:
+                def send_chat_delta(content: str, completion: Optional[dict[str, Any]] = None) -> None:
+                    if not content and not completion:
                         return
                     if _output_is_suppressed():
                         disconnected_speech.clear()
                         return
                     if not self._llm_impl.is_participant_connected():
-                        disconnected_speech.append(content)
+                        disconnected_speech.append((content, completion))
                         return
-                    if disconnected_speech:
-                        content = "".join(disconnected_speech) + content
-                        disconnected_speech.clear()
-                    emit_chat_delta(content)
+                    pending = [*disconnected_speech, (content, completion)]
+                    disconnected_speech.clear()
+                    for text, boundary in pending:
+                        emit_chat_delta(text, boundary)
 
                 async def flush_disconnected_speech() -> None:
                     if not disconnected_speech:
@@ -3619,14 +4298,15 @@ class _LibreChatLLMStream(llm.LLMStream):
                     if _output_is_suppressed():
                         disconnected_speech.clear()
                         return
-                    content = "".join(disconnected_speech)
+                    pending = list(disconnected_speech)
                     disconnected_speech.clear()
-                    emit_chat_delta(content)
+                    for text, boundary in pending:
+                        emit_chat_delta(text, boundary)
 
-                async def process_text_delta(raw_delta: str) -> None:
+                async def process_text_delta(raw_delta: str, *, audio_skipped: bool = False) -> None:
                     nonlocal saw_any_tokens, first_token_at
                     collected_raw_response.append(raw_delta)
-                    if _output_is_suppressed():
+                    if audio_skipped or _output_is_suppressed():
                         return
                     delta = sanitize_voice_delta_text(raw_delta)
                     if not delta:
@@ -3647,10 +4327,6 @@ class _LibreChatLLMStream(llm.LLMStream):
                             "[VoiceHop] %s",
                             hop_trace.log_payload("first_model_token"),
                         )
-                        if task_id and self._llm_impl._model_output_handler is not None:
-                            output_result = self._llm_impl._model_output_handler(task_id)
-                            if asyncio.iscoroutine(output_result):
-                                await output_result
                         if log_latency:
                             logger.info(
                                 "[VoiceLatency] ttft_ms=%s request_id=%s stream_id=%s",
@@ -3659,6 +4335,7 @@ class _LibreChatLLMStream(llm.LLMStream):
                                 stream_id,
                             )
                     collected_response.append(delta)
+                    public_part_response.append(delta)
                     for emit_delta in no_response_guard.feed(delta):
                         send_chat_delta(emit_delta)
 
@@ -3704,15 +4381,21 @@ class _LibreChatLLMStream(llm.LLMStream):
                                 )
                                 stream_error = _extract_stream_error(event)
                                 if stream_error:
+                                    declared_code = event.get("error_class")
+                                    stream_error_code = declared_code if isinstance(declared_code, str) else None
                                     break
 
                                 if event.get("sync"):
-                                    resumed_text = _extract_resume_state_text(event)
+                                    resumed_segments = _extract_resume_state_audio_segments(event)
+                                    resumed_text = "".join(text for text, _ in resumed_segments)
                                     collected_text = "".join(collected_raw_response)
                                     if resumed_text.startswith(collected_text):
-                                        missing_text = resumed_text[len(collected_text) :]
-                                        if missing_text:
-                                            await process_text_delta(missing_text)
+                                        consumed = len(collected_text)
+                                        for text, skipped in resumed_segments:
+                                            missing_text = text[consumed:]
+                                            consumed = max(0, consumed - len(text))
+                                            if missing_text:
+                                                await process_text_delta(missing_text, audio_skipped=skipped)
                                     elif resumed_text:
                                         logger.warning(
                                             "[LibreChatLLM] Resume state diverged from consumed voice text; refusing duplicate replay"
@@ -3792,10 +4475,28 @@ class _LibreChatLLMStream(llm.LLMStream):
                                     continue
                                 # === VIVENTIUM END ===
 
-                                if _stream_delta_audio_is_skipped(event):
+                                completion = _stream_public_part_completion(event, stream_id)
+                                if completion:
+                                    key = (completion["request_id"], completion["run_id"], completion["part_id"])
+                                    if key not in completed_public_parts and not _output_is_suppressed():
+                                        completed_public_parts.add(key)
+                                        if log_latency:
+                                            logger.info("[VoiceLatency] public_part_complete_received request_id=%s stream_id=%s native_request_id=%s part_id=%s timestamp_ms=%s",
+                                                self._request_id, stream_id, completion["request_id"], completion["part_id"], time.time()*1000.0)
+                                        part_text = "".join(public_part_response)
+                                        suppressed_part, pending = no_response_guard.finalize(part_text)
+                                        if not suppressed_part and part_text:
+                                            for value in pending:
+                                                send_chat_delta(value)
+                                            # A control-only ChatChunk survives LLM metrics; the
+                                            # agent converts it to SDK FlushSentinel after text.
+                                            send_chat_delta("", completion)
+                                        public_part_response.clear()
+                                        no_response_guard = _NoResponseStreamGuard()
                                     continue
+
                                 for raw_delta in extract_raw_text_deltas(event):
-                                    await process_text_delta(raw_delta)
+                                    await process_text_delta(raw_delta, audio_skipped=_stream_delta_audio_is_skipped(event))
 
                             if stream_error or final_event:
                                 break
@@ -3816,6 +4517,26 @@ class _LibreChatLLMStream(llm.LLMStream):
                         await asyncio.sleep(retry_delay_s)
                 # === VIVENTIUM END ===
 
+                # Recheck durable speech authority only before synthetic error speech.
+                # End stops presentation while the accepted backend task can keep running.
+                response = final_event.get("responseMessage") if final_event else None
+                final_content = response.get("content") if isinstance(response, dict) else None
+                error_fallback_pending = bool(stream_error or (
+                    not saw_any_tokens and final_event
+                    and not _final_response_audio_is_skipped(final_event)
+                    and isinstance(final_content, list)
+                    and any(isinstance(part, dict) and part.get("type") == "error"
+                            for part in final_content)
+                ))
+                if error_fallback_pending and not _output_is_suppressed():
+                    call_state = await self._llm_impl.get_call_state()
+                    if call_state and (call_state["status"] in {"ended", "failed"}
+                                       or call_state["mode"] == "listen_only"):
+                        suppress_task_output = True
+                    # Stop or supersession may arrive during the bounded state read.
+                    if _output_is_suppressed():
+                        disconnected_speech.clear()
+
                 # Fallback: if LibreChat didn't stream any deltas, emit the final response text (if any)
                 if not _output_is_suppressed() and not saw_any_tokens and final_event:
                     text = _extract_final_response_text(final_event)
@@ -3829,7 +4550,7 @@ class _LibreChatLLMStream(llm.LLMStream):
                         stream_id,
                         _summarize_error_for_log(stream_error),
                     )
-                    fallback = _select_stream_error_message(stream_error)
+                    fallback = _select_stream_error_message(stream_error, code=stream_error_code)
                     fallback = sanitize_voice_followup_text(fallback)
                     if fallback:
                         collected_response.append(fallback)
@@ -3863,6 +4584,13 @@ class _LibreChatLLMStream(llm.LLMStream):
                 if not suppressed and not _output_is_suppressed():
                     for emit_delta in pending_emit:
                         send_chat_delta(emit_delta)
+                if (final_event and not stream_error and not suppressed
+                        and not _output_is_suppressed()):
+                    failure_text = _final_file_delivery_failure_text(final_event)
+                    if failure_text:
+                        # Keep model text, resume dedupe and Cortex input unchanged. This
+                        # factual terminal notice shares the existing current speech stream.
+                        send_chat_delta(("\n" if collected_response else "") + failure_text)
                 await flush_disconnected_speech()
                 # === VIVENTIUM END ===
 
@@ -3898,9 +4626,8 @@ class _LibreChatLLMStream(llm.LLMStream):
                             cortex_expected=saw_cortex_event,
                             glasshive_expected=saw_glasshive_tool_call,
                             trace_id=self._request_id,
-                            presentation_is_current=lambda: self._llm_impl._presentation_coordinator.is_current(
-                                self._presentation
-                            ),
+                            task_ref={"taskId": task_id, "streamId": stream_id},
+                            presentation_is_current=lambda: not _output_is_suppressed(),
                         )
                     except Exception as e:
                         logger.warning(
@@ -3909,19 +4636,8 @@ class _LibreChatLLMStream(llm.LLMStream):
                         )
                 # === VIVENTIUM END ===
             except asyncio.CancelledError:
-                if stream_id and task_id and final_event is None:
-                    self._llm_impl._start_task_continuation(
-                        stream_id=stream_id,
-                        task_id=task_id,
-                        headers=dict(headers),
-                        request_id=self._request_id,
-                        pending_insights=pending_insights,
-                        saw_cortex_event=saw_cortex_event,
-                        saw_glasshive_tool_call=saw_glasshive_tool_call,
-                        cortex_message_id=cortex_message_id,
-                        hop_trace=hop_trace,
-                        presentation=self._presentation,
-                    )
+                admission_interrupted = True
+                preserve_interrupted_task()
                 logger.info(
                     "[VoiceTask] stream_consumer_interrupted callSessionId=%s requestId=%s streamId=%s backendTaskPreserved=true",
                     self._auth.call_session_id,
@@ -3930,7 +4646,10 @@ class _LibreChatLLMStream(llm.LLMStream):
                 )
                 raise
             finally:
-                self._llm_impl.schedule_trace_terminal(hop_trace)
+                if (not continuation_started
+                        and (self._presentation.admission_task is None
+                             or self._presentation.admission_task.done())):
+                    self._llm_impl.schedule_trace_terminal(hop_trace, stream_terminal=True)
                 if stream_id and final_event is None:
                     logger.info(
                         "[VoiceTask] stream_closed_without_final callSessionId=%s requestId=%s streamId=%s backendTaskPreserved=true",

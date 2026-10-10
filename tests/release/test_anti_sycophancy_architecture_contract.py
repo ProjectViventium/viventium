@@ -105,13 +105,14 @@ def test_deep_memory_is_one_always_on_background_cortex_with_recall_access() -> 
     assert "file_search" in agent["tools"]
     assert agent["conversation_recall_agent_only"] is False
     assert agent["provider"] == "openAI"
-    assert agent["model"] == "gpt-5.6-terra"
+    assert agent["model"] == "gpt-6.1-sol"
+    assert agent["model_parameters"]["reasoning_effort"] == "high"
     assert agent["model_parameters"]["resendFiles"] is True
     assert agent["fallback_llm_provider"] == "glasshive-harness"
-    assert agent["fallback_llm_model"] == "claude-code:opus"
+    assert agent["fallback_llm_model"] == "claude-code:claude-opus-5-5"
     assert agent["fallback_llm_model_parameters"] == {
-        "model": "claude-code:opus",
-        "reasoning_effort": "medium",
+        "model": "claude-code:claude-opus-5-5",
+        "reasoning_effort": "high",
     }
     assert agent["hide_sequential_outputs"] is False
     assert isinstance(agent["instructions"], str) and agent["instructions"].strip()
@@ -129,10 +130,12 @@ def test_reality_check_is_one_full_life_glasshive_handoff_with_evidence_tools() 
     reality = _by_id(bundle["handoffAgents"], REALITY_CHECK_ID)
 
     assert reality["provider"] == "glasshive-harness"
+    assert reality["model"] == "codex-cli:gpt-6.1-sol"
+    assert reality["model_parameters"]["reasoning_effort"] == "high"
     assert reality["glasshive_options"] == {
         "workspace": {"mode": "life"},
         "access": "full",
-        "fallback_model": "claude-code:opus",
+        "fallback_model": "claude-code:claude-opus-5-5",
         "fallback_reasoning_effort": "high",
     }
     assert reality.get("fallback_llm_model") in (None, "")
@@ -265,30 +268,34 @@ def test_background_cortices_cannot_duplicate_main_direct_actions() -> None:
     ), "Background cortices must remain evidence-only for Main-owned action scopes"
 
 
-def test_prompt_refs_resolve_and_voice_does_not_start_foreground_consults() -> None:
+def test_prompt_refs_resolve_and_voice_retains_model_owned_foreground_consults() -> None:
     bundle = _load_resolved()
     main_instructions = bundle["mainAgent"]["instructions"]
     voice_instructions = VOICE_CALL_PROMPT.read_text(encoding="utf-8").lower()
 
     assert isinstance(main_instructions, str) and main_instructions.strip()
-    assert "do not start a foreground reality check or red team handoff during a live voice call" in (
+    assert "consult reality check when fresh outside-world evidence" in main_instructions.lower()
+    assert "do not consult when the prepared context and verified current-run evidence are already sufficient" in (
         main_instructions.lower()
     )
-    # Surface prompt stays generic: it may own the live-voice foreground-work boundary, while
-    # consultant identities and graph mechanics remain in Main's graph-aware prompt.
+    assert "do not start a foreground reality check or red team handoff during a live voice call" not in (
+        main_instructions.lower()
+    )
+    # Surface presentation stays generic; consultant identities and graph mechanics belong to
+    # Main's graph-aware prompt on every surface.
     for forbidden in ("reality check", "red team", "handoff"):
         assert forbidden not in voice_instructions
 
 
-def test_voice_prompt_keeps_unsolicited_research_out_of_the_immediate_answer() -> None:
+def test_voice_prompt_preserves_authorized_work_with_evidence_and_interruption() -> None:
     voice_instructions = VOICE_CALL_PROMPT.read_text(encoding="utf-8").lower()
 
-    assert "unless the user explicitly asks for a lookup or tool action now" in voice_instructions
-    assert "do not start foreground research or tool work" in voice_instructions
-    assert "give the best bounded immediate answer" in voice_instructions
-    assert "state what remains unverified" in voice_instructions
-    assert "nonblocking background work" in voice_instructions
-    assert "the current voice task may do it" in voice_instructions
+    assert "foreground tool or consultant work during a call stays interruptible and cancellable" in (
+        voice_instructions
+    )
+    assert "never claim a result before its authoritative evidence returns" in voice_instructions
+    assert "unless the user explicitly asks for a lookup or tool action now" not in voice_instructions
+    assert "do not start foreground research or tool work" not in voice_instructions
 
 
 def test_main_uses_relevant_life_context_before_asking_the_user() -> None:

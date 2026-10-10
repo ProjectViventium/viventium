@@ -645,12 +645,14 @@ def test_cmd_refresh_mappings_renews_saved_public_edge_ports(monkeypatch, tmp_pa
 
     monkeypatch.setattr(module, "load_state", lambda _path: dict(state))
     monkeypatch.setattr(module, "resolve_binary", lambda _name: "/opt/homebrew/bin/upnpc")
+    monkeypatch.setattr(module, "list_upnpc_state", lambda _bin: {"local_ip": "192.168.50.10"})
+    monkeypatch.setattr(module, "assigned_local_ipv4s", lambda: {"192.168.50.10"})
     monkeypatch.setattr(module.time, "strftime", lambda *_args, **_kwargs: "2026-04-07T03:30:00Z")
 
     monkeypatch.setattr(
         module,
         "ensure_upnp_mapping",
-        lambda _bin, *, protocol, external_port, internal_host, internal_port, description, lease_seconds=14400: captured.append(
+        lambda _bin, *, protocol, external_port, internal_host, internal_port, description, lease_seconds=14400, previous_internal_host="", renew_existing=False: captured.append(
             (protocol, external_port, internal_host, internal_port, lease_seconds)
         ),
     )
@@ -1142,3 +1144,195 @@ def test_parse_args_uses_remote_tunnel_timeout_env(monkeypatch) -> None:
     args = module.parse_args()
 
     assert args.timeout_seconds == 165
+
+
+# Native public-edge refresh regressions: synthetic addresses and router only.
+def edge_refresh_fixture(module, monkeypatch, *, moved=True):
+    import copy
+    old_ip, new_ip = "192.0.2.10", "192.0.2.11" if moved else "192.0.2.10"
+    ports = [("TCP", 80, 45080), ("TCP", 443, 45443), ("TCP", 7889, 7889), ("UDP", 7890, 7890), ("TCP", 5349, 5349)]
+    state = {
+        "provider": "public_https_edge", "public_ip": "198.51.100.20", "livekit_node_ip": "198.51.100.20",
+        "public_playground_url": "https://voice.example.test", "public_livekit_url": "wss://media.example.test",
+        "caddy": {"pid": 701, "http_port": 45080, "https_port": 45443},
+        "router": {"local_ip": old_ip, "mappings": [
+            {"protocol": proto, "external_port": external, "internal_host": old_ip, "internal_port": internal}
+            for proto, external, internal in ports
+        ]},
+    }
+    live = {"local_ip": new_ip, "external_ip": state["public_ip"], "mappings": {
+        (proto, external): (old_ip, internal) for proto, external, internal in ports
+    }, "mapping_descriptions": {(proto, external): module.public_edge_mapping_description(proto, external)
+                                 for proto, external, _internal in ports}}
+    commands = []
+    monkeypatch.setattr(module, "resolve_binary", lambda _name: "/synthetic/upnpc")
+    monkeypatch.setattr(module, "list_upnpc_state", lambda _bin: copy.deepcopy(live))
+    monkeypatch.setattr(module, "assigned_local_ipv4s", lambda: {new_ip})
+    monkeypatch.setattr(module, "pid_is_running", lambda pid: pid == 701)
+    monkeypatch.setattr(module, "mapping_target_reachable", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(module, "stop_state", lambda *_args: pytest.fail("Refresh must not stop the proxy"))
+    def run(command, **_kwargs):
+        commands.append(command)
+        if "-d" in command:
+            i = command.index("-d"); key = (command[i + 2], int(command[i + 1]))
+            live["mappings"].pop(key, None); live["mapping_descriptions"].pop(key, None)
+        elif "-a" in command:
+            i = command.index("-a"); host, internal, external, proto = command[i + 1:i + 5]
+            key = (proto, int(external))
+            previous = live["mappings"].get(key)
+            if previous and previous[0] != host:
+                return types.SimpleNamespace(returncode=2, stdout="AddPortMapping() returned 718", stderr="")
+            live["mappings"][key] = (host, int(internal))
+            live["mapping_descriptions"][key] = command[command.index("-e") + 1]
+        return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+    monkeypatch.setattr(module, "run_checked", run)
+    return state, live, commands, ports, old_ip, new_ip
+
+
+def test_refresh_owned_dhcp_drift_moves_exact_ports_without_stopping_proxy(monkeypatch):
+    import copy
+    module = load_module()
+    state, live, commands, ports, old_ip, new_ip = edge_refresh_fixture(module, monkeypatch)
+    original = copy.deepcopy(state)
+    result = module.refresh_public_https_edge_mappings(state, lease_seconds=14400)
+    assert len(commands) == 10
+    for n, (proto, external, internal) in enumerate(ports):
+        assert commands[2 * n] == ["/synthetic/upnpc", "-d", str(external), proto]
+        assert commands[2 * n + 1] == ["/synthetic/upnpc", "-e", module.public_edge_mapping_description(proto, external),
+                                     "-a", new_ip, str(internal), str(external), proto, "14400"]
+    assert state == original
+    assert result["router"]["local_ip"] == new_ip
+    assert all(m["internal_host"] == new_ip for m in result["router"]["mappings"])
+    assert result["caddy"] == original["caddy"]
+    assert {k: v for k, v in result.items() if k != "router"} == {k: v for k, v in original.items() if k != "router"}
+    assert live["mappings"] == {(proto, external): (new_ip, internal) for proto, external, internal in ports}
+
+
+def test_refresh_matching_owned_mappings_actually_renews_router_leases(monkeypatch):
+    module = load_module()
+    state, _live, commands, ports, _old_ip, new_ip = edge_refresh_fixture(module, monkeypatch, moved=False)
+    result = module.refresh_public_https_edge_mappings(state, lease_seconds=14400)
+    assert commands == [["/synthetic/upnpc", "-e", module.public_edge_mapping_description(proto, external),
+                         "-a", new_ip, str(internal), str(external), proto, "14400"] for proto, external, internal in ports]
+    assert result["router"]["mapping_lease_seconds"] == 14400
+
+
+def test_refresh_dhcp_partial_retry_renews_moved_key_without_deleting_it(monkeypatch):
+    module = load_module()
+    state, live, commands, _ports, _old_ip, new_ip = edge_refresh_fixture(module, monkeypatch)
+    live["mappings"][("TCP", 80)] = (new_ip, 45080)
+    result = module.refresh_public_https_edge_mappings(state, lease_seconds=14400)
+    assert len(commands) == 9
+    assert "-a" in commands[0] and "-d" not in commands[0]
+    assert all(m["internal_host"] == new_ip for m in result["router"]["mappings"])
+
+
+@pytest.mark.parametrize("fault", ["foreign_target", "foreign_description", "wan_changed", "current_unassigned", "old_still_assigned", "missing_local", "missing_old", "dead_proxy", "edge_port_changed", "invalid_protocol", "previous_target_active"])
+def test_refresh_dhcp_identity_faults_fail_before_any_router_write(monkeypatch, fault):
+    module = load_module()
+    state, live, commands, _ports, old_ip, new_ip = edge_refresh_fixture(module, monkeypatch)
+    if fault == "foreign_target": live["mappings"][("TCP", 443)] = ("192.0.2.99", 45443)
+    elif fault == "foreign_description": live["mapping_descriptions"][("TCP", 443)] = "Other application"
+    elif fault == "wan_changed": live["external_ip"] = "198.51.100.21"
+    elif fault == "current_unassigned": monkeypatch.setattr(module, "assigned_local_ipv4s", lambda: {"192.0.2.12"})
+    elif fault == "old_still_assigned": monkeypatch.setattr(module, "assigned_local_ipv4s", lambda: {old_ip, new_ip})
+    elif fault == "missing_local": live["local_ip"] = ""
+    elif fault == "missing_old": state["router"]["local_ip"] = ""
+    elif fault == "dead_proxy": monkeypatch.setattr(module, "pid_is_running", lambda _pid: False)
+    elif fault == "edge_port_changed": state["caddy"]["https_port"] = 45444
+    elif fault == "invalid_protocol": state["router"]["mappings"][0]["protocol"] = "SCTP"
+    elif fault == "previous_target_active": monkeypatch.setattr(module, "mapping_target_reachable", lambda *_args, **_kwargs: True)
+    with pytest.raises(RuntimeError): module.refresh_public_https_edge_mappings(state, lease_seconds=14400)
+    assert commands == []
+
+
+def test_refresh_owned_tuple_description_replacement_does_not_renew_foreign_mapping(monkeypatch):
+    module = load_module()
+    state, live, commands, _ports, _old_ip, _new_ip = edge_refresh_fixture(module, monkeypatch, moved=False)
+    live["mapping_descriptions"][("TCP", 80)] = "Other application"
+    with pytest.raises(RuntimeError): module.refresh_public_https_edge_mappings(state, lease_seconds=14400)
+    assert commands == []
+
+
+def test_refresh_router_add_failure_does_not_report_saved_success_or_stop_proxy(monkeypatch):
+    import copy
+    module = load_module()
+    state, _live, commands, _ports, _old_ip, _new_ip = edge_refresh_fixture(module, monkeypatch)
+    original = copy.deepcopy(state)
+    actual_run = module.run_checked
+    def fail_add(command, **kwargs):
+        if "-a" in command:
+            commands.append(command)
+            return types.SimpleNamespace(returncode=2, stdout="AddPortMapping() returned 501", stderr="")
+        return actual_run(command, **kwargs)
+    monkeypatch.setattr(module, "run_checked", fail_add)
+    with pytest.raises(RuntimeError, match="Failed to create router port forward"):
+        module.refresh_public_https_edge_mappings(state, lease_seconds=14400)
+    assert len(commands) == 2 and "-d" in commands[0] and "-a" in commands[1]
+    assert state == original
+
+
+def test_public_edge_health_rejects_saved_unassigned_lan_without_rewriting_media_node(monkeypatch):
+    module = load_module()
+    state, _live, _commands, _ports, _old_ip, _new_ip = edge_refresh_fixture(module, monkeypatch)
+    state["client"] = {"target": "http://127.0.0.1:3190", "public_url": "https://app.example.test"}
+    monkeypatch.setattr(module, "probe_local_endpoint", lambda *_args, **_kwargs: True)
+    assert module.state_is_healthy(state) is False
+    assert state["livekit_node_ip"] == "198.51.100.20"
+
+
+def test_parse_upnpc_retains_native_mapping_descriptions_for_exact_ownership():
+    module = load_module()
+    parsed = module.parse_upnpc_listing("Local LAN ip address : 192.0.2.10\nExternalIPAddress = 198.51.100.20\n 0 TCP 443->192.0.2.10:45443 'Viventium public HTTPS' '' 3739\n")
+    assert parsed["mappings"][("TCP", 443)] == ("192.0.2.10", 45443)
+    assert parsed["mapping_descriptions"][("TCP", 443)] == "Viventium public HTTPS"
+
+
+def test_cmd_refresh_lock_covers_read_router_changes_and_state_save(monkeypatch, tmp_path):
+    module = load_module()
+    held = [False]
+    class Lock:
+        def fileno(self): return 82
+        def close(self): assert held[0] is False
+    def lock(path):
+        assert path == tmp_path / "edge.lock"
+        held[0] = True
+        return Lock()
+    def load(_path):
+        assert held[0] is True
+        return {"provider": "public_https_edge"}
+    def refresh(state, *, lease_seconds):
+        assert held[0] is True and lease_seconds == 14400
+        return state
+    def save(_path, _state): assert held[0] is True
+    def unlock(_fd, mode):
+        assert mode == module.fcntl.LOCK_UN
+        held[0] = False
+    monkeypatch.setattr(module, "with_lock", lock)
+    monkeypatch.setattr(module, "load_state", load)
+    monkeypatch.setattr(module, "refresh_public_https_edge_mappings", refresh)
+    monkeypatch.setattr(module, "save_state", save)
+    monkeypatch.setattr(module.fcntl, "flock", unlock)
+    assert module.cmd_refresh_mappings(types.SimpleNamespace(state_file=str(tmp_path / "edge.json"), upnp_lease_seconds=14400)) == 0
+    assert held[0] is False
+
+
+
+def test_refresh_failed_dhcp_add_retry_restores_exact_missing_owned_key(monkeypatch):
+    module = load_module()
+    state, live, commands, ports, _old_ip, new_ip = edge_refresh_fixture(module, monkeypatch)
+    actual_run = module.run_checked
+    def fail_add(command, **kwargs):
+        if "-a" in command:
+            commands.append(command)
+            return types.SimpleNamespace(returncode=2, stdout="AddPortMapping() returned 501", stderr="")
+        return actual_run(command, **kwargs)
+    monkeypatch.setattr(module, "run_checked", fail_add)
+    with pytest.raises(RuntimeError): module.refresh_public_https_edge_mappings(state, lease_seconds=14400)
+    assert ("TCP", 80) not in live["mappings"]
+    commands.clear()
+    monkeypatch.setattr(module, "run_checked", actual_run)
+    result = module.refresh_public_https_edge_mappings(state, lease_seconds=14400)
+    assert len(commands) == 9 and "-a" in commands[0]
+    assert live["mappings"] == {(proto, external): (new_ip, internal) for proto, external, internal in ports}
+    assert all(mapping["internal_host"] == new_ip for mapping in result["router"]["mappings"])

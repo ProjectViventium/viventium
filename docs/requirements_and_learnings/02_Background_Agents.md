@@ -285,6 +285,17 @@ Canonical model-parameter rule:
 - Silent success is still terminal. Runtime must emit and persist a structured completion payload
   with `status=complete`, `silent=true`, and `no_response=true` so any previous brewing/progress row
   is replaced instead of leaving the UI stuck on "checking" or "analyzing".
+- Intentional owner cancellation also emits and persists a terminal cortex part through the same
+  completion channel. A confirmed cancellation uses `status=cancelled` without an insight; a native
+  request whose release remains unconfirmed uses terminal error with `native_release_unconfirmed`.
+  A cached transport acknowledgement alone does not confirm native capacity release. The attempt
+  reuses its existing exact owner/key release request once to obtain that proof with the configured
+  cancellation bound; confirmed release avoids a false error, and failed release remains an error.
+  Neither outcome claims an insight or successful capacity release. Already-cancelled activations,
+  including Stop during agent or fallback configuration loading, must not load or execute tools.
+  Main's `generation_completed` cleanup keeps detached cortex work and its accepted results active
+  until their own terminal outcome. Results accepted before a later Stop remain complete; their
+  diagnostic trace must agree with the saved terminal status.
 - Activation detection always judges the latest human/user message as the decision subject.
   Configured history depth provides context only. Older user requests in that history must not
   reactivate a cortex when the latest user turn is a simple reply, acknowledgement, test
@@ -328,6 +339,30 @@ Requirements:
      assistant content unless Phase A intentionally produced a structured no-visible-answer marker
      such as `{NTA}`.
 - The main assistant turn must never wait on background agents before answering the user.
+- Activation detection runs alongside the single Main invocation. The finite set activated for
+  that turn, including final detection/recovery, completes before the courier can offer one
+  combined useful context to the exact still-running native Main. Silent `{NTA}` results and canceled results do
+  not enter that context. This does not wait for unrelated ongoing worker jobs.
+- Live context uses the native harness interjection capability, without interrupting or replaying
+  Main. The Grok driver can provide it for a reviewed artifact, but product activation remains
+  gated on exact-Main authority, continuity, and response-contract acceptance. The production
+  Codex exec adapter and Anthropic adapter retain after-Main delivery; native Codex itself supports
+  Steer through App Server, whose production authority gate remains separate. A native
+  `queued`/`pending` receipt is not proof of consumption or user
+  presentation. The existing durable follow-up and model relevance/NTA decision remain responsible
+  for the accepted batch on Voice, Text, and Telegram, including unsupported or too-late injection.
+  The live courier does not delay either Main or after-Main synthesis.
+- With live context disabled, the courier returns before source preparation, route lookup or
+  network work. When enabled, preparation retains the exact background evidence before transport;
+  current-turn and source-order checks repeat after that preparation. A newer user input or Stop
+  prevents transport to the older turn.
+- Native streamed generations retain their ordered part controls. Complete repeated typed parts
+  are deduplicated before a later part can reach speech. An acknowledgement alone must never
+  suppress the durable follow-up. Model consumption, concise useful integration and real surface
+  delivery still require acceptance evidence; source and framing checks do not prove them.
+  The automatic courier requires the exact admitted delivery contract that owns this framing.
+  Free-form or graph-only output keeps after-Main delivery; ordinary worker/operator Steer and
+  explicit model choices remain available.
 - Background agent results must travel over a durable, structured, DB-backed communication line
   tied to the originating conversation and assistant message. In-memory callbacks may improve
   latency, but they must not be the only delivery path.
@@ -796,11 +831,28 @@ text mode with audio delivery after the text answer, not voice-call mode.
 `VIVENTIUM_CORTEX_DETECT_TIMEOUT_MS` (default 2000 ms) is the **shared fallback** budget; a mode uses
 it only when its own `*_PHASE_A_AWAIT_MS` is unset. `VIVENTIUM_CORTEX_SPECULATIVE_PARALLEL_DETECT` is
 retained only as a **back-compat alias** for `VIVENTIUM_TEXT_BACKGROUND_AGENT_DETECTION_ASYNC`.
-`VIVENTIUM_CORTEX_LATE_DETECT_TIMEOUT_MS` defaults to **6000 ms** and owns the existing non-blocking
-recovery pass whenever the fast window has at least one detector timeout, including partial results.
-It does not extend the conscious/main-answer wait. The recovery pass reuses the same activation
-prompts, provider order, direct-action ownership gates, cards, Phase B execution, and persistence
-pipeline, deduplicates fast-pass activations, and executes only newly recovered cortices.
+`VIVENTIUM_CORTEX_LATE_DETECT_TIMEOUT_MS` defaults to **6000 ms**. Operators can set its existing
+background window through `runtime.background_activation.late_detect_timeout_ms` from **2001** to
+**30000 ms**. An explicitly configured total must cover the primary attempt limit. Omitting the new
+field preserves existing attempt choices and the runtime's default-total clamp. Select both from measured
+configured-model tail latency; increasing only the total does not extend a shorter primary attempt.
+One-pass async detection uses the
+larger of this existing background budget and its mode budget for one classifier pass. Main runs
+immediately; the same detection promise feeds activation cards and Phase B. Exhausting that full
+budget cannot cancel and re-infer the same classification in a second late pass. Early Deep Memory
+awareness and execution start from the early result while the same final detection continues.
+Final results execute only newly activated Cortex IDs. Disabled activation scopes cannot impose
+holding or ownership guards; enabled tool scopes retain those guards. Blocking and legacy
+speculative routes retain their mode budget and deduplicated late recovery behavior. The same
+attempt controller stops classification on typed `user_cancelled` or `maintenance_yield`, without
+starting a fallback. Main's `generation_completed` cleanup does not cancel detached classification.
+
+An explicit activation provider/model selector may promote a declared fallback. Runtime rendering
+carries the matching fallback's explicit `reasoning_effort` with the exact provider/model identity.
+An unchanged primary assignment retains its explicit effort and supported alternatives. The
+supported `llm.activation.provider: xai` override selects Grok 4.7; it does not change Main, Voice,
+specialist, or Anthropic fallback choices. It uses the existing authenticated direct xAI endpoint.
+GlassHive remains unavailable for direct classification under its declared capability contract.
 
 Provider attempts inside those total windows are independently bounded. The compiler defaults
 `VIVENTIUM_ACTIVATION_PRIMARY_ATTEMPT_TIMEOUT_MS` to **1600 ms** and
@@ -833,9 +885,9 @@ user-scoped authentication failure and can use the next configured fallback.
 2. Main is invoked **exactly once**. There is no cancel/replay around model output or tools.
 3. Activation awareness is injected only if it is already available before Main's irreversible
    invocation boundary. Main never waits merely to decide whether the detector is "enough."
-4. Anything arriving later—including a timeout recovered by the 6000 ms retry—uses durable cards and
-   **Phase B**. Initial Phase B execution and late detection recovery run concurrently, deduplicate by
-   cortex ID, and produce one final value-gated follow-up decision.
+4. Later results from the same classification pass use durable cards and **Phase B**. Initial Phase B
+   execution and the same final detection continue concurrently, deduplicate by cortex ID, and
+   produce one final value-gated follow-up decision.
 5. Phase B is unchanged in every case above.
 
 Why async ON is the default: it removes detector latency from the conscious answer without risking

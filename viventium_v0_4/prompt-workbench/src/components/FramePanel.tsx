@@ -17,6 +17,14 @@ const healthCopy: Record<FrameHealth['reason'], string> = {
   trusted_log_unavailable: 'The local Core trace source is unavailable. Confirm Core is running, then retry.',
 };
 
+const sourceLabels: Array<[keyof FrameLog['source_hashes'], string]> = [
+  ['agent_source', 'Agent source'],
+  ['librechat_source', 'LibreChat source'],
+  ['compiled_runtime_config', 'Compiled config'],
+  ['live_installed_runtime_config', 'Live config'],
+  ['compiler_version', 'Compiler version'],
+];
+
 export function FramePanel({ frames, health, loading, loadFailed, onRefresh }: Props) {
   const tokenTotal = frames.reduce((sum, frame) => {
     return sum + Object.values(frame.layer_tokens ?? {}).reduce((inner, value) => inner + Number(value || 0), 0);
@@ -57,7 +65,30 @@ export function FramePanel({ frames, health, loading, loadFailed, onRefresh }: P
             <Clock3 size={14} />
             <div>
               <strong>{frame.surface} / {frame.family}</strong>
-              <small>{new Date(frame.time).toLocaleString()} · Provider ID {frame.provider} · Model ID {frame.model}</small>
+              <small>{new Date(frame.time).toLocaleString()} · Provider ID {frame.provider} · Model ID {frame.model} · Effort {frame.effective_effort ?? 'not recorded'}</small>
+              <details className="frame-lineage">
+                <summary>Route and lineage</summary>
+                <dl>
+                  <dt>Requested route</dt>
+                  <dd>{frame.version === 2
+                    ? <>Provider ID <code>{frame.requested_provider}</code> · Model ID <code>{frame.requested_model}</code> · Effort <code>{frame.requested_effort}</code></>
+                    : 'Not recorded in legacy trace'}</dd>
+                  <dt>Effective route</dt>
+                  <dd>Provider ID <code>{frame.provider}</code> · Model ID <code>{frame.model}</code> · Effort <code>{frame.effective_effort ?? 'not recorded'}</code></dd>
+                  <dt>Fallback</dt>
+                  <dd>{frame.version === 2
+                    ? <>{frame.fallback_used ? 'Used' : 'Not used'} · <code>{frame.fallback_reason}</code></>
+                    : 'Not recorded in legacy trace'}</dd>
+                  <dt>Request hash</dt>
+                  <dd><code>{frame.request_identity_hash ?? 'not recorded'}</code></dd>
+                  {sourceLabels.map(([key, label]) => (
+                    <div className="frame-source-hash" key={key}>
+                      <dt>{label}</dt>
+                      <dd><code>{frame.source_hashes?.[key] ?? 'not recorded'}</code></dd>
+                    </div>
+                  ))}
+                </dl>
+              </details>
             </div>
           </div>
         ))}

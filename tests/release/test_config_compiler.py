@@ -143,6 +143,30 @@ def minimal_compile_config() -> dict:
     }
 
 
+@pytest.mark.parametrize("endpoint", ["http://127.0.0.1:7888", "https://voice.example.test"])
+def test_declared_livekit_api_endpoint_survives_runtime_compilation(endpoint: str) -> None:
+    config = minimal_compile_config()
+    config["runtime"]["network"] = {"livekit_api_host": endpoint}
+    env = config_compiler.render_runtime_env(config, config_compiler.build_agent_assignments(config))
+    assert env["LIVEKIT_API_HOST"] == endpoint
+    assert env["LIVEKIT_URL"] == endpoint.replace("https://", "wss://", 1).replace("http://", "ws://", 1)
+    assert env["NEXT_PUBLIC_LIVEKIT_URL"] == env["LIVEKIT_URL"]
+
+
+def test_unconfigured_livekit_api_endpoint_keeps_managed_local_default() -> None:
+    config = minimal_compile_config()
+    env = config_compiler.render_runtime_env(config, config_compiler.build_agent_assignments(config))
+    assert env["LIVEKIT_API_HOST"] == "http://localhost:7888"
+
+
+@pytest.mark.parametrize("endpoint", ["wss://voice.example.test", "http://user:secret@voice.example.test", "http://voice.example.test?token=synthetic", "http://voice.example.test#fragment", "http://voice.example.test:invalid", "http://", "http://voice.example.test", "https://voice.example.test/prefix"])
+def test_declared_livekit_api_endpoint_rejects_invalid_or_secret_bearing_urls(endpoint: str) -> None:
+    config = minimal_compile_config()
+    config["runtime"]["network"] = {"livekit_api_host": endpoint}
+    with pytest.raises(SystemExit, match="runtime.network.livekit_api_host"):
+        config_compiler.render_runtime_env(config, config_compiler.build_agent_assignments(config))
+
+
 def test_google_workspace_compiles_independent_multi_account_oauth_slots() -> None:
     config = minimal_compile_config()
     config["integrations"]["google_workspace"] = {
@@ -373,6 +397,66 @@ def test_background_activation_attempt_budgets_are_reliable_and_configurable(
     librechat_env = (tmp_path / "service-env" / "librechat.env").read_text(encoding="utf-8")
     assert "VIVENTIUM_ACTIVATION_PRIMARY_ATTEMPT_TIMEOUT_MS=1450" in librechat_env
     assert "VIVENTIUM_ACTIVATION_FALLBACK_ATTEMPT_TIMEOUT_MS=2250" in librechat_env
+
+
+def test_background_activation_total_budget_schema_and_rendering(tmp_path: Path) -> None:
+    schema = yaml.safe_load((REPO_ROOT / "config.schema.yaml").read_text(encoding="utf-8"))
+    field = schema["properties"]["runtime"]["properties"]["background_activation"]["properties"][
+        "late_detect_timeout_ms"
+    ]
+    assert field == {"type": "integer", "minimum": 2001, "maximum": 30000, "default": 6000}
+    config = minimal_compile_config()
+    env = config_compiler.render_runtime_env(config, config_compiler.build_agent_assignments(config))
+    assert env["VIVENTIUM_CORTEX_LATE_DETECT_TIMEOUT_MS"] == "6000"
+    config["runtime"]["background_activation"] = {
+        "late_detect_timeout_ms": 8000,
+        "primary_attempt_timeout_ms": 8000,
+        "fallback_attempt_timeout_ms": 2500,
+    }
+    env = config_compiler.render_runtime_env(config, config_compiler.build_agent_assignments(config))
+    assert env["VIVENTIUM_CORTEX_LATE_DETECT_TIMEOUT_MS"] == "8000"
+    assert env["VIVENTIUM_ACTIVATION_PRIMARY_ATTEMPT_TIMEOUT_MS"] == "8000"
+    assert env["VIVENTIUM_ACTIVATION_FALLBACK_ATTEMPT_TIMEOUT_MS"] == "2500"
+    assert env["VIVENTIUM_VOICE_PHASE_A_AWAIT_MS"] == "690"
+    assert env["VIVENTIUM_TEXT_PHASE_A_AWAIT_MS"] == "1300"
+    config_compiler.render_service_envs(tmp_path, env)
+    assert "VIVENTIUM_CORTEX_LATE_DETECT_TIMEOUT_MS=8000" in (
+        tmp_path / "service-env" / "librechat.env"
+    ).read_text()
+    for bound in (2001, 30000):
+        config["runtime"]["background_activation"].update(
+            late_detect_timeout_ms=bound, primary_attempt_timeout_ms=bound
+        )
+        rendered = config_compiler.render_runtime_env(
+            config, config_compiler.build_agent_assignments(config)
+        )
+        assert rendered["VIVENTIUM_CORTEX_LATE_DETECT_TIMEOUT_MS"] == str(bound)
+
+
+@pytest.mark.parametrize("value", [2000, 30001, "invalid", True])
+def test_background_activation_total_budget_rejects_invalid(value: object) -> None:
+    config = minimal_compile_config()
+    config["runtime"]["background_activation"] = {"late_detect_timeout_ms": value}
+    with pytest.raises(SystemExit, match="runtime.background_activation.late_detect_timeout_ms"):
+        config_compiler.render_runtime_env(config, config_compiler.build_agent_assignments(config))
+
+
+def test_background_activation_legacy_primary_budget_remains_supported() -> None:
+    config = minimal_compile_config()
+    config["runtime"]["background_activation"] = {"primary_attempt_timeout_ms": 8000}
+    env = config_compiler.render_runtime_env(config, config_compiler.build_agent_assignments(config))
+    assert env["VIVENTIUM_ACTIVATION_PRIMARY_ATTEMPT_TIMEOUT_MS"] == "8000"
+    assert env["VIVENTIUM_CORTEX_LATE_DETECT_TIMEOUT_MS"] == "6000"
+
+
+def test_background_activation_primary_budget_cannot_exceed_total() -> None:
+    config = minimal_compile_config()
+    config["runtime"]["background_activation"] = {
+        "late_detect_timeout_ms": 8000,
+        "primary_attempt_timeout_ms": 8001,
+    }
+    with pytest.raises(SystemExit, match="primary_attempt_timeout_ms must not exceed.*late_detect_timeout_ms"):
+        config_compiler.render_runtime_env(config, config_compiler.build_agent_assignments(config))
 
 
 def test_background_activation_configuration_must_be_an_object() -> None:
@@ -2185,6 +2269,7 @@ def test_glasshive_compiles_as_exact_core_agent_provider(
     source_endpoint = custom_endpoint(source["endpoints"]["custom"], "glasshive-harness")
     assert endpoint["models"] == source_endpoint["models"]
     assert "codex-cli:gpt-5.6-luna" in endpoint["models"]["default"]
+    assert "codex-cli:gpt-6-sol" in endpoint["models"]["default"]
     assert endpoint["titleEndpoint"] == "openAI"
     assert endpoint["titleModel"] == "gpt-6.1-sol"
     assert set(config_compiler.GLASSHIVE_PROVIDER_DROP_PARAMS) <= set(endpoint["dropParams"])
@@ -3487,7 +3572,10 @@ def test_render_runtime_env_emits_glasshive_launch_env_only_when_enabled(tmp_pat
     assert enabled_env["WPR_LIBRECHAT_UPLOADS_ROOT"] == enabled_env[
         "VIVENTIUM_LIBRECHAT_UPLOADS_ROOT"
     ]
-    assert enabled_env["WPR_BOOTSTRAP_SOURCE_ROOTS"] == enabled_env["WPR_LIBRECHAT_UPLOADS_ROOT"]
+    assert enabled_env["WPR_BOOTSTRAP_SOURCE_ROOTS"].split(os.pathsep) == [
+        enabled_env["WPR_LIBRECHAT_UPLOADS_ROOT"],
+        str(Path(enabled_env["WPR_DB_PATH"]).parent / "managed-files"),
+    ]
     assert enabled_env["VIVENTIUM_GLASSHIVE_CALLBACK_URL"].endswith("/api/viventium/glasshive/callback")
     assert enabled_env["VIVENTIUM_GLASSHIVE_CALLBACK_SECRET"] == config_compiler.scoped_secret(
         "call-session-test", "glasshive-callback"
@@ -3550,6 +3638,7 @@ def test_render_runtime_env_uses_codex_app_bundle_when_shell_path_is_missing(
     app_cli.chmod(0o755)
     monkeypatch.setattr(config_compiler, "CODEX_APP_CLI", app_cli)
     monkeypatch.setattr(config_compiler.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path / "home"))
 
     config = minimal_compile_config()
     config["integrations"]["glasshive"] = {"enabled": True}
@@ -10858,6 +10947,7 @@ def test_render_runtime_env_discovers_codex_app_bundle_from_user_app_search_path
     app_cli.chmod(0o755)
     monkeypatch.setenv("VIVENTIUM_CODEX_APP_DIRS", str(app_root))
     monkeypatch.setattr(config_compiler.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path / "home"))
 
     config = minimal_compile_config()
     config["integrations"]["glasshive"] = {"enabled": True}
@@ -12127,3 +12217,19 @@ def test_compiled_activation_fallbacks_keep_current_models_and_native_effort() -
         assert entry["activation"]["provider"] == "groq"
         assert entry["activation"]["model"] == "qwen/qwen3.6-27b"
         assert entry["activation"]["fallbacks"] == expected
+
+
+def test_native_grok_interjection_hash_uses_canonical_extra_env_without_route_changes() -> None:
+    config = minimal_compile_config()
+    assignments = config_compiler.build_agent_assignments(config)
+    before = config_compiler.render_runtime_env(config, assignments)
+    reviewed_hash = "a" * 64
+    config["runtime"]["extra_env"] = {"WPR_GROK_REVIEWED_BINARY_SHA256": reviewed_hash}
+
+    rendered = config_compiler.render_runtime_env(config, assignments)
+    assert rendered == {**before, "WPR_GROK_REVIEWED_BINARY_SHA256": reviewed_hash}
+    native = config_compiler.render_native_runtime_env(config, rendered)
+    assert native["WPR_GROK_REVIEWED_BINARY_SHA256"] == reviewed_hash
+    assert native["WPR_MODEL_GROK_BUILD"] == before["WPR_MODEL_GROK_BUILD"]
+    assert native["WPR_GROK_REASONING_EFFORT"] == before["WPR_GROK_REASONING_EFFORT"]
+    assert "WPR_GROK_REVIEWED_BINARY_SHA256" not in config_compiler.render_native_runtime_env(config, before)

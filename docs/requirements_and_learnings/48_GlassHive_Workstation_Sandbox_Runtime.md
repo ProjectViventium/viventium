@@ -1250,6 +1250,25 @@ without pretending the worker path is the only supported product route.
   form is available. The bootstrap writer should materialize broker `Authorization` headers as
   `Bearer ${GLASSHIVE_CAPABILITY_BROKER_TOKEN}` and keep the grant itself in the worker runtime env.
 
+### Current-turn background interjection
+
+The optional native interjection route binds one retained delivery ID and body digest to the
+current owner, invocation, native run, attempt and active session. It must not cancel, replay or
+start another authoring turn. Current-request, Stop and native transport-write fences remain in
+force. A reviewed installed-artifact digest enables the optional Grok capability; an absent or
+different artifact leaves ordinary generation available. It is not a consumption receipt.
+
+The producer returns queued, pending, unsupported or not-running transport state without waiting
+for model completion. The host retains exact background evidence and durable after-Main delivery.
+Automatic cohort dispatch requires the admitted messaging delivery contract used for native
+generation framing. An absent or unframed contract returns unsupported before native dispatch;
+ordinary worker/operator controls and model selection are unchanged.
+The installed Grok native API introduces interjected text through its native user-query wrapper.
+Source-labelled evidence, hostile-context evaluation and later-turn provenance therefore remain
+required; a successful native RPC does not establish developer authority or feature parity.
+The production Codex exec and Anthropic adapters do not expose this live-control hook. Their
+after-Main delivery remains supported; the separate App Server authority gate above is unchanged.
+
 ### Critical Boundary
 
 GlassHive must **NOT** directly depend on or read LibreChat/parent internals (Mongo schemas, token
@@ -1959,6 +1978,11 @@ runtime intent classifier.
   preserving workspace state, the worker record must carry a durable release marker so periodic
   reaper passes do not repeatedly stop the same already-released compute or emit duplicate lifecycle
   events. Starting/resuming compute clears that marker.
+- Ephemeral workspace GC must refuse before compute or file cleanup while retained run, mission,
+  replay, lifecycle, security, or peer history still references the workspace or its runs. Keep
+  those records and files; do not cascade or detach them to complete cleanup. An idle `gc_claimed`
+  workspace must use container teardown without probing or starting historical screen sessions.
+  Workspace-owned disposable metadata still follows the existing GC finalizer's cleanup rules.
 - Public QA artifacts must sanitize local paths, personal emails, account ids, subscription ids,
   raw logs, DB exports, screenshots with private content, and secret-bearing commands.
 - Enterprise service managers must disable raw uvicorn access logs or prove redaction before logs

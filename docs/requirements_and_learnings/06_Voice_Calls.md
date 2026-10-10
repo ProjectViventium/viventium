@@ -1,5 +1,9 @@
 # Voice Calls (LiveKit + Voice Gateway) - Requirements, Specs, and Learnings
 
+Active owner: [`capabilities/voice.md`](capabilities/voice.md). This preserved page contains
+implementation detail and history; its dated status is not current acceptance.
+
+
 ## Overview
 Voice calls reuse the standard Agents pipeline while streaming audio through the LiveKit voice
 gateway. The core requirement is parity with text chat: same agent, same permissions, same
@@ -9,6 +13,10 @@ background-cortex behavior.
 - Call sessions must survive process restarts and multi-instance deployments.
 - Voice gateway authentication must rely on a shared secret plus call-session identity.
 - Conversation continuity must be preserved.
+- Protected history must retain the complete ordered provider and tool carrier. Saved Voice
+  display text may use the existing persistence projection of the same owned content; accepting
+  that exact projection must not weaken owner, ancestry, current-input, or tool checks.
+- **Native capacity refusal and recovery:** After the existing bounded retry budget, Native may report an exact versioned `accepted: false` proof only when a fresh request was refused before the durable provider-request journal. The existing owner, invocation, body, stream, message and current-revision guards may then release recovery and persist a closed `host_capacity` failure. This is not an accepted Main turn or a completed model response. Queued, accepted, replayed, journal-unavailable, unknown, mismatched and transport-ambiguous outcomes retain the existing recovery fences. A `503`, a result `404`, or a later missing row alone never proves refusal. Healthy dispatch and first-word paths add no request. The fresh proof relies on the managed single Native process and its per-session start lock; a multi-process Native requires a durable invocation reservation before using this proof.
 - Voice conversation reuse is owned by the persisted call-session agent identity. Some
   provider-backed ephemeral agent conversations are stored with their provider endpoint rather than
   `agents`; the voice resolver may reuse those only when the conversation `agent_id` exactly
@@ -24,6 +32,11 @@ background-cortex behavior.
   - do not wait so long after a true stop that the system feels sluggish or unresponsive
 - Background insights must be surfaced after the main response without leaking raw internal insight
   text into live voice speech.
+- A later persisted Main-authored Cortex reply must wake the existing call-wide task stream,
+  including after its parent completes. Speech must use the authenticated Cortex fetch and
+  playback receipt paths, preserve the parent result, and honor Stop, End, and Listen-Only.
+  Recovery must reuse durable turn and presentation state after the task stream synchronizes;
+  reconnects must not replay accepted speech or let a stopped or superseded turn speak.
 - The shipped background follow-up window should stay in parity across LibreChat, live voice, and
   Telegram unless a future doc explicitly splits those defaults.
 - Voice-mode output must be plain conversational text and strip citation markers before TTS.
@@ -47,21 +60,23 @@ background-cortex behavior.
   generation-job replay, content aggregation, TTS, transcript display, Mongo persistence, and
   Phase-B recent-response context. Final-message cleanup is only a safety net; it is not an
   acceptable primary fix. `{NTA}` must remain exact and silent; malformed recombinations such as
-  doubled control tags or adjacent duplicate words are forbidden in audio, playground transcript,
-  linked LibreChat chat, stream replay, and saved assistant rows.
+  doubled control tags are forbidden in audio, playground transcript, linked LibreChat chat, stream
+  replay, and saved assistant rows. Snapshot replay is identified by its typed stream-part identity,
+  not by repeated word spelling.
 - Streaming cleanup must preserve the SDK's run-step indexes, including empty slots for suppressed
   reasoning. Compact malformed/empty parts only after streaming ends. Otherwise later chunks can
   split from the first word and final-output selection can save an incomplete answer.
-- Duplicate-artifact cleanup must preserve meaningful quoted, blockquoted, and code-formatted text.
-  Repetition inside `"..."`, curly quotes, markdown blockquotes, inline code, or fenced code can be
-  intentional user/source content and must not be collapsed merely because it repeats words. Only
-  unprotected cumulative-stream artifacts should be rewritten.
+- Authored words must remain intact in display, speech, persisted text, content parts, and reload.
+  Repetition can be intentional prose, counting, emphasis, quotes, code, or source content. Historical
+  readers and artifact sanitizers must not infer transport duplication from spelling, punctuation,
+  or a number of repeated words. Typed message-delta, run-step, and stream-part identity own snapshot
+  normalization; malformed control markers and private metadata keep their existing cleanup.
 - Voice artifact handling has a single product-owned condition contract:
   `viventium_v0_4/LibreChat/api/server/services/viventium/voiceArtifactText.js`.
   Browser, Chrome, and text-level regressions import it through
   `qa/modern-playground-voice/scripts/voice_artifact_contract.cjs` rather than copying forbidden marker
   punctuation, citation, URL/email, markdown emphasis/decorative-marker, voice-control,
-  missing-space, or duplicate-word checks. When a new escaped artifact class is found, update this
+  or missing-space checks. When a new escaped artifact class is found, update this
   product contract and its synthetic wildcard corpus first, then update runtime/docs/tests that own
   the product behavior. The LiveKit and Telegram Python speech sanitizers are language-specific
   adapters, but their regression tests must load this same contract and prove the sanitizer-owned
@@ -71,11 +86,11 @@ background-cortex behavior.
 - When asynchronous background detection and Main start together, Main authors exactly once. Any
   provider failure must propagate into the normal fallback/error path; detector completion or
   activation is never a reason to cancel and replay the provider run.
-- A live voice turn must not start unsolicited foreground research or tool work. When evidence is
-  not already verified, Main gives the best bounded immediate answer, states what remains
-  unverified, and lets nonblocking background work surface later value through Phase B. An explicit
-  user request to look something up or use a tool now remains valid current-turn authority; that
-  work stays interruptible/cancellable and cannot be claimed before authoritative evidence returns.
+- Voice keeps the same authorized tools, research and delegation capabilities as the other surfaces.
+  Main decides what work serves the user's goal using the existing prompts and capabilities. Call
+  mode must not impose a blanket foreground-tool exclusion. Foreground tools and consultants stay
+  interruptible/cancellable; no result is claimed before its authoritative evidence returns.
+  Nonblocking background work can surface later value through the existing Phase-B path.
 - Provider-bound Anthropic histories must drop malformed thinking blocks before execution.
 - Voice input mode must be propagated to main agents and background cortices.
 - A connected call must not die just because the user is quiet for a long time.
@@ -103,6 +118,10 @@ background-cortex behavior.
   healthy retrieval and produce an unsupported no-memory answer.
 - If the Voice Call LLM is unset, runtime must use the agent's primary provider/model exactly as
   selected in Agent Builder.
+- Durable Worker completion synthesis uses the saved Voice Call LLM and parameters only while one
+  same-owner, same-conversation canonical Call is active and leased. Wing, Listen Only, ended,
+  expired, detached, and ambiguous calls retain the primary route. Delivery checks the current Call
+  again after synthesis; a later End retains the authored linked text without speech.
 - When a user changes the provider of an optional Voice Call or fallback route in Agent Builder,
   the prior provider's parameter bag must be cleared before the new route is rendered or saved.
   Initial form hydration, including a mounted panel's transient empty-to-persisted-provider reset,
@@ -151,6 +170,10 @@ background-cortex behavior.
   agent route: user connected account first, then server env key where the endpoint supports it.
 - If no fallback route is configured or the fallback route is invalid, voice must surface an honest
   provider-specific failure. A provider rate limit must not be voiced as a generic service outage.
+- An HTTP 403 access denial, including a workspace outside its allowed roots, must retain
+  `provider_access_denied` through Main and Voice task errors. It must not claim credentials were
+  rejected unless the provider supplies explicit authentication evidence. Public errors must not
+  expose raw workspace paths or provider details.
 - If primary output has already produced substantive assistant text, runtime must not switch models
   mid-answer; that would create an incoherent mixed-provider response.
 
@@ -174,14 +197,28 @@ background-cortex behavior.
 
 - LiveKit room text is authenticated participant input, not microphone or speaker evidence. The
   gateway binds its actual `TextInputEvent.participant.identity` and stable stream identity to the
-  current call owner, original source event and exact text digest. It uses the supported text-input
-  callback and `ChatMessage.extra`; it does not fabricate `SpeakerSegmentV1` records or change the
+  current call owner, original source event and exact text digest. It uses the public room text-stream
+  handler, existing typed-input callback and `ChatMessage.extra`; it does not fabricate
+  `SpeakerSegmentV1` records or change the
   shared-microphone attribution state.
+- If a text stream arrives before the returning owner participant is natively present, the gateway
+  retains its original reader within the existing owner-wait bound. It rechecks current participant
+  presence and active session state before reading and dispatch. A recoverable task-stream gap does
+  not drop owner text; existing downstream authority checks remain in force. End, room/session close and job cleanup
+  cancel pending readers. Typed Wing and Listen-Only input still uses the existing restricted mode
+  suppression and persistence path. The original stream identity remains the Core ingress
+  idempotency key. Present, ready participants add no presence wait.
 - In Call mode, this owner-bound input retains the selected agent's existing tools and permissions.
   Core accepts the typed provenance only behind the current authenticated gateway job lease. It
   rechecks the exact call, owner, source and text at initial admission, after coalescing and before
   execution. Ended or replaced sessions fail closed. Typed and audio ingress use separate identities,
   and typed text retains its formatting rather than entering audio continuation merging.
+- The server-created participant-text WorkAuthority is retained through both agent admission
+  paths, job metadata and Redis hydration. Durable worker delegation, Steer and connected mutations
+  recheck this same current Call authority before reserve or replay. The durable effect keeps its
+  opaque authority reference without inventing speaker segments or audio permission. Caller-supplied
+  work/effect carriers are discarded. Recording a provider action already accepted before End keeps
+  its exact durable receipt; it does not authorize another action or bypass delivery checks.
 - Typed input still reaches the existing restricted Wing or Listen-Only route. Its provenance does
   not grant Wing engagement or Listen-Only execution authority. Audio still
   requires finalized, verified owner evidence; mixed typed/audio authority is rejected. Normal
@@ -205,6 +242,12 @@ background-cortex behavior.
 - Wing Mode has no first-enable click-through or provider disclosure in the primary call path. A
   persistent, non-blocking listening indicator communicates the active state. Effective STT, TTS,
   assistant, and fallback routes remain available in Advanced settings and diagnostics.
+- Advanced Voice settings use human-facing provider and model labels from the canonical Agent
+  Builder registry loaded at Core startup. Exact configured provider/model IDs and effort remain
+  unchanged. Missing or unregistered display metadata falls back to the exact IDs. The existing
+  settings response carries these optional labels; display enrichment adds no config/cache read,
+  new request, or dispatch dependency. Shared Wing settings reads retain the raw route. A normal
+  Core reload adopts any changed canonical registry.
 - Runtime uses the persisted call-session `mode` as the source of truth. `wing` is one value of the
   canonical `call|wing|listen_only` enum; legacy booleans are compatibility projections only.
 - Wing Mode suppresses background-cortex activation for that turn. Ambient voice presence is not a
@@ -312,6 +355,16 @@ background-cortex behavior.
   **Save these voice choices as my default** action saves the persisted call choices through the
   authenticated owner route and the existing voice-preferences service. New calls use those saved
   Listening and Speaking choices. A per-call browser capability cannot change account defaults.
+- Main receives a bounded current-Call data capsule through its existing invocation-local context.
+  The authenticated Call session owns the requested Listening and Speaking selections. The ready
+  gateway supplies its initialized providers, variants, configured speech fallback, and resolved turn
+  policy after detector fallback. A primary speech route whose initialization failed stays unknown
+  as a ready route while its requested choice and configured fallback remain visible.
+  These facts are pinned across retries and fallback attempts and take no additional per-turn read.
+  Workspace/profile defaults do not describe an overridden Call. Gateway readiness is separate from
+  the provider that actually produced playback; an unknown playback route stays unknown. The existing
+  Main attempt facts still own language-model route and fallback disclosure. Text and Telegram turns
+  receive no current-Call capsule.
 - Launcher-managed local runtimes should prewarm the modern-playground voice startup routes after
   the playground answers HTTP and before starting the voice worker. The prewarm covers
   `call-session-voice-settings`, `call-session-state`, and `connection-details` so the first real
@@ -343,11 +396,27 @@ background-cortex behavior.
 - Call startup must be single-flight. The originating **Call** click owns connection, dispatch
   preparation, room join, and post-connect microphone enablement; the UI must prevent duplicate
   starts and show startup/microphone progress instead of requiring a second click.
+- A browser permission prompt keeps waiting for the browser while the call remains live; it does
+  not trigger a permission timeout or dispatch reclaim. Terminal room loss or a real unmount ends
+  startup and disables capture that completes later. An obsolete attempt cannot mute a newer
+  explicit Retry. React effect cleanup/setup replay retains the mounted attempt's ownership.
+- Passive SDK preparation, disconnect and teardown reuse the prepared canonical credentials.
+  Explicit Start refreshes expired preparation; explicit Retry refreshes the previous attempt once.
+  Durable End remains authoritative. Cold-start dispatch reclaim starts only after microphone
+  startup settles and stops immediately on a terminal signal.
+- Connection preparation diagnostics record only the call digest, reclaim flag, stage times,
+  status and elapsed time. Invalid or ended authority produces no preparation trace; credentials,
+  user text, participant identities and room names are excluded.
 - The microphone may be technically disabled during the pre-connect phase only to avoid LiveKit's
   pre-connect publish timeout. After the room is connected, Viventium must automatically publish the
   user's microphone as part of the same **Call** action unless the browser denies microphone access.
   A connected call must not look muted by default because the user did not press a second control;
   browser permission and missing-device failures must surface as explicit microphone errors.
+  An explicit microphone mute or unmute remains in effect when that same call reconnects or
+  reloads in the same browser tab. A fresh call still enables its microphone by default.
+- Reloading an ended call must show Ended without starting or disconnecting an already
+  disconnected native session. Active connection and reconnect states still disconnect normally.
+  Token preparation remains parallel with settings preparation for fresh calls.
 - Browser-visible voice startup errors must not expose raw fetch exceptions such as
   `Failed to fetch`. Transient runtime fetch failures during startup/restart should retry briefly,
   then surface a Viventium-specific recovery message if the runtime is still unavailable.
@@ -376,6 +445,13 @@ background-cortex behavior.
 - Native provider streaming must be preserved end to end. Fallback wrappers or route-selection
   layers must not downgrade a provider that supports incremental speech continuations back to a
   non-streaming sentence-buffered path.
+- A validated, complete eligible public content part may close only its current TTS input while
+  cognition and the request continue. Completion is bound to the accepted request, native run and
+  public part; it carries no text or outcome claim. Use the native SDK flush sentinel after all
+  buffered words and controls drain, then its fresh serialized TTS stream for later public parts.
+  Thoughts, tools, skipped or incomplete parts, mutable file projections, cancelled and superseded
+  output cannot seal speech. Replay cannot repeat a seal; terminal artifact failures retain their
+  existing spoken failure notice. This boundary does not mark the whole task successful.
 - Rapid same-parent voice ingress requests must coalesce onto one launched stream in ingress order
   when they land inside the configured turn-coalescing window.
 - Normal interactive voice should not pay a hidden coalescing wait by default after final STT text
@@ -399,6 +475,12 @@ background-cortex behavior.
   scaffolding, unknown angle tags, and stray spaces before punctuation. This cleanup must preserve
   leading whitespace needed for provider continuation and must not silently change the selected
   model or provider.
+- The owning streaming TTS buffer handles Markdown and supported voice controls. LiveKit retains
+  its emoji filter without adding a second Markdown filter before that buffer. Safe authored words
+  can reach synthesis before LLM input ends. Pending code, links, images, and emphasis retain their
+  existing syntax guards; incomplete link targets remain non-speech at input end. Reuse a pending
+  code or link span until a closing delimiter can change its classification. This does not change
+  display text, model audio choices, interruption, or fallback authority.
 - Email-address replacement must remain natural on both speech and linked-chat persistence paths:
   an input such as `Email qa@example.com` becomes `Email address available`, never the adjacent
   duplicate `Email email available`.
@@ -476,8 +558,8 @@ background-cortex behavior.
   unless the caller explicitly opts into snapshot normalization. Internal no-response markers such
   as `{NTA}` must remain exact and silent; malformed recombinations of partial snapshots must never
   be spoken, displayed, saved, or replayed. Quote-wrapped, blockquoted, or code-formatted repeated
-  words remain content; they are not duplicate-stream artifacts unless they appear outside those
-  protected spans.
+  words and unquoted repetition remain content; spelling alone is not evidence of a duplicate
+  stream event. The normal message reader preserves canonical authored text without lexical repair.
 - Exact/no-response-only checks remain strict so meaningful content is not suppressed by a malformed
   marker. Last-mile speech/display sanitizers may still strip known malformed internal marker
   artifacts as defensive cleanup, but that is not the primary fix for cumulative snapshots; the
@@ -497,6 +579,18 @@ background-cortex behavior.
   call-session and conversation identifiers kept out of public QA artifacts. Runtime logs must use
   non-deprecated LiveKit surfaces for `llm_node_ttft`, `tts_node_ttfb`, and `e2e_latency`, plus
   provider `tts_metrics` first-audio timing when the TTS implementation emits it.
+- Existing opt-in Core latency logging retains its INFO stages and adds structured numeric DEBUG
+  records for declared stage, source, request identity, and finite elapsed clocks. The client retains
+  its existing hashed request identity. These records contain no prompts or message content and
+  keep missing clocks absent. Record whether DEBUG logging is enabled when verifying the loaded
+  runtime; an accepted public chunk is not proof of the first raw model token.
+- Existing opt-in gateway P0 timing records first decoded PCM and first active produced PCM for
+  the pinned xAI mono PCM16-LE path. The latter carries only hashed bindings, clocks, sample rate,
+  leading-quiet sample count, and the same `.008` normalized peak threshold as the SDK QA capture.
+  Compare source quiet duration with first active received PCM; do not label their combined gap as
+  pure network delay. The observer preserves audio, stops scanning after activity, and is absent
+  when P0 timing is disabled. Only the pinned decoder's exact `audio/pcm` MIME type is
+  supported; explicit format parameters or other formats leave the activity clock absent.
 - STT end times retain their declared clock through the speaker-context and LLM boundaries.
   Only times explicitly mapped to UTC enter the hop trace; relative offsets remain separate.
 - Native terminal text carries its canonical delivery disposition on the same message delta.
@@ -505,6 +599,11 @@ background-cortex behavior.
   Core retains each strict chunk disposition for its exact graph invocation when saving the final
   result. SDK chunk concatenation must not corrupt this control or reuse it across tool calls,
   retries, agents, or provider contexts; malformed controls remain closed to audio.
+- Stream aggregation and reconnect retain delivery ranges against the same public-text bytes.
+  Apply display cleanup after deciding which ranges may speak. Removing expressive controls before
+  that decision must not move a silent range onto audible words. Saved display text remains clean;
+  ranges that no longer match its bytes are not retained as valid offsets. Complete and incomplete
+  matching backtick spans protect literal text from provider-control cleanup.
 - The Cartesia public request contract is Sonic-3-only: `Cartesia-Version=2026-03-01`
   and `model_id=sonic-3`. Voice selection is by named persona in the UI, backed by Cartesia
   voice IDs: Megan (`e8e5fffb-252c-436d-b842-8879b84445b6`) and Lyra
@@ -967,6 +1066,10 @@ background-cortex behavior.
 - `VoiceTaskEventV1` uses numeric `version=1`, monotonic per-task sequence/event ids, correlation
   ids, authoritative task state/phase, real-only progress, sources, input/cancel/retry capability,
   owner, result reference, and classified error. LiveKit topic: `viventium.task.v1`.
+- The task UI merges snapshot source history and the current source by the existing source
+  identity: ID, then URL, then provider/title. An identity appears once. The UI keeps distinct
+  source IDs even when their labels or URLs match, preserves first-seen order, and retains the
+  original result and speech/presentation references through reload and later updates.
 - `SpeakerSegmentV1` uses numeric `version=1`, monotonic segment sequence/revision, call/turn ids,
   time range, text/finality, call-scoped speaker metadata, attribution class, actor trust, and
   uncertainty/overlap state. LiveKit topic: `viventium.speaker.v1`.
@@ -1008,11 +1111,20 @@ background-cortex behavior.
   file/media identity and owner scope. Voice gives concise spoken status or completion; generated
   files and other non-speech artifacts appear once in the linked chat and Active Work with a usable
   open/download action.
+- Selected linked-chat ancestry carries prior result attachment identities through the existing
+  signed upload ledger. Current owner File records remain authoritative. Original bytes come from
+  a unique permitted owner storage identity; malformed references, missing bytes, ambiguous storage
+  matches and symlink paths do not become readable files. Request paths and authored links do not
+  grant file access. Projection scans each permitted owner tree once per request.
 - Generation owners record Voice task completion or failure even when the gateway never subscribes
   or disconnects. Superseding a spoken presentation is not proof that its generation or linked child
   work has finished. Owner completion retains child-result and explicit-cancellation barriers.
   Task status uses the existing asynchronous durable queue; an unrelated failed database batch must
   not hold generation cleanup or request accounting open.
+- A foreground `provider_progress_stalled` failure offers the existing explicit Cancel only while
+  its exact validated native owner adapter remains available. Confirmed cancellation requires
+  native capacity release. A restored task without that adapter cannot claim an enforceable Stop;
+  this capability does not authorize automatic cancellation or provider fallback.
 - The controller ready receipt binds a first-use Voice task to its canonical conversation once,
   under the same call and user. A retained unbound parent placeholder is compatible with a signed
   worker callback only after the current call session proves the exact user and conversation;
@@ -1030,7 +1142,7 @@ background-cortex behavior.
   configured destinations remain intact. This receipt does not claim that the user read it.
 - Wing keeps its existing explicit-engagement and speaker-trust rules. Listen-Only cannot launch or
   control work and never enables tools, controller execution, cortex work, live memory, or recall.
-- The complete cross-surface acceptance journey is owned jointly by `MPV-054`, `PWK-017`,
+- The complete cross-surface acceptance journey is owned jointly by `MPV-061`, `PWK-017`,
   `PWK-UC-019`, and `TGDOC-010`; a narrower successful voice task does not prove full parity.
 
 #### MPV-054 local PRE-GATE classifier fallback control
@@ -1063,9 +1175,22 @@ background-cortex behavior.
 - Explicit cancellation is task-id scoped. The internal terminal set is `completed`, `failed`,
   `cancelled_confirmed`, and `cancelled_unenforceable`; an already-completed external side effect is
   reported truthfully instead of being relabelled cancelled.
+- A Cancel request that races with an already completed or failed task retains the matching
+  authoritative terminal event. The browser shows that task state without a global call-failure
+  alarm and does not confirm cancellation. Foreign, malformed, unauthenticated and server-error
+  responses retain visible failure handling. Action diagnostics report only the action, HTTP
+  status, elapsed time and validated outcome; they contain no user text or credentials.
+- Cortex progress is detail within its owning generation; it does not rename that generation
+  or replace its task-level Stop and input adapters. Cortex attempts retain their own transport
+  cancellation, parent-abort propagation, and native capacity-release checks.
+- Stop not confirmed remains visible until the user dismisses it or authoritative confirmation
+  arrives. Dismissal does not claim cancellation.
 - Accepting cancellation installs a task-id suppression barrier at TTS, conversation-result,
   memory, follow-up, and user-visible result boundaries. Late uncancellable work may finish for
   cleanup/audit but must not cross those boundaries.
+- Accepted cancellation of the current foreground task stops only its bound native SpeechHandle. Existing task suppression also rejects that task’s later Main follow-up speech. Unrelated completed Worker Bee deliveries and their queued speech remain scheduled. Global End and barge-in behavior remain unchanged. The task event must match the current task, nonempty stream, owner, presentation, and live speech handle; optional metadata does not authorize interruption.
+- A completed foreground text result can still have active Voice playout. The existing authenticated gateway stage route projects the exact native speech presentation into the ordered task stream without waiting on HTTP or storage on the audio callback. The Call UI keeps `Stop speech` visible only for that active presentation. It sends the same task action with the exact presentation reference. Completed-result Stop requests interrupt only that bound active native SpeechHandle; they do not cancel the completed generation, install a backend cancellation tombstone, clear unrelated Worker Bee speech, or remove the canonical final result and files. Native start timestamps and exact terminal references prevent stale or reordered events from exposing old completed Stop controls; reconnect snapshots retain the same metadata.
+
 - Task state and suppression tombstones are durable across API restart and in-memory task pressure.
   Every output boundary rechecks durable suppression and fails closed when the authoritative state
   is unavailable.
@@ -1078,11 +1203,13 @@ background-cortex behavior.
   supported response is delivered idempotently through that adapter. If an owner requests input
   without the capability, the task fails visibly as `task_input_unsupported`; the UI never offers a
   dead input control. Listen-Only exposes no retry or new-work input authority.
-- Spoken acknowledgements and progress derive only from authoritative task events, never transcript
-  keywords. A neutral fallback may speak after 1.2 seconds only when real work is running and the
-  model has not acknowledged it. Meaningful state, phase or detail changes may speak once within
-  the existing rate limits. Unchanged active work stays visible without periodic spoken repeats.
-  A failed speech schedule keeps the latest status pending without a busy retry loop.
+- Authoritative task events supply visible status and the durable relay. Main and the independent
+  Cortex presenter own public speech; elapsed time or task-state changes do not author assistant
+  acknowledgements, transcript text or progress narration.
+- A typed unavailable attachment on the current canonical response adds “The file could not be
+  attached.” once through the active reply stream, including while linked background work continues.
+  The authored reply, result identity and Cortex context stay intact. Primary generation errors,
+  text-only delivery, declared silence, Listen-Only, Stop and supersession retain their existing fences.
 - The call-wide typed task stream arms native worker completion delivery from a terminal child
   and its exact generation parent's canonical Main message. This join accepts either event order,
   checks call/conversation and cancellation, and deduplicates each child and Main anchor pair.
@@ -1097,13 +1224,25 @@ background-cortex behavior.
 
 - AssemblyAI calls enable provider `speaker_labels` automatically. Existing `speaker_id` values are
   scoped to the current call and displayed generically; they are not biometric identity.
-- A signed participant/track may be treated as the displayed speaker only while it carries one
-  detected speaker. When a second provider speaker appears on the same track, participant identity
+- With a diarizing STT route, a signed participant/track may be treated as the displayed speaker
+  only while it carries one detected speaker. When a second provider speaker appears on the same
+  track, participant identity
   becomes device ownership only; all speakers on that track are unverified for the session and
   earlier segment trust is revised deterministically.
-- Separate participant tracks remain distinct. Missing, unstable, overlapping, or too-short
-  attribution abstains to `Unknown`. ASR word confidence must never be used as speaker-identity
-  confidence.
+- In normal Call, final speech on the canonical signed owner participant/track may use the existing
+  `participant_track` authority only when the actual STT producer reports diarization capability
+  `False`. The SDK default means the producer does not declare diarization; it is not a positive
+  provider promise. Missing or invalid capabilities cannot grant participant-track authority. The publication
+  must be the currently subscribed owner microphone, with its actual current track SID. Initially
+  muted or delayed publication and replacement tracks refresh the same participant tracker; shared-
+  microphone state remains sticky across replacement and call recovery.
+  This is account/device authority; it does not prove who spoke or whether one voice was present.
+  It accepts that nearby speech, playback, or uncancelled echo on that track may run authorized tools.
+  Known shared-mic state, wrong owner/room/track, stale revisions, replay, overlap, and uncertainty
+  still restrict authority. Guest, Wing, and Listen-Only input cannot use this exception.
+- Separate participant tracks remain distinct. Missing, unstable, overlapping, or too-short expected
+  diarizer attribution abstains to `Unknown`; a failed diarizer cannot fall back to participant-track
+  authority. ASR word confidence must never be used as speaker-identity confidence.
 - Shared-mic/guest/unverified speech may inform context but cannot authorize an external side
   effect. Listen-Only retains its strict no-TTS/no-tools/no-controller/no-cortex/no-live-memory/no-
   recall contract.
@@ -1122,9 +1261,13 @@ background-cortex behavior.
 - Conversation context and memory reads remain live. Durable voice-derived memory writes are
   deferred until post-call hardening so a late-discovered second speaker cannot contaminate stable
   memory.
-- Owner-trusted single-speaker Call content may enter the existing writer after the call. Wing,
-  Listen-Only, mixed/shared-mic, guest, and unverified content remains soft evidence. One call
-  session is one evidence source regardless of how many diarized speakers it contains.
+- Owner-trusted Call content may enter the existing writer after the call, including final
+  `participant_track` content from the signed owner microphone when the actual STT producer does
+  not declare diarization. This proves account/device provenance, not who spoke; nearby speech,
+  playback, or uncancelled echo on that device may also become owner memory evidence. A second
+  detected speaker on a diarizing route still downgrades the track. Wing, Listen-Only, known
+  mixed/shared-mic, guest, and unverified content remains soft evidence. One call session is one
+  evidence source regardless of how many diarized speakers it contains.
 
 ## 2026-09-04 candidate closeout: owner-wait seam
 
@@ -1134,3 +1277,20 @@ background-cortex behavior.
   host before the owner arrived. The compiled default is now 45 s, bounded to 180 s, emitted as
   `VIVENTIUM_VOICE_OWNER_WAIT_S` from `voice.worker.owner_wait_s`; the worker keeps the same
   default when the seam is absent.
+
+
+### Existing-chat call navigation
+
+A call launched from an authenticated existing Web chat carries the verified conversation ID through
+the launch URL and capability bootstrap. The linked-chat action is available before the first accepted
+turn and stays available after normal End and full reload. The ID is a navigation hint; server ownership
+checks still control chat access. Telegram-posted launch URLs omit this internal navigation hint. Calls
+without a concrete conversation ID wait for a canonical result before showing the linked-chat action.
+
+<!-- VIVENTIUM-STABLE-REQUIREMENT-DECLARATIONS:START -->
+## Stable requirement declarations
+
+Each line is the canonical public owner declaration for one stable requirement ID. Detailed sections supply implementation context; they must not narrow or contradict these declared outcomes.
+
+VOICE-001: Listen-Only Mode is structured `mode=listen_only` presence and learning without live interaction. It saves visible ambient transcript records through the selected STT route—local `pywhispercpp` / WhisperCPP is the intended zero-model-token route—with `tokenCount=0`, but produces no assistant/TTS response, title generation, tools, controller work, background cortex, live Memory Agent write, or normal conversation-recall input. Call, Wing, and Listen-Only switch atomically without reconnecting. Supported diarization separates speakers with call-scoped generic labels; unsupported or uncertain same-microphone attribution stays `Unknown` and grants no identity or authority. After the call, the daily memory hardener may use the session only as one soft ambient evidence source under transcript corroboration rules; any durable memory it validly writes becomes available through normal later recall.
+<!-- VIVENTIUM-STABLE-REQUIREMENT-DECLARATIONS:END -->

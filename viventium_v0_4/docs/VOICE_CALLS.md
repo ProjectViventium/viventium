@@ -16,10 +16,10 @@ The design intentionally opens the Viventium Modern Playground (`agent-starter-r
 5. Voice Gateway streams audio → LibreChat `/api/viventium/voice/chat` and speaks the response.
 6. Background insights are surfaced after the main response (same contract as text).
 
-The immediate live-voice answer does not start unsolicited foreground research or tool work. It
-answers from already available evidence, names what remains unverified, and leaves later background
-value to Phase B. If the user explicitly asks for a lookup or tool action now, the normal voice task
-may perform it with authoritative progress, interruption/cancellation, and source/result truth.
+Voice uses the same authorized tools, research and delegation capabilities as the other surfaces.
+Main decides what serves the user's goal; call mode does not impose a blanket foreground-tool ban.
+Foreground tools and consultants remain interruptible/cancellable and cannot be claimed complete
+before authoritative evidence returns. Nonblocking background value uses the existing Phase-B path.
 
 Conversation continuity follows the call-session `agentId`. Provider-backed ephemeral agent
 conversations may be stored with provider endpoints such as `xai`; the voice resolver may reuse
@@ -54,7 +54,8 @@ stream, TTS, follow-up polling, tools, background cortices, title generation, or
   bounded by timeouts and must surface Viventium-specific recovery text rather than leaving the page
   in an indefinite loading state.
 - Launcher-managed local runtimes prewarm the modern-playground startup routes
-  `call-session-voice-settings`, `call-session-state`, and `connection-details` after the playground
+  `health`, `call-session-voice-settings`, `call-session-state`, `connection-details`, and
+  the task-action route after the playground
   is reachable and before the voice worker starts. Prewarm failures are logged as startup evidence
   and should not prevent the rest of the runtime from starting; each prewarm request is bounded so
   route compilation cannot hold startup behind a long hang.
@@ -226,6 +227,11 @@ stream, TTS, follow-up polling, tools, background cortices, title generation, or
   rate limits use the rate-limit message, not the generic service outage message.
 - Assistant route disclosure reports the effective call LLM separately from STT/TTS settings and
   may include the configured fallback route as secondary route information.
+
+For a locally managed stack, the launcher supplies the Native runtime's own context-read
+route from its selected port. Host workers can read context beyond the inline budget. An
+explicit **GLASSHIVE_PEER_RUNTIME_BASE_URL** remains unchanged; packaged socket and externally
+managed service routes retain their existing owners.
 
 ## Streaming-First TTS Contract
 - Live voice calls must begin speech from incremental LLM output; they must not wait for the full

@@ -720,8 +720,8 @@ Parallel Work extends rather than replaces the existing logical-turn revision co
   cacheable static prefix; the GlassHive conversation-provider header is one adapter, not the
   universal transport.
 - Inject the capsule only when Parallel Work is on or Core has unresolved work/delivery. It stays
-  outside persisted messages and native authority fingerprints. Voice receives only active count
-  and urgent attention plus on-demand tools.
+  outside persisted messages and native authority fingerprints. Voice receives the same bounded known-work facts and exact actions as the other surfaces,
+  with urgent attention first and the same on-demand list tool.
 - Status cards use neutral lifecycle language. A worker never speaks as Main. Terminal evidence
   enters the existing Phase-B adjudication path; Main authors any useful continuation in its own
   voice, while redundant/moved-on results may resolve silently with durable status intact.
@@ -1696,7 +1696,7 @@ PW-102: Active Work projects indexed current project/run truth, returns fresh/st
 PW-103: Main gets only two eager work tools—`active_work_list` and `active_work_action`. Low-level `worker_*` tools remain diagnostics/operator-only, not a competing public control plane.
 PW-104: The LibreChat account proxy enriches GlassHive mission truth only with trusted origin and delivery truth. Core owns one `ViventiumExternalWork` relation containing opaque work identity, owner, logical-turn or schedule origin, `required`, delivery binding, external state, private IDs, configured destinations, and delivery state.
 PW-105: Build one provider-independent, ephemeral `ViventiumDynamicTurnContext` before provider dispatch. Fetch roster in parallel; map it through each Main provider adapter; never rely only on a GlassHive header.
-PW-106: The dynamic roster capsule is at most 16 KiB, prioritizes needs-input/stopping/recent work, includes overflow plus the list-tool path, and is injected only when Parallel is on, active work exists, or unread terminal work needs attention. Voice receives only active count and urgent attention until it asks for more.
+PW-106: The dynamic roster capsule is at most 16 KiB, prioritizes needs-input/stopping/recent work, includes overflow plus the list-tool path, and is injected only when Parallel is on, active work exists, or unread terminal work needs attention. Voice receives the same bounded known-work facts and exact actions as other surfaces; urgent attention remains first.
 PW-107: Dynamic work context is not persisted into conversation text, is excluded from native authority fingerprints, and does not trigger Phase-A activation. Static prompts stay cacheable; dynamic context follows the cached static prefix.
 PW-108: Rollout order is L0 unflagged correctness; L1 dark secure control plane; L2 isolated parallel runtime; L3 product surfaces; L4 capability-gated native-team adapters; L5 full release/artifact proof. Codex production uses streamed `codex exec --json` with immediate `thread.started`; App Server stays QA-only. Claude uses proved worker-local background/Agent View, with process-owned `-p stream-json` rollback; cross-session messaging is capability-gated and Agent Teams remains separate/off. Each stage keeps existing work safe during rollback.
 PW-109: Useful completion after the user moves on or archives the origin arrives once through a governed Main continuation. A deleted origin is never recreated; use one account-level continuation when useful. Reviewed maintenance cleanup tombstones retire the source instead: exact owner-bound conversation or anchor evidence settles as suppressed and cannot create a status card or account continuation. Check that tombstone before status persistence or synthesis and again within the authored transaction. Ordinary deleted-origin continuation remains available.

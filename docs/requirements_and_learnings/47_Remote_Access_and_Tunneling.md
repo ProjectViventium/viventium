@@ -280,7 +280,14 @@ Router lease note:
 - some consumer routers grant UPnP port mappings with finite leases instead of permanent mappings
 - Viventium now treats those mappings as renewable runtime state, not one-time setup
 - the launcher keeps a lightweight background refresh worker alive for `public_https_edge` /
-  `custom_domain` so leased mappings are renewed before they expire
+  `custom_domain` so leased mappings are renewed before they expire; an unchanged owned mapping
+  must receive the native lease-renewal request instead of only updating its saved timestamp
+- refresh may move the saved public-edge mappings to this host's current assigned LAN address
+  after DHCP drift only when the live router still has the exact saved ports, protocols, targets,
+  and Viventium descriptions, the public router address matches, and the saved Caddy is running;
+  an active previous target or a foreign mapping remains a conflict
+- the native remap removes and recreates only each verified owned mapping under the existing state
+  lock, preserves public origins and ports, and leaves Caddy and the local services running
 - startup may reclaim stale UPnP mappings that already point back to this same Mac but no longer
   have a reachable local target; active conflicting mappings still remain a fatal operator-visible
   error instead of being silently hijacked

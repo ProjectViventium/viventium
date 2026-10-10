@@ -104,9 +104,10 @@ def test_memory_hardening_defaults_are_launch_ready_and_opt_in() -> None:
     assert settings["provider_profile"] == "launch_ready_only"
     assert settings["anthropic_model"] in config_compiler.MEMORY_HARDENING_LAUNCH_READY_MODELS["anthropic"]
     assert settings["openai_model"] in config_compiler.MEMORY_HARDENING_LAUNCH_READY_MODELS["openai"]
-    assert settings["openai_model"] == "gpt-5.6-luna"
-    assert settings["anthropic_effort"] == "xhigh"
-    assert settings["openai_reasoning_effort"] == "medium"
+    assert settings["openai_model"] == "gpt-6.1-sol"
+    assert settings["anthropic_model"] == "claude-opus-5-5"
+    assert settings["anthropic_effort"] == "high"
+    assert settings["openai_reasoning_effort"] == "high"
     assert settings["transcripts"]["rag_mode"] == "detailed_summary_only"
     assert settings["transcripts"]["min_files_per_run"] == 5
     assert settings["transcripts"]["max_batches_per_invocation"] == 1
@@ -373,7 +374,9 @@ process.stdout.write(JSON.stringify({ defaultCandidates, explicitCandidates }));
     payload = json.loads(result.stdout)
 
     assert {candidate["provider"] for candidate in payload["defaultCandidates"]} == {"anthropic"}
-    assert any(candidate["model"] == "claude-opus-5" for candidate in payload["defaultCandidates"])
+    assert [(candidate["model"], candidate["effort"]) for candidate in payload["defaultCandidates"]] == [
+        ("claude-opus-5-5", "high")
+    ]
     assert not any(candidate["model"] == "opus" for candidate in payload["defaultCandidates"])
     assert any(candidate["model"] == "opus" for candidate in payload["explicitCandidates"])
     assert any(candidate["provider"] == "openai" for candidate in payload["explicitCandidates"])
@@ -398,7 +401,7 @@ process.stdout.write(JSON.stringify({ defaultCandidates, explicitCandidates }));
                 "VIVENTIUM_PRIMARY_PROVIDER": "openai",
                 "VIVENTIUM_SECONDARY_PROVIDER": "anthropic",
             },
-            [("openai", "gpt-5.6-luna", "medium")],
+            [("openai", "gpt-6.1-sol", "high")],
             id="foundation-provider-list-is-not-fallback-authority",
         ),
         pytest.param(
@@ -434,7 +437,7 @@ process.stdout.write(JSON.stringify({ defaultCandidates, explicitCandidates }));
         ),
         pytest.param(
             {},
-            [("openai", "gpt-5.6-luna", "medium")],
+            [("openai", "gpt-6.1-sol", "high")],
             id="ungenerated-default-cannot-silently-remap-provider",
         ),
     ],
@@ -475,7 +478,7 @@ process.stdout.write(JSON.stringify(hardener.resolveProvider({}).candidates));
     ] == expected_candidates
 
 
-def test_memory_hardening_prefers_luna_medium_when_both_providers_are_available() -> None:
+def test_memory_hardening_prefers_sol_high_when_both_providers_are_available() -> None:
     script = """
 const hardener = require('./viventium_v0_4/LibreChat/scripts/viventium-memory-hardening.js');
 process.env.VIVENTIUM_PRIMARY_PROVIDER = 'openai';
@@ -497,8 +500,8 @@ process.stdout.write(JSON.stringify(selected));
     payload = json.loads(result.stdout)
 
     assert payload["provider"] == "openai"
-    assert payload["model"] == "gpt-5.6-luna"
-    assert payload["effort"] == "medium"
+    assert payload["model"] == "gpt-6.1-sol"
+    assert payload["effort"] == "high"
 
 
 def test_memory_hardening_vector_presence_failures_are_not_model_failures() -> None:
@@ -3200,6 +3203,7 @@ def test_meeting_transcript_recall_dist_bundle_contains_runtime_hooks() -> None:
 
 def test_memory_hardening_effort_defaults_cover_each_evaluated_gpt56_tier() -> None:
     assert memory_harden.DEFAULT_OPENAI_MEMORY_EFFORT_BY_MODEL == {
+        "gpt-6.1-sol": "high",
         "gpt-5.5": "xhigh",
         "gpt-5.6-sol": "xhigh",
         "gpt-5.6-terra": "high",
@@ -3234,9 +3238,11 @@ for (const key of [
 ]) delete process.env[key];
 const luna = hardener.resolveProvider({ provider: 'openai', model: 'gpt-5.6-luna' });
 const sol = hardener.resolveProvider({ provider: 'openai', model: 'gpt-5.6-sol' });
+const sol61 = hardener.resolveProvider({ provider: 'openai', model: 'gpt-6.1-sol' });
 const unknownOpenAI = hardener.resolveProvider({ provider: 'openai', model: 'synthetic-model' });
 const opus = hardener.resolveProvider({ provider: 'anthropic', model: 'claude-opus-5' });
-process.stdout.write(JSON.stringify({ luna, sol, unknownOpenAI, opus }));
+const opus55 = hardener.resolveProvider({ provider: 'anthropic', model: 'claude-opus-5-5' });
+process.stdout.write(JSON.stringify({ luna, sol, sol61, unknownOpenAI, opus, opus55 }));
 """
     result = subprocess.run(
         ["node", "-e", script],
@@ -3250,8 +3256,10 @@ process.stdout.write(JSON.stringify({ luna, sol, unknownOpenAI, opus }));
 
     assert payload["luna"]["effort"] == "medium"
     assert payload["sol"]["effort"] == "xhigh"
+    assert payload["sol61"]["effort"] == "high"
     assert payload["unknownOpenAI"]["effort"] == "high"
-    assert payload["opus"]["effort"] == "xhigh"
+    assert payload["opus"]["effort"] == "high"
+    assert payload["opus55"]["effort"] == "high"
 
 
 def test_memory_hardening_health_rejects_legacy_or_unattested_schedule_receipts(
@@ -3582,11 +3590,13 @@ assert.strictEqual(health.healthy, false);
 @pytest.mark.parametrize(
     ("provider", "model", "expected_effort"),
     [
-        (None, None, "medium"),
+        (None, None, "high"),
+        ("openai", "gpt-6.1-sol", "high"),
         ("openai", "gpt-5.6-luna", "medium"),
         ("openai", "gpt-5.6-sol", "xhigh"),
         ("openai", "synthetic-model", "high"),
-        ("anthropic", "claude-opus-5", "xhigh"),
+        ("anthropic", "claude-opus-5", "high"),
+        ("anthropic", "claude-opus-5-5", "high"),
     ],
 )
 def test_memory_hardening_wrapper_default_effort_matches_selected_model(
@@ -3768,3 +3778,209 @@ def test_memory_hardening_launchd_proof_requires_the_loaded_job_pid(monkeypatch)
     matched = memory_harden.launchd_invocation_proof(args)
     assert matched["verified"] is True
     assert matched["method"] == "launchctl_job_pid"
+
+
+# Selected-instance loader regression coverage. No live runtime or provider calls.
+def test_memory_loader_uses_compiled_instance_mongo_before_source_fallback(tmp_path):
+    runtime = tmp_path / "selected" / "runtime"
+    source = tmp_path / "LibreChat"
+    runtime.mkdir(parents=True)
+    source.mkdir()
+    (source / ".env").write_text("MONGO_URI=mongodb://127.0.0.1:27018/source\n")
+    (runtime / "runtime.env").write_text(
+        "VIVENTIUM_LOCAL_MONGO_PORT=28018\nVIVENTIUM_LOCAL_MONGO_DB=Selected\n"
+    )
+    result = memory_harden.load_runtime_env(runtime, source)
+    assert result["MONGO_URI"] == "mongodb://127.0.0.1:28018/Selected"
+
+
+def test_memory_loader_keeps_explicit_selected_remote_mongo(tmp_path):
+    runtime = tmp_path / "runtime"
+    source = tmp_path / "LibreChat"
+    runtime.mkdir()
+    source.mkdir()
+    (source / ".env").write_text("MONGO_URI=mongodb://legacy/source\n")
+    (runtime / "runtime.env").write_text(
+        "MONGO_URI=mongodb://selected.example/Remote\n"
+        "VIVENTIUM_LOCAL_MONGO_PORT=28018\nVIVENTIUM_LOCAL_MONGO_DB=Selected\n"
+    )
+    assert memory_harden.load_runtime_env(runtime, source)["MONGO_URI"] == (
+        "mongodb://selected.example/Remote"
+    )
+
+
+def test_memory_loader_reads_existing_selected_secrets_without_creating(tmp_path, monkeypatch):
+    import native_runtime
+    support = tmp_path / "selected"
+    runtime = support / "runtime"
+    source = tmp_path / "LibreChat"
+    runtime.mkdir(parents=True)
+    source.mkdir()
+    (support / "state").mkdir()
+    (support / "state" / "native-secrets.json").write_text("{}")
+    (source / ".env").write_text("JWT_SECRET=stale-source\nCREDS_KEY=stale-source\n")
+    expected = {name: "a" * length for name, length in native_runtime.RUNTIME_SECRET_LENGTHS.items()}
+    observed = []
+    def existing_owner(owner, *, create):
+        observed.append((owner, create))
+        return expected.copy()
+    monkeypatch.setattr(native_runtime, "runtime_secrets", existing_owner)
+    result = memory_harden.load_runtime_env(runtime, source, app_support_dir=support)
+    assert observed == [(support, False)]
+    assert all(result[name] == value for name, value in expected.items())
+
+
+def test_memory_loader_preserves_owned_resolved_inherited_secrets(tmp_path, monkeypatch):
+    support = tmp_path / "selected"
+    runtime = support / "runtime"
+    source = tmp_path / "LibreChat"
+    runtime.mkdir(parents=True)
+    source.mkdir()
+    (source / ".env").write_text("JWT_SECRET=stale-source\n")
+    monkeypatch.setenv("VIVENTIUM_APP_SUPPORT_DIR", str(support))
+    monkeypatch.setenv("JWT_SECRET", "resolved-selected")
+    result = memory_harden.load_runtime_env(runtime, source, app_support_dir=support)
+    assert result["JWT_SECRET"] == "resolved-selected"
+
+
+def test_memory_loader_does_not_import_foreign_inherited_or_custom_runtime_secrets(tmp_path, monkeypatch):
+    support = tmp_path / "selected"
+    runtime = tmp_path / "custom-runtime"
+    source = tmp_path / "LibreChat"
+    runtime.mkdir()
+    source.mkdir()
+    (source / ".env").write_text("JWT_SECRET=source-fallback\n")
+    (runtime / "runtime.env").write_text("JWT_SECRET=explicit-custom\n")
+    monkeypatch.setenv("VIVENTIUM_APP_SUPPORT_DIR", str(tmp_path / "foreign"))
+    monkeypatch.setenv("JWT_SECRET", "foreign-inherited")
+    assert memory_harden.load_runtime_env(runtime, source, app_support_dir=support)["JWT_SECRET"] == (
+        "explicit-custom"
+    )
+
+
+def test_memory_loader_uses_packaged_native_socket_owner(tmp_path, monkeypatch):
+    import native_runtime
+    support = tmp_path / "selected"
+    runtime = support / "runtime"
+    source = tmp_path / "LibreChat"
+    runtime.mkdir(parents=True)
+    source.mkdir()
+    (support / "state").mkdir()
+    (support / "state" / "native-runtime.json").write_text("{}")
+    (source / ".env").write_text("MONGO_URI=mongodb://legacy/source\n")
+    observed = []
+    monkeypatch.setattr(native_runtime, "runtime_state", lambda owner: observed.append(owner) or {})
+    assert memory_harden.load_runtime_env(runtime, source, app_support_dir=support)["MONGO_URI"] == (
+        native_runtime.mongodb_uri(support)
+    )
+    assert observed == [support]
+
+
+def test_memory_loader_projection_reaches_normal_child_and_keeps_cli_override(tmp_path, monkeypatch):
+    support = tmp_path / "selected"
+    runtime = support / "runtime"
+    source = tmp_path / "LibreChat"
+    runtime.mkdir(parents=True)
+    source.mkdir()
+    (source / ".env").write_text(
+        "MONGO_URI=mongodb://127.0.0.1:27018/source\nJWT_SECRET=stale-source\n"
+    )
+    (runtime / "runtime.env").write_text(
+        "VIVENTIUM_LOCAL_MONGO_PORT=28018\nVIVENTIUM_LOCAL_MONGO_DB=Selected\n"
+        "RAG_API_URL=http://127.0.0.1:9101\n"
+        "VIVENTIUM_MEMORY_HARDENING_PROVIDER=openai\n"
+        "VIVENTIUM_MEMORY_HARDENING_MODEL=gpt-6.1-sol\n"
+        "VIVENTIUM_MEMORY_HARDENING_EFFORT=high\n"
+    )
+    monkeypatch.setenv("VIVENTIUM_APP_SUPPORT_DIR", str(support))
+    monkeypatch.setenv("JWT_SECRET", "resolved-selected")
+    selected = memory_harden.load_runtime_env(runtime, source, app_support_dir=support)
+    args = make_memory_harden_args(
+        repo_root=ROOT, app_support_dir=support, runtime_dir=runtime,
+        command="status", mongo_uri="mongodb://explicit.example/Override", json=True,
+    )
+    calls = []
+    def observe_child(command, **kwargs):
+        calls.append((command, kwargs["env"]))
+        return subprocess.CompletedProcess(command, 0, "{}", "")
+    monkeypatch.setattr(memory_harden.subprocess, "run", observe_child)
+    monkeypatch.setattr(
+        memory_harden, "launch_agent_status", lambda _env: {"installed": True, "loaded": True}
+    )
+    assert memory_harden.run_node(args, selected) == 0
+    command, child_env = calls[0]
+    assert command[command.index("--mongo-uri") + 1] == "mongodb://explicit.example/Override"
+    assert child_env["MONGO_URI"] == "mongodb://127.0.0.1:28018/Selected"
+    assert child_env["RAG_API_URL"] == "http://127.0.0.1:9101"
+    assert child_env["JWT_SECRET"] == "resolved-selected"
+    assert child_env["VIVENTIUM_MEMORY_HARDENING_MODEL"] == "gpt-6.1-sol"
+    assert child_env["VIVENTIUM_MEMORY_HARDENING_EFFORT"] == "high"
+
+
+def test_memory_loader_rejects_unsafe_existing_owner_secret_file(tmp_path):
+    import native_runtime
+    support = tmp_path / "selected"
+    runtime = support / "runtime"
+    source = tmp_path / "LibreChat"
+    runtime.mkdir(parents=True)
+    source.mkdir()
+    (support / "state").mkdir()
+    secret_file = support / "state" / "native-secrets.json"
+    secret_file.write_text(json.dumps(
+        {name: "a" * length for name, length in native_runtime.RUNTIME_SECRET_LENGTHS.items()}
+    ))
+    secret_file.chmod(0o644)
+    (source / ".env").write_text("JWT_SECRET=stale-source\n")
+    with pytest.raises(native_runtime.RuntimeError_, match="unsafe"):
+        memory_harden.load_runtime_env(runtime, source, app_support_dir=support)
+
+
+@pytest.mark.parametrize("ambient_owner", [None, "foreign"])
+def test_memory_loader_child_omits_unowned_ambient_instance_keys(tmp_path, monkeypatch, ambient_owner):
+    import native_runtime
+    support = tmp_path / "selected"
+    runtime = support / "runtime"
+    source = tmp_path / "LibreChat"
+    runtime.mkdir(parents=True)
+    source.mkdir()
+    (runtime / "runtime.env").write_text("RAG_API_URL=http://selected-rag\n")
+    if ambient_owner:
+        monkeypatch.setenv("VIVENTIUM_APP_SUPPORT_DIR", str(tmp_path / ambient_owner))
+    else:
+        monkeypatch.delenv("VIVENTIUM_APP_SUPPORT_DIR", raising=False)
+    for key in native_runtime.RUNTIME_SECRET_LENGTHS:
+        monkeypatch.setenv(key, "foreign-ambient")
+    selected = memory_harden.load_runtime_env(runtime, source, app_support_dir=support)
+    args = make_memory_harden_args(
+        repo_root=ROOT, app_support_dir=support, runtime_dir=runtime, command="status", json=True,
+    )
+    observed = []
+    def observe_child(command, **kwargs):
+        observed.append(kwargs["env"])
+        return subprocess.CompletedProcess(command, 0, "{}", "")
+    monkeypatch.setattr(memory_harden.subprocess, "run", observe_child)
+    monkeypatch.setattr(
+        memory_harden, "launch_agent_status", lambda _env: {"installed": True, "loaded": True}
+    )
+    assert memory_harden.run_node(args, selected) == 0
+    assert observed[0]["VIVENTIUM_APP_SUPPORT_DIR"] == str(support)
+    assert all(key not in observed[0] for key in native_runtime.RUNTIME_SECRET_LENGTHS)
+
+
+def test_memory_loader_keeps_exported_service_uri_over_native_socket(tmp_path, monkeypatch):
+    import native_runtime
+    support = tmp_path / "selected"
+    runtime = support / "runtime"
+    source = tmp_path / "LibreChat"
+    (runtime / "service-env").mkdir(parents=True)
+    source.mkdir()
+    (support / "state").mkdir()
+    (support / "state" / "native-runtime.json").write_text("{}")
+    (runtime / "service-env" / "librechat.env").write_text(
+        'export MONGO_URI="mongodb://selected.example/Remote"\n'
+    )
+    monkeypatch.setattr(
+        native_runtime, "runtime_state", lambda _support: pytest.fail("explicit service URI replaced")
+    )
+    result = memory_harden.load_runtime_env(runtime, source, app_support_dir=support)
+    assert result["MONGO_URI"] == "mongodb://selected.example/Remote"

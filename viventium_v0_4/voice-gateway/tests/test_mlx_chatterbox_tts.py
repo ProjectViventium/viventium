@@ -14,6 +14,8 @@
 # - Avoid any heavyweight model downloads in unit tests.
 # === VIVENTIUM END ===
 
+import asyncio
+import concurrent.futures
 import os
 import sys
 import threading
@@ -31,7 +33,9 @@ from mlx_chatterbox_tts import (
     MlxChatterboxTTS,
     _audio_to_pcm_s16le,
     _strip_cartesia_emotion_tags,
+    _MlxChatterboxChunkedStream,
 )
+from livekit.agents.types import DEFAULT_API_CONNECT_OPTIONS
 
 
 # ---------------------------------------------------------------------------
@@ -356,6 +360,119 @@ class TestMlxChatterboxErrorHandling(unittest.IsolatedAsyncioTestCase):
         ):
             with self.assertRaises(APIError):
                 await stream._run(emitter)
+
+
+def _isolated_chunked_stream():
+    # Exercise the real adapter coroutine once, without the SDK constructor also
+    # scheduling its parallel internal task against the same test emitter.
+    stream = object.__new__(_MlxChatterboxChunkedStream)
+    stream._tts = MlxChatterboxTTS(config=MlxChatterboxConfig(model_id="synthetic-model", prebuffer_ms=0))
+    stream._input_text = "An interrupted reply."
+    stream._conn_options = DEFAULT_API_CONNECT_OPTIONS
+    return stream
+
+
+class TestMlxChatterboxCancellation(unittest.IsolatedAsyncioTestCase):
+    async def test_cancellation_removes_only_its_queued_executor_item(self):
+        release = threading.Event()
+        submitted = []
+        emitter = _DummyEmitter()
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            blocker = executor.submit(release.wait)
+            def submit(function, *args, **kwargs):
+                future = executor.submit(function, *args, **kwargs)
+                submitted.append(future)
+                return future
+            try:
+                with (
+                    mock.patch("mlx_chatterbox_tts._submit_mlx_work", side_effect=submit),
+                    mock.patch("mlx_chatterbox_tts._load_mlx_model") as loader,
+                ):
+                    task = asyncio.create_task(_isolated_chunked_stream()._run(emitter))
+                    await asyncio.sleep(0)
+                    unrelated = executor.submit(lambda: "other stream preserved")
+                    task.cancel()
+                    with self.assertRaises(asyncio.CancelledError):
+                        await task
+                    self.assertTrue(submitted[0].cancelled())
+                    self.assertFalse(unrelated.cancelled())
+                    release.set()
+                    self.assertEqual(await asyncio.to_thread(unrelated.result, 2), "other stream preserved")
+                    loader.assert_not_called()
+                    self.assertEqual(emitter.push_calls, [])
+            finally:
+                release.set()
+                await asyncio.to_thread(blocker.result, 2)
+
+    async def test_running_entry_race_stops_before_loading(self):
+        queued = []
+        future = concurrent.futures.Future()
+        future.set_running_or_notify_cancel()
+        def submit(function):
+            queued.append(function)
+            return future
+        emitter = _DummyEmitter()
+        with (
+            mock.patch("mlx_chatterbox_tts._submit_mlx_work", side_effect=submit),
+            mock.patch("mlx_chatterbox_tts._load_mlx_model") as loader,
+        ):
+            task = asyncio.create_task(_isolated_chunked_stream()._run(emitter))
+            await asyncio.sleep(0)
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+            self.assertFalse(future.cancelled())  # Executor has already marked it running.
+            queued[0]()
+            await asyncio.sleep(0)
+            loader.assert_not_called()
+        self.assertEqual(emitter.push_calls, [])
+
+    async def test_cancel_during_model_load_stops_before_generation(self):
+        started = asyncio.Event()
+        release = threading.Event()
+        loop = asyncio.get_running_loop()
+        model = _RecordingModel()
+        def load(_model_id):
+            loop.call_soon_threadsafe(started.set)
+            release.wait()
+            return model
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            future = None
+            def submit(function):
+                nonlocal future
+                future = executor.submit(function)
+                return future
+            try:
+                with (
+                    mock.patch("mlx_chatterbox_tts._submit_mlx_work", side_effect=submit),
+                    mock.patch("mlx_chatterbox_tts._load_mlx_model", side_effect=load),
+                ):
+                    emitter = _DummyEmitter()
+                    task = asyncio.create_task(_isolated_chunked_stream()._run(emitter))
+                    await asyncio.wait_for(started.wait(), 2)
+                    task.cancel()
+                    with self.assertRaises(asyncio.CancelledError):
+                        await task
+                    release.set()
+                    await asyncio.to_thread(future.result, 2)
+                    await asyncio.sleep(0)
+                    self.assertEqual(model.calls, [])
+                    self.assertEqual(emitter.push_calls, [])
+            finally:
+                release.set()
+
+    async def test_timeout_also_cancels_its_queued_work(self):
+        from livekit.agents import APIError
+        future = concurrent.futures.Future()
+        with (
+            mock.patch("mlx_chatterbox_tts._submit_mlx_work", return_value=future),
+            mock.patch("mlx_chatterbox_tts.time.monotonic", side_effect=[0.0, 0.0, 121.0]),
+            mock.patch("mlx_chatterbox_tts._should_log_latency", return_value=False),
+            mock.patch("mlx_chatterbox_tts._log_tts_input"),
+        ):
+            with self.assertRaisesRegex(APIError, "timed out"):
+                await _isolated_chunked_stream()._run(_DummyEmitter())
+        self.assertTrue(future.cancelled())
 
 
 if __name__ == "__main__":

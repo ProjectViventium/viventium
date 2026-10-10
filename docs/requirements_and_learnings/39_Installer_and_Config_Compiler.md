@@ -398,6 +398,14 @@ delta on the disposable MacBook Air. Until those gates pass, release wording rem
 
 ## Config Compiler Boundary
 
+- `runtime.network.livekit_api_host` declares an existing HTTP(S) LiveKit API endpoint.
+  Compilation preserves it for normal CLI startup; an empty value keeps the managed local
+  default. Signaling URLs derive from the same endpoint. Remote hosts require HTTPS; plaintext HTTP
+  is limited to loopback. Credentials, non-root paths, query strings, fragments, and invalid ports are rejected. An unavailable
+  declared endpoint still fails explicitly through the launcher's existing health check.
+- Before restart teardown, the launcher verifies the required managed LiveKit Docker control or
+  declared endpoint. A failed prerequisite keeps the current services running and names the repair.
+
 - The config compiler still owns generated runtime artifacts such as:
   - `runtime.env`
   - `runtime.local.env`
@@ -1029,7 +1037,11 @@ delta on the disposable MacBook Air. Until those gates pass, release wording rem
     - `VIVENTIUM_VOICE_PHASE_A_AWAIT_MS=690` (voice detection budget)
     - `VIVENTIUM_TEXT_PHASE_A_AWAIT_MS=1300` (text detection budget)
     - `VIVENTIUM_CORTEX_DETECT_TIMEOUT_MS=2000` (shared fallback budget)
-    - `VIVENTIUM_CORTEX_LATE_DETECT_TIMEOUT_MS=6000` (non-blocking recovery budget after a zero-activation fast-pass timeout; reuses canonical classifier/fallback/Phase B paths and does not delay the main answer)
+    - `VIVENTIUM_CORTEX_LATE_DETECT_TIMEOUT_MS=6000` by default; the canonical
+      `runtime.background_activation.late_detect_timeout_ms` field accepts 2001–30000 ms.
+      One-pass async detection uses this total window once without delaying Main; blocking and
+      legacy paths retain late recovery. An explicitly configured total must cover the primary
+      attempt; omitting it preserves existing attempt choices and the default-total runtime clamp.
     - `VIVENTIUM_ACTIVATION_PRIMARY_ATTEMPT_TIMEOUT_MS=1600`
     - `VIVENTIUM_ACTIVATION_FALLBACK_ATTEMPT_TIMEOUT_MS=2500`
     - `VIVENTIUM_VOICE_PHASE_A_ASYNC_ALLOW_TOOL_HOLD=true` (voice stays async even when a

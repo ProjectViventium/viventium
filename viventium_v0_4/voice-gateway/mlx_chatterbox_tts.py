@@ -232,16 +232,17 @@ class MlxChatterboxTTS(TTS):
         return self._config.model_id
 
     def prewarm(self) -> None:
-        """Best-effort preload. Downloads weights on first run and loads into MLX memory."""
+        """Load into MLX memory; the caller owns required-route or fallback recovery."""
         try:
             _submit_mlx_work(_load_mlx_model, self._config.model_id).result()
             logger.info("MLX Chatterbox model loaded (model=%s)", self._config.model_id)
         except Exception:
-            logger.warning(
-                "MLX Chatterbox prewarm failed (model=%s); first synthesis will be slow",
+            logger.error(
+                "MLX Chatterbox prewarm failed (model=%s)",
                 self._config.model_id,
                 exc_info=True,
             )
+            raise
 
     def synthesize(
         self, text: str, *, conn_options: APIConnectOptions = DEFAULT_API_CONNECT_OPTIONS
@@ -365,7 +366,11 @@ class _MlxChatterboxChunkedStream(ChunkedStream):
 
         def _worker() -> None:
             try:
+                if stop_event.is_set():
+                    return
                 model = _load_mlx_model(cfg.model_id)
+                if stop_event.is_set():
+                    return
                 # `mlx-audio` TTS models yield GenerationResult objects.
                 # NOTE: upstream `sample_rate` param is the *input* ref_audio rate (not output).
                 # Output rate is always model.sample_rate (S3GEN_SR = 24kHz for Chatterbox Turbo).
@@ -396,7 +401,7 @@ class _MlxChatterboxChunkedStream(ChunkedStream):
             finally:
                 loop.call_soon_threadsafe(_emit_end)
 
-        _submit_mlx_work(_worker)
+        worker_future = _submit_mlx_work(_worker)
 
         try:
             while True:
@@ -487,3 +492,8 @@ class _MlxChatterboxChunkedStream(ChunkedStream):
         except Exception as exc:
             stop_event.set()
             raise APIError(f"Local Chatterbox (MLX) TTS failed: {exc}", retryable=True) from exc
+        finally:
+            if stop_event.is_set():
+                # Cancel only this stream's queued work. Running native generation keeps
+                # its single owning thread and observes stop_event at the next yield.
+                worker_future.cancel()

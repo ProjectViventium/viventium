@@ -148,10 +148,10 @@ Conversation exports must render background events as readable text (not raw JSO
 - Empty voice follow-up generation for a normal follow-up stays silent; fallback insight text is
   reserved for explicit replacement/deferred-primary flows that own the user-visible answer.
 - Background processing should never interrupt or block speech generation.
-- Main must not start unsolicited foreground research or tool work during a live voice turn. An
-  immediate answer uses already available evidence and states what remains unverified; later
-  background value follows the normal Phase B path. An explicit current-turn lookup/tool request is
-  still permitted and must stay interruptible/cancellable and evidence-grounded.
+- Voice keeps the same authorized tools and consultants as other Main surfaces. Main decides when
+  useful foreground work is needed; that work stays interruptible, cancellable and evidence-grounded.
+  Main never claims a result before its authoritative evidence returns. Nonblocking background value
+  follows the existing Phase B path.
 - When a real spoken surface carries a Feelings capsule, the model appraises the state and moment as
   expressive or restrained. A strongly outward state in an emotionally meaningful or relational
   reply is expressive even when plain wording already carries tone; a containing state or neutral

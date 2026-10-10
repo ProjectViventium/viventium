@@ -52,6 +52,17 @@ need no parallel-mode toggle, special delegation prompt, extra configuration, or
 - **PW-020 / PW-021 / HARD-004:** Stale or unavailable roster state is never shown as empty. Main reports only
   verified route, model, effort, Feeling, capability, state, and delivery facts.
 
+The native Main context encoder reuses the exact request-pinned roster projection after reserving
+attempt authority and the existing minimum capability capsule. Existing optional context priorities
+remain unchanged; required reviewed conversation summaries stay intact. Overflow retains truthful
+unavailable or truncated state and access to `active_work_list`, rather than silently removing the
+whole work-awareness capsule. Component retention logs contain byte counts, fixed kinds and hashes.
+
+An obsolete same-run input or blocked callback cannot overwrite an accepted terminal result.
+Native retry currentness, Core persistence and surface delivery claims reuse exact bound run facts
+and the existing transaction fence. A new run remains eligible. Already-dispatched notices cannot
+be recalled, and completion before its Core receipt remains an asynchronous boundary.
+
 ### Turn integrity
 
 - **PW-023 / PW-024 / PW-025:** Source segments are durable and ordered. Input received before
@@ -95,6 +106,15 @@ need no parallel-mode toggle, special delegation prompt, extra configuration, or
   remain distinct. A new unrelated message cannot strand an earlier completed result; useful Main
   synthesis reaches its authorized origin or existing governed continuation once.
 
+- **PW-028a:** A managed stop of the GlassHive runtime releases the host leases of its running
+  runs with a typed `managed_shutdown` reason before it exits. The provider-liveness monitor never
+  reads that silence as a stalled provider, startup reconciliation re-queues the same run with
+  managed-restart wording, and the run completes and delivers exactly once without a person
+  resuming it. Pre-accept reservations keep their transfer-or-expiry contract.
+- **PW-028b:** A `needs_input` notice in the conversation carries the runtime's sanitized human
+  reason; the open web conversation keeps refetching at a slow cadence while a Worker is still live
+  past the follow-up grace window, so a delivered result appears without reload.
+
 ### Capacity truth
 
 - **PW-033 / HARD-008 / HARD-010 / PW-078:** Queued is not running. Execution admission requires
@@ -122,6 +142,12 @@ need no parallel-mode toggle, special delegation prompt, extra configuration, or
 
 - **PW-081 / PW-082:** Work and artifacts are owner-isolated. References are not authority; service
   calls require signed owner scope and public summaries exclude private inputs and internals.
+- Main callback files imported into the host File store open through its authenticated download
+  path on Web. The Markdown link renderer binds only the exact verified native grant and message
+  to its owner-matched imported attachment; rejected or unavailable imports gain no download
+  binding. Both canonical callback text and content stay byte-intact for continued Main history,
+  Voice and remote channels, whose
+  existing attachment carriers retain the original filename and bytes.
 
 ## Quality and rollout
 

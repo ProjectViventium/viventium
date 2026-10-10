@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import pytest
 import json
 import re
 import sqlite3
@@ -3091,6 +3092,35 @@ def test_exact_model_judge_treats_complete_visible_response_as_absence_evidence(
     assert "its lack of forbidden content is evidence" in runner
 
 
+def test_exact_model_judge_preserves_independent_work_after_a_sibling_blocker() -> None:
+    script = f"""
+const assert = require('assert');
+const runner = require({json.dumps(str(EVAL_SCRIPT))});
+const prompt = runner.buildJudgePrompt(
+  {{ id: 'independent-objectives', familyId: 'glasshive_direct_action',
+     rubric: ['does not block independent work solely because its sibling failed'] }},
+  {{ responseForJudge: 'The first objective needs approval. The second was accepted.',
+     eventEvidenceForJudge: 'Objective A blocked; independent objective B admitted.' }},
+);
+assert.ok(prompt.includes('a blocked objective does not block independent permitted work'));
+assert.ok(prompt.includes('when the returned blocker does not apply to them'));
+assert.ok(prompt.includes('only when verified evidence shows that the same prerequisite blocks'));
+assert.ok(prompt.includes('Report the exact blocker for each affected objective'));
+assert.ok(!prompt.includes('Do not require attempts for later sibling missions'));
+assert.ok(!prompt.includes('they must remain unresolved'));
+console.log('OK');
+"""
+    result = subprocess.run(
+        ["node", "-e", script],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "OK"
+
+
 def test_exact_model_judge_includes_declared_comparison_case_evidence() -> None:
     prompt_bank = json.loads(PROMPT_BANK_PATH.read_text(encoding="utf-8"))
     family = next(
@@ -3917,3 +3947,104 @@ const harness = require(process.argv[1]);
     )
     assert result.returncode == 0, result.stderr
     assert result.stdout == "OK"
+
+
+@pytest.mark.parametrize("runner_name,builder_name", [
+    ("run-exact-model-evals.cjs", "buildCaseText"),
+    ("run-native-surface-playwright-qa.cjs", "buildText"),
+])
+@pytest.mark.parametrize("case_id", [
+    "file-returned-requested-image",
+    "file-viewed-image-not-selected",
+    "file-returned-arbitrary-requested-artifact",
+    "file-discussed-upload-not-resent",
+])
+def test_worker_file_delivery_subject_receives_exact_existing_fixture(
+    runner_name: str, builder_name: str, case_id: str,
+) -> None:
+    script = r"""
+const assert = require('assert');
+const runner = require(process.argv[1]);
+const bank = require(process.argv[2]);
+const sourceCase = bank.families.find(f => f.id === 'worker_conversation_file_delivery')
+  .cases.find(c => c.id === process.argv[4]);
+const testCase = {...sourceCase, rubric: ['PRIVATE_GOLD_MUST_NOT_REACH_SUBJECT'],
+  groundTruth: {completion: 'PRIVATE_COMPLETION_GOLD'}};
+const before = JSON.stringify(testCase);
+global.fetch = () => { throw Error('unexpected_model_or_network_call'); };
+const subject = runner[process.argv[3]](testCase);
+for (const value of [sourceCase.fixture.workerFileDelivery.userRequest,
+                     sourceCase.fixture.workerFileDelivery.evidence, sourceCase.prompt]) {
+  assert.ok(subject.includes(value), 'exact case field absent: ' + sourceCase.id);
+  assert.strictEqual(subject.split(value).length - 1, 1, 'case field duplicated');
+}
+assert.ok(!subject.includes('PRIVATE_GOLD_MUST_NOT_REACH_SUBJECT'));
+assert.ok(!subject.includes('PRIVATE_COMPLETION_GOLD'));
+assert.strictEqual(JSON.stringify(testCase), before, 'source fixture mutated');
+console.log('OK');
+"""
+    result = subprocess.run(
+        ["node", "-e", script,
+         str(EVAL_SCRIPT.parent / runner_name), str(PROMPT_BANK_PATH),
+         builder_name, case_id],
+        cwd=REPO_ROOT, capture_output=True, text=True, check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "OK"
+
+
+@pytest.mark.parametrize("runner_name,builder_name", [
+    ("run-exact-model-evals.cjs", "buildCaseText"),
+    ("run-native-surface-playwright-qa.cjs", "buildText"),
+])
+def test_worker_file_delivery_subject_rejects_incomplete_typed_fixture(
+    runner_name: str, builder_name: str,
+) -> None:
+    script = r"""
+const assert = require('assert');
+const runner = require(process.argv[1]);
+global.fetch = () => { throw Error('unexpected_model_or_network_call'); };
+for (const fixture of [[], {}, {userRequest: 'request', evidence: 42},
+                      {userRequest: ' ', evidence: 'evidence'}]) {
+  assert.throws(() => runner[process.argv[2]]({prompt: 'Original case prompt.',
+    fixture: {workerFileDelivery: fixture}}), /worker_file_delivery_fixture_invalid/);
+}
+console.log('OK');
+"""
+    result = subprocess.run(
+        ["node", "-e", script, str(EVAL_SCRIPT.parent / runner_name), builder_name],
+        cwd=REPO_ROOT, capture_output=True, text=True, check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "OK"
+
+
+@pytest.mark.parametrize("runner_name,builder_name", [
+    ("run-exact-model-evals.cjs", "buildCaseText"),
+    ("run-native-surface-playwright-qa.cjs", "buildText"),
+])
+def test_worker_file_delivery_projection_preserves_ordinary_subject_fields(
+    runner_name: str, builder_name: str,
+) -> None:
+    script = r"""
+const assert = require('assert');
+const runner = require(process.argv[1]);
+const builder = runner[process.argv[2]];
+assert.strictEqual(builder({context: 'Context.', setup: 'Setup.', prompt: 'Prompt.',
+  fixture: {unrelated: {evidence: 'Do not project this field.'}}}),
+  'Context.\n\nSetup.\n\nPrompt.');
+if (process.argv[2] === 'buildText') {
+  assert.strictEqual(builder({context: 'Context.', setup: 'Setup.', prompt: 'Prompt.',
+    seed_prompts: ['Earlier turn.']}), 'Context.\n\nPrompt.');
+} else {
+  assert.strictEqual(builder({context: 'Context.', setup: 'Setup.', prompt: 'Prompt.'},
+    {includeSetup: false}), 'Context.\n\nPrompt.');
+}
+console.log('OK');
+"""
+    result = subprocess.run(
+        ["node", "-e", script, str(EVAL_SCRIPT.parent / runner_name), builder_name],
+        cwd=REPO_ROOT, capture_output=True, text=True, check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "OK"

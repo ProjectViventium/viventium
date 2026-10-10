@@ -72,10 +72,29 @@ librechat_client_build_node_options() {
   fi
 }
 
+# Check ownership before npm or cleanup can follow a shared dependency path.
+librechat_build_tree_owned() {
+  "${PYTHON_BIN:-python3}" - "$LIBRECHAT_DIR" <<'PY_OWNED'
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1]).resolve(strict=True)
+# Installation and cleanup may mutate only paths owned by this checkout.
+for name in ("node_modules", "client/node_modules", "packages/api/node_modules",
+             "packages/client/node_modules", "packages/data-provider/node_modules",
+             "packages/data-schemas/node_modules", "client/dist", "packages/api/dist",
+             "packages/client/dist", "packages/data-provider/dist", "packages/data-schemas/dist"):
+    path = root / name
+    if (path.exists() or path.is_symlink()) and not path.resolve().is_relative_to(root):
+        raise SystemExit("LibreChat build paths refer to another checkout; preparation stopped.")
+PY_OWNED
+}
+
 ## === VIVENTIUM START ===
 # Feature: LibreChat dependency auto-heal after pulls.
 # Purpose: Prevent blank 3090/3080 startup when lockfile changes or critical modules are missing.
 clean_librechat_dependency_tree() {
+  librechat_build_tree_owned || return 1
   (
     cd "$LIBRECHAT_DIR" || exit 1
     local rel=""
@@ -127,6 +146,7 @@ run_librechat_npm() {
 
 
 run_librechat_dependency_install() {
+  librechat_build_tree_owned || return 1
   if [[ -f "package-lock.json" ]]; then
     run_librechat_npm ci
   else
@@ -355,20 +375,13 @@ should_rebuild_librechat_packages() {
 
 # A status-only check: never signal a reader or mutate a running checkout.
 librechat_build_tree_idle() {
+  librechat_build_tree_owned || return 1
   "${PYTHON_BIN:-python3}" - "$LIBRECHAT_DIR" <<'PY_IDLE'
 import subprocess
 import sys
 from pathlib import Path
 
 root = Path(sys.argv[1]).resolve(strict=True)
-# An external dependency tree is not owned by this candidate.
-for name in ("node_modules", "client/node_modules", "packages/api/node_modules",
-             "packages/client/node_modules", "packages/data-provider/node_modules",
-             "packages/data-schemas/node_modules", "client/dist", "packages/api/dist",
-             "packages/client/dist", "packages/data-provider/dist", "packages/data-schemas/dist"):
-    path = root / name
-    if path.is_symlink() and not path.resolve().is_relative_to(root):
-        raise SystemExit("Candidate dependencies refer to another checkout; preparation stopped.")
 try:
     result = subprocess.run(["lsof", "-nP", "-d", "cwd", "-Fpcn"],
                             capture_output=True, text=True, timeout=10)

@@ -130,6 +130,21 @@ forwarding, or zero-audio failures may also complete it. Those failures acknowle
 stable supersession acknowledges `partial_removed`. Streaming previews and partial speech are never
 commits.
 
+End or session closure during playback, without a newer stable source presentation, acknowledges
+`failed` and records interrupted audio. It retains the canonical answer, cortex cards and offered
+background source. Failure records presentation outcome on an unfinished or completed answer without
+changing canonical content or declaring the full answer heard.
+
+An acoustic interruption alone does not close the claim: its completed handle waits for the existing
+presentation lifecycle. A distinct stable source resolves `partial_removed`; same-source replacement,
+non-resumed false interruption, exact owner Stop, or call closure resolves `failed`. Automatic false
+interruption resumption keeps the same handle eligible to commit after complete audible playout.
+This wait does not block successor admission, run models, or add an expiry timer. Core retains
+ownership of logical-claim expiry and rejects stale receipts.
+The existing VAD/STT speech events, adaptive overlap event, and authenticated owner text input mark
+only the current live handle bound to the generated Main presentation before interruption. Progress,
+callback, mode and other forced-speech interruption paths do not mark user supersession.
+
 `committed` closes the presentation turn. `failed` is also terminal and closes the current claim,
 so the next user segment starts a fresh logical turn rather than superseding a response the adapter
 has already declared impossible to deliver. `partial_removed` keeps the current turn open because a
@@ -140,6 +155,12 @@ Telegram and voice retry the exact same idempotent acknowledgement payload up to
 a short backoff, for transport failures, HTTP 408/425/429, and 5xx responses. Semantic rejections
 such as stale revision, ownership conflict, or unknown turn are not retried. Generation completion
 alone is never evidence that Telegram text was delivered or voice audio was heard.
+
+Removing an obsolete adapter presentation must retain the exact canonical Native response while
+its accepted producer is still running. This does not grant the obsolete presentation commit
+authority. A stored Stop snapshot, identified by cancelled Native state and its positive snapshot
+marker, stays in durable chat history through adapter removal and later source supersession.
+Ordinary unfinished superseded answers remain eligible for removal.
 
 After Telegram exhausts those immediate retries, it durably records a bounded local recovery intent
 before it removes or replaces visible output. Recovery uses exact claim tokens and generations.

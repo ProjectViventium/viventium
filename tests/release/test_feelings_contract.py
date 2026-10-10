@@ -336,7 +336,20 @@ def test_feelings_runtime_publishes_concurrency_privacy_and_telemetry_contract()
     assert "resolvePhaseBFeelingContext" in follow_up
     assert "reason: 'conscious_synthesis'" in follow_up
     assert "feelingCapsule" in follow_up
-    assert "pinFeelingCapsuleLast" in follow_up
+    follow_up_prompt = follow_up.split("function buildFollowUpSystemPrompt(", 1)[1].split(
+        "function resolvePhaseBFeelingContext", 1
+    )[0]
+    assert (
+        "return pinViventiumDynamicTailLast({\n"
+        "    instructions: registeredPrompt,\n"
+        "    capsule: feelingCapsule,\n"
+        "  });"
+    ) in follow_up_prompt
+    dynamic_tail = prompt_tail.split("function pinViventiumDynamicTailLast(", 1)[1].split(
+        "module.exports", 1
+    )[0]
+    assert "withoutTail = withoutTail.split(exactCapsule).join('');" in dynamic_tail
+    assert "[exactMemory, factGuard, exactCapsule].filter(Boolean).join('\\n\\n')" in dynamic_tail
     assert "specialist_cortex_independent" in background_service
     assert "function feelingTailForBackgroundAgent(_snapshot)" in background_service
     assert "requireFeelingsAvailable" in route

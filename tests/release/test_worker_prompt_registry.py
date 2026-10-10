@@ -138,7 +138,9 @@ def test_workbench_exposes_sources_and_exact_consumer_relationships(monkeypatch)
     detail = prompt_service.get_prompt('worker.conversation_file_delivery')
     assert entries['worker.conversation_file_delivery']['ownerLayer'] == 'glasshive_worker'
     assert detail['rendered'].strip() == detail['body'].strip()
-    assert {row['selector'] for row in prompt_service.related_config_for_prompt('worker.conversation_file_delivery')} == {'_worker_prompt', '_conversation_file_delivery_instructions'}
+    assert {row['selector'] for row in prompt_service.related_config_for_prompt('worker.conversation_file_delivery')} == {
+        '_worker_prompt', '_conversation_file_delivery_instructions', '_request_attachment_context'
+    }
     assert prompt_service._config_source_path('viventium_v0_4/xPerfect/runtime_phase1/src/workers_projects_runtime/auth.py') is None
     assert prompt_service._config_source_path('viventium_v0_4/GlassHive/runtime_phase1/src/workers_projects_runtime/bootstrap.py') is None
 
@@ -199,3 +201,55 @@ def test_registered_conversation_delivery_source_fails_closed_without_affecting_
     env.update(PYTHONPATH=str(BOOTSTRAP.parents[1]), VIVENTIUM_INSTALL_MODE='express', VIVENTIUM_PROMPT_BUNDLE_PATH=str(path))
     legacy = subprocess.run([sys.executable, '-c', 'from workers_projects_runtime import bootstrap as b; assert b.GLASSHIVE_WORKER_PROJECT_CONTRACT'], env=env, capture_output=True, text=True)
     assert legacy.returncode == 0, legacy.stderr
+
+
+def test_registered_grok_tool_access_fact_uses_current_compiler_and_workbench(monkeypatch):
+    sys.path.insert(0, str(ROOT / "viventium_v0_4/prompt-workbench/backend"))
+    from prompt_workbench import prompt_service
+    monkeypatch.setattr(prompt_service, "PROMPTS_ROOT", PROMPTS)
+    monkeypatch.setattr(prompt_service, "REPO_ROOT", ROOT)
+    monkeypatch.setattr(prompt_service, "LIBRECHAT_ROOT", ROOT / "viventium_v0_4/LibreChat")
+    monkeypatch.setattr(prompt_service, "git_history", lambda *_args, **_kwargs: [])
+    detail = prompt_service.get_prompt("worker.grok_mcp_tool_access")
+    assert detail["metadata"]["owner_layer"] == "glasshive_worker"
+    assert detail["rendered"].strip() == detail["body"].strip()
+    assert "`search_tool`" in detail["body"] and "`use_tool`" in detail["body"]
+    assert {row["selector"] for row in prompt_service.related_config_for_prompt("worker.grok_mcp_tool_access")} == {"_worker_prompt", "native_profile_tool_access_instructions"}
+    bundle = build_prompt_bundle(PROMPTS)
+    assert bundle["prompts"]["worker.grok_mcp_tool_access"]["body"].strip() == detail["body"].strip()
+
+
+def test_compiled_registered_grok_fact_reaches_actual_command_without_bundle_mutation(tmp_path):
+    bundle = build_prompt_bundle(PROMPTS)
+    expected = bundle["prompts"]["worker.grok_mcp_tool_access"]["body"].strip()
+    path = write_bundle(tmp_path, bundle)
+    env = {key: value for key, value in os.environ.items() if not key.startswith("VIVENTIUM_")}
+    env.update(PYTHONDONTWRITEBYTECODE="1", PYTHONPATH=str(BOOTSTRAP.parents[1]),
+               VIVENTIUM_INSTALL_MODE="express", VIVENTIUM_PROMPT_BUNDLE_PATH=str(path),
+               TOOL_ACCESS_QA_ROOT=str(tmp_path / "command-state"))
+    code = r"""
+import json,os
+from pathlib import Path
+from workers_projects_runtime import bootstrap as b
+from workers_projects_runtime.grok_runtime import HostGrokBuildRuntime
+from workers_projects_runtime.openclaw_runtime import RuntimeInfo
+root=Path(os.environ['TOOL_ACCESS_QA_ROOT'])
+tail='<viventium_feeling_state>Synthetic state.</viventium_feeling_state>'
+authority='Exact authority.\n\n'+tail
+bundle={'run_mode':'conversation','developer_instructions':authority,'application_developer_instructions':authority,'declared_developer_instruction_tail':tail,
+ 'provider_capabilities':{'native_tools':True},'grok_mcp_servers':[{'name':'synthetic','type':'http','url':'https://example.test/mcp'}]}
+encoded=json.dumps(bundle)
+worker={'worker_id':'synthetic-worker','profile':'grok-build','bootstrap_bundle_json':encoded}
+runtime=HostGrokBuildRuntime(str(root))
+info=RuntimeInfo('grok-build','grok-selected','',None,None,'native-id',str(root),str(root/'workspace'),None)
+command=runtime._grok_command(worker,info,host=True)
+rules=(runtime._home_dir('synthetic-worker')/'.xperfect-grok/developer-instructions.txt').read_text()
+fact=b._VIVENTIUM_WORKER_PROMPTS['worker.grok_mcp_tool_access']['body'].strip()
+print(json.dumps({'exact':rules=='Exact authority.\n\n'+fact+'\n\n'+tail,
+ 'factCount':rules.count(fact),'bundleUnchanged':worker['bootstrap_bundle_json']==encoded,
+ 'systemFlag':'--system-prompt-file' in command}))
+"""
+    result = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True, timeout=10)
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {"exact": True, "factCount": 1, "bundleUnchanged": True, "systemFlag": True}
+    assert expected in render_prompt("worker.grok_mcp_tool_access", load_prompt_registry(PROMPTS))

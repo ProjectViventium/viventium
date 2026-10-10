@@ -2,6 +2,7 @@ import asyncio
 import json
 import os
 import sys
+import struct
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
@@ -76,6 +77,32 @@ class VoiceP0TimingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(stt._process_stream_event, original)
         self.assertFalse(timing.attach_xai(FakeTTS(FakeSocket())))
         self.log.info.assert_not_called()
+
+    def test_local_stt_final_has_a_generic_stream_binding(self):
+        stream = SimpleNamespace()
+        self.timing.bind_stt(stream)
+        self.timing.final_stt(SimpleNamespace(type=SimpleNamespace(name="FINAL_TRANSCRIPT")), stream)
+        self.assertEqual(self.rows()[0]["streamHash"], self.rows()[1]["streamHash"])
+        self.assertEqual(self.rows()[1]["bindingStatus"], "bound")
+
+    async def test_vad_receipt_preserves_event_and_clock_without_audio_or_text(self):
+        class Recognition:
+            __module__ = "livekit.agents.voice.audio_recognition"
+            async def _on_vad_event(self, event):
+                return event
+        recognition = Recognition()
+        event = SimpleNamespace(type=SimpleNamespace(name="END_OF_SPEECH"),
+            samples_index=16000, speech_duration=1.0, silence_duration=.5,
+            frames=["private audio"], text="private transcript")
+        self.assertTrue(self.timing.attach_audio_recognition(recognition))
+        self.assertFalse(self.timing.attach_audio_recognition(recognition))
+        with patch("voice_p0_timing.time.time_ns", return_value=999_000_000):
+            self.assertIs(await recognition._on_vad_event(event), event)
+        row = self.rows()[-1]
+        self.assertEqual(row["observedAtMs"], 999)
+        self.assertEqual(row["samplesIndex"], 16000)
+        self.assertEqual(row["endClock"], "sdk_vad_sample_relative")
+        self.assertNotIn("private", str(row))
 
     def test_unsupported_version_does_not_modify_provider(self):
         stt = FakeSTT()
@@ -224,6 +251,225 @@ class VoiceP0TimingTests(unittest.IsolatedAsyncioTestCase):
         stages = [row['stage'] for row in self.rows()]
         self.assertIn('tts_request_bound', stages)
         self.assertIn('tts_first_audio_receipt', stages)
+        self.assertEqual(stages.count('tts_first_decoded_pcm'), 1)
+        self.assertLess(stages.index('tts_first_audio_receipt'), stages.index('tts_first_decoded_pcm'))
+        decoded = next(row for row in self.rows() if row['stage'] == 'tts_first_decoded_pcm')
+        self.assertEqual(decoded['byteCount'], len(pcm))
+        self.assertNotIn('private', str(decoded))
+
+    async def test_decoded_pcm_observation_preserves_push_and_restores_after_failure(self):
+        ws = FakeSocket()
+        tts = FakeTTS(ws)
+        error = RuntimeError('synthetic failure')
+        async def run(emitter):
+            emitter.initialize(request_id='synthetic-request', mime_type='audio/pcm')
+            emitter.push(b'')
+            emitter.push(b'\0\1')
+            emitter.push(b'\2\3')
+            raise error
+        original_stream = tts.stream
+        def stream():
+            result = original_stream()
+            result._run = run
+            return result
+        tts.stream = stream
+        self.assertTrue(self.timing.attach_xai(tts))
+        emitter = SimpleNamespace(initialize=Mock(), push=Mock())
+        initialize, push = emitter.initialize, emitter.push
+        with self.assertRaises(RuntimeError) as captured:
+            await tts.stream()._run(emitter)
+        self.assertIs(captured.exception, error)
+        self.assertIs(emitter.initialize, initialize)
+        self.assertIs(emitter.push, push)
+        self.assertEqual([call.args[0] for call in push.call_args_list], [b'', b'\0\1', b'\2\3'])
+        decoded = [row for row in self.rows() if row['stage'] == 'tts_first_decoded_pcm']
+        self.assertEqual(len(decoded), 1)
+        self.assertEqual(decoded[0]['byteCount'], 2)
+        ended = [row for row in self.rows() if row['stage'] == 'tts_stream_end']
+        self.assertEqual(len(ended), 1)
+        self.assertEqual(ended[0]['status'], 'failed')
+        self.assertNotIn('synthetic failure', str(ended))
+
+    async def test_stream_cancellation_preserves_emitter_and_reports_actual_outcome(self):
+        tts = FakeTTS(FakeSocket())
+        ready = asyncio.Event()
+        original_stream = tts.stream
+        async def run(emitter):
+            emitter.initialize(request_id='synthetic-request', mime_type='audio/pcm')
+            ready.set()
+            await asyncio.Event().wait()
+        def stream():
+            result = original_stream()
+            result._run = run
+            return result
+        tts.stream = stream
+        self.assertTrue(self.timing.attach_xai(tts))
+        emitter = SimpleNamespace(initialize=Mock(), push=Mock())
+        initialize, push = emitter.initialize, emitter.push
+        task = asyncio.create_task(tts.stream()._run(emitter))
+        await ready.wait()
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+        self.assertIs(emitter.initialize, initialize)
+        self.assertIs(emitter.push, push)
+        ended = [row for row in self.rows() if row['stage'] == 'tts_stream_end']
+        self.assertEqual(len(ended), 1)
+        self.assertEqual(ended[0]['status'], 'cancelled')
+        self.assertNotIn('leaseHash', ended[0])
+
+
+    async def _render_native_pcm_chunks(self, chunks, *, enabled=True):
+        import base64
+        import aiohttp
+        from worker import _build_xai_tts_word_tokenizer
+        from xai_pooled_tts import PooledXaiTTS
+        sent_done = asyncio.Event()
+
+        class SDKSocket(FakeSocket):
+            closed = False
+            read_count = 0
+
+            async def send_str(self, data, **kwargs):
+                result = await super().send_str(data, **kwargs)
+                if json.loads(data).get('type') == 'text.done':
+                    sent_done.set()
+                return result
+
+            async def receive(self, **kwargs):
+                await sent_done.wait()
+                index = self.read_count
+                self.read_count += 1
+                packet = ({'type': 'audio.delta', 'delta': base64.b64encode(chunks[index]).decode()}
+                          if index < len(chunks) else {'type': 'audio.done'})
+                return SimpleNamespace(type=aiohttp.WSMsgType.TEXT, data=json.dumps(packet))
+
+            async def close(self):
+                self.closed = True
+
+        ws = SDKSocket()
+        tts = PooledXaiTTS(api_key='synthetic-key', tokenizer=_build_xai_tts_word_tokenizer())
+        async def connect(timeout):
+            return ws
+        tts._connect_ws = connect
+        observer = self.timing if enabled else VoiceP0Timing(self.log, 'synthetic-call', enabled=False)
+        self.assertEqual(observer.attach_xai(tts), enabled)
+        stream = tts.stream()
+        try:
+            stream.push_text('Synthetic speech keeps spaces.')
+            stream.end_input()
+            output = [event async for event in stream]
+            self.assertEqual(b''.join(bytes(event.frame.data) for event in output), b''.join(chunks))
+            if enabled:
+                returned = [r for r in self.rows() if r['stage'] == 'tts_pool_disposition']
+                self.assertEqual(returned[-1]['operation'], 'returned')
+        finally:
+            await stream.aclose()
+            await tts.aclose()
+        return self.rows()
+
+    async def test_actual_pinned_decoder_binds_first_activity_after_quiet_and_only_once(self):
+        chunks = [bytes(48000), struct.pack('<hhhh', 0, 263, 0, -500), bytes(2392)]
+        rows = await self._render_native_pcm_chunks(chunks)
+        active = [r for r in rows if r['stage'] == 'tts_first_active_produced_pcm']
+        self.assertEqual(len(active), 1)
+        self.assertEqual(active[0]['leadingQuietSamples'], 24001)
+        self.assertEqual(active[0]['sampleRate'], 24000)
+        self.assertEqual(active[0]['thresholdNormalized'], .008)
+        decoded = next(r for r in rows if r['stage'] == 'tts_first_decoded_pcm')
+        self.assertLess(decoded['observedAtMs'], active[0]['observedAtMs'])
+        for key in ('callHash', 'streamHash', 'requestHash', 'leaseHash'):
+            self.assertEqual(decoded[key], active[0][key])
+        self.assertEqual(set(active[0]), {'event', 'stage', 'callHash', 'observedAtMs', 'monotonicMs',
+                                        'streamHash', 'requestHash', 'leaseHash',
+                                        'leadingQuietSamples', 'sampleRate', 'thresholdNormalized'})
+        self.assertNotIn('synthetic', str(active))
+
+    async def test_actual_pinned_decoder_handles_sample_split_across_odd_payloads(self):
+        chunks = [bytes(3), b'\0\x07', b'\x01' + bytes(2394)]
+        rows = await self._render_native_pcm_chunks(chunks)
+        active = [r for r in rows if r['stage'] == 'tts_first_active_produced_pcm']
+        self.assertEqual(len(active), 1)
+        self.assertEqual(active[0]['leadingQuietSamples'], 2)
+        self.assertNotIn('tts_active_pcm_support', [r['stage'] for r in rows])
+
+    async def test_actual_pinned_decoder_all_quiet_leaves_activity_clock_absent(self):
+        rows = await self._render_native_pcm_chunks([struct.pack('<hh', 262, -262) * 600])
+        self.assertNotIn('tts_first_active_produced_pcm', [r['stage'] for r in rows])
+        self.assertEqual([r['stage'] for r in rows].count('tts_first_decoded_pcm'), 1)
+
+    async def test_activity_scan_stops_after_first_active_sample(self):
+        import voice_p0_timing
+        scan = getattr(voice_p0_timing, '_first_active_pcm16le_index', lambda data: None)
+        with patch('voice_p0_timing._first_active_pcm16le_index', wraps=scan, create=True) as observed:
+            await self._render_native_pcm_chunks([bytes(1200), struct.pack('<h', -263) + bytes(1198), bytes(1200)])
+        self.assertEqual(observed.call_count, 2)
+
+    async def test_disabled_native_pcm_path_never_scans_or_logs(self):
+        with patch('voice_p0_timing._first_active_pcm16le_index', create=True) as scan:
+            await self._render_native_pcm_chunks([struct.pack('<h', 500) + bytes(2398)], enabled=False)
+        scan.assert_not_called()
+        self.log.info.assert_not_called()
+
+    async def _observe_fake_pcm_format(self, **settings):
+        tts = FakeTTS(FakeSocket())
+        sentinel = object()
+        original_stream = tts.stream
+        async def run(emitter):
+            emitter.initialize(request_id='synthetic-request', **settings)
+            emitter.push(struct.pack('<h', 500))
+            return sentinel
+        def stream():
+            result = original_stream()
+            result._run = run
+            return result
+        tts.stream = stream
+        self.assertTrue(self.timing.attach_xai(tts))
+        emitter = SimpleNamespace(initialize=Mock(), push=Mock())
+        initialize, push = emitter.initialize, emitter.push
+        self.assertIs(await tts.stream()._run(emitter), sentinel)
+        self.assertIs(emitter.initialize, initialize)
+        self.assertIs(emitter.push, push)
+        push.assert_called_once_with(struct.pack('<h', 500))
+        return self.rows()
+
+    async def test_unknown_raw_format_leaves_clock_absent_without_changing_push(self):
+        for settings in ({'mime_type':'audio/pcm'},
+                         {'mime_type':'audio/raw', 'sample_rate':True, 'num_channels':1},
+                         {'mime_type':'audio/pcm', 'sample_rate':24000, 'num_channels':2}):
+            self.log.reset_mock()
+            rows = await self._observe_fake_pcm_format(**settings)
+            self.assertNotIn('tts_first_active_produced_pcm', [r['stage'] for r in rows])
+            unsupported = [r for r in rows if r['stage'] == 'tts_active_pcm_support']
+            self.assertEqual(len(unsupported), 1)
+            self.assertEqual(unsupported[0]['reason'], 'format')
+            self.assertNotIn('synthetic', str(unsupported))
+
+    async def test_explicit_or_unproven_pcm_formats_abstain_without_changing_audio(self):
+        for mime_type in ('audio/pcm;format=f32', 'audio/pcm;bits=24',
+                          'audio/pcm;endianness=big', 'audio/pcm-f32', 'audio/raw'):
+            self.log.reset_mock()
+            rows = await self._observe_fake_pcm_format(mime_type=mime_type, sample_rate=24000,
+                                                       num_channels=1)
+            self.assertNotIn('tts_first_active_produced_pcm', [r['stage'] for r in rows])
+            unsupported = [r for r in rows if r['stage'] == 'tts_active_pcm_support']
+            self.assertEqual(len(unsupported), 1)
+            self.assertEqual(unsupported[0]['reason'], 'format')
+            self.assertNotIn(mime_type, str(unsupported))
+
+    async def test_compressed_format_does_not_invent_activity(self):
+        rows = await self._observe_fake_pcm_format(mime_type='audio/mpeg', sample_rate=24000, num_channels=1)
+        self.assertNotIn('tts_first_active_produced_pcm', [r['stage'] for r in rows])
+        self.assertNotIn('tts_first_decoded_pcm', [r['stage'] for r in rows])
+
+    async def test_activity_observer_error_preserves_native_audio_and_outcome(self):
+        with patch('voice_p0_timing._first_active_pcm16le_index', side_effect=RuntimeError('private diagnostic'), create=True):
+            rows = await self._render_native_pcm_chunks([struct.pack('<h', 500) + bytes(2398)])
+        unsupported = [r for r in rows if r['stage'] == 'tts_active_pcm_support']
+        self.assertEqual(len(unsupported), 1)
+        self.assertEqual(unsupported[0]['reason'], 'observation')
+        self.assertNotIn('private diagnostic', str(rows))
+        self.assertEqual([r for r in rows if r['stage'] == 'tts_stream_end'][-1]['status'], 'completed')
 
     async def test_actual_pinned_assemblyai_event_keeps_final_contract_without_network(self):
         import aiohttp
@@ -256,3 +502,22 @@ class VoiceP0TimingTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TextDoneTimingTests(unittest.IsolatedAsyncioTestCase):
+    async def test_done_write_after_delta_is_once_bound_and_exactly_forwarded(self):
+        log = Mock(); timing = VoiceP0Timing(log, 'synthetic-call', enabled=True)
+        ws = FakeSocket(); ws.messages.append(SimpleNamespace(data=json.dumps({'type':'audio.delta'})))
+        tts = FakeTTS(ws); self.assertTrue(timing.attach_xai(tts))
+        stream = tts.stream(); stream.push_text('Synthetic public text')
+        await stream._run(SimpleNamespace(initialize=Mock()))
+        done = json.dumps({'type':'text.done'})
+        await ws.send_str(done, compress=0); await ws.send_str(done, compress=0)
+        rows = [json.loads(call.args[1]) for call in log.info.call_args_list]
+        writes = [r for r in rows if r['stage']=='tts_first_text_write']
+        ends = [r for r in rows if r['stage']=='tts_text_done_write']
+        self.assertEqual(len(ends),1)
+        self.assertEqual(ends[0]['requestHash'],writes[0]['requestHash'])
+        self.assertEqual(ends[0]['socketHash'],writes[0]['socketHash'])
+        self.assertEqual(ws.sent[-2:], [(done, {'compress':0}), (done, {'compress':0})])
+        self.assertNotIn('Synthetic public text',str(rows))

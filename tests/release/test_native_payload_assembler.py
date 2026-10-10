@@ -893,19 +893,26 @@ def test_native_candidate_config_excludes_unbundled_glasshive(
     compiled = tmp_path / "compiled"
     config_path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
 
-    subprocess.run(
-        [
-            sys.executable,
-            str(REPO_ROOT / "scripts/viventium/config_compiler.py"),
-            "--native-payload",
-            "--config",
-            str(config_path),
-            "--output-dir",
-            str(compiled),
-        ],
-        cwd=REPO_ROOT,
-        check=True,
-    )
+    compiler_path = REPO_ROOT / "scripts/viventium/config_compiler.py"
+    monkeypatch.syspath_prepend(str(compiler_path.parent))
+    spec = importlib.util.spec_from_file_location("native_candidate_compiler_under_test", compiler_path)
+    assert spec and spec.loader
+    compiler = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(compiler)
+    source = compiler.load_source_of_truth_agents_bundle()
+    # This unbundled fixture has no Voice route. The delivered Agent source explicitly selects
+    # GlassHive Voice; keep that source intact and compile this fixture's declared empty routes.
+    for field in (
+        "voice_llm_model", "voice_llm_provider", "voice_llm_model_parameters",
+        "voice_fallback_llm_model", "voice_fallback_llm_provider", "voice_fallback_llm_model_parameters",
+    ):
+        source["mainAgent"][field] = {} if field.endswith("_parameters") else None
+    monkeypatch.setattr(compiler, "load_source_of_truth_agents_bundle", lambda: source)
+    monkeypatch.setattr(sys, "argv", [
+        str(compiler_path), "--native-payload", "--config", str(config_path),
+        "--output-dir", str(compiled),
+    ])
+    compiler.main()
     shutil.copyfile(config_path, compiled / "config.yaml")
 
     load_native_assembler(monkeypatch).validate_native_compiled_defaults(compiled)
@@ -4694,3 +4701,43 @@ def test_native_work_view_and_artifact_links_use_the_existing_proxy_origin(tmp_p
     assert public_base == environment["WPR_MCP_BASE_URL"]
     assert public_base + "/v1" == environment["GLASSHIVE_PROVIDER_BASE_URL"]
     assert urllib.parse.urlparse(public_base + "/w/opaque-ref").path.startswith("/__viventium_native_glasshive/w/")
+
+
+def test_native_file_source_roots_follow_the_owned_runtime_database(tmp_path, monkeypatch):
+    runtime = load_native_runtime()
+    monkeypatch.setattr(runtime, "native_body_paths", lambda *_: {"codex-cli": tmp_path / "codex", "claude-code": tmp_path / "claude"})
+    monkeypatch.setattr(runtime, "runtime_secrets", lambda *_: {"CREDS_KEY": "11" * 32})
+    support = tmp_path / "support"
+    default = runtime.native_glasshive_transport_environment(tmp_path / "release", support)
+    assert default["WPR_BOOTSTRAP_SOURCE_ROOTS"].split(os.pathsep) == [
+        str(support / "data/uploads"),
+        str(support / "state/runtime/native/glasshive/managed-files"),
+    ]
+    selected_db = support / "state/runtime/isolated/glasshive/runtime.sqlite"
+    selected = runtime.native_glasshive_transport_environment(
+        tmp_path / "release", support, database_path=selected_db,
+    )
+    assert selected["WPR_BOOTSTRAP_SOURCE_ROOTS"].split(os.pathsep) == [
+        str(support / "data/uploads"), str(selected_db.parent / "managed-files"),
+    ]
+    monkeypatch.setattr(runtime, "build_metadata", lambda *_: {"source_commit": "test", "components": {"glasshive": {"commit": "test"}}})
+    monkeypatch.setattr(runtime, "load_native_runtime_env", lambda *_: {"WPR_DB_PATH": str(selected_db)})
+    monkeypatch.setattr(runtime, "native_scheduling_environment", lambda *_: {})
+    merged = runtime.native_glasshive_environment(tmp_path / "release", support)
+    assert merged["WPR_BOOTSTRAP_SOURCE_ROOTS"].split(os.pathsep)[1] == str(Path(merged["WPR_DB_PATH"]).parent / "managed-files")
+    assert merged["WPR_DB_PATH"] != str(selected_db)
+
+
+def test_native_runtime_accepts_reviewed_host_grok_hash_without_container_opt_in(tmp_path, monkeypatch):
+    monkeypatch.syspath_prepend(str(ASSEMBLER.parent))
+    import config_compiler
+    runtime = load_native_runtime()
+    native = config_compiler.render_native_runtime_env({"install": {"mode": "native"}}, {})
+    native["WPR_GROK_REVIEWED_BINARY_SHA256"] = "a" * 64
+    path = tmp_path / "native-runtime.env"
+    config_compiler.dump_env(path, native)
+    assert runtime.load_native_runtime_env(path) == native
+
+    config_compiler.dump_env(path, {**native, "WPR_GROK_CONTAINER_REVIEWED_BINARY_SHA256": "b" * 64})
+    with pytest.raises(runtime.RuntimeError_, match="unapproved key"):
+        runtime.load_native_runtime_env(path)

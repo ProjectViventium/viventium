@@ -30,7 +30,7 @@ from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from importlib import metadata as importlib_metadata
 from pathlib import Path
-from typing import Any, Callable, NoReturn, Optional
+from typing import Any, Awaitable, Callable, NoReturn, Optional
 from urllib.parse import quote, urlencode
 
 import aiohttp
@@ -51,13 +51,16 @@ from livekit.agents import (
     text_transforms,
     tokenize,
 )
+from livekit.agents.types import FlushSentinel, TOPIC_CHAT
+from livekit.agents.llm import ChatChunk
 from livekit.agents.worker import WorkerType
-from livekit.agents.stt import SpeechEventType
+from livekit.agents.stt import SpeechEventType, StreamAdapter as LivekitStreamAdapter
 from livekit.agents import stt as livekit_stt, utils as livekit_utils
 from livekit.plugins import openai
 
 try:
     from livekit.plugins import xai as xai_plugin
+    from xai_pooled_tts import PooledXaiTTS, create_xai_tts
     HAS_XAI_TTS = True
 except ImportError:
     HAS_XAI_TTS = False
@@ -133,6 +136,8 @@ except ImportError:
     elevenlabs = None
 
 from librechat_llm import (
+    _PUBLIC_PART_COMPLETION_EXTRA,
+    _public_part_completion,
     LibreChatAuth, LibreChatLLM, TYPED_INPUT_EXTRA_KEY, _VoiceTtsDeltaBuffer,
     _voice_source_event_id,
 )
@@ -176,8 +181,6 @@ from multi_track_ingress import (
 from voice_hop_trace import voice_stage_span
 from voice_p0_timing import VoiceP0Timing, observe_sdk_commit
 from voice_progress import (
-    AsyncVoiceProgressController,
-    VoiceProgressStateMachine,
     parse_authoritative_call_state_packet,
     parse_voice_call_state_v1,
     run_authoritative_mode_reconciliation,
@@ -1629,6 +1632,46 @@ def _apply_xai_tts_streaming_latency_options(
     )
 
 
+def _build_current_call_runtime_context(
+    env: Env, call_session_id: str, *, turn_detection: Any, primary_tts_ready: bool = True,
+) -> dict[str, Any]:
+    stt_provider = _normalize_stt_provider(env.stt_provider)
+    tts_provider = _normalize_voice_provider(env.tts_provider)
+    return {
+        "version": 1,
+        "callSessionId": call_session_id,
+        "readyRoute": {
+            "stt": {
+                "provider": stt_provider,
+                "variant": {
+                    "pywhispercpp": env.stt_model,
+                    "assemblyai": env.assemblyai_stt_model,
+                    "openai": env.openai_stt_model,
+                }.get(stt_provider),
+            },
+            "tts": {
+                "provider": tts_provider if primary_tts_ready else None,
+                "variant": {
+                    "local_chatterbox_turbo_mlx_8bit": env.mlx_audio_model_id,
+                    "cartesia": env.cartesia_voice_id,
+                    "elevenlabs": env.elevenlabs_voice_id,
+                    "openai": env.openai_tts_model,
+                    "xai": env.xai_voice,
+                }.get(tts_provider) if primary_tts_ready else None,
+            },
+        },
+        "configuredTtsFallback": _normalize_voice_provider(env.tts_provider_fallback)
+        if env.tts_provider_fallback else None,
+        "turnHandling": {
+            "turnDetection": _turn_detection_label(turn_detection),
+            "minEndpointingDelayS": env.voice_min_endpointing_delay_s,
+            "maxEndpointingDelayS": env.voice_max_endpointing_delay_s,
+            "minInterruptionDurationS": env.voice_min_interruption_duration_s,
+            "minInterruptionWords": env.voice_min_interruption_words,
+        },
+    }
+
+
 def _apply_requested_voice_route(
     env: Env,
     requested_voice_route: Any,
@@ -2645,6 +2688,7 @@ async def _abandon_voice_session_claim(
         "owner_timeout",
         "owner_mismatch",
         "gateway_initialization_failed",
+        "gateway_transport_failed",
     }
     normalized_reason = (reason or "").strip()
     if (
@@ -2787,6 +2831,65 @@ async def _report_voice_gateway_failure(
         payload["status"],
     )
     return payload
+
+
+async def _close_voice_auth_planes_and_release_terminal_claim(
+    *,
+    close_planes: list[Callable[[], Awaitable[None]]],
+    pending_reports: set[asyncio.Task[Any]],
+    terminal_failure_accepted: Callable[[], bool],
+    abandon: Callable[[], Awaitable[bool]],
+) -> bool:
+    """Quiesce this job's authenticated couriers before compare-and-clearing its lease."""
+    if pending_reports:
+        await asyncio.gather(*tuple(pending_reports), return_exceptions=True)
+    # Shutdown callbacks run concurrently in LiveKit. One callback owns these
+    # closures so an old state poll cannot reclaim the lease after it is cleared.
+    await asyncio.gather(*(close() for close in close_planes))
+    if not terminal_failure_accepted():
+        return False
+    return await abandon()
+
+
+def _register_terminal_room_failure_report(
+    room: Any,
+    *,
+    is_ready: Callable[[], bool],
+    report_failure: Callable[[], Any],
+    pending_reports: set[asyncio.Task[Any]],
+) -> Callable[[], Awaitable[None]]:
+    """Report native terminal media loss through the existing exact-worker courier."""
+    reported = False
+
+    def on_disconnected(reason: Any) -> None:
+        nonlocal reported
+        if reported or not is_ready() or reason == rtc.DisconnectReason.CLIENT_INITIATED:
+            return
+        reported = True
+        task = asyncio.create_task(report_failure())
+        pending_reports.add(task)
+
+        def consume_result(completed: asyncio.Task[Any]) -> None:
+            pending_reports.discard(completed)
+            if not completed.cancelled():
+                completed.exception()
+
+        task.add_done_callback(consume_result)
+        try:
+            reason_name = rtc.DisconnectReason.Name(reason)
+        except (ValueError, TypeError):
+            reason_name = "UNKNOWN_REASON"
+        logger.warning(
+            "[VoiceTransport] terminal_room_disconnect reason=%s failureReport=scheduled",
+            reason_name,
+        )
+
+    room.on("disconnected", on_disconnected)
+
+    async def stop(*_args: Any) -> None:
+        room.off("disconnected", on_disconnected)
+
+    return stop
 
 
 async def _report_voice_initialization_failure_and_abandon(
@@ -3222,6 +3325,20 @@ def prewarm_process(proc: JobProcess) -> None:
             prewarmed_tts.prewarm()
             proc.userdata["prewarmed_local_chatterbox_tts"] = prewarmed_tts
         except Exception as exc:
+            has_configured_alternative = any(
+                _normalize_voice_provider(provider) != "local_chatterbox_turbo_mlx_8bit"
+                for provider in (env.tts_provider, env.tts_provider_fallback)
+                if (provider or "").strip()
+            )
+            if has_configured_alternative:
+                # Registration is not call readiness. The owned call must construct
+                # its actual configured attempts before treating fallback as usable.
+                logger.warning(
+                    "[voice-gateway] Optional local Chatterbox TTS prewarm failed; "
+                    "leaving it uncached while another configured route remains",
+                    exc_info=True,
+                )
+                return
             logger.error(
                 "[voice-gateway] Local Chatterbox TTS prewarm failed; refusing to register an unhealthy local TTS worker",
                 exc_info=True,
@@ -3229,6 +3346,51 @@ def prewarm_process(proc: JobProcess) -> None:
             raise RuntimeError(
                 "Local Chatterbox TTS prewarm failed; worker will not register."
             ) from exc
+
+
+async def _prewarm_call_local_tts(
+    *,
+    env: Env,
+    auth: LibreChatAuth,
+    primary_tts_impl: Any,
+    primary_voice_provider: str,
+    prewarmed_local_tts: Any,
+    attempts: list[ProviderAttempt],
+    fail_initialization: Callable[[VoiceRouteError], Awaitable[None]],
+) -> bool:
+    """Warm the selected local route; report whether its readiness is known to have failed."""
+    if (
+        primary_voice_provider != "local_chatterbox_turbo_mlx_8bit"
+        or primary_tts_impl is prewarmed_local_tts
+        or not env.voice_prewarm_local_tts
+        or not hasattr(primary_tts_impl, "prewarm")
+    ):
+        return True
+    logger.info("[voice-gateway] Prewarming TTS model (%s)...", primary_voice_provider)
+    try:
+        primary_tts_impl.prewarm()
+    except Exception as exc:
+        classified = VoiceRouteError(
+            "provider_failure",
+            modality="tts",
+            provider=primary_voice_provider,
+            reason="prewarm failed",
+        )
+        if len(attempts) > 1:
+            await _report_voice_gateway_failure(
+                env.librechat_origin,
+                auth,
+                classification=classified.code,
+                modality=classified.modality,
+                provider=classified.provider,
+                phase="initialization",
+                fatal=False,
+            )
+            return False
+        await fail_initialization(classified)
+        raise classified from exc
+
+    return True
 
 
 def _merge_insights(
@@ -3277,7 +3439,8 @@ def _voice_sync_transcription_enabled() -> bool:
 
 
 def _build_room_options(
-    *, sync_transcription: bool, participant_identity: str = "", text_input_cb: Optional[Any] = None
+    *, sync_transcription: bool, participant_identity: str = "", text_input_cb: Optional[Any] = None,
+    owns_text_stream: bool = False,
 ) -> Any:
     options: dict[str, Any] = {
         "text_output": room_io.TextOutputOptions(
@@ -3287,9 +3450,21 @@ def _build_room_options(
     }
     if participant_identity:
         options["participant_identity"] = participant_identity
-    if text_input_cb is not None:
+    if owns_text_stream:
+        options["text_input"] = False
+    elif text_input_cb is not None:
         options["text_input"] = room_io.TextInputOptions(text_input_cb=text_input_cb)
     return room_io.RoomOptions(**options)
+
+
+def _note_current_presentation_interruption(session: Any, llm_impl: LibreChatLLM) -> None:
+    """Mark overlap only on the SDK's current, live, bound generated presentation."""
+    speech_handle = getattr(session, "current_speech", None)
+    if (speech_handle is None
+            or bool(getattr(speech_handle, "done", lambda: False)())
+            or bool(getattr(speech_handle, "interrupted", False))):
+        return
+    llm_impl.note_provisional_interruption(speech_handle=speech_handle)
 
 
 async def _handle_owner_text_input(
@@ -3316,8 +3491,110 @@ async def _handle_owner_text_input(
         "sourceEventId": _voice_source_event_id(ChatContext(items=[message]), call_session_id),
         "textSha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
     }
+    llm_impl = getattr(session, "llm", None)
+    if isinstance(llm_impl, LibreChatLLM):
+        _note_current_presentation_interruption(session, llm_impl)
     await session.interrupt()
     session.generate_reply(user_input=message, input_modality="text")
+
+
+def _register_owner_text_input(
+    ctx: Any, session: Any, *, call_session_id: str, owner_participant_identity: str,
+    session_ready: asyncio.Event, can_dispatch: Callable[[], bool],
+    text_input_cb: Callable[..., Any], owner_wait_s: float,
+) -> tuple[Callable[..., None], Callable[..., Any]]:
+    """Retain original owner readers across native participant event ordering."""
+    room = ctx.room
+    pending: dict[str, asyncio.Task[None]] = {}
+    closed = False
+
+    def cancel_pending() -> None:
+        for task in list(pending.values()):
+            task.cancel()
+
+    async def read_text(reader: Any, stream_hash: str) -> None:
+        owner_wait_ms = 0.0
+        try:
+            if not session_ready.is_set():
+                await session_ready.wait()
+            if closed or not can_dispatch():
+                logger.info("[VoiceTypedInput] reader_dropped callSessionId=%s streamHash=%s reason=%s",
+                            call_session_id, stream_hash, "closed" if closed else "session_unavailable")
+                return
+            participant = room.remote_participants.get(owner_participant_identity)
+            if participant is None:
+                wait_started = time.perf_counter()
+                logger.info("[VoiceTypedInput] owner_wait_started callSessionId=%s streamHash=%s",
+                            call_session_id, stream_hash)
+                participant = await asyncio.wait_for(
+                    ctx.wait_for_participant(identity=owner_participant_identity),
+                    timeout=owner_wait_s,
+                )
+                owner_wait_ms = (time.perf_counter() - wait_started) * 1000.0
+            if (closed or not can_dispatch()
+                    or participant.identity != owner_participant_identity
+                    or room.remote_participants.get(owner_participant_identity) is not participant):
+                logger.info("[VoiceTypedInput] reader_dropped callSessionId=%s streamHash=%s reason=participant_or_session_changed",
+                            call_session_id, stream_hash)
+                return
+            text = await reader.read_all()
+            if (closed or not can_dispatch()
+                    or room.remote_participants.get(owner_participant_identity) is not participant):
+                logger.info("[VoiceTypedInput] reader_dropped callSessionId=%s streamHash=%s reason=participant_or_session_changed",
+                            call_session_id, stream_hash)
+                return
+            logger.info("[VoiceTypedInput] reader_callback callSessionId=%s streamHash=%s ownerWaitMs=%.3f",
+                        call_session_id, stream_hash, owner_wait_ms)
+            await text_input_cb(
+                session, room_io.TextInputEvent(text=text, info=reader.info, participant=participant),
+            )
+        except asyncio.CancelledError:
+            logger.info("[VoiceTypedInput] reader_cancelled callSessionId=%s streamHash=%s reason=%s",
+                        call_session_id, stream_hash, "closed" if closed else "cancelled")
+            raise
+        except Exception as error:
+            logger.warning("[VoiceTypedInput] stream_unavailable callSessionId=%s streamHash=%s errorClass=%s",
+                           call_session_id, stream_hash, type(error).__name__)
+
+    def on_text_stream(reader: Any, participant_identity: str) -> None:
+        stream_id = getattr(getattr(reader, "info", None), "stream_id", None)
+        if closed or not owner_participant_identity or participant_identity != owner_participant_identity:
+            logger.info("[VoiceTypedInput] reader_dropped callSessionId=%s reason=%s", call_session_id,
+                        "closed" if closed else "non_owner")
+            return
+        if not isinstance(stream_id, str) or not 0 < len(stream_id) <= 256:
+            logger.info("[VoiceTypedInput] reader_dropped callSessionId=%s reason=invalid_stream", call_session_id)
+            return
+        stream_hash = hashlib.sha256(stream_id.encode("utf-8")).hexdigest()[:16]
+        if stream_id in pending:
+            logger.info("[VoiceTypedInput] reader_dropped callSessionId=%s streamHash=%s reason=duplicate_pending_stream",
+                        call_session_id, stream_hash)
+            return
+        logger.info("[VoiceTypedInput] reader_received callSessionId=%s streamHash=%s", call_session_id, stream_hash)
+        task = asyncio.create_task(read_text(reader, stream_hash))
+        pending[stream_id] = task
+        task.add_done_callback(lambda _task: pending.pop(stream_id, None))
+
+    def stop(*_args: Any) -> None:
+        nonlocal closed
+        if closed:
+            return
+        closed = True
+        room.unregister_text_stream_handler(TOPIC_CHAT)
+        room.off("disconnected", stop)
+        session.off("close", stop)
+        cancel_pending()
+
+    async def close(*_args: Any) -> None:
+        tasks = list(pending.values())
+        stop()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+    room.register_text_stream_handler(TOPIC_CHAT, on_text_stream)
+    room.on("disconnected", stop)
+    session.on("close", stop)
+    return stop, close
 
 
 def _metric_value(metrics: Any, key: str) -> Optional[float]:
@@ -3358,7 +3635,7 @@ def _metric_seconds(metrics: Any, key: str) -> float:
     return 0.0 if value is None else value
 
 
-def _interrupt_livekit_speech_handles(handles: set[Any]) -> None:
+def _interrupt_livekit_speech_handles(handles: Any) -> None:
     """Stop only still-active progress handles and forget the completed ones."""
     pending = list(handles)
     handles.clear()
@@ -3371,6 +3648,10 @@ def _interrupt_livekit_speech_handles(handles: set[Any]) -> None:
                 "[VoiceTask] progress_interrupt_failed error=%s callContinues=true",
                 type(exc).__name__,
             )
+
+
+
+
 
 
 def _interrupt_agent_session_speech(session: Any) -> None:
@@ -3395,16 +3676,40 @@ def _register_presentation_lifecycle_handlers(session: Any, llm_impl: LibreChatL
         ):
             llm_impl.register_speech_handle(getattr(event, "speech_handle", None))
 
+    @session.on("agent_state_changed")
+    def _on_started_playout(event: Any) -> None:
+        if getattr(event, "new_state", None) == "speaking":
+            created_at = float(getattr(event, "created_at", 0.0) or 0.0)
+            llm_impl.record_speech_started(
+                session.current_speech,
+                (created_at if created_at > 0 else time.time()) * 1000.0,
+            )
+
     @session.on("overlapping_speech")
     def _on_provisional_overlapping_speech(event: Any) -> None:
         if bool(getattr(event, "is_interruption", False)):
-            llm_impl.note_provisional_interruption()
+            _note_current_presentation_interruption(session, llm_impl)
+
+    @session.on("user_state_changed")
+    def _on_provisional_user_speech(event: Any) -> None:
+        if getattr(event, "new_state", None) == "speaking":
+            _note_current_presentation_interruption(session, llm_impl)
+
+    @session.on("user_input_transcribed")
+    def _on_provisional_user_transcript(event: Any) -> None:
+        if getattr(event, "transcript", None):
+            _note_current_presentation_interruption(session, llm_impl)
+
+    @session.on("agent_false_interruption")
+    def _on_resolved_false_interruption(event: Any) -> None:
+        llm_impl.resolve_false_interruption(
+            session.current_speech, resumed=bool(getattr(event, "resumed", False))
+        )
 
 
 def _apply_authoritative_call_mode_to_speech_planes(
     mode: str,
     *,
-    progress_controller: Any,
     ambient_ingress: Any,
     followup_scheduler: Any,
     session: Any,
@@ -3412,7 +3717,6 @@ def _apply_authoritative_call_mode_to_speech_planes(
     """Apply one validated mode atomically without reconnecting or cancelling backend work."""
     if mode not in {"call", "wing", "listen_only"}:
         return
-    progress_controller.set_mode(mode)
     ambient_ingress.set_mode(mode)
     followup_scheduler.set_mode(mode)
     if mode == "listen_only":
@@ -3433,21 +3737,18 @@ def _classify_authoritative_mode_sync(
 
 def _suspend_all_call_speech_until_authoritative(
     *,
-    progress_controller: Any,
     followup_scheduler: Any,
     session: Any,
     authoritative_mode_state: Optional[Any] = None,
 ) -> None:
     if authoritative_mode_state is not None:
         authoritative_mode_state.suspend()
-    progress_controller.suspend_until_authoritative()
     followup_scheduler.suspend_until_authoritative()
     _interrupt_agent_session_speech(session)
 
 
 def _suspend_call_response_playout_until_authoritative(
     *,
-    progress_controller: Any,
     followup_scheduler: Any,
     audio_gate: Any,
     authoritative_mode_state: Optional[Any] = None,
@@ -3455,7 +3756,6 @@ def _suspend_call_response_playout_until_authoritative(
     """Pause uncertain playout without cancelling the attached durable generation."""
     if authoritative_mode_state is not None:
         authoritative_mode_state.suspend()
-    progress_controller.suspend_until_authoritative()
     followup_scheduler.suspend_until_authoritative()
     return bool(audio_gate.suspend())
 
@@ -3463,12 +3763,10 @@ def _suspend_call_response_playout_until_authoritative(
 def _apply_task_cancel_suppression(
     task_id: str,
     *,
-    progress_controller: Any,
     followup_scheduler: Any,
     session: Any,
 ) -> None:
     """Synchronously silence accepted cancellation while backend settlement continues."""
-    progress_controller.suppress_task(task_id)
     followup_scheduler.cancel_pending()
     _interrupt_agent_session_speech(session)
 
@@ -3597,30 +3895,41 @@ def _linked_participant_speaker_context(
         ),
         None,
     )
-    if participant is None:
-        return {}
-    track_sid = ""
-    publications = list(getattr(participant, "track_publications", {}).values())
-    microphone_publication = next(
-        (
-            item
-            for item in publications
-            if str(getattr(item, "source", "")).lower().endswith("microphone")
-        ),
-        publications[0] if publications else None,
-    )
-    if microphone_publication is not None:
-        track_sid = str(getattr(microphone_publication, "sid", "") or "")
-    identity = str(getattr(participant, "identity", "") or "").strip()
-    return {
-        "participant_identity": identity,
-        "participant_name": str(getattr(participant, "name", "") or "").strip(),
-        "track_sid": track_sid,
-        # LiveKit participant identity is signed by the token minted for the authenticated call
-        # session. Provider diarization never upgrades a different physical voice to this trust.
-        "owner_signed": identity == owner_identity,
+    context = {
+        "participant_identity": owner_identity,
+        "participant_name": "",
+        "track_sid": "",
+        "owner_signed": False,
     }
+    if participant is None:
+        return context
+    microphones = [
+        publication
+        for publication in getattr(participant, "track_publications", {}).values()
+        if getattr(publication, "source", None) == rtc.TrackSource.SOURCE_MICROPHONE
+        and getattr(publication, "subscribed", False) is True
+        and getattr(publication, "track", None) is not None
+        and getattr(publication, "kind", None) == rtc.TrackKind.KIND_AUDIO
+        and str(getattr(publication, "sid", "") or "").strip()
+        == str(getattr(publication.track, "sid", "") or "").strip()
+    ]
+    if len(microphones) != 1:
+        return context
+    publication = microphones[0]
+    context.update(
+        participant_name=str(getattr(participant, "name", "") or "").strip(),
+        track_sid=str(publication.sid or "").strip(),
+        owner_signed=bool(str(publication.sid or "").strip()),
+    )
+    return context
 
+
+def _refresh_owner_speaker_track(
+    tracker: SpeakerSegmentTracker, room: Any, owner_participant_identity: str
+) -> None:
+    tracker.update_participant_track(
+        **_linked_participant_speaker_context(room, owner_participant_identity)
+    )
 
 # === VIVENTIUM START ===
 # Feature: Signed, owner-bound Wing engagement authority.
@@ -4148,6 +4457,8 @@ def _ingest_raw_stt_speaker_event(
     timeline_offset_s: float,
     sample_timeline: Optional[AudioSampleTimeline] = None,
     speech_stream: Any = None,
+    stt_diarization: Optional[bool] = None,
+    call_mode: Optional[str] = None,
 ) -> tuple[list[dict[str, Any]], bool]:
     """Preserve provider timing/diarization before AgentSession strips SpeechData."""
     event_type = getattr(event, "type", None)
@@ -4185,6 +4496,9 @@ def _ingest_raw_stt_speaker_event(
         created_at=time.time(),
         start_time=start_time,
         end_time=end_time,
+        allow_owner_participant_track=(
+            is_final and stt_diarization is False and call_mode == "call"
+        ),
     )
     return changes, is_final
 
@@ -4201,8 +4515,10 @@ class ViventiumVoiceAgent(Agent):
         on_interim_speaker_changes: Optional[Any] = None,
         speaker_timeline_offset: Optional[Any] = None,
         speaker_timeline_origin: Optional[Any] = None,
+        refresh_speaker_track: Optional[Any] = None,
         refresh_turn_authority: Optional[Any] = None,
         p0_timing: Optional[VoiceP0Timing] = None,
+        prewarm_tts: Optional[Any] = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -4214,9 +4530,11 @@ class ViventiumVoiceAgent(Agent):
         self._on_interim_speaker_changes = on_interim_speaker_changes
         self._speaker_timeline_offset = speaker_timeline_offset
         self._speaker_timeline_origin = speaker_timeline_origin
+        self._refresh_speaker_track = refresh_speaker_track
         self._speaker_timeline_utc_available = True
         self._refresh_turn_authority = refresh_turn_authority
         self._p0_timing = p0_timing
+        self._prewarm_tts = prewarm_tts
 
     async def _suppress_current_turn(
         self, context: dict[str, Any], mode: str
@@ -4414,12 +4732,24 @@ class ViventiumVoiceAgent(Agent):
             return
         await self._suppress_current_turn(context, mode_state.suppressed_mode)
 
+    def llm_node(self, chat_ctx: Any, tools: Any, model_settings: Any) -> Any:
+        mode = self._authoritative_mode_state
+        if self._prewarm_tts is not None and (mode is None or mode.allows_agent_dispatch):
+            try:
+                self._prewarm_tts()
+            except Exception as error:
+                logger.warning("TTS turn prewarm failed (%s); demand will retry", type(error).__name__)
+        return self._public_part_llm_stream(Agent.default.llm_node(self, chat_ctx, tools, model_settings))
+
     async def stt_node(self, audio: Any, model_settings: Any) -> Any:
         # Keep the SDK's stream lifecycle while reading its public clock pair. The default
         # node hides this stream, so a node-start anchor cannot account for late first audio.
         _ = model_settings
         activity = self._get_activity_or_raise()
         assert activity.stt is not None, "stt_node called but no STT node is available"
+        source_stt = activity.stt
+        while isinstance(source_stt, LivekitStreamAdapter):
+            source_stt = source_stt.wrapped_stt
         wrapped_stt = activity.stt
         sample_timeline = (AudioSampleTimeline() if wrapped_stt.capabilities.streaming
                            and self._speaker_timeline_offset is not None else None)
@@ -4434,7 +4764,9 @@ class ViventiumVoiceAgent(Agent):
         )
         async with wrapped_stt.stream(conn_options=conn_options) as stream:
             if self._p0_timing is not None:
+                self._p0_timing.bind_stt(stream)
                 self._p0_timing.attach_assemblyai(stream)
+                self._p0_timing.attach_audio_recognition(activity._audio_recognition)
             self._speaker_timeline_utc_available = True
             input_started_at = (
                 activity._audio_recognition._input_started_at
@@ -4480,11 +4812,16 @@ class ViventiumVoiceAgent(Agent):
                               if self._speaker_timeline_origin is not None else None)
                     stream_offset_s = speech_stream_call_timeline_offset_s(stream, origin)
                     if self._speaker_tracker is not None:
+                        if self._refresh_speaker_track is not None:
+                            self._refresh_speaker_track()
                         changes, is_final = _ingest_raw_stt_speaker_event(
                             self._speaker_tracker, event,
                             timeline_offset_s=(stream_offset_s if stream_offset_s is not None
                                                else timeline_offset_s),
                             sample_timeline=sample_timeline, speech_stream=stream,
+                            stt_diarization=getattr(source_stt.capabilities, "diarization", None),
+                            call_mode=(self._authoritative_mode_state.mode
+                                       if self._authoritative_mode_state is not None else None),
                         )
                         if changes and not is_final and self._on_interim_speaker_changes is not None:
                             result = self._on_interim_speaker_changes(changes)
@@ -4493,6 +4830,45 @@ class ViventiumVoiceAgent(Agent):
                     yield event
             finally:
                 await livekit_utils.aio.cancel_and_wait(forward_task)
+
+    async def _public_part_llm_stream(self, chunks: Any) -> Any:
+        seen: set[tuple[str, str, str, str]] = set()
+        has_public_text = False
+        # FlushSentinel belongs outside LLMStream: its metrics consume ChatChunks.
+        async with aclosing(chunks) as chunks:
+            async for chunk in chunks:
+                completion = None
+                if isinstance(chunk, ChatChunk) and chunk.delta is not None:
+                    extra = dict(chunk.delta.extra or {})
+                    has_completion_control = _PUBLIC_PART_COMPLETION_EXTRA in extra
+                    completion = _public_part_completion(extra.pop(_PUBLIC_PART_COMPLETION_EXTRA, None))
+                    if chunk.delta.tool_calls:
+                        completion = None
+                    if has_completion_control:
+                        chunk = chunk.model_copy(update={"delta": chunk.delta.model_copy(update={"extra": extra})})
+                    if chunk.delta.content:
+                        has_public_text = True
+                    # Control-only chunks do not become transcript or chat metadata.
+                    if (chunk.delta.content or chunk.delta.tool_calls or extra or chunk.usage
+                            or not has_completion_control):
+                        yield chunk
+                else:
+                    if isinstance(chunk, str) and chunk:
+                        has_public_text = True
+                    yield chunk
+                if completion:
+                    key = (chunk.id, completion["request_id"], completion["run_id"], completion["part_id"])
+                    if key not in seen:
+                        seen.add(key)
+                        if has_public_text:
+                            has_public_text = False
+                            # SDK closes this TTS input, drains tts_node's buffer,
+                            # then awaits the utterance before a fresh next stream.
+                            if self._p0_timing is not None:
+                                self._p0_timing.emit("public_part_flush_yield",
+                                    gatewayRequestId=chunk.id, coreStreamId=completion["stream_id"],
+                                    nativeRequestId=completion["request_id"], partId=completion["part_id"])
+                            yield FlushSentinel()
 
     async def tts_node(self, text: Any, model_settings: Any) -> Any:
         buffer = _VoiceTtsDeltaBuffer(
@@ -4520,20 +4896,36 @@ class ViventiumVoiceAgent(Agent):
 
     async def transcription_node(self, text: Any, model_settings: Any) -> Any:
         display_filter = VoiceControlDisplayFilter()
+        # Reuse the native word/markup boundary, without a phrase-length wait or the
+        # speech sanitizer: display keeps complete public URLs and literal code.
+        buffer = _VoiceTtsDeltaBuffer(native_streaming=lambda: True)
         async for delta in text:
-            cleaned = display_filter.feed(str(delta))
-            if not cleaned:
-                continue
             if isinstance(delta, TimedString):
-                yield TimedString(
-                    cleaned,
-                    start_time=delta.start_time,
-                    end_time=delta.end_time,
-                    confidence=delta.confidence,
-                    start_time_offset=delta.start_time_offset,
-                    speaker_id=delta.speaker_id,
-                )
+                # Renderer-aligned words already have their SDK boundaries. Preserve
+                # those timing fields instead of rebatching timed speech.
+                for value in buffer.finalize():
+                    cleaned = display_filter.feed(value)
+                    if cleaned:
+                        yield cleaned
+                cleaned = display_filter.feed(str(delta))
+                if cleaned:
+                    yield TimedString(
+                        cleaned,
+                        start_time=delta.start_time,
+                        end_time=delta.end_time,
+                        confidence=delta.confidence,
+                        start_time_offset=delta.start_time_offset,
+                        speaker_id=delta.speaker_id,
+                    )
             else:
+                for value in buffer.feed(str(delta)):
+                    cleaned = display_filter.feed(value)
+                    if cleaned:
+                        yield cleaned
+
+        for value in buffer.finalize():
+            cleaned = display_filter.feed(value)
+            if cleaned:
                 yield cleaned
 
         trailing = display_filter.feed("", final=True)
@@ -4570,9 +4962,9 @@ class CortexFollowupScheduler:
             float(self._timeout_s if glasshive_timeout_s is None else glasshive_timeout_s),
         )
         self._seq = 0
-        self._task: Optional[asyncio.Task[None]] = None
-        self._cortex_task: Optional[asyncio.Task[None]] = None
-        self._glasshive_tasks: set[asyncio.Task[None]] = set()
+        self._task: Optional[asyncio.Task[Optional[bool]]] = None
+        self._cortex_task: Optional[asyncio.Task[Optional[bool]]] = None
+        self._glasshive_tasks: set[asyncio.Task[Optional[bool]]] = set()
         self._glasshive_task_warning_threshold = 4
         self._mode = "call"
         self._authoritative_mode_available = True
@@ -4584,6 +4976,15 @@ class CortexFollowupScheduler:
         self._playout_audio: Optional[Any] = None
         self._task_refs: dict[str, dict[str, Any]] = {}
         self._worker_followup_pairs: dict[tuple[str, str], None] = {}
+        self._followup_presentations: dict[Any, dict[str, Any]] = {}
+        self._closed = False
+        self._task_stream_connected = False
+        self._cortex_wake_tasks: set[asyncio.Task[Optional[bool]]] = set()
+        # False: running; True: native recovery raced it; None: resolved.
+        self._cortex_wake_pairs: dict[tuple[str, str], Optional[bool]] = {}
+        self._cortex_speech_refs: dict[str, None] = {}
+        self._cortex_contexts: dict[str, tuple[int, Optional[Callable[[], bool]], str]] = {}
+        self._is_task_suppressed: Callable[[str], bool] = lambda _task_id: False
 
     def on_task_event(
         self,
@@ -4591,12 +4992,31 @@ class CortexFollowupScheduler:
         *,
         is_task_suppressed: Callable[[str], bool],
     ) -> None:
-        if event.get("callSessionId") != self._auth.call_session_id:
+        if self._closed or event.get("callSessionId") != self._auth.call_session_id:
             return
+        self._is_task_suppressed = is_task_suppressed
         task_id = str(event.get("taskId") or "").strip()
         owner = event.get("owner") or {}
         if not task_id or not event.get("conversationId"):
             return
+        presentation = event.get("presentation") or {}
+        stream_id = event.get("streamId")
+        if (event.get("state") == "completed" and presentation.get("state") == "stop_requested"
+                and isinstance(stream_id, str) and stream_id
+                and owner.get("id")):
+            for handle, binding in tuple(self._followup_presentations.items()):
+                main_owner = owner.get("kind") in {"generation_job", "remote_generation"} and owner.get("id") == stream_id
+                delivery_owner = (owner.get("kind") == "glasshive_delivery"
+                    and binding.get("workerDelivery") is not None
+                    and owner.get("id") == binding["workerDelivery"].get("deliveryId")
+                    and stream_id == f"glasshive-delivery:{owner['id']}")
+                if ((main_owner or delivery_owner) and binding["task"].get("taskId") == task_id
+                        and binding["task"].get("streamId") == stream_id
+                        and binding["ref"] == presentation.get("ref") and binding["startedAtMs"]
+                        and binding["startedAtMs"] == presentation.get("startedAtMs")
+                        and not handle.done() and not getattr(handle, "interrupted", False)):
+                    self._interrupt_speech_handle(handle)
+                    break
         ref = {
             key: event.get(key)
             for key in (
@@ -4606,13 +5026,22 @@ class CortexFollowupScheduler:
                 "parentTaskId",
                 "streamId",
                 "state",
-                "resultMessageId",
+                "resultMessageId", "createdAt", "turnId", "phase", "source", "sources", "presentation",
             )
         }
         ref["owner"] = {"kind": owner.get("kind"), "id": owner.get("id")}
+        # Update current presentation and generation facts before arming any wake.
+        previous_ref = self._task_refs.get(task_id)
         self._task_refs[task_id] = ref
         while len(self._task_refs) > 4096:
             self._task_refs.pop(next(iter(self._task_refs)))
+        self._resume_cortex_followup(ref, is_task_suppressed)
+        self._resume_worker_delivery(ref, is_task_suppressed)
+        # Presentation-only snapshots must not re-arm delivered Worker results.
+        generation_keys = ("taskId", "callSessionId", "conversationId", "parentTaskId", "streamId", "state", "resultMessageId", "owner")
+        if (event.get("presentation") is not None and previous_ref is not None
+                and all(previous_ref.get(key) == ref.get(key) for key in generation_keys)):
+            return
         if owner.get("kind") == "glasshive_run":
             parent = self._task_refs.get(str(event.get("parentTaskId") or ""))
             if parent is not None:
@@ -4621,6 +5050,170 @@ class CortexFollowupScheduler:
             for child in self._task_refs.values():
                 if child.get("parentTaskId") == task_id:
                     self._arm_worker_followup(child, ref, is_task_suppressed)
+
+    def set_task_stream_connected(self, connected: bool) -> None:
+        changed = bool(connected) != self._task_stream_connected
+        self._task_stream_connected = bool(connected)
+        if connected and changed:
+            self.resume_pending(rearm_inflight=True)
+
+    def resume_pending(self, *, rearm_inflight: bool = False) -> None:
+        if rearm_inflight:
+            # Retain a native mode/sync transition while its old wake still owns
+            # the pair. Ordinary snapshots never request an automatic retry.
+            for pair, pending in tuple(self._cortex_wake_pairs.items()):
+                if pending is not None:
+                    self._cortex_wake_pairs[pair] = True
+        for ref in tuple(self._task_refs.values()):
+            self._resume_cortex_followup(ref, self._is_task_suppressed)
+            self._resume_worker_delivery(ref, self._is_task_suppressed)
+
+    def _resume_cortex_followup(
+        self, ref: dict[str, Any], is_task_suppressed: Callable[[str], bool],
+    ) -> None:
+        if ref.get("phase") != "follow_up":
+            return
+        # Preserve durable source order; append the current source only if needed.
+        sources = list(ref.get("sources") or [])
+        current = ref.get("source")
+        if isinstance(current, dict) and current not in sources:
+            sources.append(current)
+        for source in sources:
+            if isinstance(source, dict) and source.get("id"):
+                self._arm_cortex_followup({**ref, "source": source}, ref, is_task_suppressed)
+
+    def _resume_worker_delivery(
+        self, ref: dict[str, Any], is_task_suppressed: Callable[[str], bool],
+    ) -> None:
+        owner = ref.get("owner") or {}
+        source = ref.get("source") or {}
+        callback_ref = str(source.get("id") or "")
+        message_id = str(ref.get("resultMessageId") or "")
+        if (not self._task_stream_connected or not self._authoritative_mode_available
+                or self._mode == "listen_only" or ref.get("state") != "completed"
+                or owner.get("kind") != "glasshive_delivery" or not owner.get("id")
+                or ref.get("streamId") != f"glasshive-delivery:{owner['id']}"
+                or not message_id
+                or not self._prefixed_lower_hex(callback_ref, "callback_sha256:", 64)):
+            return
+        pair = (message_id, callback_ref)
+        if pair in self._cortex_wake_pairs:
+            return
+        def is_current() -> bool:
+            current = self._task_refs.get(ref["taskId"], {})
+            return (not self._closed and self._authoritative_mode_available
+                and self._mode in {"call", "wing"} and self._task_stream_connected
+                and current.get("state") == "completed" and current.get("owner") == owner
+                and current.get("source") == source and current.get("resultMessageId") == message_id
+                and current.get("streamId") == ref["streamId"]
+                and (current.get("presentation") or {}).get("state") not in {
+                    "stop_requested", "completed", "interrupted", "superseded", "failed"}
+                and not is_task_suppressed(ref["taskId"]))
+        if not is_current():
+            return
+        task = self.schedule(message_id, [], "", cortex_expected=False, glasshive_expected=True,
+            trace_id=ref["streamId"], task_ref={"taskId": ref["taskId"], "streamId": ref["streamId"]},
+            presentation_is_current=is_current, advance_sequence=False,
+            published_worker_callback_id=callback_ref)
+        if task is not None:
+            self._cortex_wake_pairs[pair] = False
+            def release_wake(completed: asyncio.Task[Optional[bool]]) -> None:
+                resolved = (not completed.cancelled() and completed.exception() is None
+                    and completed.result() is True)
+                if resolved:
+                    self._cortex_wake_pairs[pair] = None
+                    return
+                retry = self._cortex_wake_pairs.pop(pair, None) is True
+                if retry and not self._closed:
+                    self.resume_pending()
+            task.add_done_callback(release_wake)
+            while len(self._cortex_wake_pairs) > 4096:
+                self._cortex_wake_pairs.pop(next(iter(self._cortex_wake_pairs)))
+
+    def _hydrated_parent_is_current(self, parent: dict[str, Any]) -> bool:
+        if not self._task_stream_connected or not parent.get("turnId"):
+            return False
+        presentation = self._task_refs.get(parent["taskId"], {}).get("presentation") or {}
+        if (presentation.get("ref") == parent.get("resultMessageId")
+                and presentation.get("state") == "superseded"):
+            return False
+        generations = [ref for ref in self._task_refs.values()
+            if ref.get("conversationId") == parent.get("conversationId")
+            and ref.get("owner", {}).get("kind") in {"generation_job", "remote_generation"}
+            and ref.get("streamId") and ref.get("owner", {}).get("id") == ref["streamId"]]
+        dated = []
+        for ref in generations:
+            try:
+                created_at = datetime.fromisoformat(str(ref.get("createdAt") or "").replace("Z", "+00:00"))
+            except ValueError:
+                return False
+            if created_at.tzinfo is None or not ref.get("turnId"):
+                return False
+            dated.append((created_at, str(ref["taskId"]), ref))
+        if not dated:
+            return False
+        latest = max(dated, key=lambda row: row[:2])[2]
+        return latest["taskId"] == parent["taskId"] and latest["turnId"] == parent["turnId"]
+
+    def _arm_cortex_followup(
+        self, event: dict[str, Any], parent: dict[str, Any],
+        is_task_suppressed: Callable[[str], bool],
+    ) -> None:
+        message_id = str(parent.get("resultMessageId") or "").strip()
+        child_id = str(event.get("source", {}).get("id") or "").strip()
+        if (parent["state"] != "completed" or not message_id or not child_id
+                or child_id == message_id
+                or parent["owner"]["kind"] not in {"generation_job", "remote_generation"}
+                or not parent["streamId"] or parent["owner"]["id"] != parent["streamId"]
+                or is_task_suppressed(parent["taskId"])):
+            return
+        presentation = event.get("presentation") or {}
+        if (presentation.get("ref") == child_id and presentation.get("state") in {
+                "stop_requested", "completed", "interrupted", "superseded"}):
+            return
+        pair = (message_id, child_id)
+        if pair in self._cortex_wake_pairs or child_id in self._cortex_speech_refs:
+            return
+        context = self._cortex_contexts.get(message_id)
+        if context is None:
+            # Full durable replay precedes the connected barrier. Rebuild the
+            # original guard only for its latest exact Main generation.
+            if self._seq != 0 or not self._hydrated_parent_is_current(parent):
+                return
+            seq, prior_current, prior_trace = self._seq, lambda: self._hydrated_parent_is_current(parent), str(parent["streamId"])
+        else:
+            seq, prior_current, prior_trace = context
+        def is_current() -> bool:
+            latest_presentation = self._task_refs.get(parent["taskId"], {}).get("presentation") or {}
+            stopped = (latest_presentation.get("ref") == child_id and latest_presentation.get("state") in {
+                "stop_requested", "completed", "interrupted", "superseded"})
+            return (not self._closed and not stopped and seq == self._seq
+                and not is_task_suppressed(parent["taskId"])
+                and (prior_current is None or prior_current()))
+        if not is_current():
+            return
+        task = self.schedule(message_id, [], "", cortex_expected=True,
+            trace_id=prior_trace,
+            task_ref={"taskId": parent["taskId"], "streamId": parent["streamId"]},
+            presentation_is_current=is_current, advance_sequence=False,
+            published_followup_id=child_id)
+        if task is not None:
+            self._cortex_wake_pairs[pair] = False
+            def release_unspoken_wake(_completed: asyncio.Task[Optional[bool]]) -> None:
+                resolved = (not _completed.cancelled() and _completed.exception() is None
+                    and _completed.result() is True)
+                if resolved or child_id in self._cortex_speech_refs:
+                    # Exact successful lookup resolved this publication, including
+                    # a canonical interrupted ACK. Do not re-fetch citation refs.
+                    self._cortex_wake_pairs[pair] = None
+                    return
+                retry = self._cortex_wake_pairs.pop(pair, None) is True
+                if (retry and not self._closed and self._task_stream_connected
+                        and self._authoritative_mode_available and self._mode in {"call", "wing"}):
+                    self.resume_pending()
+            task.add_done_callback(release_unspoken_wake)
+            while len(self._cortex_wake_pairs) > 4096:
+                self._cortex_wake_pairs.pop(next(iter(self._cortex_wake_pairs)))
 
     def _arm_worker_followup(
         self,
@@ -4664,8 +5257,11 @@ class CortexFollowupScheduler:
     def set_mode(self, mode: str) -> None:
         if mode not in {"call", "wing", "listen_only"}:
             return
+        restored = not self._authoritative_mode_available or self._mode == "listen_only"
         self._mode = mode
         self._authoritative_mode_available = True
+        if restored and mode in {"call", "wing"} and self._task_stream_connected:
+            self.resume_pending(rearm_inflight=True)
         if mode == "listen_only":
             _interrupt_livekit_speech_handles(self._speech_handles)
 
@@ -4678,7 +5274,7 @@ class CortexFollowupScheduler:
         for task in (
             self._task,
             self._cortex_task,
-            *self._glasshive_tasks,
+            *self._glasshive_tasks, *self._cortex_wake_tasks,
         ):
             if task is not None and not task.done():
                 task.cancel()
@@ -4688,11 +5284,12 @@ class CortexFollowupScheduler:
         if self._playout_audio is not None:
             self._playout_audio.off("playback_started", self._on_audio_playback_started)
             self._playout_audio = None
+        self._closed = True
         self._task_refs.clear()
         self._worker_followup_pairs.clear()
         tasks = {
             task
-            for task in (self._task, self._cortex_task, *self._glasshive_tasks)
+            for task in (self._task, self._cortex_task, *self._glasshive_tasks, *self._cortex_wake_tasks)
             if task is not None and not task.done()
         }
         for task in tasks:
@@ -4713,16 +5310,27 @@ class CortexFollowupScheduler:
         glasshive_expected: bool = False,
         presentation_is_current: Optional[Callable[[], bool]] = None,
         trace_id: str = "",
+        task_ref: Optional[dict[str, Any]] = None,
         advance_sequence: bool = True,
-    ) -> Optional[asyncio.Task[None]]:
+        published_followup_id: str = "",
+        published_worker_callback_id: str = "",
+    ) -> Optional[asyncio.Task[Optional[bool]]]:
         _ = recent_response
         should_poll_cortex = bool(pending_insights) if cortex_expected is None else bool(cortex_expected)
         should_poll_glasshive = bool(glasshive_expected)
-        if not message_id or not (should_poll_cortex or should_poll_glasshive):
+        if self._closed or not message_id:
             return
-        if advance_sequence:
+        if advance_sequence and (should_poll_cortex or should_poll_glasshive):
             self._seq += 1
         seq = self._seq
+        if advance_sequence:
+            # A child can first publish after generation SSE closes. Retain the
+            # existing guard even when that stream did not yet announce Cortex work.
+            self._cortex_contexts[message_id] = (seq, presentation_is_current, trace_id)
+            while len(self._cortex_contexts) > 4096:
+                self._cortex_contexts.pop(next(iter(self._cortex_contexts)))
+        if not (should_poll_cortex or should_poll_glasshive):
+            return
         allow_stale_delivery = should_poll_glasshive
         if _voice_latency_log_enabled():
             logger.info(
@@ -4736,10 +5344,13 @@ class CortexFollowupScheduler:
                 self._grace_s,
                 self._interval_s,
             )
-        if not should_poll_glasshive and self._cortex_task and not self._cortex_task.done():
+        if not published_followup_id and not should_poll_glasshive and self._cortex_task and not self._cortex_task.done():
             self._cortex_task.cancel()
-        task = asyncio.create_task(
-            self._run(
+        prior_wakes = tuple(self._cortex_wake_tasks) if published_followup_id else ()
+        async def run_followup() -> Optional[bool]:
+            if prior_wakes:
+                await asyncio.gather(*(asyncio.shield(prior) for prior in prior_wakes), return_exceptions=True)
+            return await self._run(
                 seq,
                 message_id,
                 pending_insights,
@@ -4748,12 +5359,18 @@ class CortexFollowupScheduler:
                 allow_stale_delivery=allow_stale_delivery,
                 presentation_is_current=presentation_is_current,
                 trace_id=trace_id,
+                task_ref=task_ref,
                 wait_for_delivery=not advance_sequence,
+                published_followup_id=published_followup_id,
+                published_worker_callback_id=published_worker_callback_id,
             )
-        )
+        task = asyncio.create_task(run_followup())
         if advance_sequence:
             self._task = task
-        if should_poll_glasshive:
+        if published_followup_id or published_worker_callback_id:
+            self._cortex_wake_tasks.add(task)
+            task.add_done_callback(self._cortex_wake_tasks.discard)
+        elif should_poll_glasshive:
             self._glasshive_tasks.add(task)
             task.add_done_callback(self._glasshive_tasks.discard)
             if len(self._glasshive_tasks) > self._glasshive_task_warning_threshold:
@@ -4776,8 +5393,12 @@ class CortexFollowupScheduler:
         allow_stale_delivery: bool,
         presentation_is_current: Optional[Callable[[], bool]],
         trace_id: str = "",
+        task_ref: Optional[dict[str, Any]] = None,
         wait_for_delivery: bool = False,
-    ) -> None:
+        published_followup_id: str = "",
+        published_worker_callback_id: str = "",
+    ) -> Optional[bool]:
+        # True means an exact published child is authoritatively resolved.
         try:
             started_at = time.monotonic()
             log_latency = _voice_latency_log_enabled()
@@ -4843,21 +5464,30 @@ class CortexFollowupScheduler:
                         return
 
                     if should_poll_glasshive:
-                        glasshive_data = await self._fetch_glasshive(session, message_id)
+                        glasshive_data = ({"callbacks": [{"callbackId": published_worker_callback_id}]}
+                            if published_worker_callback_id else await self._fetch_glasshive(session, message_id))
                         if (
                             presentation_is_current is not None
                             and not presentation_is_current()
                         ):
                             return
                         if isinstance(glasshive_data, dict):
-                            latest = glasshive_data.get("latest")
-                            if isinstance(latest, dict):
-                                text = latest.get("text")
-                                if (
-                                    isinstance(text, str)
-                                    and text.strip()
-                                    and _glasshive_callback_is_terminal(latest)
-                                ):
+                            callbacks = glasshive_data.get("callbacks")
+                            if not isinstance(callbacks, list) or not callbacks:
+                                callbacks = [glasshive_data.get("latest")]
+                            terminal_callbacks = [
+                                callback for callback in callbacks
+                                if isinstance(callback, dict)
+                                and ((published_worker_callback_id
+                                    and callback.get("callbackId") == published_worker_callback_id)
+                                    or (isinstance(callback.get("text"), str)
+                                        and callback["text"].strip()
+                                        and _glasshive_callback_is_terminal(callback)))
+                            ]
+                            if terminal_callbacks:
+                                latest = terminal_callbacks[-1]
+                                text = str(latest.get("text") or "")
+                                if text.strip() or published_worker_callback_id:
                                     if (
                                         self._mode == "listen_only"
                                         or not self._authoritative_mode_available
@@ -4867,7 +5497,20 @@ class CortexFollowupScheduler:
                                             message_id,
                                         )
                                         return
-                                    delivery = await self._claim_glasshive_delivery(session, latest)
+                                    delivery = None
+                                    settled_callbacks = 0
+                                    for callback in reversed(terminal_callbacks):
+                                        delivery = await self._claim_glasshive_delivery(session, callback)
+                                        if delivery is not None and delivery.get("status") in {"sent", "suppressed"}:
+                                            settled_callbacks += 1
+                                            delivery = None
+                                            continue
+                                        if delivery is not None:
+                                            latest = callback
+                                            text = str(callback.get("text") or "")
+                                            break
+                                    if settled_callbacks == len(terminal_callbacks):
+                                        return True
                                     callback_id = str(
                                         latest.get("callbackId")
                                         or latest.get("callback_id")
@@ -4879,9 +5522,22 @@ class CortexFollowupScheduler:
                                             message_id,
                                             callback_id or "missing",
                                         )
-                                        if callback_id and wait_for_delivery:
+                                        if wait_for_delivery and any(
+                                            str(callback.get("callbackId") or callback.get("callback_id") or "").strip()
+                                            for callback in terminal_callbacks
+                                        ):
                                             await asyncio.sleep(self._interval_s)
                                             continue
+                                        return
+                                    if published_worker_callback_id and (
+                                        not task_ref or task_ref.get("streamId")
+                                        != f"glasshive-delivery:{delivery.get('deliveryId')}"
+                                        or delivery.get("callbackMessageId") != message_id
+                                        or not isinstance(delivery.get("workerCompletionPresentation"), dict)
+                                        or (delivery.get("presentationTask") or {}).get("taskId")
+                                        != task_ref.get("taskId")
+                                    ):
+                                        logger.warning("[VoicePresentation] worker_delivery_wake_scope_mismatch message_id=%s", message_id)
                                         return
                                     text = str(
                                         delivery.get("fullText")
@@ -4973,6 +5629,19 @@ class CortexFollowupScheduler:
                                             permit,
                                         )
                                         return
+                                    presentation_task = delivery.get("presentationTask")
+                                    if isinstance(presentation_task, dict):
+                                        task_ref = {"taskId": presentation_task.get("taskId"),
+                                                    "streamId": presentation_task.get("streamId")}
+                                    if (task_ref and task_ref.get("taskId") and task_ref.get("streamId")
+                                            and delivery.get("voiceCallSessionId") == self._auth.call_session_id
+                                            and delivery.get("voiceRequestId")):
+                                        self._bind_followup_presentation(
+                                            speech_handle, trace_id=trace_id, task_ref=task_ref,
+                                            presentation_ref=(worker_presentation["presentationRef"]
+                                                if worker_presentation else delivery["deliveryId"]),
+                                            worker_delivery={**delivery, "dispatchPermit": permit},
+                                        )
                                     spoken = await self._maintain_glasshive_speech_permit(
                                         session,
                                         delivery,
@@ -4990,14 +5659,50 @@ class CortexFollowupScheduler:
                                             message_id,
                                             spoken,
                                         )
-                                    return
+                                    return True if published_worker_callback_id and spoken else None
 
                     data = None
                     if should_poll_cortex and time.monotonic() < cortex_deadline:
-                        data = await self._fetch_cortex(session, message_id)
+                        if self._closed or self._mode == "listen_only" or not self._authoritative_mode_available:
+                            return
+                        data = (await self._fetch_cortex(session, message_id,
+                            followup_message_id=published_followup_id) if published_followup_id
+                            else await self._fetch_cortex(session, message_id))
+                    post_fetch_current = (not self._closed and self._mode != "listen_only"
+                        and self._authoritative_mode_available
+                        and (allow_stale_delivery or seq == self._seq)
+                        and (presentation_is_current is None or presentation_is_current()))
                     if isinstance(data, dict):
                         follow_up = data.get("followUp")
-                        if isinstance(follow_up, dict):
+                        # An exact persisted publication can be absent/ineligible,
+                        # but cannot become a different child on a later poll.
+                        if published_followup_id and (not isinstance(follow_up, dict)
+                                or follow_up.get("messageId") != published_followup_id):
+                            return True
+                        if isinstance(follow_up, dict) and (not published_followup_id
+                                or follow_up.get("messageId") == published_followup_id):
+                            accepted_context = follow_up.get("presentationContext")
+                            if accepted_context is not None:
+                                if (not isinstance(accepted_context, dict)
+                                        or set(accepted_context) != {"callSessionId", "taskId", "streamId", "turnId"}
+                                        or accepted_context.get("callSessionId") != self._auth.call_session_id
+                                        or not task_ref or accepted_context.get("taskId") != task_ref.get("taskId")
+                                        or accepted_context.get("streamId") != task_ref.get("streamId")
+                                        or not isinstance(accepted_context.get("turnId"), str)
+                                        or not accepted_context["turnId"].strip()):
+                                    return
+                                task_ref = dict(accepted_context)
+                            if not post_fetch_current:
+                                if accepted_context is not None:
+                                    # Acceptance is one-shot. If playback lost its
+                                    # authority/guard during GET, settle that exact
+                                    # claim as interrupted; never claim it was heard.
+                                    await self._record_followup_presentation({
+                                        "trace": trace_id, "ref": str(follow_up["messageId"]),
+                                        "startedAtMs": 0, "task": task_ref, "workerDelivery": None,
+                                    }, "audio.interrupted")
+                                    return True
+                                return
                             text = follow_up.get("text")
                             if isinstance(text, str) and text.strip():
                                 text = text.strip()
@@ -5027,6 +5732,7 @@ class CortexFollowupScheduler:
                                     seq,
                                     trace_id=trace_id,
                                     presentation_ref=str(follow_up.get("messageId") or message_id),
+                                    task_ref=task_ref,
                                     allow_stale_delivery=allow_stale_delivery,
                                     presentation_is_current=presentation_is_current,
                                 )
@@ -5040,6 +5746,8 @@ class CortexFollowupScheduler:
                                     )
                                 return
 
+                        if not post_fetch_current:
+                            return
                         followup_decision = _terminal_cortex_followup_decision(
                             data.get("followUpDecision")
                         )
@@ -5077,6 +5785,8 @@ class CortexFollowupScheduler:
                                         len(merged_insights),
                                     )
 
+                    if not post_fetch_current:
+                        return
                     if merged_insights and first_insight_at is not None:
                         grace_deadline = first_insight_at + self._grace_s
                         if time.monotonic() >= grace_deadline:
@@ -5118,7 +5828,7 @@ class CortexFollowupScheduler:
             )
 
     async def _fetch_cortex(
-        self, session: aiohttp.ClientSession, message_id: str
+        self, session: aiohttp.ClientSession, message_id: str, *, followup_message_id: str = ""
     ) -> Optional[dict[str, Any]]:
         url = f"{self._origin}/api/viventium/voice/cortex/{message_id}"
         headers = {
@@ -5130,7 +5840,8 @@ class CortexFollowupScheduler:
         if self._auth.worker_id:
             headers["X-VIVENTIUM-WORKER-ID"] = self._auth.worker_id
         try:
-            async with session.get(url, headers=headers) as resp:
+            async with session.get(url, headers=headers,
+                **({"params": {"followupMessageId": followup_message_id}} if followup_message_id else {})) as resp:
                 if resp.status == 200:
                     payload = await resp.json()
                     if isinstance(payload, dict):
@@ -5245,6 +5956,19 @@ class CortexFollowupScheduler:
                         )
                         return None
                     return first
+                settled = payload.get("settled") if isinstance(payload, dict) else None
+                if deliveries == [] and isinstance(settled, dict):
+                    settled_owner = str(settled.get("userId") or "").strip()
+                    expected_owner = str(latest.get("userId") or "").strip()
+                    if (
+                        settled.get("status") in {"sent", "suppressed"}
+                        and settled.get("callbackId") == callback_ref
+                        and settled.get("voiceCallSessionId") == self._auth.call_session_id
+                        and settled_owner
+                        and (not expected_owner or settled_owner == expected_owner)
+                        and str(settled.get("deliveryId") or "").strip()
+                    ):
+                        return settled
         except Exception:
             return None
         return None
@@ -5619,6 +6343,8 @@ class CortexFollowupScheduler:
                     "claimId": claim_id,
                     "dispatchPermit": current_permit,
                     "presentationRef": presentation["presentationRef"],
+                    **({"taskPresentation": delivery["taskPresentation"]}
+                       if delivery.get("taskPresentation") else {}),
                 },
             ) as resp:
                 if resp.status != 200:
@@ -5666,6 +6392,8 @@ class CortexFollowupScheduler:
             f"{quote(delivery_id, safe='')}/status"
         )
         payload: dict[str, Any] = {"claimId": claim_id, "status": status}
+        if status in {"sent", "delivery_unknown"} and delivery.get("taskPresentation"):
+            payload["taskPresentation"] = delivery["taskPresentation"]
         if status in {"sent", "delivery_unknown"}:
             validated_permit = self._validate_glasshive_dispatch_permit(
                 dispatch_permit,
@@ -5740,29 +6468,31 @@ class CortexFollowupScheduler:
         def _speech_completed(_handle: Any) -> None:
             loop.call_soon_threadsafe(completed.set)
 
+        def note_outcome(stage: str) -> Optional[dict[str, Any]]:
+            binding = self._followup_presentations.get(speech_handle)
+            if binding is not None:
+                delivery["taskPresentation"] = {"taskId": binding["task"].get("taskId"),
+                    "streamId": binding["task"].get("streamId"), "presentationRef": binding["ref"],
+                    "startedAtMs": binding["startedAtMs"], "stage": stage}
+            return binding
+
         async def settle_completed_speech(reason: str) -> bool:
+            binding = self._followup_presentations.get(speech_handle)
             interrupted = getattr(speech_handle, "interrupted", None)
             output = getattr(self._session, "output", None)
             audible = (
                 speech_handle in self._audible_cortex_handles
-                or (
-                    getattr(output, "audio_enabled", False) is True
+                or (getattr(output, "audio_enabled", False) is True
                     and getattr(output, "audio", None) is not None
-                    and LibreChatLLM._speech_handle_has_audible_playout(speech_handle)
-                )
+                    and LibreChatLLM._speech_handle_has_audible_playout(speech_handle))
             )
+            note_outcome("audio.interrupted" if interrupted is True
+                         else "audio.completed" if interrupted is False and audible else "audio.failed")
             if interrupted is not False or not audible:
-                await self._mark_glasshive_delivery_status(
-                    session,
-                    delivery,
-                    "delivery_unknown",
+                await self._mark_glasshive_delivery_status(session, delivery, "delivery_unknown",
                     dispatch_permit=current_permit,
-                    reason=(
-                        "voice_speech_interrupted"
-                        if interrupted is True
-                        else "voice_speech_playout_unconfirmed"
-                    ),
-                )
+                    reason="voice_speech_interrupted" if interrupted is True
+                           else "voice_speech_playout_unconfirmed")
                 return False
             presentation = delivery.get("workerCompletionPresentation")
             if presentation is not None:
@@ -5798,6 +6528,7 @@ class CortexFollowupScheduler:
                 expiry = self._glasshive_dispatch_permit_expiry(current_permit)
                 if expiry is None:
                     self._interrupt_speech_handle(speech_handle)
+                    note_outcome("audio.interrupted")
                     await self._mark_glasshive_delivery_status(
                         session,
                         delivery,
@@ -5833,6 +6564,7 @@ class CortexFollowupScheduler:
                                 "voice_speech_settlement_unknown"
                             )
                         self._interrupt_speech_handle(speech_handle)
+                        note_outcome("audio.interrupted")
                         await self._mark_glasshive_delivery_status(
                             session,
                             delivery,
@@ -5842,11 +6574,15 @@ class CortexFollowupScheduler:
                         )
                         return False
                     current_permit = renewed
+                binding = self._followup_presentations.get(speech_handle)
+                if binding is not None:
+                    binding["workerDelivery"]["dispatchPermit"] = current_permit
 
             return await settle_completed_speech("voice_speech_settlement_unknown")
         except asyncio.CancelledError:
             speech_completed = self._speech_handle_is_done(speech_handle)
             self._interrupt_speech_handle(speech_handle)
+            note_outcome("audio.interrupted")
             if speech_completed:
                 await asyncio.shield(
                     settle_completed_speech(
@@ -5866,6 +6602,7 @@ class CortexFollowupScheduler:
             raise
         except Exception as exc:
             self._interrupt_speech_handle(speech_handle)
+            note_outcome("audio.interrupted")
             await self._mark_glasshive_delivery_status(
                 session,
                 delivery,
@@ -5878,8 +6615,9 @@ class CortexFollowupScheduler:
                 type(exc).__name__,
             )
             return False
+
         finally:
-            self._audible_cortex_handles.discard(speech_handle)
+            self._followup_presentations.pop(speech_handle, None)
 
     def _start_speech(
         self,
@@ -5938,49 +6676,73 @@ class CortexFollowupScheduler:
         )
         return spoken
 
+    def _bind_followup_presentation(
+        self, handle: Any, *, trace_id: str, presentation_ref: str,
+        task_ref: Optional[dict[str, Any]], worker_delivery: Optional[dict[str, Any]] = None,
+    ) -> dict[str, Any]:
+        binding = {"handle": handle, "trace": trace_id, "ref": presentation_ref,
+            "task": dict(task_ref or {}), "workerDelivery": worker_delivery, "startedAtMs": 0}
+        self._followup_presentations[handle] = binding
+        return binding
+
+    async def _record_followup_presentation(self, binding: dict[str, Any], stage: str) -> bool:
+        if not self._trace_handler or not binding["ref"]:
+            return False
+        return bool(await self._trace_handler(binding["trace"], binding["ref"], stage,
+            started_at_ms=binding["startedAtMs"], task_ref=binding["task"],
+            worker_delivery=binding["workerDelivery"]))
+
+    def _queue_followup_presentation(self, binding: dict[str, Any], stage: str) -> None:
+        task = asyncio.create_task(self._record_followup_presentation(binding, stage))
+        self._presentation_trace_tasks.add(task)
+        task.add_done_callback(self._presentation_trace_tasks.discard)
+
     def _speak_cortex_followup(
         self, text: str, seq: int, *, trace_id: str, presentation_ref: str,
+        task_ref: Optional[dict[str, Any]] = None,
         allow_stale_delivery: bool = False,
         presentation_is_current: Optional[Callable[[], bool]] = None,
     ) -> bool:
+        if presentation_ref in self._cortex_speech_refs:
+            return False
         spoken, handle, reason = self._start_speech(text, seq,
             allow_stale_delivery=allow_stale_delivery,
             presentation_is_current=presentation_is_current)
-
-        def record(stage: str) -> None:
-            if not self._trace_handler or not trace_id or not presentation_ref:
-                return
-            task = asyncio.create_task(self._trace_handler(trace_id, presentation_ref, stage))
-            self._presentation_trace_tasks.add(task)
-            task.add_done_callback(self._presentation_trace_tasks.discard)
-
         if not spoken or handle is None:
-            record("audio.superseded" if reason in {
-                "superseded", "mode_suppressed", "no_response", "empty"
-            } else "audio.failed")
+            self._queue_followup_presentation({"trace": trace_id, "ref": presentation_ref,
+                "startedAtMs": 0, "task": dict(task_ref or {}), "workerDelivery": None},
+                "audio.superseded" if reason in {"superseded", "mode_suppressed", "no_response", "empty"}
+                else "audio.failed")
             return False
+        self._cortex_speech_refs[presentation_ref] = None
+        while len(self._cortex_speech_refs) > 4096:
+            self._cortex_speech_refs.pop(next(iter(self._cortex_speech_refs)))
+        binding = self._bind_followup_presentation(handle, trace_id=trace_id,
+            presentation_ref=presentation_ref, task_ref=task_ref)
         self._cortex_speech_handles.add(handle)
 
         def completed(done: Any) -> None:
             audible = done in self._audible_cortex_handles
             self._cortex_speech_handles.discard(done)
             self._audible_cortex_handles.discard(done)
+            self._followup_presentations.pop(done, None)
             if bool(getattr(done, "interrupted", False)):
-                record("audio.interrupted")
+                self._queue_followup_presentation(binding, "audio.interrupted")
             elif presentation_is_current is not None and not presentation_is_current():
-                record("audio.superseded")
+                self._queue_followup_presentation(binding, "audio.superseded")
             elif audible:
-                record("tts.completed")
-                record("audio.completed")
+                self._queue_followup_presentation(binding, "tts.completed")
+                self._queue_followup_presentation(binding, "audio.completed")
             else:
-                record("audio.failed")
+                self._queue_followup_presentation(binding, "audio.failed")
 
         callback = getattr(handle, "add_done_callback", None)
         if callable(callback):
             callback(completed)
         else:
             self._cortex_speech_handles.discard(handle)
-            record("audio.failed")
+            self._followup_presentations.pop(handle, None)
+            self._queue_followup_presentation(binding, "audio.failed")
         return spoken
 
     def bind_audio_playout(self) -> None:
@@ -5996,18 +6758,24 @@ class CortexFollowupScheduler:
     def _on_audio_playback_started(self, _event: Any) -> None:
         self.note_started_playout(self._session.current_speech)
 
-    def note_started_playout(self, handle: Any) -> None:
-        # Native audio playback_started fires per segment even if `speaking` is unchanged.
-        # Require enabled audio and the exact active handle;
-        # queued worker/cortex speech cannot borrow another handle's positive playout evidence.
+    def note_started_playout(self, handle: Any, timestamp_ms: Optional[float] = None) -> None:
+        # Attribute each native audio segment to its exact active handle, including
+        # back-to-back speech without a new session-wide speaking state.
         output = getattr(self._session, "output", None)
-        if (
-            getattr(output, "audio_enabled", False) is True
-            and getattr(output, "audio", None) is not None
-            and handle is getattr(self._session, "current_speech", None)
-            and handle in self._speech_handles
-        ):
-            self._audible_cortex_handles.add(handle)
+        if (getattr(output, "audio_enabled", False) is not True
+                or getattr(output, "audio", None) is None
+                or handle is not getattr(self._session, "current_speech", None)
+                or handle not in self._speech_handles):
+            return
+        self._audible_cortex_handles.add(handle)
+        binding = self._followup_presentations.get(handle)
+        if binding is None or binding["startedAtMs"] or handle.done() or getattr(handle, "interrupted", False):
+            return
+        timestamp_ms = time.time() * 1000 if timestamp_ms is None else timestamp_ms
+        if not math.isfinite(timestamp_ms) or timestamp_ms <= 0:
+            return
+        binding["startedAtMs"] = int(timestamp_ms)
+        self._queue_followup_presentation(binding, "audio.started")
 # === VIVENTIUM END ===
 
 
@@ -6080,6 +6848,22 @@ async def entrypoint(ctx: JobContext) -> None:
     # reclaimed call may intentionally still carry a retryable failure tombstone.
     # Keep every response plane closed until the exact job+worker marks ready.
     voice_session_ready = [False]
+    terminal_room_failure_accepted = [False]
+    runtime_failure_report_tasks: set[asyncio.Task[Any]] = set()
+    voice_auth_plane_closers: list[Callable[[], Awaitable[None]]] = []
+
+    async def _close_voice_auth_planes(*_args: Any) -> None:
+        voice_session_ready[0] = False
+        await _close_voice_auth_planes_and_release_terminal_claim(
+            close_planes=voice_auth_plane_closers,
+            pending_reports=runtime_failure_report_tasks,
+            terminal_failure_accepted=lambda: terminal_room_failure_accepted[0],
+            abandon=lambda: _abandon_voice_session_claim(
+                env.librechat_origin, auth, reason="gateway_transport_failed"
+            ),
+        )
+
+    ctx.add_shutdown_callback(_close_voice_auth_planes)
     unready_claim_active = [True]
     abandon_attempted = [False]
 
@@ -6199,7 +6983,7 @@ async def entrypoint(ctx: JobContext) -> None:
     async def _close_llm_background_continuations(*_args: Any) -> None:
         await llm_impl.close_background_continuations()
 
-    ctx.add_shutdown_callback(_close_llm_background_continuations)
+    voice_auth_plane_closers.append(_close_llm_background_continuations)
 
     # === VIVENTIUM END ===
 
@@ -6365,7 +7149,7 @@ async def entrypoint(ctx: JobContext) -> None:
                 ws_url=env.xai_tts_ws_url,
                 sample_rate=env.xai_sample_rate,
             )
-            tts_instance = xai_plugin.TTS(
+            tts_instance = create_xai_tts(
                 api_key=xai_api_key,
                 voice=env.xai_voice,
                 language=env.xai_language,
@@ -6384,6 +7168,11 @@ async def entrypoint(ctx: JobContext) -> None:
                 optimize_streaming_latency=env.xai_tts_optimize_streaming_latency,
             )
             p0_timing.attach_xai(tts_instance)
+            if isinstance(tts_instance, PooledXaiTTS):
+                async def _close_call_xai_tts(*_args: Any) -> None:
+                    await tts_instance.aclose()
+
+                ctx.add_shutdown_callback(_close_call_xai_tts)
             return (tts_instance, actual_voice_provider)
 
         if provider == "cartesia":
@@ -6525,33 +7314,6 @@ async def entrypoint(ctx: JobContext) -> None:
         await _fail_voice_route_initialization(classified)
         raise classified from exc
 
-    # === VIVENTIUM START ===
-    # Feature: Prewarm local TTS models to eliminate cold-start latency on first voice call.
-    # Purpose: MLX Chatterbox must load ~2-4 GB of weights from disk on first use. Without
-    # prewarming, the first call has 5-15s extra TTFA. The launcher prefetch warms the HF
-    # disk cache but the worker process still needs an in-process load.
-    local_tts_providers = {"local_chatterbox_turbo_mlx_8bit"}
-    prewarmed_local_tts = ctx.proc.userdata.get("prewarmed_local_chatterbox_tts")
-    if (
-        primary_voice_provider in local_tts_providers
-        and primary_tts_impl is not prewarmed_local_tts
-        and env.voice_prewarm_local_tts
-        and hasattr(primary_tts_impl, "prewarm")
-    ):
-        logger.info("[voice-gateway] Prewarming TTS model (%s)...", primary_voice_provider)
-        try:
-            primary_tts_impl.prewarm()
-        except Exception as exc:
-            classified = VoiceRouteError(
-                "provider_failure",
-                modality="tts",
-                provider=primary_voice_provider,
-                reason="prewarm failed",
-            )
-            await _fail_voice_route_initialization(classified)
-            raise classified from exc
-    # === VIVENTIUM END ===
-
     attempts: list[ProviderAttempt] = [
         _build_tts_provider_attempt(
             capabilities=capabilities,
@@ -6638,6 +7400,18 @@ async def entrypoint(ctx: JobContext) -> None:
             await _maybe_add_elevenlabs_voice_fallback(voice_provider=fallback_voice_provider)
             configured_fallback_tts_impl = fallback_tts_impl
             configured_fallback_voice_provider = fallback_voice_provider
+
+    # Preserve configured fallback when a selected local model fails to load. Only
+    # successfully constructed attempts count; registration alone is not readiness.
+    primary_tts_ready = await _prewarm_call_local_tts(
+        env=env,
+        auth=auth,
+        primary_tts_impl=primary_tts_impl,
+        primary_voice_provider=primary_voice_provider,
+        prewarmed_local_tts=ctx.proc.userdata.get("prewarmed_local_chatterbox_tts"),
+        attempts=attempts,
+        fail_initialization=_fail_voice_route_initialization,
+    )
 
     current_tts_provider = primary_voice_provider
     current_tts_impl = primary_tts_impl
@@ -6744,12 +7518,15 @@ async def entrypoint(ctx: JobContext) -> None:
             on_provider_selected=_handle_provider_selected,
             on_provider_attempt=_handle_provider_attempt,
         )
+        if HAS_XAI_TTS and isinstance(primary_tts_impl, PooledXaiTTS) and call_mode != "listen_only":
+            primary_tts_impl.prewarm()
     else:
         tts_impl = primary_tts_impl
 
     # Build session
+    turn_detection, turn_end_reason = load_turn_detection(env, vad is not None)
     # === VIVENTIUM START ===
-    # Feature: Sync final provider back into LibreChat voiceMode payloads.
+    # Feature: Sync final provider and resolved Call facts into LibreChat voiceMode payloads.
     llm_impl.set_voice_provider(
         primary_voice_provider,
         native_streaming=_tts_uses_native_streaming(primary_tts_impl),
@@ -6757,10 +7534,11 @@ async def entrypoint(ctx: JobContext) -> None:
             capabilities,
             primary_voice_provider,
         ),
+        runtime_context=_build_current_call_runtime_context(
+            env, call_session_id, turn_detection=turn_detection, primary_tts_ready=primary_tts_ready,
+        ),
     )
     # === VIVENTIUM END ===
-
-    turn_detection, turn_end_reason = load_turn_detection(env, vad is not None)
 
     turn_handling: TurnHandlingOptions = {
         "turn_detection": turn_detection,
@@ -6788,9 +7566,10 @@ async def entrypoint(ctx: JobContext) -> None:
         turn_handling=turn_handling,
         min_consecutive_speech_delay=env.voice_min_consecutive_speech_delay_s,
         aec_warmup_duration=env.voice_aec_warmup_duration_s,
+        # The owning TTS node handles Markdown and supported voice controls.
+        tts_text_transforms=["filter_emoji"],
     )
     _register_presentation_lifecycle_handlers(session, llm_impl)
-    runtime_failure_report_tasks: set[asyncio.Task[Any]] = set()
     runtime_failure_reported_at: dict[tuple[str, str], float] = {}
 
     def _schedule_runtime_provider_failure_report(event: Any) -> None:
@@ -6848,6 +7627,26 @@ async def entrypoint(ctx: JobContext) -> None:
 
     ctx.add_shutdown_callback(_drain_runtime_failure_reports)
 
+    async def _report_terminal_room_failure() -> Optional[dict[str, Any]]:
+        reported = await _report_voice_gateway_failure(
+            env.librechat_origin,
+            auth,
+            classification="gateway_down",
+            phase="runtime",
+            fatal=True,
+        )
+        terminal_room_failure_accepted[0] = reported is not None
+        return reported
+
+    ctx.add_shutdown_callback(
+        _register_terminal_room_failure_report(
+            ctx.room,
+            is_ready=lambda: voice_session_ready[0],
+            report_failure=_report_terminal_room_failure,
+            pending_reports=runtime_failure_report_tasks,
+        )
+    )
+
     followup_scheduler = CortexFollowupScheduler(
         origin=env.librechat_origin,
         auth=auth,
@@ -6864,59 +7663,12 @@ async def entrypoint(ctx: JobContext) -> None:
     async def _close_followup_scheduler(*_args: Any) -> None:
         await followup_scheduler.close()
 
-    ctx.add_shutdown_callback(_close_followup_scheduler)
-    progress_speech_handles: set[Any] = set()
-
-    def _stop_active_progress_speech() -> None:
-        _interrupt_livekit_speech_handles(progress_speech_handles)
-
-    def _speak_task_progress(task_id: str, text: str) -> bool:
-        cleaned = sanitize_voice_followup_text(text)
-        if not cleaned:
-            return False
-        try:
-            handle = session.say(
-                cleaned,
-                allow_interruptions=True,
-                add_to_chat_ctx=False,
-            )
-            if handle is not None:
-                progress_speech_handles.add(handle)
-                add_done_callback = getattr(handle, "add_done_callback", None)
-                if callable(add_done_callback):
-                    add_done_callback(
-                        lambda completed: progress_speech_handles.discard(completed)
-                    )
-            logger.info(
-                "[VoiceTask] progress_spoken callSessionId=%s taskId=%s chars=%s interruptible=true",
-                call_session_id,
-                task_id,
-                len(cleaned),
-            )
-            return True
-        except Exception as exc:
-            logger.warning(
-                "[VoiceTask] progress_speak_failed callSessionId=%s taskId=%s error=%s callContinues=true",
-                call_session_id,
-                task_id,
-                type(exc).__name__,
-            )
-            return False
-
-    progress_controller = AsyncVoiceProgressController(
-        machine=VoiceProgressStateMachine(enabled=False),
-        speak=_speak_task_progress,
-        clock=time.monotonic,
-        stop_active_speech=_stop_active_progress_speech,
-        initial_mode="listen_only",
-    )
-
+    voice_auth_plane_closers.append(_close_followup_scheduler)
     async def _relay_and_track_task_event(task_event: dict[str, Any]) -> None:
         followup_scheduler.on_task_event(
             task_event,
             is_task_suppressed=llm_impl.is_task_output_suppressed,
         )
-        progress_controller.on_task_event(task_event)
         await _publish_livekit_task_event(
             ctx.room.local_participant,
             task_event,
@@ -6924,13 +7676,11 @@ async def entrypoint(ctx: JobContext) -> None:
         )
 
     llm_impl.set_task_event_handler(_relay_and_track_task_event)
-    llm_impl.set_model_output_handler(progress_controller.on_model_output)
 
     def _on_task_cancel_accepted(task_id: str, _result: dict[str, Any]) -> None:
         # The backend task remains authoritative; this is the local suppression barrier.
         _apply_task_cancel_suppression(
             task_id,
-            progress_controller=progress_controller,
             followup_scheduler=followup_scheduler,
             session=session,
         )
@@ -7028,11 +7778,6 @@ async def entrypoint(ctx: JobContext) -> None:
         segment_sequencer=segment_sequencer,
     )
 
-    async def _poll_spoken_progress() -> None:
-        while True:
-            await asyncio.sleep(0.1)
-            progress_controller.poll()
-
     latest_pushed_mode_revision = [int(claimed_call_state["revision"])]
     task_stream_audio_gate = TaskStreamAudioAuthorityGate(session)
 
@@ -7041,15 +7786,16 @@ async def entrypoint(ctx: JobContext) -> None:
         # Main generation. Pause audio and the auxiliary speech planes; a fresh owner-scoped
         # snapshot below is the only path that may restore them.
         _suspend_call_response_playout_until_authoritative(
-            progress_controller=progress_controller,
             followup_scheduler=followup_scheduler,
             audio_gate=task_stream_audio_gate,
             authoritative_mode_state=authoritative_mode_state,
         )
 
+    stop_owner_text_input: Callable[..., None] = lambda *_args: None
+
     def _terminate_for_task_stream_failure() -> None:
         authoritative_mode_state.suspend()
-        progress_controller.suspend_until_authoritative()
+        stop_owner_text_input()
         followup_scheduler.suspend_until_authoritative()
         task_stream_audio_gate.terminate()
 
@@ -7075,7 +7821,6 @@ async def entrypoint(ctx: JobContext) -> None:
         authoritative_mode_state.apply(call_mode)
         _apply_authoritative_call_mode_to_speech_planes(
             call_mode,
-            progress_controller=progress_controller,
             ambient_ingress=multi_track_ingress,
             followup_scheduler=followup_scheduler,
             session=session,
@@ -7089,9 +7834,14 @@ async def entrypoint(ctx: JobContext) -> None:
         apply_state=_apply_task_stream_call_state,
         terminate=_terminate_for_task_stream_failure,
     )
-    llm_impl.set_call_task_event_stream_health_handler(
-        task_stream_authority.on_stream_health
-    )
+    async def _on_call_task_stream_health(health: dict[str, Any]) -> None:
+        if health.get("state") != "connected":
+            followup_scheduler.set_task_stream_connected(False)
+        await task_stream_authority.on_stream_health(health)
+        if health.get("state") == "connected" and task_stream_authority.authoritative:
+            followup_scheduler.set_task_stream_connected(True)
+
+    llm_impl.set_call_task_event_stream_health_handler(_on_call_task_stream_health)
 
     @ctx.room.on("data_received")
     def _on_authoritative_call_state_packet(packet: Any) -> None:
@@ -7123,7 +7873,6 @@ async def entrypoint(ctx: JobContext) -> None:
         raw_data = getattr(packet, "data", b"")
         if not isinstance(raw_data, (bytes, bytearray)) or len(raw_data) > 16_000:
             _suspend_all_call_speech_until_authoritative(
-                progress_controller=progress_controller,
                 followup_scheduler=followup_scheduler,
                 session=session,
                 authoritative_mode_state=authoritative_mode_state,
@@ -7155,7 +7904,6 @@ async def entrypoint(ctx: JobContext) -> None:
         )
         if parsed is None:
             _suspend_all_call_speech_until_authoritative(
-                progress_controller=progress_controller,
                 followup_scheduler=followup_scheduler,
                 session=session,
                 authoritative_mode_state=authoritative_mode_state,
@@ -7183,11 +7931,10 @@ async def entrypoint(ctx: JobContext) -> None:
                 call_session_id,
             )
             return
+        previous_mode = authoritative_mode_state.mode
         authoritative_mode_state.apply(mode)
-        previous_mode = progress_controller.mode
         _apply_authoritative_call_mode_to_speech_planes(
             mode,
-            progress_controller=progress_controller,
             ambient_ingress=multi_track_ingress,
             followup_scheduler=followup_scheduler,
             session=session,
@@ -7210,7 +7957,6 @@ async def entrypoint(ctx: JobContext) -> None:
 
         def _on_state_uncertain() -> None:
             _suspend_call_response_playout_until_authoritative(
-                progress_controller=progress_controller,
                 followup_scheduler=followup_scheduler,
                 audio_gate=task_stream_audio_gate,
                 authoritative_mode_state=authoritative_mode_state,
@@ -7246,10 +7992,10 @@ async def entrypoint(ctx: JobContext) -> None:
                         call_session_id,
                     )
                 return
-            previous_mode = progress_controller.mode
+            previous_mode = authoritative_mode_state.mode
             authoritative_mode = await sync_authoritative_call_mode_once(
                 fetch_mode=llm_impl.get_call_state,
-                progress_controller=progress_controller,
+                mode_state=authoritative_mode_state,
                 set_ambient_mode=multi_track_ingress.set_mode,
                 on_mode_transition=_on_mode_transition,
                 on_state_uncertain=_on_state_uncertain,
@@ -7297,13 +8043,12 @@ async def entrypoint(ctx: JobContext) -> None:
             sleep=asyncio.sleep,
         )
 
-    progress_poll_task: Optional[asyncio.Task[None]] = None
     mode_sync_task: Optional[asyncio.Task[None]] = None
 
-    async def _stop_progress_and_mode_sync(*_args: Any) -> None:
+    async def _stop_mode_sync(*_args: Any) -> None:
         tasks = [
             task
-            for task in (progress_poll_task, mode_sync_task)
+            for task in (mode_sync_task,)
             if task is not None
         ]
         for task in tasks:
@@ -7313,9 +8058,8 @@ async def entrypoint(ctx: JobContext) -> None:
                 await task
             except asyncio.CancelledError:
                 pass
-        _stop_active_progress_speech()
 
-    ctx.add_shutdown_callback(_stop_progress_and_mode_sync)
+    voice_auth_plane_closers.append(_stop_mode_sync)
 
     def _register_ambient_track(track: Any, publication: Any, participant: Any) -> None:
         if not voice_session_ready[0]:
@@ -7329,10 +8073,12 @@ async def entrypoint(ctx: JobContext) -> None:
 
     @ctx.room.on("track_subscribed")
     def _on_ambient_track_subscribed(track: Any, publication: Any, participant: Any) -> None:
+        _refresh_owner_speaker_track(speaker_tracker, ctx.room, owner_participant_identity)
         _register_ambient_track(track, publication, participant)
 
     @ctx.room.on("track_unsubscribed")
     def _on_ambient_track_unsubscribed(track: Any, publication: Any, participant: Any) -> None:
+        _refresh_owner_speaker_track(speaker_tracker, ctx.room, owner_participant_identity)
         _ = participant
         track_sid = str(
             getattr(publication, "sid", "") or getattr(track, "sid", "") or ""
@@ -7341,6 +8087,11 @@ async def entrypoint(ctx: JobContext) -> None:
             asyncio.get_running_loop().create_task(
                 multi_track_ingress.track_left(track_sid)
             )
+
+    @ctx.room.on("track_unpublished")
+    def _on_owner_track_unpublished(publication: Any, participant: Any) -> None:
+        _ = publication, participant
+        _refresh_owner_speaker_track(speaker_tracker, ctx.room, owner_participant_identity)
 
     def _register_existing_ambient_tracks() -> None:
         for participant in getattr(ctx.room, "remote_participants", {}).values():
@@ -7352,7 +8103,7 @@ async def entrypoint(ctx: JobContext) -> None:
     async def _close_multi_track_ingress(*_args: Any) -> None:
         await multi_track_ingress.close()
 
-    ctx.add_shutdown_callback(_close_multi_track_ingress)
+    voice_auth_plane_closers.append(_close_multi_track_ingress)
 
     async def _on_owner_interim_speaker_changes(
         changes: list[dict[str, Any]],
@@ -7435,15 +8186,16 @@ async def entrypoint(ctx: JobContext) -> None:
 
     @session.on("agent_state_changed")
     def _on_agent_state_changed(event: Any) -> None:
+        if getattr(event, "new_state", None) == "speaking":
+            created_at = float(getattr(event, "created_at", 0.0) or 0.0)
+            followup_scheduler.note_started_playout(session.current_speech,
+                (created_at if created_at > 0 else time.time()) * 1000.0)
         if str(getattr(event, "new_state", "") or "") == "speaking":
             created_at = float(getattr(event, "created_at", 0.0) or 0.0)
-            correlation_id = llm_impl.record_next_trace_hop(
+            llm_impl.record_next_trace_hop(
                 "audio_output",
                 (created_at if created_at > 0 else time.time()) * 1000.0,
             )
-            task_id = llm_impl.task_id_for_trace(correlation_id)
-            if task_id:
-                progress_controller.on_audible_ack(task_id)
         logger.info(
             "[voice-gateway] agent_state_changed callSessionId=%s old=%s new=%s",
             call_session_id,
@@ -7549,8 +8301,13 @@ async def entrypoint(ctx: JobContext) -> None:
         on_interim_speaker_changes=_on_owner_interim_speaker_changes,
         speaker_timeline_offset=multi_track_ingress.call_timeline_offset_s,
         speaker_timeline_origin=multi_track_ingress.call_timeline_origin_at_ms,
+        refresh_speaker_track=lambda: _refresh_owner_speaker_track(
+            speaker_tracker, ctx.room, owner_participant_identity
+        ),
         refresh_turn_authority=_refresh_persisted_owner_turn_authority,
         p0_timing=p0_timing,
+        prewarm_tts=(primary_tts_impl.prewarm
+                     if HAS_XAI_TTS and isinstance(primary_tts_impl, PooledXaiTTS) else None),
     )
 
     # === VIVENTIUM START ===
@@ -7572,7 +8329,15 @@ async def entrypoint(ctx: JobContext) -> None:
             owner_participant_identity=owner_participant_identity,
         )
 
+    owner_text_session_ready = asyncio.Event()
     try:
+        stop_owner_text_input, close_owner_text_input = _register_owner_text_input(
+            ctx, session, call_session_id=call_session_id, owner_participant_identity=owner_participant_identity,
+            session_ready=owner_text_session_ready,
+            can_dispatch=lambda: voice_session_ready[0] and ctx.room.isconnected(),
+            text_input_cb=_owner_text_input_cb, owner_wait_s=owner_wait_s,
+        )
+        voice_auth_plane_closers.append(close_owner_text_input)
         await session.start(
             agent=agent,
             room=ctx.room,
@@ -7581,7 +8346,7 @@ async def entrypoint(ctx: JobContext) -> None:
                 participant_identity=(
                     owner_participant_identity or "__viventium_unbound_owner__"
                 ),
-                text_input_cb=_owner_text_input_cb,
+                owns_text_stream=True,
             ),
         )
         task_stream_audio_gate.bind_current_output()
@@ -7634,7 +8399,6 @@ async def entrypoint(ctx: JobContext) -> None:
         raise RuntimeError("authoritative call task stream handshake failed")
     if ready_state is None:
         _suspend_all_call_speech_until_authoritative(
-            progress_controller=progress_controller,
             followup_scheduler=followup_scheduler,
             session=session,
             authoritative_mode_state=authoritative_mode_state,
@@ -7655,8 +8419,9 @@ async def entrypoint(ctx: JobContext) -> None:
             if inspect.isawaitable(result):
                 await result
         raise RuntimeError("authoritative task stream lost before voice readiness")
+    followup_scheduler.set_task_stream_connected(task_stream_authority.stream_connected)
     voice_session_ready[0] = True
-    progress_poll_task = asyncio.create_task(_poll_spoken_progress())
+    owner_text_session_ready.set()
     mode_sync_task = asyncio.create_task(_sync_authoritative_mode())
     _register_existing_ambient_tracks()
     unready_claim_active[0] = False

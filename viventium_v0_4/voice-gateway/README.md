@@ -114,6 +114,15 @@ This service is the **voice bridge** between:
       - `VIVENTIUM_XAI_SAMPLE_RATE` (default `24000`)
     - Live voice calls use the first-party `livekit-plugins-xai` standalone TTS path, which streams
       PCM audio from `wss://api.x.ai/v1/tts`.
+    - On the pinned `1.5.10` set, `xai_pooled_tts.py` reuses the SDK connection pool around the
+      original sender and receiver. Only a successfully completed socket is reused. Cancelled,
+      failed, closed, expired, or outdated settings are evicted. The selected primary warms at
+      call and LLM-turn start; fallback stays lazy. Each call closes its own pool. Other SDK
+      versions retain the original renderer until the adapter is verified against that version.
+      A socket that accepts text but returns no first PCM is bounded by the existing request
+      timeout. This budget starts at the native text write; model thinking and prewarm are
+      excluded. The native retry owns recovery before audio. After first PCM, native tail
+      handling remains unchanged, and failed or cancelled audio is not replayed.
     - The xAI prompt may use documented xAI speech tags from
       `viventium_v0_4/shared/voice/xai_tts_capabilities.json`. These are not SSML and must not be
       mixed with Cartesia controls.
@@ -122,6 +131,19 @@ This service is the **voice bridge** between:
     - The route is markup-free: provider-control tags are stripped before synthesis.
     - OpenAI's documented `instructions` side channel is configured once through
       `VIVENTIUM_OPENAI_TTS_INSTRUCTIONS`; it is not currently recomputed from Feelings per turn.
+  - **Local Chatterbox TTS readiness**
+    - A failed model preload raises an error and is never cached as successful warmup.
+    - A failed preload of the sole configured local route fails startup. If a distinct alternative is configured,
+      optional local warmup may fail without blocking worker registration; registration does
+      not prove call readiness or provider health.
+    - Each call constructs its actual configured fallback attempts before warming its local
+      primary. Without an actual alternative, failure is reported and the unready claim is
+      released. With an alternative, the existing streaming fallback handles synthesis failure;
+      the effective provider changes only after that provider emits audio.
+      The existing route authorization and local/cloud egress boundary still apply.
+    - Cancelled sentence synthesis cancels only its own queued MLX work. A stopped item checks
+      cancellation before loading or generating; already running work stops at its next yield.
+      The single MLX thread and normal audio tail remain unchanged.
   - **ElevenLabs TTS**
     - Current runtime model: `eleven_turbo_v2_5` (passed explicitly to the LiveKit adapter).
     - The route is markup-free and SSML parsing remains disabled. Eleven v3 audio tags must not be
@@ -185,6 +207,9 @@ the worker exits with an actionable startup error if it is missing or invalid.
 - **Latency logging (optional)**
   - `VIVENTIUM_VOICE_LOG_LATENCY=1`
     - Enables voice latency logs in both the Voice Gateway and LibreChat voice routes.
+    - P0 records SDK VAD receipt, final STT, turn commit, actual socket connect and every lease,
+      text write, provider audio and emitted PCM separately. Reused leases are rebound to the
+      current stream. VAD sample offsets are relative audio time, not physical microphone end.
     - For local Whisper, this also emits `VoiceLatencyDetail` records for VAD start/end, frame
       merge, pywhispercpp recognition, final transcript send, and LiveKit EOU metric event lag.
     - Current local `large-v3-turbo` QA ballparks: VAD silence `~500-525ms`, merge/final-send/
@@ -207,6 +232,10 @@ the worker exits with an actionable startup error if it is missing or invalid.
 
 ### Live call contracts
 
+- Authenticated audio delivery retains raw public text and its UTF-16 delivery-choice ranges.
+  Display and persistence use separate clean projections; changed persisted text drops invalidated
+  ranges. The display stream reuses the native word/markup boundary and preserves public URL bytes
+  and literal code. Speech alone applies the TTS sanitizer and selected provider controls.
 - The configured STT route remains authoritative. AssemblyAI diarization is enabled with
   `speaker_labels`; this does not select AssemblyAI or send local-only audio to a cloud route.
 - The signed job publisher is the owner input. Additional participant microphone tracks are
@@ -237,7 +266,11 @@ the worker exits with an actionable startup error if it is missing or invalid.
   cannot evict that zero-output barrier before its TTL.
 - Hop telemetry carries correlation IDs and timestamps, not transcript content. The shared sequence
   is utterance end, gateway dispatch, agent/tool work, first model token, TTS first byte, and audio
-  output so the first breached latency hop can be identified deterministically.
+  output so the first breached latency hop can be identified deterministically. Message creation is
+  agent work; only typed tool events mark tool work. First-token and audio marks remain immediate.
+  The final diagnostic summary waits for the owning stream and exact speech handle to finish so it
+  can include later tool completion. Call cleanup seals incomplete traces once. A missing physical
+  utterance-end clock remains missing; VAD end is not a substitute.
 
 ### Dependency baseline
 

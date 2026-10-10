@@ -319,11 +319,20 @@ export interface PromptWorkbenchContext {
 }
 
 export interface FrameLog {
+  version: 1 | 2;
   time: string;
   surface: string;
   family: string;
   provider: string;
   model: string;
+  requested_provider?: string;
+  requested_model?: string;
+  requested_effort?: string;
+  effective_effort?: string;
+  fallback_used?: boolean;
+  fallback_reason?: WorkbenchFallbackReason | "missing";
+  request_identity_hash: string;
+  source_hashes: Record<"agent_source" | "librechat_source" | "compiled_runtime_config" | "live_installed_runtime_config" | "compiler_version", string>;
   layer_hashes: Record<string, string>;
   layer_tokens: Record<string, number>;
   decision: Record<string, unknown>;

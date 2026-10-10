@@ -26,6 +26,13 @@ Failure or deletion in one surface does not silently mutate or certify another.
   the same authoritative state.
 - A writer uses actual evidence and cannot turn a transient note, tool result, transcript ambiguity,
   or unsupported inference into a stable fact.
+- Internal memory maintenance declares a system actor and retains the source interaction origin.
+  Its signed memory-tool receipt owns completion; an empty user-facing answer is valid.
+
+Automatic Telegram memory bookkeeping remains in redacted operational logs and does not create
+chat or speech output; the owning presentation contract is
+[Telegram](../03_Telegram_Bridge.md#quiet-system-bookkeeping-and-conversational-speech).
+Explicit model-authored conversational replies remain eligible for normal presentation.
 
 ## Conversation recall
 

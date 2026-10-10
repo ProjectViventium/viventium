@@ -33,6 +33,35 @@ def _read(relative: str) -> str:
     return (ROOT / relative).read_text(encoding="utf-8")
 
 
+def test_restart_livekit_prerequisite_preserves_stack_before_teardown() -> None:
+    source = _read("viventium_v0_4/viventium-librechat-start.sh")
+    start = source.index("ensure_restart_livekit_prerequisite() {\n")
+    end = source.index("\n# Preserve the predecessor receipt", start)
+    guard_and_stop = source[start:end]
+    setup = """
+set -e
+log_error() { :; }
+docker_daemon_ready() { return "$DOCKER_RESULT"; }
+curl() { return "$ENDPOINT_RESULT"; }
+stop_running_services() { printf STOPPED; }
+"""
+    for configured, docker, endpoint, skip_voice, expected_stop in [
+        ("false", "1", "0", "false", False),
+        ("false", "0", "0", "false", True),
+        ("true", "1", "1", "false", False),
+        ("true", "1", "0", "false", True),
+        ("false", "1", "1", "true", True),
+    ]:
+        env = dict(os.environ, RESTART_SERVICES="true", SKIP_DOCKER="false",
+                   SKIP_LIVEKIT=skip_voice, LIVEKIT_API_HOST_WAS_CONFIGURED=configured,
+                   LIVEKIT_API_HOST="https://voice.example.test", DOCKER_RESULT=docker,
+                   ENDPOINT_RESULT=endpoint)
+        result = subprocess.run(["bash", "-c", setup + guard_and_stop], env=env,
+                                capture_output=True, text=True)
+        assert (result.returncode == 0) == expected_stop
+        assert result.stdout == ("STOPPED" if expected_stop else "")
+
+
 def _extract_javascript_logging_calls(source: str) -> list[str]:
     """Return complete console/logger calls without treating ordinary service arguments as logs."""
     call_start = re.compile(
@@ -997,7 +1026,7 @@ printf '%s' "$LIVEKIT_NODE_IP"
         assert "udp_port: 17882" in config
 
 
-def test_livekit_native_discovery_asserts_configured_public_ip() -> None:
+def test_livekit_native_discovery_asserts_configured_public_ip(tmp_path: Path) -> None:
     definition = _extract_shell_function(
         _read("viventium_v0_4/viventium-librechat-start.sh"),
         "livekit_public_mapping_matches_configured",
@@ -1012,6 +1041,7 @@ def test_livekit_native_discovery_asserts_configured_public_ip() -> None:
         script = f"""
 set -eu
 LIVEKIT_NODE_IP=1.1.1.1
+LOG_DIR={str(tmp_path)!r}
 docker() {{ printf '%s\\n' 'native using external IPs {payload}'; }}
 {definition}
 livekit_public_mapping_matches_configured owned-container
@@ -1375,7 +1405,7 @@ set -u
 SKIP_LIVEKIT=false
 SKIP_DOCKER=false
 LIVEKIT_HTTP_PORT=17880
-LIVEKIT_API_HOST=http://127.0.0.1:17880
+LIVEKIT_API_HOST=https://voice.example.test
 LIVEKIT_API_HOST_WAS_CONFIGURED=false
 curl() {{ return 1; }}
 docker() {{ touch '{docker_marker}'; return 1; }}

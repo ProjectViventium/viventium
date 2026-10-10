@@ -99,10 +99,13 @@ _SOURCE_REFERENCE_LINK_LINE_RE = re.compile(
 )
 _SOURCE_REFERENCE_LABEL_RE = re.compile(r"(?im)^\s*(?:sources?|references?|citations?)\s*:\s*")
 _REFERENCE_DEF_RE = re.compile(r"(?m)^\s*\[[^\]]+\]:\s*\S+.*(?:\n|$)")
-_MARKDOWN_IMAGE_RE = re.compile(r"!\[([^\]]*)\]\((?:https?://|www\.)[^)]+\)")
-_MARKDOWN_LINK_RE = re.compile(r"\[([^\]]+)\]\((https?://[^)]+)\)")
+_MARKDOWN_IMAGE_RE = re.compile(r"!\[([^\]]*)\]\(")
+_MARKDOWN_LINK_RE = re.compile(r"\[([^\]]+)\]\(")
 _GENERIC_ANGLE_TAG_RE = re.compile(r"</?[A-Za-z][A-Za-z0-9_-]*(?:\s+[^<>]*)?/?>")
-_CODE_BLOCK_RE = re.compile(r"```.*?```", re.DOTALL)
+_CODE_BLOCK_RE = re.compile(r"```.*?(?:```|\Z)", re.DOTALL)
+_CODE_LITERAL_RE = re.compile(
+    r"(?<!`)(?P<ticks>`+)(?!`).*?(?<!`)(?P=ticks)(?!`)", re.DOTALL
+)
 _MARKDOWN_SPACED_DECORATION_RE = re.compile(
     r"(?<!\w)(?P<marker>\*{3}|_{3}|~{3})\s+(?P<text>[^*_~\n]+?)\s+(?P=marker)(?!\w)"
 )
@@ -112,7 +115,7 @@ _MARKDOWN_EMPHASIS_RE = re.compile(
 )
 _MARKDOWN_MARKER_ONLY_LINE_RE = re.compile(r"(?m)^\s*(?:[*_~]\s*)+\s*$")
 _HEADING_RE = re.compile(r"(?m)^\s{0,3}#{1,6}\s+")
-_LIST_PREFIX_RE = re.compile(r"(?m)^\s*(?:[-*+]|\d+[.)]|\u2022)\s+")
+_LIST_PREFIX_RE = re.compile(r"(?m)^\s*(?:[-*+>]|\d+[.)]|\u2022)\s+")
 _PLAN_PREFIX_RE = re.compile(r"(?im)^\s*(?:structured\s+)?(?:plan|steps?)\s*:\s*")
 _TABLE_ROW_RE = re.compile(r"(?m)^\s*[|:\\-\\s]+$")
 _WHITESPACE_BEFORE_PUNCT_RE = re.compile(r"\s+([.,!?;:])")
@@ -405,11 +408,12 @@ def _could_be_voice_control_tag_prefix(text: str) -> bool:
 
 
 class VoiceControlDisplayFilter:
-    """Streaming display filter for Cartesia voice-control markup.
+    """Streaming display filter for provider controls and structural formatting.
 
-    TTS receives the original LLM text, including Cartesia SSML-like tags. The
+    TTS receives the original LLM text, including supported provider tags. The
     LiveKit transcript display receives this filtered stream so incomplete tag
     fragments never briefly render to the user while token deltas are arriving.
+    Complete public links and literal code remain display content.
     """
 
     def __init__(self) -> None:
@@ -421,6 +425,33 @@ class VoiceControlDisplayFilter:
 
         source = f"{self._pending}{text or ''}"
         self._pending = ""
+        literals: list[str] = []
+        token_prefix = "\x00VOICE_DISPLAY_LITERAL"
+        while token_prefix in source:
+            token_prefix += "_"
+
+        def protect(match: re.Match[str]) -> str:
+            literals.append(restore(match.group(0)))
+            return f"{token_prefix}{len(literals) - 1}\x00"
+
+        def restore(value: str) -> str:
+            return re.sub(
+                re.escape(token_prefix) + r"(\d+)\x00",
+                lambda match: literals[int(match.group(1))], value,
+            )
+
+        # Match whole, equal-length delimiter runs. A shorter empty pair inside
+        # an unfinished multi-backtick opener must stay in the existing pending tail.
+        source = _CODE_LITERAL_RE.sub(protect, source)
+        if final:
+            # An unclosed literal remains literal at completion; do not clean its
+            # tags/emphasis as if they were surrounding display syntax.
+            source = re.sub(r"`.*\Z", protect, source, count=1, flags=re.DOTALL)
+        source = _MARKDOWN_EMPHASIS_RE.sub(
+            lambda match: match.group("marker")
+            + _URL_RE.sub(protect, match.group("text")) + match.group("marker"), source,
+        )
+        source = _URL_RE.sub(protect, source)
         output: list[str] = []
         index = 0
         source_len = len(source)
@@ -428,21 +459,28 @@ class VoiceControlDisplayFilter:
         while index < source_len:
             char = source[index]
 
+            if char == "`" and not final:
+                self._pending = source[index:]
+                break
+
             if char == "<":
                 closing = source.find(">", index + 1)
                 if closing < 0:
                     pending = source[index:]
-                    if not final and _could_be_voice_control_tag_prefix(pending):
+                    tag_prefix = _could_be_voice_control_tag_prefix(pending) or bool(
+                        _GENERIC_ANGLE_TAG_RE.fullmatch(pending + ">")
+                    )
+                    if not final and tag_prefix:
                         self._pending = pending[-_VOICE_CONTROL_PENDING_MAX:]
                         break
-                    if final and _could_be_voice_control_tag_prefix(pending):
+                    if final and tag_prefix and pending not in ("<", "</"):
                         break
                     output.append(char)
                     index += 1
                     continue
 
                 tag = source[index : closing + 1]
-                if _is_voice_control_tag(tag):
+                if _is_voice_control_tag(tag) or _GENERIC_ANGLE_TAG_RE.fullmatch(tag):
                     index = closing + 1
                     continue
 
@@ -487,8 +525,15 @@ class VoiceControlDisplayFilter:
             index += 1
 
         cleaned = "".join(output)
+        if not final:
+            safe_end = safe_voice_tts_prefix_end(cleaned.replace("<", " ").replace("[", " "))
+            self._pending = cleaned[safe_end:] + self._pending
+            cleaned = cleaned[:safe_end]
+        self._pending = restore(self._pending)
+        cleaned = _strip_inline_markdown_emphasis(cleaned)
+        cleaned = _EMAIL_RE.sub("address available", cleaned)
         cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
-        return cleaned
+        return restore(cleaned)
 # === VIVENTIUM END ===
 
 
@@ -528,6 +573,83 @@ def _strip_inline_markdown_emphasis(text: str) -> str:
     return cleaned
 
 
+def _markdown_link_target_end(text: str, opening: int) -> Optional[int]:
+    """Find the target close or a proved malformed destination line boundary."""
+    depth, index = 1, opening + 1
+    title_quote, title_depth = "", 0
+    angle_destination = False
+    title_closed = False
+    line_boundary: Optional[int] = None
+    while index < len(text):
+        char = text[index]
+        if char == "\\":
+            index += 2
+            continue
+        # A title may span lines; its delimiters do not close the link itself.
+        if title_quote:
+            if char == title_quote:
+                title_quote = ""
+                title_closed = True
+        elif title_depth:
+            if char == "(":
+                title_depth += 1
+            elif char == ")":
+                title_depth -= 1
+                title_closed = title_depth == 0
+        elif title_closed and line_boundary is not None and not char.isspace() and char != ")":
+            return line_boundary
+        elif char in "\r\n":
+            if not text[opening + 1:index].strip():
+                index += 1  # A line ending may precede the destination.
+                continue
+            following = index + 1
+            while following < len(text) and text[following].isspace():
+                following += 1
+            if following == len(text):
+                return None  # The next chunk may supply a title or closing parenthesis.
+            if angle_destination or depth != 1 or text[following] not in "\"'()":
+                # A destination cannot contain this line ending. Keep the target
+                # non-speech through the boundary and retain subsequent authored words.
+                return index
+            if line_boundary is None:
+                line_boundary = index
+        elif angle_destination:
+            if char == ">":
+                angle_destination = False
+        elif char == "<" and depth == 1 and not text[opening + 1:index].strip():
+            angle_destination = True
+        elif char in "\"'" and depth == 1 and text[index - 1:index].isspace():
+            title_quote = char
+        elif char == "(":
+            if depth == 1 and text[index - 1:index].isspace():
+                title_depth = 1
+            else:
+                depth += 1
+        elif char == ")":
+            depth -= 1
+            if depth == 0:
+                return index + 1
+        index += 1
+    return None
+
+
+def _strip_markdown_link_targets(text: str, pattern: re.Pattern[str], *, image: bool = False) -> str:
+    output, previous = [], 0
+    for match in pattern.finditer(text):
+        if match.start() < previous:
+            continue
+        opening = text.index("](", match.start()) + 1
+        end = _markdown_link_target_end(text, opening)
+        if end is None:
+            # At input end the unfinished target stays non-speech. Keep its label.
+            end = len(text)
+        label = (match.group(1) or "image available") if image else match.group(1)
+        output.extend((text[previous:match.start()], label))
+        previous = end
+    output.append(text[previous:])
+    return "".join(output)
+
+
 def _safe_markup_prefix_end(text: str) -> int:
     """Keep unfinished angle/bracket tokens for the next streaming text input."""
     tag_start: Optional[int] = None
@@ -537,7 +659,7 @@ def _safe_markup_prefix_end(text: str) -> int:
             if char == "<":
                 tag_start = index
             elif char == "[":
-                bracket_start = index
+                bracket_start = index - 1 if text[index - 1:index] == "!" else index
             continue
         if tag_start is not None:
             if char == ">":
@@ -559,9 +681,38 @@ def safe_voice_tts_prefix_end(text: str) -> int:
     Complete emphasis uses the sanitizer's existing grammar. Masking it with equal-length
     spaces keeps positions stable when an unfinished delimiter follows it.
     """
-    safe_end = _safe_markup_prefix_end(text)
+    # Use the display owner's equal-delimiter grammar; complete code is opaque
+    # to markup classification, and an unfinished literal stays in the pending tail.
+    masked_code = _CODE_LITERAL_RE.sub(lambda match: " " * len(match.group(0)), text)
+    # Targets may contain balanced/escaped parentheses. A complete link is opaque
+    # to tag/emphasis classification; an incomplete target stays in the pending tail.
+    masked_links = list(masked_code)
+    pending_link_start = None
+    completed_link_end = 0
+    for match in re.finditer(r"!?\[[^\]]*\]\(", masked_code):
+        if match.start() < completed_link_end:
+            continue
+        end = _markdown_link_target_end(masked_code, match.end() - 1)
+        if end is None:
+            pending_link_start = match.start()
+            break
+        masked_links[match.start():end] = " " * (end - match.start())
+        completed_link_end = end
+    masked_code = "".join(masked_links)
+    # Whitespace or a digit cannot start the existing angle-tag grammar.
+    masked_markup = re.sub(r"<(?=[^/A-Za-z])|</(?=[^A-Za-z])",
+                           lambda match: " " * len(match.group(0)), masked_code)
+    safe_end = _safe_markup_prefix_end(masked_markup)
+    if pending_link_start is not None:
+        safe_end = min(safe_end, pending_link_start)
+    pending_code = re.search(r"(?<!`)`+(?!`)", masked_code)
+    pending_label = re.search(r"!?\[[^\]]*\]$", masked_code)
+    pending_image = re.search(r"(?<!\S)!$", masked_code)
+    for pending in (pending_code, pending_label, pending_image):
+        if pending:
+            safe_end = min(safe_end, pending.start())
     masked = _MARKDOWN_SPACED_DECORATION_RE.sub(
-        lambda match: " " * len(match.group(0)), text[:safe_end]
+        lambda match: " " * len(match.group(0)), masked_code[:safe_end]
     )
     masked = _MARKDOWN_EMPHASIS_RE.sub(
         lambda match: " " * len(match.group(0)), masked
@@ -618,7 +769,7 @@ def sanitize_voice_tts_text(
     leading_space = preserve_leading_space and text[:1].isspace()
     trailing_space = preserve_trailing_space and text[-1:].isspace()
     cleaned = text
-    cleaned = strip_inline_nta(cleaned)
+    cleaned = strip_inline_nta(cleaned, preserve_outer_whitespace=True)
     cleaned = sanitize_voice_text(cleaned)
     if not cleaned:
         return ""
@@ -628,8 +779,8 @@ def sanitize_voice_tts_text(
     cleaned = _SOURCE_REFERENCE_LINK_LINE_RE.sub(" ", cleaned)
     cleaned = _SOURCE_REFERENCE_LABEL_RE.sub("", cleaned)
     cleaned = _REFERENCE_DEF_RE.sub(" ", cleaned)
-    cleaned = _MARKDOWN_IMAGE_RE.sub(lambda m: (m.group(1) or "image available"), cleaned)
-    cleaned = _MARKDOWN_LINK_RE.sub(r"\1", cleaned)
+    cleaned = _strip_markdown_link_targets(cleaned, _MARKDOWN_IMAGE_RE, image=True)
+    cleaned = _strip_markdown_link_targets(cleaned, _MARKDOWN_LINK_RE)
     cleaned = _strip_inline_markdown_emphasis(cleaned)
     if not allow_voice_controls:
         cleaned = strip_voice_control_tags(cleaned)

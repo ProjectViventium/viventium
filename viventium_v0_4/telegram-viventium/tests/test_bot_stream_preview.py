@@ -5315,7 +5315,13 @@ def test_media_group_coalesces_files_into_one_viventium_call(monkeypatch):
     assert [file["filename"] for file in kwargs["files"]] == ["file-1.jpg", "file-2.jpg"]
 
 
-def test_command_bot_get_me_timeout_without_reply_does_not_crash(monkeypatch):
+@pytest.mark.parametrize("backend, schedules_idle_reset", [
+    ("librechat", False),
+    ("livekit", True),
+])
+def test_command_bot_get_me_timeout_without_reply_does_not_crash(
+    monkeypatch, backend, schedules_idle_reset,
+):
     update_message = _FakeUpdateMessage()
     update_message.message_id = 42
     update_message.chat_id = "chat-1"
@@ -5366,6 +5372,7 @@ def test_command_bot_get_me_timeout_without_reply_does_not_crash(monkeypatch):
     monkeypatch.setattr(tg_bot, "get_robot", lambda _convo_id: (_FakeRobot(), None, None, None))
     monkeypatch.setattr(tg_bot.config, "get_robot", lambda _convo_id: (_FakeRobot(), None, None, None), raising=False)
     monkeypatch.setattr(tg_bot, "remove_job_if_exists", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(tg_bot.config, "VIVENTIUM_TELEGRAM_BACKEND", backend)
 
     update = types.SimpleNamespace(
         update_id=99,
@@ -5378,7 +5385,26 @@ def test_command_bot_get_me_timeout_without_reply_does_not_crash(monkeypatch):
     asyncio.run(tg_bot.command_bot(_preparation_update(update), context, has_command=False))
 
     assert len(forwarded) == 1
-    assert context.job_queue.jobs
+    assert bool(context.job_queue.jobs) is schedules_idle_reset
+
+
+@pytest.mark.parametrize("backend, expected_resets", [
+    ("librechat", []),
+    ("livekit", ["chat-1:user-1"]),
+])
+def test_idle_reset_callback_preserves_durable_core_conversation(
+    monkeypatch, backend, expected_resets,
+):
+    resets = []
+    monkeypatch.setattr(tg_bot.config, "VIVENTIUM_TELEGRAM_BACKEND", backend)
+    monkeypatch.setattr(tg_bot.config, "ADMIN_LIST", None)
+    monkeypatch.setattr(tg_bot, "reset_ENGINE", lambda convo: resets.append(convo))
+    monkeypatch.setattr(tg_bot, "remove_job_if_exists", lambda *_args: None)
+    context = types.SimpleNamespace(job=types.SimpleNamespace(
+        chat_id="chat-1", name="chat-1:user-1",
+    ))
+    asyncio.run(tg_bot.scheduled_function(context))
+    assert resets == expected_resets
 
 
 def test_error_handler_does_not_log_raw_update_text(caplog):

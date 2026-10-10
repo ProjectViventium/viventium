@@ -150,14 +150,29 @@ def test_scheduler_prompts_have_workbench_relationship_metadata() -> None:
     )
 
 
-def test_compiled_voice_provider_prompts_preserve_immediate_answer_research_boundary() -> None:
+def test_compiled_voice_provider_prompts_preserve_main_cognitive_parity() -> None:
     bundle = build_prompt_bundle(PROMPT_ROOT)
+    registry = load_prompt_registry(PROMPT_ROOT)
 
     voice_body = bundle["prompts"]["surface.voice.call"]["body"].lower()
-    assert "unless the user explicitly asks for a lookup or tool action now" in voice_body
-    assert "do not start foreground research or tool work" in voice_body
-    assert "give the best bounded immediate answer" in voice_body
-    assert "the current voice task may do it" in voice_body
+    assert "unless the user explicitly asks for a lookup or tool action now" not in voice_body
+    assert "do not start foreground research or tool work" not in voice_body
+    assert "foreground tool or consultant work during a call stays interruptible and cancellable" in voice_body
+    assert "never claim a result before its authoritative evidence returns" in voice_body
+
+    main_body = render_prompt("main.conscious_agent", registry)
+    assert "Do not start a foreground Reality Check or Red Team handoff" not in main_body
+    assert "consult Reality Check when fresh outside-world evidence" in main_body
+    assert "Do not consult when the prepared context and verified current-run evidence are already sufficient" in main_body
+    assert "Each consultant may be called at most once per user turn" in main_body
+    assert "You remain the final judge and speaker" in main_body
+    assert "Ask before external actions such as sending messages or publishing" in main_body
+    assert "Private things stay private" in main_body
+
+    rendered_voice = render_prompt("surface.voice.call", registry)
+    assert "VOICE MODE:" in rendered_voice
+    assert "Set voice=skip only when the user explicitly asks for text-only or silent delivery" in rendered_voice
+    assert "Never name, list, quote, or explain the feeling state" in rendered_voice
 
     for prompt_id in (
         "surface.voice.provider.cartesia",

@@ -5,12 +5,13 @@
 # Added: 2026-02-06
 # === VIVENTIUM END ===
 
+import asyncio
 import os
 import sys
 import unittest
 from unittest.mock import patch
 
-from livekit.agents import APIError
+from livekit.agents import APIConnectOptions, APIError, APIStatusError, APITimeoutError
 from livekit.agents.tts import AudioEmitter, ChunkedStream, SynthesizeStream, TTS, TTSCapabilities
 
 # Ensure voice-gateway root is on sys.path so `import fallback_tts` works
@@ -584,6 +585,257 @@ class TestFallbackTTS(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("".join(fallback.last_stream_chunks), "Hello  world")
     # === VIVENTIUM END ===
 
+
+
+# === VIVENTIUM START ===
+# The installed SDK owns replay across retries; fallback owns replay within one run.
+class _RetryInputTTS(TTS):
+    def __init__(self, modes):
+        super().__init__(capabilities=TTSCapabilities(streaming=True), sample_rate=24000, num_channels=1)
+        self.modes = modes
+        self.inputs = []
+        self.opened = []
+
+    @property
+    def provider(self):
+        return "synthetic"
+
+    @property
+    def model(self):
+        return "synthetic"
+
+    def synthesize(self, *args, **kwargs):
+        raise AssertionError("streaming route required")
+
+    def stream(self, *, conn_options):
+        index = len(self.inputs)
+        self.inputs.append([])
+        self.opened.append(asyncio.Event())
+        return _RetryInputStream(tts=self, conn_options=conn_options, index=index)
+
+
+class _RetryInputStream(SynthesizeStream):
+    def __init__(self, *, tts, conn_options, index):
+        super().__init__(tts=tts, conn_options=conn_options)
+        self.index = index
+
+    async def _run(self, emitter):
+        mode = self._tts.modes[min(self.index, len(self._tts.modes) - 1)]
+        self._tts.opened[self.index].set()
+        if mode == "unauthorized":
+            raise APIStatusError("synthetic unauthorized", status_code=401)
+        async for item in self._input_ch:
+            if isinstance(item, str):
+                self._tts.inputs[self.index].append(item)
+                if mode == "early_timeout":
+                    raise APITimeoutError("synthetic timeout")
+        if mode == "timeout":
+            raise APITimeoutError("synthetic timeout")
+        emitter.initialize(request_id="synthetic", sample_rate=24000, num_channels=1,
+                           mime_type="audio/pcm", frame_size_ms=200, stream=True)
+        emitter.start_segment(segment_id="synthetic")
+        emitter.push(bytes(9600))
+        if mode == "partial_error":
+            await asyncio.sleep(0)
+            raise APITimeoutError("synthetic after audio")
+
+
+class TestNativeSdkFallbackRetryReplay(unittest.IsolatedAsyncioTestCase):
+    async def consume(self, stream):
+        async with stream:
+            return [event async for event in stream]
+
+    async def test_native_retry_replays_long_markup_once_per_attempt(self):
+        primary = _RetryInputTTS(["timeout", "timeout", "success"])
+        fallback = _RetryInputTTS(["unauthorized"])
+        wrapper = FallbackTTS(attempts=[ProviderAttempt("primary", primary), ProviderAttempt("fallback", fallback)])
+        chunks = ['<emotion value="ca', 'lm">Pine moon. ' * 1,
+                  'Pine moon. ' * 256, '</emotion>Final words.']
+        original = ''.join(chunks)
+        stream = wrapper.stream(conn_options=APIConnectOptions(max_retry=2, retry_interval=0, timeout=1))
+        for chunk in chunks:
+            stream.push_text(chunk)
+        stream.end_input()
+        frames = await self.consume(stream)
+        self.assertTrue(frames)
+        self.assertEqual([''.join(parts) for parts in primary.inputs], [original] * 3)
+        self.assertEqual(len(fallback.inputs), 2)  # Terminal-provider policy is unchanged.
+
+    async def test_native_retry_captures_future_input_once(self):
+        primary = _RetryInputTTS(["early_timeout", "success"])
+        fallback = _RetryInputTTS(["unauthorized"])
+        wrapper = FallbackTTS(attempts=[ProviderAttempt("primary", primary), ProviderAttempt("fallback", fallback)])
+        stream = wrapper.stream(conn_options=APIConnectOptions(max_retry=1, retry_interval=0, timeout=1))
+        stream.push_text('<emotion value="calm">First words ')
+        consume = asyncio.create_task(self.consume(stream))
+        async def second_started():
+            while len(primary.opened) < 2:
+                await asyncio.sleep(0)
+            await primary.opened[1].wait()
+        try:
+            await asyncio.wait_for(second_started(), 2)
+            stream.push_text('and later words.</emotion>')
+            stream.end_input()
+            self.assertTrue(await asyncio.wait_for(consume, 2))
+            self.assertEqual(''.join(primary.inputs[1]), '<emotion value="calm">First words and later words.</emotion>')
+        finally:
+            await stream.aclose()
+            if not consume.done():
+                consume.cancel()
+            await asyncio.gather(consume, return_exceptions=True)
+
+    async def test_same_run_fallback_keeps_exact_markup_and_tail(self):
+        primary = _RetryInputTTS(["timeout"])
+        fallback = _RetryInputTTS(["success"])
+        wrapper = FallbackTTS(attempts=[ProviderAttempt("primary", primary), ProviderAttempt("fallback", fallback)])
+        text = '<emotion value="calm">Pine moon.</emotion> Final words.'
+        stream = wrapper.stream(conn_options=APIConnectOptions(max_retry=2, retry_interval=0, timeout=1))
+        stream.push_text(text)
+        stream.end_input()
+        self.assertTrue(await self.consume(stream))
+        self.assertEqual([''.join(parts) for parts in primary.inputs], [text])
+        self.assertEqual([''.join(parts) for parts in fallback.inputs], [text])
+
+    async def test_partial_audio_does_not_restart_or_invoke_fallback(self):
+        primary = _RetryInputTTS(["partial_error", "success"])
+        fallback = _RetryInputTTS(["success"])
+        wrapper = FallbackTTS(attempts=[ProviderAttempt("primary", primary), ProviderAttempt("fallback", fallback)])
+        stream = wrapper.stream(conn_options=APIConnectOptions(max_retry=2, retry_interval=0, timeout=1))
+        stream.push_text('Keep the delivered words.')
+        stream.end_input()
+        self.assertTrue(await self.consume(stream))
+        self.assertEqual(len(primary.inputs), 1)
+        self.assertEqual(fallback.inputs, [])
+
+    async def test_terminal_unauthorized_alone_keeps_native_no_retry(self):
+        primary = _RetryInputTTS(["unauthorized"])
+        wrapper = FallbackTTS(attempts=[ProviderAttempt("primary", primary)])
+        stream = wrapper.stream(conn_options=APIConnectOptions(max_retry=2, retry_interval=0, timeout=1))
+        stream.push_text('Unavailable remains unavailable.')
+        stream.end_input()
+        with self.assertRaises(APIError) as caught:
+            await self.consume(stream)
+        self.assertFalse(caught.exception.retryable)
+        self.assertEqual(len(primary.inputs), 1)
+# === VIVENTIUM END ===
+
+
+
+# === VIVENTIUM START ===
+# Provider warnings retain typed diagnostics, never provider error payloads.
+class TestProviderFailureLoggingPrivacy(unittest.IsolatedAsyncioTestCase):
+    def failure(self, api_error):
+        if api_error:
+            return APIStatusError(
+                "Synthetic private provider prose.", status_code=401,
+                body={"error": {"message": "Synthetic masked key " + "-".join(("sk", "test...private-fragment"))}},
+                request_id="synthetic-private-request",
+            )
+        return RuntimeError("Synthetic private provider prose.")
+
+    def assert_private_warning(self, captured, exc):
+        joined = "\n".join(captured.output)
+        self.assertNotIn("-".join(("sk", "test...private-fragment")), joined)
+        self.assertNotIn("Synthetic private provider prose", joined)
+        self.assertNotIn("synthetic-private-request", joined)
+        self.assertNotIn("Traceback", joined)
+        warnings = [record for record in captured.records if record.levelname == "WARNING"]
+        self.assertEqual(len(warnings), 1)
+        self.assertIsNone(warnings[0].exc_info)
+        self.assertIn("primary", joined)
+        self.assertIn(f"error_class={type(exc).__name__}", joined)
+        self.assertIn(f"retryable={bool(getattr(exc, 'retryable', True))}", joined)
+        if isinstance(exc, APIStatusError):
+            self.assertIn("status_code=401", joined)
+
+    async def chunked_failure(self, api_error):
+        primary = FakeTTS(sample_rate=24000)
+        fallback = FakeTTS(sample_rate=24000)
+        selected = []
+        wrapper = FallbackTTS(
+            attempts=[ProviderAttempt("primary", primary), ProviderAttempt("fallback", fallback)],
+            on_provider_selected=lambda label, _tts: selected.append(label),
+        )
+        exc = self.failure(api_error)
+        original = fallback_tts_module._FallbackChunkedStream._collect_frames
+
+        async def collect(stream, attempt, **kwargs):
+            if attempt.tts is primary:
+                raise exc
+            return await original(stream, attempt, **kwargs)
+
+        text = '<emotion value="calm">Complete words.</emotion> Final tail.'
+        with patch.object(fallback_tts_module._FallbackChunkedStream, "_collect_frames", collect):
+            with self.assertLogs("voice-gateway.fallback_tts", level="WARNING") as captured:
+                frame = await wrapper.synthesize(text).collect()
+        self.assertGreater(len(frame.data), 0)
+        self.assertEqual(selected, ["fallback"])
+        self.assertEqual(fallback.last_synth_text, text)
+        self.assert_private_warning(captured, exc)
+
+    async def streaming_failure(self, api_error):
+        primary = FakeStreamingTTS(sample_rate=24000)
+        fallback = FakeStreamingTTS(sample_rate=24000)
+        selected = []
+        attempted = []
+        wrapper = FallbackTTS(
+            attempts=[ProviderAttempt("primary", primary), ProviderAttempt("fallback", fallback)],
+            on_provider_selected=lambda label, _tts: selected.append(label),
+            on_provider_attempt=attempted.append,
+        )
+        exc = self.failure(api_error)
+        original = fallback_tts_module._FallbackSynthesizeStream._try_synthesize
+
+        async def synthesize(stream, *, attempt, **kwargs):
+            if attempt.tts is primary:
+                raise exc
+            async for audio in original(stream, attempt=attempt, **kwargs):
+                yield audio
+
+        text = '<emotion value="calm">Complete words.</emotion> Final tail.'
+        stream = wrapper.stream()
+        stream.push_text(text)
+        stream.end_input()
+        with patch.object(fallback_tts_module._FallbackSynthesizeStream, "_try_synthesize", synthesize):
+            with self.assertLogs("voice-gateway.fallback_tts", level="WARNING") as captured:
+                async with stream:
+                    frames = [event.frame async for event in stream]
+        self.assertTrue(frames)
+        self.assertEqual(selected, ["fallback"])
+        self.assertEqual(attempted, [primary, primary, fallback])
+        self.assertEqual("".join(fallback.last_stream_chunks), text)
+        self.assert_private_warning(captured, exc)
+
+    async def test_chunked_api_status_warning_omits_private_payload(self):
+        await self.chunked_failure(True)
+
+    async def test_chunked_generic_warning_omits_private_prose_and_traceback(self):
+        await self.chunked_failure(False)
+
+    async def test_streaming_api_status_warning_omits_private_payload(self):
+        await self.streaming_failure(True)
+
+    async def test_streaming_generic_warning_omits_private_prose_and_traceback(self):
+        await self.streaming_failure(False)
+
+    def test_attempt_description_preserves_structural_status_retryability_and_voice(self):
+        from types import SimpleNamespace
+        provider = FakeTTS(sample_rate=24000)
+        provider._opts = SimpleNamespace(voice_id="synthetic-voice")
+        for status, retryable in ((401, False), (429, False), (503, True)):
+            with self.subTest(status=status):
+                exc = APIStatusError("Synthetic private provider prose.", status_code=status,
+                                     body={"key": "-".join(("sk", "test...private-fragment"))})
+                with patch.object(fallback_tts_module, "_safe_json") as render_body:
+                    description = fallback_tts_module._describe_attempt(ProviderAttempt("primary", provider), exc)
+                self.assertNotIn("-".join(("sk", "test...private-fragment")), description)
+                render_body.assert_not_called()
+                self.assertIn("primary", description)
+                self.assertIn("voice_id=synthetic-voice", description)
+                self.assertIn("error_class=APIStatusError", description)
+                self.assertIn(f"status_code={status}", description)
+                self.assertIn(f"retryable={retryable}", description)
+# === VIVENTIUM END ===
 
 if __name__ == "__main__":
     unittest.main()

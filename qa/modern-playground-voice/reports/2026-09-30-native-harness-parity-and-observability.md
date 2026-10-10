@@ -1,5 +1,12 @@
 # Native Harness Voice Parity and Observability — 2026-09-30
 
+<!-- qa-evidence-exempt: Retained historical aggregate with candidate-specific failures and evidence before the v2 report layout. Current bounded results and explicit acceptance limits are owned by 2026-10-03-voice-and-telegram-acceptance.md; this archive is not new release evidence. -->
+
+**Historical aggregate.** Later applicable results are owned by the
+[current local QA report](2026-10-03-voice-and-telegram-acceptance.md). The retained audit below does
+not certify the current merged or installed candidate.
+
+
 ## Current finishing audit
 
 **Scoped functional repair: PASS. Performance: PARTIAL. QA mode: blast-radius.**

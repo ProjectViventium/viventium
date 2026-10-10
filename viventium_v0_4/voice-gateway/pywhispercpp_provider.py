@@ -495,7 +495,7 @@ class PyWhisperCppSTT(STT):
         model_name: Optional[str] = None,
     ) -> None:
         super().__init__(
-            capabilities=STTCapabilities(streaming=False, interim_results=False)
+            capabilities=STTCapabilities(streaming=False, interim_results=False, diarization=False)
         )
         self._language = language
         self._sample_rate = sample_rate

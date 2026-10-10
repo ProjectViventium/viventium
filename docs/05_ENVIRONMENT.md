@@ -18,6 +18,15 @@ Secrets should live in macOS Keychain and be referenced from `config.yaml` using
 
 For advanced local setups that still depend on env-based LibreChat provider wiring
 (for example Azure-backed local models), use `runtime.extra_env` in `config.yaml`.
+The advanced host Grok steering opt-in uses
+`runtime.extra_env.WPR_GROK_REVIEWED_BINARY_SHA256`. Set it only after a real
+interjection check on the exact configured Grok executable. The compiler retains
+this secret-free value in Native runtime inputs. The native runner verifies the
+executable bytes before opening a session; a changed artifact needs a new review.
+This opt-in does not change the selected model, effort, account or tool authority.
+A queued interjection receipt proves admission, not that the model consumed it.
+Leave the field absent when the artifact has not been verified.
+
 Telegram local Bot API settings now have canonical config fields under
 `integrations.telegram` and should not require `runtime.extra_env`.
 That same canonical block now owns:

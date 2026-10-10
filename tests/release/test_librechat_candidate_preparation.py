@@ -220,3 +220,216 @@ if should_rebuild_librechat_client_bundle; then echo rebuild; else echo current;
     result = run_shell(candidate, check)
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == 'rebuild'
+
+
+# Installation and cleanup share candidate preparation's checkout ownership boundary.
+def dependency_setup(tmp_path: Path, relative: str = 'node_modules') -> tuple[Path, Path, Path]:
+    checkout = tmp_path / 'checkout'
+    checkout.mkdir()
+    (checkout / 'package-lock.json').write_text('{}')
+    external = tmp_path / 'other-checkout'
+    external.mkdir()
+    sentinel = external / 'sentinel'
+    sentinel.write_text('preserve')
+    sentinel.chmod(0o444)
+    linked = checkout / relative
+    linked.parent.mkdir(parents=True, exist_ok=True)
+    linked.symlink_to(external, target_is_directory=True)
+    return checkout, linked, sentinel
+
+
+def dependency_shell(checkout: Path, event_log: Path) -> str:
+    return source_build() + f'''
+LIBRECHAT_DIR={shlex.quote(str(checkout))}
+PYTHON_BIN={shlex.quote(sys.executable)}
+event_log={shlex.quote(str(event_log))}
+RED= YELLOW= NC=
+ensure_validated_node24_runtime() {{ :; }}
+librechat_dependency_install_reason() {{ printf '%s\\n' missing; }}
+node() {{ return 0; }}
+cd "$LIBRECHAT_DIR"
+'''
+
+
+def sentinel_snapshot(sentinel: Path) -> tuple[bytes, int, int]:
+    st = sentinel.stat()
+    return sentinel.read_bytes(), st.st_mode, st.st_mtime_ns
+
+
+@pytest.mark.parametrize('relative', ['node_modules', 'packages/data-provider/node_modules'])
+@pytest.mark.parametrize('entrypoint', ['run_librechat_dependency_install', 'ensure_librechat_node_dependencies'])
+def test_dependency_install_rejects_shared_paths_before_npm_mutates_them(
+    tmp_path: Path, relative: str, entrypoint: str,
+) -> None:
+    checkout, linked, sentinel = dependency_setup(tmp_path, relative)
+    before = sentinel_snapshot(sentinel)
+    events = tmp_path / 'events'
+    result = run_shell(tmp_path, dependency_shell(checkout, events) + f'''
+run_librechat_npm() {{
+  echo "npm $*" >> "$event_log"
+  printf mutated > {shlex.quote(str(linked / 'sentinel'))}
+}}
+{entrypoint}
+''')
+    assert result.returncode != 0
+    assert 'another checkout' in result.stderr
+    assert not events.exists()
+    assert linked.is_symlink()
+    assert sentinel_snapshot(sentinel) == before
+
+
+@pytest.mark.parametrize('relative', ['node_modules', 'packages/data-provider/node_modules'])
+def test_dependency_cleanup_rejects_shared_paths_before_chmod_or_unlink(
+    tmp_path: Path, relative: str,
+) -> None:
+    checkout, linked, sentinel = dependency_setup(tmp_path, relative)
+    before = sentinel_snapshot(sentinel)
+    events = tmp_path / 'events'
+    result = run_shell(tmp_path, dependency_shell(checkout, events) + '''
+chmod() { echo chmod >> "$event_log"; }
+clean_librechat_dependency_tree
+''')
+    assert result.returncode != 0
+    assert 'another checkout' in result.stderr
+    assert not events.exists()
+    assert linked.is_symlink()
+    assert sentinel_snapshot(sentinel) == before
+
+
+@pytest.mark.parametrize('entrypoint', ['run_librechat_dependency_install', 'clean_librechat_dependency_tree'])
+def test_dependency_mutation_rejects_dangling_external_links(tmp_path: Path, entrypoint: str) -> None:
+    checkout = tmp_path / 'checkout'
+    checkout.mkdir()
+    linked = checkout / 'node_modules'
+    linked.symlink_to(tmp_path / 'missing-other-checkout', target_is_directory=True)
+    events = tmp_path / 'events'
+    result = run_shell(tmp_path, dependency_shell(checkout, events) + f'''
+run_librechat_npm() {{ echo npm >> "$event_log"; }}
+chmod() {{ echo chmod >> "$event_log"; }}
+{entrypoint}
+''')
+    assert result.returncode != 0
+    assert not events.exists()
+    assert linked.is_symlink()
+
+
+@pytest.mark.parametrize('locked', [False, True])
+def test_dependency_install_preserves_normal_owned_tree_and_locked_command(tmp_path: Path, locked: bool) -> None:
+    checkout = tmp_path / 'checkout'
+    (checkout / 'node_modules').mkdir(parents=True)
+    if locked:
+        (checkout / 'package-lock.json').write_text('{}')
+    events = tmp_path / 'events'
+    result = run_shell(tmp_path, dependency_shell(checkout, events) + '''
+run_librechat_npm() { printf '%s\\n' "$*" >> "$event_log"; }
+run_librechat_dependency_install
+''')
+    assert result.returncode == 0, result.stderr
+    assert events.read_text().splitlines() == ['ci' if locked else 'install']
+
+
+def test_dependency_install_allows_internal_workspace_link(tmp_path: Path) -> None:
+    checkout = tmp_path / 'checkout'
+    (checkout / 'owned-dependencies').mkdir(parents=True)
+    (checkout / 'node_modules').symlink_to('owned-dependencies', target_is_directory=True)
+    events = tmp_path / 'events'
+    result = run_shell(tmp_path, dependency_shell(checkout, events) + '''
+run_librechat_npm() { echo npm >> "$event_log"; }
+run_librechat_dependency_install
+''')
+    assert result.returncode == 0, result.stderr
+    assert events.read_text().splitlines() == ['npm']
+
+
+def test_failed_install_retry_rechecks_ownership_before_cleanup(tmp_path: Path) -> None:
+    checkout = tmp_path / 'checkout'
+    (checkout / 'node_modules').mkdir(parents=True)
+    external = tmp_path / 'other-checkout'
+    external.mkdir()
+    sentinel = external / 'sentinel'
+    sentinel.write_text('preserve')
+    before = sentinel_snapshot(sentinel)
+    linked = checkout / 'packages/data-provider/node_modules'
+    linked.parent.mkdir(parents=True)
+    events = tmp_path / 'events'
+    result = run_shell(tmp_path, dependency_shell(checkout, events) + f'''
+calls=0
+run_librechat_npm() {{
+  calls=$((calls + 1))
+  echo "npm $calls" >> "$event_log"
+  if [[ "$calls" == 1 ]]; then
+    ln -s {shlex.quote(str(external))} {shlex.quote(str(linked))}
+    return 23
+  fi
+}}
+chmod() {{ echo chmod >> "$event_log"; }}
+ensure_librechat_node_dependencies
+''')
+    assert result.returncode != 0
+    assert events.read_text().splitlines() == ['npm 1']
+    assert linked.is_symlink()
+    assert sentinel_snapshot(sentinel) == before
+
+
+def test_failed_owned_install_keeps_existing_single_cleanup_retry(tmp_path: Path) -> None:
+    checkout = tmp_path / 'checkout'
+    (checkout / 'node_modules').mkdir(parents=True)
+    (checkout / 'package-lock.json').write_text('{}')
+    events = tmp_path / 'events'
+    result = run_shell(tmp_path, dependency_shell(checkout, events) + '''
+calls=0
+run_librechat_npm() {
+  calls=$((calls + 1))
+  echo "npm $calls $*" >> "$event_log"
+  if [[ "$calls" == 1 ]]; then return 23; fi
+  mkdir node_modules
+}
+ensure_librechat_node_dependencies
+''')
+    assert result.returncode == 0, result.stderr
+    assert events.read_text().splitlines() == ['npm 1 ci', 'npm 2 ci']
+    assert (checkout / 'node_modules').is_dir()
+
+
+def test_dependency_install_rejects_shared_ancestor_directory(tmp_path: Path) -> None:
+    checkout = tmp_path / 'checkout'
+    (checkout / 'packages').mkdir(parents=True)
+    external = tmp_path / 'other-checkout'
+    (external / 'node_modules').mkdir(parents=True)
+    (checkout / 'packages/data-provider').symlink_to(external, target_is_directory=True)
+    events = tmp_path / 'events'
+    result = run_shell(tmp_path, dependency_shell(checkout, events) + '''
+run_librechat_npm() { echo npm >> "$event_log"; }
+run_librechat_dependency_install
+''')
+    assert result.returncode != 0
+    assert not events.exists()
+
+
+def test_dependency_install_reuses_existing_external_artifact_ownership_boundary(tmp_path: Path) -> None:
+    checkout, linked, sentinel = dependency_setup(tmp_path, 'packages/api/dist')
+    before = sentinel_snapshot(sentinel)
+    events = tmp_path / 'events'
+    result = run_shell(tmp_path, dependency_shell(checkout, events) + '''
+run_librechat_npm() { echo npm >> "$event_log"; }
+run_librechat_dependency_install
+''')
+    assert result.returncode != 0
+    assert not events.exists()
+    assert linked.is_symlink()
+    assert sentinel_snapshot(sentinel) == before
+
+
+def test_read_only_dependency_check_does_not_reject_sharing_without_a_mutation(tmp_path: Path) -> None:
+    checkout, linked, sentinel = dependency_setup(tmp_path)
+    before = sentinel_snapshot(sentinel)
+    events = tmp_path / 'events'
+    result = run_shell(tmp_path, dependency_shell(checkout, events) + '''
+librechat_dependency_install_reason() { :; }
+run_librechat_npm() { echo npm >> "$event_log"; }
+ensure_librechat_node_dependencies
+''')
+    assert result.returncode == 0, result.stderr
+    assert not events.exists()
+    assert linked.is_symlink()
+    assert sentinel_snapshot(sentinel) == before

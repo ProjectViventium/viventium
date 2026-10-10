@@ -26,7 +26,7 @@ def test_direct_openai_model_inventories_expose_the_full_gpt_56_family() -> None
         assert GPT_56_MODELS <= set(_shell_csv_constant(source, name))
 
 
-def test_connected_account_inventory_exposes_only_verified_gpt_56_models() -> None:
+def test_connected_account_inventory_defaults_to_current_model_and_retains_verified_gpt_56_models() -> None:
     source = START_SCRIPT.read_text(encoding="utf-8")
 
     for name in (
@@ -34,7 +34,7 @@ def test_connected_account_inventory_exposes_only_verified_gpt_56_models() -> No
         "CONNECTED_ACCOUNT_VIVENTIUM_ASSISTANTS_MODELS",
     ):
         models = _shell_csv_constant(source, name)
-        assert models[0] == "gpt-5.6-sol"
+        assert models[0] == "gpt-6.1-sol"
         assert set(models) & GPT_56_MODELS == CONNECTED_ACCOUNT_GPT_56_MODELS
 
 

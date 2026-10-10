@@ -2905,9 +2905,18 @@ function structuredDecisionCaseText(testCase) {
 }
 
 function buildCaseText(testCase, { includeSetup = true } = {}) {
+  const fileFixture = testCase.fixture?.workerFileDelivery;
+  if (fileFixture != null &&
+      (typeof fileFixture !== "object" || Array.isArray(fileFixture) ||
+       typeof fileFixture.userRequest !== "string" || !fileFixture.userRequest.trim() ||
+       typeof fileFixture.evidence !== "string" || !fileFixture.evidence.trim())) {
+    throw new Error("worker_file_delivery_fixture_invalid");
+  }
   return [
     testCase.context,
     includeSetup ? testCase.setup : null,
+    fileFixture == null ? null :
+      `User request: ${fileFixture.userRequest}\nEvidence: ${fileFixture.evidence}`,
     structuredDecisionCaseText(testCase) || testCase.prompt,
   ]
     .filter(Boolean)
@@ -3450,7 +3459,7 @@ function buildJudgePrompt(
     'Hold/delayed-work note: for productivity, worker, scheduling, or cortex cases, a short hold such as "Checking now" is acceptable only when stream, prompt-frame, or delayed DB evidence shows a routed read-only/background path and either completed insight/delayed evidence, an explicit pending-callback contract for that case, or an honest limitation. A generic hold with still-pending statuses and no result evidence after the observation window is insufficient.',
     "Scheduling-tool evidence note: when runtime evidence shows schedule search/get/update tool calls, treat timezone and identity handling as satisfied by the tool-owned contract unless the visible response or tool evidence contradicts it. Do not require the assistant to expose timezone, identity, task IDs, metadata, or schedule internals in the user-facing answer.",
     "Connected-tool receipt note: connected_tool_receipts contains only exact terminal lines from the final persisted typed harness-activity part. Completed, failed, and cancelled each prove that the named connected operation was invoked; only completed proves success.",
-    "Blocked sibling-launch note: when provider-run evidence proves the first independently scoped mission was blocked, one failed launch is correct. Do not require attempts for later sibling missions; they must remain unresolved. objectiveScopes are boolean checks over private tool arguments and do not expose those arguments.",
+    "Blocked sibling-launch note: a blocked objective does not block independent permitted work. Continue other permitted launches when the returned blocker does not apply to them; one failed launch is sufficient only when verified evidence shows that the same prerequisite blocks the remaining objectives too. Report the exact blocker for each affected objective without inventing admission or completion. objectiveScopes are boolean checks over private tool arguments and do not expose those arguments.",
     'Pending-worker note: after a worker/tool call, a short acknowledgement such as "working on it", "checking now", or "I will send the result here" is not pretending to have inspected anything unless it claims a concrete finding, UI state, artifact, or completion without evidence.',
     "Direct-action callback-window note: do not fail a worker/delegation case solely because the callback or final inspection result did not arrive within this runner’s observation window. If native evidence shows a tool_call/delegation route and the visible text only promises future results, treat it as a valid pending delegation. Fail only if the answer claims completed inspection, concrete findings, or local UI state without verified evidence.",
     "View / Steer receipt note: a connected-tool receipt with viewSteerLinkKind=mission_control, viewSteerState=nonterminal, viewSteerIncludeInResponse=true, and viewSteerVisibleResponseMatch=true proves that the exact current-turn steering link was shown in the visible response. It proves a live mission-control link, not a completed artifact or opened window.",

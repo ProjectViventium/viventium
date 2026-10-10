@@ -296,9 +296,12 @@ Structured final-run events record each artifact's pinned hash, count, and final
 
 For the core `glasshive-harness` provider, the selected harness is the main speaking agent rather
 than a delegated specialist. The request-pinned capsule is therefore present exactly once in the
-main authored turn and is carried forward by the same native session for Phase B. It is never copied
-into specialist cortex prompts, harness activity, provider metadata, or LIFE files. A direct main
-with a GlassHive cortex keeps the capsule on the direct main adjudication path only.
+main authored turn. User-visible Phase-B synthesis has its own `phase_b:followup` native session
+and receives the same request-pinned capsule once at its final instruction boundary. It does not
+borrow Main's session or authority; retries and later turns in that follow-up lane use the existing
+native authority replacement and de-duplication mechanisms. The capsule is never copied into
+specialist cortex prompts, harness activity, provider metadata, or LIFE files. A direct main with a
+GlassHive cortex keeps the capsule on the direct main adjudication path only.
 
 Viventium-compiled Codex workers default the native Codex `personality` setting to `none`. The
 official [Codex personality documentation](https://learn.chatgpt.com/docs/developer-commands?surface=cli#set-a-communication-style-with-personality)
@@ -321,9 +324,10 @@ than user-prompt imitation. The final request-pinned Feeling authority is includ
 combined `system`/`developer` snapshot and materialized as worker-local Codex
 `developer_instructions`; it is excluded from visible user/assistant history. Changed active units
 use the verified native delivery path in [Codex Resumed Authority Delivery](#codex-resumed-authority-delivery).
-Unchanged authority and a Phase-B request with no repeated authority reuse the current session. Thus `none`
-removes Codex's generic style layer, but does not remove Viventium identity, guardrails, capabilities,
-or the pinned Feeling state.
+Unchanged authority reuses the current session within its lane. Phase-B synthesis uses its separate
+follow-up lane with the request-pinned capsule; provider conversation support alone is not a reason
+to omit that state. Thus `none` removes Codex's generic style layer, but does not remove Viventium
+identity, guardrails, capabilities, or the pinned Feeling state.
 
 Durable authority and mutable turn context are separate. Identity, guardrails, memory context, and
 the current Feeling capsule belong to native developer authority and its acknowledged unit digests.
